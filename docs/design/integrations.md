@@ -1,6 +1,6 @@
 # Integrations
 
-This contract fixes how LINA connects to external services. LINA's conversation engine reaches a service through a plugin: one installable integration unit with a manifest. LINA ships first-party plugins for GitHub and Google, and the person adds others one at a time. LINA Core hosts every plugin, holds the credentials LINA itself obtains, classifies each tool for approval and records every write. The contract covers the plugin system, credentials and sign-in, the rules every plugin follows, and the GitHub and Google plugins. It is normative: implementations must follow it, and any change to it goes through a pull request against this file. Adding a plugin is the person's act or a first-party plugin in a release, never a change to this contract.
+This contract fixes how LINA connects to external services. LINA's conversation engine reaches a service through a plugin: one installable integration unit with a manifest. LINA ships first-party plugins for GitHub and Google, and the person adds others one at a time. LINA Core hosts every plugin for every agent, holds the credentials LINA itself obtains, classifies each tool for approval and records every write. The contract covers the plugin system, credentials and sign-in, the rules every plugin follows, and the GitHub and Google plugins. It is normative: implementations must follow it, and any change to it is made in this file and joins dev under [integration.md](../policy/integration.md). Adding a plugin is the person's act or a first-party plugin in a release, never a change to this contract.
 
 ## Scope
 
@@ -11,7 +11,7 @@ This contract covers:
 - service profiles and the tier of each plugin tool and command
 - credentials, LINA's secret store and sign-in
 - the rules every plugin follows: field ownership, change signals, external evidence, writes and failures
-- the GitHub plugin: the user's `gh` login and git setup, the command profile, LINA Core's own reads, field ownership in a connected part, the GitHub-specific merge rules and the SION link
+- the GitHub plugin: the user's `gh` login and git setup, the command profile, LINA Core's own reads, field ownership in a connected part and the GitHub-specific merge rules
 - the Google plugin: the built-in connector, the user's own OAuth client, accounts, areas, consent and token failures
 
 No external planning service is canonical or required ([product-families.md](product-families.md)). The one-time takeover of planning records at the operational switch is defined in [work-and-delegation.md](work-and-delegation.md).
@@ -19,10 +19,10 @@ No external planning service is canonical or required ([product-families.md](pro
 This contract does not cover:
 
 - the role rule itself (no exclusive owner; enforced pre-merge safety and result records): [product-families.md](product-families.md)
-- grants, the approval tiers, standing grants, receipts and sibling records: [main-authority.md](main-authority.md)
-- the envelope, effect states, idempotency keys, the sign-in relay on the `client` connection and the SION payloads: [host-protocol.md](host-protocol.md)
+- grants, the approval tiers, standing grants, receipts and observed results: [main-authority.md](main-authority.md)
+- the envelope, effect states, idempotency keys, and the sign-in relay on the `client` connection: [host-protocol.md](host-protocol.md)
 - plugin tool names and declarations, the effect ledger, the sandbox and its network rule, and tools the user installs: [runtime.md](runtime.md)
-- worker agents, which use the integrations connected in the agent itself, and delegated work, development mode, the merge slot, the protected-ref check and apply records: [work-and-delegation.md](work-and-delegation.md)
+- workers, which use the integrations connected in the worker itself, and delegated work, development mode, the merge slot, the protected-ref check and apply records: [work-and-delegation.md](work-and-delegation.md)
 - where the plugin registry and LINA's secrets live: [filesystem.md](filesystem.md)
 - meeting notes, connected sources in the library and deletion propagation: [materials-and-knowledge.md](materials-and-knowledge.md)
 - screens, including the plugin list in settings, approval cards, code view, CI status and the today feed: [surfaces.md](surfaces.md)
@@ -66,15 +66,15 @@ Installing and turning on a plugin are the person's acts. LINA never installs or
 
 LINA Core is the host of every plugin. It is the MCP client of plugin servers, using the official [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk) at a pinned version, and it negotiates the protocol version with each server.
 
-- Plugin tools are tools of LINA's conversation engine and of LINA Core's own background features. They are named and declared as defined in [runtime.md](runtime.md). An enabled plugin is available in every conversation; there is no per-conversation switch.
-- Worker agents never receive plugin tools. A worker agent uses the integrations connected in the agent itself ([work-and-delegation.md](work-and-delegation.md)).
+- Plugin tools are tools of LINA's conversation engine and of LINA Core's own background features. They are named and declared as defined in [runtime.md](runtime.md). An enabled plugin is available to every agent in every conversation; there is no per-conversation switch.
+- Workers never receive plugin tools. A worker uses the integrations connected in the worker itself ([work-and-delegation.md](work-and-delegation.md)).
 - LINA uses tools, tool annotations and elicitation. An elicitation from a server reaches the conversation as a question. A URL elicitation shows the full URL and opens it only after the person agrees.
 - A local server runs as a child process of LINA Core under the user's OS user, outside the command sandbox ([runtime.md](runtime.md)). Control sits at the tool call: the approval tiers and the effect ledger.
 - LINA doesn't show MCP Apps interfaces (see Deferred). It uses the tool's text result.
 
 ### Registry
 
-LINA Core keeps one plugin registry in canon ([filesystem.md](filesystem.md)). Each entry holds the plugin's manifest and source, the recorded version and commit, its state, its account with the person the account belongs to, the hash of its local command when it has one, and a snapshot of its tools, each with its tier and the person's policy, recorded with the person who set it.
+LINA Core keeps one plugin registry in canon ([filesystem.md](filesystem.md)). Each entry holds the plugin's manifest and source, the recorded version and commit, its state, its account with the person the account belongs to, the hash of its local command when it has one, and a snapshot of its tools, each with its tier and the person's policy, recorded with the person who set it. A tool policy applies to every agent unless the person names agents in it; naming agents is the person's recorded choice.
 
 ## Service profiles
 
@@ -110,7 +110,7 @@ A plugin's credential comes from one of three places:
 
 LINA's secret store is the OS keychain. Where no keychain is available, it is files with mode 0600 in the secrets area of the state root ([filesystem.md](filesystem.md)). Only LINA Core reads it.
 
-Every account and credential LINA keeps belongs to one person and is kept under that person's id ([product-families.md](product-families.md)). A LINA admits only its owner, so only the owner's exist.
+Every account and credential LINA keeps belongs to one person and is kept under that person's id ([product-families.md](product-families.md)). A LINA admits only its owner, so only the owner's exist. Agents own no accounts: every agent uses the person's accounts under the grants and approval tiers of [main-authority.md](main-authority.md), and every use records the agent.
 
 Rules:
 
@@ -123,7 +123,7 @@ Rules:
 Sign-in to a remote MCP server follows the [MCP authorization specification](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization):
 
 - LINA finds the authorization server through the server's protected resource metadata.
-- LINA registers as a client in this order: a client ID metadata document, then dynamic client registration with `application_type: native`, then a client id the person enters. The LINA project publishes its client metadata document, with loopback redirect URIs, as a static file at an https URL.
+- LINA registers as a client in this order: a client ID metadata document when the owner has chosen an https URL that serves one, then dynamic client registration with `application_type: native`, then a client id the person enters. The client metadata document lists loopback redirect URIs.
 - Every authorization request uses PKCE with S256 and the `resource` parameter. LINA checks `iss` in the authorization response before it sends the code.
 - Scopes come from the server's 401 challenge. On `insufficient_scope`, LINA asks for the earlier scopes together with the new ones (step-up).
 - Tokens are refreshed before they expire and after a 401. When a refresh fails, the plugin shows needs sign-in. LINA never falls back to another account, another client or a key found in the environment.
@@ -146,7 +146,7 @@ These rules apply to every plugin.
 - **Every field has one owner.** The data model names the canonical side of each field. LINA Core never treats its copy of an externally owned field as canonical. When the two disagree, LINA Core reads the external side again.
 - **Change signals are hints.** A notification or a change feed tells LINA Core to read again. It isn't a record of what changed. Periodic reconciliation compares LINA's links and derived data with the external side and catches missed signals. LINA Core reaches every service with outbound requests only. No service calls in to LINA Core.
 - **External content is evidence, not instruction.** Everything read through a plugin, tool results included, carries provenance: the plugin, the account, the object id when there is one, the fetch time, and the revision or etag when the service has one. It enters model requests as untrusted input ([conversation-and-memory.md](conversation-and-memory.md)). It never becomes a fact, an approval, a current instruction or a persona change by itself, and it never changes an approval decision ([main-authority.md](main-authority.md)).
-- **Every write is an effect.** A plugin write runs under a grant or an approval ([main-authority.md](main-authority.md)). The effect ledger ([runtime.md](runtime.md)) records the plugin, the account, the tool, the argument hash, the tier, the approval basis (a task grant, a standing grant, or approval of this call), the effect state ([host-protocol.md](host-protocol.md)), the conversation or task id, and the person the write acts for. Its idempotency key takes the plugin and tool as the action and the argument hash as the intent, and a normalized target only when the service profile names one.
+- **Every write is an effect.** A plugin write runs under a grant or an approval ([main-authority.md](main-authority.md)). The effect ledger ([runtime.md](runtime.md)) records the plugin, the account, the tool, the argument hash, the tier, the approval basis (a task grant, a standing grant, or approval of this call), the effect state ([host-protocol.md](host-protocol.md)), the conversation or task id, the agent that called the tool, and the person the write acts for. Its idempotency key takes the plugin and tool as the action and the argument hash as the intent, and a normalized target only when the service profile names one.
 - **Unknown outcomes are never sent again.** When a write's outcome is unknown, LINA Core reads the service to settle it if the service profile says how. Otherwise it tells the person that the outcome is unknown.
 - **A failing plugin never blocks conversation.** The plugin shows as failing, with its cause, and the rest of LINA keeps working.
 
@@ -158,11 +158,11 @@ The GitHub plugin is a first-party plugin that relies on the user's own setup: t
 
 - LINA detects the login with `gh auth status`, which names the host, the account and the token scopes. Each repository's remote names its transport: HTTPS with git's credential helper, or SSH. When `gh` is not logged in, the plugin shows needs sign-in and names the `gh` command that signs in; git transport keeps working.
 - In a conversation, the model runs `gh` and `git` as shell commands. The plugin's service profile classifies them (see Command profile), and LINA Core decides a command's network access from that tier ([runtime.md](runtime.md)).
-- LINA Core's own reads are not model tool calls: the work it coordinates, Klotho's project supervision ([cognition-and-life.md](cognition-and-life.md)), the read right before a merge, and the check of a SION result. LINA Core runs them with `gh` as its own child process. Reads need no approval.
+- LINA Core's own reads are not model tool calls: the work it coordinates, Klotho's project supervision ([cognition-and-life.md](cognition-and-life.md)), the read right before a merge, and the check of a merge a person made. LINA Core runs them with `gh` as its own child process. Reads need no approval.
 - When the login lacks a scope that a command needs, for example `workflow` for a push that changes workflow files, LINA tells the person the command that adds it, such as `gh auth refresh -s workflow`, and never works around it.
 - A person who works with a GitHub MCP server can add it as a plugin like any other MCP server.
 
-Worker agents do their GitHub work with the GitHub setup of the agent itself, on the main and on a Node device ([work-and-delegation.md](work-and-delegation.md)).
+Workers do their GitHub work with the GitHub setup of the worker itself, on the main and on a Node device ([work-and-delegation.md](work-and-delegation.md)).
 
 LINA's GitHub writes include pushing branches, opening and updating pull requests, replying to reviews, editing issues and merging: whatever the user's setup can do. Every write is recorded under the plugin rules. In delegated work, a push writes only the task's own branch, and a protected ref moves only through a merge that passes pre-merge safety ([work-and-delegation.md](work-and-delegation.md)).
 
@@ -196,19 +196,9 @@ The shared role rule is in [product-families.md](product-families.md). [work-and
 
 - LINA Core never uses an administrator bypass of protection rules, even when the user's credential would allow one.
 - Right before it merges, LINA Core reads the pull request again. If someone else has already merged it, LINA Core records that merge and doesn't try again.
-- Before LINA Core accepts a SION merge record as a sibling record, or records a merge made by a person as an observed result ([main-authority.md](main-authority.md)), it checks on GitHub that the merge commit exists and that the target ref points to it. It also reads the check results on that commit.
+- Before LINA Core records a merge made by a person as an observed result ([main-authority.md](main-authority.md)), it checks on GitHub that the merge commit exists and that the target ref points to it. It also reads the check results on that commit.
 - A merge that went in without passing required checks is recorded as observed and reported to the user. LINA Core never reverts another actor's merge without a user decision.
 - A merge is not verification. It records that a draft was applied. LINA Core still judges the task's delivery from evidence ([work-and-delegation.md](work-and-delegation.md)).
-
-### SION link
-
-SION is a sibling product ([product-families.md](product-families.md)). LINA and SION connect only through the envelope. [host-protocol.md](host-protocol.md) defines the SION mailbox, the declaration, the payloads and the handling of each result kind. On the GitHub side:
-
-- **Linking is the person's act.** The person names a SION operator repository in LINA. Naming it is the link and its approval, recorded with the person. LINA then reads SION's declaration, `outbox/declaration.json` on the `state` branch, which lists the target repositories whose link is on ([host-protocol.md](host-protocol.md)).
-- **Writes use the user's setup.** LINA Core writes its judgment input to the `mailbox` branch of SION's operator repository with the user's GitHub setup. SION's ruleset lets only the operator repository's maintainers update that branch. Klotho's judgment is input to SION's review, never a command ([cognition-and-life.md](cognition-and-life.md)).
-- **Results are checked on GitHub.** LINA Core checks every SION item result against the target repository before it accepts it as a sibling record. That covers the item, the head or merge commit, and the check state that the result names.
-- **No resend loop.** After a refused, failed or unknown result, LINA Core doesn't send the same input again in a loop.
-- **Each side stands alone.** Neither side calls the other's internals, and each works fully without the other. In conversation, SION's results appear only as cards labeled SION ([product-families.md](product-families.md)).
 
 ## Google
 

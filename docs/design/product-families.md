@@ -1,6 +1,6 @@
-# Product families and siblings
+# Product families and agents
 
-This contract fixes what LINA is made of: the product families and their components, the sibling products SION and RUMI, where canon lives and who writes it, how roles are shared, which platforms and installation modes exist, and how the products are built, versioned and kept compatible. It is normative: implementations follow it, and any change to it goes through a pull request against this file.
+This contract fixes what LINA is made of: the product families and their components, the agents the person creates, where canon lives and who writes it, how roles are shared, which platforms and installation modes exist, and how LINA is built and versioned. It is normative: implementations follow it, and any change to it is made in this file and joins `dev` under [integration.md](../policy/integration.md).
 
 ## Scope
 
@@ -9,26 +9,28 @@ This contract covers:
 - the people LINA serves: the person id and the owner
 - each component's responsibility, and what it never takes on
 - canon, its one writer, and the other kinds of state
-- the sibling products, their boundaries, the speaker rule and the six conditions of sibling compatibility
+- agents: the persona unit, the two knowledge layers, what agents share and the speaker rule
 - roles and the two rules that every actor follows
 - supported platforms and installation modes
 - the repository, the artifacts and the kinds of version
 - what LINA owns itself for delegated work
 
-It does not define the envelope, version negotiation, the supported-combination table or conformance fixtures; those are in [host-protocol.md](host-protocol.md). Grants, epochs, receipts and approval are in [main-authority.md](main-authority.md). The runtime, packaging, updates and remote access are in [runtime.md](runtime.md). This contract proves nothing about an implementation. Runtime proof belongs to the implementation issues that consume it.
+It does not define the envelope, version negotiation, the supported-combination table or conformance fixtures; those are in [host-protocol.md](host-protocol.md). Grants, epochs, receipts and approval are in [main-authority.md](main-authority.md). The runtime, packaging, updates and remote access are in [runtime.md](runtime.md). Persona layers, memory items and recall are in [conversation-and-memory.md](conversation-and-memory.md). This contract proves nothing about an implementation. Runtime proof belongs to the implementation issues that consume it.
 
 ## LINA
 
-LINA (Lifelong Intelligent Navigator & Ally) is one companion. Product text calls LINA a companion or a partner, never an AI.
+LINA (Lifelong Intelligent Navigator & Ally) is a companion platform. The person creates agents in it, and each agent is one persona and one companion (see Agents). LINA ships presets that agents are created from. LINA is also the name of the default agent, created from the LINA preset.
 
-LINA is open-source software, not a sold product. No release gate, such as age verification, is required before a release.
+Product text calls the personas the person creates agents, in Korean 에이전트. The coding tools that LINA delegates work to, such as Codex, are workers ([work-and-delegation.md](work-and-delegation.md)); product text never calls them agents.
+
+LINA is proprietary software with all rights reserved ([LICENSE](../../LICENSE)), not a sold product. No release gate, such as age verification, is required before a release.
 
 ## People
 
-A person is a human LINA serves. Each person has a person id: stable, assigned by LINA Core in canon, and never reused for another person. The first person is the owner, the person who sets up the LINA. LINA Core records the owner when it creates the identity, so the first run asks nothing for it. A LINA admits only its owner. Admitting more people is multi-person operation, a backlog item that this canon does not define yet ([cognition-and-life.md](cognition-and-life.md)).
+A person is a human LINA serves. Each person has a person id: stable, assigned by LINA Core in canon, and never reused for another person. The first person is the owner, the person who sets up the LINA. LINA Core records the owner when it creates the main's canon, so the first run asks nothing for it. A LINA admits only its owner. Admitting more people is multi-person operation, a backlog item that this canon does not define yet ([cognition-and-life.md](cognition-and-life.md)).
 
-- A person is not an identity. The identity is LINA's own, with its canon under `identities/<identity-id>/` ([filesystem.md](filesystem.md)). The people a LINA serves are recorded in that canon.
-- A main holds exactly one identity. The main id names the main that confirms canon ([main-authority.md](main-authority.md)), and the identity id names the canon it confirms.
+- A person is not an agent. The person axis and the agent axis are separate (see Agents).
+- A main holds one canon under one state root ([filesystem.md](filesystem.md)): its agents, people, knowledge, work and grants. The main id names the main that confirms canon ([main-authority.md](main-authority.md)).
 - Every record of something a person said, decided, granted, connected or signed in to names that person's id. Each contract that lists a record's fields names the field. A client connection acts for one person ([host-protocol.md](host-protocol.md)).
 - Because a LINA admits only its owner, every person id in canon is the owner's.
 - "A person" in the role rules below means any human actor, whether or not LINA serves them.
@@ -41,78 +43,55 @@ Users see LINA APP as "the LINA app". No other app name is used.
 
 | Component | Owns | Never owns | Ships as |
 | --- | --- | --- | --- |
-| LINA Core | The engine and the terminal UI (`lina`). The canon of the one LINA. Inside it: the conversation engine ([conversation-and-memory.md](conversation-and-memory.md)), the work engine ([work-and-delegation.md](work-and-delegation.md)), the Moirai engine ([cognition-and-life.md](cognition-and-life.md)) and the skill system. Coordination of delegated work, approved scope and decisions. | Device execution on another machine. GUI screens. Installation, update and recovery of an operating system. | Independent artifact with its own release cadence. `moirai-worker` and opencodex are installed with it, and the LINA work harness ships in LINA releases as a Codex plugin ([runtime.md](runtime.md)). |
-| LINA APP | The LINA app on desktop and mobile: conversation, work threads, questions, results, settings and the LIFE personal feed. It shows and asks; the logic lives in LINA Core. Desktop and mobile have the same functions, flows and terms; only the layout differs by screen size ([surfaces.md](surfaces.md)). | Canon. Product logic. Execution on the device it runs on. A direct path to a model, a worker or a sibling. A second LINA. | One Flutter codebase built natively per platform; each platform build is an independent artifact with its own release cadence |
-| LINA OS | An integrated product on Omarchy 4 Linux that combines verified LINA Core, Node and LINA app artifacts with an operating, update and recovery environment and a Hangul input setup, and includes opencodex as part of LINA's installation. It may offer to install a coding agent such as Codex, and RUMI, as the user's own tools ([runtime.md](runtime.md)). Manifest-based installation, diagnosis and recovery. | Product logic of LINA Core, the LINA app or Node. Copies of their code or ledgers. A second canonical LINA Core. | Composition of pinned artifacts with its own release cadence |
-| Node | Device execution under a grant from the main, on the device where Node is installed, as if the main were sitting there. LINA uses many devices, local or remote, as one machine. Receipts for what it did. | Independent planning. Offline execution. Any canon. Screens. A separate LINA. | Independent artifact per supported OS with its own release cadence |
-| LIFE | A background world engine that keeps a world, its time, its events and LINA's daily activity, and a personal feed in the LINA app that shows LINA's activity, posts, reactions, media and conversation experiences ([cognition-and-life.md](cognition-and-life.md)). | A separate app, installer, login or independent persona. A connection to a real social network. A multi-person product. | The world engine runs on the main as part of the LINA Core family, because the LINA app holds no logic. The feed is part of the LINA app. |
+| LINA Core | The engine and the terminal UI (`lina`). The canon of the main: agents, people, knowledge, work and grants. Inside it: the conversation engine ([conversation-and-memory.md](conversation-and-memory.md)), the work engine ([work-and-delegation.md](work-and-delegation.md)), the Moirai engine ([cognition-and-life.md](cognition-and-life.md)) and the skill system. Coordination of delegated work, approved scope and decisions. | Device execution on another machine. GUI screens. Installation, update and recovery of an operating system. | Independent artifact with its own release cadence. `moirai-worker` and opencodex are installed with it, and the LINA work harness ships in LINA releases as a Codex plugin ([runtime.md](runtime.md)). |
+| LINA APP | The LINA app on desktop and mobile: conversations with the person's agents, work threads, questions, results, settings and the LIFE personal feed. It shows and asks; the logic lives in LINA Core. Desktop and mobile have the same functions, flows and terms; only the layout differs by screen size ([surfaces.md](surfaces.md)). | Canon. Product logic. Execution on the device it runs on. A direct path to a model or a worker. A second main. | One Flutter codebase built natively per platform; each platform build is an independent artifact with its own release cadence |
+| LINA OS | An integrated product on Omarchy 4 Linux that combines verified LINA Core, Node and LINA app artifacts with an operating, update and recovery environment and a Hangul input setup, and includes opencodex as part of LINA's installation. It may offer to install a coding tool such as Codex as the user's own tool, which LINA then runs as a worker ([runtime.md](runtime.md)). Manifest-based installation, diagnosis and recovery. | Product logic of LINA Core, the LINA app or Node. Copies of their code or ledgers. A second canonical LINA Core. | Composition of pinned artifacts with its own release cadence |
+| Node | Device execution under a grant from the main, on the device where Node is installed, as if the main were sitting there. LINA uses many devices, local or remote, as one machine. Receipts for what it did. | Independent planning. Offline execution. Any canon. Screens. A second main. | Independent artifact per supported OS with its own release cadence |
+| LIFE | A background world engine that keeps a world, its time, its events and the daily activity of the person's agents, and a personal feed in the LINA app that shows the agents' activity, posts, reactions, media and conversation experiences ([cognition-and-life.md](cognition-and-life.md)). | A separate app, installer or login. A persona of its own. A connection to a real social network. A multi-person product. | The world engine runs on the main as part of the LINA Core family, because the LINA app holds no logic. The feed is part of the LINA app. |
 
 Responsibilities do not overlap. A release of one component never carries a copy of another component's logic, and integration acceptance checks for duplicated responsibility across components.
 
-LINA uses tools the user installs as they are: coding agents such as Codex as workers ([work-and-delegation.md](work-and-delegation.md)), the command-line tools that plugins rely on, and the servers of plugins the user adds ([integrations.md](integrations.md)). LINA records their versions and never ships, pins or owns them ([runtime.md](runtime.md)).
+LINA uses tools the user installs as they are: coding tools such as Codex as workers ([work-and-delegation.md](work-and-delegation.md)), the command-line tools that plugins rely on, and the servers of plugins the user adds ([integrations.md](integrations.md)). LINA records their versions and never ships, pins or owns them ([runtime.md](runtime.md)).
 
 ## Canon and writers
 
-LINA Core on the main is the only writer of identity, conversation, memory, work intent, permissions and results. There is exactly one main per LINA: the one LINA Core that confirms canon. The LINA app and Node attach to the main as screens and executors. They never confirm canon themselves.
+LINA Core on the main is the only writer of agents, people, conversation, memory, work intent, permissions and results. There is exactly one main per LINA: the one LINA Core that confirms canon. The LINA app and Node attach to the main as screens and executors. They never confirm canon themselves.
 
-State comes in four kinds, and each has one writer:
+State comes in three kinds, and each has one writer:
 
 | Kind | Writer | Meaning |
 | --- | --- | --- |
-| Canon | LINA Core on the main | The authoritative identity, conversation, memory, work intent, permissions, approved scope, decisions and results |
+| Canon | LINA Core on the main | The authoritative agents, people, conversation, memory, work intent, permissions, approved scope, decisions and results |
 | Receipt | Node, or a worker | The statement of what an executor did under a grant from the main ([main-authority.md](main-authority.md)) |
-| Sibling record | A sibling, in its own repository | A sibling's result, read by LINA only as verified external evidence with provenance ([host-protocol.md](host-protocol.md)) |
 | Client display | The LINA app or the TUI | What a client currently shows, derived from the main and never authoritative |
 
 Rules:
 
 - The LINA app and Node never write canon. The LINA app shows and asks; Node executes and reports.
+- Agents are canon objects written by LINA Core. A preset is persona material in a LINA release; the agent created from it is canon.
 - When a client display disagrees with the main, the main wins and the client refreshes.
 - When a receipt disagrees with the main's expectation, the main reconciles. The executor never rewrites the main's record.
-- A sibling record never becomes canon by itself. LINA Core records that it accepted the record, with provenance. It never promotes the record automatically into a fact, an approval, a current instruction or a persona change.
 - Canon, events, evidence, scope and permissions are kept mechanically, and surfaces translate them for each role. Completion, memory and sync are never decided by a model's sentence.
 
-Being the same LINA is not the same as cloning a disk or an account. Artifacts on different devices are linked by provenance, as defined in [main-authority.md](main-authority.md). The same name, path or content alone never makes two files on different devices the same file.
+One main across many devices is not the same as cloning a disk or an account. Artifacts on different devices are linked by provenance, as defined in [main-authority.md](main-authority.md). The same name, path or content alone never makes two files on different devices the same file.
 
-## Sibling products
+## Agents
 
-SION and RUMI are sibling products. They are not LINA product families.
+An agent is one persona and one companion. The person creates agents. An agent has an agent id, a name, the four persona layers with their revisions, an emotional state and personal knowledge ([conversation-and-memory.md](conversation-and-memory.md)). LINA ships presets: persona material that an agent is created from, kept in `persona/<preset>/` of the LINA repository. The LINA preset is one of them. The first run creates the default agent, LINA, from it and goes straight into conversation, without asking anything. Afterwards the person adds agents from a preset or from a description, and renames, tunes and deletes them. An agent created from a preset takes its core and default voice layers from the preset, and a preset update gives those agents the next revision of those two layers. The agent owns its user voice and growth snapshot layers and the values of its blank settings, and no preset update touches them. An agent created from a description owns all four layers. An agent is data that the one LINA Core runs. There is no process, engine or worker per agent. The model policy is one setting of the main, used by every agent.
 
-| Sibling | What it is | Repository | Design |
-| --- | --- | --- | --- |
-| SION (Sweeping Inspector Over Noise) | A repository maintenance bot that runs on GitHub Actions. It reviews issues and pull requests, cleans up and closes issues whose evidence is clear, fixes pull requests on opt-in, merges automatically on opt-in and tells people what to do next. | `thisisjun786/sion` | [sion.md](https://github.com/thisisjun786/sion/blob/dev/docs/design/sion.md) |
-| RUMI (Roots Under My Ideas) | A knowledge manager and LINA's sibling for knowledge work. It reads collected material, ties every note to its sources, links related notes and answers with cited passages. LINA hands it research and organizing, and RUMI returns cited briefs. Its vault is a user-owned Git repository of Markdown. | `thisisjun786/rumi` | [rumi.md](https://github.com/thisisjun786/rumi/blob/dev/docs/design/rumi.md) |
+Knowledge has two layers. Personal knowledge is held by one agent and known only to it. Common knowledge is held by every agent. Every memory item names its holder, an agent id or `all`, and the holder is checked before an item becomes a search candidate. Recall, the person brief, ledger search and context assembly read only the speaking agent's personal knowledge and the common knowledge. A new item about the person and the world (facts, preferences, commitments, decisions, verified work results) is common knowledge. A new item about the relationship (relationship, emotion observations, shared history, how the person likes that agent to talk) is that agent's personal knowledge. The person can say otherwise for any item. Moving an item between layers is a recorded act. The person does it, or an agent does it when the person asks or under a grant the person gave. Correcting or forgetting a common item applies to every agent. When the evidence of a common item is a turn in one agent's conversation, another agent sees the source agent, the time and the event id of that evidence; the turn itself is shown to the person and to the source agent. The same fact learned in two agents' conversations is one common item with two pieces of evidence.
 
-Each sibling is open source, has its own repository, its own canon and its own voice, and works without LINA. LINA works without either sibling. Repository READMEs, manifestos and descriptions use the name expansions above.
+Everything else in the main is shared, like one computer used by several people: the work area and its file system, materials and connected sources, plans and intent cards, the work queue and work ledger, workers, Node devices, plugins and their accounts, standing grants, and the model budget. One Moirai engine and one `moirai-worker` serve every agent. A background job that reads one agent's personal records, such as extracting memory from its conversations, runs as that agent's job, and each item it writes takes its layer by the rule above. A job for the whole main, such as Klotho's goal discovery, supervision, forecasts and news, reads only common knowledge, plans and the work ledger, runs once, and writes common output; the agent in the conversation speaks its suggestions. A grant applies to every agent unless the person names agents in it. Every record of something an agent did, asked for or changed names the agent id next to the person id. This covers tasks, effects, receipts, approvals, asset revisions, commits and grants.
 
-| Sibling | Canon | LINA writes | LINA reads | The sibling speaks in |
-| --- | --- | --- | --- | --- |
-| SION | Its operator repository, including the `state` branch | The `mailbox` branch of the operator repository, with the user's GitHub authentication: Klotho's judgment as input to SION's review | Item results, as sibling records | Its own commands and pull request comments |
-| RUMI | The vault | The mailbox: new files in `inbox/` and envelopes in `.rumi/inputs/`. Grant-scoped edits of existing notes ([materials-and-knowledge.md](materials-and-knowledge.md)). | Records in `.rumi/records/`, as sibling records. The vault's notes, as a connected source ([filesystem.md](filesystem.md)). | The RUMI app and its outputs |
+Agents never lock each other out. When two agents touch the same thing, the existing checks decide and the record shows both agents. A write to a material, a connected source or a plan object against a stale revision is refused with `stale_revision` and is retried on the current revision. In the shared conversation workspace, `apply_patch` fails when its context lines no longer match, and the agent reads the file again and retries; a shell write is recorded in the effect ledger with the changed paths, their hashes before and after, and the agent id ([runtime.md](runtime.md)). A merge waits for the merge slot. A GUI session has one seat-lease holder at a time, and another task waits or gets another session. Nothing else blocks an agent.
 
-Rules:
+Creating, changing and deleting an agent is the person's act and is recorded with the person id. Deleting an agent moves its persona revisions, emotional state, conversations and personal knowledge to the trash for 30 days, and then deletes them permanently with tombstones. Common knowledge the agent wrote stays, with the agent id as its source. Before deleting, the person can move any of the agent's items to common knowledge. Tasks the agent asked for keep running; their questions and results go to the person's home cards, and the person can hand them to another agent's conversation. A grant that named only the deleted agent applies to no agent, and the record says so.
 
-- LINA and a sibling never call each other's APIs while running. The sibling's repository is the only point of contact. The payloads and the verification of records are in [host-protocol.md](host-protocol.md).
-- LINA never copies a sibling's repository. The vault is a connected source.
-- A sibling never takes LINA's persona, skills or memory. LINA never imitates a sibling's voice.
-- RUMI and LINA share the LINA kit, a stateless Go module that RUMI vendors from LINA release tags ([runtime.md](runtime.md)). SION uses TypeScript protocol types generated from the shared schema. Shared code is a convenience, never a condition of compatibility.
+The agent axis is separate from the person axis. The person id records who said, decided, granted or signed in. The agent id records which persona answered, asked or acted. A LINA admits only its owner. Admitting other people is a backlog item on the person axis and does not change agents.
 
 ### Speaker rule
 
-Only LINA speaks in a LINA conversation. A sibling never joins it as a second speaker. Sibling results appear only as labeled sibling cards that carry the sibling's name and icon ([surfaces.md](surfaces.md)). LINA never reads a sibling's output aloud in the sibling's voice.
-
-### Sibling compatibility
-
-A sibling is "LINA Core compatible" when all six conditions hold:
-
-1. One envelope. The sibling exchanges every message in the shared envelope of the LINA host contract ([host-protocol.md](host-protocol.md)).
-2. Declared versions. The sibling declares its protocol and capability versions. LINA accepts only combinations listed in the supported-combination table, and refuses and reports every other combination.
-3. Canon boundary. Each side keeps its canon in its own repository. LINA writes into a sibling's repository only through the sibling's mailbox and, for user-owned notes, through grant-scoped edits. LINA takes a sibling record only after verifying it, and only as external evidence with provenance.
-4. Speaker boundary. The speaker rule above holds on both sides.
-5. Standalone both ways. Each side keeps all of its own functions when the other is absent or the link is off.
-6. Conformance. The sibling passes the conformance fixtures of every protocol version it declares.
-
-Using the same language or the same runtime is not a condition.
+A conversation has a list of participating agents, and today that list holds one agent. Only a participating agent speaks in a conversation, and every event in the conversation ledger names the agent that spoke it. Each person has one main conversation with each agent. A thread is attached to one artifact and one agent. A conversation ledger is the personal record of the agents in it. Group conversations, in which several agents take part in one conversation, are built on this model later; they are a backlog item in [cognition-and-life.md](cognition-and-life.md#backlog).
 
 ## Roles
 
@@ -121,16 +100,14 @@ Roles name a default owner, never an exclusive one.
 | Actor | Default role |
 | --- | --- |
 | LINA Core | Delegated work through workers and merges of its own delegated work ([work-and-delegation.md](work-and-delegation.md), [integrations.md](integrations.md)) |
-| SION | Review, cleanup and evidence-based closing, opt-in fixes, automerge and next-step notices |
-| RUMI | Knowledge work: research and organizing that LINA hands over, returned as cited briefs; the vault's sources, notebooks, proposals and digest |
 | A person | Anything |
 
-LINA Core, SION and a person may each merge, fix and create pull requests. LINA, RUMI and a person may each edit notes in the vault. Every vault change is a commit, a write against a stale revision is refused and the human edit wins.
+LINA Core and a person may each merge, fix and create pull requests in a repository the person connects to LINA.
 
 Every actor follows two rules, and only these two are enforced:
 
 1. Pre-merge safety. Before any merge, by any actor, the required checks pass, the protection rules hold and the protected refs match.
-2. Result record. Every merge, fix and pull request creation leaves a record by its actor: LINA Core in canon, SION in its operator repository, a person in the repository's own history. In a repository connected to LINA, LINA Core applies every such result to canon. Its own result arrives as a receipt, a SION result as a sibling record, and a merge by a person as an observed result after LINA Core checks it against the repository ([main-authority.md](main-authority.md)).
+2. Result record. Every merge, fix and pull request creation leaves a record by its actor: LINA Core in canon, with the agent that asked for the work, and a person in the repository's own history. In a repository connected to LINA, LINA Core applies every such result to canon. Its own result arrives as a receipt, and a merge by a person as an observed result after LINA Core checks it against the repository ([main-authority.md](main-authority.md)).
 
 ## Platforms
 
@@ -158,14 +135,9 @@ LINA OS has three profiles:
 
 Each mode and profile is built from one of the runtime compositions in [runtime.md](runtime.md), which also defines what stays available when a piece is missing.
 
-Siblings in installs:
-
-- RUMI runs on the user's device as a local process with the `rumi` CLI and the RUMI app, using one Responses-compatible endpoint that the user chooses. With a desktop install, the device's Node reaches the vault as a connected folder within its grant. On LINA OS, LINA OS may offer to install RUMI. That install sets RUMI's model endpoint, in RUMI's own settings, to the local opencodex endpoint; once installed, RUMI runs as a separate process with that endpoint when the user creates or connects a vault. LINA never pins or ships a RUMI release.
-- SION runs in GitHub Actions for each installation. Nothing of SION is installed on a LINA device.
-
 ## Repository, artifacts and versions
 
-LINA is the monorepo `thisisjun786/lina` under the MIT license. Work branches from `dev` and targets `dev` with pull requests. `main` mirrors releases, and releases are immutable `vX.Y.Z` tags ([releases.md](../policy/releases.md)). The one required CI check is `foundation` ([ci.md](../policy/ci.md)). SION and RUMI follow the same contribution, CI, branch and release policies. Issue #1 of each repository is its roadmap.
+LINA is the private monorepo `thisisjun786/lina`. Work branches from `dev` and joins `dev` through the integration script after the local foundation verification passes ([integration.md](../policy/integration.md), [foundation.md](../policy/foundation.md)). `main` mirrors releases, and releases are immutable `vX.Y.Z` tags ([releases.md](../policy/releases.md)). Issue #1 of the repository is its roadmap.
 
 No code, database structure or fixture is ported from another LINA codebase. Planning records and the owner's existing intent card data come in as data, once, through the one-time import at the operational switch ([work-and-delegation.md](work-and-delegation.md)). Vendored upstream code follows [dependencies.md](../policy/dependencies.md).
 
@@ -175,9 +147,9 @@ There are three kinds of version:
 
 | Version | Belongs to | Rule |
 | --- | --- | --- |
-| Product version | Each component and each sibling | Names a release. It never decides compatibility alone. |
-| Protocol and capability version | Each connection: client, Node, SION and RUMI | Decides compatibility between installed components and with siblings ([host-protocol.md](host-protocol.md)) |
-| LINA kit version | The LINA kit | Pinned exactly by each consumer and recorded in its release manifest |
+| Product version | Each component | Names a release. It never decides compatibility alone. |
+| Protocol and capability version | Each connection: client and Node | Decides compatibility between installed components ([host-protocol.md](host-protocol.md)) |
+| LINA kit version | The LINA kit | Recorded in the release manifest of every build that uses the kit ([runtime.md](runtime.md)) |
 
 LINA OS consumes pinned artifacts: a specific verified LINA Core, Node and LINA app, fixed by manifest with version and digest. LINA OS duplicates no code and no ledger from the components it composes. Replacing the OS is separate from migrating or rolling back state schemas. The release manifest is defined in [runtime.md](runtime.md).
 
@@ -189,7 +161,7 @@ Mixed versions are expected, because the artifacts release independently. The su
 
 ## Delegated work and operations
 
-Planning, documents, approved scope, decisions, execution permission, identity and receipts are owned by the main's canon. No external copy is canonical.
+Planning, documents, approved scope, decisions, execution permission, agents and receipts are owned by the main's canon. No external copy is canonical.
 
 Installation, management, delegation and recovery work without any external issue tracker account, API, webhook, external ID, URL or cache. A required path never depends on an external planning service being reachable. The product has no import from or export to an external planning service. A planning service's tools may be used in conversation through a plugin ([integrations.md](integrations.md)); they never become canonical or a required path. Records the operator tool keeps elsewhere are taken over once at the operational switch ([work-and-delegation.md](work-and-delegation.md)).
 

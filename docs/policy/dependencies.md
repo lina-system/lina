@@ -1,22 +1,22 @@
 # Dependencies
 
-This policy covers code that LINA takes from outside the repository: Go modules, the Go toolchain, opencodex and the Node.js runtime it runs on, other npm packages, pinned binaries, external components, and upstream source and generated upstream code vendored into the repository. LINA Core runs all day with the user's credentials, so outside code must be pinned, reviewed like any other code, and verified in CI before it can run. The rules apply from the first change that adds a dependency, and the `foundation` check enforces them.
+This policy covers code that LINA takes from outside the repository: Go modules, the Go toolchain, opencodex and the Node.js runtime it runs on, other npm packages, pinned binaries, external components, and upstream source and generated upstream code vendored into the repository. LINA Core runs all day with the user's credentials, so outside code must be pinned, reviewed like any other code, and verified by `foundation` before it can join `dev`. The rules apply from the first change that adds a dependency, and the `foundation` check enforces them.
 
 ## Scope
 
 This policy covers:
 
 - Go modules in every `go.mod` and `go.sum`
-- the Go toolchain used by CI and release builds
+- the Go toolchain used by `foundation` and release builds
 - npm packages in the root `package.json` and lockfile: the opencodex package and any repository tooling that needs an npm package
 - the Node.js runtime that releases ship with opencodex
-- opencodex, binaries that LINA ships or downloads, external components, CI tools, and GitHub Actions
+- opencodex, binaries that LINA ships or downloads, and external components
 - upstream source and generated upstream code under `third_party/`
 - the `dependencies` check that enforces these rules
 
-Tools the user installs are outside this policy: coding agents such as Codex, RUMI, the command-line tools that plugins rely on, and the plugins the user adds with their servers. They are not LINA dependencies. LINA records the version and source it observed for them and never pins them ([runtime.md](../design/runtime.md), [integrations.md](../design/integrations.md)). First-party plugins are LINA code and follow this policy.
+Tools the user installs are outside this policy: workers such as Codex, the command-line tools that plugins rely on, and the plugins the user adds with their servers. They are not LINA dependencies. LINA records the version and source it observed for them and never pins them ([runtime.md](../design/runtime.md), [integrations.md](../design/integrations.md)). First-party plugins are LINA code and follow this policy.
 
-Other documents cover what each component uses and why. [runtime.md](../design/runtime.md) names the vendored upstream, the model client, opencodex, external components, the packaging, and the release manifest. The [CI policy](ci.md) owns path mapping and job layout.
+Other documents cover what each component uses and why. [runtime.md](../design/runtime.md) names the vendored upstream, the model client, opencodex, external components, the packaging, and the release manifest. The [foundation policy](foundation.md) owns path mapping and check layout.
 
 ## Go modules
 
@@ -24,10 +24,10 @@ LINA's components are Go. Their outside code comes in as Go modules.
 
 ### Toolchain and configuration
 
-- Every `go.mod` has a `toolchain` line that names one exact Go release. CI and release builds use that toolchain.
+- Every `go.mod` has a `toolchain` line that names one exact Go release. `foundation` and release builds use that toolchain.
 - `go.mod` and `go.sum` of every LINA module, and the workspace file when the repository uses one, are committed.
-- Modules come only from the public Go module proxy and are verified against the Go checksum database. `GOPROXY`, `GOSUMDB`, `GONOSUMDB`, `GOPRIVATE` and `GOINSECURE` keep their defaults in CI, release builds and scripts; do not override them with flags, environment variables, or user configuration.
-- Go tools that scripts and CI run, such as `govulncheck`, are module requirements pinned in `go.mod` and verified through `go.sum`, and run from those versions.
+- Modules come only from the public Go module proxy and are verified against the Go checksum database. `GOPROXY`, `GOSUMDB`, `GONOSUMDB`, `GOPRIVATE` and `GOINSECURE` keep their defaults in `foundation`, release builds and scripts; do not override them with flags, environment variables, or user configuration.
+- Go tools that scripts run, such as `govulncheck`, are module requirements pinned in `go.mod` and verified through `go.sum`, and run from those versions.
 
 ### Exact versions and sources
 
@@ -36,10 +36,10 @@ LINA's components are Go. Their outside code comes in as Go modules.
 
 ### go.sum and builds
 
-- `go.sum` changes only through the `go` command, in the same PR as the `go.mod` change that causes it.
-- CI and release builds run with `-mod=readonly` or from vendored modules, so a build that would change `go.mod` or `go.sum` fails. Use `go get` and `go mod tidy` only to change dependencies, never to verify them.
-- `go mod verify` passes before every build in CI and before every release build. A release build resolves nothing new.
-- Install and build jobs have no secrets or write tokens. Publication runs in a separate job that does not fetch modules.
+- `go.sum` changes only through the `go` command, in the same change as the `go.mod` change that causes it.
+- `foundation` and release builds run with `-mod=readonly` or from vendored modules, so a build that would change `go.mod` or `go.sum` fails. Use `go get` and `go mod tidy` only to change dependencies, never to verify them.
+- `go mod verify` passes before every build in `foundation` and before every release build. A release build resolves nothing new.
+- Install and build steps run in a clean worktree with no credentials. The publication stage (pushing the tag and placing the artifacts) is a separate stage that fetches no modules and uses the owner's local credentials ([releases.md](releases.md)).
 
 ### Vulnerabilities
 
@@ -61,7 +61,7 @@ ignore-scripts=true
 
 These settings apply to every npm command in the checkout and in release builds. Do not override them with flags, environment variables, or user configuration.
 
-Run tools from the lockfile through package scripts or `npx --no-install`. Scripts and CI never fetch an unpinned tool at run time, for example with `npx <package>` for a package outside the lockfile, `go run` or `go install` of a module version outside `go.mod`, or a piped install script.
+Run tools from the lockfile through package scripts or `npx --no-install`. Scripts never fetch an unpinned tool at run time, for example with `npx <package>` for a package outside the lockfile, `go run` or `go install` of a module version outside `go.mod`, or a piped install script.
 
 ### Exact versions and sources
 
@@ -71,14 +71,14 @@ Run tools from the lockfile through package scripts or `npx --no-install`. Scrip
 
 ### Lockfile
 
-- One `package-lock.json` at the root covers every npm package. It is committed and changes only through npm, in the same PR as the manifest change that causes it.
-- CI and release builds install with `npm ci --ignore-scripts`, which fails if the lockfile and manifests disagree. Use `npm install` only to change dependencies, never to verify them.
+- One `package-lock.json` at the root covers every npm package. It is committed and changes only through npm, in the same change as the manifest change that causes it.
+- `foundation` and release builds install with `npm ci --ignore-scripts`, which fails if the lockfile and manifests disagree. Use `npm install` only to change dependencies, never to verify them.
 - The opencodex package that releases ship is installed from the same lockfile with `npm ci --ignore-scripts --omit=dev`. A release build resolves nothing new.
-- Install and build jobs have no secrets or write tokens. Publication runs in a separate job that does not install packages.
+- Install and build steps run in a clean worktree with no credentials. The publication stage is a separate stage that installs no packages and uses the owner's local credentials ([releases.md](releases.md)).
 
 ### No lifecycle scripts
 
-- Because `ignore-scripts=true`, no package runs a `preinstall`, `install`, `postinstall`, or `prepare` script, in CI or locally.
+- Because `ignore-scripts=true`, no package runs a `preinstall`, `install`, `postinstall`, or `prepare` script, anywhere.
 - LINA's own `package.json` files define none of these scripts and no `pre` or `post` hooks. Scripts invoked explicitly, such as `npm test`, still run.
 - A dependency that needs an install script to work is not admitted. Native code comes from prebuilt platform packages verified by lockfile integrity or from a pinned binary verified by digest.
 - A lockfile entry with `hasInstallScript` is admitted only when the exceptions file lists that exact name and version and explains why the package works without the script. The component's tests must pass with the script never run.
@@ -92,17 +92,16 @@ Run tools from the lockfile through package scripts or `npx --no-install`. Scrip
 - Use the Go standard library when it covers the need, and Node.js built-in modules for repository tooling.
 - A new upstream release may be adopted as soon as it is published. No minimum release age applies to any dependency.
 - Review the dependency change as code, including its license and the module and transitive package counts that the `dependencies` check reports.
-- In-process dependencies use licenses that allow distribution with LINA under MIT when their notices are kept, such as MIT, Apache-2.0, BSD, and ISC. Code under other licenses runs only as an external component ([runtime.md](../design/runtime.md)).
-- Update dependencies in small groups that reviewers can assess together. Split bulk updates of unrelated modules or packages. Update PRs follow these rules whether a person or a bot opens them.
+- In-process dependencies use permissive licenses that allow their code to be distributed inside LINA's proprietary releases when their notices are kept, such as MIT, Apache-2.0, BSD, and ISC. Code under other licenses runs only as an external component ([runtime.md](../design/runtime.md)).
+- Update dependencies in small groups that can be reviewed together. Split bulk updates of unrelated modules or packages. The merge commit message of an update states the reason and the checks it ran, whoever made the update.
 
 ## Runtime and binaries
 
-- The `toolchain` line of `go.mod` records the Go release that CI and release builds use.
+- The `toolchain` line of `go.mod` records the Go release that `foundation` and release builds use.
 - `.node-version` records one exact Node.js version: the runtime that releases ship with opencodex after verifying it as described in [runtime.md](../design/runtime.md).
 - opencodex is a LINA dependency: the upstream npm package `@bitkyc08/opencodex` from [lidge-jun/opencodex](https://github.com/lidge-jun/opencodex). LINA's installation installs it at the version and digest the release pins, together with its Node.js runtime, and the pin follows upstream releases.
-- Pin every other binary that LINA ships or downloads, including sqlite-vec platform binaries, CI tools such as actionlint, and [external components](../design/runtime.md), by version and SHA-256 digest. Verify each download against its digest before extraction or execution, every time, including after a cache hit.
+- Pin every other binary that LINA ships or downloads, including sqlite-vec platform binaries and [external components](../design/runtime.md), by version and SHA-256 digest. Verify each download against its digest before extraction or execution, every time, including after a cache hit.
 - An external component ships with its license and notices.
-- Pin GitHub Actions by full commit SHA, with the release tag in a comment.
 - The release manifest in [runtime.md](../design/runtime.md) records each pinned version and digest.
 
 ## Vendored code
@@ -116,7 +115,7 @@ third_party/<name>/
   vendor.json    source, scope, file hashes, and patch records
 ```
 
-- **Unchanged:** every file under `upstream/` is byte-identical to the recorded upstream commit, or to the result of applying the recorded patches. Vendored tests come with the code they test and run unchanged in CI.
+- **Unchanged:** every file under `upstream/` is byte-identical to the recorded upstream commit, or to the result of applying the recorded patches. Vendored tests come with the code they test and run unchanged in `foundation`.
 - **Licenses and notices:** keep the upstream license and notice files in `upstream/`. [THIRD-PARTY-NOTICES.md](../../THIRD-PARTY-NOTICES.md) has one entry per vendored tree with the source repository, commit, scope, license, and one line for each patch.
 - **Wrapping layers:** LINA changes, including adapters, extra checks, and extra behavior, live in LINA's own packages that import vendored code. LINA never edits files under `upstream/`, and vendored code never imports LINA packages.
 - **Patches:** use a patch only when a wrapping layer cannot make the change. Examples are an unreleased upstream security fix and removing an import that would bring in a rejected dependency. Record each patch as a file in `patches/` and an entry in `vendor.json` with its id, the files it touches, its reason, why a wrapper cannot make the change, and the upstream issue or PR when one exists. Offer a general fix upstream, and delete the patch once upstream includes it.
@@ -125,11 +124,9 @@ third_party/<name>/
 
 `vendor.json` records the name, source repository URL, upstream commit (40 hex characters) and release tag when one exists, license, scope, SHA-256 hash of each file as upstream ships it and as it sits in the tree, and patch records.
 
-The LINA kit is the Go module in `kit/`, and LINA publishes no separate release of it. A sibling repository that uses it vendors it from one LINA release tag into `third_party/` under these same rules, with the release tag as its upstream reference ([runtime.md](../design/runtime.md)).
-
 ### Upstream sync
 
-A sync updates one vendored tree in one PR, such as `chore(vendor): sync <name> to <tag>`:
+A sync updates one vendored tree in one integrated change, with a merge commit title such as `chore(vendor): sync <name> to <tag>`:
 
 1. Choose an upstream release. For an upstream without releases, choose a default-branch commit.
 2. Review upstream changes in the scope between the recorded and target commits, including the changelog, breaking changes, new imports, and license changes.
@@ -137,17 +134,17 @@ A sync updates one vendored tree in one PR, such as `chore(vendor): sync <name> 
 4. Re-apply the recorded patches in order. Delete a patch that upstream makes unnecessary. Rewrite a patch that fails to apply, and keep its reason current. Record a new patch in full.
 5. Update `vendor.json`, the notices entry, and any wrapping layer affected by the upstream change.
 6. Run the vendored tests unchanged, the wrapping layers' tests, and the checks of every dependent component.
-7. List the upstream range, scope changes, kept, rewritten, and dropped patches, test results, and any behavior change at the wrapper boundary in the PR body.
+7. List the upstream range, scope changes, kept, rewritten, and dropped patches, test results, and any behavior change at the wrapper boundary in the merge commit message.
 
 Another change never updates vendored code as a side effect.
 
 ## Exceptions
 
-`.github/dependency-exceptions.json` is the only place where a rule in this policy can be waived. Each entry names its kind (`install-script`, or `vulnerability` for a reported vulnerability that has no fixed version yet or does not reach LINA's code), the exact package or module name and version, the vulnerability id for a `vulnerability` entry, the reason, and a reference URL when one exists. Wildcards are not allowed. Each entry is reviewed in the PR that adds it.
+`scripts/verify/dependency-exceptions.json` is the only place where a rule in this policy can be waived. Each entry names its kind (`install-script`, or `vulnerability` for a reported vulnerability that has no fixed version yet or does not reach LINA's code), the exact package or module name and version, the vulnerability id for a `vulnerability` entry, the reason, and a reference URL when one exists. Wildcards are not allowed. Each entry is reviewed in the change that adds it.
 
-## CI enforcement
+## Foundation enforcement
 
-The `dependencies` check runs whenever the [CI policy](ci.md) selects it, and reports to `foundation` like every selected check. A failure blocks the merge. It runs without secrets. Its network access is read-only and limited to the Go module proxy, the Go checksum and vulnerability databases, the npm registry, and the recorded upstream repositories. The script is `.github/scripts/check-dependencies.mjs`, with behavioral tests like the other CI scripts. Run it locally with `node .github/scripts/check-dependencies.mjs`.
+The `dependencies` check runs whenever the [foundation policy](foundation.md) selects it, and reports to the gate like every selected check. A failure keeps the change out of `dev`. It runs without credentials. Its network access is read-only and limited to the Go module proxy, the Go checksum and vulnerability databases, the npm registry, and the recorded upstream repositories. The script is `scripts/verify/check-dependencies.mjs`, with behavioral tests like the other verification scripts. Run it alone with `node scripts/verify/check-dependencies.mjs`.
 
 | Check | Fails when |
 | --- | --- |
@@ -162,7 +159,7 @@ The `dependencies` check runs whenever the [CI policy](ci.md) selects it, and re
 | Upstream fetch | For a changed `vendor.json`, the recorded upstream commit or generator output does not match the recorded upstream hashes, or the recorded patches do not reproduce the tree. |
 | Exceptions | An exceptions entry is malformed, uses a wildcard, or lacks a reason. |
 
-The Actions summary lists Go modules and npm packages that the change adds, removes, or updates, their versions, the total module count, and the total transitive package count.
+The `foundation` output and its evidence note list the Go modules and npm packages that the change adds, removes, or updates, their versions, the total module count, and the total transitive package count.
 
 ## Deferred
 

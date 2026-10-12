@@ -4,19 +4,15 @@
 
 **Your world. One connected mind.**
 
-We’re building LINA to be an ally who knows you and a personal agent you can count on. A conversation is worth having even when it produces no deliverable.
+Agents to think aloud with. LINA is the first of them.
 
-Talk about your day. Think aloud. Bring a problem. LINA carries your shared history across conversations and devices, notices what needs doing, and follows through from intent to verified outcomes. One conversation, without making you the messenger or the manager.
+We’re building agents that know you and that you can count on. Create the agents you want from presets; LINA is the first. A conversation is worth having even when it produces no deliverable.
+
+Talk about your day. Think aloud. Bring a problem. Your agents carry your shared history across conversations and devices, notice what needs doing, and follow through from intent to verified outcomes. What every agent should know is shared; what only one of them knows stays with it. Whichever one you talk to, you are never the messenger or the manager.
 
 [Read our manifesto](MANIFESTO.md).
 
-> In development. No runnable release yet.
-
-## Contribute
-
-Start with the [contribution guide](CONTRIBUTING.md), or [open an issue](https://github.com/thisisjun786/lina/issues/new/choose) to report a problem or discuss an idea.
-
-For sensitive reports, see [Security](SECURITY.md).
+> In development. No runnable release yet. Report security issues privately ([Security](SECURITY.md)).
 
 ## Built to finish
 

@@ -1,42 +1,43 @@
 # Work and delegation
 
-This contract fixes how LINA Core plans, delegates, supervises and accepts work. It covers the work engine and its ledger, the CRW contract schemas and fixtures the engine is built from, plans and intent cards, parent and child roles, workers (the coding agents the user installed, driven through worker adapters), the LINA work harness those workers use, how LINA Core judges stage transitions and deliveries, how work handles effects with unknown outcomes, how results reach GitHub and get merged, and what the progress display shows. It is normative: implementations must follow it, and any change to it goes through a pull request against this file. Finishing this document does not mean any part of it is implemented or accepted. Runtime proof belongs to the implementation issues that consume this contract.
+This contract fixes how LINA Core plans, delegates, supervises and accepts work. It covers the work engine and its ledger, the CRW contract schemas and fixtures the engine is built from, plans and intent cards, parent and child roles, how every agent shares the work engine, workers (the coding tools the user installed, driven through worker adapters), the LINA work harness those workers use, how LINA Core judges stage transitions and deliveries, how work handles effects with unknown outcomes, how results reach GitHub and get merged, and what the progress display shows. It is normative: implementations must follow it, and any change to it is made in this file and joins dev under [integration.md](../policy/integration.md). Finishing this document does not mean any part of it is implemented or accepted. Runtime proof belongs to the implementation issues that consume this contract.
 
 ## Scope
 
 This contract covers:
 
 - the work engine: queue, work threads, ledger, routing, capacity, budget and result acceptance
+- agents and work: one queue, work area and set of workers for every agent, and the requesting agent on every task
 - the CRW contract schemas and fixtures as fixed input, and the start gate they set
 - goals, projects, tasks, milestones, to-dos and memos, and the intent-card data model
 - supervisor, parent and child roles, delivery and verdicts
-- workers: the coding agents the user installed, the adapter boundary, the Codex adapter, compatibility, readiness, assignment, control and approvals
+- workers: the coding tools the user installed, the adapter boundary, the Codex adapter, compatibility, readiness, assignment, control and approvals
 - the LINA work harness (`lina-work`) and stage judgment
 - effects and unknown outcomes inside work
-- GitHub writes and merges done for work, under the shared role rule
+- GitHub writes and merges done for work
 - the progress display data, observation, handover and discovery of work
 - the operational switch from CRW
 
 This contract does not cover, and links instead to:
 
-- product families, canon, writers and the role rule itself: [product-families.md](product-families.md)
-- grants, epochs, receipts, sibling records, authorization and the approval policy: [main-authority.md](main-authority.md)
+- product families, canon, writers, agents and the role rule itself: [product-families.md](product-families.md)
+- grants, epochs, receipts, observed results, authorization and the approval policy: [main-authority.md](main-authority.md)
 - the envelope, delivery rules, effect states, idempotency keys, the `node` connection and the supported-combination table: [host-protocol.md](host-protocol.md)
 - the language of LINA's components, installed tools, conversation tools, the effect ledger and the sandbox, the model path, usage accounting, packaging and the update order: [runtime.md](runtime.md)
-- plugins, the GitHub plugin (identity, field-level canon, notifications, reconciliation) and the SION link: [integrations.md](integrations.md)
+- plugins and the GitHub plugin (identity, field-level canon, notifications, reconciliation): [integrations.md](integrations.md)
 - how cards, plans and work cards are drawn: [surfaces.md](surfaces.md)
 - Klotho's drafting, project supervision and the QA product map: [cognition-and-life.md](cognition-and-life.md)
-- conversation threads and the memory entry of verified results: [conversation-and-memory.md](conversation-and-memory.md)
-- materials and their projections: [materials-and-knowledge.md](materials-and-knowledge.md)
+- conversation threads, agents' conversations and the memory entry of verified results: [conversation-and-memory.md](conversation-and-memory.md)
+- materials, their projections and passage anchors: [materials-and-knowledge.md](materials-and-knowledge.md)
 - the state root, the work area's place in it, and where versioned text lives: [filesystem.md](filesystem.md)
 
 ## Terms
 
-**Task.** The unit of work in a plan and in the work engine. A task is the size of one pull request. It references acceptance criteria, and it owns its procedure, its pull-request scope, its execution record and its verification evidence. It records its task owner, the person it is done for ([main-authority.md](main-authority.md)).
+**Task.** The unit of work in a plan and in the work engine. A task is the size of one pull request. It references acceptance criteria, and it owns its procedure, its pull-request scope, its execution record and its verification evidence. It records its task owner, the person it is done for, and its requesting agent, the agent whose conversation asked for it, or none when the person started it directly ([main-authority.md](main-authority.md)).
 
 **Work thread.** The execution of one task by one executor: a worker thread, or a command sequence on a Node. A work thread is a different object from a conversation thread.
 
-**Attempt.** One run of a work thread. An attempt records the agent and its version, its thread and its turns, so that every card links to work through task, attempt, thread and turn.
+**Attempt.** One run of a work thread. An attempt records the worker and its version, its thread and its turns, so that every card links to work through task, attempt, thread and turn.
 
 **Execution generation.** A numbered round of a child's work on one task. A `needs_changes` verdict opens the next execution generation on the same child.
 
@@ -62,7 +63,7 @@ This contract does not cover, and links instead to:
 
 **Verdict.** LINA Core's recorded judgment on a stage receipt or on a delivery.
 
-**Apply record.** LINA Core's ledger record that a task's result was merged or otherwise applied, with the evidence that shows it and, when the result was applied through an apply request, the person who accepted it.
+**Apply record.** LINA Core's ledger record that a task's result was merged or otherwise applied, with the evidence that shows it, the agent that requested the change and, when the result was applied through an apply request, the person who accepted it.
 
 ## Work engine
 
@@ -82,26 +83,27 @@ Rules:
 - **One coordinator.** LINA Core coordinates. LINA Core and a worker never manage the same sub-execution twice. Harness stages and Codex subagents are the worker's internal execution; LINA Core does not own their scheduling, retries or cancellation. LINA Core judges stage transitions and deliveries.
 - **No parent advisor thread.** Judgment belongs to LINA Core and comes from the ledger and evidence only. No model thread judges on LINA Core's behalf.
 - **Kind of work.** Conversation and work are split by the kind of work, not by tools. Work that needs a branch or worktree, outlasts a tool deadline, or needs parallel execution or a stage loop goes to the work engine. Checking a file, a short command or a document edit happens in the conversation with the conversation tools of [runtime.md](runtime.md).
-- **Routing.** Coding work and worker work such as planning go to a worker thread. Research and organizing go to RUMI when a RUMI vault is connected ([materials-and-knowledge.md](materials-and-knowledge.md)), and to a worker thread otherwise. Device work goes to the Node on that device. Worker and Node routes use the same grants, ids, effects and receipts; RUMI returns its brief as a sibling record. When these rules leave the destination or the worker agent open, Atropos may ask Jev to choose among the candidates that code fixes; the choice is a routing judgment, never permission to act ([cognition-and-life.md](cognition-and-life.md)).
+- **Routing.** Coding work and worker work such as planning go to a worker thread. Research and organizing go to a worker thread as well; their result is a cited brief whose citations carry passage anchors ([materials-and-knowledge.md](materials-and-knowledge.md)), and a brief that is accepted becomes a `verified` result. Device work goes to the Node on that device. Worker and Node routes use the same grants, ids, effects and receipts. When these rules leave the destination or the worker open, Atropos may ask Jev to choose among the candidates that code fixes; the choice is a routing judgment, never permission to act ([cognition-and-life.md](cognition-and-life.md)).
+- **Agents.** Every agent uses the same work queue, work area and workers. The work ledger records the requesting agent of every task, and the task's questions and results return to the conversation that asked, which belongs to that agent. When the requesting agent is deleted, its tasks keep running; their questions and results go to the person's home cards, and the person can hand them to another agent's conversation ([product-families.md](product-families.md)).
 - **Workspaces.** Only file-producing work gets a worktree and a branch. Work with no file output runs in a non-git work directory in the work area and completes by its artifacts and receipts. A file-producing work thread has exactly one draft branch, and its result returns as an apply request. Finished and abandoned workspaces are cleaned up automatically after retention.
 - **Draft and apply.** Only delegated results go through a draft and an apply request. A document or goal edited through its own conversation thread is saved at once as a saved version.
-- **Profiles.** Each worker profile (direct, single, complementary) records its model, reasoning effort, tools, budget, session persistence, completion-verification capability and unsupported scope. A profile names a model or an effort only when it sets one, and then only for the threads it starts; it never changes the agent's provider settings (see Assignment). Choosing a profile is a proposal. The work engine decides whether the work runs.
+- **Profiles.** Each worker profile (direct, single, complementary) records its model, reasoning effort, tools, budget, session persistence, completion-verification capability and unsupported scope. A profile names a model or an effort only when it sets one, and then only for the threads it starts; it never changes the worker's provider settings (see Assignment). Choosing a profile is a proposal. The work engine decides whether the work runs.
 - **Liveness.** The heartbeat interval H comes from worker events and LINA Core polling. A work thread is stale after max(3H, 90 s). A worker lease lasts at most 5 minutes.
 - **Budget.** LINA Core reserves and settles budget for every worker thread, including subagents inside the worker. At the cap the work engine sends `turn/interrupt` under the budget policy. Codex's own goal token budget is never used. Usage accounting is in [runtime.md](runtime.md).
-- **Optional configuration.** An installed worker agent and the LINA work harness are needed only for delegation. When either is missing or fails readiness, only delegation is unsupported. Conversation is never blocked by work, and the conversation and other tasks continue while work runs or waits.
+- **Optional configuration.** An installed worker and the LINA work harness are needed only for delegation. When either is missing or fails readiness, only delegation is unsupported. Conversation is never blocked by work, and the conversation and other tasks continue while work runs or waits.
 - **Execution owner.** The work engine runs the code, work and skill creation that Klotho requests; Klotho's own limits are in [cognition-and-life.md](cognition-and-life.md).
-- **Memory.** Only a result with a `verified` verdict may enter LINA memory, under the writing rules of [conversation-and-memory.md](conversation-and-memory.md).
+- **Memory.** Only a result with a `verified` verdict may enter LINA memory, under the writing rules of [conversation-and-memory.md](conversation-and-memory.md). A verified work result is common knowledge, known to every agent, unless the person says otherwise.
 
 ### Work area
 
-The work area is `identities/<identity-id>/work/` under the state root ([filesystem.md](filesystem.md)). Its layout:
+The work area is `work/` under the state root ([filesystem.md](filesystem.md)). Every agent's tasks share it. Its layout:
 
 | Relative path inside the work area | Holds | Writer |
 | --- | --- | --- |
 | `clones/<repository-id>/` | The parent clone of each repository that delegated work uses | LINA Core |
 | `tasks/<task-id>/` | The task's worktree, or its non-git work directory | LINA Core creates it; the task's worker writes inside it under its grant |
 
-- The work area is not part of the personal backup generation. Everything needed to recover work is canon and LINA materials: the work ledger, receipts and artifacts.
+- The work area is not part of the backup generation. Everything needed to recover work is canon and LINA materials: the work ledger, receipts and artifacts.
 - When a task's result is ready for review, LINA Core keeps a copy as LINA materials of the task: a Git bundle of the draft branch, or the output files of a non-Git task. A restore that lacks the work area applies the draft from that copy, so an unapplied result survives a lost disk.
 - A worker writes only inside its own task directory and the git directories it needs to commit. It never writes a protected ref in a parent clone.
 - Task directories are removed only under the retention rules of this contract.
@@ -127,7 +129,7 @@ CRW ([codex-relay-workflow](https://github.com/thisisjun786/codex-relay-workflow
 - Single delegation uses these records from its first implementation, so delegation records are never built twice.
 - LINA runs every adopted fixture against the work engine with its own runner. Expected values come from the fixture, never from LINA's observed output. A failing fixture is fixed in LINA, never in the fixture.
 - A fixture that exercises a CRW-only surface (its CLI, sockets, MCP bridge or plugin hooks) is not adopted.
-- Moving the pin is one pull request that updates the pin record, the release manifest and every affected record shape together.
+- Moving the pin is one change that updates the pin record, the release manifest and every affected record shape together.
 
 ## Plans
 
@@ -202,9 +204,9 @@ Rules:
 
 ## Workers
 
-Workers are coding agents the user installed. LINA drives each agent through one worker adapter. Codex is the first agent, driven through its app-server protocol over stdio; Claude Code and Antigravity CLI are added later as further adapters on the same boundary.
+Workers are coding tools the user installed. LINA drives each worker through one worker adapter. Codex is the first worker, driven through its app-server protocol over stdio; Claude Code and Antigravity CLI are added later as further adapters on the same boundary.
 
-A worker runs with the user's own installation and configuration: its version, login and model provider, MCP servers, plugins and integrations such as `gh`, trust settings, repository instructions such as `AGENTS.md` and skills, sandbox and approval mode. LINA Core and the worker run as the user's own OS user ([runtime.md](runtime.md)). LINA does not ship, pin or configure the agent, does not override its model provider, and does not isolate it from the user's setup. The one thing LINA adds to the agent is its work harness plugin (see LINA work harness). LINA plugins never reach a worker; a worker uses the integrations connected in its own agent ([integrations.md](integrations.md)).
+A worker runs with the user's own installation and configuration: its version, login and model provider, MCP servers, plugins and integrations such as `gh`, trust settings, repository instructions such as `AGENTS.md` and skills, sandbox and approval mode. LINA Core and the worker run as the user's own OS user ([runtime.md](runtime.md)). LINA does not ship, pin or configure the worker, does not override its model provider, and does not isolate it from the user's setup. The one thing LINA adds to the worker is its work harness plugin (see LINA work harness). LINA plugins never reach a worker; a worker uses the integrations connected in the worker itself ([integrations.md](integrations.md)). Workers serve every agent.
 
 LINA gives a worker three things: per-thread instructions (the task packet), LINA's own work tools, and the LINA work harness. LINA Core judges stage transitions and deliveries from receipts and independent checks, checks protected refs, and reads the user's Codex rollout files directly for discovery (see Observation, handover and discovery).
 
@@ -215,17 +217,17 @@ Every worker adapter offers the work engine the same operations:
 - start a task: open a thread in the task's worktree or work directory, with the task packet and LINA's work tools
 - continue it: input to an idle thread, or steering of an active turn
 - interrupt it
-- stream progress: turn and item events, and usage when the agent reports it
-- route the agent's questions and approval requests to the originating conversation, and return the answers
+- stream progress: turn and item events, and usage when the worker reports it
+- route the worker's questions and approval requests to the originating conversation, and return the answers
 - carry calls of LINA's work tools, receipts included, to LINA Core
-- report the agent's name and version
+- report the worker's name and version
 
 ### Compatibility
 
-- The adapter records the installed agent's version with every attempt.
-- LINA lists the agent versions each adapter has verified in the release manifest ([runtime.md](runtime.md)). When the installed version is not on the list, LINA tells the user that the version is unverified, with the version it found and the verified ones, and still delegates.
-- LINA refuses delegation to the agent only when the adapter can't connect to it or the protocol handshake fails (for Codex, `initialize`), and names the cause.
-- LINA never installs, updates or pins the agent.
+- The adapter records the installed worker's version with every attempt.
+- LINA lists the worker versions each adapter has verified in the release manifest ([runtime.md](runtime.md)). When the installed version is not on the list, LINA tells the user that the version is unverified, with the version it found and the verified ones, and still delegates.
+- LINA refuses delegation to the worker only when the adapter can't connect to it or the protocol handshake fails (for Codex, `initialize`), and names the cause.
+- LINA never installs, updates or pins the worker.
 
 ### Codex adapter
 
@@ -243,20 +245,20 @@ Every worker adapter offers the work engine the same operations:
 
 ### Readiness
 
-Delegation to an agent is ready when:
+Delegation to a worker is ready when:
 
-1. the installed agent is found; an unverified version is reported and passes (see Compatibility)
+1. the installed worker is found; an unverified version is reported and passes (see Compatibility)
 2. the adapter's session opens (for Codex, `initialize`)
-3. for code-change work, the LINA work harness is installed in the agent at the revision the release manifest records; LINA installs or updates it first when it is missing or at another revision (see LINA work harness)
+3. for code-change work, the LINA work harness is installed in the worker at the revision the release manifest records; LINA installs or updates it first when it is missing or at another revision (see LINA work harness)
 
 When a check fails, delegation is reported as unsupported with its cause. Conversation readiness is separate and can pass while worker readiness fails.
 
 ### Assignment
 
 1. For file-producing work, LINA Core creates the worktree and branch and records the parent clone's protected refs in the ledger.
-2. The adapter starts a thread with the worktree or work directory as its working directory, LINA's work tools and the task packet. For Codex this is `thread/start` with `cwd` and `dynamicTools`, and the task packet goes out in the first turn. Model and effort come from the worker profile when it names them, and otherwise from the agent's own configuration.
+2. The adapter starts a thread with the worktree or work directory as its working directory, LINA's work tools and the task packet. For Codex this is `thread/start` with `cwd` and `dynamicTools`, and the task packet goes out in the first turn. Model and effort come from the worker profile when it names them, and otherwise from the worker's own configuration.
 3. LINA Core compares the returned working directory, model and effort with the request. A mismatch stops the assignment.
-4. LINA Core records the agent and its version, the thread, and the instruction sources and skills the agent reports (for Codex, `instructionSources` and `skills/list`).
+4. LINA Core records the worker and its version, the thread, and the instruction sources and skills the worker reports (for Codex, `instructionSources` and `skills/list`).
 
 Code-change work uses the harness's PABCD loop. Work without a pull request, such as audits and research, uses the path that requires no source change and completes by its artifacts. The assignment judgment looks separately at the instruction received, the settings requested, the settings returned, and the child harness's work-phase state.
 
@@ -273,22 +275,22 @@ Code-change work uses the harness's PABCD loop. Work without a pull request, suc
 
 ### Approvals
 
-- When the agent asks for an approval (for Codex: a command, a file change or permissions), the adapter routes the request to the originating conversation, and the person's answer goes back to the agent. On a remote device the Node relays both.
-- The agent's own sandbox and approval mode decide what it asks. LINA imposes no sandbox or approval policy of its own on a worker.
-- Arguments of the agent's tools are never rewritten (`updatedInput` is never used).
+- When the worker asks for an approval (for Codex: a command, a file change or permissions), the adapter routes the request to the originating conversation, and the person's answer goes back to the worker. On a remote device the Node relays both.
+- The worker's own sandbox and approval mode decide what it asks. LINA imposes no sandbox or approval policy of its own on a worker.
+- Arguments of the worker's tools are never rewritten (`updatedInput` is never used).
 - A linked worktree shares the common `.git`, so the protected-ref check is what keeps a worker's result to its own branch (see GitHub writes and merges).
 
 ### LINA tools for workers
 
 - LINA's work tools reach a worker through its adapter: for Codex, `thread/start.dynamicTools` in the namespace `lina_work`. LINA Core identifies the caller by thread, turn and call ids.
-- The tools are: submit a stage receipt and request a transition judgment; submit a completion receipt; ask a question; send a coordination request (to LINA Core only, never to another worker); read LINA materials and memory projections. GitHub work and other integrations need no LINA tool; the worker uses its own agent's setup.
+- The tools are: submit a stage receipt and request a transition judgment; submit a completion receipt; ask a question; send a coordination request (to LINA Core only, never to another worker); read LINA materials and memory projections. GitHub work and other integrations need no LINA tool; the worker uses its own setup.
 - LINA Core declares the tools and handles `item/tool/call`. The harness defines the receipt and question schemas.
 - Only the worker thread itself submits receipts.
 - A projection read returns only the scope the task allows, carries a revision, and never returns a revoked item. A write happens only on an explicit request and passes the grant check.
 
 ### Remote devices
 
-- On a remote device, the registered Node starts and restarts the device's installed agent as its own stdio child. Events and server requests (approvals, questions, dynamic tool calls) reach LINA Core over the `node` connection ([host-protocol.md](host-protocol.md)), and answers return the same way. LINA Core never connects to a remote app-server.
+- On a remote device, the registered Node starts and restarts the device's installed worker as its own stdio child. Events and server requests (approvals, questions, dynamic tool calls) reach LINA Core over the `node` connection ([host-protocol.md](host-protocol.md)), and answers return the same way. LINA Core never connects to a remote app-server.
 - For coding work, the Node creates the worktree and branch in the device clone, records the protected refs and reports them. To return commits, the Node sends the branch as a git bundle with the head SHA named in the receipt. LINA Core fetches it into the main clone, runs the protected-ref check, merges, and pushes when needed.
 - Remote coding work is unsupported until the remote transport is verified and listed in the supported-combination table.
 
@@ -310,7 +312,7 @@ Behavior:
 - Questions go through the LINA question tool. There is no free-pass path that crosses a transition without evidence.
 - The subagent evidence gate applies only to subagents called inside the PABCD loop.
 - The Stop-block limit counts per turn.
-- The harness never edits the agent's settings.
+- The harness never edits the worker's settings.
 - A background completion notice is never a delivery acknowledgement.
 - Input from LINA Core is never treated as a human command.
 - Rule formats are identified by the harness contract version and content hash.
@@ -368,25 +370,25 @@ Effect states and idempotency keys are defined in [host-protocol.md](host-protoc
 
 ## GitHub writes and merges
 
-The role rule is in [product-families.md](product-families.md): LINA Core, SION or a person may merge, fix and open pull requests, and no role is exclusive. Pre-merge safety and a result record are mandatory for every merge. The GitHub plugin, the GitHub-side merge preconditions and the recording of merges by SION and by people are defined in [integrations.md](integrations.md). This section fixes the parts that belong to work.
+The role rule is in [product-families.md](product-families.md): LINA Core or a person may merge, fix and open pull requests, and no role is exclusive. Pre-merge safety and a result record are mandatory for every merge. The GitHub plugin, the GitHub-side merge preconditions and the recording of merges by people are defined in [integrations.md](integrations.md). This section fixes the parts that belong to work.
 
-- A worker does its GitHub work (push, pull request, review reply) with its own agent's GitHub setup, such as the `gh` login, SSH or a GitHub MCP server in the user's Codex. LINA does not issue, inject or restrict a GitHub credential.
+- A worker does its GitHub work (push, pull request, review reply) with its own GitHub setup, such as the `gh` login, SSH or a GitHub MCP server in the user's Codex. LINA does not issue, inject or restrict a GitHub credential.
 - The GitHub writes a worker makes are reported in its receipt, and LINA Core records them.
 - At assignment LINA Core records the parent clone's protected refs in the ledger. When a receipt arrives, and again before a merge, LINA Core compares the receipt's head SHA and the protected refs. On any mismatch it does not merge and tells the originating conversation.
-- LINA Core serializes merges into a shared base branch through merge turn slots. It takes the slot, pins the head, runs the protected-ref check and the preconditions of [integrations.md](integrations.md), merges, and then releases the slot.
-- Every merge of a task's result ends as an apply record in the work ledger, whoever made it. The record cites LINA Core's own receipted merge, SION's verified sibling record, or the observed result of a person's merge ([main-authority.md](main-authority.md)).
+- LINA Core serializes merges into a shared base branch through merge turn slots, whichever agent requested the task. It takes the slot, pins the head, runs the protected-ref check and the preconditions of [integrations.md](integrations.md), merges, and then releases the slot.
+- Every merge of a task's result ends as an apply record in the work ledger, whoever made it. The record cites LINA Core's own receipted merge or the observed result of a person's merge ([main-authority.md](main-authority.md)).
 - An apply record is not a verdict. The task's delivery is judged from evidence as in Stage judgment and delivery.
 
 ## Progress display
 
 Work progress is seen only through work cards. The product has no session view, no "open session" action and no CLI observation command. This section fixes what a work card shows and where each value comes from; how it is drawn is defined in [surfaces.md](surfaces.md).
 
-- Goals, projects and tasks each have a live card that reports whether LINA is working on it.
+- Goals, projects and tasks each have a live card that reports whether LINA is working on it. A task's card names its requesting agent.
 - A card's state is one of working, paused, ready for review, input needed, stopped, failed, done or unknown. Paused means LINA has stopped delivery to the work thread (see Control). Input needed shows as waiting for the user when the user owns the open question, approval or decision. Done requires a `verified` verdict, plus an apply record when the task's result must be applied. A model's completion text, a harness `DONE` or a completed turn never shows done.
 - Each stage has a short summary built from actual results. A stage without results is unknown. The card also carries the execution record and the acceptance-criterion references.
 - Counts include only the required children of the current generation. Optional or superseded children, and verifiers of another revision, never count toward overall success.
 - The user-visible ladder of a delegated task is: ready, accepted, posted, reported, verified, delivered to the user, confirmed by the user, accepted by LINA Core, merged or released. Each rung is shown only with the evidence that sets it.
-- The developer view of a card is hidden by default and turned on in settings. It adds the agent and its version, the thread id, the attempt and the receipts. Stages, counts and times are the same as in the default view.
+- The developer view of a card is hidden by default and turned on in settings. It adds the worker and its version, the thread id, the attempt and the receipts. Stages, counts and times are the same as in the default view.
 
 ## Observation, handover and discovery
 

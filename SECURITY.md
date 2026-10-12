@@ -2,16 +2,16 @@
 
 ## Report a vulnerability
 
-Do not disclose vulnerabilities or sensitive evidence in a public issue or PR. If private vulnerability reporting is available in this repository's Security tab, use it. Otherwise, open a [private contact request](https://github.com/thisisjun786/lina/issues/new?title=Private%20contact%20request) asking the owner for a private route. That request is public: include no vulnerability details, credentials, or personal data.
+Report a vulnerability or sensitive evidence to the repository owner directly, through a private channel. Never put vulnerability details, credentials, or personal data in an issue, a commit message, or a branch name.
 
-A useful private report includes the affected commit or version, impact, and a minimal reproduction. Use synthetic data and redact credentials, personal conversations, memory/persona data, user files, and operational logs.
+A useful report includes the affected commit or version, impact, and a minimal reproduction. Use synthetic data and redact credentials, personal conversations, memory/persona data, user files, and operational logs.
 
 ## Supported versions
 
 LINA has no released versions yet. There is no response-time commitment.
 
-## Public contributions
+## Repository hygiene
 
-Review files and evidence before publishing them. Do not commit secrets, personal data, local installation details, or operational state; `.gitignore` is not a substitute for that review. Changes to permissions, authentication, or data access need an explicit explanation of their impact.
+Review files and evidence before committing or pushing them. Do not commit secrets, personal data, local installation details, or operational state; `.gitignore` is not a substitute for that review. A change to permissions, authentication, or data access explains its impact in its merge commit message.
 
-The [CI policy](docs/policy/ci.md) defines isolation and execution requirements for external contributions.
+Verification runs without credentials ([foundation.md](docs/policy/foundation.md#boundaries)).

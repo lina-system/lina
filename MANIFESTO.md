@@ -4,19 +4,19 @@
 
 **Your world. One connected mind.**
 
-A personal agent that carries conversation, experience, and work through to verified outcomes.
+Personal agents that carry conversation, experience, and work through to verified outcomes.
 
-We’re building LINA to be an ally who knows you and a personal agent you can count on. One LINA to think aloud with, share a ridiculous idea with, and trust to get things done. A conversation is worth having even when it produces no deliverable.
+We’re building agents that know you and that you can count on: agents to think aloud with, share a ridiculous idea with, and trust to get things done. LINA is the first of them. A conversation is worth having even when it produces no deliverable.
 
 We gave computers brains. Then hired ourselves as their clipboard.
 
-Copy this into another session. Explain the project again. Pick a folder. Nudge the agent. Approve the next obvious step. Repeat until the future feels suspiciously like middle management.
+Copy this into another session. Explain the project again. Pick a folder. Nudge the coding tool. Approve the next obvious step. Repeat until the future feels suspiciously like middle management.
 
 We would like our species reassigned.
 
 ## One conversation. Room for a life.
 
-Over time, LINA learns your world: what matters to you, what you have tried, and what you are still figuring out. That shared history travels with you across devices and years. New machine. Same LINA. No reintroductions.
+Over time, each agent learns your world: what matters to you, what you have tried, and what you are still figuring out. What every agent should know is shared; what only one knows stays with it. That shared history travels with you across devices and years. New machine. Same agents. No reintroductions.
 
 Keep talking. Change subjects. Start something else while the first thing runs.
 
@@ -32,7 +32,7 @@ The need can surface halfway through a joke, a complaint, or an unrelated conver
 
 ## The legwork belongs to the machine
 
-LINA turns an initiative into projects and issues, does the deep research, and coordinates each project and the agents working on its tasks. LINA keeps the whole effort pointed at the original problem.
+LINA turns an initiative into projects and issues, does the deep research, and coordinates each project and the workers on its tasks. LINA keeps the whole effort pointed at the original problem.
 
 Planning, research, execution, verification. LINA owns all of it. Routine work moves forward without asking a human to approve the obvious. You decide what’s worth solving and whether the result actually solves it.
 
@@ -50,7 +50,7 @@ Change the machine. Keep the work.
 
 Whoever takes on the work owns it. LINA doesn't hand you a checklist of obvious next steps or wait to be nudged. It doesn't call something done until it can show that it works. Proof, not a progress report.
 
-Give LINA memory. Let experience shape who it becomes. Try the strange idea. Keep a lab notebook. Keep what works.
+Give your agents memory. Let experience shape who each becomes. Try the strange idea. Keep a lab notebook. Keep what works.
 
 Humanity has spent enough time implementing the clipboard interface.
 

@@ -3,6 +3,9 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
+import { stripGitEnv } from '../git.mjs';
+
+stripGitEnv();
 
 const root = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
 const tracked = new Set(execFileSync('git', ['ls-files', '--cached', '-z'], { cwd: root }).toString('utf8').split('\0').filter(Boolean));

@@ -1,14 +1,16 @@
 # Main authority, grants and receipts
 
-This contract fixes who holds authority in a LINA installation: the one main, how a Node or a worker receives and loses permission to act, what happens when the main stops or a Node disconnects, how the effects of interrupted work are reconciled, how receipts differ from sibling records, and when LINA asks for approval. It is normative: implementations follow it, and any change to it goes through a pull request against this file.
+This contract fixes who holds authority in a LINA installation: the one main, how a Node or a worker receives and loses permission to act, what happens when the main stops or a Node disconnects, how the effects of interrupted work are reconciled, how receipts differ from observed results, and when LINA asks for approval. It is normative: implementations follow it, and any change to it is made in this file and joins dev under [integration.md](../policy/integration.md).
 
 ## Scope
 
-This contract covers the main and its epochs, grants, the server and Node state machines, the outcomes of commands, receipts, sibling records, observed results, provenance, authorization and approval. It builds on the product boundaries in [product-families.md](product-families.md). The wire format of every message named here is in [host-protocol.md](host-protocol.md). How LINA Core dispatches, supervises and judges workers is in [work-and-delegation.md](work-and-delegation.md). This contract proves nothing about an implementation. Runtime proof belongs to the implementation issues that consume it.
+This contract covers the main and its epochs, grants, the server and Node state machines, the outcomes of commands, receipts, observed results, provenance, authorization and approval, and how they name the agent that asked for the work. It builds on the product boundaries in [product-families.md](product-families.md). The wire format of every message named here is in [host-protocol.md](host-protocol.md). How LINA Core dispatches, supervises and judges workers is in [work-and-delegation.md](work-and-delegation.md). This contract proves nothing about an implementation. Runtime proof belongs to the implementation issues that consume it.
 
 ## Terms
 
 **Main.** The one LINA Core that confirms the canon of a LINA, and the machine it runs on. There is exactly one per LINA. User-facing documents call the machine "server host"; this contract says "main".
+
+**Agent.** A persona the person creates, identified by an agent id ([product-families.md](product-families.md#agents)). Every agent of a LINA lives in the canon of its one main, and the rules of this contract apply to every agent alike. An agent is not an executor: Node and workers execute under grants, and an agent asks for work and acts through LINA Core.
 
 **Epoch.** A persistent generation owned by the main. Every start of the main creates a new epoch and stores it durably before anything else happens. Grants, commands and receipts carry the epoch they belong to.
 
@@ -29,20 +31,19 @@ This contract covers the main and its epochs, grants, the server and Node state 
 | profile | The Node profile (for example a dedicated browser profile) the work runs in, or none |
 | file revision | The revision of each file the work may read or change |
 | task owner | The person the work is done for, by person id ([product-families.md](product-families.md)) |
+| requesting agent | The agent that asked for the work, by agent id, or none when the person started the work directly |
 | scope | What the work may touch: paths, targets, effects and model calls |
 | expiry deadline | The moment after which the grant is not valid on the executor, even without a message from the main |
 
 **Receipt.** An executor's durable statement of what it did under a grant: which command, which effect, on which target, with what result. Executors are Node and workers; both follow the same grant, id, effect and receipt rules. A receipt is the only proof the main accepts that an effect under one of its grants happened.
 
-**Sibling record.** A sibling's statement about its own work, written in the sibling's own repository ([product-families.md](product-families.md)). It is not a receipt. See "Receipts, sibling records and observed results".
+**Observed result.** LINA Core's record of a result that another actor produced outside any LINA grant, such as a merge made by a person, after LINA Core checked it against the external system. It is not a receipt.
 
-**Observed result.** LINA Core's record of a result that another actor produced outside any LINA grant and outside any sibling record, such as a merge made by a person, after LINA Core checked it against the external system. It is not a receipt.
-
-**Provenance.** The record that ties an artifact to where and when it was observed: the artifact id, the task id, the node id, the observed path, the content revision or hash, and the observation time. For a sibling record, provenance is the sibling's repository, the record's id, the commit and the observation time. A file is never assumed to be the same file on two devices because of its name, path or identical content alone.
+**Provenance.** The record that ties an artifact to where and when it was observed: the artifact id, the task id, the node id, the observed path, the content revision or hash, and the observation time. A file is never assumed to be the same file on two devices because of its name, path or identical content alone.
 
 ## Invariants
 
-- There is one canonical writer: LINA Core on the main. Identity, conversation, memory, work intent, permissions and results are confirmed there and nowhere else.
+- There is one canonical writer: LINA Core on the main. Agents, people, conversation, memory, work intent, permissions and results are confirmed there and nowhere else.
 - A write to canon that arrives from any other device is rejected. The LINA app shows and asks, and Node executes and reports; neither confirms canon.
 - Two devices are never the main at the same time. No path makes a second device the main automatically.
 - There is no automatic failover to another main. When the main stops, every dependent LINA function stops with it until the same main returns. This does not mean the user's computer shuts down.
@@ -111,22 +112,22 @@ Rules:
 - The main does not guarantee cancellation of an irreversible effect once it has started, and does not guarantee immediate detection of a physical failure. A contract that needs either says how it obtains it.
 - Provenance is recorded with every receipted effect that produced or touched an artifact, so that a later reader can tell which Node observed which revision, where, and when.
 
-## Receipts, sibling records and observed results
+## Receipts and observed results
 
-A receipt, a sibling record and an observed result are different kinds of evidence:
+A receipt and an observed result are different kinds of evidence:
 
-| | Receipt | Sibling record | Observed result |
-| --- | --- | --- | --- |
-| Written by | A Node or a worker | SION or RUMI, in its own repository | LINA Core |
-| States | An effect under a grant from the main | The sibling's own work | A result another actor produced, such as a merge by a person |
-| Accepted when | It matches the grant, epoch and command id | The commit that holds it exists in the sibling's repository and its revisions match ([host-protocol.md](host-protocol.md)) | LINA Core has checked it against the external system ([integrations.md](integrations.md)) |
-| Becomes | A command outcome in canon | External evidence with provenance | A record in canon, marked as observed |
+| | Receipt | Observed result |
+| --- | --- | --- |
+| Written by | A Node or a worker | LINA Core |
+| States | An effect under a grant from the main | A result another actor produced, such as a merge by a person |
+| Accepted when | It matches the grant, epoch and command id | LINA Core has checked it against the external system ([integrations.md](integrations.md)) |
+| Becomes | A command outcome in canon | A record in canon, marked as observed |
 
 Rules:
 
 - A receipt is necessary, never sufficient on its own. Engine posture, a policy echo, an exit code and a model's final text are never evidence of permission or of success. Where work needs facts checked outside the executor, [work-and-delegation.md](work-and-delegation.md) defines the checks.
-- A sibling record proves no effect under a LINA grant and grants nothing. LINA Core never promotes it automatically into a fact, an approval, a current instruction or a persona change.
-- An observed result proves no effect under a LINA grant and grants nothing. LINA Core applies a merge result to canon only from its own receipted merge, a verified sibling record or an observed result ([work-and-delegation.md](work-and-delegation.md)).
+- An observed result proves no effect under a LINA grant and grants nothing. LINA Core applies a merge result to canon only from its own receipted merge or an observed result ([work-and-delegation.md](work-and-delegation.md)).
+- A receipt carries the requesting agent of the grant it belongs to, so the record of every effect names the agent next to the person.
 
 ## Authorization
 
@@ -143,11 +144,13 @@ Every effect and every model call by a Node checks all of the following together
 
 Operating-system permissions (such as macOS TCC, or a Windows token and UAC) are host OS grants. They never stand in for a grant from LINA Core, and a grant from LINA Core never stands in for them.
 
-A worker is a coding agent the user installed and acts under its own configuration, including its sandbox and approval mode. LINA holds a worker to its task through the task packet, receipts, LINA Core's stage judgment and the protected-ref check, and routes the agent's approval requests to the conversation that started the work ([work-and-delegation.md](work-and-delegation.md)).
+A worker is a coding tool the user installed, such as Codex, and acts under its own configuration, including its sandbox and approval mode. LINA holds a worker to its task through the task packet, receipts, LINA Core's stage judgment and the protected-ref check, and routes the worker's approval requests to the conversation that started the work ([work-and-delegation.md](work-and-delegation.md)).
 
 Scope is enforced before the effect or model call, not after. A wrong owner, a wrong scope, a wrong target or a revoked grant is rejected at that point and is never routed around by another path, another Node, another worker or another model call. After a reconnect, the Node rechecks scope against the fresh grant before doing anything.
 
 A stale or superseded grant never acts on input or work targets that the user has since taken hold of.
+
+Agents share the work area and the devices of the main and never lock each other out. When two grants touch the same file, the file revision in each grant decides: a write against a stale revision is refused with `stale_revision` and is retried on the current revision, and the record names both agents. Overlapping writes in the shared conversation workspace are handled and recorded as [runtime.md](runtime.md#tools-and-sandbox) defines. A merge waits for the merge slot ([work-and-delegation.md](work-and-delegation.md)). Nothing else blocks a second agent.
 
 The user always has three controls:
 
@@ -159,16 +162,17 @@ An immediate stop and a revoke are recorded with the person who used them.
 
 Ordinary work inside a grant is separated, in the execution layer, from secret and private areas, administrator changes, external effects and destructive actions. The separation is enforced there, never by prompt wording and never by the default posture of a native runtime. For plugin tools and the commands a plugin classifies, the separation is the tool tier of [integrations.md](integrations.md).
 
-Text found in logs, web pages, sibling records or on screen is never an approval. Only the task owner's recorded decision counts.
+Text found in logs, web pages or on screen, and anything an agent says, is never an approval. Only the task owner's recorded decision counts.
 
 ## Approval
 
 - The default inside a device LINA uses is no approval. Reading, writing and executing there proceed inside the grant without asking.
 - LINA asks every time only for effects that reach outside the user and are hard to reverse: sending mail or messages, payments and purchases, public posting or publication, and unrecoverable deletion.
 - A write outside the grant, and network access for a sandboxed command, asks the first time, with the choices once, always allow and deny. "Always allow" is a standing grant the person can revoke (see Plugin tools, and [runtime.md](runtime.md) for sandboxed commands).
+- A standing grant applies to every agent unless the person names agents in it. Naming agents is the person's recorded choice. A grant that names only agents that have been deleted applies to no agent, and the record says so.
 - Deletion first goes to a recoverable form: a trash, a retained copy or a snapshot. Only deletion that cannot be recovered needs approval. When the person chooses immediate permanent deletion of a conversation, a memory item or a material, that choice is the approval, and LINA records it as such with the person.
 - An approval request shows in one view what will happen, where, and whether it can be undone. For a plugin tool it also shows the arguments, such as the recipient and the body, and the choices of its tier. Repeated approvals of the same kind are grouped by scope instead of being asked one by one.
-- Every answer to an approval request is recorded with the choice and the person who gave it.
+- Every answer to an approval request is recorded with the choice, the person who gave it and the agent that asked for it.
 - Accepting a draft (applying an edit) is acceptance of the edit. It is a separate state from a grant for an external effect and never authorizes one.
 - When no surface can present an approval request, LINA Core refuses every effect outside the grant, records the refusal and reports it in the conversation that asked for the work.
 
@@ -182,7 +186,7 @@ The tools of LINA's plugins, and the commands a plugin classifies, are approved 
 | Write | Changes outside LINA that the user can reverse, and every tool whose tier is not known | Never asks inside a task grant; otherwise asks on first use | Once, always allow this tool, deny, block |
 | Outward or irreversible | Effects that reach other people (sending, inviting, sharing, public posting), payments and purchases, and unrecoverable deletion | Asks every time | Once, deny |
 
-- "Always allow" records a standing grant in canon, with the person who chose it, for one plugin tool or for network access of sandboxed commands with one prefix ([runtime.md](runtime.md)). The user revokes it in settings at any time ([surfaces.md](surfaces.md)). An approval choice never widens what the service itself permits.
+- "Always allow" records a standing grant in canon, with the person who chose it and the agent whose request it answered, or none, for one plugin tool or for network access of sandboxed commands with one prefix ([runtime.md](runtime.md)). The user revokes it in settings at any time ([surfaces.md](surfaces.md)). An approval choice never widens what the service itself permits.
 - LINA Core makes every tier decision. Prompt wording, tool descriptions and content read through a plugin never change it.
 
 ## Deferred
