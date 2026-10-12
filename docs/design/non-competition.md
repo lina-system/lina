@@ -1,6 +1,6 @@
 # Sharing a computer with its user
 
-This contract defines how a LINA install proves that it doesn't compete with the person who uses the same machine. It covers input, focus, clipboard, files, CPU and memory, and the session events that change who is in control: lock, unlock, sleep, resume and disconnect. It is normative: an install claims non-competition only through the evidence described here, and any change to the rules goes through a pull request against this file.
+This contract defines how a LINA install proves that it doesn't compete with the person who uses the same machine. It covers input, focus, clipboard, files, CPU and memory, and the session events that change who is in control: lock, unlock, sleep, resume and disconnect. It is normative: an install claims non-competition only through the evidence described here, and any change to the rules is made in this file and joins dev under [integration.md](../policy/integration.md).
 
 The installation modes come from [product-families.md](product-families.md). Grants, scope enforcement, expiry and reconnect behavior come from [main-authority.md](main-authority.md). The processes LINA runs, and the budget each one declares, come from [runtime.md](runtime.md). This document adds the background load, the acceptance matrix and the pass criteria; it doesn't restate those contracts.
 
@@ -21,19 +21,18 @@ Mobile devices run LINA APP. LINA APP is an access product, never a permanent No
 
 ## Background load
 
-Every measurement runs with the background load that the machine carries in normal use. It has three parts:
+Every measurement runs with the background load that the machine carries in normal use. It has two parts:
 
-- LINA's own processes on that machine, as listed in [runtime.md](runtime.md): LINA Core, `moirai-worker`, Node, sandboxed tool commands, worker agents, plugin processes and external components, including background preprocessing of materials.
+- LINA's own processes on that machine, as listed in [runtime.md](runtime.md): LINA Core, `moirai-worker`, Node, sandboxed tool commands, workers, plugin processes and external components, including background preprocessing of materials.
 - LIFE world activity: the background world engine keeping its world, time, events and daily activity.
-- Sibling processes that run on the machine, such as RUMI with its indexing, digests and proposals. A sibling is its own product with its own process and state. LINA never starts, stops, throttles or kills it on its own, but on a shared machine its load is part of what the person feels, so every measurement records it.
 
-SION runs on GitHub Actions and puts no load on the machine.
+Agents are data that the one LINA Core runs, with no process of their own ([product-families.md](product-families.md)). The background work of every agent, such as memory extraction from its conversations, runs inside LINA's processes on the main and is part of their load on that machine. Every measurement records how many agents ran background work during it.
 
 A measurement that leaves out any part of the background load that the install runs in normal use is not a measurement of that install.
 
 ## Seat lease
 
-LINA touches the person's GUI session only under a seat lease: the person's explicit, exclusive and revocable handover of one GUI session to LINA, named in the grant. Without a live seat lease LINA never sends input to the person's session and never takes its focus. Revoking the lease returns the session to the person at once, and a stale grant never acts on a session the person has taken back.
+LINA touches the person's GUI session only under a seat lease: the person's explicit, exclusive and revocable handover of one GUI session to LINA, named in the grant. One task holds a seat lease at a time: the grant names that task, and the lease records the agent that asked for it. Another task, whichever agent asked for it, waits for the lease or gets another session. Without a live seat lease LINA never sends input to the person's session and never takes its focus. Revoking the lease returns the session to the person at once, and a stale grant never acts on a session the person has taken back.
 
 A Windows service runs in Session 0 and never sends input directly to the person's GUI.
 
@@ -83,7 +82,7 @@ A measured cell passes only when all of the following are observed during a conc
 - Keyboard and pointer input: zero unauthorized input injection. No keystroke, click or pointer movement reaches the person's session unless a live seat lease covers it.
 - Clipboard: zero clipboard reads and zero clipboard writes on the person's clipboard, apart from the clipboard history the person turned on.
 - File scope: zero out-of-scope file access, and zero lost human edits. Every file LINA touches is in the scope of its grant. When a file changed under the person's hands, LINA's write against the stale revision is rejected; the person's version wins.
-- CPU and memory yield: under concurrent load from the person, from LINA and from the background load (LIFE world activity and sibling processes included), the person's input latency stays within the declared bounds, and LINA's processes stay within their declared resource bounds. LINA yields when the person needs the machine and recovers its own work afterwards. LINA never kills the person's processes or a sibling's processes.
+- CPU and memory yield: under concurrent load from the person, from LINA and from the background load (LIFE world activity and every agent's background work included), the person's input latency stays within the declared bounds, and LINA's processes stay within their declared resource bounds. LINA yields when the person needs the machine and recovers its own work afterwards. LINA never kills the person's processes.
 - Lock and unlock: the outcome is measured per cell. Locking the person's session must never let LINA act on that session, and unlocking must never let a stale grant resume as if nothing happened.
 - Sleep and resume: the outcome is measured per cell. Resuming from sleep never revives a grant that expired while the machine was asleep, and never lets a stale grant act on the person's session.
 - Disconnect: an observed disconnect from the main blocks new work and requests cancellation of running work at once. A silent disconnect ends authorization at the grant's expiry deadline, as defined in [main-authority.md](main-authority.md). In both cases the person's session stays untouched.
@@ -100,7 +99,7 @@ The following are never accepted as evidence of non-competition on their own:
 - A separate profile, session or OS user. Separation is a setup choice, not a measurement.
 - A VM. The VM rows are `not applicable`, not passed; a VM proves nothing about a shared machine.
 - The word background. A process that calls itself background still has to be measured.
-- A process's own limits. A sibling or a LINA process that caps itself is still part of the measured load.
+- A process's own limits. A LINA process that caps itself is still part of the measured load.
 - Policy text. A sentence that says LINA yields is not a yield. Only a record from a concurrent session counts.
 - Research conclusions. Work done during research isn't acceptance on the person's device.
 
@@ -114,8 +113,7 @@ Each measured cell has one record, and it holds:
 - the session: OS user, GUI session, profile, the grant the work ran under, and any seat lease in force
 - the hardware: CPU, memory, and any relevant device
 - the versions and release manifest digests of every LINA artifact involved: LINA Core, Node, LINA APP and LINA OS (the manifest pins opencodex and its Node.js runtime)
-- the version of every sibling process running on the machine
-- the workload: what the person did, what LINA did, what LIFE world activity ran and which sibling processes ran in the background
+- the workload: what the person did, what LINA did, what LIFE world activity ran, how many agents the main holds and how many of them ran background work
 - the traces: input, focus, clipboard and file access traces for the whole session, tied to the task and grant ids
 - the declared bounds and the measured deltas against them, with resource use reported per process
 - the result per column: which pass criteria were met and which were not, against the declared bounds

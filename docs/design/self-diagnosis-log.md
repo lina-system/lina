@@ -1,12 +1,12 @@
 # Self-diagnosis log
 
-This contract fixes the one structured event format that every LINA component writes, what an event may never contain, how LINA reads its own events back, where they live, and what proves that LINA can explain a failure from them. It is normative: implementations must follow it, and any change to it goes through a pull request against this file.
+This contract fixes the one structured event format that every LINA component writes, what an event may never contain, how LINA reads its own events back, where they live, and what proves that LINA can explain a failure from them. It is normative: implementations must follow it, and any change to it is made in this file and joins dev under [integration.md](../policy/integration.md).
 
 It builds on the product boundaries in [product-families.md](product-families.md), the epoch and grant terms in [main-authority.md](main-authority.md) and the state root in [filesystem.md](filesystem.md). Finishing this document does not mean any event is written, queried or explained yet. Runtime proof belongs to the implementation issues that consume this contract.
 
 ## Purpose
 
-The log exists so that LINA can read its own events and find out what failed and why. The reader is the agent, not a person. A person may still look at the events, but the format is chosen for machine reading first: fixed fields, closed code lists and opaque ids that a query can filter and a summary can cite.
+The log exists so that LINA can read its own events and find out what failed and why. The reader is LINA itself, not a person. A person may still look at the events, but the format is chosen for machine reading first: fixed fields, closed code lists and opaque ids that a query can filter and a summary can cite.
 
 Human-readable text logs are secondary. A component may write them, but nothing in diagnosis depends on them and no acceptance check reads them. When a text log and a structured event disagree, the structured event is the record.
 
@@ -25,6 +25,7 @@ An event is a flat record with exactly the fields below. Every field is present 
 | `component` | string | Exactly one of `conversation`, `task`, `memory`, `materials`, `node`, `app`, `os`. |
 | `conversation_id` | string or null | The conversation the event belongs to, or null when there is none. |
 | `task_id` | string or null | The task the event belongs to, or null when there is none. |
+| `agent_id` | string or null | The agent the event is recorded for: the agent that spoke or acted, or the requesting agent of the task ([product-families.md](product-families.md)). Null when no agent is involved, such as an install event or a job for the whole main. |
 | `epoch` | string or null | The main epoch the event was recorded under, as defined in [main-authority.md](main-authority.md), or null for events recorded before an epoch is durable. |
 | `node_id` | string or null | The Node that recorded the event, as defined in [main-authority.md](main-authority.md), or null when the main or a client recorded it. |
 | `cause` | object | `{ code, parent_event_id }`. `code` is an allowlisted cause code. `parent_event_id` is the `event_id` of the event that led to this one, or null for a root event. |
@@ -41,7 +42,7 @@ Rules that apply across fields:
 - Cause codes and action codes come from closed allowlists owned by the implementation. A code outside the allowlist is never written.
 - Component names in `component` match the product boundaries in [product-families.md](product-families.md): `app` is LINA APP, `os` is LINA OS, `node` is Node, and the remaining four are LINA Core.
 
-The table above is the complete field list. A check that compares an event's keys against this table must accept exactly these eleven names and reject anything else.
+The table above is the complete field list. A check that compares an event's keys against this table must accept exactly these twelve names and reject anything else.
 
 ## Redaction
 
@@ -74,6 +75,7 @@ Filters:
 | `component[]` | Only events whose `component` is in the list |
 | `conversation_id` | Only events with this `conversation_id` |
 | `task_id` | Only events with this `task_id` |
+| `agent_id` | Only events with this `agent_id` |
 | `cause_code` | Only events whose `cause.code` equals this code |
 | `result[]` | Only events whose `result` is in the list |
 | `error_class[]` | Only events whose `error_class` is in the list |
@@ -88,9 +90,9 @@ A summary that LINA produces from the query cites event ids. Every claim about a
 
 ## Storage
 
-Events live under the system area of the state root defined in [filesystem.md](filesystem.md). That is the `system/` area: installation state, written by the install, snapshotted with the OS root and not part of a personal backup generation.
+Events live under the system area of the state root defined in [filesystem.md](filesystem.md). That is the `system/` area: installation state, written by the install, snapshotted with the OS root and not part of a backup generation.
 
-Events are not canon and not materials. Events never go through the canon writer, and writing an event never changes canon or materials. A personal backup generation does not include events, and a restore does not restore them.
+Events are not canon and not materials. Events never go through the canon writer, and writing an event never changes canon or materials. A backup generation does not include events, and a restore does not restore them.
 
 Events from a Node use the same schema. A Node event is never a receipt and never confirms an effect on its own.
 
@@ -125,3 +127,4 @@ Passing these checks in an implementation is claimed by the implementation issue
 - The concrete file or database form of the event store under `system/`, and its rotation, are set during implementation acceptance within the storage rules of [runtime.md](runtime.md).
 - The diagnosis acceptance runs themselves, including how each failure is injected and which install they run on, are set during implementation acceptance.
 - Whether and how Node events are copied to the main beyond the reports that the main authority contract already allows is set during implementation acceptance.
+- Whether an event records the person it acts for is set together with admitting people other than the owner, a backlog item on the person axis ([cognition-and-life.md](cognition-and-life.md)).

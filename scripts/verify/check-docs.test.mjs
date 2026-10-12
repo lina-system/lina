@@ -5,11 +5,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { cleanEnv } from '../git.mjs';
 
 const checker = fileURLToPath(new URL('./check-docs.mjs', import.meta.url));
 
 function run(command, args, cwd) {
-  const result = spawnSync(command, args, { cwd, encoding: 'utf8' });
+  const result = spawnSync(command, args, { cwd, encoding: 'utf8', env: cleanEnv() });
   assert.ifError(result.error);
   return result;
 }
