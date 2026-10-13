@@ -53,8 +53,8 @@ The scripts use Node 20 or newer and its built-in modules, and Git.
 
 | mode | commit | machine | cache | wall s | bound s |
 | --- | --- | --- | --- | ---: | ---: |
-| full | not measured | | | | |
-| docs | not measured | | | | |
+| full | e86f7b2 | lina-os (x86-64, 20 threads) | warm | 3.6 | 20 |
+| docs | e86f7b2 | lina-os (x86-64, 20 threads) | warm | 0.1 | 20 |
 
 The bound is U(x) = 10 * ceil(max(1.5x, x + 15) / 10) seconds of wall time, measured from the start of `foundation.mjs` to the gate's result. A mode without a measurement has no bound. The development-loop check V7 records the first local measurement of each mode ([runtime.md](../design/runtime.md#runtime-acceptance)).
 
