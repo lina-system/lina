@@ -27,6 +27,7 @@ function componentOf(path) {
 const goObjects = text => JSON.parse(`[${text.trim().replace(/^}\s*\n{/gm, '},{')}]`);
 
 export function kind(path) {
+  if (path === 'scripts/verify/dependency-exceptions.json' || path === 'THIRD-PARTY-NOTICES.md') return 'dependencies';
   if (modules.has(path)) return 'modules';
   if (componentOf(path)) return 'components';
   if (documents.has(path) || /^docs\/(?:policy|design)\/[^/]+\.md$/.test(path)) return 'docs';
@@ -123,7 +124,8 @@ export function scopeFor({ base = '', head, full = false, cwd = process.cwd() })
     : resolvedBase === null ? 'base-unavailable'
     : changed.length === 0 ? 'empty-diff'
     : docsOnly ? 'documents-only'
-    : changed.some(path => ['modules', 'components'].includes(kind(path))) ? 'component-change' : 'automation-change';
+    : changed.some(path => ['modules', 'components'].includes(kind(path))) ? 'component-change'
+    : changed.some(path => kind(path) === 'dependencies') ? 'dependency-change' : 'automation-change';
   const active = componentRegistry.filter(component => inventory.some(path => componentOf(path)?.name === component.name));
   const all = full || resolvedBase === null || changed.length === 0 || unmapped.length > 0
     || changed.some(path => ['automation', 'modules', 'unmapped'].includes(kind(path)))
@@ -144,7 +146,8 @@ export function scopeFor({ base = '', head, full = false, cwd = process.cwd() })
     mode: docsOnly ? 'docs' : 'full', reason,
     base: resolvedBase, head: resolvedHead,
     docs: true, automation: all && !docsOnly,
-    dependencies: all && !docsOnly && [...inventory, ...changed].some(path => modules.has(path)),
+    dependencies: changed.some(path => kind(path) === 'dependencies')
+      || (all && !docsOnly && [...inventory, ...changed].some(path => modules.has(path))),
     components: selectedComponents.length > 0,
     selectedComponents, changed, unmapped,
   };
