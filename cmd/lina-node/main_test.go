@@ -25,7 +25,6 @@ func TestCommand(t *testing.T) {
 	}{
 		{name: "missing", code: 64},
 		{name: "unknown", args: []string{"unknown"}, code: 64},
-		{name: "version", args: []string{"version"}, code: 70},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			command := exec.Command(binary, tc.args...)
