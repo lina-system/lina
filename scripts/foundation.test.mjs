@@ -183,7 +183,10 @@ test('foundation records selected Go components, skips them for prose and fails 
   Object.assign(sb.env, JSON.parse(caches.stdout));
   const { work } = developmentRepository(sb);
   const source = new URL('../', import.meta.url);
-  installScripts(work, ['verify/check-dependencies.mjs']);
+  // This fixture tests Go component orchestration; dependency behavior has offline runner tests.
+  sb.write(work, 'scripts/verify/check-dependencies.mjs', `// SPDX-License-Identifier: Apache-2.0
+process.exitCode = 0;
+`);
   for (const name of ['go.mod', 'go.sum', 'go.work', 'kit/go.mod']) {
     sb.write(work, name, readFileSync(new URL(name, source)));
   }
