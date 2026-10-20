@@ -2,18 +2,78 @@
 // Classifies a change into the checks it needs. The path map below is the executable registry:
 // a path that no entry covers is unmapped, and the gate refuses to pass until it is registered.
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { git, gitOut, resolveCommit } from '../git.mjs';
+import { createGoContext, execute } from './check-components.mjs';
 
 const documents = new Set([
   'README.md', 'MANIFESTO.md', 'LICENSE', 'THIRD-PARTY-NOTICES.md', 'SECURITY.md', 'AGENTS.md', 'CONTRIBUTING.md', 'NOTICE',
 ]);
 const configuration = new Set(['.editorconfig', '.gitattributes', '.gitignore']);
+const modules = new Set(['go.mod', 'go.sum', 'go.work', 'go.work.sum', 'kit/go.mod', 'kit/go.sum']);
+
+export const componentRegistry = [
+  { name: 'kit', module: 'kit', directories: ['kit/'], files: [], packages: ['./...'] },
+  { name: 'lina', module: '.', directories: ['cmd/lina/'], files: ['doc.go'], packages: ['.', './cmd/lina/...'], binary: 'lina' },
+  { name: 'lina-node', module: '.', directories: ['cmd/lina-node/'], files: [], packages: ['./cmd/lina-node/...'], binary: 'lina-node' },
+];
+
+function componentOf(path) {
+  return componentRegistry.find(component => component.files.includes(path)
+    || component.directories.some(directory => path.startsWith(directory)));
+}
+
+// Go emits adjacent, indented JSON objects, with closing braces at column zero.
+const goObjects = text => JSON.parse(`[${text.trim().replace(/^}\s*\n{/gm, '},{')}]`);
 
 export function kind(path) {
+  if (modules.has(path)) return 'modules';
+  if (componentOf(path)) return 'components';
   if (documents.has(path) || /^docs\/(?:policy|design)\/[^/]+\.md$/.test(path)) return 'docs';
   if (configuration.has(path) || /^scripts\/(?:verify\/)?[^/]+\.(?:mjs|sh)$/.test(path)) return 'automation';
   return 'unmapped';
+}
+
+// Let Go parse imports, including internal/external test packages. Package names alone are not
+// component boundaries: use each package's source directory from the module being inspected.
+function importers(cwd, active) {
+  const context = createGoContext(cwd);
+  try {
+    const listedModules = execute('go', ['list', '-m', '-json'], { cwd, env: context.env });
+    if (listedModules.status !== 0) throw new Error(`Cannot read Go modules: ${listedModules.stderr}`);
+    const workspace = goObjects(listedModules.stdout).sort((a, b) => b.Path.length - a.Path.length);
+    const ownerOfImport = imported => {
+      const module = workspace.find(module => imported === module.Path || imported.startsWith(`${module.Path}/`));
+      if (!module?.Dir) return undefined;
+      const directory = relative(cwd, join(module.Dir, imported.slice(module.Path.length))).replaceAll('\\', '/');
+      return componentOf(directory ? `${directory}/package.go` : 'doc.go')?.name;
+    };
+    const packages = [];
+    for (const module of new Set(active.map(component => component.module))) {
+      const patterns = [...new Set(active.filter(component => component.module === module).flatMap(component => component.packages))];
+      const result = execute('go', ['list', '-e', '-mod=readonly', '-json', ...patterns], { cwd: join(cwd, module), env: context.env });
+      if (result.status !== 0) throw new Error(`Cannot read component imports: ${result.stderr}`);
+      for (const pkg of goObjects(result.stdout)) {
+        if (pkg.Error) throw new Error(`Cannot read component imports: ${pkg.Error.Err}`);
+        const directory = `${relative(cwd, pkg.Dir).replaceAll('\\', '/')}/`;
+        const owner = directory === '/' ? componentOf('doc.go') : componentOf(`${directory}package.go`);
+        if (owner) packages.push({ ...pkg, owner: owner.name });
+      }
+    }
+    const owners = new Map(packages.map(pkg => [pkg.ImportPath, pkg.owner]));
+    const edges = new Map(active.map(component => [component.name, new Set()]));
+    for (const pkg of packages) {
+      for (const imported of [...(pkg.Imports ?? []), ...(pkg.TestImports ?? []), ...(pkg.XTestImports ?? [])]) {
+        // A deleted package still has importers: its module path identifies the owner even
+        // when go list can no longer return a package record for that directory.
+        const dependency = owners.get(imported) ?? ownerOfImport(imported);
+        if (dependency && dependency !== pkg.owner) edges.get(dependency)?.add(pkg.owner);
+      }
+    }
+    return edges;
+  } finally {
+    context.close();
+  }
 }
 
 // The files that exist for the candidate. When the candidate is the checked-out commit, the work
@@ -46,6 +106,12 @@ export function scopeFor({ base = '', head, full = false, cwd = process.cwd() })
       else resolvedBase = null;
     }
   }
+  if (resolveCommit(cwd, 'HEAD') === resolvedHead) {
+    changed = [...new Set([...changed,
+      ...gitOut(cwd, ['diff', '--name-only', '--no-renames', 'HEAD']).split('\n').filter(Boolean),
+      ...gitOut(cwd, ['ls-files', '--others', '--exclude-standard']).split('\n').filter(Boolean),
+    ])].sort();
+  }
   // Only files that exist can be unregistered product code; a deleted path with no mapping only
   // keeps the change out of the documents-only class.
   const unmapped = [...new Set(inventory.filter((path) => kind(path) === 'unmapped'))].sort();
@@ -55,10 +121,28 @@ export function scopeFor({ base = '', head, full = false, cwd = process.cwd() })
     : full ? 'manual-full'
     : resolvedBase === null ? 'base-unavailable'
     : changed.length === 0 ? 'empty-diff'
-    : docsOnly ? 'documents-only' : 'automation-change';
+    : docsOnly ? 'documents-only'
+    : changed.some(path => ['modules', 'components'].includes(kind(path))) ? 'component-change' : 'automation-change';
+  const active = componentRegistry.filter(component => inventory.some(path => componentOf(path)?.name === component.name));
+  const all = full || resolvedBase === null || changed.length === 0 || unmapped.length > 0
+    || changed.some(path => ['automation', 'modules', 'unmapped'].includes(kind(path)))
+    || changed.some(path => componentOf(path) && !active.some(component => component.name === componentOf(path).name));
+  const selected = new Set(all ? active.map(component => component.name)
+    : changed.map(path => componentOf(path)?.name).filter(name => active.some(component => component.name === name)));
+  if (selected.size && !all) {
+    if (resolveCommit(cwd, 'HEAD') !== resolvedHead) {
+      // Never use the current checkout's imports as evidence about a different commit.
+      for (const component of active) selected.add(component.name);
+    } else {
+      const edges = importers(cwd, active);
+      for (const name of selected) for (const importer of edges.get(name) ?? []) selected.add(importer);
+    }
+  }
+  const selectedComponents = active.map(component => component.name).filter(name => selected.has(name));
   return {
     mode: docsOnly ? 'docs' : 'full', reason,
     base: resolvedBase, head: resolvedHead,
-    docs: true, automation: !docsOnly, changed, unmapped,
+    docs: true, automation: all && !docsOnly, components: selectedComponents.length > 0,
+    selectedComponents, changed, unmapped,
   };
 }

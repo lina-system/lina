@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { evaluateGate } from './gate.mjs';
 
-const scope = { mode: 'full', head: '1'.repeat(40), docs: true, automation: true, unmapped: [] };
-const passed = { selection: { result: 'success' }, docs: { result: 'success' }, automation: { result: 'success' } };
+const scope = { mode: 'full', head: '1'.repeat(40), docs: true, automation: true, components: false, selectedComponents: [], unmapped: [] };
+const passed = { selection: { result: 'success' }, docs: { result: 'success' }, automation: { result: 'success' }, components: { result: 'skipped' } };
 
 test('selected checks all succeed and intentional docs-only skipping is accepted', () => {
   const full = evaluateGate(scope, passed);
@@ -39,4 +39,22 @@ test('a failed selection fails closed with one failure and no scope', () => {
   assert.equal(result.result, 'failure');
   assert.deepEqual(result.failures, ['selection did not succeed']);
   assert.equal(evaluateGate(scope, { selection: passed.selection }).result, 'failure');
+});
+
+test('components must succeed when selected and be skipped otherwise', () => {
+  for (const result of ['failure', 'cancelled', 'skipped', undefined]) {
+    assert.equal(evaluateGate({ ...scope, components: true, selectedComponents: ['kit'] }, {
+      ...passed, components: result ? { result } : undefined,
+    }).result, 'failure');
+  }
+  assert.equal(evaluateGate({ ...scope, components: true, selectedComponents: ['kit'] }, {
+    ...passed, components: { result: 'success' },
+  }).result, 'success');
+  assert.equal(evaluateGate({ ...scope, components: false, selectedComponents: [] }, {
+    ...passed, components: { result: 'skipped' },
+  }).result, 'success');
+  assert.equal(evaluateGate({ ...scope, components: false, selectedComponents: [] }, {
+    ...passed, components: { result: 'success' },
+  }).result, 'failure');
+  assert.equal(evaluateGate({ ...scope, components: true, selectedComponents: [] }, passed).result, 'failure');
 });

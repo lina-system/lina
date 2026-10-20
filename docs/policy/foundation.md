@@ -19,6 +19,7 @@ The script clears `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and every other `
 ```text
 selection ----+---- docs --------+---- gate
               +---- automation --+
+              +---- components --+
 ```
 
 Everything runs in one process. `selection` records the exact base and candidate commits, the changed paths, the selected checks and the selection reason. It also checks Git whitespace errors: `git diff --check` over the range, or `git show --check` on the `HEAD` commit with `--full`. The selected checks run in parallel after selection. The gate only evaluates their results; it never reruns their commands. Each check has a bounded timeout.
@@ -36,9 +37,9 @@ The executable path map is `scripts/verify/scope.mjs`.
 | Change | Selection |
 | --- | --- |
 | Only explicitly listed root documents or Markdown directly under `docs/policy/` or `docs/design/` | `docs`; no automation installation or test run. |
-| A verification script or shared repository configuration | Both `docs` and `automation`. |
-| Empty or unavailable diff | Both `docs` and `automation`; never assume documentation-only. |
-| An unmapped path in the changed paths or candidate tree | Both `docs` and `automation`, but the gate refuses to pass until its verification is registered. |
+| A verification script or shared repository configuration | `docs`, `automation`, and every registered Go component. |
+| Empty or unavailable diff | `docs`, `automation`, and every registered Go component; never assume documentation-only. |
+| An unmapped path in the changed paths or candidate tree | `docs`, `automation`, and every registered Go component, but the gate refuses to pass until its verification is registered. |
 
 Deleted paths and both sides of a rename participate. A `.md` suffix alone does not make a file prose: prompts, executable examples, and test inputs need their consumer's checks.
 
@@ -46,8 +47,9 @@ Deleted paths and both sides of a rename participate. A `.md` suffix alone does 
 
 - **docs:** validate local file targets in all tracked Markdown and `LICENSE`, including links from unchanged documents to deleted targets (`scripts/verify/check-docs.mjs`). This does not validate external URLs, heading anchors, or the meaning of prose.
 - **automation:** check JavaScript syntax and run the Node behavioral suite of the scripts under `scripts/`. Tests that use Git run in disposable repositories with every `GIT_*` variable cleared. Integration and release tests run against a disposable bare remote; they never push to the real remote or publish a real release.
+- **components:** build, vet, run the pinned `exhaustive` analyzer, and run uncached tests for selected Go components (`scripts/verify/check-components.mjs`). Command builds go to a temporary directory; the check executes each produced command without arguments and verifies its usage error. Temporary outputs and the isolated home directory are removed when the check ends.
 
-The scripts use Node 20 or newer and its built-in modules, and Git.
+The scripts use Node 20 or newer and its built-in modules, and Git. Go components also need the exact Go toolchain named in the workspace.
 
 ## Timing and budget
 
@@ -55,6 +57,7 @@ The scripts use Node 20 or newer and its built-in modules, and Git.
 | --- | --- | --- | --- | ---: | ---: |
 | full | e86f7b2 | lina-os (x86-64, 20 threads) | warm | 3.6 | 20 |
 | docs | e86f7b2 | lina-os (x86-64, 20 threads) | warm | 0.1 | 20 |
+| full (Go components) | 230383f + #24 worktree | Linux x86-64, 24 threads | warm | 4.1 | 20 |
 
 The bound is U(x) = 10 * ceil(max(1.5x, x + 15) / 10) seconds of wall time, measured from the start of `foundation.mjs` to the gate's result. A mode without a measurement has no bound. The development-loop check V7 records the first local measurement of each mode ([runtime.md](../design/runtime.md#runtime-acceptance)).
 
@@ -85,7 +88,15 @@ Register a component in `scripts/verify/scope.mjs` in the change that adds it. I
 
 The protocol JSON Schema in `protocol/schema/` and the conformance fixtures in `protocol/fixtures/` are registered with the component that generates types from them, so a schema or fixture change runs type regeneration and the fixtures ([host-protocol.md](../design/host-protocol.md)).
 
-The scope script reads the imports between components from the Go packages, so a change to one component also selects every component that depends on it. Until a component is registered, its paths remain unmapped and the gate refuses to pass. Register a vendored tree under `third_party/<name>/` the same way as any other component. `go test` runs its upstream tests unchanged.
+The initial registry is:
+
+| Component | Owned paths | Module | Package patterns |
+| --- | --- | --- | --- |
+| `kit` | `kit/` | `kit/` | `./...` |
+| `lina` | `cmd/lina/`, root `doc.go` | root | `.`, `./cmd/lina/...` |
+| `lina-node` | `cmd/lina-node/` | root | `./cmd/lina-node/...` |
+
+The scope script reads package imports and test imports with `go list` using the pinned toolchain, so a change to one component also selects every component that depends on it, transitively. It includes uncommitted changes and untracked files when checking the current checkout. A candidate that is not checked out conservatively selects all its registered components instead of using another commit's imports. Component-only changes run `docs` and the selected components; changes to verification scripts, shared configuration, module manifests or workspace files select every component. Selection and the evidence note record the selected component names. Until a component is registered, its paths remain unmapped and the gate refuses to pass. Register a vendored tree under `third_party/<name>/` the same way as any other component. `go test` runs its upstream tests unchanged.
 
 ### Path mapping
 
@@ -105,6 +116,10 @@ Markdown under `third_party/` is upstream content. The docs check skips it becau
 
 - **dependencies:** runs the checks listed in the [dependency policy](dependencies.md#foundation-enforcement), including `go mod verify` and `govulncheck`. It runs without credentials and reads only the Go module proxy, the Go checksum and vulnerability databases, the npm registry, and recorded upstream repositories.
 - **components:** uses Go from the shared `toolchain` line and runs `go build`, `go vet`, the `exhaustive` analyzer and `go test` with `-mod=readonly` for each selected component, in the directory of the module that holds it. The analyzer is a module tool pinned in `go.mod`, like `govulncheck` ([dependencies.md](dependencies.md)), and fails a switch over a closed set of variants that misses one. Build checks use the produced binary. Short component checks share one step and its module download. A component gets its own parallel step only when a measured run shows that the shared step is the bottleneck.
+
+The component check requires matching `go` and exact `toolchain` directives in both module manifests and `go.work`, sets `GOTOOLCHAIN` to that release, and checks the Go version actually used. It verifies module sums before building, including the root module that supplies the analyzer when only kit is selected. Commands sharing a module run together with their package patterns. Go subprocesses use an isolated home directory and an allowlist of environment variables, with user Go/Git configuration disabled; proxy and checksum settings retain Go's defaults. All Go builds and analyzer package loading use `-mod=readonly`, and builds use `CGO_ENABLED=0`.
+
+Component registration implements the `components` gate. The separate `dependencies` check described here remains to be implemented; the component check's `go mod verify` does not establish the full dependency policy, including vulnerability and license scanning.
 
 Both checks reuse the machine's Go module and npm download caches, which `go.sum` and lockfile integrity verify, and never cache `node_modules` or results: `go test` runs with `-count=1`, so no cached test result counts. Adding either check changes the full-mode run, so the change that registers the first component records a new full-mode measurement and bound in the timing table.
 
