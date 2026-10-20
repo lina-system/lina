@@ -101,6 +101,9 @@ func violations(root string, standard map[string]bool) ([]string, error) {
 			if within(owner, "kit") && within(imported, rootModule) && !within(imported, rootModule+"/kit") {
 				report(spec.Pos(), "kit", "kit must not import the root module: "+imported)
 			}
+			if within(owner, "internal/buildinfo") && !standard[imported] {
+				report(spec.Pos(), "buildinfo", "build metadata may import only the standard library: "+imported)
+			}
 			if (within(imported, "github.com/charmbracelet") || within(imported, "charm.land")) && !within(owner, "internal/tui/term") && !within(owner, "internal/tui/ui") {
 				report(spec.Pos(), "Charm", "only internal/tui/term and internal/tui/ui may import "+imported)
 			}
@@ -109,8 +112,9 @@ func violations(root string, standard map[string]bool) ([]string, error) {
 			}
 			if within(owner, "internal/node") || within(owner, "cmd/lina-node") {
 				allowedKit := within(imported, rootModule+"/kit") && nodeKit[family(imported, rootModule+"/kit")]
-				if !standard[imported] && !allowedKit {
-					report(spec.Pos(), "Node", "only the standard library and C-35 kit packages are allowed: "+imported)
+				allowedBuildinfo := owner == "cmd/lina-node" && imported == rootModule+"/internal/buildinfo"
+				if !standard[imported] && !allowedKit && !allowedBuildinfo {
+					report(spec.Pos(), "Node", "only the standard library, C-35 kit packages and cmd/lina-node's buildinfo import are allowed: "+imported)
 				}
 			}
 			if imported == "os" {

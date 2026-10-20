@@ -12,7 +12,9 @@ This document is the version policy of LINA. It says what is versioned, how each
 
 ## What a binary reports
 
-`lina version` prints `0.0.1-alpha.YYYYMMDD.N (commit <short sha>, built <date>)`. The build sets these values with `-ldflags`. A build without a tag prints `0.0.1-alpha.dev (commit <sha>)`.
+`lina version` and `lina-node version` print `0.0.1-alpha.YYYYMMDD.N (commit <short sha>, built <date>)` on stdout and exit successfully. The build sets `github.com/thisisjun786/lina/internal/buildinfo.Version`, `.Commit` and `.Date` with `-ldflags -X`. The version is the tag without its leading `v` and without build metadata. The commit is displayed as its first seven characters (or the whole value if shorter), and the build date is UTC `YYYY-MM-DD`.
+
+Without linker flags, both commands print `0.0.1-alpha.dev (commit <sha>)`, using the full `vcs.revision` embedded by Go. If the build has no VCS revision, as with a source export outside a repository or `-buildvcs=false`, the commit is `unknown`. The development line has no build date. Only the build supplies release metadata; source contains no dated release number, and the running binary does not inspect Git, tags or the current directory.
 
 ## Other versions
 
