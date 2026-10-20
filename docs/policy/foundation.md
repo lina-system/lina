@@ -64,6 +64,7 @@ The scripts use Node 20 or newer and its built-in modules, Git, and actionlint o
 | full | e86f7b2 | lina-os (x86-64, 20 threads) | warm | 3.6 | 20 |
 | docs | e86f7b2 | lina-os (x86-64, 20 threads) | warm | 0.1 | 20 |
 | full (Go components) | 230383f + #24 worktree | Linux x86-64, 24 threads | warm | 4.1 | 20 |
+| full (import, vulnerability and license checks) | b9ddd15 | Linux x86-64, 16 CPUs | warm | 7.239 | 30 |
 
 The bound is U(x) = 10 * ceil(max(1.5x, x + 15) / 10) seconds of wall time, measured from the start of `foundation.mjs` to the gate's result. A mode without a measurement has no bound. The development-loop check V7 records the first local measurement of each mode ([runtime.md](../design/runtime.md#runtime-acceptance)).
 

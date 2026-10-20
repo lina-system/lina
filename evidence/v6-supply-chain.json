@@ -354,7 +354,18 @@
     }
   ],
   "dependency_gate": {
-    "status": "pending measurement"
+    "command": "node scripts/foundation.mjs --full",
+    "status": "success",
+    "seconds": 4.7,
+    "finished_at": "2026-10-20T17:34:37.944Z",
+    "coverage": [
+      "matching toolchains and exact pins",
+      "local replacement boundaries",
+      "go mod verify in root and kit",
+      "govulncheck in root and kit",
+      "licenses and notices for root and kit production imports"
+    ],
+    "foundation_result": "success"
   },
   "checksum_verification": "The dependency gate runs go mod verify against cached hashes with public proxy and checksum defaults. No fresh-cache checksum-database audit is claimed.",
   "npm": {
@@ -362,5 +373,6 @@
     "lockfile": null,
     "transitive_package_count": null,
     "reason": "The Claude adapter and its lockfile do not exist yet; npm acceptance remains deferred."
-  }
+  },
+  "source_commit": "b9ddd159c4329ef26e4dea987088afa931584887"
 }

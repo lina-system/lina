@@ -16,7 +16,7 @@
         {
           "command": "go build -mod=readonly ./internal/archtest/...",
           "exit_code": 0,
-          "seconds": 0.07235599999999999
+          "seconds": 0.072356
         },
         {
           "command": "go vet -mod=readonly ./internal/archtest/...",
@@ -31,6 +31,43 @@
       ],
       "seconds": 1.176347,
       "within_budget": true
+    },
+    "full_foundation": {
+      "started_at": "2026-10-20T17:34:30.720Z",
+      "source_commit": "b9ddd159c4329ef26e4dea987088afa931584887",
+      "clean_worktree": true,
+      "command": "node scripts/foundation.mjs --full",
+      "seconds": 7.239,
+      "exit_code": 0,
+      "within_budget": true,
+      "output_sha256": "ce9b08287969d28dbb48a8a2f7d4011758c9f7b0ed26832b34da19fedca7f348",
+      "foundation_result": "success",
+      "checks": {
+        "selection": {
+          "result": "success",
+          "seconds": 0
+        },
+        "docs": {
+          "result": "success",
+          "seconds": 0.1
+        },
+        "automation": {
+          "result": "success",
+          "seconds": 7.2
+        },
+        "dependencies": {
+          "result": "success",
+          "seconds": 4.7,
+          "toolchain": "go1.27.3"
+        },
+        "components": {
+          "result": "success",
+          "seconds": 2.9,
+          "toolchain": "go1.27.3"
+        }
+      },
+      "source_tree": "7f8ebfceace1925ff09e6b5cd9843f82607e2e43",
+      "note_written": true
     }
   },
   "source_commit_before_edit": "d31b5fc1f9ca55a66414c2ef50552aa0047f7c61",
@@ -55,5 +92,10 @@
       "output_sha256": "9a0a2eeb8581f4b07fc17c749345d981f8282132288105b9b3f09c1477a95bfc",
       "failure": "All checks passed, but the gate rejected an unregistered component name. The final registration uses the existing lina component."
     }
-  ]
+  ],
+  "source_files_sha256": {
+    "internal/archtest/imports_test.go": "394b0d8dfcfab7667da48c33894ebc1d6c633f31c13df24de5f4a18142904a60",
+    "internal/archtest/rules.go": "d969752bf90db666d800f9e381ed499d32cc19a742093229f86ba2aa23625eb6",
+    "internal/archtest/rules_test.go": "16dfbf8ea6d48b66b9e54c98ae0ac241350270ea97408a23c2c1600e831e9302"
+  }
 }
