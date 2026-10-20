@@ -1,0 +1,10 @@
+{
+  "check": "V7",
+  "budget_declared_at": "2026-10-20T17:25:13.280841+00:00",
+  "budget_seconds": {
+    "edit_to_test": 20,
+    "full_foundation": 60
+  },
+  "budget_rationale": "20 seconds for the affected Go package loop; 60 seconds for full verification including the vulnerability and license gates added after the earlier component-only timing. Budgets are fixed before measurement.",
+  "measurements": null
+}

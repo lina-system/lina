@@ -1,0 +1,366 @@
+{
+  "check": "V6",
+  "recorded_at": "2026-10-20T17:30:13.608Z",
+  "base_commit": "7da61907aea18309d776581e048f06081f059371",
+  "go_toolchain": "go1.27.3",
+  "go_sum": {
+    "path": "go.sum",
+    "sha256": "58bdf04d76603adca37539160d5b3a6baed4d9ee50355c57592f90e317a6b1bc",
+    "bytes": 15431,
+    "lines": 163
+  },
+  "kit_go_sum": {
+    "path": "kit/go.sum",
+    "status": "absent; kit has no external dependencies"
+  },
+  "inventory_command": "go list -m -json all",
+  "inventory_scope": "Workspace build list, including tool dependencies; local root and kit counted separately from external modules.",
+  "module_count": 67,
+  "local_module_count": 2,
+  "external_module_count": 65,
+  "modules": [
+    {
+      "path": "github.com/thisisjun786/lina",
+      "local": true
+    },
+    {
+      "path": "github.com/thisisjun786/lina/kit",
+      "local": true
+    },
+    {
+      "path": "cloud.google.com/go",
+      "version": "v0.26.0",
+      "local": false
+    },
+    {
+      "path": "github.com/BurntSushi/toml",
+      "version": "v0.3.1",
+      "local": false
+    },
+    {
+      "path": "github.com/census-instrumentation/opencensus-proto",
+      "version": "v0.2.1",
+      "local": false
+    },
+    {
+      "path": "github.com/client9/misspell",
+      "version": "v0.3.4",
+      "local": false
+    },
+    {
+      "path": "github.com/cncf/udpa/go",
+      "version": "v0.0.0-20191209042840-269d4d468f6f",
+      "local": false
+    },
+    {
+      "path": "github.com/cpuguy83/go-md2man/v2",
+      "version": "v2.0.2",
+      "local": false
+    },
+    {
+      "path": "github.com/davecgh/go-spew",
+      "version": "v1.1.1",
+      "local": false
+    },
+    {
+      "path": "github.com/envoyproxy/go-control-plane",
+      "version": "v0.9.4",
+      "local": false
+    },
+    {
+      "path": "github.com/envoyproxy/protoc-gen-validate",
+      "version": "v0.1.0",
+      "local": false
+    },
+    {
+      "path": "github.com/go-logr/logr",
+      "version": "v1.2.0",
+      "local": false
+    },
+    {
+      "path": "github.com/golang/glog",
+      "version": "v0.0.0-20160126235308-23def4e6c14b",
+      "local": false
+    },
+    {
+      "path": "github.com/golang/groupcache",
+      "version": "v0.0.0-20210331224755-41bb18bfe9da",
+      "local": false
+    },
+    {
+      "path": "github.com/golang/mock",
+      "version": "v1.1.1",
+      "local": false
+    },
+    {
+      "path": "github.com/golang/protobuf",
+      "version": "v1.4.3",
+      "local": false
+    },
+    {
+      "path": "github.com/google/go-cmdtest",
+      "version": "v0.4.1-0.20220921163831-55ab3332a786",
+      "local": false
+    },
+    {
+      "path": "github.com/google/go-cmp",
+      "version": "v0.6.0",
+      "local": false
+    },
+    {
+      "path": "github.com/google/go-licenses/v2",
+      "version": "v2.0.1",
+      "local": false
+    },
+    {
+      "path": "github.com/google/go-replayers/httpreplay",
+      "version": "v1.2.0",
+      "local": false
+    },
+    {
+      "path": "github.com/google/licenseclassifier/v2",
+      "version": "v2.0.0",
+      "local": false
+    },
+    {
+      "path": "github.com/google/martian/v3",
+      "version": "v3.3.2",
+      "local": false
+    },
+    {
+      "path": "github.com/google/renameio",
+      "version": "v0.1.0",
+      "local": false
+    },
+    {
+      "path": "github.com/google/uuid",
+      "version": "v1.1.2",
+      "local": false
+    },
+    {
+      "path": "github.com/inconshreveable/mousetrap",
+      "version": "v1.1.0",
+      "local": false
+    },
+    {
+      "path": "github.com/kr/pretty",
+      "version": "v0.1.0",
+      "local": false
+    },
+    {
+      "path": "github.com/kr/pty",
+      "version": "v1.1.1",
+      "local": false
+    },
+    {
+      "path": "github.com/kr/text",
+      "version": "v0.1.0",
+      "local": false
+    },
+    {
+      "path": "github.com/nishanths/exhaustive",
+      "version": "v0.15.1",
+      "local": false
+    },
+    {
+      "path": "github.com/otiai10/copy",
+      "version": "v1.10.0",
+      "local": false
+    },
+    {
+      "path": "github.com/otiai10/mint",
+      "version": "v1.5.1",
+      "local": false
+    },
+    {
+      "path": "github.com/pmezard/go-difflib",
+      "version": "v1.0.0",
+      "local": false
+    },
+    {
+      "path": "github.com/prometheus/client_model",
+      "version": "v0.0.0-20190812154241-14fe0d1b01d4",
+      "local": false
+    },
+    {
+      "path": "github.com/russross/blackfriday/v2",
+      "version": "v2.1.0",
+      "local": false
+    },
+    {
+      "path": "github.com/sergi/go-diff",
+      "version": "v1.2.0",
+      "local": false
+    },
+    {
+      "path": "github.com/spf13/cobra",
+      "version": "v1.7.0",
+      "local": false
+    },
+    {
+      "path": "github.com/spf13/pflag",
+      "version": "v1.0.5",
+      "local": false
+    },
+    {
+      "path": "github.com/stretchr/objx",
+      "version": "v0.5.0",
+      "local": false
+    },
+    {
+      "path": "github.com/stretchr/testify",
+      "version": "v1.8.1",
+      "local": false
+    },
+    {
+      "path": "github.com/yuin/goldmark",
+      "version": "v1.4.13",
+      "local": false
+    },
+    {
+      "path": "go.opencensus.io",
+      "version": "v0.24.0",
+      "local": false
+    },
+    {
+      "path": "golang.org/x/crypto",
+      "version": "v0.58.0",
+      "local": false
+    },
+    {
+      "path": "golang.org/x/exp",
+      "version": "v0.0.0-20190121172915-509febef88a4",
+      "local": false
+    },
+    {
+      "path": "golang.org/x/lint",
+      "version": "v0.0.0-20190313153728-d0100b6bd8b3",
+      "local": false
+    },
+    {
+      "path": "golang.org/x/mod",
+      "version": "v0.42.0",
+      "local": false
+    },
+    {
+      "path": "golang.org/x/net",
+      "version": "v0.61.0",
+      "local": false
+    },
+    {
+      "path": "golang.org/x/oauth2",
+      "version": "v0.0.0-20180821212333-d2e6202438be",
+      "local": false
+    },
+    {
+      "path": "golang.org/x/sync",
+      "version": "v0.24.0",
+      "local": false
+    },
+    {
+      "path": "golang.org/x/sys",
+      "version": "v0.49.0",
+      "local": false
+    },
+    {
+      "path": "golang.org/x/telemetry",
+      "version": "v0.0.0-20261010193011-f71dc92da45e",
+      "local": false
+    },
+    {
+      "path": "golang.org/x/term",
+      "version": "v0.47.0",
+      "local": false
+    },
+    {
+      "path": "golang.org/x/text",
+      "version": "v0.43.0",
+      "local": false
+    },
+    {
+      "path": "golang.org/x/tools",
+      "version": "v0.52.0",
+      "local": false
+    },
+    {
+      "path": "golang.org/x/tools/go/expect",
+      "version": "v0.1.1-deprecated",
+      "local": false
+    },
+    {
+      "path": "golang.org/x/tools/go/packages/packagestest",
+      "version": "v0.1.1-deprecated",
+      "local": false
+    },
+    {
+      "path": "golang.org/x/vuln",
+      "version": "v1.9.0",
+      "local": false
+    },
+    {
+      "path": "golang.org/x/xerrors",
+      "version": "v0.0.0-20191204190536-9bdfabe68543",
+      "local": false
+    },
+    {
+      "path": "google.golang.org/appengine",
+      "version": "v1.4.0",
+      "local": false
+    },
+    {
+      "path": "google.golang.org/genproto",
+      "version": "v0.0.0-20200526211855-cb27e3aa2013",
+      "local": false
+    },
+    {
+      "path": "google.golang.org/grpc",
+      "version": "v1.33.2",
+      "local": false
+    },
+    {
+      "path": "google.golang.org/protobuf",
+      "version": "v1.25.0",
+      "local": false
+    },
+    {
+      "path": "gopkg.in/check.v1",
+      "version": "v1.0.0-20190902080502-41f04d3bba15",
+      "local": false
+    },
+    {
+      "path": "gopkg.in/yaml.v2",
+      "version": "v2.2.4",
+      "local": false
+    },
+    {
+      "path": "gopkg.in/yaml.v3",
+      "version": "v3.0.1",
+      "local": false
+    },
+    {
+      "path": "honnef.co/go/tools",
+      "version": "v0.0.0-20190523083050-ea95bdfd59fc",
+      "local": false
+    },
+    {
+      "path": "k8s.io/klog/v2",
+      "version": "v2.90.1",
+      "local": false
+    },
+    {
+      "path": "rsc.io/script",
+      "version": "v0.0.2",
+      "local": false
+    }
+  ],
+  "dependency_gate": {
+    "status": "pending measurement"
+  },
+  "checksum_verification": "The dependency gate runs go mod verify against cached hashes with public proxy and checksum defaults. No fresh-cache checksum-database audit is claimed.",
+  "npm": {
+    "status": "not applicable to the current skeleton",
+    "lockfile": null,
+    "transitive_package_count": null,
+    "reason": "The Claude adapter and its lockfile do not exist yet; npm acceptance remains deferred."
+  }
+}

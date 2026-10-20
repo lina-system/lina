@@ -1,0 +1,152 @@
+// SPDX-License-Identifier: Apache-2.0
+package archtest
+
+import (
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"io/fs"
+	"path"
+	"path/filepath"
+	"strconv"
+	"strings"
+)
+
+const rootModule = "github.com/thisisjun786/lina"
+
+// C-40 assigns package families, including their subpackages, to these layers.
+var layers = func() map[string]int {
+	result := make(map[string]int)
+	for i, names := range []string{
+		"canon eventstore secrets ctlfiles guard ids",
+		"authority lifecycle budget manifest",
+		"ledger inbox agents memory retract skills records assets work timers plugins channels accounts",
+		"lane assemble compaction turn runs reply results modelpath exec exchange gateway worker reactor review ghclient progress waiting importer backup update recover clientsrv jobs mcphost",
+		"boot supervise",
+	} {
+		for _, name := range strings.Fields(names) {
+			result[name] = i + 1
+		}
+	}
+	return result
+}()
+
+// C-35 names the kit packages Node can use; C-02 also permits the standard library.
+var nodeKit = map[string]bool{
+	"grant": true, "lease": true, "sandbox": true, "proc": true,
+	"protocol": true, "rpc": true, "diag": true, "secret": true,
+}
+
+func within(name, prefix string) bool {
+	return name == prefix || strings.HasPrefix(name, prefix+"/")
+}
+
+func family(name, prefix string) string {
+	return strings.Split(strings.TrimPrefix(name, prefix+"/"), "/")[0]
+}
+
+// violations checks production sources under root against the C-40 import rules.
+// Parse every build variant: a Linux run must also catch a forbidden Windows import.
+// Test harnesses and fixture/vendor trees are not LINA production packages.
+func violations(root string, standard map[string]bool) ([]string, error) {
+	var failures []string
+	err := filepath.WalkDir(root, func(filename string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			if filename != root && (strings.HasPrefix(entry.Name(), ".") || entry.Name() == "testdata" || entry.Name() == "vendor" || entry.Name() == "third_party" || entry.Name() == "node_modules") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(filename, ".go") || strings.HasSuffix(filename, "_test.go") {
+			return nil
+		}
+		relative, err := filepath.Rel(root, filename)
+		if err != nil {
+			return err
+		}
+		name := filepath.ToSlash(relative)
+		owner := path.Dir(name)
+		positions := token.NewFileSet()
+		file, err := parser.ParseFile(positions, filename, nil, 0)
+		if err != nil {
+			return err
+		}
+		report := func(pos token.Pos, rule, detail string) {
+			failures = append(failures, fmt.Sprintf("%s:%d: %s: %s", name, positions.Position(pos).Line, rule, detail))
+		}
+		core := within(owner, "internal/core")
+		ownerFamily := family(owner, "internal/core")
+		if core && layers[ownerFamily] == 0 {
+			report(file.Package, "unmapped", owner+" has no C-40 layer")
+		}
+		osNames := make(map[string]bool)
+		dotOS := false
+		for _, spec := range file.Imports {
+			imported, err := strconv.Unquote(spec.Path.Value)
+			if err != nil {
+				return err
+			}
+			if within(imported, rootModule+"/internal/core") {
+				target := family(imported, rootModule+"/internal/core")
+				if layers[target] == 0 {
+					report(spec.Pos(), "unmapped", imported+" has no C-40 layer")
+				} else if core && ownerFamily != target && layers[target] >= layers[ownerFamily] {
+					report(spec.Pos(), "layer", fmt.Sprintf("%s (L%d) imports %s (L%d); imports must run downward", ownerFamily, layers[ownerFamily], target, layers[target]))
+				}
+			}
+			if within(owner, "kit") && within(imported, rootModule) && !within(imported, rootModule+"/kit") {
+				report(spec.Pos(), "kit", "kit must not import the root module: "+imported)
+			}
+			if (within(imported, "github.com/charmbracelet") || within(imported, "charm.land")) && !within(owner, "internal/tui/term") && !within(owner, "internal/tui/ui") {
+				report(spec.Pos(), "Charm", "only internal/tui/term and internal/tui/ui may import "+imported)
+			}
+			if imported == "os/exec" && !within(owner, "kit/proc") && !within(owner, "kit/sandbox") {
+				report(spec.Pos(), "os/exec", "process creation belongs in kit/proc or kit/sandbox")
+			}
+			if within(owner, "internal/node") || within(owner, "cmd/lina-node") {
+				allowedKit := within(imported, rootModule+"/kit") && nodeKit[family(imported, rootModule+"/kit")]
+				if !standard[imported] && !allowedKit {
+					report(spec.Pos(), "Node", "only the standard library and C-35 kit packages are allowed: "+imported)
+				}
+			}
+			if imported == "os" {
+				alias := "os"
+				if spec.Name != nil {
+					alias = spec.Name.Name
+				}
+				dotOS = alias == "."
+				osNames[alias] = alias != "_" && alias != "."
+			}
+		}
+		if !within(owner, "kit/proc") {
+			// Resolve import aliases and local shadowing, and catch taking the function as
+			// a value as well as calling it. Selector fields are not dot-import references.
+			selectors := make(map[*ast.Ident]bool)
+			ast.Inspect(file, func(node ast.Node) bool {
+				if selector, ok := node.(*ast.SelectorExpr); ok {
+					selectors[selector.Sel] = true
+				}
+				return true
+			})
+			ast.Inspect(file, func(node ast.Node) bool {
+				switch value := node.(type) {
+				case *ast.SelectorExpr:
+					if ident, ok := value.X.(*ast.Ident); ok && ident.Obj == nil && osNames[ident.Name] && value.Sel.Name == "Environ" {
+						report(value.Pos(), "os.Environ", "environment capture belongs in kit/proc")
+					}
+				case *ast.Ident:
+					if dotOS && value.Name == "Environ" && value.Obj == nil && !selectors[value] {
+						report(value.Pos(), "os.Environ", "environment capture belongs in kit/proc")
+					}
+				}
+				return true
+			})
+		}
+		return nil
+	})
+	return failures, err
+}

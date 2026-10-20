@@ -5,7 +5,68 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { git as runGit } from '../git.mjs';
-import { kind, scopeFor } from './scope.mjs';
+import { componentRegistry, kind, scopeFor } from './scope.mjs';
+
+test('evidence records are documents, including additions, edits, renames and deletions', t => {
+  const r = repository(t);
+  mkdirSync(join(r.cwd, 'evidence'));
+  for (const file of ['v6-supply-chain.json', 'v7-dev-loop.json']) {
+    const name = `evidence/${file}`;
+    const old = r.git('rev-parse', 'HEAD');
+    writeFileSync(join(r.cwd, name), '{}\n');
+    const added = r.commit();
+    writeFileSync(join(r.cwd, name), '{"result":"pass"}\n');
+    const modified = r.commit();
+    renameSync(join(r.cwd, name), join(r.cwd, 'evidence/renamed.json'));
+    const renamed = r.commit();
+    rmSync(join(r.cwd, 'evidence/renamed.json'));
+    const deleted = r.commit();
+    for (const [base, head] of [[old, added], [added, modified], [modified, renamed], [renamed, deleted]]) {
+      const scope = r.classify(head, { base });
+      assert.equal(scope.reason, 'documents-only');
+      assert.equal(scope.automation, false);
+      assert.equal(scope.components, false);
+      assert.deepEqual(scope.unmapped, []);
+    }
+  }
+  assert.equal(kind('evidence/nested/measurement.json'), 'docs');
+  assert.equal(kind('evidence/README.md'), 'docs');
+  assert.equal(kind('evidence/run.mjs'), 'unmapped');
+  assert.equal(kind('evidence-other/measurement.json'), 'unmapped');
+});
+
+test('every Go component change also selects the architecture test', t => {
+  const r = repository(t);
+  const files = {
+    'go.mod': 'module example.invalid/lina\ngo 1.27\ntoolchain go1.27.3\n',
+    'kit/go.mod': 'module example.invalid/lina/kit\ngo 1.27\ntoolchain go1.27.3\n',
+    'go.work': 'go 1.27\ntoolchain go1.27.3\nuse (\n.\n./kit\n)\n',
+    'doc.go': 'package lina\n',
+    'kit/doc.go': 'package kit\n',
+    'cmd/lina/main.go': 'package main\nfunc main() {}\n',
+    'cmd/lina-node/main.go': 'package main\nfunc main() {}\n',
+    'internal/archtest/imports_test.go': 'package archtest\n',
+  };
+  for (const [name, content] of Object.entries(files)) {
+    mkdirSync(join(r.cwd, name, '..'), { recursive: true });
+    writeFileSync(join(r.cwd, name), content);
+  }
+  const base = r.commit();
+  for (const [path, component] of [
+    ['kit/doc.go', 'kit'], ['cmd/lina/main.go', 'lina'], ['cmd/lina-node/main.go', 'lina-node'],
+    ['internal/archtest/imports_test.go', 'archtest'],
+  ]) {
+    writeFileSync(join(r.cwd, path), files[path] + '// edited\n');
+    const scope = r.classify('HEAD', { base });
+    assert.deepEqual(scope.selectedComponents, [...new Set([component, 'archtest'])]);
+    assert.equal(scope.automation, false);
+    assert.deepEqual(scope.unmapped, []);
+    writeFileSync(join(r.cwd, path), files[path]);
+  }
+  assert.deepEqual(componentRegistry.find(component => component.name === 'archtest').packages, ['./internal/archtest/...']);
+  writeFileSync(join(r.cwd, 'README.md'), '# Docs\n');
+  assert.equal(r.classify('HEAD', { base }).components, false);
+});
 
 for (const path of ['protocol/schema/client/1.0/envelope.json', 'protocol/fixtures/client/1.0/hello.json']) {
   test(`${path} selects kit and its consumers`, t => {

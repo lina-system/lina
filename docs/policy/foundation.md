@@ -42,7 +42,7 @@ The executable path map is `scripts/verify/scope.mjs`.
 
 | Change | Selection |
 | --- | --- |
-| Only explicitly listed root documents or Markdown directly under `docs/policy/` or `docs/design/` | `docs`; no automation installation or test run. |
+| Only explicitly listed root documents, Markdown directly under `docs/policy/` or `docs/design/`, or JSON and Markdown records under `evidence/` | `docs`; no automation installation or test run. |
 | A verification script, `.github/workflows/*.yml` or `*.yaml`, `.node-version`, or shared repository configuration | `docs`, `automation`, and every registered Go component. |
 | Empty or unavailable diff | `docs`, `automation`, and every registered Go component; never assume documentation-only. |
 | An unmapped path in the changed paths or candidate tree | `docs`, `automation`, and every registered Go component, but the gate refuses to pass until its verification is registered. |
@@ -101,8 +101,30 @@ The initial registry is:
 | `kit` | `kit/` | `kit/` | `./...` |
 | `lina` | `cmd/lina/`, root `doc.go` | root | `.`, `./cmd/lina/...` |
 | `lina-node` | `cmd/lina-node/` | root | `./cmd/lina-node/...` |
+| `archtest` | `internal/archtest/` | root | `./internal/archtest/...` |
 
 The scope script reads package imports and test imports with `go list` using the pinned toolchain, so a change to one component also selects every component that depends on it, transitively. It includes uncommitted changes and untracked files when checking the current checkout. Foundation rejects a candidate that is not checked out before invoking the scope script. Component-only changes run `docs` and the selected components; changes to verification scripts, shared configuration, module manifests or workspace files select every component. Selection and the evidence note record the selected component names. Until a component is registered, its paths remain unmapped and the gate refuses to pass. Register a vendored tree under `third_party/<name>/` the same way as any other component. `go test` runs its upstream tests unchanged.
+
+### Architecture imports
+
+Whenever a Go component is selected, `components` also includes `archtest`. Its source scan has no Go import edge to the packages it checks, so selection adds that dependency explicitly. It adds no gate. Run it directly with `go test ./internal/archtest/...`.
+
+The test enforces the import rules in [go-core.md C-40](../design/go-core.md#processes-binaries-and-packages) on production Go source in both modules, including inactive platform and build-tag variants. It parses imports and syntax without loading imported dependencies. Test harnesses (`*_test.go`), `testdata`, vendored trees, hidden directories and `node_modules` are excluded. Command smoke tests can therefore build and launch their binaries independently of the product's process wrappers.
+
+- Core package families and their descendants use the C-40 layer table. A package under `internal/core` absent from that table fails as unmapped. Imports between different families must go strictly downward, including the ban on imports between L3 stores. Imports within one family are allowed; Go checks cycles.
+- Kit cannot import the root module. Charm imports (`github.com/charmbracelet/` and `charm.land/`) belong only to `internal/tui/term` and `internal/tui/ui`.
+- `os/exec` belongs only to `kit/proc` and `kit/sandbox`; references to `os.Environ`, including aliases, dot imports and function values, belong only to `kit/proc`.
+- `internal/node` and `cmd/lina-node` may import the Go standard library and the C-35 kit families `grant`, `lease`, `sandbox`, `proc`, `protocol`, `rpc`, `diag` and `secret`.
+
+Diagnostics name the source file, line and violated rule. Behavioral fixtures exercise forbidden and permitted imports; a disposable module proves that a seeded forbidden import fails the ordinary Go test command and that removing it restores success. This import check does not establish the separate C-40 purity, secret-reveal or view-field constraints.
+
+### Acceptance evidence
+
+[V6](../../evidence/v6-supply-chain.json) records the root `go.sum` digest, the workspace module count (including and excluding the two local modules), the selected module versions and the current Go dependency-gate result. There is no Claude adapter or npm lockfile yet; its supply-chain baseline remains unmeasured. Cached `go mod verify` does not independently revalidate every sum against the checksum database.
+
+[V7](../../evidence/v7-dev-loop.json) records budgets declared before measurement, an edit followed by `go build`, `go vet` and uncached `go test` for the affected Go package, and `node scripts/foundation.mjs --full`. The initial budgets are 20 seconds for the affected-package loop and 60 seconds for full verification including vulnerability and license scans. Records identify the source, tool versions, cache conditions, commands, durations and outcomes. An over-budget measurement remains a failure; it is not hidden by raising the budget after the run.
+
+JSON and Markdown under `evidence/` are documents paths. Updating an evidence record alone selects `docs`; the record is historical evidence, not a replacement for running checks on a changed candidate. Executable files in that directory remain unmapped.
 
 ### Path mapping
 
@@ -120,12 +142,12 @@ Markdown under `third_party/` is upstream content. The docs check skips it becau
 
 `dependencies` and `components` run after `selection`, in parallel with `docs` and `automation`. Selection lists the selected components. The gate evaluates both checks like the others: a selected check must report `success`, and an unselected check must report `skipped`.
 
-- **dependencies:** currently checks matching Go and exact toolchain declarations in both module manifests and `go.work`, exact `require` and `replace` versions, local replacement boundaries, and `go mod verify` in both modules. Module and workspace manifest or sum changes select it and every active component; full verification and automation or shared-configuration changes select it when Go manifests or sums are present or removed. Prose-only and component-source-only changes skip it. The gate requires success when selected and an explicit skipped result otherwise, and the evidence records its result, duration and toolchain. The remaining checks, including `govulncheck`, are tracked in the [dependency policy](dependencies.md#foundation-enforcement). It runs without credentials, with an isolated home and user configuration disabled, and keeps Go's public proxy and checksum defaults. Its behavioral tests inject every Go command and use no network.
+- **dependencies:** checks matching Go and exact toolchain declarations in both module manifests and `go.work`, exact `require` and `replace` versions, local replacement boundaries, `go mod verify`, vulnerability scans, licenses and notices in both modules. Module and workspace manifest or sum changes select it and every active component; full verification and automation or shared-configuration changes select it when Go manifests or sums are present or removed. Prose-only and component-source-only changes skip it. The gate requires success when selected and an explicit skipped result otherwise, and the evidence records its result, duration and toolchain. Coverage and remaining checks are listed in the [dependency policy](dependencies.md#foundation-enforcement). It runs without credentials, with an isolated home and user configuration disabled, and keeps Go's public proxy and checksum defaults. Its behavioral tests inject every Go command and use no network.
 - **components:** uses Go from the shared `toolchain` line and runs `go build`, `go vet`, the `exhaustive` analyzer and `go test` with `-mod=readonly` for each selected component, in the directory of the module that holds it. The analyzer is a module tool pinned in `go.mod`, like `govulncheck` ([dependencies.md](dependencies.md)), and fails a switch over a closed set of variants that misses one. Build checks use the produced binary. Short component checks share one step and its module download. A component gets its own parallel step only when a measured run shows that the shared step is the bottleneck.
 
 The component check requires matching `go` and exact `toolchain` directives in both module manifests and `go.work`, sets `GOTOOLCHAIN` to that release, and checks the Go version actually used. It verifies module sums before building, including the root module that supplies the analyzer when only kit is selected. Commands sharing a module run together with their package patterns. Go subprocesses use an isolated home directory and an allowlist of environment variables, with user Go/Git configuration disabled; proxy and checksum settings retain Go's defaults. All Go builds and analyzer package loading use `-mod=readonly`, and builds use `CGO_ENABLED=0`.
 
-Component registration implements the `components` gate. The separate `dependencies` check implements the Go configuration, exact-pin and module-verification checks. Neither check establishes the full dependency policy, including vulnerability and license scanning. `go mod verify` checks downloaded module contents against cached hashes; readonly component builds also enforce the manifest and checksum inputs needed by those builds.
+Component registration implements the `components` gate. The separate `dependencies` check implements the current Go dependency policy checks, including vulnerability and license scanning. Neither check establishes the still-deferred npm or vendored-tree checks. `go mod verify` checks downloaded module contents against cached hashes; readonly component builds also enforce the manifest and checksum inputs needed by those builds.
 
 Both checks reuse the machine's Go module and npm download caches, which `go.sum` and lockfile integrity verify, and never cache `node_modules` or results: `go test` runs with `-count=1`, so no cached test result counts. Adding either check changes the full-mode run, so the change that registers the first component records a new full-mode measurement and bound in the timing table.
 
