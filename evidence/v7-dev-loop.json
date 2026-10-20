@@ -42,5 +42,18 @@
     "node": "v24.20.0",
     "actionlint": "1.7.12",
     "cache": "Warm module and build caches; the Go source edit invalidates the affected package. go test uses -count=1. Isolated home, no credentials."
-  }
+  },
+  "earlier_attempts": [
+    {
+      "started_at": "2026-10-20T17:31:05.858Z",
+      "source_commit": "ea9c5f8a9e8cb197d66624a0cfbb534f48b14307",
+      "clean_worktree": false,
+      "command": "node scripts/foundation.mjs --full",
+      "seconds": 9.714,
+      "exit_code": 1,
+      "within_budget": true,
+      "output_sha256": "9a0a2eeb8581f4b07fc17c749345d981f8282132288105b9b3f09c1477a95bfc",
+      "failure": "All checks passed, but the gate rejected an unregistered component name. The final registration uses the existing lina component."
+    }
+  ]
 }

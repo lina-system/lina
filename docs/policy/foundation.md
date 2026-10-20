@@ -99,15 +99,14 @@ The initial registry is:
 | Component | Owned paths | Module | Package patterns |
 | --- | --- | --- | --- |
 | `kit` | `kit/` | `kit/` | `./...` |
-| `lina` | `cmd/lina/`, root `doc.go` | root | `.`, `./cmd/lina/...` |
+| `lina` | `cmd/lina/`, `internal/archtest/`, root `doc.go` | root | `.`, `./cmd/lina/...`, `./internal/archtest/...` |
 | `lina-node` | `cmd/lina-node/` | root | `./cmd/lina-node/...` |
-| `archtest` | `internal/archtest/` | root | `./internal/archtest/...` |
 
 The scope script reads package imports and test imports with `go list` using the pinned toolchain, so a change to one component also selects every component that depends on it, transitively. It includes uncommitted changes and untracked files when checking the current checkout. Foundation rejects a candidate that is not checked out before invoking the scope script. Component-only changes run `docs` and the selected components; changes to verification scripts, shared configuration, module manifests or workspace files select every component. Selection and the evidence note record the selected component names. Until a component is registered, its paths remain unmapped and the gate refuses to pass. Register a vendored tree under `third_party/<name>/` the same way as any other component. `go test` runs its upstream tests unchanged.
 
 ### Architecture imports
 
-Whenever a Go component is selected, `components` also includes `archtest`. Its source scan has no Go import edge to the packages it checks, so selection adds that dependency explicitly. It adds no gate. Run it directly with `go test ./internal/archtest/...`.
+Whenever a Go component is selected and `internal/archtest/` exists, `components` also includes `lina`, which runs the architecture test. Its source scan has no Go import edge to the packages it checks, so selection adds that dependency explicitly. It adds no component name or gate. Run it directly with `go test ./internal/archtest/...`.
 
 The test enforces the import rules in [go-core.md C-40](../design/go-core.md#processes-binaries-and-packages) on production Go source in both modules, including inactive platform and build-tag variants. It parses imports and syntax without loading imported dependencies. Test harnesses (`*_test.go`), `testdata`, vendored trees, hidden directories and `node_modules` are excluded. Command smoke tests can therefore build and launch their binaries independently of the product's process wrappers.
 

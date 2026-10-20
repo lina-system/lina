@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { git as runGit } from '../git.mjs';
 import { componentRegistry, kind, scopeFor } from './scope.mjs';
+import { evaluateGate } from './gate.mjs';
 
 test('evidence records are documents, including additions, edits, renames and deletions', t => {
   const r = repository(t);
@@ -54,16 +55,18 @@ test('every Go component change also selects the architecture test', t => {
   const base = r.commit();
   for (const [path, component] of [
     ['kit/doc.go', 'kit'], ['cmd/lina/main.go', 'lina'], ['cmd/lina-node/main.go', 'lina-node'],
-    ['internal/archtest/imports_test.go', 'archtest'],
+    ['internal/archtest/imports_test.go', 'lina'],
   ]) {
     writeFileSync(join(r.cwd, path), files[path] + '// edited\n');
     const scope = r.classify('HEAD', { base });
-    assert.deepEqual(scope.selectedComponents, [...new Set([component, 'archtest'])]);
+    assert.deepEqual(scope.selectedComponents, ['kit', 'lina', 'lina-node'].filter(name => name === component || name === 'lina'));
     assert.equal(scope.automation, false);
     assert.deepEqual(scope.unmapped, []);
+    const results = Object.fromEntries(['docs', 'automation', 'dependencies', 'components'].map(name => [name, { result: scope[name] ? 'success' : 'skipped' }]));
+    assert.equal(evaluateGate(scope, { selection: { result: 'success' }, ...results }).result, 'success');
     writeFileSync(join(r.cwd, path), files[path]);
   }
-  assert.deepEqual(componentRegistry.find(component => component.name === 'archtest').packages, ['./internal/archtest/...']);
+  assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/archtest/...'));
   writeFileSync(join(r.cwd, 'README.md'), '# Docs\n');
   assert.equal(r.classify('HEAD', { base }).components, false);
 });

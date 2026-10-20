@@ -14,9 +14,8 @@ const modules = new Set(['go.mod', 'go.sum', 'go.work', 'go.work.sum', 'kit/go.m
 
 export const componentRegistry = [
   { name: 'kit', module: 'kit', directories: ['kit/', 'protocol/schema/', 'protocol/fixtures/'], files: [], packages: ['./...'] },
-  { name: 'lina', module: '.', directories: ['cmd/lina/'], files: ['doc.go'], packages: ['.', './cmd/lina/...'], binary: 'lina' },
+  { name: 'lina', module: '.', directories: ['cmd/lina/', 'internal/archtest/'], files: ['doc.go'], packages: ['.', './cmd/lina/...', './internal/archtest/...'], binary: 'lina' },
   { name: 'lina-node', module: '.', directories: ['cmd/lina-node/'], files: [], packages: ['./cmd/lina-node/...'], binary: 'lina-node' },
-  { name: 'archtest', module: '.', directories: ['internal/archtest/'], files: [], packages: ['./internal/archtest/...'] },
 ];
 
 function componentOf(path) {
@@ -145,7 +144,7 @@ export function scopeFor({ base = '', head, full = false, cwd = process.cwd() })
   }
   // Architecture scans source files, so Go's import graph cannot express its dependency
   // on every component. Run it with any selected Go component, including kit-only changes.
-  if (selected.size && active.some(component => component.name === 'archtest')) selected.add('archtest');
+  if (selected.size && inventory.some(path => path.startsWith('internal/archtest/'))) selected.add('lina');
   const selectedComponents = active.map(component => component.name).filter(name => selected.has(name));
   return {
     mode: docsOnly ? 'docs' : 'full', reason,
