@@ -62,10 +62,39 @@ test('an explicit range is measured as given', (t) => {
   const first = sb.g(work, 'rev-parse', 'HEAD');
   const second = sb.commit(work, 'docs: update', { 'README.md': '# Fixture\n\n[guide](docs/design/guide.md)\n\nText.\n' });
   const result = foundation(sb, work, ['--range', `${first}..${second}`]);
+  assert.equal(result.status, 0, result.stderr);
   assert.equal(result.evidence.base, first);
   assert.equal(result.evidence.head, second);
   assert.equal(foundation(sb, work, ['--range', 'nonsense']).status, 1);
   assert.equal(foundation(sb, work, ['--full', '--range', `${first}..${second}`]).status, 1);
+});
+
+test('a range naming a different candidate fails selection before running checks', (t) => {
+  const sb = sandbox(t);
+  const { work } = developmentRepository(sb);
+  const checkout = sb.g(work, 'rev-parse', 'HEAD');
+  assert.equal(foundation(sb, work, ['--full', '--no-note']).status, 0);
+  const base = sb.commit(work, 'docs: base', { 'README.md': '# Base\n' });
+  const candidate = sb.commit(work, 'docs: broken candidate', { 'README.md': '[missing](missing.md)\n' });
+  sb.g(work, 'checkout', '-q', '--detach', checkout);
+
+  for (const flags of [[], ['--no-note']]) {
+    const result = foundation(sb, work, ['--range', `${base}..${candidate}`, ...flags]);
+    assert.equal(result.status, 1, result.stdout);
+    assert.equal(result.evidence.result, 'failure');
+    assert.equal(result.evidence.head, candidate);
+    assert.deepEqual(outcomes(result.evidence), { selection: 'failure' });
+    assert.match(result.stderr, /check out the candidate first/i);
+    assert.equal(result.evidence.note, 'not written');
+  }
+  assert.notEqual(run('git', ['notes', '--ref=refs/notes/foundation', 'show', candidate], { cwd: work, env: sb.env }).status, 0);
+
+  // Once checked out, the same candidate reaches its real failing docs check.
+  sb.g(work, 'checkout', '-q', '--detach', candidate);
+  const result = foundation(sb, work, ['--range', `${base}..${candidate}`, '--no-note']);
+  assert.equal(result.status, 1);
+  assert.equal(result.evidence.checks.selection.result, 'success');
+  assert.equal(result.evidence.checks.docs.result, 'failure');
 });
 
 test('a broken link fails the docs check, exits non-zero and writes no note', (t) => {

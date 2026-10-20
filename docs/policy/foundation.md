@@ -8,7 +8,7 @@
 node scripts/foundation.mjs [--range <base>..<head>] [--full] [--no-note]
 ```
 
-- `--range <base>..<head>` classifies the diff between two commits. Without it, the base is the commit the checked-out change was developed on: its merge base with `dev`, or the previous `dev` head when the checkout is `dev` itself.
+- `--range <base>..<head>` classifies the diff between two commits. The head must resolve to the checked-out commit; otherwise selection fails and no checks run. Check out the candidate first. Without the option, the base is the commit the checked-out change was developed on: its merge base with `dev`, or the previous `dev` head when the checkout is `dev` itself.
 - `--full` runs every current check, regardless of changed paths.
 - `--no-note` skips writing the evidence note.
 
@@ -32,7 +32,7 @@ Everything runs in one process. `selection` records the exact base and candidate
 
 ## Evidence
 
-When `foundation` passes on a clean checkout of the candidate commit, it writes its evidence as a JSON note on that commit under `refs/notes/foundation`: the head and base commits, the mode and selection reason, each check's result and duration, and the versions of the tools that ran. A run on a worktree with uncommitted changes, or on a candidate other than the checked-out commit, reports its result and writes no note.
+When `foundation` passes on a clean checkout of the candidate commit, it writes its evidence as a JSON note on that commit under `refs/notes/foundation`: the head and base commits, the mode and selection reason, each check's result and duration, and the versions of the tools that ran. A run on a worktree with uncommitted changes reports its result and writes no note. A candidate other than the checked-out commit fails selection without running checks or writing a note.
 
 The owner's local [integration script](integration.md) pushes the notes with `dev`. Pull request CI reports a GitHub check and writes no note. A note saves time: a [release](releases.md) reads it for the exact commit and, when it is missing or does not show a passing run of that commit, runs `foundation` again on that commit in a clean worktree.
 
@@ -102,7 +102,7 @@ The initial registry is:
 | `lina` | `cmd/lina/`, root `doc.go` | root | `.`, `./cmd/lina/...` |
 | `lina-node` | `cmd/lina-node/` | root | `./cmd/lina-node/...` |
 
-The scope script reads package imports and test imports with `go list` using the pinned toolchain, so a change to one component also selects every component that depends on it, transitively. It includes uncommitted changes and untracked files when checking the current checkout. A candidate that is not checked out conservatively selects all its registered components instead of using another commit's imports. Component-only changes run `docs` and the selected components; changes to verification scripts, shared configuration, module manifests or workspace files select every component. Selection and the evidence note record the selected component names. Until a component is registered, its paths remain unmapped and the gate refuses to pass. Register a vendored tree under `third_party/<name>/` the same way as any other component. `go test` runs its upstream tests unchanged.
+The scope script reads package imports and test imports with `go list` using the pinned toolchain, so a change to one component also selects every component that depends on it, transitively. It includes uncommitted changes and untracked files when checking the current checkout. Foundation rejects a candidate that is not checked out before invoking the scope script. Component-only changes run `docs` and the selected components; changes to verification scripts, shared configuration, module manifests or workspace files select every component. Selection and the evidence note record the selected component names. Until a component is registered, its paths remain unmapped and the gate refuses to pass. Register a vendored tree under `third_party/<name>/` the same way as any other component. `go test` runs its upstream tests unchanged.
 
 ### Path mapping
 

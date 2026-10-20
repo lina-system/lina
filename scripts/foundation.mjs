@@ -6,7 +6,8 @@
 //
 //   node scripts/foundation.mjs [--range <base>..<head>] [--full] [--no-note]
 //
-// --range  measures the change from <base> to <head>. The default measures the checked-out commit
+// --range  measures the change from <base> to <head>; <head> must be the checked-out commit.
+//          The default measures the checked-out commit
 //          from the commit it was developed on: the merge base with dev, or the first parent when
 //          the checkout is dev itself (the previous dev head).
 // --full   runs every check regardless of the changed paths and checks the whitespace of HEAD.
@@ -129,6 +130,9 @@ export async function foundation({ cwd = process.cwd(), range, full = false, not
   let selectionOutput = '';
   try {
     if (!resolvedHead) throw new Error(`Unknown candidate revision: ${requestedHead}`);
+    if (resolvedHead !== resolveCommit(root, 'HEAD')) {
+      throw new Error(`Candidate ${resolvedHead} is not the checked-out HEAD; check out the candidate first.`);
+    }
     const base = full ? '' : requestedBase ?? defaultBase(root, resolvedHead);
     scope = scopeFor({ base, head: resolvedHead, full, cwd: root });
     const whitespace = whitespaceCheck(root, scope);
