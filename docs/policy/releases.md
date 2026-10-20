@@ -14,6 +14,18 @@ node scripts/release.mjs --commit <sha> --tag <v0.0.1-alpha.YYYYMMDD.N> --notes-
 
 Without `--publish`, the script validates and changes no tag, release, or branch. Pass `--publish` only when the owner has approved that release.
 
+## Generate release notes
+
+```sh
+node scripts/release-notes.mjs --from <tag or root> --to <sha> --out <file>
+```
+
+Use the previous release tag as `--from`, or the literal `root` for the first release. The range includes commits reachable from `--to` and excludes those already reachable from `--from`; `root` includes all history through `--to`. Fetch the relevant history and tags before running it. The script reads merge commits whose subjects start with `Merge pull request #N` and asks `gh pr view N --json title,labels` for each distinct pull request. It uses the current GitHub title and labels, so `gh` needs read access to this repository.
+
+Each pull request appears once as `title (#number)`, under these headings in order: Breaking changes, Features, Bug fixes, Decisions, Other. A title with `!` immediately before its first colon (such as `feat!:` or `fix(core)!:`) goes under Breaking changes regardless of its labels. Otherwise the exact type labels `feature`, `bug` and `decision` select the group, in that priority order when several are present. A pull request with none of those labels goes under Other. Empty groups are omitted; entries within each group follow Git's oldest-first topological order.
+
+An empty range, a range without matching pull request merges, an unknown revision or a failed metadata lookup exits non-zero and leaves any existing output file unchanged. Successful generation writes the Markdown file for `scripts/release.mjs --notes-file`. It adds no release gate; inspect the notes and include any migration or recovery guidance the release needs before requesting approval. The generator's tests use a stub `gh` and local Git repositories without network access.
+
 ## Validate
 
 Every run, with or without `--publish`, fetches `dev`, `main` and the tags from the remote and checks that:

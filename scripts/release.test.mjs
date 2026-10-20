@@ -53,7 +53,7 @@ esac
   const notesFile = join(sb.dir, 'notes.md');
   writeFileSync(notesFile, 'Release notes.\n');
   const logs = [];
-  const call = (options = {}) => release({ cwd: work, commit, tag: 'v0.1.0', notesFile, outDir: join(sb.dir, 'out'), log: (line) => logs.push(line), ...options });
+  const call = (options = {}) => release({ cwd: work, commit, tag: 'v0.0.1-alpha.20261020.1', notesFile, outDir: join(sb.dir, 'out'), log: (line) => logs.push(line), ...options });
   const ghCalls = () => readFileSync(ghLog, 'utf8').split('\n').filter(Boolean);
   const remoteRef = (ref) => sb.g(remote, 'rev-parse', '--verify', '--quiet', ref);
   const remoteHas = (ref) => git(remote, ['rev-parse', '--verify', '--quiet', ref], { env: sb.env }).status === 0;
@@ -62,11 +62,11 @@ esac
 
 const untouched = (s) => {
   assert.equal(s.remoteRef('refs/heads/main'), s.first);
-  assert.equal(s.remoteHas('refs/tags/v0.1.0'), false);
+  assert.equal(s.remoteHas('refs/tags/v0.0.1-alpha.20261020.1'), false);
   assert.equal(s.ghCalls().some((line) => line.startsWith('release create')), false);
 };
 
-test('the default is a dry run that checks and builds but publishes nothing', (t) => {
+test('the default dry run builds a dated alpha release and publishes nothing', (t) => {
   const s = setup(t);
   const summary = s.call();
   assert.equal(summary.mode, 'dry-run');
@@ -74,16 +74,18 @@ test('the default is a dry run that checks and builds but publishes nothing', (t
   assert.match(s.logs.join('\n'), /running foundation on a clean work tree/);
   untouched(s);
   const out = join(s.sb.dir, 'out');
-  assert.deepEqual(readdirSync(out).sort(), ['SHA256SUMS', 'lina-0.1.0-source.tar.gz', 'release-manifest.json']);
+  assert.deepEqual(readdirSync(out).sort(), ['SHA256SUMS', 'lina-0.0.1-alpha.20261020.1-source.tar.gz', 'release-manifest.json']);
   const manifest = JSON.parse(readFileSync(join(out, 'release-manifest.json'), 'utf8'));
+  assert.equal(manifest.tag, 'v0.0.1-alpha.20261020.1');
+  assert.equal(manifest.version, '0.0.1-alpha.20261020.1');
   assert.equal(manifest.commit, s.commit);
   assert.equal(manifest.tree, s.sb.g(s.work, 'rev-parse', `${s.commit}^{tree}`));
-  assert.equal(manifest.prerelease, false);
+  assert.equal(manifest.prerelease, true);
   assert.equal(manifest.foundation.result, 'success');
-  const archive = join(out, 'lina-0.1.0-source.tar.gz');
+  const archive = join(out, 'lina-0.0.1-alpha.20261020.1-source.tar.gz');
   assert.equal(manifest.artifacts[0].sha256, createHash('sha256').update(readFileSync(archive)).digest('hex'));
-  assert.match(readFileSync(join(out, 'SHA256SUMS'), 'utf8'), new RegExp(`${manifest.artifacts[0].sha256}  lina-0.1.0-source.tar.gz`));
-  assert.equal(run('tar', ['-tzf', archive], { cwd: out }).stdout.includes('lina-0.1.0/README.md'), true);
+  assert.ok(readFileSync(join(out, 'SHA256SUMS'), 'utf8').includes(`${manifest.artifacts[0].sha256}  lina-0.0.1-alpha.20261020.1-source.tar.gz\n`));
+  assert.equal(run('tar', ['-tzf', archive], { cwd: out }).stdout.includes('lina-0.0.1-alpha.20261020.1/README.md'), true);
   // A dry run leaves no evidence note behind and no extra work tree.
   assert.notEqual(git(s.work, ['notes', '--ref=refs/notes/foundation', 'show', s.commit], { env: s.sb.env }).status, 0);
   assert.equal(s.sb.g(s.work, 'worktree', 'list').split('\n').length, 1);
@@ -105,20 +107,20 @@ test('recorded foundation evidence for the exact tree is used without running fo
 
 test('publishing fast-forwards main, pushes the tag and creates the private release with its artifacts', (t) => {
   const s = setup(t);
-  const summary = s.call({ publish: true, tag: 'v0.1.0-rc.1' });
+  const summary = s.call({ publish: true });
   assert.equal(summary.mode, 'publish');
   assert.equal(s.remoteRef('refs/heads/main'), s.commit);
-  assert.equal(s.remoteRef('refs/tags/v0.1.0-rc.1'), s.commit);
+  assert.equal(s.remoteRef('refs/tags/v0.0.1-alpha.20261020.1'), s.commit);
   const create = s.ghCalls().find((line) => line.startsWith('release create'));
-  assert.ok(create.startsWith('release create v0.1.0-rc.1 '));
-  for (const fragment of ['lina-0.1.0-rc.1-source.tar.gz', 'release-manifest.json', 'SHA256SUMS', '--verify-tag', '--prerelease', `--notes-file ${s.notesFile}`]) {
+  assert.ok(create.startsWith('release create v0.0.1-alpha.20261020.1 '));
+  for (const fragment of ['lina-0.0.1-alpha.20261020.1-source.tar.gz', 'release-manifest.json', 'SHA256SUMS', '--verify-tag', '--prerelease', `--notes-file ${s.notesFile}`]) {
     assert.ok(create.includes(fragment), fragment);
   }
   assert.equal(s.ghCalls().filter((line) => line.startsWith('repo view')).length, 1);
   // A published evidence note exists for the exact commit because the rerun wrote it.
   assert.equal(JSON.parse(s.sb.g(s.work, 'notes', '--ref=refs/notes/foundation', 'show', s.commit)).result, 'success');
   // Tags are immutable: the same release cannot run twice.
-  assert.throws(() => s.call({ publish: true, tag: 'v0.1.0-rc.1', outDir: join(s.sb.dir, 'again') }), /already exists/);
+  assert.throws(() => s.call({ publish: true, outDir: join(s.sb.dir, 'again') }), /already exists/);
 });
 
 test('every failed condition stops before anything is pushed or published', (t) => {
@@ -135,6 +137,7 @@ test('every failed condition stops before anything is pushed or published', (t) 
     ['a short commit id', { commit: s.commit.slice(0, 12) }, /40-character/],
     ['an unknown commit', { commit: '1'.repeat(40) }, /not in this repository/],
     ['a bad tag', { tag: 'v1.0' }, /version such as/],
+    ['a tag with build metadata', { tag: 'v0.0.1-alpha.20261020.1+abc123' }, /--tag/],
     ['missing notes', { notesFile: undefined }, /--notes-file/],
     ['empty notes', { notesFile: emptyNotes }, /notes are empty/],
     ['a commit outside dev', { commit: localOnly }, /belong to dev/],
@@ -156,14 +159,14 @@ test('every failed condition stops before anything is pushed or published', (t) 
   s.sb.g(s.work, 'push', '-q', 'origin', `${s.first}:refs/heads/main`);
 
   // The tag exists on the remote, even on the same commit.
-  s.sb.g(s.work, 'push', '-q', 'origin', `${s.commit}:refs/tags/v0.1.0`);
+  s.sb.g(s.work, 'push', '-q', 'origin', `${s.commit}:refs/tags/v0.0.1-alpha.20261020.1`);
   assert.throws(() => s.call({ publish: true }), /already exists on origin/);
-  s.sb.g(s.work, 'push', '-q', 'origin', ':refs/tags/v0.1.0');
+  s.sb.g(s.work, 'push', '-q', 'origin', ':refs/tags/v0.0.1-alpha.20261020.1');
 
   // A local tag on another commit.
-  s.sb.g(s.work, 'tag', 'v0.1.0', s.first);
-  assert.throws(() => s.call({ publish: true }), /local tag v0.1.0 identifies a different commit/);
-  s.sb.g(s.work, 'tag', '-d', 'v0.1.0');
+  s.sb.g(s.work, 'tag', 'v0.0.1-alpha.20261020.1', s.first);
+  assert.throws(() => s.call({ publish: true }), /local tag .* identifies a different commit/);
+  s.sb.g(s.work, 'tag', '-d', 'v0.0.1-alpha.20261020.1');
 
   // A public repository.
   s.set('GH_PRIVATE', 'false');
@@ -188,15 +191,15 @@ test('a failed main push publishes nothing and the same release can run again', 
   rmSync(join(s.remote, 'reject-main'));
   s.call({ publish: true, outDir: join(s.sb.dir, 'second') });
   assert.equal(s.remoteRef('refs/heads/main'), s.commit);
-  assert.equal(s.remoteRef('refs/tags/v0.1.0'), s.commit);
+  assert.equal(s.remoteRef('refs/tags/v0.0.1-alpha.20261020.1'), s.commit);
 });
 
 test('a failed GitHub Release after the tag is reported with the command that completes it', (t) => {
   const s = setup(t);
   s.set('GH_FAIL', '1');
-  assert.throws(() => s.call({ publish: true }), (error) => /creating the GitHub Release failed/.test(error.message) && /gh release create v0\.1\.0 /.test(error.message));
+  assert.throws(() => s.call({ publish: true }), (error) => /creating the GitHub Release failed/.test(error.message) && error.message.includes('gh release create v0.0.1-alpha.20261020.1 '));
   assert.equal(s.remoteRef('refs/heads/main'), s.commit);
-  assert.equal(s.remoteRef('refs/tags/v0.1.0'), s.commit);
+  assert.equal(s.remoteRef('refs/tags/v0.0.1-alpha.20261020.1'), s.commit);
 });
 
 test('a named output directory must be empty so the release never deletes what it did not create', (t) => {
@@ -213,12 +216,13 @@ test('the command line is a dry run by default and ignores GIT_* variables of it
   const decoy = join(s.sb.dir, 'decoy');
   s.sb.g(s.sb.dir, 'init', '-q', decoy);
   s.sb.commit(decoy, 'decoy', { 'README.md': '# Decoy\n' });
-  const args = [join(scriptsDir, 'release.mjs'), '--commit', s.commit, '--tag', 'v0.2.0', '--notes-file', s.notesFile, '--out', join(s.sb.dir, 'cli-out')];
+  const args = [join(scriptsDir, 'release.mjs'), '--commit', s.commit, '--tag', 'v0.0.1-alpha.20261020.1', '--notes-file', s.notesFile, '--out', join(s.sb.dir, 'cli-out')];
   const env = { ...s.sb.env, GIT_DIR: join(decoy, '.git'), GIT_WORK_TREE: decoy };
   const result = run(process.execPath, args, { cwd: s.work, env });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(JSON.parse(result.stdout).mode, 'dry-run');
-  assert.equal(s.remoteHas('refs/tags/v0.2.0'), false);
+  assert.equal(JSON.parse(result.stdout).tag, 'v0.0.1-alpha.20261020.1');
+  assert.equal(s.remoteHas('refs/tags/v0.0.1-alpha.20261020.1'), false);
   const failed = run(process.execPath, args.slice(0, 1), { cwd: s.work, env });
   assert.equal(failed.status, 1);
   assert.match(failed.stderr, /40-character/);
