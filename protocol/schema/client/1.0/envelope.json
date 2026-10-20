@@ -1,0 +1,473 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Client 1.0 handshake envelope skeleton",
+  "description": "Only hello, welcome and error are implemented here. G1-17 adds the full client schema, generated types and conformance runner.",
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "$ref": "#/$defs/protocol"
+    },
+    "kind": {
+      "enum": [
+        "hello",
+        "welcome",
+        "error"
+      ]
+    },
+    "message_id": {
+      "type": "string"
+    },
+    "attempt_id": {
+      "type": "string"
+    },
+    "reply_to": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "sender": {
+      "$ref": "#/$defs/sender"
+    },
+    "epoch": {
+      "$ref": "#/$defs/epoch"
+    },
+    "sent_at": {
+      "$ref": "#/$defs/utc"
+    },
+    "idempotency_key": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "effect_state": {
+      "$ref": "#/$defs/effect_state"
+    },
+    "receipt_ref": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/receipt_ref"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "source_refs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/source_ref"
+      }
+    },
+    "error": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/error"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "payload": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "protocol",
+    "kind",
+    "message_id",
+    "attempt_id",
+    "reply_to",
+    "sender",
+    "epoch",
+    "sent_at",
+    "idempotency_key",
+    "effect_state",
+    "receipt_ref",
+    "source_refs",
+    "error",
+    "payload"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "hello"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/hello"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "welcome"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/welcome"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "error"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/error_payload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "anyOf": [
+          {
+            "properties": {
+              "kind": {
+                "const": "error"
+              }
+            }
+          },
+          {
+            "properties": {
+              "effect_state": {
+                "enum": [
+                  "refused",
+                  "failed"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "then": {
+        "properties": {
+          "error": {
+            "$ref": "#/$defs/error"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "version": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
+      "not": {
+        "pattern": "\\s"
+      }
+    },
+    "epoch": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]{1}|1844674407370955161[0-4]|18446744073709551615)$",
+      "not": {
+        "pattern": "\\s"
+      }
+    },
+    "utc": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|\\+00:00)$",
+      "not": {
+        "pattern": "\\s"
+      }
+    },
+    "party": {
+      "type": "string",
+      "enum": [
+        "core",
+        "client",
+        "node"
+      ]
+    },
+    "effect_state": {
+      "type": "string",
+      "enum": [
+        "none",
+        "refused",
+        "failed",
+        "applied",
+        "cancelled",
+        "unknown"
+      ]
+    },
+    "error_code": {
+      "type": "string",
+      "enum": [
+        "unsupported_combination",
+        "capability_not_negotiated",
+        "malformed",
+        "stale_epoch",
+        "stale_revision",
+        "not_authorized",
+        "out_of_scope",
+        "duplicate",
+        "unavailable"
+      ]
+    },
+    "protocol": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "const": "client"
+        },
+        "version": {
+          "const": "1.0"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "sender": {
+      "type": "object",
+      "properties": {
+        "party": {
+          "$ref": "#/$defs/party"
+        },
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "party",
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "receipt_ref": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "receipt"
+        },
+        "id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    "source_ref": {
+      "type": "object",
+      "properties": {
+        "origin": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "string"
+        },
+        "locator": {
+          "type": "string"
+        },
+        "observed_at": {
+          "$ref": "#/$defs/utc"
+        },
+        "observed_by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "origin",
+        "namespace",
+        "id",
+        "revision",
+        "locator",
+        "observed_at",
+        "observed_by"
+      ],
+      "additionalProperties": false
+    },
+    "error": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/error_code"
+        },
+        "detail": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "detail"
+      ],
+      "additionalProperties": false
+    },
+    "capability": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "$ref": "#/$defs/version"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "agent": {
+      "type": "object",
+      "properties": {
+        "agent_id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "preset": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "agent_id",
+        "name",
+        "preset"
+      ],
+      "additionalProperties": false
+    },
+    "hello": {
+      "type": "object",
+      "properties": {
+        "party": {
+          "const": "client"
+        },
+        "id": {
+          "type": "string"
+        },
+        "product_version": {
+          "type": "string"
+        },
+        "protocol_versions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/version"
+          },
+          "minItems": 1
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/capability"
+          }
+        }
+      },
+      "required": [
+        "party",
+        "id",
+        "product_version",
+        "protocol_versions",
+        "capabilities"
+      ],
+      "additionalProperties": false
+    },
+    "welcome": {
+      "type": "object",
+      "properties": {
+        "protocol_version": {
+          "const": "1.0"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/capability"
+          }
+        },
+        "main_id": {
+          "type": "string"
+        },
+        "epoch": {
+          "$ref": "#/$defs/epoch"
+        },
+        "person_id": {
+          "type": "string"
+        },
+        "agents": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/agent"
+          }
+        }
+      },
+      "required": [
+        "protocol_version",
+        "capabilities",
+        "main_id",
+        "epoch",
+        "person_id",
+        "agents"
+      ],
+      "additionalProperties": false
+    },
+    "error_payload": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    }
+  }
+}

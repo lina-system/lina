@@ -13,7 +13,7 @@ const configuration = new Set(['.editorconfig', '.gitattributes', '.gitignore', 
 const modules = new Set(['go.mod', 'go.sum', 'go.work', 'go.work.sum', 'kit/go.mod', 'kit/go.sum']);
 
 export const componentRegistry = [
-  { name: 'kit', module: 'kit', directories: ['kit/'], files: [], packages: ['./...'] },
+  { name: 'kit', module: 'kit', directories: ['kit/', 'protocol/schema/', 'protocol/fixtures/'], files: [], packages: ['./...'] },
   { name: 'lina', module: '.', directories: ['cmd/lina/'], files: ['doc.go'], packages: ['.', './cmd/lina/...'], binary: 'lina' },
   { name: 'lina-node', module: '.', directories: ['cmd/lina-node/'], files: [], packages: ['./cmd/lina-node/...'], binary: 'lina-node' },
 ];
