@@ -30,7 +30,13 @@ func TestTUIProcess(t *testing.T) {
 	t.Run("live and quit", func(t *testing.T) {
 		root := socketRoot(t)
 		socket := filepath.Join(root, "core.sock")
-		core := exec.Command(binary, "core", "--socket", socket)
+		if err := os.MkdirAll(filepath.Join(root, "system/core"), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "system/core/main.json"), []byte(`{"main_id":"main-tui-test"}`), 0600); err != nil {
+			t.Fatal(err)
+		}
+		core := exec.Command(binary, "core", "--state-root", root, "--socket", socket)
 		core.Env = []string{"HOME=" + root, "XDG_STATE_HOME=" + root}
 		var coreOutput bytes.Buffer
 		core.Stdout, core.Stderr = &coreOutput, &coreOutput
