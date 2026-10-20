@@ -145,3 +145,38 @@ test('GIT_* variables of the caller never redirect foundation to another reposit
   assert.equal(sb.g(decoy, 'for-each-ref'), before);
   assert.equal(sb.g(decoy, 'status', '--porcelain'), '');
 });
+
+const workflow = `# SPDX-License-Identifier: Apache-2.0
+name: Fixture
+on: push
+jobs:
+  foundation:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo verified
+`;
+
+for (const extension of ['yml', 'yaml']) {
+  test(`a valid ${extension} workflow passes foundation`, (t) => {
+    const sb = sandbox(t);
+    const { work } = developmentRepository(sb);
+    sb.commit(work, 'ci: add workflow', { [`.github/workflows/ci.${extension}`]: workflow });
+    const result = foundation(sb, work);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.evidence.checks.automation.result, 'success');
+  });
+
+  test(`an invalid ${extension} workflow fails automation and writes no note`, (t) => {
+    const sb = sandbox(t);
+    const { work } = developmentRepository(sb);
+    const head = sb.commit(work, 'ci: invalid workflow', {
+      [`.github/workflows/ci.${extension}`]: workflow.replace('runs-on:', 'runs_on:'),
+    });
+    const result = foundation(sb, work);
+    assert.equal(result.status, 1);
+    assert.equal(result.evidence.checks.automation.result, 'failure');
+    assert.match(result.stderr, /actionlint failed/);
+    assert.match(result.stderr, /runs_on/);
+    assert.notEqual(run('git', ['notes', '--ref=refs/notes/foundation', 'show', head], { cwd: work, env: sb.env }).status, 0);
+  });
+}

@@ -1,6 +1,6 @@
 # Foundation verification
 
-`node scripts/foundation.mjs` classifies a change, runs the applicable checks, and reports one result: `foundation`. It runs from this repository on the developer's machine, with Node.js and Git. [Integration](integration.md) runs it on every merge candidate before `dev` moves, and a [release](releases.md) requires it for the exact release commit.
+`node scripts/foundation.mjs` classifies a change, runs the applicable checks, and reports one result: `foundation`. It runs from this repository on the developer's machine and in GitHub Actions, with Node.js and Git. [Integration](integration.md) requires a green pull request check before merging, or verifies the merge candidate through the owner's local script. A [release](releases.md) requires it for the exact release commit.
 
 ## Running it
 
@@ -13,6 +13,12 @@ node scripts/foundation.mjs [--range <base>..<head>] [--full] [--no-note]
 - `--no-note` skips writing the evidence note.
 
 The script clears `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and every other `GIT_*` environment variable on entry; it works on the repository it runs in and takes the range as an argument. A run that integration or a release relies on happens in a clean worktree of the exact commit, in an environment that holds no credentials.
+
+## Pull request CI
+
+The [CI workflow](../../.github/workflows/ci.yml) runs on pull requests targeting `dev` and pushes to `dev`, with one job named `foundation` on `ubuntu-24.04`. It checks out the event's `github.sha` with full history and without persisting Git credentials: the pull request merge commit from `refs/pull/<number>/merge`, or the pushed commit. It runs `node scripts/foundation.mjs --range <base>..<head> --no-note`, using the pull request's base SHA and that merge commit SHA, or the push's before and after SHAs. This verifies the proposed merge result even when the pull request branch is behind `dev`. A new branch push without a previous commit uses `--full --no-note`.
+
+Node comes from `.node-version` when present, otherwise Node 24. When `go.mod` exists, Go comes from its `toolchain` line; a missing toolchain fails setup. Actions are pinned to commit SHAs. The workflow installs actionlint 1.7.12 from a checksum-verified archive before verification. CI has read-only repository permissions, writes no evidence note, and never publishes or integrates a change.
 
 ## Execution
 
@@ -27,7 +33,7 @@ Everything runs in one process. `selection` records the exact base and candidate
 
 When `foundation` passes on a clean checkout of the candidate commit, it writes its evidence as a JSON note on that commit under `refs/notes/foundation`: the head and base commits, the mode and selection reason, each check's result and duration, and the versions of the tools that ran. A run on a worktree with uncommitted changes, or on a candidate other than the checked-out commit, reports its result and writes no note.
 
-[Integration](integration.md) pushes the notes with `dev`. A note saves time: a [release](releases.md) reads it for the exact commit and, when it is missing or does not show a passing run of that commit, runs `foundation` again on that commit in a clean worktree.
+The owner's local [integration script](integration.md) pushes the notes with `dev`. Pull request CI reports a GitHub check and writes no note. A note saves time: a [release](releases.md) reads it for the exact commit and, when it is missing or does not show a passing run of that commit, runs `foundation` again on that commit in a clean worktree.
 
 ## Change classification
 
@@ -36,7 +42,7 @@ The executable path map is `scripts/verify/scope.mjs`.
 | Change | Selection |
 | --- | --- |
 | Only explicitly listed root documents or Markdown directly under `docs/policy/` or `docs/design/` | `docs`; no automation installation or test run. |
-| A verification script or shared repository configuration | Both `docs` and `automation`. |
+| A verification script, `.github/workflows/*.yml` or `*.yaml`, `.node-version`, or shared repository configuration | Both `docs` and `automation`. |
 | Empty or unavailable diff | Both `docs` and `automation`; never assume documentation-only. |
 | An unmapped path in the changed paths or candidate tree | Both `docs` and `automation`, but the gate refuses to pass until its verification is registered. |
 
@@ -45,9 +51,9 @@ Deleted paths and both sides of a rename participate. A `.md` suffix alone does 
 ## Current checks
 
 - **docs:** validate local file targets in all tracked Markdown and `LICENSE`, including links from unchanged documents to deleted targets (`scripts/verify/check-docs.mjs`). This does not validate external URLs, heading anchors, or the meaning of prose.
-- **automation:** check JavaScript syntax and run the Node behavioral suite of the scripts under `scripts/`. Tests that use Git run in disposable repositories with every `GIT_*` variable cleared. Integration and release tests run against a disposable bare remote; they never push to the real remote or publish a real release.
+- **automation:** run `actionlint` on workflow files when present, check JavaScript syntax and run the Node behavioral suite of the scripts under `scripts/`. A missing actionlint executable or invalid workflow fails the check. Tests that use Git run in disposable repositories with every `GIT_*` variable cleared. Integration and release tests run against a disposable bare remote; they never push to the real remote or publish a real release.
 
-The scripts use Node 20 or newer and its built-in modules, and Git.
+The scripts use Node 20 or newer and its built-in modules, Git, and actionlint on `PATH` for workflow validation and its regression tests. Use actionlint 1.7.12 to match CI; ShellCheck is used by actionlint when installed.
 
 ## Timing and budget
 

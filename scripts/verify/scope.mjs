@@ -8,10 +8,11 @@ import { git, gitOut, resolveCommit } from '../git.mjs';
 const documents = new Set([
   'README.md', 'MANIFESTO.md', 'LICENSE', 'THIRD-PARTY-NOTICES.md', 'SECURITY.md', 'AGENTS.md', 'CONTRIBUTING.md', 'NOTICE',
 ]);
-const configuration = new Set(['.editorconfig', '.gitattributes', '.gitignore']);
+const configuration = new Set(['.editorconfig', '.gitattributes', '.gitignore', '.node-version']);
 
 export function kind(path) {
   if (documents.has(path) || /^docs\/(?:policy|design)\/[^/]+\.md$/.test(path)) return 'docs';
+  if (/^\.github\/workflows\/[^/]+\.ya?ml$/.test(path)) return 'automation';
   if (configuration.has(path) || /^scripts\/(?:verify\/)?[^/]+\.(?:mjs|sh)$/.test(path)) return 'automation';
   return 'unmapped';
 }
