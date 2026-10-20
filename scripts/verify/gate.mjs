@@ -6,13 +6,17 @@ export function evaluateGate(scope, results) {
   const failures = [];
   if (results.selection?.result !== 'success') {
     failures.push('selection did not succeed');
-  } else if (scope.docs !== true || typeof scope.automation !== 'boolean' || !Array.isArray(scope.unmapped)) {
+  } else if (scope.docs !== true || typeof scope.automation !== 'boolean' || !Array.isArray(scope.unmapped)
+      || typeof scope.components !== 'boolean' || !Array.isArray(scope.selectedComponents)
+      || scope.components !== (scope.selectedComponents.length > 0)
+      || scope.selectedComponents.some(name => !['kit', 'lina', 'lina-node'].includes(name))
+      || new Set(scope.selectedComponents).size !== scope.selectedComponents.length) {
     failures.push('selection output is missing or malformed');
   } else {
     if (scope.unmapped.length) {
       failures.push(`Register verification for unmapped paths: ${scope.unmapped.join(', ')}`);
     }
-    for (const name of ['docs', 'automation']) {
+    for (const name of ['docs', 'automation', 'components']) {
       const expected = scope[name] ? 'success' : 'skipped';
       const actual = results[name]?.result;
       if (actual !== expected) failures.push(`${name}: expected ${expected}, received ${actual ?? 'missing'}`);

@@ -177,7 +177,54 @@ test('the checked-out candidate is read from the work tree, including untracked 
   assert.deepEqual(r.classify(head).unmapped, []);
   // A candidate that is not checked out is read from its commit.
   assert.deepEqual(r.classify(r.base).unmapped, []);
-  assert.deepEqual(r.classify(head, { cwd: r.cwd, base: r.base }).changed, ['tracked.txt']);
+  assert.deepEqual(r.classify(head, { cwd: r.cwd, base: r.base }).changed, ['.gitignore', 'tracked.txt']);
+});
+
+test('Go components select importers transitively, including test imports, and leave unrelated components out', t => {
+  const r = repository(t);
+  const files = {
+    'go.mod': 'module example.invalid/lina\n\ngo 1.27\ntoolchain go1.27.3\n',
+    'kit/go.mod': 'module example.invalid/lina/kit\n\ngo 1.27\ntoolchain go1.27.3\n',
+    'go.work': 'go 1.27\ntoolchain go1.27.3\nuse (\n.\n./kit\n)\n',
+    'doc.go': 'package lina\n',
+    'kit/doc.go': 'package kit\n',
+    'cmd/lina/main.go': 'package main\nimport _ "example.invalid/lina"\nfunc main() {}\n',
+    'cmd/lina/main_test.go': 'package main\nimport _ "example.invalid/lina/kit"\n',
+    'cmd/lina-node/main.go': 'package main\nfunc main() {}\n',
+  };
+  for (const [name, content] of Object.entries(files)) {
+    mkdirSync(join(r.cwd, name, '..'), { recursive: true });
+    writeFileSync(join(r.cwd, name), content);
+  }
+  const base = r.commit();
+  writeFileSync(join(r.cwd, 'kit/doc.go'), 'package kit\n// changed\n');
+  const head = r.commit();
+  const scope = r.classify(head, { base });
+  assert.deepEqual(scope.selectedComponents, ['kit', 'lina']);
+  assert.equal(scope.components, true);
+  assert.deepEqual(scope.unmapped, []);
+  assert.equal(scope.automation, false);
+  mkdirSync(join(r.cwd, 'cmd/lina/bridge'));
+  writeFileSync(join(r.cwd, 'cmd/lina/bridge/bridge.go'), 'package bridge\nimport _ "example.invalid/lina/kit"\n');
+  writeFileSync(join(r.cwd, 'cmd/lina-node/main.go'), 'package main\nimport _ "example.invalid/lina/cmd/lina/bridge"\nfunc main() {}\n');
+  const chain = r.commit();
+  writeFileSync(join(r.cwd, 'kit/doc.go'), 'package kit\n// changed again\n');
+  assert.deepEqual(r.classify(r.commit(), { base: chain }).selectedComponents, ['kit', 'lina', 'lina-node']);
+  writeFileSync(join(r.cwd, 'go.mod'), files['go.mod'] + '\n// changed\n');
+  assert.deepEqual(r.classify('HEAD', { base: chain }).selectedComponents, ['kit', 'lina', 'lina-node']);
+  r.commit();
+  mkdirSync(join(r.cwd, 'kit/removed'));
+  writeFileSync(join(r.cwd, 'kit/removed/doc.go'), 'package removed\n');
+  writeFileSync(join(r.cwd, 'cmd/lina/bridge/bridge.go'), 'package bridge\nimport _ "example.invalid/lina/kit/removed"\n');
+  const beforeDelete = r.commit();
+  rmSync(join(r.cwd, 'kit/removed'), { recursive: true });
+  const config = r.commit();
+  assert.deepEqual(r.classify(config, { base: beforeDelete }).selectedComponents, ['kit', 'lina', 'lina-node']);
+  writeFileSync(join(r.cwd, 'README.md'), '# Docs\n');
+  assert.equal(r.classify(r.commit(), { base: config }).components, false);
+  // Existing unregistered Go code cannot hide in a docs-only diff.
+  writeFileSync(join(r.cwd, 'unexpected.go'), 'package lina\n');
+  assert.deepEqual(r.classify('HEAD', { base: config }).unmapped, ['unexpected.go']);
 });
 
 for (const path of ['.github/workflows/ci.yml', '.github/workflows/ci.yaml', '.node-version']) {

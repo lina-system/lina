@@ -30,6 +30,8 @@ One structural rule follows. The Go types that make up the default view (progres
 
 **C-02 Binaries and modules (changed).** Subcommands of `lina`, proposed here because [runtime.md](runtime.md#the-lina-command) defers the names: `core`, `tui`, `install`, `backup`, `restore` (main stopped), `doctor`, `replay`, `export`, `about`, `version`. `version` prints the version, the commit and the build date that the build sets with `-ldflags` ([versioning.md](versioning.md)). Separate artifacts: `lina-node` and `moirai-worker`. Modules: the root module and `kit` (`github.com/thisisjun786/lina/kit`), joined by `go.work` and a `replace`.
 
+The initial command skeleton registers `core`, `tui` and `version` in `lina`, and `version` in `lina-node`. Until their implementation lands, these commands report that they are not implemented on stderr and exit 70. Missing or unknown subcommands print usage on stderr and exit 64. Entry points have no product dependencies yet; future handlers dispatch into internal packages, and Node may depend only on the kit and the Go standard library.
+
 Layout: `cmd/lina`, `cmd/lina-node`, `cmd/moirai-worker`, `protocol/schema`, `protocol/fixtures`, `persona/<preset>/`, `skills/` (built-in, embedded), `catalog/` (plan and plugin catalog sources), `adapters/claude/` (TypeScript, lockfile), and `internal/` with `core`, `node`, `tui`, `clientapi`, `design` (generated from the token source) and `fakecore`. Builds are static; cgo follows the SQLite binding chosen by [V2](runtime.md#runtime-acceptance). The kit wrapper starts bubblewrap directly ([runtime.md](runtime.md#sandbox)); there is no hidden re-exec mode.
 
 Kit seams, following [runtime.md](runtime.md#lina-kit):

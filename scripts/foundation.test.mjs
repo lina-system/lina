@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { run } from './git.mjs';
 import { developmentRepository, sandbox } from './test-fixture.mjs';
@@ -23,8 +24,8 @@ test('a full run on a clean checkout passes and records the evidence as a note',
   assert.equal(result.evidence.result, 'success');
   assert.equal(result.evidence.mode, 'full');
   assert.equal(result.evidence.head, head);
-  assert.deepEqual(outcomes(result.evidence), { selection: 'success', docs: 'success', automation: 'success' });
-  for (const check of Object.values(result.evidence.checks)) assert.equal(typeof check.seconds, 'number');
+  assert.deepEqual(outcomes(result.evidence), { selection: 'success', docs: 'success', automation: 'success', components: 'skipped' });
+  for (const check of Object.values(result.evidence.checks).filter(check => check.result !== 'skipped')) assert.equal(typeof check.seconds, 'number');
   assert.equal(result.evidence.tools.node, process.version);
   const note = JSON.parse(noteOf(sb, work, head));
   assert.equal(note.head, head);
@@ -41,7 +42,7 @@ test('a documents-only range skips automation, and the default range starts at t
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.evidence.mode, 'docs');
   assert.equal(result.evidence.base, sb.g(work, 'rev-parse', 'dev'));
-  assert.deepEqual(outcomes(result.evidence), { selection: 'success', docs: 'success', automation: 'skipped' });
+  assert.deepEqual(outcomes(result.evidence), { selection: 'success', docs: 'success', automation: 'skipped', components: 'skipped' });
 });
 
 test('on dev itself the default range is the previous dev head', (t) => {
@@ -61,10 +62,39 @@ test('an explicit range is measured as given', (t) => {
   const first = sb.g(work, 'rev-parse', 'HEAD');
   const second = sb.commit(work, 'docs: update', { 'README.md': '# Fixture\n\n[guide](docs/design/guide.md)\n\nText.\n' });
   const result = foundation(sb, work, ['--range', `${first}..${second}`]);
+  assert.equal(result.status, 0, result.stderr);
   assert.equal(result.evidence.base, first);
   assert.equal(result.evidence.head, second);
   assert.equal(foundation(sb, work, ['--range', 'nonsense']).status, 1);
   assert.equal(foundation(sb, work, ['--full', '--range', `${first}..${second}`]).status, 1);
+});
+
+test('a range naming a different candidate fails selection before running checks', (t) => {
+  const sb = sandbox(t);
+  const { work } = developmentRepository(sb);
+  const checkout = sb.g(work, 'rev-parse', 'HEAD');
+  assert.equal(foundation(sb, work, ['--full', '--no-note']).status, 0);
+  const base = sb.commit(work, 'docs: base', { 'README.md': '# Base\n' });
+  const candidate = sb.commit(work, 'docs: broken candidate', { 'README.md': '[missing](missing.md)\n' });
+  sb.g(work, 'checkout', '-q', '--detach', checkout);
+
+  for (const flags of [[], ['--no-note']]) {
+    const result = foundation(sb, work, ['--range', `${base}..${candidate}`, ...flags]);
+    assert.equal(result.status, 1, result.stdout);
+    assert.equal(result.evidence.result, 'failure');
+    assert.equal(result.evidence.head, candidate);
+    assert.deepEqual(outcomes(result.evidence), { selection: 'failure' });
+    assert.match(result.stderr, /check out the candidate first/i);
+    assert.equal(result.evidence.note, 'not written');
+  }
+  assert.notEqual(run('git', ['notes', '--ref=refs/notes/foundation', 'show', candidate], { cwd: work, env: sb.env }).status, 0);
+
+  // Once checked out, the same candidate reaches its real failing docs check.
+  sb.g(work, 'checkout', '-q', '--detach', candidate);
+  const result = foundation(sb, work, ['--range', `${base}..${candidate}`, '--no-note']);
+  assert.equal(result.status, 1);
+  assert.equal(result.evidence.checks.selection.result, 'success');
+  assert.equal(result.evidence.checks.docs.result, 'failure');
 });
 
 test('a broken link fails the docs check, exits non-zero and writes no note', (t) => {
@@ -146,6 +176,35 @@ test('GIT_* variables of the caller never redirect foundation to another reposit
   assert.equal(sb.g(decoy, 'status', '--porcelain'), '');
 });
 
+test('foundation records selected Go components, skips them for prose and fails on broken Go code', t => {
+  const sb = sandbox(t);
+  const caches = run('go', ['env', '-json', 'GOCACHE', 'GOMODCACHE']);
+  assert.equal(caches.status, 0, caches.stderr);
+  Object.assign(sb.env, JSON.parse(caches.stdout));
+  const { work } = developmentRepository(sb);
+  const source = new URL('../', import.meta.url);
+  for (const name of ['go.mod', 'go.sum', 'go.work', 'kit/go.mod']) {
+    sb.write(work, name, readFileSync(new URL(name, source)));
+  }
+  sb.write(work, 'doc.go', 'package lina\n');
+  sb.write(work, 'kit/doc.go', 'package kit\n');
+  for (const name of ['lina', 'lina-node']) sb.write(work, `cmd/${name}/main.go`,
+    'package main\nimport ("fmt"; "os")\nfunc main() { fmt.Fprintln(os.Stderr, "usage: fixture"); os.Exit(64) }\n');
+  sb.commit(work, 'feat: Go components');
+  const green = foundation(sb, work, ['--full']);
+  assert.equal(green.status, 0, green.stderr);
+  assert.deepEqual(green.evidence.selectedComponents, ['kit', 'lina', 'lina-node']);
+  assert.equal(green.evidence.checks.components.result, 'success');
+  assert.equal(green.evidence.tools.go, 'go1.27.3');
+  sb.commit(work, 'docs: change', { 'README.md': '# Updated fixture\n' });
+  assert.equal(foundation(sb, work).evidence.checks.components.result, 'skipped');
+  const broken = sb.commit(work, 'feat: broken Go', { 'kit/doc.go': 'package kit\nvar broken = doesNotExist\n' });
+  const red = foundation(sb, work);
+  assert.equal(red.status, 1);
+  assert.equal(red.evidence.checks.components.result, 'failure');
+  assert.match(red.stderr, /doesNotExist/);
+  assert.notEqual(run('git', ['notes', '--ref=refs/notes/foundation', 'show', broken], { cwd: work, env: sb.env }).status, 0);
+});
 const workflow = `# SPDX-License-Identifier: Apache-2.0
 name: Fixture
 on: push
