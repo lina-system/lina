@@ -9,7 +9,9 @@ import (
 func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
-		case "core", "tui", "version":
+		case "core":
+			os.Exit(runCore(os.Args[2:]))
+		case "tui", "version":
 			fmt.Fprintf(os.Stderr, "lina %s: not implemented\n", os.Args[1])
 			os.Exit(70)
 		}

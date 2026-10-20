@@ -28,6 +28,8 @@ One structural rule follows. The Go types that make up the default view (progres
 
 **C-01 One main (changed).** One `lina core` runs per state root, as a user service under the person's OS user ([runtime.md](runtime.md#processes)). Inside it run these goroutine families: one lane per conversation, the background-run supervisor, the gateway adapters, the scheduler, the completion-event reactor, the client hub and the job API for `moirai-worker`. Children are created through `kit/proc` in a Core-owned process group (a cgroup where the service manager has one): the Claude adapter (started on first use, stopped after idle), the `grok` command, workers, plugin servers and sandboxed commands. There is no process per agent and no model proxy. A foreground `lina core` for development runs only where install created the main id file.
 
+The empty Core increment (#31) starts with `lina core --socket <path>` and needs no installation or main id file. It holds no state root, lock, persistent epoch or database. Its fixed identity is `main-placeholder` with epoch `0`; these placeholders convey no authority. G1-02 adds the control files and real identity, and G1-23 adds installation and the service unit.
+
 **C-02 Binaries and modules (changed).** Subcommands of `lina`, proposed here because [runtime.md](runtime.md#the-lina-command) defers the names: `core`, `tui`, `install`, `backup`, `restore` (main stopped), `doctor`, `replay`, `export`, `about`, `version`. `version` prints the version, the commit and the build date that the build sets with `-ldflags` ([versioning.md](versioning.md)). Separate artifacts: `lina-node` and `moirai-worker`. Modules: the root module and `kit` (`github.com/thisisjun786/lina/kit`), joined by `go.work` and a `replace`.
 
 The initial command skeleton registers `core`, `tui` and `version` in `lina`, and `version` in `lina-node`. Until their implementation lands, these commands report that they are not implemented on stderr and exit 70. Missing or unknown subcommands print usage on stderr and exit 64. Entry points have no product dependencies yet; future handlers dispatch into internal packages, and Node may depend only on the kit and the Go standard library.
@@ -85,6 +87,8 @@ type API interface {
 9. Reconcile.
 10. READY.
 
+For the empty Core increment, startup only creates the private socket directory and binds the client socket. A connection proves readiness. Missing or invalid command arguments exit 64, and a socket startup failure exits 78. SIGTERM and SIGINT stop accepting clients, close all accepted connections (including incomplete handshakes), remove the socket and exit 0. The directory remains. No lock, epoch or recovery steps run yet. Process tests establish readiness by connecting, with retries bounded by a deadline, never by assuming a fixed startup delay.
+
 The reconcile table follows [runtime.md](runtime.md#recovery) and [main-authority.md](main-authority.md#command-outcomes):
 
 | Found | Outcome |
@@ -137,6 +141,8 @@ The gate needs every cell: idle, candidate verified, schema relation, peer rows,
 - Approval decider: an answer to an approval or a question is accepted only from a client connection whose peer is not a descendant of Core by process ancestry. The socket path is not mapped into any sandbox. Remote clients are identified by Tailscale. The residual risk is another process of the same OS user that Core did not start. Acceptance test: a connect from inside the sandbox fails.
 - RECOVERING: reads and subscriptions are served; mutations return `unavailable`.
 - Details: the capability returns a typed document of the audit trail behind a card, result or answer. The activity log is a view over records Core already keeps.
+
+The empty Core increment implements only the local handshake, using the handwritten `kit/protocol` skeleton. It creates missing socket directories at 0700, requires an existing parent to be a directory at 0700, and sets the socket to 0600 before accepting clients. It refuses an occupied socket path without removing it, including a stale socket. The first frame is a JSON-RPC 2.0 `hello` request with the client envelope in `params`; the response preserves the request id and carries the answer envelope in `result`. Frames are newline-delimited and capped at 1 MiB. The only supported protocol row is client 1.0 with no capabilities. An offer containing 1.0 receives `welcome` with `main-placeholder`, epoch `0`, `person-placeholder`, and empty agent and capability arrays; any other version offer receives `unsupported_combination` and the connection closes. A welcomed connection stays open until disconnect or shutdown; further valid requests receive `capability_not_negotiated`. Malformed framing closes the connection. Peer credential checks, the full supported-combination manifest, event recording, deduplication and the remaining client operations belong to the later client-service implementation; the empty Core accepts no effects.
 
 ```go
 type Hub interface {

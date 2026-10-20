@@ -66,6 +66,8 @@ LINA uses some tools that the user installs and that LINA neither ships nor pins
 
 Provider adapters are never registered with the service manager: they start with LINA Core and end with it. The ChatGPT and Gemini adapters are Go inside LINA Core and open no process.
 
+The first runnable Core increment is `lina core --socket <path>`. It can run as a child process before service installation exists: it creates a 0600 Unix socket in a 0700 directory and serves the client 1.0 handshake with a fixed placeholder main id and epoch. SIGTERM or SIGINT closes clients, removes the socket and exits 0. Tests wait for readiness by connecting. This increment owns no state root, lock, epoch record or database; control files and real identity come with G1-02, and installation and service units with G1-23. [go-core.md C-01, C-04 and C-42](go-core.md) define the exact placeholder and handshake behavior.
+
 ## Vendored source
 
 Upstream code enters the LINA repository only as vendored source or generated upstream code, such as the Go types of the Codex app-server protocol, generated for each verified Codex version ([work-and-delegation.md](work-and-delegation.md)). How vendored code is kept unchanged, wrapped, patched, pinned and synced is defined in [dependencies.md](../policy/dependencies.md); the source, files and license notices are listed in [THIRD-PARTY-NOTICES.md](../../THIRD-PARTY-NOTICES.md).

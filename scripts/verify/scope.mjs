@@ -15,9 +15,12 @@ const modules = new Set(['go.mod', 'go.sum', 'go.work', 'go.work.sum', 'kit/go.m
 function registryFor(cwd) {
   // Older trees and minimal verification fixtures may not have architecture tests yet.
   const architecture = existsSync(join(cwd, 'internal/archtest')) ? ['./internal/archtest/...'] : [];
+  const coreDirectories = ['internal/core/boot/', 'internal/core/clientsrv/'];
+  const corePackages = coreDirectories.filter(directory => existsSync(join(cwd, directory)))
+    .map(directory => `./${directory}...`);
   return [
     { name: 'kit', module: 'kit', directories: ['kit/', 'protocol/schema/', 'protocol/fixtures/'], files: [], packages: ['./...'] },
-    { name: 'lina', module: '.', directories: ['cmd/lina/', 'internal/archtest/'], files: ['doc.go'], packages: ['.', './cmd/lina/...', ...architecture], binary: 'lina' },
+    { name: 'lina', module: '.', directories: ['cmd/lina/', 'internal/archtest/', ...coreDirectories], files: ['doc.go'], packages: ['.', './cmd/lina/...', ...architecture, ...corePackages], binary: 'lina' },
     { name: 'lina-node', module: '.', directories: ['cmd/lina-node/'], files: [], packages: ['./cmd/lina-node/...'], binary: 'lina-node' },
   ];
 }
