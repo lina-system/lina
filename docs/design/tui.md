@@ -45,6 +45,8 @@ Ids are stable. Section headings carry the ids they specify. T-02 is withdrawn: 
 
 `lina tui` is a subcommand of the `lina` binary and runs as its own process ([runtime.md](runtime.md#the-lina-command)). It holds display state only, under the rules of [surfaces.md](surfaces.md#the-lina-app-is-a-thin-client): what is on screen, layout, reading position and unsent drafts. Drafts live in memory and never on disk, because a file of drafts would be personal content outside canon.
 
+The empty TUI increment (#32) runs as `lina tui --socket <path>` with plain text input and output. `internal/clientapi` owns the Unix connection and the generated client 1.0 handshake types; `internal/tui/ui` owns the connection display and quit input. The command supplies the product version for diagnosis. This increment declares no capabilities, writes no preferences or drafts, and imports no terminal UI library. The terminal library and screens follow the T-08 spike gate.
+
 - It keeps its preferences (theme, glyph set, width settings, notification mode) in one client file, mode 0600, at the location the install fixes. A missing or bad file never blocks start.
 - It never opens canon, never runs `lina core` and never holds the lock. Every message it sends is a request that Core accepts or refuses, and when the two disagree Core wins and the TUI refreshes.
 - It uses only the client connection. Its types are the Go types generated from the schema ([host-protocol.md](host-protocol.md#schema-and-generated-types)).
@@ -56,6 +58,8 @@ Ids are stable. Section headings carry the ids they specify. T-02 is withdrawn: 
 ## Connection states (T-05)
 
 `lina tui` never starts a main. The connection is in one of eight states. Each is a screen state, never an empty conversation and never a conversation item.
+
+In the empty TUI increment, a validated `welcome` prints `live` on standard output. Reading `q` or reaching end of input closes only the client connection and exits 0; other input is ignored. Input uses the terminal's existing mode, so a terminal in canonical mode delivers `q` after Enter. Failure to connect to the supplied socket reports `unavailable` on standard error and exits 69 without starting Core or creating state. A typed `unsupported_combination` refusal reports that code and exits 78. Bad arguments exit 64; malformed handshakes and other connection or input/output failures exit 70. Connection and handshake share a five-second timeout. Peer diagnostic text is not printed as terminal output. Reconnect, streaming disconnect notices, supported-range presentation and the remaining screens below belong to later increments.
 
 | State | Screen |
 | --- | --- |
