@@ -1,0 +1,40 @@
+{
+  "protocol": {
+    "name": "client",
+    "version": "1.0"
+  },
+  "kind": "welcome",
+  "message_id": "welcome-example",
+  "attempt_id": "welcome-attempt-1",
+  "reply_to": "hello-example",
+  "sender": {
+    "party": "core",
+    "id": "main-example"
+  },
+  "epoch": "42",
+  "sent_at": "2026-01-01T00:00:01Z",
+  "idempotency_key": null,
+  "effect_state": "none",
+  "receipt_ref": null,
+  "source_refs": [],
+  "error": null,
+  "payload": {
+    "protocol_version": "1.0",
+    "capabilities": [],
+    "main_id": "main-example",
+    "epoch": "42",
+    "person_id": "person-example",
+    "agents": [
+      {
+        "agent_id": "agent-preset",
+        "name": "Example preset agent",
+        "preset": "example-preset"
+      },
+      {
+        "agent_id": "agent-description",
+        "name": "Example custom agent",
+        "preset": null
+      }
+    ]
+  }
+}
