@@ -73,6 +73,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-04 Diagnosis emitter, event store and citation check.** Closed enums, twelve fields, chain roots, agent filter.
 - Done when: no emitter parameter is a free string; stored keys equal the twelve names; the model, interruption and storage injections are each explained by event id, class and cause code; returned events hold no secret, prompt, provider body or absolute home path.
 - Depends on: G1-02. Design refs: C-33; [self-diagnosis-log.md](self-diagnosis-log.md).
+- #41 implements the typed emitter, root constructors, strict codec, `database/sql` event store, intersecting filters and citation oracle. Package injections cover model failure, cancellation and a failed write; scripted SQL tests cover transaction calls and error handling. The caller supplies #39's binding. Binding-dependent persistence, crash/full-disk durability and running-install diagnosis remain unverified. No TUI or protocol operation exposes this package yet.
 
 **G1-29 Asset store and staging.** Asset ids, revisions, hashes, staging, trash.
 - Done when: a rename keeps asset id and hash; an edit keeps the id, changes the hash and advances the revision; identical content gets two ids; an import writes only under staging until handed over; an export leaves a canon record and no staged copy; a backup detects a hash mismatch.

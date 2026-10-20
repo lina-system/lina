@@ -8,6 +8,18 @@ import { git as runGit } from '../git.mjs';
 import { componentRegistry, kind, scopeFor } from './scope.mjs';
 import { evaluateGate } from './gate.mjs';
 
+test('diagnosis store is registered with the lina Go checks', t => {
+  const r = repository(t);
+  const base = r.git('rev-parse', 'HEAD');
+  mkdirSync(join(r.cwd, 'internal/core/eventstore'), { recursive: true });
+  writeFileSync(join(r.cwd, 'internal/core/eventstore/store.go'), 'package eventstore\n');
+  const head = r.commit();
+  const scope = r.classify(head, { base, full: true });
+  assert.deepEqual(scope.unmapped, []);
+  assert.ok(scope.selectedComponents.includes('lina'));
+  assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/eventstore/...'));
+});
+
 test('manifest changes are registered with the lina component and its Go checks', t => {
   const r = repository(t);
   const base = r.git('rev-parse', 'HEAD');
