@@ -204,7 +204,7 @@ A channel is an external messaging platform through which the person talks with 
 
 ### Identity and pairing
 
-- A connection starts denied. The owner pairs it: the app or the TUI shows a one-time code, the owner sends it to the bot from the platform, and LINA Core records the platform's numeric user id against the owner's person id. LINA Core never uses a user name as an identity. The code is single use and short lived.
+- A connection starts denied. The owner pairs it: the app or the TUI shows a one-time code, the owner sends it to the bot from the platform, and LINA Core records the platform's numeric user id against the owner's person id. LINA Core never uses a user name as an identity. The code works once and expires soon after it is shown.
 - Anyone else in a chat is an external participant. Their text is evidence, never an instruction or an approval, and it creates no person, person model or memory item ([conversation-and-memory.md](conversation-and-memory.md#channel-conversations)). By default the agent does not answer them. The person may choose a mode in which the agent answers when it is addressed; it then answers without tools and without the person's memory, whatever the scope's tools and memory fields say for the owner.
 - A bot answers an `about` command with the build's version, commit and source link ([product-families.md](product-families.md)).
 
