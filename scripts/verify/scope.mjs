@@ -12,11 +12,17 @@ const documents = new Set([
 const configuration = new Set(['.editorconfig', '.gitattributes', '.gitignore', '.node-version']);
 const modules = new Set(['go.mod', 'go.sum', 'go.work', 'go.work.sum', 'kit/go.mod', 'kit/go.sum']);
 
-export const componentRegistry = [
-  { name: 'kit', module: 'kit', directories: ['kit/', 'protocol/schema/', 'protocol/fixtures/'], files: [], packages: ['./...'] },
-  { name: 'lina', module: '.', directories: ['cmd/lina/'], files: ['doc.go'], packages: ['.', './cmd/lina/...'], binary: 'lina' },
-  { name: 'lina-node', module: '.', directories: ['cmd/lina-node/'], files: [], packages: ['./cmd/lina-node/...'], binary: 'lina-node' },
-];
+function registryFor(cwd) {
+  // Older trees and minimal verification fixtures may not have architecture tests yet.
+  const architecture = existsSync(join(cwd, 'internal/archtest')) ? ['./internal/archtest/...'] : [];
+  return [
+    { name: 'kit', module: 'kit', directories: ['kit/', 'protocol/schema/', 'protocol/fixtures/'], files: [], packages: ['./...'] },
+    { name: 'lina', module: '.', directories: ['cmd/lina/', 'internal/archtest/'], files: ['doc.go'], packages: ['.', './cmd/lina/...', ...architecture], binary: 'lina' },
+    { name: 'lina-node', module: '.', directories: ['cmd/lina-node/'], files: [], packages: ['./cmd/lina-node/...'], binary: 'lina-node' },
+  ];
+}
+
+export const componentRegistry = registryFor(process.cwd());
 
 function componentOf(path) {
   return componentRegistry.find(component => component.files.includes(path)
@@ -30,7 +36,8 @@ export function kind(path) {
   if (path === 'scripts/verify/dependency-exceptions.json' || path === 'THIRD-PARTY-NOTICES.md') return 'dependencies';
   if (modules.has(path)) return 'modules';
   if (componentOf(path)) return 'components';
-  if (documents.has(path) || /^docs\/(?:policy|design)\/[^/]+\.md$/.test(path)) return 'docs';
+  if (documents.has(path) || /^docs\/(?:policy|design)\/[^/]+\.md$/.test(path)
+      || /^evidence\/.+\.(?:json|md)$/.test(path)) return 'docs';
   if (/^\.github\/workflows\/[^/]+\.ya?ml$/.test(path)) return 'automation';
   if (configuration.has(path) || /^scripts\/(?:verify\/)?[^/]+\.(?:mjs|sh)$/.test(path)) return 'automation';
   return 'unmapped';
@@ -126,7 +133,7 @@ export function scopeFor({ base = '', head, full = false, cwd = process.cwd() })
     : docsOnly ? 'documents-only'
     : changed.some(path => ['modules', 'components'].includes(kind(path))) ? 'component-change'
     : changed.some(path => kind(path) === 'dependencies') ? 'dependency-change' : 'automation-change';
-  const active = componentRegistry.filter(component => inventory.some(path => componentOf(path)?.name === component.name));
+  const active = registryFor(cwd).filter(component => inventory.some(path => componentOf(path)?.name === component.name));
   const all = full || resolvedBase === null || changed.length === 0 || unmapped.length > 0
     || changed.some(path => ['automation', 'modules', 'unmapped'].includes(kind(path)))
     || changed.some(path => componentOf(path) && !active.some(component => component.name === componentOf(path).name));
@@ -141,6 +148,9 @@ export function scopeFor({ base = '', head, full = false, cwd = process.cwd() })
       for (const name of selected) for (const importer of edges.get(name) ?? []) selected.add(importer);
     }
   }
+  // Architecture scans source files, so Go's import graph cannot express its dependency
+  // on every component. Run it with any selected Go component, including kit-only changes.
+  if (selected.size && inventory.some(path => path.startsWith('internal/archtest/'))) selected.add('lina');
   const selectedComponents = active.map(component => component.name).filter(name => selected.has(name));
   return {
     mode: docsOnly ? 'docs' : 'full', reason,

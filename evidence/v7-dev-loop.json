@@ -1,0 +1,101 @@
+{
+  "check": "V7",
+  "budget_declared_at": "2026-10-20T17:25:13.280841+00:00",
+  "budget_seconds": {
+    "edit_to_test": 20,
+    "full_foundation": 60
+  },
+  "budget_rationale": "20 seconds for the affected Go package loop; 60 seconds for full verification including the vulnerability and license gates added after the earlier component-only timing. Budgets are fixed before measurement.",
+  "measurements": {
+    "edit_to_test": {
+      "started_at": "2026-10-20T17:30:43.906Z",
+      "edit": "Clarify the production layer-violation diagnostic to mention package families.",
+      "path": "internal/archtest/rules.go",
+      "sha256": "d969752bf90db666d800f9e381ed499d32cc19a742093229f86ba2aa23625eb6",
+      "commands": [
+        {
+          "command": "go build -mod=readonly ./internal/archtest/...",
+          "exit_code": 0,
+          "seconds": 0.072356
+        },
+        {
+          "command": "go vet -mod=readonly ./internal/archtest/...",
+          "exit_code": 0,
+          "seconds": 0.594912
+        },
+        {
+          "command": "go test -count=1 -mod=readonly ./internal/archtest/...",
+          "exit_code": 0,
+          "seconds": 0.50892
+        }
+      ],
+      "seconds": 1.176347,
+      "within_budget": true
+    },
+    "full_foundation": {
+      "started_at": "2026-10-20T17:34:30.720Z",
+      "source_commit": "b9ddd159c4329ef26e4dea987088afa931584887",
+      "clean_worktree": true,
+      "command": "node scripts/foundation.mjs --full",
+      "seconds": 7.239,
+      "exit_code": 0,
+      "within_budget": true,
+      "output_sha256": "ce9b08287969d28dbb48a8a2f7d4011758c9f7b0ed26832b34da19fedca7f348",
+      "foundation_result": "success",
+      "checks": {
+        "selection": {
+          "result": "success",
+          "seconds": 0
+        },
+        "docs": {
+          "result": "success",
+          "seconds": 0.1
+        },
+        "automation": {
+          "result": "success",
+          "seconds": 7.2
+        },
+        "dependencies": {
+          "result": "success",
+          "seconds": 4.7,
+          "toolchain": "go1.27.3"
+        },
+        "components": {
+          "result": "success",
+          "seconds": 2.9,
+          "toolchain": "go1.27.3"
+        }
+      },
+      "source_tree": "7f8ebfceace1925ff09e6b5cd9843f82607e2e43",
+      "note_written": true
+    }
+  },
+  "source_commit_before_edit": "d31b5fc1f9ca55a66414c2ef50552aa0047f7c61",
+  "environment": {
+    "os": "linux",
+    "arch": "x64",
+    "available_cpus": 16,
+    "go": "go1.27.3",
+    "node": "v24.20.0",
+    "actionlint": "1.7.12",
+    "cache": "Warm module and build caches; the Go source edit invalidates the affected package. go test uses -count=1. Isolated home, no credentials."
+  },
+  "earlier_attempts": [
+    {
+      "started_at": "2026-10-20T17:31:05.858Z",
+      "source_commit": "ea9c5f8a9e8cb197d66624a0cfbb534f48b14307",
+      "clean_worktree": false,
+      "command": "node scripts/foundation.mjs --full",
+      "seconds": 9.714,
+      "exit_code": 1,
+      "within_budget": true,
+      "output_sha256": "9a0a2eeb8581f4b07fc17c749345d981f8282132288105b9b3f09c1477a95bfc",
+      "failure": "All checks passed, but the gate rejected an unregistered component name. The final registration uses the existing lina component."
+    }
+  ],
+  "source_files_sha256": {
+    "internal/archtest/imports_test.go": "394b0d8dfcfab7667da48c33894ebc1d6c633f31c13df24de5f4a18142904a60",
+    "internal/archtest/rules.go": "d969752bf90db666d800f9e381ed499d32cc19a742093229f86ba2aa23625eb6",
+    "internal/archtest/rules_test.go": "16dfbf8ea6d48b66b9e54c98ae0ac241350270ea97408a23c2c1600e831e9302"
+  }
+}
