@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Package clientsrv serves the empty Core's client 1.0 handshake.
+// Package clientsrv serves Core's client 1.0 handshake.
 package clientsrv
 
 import (
@@ -21,11 +21,16 @@ import (
 )
 
 const (
-	mainID        = "main-placeholder"
-	epoch         = "0"
 	personID      = "person-placeholder"
 	maxFrameBytes = 1 << 20
 )
+
+// Identity is immutable for one boot; Recovering reports the admission state.
+type Identity struct {
+	MainID     string
+	Epoch      string
+	Recovering func() bool
+}
 
 // Listen creates a socket in a private directory. An existing directory must
 // already be private; existing paths (including stale sockets) are preserved.
@@ -60,7 +65,7 @@ func Listen(path string) (*net.UnixListener, error) {
 
 // Serve owns the listener and all accepted connections. Cancellation closes
 // blocked reads and writes, waits for handlers, and removes the socket.
-func Serve(ctx context.Context, listener *net.UnixListener) error {
+func Serve(ctx context.Context, listener *net.UnixListener, identity Identity) error {
 	ctx, cancel := context.WithCancel(ctx)
 	var mu sync.Mutex
 	connections := make(map[net.Conn]struct{})
@@ -106,7 +111,7 @@ func Serve(ctx context.Context, listener *net.UnixListener) error {
 				delete(connections, conn)
 				mu.Unlock()
 			}()
-			serveConn(conn)
+			serveConn(conn, identity)
 		}()
 	}
 }
@@ -124,7 +129,7 @@ type response struct {
 	Result  protocol.Envelope `json:"result"`
 }
 
-func serveConn(conn net.Conn) {
+func serveConn(conn net.Conn, identity Identity) {
 	reader := bufio.NewScanner(conn)
 	reader.Buffer(make([]byte, 4096), maxFrameBytes)
 	writer := json.NewEncoder(conn)
@@ -145,8 +150,8 @@ func serveConn(conn net.Conn) {
 		}
 		if !welcomed {
 			if messageID, unsupported := unsupportedHello(req.Method, req.Params); unsupported {
-				answer := reply(protocol.Envelope{MessageID: messageID})
-				refuse(&answer, protocol.ErrorUnsupportedCombination, "the empty Core supports client 1.0 only")
+				answer := reply(protocol.Envelope{MessageID: messageID}, identity)
+				refuse(&answer, protocol.ErrorUnsupportedCombination, "Core supports client 1.0 only")
 				writer.Encode(response{JSONRPC: "2.0", ID: req.ID, Result: answer})
 				return
 			}
@@ -155,23 +160,25 @@ func serveConn(conn net.Conn) {
 		if err := json.Unmarshal(req.Params, &envelope); err != nil {
 			return
 		}
-		answer := reply(envelope)
+		answer := reply(envelope, identity)
 		closeAfter := false
 		hello, isHello := envelope.Payload.(protocol.Hello)
 		switch {
+		case welcomed && identity.Recovering != nil && identity.Recovering():
+			refuse(&answer, protocol.ErrorUnavailable, "Core is recovering")
 		case welcomed:
-			refuse(&answer, protocol.ErrorCapabilityNotNegotiated, "the empty Core grants no capabilities")
+			refuse(&answer, protocol.ErrorCapabilityNotNegotiated, "Core grants no capabilities")
 		case req.Method != "hello" || envelope.Kind != protocol.KindHello || !isHello || envelope.Sender.Party != protocol.PartyClient || envelope.Sender.ID != hello.ID:
 			refuse(&answer, protocol.ErrorMalformed, "expected a client hello request")
 			closeAfter = true
 		case !slices.Contains(hello.ProtocolVersions, "1.0"):
-			refuse(&answer, protocol.ErrorUnsupportedCombination, "the empty Core supports client 1.0 only")
+			refuse(&answer, protocol.ErrorUnsupportedCombination, "Core supports client 1.0 only")
 			closeAfter = true
 		default:
 			answer.Kind = protocol.KindWelcome
 			answer.Payload = protocol.Welcome{
 				ProtocolVersion: "1.0", Capabilities: []protocol.Capability{},
-				MainID: mainID, Epoch: epoch, PersonID: personID, Agents: []protocol.Agent{},
+				MainID: identity.MainID, Epoch: identity.Epoch, PersonID: personID, Agents: []protocol.Agent{},
 			}
 			welcomed = true
 		}
@@ -215,11 +222,11 @@ func unsupportedHello(method string, data json.RawMessage) (string, bool) {
 	return offer.MessageID, true
 }
 
-func reply(request protocol.Envelope) protocol.Envelope {
+func reply(request protocol.Envelope, identity Identity) protocol.Envelope {
 	return protocol.Envelope{
 		Protocol:  protocol.Protocol{Name: "client", Version: "1.0"},
 		MessageID: rand.Text(), AttemptID: rand.Text(), ReplyTo: &request.MessageID,
-		Sender: protocol.Sender{Party: protocol.PartyCore, ID: mainID}, Epoch: epoch,
+		Sender: protocol.Sender{Party: protocol.PartyCore, ID: identity.MainID}, Epoch: identity.Epoch,
 		SentAt: time.Now().UTC().Format(time.RFC3339Nano), EffectState: protocol.EffectNone,
 		SourceRefs: []protocol.SourceRef{},
 	}

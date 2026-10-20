@@ -38,7 +38,11 @@ func TestUnsupportedEnvelopeVersion(t *testing.T) {
 			}
 			client, server := net.Pipe()
 			done := make(chan struct{})
-			go func() { defer close(done); defer server.Close(); serveConn(server) }()
+			go func() {
+				defer close(done)
+				defer server.Close()
+				serveConn(server, Identity{MainID: "main-test", Epoch: "1"})
+			}()
 			t.Cleanup(func() { client.Close(); server.Close(); <-done })
 			client.SetDeadline(time.Now().Add(5 * time.Second))
 			if _, err := client.Write(append(frame, '\n')); err != nil {
@@ -74,7 +78,11 @@ func TestUnrecognizableFirstFrameCloses(t *testing.T) {
 		t.Run(frame, func(t *testing.T) {
 			client, server := net.Pipe()
 			done := make(chan struct{})
-			go func() { defer close(done); defer server.Close(); serveConn(server) }()
+			go func() {
+				defer close(done)
+				defer server.Close()
+				serveConn(server, Identity{MainID: "main-test", Epoch: "1"})
+			}()
 			t.Cleanup(func() { client.Close(); server.Close(); <-done })
 			client.SetDeadline(time.Now().Add(5 * time.Second))
 			if _, err := io.WriteString(client, frame+"\n"); err != nil {
@@ -142,7 +150,7 @@ func TestServeCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	done := make(chan error, 1)
-	go func() { done <- Serve(ctx, listener) }()
+	go func() { done <- Serve(ctx, listener, Identity{MainID: "main-test", Epoch: "1"}) }()
 	conn, err := net.Dial("unix", path)
 	if err != nil {
 		t.Fatal(err)

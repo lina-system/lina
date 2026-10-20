@@ -11,13 +11,15 @@ import (
 	"syscall"
 
 	"github.com/thisisjun786/lina/internal/core/boot"
+	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 )
 
 func runCore(args []string) int {
 	flags := flag.NewFlagSet("lina core", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
+	root := flags.String("state-root", "", "path to the installed local state root")
 	socket := flags.String("socket", "", "path to the private client Unix socket")
-	flags.Usage = func() { fmt.Fprintln(os.Stderr, "usage: lina core --socket <path>") }
+	flags.Usage = func() { fmt.Fprintln(os.Stderr, "usage: lina core --state-root <path> --socket <path>") }
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -25,14 +27,20 @@ func runCore(args []string) int {
 		flags.Usage()
 		return 64
 	}
-	if *socket == "" || flags.NArg() != 0 {
+	if *root == "" || *socket == "" || flags.NArg() != 0 {
 		flags.Usage()
 		return 64
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
-	if err := boot.Run(ctx, *socket); err != nil {
+	if err := boot.Run(ctx, boot.Config{StateRoot: *root, Socket: *socket}); err != nil {
 		fmt.Fprintf(os.Stderr, "lina core: %v\n", err)
+		if errors.Is(err, ctlfiles.ErrLocked) {
+			return 69
+		}
+		if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+			return 0
+		}
 		return 78
 	}
 	return 0
