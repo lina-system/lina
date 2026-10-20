@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Verify registered Go packages using the workspace's exact toolchain and disposable outputs.
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -62,6 +62,12 @@ export function checkComponents({ cwd = process.cwd(), components, execute: run 
     // The root also supplies the analyzer when only kit packages are selected.
     for (const module of new Set(['.', ...components.map(component => component.module)])) {
       if (invoke('go', ['mod', 'verify'], join(cwd, module)).status !== 0) return { status: 1, output };
+    }
+    // Compare regenerated types without modifying the candidate. Minimal older
+    // trees and verification fixtures may not contain the protocol package yet.
+    const protocol = join(cwd, 'kit/protocol');
+    if (components.some(component => component.name === 'kit') && existsSync(protocol)) {
+      if (invoke('go', ['run', './internal/generate', '-check'], protocol).status !== 0) return { status: 1, output };
     }
     for (const module of new Set(components.map(component => component.module))) {
       const selected = components.filter(component => component.module === module);

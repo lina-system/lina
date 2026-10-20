@@ -7,8 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"regexp"
 	"slices"
+	"strconv"
 	"testing"
 )
 
@@ -83,7 +83,7 @@ func TestRejectInvalidEnvelope(t *testing.T) {
 		"unknown protocol field":   func(v map[string]any) { v["protocol"].(map[string]any)["extra"] = true },
 		"wrong connection":         func(v map[string]any) { v["protocol"].(map[string]any)["name"] = "node" },
 		"wrong version":            func(v map[string]any) { v["protocol"].(map[string]any)["version"] = "2.0" },
-		"unknown kind":             func(v map[string]any) { v["kind"] = "input" },
+		"unknown kind":             func(v map[string]any) { v["kind"] = "future_kind" },
 		"unknown sender":           func(v map[string]any) { v["sender"].(map[string]any)["party"] = "worker" },
 		"unknown effect":           func(v map[string]any) { v["effect_state"] = "success" },
 		"refusal without error":    func(v map[string]any) { v["effect_state"] = "refused" },
@@ -197,8 +197,8 @@ func TestRequiredNullability(t *testing.T) {
 	}
 }
 
-// Until generated types replace these types, verify the schema's object fields
-// and closed lists against the codec, so schema edits participate in kit checks.
+// Keep the public handshake API and canonical wire shape aligned as generation
+// replaces the original handwritten types.
 func TestSchemaAndTypesAgree(t *testing.T) {
 	data, err := os.ReadFile("../../protocol/schema/client/1.0/envelope.json")
 	if err != nil {
@@ -285,20 +285,15 @@ func TestSchemaAndTypesAgree(t *testing.T) {
 			}
 		}
 	}
-	var epoch struct {
-		Pattern string `json:"pattern"`
-		Not     struct {
-			Pattern string `json:"pattern"`
-		} `json:"not"`
-	}
-	if err := json.Unmarshal(schema.Definitions["epoch"], &epoch); err != nil {
-		t.Fatal(err)
-	}
-	pattern := regexp.MustCompile(epoch.Pattern)
-	forbidden := regexp.MustCompile(epoch.Not.Pattern)
 	for _, value := range []string{"0", "1", "10", "18446744073709551615", "18446744073709551616", "99999999999999999999", "01", "-1", "1.0", "", "0\n"} {
-		if (pattern.MatchString(value) && !forbidden.MatchString(value)) != (validateEpoch(value) == nil) {
-			t.Fatalf("epoch schema and codec disagree for %q", value)
+		number, err := strconv.ParseUint(value, 10, 64)
+		valid := err == nil && strconv.FormatUint(number, 10) == value
+		input := jsonValue(t, fixture(t, "hello")).(map[string]any)
+		input["epoch"] = value
+		data, _ := json.Marshal(input)
+		var envelope Envelope
+		if (json.Unmarshal(data, &envelope) == nil) != valid {
+			t.Fatalf("incorrect uint64 epoch validation for %q", value)
 		}
 	}
 }
