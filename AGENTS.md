@@ -12,5 +12,6 @@ Product design contracts live in [docs/design](docs/design/); implement against 
 - Preserve work, branches, and worktrees that belong to other people or workers.
 - Verify changes and report what was and was not checked. Do not write tests that pin prose or pass by timing luck.
 - Keep secrets, personal conversations, memories, user files, and operational state out of the repository ([SECURITY.md](SECURITY.md)).
+- Start every source file with `SPDX-License-Identifier: Apache-2.0` in its comment syntax, after a shebang line if it has one ([LICENSE](LICENSE)).
 - Plans and issues live in the owner's Linear workspace; the roadmap is issue #1 of this repository.
 - Clean up temporary processes and resources created for the task.

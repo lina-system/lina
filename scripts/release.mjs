@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: Apache-2.0
 // Releases one exact commit of dev.
 //
 //   node scripts/release.mjs --commit <sha> --tag vX.Y.Z --notes-file <file> [--publish]

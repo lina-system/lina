@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Shared Git helpers for the repository scripts. Every Git child process runs with the GIT_*
 // variables of the caller removed, so a hook, a worktree wrapper, or a test that exports GIT_DIR
 // never redirects a script to another repository.

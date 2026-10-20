@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Classifies a change into the checks it needs. The path map below is the executable registry:
 // a path that no entry covers is unmapped, and the gate refuses to pass until it is registered.
 import { existsSync } from 'node:fs';
@@ -5,7 +6,7 @@ import { join } from 'node:path';
 import { git, gitOut, resolveCommit } from '../git.mjs';
 
 const documents = new Set([
-  'README.md', 'MANIFESTO.md', 'LICENSE', 'THIRD-PARTY-NOTICES.md', 'SECURITY.md', 'AGENTS.md',
+  'README.md', 'MANIFESTO.md', 'LICENSE', 'THIRD-PARTY-NOTICES.md', 'SECURITY.md', 'AGENTS.md', 'CONTRIBUTING.md', 'NOTICE',
 ]);
 const configuration = new Set(['.editorconfig', '.gitattributes', '.gitignore']);
 

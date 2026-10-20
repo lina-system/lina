@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // The gate: foundation passes only when selection succeeded, every selected check succeeded, and
 // every unselected check was skipped. Missing, malformed, or unexpected results fail it.
 

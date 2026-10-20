@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: Apache-2.0
 // Integrates a branch into dev. This is the only way a change enters dev.
 //
 //   node scripts/integrate.mjs <branch> [--message-file <file>] [--remote <name>]

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // Helpers for the script tests. Every test runs against repositories in a temporary directory,
 // with the GIT_* variables of the test process removed and with no access to the real user or
 // system Git configuration.
