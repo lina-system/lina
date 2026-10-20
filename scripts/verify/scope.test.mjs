@@ -148,6 +148,7 @@ test('Core and client package edits select their tests and follow kit imports', 
     'cmd/lina-node/main.go': 'package main\nfunc main() {}\n',
     'internal/core/boot/boot.go': 'package boot\n',
     'internal/core/ctlfiles/files.go': 'package ctlfiles\n',
+    'internal/core/lifecycle/registry.go': 'package lifecycle\n',
     'internal/core/clientsrv/server.go': 'package clientsrv\nimport _ "example.invalid/lina/kit/protocol"\n',
     'internal/clientapi/client.go': 'package clientapi\nimport _ "example.invalid/lina/kit/protocol"\n',
     'internal/tui/ui/ui.go': 'package ui\nimport _ "example.invalid/lina/internal/clientapi"\n',
@@ -158,7 +159,7 @@ test('Core and client package edits select their tests and follow kit imports', 
   }
   const base = r.commit();
   for (const path of ['internal/core/boot/boot.go', 'internal/core/ctlfiles/files.go', 'internal/core/clientsrv/server.go',
-    'internal/clientapi/client.go', 'internal/tui/ui/ui.go', 'kit/protocol/doc.go']) {
+    'internal/core/lifecycle/registry.go', 'internal/clientapi/client.go', 'internal/tui/ui/ui.go', 'kit/protocol/doc.go']) {
     writeFileSync(join(r.cwd, path), files[path] + '// edited\n');
     const scope = r.classify('HEAD', { base });
     assert.deepEqual(scope.unmapped, []);
@@ -167,7 +168,7 @@ test('Core and client package edits select their tests and follow kit imports', 
     writeFileSync(join(r.cwd, path), files[path]);
   }
   const lina = componentRegistry.find(component => component.name === 'lina');
-  for (const directory of ['boot', 'ctlfiles', 'clientsrv']) {
+  for (const directory of ['boot', 'ctlfiles', 'clientsrv', 'lifecycle']) {
     assert.ok(lina.packages.includes(`./internal/core/${directory}/...`));
   }
   for (const directory of ['clientapi', 'tui']) {
