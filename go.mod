@@ -8,6 +8,8 @@ toolchain go1.27.3
 
 replace github.com/thisisjun786/lina/kit => ./kit
 
+require github.com/thisisjun786/lina/kit v0.0.0
+
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/go-logr/logr v1.2.0 // indirect
