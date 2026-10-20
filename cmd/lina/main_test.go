@@ -31,7 +31,6 @@ func TestCommand(t *testing.T) {
 		{name: "core extra argument", args: []string{"core", "--socket", "unused.sock", "extra"}, code: 64},
 		{name: "core occupied socket path", args: []string{"core", "--socket", binary}, code: 78},
 		{name: "tui", args: []string{"tui"}, code: 70},
-		{name: "version", args: []string{"version"}, code: 70},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			command := exec.Command(binary, tc.args...)

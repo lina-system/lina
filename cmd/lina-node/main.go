@@ -8,8 +8,8 @@ import (
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "version" {
-		fmt.Fprintln(os.Stderr, "lina-node version: not implemented")
-		os.Exit(70)
+		version()
+		return
 	}
 	fmt.Fprintln(os.Stderr, "usage: lina-node <version>")
 	os.Exit(64)

@@ -36,6 +36,33 @@ test('evidence records are documents, including additions, edits, renames and de
   assert.equal(kind('evidence-other/measurement.json'), 'unmapped');
 });
 
+test('build metadata changes select both binaries and verify the shared package', t => {
+  const r = repository(t);
+  const files = {
+    'go.mod': 'module example.invalid/lina\ngo 1.27\ntoolchain go1.27.3\n',
+    'kit/go.mod': 'module example.invalid/lina/kit\ngo 1.27\ntoolchain go1.27.3\n',
+    'go.work': 'go 1.27\ntoolchain go1.27.3\nuse (\n.\n./kit\n)\n',
+    'doc.go': 'package lina\n',
+    'kit/doc.go': 'package kit\n',
+    'internal/buildinfo/info.go': 'package buildinfo\n',
+    'cmd/lina/main.go': 'package main\nimport _ "example.invalid/lina/internal/buildinfo"\nfunc main() {}\n',
+    'cmd/lina-node/main.go': 'package main\nimport _ "example.invalid/lina/internal/buildinfo"\nfunc main() {}\n',
+    'internal/archtest/imports_test.go': 'package archtest\n',
+  };
+  for (const [name, content] of Object.entries(files)) {
+    mkdirSync(join(r.cwd, name, '..'), { recursive: true });
+    writeFileSync(join(r.cwd, name), content);
+  }
+  const base = r.commit();
+  writeFileSync(join(r.cwd, 'internal/buildinfo/info.go'), 'package buildinfo\n// changed\n');
+  const scope = r.classify('HEAD', { base });
+  assert.deepEqual(scope.unmapped, []);
+  assert.deepEqual(scope.selectedComponents, ['lina', 'lina-node']);
+  assert.equal(scope.automation, false);
+  assert.equal(scope.dependencies, false);
+  assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/buildinfo/...'));
+});
+
 test('every Go component change also selects the architecture test', t => {
   const r = repository(t);
   const files = {

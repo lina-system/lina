@@ -11,7 +11,10 @@ func main() {
 		switch os.Args[1] {
 		case "core":
 			os.Exit(runCore(os.Args[2:]))
-		case "tui", "version":
+		case "version":
+			version()
+			return
+		case "tui":
 			fmt.Fprintf(os.Stderr, "lina %s: not implemented\n", os.Args[1])
 			os.Exit(70)
 		}

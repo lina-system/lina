@@ -100,7 +100,7 @@ The initial registry is:
 | Component | Owned paths | Module | Package patterns |
 | --- | --- | --- | --- |
 | `kit` | `kit/` | `kit/` | `./...` |
-| `lina` | `cmd/lina/`, `internal/archtest/`, root `doc.go` | root | `.`, `./cmd/lina/...`, `./internal/archtest/...` |
+| `lina` | `cmd/lina/`, `internal/archtest/`, `internal/buildinfo/`, root `doc.go` | root | `.`, `./cmd/lina/...`, `./internal/archtest/...`, `./internal/buildinfo/...` |
 | `lina-node` | `cmd/lina-node/` | root | `./cmd/lina-node/...` |
 
 The scope script reads package imports and test imports with `go list` using the pinned toolchain, so a change to one component also selects every component that depends on it, transitively. It includes uncommitted changes and untracked files when checking the current checkout. Foundation rejects a candidate that is not checked out before invoking the scope script. Component-only changes run `docs` and the selected components; changes to verification scripts, shared configuration, module manifests or workspace files select every component. Selection and the evidence note record the selected component names. Until a component is registered, its paths remain unmapped and the gate refuses to pass. Register a vendored tree under `third_party/<name>/` the same way as any other component. `go test` runs its upstream tests unchanged.
@@ -114,7 +114,7 @@ The test enforces the import rules in [go-core.md C-40](../design/go-core.md#pro
 - Core package families and their descendants use the C-40 layer table. A package under `internal/core` absent from that table fails as unmapped. Imports between different families must go strictly downward, including the ban on imports between L3 stores. Imports within one family are allowed; Go checks cycles.
 - Kit cannot import the root module. Charm imports (`github.com/charmbracelet/` and `charm.land/`) belong only to `internal/tui/term` and `internal/tui/ui`.
 - `os/exec` belongs only to `kit/proc` and `kit/sandbox`; references to `os.Environ`, including aliases, dot imports and function values, belong only to `kit/proc`.
-- `internal/node` and `cmd/lina-node` may import the Go standard library and the C-35 kit families `grant`, `lease`, `sandbox`, `proc`, `protocol`, `rpc`, `diag` and `secret`.
+- `internal/node` and `cmd/lina-node` may import the Go standard library and the C-35 kit families `grant`, `lease`, `sandbox`, `proc`, `protocol`, `rpc`, `diag` and `secret`. The command entry point `cmd/lina-node` may also import the exact package `internal/buildinfo`, which may itself import only the standard library.
 
 Diagnostics name the source file, line and violated rule. Behavioral fixtures exercise forbidden and permitted imports; a disposable module proves that a seeded forbidden import fails the ordinary Go test command and that removing it restores success. This import check does not establish the separate C-40 purity, secret-reveal or view-field constraints.
 

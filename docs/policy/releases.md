@@ -47,6 +47,16 @@ With `--publish`, the script runs two separate stages.
 
 A release carries the source at its tag, the repository's [license](../../LICENSE) and the [third-party notices](../../THIRD-PARTY-NOTICES.md). It publishes no package to any registry and deploys no service.
 
+When building `lina` and `lina-node`, the build stage supplies these string variables with `go build -ldflags "-X <name>=<value> ..."`:
+
+| Name | Value |
+| --- | --- |
+| `github.com/thisisjun786/lina/internal/buildinfo.Version` | The release tag without its leading `v`, `0.0.1-alpha.YYYYMMDD.N`, with no `+` metadata |
+| `github.com/thisisjun786/lina/internal/buildinfo.Commit` | The verified source commit SHA |
+| `github.com/thisisjun786/lina/internal/buildinfo.Date` | The build date in UTC, `YYYY-MM-DD` |
+
+Both binaries report these fields through `version` as specified in [versioning.md](../design/versioning.md#what-a-binary-reports). The source defaults remain a development version and do not change for each release. The current release script packages source; wiring binary artifacts into that script is separate from the commands' metadata support.
+
 ## Distribution
 
 The main installs LINA from the GitHub release, downloaded with the installing person's own `gh` authentication, which needs read access to this repository. Node binaries and updates reach the other devices from the main LINA Core over the tailnet ([runtime.md](../design/runtime.md#updates)).
