@@ -90,6 +90,12 @@ func checkDirectory(root *os.Root) error {
 	return private(info, true)
 }
 
+// ValidatePrivateDirectory applies the state-directory owner and mode checks
+// to directory metadata. Callers use Lstat so symbolic links are refused.
+func ValidatePrivateDirectory(info os.FileInfo) error {
+	return private(info, true)
+}
+
 func private(info os.FileInfo, directory bool) error {
 	mode := os.FileMode(0600)
 	valid := info.Mode().IsRegular()

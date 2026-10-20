@@ -188,8 +188,20 @@ func Run(ctx context.Context, cfg Config) (result error) {
 			return err
 		}
 	}
-	sentinel, _ := json.Marshal(Sentinel{Epoch: strconv.FormatUint(snapshot.Epoch, 10), Socket: cfg.Socket})
-	if err := store.Write("run.sentinel", sentinel); err != nil {
+	// Starting a run does not establish ownership of the requested socket.
+	// Keep the previous run's path until a new listener has actually bound.
+	ownedSocket := ""
+	if recovery.Previous != nil {
+		ownedSocket = recovery.Previous.Socket
+	}
+	writeSentinel := func(socket string) error {
+		sentinel, err := json.Marshal(Sentinel{Epoch: strconv.FormatUint(snapshot.Epoch, 10), Socket: socket})
+		if err != nil {
+			return err
+		}
+		return store.Write("run.sentinel", sentinel)
+	}
+	if err := writeSentinel(ownedSocket); err != nil {
 		return err
 	}
 	sentinelWritten = true
@@ -218,12 +230,19 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	if err := boundary(EpochMirrored); err != nil {
 		return err
 	}
+	// Validate the owner before either deleting a previous socket or binding.
+	if err := clientsrv.PrepareSocketDirectory(cfg.Socket); err != nil {
+		return err
+	}
 	if err := reclaimSocket(cfg.Socket, recovery.Previous); err != nil {
 		return err
 	}
 	listener, err := clientsrv.Listen(cfg.Socket)
 	if err != nil {
 		return err
+	}
+	if err := writeSentinel(cfg.Socket); err != nil {
+		return errors.Join(err, listener.Close())
 	}
 	snapshot.State = Recovering
 	var recovering atomic.Bool
@@ -309,7 +328,10 @@ func readControls(store *ctlfiles.Store) (Recovery, error) {
 				return recovery, err
 			}
 			epoch, err := strconv.ParseUint(previous.Epoch, 10, 64)
-			if err != nil || strconv.FormatUint(epoch, 10) != previous.Epoch || epoch == 0 || !filepath.IsAbs(previous.Socket) {
+			_, socketPresent := object["socket"]
+			if err != nil || strconv.FormatUint(epoch, 10) != previous.Epoch || epoch == 0 ||
+				!socketPresent || strings.TrimSpace(string(object["socket"])) == "null" ||
+				(previous.Socket != "" && !filepath.IsAbs(previous.Socket)) {
 				return recovery, errors.New("invalid run sentinel")
 			}
 			recovery.Previous = &previous

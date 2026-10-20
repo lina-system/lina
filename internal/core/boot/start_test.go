@@ -336,6 +336,7 @@ func TestBadControlRecordsStopBeforeEpochMint(t *testing.T) {
 	for _, tc := range []struct{ name, data string }{
 		{"main.json", `{}`}, {"main.json", `null`}, {"main.json", `{"main_id":" "}`},
 		{"run.sentinel", `{"epoch":"01","socket":"/unused"}`}, {"run.sentinel", `{}`},
+		{"run.sentinel", `{"epoch":"1"}`}, {"run.sentinel", `{"epoch":"1","socket":null}`},
 		{"halt.json", `broken`}, {"lifecycle.json", `null`},
 	} {
 		t.Run(tc.name+tc.data, func(t *testing.T) {

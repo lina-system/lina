@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -35,16 +36,8 @@ type Identity struct {
 // Listen creates a socket in a private directory. An existing directory must
 // already be private; existing paths (including stale sockets) are preserved.
 func Listen(path string) (*net.UnixListener, error) {
-	directory := filepath.Dir(path)
-	if err := os.MkdirAll(directory, 0700); err != nil {
-		return nil, fmt.Errorf("create socket directory: %w", err)
-	}
-	info, err := os.Lstat(directory)
-	if err != nil {
+	if err := PrepareSocketDirectory(path); err != nil {
 		return nil, err
-	}
-	if !info.IsDir() || info.Mode().Perm() != 0700 {
-		return nil, fmt.Errorf("socket directory must be a directory at mode 0700")
 	}
 	if _, err := os.Lstat(path); !os.IsNotExist(err) {
 		if err != nil {
@@ -61,6 +54,28 @@ func Listen(path string) (*net.UnixListener, error) {
 		return nil, fmt.Errorf("set socket permissions: %w", err)
 	}
 	return listener, nil
+}
+
+// PrepareSocketDirectory creates and validates the private parent of a socket.
+// Boot also calls it before reclaiming a previous socket, so an untrusted
+// directory is refused before any socket entry is removed.
+func PrepareSocketDirectory(path string) error {
+	directory := filepath.Dir(path)
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		return fmt.Errorf("create socket directory: %w", err)
+	}
+	info, err := os.Lstat(directory)
+	if err != nil {
+		return err
+	}
+	return validateSocketDirectory(info)
+}
+
+func validateSocketDirectory(info os.FileInfo) error {
+	if err := ctlfiles.ValidatePrivateDirectory(info); err != nil {
+		return fmt.Errorf("socket directory: %w", err)
+	}
+	return nil
 }
 
 // Serve owns the listener and all accepted connections. Cancellation closes
