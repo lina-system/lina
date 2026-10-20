@@ -42,6 +42,7 @@ test('a real document-only Git diff excludes automation', t => {
   assert.equal(scope.reason, 'documents-only');
   assert.equal(scope.docs, true);
   assert.equal(scope.automation, false);
+  assert.equal(scope.dependencies, false);
   assert.deepEqual(scope.changed, ['README.md']);
   assert.deepEqual(scope.unmapped, []);
   assert.equal(r.classify(scope.head, { full: true }).automation, true);
@@ -202,6 +203,7 @@ test('Go components select importers transitively, including test imports, and l
   const scope = r.classify(head, { base });
   assert.deepEqual(scope.selectedComponents, ['kit', 'lina']);
   assert.equal(scope.components, true);
+  assert.equal(scope.dependencies, false);
   assert.deepEqual(scope.unmapped, []);
   assert.equal(scope.automation, false);
   mkdirSync(join(r.cwd, 'cmd/lina/bridge'));
@@ -225,6 +227,31 @@ test('Go components select importers transitively, including test imports, and l
   // Existing unregistered Go code cannot hide in a docs-only diff.
   writeFileSync(join(r.cwd, 'unexpected.go'), 'package lina\n');
   assert.deepEqual(r.classify('HEAD', { base: config }).unmapped, ['unexpected.go']);
+});
+
+test('module and workspace changes select dependencies and every component without running Go', t => {
+  const r = repository(t);
+  const files = ['go.mod', 'go.sum', 'go.work', 'go.work.sum', 'kit/go.mod', 'kit/go.sum',
+    'doc.go', 'kit/doc.go', 'cmd/lina/main.go', 'cmd/lina-node/main.go'];
+  for (const path of files) {
+    mkdirSync(join(r.cwd, path, '..'), { recursive: true });
+    writeFileSync(join(r.cwd, path), 'fixture\n');
+  }
+  const base = r.commit();
+  for (const path of files.filter(path => /(?:go\.(?:mod|sum|work)|go\.work\.sum)$/.test(path))) {
+    writeFileSync(join(r.cwd, path), 'changed fixture\n');
+    const scope = r.classify('HEAD', { base });
+    assert.equal(scope.dependencies, true, path);
+    assert.deepEqual(scope.selectedComponents, ['kit', 'lina', 'lina-node'], path);
+    writeFileSync(join(r.cwd, path), 'fixture\n');
+  }
+  assert.equal(r.classify('HEAD', { full: true }).dependencies, true);
+  assert.equal(r.classify('HEAD', { base }).dependencies, true);
+  assert.equal(r.classify('HEAD', { base: '' }).dependencies, true);
+  writeFileSync(join(r.cwd, 'README.md'), '# Changed\n');
+  assert.equal(r.classify('HEAD', { base }).dependencies, false);
+  rmSync(join(r.cwd, 'go.sum'));
+  assert.equal(r.classify('HEAD', { base }).dependencies, true);
 });
 
 for (const path of ['.github/workflows/ci.yml', '.github/workflows/ci.yaml', '.node-version']) {

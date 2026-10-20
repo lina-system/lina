@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { run } from './git.mjs';
-import { developmentRepository, sandbox } from './test-fixture.mjs';
+import { developmentRepository, installScripts, sandbox } from './test-fixture.mjs';
 
 function foundation(sb, repo, args = [], env = {}) {
   const result = run(process.execPath, [join(repo, 'scripts/foundation.mjs'), ...args], { cwd: repo, env: { ...sb.env, ...env } });
@@ -24,7 +24,7 @@ test('a full run on a clean checkout passes and records the evidence as a note',
   assert.equal(result.evidence.result, 'success');
   assert.equal(result.evidence.mode, 'full');
   assert.equal(result.evidence.head, head);
-  assert.deepEqual(outcomes(result.evidence), { selection: 'success', docs: 'success', automation: 'success', components: 'skipped' });
+  assert.deepEqual(outcomes(result.evidence), { selection: 'success', docs: 'success', automation: 'success', dependencies: 'skipped', components: 'skipped' });
   for (const check of Object.values(result.evidence.checks).filter(check => check.result !== 'skipped')) assert.equal(typeof check.seconds, 'number');
   assert.equal(result.evidence.tools.node, process.version);
   const note = JSON.parse(noteOf(sb, work, head));
@@ -42,7 +42,7 @@ test('a documents-only range skips automation, and the default range starts at t
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.evidence.mode, 'docs');
   assert.equal(result.evidence.base, sb.g(work, 'rev-parse', 'dev'));
-  assert.deepEqual(outcomes(result.evidence), { selection: 'success', docs: 'success', automation: 'skipped', components: 'skipped' });
+  assert.deepEqual(outcomes(result.evidence), { selection: 'success', docs: 'success', automation: 'skipped', dependencies: 'skipped', components: 'skipped' });
 });
 
 test('on dev itself the default range is the previous dev head', (t) => {
@@ -183,6 +183,7 @@ test('foundation records selected Go components, skips them for prose and fails 
   Object.assign(sb.env, JSON.parse(caches.stdout));
   const { work } = developmentRepository(sb);
   const source = new URL('../', import.meta.url);
+  installScripts(work, ['verify/check-dependencies.mjs']);
   for (const name of ['go.mod', 'go.sum', 'go.work', 'kit/go.mod']) {
     sb.write(work, name, readFileSync(new URL(name, source)));
   }
@@ -195,15 +196,45 @@ test('foundation records selected Go components, skips them for prose and fails 
   assert.equal(green.status, 0, green.stderr);
   assert.deepEqual(green.evidence.selectedComponents, ['kit', 'lina', 'lina-node']);
   assert.equal(green.evidence.checks.components.result, 'success');
+  assert.equal(green.evidence.checks.dependencies.result, 'success');
   assert.equal(green.evidence.tools.go, 'go1.27.3');
   sb.commit(work, 'docs: change', { 'README.md': '# Updated fixture\n' });
   assert.equal(foundation(sb, work).evidence.checks.components.result, 'skipped');
+  assert.equal(foundation(sb, work).evidence.checks.dependencies.result, 'skipped');
   const broken = sb.commit(work, 'feat: broken Go', { 'kit/doc.go': 'package kit\nvar broken = doesNotExist\n' });
   const red = foundation(sb, work);
   assert.equal(red.status, 1);
   assert.equal(red.evidence.checks.components.result, 'failure');
   assert.match(red.stderr, /doesNotExist/);
   assert.notEqual(run('git', ['notes', '--ref=refs/notes/foundation', 'show', broken], { cwd: work, env: sb.env }).status, 0);
+});
+
+test('foundation runs dependencies once, records failures, and skips it for prose', t => {
+  const sb = sandbox(t);
+  const { work } = developmentRepository(sb);
+  // Process stubs exercise orchestration without invoking Go or accessing the network.
+  sb.write(work, 'go.mod', 'module example.invalid/fixture\n');
+  sb.write(work, 'scripts/verify/check-dependencies.mjs', `// SPDX-License-Identifier: Apache-2.0
+import { appendFileSync, existsSync } from 'node:fs';
+appendFileSync('calls', 'dependencies\\n');
+if (existsSync('go.sum')) { console.error('seeded module verification failure'); process.exitCode = 1; }
+`);
+  sb.write(work, '.gitignore', 'calls\n');
+  sb.commit(work, 'test: seed dependencies');
+  const green = foundation(sb, work);
+  assert.equal(green.status, 0, green.stderr);
+  assert.equal(green.evidence.checks.dependencies.result, 'success');
+  assert.equal(readFileSync(join(work, 'calls'), 'utf8'), 'dependencies\n');
+  const failedHead = sb.commit(work, 'test: bad sums', { 'go.sum': 'CORRUPT\n' });
+  const red = foundation(sb, work);
+  assert.equal(red.status, 1);
+  assert.equal(red.evidence.checks.dependencies.result, 'failure');
+  assert.match(red.stderr, /seeded module verification failure/);
+  assert.equal(red.evidence.note, 'not written');
+  assert.notEqual(run('git', ['notes', '--ref=refs/notes/foundation', 'show', failedHead], { cwd: work, env: sb.env }).status, 0);
+  sb.commit(work, 'docs: change', { 'README.md': '# Changed\n' });
+  assert.equal(foundation(sb, work).evidence.checks.dependencies.result, 'skipped');
+  assert.equal(readFileSync(join(work, 'calls'), 'utf8'), 'dependencies\ndependencies\n');
 });
 const workflow = `# SPDX-License-Identifier: Apache-2.0
 name: Fixture

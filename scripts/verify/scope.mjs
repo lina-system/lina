@@ -143,7 +143,9 @@ export function scopeFor({ base = '', head, full = false, cwd = process.cwd() })
   return {
     mode: docsOnly ? 'docs' : 'full', reason,
     base: resolvedBase, head: resolvedHead,
-    docs: true, automation: all && !docsOnly, components: selectedComponents.length > 0,
+    docs: true, automation: all && !docsOnly,
+    dependencies: all && !docsOnly && [...inventory, ...changed].some(path => modules.has(path)),
+    components: selectedComponents.length > 0,
     selectedComponents, changed, unmapped,
   };
 }

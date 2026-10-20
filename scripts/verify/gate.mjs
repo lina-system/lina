@@ -7,6 +7,7 @@ export function evaluateGate(scope, results) {
   if (results.selection?.result !== 'success') {
     failures.push('selection did not succeed');
   } else if (scope.docs !== true || typeof scope.automation !== 'boolean' || !Array.isArray(scope.unmapped)
+      || typeof scope.dependencies !== 'boolean'
       || typeof scope.components !== 'boolean' || !Array.isArray(scope.selectedComponents)
       || scope.components !== (scope.selectedComponents.length > 0)
       || scope.selectedComponents.some(name => !['kit', 'lina', 'lina-node'].includes(name))
@@ -16,7 +17,7 @@ export function evaluateGate(scope, results) {
     if (scope.unmapped.length) {
       failures.push(`Register verification for unmapped paths: ${scope.unmapped.join(', ')}`);
     }
-    for (const name of ['docs', 'automation', 'components']) {
+    for (const name of ['docs', 'automation', 'dependencies', 'components']) {
       const expected = scope[name] ? 'success' : 'skipped';
       const actual = results[name]?.result;
       if (actual !== expected) failures.push(`${name}: expected ${expected}, received ${actual ?? 'missing'}`);
