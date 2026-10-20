@@ -226,3 +226,25 @@ test('Go components select importers transitively, including test imports, and l
   writeFileSync(join(r.cwd, 'unexpected.go'), 'package lina\n');
   assert.deepEqual(r.classify('HEAD', { base: config }).unmapped, ['unexpected.go']);
 });
+
+for (const path of ['.github/workflows/ci.yml', '.github/workflows/ci.yaml', '.node-version']) {
+  test(`${path} selects automation without unmapped paths`, t => {
+    const r = repository(t);
+    mkdirSync(join(r.cwd, path, '..'), { recursive: true });
+    writeFileSync(join(r.cwd, path), 'fixture\n');
+    const scope = r.classify(r.commit());
+    assert.equal(scope.mode, 'full');
+    assert.equal(scope.reason, 'automation-change');
+    assert.equal(scope.automation, true);
+    assert.deepEqual(scope.unmapped, []);
+  });
+}
+
+for (const path of ['.github/workflows/nested/ci.yml', '.github/workflows/script.sh', '.github/actions/example/action.yml']) {
+  test(`${path} still needs its own verification registration`, t => {
+    const r = repository(t);
+    mkdirSync(join(r.cwd, path, '..'), { recursive: true });
+    writeFileSync(join(r.cwd, path), 'fixture\n');
+    assert.deepEqual(r.classify(r.commit()).unmapped, [path]);
+  });
+}

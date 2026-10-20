@@ -9,7 +9,7 @@ import { createGoContext, execute } from './check-components.mjs';
 const documents = new Set([
   'README.md', 'MANIFESTO.md', 'LICENSE', 'THIRD-PARTY-NOTICES.md', 'SECURITY.md', 'AGENTS.md', 'CONTRIBUTING.md', 'NOTICE',
 ]);
-const configuration = new Set(['.editorconfig', '.gitattributes', '.gitignore']);
+const configuration = new Set(['.editorconfig', '.gitattributes', '.gitignore', '.node-version']);
 const modules = new Set(['go.mod', 'go.sum', 'go.work', 'go.work.sum', 'kit/go.mod', 'kit/go.sum']);
 
 export const componentRegistry = [
@@ -30,6 +30,7 @@ export function kind(path) {
   if (modules.has(path)) return 'modules';
   if (componentOf(path)) return 'components';
   if (documents.has(path) || /^docs\/(?:policy|design)\/[^/]+\.md$/.test(path)) return 'docs';
+  if (/^\.github\/workflows\/[^/]+\.ya?ml$/.test(path)) return 'automation';
   if (configuration.has(path) || /^scripts\/(?:verify\/)?[^/]+\.(?:mjs|sh)$/.test(path)) return 'automation';
   return 'unmapped';
 }
