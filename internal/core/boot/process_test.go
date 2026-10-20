@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"syscall"
 	"testing"
 	"time"
@@ -34,7 +35,9 @@ func TestCoreProcess(t *testing.T) {
 			}
 			t.Cleanup(func() { os.RemoveAll(root) })
 			socket := filepath.Join(root, "run", "core.sock")
-			for range 2 { // A restart keeps the placeholders and needs no control files.
+			seedMain(t, root)
+			for iteration := range 2 {
+				epoch := strconv.Itoa(iteration + 1)
 				child := startCore(t, binary, root, socket)
 				idle := child.connect(t, socket) // Readiness is a successful connection.
 				for _, versions := range [][]string{{"1.0"}, {"2.0", "1.0"}, {"2.0", "1.1"}} {
@@ -67,13 +70,13 @@ func TestCoreProcess(t *testing.T) {
 					if response.JSONRPC != "2.0" || response.ID != "handshake" || envelope.ReplyTo == nil || *envelope.ReplyTo != hello.MessageID {
 						t.Fatalf("uncorrelated response: %s", line)
 					}
-					if envelope.Sender != (protocol.Sender{Party: protocol.PartyCore, ID: "main-placeholder"}) || envelope.Epoch != "0" {
+					if envelope.Sender != (protocol.Sender{Party: protocol.PartyCore, ID: "main-test"}) || envelope.Epoch != epoch {
 						t.Fatalf("unexpected identity: %s", line)
 					}
 					if versions[len(versions)-1] == "1.0" {
 						welcome, ok := envelope.Payload.(protocol.Welcome)
 						want := protocol.Welcome{
-							ProtocolVersion: "1.0", MainID: "main-placeholder", Epoch: "0",
+							ProtocolVersion: "1.0", MainID: "main-test", Epoch: epoch,
 							PersonID: "person-placeholder", Agents: []protocol.Agent{}, Capabilities: []protocol.Capability{},
 						}
 						if !ok || envelope.Kind != protocol.KindWelcome || envelope.Error != nil || envelope.EffectState != protocol.EffectNone || !reflect.DeepEqual(welcome, want) {
@@ -107,14 +110,20 @@ func TestCoreProcess(t *testing.T) {
 				// Inspect after a round trip, so binding and chmod have both completed.
 				assertMode(t, filepath.Dir(socket), 0700, os.ModeDir)
 				assertMode(t, socket, 0600, os.ModeSocket)
-				assertFiles(t, root, []string{"run", "run/core.sock"})
+				assertMode(t, filepath.Join(root, "system/core"), 0700, os.ModeDir)
+				assertMode(t, filepath.Join(root, "system/core/epoch"), 0600, 0)
 				child.stop(t, signal)
+				if _, err := os.Lstat(socket); !os.IsNotExist(err) {
+					t.Fatalf("socket remains after shutdown: %v", err)
+				}
 				idle.SetReadDeadline(time.Now().Add(time.Second))
 				if _, err := idle.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
 					t.Fatalf("idle connection after shutdown: %v", err)
 				}
 				idle.Close()
-				assertFiles(t, root, []string{"run"})
+				if _, err := os.Stat(filepath.Join(root, "system/core/run.sentinel")); !os.IsNotExist(err) {
+					t.Fatalf("sentinel remains after shutdown: %v", err)
+				}
 			}
 		})
 	}
@@ -146,7 +155,7 @@ type coreChild struct {
 
 func startCore(t *testing.T, binary, root, socket string) *coreChild {
 	t.Helper()
-	child := &coreChild{command: exec.Command(binary, "core", "--socket", socket), done: make(chan struct{})}
+	child := &coreChild{command: exec.Command(binary, "core", "--state-root", root, "--socket", socket), done: make(chan struct{})}
 	child.command.Env = []string{"HOME=" + root, "XDG_STATE_HOME=" + root, "XDG_RUNTIME_DIR=" + root}
 	child.command.Dir = root
 	child.command.Stdout, child.command.Stderr = &child.output, &child.output
@@ -206,26 +215,44 @@ func assertMode(t *testing.T, path string, mode os.FileMode, kind os.FileMode) {
 	}
 }
 
-func assertFiles(t *testing.T, root string, want []string) {
+func seedMain(t *testing.T, root string) {
 	t.Helper()
-	var found []string
-	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if path != root {
-			name, err := filepath.Rel(root, path)
-			if err != nil {
-				return err
-			}
-			found = append(found, name)
-		}
-		return nil
-	})
+	if err := os.MkdirAll(filepath.Join(root, "system/core"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "system/core/main.json"), []byte(`{"main_id":"main-test"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSecondCoreExits69(t *testing.T) {
+	binary := filepath.Join(t.TempDir(), "lina")
+	build := exec.Command("go", "build", "-mod=readonly", "-o", binary, "../../../cmd/lina")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, output)
+	}
+	root := stateRoot(t)
+	socket := filepath.Join(root, "run/core.sock")
+	child := startCore(t, binary, root, socket)
+	connection := child.connect(t, socket)
+	defer connection.Close()
+	before, err := os.Stat(socket)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(found, want) {
-		t.Fatalf("files = %v, want %v (no state or control files)", found, want)
+	second := exec.Command(binary, "core", "--state-root", root, "--socket", socket)
+	output, err := second.CombinedOutput()
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 69 {
+		t.Fatalf("second Core: %v\n%s", err, output)
 	}
+	after, err := os.Stat(socket)
+	if err != nil || !os.SameFile(before, after) {
+		t.Fatalf("second Core replaced socket: %v", err)
+	}
+	epoch, err := os.ReadFile(filepath.Join(root, "system/core/epoch"))
+	if err != nil || string(epoch) != "1" {
+		t.Fatalf("second Core changed epoch: %s %v", epoch, err)
+	}
+	child.stop(t, syscall.SIGTERM)
 }
