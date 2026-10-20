@@ -361,3 +361,28 @@ func TestConcurrentWritersAndReaders(t *testing.T) {
 		t.Fatalf("events=%d err=%v", len(p.Events), err)
 	}
 }
+
+func TestOrdinaryEventsPreserveEmergencyReserve(t *testing.T) {
+	for _, result := range []diag.Result{diag.Pending, diag.Success} {
+		s, b := memoryStore()
+		dir := t.TempDir()
+		reserve, err := PrepareReserve(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { reserve.Close() })
+		s.reserve = reserve
+		full := errors.New("typed full error")
+		s.isFull = func(err error) bool { return errors.Is(err, full) }
+		r := root(t, s, diag.References{TaskID: newID(t)})
+		b.calls = 0
+		b.writeErrors = []error{full}
+		_, err = diag.NewEmitter(s).Emit(t.Context(), diag.Fields{Component: diag.Task, Cause: diag.Cause{Code: diag.OperationStarted, ParentEventID: r.EventID}, Result: result, NextAction: diag.Continue})
+		if !errors.Is(err, ErrStorage) || b.calls != 1 {
+			t.Fatalf("ordinary event consumed emergency retry: err=%v calls=%d", err, b.calls)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "system", "events", "reserve")); err != nil {
+			t.Fatal("reserve unavailable for the failure event")
+		}
+	}
+}

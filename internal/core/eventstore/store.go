@@ -100,7 +100,8 @@ func (s *Store) Append(ctx context.Context, e diag.Event) error {
 	// A full-disk transaction has failed; release actual preallocated disk space
 	// and retry the same id once. The SQL backend recognizes a previously committed
 	// identical id, so an ambiguous commit cannot duplicate a diagnosis event.
-	if err != nil && s.isFull != nil && s.isFull(err) && s.reserve != nil {
+	emergency := e.Result == diag.Failure || e.Result == diag.Unknown || e.Result == diag.Denied || e.Result == diag.Cancelled
+	if err != nil && emergency && s.isFull != nil && s.isFull(err) && s.reserve != nil {
 		if releaseErr := s.reserve.Release(); releaseErr != nil {
 			return ErrStorage
 		}
