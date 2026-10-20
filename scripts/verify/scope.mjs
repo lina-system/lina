@@ -18,9 +18,12 @@ function registryFor(cwd) {
   const buildinfo = existsSync(join(cwd, 'internal/buildinfo')) ? ['./internal/buildinfo/...'] : [];
   const clientapi = existsSync(join(cwd, 'internal/clientapi')) ? ['./internal/clientapi/...'] : [];
   const manifest = existsSync(join(cwd, 'internal/core/manifest')) ? ['./internal/core/manifest/...'] : [];
+  const coreDirectories = ['internal/core/boot/', 'internal/core/clientsrv/'];
+  const corePackages = coreDirectories.filter(directory => existsSync(join(cwd, directory)))
+    .map(directory => `./${directory}...`);
   return [
     { name: 'kit', module: 'kit', directories: ['kit/', 'protocol/schema/', 'protocol/fixtures/'], files: [], packages: ['./...'] },
-    { name: 'lina', module: '.', directories: ['cmd/lina/', 'internal/archtest/', 'internal/buildinfo/', 'internal/core/manifest/', 'internal/clientapi/'], files: ['doc.go'], packages: ['.', './cmd/lina/...', ...architecture, ...buildinfo, ...manifest, ...clientapi], binary: 'lina' },
+    { name: 'lina', module: '.', directories: ['cmd/lina/', 'internal/archtest/', 'internal/buildinfo/', 'internal/core/manifest/', ...coreDirectories, 'internal/clientapi/'], files: ['doc.go'], packages: ['.', './cmd/lina/...', ...architecture, ...buildinfo, ...manifest, ...corePackages, ...clientapi], binary: 'lina' },
     { name: 'lina-node', module: '.', directories: ['cmd/lina-node/'], files: [], packages: ['./cmd/lina-node/...'], binary: 'lina-node' },
   ];
 }
