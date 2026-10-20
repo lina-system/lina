@@ -1,0 +1,22 @@
+{
+  "protocol": {
+    "name": "client",
+    "version": "1.0"
+  },
+  "kind": "task_status",
+  "message_id": "task_status-example",
+  "attempt_id": "task_status-attempt-1",
+  "reply_to": null,
+  "sender": {
+    "party": "core",
+    "id": "main-example"
+  },
+  "epoch": "42",
+  "sent_at": "2026-01-01T00:00:01Z",
+  "idempotency_key": null,
+  "effect_state": "cancelled",
+  "receipt_ref": null,
+  "source_refs": [],
+  "error": null,
+  "payload": {}
+}

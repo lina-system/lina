@@ -63,6 +63,31 @@ test('build metadata changes select both binaries and verify the shared package'
   assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/buildinfo/...'));
 });
 
+test('client API fixtures run kit and the Core receive boundary', t => {
+  const r = repository(t);
+  const files = {
+    'go.mod': 'module example.invalid/lina\ngo 1.27\ntoolchain go1.27.3\n',
+    'kit/go.mod': 'module example.invalid/lina/kit\ngo 1.27\ntoolchain go1.27.3\n',
+    'go.work': 'go 1.27\ntoolchain go1.27.3\nuse (\n.\n./kit\n)\n',
+    'doc.go': 'package lina\n',
+    'kit/protocol/protocol.go': 'package protocol\n',
+    'internal/clientapi/decode.go': 'package clientapi\nimport _ "example.invalid/lina/kit/protocol"\n',
+    'cmd/lina/main.go': 'package main\nfunc main() {}\n',
+    'protocol/fixtures/client/1.0/hello.json': '{}\n',
+  };
+  for (const [name, content] of Object.entries(files)) {
+    mkdirSync(join(r.cwd, name, '..'), { recursive: true });
+    writeFileSync(join(r.cwd, name), content);
+  }
+  const base = r.commit();
+  writeFileSync(join(r.cwd, 'protocol/fixtures/client/1.0/hello.json'), '{"changed":true}\n');
+  const scope = r.classify('HEAD', { base });
+  assert.deepEqual(scope.unmapped, []);
+  assert.deepEqual(scope.selectedComponents, ['kit', 'lina']);
+  assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/clientapi/...'));
+  assert.equal(kind('internal/clientapi/decode.go'), 'components');
+});
+
 test('every Go component change also selects the architecture test', t => {
   const r = repository(t);
   const files = {
