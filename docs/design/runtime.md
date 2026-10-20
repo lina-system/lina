@@ -10,17 +10,17 @@ This contract covers:
 
 - the language, the build and the processes of every component LINA builds
 - the vendored source and the LINA kit
-- the conversation loop, the model path through opencodex and the non-chat adapters
+- the conversation loop with its turn budget and the replay command, the model path through provider adapters, model-provider accounts and sign-in, and the non-chat adapters
 - the conversation tools, plugin tools and the OS sandbox
 - installed tools that LINA uses without owning them, including the coding tools LINA runs as workers
 - storage engines, packaging, the `lina` command, the release manifest and the packaging and resident budget
 - updates, recovery, failure injections, remote access and LINA OS composition
 
-It does not cover the envelope and wire formats ([host-protocol.md](host-protocol.md)), grants, epochs, receipts and the approval policy ([main-authority.md](main-authority.md)), turn preparation, request assembly, persona, memory and compaction ([conversation-and-memory.md](conversation-and-memory.md)), the work engine, the kind-of-work rule, worker adapters and the LINA work harness rules ([work-and-delegation.md](work-and-delegation.md)), plugins ([integrations.md](integrations.md)), installation modes and LINA OS profiles ([product-families.md](product-families.md)), the state root, backup generations and restore ([filesystem.md](filesystem.md)), screens ([surfaces.md](surfaces.md)) or dependency and vendoring rules ([dependencies.md](../policy/dependencies.md)).
+It does not cover the envelope and wire formats ([host-protocol.md](host-protocol.md)), grants, epochs, receipts and the approval policy ([main-authority.md](main-authority.md)), turn preparation, request assembly, persona, memory and compaction ([conversation-and-memory.md](conversation-and-memory.md)), the work engine, the kind-of-work rule and worker adapters ([work-and-delegation.md](work-and-delegation.md)), plugins ([integrations.md](integrations.md)), installation modes and LINA OS profiles ([product-families.md](product-families.md)), the state root, backup generations and restore ([filesystem.md](filesystem.md)), screens ([surfaces.md](surfaces.md)) or dependency and vendoring rules ([dependencies.md](../policy/dependencies.md)).
 
 ## Language and build
 
-LINA Core, `moirai-worker`, the `lina` TUI, the worker adapters, Node, the LINA work harness (`lina-work`) and the LIFE world engine are Go. They are built as static binaries per platform, and LINA's own code needs no separate language runtime on any device. The LINA work harness runs inside the worker ([work-and-delegation.md](work-and-delegation.md)). The LIFE world engine is part of the LINA Core family; its packaging is a backlog item ([cognition-and-life.md](cognition-and-life.md)).
+LINA Core, `moirai-worker`, the `lina` TUI, the worker adapters, the provider adapters inside LINA Core, Node and the LIFE world engine are Go. They are built as static binaries per platform, and these components need no separate language runtime on any device. Apart from the LINA app (see below), the one component LINA writes that is not Go is the Claude adapter, a small TypeScript program on Node.js that is an external component (see below and Provider adapters). The LIFE world engine is part of the LINA Core family; its packaging is a backlog item ([cognition-and-life.md](cognition-and-life.md)).
 
 Go fits these components because:
 
@@ -29,39 +29,42 @@ Go fits these components because:
 - An always-on main keeps a low resident cost.
 - It suits a main that may later serve many people.
 
-The LINA app is one Flutter codebase in Dart, built natively for each platform it supports ([surfaces.md](surfaces.md)).
+The LINA app is one React codebase in TypeScript, drawn with React DOM, and macOS usability comes first. On desktop it runs in a Wails v3 shell, which is Go and uses the operating system's own web engine: WKWebView on macOS, WebView2 on Windows and WebKitGTK 6.0 on Linux. Electron is the drop-in fallback behind the same bridge interface, and a different shell for an operating system is allowed. On iOS and Android the app runs in a thin WebView host (open owner decision, [surfaces.md](surfaces.md#app-front-end)). The shell's runtime is part of the app artifact. It is not a runtime that the person or another LINA component installs, and it is never called Node, which is LINA's device execution component. The TUI is not part of the app: it stays Go on Bubble Tea.
 
 The conversation engine is LINA's own Go loop, built on the [Codex](https://github.com/openai/codex) tool contracts, with a structure that follows the [pi](https://github.com/earendil-works/pi) agent loop and conversation patterns from [Hermes Agent](https://github.com/NousResearch/hermes-agent) (see Conversation loop). pi and Hermes Agent are design references only: no code from either is vendored or translated line by line.
 
 Each function has exactly one path. A function never switches to a second transport when the first one fails. A missing piece makes its function unsupported, and the function says so.
 
-External components (document parsers, OCR, the local transcription component and similar) may be written in any language, need any runtime and carry any license, Python, a JRE and AGPL code included. They run only as separate processes at a version pinned by the release, and are never linked or loaded into a LINA process.
+External components (document parsers, OCR, the local transcription component, the Claude adapter and similar) may be written in any language and need any runtime, Python, Node.js and a JRE included, and carry any license that is compatible with LINA's dependency rules in [dependencies.md](../policy/dependencies.md): copyleft code only because the component runs as a separate process, and never a non-commercial or source-available license. They run only as separate processes at a version pinned by the release, and are never linked or loaded into a LINA process.
 
 ## Installed tools
 
-LINA uses some tools that the user installs and that LINA neither ships nor pins: coding tools such as Codex, which LINA runs as workers ([work-and-delegation.md](work-and-delegation.md)), the command-line tools that plugins rely on, such as `gh`, and the local server commands of third-party plugins ([integrations.md](integrations.md)). Each is a separate project with its own releases and repository.
+LINA uses some tools that the user installs and that LINA neither ships nor pins: coding tools such as Codex, Claude Code, Antigravity or Devin, which LINA runs as workers ([work-and-delegation.md](work-and-delegation.md)), the command-line tools that plugins rely on, such as `gh`, the local server commands of third-party plugins ([integrations.md](integrations.md)), the official `grok` command that the Grok adapter drives, and the Node.js that the Claude adapter runs on. Each is a separate project with its own releases and repository.
 
 - LINA uses the installed tool found on `PATH` or at a path the user configured, and records the version it observed.
 - LINA lists the versions of each such tool that it has verified. A version not on the list is reported to the user as unverified, with the version found and the verified versions, and LINA still uses the tool. A function becomes unsupported only when its tool is missing, can't be started or connected to, or fails its protocol handshake, and LINA says why.
-- LINA never installs, updates or pins the tool on its own. Inside the user's Codex, the only thing LINA installs and updates is its own work harness plugin ([work-and-delegation.md](work-and-delegation.md)).
+- LINA never installs, updates or pins the tool on its own, and installs nothing inside it.
 - LINA OS may offer to install these tools for the user ([product-families.md](product-families.md)).
+- Nothing in this section applies to the Claude Agent SDK package. LINA installs that package itself, on first use of a Claude account, under Provider adapters.
 
 ## Processes
 
 | Process | Built from | Runs as | Needed for |
 | --- | --- | --- | --- |
-| LINA Core | Go, a static binary | A service under the user's own OS user | Everything; it is the only canon writer. Agents are data that this one LINA Core runs; there is no process per agent ([product-families.md](product-families.md)). |
-| `moirai-worker` | Go, a static binary | An optional background service of the LINA Core install | Background memory and planning |
+| LINA Core | Go, a static binary | A service under the user's own OS user | Everything; it is the only canon writer. Agents are data that this one LINA Core runs; there is no process per agent ([product-families.md](product-families.md)). The message gateway for external channels runs inside it, with one adapter per platform ([integrations.md](integrations.md#channels)). |
+| `moirai-worker` | Go, a static binary | An optional background service of the LINA Core install | Background memory (the maintenance pass and imports included) and planning |
 | `lina` TUI | Go on Bubble Tea, a static binary | A user process connected to LINA Core over its local socket or the tailnet | The terminal surface ([surfaces.md](surfaces.md)) |
+| LINA app | TypeScript on React, in a bundled shell: Wails v3 (Go) on macOS, Windows and Linux, a WebView host on mobile (open owner decision) | A user process on the person's device, connected to LINA Core over its local socket or the tailnet | The app surface ([surfaces.md](surfaces.md)) |
 | Node | Go, a static binary | A service on each device | Device execution under grants |
-| Worker | The coding tool the user installed, with the user's own configuration; Codex runs as `codex app-server` | A stdio child of LINA Core, or of Node on a remote device | Workers |
-| LINA work harness (`lina-work`) | LINA's own Go, built as static binaries per platform and shipped in LINA releases as a Codex plugin | Inside the user's Codex, where LINA installs it at the first delegation | Delegated work |
+| Worker | The coding tool the user installed or signed in to, with the user's own configuration; Codex runs as `codex app-server`, Claude Code and Antigravity as headless child processes, and Devin is a hosted session reached through its API | A stdio child of LINA Core, or of Node on a remote device; a hosted worker has no process | Workers, one child or session per task in flight |
+| Claude adapter | LINA's own TypeScript on Node.js, an external component pinned by the release, with the Claude Agent SDK installed on the person's machine (see Provider adapters) | A stdio child of LINA Core, started on first use of a Claude account and stopped after an idle period | Model calls through a Claude account |
+| Grok command | The official `grok` command the user installed | A stdio child of LINA Core, started for a turn and driven by the Go Grok adapter | Model calls through a Grok account |
 | Sandboxed commands | Whatever a tool call runs | Children of LINA Core inside the OS sandbox | Shell and file tools |
-| Plugin processes | Local MCP server commands of installed plugins, and the command-line tools that plugins rely on when LINA Core runs them for its own reads | Children of LINA Core under the user's OS user, outside the command sandbox, with the environment of sandboxed commands | Plugins ([integrations.md](integrations.md)) |
+| Background runs | Go, on the loop core of the LINA kit | Goroutines inside LINA Core, with no process of their own | Background research and analysis by LINA's sub-agents ([work-and-delegation.md](work-and-delegation.md#background-runs)) |
+| Plugin processes | Local MCP server commands of installed plugins, and the command-line tools that plugins rely on when LINA Core runs them for its own reads | Children of LINA Core with the environment of sandboxed commands. A local server the person added by command runs inside the OS sandbox with the allowance the person granted (see Plugin servers). First-party plugins, the command-line tools LINA Core runs for its own reads and catalog entries that need more run under the user's OS user outside it, the entries only after the person accepts the card. | Plugins ([integrations.md](integrations.md)) |
 | External components | Any language, pinned by the release | Separate processes | Parsing, OCR, local transcription |
-| opencodex | The upstream npm package [`@bitkyc08/opencodex`](https://github.com/lidge-jun/opencodex) (MIT), pinned by the release, on the pinned Node.js runtime the release ships with it | A local service installed with LINA, which LINA connects to | Every chat model call |
 
-LINA Core never starts, stops or restarts opencodex on its own. The operating system's service manager runs it as its own service.
+Provider adapters are never registered with the service manager: they start with LINA Core and end with it. The ChatGPT and Gemini adapters are Go inside LINA Core and open no process.
 
 ## Vendored source
 
@@ -71,21 +74,22 @@ Upstream code enters the LINA repository only as vendored source or generated up
 
 The LINA kit is the stateless Go module that LINA Core, the TUI and Node share. It lives in `kit/` of the LINA repository with its own `go.mod`, under the module path `github.com/thisisjun786/lina/kit`. LINA's own module uses it through a `replace` to that directory. It holds:
 
-- the Responses adapter: openai-go with `store=false`, the encrypted reasoning round trip and the stream assembly rules of this document
+- the provider adapters of the model path: the Responses adapter (openai-go with `store=false`, the encrypted reasoning round trip and the stream assembly rules of this document), the Gemini adapter (the Go genai client), the Grok adapter (an Agent Client Protocol client over stdio) and the Go side of the protocol that the Claude adapter speaks
 - the loop core of the conversation loop (see Conversation loop)
 - the tool executor and the sandbox wrapper
 - the protocol types of the `client` and `node` connections, generated from the JSON Schema in [host-protocol.md](host-protocol.md)
 - document parsing, passage anchors, citation checks and the web fetch tool
+- validation and plain-text rendering of the typed result bodies ([host-protocol.md](host-protocol.md#typed-results))
 
 The web fetch tool is stateless: it takes one URL and hands the fetched document to the kit's document parsing. Its network access follows the caller's grant.
 
-The Responses adapter, the loop core, the tool executor with the sandbox wrapper and the protocol types are built as kit packages from their first implementation. Document parsing, passage anchors, citation checks and the web fetch tool are a separate stateless part of the kit: LINA's materials features use it, and it is not tied to any one materials feature ([materials-and-knowledge.md](materials-and-knowledge.md)).
+The provider adapters, the loop core, the tool executor with the sandbox wrapper and the protocol types are built as kit packages from their first implementation. Document parsing, passage anchors, citation checks and the web fetch tool are a separate stateless part of the kit: LINA's materials features use it, and it is not tied to any one materials feature ([materials-and-knowledge.md](materials-and-knowledge.md)).
 
-The kit never holds a default state path, a persona, skills, an agent's knowledge scope or a database writer. Callers explicitly pass state locations, the speaking agent's persona and skills, and the knowledge that agent may read, and each caller stores its own records. What differs per host (writer fencing, queues, the layer that owns retries) stays in the component that uses the kit. The kit has its own version, separate from product and protocol versions, and every build records it in its release manifest.
+The kit never holds a default state path, a persona, skills, an agent's knowledge scope or a database writer. Callers explicitly pass state locations, the speaking agent's persona and skills, and the knowledge that agent may read, and each caller stores its own records. What differs per host (writer fencing, queues, the layer that owns retries) stays in the component that uses the kit. The kit has its own version, separate from product and protocol versions, and every build records it in its release manifest. A provider adapter receives its credential from its caller and never reads the secret store.
 
 ## Conversation loop
 
-The conversation engine is LINA's own Go loop inside LINA Core, built on the kit's loop core. One loop serves every agent. Each conversation runs with the persona and personal knowledge of its agent and the common knowledge ([product-families.md](product-families.md), [conversation-and-memory.md](conversation-and-memory.md)). The Codex app-server never runs a conversation, and a Codex home never holds conversation state. Apart from installing its work harness plugin, LINA only reads the user's Codex home: for discovery ([work-and-delegation.md](work-and-delegation.md)) and as external evidence ([conversation-and-memory.md](conversation-and-memory.md)).
+The conversation engine is LINA's own Go loop inside LINA Core, built on the kit's loop core. One loop serves every agent. Each conversation runs with the persona and personal knowledge of its agent and the common knowledge ([product-families.md](product-families.md), [conversation-and-memory.md](conversation-and-memory.md)). The Codex app-server never runs a conversation, and a Codex home never holds conversation state. LINA only reads the user's Codex home: for discovery ([work-and-delegation.md](work-and-delegation.md)) and as external evidence ([conversation-and-memory.md](conversation-and-memory.md)).
 
 The loop's structure follows the pi agent loop (`packages/agent`):
 
@@ -103,6 +107,8 @@ The loop behaves as follows:
 - A tool call in a response cut off by the output limit is never executed. The loop returns a result that asks the model to call again with complete arguments.
 - On abort, every open tool call receives an `aborted` result, so the recorded history stays valid for the next request.
 
+Background runs use the same loop core with a different tool set and request (see [work-and-delegation.md](work-and-delegation.md#background-runs)). There is one loop implementation, not a second engine, and the person's input reaches a run only as a follow-up to that run.
+
 Retries and failover have one owner: LINA Core. The loop core and the SDK never retry on their own.
 
 Conversation quality follows patterns from Hermes Agent (Nous Research):
@@ -110,73 +116,223 @@ Conversation quality follows patterns from Hermes Agent (Nous Research):
 - the person's standing preferences in every turn
 - a brief about the person, synthesized from memory after each answer and used in the next turn
 - memory written as statements, never as instructions to the agent
-- memory review in the background, outside the request path
-- a tool that searches past conversations
+- memory review as one background maintenance pass, outside the request path
+- a tool that searches past conversations in all of an agent's sessions and expands a hit or a summary to its exact content
 - a compaction summary written as a handoff for reference
 - older tool outputs condensed into one-line notes
 - full-text search that finds Korean words
+- a bounded query for what is known about the person
 - a tool that reads a skill body the turn did not receive
 
 Where each applies is defined in [conversation-and-memory.md](conversation-and-memory.md). Recall is prepared outside the request path, apart from a time-capped query on the person's current input, and a compaction summary, written with the conversation model, is prepared before the request that needs it; only an in-turn compaction that must also cover the earlier verbatim tail, and a continuation turn, build their summary when they need it.
 
-The conversation ledger, turn preparation (including the executable hash and opencodex readiness checks), request assembly, persona injection, compaction and resume are defined in [conversation-and-memory.md](conversation-and-memory.md).
+The conversation ledger, turn preparation (including the executable hash and account readiness checks), request assembly, persona injection, compaction and resume are defined in [conversation-and-memory.md](conversation-and-memory.md).
+
+### Turn budget
+
+The conversation turn does only small, bounded analysis, so that the agent stays free to answer while the person talks. Heavy or long work never runs inside it. Coding work goes to a worker through the work engine, and research, analysis, multi-file reading, drafting and read-only checks go to a background run ([work-and-delegation.md](work-and-delegation.md#background-runs)). The person is never made to wait for either.
+
+The budget decides only where work runs, in the turn or in the background. It never decides how much work is done or how well. The quality bar and the done condition of a piece of work are the same in the turn and in the background. Work that moves to the background runs to its real done condition with the same checks, and it has no shorter depth, fewer sources or skipped verification because it moved. No answer is shortened, summarized away or left unchecked to meet the budget.
+
+A turn is small while it stays inside this budget. LINA Core measures it from the receipt of the person's input and enforces it itself, because instructions only steer the model. The values are starting values for the hand-off point and nothing else, and they are an open owner decision. They are tuned as the last bullet below says.
+
+| Measure | Starting value |
+| --- | --- |
+| Acknowledgement | The first output delta of the turn within 3 seconds; the working state is shown at receipt |
+| Soft budget | 6 tool round trips and 30 seconds of tool wall time |
+| Hard budget | 10 tool round trips and 60 seconds of tool wall time |
+| Conversation tool deadline | 15 seconds |
+
+- A round trip is one model response with its tool calls and their results; the parallel tool calls of one response are one round trip. Tool wall time is the time spent inside tool calls. Model generation time is not counted.
+- At receipt LINA Core sends the working state to every connected client, so the person never sees silence. When the request is obviously heavy, the agent hands it off in its first round trip and answers with one acknowledging line and a card, instead of spending the budget first.
+- At the soft budget LINA Core runs no further tool call except one that starts a background run or dispatches work. It answers any other call with a typed result that says the budget is reached and nothing ran, so the declared tools and the cached prefix stay as they are. The agent then hands the rest off and the work continues in the background. It never presents what it has gathered as the answer.
+- A partial result may be shown in the turn only when it is labelled partial, says what is missing and says that the work continues in the background. The reply that hands off is short: one line that says what moved to the background and that it continues, and a card.
+- At the hard budget LINA Core ends the loop and hands the work off itself. If the turn has made no effect, LINA Core starts a background run from the person's input and the turn's tool outputs so far, with the standard read-only tool set. The run continues from the state gathered so far to the done condition of the whole request. If the turn has already made an effect, the reads and analysis that remain go to a background run in the same way, and any further effect waits for the person's go-ahead on a question card; an effect with an unknown outcome is never run again (see Execution rules) (open owner decision). The turn ends with one short line that says what is done, what continues and what waits. Gathered state is never discarded, and the person is never asked to type "continue".
+- The budget applies to reads and analysis. It never cuts a tool whose effect is running; the rule of Execution rules, "outcome unknown, do not retry", still governs that tool.
+- A conversation tool that can take longer than its deadline returns a handle and continues in the background, as a shell command does with its session. It never holds the turn.
+- Steering input during a turn does not reset the budget. A new turn starts a new budget, and a continuation turn continues the budget of the turn it continues. A report turn has no tool round trips ([conversation-and-memory.md](conversation-and-memory.md#background-results)). A turn from an external channel follows the same budget as one from the app.
+- Core applies the reply budget of [Reply shape](conversation-and-memory.md#reply-shape) to every reply that goes to a person: while a chat reply streams it stops showing the reply at the hard ceiling, and it counts breaches. A tool's output and the model's reasoning are not replies. The reply budget shortens the presentation only; the work behind the reply is complete.
+- The budget does not apply to a background run. A run has no fixed time or call cap, and it stops only when its done condition is met, when it fails for real, or when the person stops it ([work-and-delegation.md](work-and-delegation.md#limits)).
+- The starting values are tuned by measurement during implementation acceptance of the conversation engine. The measurement tracks waiting time and completion quality together: how often the person corrects, repeats or reworks a result, or says that it is not what they asked for, after a hand-off and after a reply that stayed in the turn. A change that lowers waiting time and raises those counts is a regression. Waiting time alone never tunes the budget.
+
+### Replay command
+
+LINA Core can re-run a recorded turn, sandboxed and without effects, so that a changed set of harness files can be compared with what the turn actually did. The harness files are the persona text, guardrails, memory guidance, tool guidance, sub-agent definitions and skills that a release ships. The command is `lina replay` ([The `lina` command](#the-lina-command)). It exists for development runs: a developer's loop calls it to score candidate files. LINA never runs a replay on its own, never in a conversation turn and never on a schedule, and a conversation never waits for one.
+
+- Input. An episode written by the episode export ([conversation-and-memory.md](conversation-and-memory.md#episode-export)) or the id of a recorded turn of the install the command runs on, and optionally a directory of candidate harness files that stand in for the persona layers, skill bodies and instruction text that the turn recorded.
+- Output. The replayed reply, its tool calls and its usage, written as files in a directory that the caller names. A replay scores nothing and judges nothing; the caller compares.
+- A replay rebuilds the request from the turn's assembly list. A memory item or material that has since been retracted, trashed or forgotten is left out, and the clock is the turn's original clock.
+- A replay uses the kit's loop core with the candidate files, on the model and effort that the turn used unless the caller names others. It runs in the sandbox with network blocked and with a scratch directory of its own, and it never touches the working directory of a conversation.
+- A turn that only answered replays in full. A turn that read replays with LINA's local read tools live and the results of its network reads taken from the ledger. A turn whose tool call had an effect replays with that call answered by the recorded result, and is left out of the replay when no result was recorded. A replay never runs an effect and never writes the effect ledger or the conversation ledger.
+- A replay's usage is recorded as a run kind of its own, with the model account it used, and counts against the total budget ([Usage and cost](#usage-and-cost)).
 
 ## Model path
 
-Every model call of LINA's own engines goes through opencodex, the local Responses API proxy. opencodex is a LINA dependency: LINA's installation installs the upstream opencodex package at the version the release pins, and the pin follows upstream releases under [dependencies.md](../policy/dependencies.md). LINA connects to its local Responses endpoint. The only exceptions are the non-chat adapters. There is no fallback to direct provider authentication.
+Every model call of LINA's own engines goes through a provider adapter. A provider adapter is the one place that knows a provider's wire, its sign-in and its limits; the loop, the ledger and request assembly see only LINA's own types. There is no model proxy: LINA runs no service of its own between its engines and a provider, and no adapter serves more than one account or passes a credential on. The only exceptions are the non-chat adapters. A function whose provider has no usable account is unsupported and says so. It never starts a billing path the person did not allow, and it moves new requests between connected accounts only by the routing of [Connected accounts and automatic setup](#connected-accounts-and-automatic-setup).
+
+### Providers
+
+The person signs in to each service themself, one account per service ([Accounts and sign-in](#accounts-and-sign-in)). There are four providers, in two fidelity classes.
+
+| Provider | Class | Adapter | Account |
+| --- | --- | --- | --- |
+| ChatGPT | Model API | Go, in LINA Core: the Responses API with the person's ChatGPT plan | Sign in with ChatGPT (OAuth). It is also LINA's login and the default provider. |
+| Claude | Agent runtime | The Claude adapter, an external component on the Claude Agent SDK ([Provider adapters](#provider-adapters)) | The person's Claude subscription |
+| Grok | Agent runtime | Go, in LINA Core, driving the official `grok` command the person installed. Best effort. | The person's Grok account, signed in through that command's OAuth login |
+| Gemini | Model API | Go, in LINA Core: the Gemini API through the Go genai client | An API key the person enters |
+
+- **Model-API providers** (ChatGPT, Gemini). LINA Core owns the loop, request assembly, tool dispatch, the ledger and compaction. Every request carries the full input it needs, and the ledger records the exact request input.
+- **Agent-runtime providers** (Claude, Grok). The vendor's process runs the inner tool loop of a turn, and LINA Core can only constrain it. Core still owns the turn, the ledger, the persona and context, compaction, and the authority of every tool. For each turn the adapter:
+  - turns the runtime's built-in tools off and offers LINA's tools to it as MCP tools, so every tool call comes back to LINA Core and runs under the checks, tiers and effect ledger of this contract;
+  - replaces the runtime's system prompt with LINA's, and loads no settings, skills, hooks, memory or MCP servers from the person's own setup of that tool;
+  - turns off the runtime's own session persistence and compaction, or treats them as opaque;
+  - records what the runtime reports with the request: usage, an estimated cost and a session id.
+  The guarantees that need the whole request in LINA's hands are not available from a runtime: the exact request input as sent, and encrypted reasoning carried back unchanged. The ledger names the class that served each request. Claude and Grok may serve as the conversation engine and as background sub-agent engines, with this reduced fidelity (open owner decision).
 
 ### Requests
 
-LINA Core calls the Responses API of opencodex at `http://127.0.0.1:10100/v1` directly with the official [openai-go](https://github.com/openai/openai-go) library at a pinned version, through a thin adapter between LINA's types and the SDK's types.
+The ChatGPT adapter calls the Responses API at `https://api.openai.com/v1` with the person's access token as the bearer, directly with the official [openai-go](https://github.com/openai/openai-go) library at a pinned version, through a thin adapter between LINA's types and the SDK's types. It never sends that token to a ChatGPT backend endpoint.
 
-- `store` is `false`. Every request carries the full input it needs.
+- `store` is `false` and `stream` is `true`. Every request carries the full input it needs.
+- The adapter sends only fields that the Sign in with ChatGPT request surface accepts. `input` is an array. Instructions go in `instructions` or in developer-role items, never in system-role items. The fields that surface lists as unsupported (among them output limits, sampling parameters, truncation, `user`, `metadata` and `previous_response_id`) are never sent. Function and custom tools are declared in the form that surface requires. A field the surface does not document enters the request field list only after V1 shows it is accepted.
 - With reasoning on, the request includes `reasoning.encrypted_content`. The [reasoning guide](https://developers.openai.com/api/docs/guides/reasoning) requires at least every reasoning item, tool call and tool output since the last user message to go back in the next request unchanged. LINA never sends an item of the current turn altered or dropped. When compacting earlier turns does not bring a follow-up request below the compaction threshold, LINA ends that turn and continues in a continuation turn whose request carries a compaction summary and the person's input once, so the round trip starts fresh ([Compaction and resume](conversation-and-memory.md#compaction-and-resume)). When no compaction runs, LINA sends every earlier item back unchanged as well, because the conversation history carries them all ([Compaction and resume](conversation-and-memory.md#compaction-and-resume)).
 - `previous_response_id`, `store: true`, server-side compaction and WebSocket mode are never used.
-- The request fields LINA sends form a list in the release manifest. A new field enters the list before it is sent.
+- The request fields LINA sends form a list per model-API provider in the release manifest. A new field enters the list before it is sent.
 - Auxiliary reasoning (internal inference without tools) is a separate request with no tool list and no persona. It runs as its own run kind, can cause no external effect, and its output is never recorded as part of the conversation.
+- The Gemini adapter follows the same rules wherever the Gemini API has an equivalent: stateless requests, every provider state item (such as thought parts) returned as received, and the same typed failures.
 
 ### Stream assembly
 
-LINA assembles the server-sent event stream itself:
+The Responses adapter assembles the server-sent event stream itself:
 
 - Text and argument deltas accumulate per output item. Deltas drive live display only.
 - An output item is final only at `response.output_item.done`. The recorded item, and the item sent back in the next request, is the done item. Encrypted reasoning is taken from `response.output_item.done`, never from `response.output_item.added`, whose value may be incomplete.
 - Tool calls are dispatched from final items only.
 - `response.completed` closes a response. It is never evidence that a product effect happened.
 
+The Gemini adapter assembles its own stream by the same rules: deltas drive live display only, an item is final only when the provider marks it done, tool calls are dispatched from final items only, and a completed response is never evidence that a product effect happened.
+
 ### Failures and retries
 
-- SDK automatic retries are 0, and the value is recorded in the release manifest.
+- Automatic retries of an SDK are 0 for model-API providers, and the value is recorded in the release manifest. An agent runtime retries on its own and cannot be told not to; LINA Core records the retries the runtime reports and sets the runtime's turn and budget limits.
 - Once output has started, a request is never sent again. An accepted turn is never replayed automatically; a turn whose outcome is unknown stays unknown.
-- Failures are typed from the response itself: proxy unavailable (`/readyz` 503 or a failed connection), authentication expired, and quota or combination unavailable (429, 503).
-- LINA Core reads the request ID header, the error type and `usage` from every response and records them in the ledger with the agent id of the request.
+- Failures are typed from the provider's own answer: account needs sign-in (authentication failed, refresh failed), not eligible, usage cap reached, provider unavailable (a failed connection, 503, 529), and request not accepted (an unsupported field or capability). A usage cap names no reset time that the provider did not give. None of these makes LINA retry on another account, another provider or another billing path.
+- LINA Core reads the request id, the error type and the usage that the provider reports from every response and records them in the ledger with the agent id of the request.
 
-### Models and the management plane
+### Models and roles
 
-- The conversation model list comes from the opencodex catalog, and LINA Core records the catalog revision. The catalog is for display and is never capability evidence.
+- Each adapter provides its own model list: for ChatGPT, the entries that the service lists for the sign-in; for Claude, the models the SDK reports as supported; for Gemini, the models the Gemini API lists; for Grok, the models the command reports. LINA Core records the adapter and the time of the list. A list is for display and is never capability or entitlement evidence. A completed turn is.
+- The model policy has one entry per model role: `conversation`, and `background`, which serves background sub-agents and the model calls of background jobs. By default `background` uses the conversation entry. An entry names a provider account, a model and an effort, and every agent uses it (open owner decision: two roles).
 - Model and effort are fixed at request boundaries: per conversation request, at worker thread creation and at the next turn boundary. A running request or an active turn never switches model or effort.
-- LINA never changes the model on its own. A model switch is an explicit decision and takes effect from the next request.
-- Ownership of provider accounts, sign-in and model enablement is defined in [product-families.md](product-families.md). LINA Core reads the opencodex management plane read-only and never exposes it to LINA APP or to any remote client.
-- A worker reaches models through its own configuration ([work-and-delegation.md](work-and-delegation.md)).
+- LINA changes the model or the provider of a role only through the setup the person can see: the automatic setup and the quota-aware routing of [Connected accounts and automatic setup](#connected-accounts-and-automatic-setup), each told in one line and changed in one action. Outside them a switch is an explicit decision of the person and takes effect from the next request. When an account is capped or needs sign-in and no other connected account can serve the role, LINA says so and offers the switch; it does not start a billing path the person did not allow.
+- A worker reaches its models through its own configuration ([work-and-delegation.md](work-and-delegation.md)). A worker's model calls never use LINA's provider credentials.
 
 ### Usage and cost
 
-- Usage comes from `usage` in each conversation response and from the usage events a worker reports, such as Codex's `thread/tokenUsage/updated`. An unreported value is unknown, never zero.
-- The total budget covers conversation requests, worker threads, the sub-threads a worker starts and auxiliary reasoning. Every agent draws on the one budget, and each usage record names the agent it served.
-- The actual model, routing reason and cost per request come from the opencodex management plane (`/api/usage`, `/api/logs`), read by LINA Core. The management token lives in LINA's secret store ([filesystem.md](filesystem.md)) and is read only by LINA Core; it never reaches LINA APP, a remote client or a worker. When the plane can't be read, route and cost are unknown.
-- Budget totals count tokens. Catalog prices and zero values are not actual cost.
-- LINA Core reserves and settles the budget. At the limit the conversation stops sending requests, and workers are interrupted under the budget policy of [work-and-delegation.md](work-and-delegation.md). The Codex goal token budget is not used.
-- A conversation request is matched to its opencodex record by the request ID header. A worker's model, route and cost are known only as far as the worker reports them.
+- Usage comes from what each provider reports: the `usage` of a model-API response, the usage an agent runtime reports with a turn, and the usage events a worker reports, such as Codex's `thread/tokenUsage/updated`. An unreported value is unknown, never zero.
+- The total budget covers conversation requests (turns in external channels and turns of agent exchanges included), background runs, the model calls of background jobs, worker threads, the sub-threads a worker starts, auxiliary reasoning and replays. Every agent draws on the one budget, and each usage record names the agent it served, the account it used and, for a background run, the run.
+- Budget totals count tokens. A cost figure is shown only when the provider or runtime reports one, and is labelled an estimate when it is computed on the client (the Claude runtime's is). A plan route has no cost. Catalog prices and zero values are not actual cost.
+- LINA Core reserves and settles the budget. At the limit the conversation stops sending requests, a background run waits with its checkpoint and says what is done and what is not instead of being wrapped up, and workers are interrupted under the budget policy of [work-and-delegation.md](work-and-delegation.md). The Codex goal token budget is not used. This budget is the person's usage; it is not the turn budget, which only decides where work runs ([Turn budget](#turn-budget)).
+- A worker's model, route and cost are known only as far as the worker reports them.
+- A worker's remaining subscription quota is read from its adapter as quota rows (see Quota). Where a worker reports none, its rows are `unknown`, and LINA Core infers from the worker's quota errors and its own usage records.
+
+**Quota.** Each account has quota rows, one per window the provider reports. A row holds:
+
+- the provider and the account;
+- the window: five-hour, weekly, daily, per-minute, spend cap or unknown;
+- the share used, or unknown;
+- when the window resets, or unknown;
+- the state: ok, warning, blocked or unknown;
+- the source: a response header, an event, an endpoint, an error code or LINA's own count;
+- when it was observed.
+
+An unreported value is `unknown`, never zero, and LINA never invents a reset time that the provider did not give.
+
+| Path | What the provider reports | Source of the rows |
+| --- | --- | --- |
+| ChatGPT plan, LINA's own calls | No number. Usage-limit, eligibility and capability error codes only | The error code and LINA's own token count. A usage-limit answer makes the state blocked, with no reset time. |
+| ChatGPT plan, a Codex worker | Primary and secondary windows, credits and plan | The worker's rate-limit read and update notifications |
+| OpenAI API key | Rate-limit headers | The headers |
+| Claude subscription | The window type, utilization and reset, when the limit changes; a usage report that may come back empty | The event, and the report where the token supports it |
+| Grok login | Denial states only | The error code |
+| xAI and Gemini API keys | Error codes; Gemini limits are per project in the provider's console | The error code and LINA's own count |
+
+The ChatGPT rows for LINA's own calls and for a Codex worker are two rows, because the weekly cap that the person sets per app in ChatGPT applies to LINA's client only. Quota rows feed the quota view of the power settings ([surfaces.md](surfaces.md#settings)) and the choice of worker ([work-and-delegation.md](work-and-delegation.md)). A row informs a choice; it grants nothing.
 
 ### Request regression
 
-A regression test compares LINA's requests with a baseline: the request that Codex sends through opencodex for the same conversation, with the Codex version recorded alongside the baseline. It compares fields, `include`, the reasoning resend and the built-in tool declarations. The parts that differ by design are listed with the baseline and left out of the match: Codex's base instructions for coding work, which a LINA request never carries, LINA's developer-role persona and context items, and LINA's own tools ([conversation-and-memory.md](conversation-and-memory.md)). It runs again whenever the opencodex or SDK pin, or the baseline, moves.
+A regression test compares LINA's requests with a baseline for each model-API provider: for ChatGPT, the request surface that the issuer documents for Sign in with ChatGPT and the requests recorded from the accepted turns of V1; for Gemini, the shape the Gemini API documents. It compares fields, `include`, the provider-state resend and the built-in tool declarations. The parts that differ by design are listed with the baseline and left out of the match: Codex's base instructions for coding work, which a LINA request never carries, LINA's developer-role persona and context items, and LINA's own tools ([conversation-and-memory.md](conversation-and-memory.md)). It runs again whenever a provider SDK pin, the request field list or a baseline moves.
+
+## Accounts and sign-in
+
+A model-provider account is the person's own account with one service. The person signs in themself, one account per service. LINA adds no terms gate: "not eligible" and "usage cap reached" are technical states shown on the account, not a gate. Agents own no accounts; every agent uses the person's accounts through the model policy.
+
+### Credentials
+
+- LINA Core keeps one credential record per provider account in LINA's secret store, which is the OS keychain, or files with mode 0600 in the secrets area of the state root where no keychain is available ([integrations.md](integrations.md#credentials-and-sign-in), [filesystem.md](filesystem.md)). The record belongs to the person and is kept under the person's id. It holds the provider, a label, the kind of sign-in (loopback OAuth, long-lived token, API key, or the provider command's own login observed), the client id and host id that the provider issued where it issues them, the scopes granted, when the access token expires, when the refresh token expires where that is known, the account's status (ok, needs sign-in, not eligible, usage capped) and the time of the last success. It holds no conversation content.
+- Only LINA Core refreshes a token, and one refresh runs at a time per account. A replacement for a rotating refresh token is stored before it is used. A token is refreshed when about ten minutes of its life remain, and an idle LINA Core refreshes often enough that a refresh token never lapses. When a refresh fails, the account shows needs sign-in. LINA does not retry forever and does not fall back to another account.
+- A token goes only into the one adapter process that serves its account, through the variable that adapter documents. It never enters a model request, a log, the sandbox or a worker, and a Node or a remote client never receives one. LINA never copies another tool's credential files, such as a worker's `auth.json` or the credential file of the Claude or Grok command, into its secret store. Where a tool keeps its own login, LINA reads the status of that login from the tool.
+- Signing out revokes the token where the provider offers revocation, clears the record, and says "not confirmed" when revocation failed.
+- Credentials are not part of a backup generation ([filesystem.md](filesystem.md)). After a restore, each account shows needs sign-in.
+
+### Connected accounts and automatic setup
+
+The person connects accounts one by one, and LINA sets up the rest. This is a default, not a gate: it asks the person for no decision and blocks no conversation.
+
+- **Connected accounts.** One view lists every connection: the service, the plan it is on (for example ChatGPT Plus or Pro, Claude Pro or Max, SuperGrok, or a Gemini API key), whether it is signed in, and its remaining quota where the provider exposes it (see Quota). A plan is read from what the provider or its command reports, is unknown where nothing reports it, and the person may state it. General settings show it in plain words with no model id ([surfaces.md](surfaces.md#settings)).
+- **Automatic setup.** When an account connects, and when its plan changes, LINA fills the model policy and the worker preference itself: which account, model and effort serve conversation and background work (the design-conformance review of delegated work is background work), and which worker takes coding work ([work-and-delegation.md](work-and-delegation.md#choosing-the-worker)). It uses what a plan already includes first, so that the person pays nothing extra. A pay-per-use API-key connection serves a role only where no connected subscription covers it and only within the budget the person set.
+- **Quota-aware routing.** When the quota rows of a subscription show its limit near, LINA Core routes new requests and new work to another connected account that can serve the role, and says so in one line. It never starts pay-per-use usage beyond what the person set. This moves new requests only: a request that has started is never sent again on another account (see Failures and retries).
+- **One line, one action.** After a setup LINA shows one line, such as "ChatGPT Pro + Claude Max connected: chat = Claude, coding = Codex", and one action changes it. Power settings show and override every choice. A general user never has to.
+- **Plan catalog.** What each plan includes, its limits and its best uses are data in a catalog that ships with a release and is recorded in the release manifest. They are not logic in the code, and a release updates them.
+
+### ChatGPT
+
+ChatGPT is the default provider and LINA's login. The sign-in is the documented Sign in with ChatGPT flow for open-source and locally hosted apps. It is not the sign-in of the Codex tool, and LINA never uses the Codex tool's client id, scopes, credential file or backend endpoint.
+
+- OAuth 2.0 with PKCE (S256) against the OpenAI auth issuer. On the first sign-in of a host, LINA registers itself dynamically (`dynamic_agent_client`, the app name hint "LINA", and one stable host id per host). It keeps the client id that the issuer returns with the account, and reuses the client id and the host id whenever the same account signs in again on that host.
+- Scopes: `openid profile email offline_access resource.invoke chatgpt.tokens.use.direct`, with the resource `https://api.openai.com/v1`. Before any inference, LINA Core checks that the granted scopes include `chatgpt.tokens.use.direct`; an ID token alone does not authorize plan usage. LINA Core verifies the ID token against the issuer's JWKS: issuer, audience, expiry and nonce.
+- The redirect is a loopback address, `http://127.0.0.1:<port>/<fixed path>`; the path is fixed and only the port varies. The listener starts before the system browser opens. The listener belongs to the client the person is using, and the sign-in runs through the sign-in relay ([integrations.md](integrations.md#consent-through-the-client), [host-protocol.md](host-protocol.md#client-connection)): LINA Core builds the URL and keeps the PKCE verifier and the state, the client relays `code`, `state` and `iss`, and LINA Core makes the token exchange. Where a client cannot listen, the person pastes the redirected URL.
+- Tokens: the access token lasts one hour. The refresh token lasts 30 days and rotates.
+- Inference is the Responses API of Requests, with models from the service's list. A usage-limit answer is a state of the account, not an error to route around: it is shown with a "Manage usage" action, and no request moves to another billing path.
+- The plan route reports no number for quota, only error codes (see Usage and cost).
+- The flow has no device-code form. A LINA Core on a host with no browser takes the sign-in through a client's browser, by the relay. If the issuer does not accept the relay's redirect, the person adds an OpenAI API-key account instead. That is a choice the person makes in "add account", never an automatic fallback.
+- The sign-in covers the plans the issuer lists (Plus and Pro today). A person on another plan sees "not eligible" and may add an OpenAI API-key account.
+
+### Claude
+
+Claude is the person's Claude subscription, used through the Claude Agent SDK. The SDK exists for TypeScript and Python only, so the Claude adapter ([Provider adapters](#provider-adapters)) is a small Node.js process that wraps it. It serves one account, speaks LINA's provider-adapter protocol over its standard input and output with one JSON message per line, and passes no credential on. It is an adapter, not a proxy (open owner decision: Node adapter).
+
+- Sign-in, in this order. LINA first looks for the login that the person already has with the vendor's command, by the command's status report; if there is one, the adapter uses it and LINA stores nothing. Otherwise LINA guides the person through the vendor's token command, which prints a one-year token for model requests only. The person pastes it, LINA keeps it in the secret store and gives it to the adapter as `CLAUDE_CODE_OAUTH_TOKEN`. LINA runs no OAuth client of its own against claude.ai. LINA records the day the token was made and warns before the year ends; a failed call shows needs sign-in.
+- The adapter's environment holds none of the variables that outrank the subscription token: an API key, an auth token, a key helper, and the cloud-provider variables.
+- The vendor's bare mode never reads a subscription login, so the adapter cannot use it. Isolation is explicit instead: the options named under Providers, an empty working directory of the adapter's own, a pinned version, and a check of the runtime's start-up message, which lists the tools, MCP servers and plugins it loaded. The adapter refuses to serve a turn when that list holds anything LINA did not put there.
+- The product names it "Claude" or "Claude Agent", never "Claude Code" or in that tool's styling.
+- Quota comes from the rate-limit events the runtime emits (window, utilization, reset) and from the SDK's usage report where it returns one for the token the adapter holds. The cost the runtime reports is an estimate.
+- A Claude API-key account can stand in for the token without any change to this contract.
+
+### Grok
+
+LINA runs no OAuth client against the Grok service, because the service documents no registration for other applications. The Grok adapter drives the official `grok` command that the person installed ([Installed tools](#installed-tools)) over the Agent Client Protocol (`grok agent` on standard input and output), because only that interface carries tool approvals. The command's headless print mode is read-only streaming with fixed allow and deny rules, and is used only for one-shot calls.
+
+- The person signs in with the command's own OAuth login: the browser, or a device code on a host with no browser. LINA stores nothing. It learns the state of the account from a cheap authenticated call, not from the command's files.
+- The adapter sets the command's telemetry and trace-upload switches explicitly, to off, restricts its built-in tools and offers LINA's tools as for any agent runtime.
+- A Grok API-key account is the alternative where the login route is unavailable. A Grok plan does not include API credits.
+- The adapter is best effort. Its approval and tool-restriction behaviour is verified by V4, and it sits behind the same interface as the others so that a direct OAuth client can replace it if the service documents one (open owner decision: Claude and Grok as conversation engines, Grok route).
+
+### Gemini
+
+The Gemini account is an API key. The person enters it, LINA keeps it in the secret store and sends it in the `x-goog-api-key` header through the Go genai client. There is no OAuth sign-in for Gemini in this design: the documented OAuth route is a testing setup that needs the person's own cloud project, the login of Google's command-line tool is not offered to other software, and a Google AI plan does not cover API calls. Settings says so beside the key field. Quota is the project's limit in Google's console, which the API reports only by error code.
+
+### LINA login
+
+"LINA login" means one thing: the owner's ChatGPT sign-in. The first successful ChatGPT sign-in binds the issuer and the subject of its ID token to the owner's person id in canon ([product-families.md](product-families.md#people)). Every later ChatGPT sign-in made as LINA's login must present the same subject. A different ChatGPT account may be added as a provider account, but it is never taken for the owner and never changes the binding. The binding and the provider accounts are separate records, so the login can later be replaced without touching model credentials. A main whose owner has not signed in with ChatGPT has an owner with no binding and works the same way.
+
+The binding is not remote access. It is made once, on the main. No client and no device presents it when it connects: Tailscale identifies devices, and every client connection acts for the owner (see Remote access). It opens LINA Core to nobody outside the tailnet, and LINA runs no account service for it.
 
 ## Non-chat adapters
 
-The Jev judge, embedding and transcription each have their own adapter outside opencodex. Their keys, billing and failure diagnosis are separate from opencodex, and none of them appears in the chat model list, the catalog or automatic routing. Jev is called only through its own typed adapter, the judge adapter, which speaks to a hosted judge API (Jev by default) or to a local judge process ([cognition-and-life.md](cognition-and-life.md)).
+The Jev judge, embedding and transcription each have their own adapter, separate from the provider adapters. Their keys, billing and failure diagnosis are separate from the chat accounts, and none of them appears in the chat model list or in automatic routing. Jev is called only through its own typed adapter, the judge adapter, which speaks to a hosted judge API (Jev by default) or to a local judge process ([cognition-and-life.md](cognition-and-life.md)).
 
-The embedding adapter calls the embedding endpoint the person configures: an OpenAI-compatible embeddings API and its key. Each vector index records the model id and the dimension it was built with. When the model changes, the index is rebuilt in the background, and until the rebuild finishes recall uses full-text search (FTS5) without the vector index. With no endpoint configured, recall does the same.
+The embedding adapter calls the embedding endpoint the person configures: an OpenAI-compatible embeddings API and its key. Each vector index records the model id and the dimension it was built with. When the model changes, the index is rebuilt in the background, and until the rebuild finishes recall uses full-text search (FTS5) without the vector index. With no endpoint configured, recall does the same. An embedding call sends no span flagged `secret`. A vector index of imported history is built with the embedding model of this adapter; vectors from a Hermes install are not imported. When history is embedded is defined in [conversation-and-memory.md](conversation-and-memory.md).
 
 None of them blocks basic conversation:
 
@@ -190,20 +346,23 @@ Each adapter reports its connection state, key presence and usage to settings. A
 
 ### Tool set
 
-The conversation engine's tools are the same kind as a Codex worker's, declared with Codex's names and formats: shell execution (`exec_command`, `write_stdin`), file editing (`apply_patch`), `view_image`, `update_plan`, a question tool and a permission request. LINA adds its own tools: reading materials and memory, searching the conversation ledger, reading a skill body, the memory tools (write, correct and forget, defined in [conversation-and-memory.md](conversation-and-memory.md)), dispatching work, reading plans and querying its own events ([self-diagnosis-log.md](self-diagnosis-log.md)). Once LINA's materials take in web pages, LINA also declares the kit's web fetch tool as its own tool (see LINA kit). Under the default approval policy a fetch is a read and never asks ([main-authority.md](main-authority.md)).
+The conversation engine's tools are the same kind as a Codex worker's, declared with Codex's names and formats: shell execution (`exec_command`, `write_stdin`), file editing (`apply_patch`), `view_image`, `update_plan`, a question tool and a permission request. LINA adds its own tools: reading materials and memory, searching the conversation ledger and expanding a result or a summary to its exact content, asking what is known about the person (`recall_person`), reading a skill body, the memory tools (write, correct and forget, defined in [conversation-and-memory.md](conversation-and-memory.md)), dispatching work, starting, following up and stopping a background run ([work-and-delegation.md](work-and-delegation.md#background-runs)), reading plans, presenting, reading and saving results (`present_result`, `read_result` and `save_result`), and querying its own events ([self-diagnosis-log.md](self-diagnosis-log.md)). Once LINA's materials take in web pages, LINA also declares the kit's web fetch tool as its own tool (see LINA kit). Under the default approval policy a fetch is a read and never asks ([main-authority.md](main-authority.md)).
 
-Plugin tools are the tools of the plugins that are on ([integrations.md](integrations.md)). Each is named `<plugin>__<tool>`, at most 64 characters, and plugin tools are declared in a deterministic order. When there are many, the conversation declares a subset and loads the rest on demand. The release manifest lists the built-in tools. Plugin tools come from the user's installed plugins, so the conversation ledger records the hash of the plugin tool declarations sent with each request.
+The result tools are LINA Core's own tools and run in LINA Core, outside the sandbox, like the memory tools. `present_result` validates the body against the schema and the size limits of its type and returns the result id, the revision and the text that the model sees ([conversation-and-memory.md](conversation-and-memory.md#results)). `save_result` runs only on the person's request in the current turn and returns the effect state. None of them reaches the network or asks for approval. The `update_plan` checklist shows an agent's own steps and is never a result.
 
-Tools are declared in `tools` on every request, and a change to the tool list applies from the next request. `apply_patch` is a custom tool; opencodex converts its format for the backend. LINA's `apply_patch` accepts the Codex patch grammar, and the grammar's test fixtures from Codex (Apache-2.0) run as regression tests with their notice kept.
+Plugin tools are the tools of the plugins that are on ([integrations.md](integrations.md)). Each is named `<plugin>__<tool>`, at most 64 characters, and plugin tools are declared in a deterministic order. When there are many, the conversation declares a subset and loads the rest on demand. The release manifest lists the built-in tools. Plugin tools come from the user's installed plugins, so the conversation ledger records the hash of the plugin tool declarations sent with each request. When a name would exceed 64 characters, LINA Core shortens it with a stable hash suffix and keeps the map to the server's own tool name. The effect ledger records the server's own name.
+
+Tools are declared in `tools` on every request, and a change to the tool list applies from the next request. `apply_patch` is a custom tool where the provider accepts custom tools. Otherwise its provider adapter declares it as a function tool with one string argument that carries the same patch text, and the executor receives the same patch either way. For an agent-runtime provider, the tools are offered to the runtime as MCP tools (see Providers). LINA's `apply_patch` accepts the Codex patch grammar, and the grammar's test fixtures from Codex (Apache-2.0) run as regression tests with their notice kept.
 
 Conversation and work are split by the kind of work, not by tools. The routing rule is in [work-and-delegation.md](work-and-delegation.md).
 
 ### Execution rules
 
 - Before a tool runs, LINA Core checks the person the call acts for, the agent that makes it, scope, grant, target, revision and current epoch ([main-authority.md](main-authority.md)).
-- Every tool has a deadline and always returns a result. A failure before the effect starts returns the failure and its reason. When the deadline passes while the effect runs, or its outcome can't be known, the tool returns "outcome unknown, do not retry" and the effect ledger records `unknown`. Effect states are defined in [host-protocol.md](host-protocol.md).
+- Every tool has a deadline and always returns a result. The default deadline of a conversation tool is 15 seconds (see Turn budget). A failure before the effect starts returns the failure and its reason. When the deadline passes while the effect runs, or its outcome can't be known, the tool returns "outcome unknown, do not retry" and the effect ledger records `unknown`. Effect states are defined in [host-protocol.md](host-protocol.md).
 - The effect ledger deduplicates tool effects by the idempotency key defined in [host-protocol.md](host-protocol.md), never by call ID. The same effect called again with a new call ID never runs twice; the call returns the first result, or `unknown`. The record and key of a plugin write are defined in [integrations.md](integrations.md).
 - An effect outside the grant, and every plugin tool call, follows the approval policy of [main-authority.md](main-authority.md), including its tiers for plugin tools and the rule for when no surface can present an approval request.
+- A plugin call that can take long runs as a background job, bounded by the time the plugin's manifest states. A call that waits for the person's input is parked as a background item and never holds the conversation turn ([integrations.md](integrations.md)).
 
 ### Default scope
 
@@ -217,17 +376,17 @@ Every agent works in the same working directory, so two agents can change the sa
 
 - `apply_patch` follows the Codex patch grammar and fails when its context lines no longer match the file. The agent reads the file again and retries on its current content.
 - A shell write, such as one through `exec_command`, can't be checked before it runs. The effect ledger's record of the tool call holds the changed paths, their hashes before and after the call, and the agent id.
-- Writes to materials, connected sources and plan objects keep their own revision checks: a write against a stale revision is refused with `stale_revision` ([main-authority.md](main-authority.md), [materials-and-knowledge.md](materials-and-knowledge.md)).
+- Writes to materials, connected sources and work records keep their own revision checks: a write against a stale revision is refused with `stale_revision` ([main-authority.md](main-authority.md), [materials-and-knowledge.md](materials-and-knowledge.md)).
 
 ### Sandbox
 
-Shell and file tools run inside an OS sandbox that LINA Core invokes directly through the kit's sandbox wrapper. Shell and file tools never run unsandboxed. Plugin processes run outside it (see Processes) and are controlled at the tool call ([main-authority.md](main-authority.md)).
+Shell and file tools run inside an OS sandbox that LINA Core invokes directly through the kit's sandbox wrapper. Shell and file tools never run unsandboxed. Replays of recorded turns run in it as well (see Replay command). Plugin processes are not shell or file tools. A local server the person added by command runs in a sandbox of its own (see Plugin servers). First-party plugins and the catalog entries that need more run outside it. Every plugin process is also controlled at the tool call ([main-authority.md](main-authority.md)).
 
 - The write roots are the conversation working directory and the grant's scope. Everything else is read-only, and `.git` directories inside a write root stay read-only.
 - Network is blocked by default. A sandboxed command gets network access in one of two ways:
   - A command that an installed plugin's service profile classifies, such as `gh` or `git` under the GitHub plugin, gets it when LINA Core approves its elevation at that command's tier ([integrations.md](integrations.md), [main-authority.md](main-authority.md)). This classification is the default for those commands.
   - Any other command gets it when the model asks for network for that command and the person confirms, as in Codex. The first request asks, with the choices once, always allow and deny. "Always allow" records a standing grant for commands with the same prefix, which the person revokes in settings at any time ([main-authority.md](main-authority.md), [surfaces.md](surfaces.md)).
-- Sandboxed commands get LINA Core's environment without model-provider keys, so the user's own tools and settings, including the GitHub setup of [integrations.md](integrations.md), work there as they do for the user. LINA's secret store, the opencodex management token and data keys are never visible inside the sandbox.
+- Sandboxed commands get LINA Core's environment without model-provider keys, so the user's own tools and settings, including the GitHub setup of [integrations.md](integrations.md), work there as they do for the user. LINA's secret store, which holds the provider credentials, and data keys are never visible inside the sandbox.
 - The policies follow the Codex sandbox source (Apache-2.0), with provenance recorded. The active sandbox policy is recorded in the release manifest.
 
 On Linux the sandbox is [bubblewrap](https://github.com/containers/bubblewrap) with seccomp. bubblewrap runs as a separate executable and is never linked. Commands get their own user and PID namespaces, their own network namespace while network is blocked, and `no_new_privs`. The seccomp filter is a compiled BPF program shipped with the release for each architecture and handed to bubblewrap by file descriptor.
@@ -240,17 +399,31 @@ On Windows the wrapper runs commands only inside a verified Windows sandbox. A v
 
 LINA Core checks on start, and before the first tool call, that the sandbox works on this host. Unprivileged user namespaces, AppArmor restrictions and hardened kernels can each disable bubblewrap. When the sandbox is missing or fails, conversation continues, only shell and file tools are unsupported, and the user sees why.
 
+### Plugin servers
+
+A local server that the person added by command runs in an instance of the OS sandbox that is separate from the sandbox of shell and file tools (open owner decision).
+
+- It writes only in a data directory of its own under the state root ([filesystem.md](filesystem.md)) and in the folders the person granted on its card. Everything else is read-only.
+- Network is blocked unless the person turns it on for that server on its card. Narrowing network to named hosts needs a filter that the sandbox wrapper does not have (see Deferred).
+- It gets the environment of sandboxed commands plus the variables its manifest names. The values of credential variables come from LINA's secret store and are visible only to that server's process, never inside the sandbox of shell and file tools.
+- The allowance is a grant recorded with the person who gave it. The card shows it, and the person revokes it there.
+- Where the sandbox is unavailable, such a server does not start and the plugin shows failing with that cause. Conversation continues. There is no unsandboxed fallback for a server the person added by command (open owner decision).
+
 ## Workers
 
-Workers are coding tools the user installed, driven through one worker adapter per tool; Codex is the first, through its app-server protocol over stdio. LINA uses the installed tool as it is (see Installed tools): its version, login, model provider, sandbox, approval mode, plugins and integrations are the user's own configuration. The LINA work harness is LINA's own rebuild of the CXC coding-work harness; it ships in LINA releases as a Codex plugin that LINA installs and updates in the user's Codex ([work-and-delegation.md](work-and-delegation.md)).
+Workers are coding tools the user installed, driven through one worker adapter per tool; Codex is the first, through its app-server protocol over stdio. LINA uses the installed tool as it is (see Installed tools): its version, login, model provider, sandbox, approval mode, plugins and integrations are the user's own configuration. A worker runs on one task with a task packet (the work definition), writes the code and the pull request, and returns a completion receipt that names the pull request ([work-and-delegation.md](work-and-delegation.md)).
 
-The adapter boundary, the Codex adapter, compatibility, readiness, assignment, approvals, the harness rules and merges are defined in [work-and-delegation.md](work-and-delegation.md).
+Several workers run at once, one per task in flight, each in its own worktree. The work engine decides how many ([work-and-delegation.md](work-and-delegation.md)). LINA Core, or Node on a remote device, starts every worker as a child process or protocol session it owns, so a worker's finish, failure or exit reaches LINA Core as an event with no polling. The one exception is a worker whose tool offers no such signal: its adapter reads the session at a short interval, only while a task is in flight.
+
+The adapter boundary, the Codex adapter, compatibility, readiness, assignment, approvals, the development method and merges are defined in [work-and-delegation.md](work-and-delegation.md).
 
 ## Storage
 
 - Structured state lives in SQLite, used from Go through one SQLite binding. Which binding, with cgo or without, is chosen by the packaging and storage check (V2) and recorded in the release manifest. No other database engine or SQLite binding is used.
 - Vector search uses [sqlite-vec](https://github.com/asg017/sqlite-vec) at a pinned version through that binding, linked into the binary or loaded as an extension as the binding requires. A sqlite-vec platform binary loaded at run time is verified against the digest in the release manifest before it loads.
 - Canon databases run in WAL mode. Full-text search uses SQLite's FTS5. How recall uses FTS5 and sqlite-vec is defined in [conversation-and-memory.md](conversation-and-memory.md).
+- The full-text index of the conversation ledger and the full-text index of memory each record their tokenizer and fallback. The nodes and links of the summary trees, and the legacy references and import batches of an import, are canon tables ([conversation-and-memory.md](conversation-and-memory.md)).
+- A SQLite file that another application keeps, such as a database of a Hermes install, is read through a read-only connection with the online backup API into the import staging area. It is never copied as a file, WAL file included, and never opened for writing.
 - Vector indexes are derived data, rebuilt from canonical text. Moving the sqlite-vec pin rebuilds the indexes and never touches canon.
 - Backups use SQLite's online backup, never a copy of database or WAL files. What a backup generation holds is defined in [filesystem.md](filesystem.md).
 
@@ -270,13 +443,20 @@ LINA Core and the TUI are one executable, `lina`. Its subcommands cover these us
 | --- | --- |
 | Core service | Runs LINA Core. The service manager starts LINA Core this way (see Services). |
 | TUI | Opens the terminal surface, a separate process that connects to LINA Core over the `client` connection ([surfaces.md](surfaces.md)) |
-| Install | Places the pinned opencodex package and its Node.js runtime, registers the LINA Core and opencodex services, and `moirai-worker` when it is part of the install, and creates the state root ([filesystem.md](filesystem.md)). When opencodex has no signed-in model provider, it opens the opencodex sign-in ([product-families.md](product-families.md)). |
+| Install | Places LINA Core's artifacts, including the Claude adapter's files and lockfile, registers the LINA Core service, and `moirai-worker` when it is part of the install, and creates the state root ([filesystem.md](filesystem.md)). It signs in to no provider: the first run of a client offers the ChatGPT sign-in ([surfaces.md](surfaces.md#settings)). |
 | Backup and restore | Takes a backup generation and restores one ([filesystem.md](filesystem.md)) |
 | Diagnosis | Reports the state and readiness of each component, with the cause of each failure |
+| Replay | Re-runs a recorded turn sandboxed and without effects, optionally under candidate harness files, and writes the result as files. It is a development tool and runs only when it is called ([Replay command](#replay-command)). |
+| Episode export | Writes recorded turns of the chosen conversations out of the ledger into the export staging area for use outside LINA ([conversation-and-memory.md](conversation-and-memory.md#episode-export)) |
 
-### opencodex and its Node.js runtime
+### Provider adapters
 
-opencodex is an npm package and is the only part of a LINA install that runs on Node.js. An install that contains LINA Core ships the pinned opencodex package together with a verified Node.js runtime at the version opencodex needs, and runs opencodex as its own service. Verified means the official Node.js release archive, checked against the project's signed checksum list ([verifying binaries](https://github.com/nodejs/node#verifying-binaries)), with its version and digest in the release manifest. opencodex starts on that runtime by absolute path. A system Node.js, a version manager or `node` on `PATH` is never used. A runtime update is a LINA release and is applied as described in Updates.
+The ChatGPT, Gemini and Grok adapters are Go inside LINA Core. The Claude adapter is the only provider adapter that is a separate program.
+
+- The Claude adapter is LINA's own TypeScript, an external component ([Language and build](#language-and-build)) that runs on Node.js. LINA Core starts it on first use of a Claude account, as a stdio child, and stops it after an idle period. It is never started at boot and never kept warm, because the vendor runtime it wraps is large: a binary of about 270 to 290 MB per platform, and a parked process of about 230 to 260 MB. Each concurrent turn on a Claude account holds its own runtime process, so the number of concurrent turns per account is limited (see Deferred).
+- LINA does not ship a Node.js runtime. The adapter runs on the Node.js that the person has installed, found on `PATH` or at a path the person configured, as an installed tool ([Installed tools](#installed-tools)). LINA OS offers to install it. Without a usable Node.js, only Claude accounts are unsupported, and the account says why (open owner decision).
+- The release carries the adapter's lockfile, with the exact version and integrity value of the Claude Agent SDK and of its platform packages. On first use of a Claude account, LINA Core installs them into the adapter's own directory from the public npm registry with `npm ci --ignore-scripts`, and verifies the lockfile against the digest in the release manifest. LINA does not redistribute the SDK package in its installers or artifacts, because it is under the vendor's own license terms. Which SDK features are used is decided by the capabilities that the runtime's start-up message reports, not by comparing version numbers.
+- An update of the adapter, its lockfile and the SDK version is part of a LINA update ([Updates](#updates)).
 
 ### Services
 
@@ -291,19 +471,20 @@ Installation modes are defined in [product-families.md](product-families.md). Ea
 
 | Composition | Contains |
 | --- | --- |
-| Conversation only (general Linux) | LINA Core, the TUI, opencodex, optionally `moirai-worker`, and bubblewrap |
+| Conversation only (general Linux) | LINA Core with the Claude adapter's files, the TUI, optionally `moirai-worker`, and bubblewrap |
 | Minimal general Linux | Conversation only, plus the worker adapters, which drive a coding tool the user installed when work is delegated |
 | LINA OS main | Minimal general Linux, plus Node, LINA APP and exactly one update owner |
-| Additional device Node | Node. Coding work there uses the coding tool installed on that device, and is supported only after transfer between that device and the main is verified. |
+| Additional device Node | Node. Coding work there uses the coding tool installed on that device, and is supported only after the Node's relay of the worker is verified. |
 | LINA APP only | LINA APP |
 | Development host | Not a product composition |
 
 When a piece is missing:
 
 - Missing conversation pieces make conversation fail its readiness checks. There is no `PATH` fallback.
-- A worker that is missing, can't be connected to or fails its handshake, or a LINA work harness that LINA can't install, makes only delegation unsupported. An unverified worker version is reported and never stops delegation.
+- A worker that is missing, can't be connected to or fails its handshake makes only delegation unsupported. An unverified worker version is reported and never stops delegation.
 - A missing `moirai-worker` makes only background memory and planning unsupported.
 - A running service is never evidence that a turn succeeded.
+- A provider whose pieces are missing (no usable Node.js or SDK package for Claude, no `grok` command for Grok, no signed-in account) makes only that provider unsupported, and its account shows why. Conversation needs one usable account of any provider.
 
 ### Release manifest
 
@@ -311,31 +492,34 @@ Every build from a clean commit, a development build included, writes a manifest
 
 - A build's version is its release tag, or `dev-<commit>` for a build that is not a release.
 - The supported-combination table of a build lists the components built together from the same commit, so the TUI and LINA Core of one build find their row ([host-protocol.md](host-protocol.md)).
-- A running component reads the values this design places in the release manifest, such as the request field list, the harness revision and the verified worker versions, from the manifest of its own build.
+- A running component reads the values this design places in the release manifest, such as the request field list and the verified worker versions, from the manifest of its own build.
 - Turn preparation compares the running LINA Core executable with the manifest of its build ([conversation-and-memory.md](conversation-and-memory.md)).
 
 The release manifest records:
 
 - external components, each with version, digest, execution mode, source and license
 - versions and digests of LINA Core, Node, LINA APP and `moirai-worker`, and the Go toolchain that built them
-- opencodex's Node.js runtime, the SQLite binding and sqlite-vec, with versions and digests
+- the app shell: the Wails version, the web engine version observed in acceptance, the mobile host version (and the Electron version where it is used), and the digest of the front-end package lockfile
+- the plan catalog: its version and digest ([Connected accounts and automatic setup](#connected-accounts-and-automatic-setup))
+- the idle memory of the packaged LINA app on Linux and macOS, which the foundation gate compares against on every build
+- the SQLite binding and sqlite-vec, with versions and digests
 - the LINA kit version
-- the conversation SDK version and its retry values
-- the request field list
+- the provider SDK versions (openai-go, the Gemini client, and the Claude Agent SDK package the adapter installs) and their retry values
+- the request field list of each model-API provider
 - the built-in conversation tool declarations and the sandbox policy
-- the LINA work harness: its revision, content hash, hook declaration and contract version
 - the verified versions of the installed tools LINA uses (see Installed tools)
+- the plugin catalog: its version, digest and signature, and the key that verifies it
 - the process environment rules for sandboxed commands and plugin processes
 - the service configuration
 - the state schema version
 - the supported-combination table ([host-protocol.md](host-protocol.md))
-- opencodex: its version, digest and address format
+- the Claude adapter: its version, its digest and the digest of its lockfile; and the sign-in client settings of the ChatGPT adapter (issuer, scopes, resource and app name hint)
 
-The manifest pins only LINA's own artifacts and dependencies: its components, opencodex with its Node.js runtime, and the external components LINA ships. A change to a pinned value (opencodex, harness, SDK, request field list, environment rules, retry values) lands in the same change as its manifest change.
+The manifest pins only LINA's own artifacts and dependencies: its components, the app shell (with the engine it bundles, where that is Electron), and the external components LINA ships. A change to a pinned value (an SDK, the Claude adapter's lockfile, a request field list, a sign-in scope, environment rules, retry values) lands in the same change as its manifest change.
 
 ### Packaging and resident budget
 
-LINA Core and Node each have a packaging and resident budget. The budget covers artifact size, start time, and resident memory and CPU over 24 hours, measured with OS instrumentation. It is declared before the measurement runs and recorded with the result.
+LINA Core, Node and the desktop LINA app each have a packaging and resident budget. The budget covers artifact size, start time, and resident memory and CPU over 24 hours, measured with OS instrumentation. It is declared before the measurement runs and recorded with the result.
 
 ## Supply chain
 
@@ -356,13 +540,13 @@ An update runs in this order:
 Rollback restores the previous compatible composition from the kept binaries and the pre-update snapshot. Binaries are never rolled back over an irreversible migration. When an update fails, the install restores the previous compatible composition, or holds: it stops, keeps the current state intact and reports. It never leaves a half-updated component running against data it can't read. LINA OS adds steps of its own around this order (see Deferred).
 
 - The main gets release artifacts from the private GitHub Releases of the LINA repository with the owner's `gh` authentication, and distributes Node binaries and their updates to devices over the tailnet ([releases.md](../policy/releases.md)).
-- opencodex is updated only as part of a LINA update, by its pin. An update never starts, stops or updates a tool the user installed, such as a worker.
+- The Claude adapter, its lockfile and the SDK package it installs are updated only as part of a LINA update, by their pin. An update never starts, stops or updates a tool the user installed, such as a worker, the `grok` command or Node.js.
 - A hash of a dirty work tree is never a release.
 - An Omarchy update is never a ready receipt for LINA's composition. Snapshot settings, a CLI version or an active service never prove an install composition, a restore or model readiness.
 
 ## Recovery
 
-LINA Core dispatches nothing before its new epoch is durable ([main-authority.md](main-authority.md)). On restart, LINA Core stops pending approvals, tool calls and background effects and fences the previous process generation: a late response from that generation never changes current state. An effect that couldn't be stopped is recorded as unknown and is never re-run automatically. Worker turns cut by the restart follow [work-and-delegation.md](work-and-delegation.md).
+LINA Core dispatches nothing before its new epoch is durable ([main-authority.md](main-authority.md)). On restart, LINA Core stops pending approvals, tool calls and background effects and fences the previous process generation: a late response from that generation never changes current state. An effect that couldn't be stopped is recorded as unknown and is never re-run automatically. Worker turns cut by the restart follow [work-and-delegation.md](work-and-delegation.md). The pollers and Gateway sessions of external channels are part of that fence: the previous generation's sessions are closed, the new epoch opens its own, and a button on an approval request from an earlier epoch is answered as stale and applies nothing ([main-authority.md](main-authority.md#channels)). A background run that was working follows the durability rule of [work-and-delegation.md](work-and-delegation.md#background-runs): it is resumed once from its last checkpoint under the new epoch, and a late result from the previous generation is fenced. Completion events are rows in LINA Core's database. Once the new epoch is durable, LINA Core runs one reconcile pass over every task marked in progress or watched before it hands off anything new.
 
 Restore, its order and its compatibility rules are defined with backup generations in [filesystem.md](filesystem.md).
 
@@ -383,54 +567,66 @@ These runtime failures must end as their rules require:
 
 | Injection | Required outcome |
 | --- | --- |
-| Digest mismatch of opencodex's Node.js runtime or of sqlite-vec | The component doesn't start and reports the mismatch |
-| Sandbox unavailable | Conversation continues; shell and file tools are unsupported and the reason is shown |
-| opencodex unavailable | No request is sent; the TUI shows the typed cause |
+| Digest mismatch of sqlite-vec, or of the lockfile or a package of the Claude adapter | The component doesn't start and reports the mismatch |
+| Sandbox unavailable | Conversation continues; shell and file tools are unsupported, local plugin servers added by command do not start, and the reason is shown |
+| Provider unavailable (a failed connection, 503 or 529) | No request is sent after the failure; the surface shows the typed cause; nothing moves to another provider |
+| Account token expired, revoked or reused | The account shows needs sign-in, no request is sent with it, no other account is used in its place, and conversation on other accounts is unaffected |
+| Usage cap reached | The account shows usage cap reached with no invented reset time; new requests go to another connected account only by the quota-aware routing, never to a pay-per-use path the person did not allow; otherwise the person is offered the switch |
+| Claude adapter killed with a turn in flight | The turn's outcome is unknown and is not replayed; late output from the old process is fenced |
 | LINA Core killed with a tool call in flight | The effect is unknown and never re-run; a late result from the old generation is fenced |
+| LINA Core killed after receiving a channel update and before answering it | The update is handled once, by its stored cursor and idempotency key; a reply whose delivery is unknown is not sent again |
+| LINA Core killed with a background run working | The run is resumed once from its checkpoint, the previous generation's late result is fenced, and a second kill lands the run as failed |
 
 ## Remote access
 
-Remote access uses [Tailscale](https://tailscale.com/kb) only. LINA APP, the TUI and Node connect to LINA Core directly inside the tailnet. Tailscale owns device identity and access control. LINA has no login of its own and registers a device on its first connection. A LINA admits only its owner, so every client connection acts for the owner ([host-protocol.md](host-protocol.md)). LINA Core accepts remote connections only on its tailnet address; there is no relay and no public listener. A relay and a login of LINA's own are on the backlog ([cognition-and-life.md](cognition-and-life.md)).
+Remote access uses [Tailscale](https://tailscale.com/kb) only. LINA APP, the TUI and Node connect to LINA Core directly inside the tailnet. A mobile app host may connect with a WebSocket on that same tailnet address ([host-protocol.md](host-protocol.md#client-connection)). Tailscale owns device identity and access control. LINA runs no account service and no login that a client or a device presents to LINA Core, and registers a device on its first connection. The sign-in that this product calls LINA login is the owner's ChatGPT sign-in ([LINA login](#lina-login)): it is made once, on the main, binds the owner's ChatGPT identity to the owner's person id and gives the conversation its default model account. It is not checked when a client or a device connects, and it opens LINA Core to nobody outside the tailnet. A LINA admits only its owner, so every client connection acts for the owner ([host-protocol.md](host-protocol.md)). LINA Core accepts remote connections only on its tailnet address; there is no relay and no public listener. Channel connections are outbound as well: LINA Core opens its own connection to each platform, and no platform calls in. There is no webhook endpoint and no listener for channels ([integrations.md](integrations.md#channels)). A relay, and the login of LINA's own that a relay would need, are on the backlog ([cognition-and-life.md](cognition-and-life.md)).
 
 ## LINA OS composition
 
-LINA OS is Linux based on [Omarchy](https://github.com/basecamp/omarchy) 4. It composes verified LINA Core, Node and LINA APP artifacts, pinned by manifest with version and digest, together with opencodex and its pinned Node.js runtime and an operating, update and recovery environment. opencodex on LINA OS never runs on a distribution-provided Node.js. Its profiles are defined in [product-families.md](product-families.md).
+LINA OS is Linux based on [Omarchy](https://github.com/basecamp/omarchy) 4. It composes verified LINA Core, Node and LINA APP artifacts, pinned by manifest with version and digest, together with an operating, update and recovery environment. Its profiles are defined in [product-families.md](product-families.md).
 
-- opencodex is part of LINA's installation on LINA OS, as on every install.
+- LINA OS may offer to install Node.js, which the Claude adapter needs, as it offers a coding tool. It is the user's installed tool (see Installed tools); LINA OS neither pins nor owns it.
 - LINA OS may offer to install a coding tool such as Codex for the user, which LINA then runs as a worker. It is the user's installed tool (see Installed tools); LINA OS neither pins nor owns it.
 - An Omarchy root snapshot or an Omarchy update is never a restore or a readiness proof for LINA Core. The recovery units of LINA OS are defined in [filesystem.md](filesystem.md).
 - Omarchy 4's desktop shell is one Quickshell-based shell that provides the bar, the launcher and notifications. Its active theme is `~/.local/state/omarchy/current/theme/colors.toml`, which third-party apps follow through templates in `~/.config/omarchy/themed/` and hooks in `~/.config/omarchy/hooks/theme-set.d/`.
-- Omarchy's default packages lack `fcitx5-hangul`. LINA OS adds it with its Hangul input setup, so Korean input works in the LINA app and the terminal.
+- Omarchy's default packages lack `fcitx5-hangul`. LINA OS adds it with its Hangul input setup, so Korean input works in the LINA app and the terminal. The desktop entry of the LINA app on LINA OS sets the input-method environment of the shell explicitly ([surfaces.md](surfaces.md#korean-input)).
 
 How LINA APP and the TUI adapt to Omarchy is defined in [surfaces.md](surfaces.md).
 
 ## Runtime acceptance
 
-The first implementation issue demonstrates the runtime with these checks. Each check's baseline comes from outside LINA: requests sent by Codex, the opencodex endpoint, the installed Codex, the Go module checksum and vulnerability databases, and OS instrumentation.
+The first implementation issue demonstrates the runtime with these checks. Each check's baseline comes from outside LINA: the request surface that the issuer documents for Sign in with ChatGPT, the installed Codex, the installed `grok` command, the types the Claude Agent SDK publishes, the Go module checksum and vulnerability databases, and OS instrumentation.
 
 | Check | What runs | Passes when |
 | --- | --- | --- |
-| V1 opencodex pass-through | openai-go through opencodex for three or more turns with `store=false`, the encrypted reasoning round trip, a custom tool (`apply_patch`) and parallel tool calls | Every turn round-trips without rejection, and the fields match the Codex baseline request apart from the parts that differ by design (see Request regression) |
+| V1 ChatGPT sign-in and Responses round trip | The Sign in with ChatGPT flow end to end through the sign-in relay, on a local client and on a remote one (dynamic registration, loopback redirect, scope check, ID token check, refresh with rotation). Then the Go Responses adapter through openai-go for three or more turns with `store=false` and `stream=true`: the encrypted reasoning round trip, a function tool declared the way the request surface requires (including `apply_patch` in its function form), parallel tool calls, and the fields `include`, `parallel_tool_calls` and `service_tier`, which the surface does not document | Every turn round-trips without rejection, the fields sent are within the request field list, and the result records which undocumented fields the surface accepts. If the encrypted reasoning round trip is rejected, or the relay's redirect is not accepted, the check fails and the ChatGPT path is reopened before conversation work builds on it |
 | V2 packaging, storage and residency | Static binaries per platform; SQLite with sqlite-vec from Go (WAL, FTS5 and vector queries); LINA Core's executable, built from the same commit, for 24 hours as a systemd service on Omarchy x64 and as a launchd job on macOS arm64. The macOS run stands in for Node's budget, because Node uses the same runtime parts. | sqlite-vec loads, the services start, and size, start time and resident memory and CPU stay within the budget declared before the run on both platforms; the chosen SQLite binding is recorded in the release manifest |
-| V3 own conversation loop | LINA's Go loop with openai-go through opencodex: streaming, tool calls with their before and after hooks, steering input, cancellation and parallel tool calls | The loop's tests pass |
-| V4 LINA work harness | The LINA work harness, installed as a plugin in the user's Codex by an install command, on a test assignment from LINA Core | A stage receipt and a completion receipt reach LINA Core through LINA's work tools; the Stop hook round-trips: a managed turn that was about to end without a result continues through the Stop hook, and its receipt reaches LINA Core; and LINA Core records a test verdict on the receipts ([work-and-delegation.md](work-and-delegation.md)) |
+| V3 own conversation loop | LINA's Go loop with the ChatGPT adapter: streaming, tool calls with their before and after hooks, steering input, cancellation and parallel tool calls | The loop's tests pass |
+| V4 provider adapters | A Claude turn and a Grok turn, each with the runtime's built-in tools off, LINA's tools offered over MCP, an approval routed to LINA Core and answered, session persistence off, and usage and session id recorded; for Claude, the start-up message check and the quota source the token supports; for Grok, the approval and tool-restriction behaviour over the Agent Client Protocol; and a Gemini turn with its thought parts returned as received | Each adapter completes its turn with every tool call run by LINA Core under its checks, a runtime that loaded anything LINA did not put there is refused, and the result records what each quota source reported |
 | V5 worker adapter round trip | Go types generated from the JSON Schema that the installed Codex writes with `generate-json-schema --experimental`, then `initialize`, `thread/start` with `dynamicTools`, `item/tool/call` and turn completion | The round trip completes with the installed Codex, and the adapter records its version |
-| V6 supply-chain baseline | The Go and npm gates of [dependencies.md](../policy/dependencies.md), run by the local foundation verification ([foundation.md](../policy/foundation.md)) on the minimal dependency set, with `go.sum`, the module count, the opencodex lockfile and its transitive package count recorded | The gates pass, `go.sum` verifies against the checksum database, `govulncheck` passes, and no npm package needs a lifecycle script |
+| V6 supply-chain baseline | The Go and npm gates of [dependencies.md](../policy/dependencies.md), run by the local foundation verification ([foundation.md](../policy/foundation.md)) on the minimal dependency set, with `go.sum`, the module count, the Claude adapter's lockfile and its transitive package count recorded | The gates pass, `go.sum` verifies against the checksum database, `govulncheck` passes, and no npm package needs a lifecycle script |
 | V7 development loop | A worker's edit to Go code, then `go build`, `go vet` and `go test` for the affected packages; and a full local `foundation` run (`node scripts/foundation.mjs --full`) | The time from the edit to the result of those commands, and the full `foundation` time, stay within the budget declared before the run |
 
 ## Deferred
 
-- The packaging and resident budget for LINA Core and Node: declared in the first implementation issue before the V2 measurement runs, and recorded with its result. A result outside the budget reopens the language choice.
+- The packaging and resident budget for LINA Core, Node and the desktop LINA app: declared in the first implementation issue before the V2 measurement runs (for the app, before its first packaged measurement), and recorded with its result. A result outside the budget reopens the language choice, and for the desktop app it reopens the shell choice.
 - The development-loop budget: declared before the V7 measurement and recorded with its result. A result outside the budget reopens the language choice.
 - The SQLite binding: chosen by V2 and recorded in the release manifest.
 - The Windows sandbox mechanism of the kit's sandbox wrapper: chosen and verified by the Windows Node implementation, which cannot be accepted without it.
-- Exact pins (the Go toolchain, openai-go, the MCP Go SDK, Bubble Tea, the SQLite binding, sqlite-vec, the JSON Schema to Go type generator, opencodex and its Node.js runtime): set by the first implementation issue and recorded in the release manifest.
+- Exact pins (the Go toolchain, openai-go, the Gemini client, the MCP Go SDK, Bubble Tea, the SQLite binding, sqlite-vec, the JSON Schema to Go type generator, the app shells (Wails, the mobile host, and Electron where it is used), the Claude Agent SDK package): set by the first implementation issue and recorded in the release manifest.
 - The verified versions of each installed tool: set by the first implementation issue (V5 for Codex) and recorded in the release manifest.
 - Whether LINA Core as a service sees the user's login environment (`PATH`, the SSH agent and the keychain), or reads the login shell's environment once at start instead: measured by the first implementation issue.
-- Per-tool deadlines: set during implementation acceptance of the conversation engine.
+- Per-tool deadlines other than the 15 second default of the turn budget: set during implementation acceptance of the conversation engine.
 - Absolute install locations, the absolute state root, service names and socket paths per OS: set during packaging implementation acceptance.
 - The subcommand names and flags of `lina`: set by the first implementation issue.
 - The path and format of a build's manifest, how a build writes it, and its foundation check: set by the first implementation issue.
 - Publishing binaries and their manifests: added to [releases.md](../policy/releases.md) when LINA is first packaged.
 - The default embedding model: chosen by the implementation issue that brings memory recall into answers.
 - LINA OS's own update steps (a pre-update snapshot check and an extra backup before drain): set during LINA OS implementation acceptance.
+- Whether LINA qualifies as a Sign in with ChatGPT client, including a LINA Core on a remote host the person owns: confirmed with the issuer before the release that depends on it.
+- The keep-alive interval of an idle ChatGPT refresh token, the warning period before a Claude token's year ends, the idle period after which the Claude adapter stops, and the number of concurrent turns per Claude account: set during implementation acceptance of the provider adapters.
+- Which quota source a Claude token supports (the runtime's events, the usage report, or both): decided by a live test in V4.
+- Where a model's context window comes from when its adapter reports none: set by the implementation issue that ships the provider adapters.
+- Narrowing a plugin server's network to named hosts: needs a filter in the sandbox wrapper; chosen at implementation acceptance of the plugin system, and until then the allowance is network on or off.
+- The starting values of the turn budget (acknowledgement, soft and hard budget, tool deadline), which only set the hand-off point: tuned by measurement during implementation acceptance of the conversation engine, on waiting time and completion quality together (rework, corrections and "that is not what I asked"), never on waiting time alone.
+- Whether a replay needs raw request bodies beyond the assembly list: decided by the first development run that uses the replay command.

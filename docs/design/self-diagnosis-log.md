@@ -24,7 +24,7 @@ An event is a flat record with exactly the fields below. Every field is present 
 | `time` | string | RFC 3339 timestamp in UTC. Written by the component at the moment the event is recorded. |
 | `component` | string | Exactly one of `conversation`, `task`, `memory`, `materials`, `node`, `app`, `os`. |
 | `conversation_id` | string or null | The conversation the event belongs to, or null when there is none. |
-| `task_id` | string or null | The task the event belongs to, or null when there is none. |
+| `task_id` | string or null | The task, or the background run (its run id), the event belongs to, or null when there is none. |
 | `agent_id` | string or null | The agent the event is recorded for: the agent that spoke or acted, or the requesting agent of the task ([product-families.md](product-families.md)). Null when no agent is involved, such as an install event or a job for the whole main. |
 | `epoch` | string or null | The main epoch the event was recorded under, as defined in [main-authority.md](main-authority.md), or null for events recorded before an epoch is durable. |
 | `node_id` | string or null | The Node that recorded the event, as defined in [main-authority.md](main-authority.md), or null when the main or a client recorded it. |
@@ -40,7 +40,7 @@ Rules that apply across fields:
 - `unknown` is a real result, not a placeholder. It is written when the component can't tell whether an effect happened, which is the same meaning the term has in [main-authority.md](main-authority.md).
 - `denied` means an authorization check refused the action before any effect; it is never used for an effect that started and then failed.
 - Cause codes and action codes come from closed allowlists owned by the implementation. A code outside the allowlist is never written.
-- Component names in `component` match the product boundaries in [product-families.md](product-families.md): `app` is LINA APP, `os` is LINA OS, `node` is Node, and the remaining four are LINA Core.
+- Component names in `component` match the product boundaries in [product-families.md](product-families.md): `app` is LINA APP, `os` is LINA OS, `node` is Node, and the remaining four are LINA Core. Events of the channel gateway are written under `conversation`, because they belong to a conversation; the gateway is not a component of its own.
 
 The table above is the complete field list. A check that compares an event's keys against this table must accept exactly these twelve names and reject anything else.
 

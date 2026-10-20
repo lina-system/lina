@@ -26,7 +26,7 @@ Every measurement runs with the background load that the machine carries in norm
 - LINA's own processes on that machine, as listed in [runtime.md](runtime.md): LINA Core, `moirai-worker`, Node, sandboxed tool commands, workers, plugin processes and external components, including background preprocessing of materials.
 - LIFE world activity: the background world engine keeping its world, time, events and daily activity.
 
-Agents are data that the one LINA Core runs, with no process of their own ([product-families.md](product-families.md)). The background work of every agent, such as memory extraction from its conversations, runs inside LINA's processes on the main and is part of their load on that machine. Every measurement records how many agents ran background work during it.
+Agents are data that the one LINA Core runs, with no process of their own ([product-families.md](product-families.md)). The background work of every agent, such as memory extraction from its conversations, runs inside LINA's processes on the main and is part of their load on that machine. Background runs of LINA's sub-agents run inside LINA Core and are part of the same load. Every measurement records how many agents ran background work and how many background runs ran during it.
 
 A measurement that leaves out any part of the background load that the install runs in normal use is not a measurement of that install.
 
@@ -82,7 +82,7 @@ A measured cell passes only when all of the following are observed during a conc
 - Keyboard and pointer input: zero unauthorized input injection. No keystroke, click or pointer movement reaches the person's session unless a live seat lease covers it.
 - Clipboard: zero clipboard reads and zero clipboard writes on the person's clipboard, apart from the clipboard history the person turned on.
 - File scope: zero out-of-scope file access, and zero lost human edits. Every file LINA touches is in the scope of its grant. When a file changed under the person's hands, LINA's write against the stale revision is rejected; the person's version wins.
-- CPU and memory yield: under concurrent load from the person, from LINA and from the background load (LIFE world activity and every agent's background work included), the person's input latency stays within the declared bounds, and LINA's processes stay within their declared resource bounds. LINA yields when the person needs the machine and recovers its own work afterwards. LINA never kills the person's processes.
+- CPU and memory yield: under concurrent load from the person, from LINA and from the background load (LIFE world activity, channel sessions, every agent's background work, agent exchanges and background sub-agent runs included), the person's input latency stays within the declared bounds, and LINA's processes stay within their declared resource bounds. LINA yields when the person needs the machine and recovers its own work afterwards. LINA never kills the person's processes.
 - Lock and unlock: the outcome is measured per cell. Locking the person's session must never let LINA act on that session, and unlocking must never let a stale grant resume as if nothing happened.
 - Sleep and resume: the outcome is measured per cell. Resuming from sleep never revives a grant that expired while the machine was asleep, and never lets a stale grant act on the person's session.
 - Disconnect: an observed disconnect from the main blocks new work and requests cancellation of running work at once. A silent disconnect ends authorization at the grant's expiry deadline, as defined in [main-authority.md](main-authority.md). In both cases the person's session stays untouched.
@@ -112,8 +112,8 @@ Each measured cell has one record, and it holds:
 - the host OS and version, and the install mode
 - the session: OS user, GUI session, profile, the grant the work ran under, and any seat lease in force
 - the hardware: CPU, memory, and any relevant device
-- the versions and release manifest digests of every LINA artifact involved: LINA Core, Node, LINA APP and LINA OS (the manifest pins opencodex and its Node.js runtime)
-- the workload: what the person did, what LINA did, what LIFE world activity ran, how many agents the main holds and how many of them ran background work
+- the versions and release manifest digests of every LINA artifact involved: LINA Core, Node, LINA APP and LINA OS, and the Claude adapter when a Claude account served the session
+- the workload: what the person did, what LINA did, what LIFE world activity ran, how many agents the main holds, how many of them ran background work and how many background runs ran
 - the traces: input, focus, clipboard and file access traces for the whole session, tied to the task and grant ids
 - the declared bounds and the measured deltas against them, with resource use reported per process
 - the result per column: which pass criteria were met and which were not, against the declared bounds
