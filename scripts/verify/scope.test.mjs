@@ -111,6 +111,39 @@ test('every Go component change also selects the architecture test', t => {
   assert.equal(r.classify('HEAD', { base }).components, false);
 });
 
+test('Core package edits select their tests and follow kit imports', t => {
+  const r = repository(t);
+  const files = {
+    'go.mod': 'module example.invalid/lina\ngo 1.27\ntoolchain go1.27.3\n',
+    'kit/go.mod': 'module example.invalid/lina/kit\ngo 1.27\ntoolchain go1.27.3\n',
+    'go.work': 'go 1.27\ntoolchain go1.27.3\nuse (\n.\n./kit\n)\n',
+    'doc.go': 'package lina\n',
+    'kit/protocol/doc.go': 'package protocol\n',
+    'cmd/lina/main.go': 'package main\nfunc main() {}\n',
+    'cmd/lina-node/main.go': 'package main\nfunc main() {}\n',
+    'internal/core/boot/boot.go': 'package boot\n',
+    'internal/core/clientsrv/server.go': 'package clientsrv\nimport _ "example.invalid/lina/kit/protocol"\n',
+  };
+  for (const [name, content] of Object.entries(files)) {
+    mkdirSync(join(r.cwd, name, '..'), { recursive: true });
+    writeFileSync(join(r.cwd, name), content);
+  }
+  const base = r.commit();
+  for (const path of ['internal/core/boot/boot.go', 'internal/core/clientsrv/server.go', 'kit/protocol/doc.go']) {
+    writeFileSync(join(r.cwd, path), files[path] + '// edited\n');
+    const scope = r.classify('HEAD', { base });
+    assert.deepEqual(scope.unmapped, []);
+    assert.deepEqual(scope.selectedComponents, path.startsWith('kit/') ? ['kit', 'lina'] : ['lina']);
+    assert.equal(scope.automation, false);
+    writeFileSync(join(r.cwd, path), files[path]);
+  }
+  const lina = componentRegistry.find(component => component.name === 'lina');
+  for (const directory of ['boot', 'clientsrv']) {
+    assert.ok(lina.packages.includes(`./internal/core/${directory}/...`));
+  }
+  assert.equal(kind('internal/core/unregistered/example.go'), 'unmapped');
+});
+
 for (const path of ['protocol/schema/client/1.0/envelope.json', 'protocol/fixtures/client/1.0/hello.json']) {
   test(`${path} selects kit and its consumers`, t => {
     const r = repository(t);
