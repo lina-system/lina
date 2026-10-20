@@ -18,7 +18,7 @@ Branch names, commit messages and merge commit messages are in English, regardle
 4. Bring the branch up to date with `dev` by merging `dev` into it when needed, resolve conflicts on the branch, and rerun verification. The pull request's `foundation` check must be green for the current head before merging.
 5. An authorized merger merges the pull request with a merge commit. Do not squash or rebase.
 
-The [CI workflow](../../.github/workflows/ci.yml) runs `foundation` for pull requests into `dev` and pushes to `dev`. It checks the pull request head over its base-to-head range; a push checks the previous-to-current `dev` range. The push run verifies the resulting merge commit. CI has read-only repository permissions and does not push branches or evidence notes.
+The [CI workflow](../../.github/workflows/ci.yml) runs `foundation` for pull requests into `dev` and pushes to `dev`. It checks the pull request event's merge commit (`github.sha`, from `refs/pull/<number>/merge`) over the range from the pull request's base SHA to that merge commit, so the proposed result is verified even when the branch is behind `dev`. A push checks the previous-to-current `dev` range and verifies the resulting merge commit. CI has read-only repository permissions and does not push branches or evidence notes.
 
 ## Owner's local integration path
 
