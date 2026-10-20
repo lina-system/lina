@@ -78,7 +78,32 @@ result revisions, the preview/saved reference shape, and the save key; whether a
 edit targets a current, editable result is a Core state decision.
 
 The package handles wire shape and values. JSON-RPC framing, negotiation,
-authorization, live conversation or result behavior, and the complete conformance
-runner belong to their implementation issues. No TUI or Core behavior is added
-here. The schema evaluator implements the vocabulary used by this schema, not an
+authorization and live conversation or result behavior belong to their
+implementation issues. The schema evaluator implements the vocabulary used by this schema, not an
 arbitrary draft 2020-12 validator.
+
+## Receive boundaries and conformance
+
+`ClientDecoder` ignores and counts a well-formed unknown kind, returns no message
+for it, and counts malformed envelopes separately. Each connection owns a decoder
+in its receive loop. `internal/clientapi.RequestDecoder` uses the strict codec and
+returns a typed `malformed` refusal without a partial request. Neither decoder
+negotiates versions, authorizes a request or implements application state.
+
+The reusable `conformance` package loads the
+[client 1.0 corpus](../../protocol/fixtures/client/1.0/README.md). `Suite.RoundTrip`
+accepts an implementation's codec; `Suite.Run` accepts its receive adapter and
+counter snapshot function. Case files specify input and output paths, per-input
+error codes and final counts. See the package tests for the Go client adapter and
+`internal/clientapi/conformance_test.go` for Core's adapter. Other language
+implementations can consume the same JSON files.
+
+```sh
+go test ./kit/protocol/... ./internal/clientapi/...
+```
+
+Foundation selects kit and the Core adapter when fixtures change. The corpus
+includes every currently defined kind, the closed effect and error codes, result
+cards of every current type, exact numbers and references, version declarations,
+and malformed/unknown-kind recovery sequences. Reserved payloads and result
+bodies still need their application scenarios when their implementations arrive.

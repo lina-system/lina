@@ -347,6 +347,15 @@ Fallbacks, in order. F1: Bubble Tea with its own probe, a quiet spinner, a lower
 
 **Tests.** The fake Core, `internal/fakecore`, is built from the conformance fixtures ([host-protocol.md](host-protocol.md#conformance-fixtures)) with an injected clock and fault switches: drop, slow reader, epoch change, duplicate delivery, disconnect mid-batch, recovering and refusal.
 
+The schema and receive-boundary corpus runs independently through
+`kit/protocol/conformance`. It checks that an unknown kind yields no admitted
+message, increments the client's unknown-kind count once per frame, and does not
+prevent the next valid frame from being received. Malformed envelopes increment
+a separate count. The server adapter checks typed `malformed` refusals for unknown
+request fields. These checks establish the boundary behavior used by T-06; they
+do not establish rendering, live Core behavior or the end-to-end scenarios that
+depend on the headless harness.
+
 | Layer | Runs | Asserts |
 | --- | --- | --- |
 | Reducer | Fixtures replayed through `Reduce` | Unique block ids; duplicates change nothing; a resumed state equals a run that never disconnected |
