@@ -179,3 +179,25 @@ test('the checked-out candidate is read from the work tree, including untracked 
   assert.deepEqual(r.classify(r.base).unmapped, []);
   assert.deepEqual(r.classify(head, { cwd: r.cwd, base: r.base }).changed, ['tracked.txt']);
 });
+
+for (const path of ['.github/workflows/ci.yml', '.github/workflows/ci.yaml', '.node-version']) {
+  test(`${path} selects automation without unmapped paths`, t => {
+    const r = repository(t);
+    mkdirSync(join(r.cwd, path, '..'), { recursive: true });
+    writeFileSync(join(r.cwd, path), 'fixture\n');
+    const scope = r.classify(r.commit());
+    assert.equal(scope.mode, 'full');
+    assert.equal(scope.reason, 'automation-change');
+    assert.equal(scope.automation, true);
+    assert.deepEqual(scope.unmapped, []);
+  });
+}
+
+for (const path of ['.github/workflows/nested/ci.yml', '.github/workflows/script.sh', '.github/actions/example/action.yml']) {
+  test(`${path} still needs its own verification registration`, t => {
+    const r = repository(t);
+    mkdirSync(join(r.cwd, path, '..'), { recursive: true });
+    writeFileSync(join(r.cwd, path), 'fixture\n');
+    assert.deepEqual(r.classify(r.commit()).unmapped, [path]);
+  });
+}
