@@ -57,7 +57,7 @@ func TestVersions(t *testing.T) {
 func TestVersionsOutsideRepository(t *testing.T) {
 	// Build actual command sources from a source export, without a .git directory.
 	root := t.TempDir()
-	for _, dir := range []string{"cmd/lina", "cmd/lina-node", "internal/buildinfo", "internal/core", "kit"} {
+	for _, dir := range []string{"cmd/lina", "cmd/lina-node", "internal/buildinfo", "internal/core", "internal/clientapi", "internal/tui", "kit"} {
 		if err := os.CopyFS(filepath.Join(root, dir), os.DirFS(filepath.Join("../..", dir))); err != nil {
 			t.Fatal(err)
 		}

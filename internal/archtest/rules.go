@@ -104,6 +104,16 @@ func violations(root string, standard map[string]bool) ([]string, error) {
 			if within(owner, "internal/buildinfo") && !standard[imported] {
 				report(spec.Pos(), "buildinfo", "build metadata may import only the standard library: "+imported)
 			}
+			if within(owner, "internal/tui") {
+				allowed := standard[imported] || within(imported, rootModule+"/internal/clientapi") ||
+					within(imported, rootModule+"/internal/design") || within(imported, rootModule+"/internal/tui") ||
+					within(imported, rootModule+"/kit/protocol")
+				charm := within(imported, "github.com/charmbracelet") || within(imported, "charm.land")
+				terminal := within(owner, "internal/tui/term") || within(owner, "internal/tui/ui")
+				if !allowed && !(charm && terminal) {
+					report(spec.Pos(), "TUI", "only the standard library, clientapi, design, protocol and TUI packages are allowed: "+imported)
+				}
+			}
 			if (within(imported, "github.com/charmbracelet") || within(imported, "charm.land")) && !within(owner, "internal/tui/term") && !within(owner, "internal/tui/ui") {
 				report(spec.Pos(), "Charm", "only internal/tui/term and internal/tui/ui may import "+imported)
 			}

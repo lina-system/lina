@@ -17,7 +17,7 @@ function fixture(t) {
   const cwd = join(sb.dir, 'source');
   mkdirSync(cwd);
   for (const name of ['cmd/lina', 'cmd/lina-node', 'internal/buildinfo', 'kit', 'go.mod', 'go.sum', 'go.work',
-    'internal/core', 'scripts/build.mjs', 'scripts/git.mjs', 'scripts/verify/check-components.mjs']) {
+    'internal/core', 'internal/clientapi', 'internal/tui', 'scripts/build.mjs', 'scripts/git.mjs', 'scripts/verify/check-components.mjs']) {
     if (!existsSync(join(root, name))) continue;
     mkdirSync(dirname(join(cwd, name)), { recursive: true });
     cpSync(join(root, name), join(cwd, name), { recursive: true });
