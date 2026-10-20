@@ -1,0 +1,21 @@
+{
+  "side": "client",
+  "input": [
+    "invalid/unknown_kind.json",
+    "invalid/unknown_kind.json",
+    "welcome.json"
+  ],
+  "output": [
+    "welcome.json"
+  ],
+  "errors": [
+    "",
+    "",
+    ""
+  ],
+  "outcome": {
+    "accepted": 1,
+    "malformed": 0,
+    "unknown_kinds": 2
+  }
+}

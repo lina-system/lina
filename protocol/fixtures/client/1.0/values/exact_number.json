@@ -1,0 +1,27 @@
+{
+  "protocol": {
+    "name": "client",
+    "version": "1.0"
+  },
+  "kind": "question_answer",
+  "message_id": "question_answer-example",
+  "attempt_id": "question_answer-attempt-1",
+  "reply_to": null,
+  "sender": {
+    "party": "client",
+    "id": "client-example"
+  },
+  "epoch": "0",
+  "sent_at": "2026-01-01T00:00:00Z",
+  "idempotency_key": null,
+  "effect_state": "none",
+  "receipt_ref": null,
+  "source_refs": [],
+  "error": null,
+  "payload": {
+    "answer": "accept",
+    "values": {
+      "amount": 9007199254740993.125
+    }
+  }
+}

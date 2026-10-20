@@ -1,0 +1,41 @@
+{
+  "side": "server",
+  "input": [
+    "invalid/unknown_envelope_field.json",
+    "invalid/unknown_payload_field.json",
+    "invalid/unknown_sender_field.json",
+    "invalid/unknown_protocol_field.json",
+    "invalid/missing_epoch.json",
+    "invalid/overflow_epoch.json",
+    "invalid/wrong_version.json",
+    "invalid/null_kind.json",
+    "invalid/empty_kind.json",
+    "invalid/null_payload.json",
+    "invalid/unknown_kind_missing_epoch.json",
+    "invalid/unknown_kind.json",
+    "hello.json"
+  ],
+  "output": [
+    "hello.json"
+  ],
+  "errors": [
+    "malformed",
+    "malformed",
+    "malformed",
+    "malformed",
+    "malformed",
+    "malformed",
+    "malformed",
+    "malformed",
+    "malformed",
+    "malformed",
+    "malformed",
+    "malformed",
+    ""
+  ],
+  "outcome": {
+    "accepted": 1,
+    "malformed": 12,
+    "unknown_kinds": 0
+  }
+}
