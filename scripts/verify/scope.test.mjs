@@ -5,7 +5,36 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { git as runGit } from '../git.mjs';
-import { scopeFor } from './scope.mjs';
+import { kind, scopeFor } from './scope.mjs';
+
+for (const path of ['protocol/schema/client/1.0/envelope.json', 'protocol/fixtures/client/1.0/hello.json']) {
+  test(`${path} selects kit and its consumers`, t => {
+    const r = repository(t);
+    const files = {
+      'go.mod': 'module example.invalid/lina\ngo 1.27\ntoolchain go1.27.3\n',
+      'kit/go.mod': 'module example.invalid/lina/kit\ngo 1.27\ntoolchain go1.27.3\n',
+      'go.work': 'go 1.27\ntoolchain go1.27.3\nuse (\n.\n./kit\n)\n',
+      'doc.go': 'package lina\n',
+      'kit/protocol/doc.go': 'package protocol\n',
+      'cmd/lina/main.go': 'package main\nimport _ "example.invalid/lina/kit/protocol"\nfunc main() {}\n',
+      'cmd/lina-node/main.go': 'package main\nfunc main() {}\n',
+      [path]: '{}\n',
+    };
+    for (const [name, content] of Object.entries(files)) {
+      mkdirSync(join(r.cwd, name, '..'), { recursive: true });
+      writeFileSync(join(r.cwd, name), content);
+    }
+    const base = r.commit();
+    writeFileSync(join(r.cwd, path), '{"changed":true}\n');
+    const scope = r.classify(r.commit(), { base });
+    assert.equal(kind(path), 'components');
+    assert.deepEqual(scope.unmapped, []);
+    assert.deepEqual(scope.selectedComponents, ['kit', 'lina']);
+    assert.equal(scope.automation, false);
+    rmSync(join(r.cwd, path));
+    assert.deepEqual(r.classify(r.commit(), { base }).selectedComponents, ['kit', 'lina']);
+  });
+}
 
 function repository(t) {
   const cwd = mkdtempSync(join(tmpdir(), 'lina-scope-'));
