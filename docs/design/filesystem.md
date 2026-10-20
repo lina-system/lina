@@ -41,7 +41,7 @@ There is one state root per main, written here as `<state-root>`. Every path bel
 | Plugin data | `plugins/<plugin-id>/` | The data directory of a local plugin server that runs in the sandbox | That server, inside its grant | Not in a backup generation |
 | Import staging | `staging/import/` | Material on its way in, and the snapshots of a memory system being imported | LINA Core | Not backed up |
 | Export staging | `staging/export/` | Material on its way out | LINA Core | Not backed up |
-| Installation state | `system/` | Install configuration and component events | The install and each component's event writer | OS root snapshot, where the install has one |
+| Installation state | `system/` | Install configuration and component events; LINA Core's control files under `system/core/` (lock, epoch record, run sentinel, halt marker, restart request, main id), written by LINA Core, never in a backup generation and left alone by a restore | The install and each component's event writer; LINA Core for `system/core/` | OS root snapshot, where the install has one |
 | Secrets | `secrets/` | LINA's secret store when no OS keychain is available: tokens, API keys, client secrets, request header values and server environment variables of plugins, the credentials of model-provider accounts, bot tokens of channel connections, Google client credentials and LINA's other secrets, each file with mode 0600 and each plugin, account or channel secret keyed by the id of the person it belongs to ([integrations.md](integrations.md), [runtime.md](runtime.md#accounts-and-sign-in)) | LINA Core | Not backed up |
 | Backup generations | `backups/<generation-id>/` | Backup generations of the main | The backup procedure | Is the unit |
 | Removal list | `backups/removals` | Every retraction, trash recovery, tombstone and source disconnection of the main, appended as each happens | LINA Core | Beside the generations, in none of them |
@@ -49,7 +49,7 @@ There is one state root per main, written here as `<state-root>`. Every path bel
 Rules for the layout:
 
 - Only LINA Core writes canon, the version space, the materials areas and derived data. LINA APP, Node, the library view and generic file tools never write there.
-- The records repository is canon in files: only LINA Core writes it, and the database index is derived from it and can be rebuilt at any time (open owner decision). Machine state stays in canon.
+- The records repository is canon in files: only LINA Core writes it, and the database index is derived from it and can be rebuilt at any time. Machine state stays in canon.
 - An agent is data in this layout: its row and records in canon, keyed by its agent id, and its repository `versions/agents/<agent-id>/`. Every other area is shared by all agents, and every record of a write names the agent that made or asked for it next to the person id.
 - Deleting an agent moves its persona revisions, emotional state, conversations and personal knowledge to the trash for 30 days, and then deletes them permanently with tombstones ([conversation-and-memory.md](conversation-and-memory.md)). Common knowledge the agent wrote stays, with its agent id as the source.
 - Conversation tools write only in the conversation workspace and in the scope of their grant. The sandbox that enforces this is defined in [runtime.md](runtime.md).
@@ -193,7 +193,7 @@ The records repository `versions/records/` is one Git repository for the whole m
 - Large binaries and media stay outside Git in the materials areas, linked by content hash. 자료 holds the knowledge documents and the links to materials.
 - LINA Core commits each change as one saved version and records the person id and the agent that asked in the commit message. Recurring completions are commits, not files.
 - Another tool may read the repository. A change made to it by another tool is detected at the next read and handled as [work-and-delegation.md](work-and-delegation.md#storage-of-records) states.
-- Where this repository lives, the form of the inbox (one file per memo) and the commit granularity are defaults to be confirmed (open owner decision).
+- The repository lives at `versions/records/`, the inbox holds one file per memo, and each change is one commit. The commit granularity is tuned by measurement during work engine implementation acceptance ([work-and-delegation.md](work-and-delegation.md)).
 - This folder layout is a machine concern of the state root and is never shown to the person by default. The person-facing library is location-free, and folders are only an optional view there ([materials-and-knowledge.md](materials-and-knowledge.md#library)).
 
 ## Originals and derived data

@@ -13,5 +13,6 @@ Product design contracts live in [docs/design](docs/design/); implement against 
 - Verify changes and report what was and was not checked. Do not write tests that pin prose or pass by timing luck.
 - Keep secrets, personal conversations, memories, user files, and operational state out of the repository ([SECURITY.md](SECURITY.md)).
 - Start every source file with `SPDX-License-Identifier: Apache-2.0` in its comment syntax, after a shebang line if it has one ([LICENSE](LICENSE)).
-- Plans and issues live in the owner's Linear workspace; the roadmap is issue #1 of this repository.
+- Plans and issues live in this repository's GitHub milestones and issues; the roadmap is issue #1.
+- An issue names the design sections it implements. A change that alters behavior updates those sections in the same pull request ([work-and-delegation.md](docs/design/work-and-delegation.md#work-definition)).
 - Clean up temporary processes and resources created for the task.

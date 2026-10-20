@@ -81,7 +81,7 @@ The screens for attaching are defined in [surfaces.md](surfaces.md).
 An agent presents a typed result in a conversation ([host-protocol.md](host-protocol.md#typed-results)). A result is a preview until the person saves it. A preview lives only in the conversation ledger ([conversation-and-memory.md](conversation-and-memory.md#results)): it is not a material, it is not in the library, it is not indexed as knowledge, and it is in no scope an answer draws on. A preview is not a draft in the sense of Versions; only delegated results arrive as a draft that the person applies.
 
 - One explicit Save promotes a result. Save is the person's action on the result's card or in the work panel, or the person's request to the agent in conversation, which the agent carries out with its `save_result` tool. No agent saves a result on its own, and a preview never becomes a material by age or by use.
-- Saving is a LINA Core effect with the usual effect states ([host-protocol.md](host-protocol.md#effect-states)). Its idempotency key is built from the result id, the revision and the destination, so a double click or a retry creates one record. It saves the revision the person saw, and a newer revision makes the save fail with `stale_revision`.
+- Saving is a LINA Core effect with the usual effect states ([host-protocol.md](host-protocol.md#effect-states)). Its idempotency key is built from the result id, the revision, the action and the destination, as [host-protocol.md](host-protocol.md#typed-results) says. A double click or a retry creates one record. It saves the revision the person saw, and a newer revision makes the save fail with `stale_revision`.
 - The saved record is a LINA material with saved version 1, or a memo or plan objects where the table below says so. Versionable text saved into a 일, a 계속 챙기는 것 or 자료 is a record of the records repository ([filesystem.md](filesystem.md#records-repository)). It carries provenance: the agent, the conversation, the turn, the result id and the revision. Citations in it stay passage anchors. Its text rendering is indexed like any document, and its derived data follows Background processing and evidence.
 - After the save, the saved record is the only copy that changes. Later edits, by the person or by an agent, are saved versions that record who made them (see Versions), and the result takes no new revision. The result's card shows where it was saved.
 - Deleting the conversation does not delete a saved record. Its provenance then shows the tombstone in place of the conversation.
@@ -120,7 +120,7 @@ Git is the common base for versions of documents and code materials, for people 
 - Only delegated results arrive as a draft that the person applies ([work-and-delegation.md](work-and-delegation.md)). An agent's own edits are made in place within the grant and are reverted like any saved version.
 - The person can compare and revert versions at any time.
 - A document project is local by default. Connecting a remote repository to it is optional and follows [integrations.md](integrations.md).
-- Goals, 일, 할 일, 계속 챙기는 것, memos and knowledge documents are files in the records repository ([filesystem.md](filesystem.md#records-repository)), and the database only indexes them (open owner decision). Their rules are in [work-and-delegation.md](work-and-delegation.md#storage-of-records).
+- Goals, 일, 할 일, 계속 챙기는 것, memos and knowledge documents are files in the records repository ([filesystem.md](filesystem.md#records-repository)), and the database only indexes them. Their rules are in [work-and-delegation.md](work-and-delegation.md#storage-of-records).
 
 ## Editing a person's files in place
 
@@ -148,7 +148,7 @@ Turning a recording into a meeting note is built in. It needs no extra install o
 
 Knowledge documents and people records are records of the records repository ([work-and-delegation.md](work-and-delegation.md#storage-of-records)), kept under 자료 and 계속 챙기는 것. The knowledge preset manages them ([conversation-and-memory.md](conversation-and-memory.md#preset-methodologies)); these are the rules LINA Core enforces whoever writes.
 
-- A knowledge document is classified by topic, not by company or area. A new topic folder is created with its first document and needs the person's approval; subfolders appear only above about fifteen documents.
+- A knowledge document is classified by topic, not by company or area. A new topic folder is created with its first document, and the agent says so in one line; subfolders appear only above about fifteen documents.
 - Originals are kept in an immutable source store, one entry per message with its message id. A statement of the person is saved verbatim first, with absolute time and zone; derived text links back to it.
 - Every claim carries an evidence level: confirmed (with a source id), the person said, the subject said (unverified), pattern (two or more independent sources), or inference (with basis and confidence). Copies of one original count as one source. Counts, silences and response speed are observations and never become relationship meaning.
 - A correction never deletes. A correction record supersedes the old one, and the old one points forward. "Valid then, changed since" stays distinct from "was wrong". Removal means moving to 보관.

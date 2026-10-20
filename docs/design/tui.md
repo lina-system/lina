@@ -76,7 +76,7 @@ The server side is [go-core.md](go-core.md) (C-42): topics, cursors, rings, batc
 
 - The TUI holds `core`, `waiting`, `progress` and `running` for the whole connection, the focused conversation with its results, and further conversations as background topics up to the limit Core grants. It opens `exchanges`, `accounts` and `channels` only while their view is open.
 - The socket reader feeds a bounded channel that the reducer drains. If it fills, the topic is marked out of sync and a resync is requested. The reader never drops a frame. A slow terminal delays pixels, not state.
-- Epochs compare numerically, the form proposed in CP-02 ([go-core.md](go-core.md#contract-change-proposals)). A gap, a repeat or an epoch mismatch counts as `resync`.
+- Epochs compare numerically, the form of CP-02 ([host-protocol.md](host-protocol.md#envelope)). A gap, a repeat or an epoch mismatch counts as `resync`.
 - A different revocation epoch ([conversation-and-memory.md](conversation-and-memory.md#terms)) makes the TUI drop cached items before the snapshot applies, so a forgotten item cannot survive a reconnect.
 - Replaying a stream or a snapshot twice leaves state unchanged.
 
@@ -202,7 +202,7 @@ Contract: [main-authority.md](main-authority.md#approval), [integrations.md](int
 
 The approval record is Core's. The TUI shows it and sends the person's decision as a request.
 
-**The card** shows what the contract says an approval request shows, the requesting agent with its recommendation first, and the choices of the tier ([main-authority.md](main-authority.md#plugin-tools)). Doing nothing means the action will not run. A request that a channel cannot present waits here ([main-authority.md](main-authority.md#channels)).
+**The card** shows what the contract says an approval request shows, the requesting agent with its recommendation first, and its choices ([main-authority.md](main-authority.md#approval)). Doing nothing means the action will not run. A request that a channel cannot present waits here ([main-authority.md](main-authority.md#channels)).
 
 - Target fields are never truncated. If they do not fit, a details view opens and confirm is disabled while any target field is cut.
 - Requests of one scope are one card. A changed group returns stale; the card refreshes and the person selects again.
@@ -226,7 +226,8 @@ Contract: [surfaces.md](surfaces.md#agent-surfaces), [surfaces.md](surfaces.md#s
 Settings are commands and labeled blocks, all requests to Core:
 
 - Accounts: the connected-accounts view with the one-line setup summary, add account, sign out.
-- Plugins: the catalog, the connect card as a labeled block, the plugin list, tools with their tiers, and standing grants with revoke.
+- Plugins: the catalog, the connect card as a labeled block, the plugin list and the tools of each plugin.
+- Command network: the standing grants, with revoke.
 - Channels: connections, pairing code, bindings and scopes. A token passes to Core once and is never shown.
 - Memory import: rehearsal report, run, promotion batches grouped, accept a whole group.
 - Agents: list, create, tune, delete. The agent talk log: one line per exchange, Enter expands.
@@ -326,7 +327,7 @@ The reducer, render, layout and `clientapi` packages are Charm-free, so a fallba
 | S2 | Bytes per status tick on a full Hangul screen at 140x45 | At most 2 KiB |
 | S3 | Long streams: 100 KB prose; 300 KB with no blank line and with no newline; a 1,000-line code fence; a 1,200-row table; a 300-item list | Build and flush p50 at most 4 ms, p95 at most 16 ms; flat per-flush cost; peak heap at most 64 MiB; key-to-byte p95 at most 50 ms at 250 events per second |
 | S4 | Resize with 200 history messages; tab-stop alignment | Reflow at most 100 ms after the coalesce; no misalignment |
-| S5 | Own sync-output and grapheme probes, OSC 52 write, OSC 8 link, over SSH and Apple Terminal | Each resolves within 200 ms; no reply leaks to the shell; behaviour recorded per terminal |
+| S5 | Own sync-output and grapheme probes, OSC 52 write, OSC 8 link, over SSH and Apple Terminal | Each resolves within 200 ms; no reply leaks to the shell; behavior recorded per terminal |
 | S6 | Key events, press-only gate, Esc latency | Gate correct; Esc to action at most 80 ms |
 | S7 | Paste whose end marker is lost | Later keys work within 1 s, or the gap is recorded with a mitigation |
 | S8 | Recording-writer harness | Runs, quits and parses with the emulator without any sleep |
@@ -377,7 +378,7 @@ Invariants that need a test:
 | T-01 | Changed. Preferences moved to one client file; the client report request is withdrawn. |
 | T-02 | Withdrawn. [host-protocol.md](host-protocol.md) decides envelope, handshake and versions. |
 | T-03 | Changed. The server side moved to C-42. |
-| T-04 | Changed. Tiers of [main-authority.md](main-authority.md#plugin-tools) replace the four effect classes. |
+| T-04 | Changed. The approval rule of [main-authority.md](main-authority.md#approval) replaces the four effect classes. |
 | T-05 | Changed. Unread counts and presence are withdrawn; they are not client capabilities. |
 | T-06 | Kept. |
 | T-07 | Changed. The work-panel phases are replaced by the surfaces contract. |

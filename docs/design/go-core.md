@@ -1,6 +1,6 @@
 # LINA Core in Go
 
-This document fixes how LINA Core is built in Go where the design contracts leave a point open: processes, packages, interfaces and algorithms. It is a design document, subordinate to the thirteen contracts in this directory: [product-families.md](product-families.md), [main-authority.md](main-authority.md), [filesystem.md](filesystem.md), [runtime.md](runtime.md), [host-protocol.md](host-protocol.md), [conversation-and-memory.md](conversation-and-memory.md), [work-and-delegation.md](work-and-delegation.md), [surfaces.md](surfaces.md), [integrations.md](integrations.md), [materials-and-knowledge.md](materials-and-knowledge.md), [cognition-and-life.md](cognition-and-life.md), [non-competition.md](non-competition.md) and [self-diagnosis-log.md](self-diagnosis-log.md). It cites contract sections instead of restating them. Where this document and a contract differ, the contract wins and this document is corrected. A contract changes only in its own file. The few changes this design asks for are listed under "Contract change proposals" and have no effect until a contract file says so. The terminal UI is designed in [tui.md](tui.md), the order of work is in [go-roadmap.md](go-roadmap.md), and the patterns behind the choices are in [hermes-patterns.md](hermes-patterns.md). Finishing this document does not mean any package, table or process is built or accepted; runtime proof belongs to the implementation issues that consume it.
+This document fixes how LINA Core is built in Go where the design contracts leave a point open: processes, packages, interfaces and algorithms. It is a design document, subordinate to the thirteen contracts in this directory: [product-families.md](product-families.md), [main-authority.md](main-authority.md), [filesystem.md](filesystem.md), [runtime.md](runtime.md), [host-protocol.md](host-protocol.md), [conversation-and-memory.md](conversation-and-memory.md), [work-and-delegation.md](work-and-delegation.md), [surfaces.md](surfaces.md), [integrations.md](integrations.md), [materials-and-knowledge.md](materials-and-knowledge.md), [cognition-and-life.md](cognition-and-life.md), [non-competition.md](non-competition.md) and [self-diagnosis-log.md](self-diagnosis-log.md). It cites contract sections instead of restating them. Where this document and a contract differ, the contract wins and this document is corrected. A contract changes only in its own file. The five changes this design asked for were accepted on 2026-10-20 and are written into the contracts; "Contract change proposals" says where each now lives. The terminal UI is designed in [tui.md](tui.md), the order of work is in [go-roadmap.md](go-roadmap.md), and the patterns behind the choices are in [hermes-patterns.md](hermes-patterns.md). Finishing this document does not mean any package, table or process is built or accepted; runtime proof belongs to the implementation issues that consume it.
 
 ## North star
 
@@ -28,7 +28,7 @@ One structural rule follows. The Go types that make up the default view (progres
 
 **C-01 One main (changed).** One `lina core` runs per state root, as a user service under the person's OS user ([runtime.md](runtime.md#processes)). Inside it run these goroutine families: one lane per conversation, the background-run supervisor, the gateway adapters, the scheduler, the completion-event reactor, the client hub and the job API for `moirai-worker`. Children are created through `kit/proc` in a Core-owned process group (a cgroup where the service manager has one): the Claude adapter (started on first use, stopped after idle), the `grok` command, workers, plugin servers and sandboxed commands. There is no process per agent and no model proxy. A foreground `lina core` for development runs only where install created the main id file.
 
-**C-02 Binaries and modules (changed).** Subcommands of `lina`, proposed here because [runtime.md](runtime.md#the-lina-command) defers the names: `core`, `tui`, `install`, `backup`, `restore` (main stopped), `doctor`, `replay`, `export`, `about`. Separate artifacts: `lina-node` and `moirai-worker`. Modules: the root module and `kit` (`github.com/thisisjun786/lina/kit`), joined by `go.work` and a `replace`.
+**C-02 Binaries and modules (changed).** Subcommands of `lina`, proposed here because [runtime.md](runtime.md#the-lina-command) defers the names: `core`, `tui`, `install`, `backup`, `restore` (main stopped), `doctor`, `replay`, `export`, `about`, `version`. `version` prints the version, the commit and the build date that the build sets with `-ldflags` ([versioning.md](versioning.md)). Separate artifacts: `lina-node` and `moirai-worker`. Modules: the root module and `kit` (`github.com/thisisjun786/lina/kit`), joined by `go.work` and a `replace`.
 
 Layout: `cmd/lina`, `cmd/lina-node`, `cmd/moirai-worker`, `protocol/schema`, `protocol/fixtures`, `persona/<preset>/`, `skills/` (built-in, embedded), `catalog/` (plan and plugin catalog sources), `adapters/claude/` (TypeScript, lockfile), and `internal/` with `core`, `node`, `tui`, `clientapi`, `design` (generated from the token source) and `fakecore`. Builds are static; cgo follows the SQLite binding chosen by [V2](runtime.md#runtime-acceptance). The kit wrapper starts bubblewrap directly ([runtime.md](runtime.md#sandbox)); there is no hidden re-exec mode.
 
@@ -146,7 +146,7 @@ type Hub interface {
 
 **C-17 Ledger (changed).** Tables: `conv_event` (append-only), `ev_rel` (`view_of` with ordinal, `supersedes`, `pairs_with`) and `ev_span` (sensitivity per span). Fields are exactly those of [conversation-and-memory.md](conversation-and-memory.md#event-fields). `speaker_kind` is an argument of the admit call, set by the entry path (an `Entry` enum) and never parsed from text. `guard.Mask` runs before append: a secret-shaped value or key block keeps the flag, not the value. A body above the inline size (P: 16 KiB) goes to `materials/lina/` and the event refers to it; missing bytes mark `bytes_unavailable`. Only the Moirai write path and the ledger package write these tables.
 
-**C-24 Agent as data (changed).** An agent is rows and files, not a process. Canon holds its row, its emotional state and the values of its blank settings. `versions/agents/<id>/` holds its persona layers as revisions: core, default voice, user voice, growth snapshot. Presets are persona material in `persona/<preset>/`. The first run creates LINA from the LINA preset and asks only for the ChatGPT sign-in. A preset update gives the next revision of core and default voice only. A preset methodology is short guidance in the core layer ([conversation-and-memory.md](conversation-and-memory.md#preset-methodologies)). Deletion follows [conversation-and-memory.md](conversation-and-memory.md#agents) and ends channel bindings at once. A persona write cannot change any grant, tier or standing approval.
+**C-24 Agent as data (changed).** An agent is rows and files, not a process. Canon holds its row, its emotional state and the values of its blank settings. `versions/agents/<id>/` holds its persona layers as revisions: core, default voice, user voice, growth snapshot. Presets are persona material in `persona/<preset>/`. The first run creates LINA from the LINA preset and asks only for the ChatGPT sign-in. A preset update gives the next revision of core and default voice only. A preset methodology is short guidance in the core layer ([conversation-and-memory.md](conversation-and-memory.md#preset-methodologies)). Deletion follows [conversation-and-memory.md](conversation-and-memory.md#agents) and ends channel bindings at once. A persona write cannot change any grant or standing approval.
 
 **C-11 Preparation and assembly (changed).** Preparation runs the four steps of [conversation-and-memory.md](conversation-and-memory.md#preparation) in order and stops at the first failure with one plain line; the failing step is in Details. `Assemble(Input, Counter) (Request, Report)` is pure and lays out the seven items of the [request layout](conversation-and-memory.md#request-layout). `atropos.Packet` builds the ContextPacket once per turn under a time cap (P: 250 ms) and returns a minimal packet on timeout. Items drop as the request layout orders. The report holds ids, reason codes and digests, never text. The ledger records the request hash, the assembly list and the fidelity class of the provider that served it. The ContextPacket is never written into the history. For agent-runtime providers the same layers go in as one non-persisted session.
 
@@ -204,7 +204,7 @@ type Runs interface {
 - `reply.Budget{Lines, Chars}` exists per reply type and surface, stored per person in canon as a setting.
 - Counting: lines as rendered lines; characters as Unicode scalar values after NFC, spaces excluded for Korean; other languages use a ratio table (data).
 - A streaming `Filter` counts the deltas. At the hard ceiling it stops showing the reply, ends the visible text at the last complete sentence, and creates a `document_draft` preview as the card. The ledger keeps the reply as written.
-- Counters: ceiling breaches, and internal vocabulary, ids, hashes and paths in the default view (a word list per language as data; patterns for ids, hashes and paths). The check never judges wording. A rewrite before showing is an open owner decision and is not built.
+- Counters: ceiling breaches, and internal vocabulary, ids, hashes and paths in the default view (a word list per language as data; patterns for ids, hashes and paths). The check never judges wording. A rewrite before showing is not built.
 - Tuning: the reactions job of Lachesis recognizes the person's reactions, and Core applies the contract's step as a setting change that records its evidence. The person edits budgets in settings.
 
 **C-52 Typed results (new).** Contract: [host-protocol.md](host-protocol.md#typed-results), [conversation-and-memory.md](conversation-and-memory.md#results), [materials-and-knowledge.md](materials-and-knowledge.md#saving-a-result).
@@ -333,13 +333,13 @@ type Router interface {
 
 ## Tools, approval and secrets
 
-**C-12 Tiers, Dispatch and the effect ledger (changed).** Tiers are those of [main-authority.md](main-authority.md#plugin-tools), resolved as [integrations.md](integrations.md#tool-classification) says. A tool is `Spec{Name, Schema, Tier, Conc, Deadline, Placement}`, and `Registry.Dispatch` is the only way to run one and always returns. The effect ledger row holds the fields of the [plugin rules](integrations.md#plugin-rules), with the states of [host-protocol.md](host-protocol.md#effect-states). `kit/grant.Check` is the one implementation of the Authorization section for Core and Node, and it fails closed with a closed denial code per field. Workers on the main get a grant record with node id none, for audit and for stop and revoke; it does not confine the worker.
+**C-12 Approvals, Dispatch and the effect ledger (changed).** Whether a call needs approval is decided as [main-authority.md](main-authority.md#plugin-tools) and [integrations.md](integrations.md#tool-classification) say: a call to a tool that a service profile marks, or an outward or irreversible effect of a built-in tool, asks every time, and every other call runs. A tool is `Spec{Name, Schema, Outward, Conc, Deadline, Placement}`, and `Registry.Dispatch` is the only way to run one and always returns. The effect ledger row holds the fields of the [plugin rules](integrations.md#plugin-rules), with the states of [host-protocol.md](host-protocol.md#effect-states). `kit/grant.Check` is the one implementation of the Authorization section for Core and Node, and it fails closed with a closed denial code per field. Workers on the main get a grant record with node id none, for audit and for stop and revoke; it does not confine the worker.
 
-**C-13 Approvals (changed).** The policy is [main-authority.md](main-authority.md#approval). A request record holds what, where and undoable, computed by Core from validated arguments and never from model prose, with the tier, the choices, a scope key for grouping, the epoch, and the requesting agent and person. A request pending at restart is stopped (C-04). Answers are accepted as C-42 and C-27 say, and text never answers. An approval the person must answer is a row in the waiting list (C-55).
+**C-13 Approvals (changed).** The policy is [main-authority.md](main-authority.md#approval). A request record holds what, where and undoable, computed by Core from validated arguments and never from model prose, with the choices, a scope key for grouping, the epoch, and the requesting agent and person. A request pending at restart is stopped (C-04). Answers are accepted as C-42 and C-27 say, and text never answers. An approval the person must answer is a row in the waiting list (C-55).
 
 **C-14 Sandbox (changed).** The sandbox is that of [runtime.md](runtime.md#sandbox), invoked through `kit/sandbox`, with the seccomp program compiled per architecture at build. The probe runs at start and before the first call; if the sandbox is unusable, shell and file tools turn off with a cause and conversation continues.
 
-- Network: a command a plugin profile classifies gets it at that command's tier ([integrations.md](integrations.md#command-profile)). Any other asks once, with once, always allow and deny.
+- Network: a command a plugin profile names gets it by default, and asks first only when the profile marks it as outward or irreversible ([integrations.md](integrations.md#command-profile)). Any other asks once, with once, always allow and deny.
 - First release: connected sources are mounted read-only for the shell. Edits to a person's files go through file tools with revision checks and the recoverable form of [materials-and-knowledge.md](materials-and-knowledge.md#editing-a-persons-files-in-place). Deletion by file tools goes to a trash.
 - A local plugin server added by command gets its own sandbox instance, its data directory and only the allowance on its card.
 - A shell write is recorded with changed paths and hashes before and after, found by a size-and-time manifest diff of the working directory.
@@ -414,7 +414,7 @@ Fixtures are synthetic only.
 
 **C-34 MCP host and plugin catalog (changed).** Contract: [integrations.md](integrations.md#plugins). `mcphost` uses the pinned official Go SDK and implements the [host](integrations.md#host), the [registry](integrations.md#registry) and the [OAuth flow](integrations.md#oauth-for-mcp-servers). Design points:
 
-- The registry row stores a hash of each tool definition. A changed hash suspends the standing grant, and the approval shows the diff.
+- The registry row stores a hash of each tool definition. A changed hash marks the tool on the plugin card, which shows the difference.
 - Names are `<plugin>__<tool>` within 64 characters, with a hash suffix and a stored map. Declaration order is deterministic.
 - A call waiting for input is parked as a background item with a question card and never holds the turn.
 - Metadata fetches go through one dialer that refuses private, loopback, link-local and metadata ranges and redirects to them, with the contract's one exception.
@@ -552,37 +552,17 @@ type Definition struct {
 
 ## Contract change proposals
 
-The owner direction is already in the contracts and is not a proposal. The Go design found five gaps.
+The owner direction is already in the contracts and is not a proposal. The Go design found five gaps. The owner accepted all five on 2026-10-20, and the text of each now lives in the contract named for it. The ids stay.
 
-**CP-01. [main-authority.md](main-authority.md#terms), Epoch.**
+**CP-01. Accepted 2026-10-20.** [main-authority.md](main-authority.md#terms), Epoch: the main stores a new epoch durably before it dispatches, issues or accepts anything. C-04 takes the lock and opens the event writer first and dispatches nothing before the epoch is durable, as [runtime.md](runtime.md#recovery) says.
 
-- Proposed text: "Every start of the main creates a new epoch and stores it durably before the main dispatches, issues or accepts anything."
-- Reason: "before anything else happens" contradicts [self-diagnosis-log.md](self-diagnosis-log.md#event-schema), which lets an event carry a null epoch before one is durable.
-- Meanwhile: C-04 takes the lock and opens the event writer first and dispatches nothing before the epoch is durable, as [runtime.md](runtime.md#recovery) says.
+**CP-02. Accepted 2026-10-20.** [host-protocol.md](host-protocol.md#envelope), `epoch` row: an unsigned 64-bit integer written as a decimal string without leading zeros and compared numerically. The epoch record, the cursors of C-42 and the fixtures use this form.
 
-**CP-02. [host-protocol.md](host-protocol.md#envelope), `epoch` row.**
+**CP-03. Accepted 2026-10-20.** [filesystem.md](filesystem.md#state-root-and-layout), `system/` row: LINA Core's control files live under `system/core/` (lock, epoch record, run sentinel, halt marker, restart request, main id), are written by LINA Core, are never in a backup generation and are left alone by a restore. The epoch must not fall after a restore, so it does not live only in canon.
 
-- Proposed text: "The epoch is an unsigned 64-bit integer written as a decimal string without leading zeros and compared numerically."
-- Reason: clients, Nodes and cursors must order epochs, and a string field alone does not say how.
-- Meanwhile: the design uses this form in the epoch record, the cursors of C-42 and the fixtures.
+**CP-04. Accepted 2026-10-20.** [host-protocol.md](host-protocol.md#envelope), `idempotency_key` row: for an effect asked inside a conversation turn the task component is the turn id. The effect ledger scopes the key by task id or by turn id.
 
-**CP-03. [filesystem.md](filesystem.md#state-root-and-layout), `system/` row.**
-
-- Proposed text: add "LINA Core's control files under `system/core/` (lock, epoch record, run sentinel, halt marker, restart request, main id), written by LINA Core, never in a backup generation and left alone by a restore".
-- Reason: the table names only the install and the event writers for `system/`, and the epoch must not fall after a restore, so it cannot live only in canon.
-- Meanwhile: Core writes these files under `system/core/`.
-
-**CP-04. [host-protocol.md](host-protocol.md#envelope), `idempotency_key` row.**
-
-- Proposed text: add "For an effect asked inside a conversation turn the task component is the turn id."
-- Reason: the key is built from a task, and a conversation tool call has none. A conversation-wide scope would merge a later, deliberate repeat into the same effect, and a call-id scope is forbidden.
-- Meanwhile: the effect ledger scopes the key by task id or by turn id.
-
-**CP-05. [materials-and-knowledge.md](materials-and-knowledge.md#saving-a-result), idempotency key.**
-
-- Proposed text: "Its idempotency key is built from the result id, the revision, the action and the destination, as [host-protocol.md](host-protocol.md#typed-results) says."
-- Reason: the two contracts name different key parts for a result save.
-- Meanwhile: C-52 uses the key of `result_save`.
+**CP-05. Accepted 2026-10-20.** [materials-and-knowledge.md](materials-and-knowledge.md#saving-a-result): the idempotency key of a result save is built from the result id, the revision, the action and the destination, as [host-protocol.md](host-protocol.md#typed-results) says. C-52 uses the key of `result_save`.
 
 **Open points at the Go level**, with the default in brackets: the SQLite binding (V2); the Git backend for the records repository (a pure-Go library, measured with thousands of files); the Telegram and Discord client libraries; whether `moirai-worker` reads canon directly or through the job API at scale; concurrent turns per Claude account (2); the Korean two-syllable method (a bigram table).
 
@@ -594,5 +574,5 @@ Titles are the headings above. Earlier ids C-01 to C-42 keep their number where 
 
 - Kept: C-03 to C-07, C-15, C-16, C-19, C-26, C-32, C-33, C-38, C-40.
 - Changed: C-01, C-02, C-08 to C-14, C-17, C-18, C-20 to C-25, C-27 to C-30, C-34, C-35, C-39, C-42. Contract decisions replace the earlier ones. The main cases: the Moirai worker is a separate service, there is no hidden sandbox mode, no automatic replay, no automatic retries by Core, six tool classes and per-agent ceilings withdrawn, workers unconfined, survival tier withdrawn, key pinning withdrawn.
-- Withdrawn: C-31 (confirmation list; the tiers decide), C-36 (desk and work Mac; placement is not a contract), C-37 (model proxy instance; the proxy is removed), C-41 (placement across machines; parallel hand-off decides).
+- Withdrawn: C-31 (confirmation list; the approval rule decides), C-36 (desk and work Mac; placement is not a contract), C-37 (model proxy instance; the proxy is removed), C-41 (placement across machines; parallel hand-off decides).
 - New: C-43 to C-59.

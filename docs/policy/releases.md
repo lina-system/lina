@@ -5,11 +5,11 @@ Development changes join `dev` through [integration](integration.md). The owner 
 ## Run
 
 ```sh
-node scripts/release.mjs --commit <sha> --tag <vX.Y.Z> --notes-file <file> [--publish]
+node scripts/release.mjs --commit <sha> --tag <v0.0.1-alpha.YYYYMMDD.N> --notes-file <file> [--publish]
 ```
 
 - `--commit`: the full 40-character commit SHA, on `dev`.
-- `--tag`: a version tag such as `v0.1.0` or `v0.1.0-rc.1`.
+- `--tag`: the version tag of [versioning.md](../design/versioning.md), such as `v0.0.1-alpha.20261020.1`: the date of tagging in UTC, then the number of the release of that day from 1. A tag carries no build metadata (`+`).
 - `--notes-file`: a file with user-facing release notes.
 
 Without `--publish`, the script validates and changes no tag, release, or branch. Pass `--publish` only when the owner has approved that release.

@@ -1,6 +1,6 @@
 # Roadmap for the Go core and TUI
 
-This document is informative. It orders the Go design of LINA Core and the terminal UI into three phases by what becomes usable, and lists the epics and issues of each phase with their done conditions and dependencies. The roadmap of record is issue #1 of this repository, and the plan is tracked in the owner's Linear workspace. This file is a derived reading of the contracts in this directory, [go-core.md](go-core.md) and [tui.md](tui.md). It decides nothing that they decide, and where it differs from them they win. Issue ids such as `G1-01` are the tracker's stable names, and an id is never reused. Listing an issue here does not mean it is filed, started, implemented or accepted.
+This document is informative. It orders the Go design of LINA Core and the terminal UI into three phases by what becomes usable, and lists the epics and issues of each phase with their done conditions and dependencies. The roadmap is issue #1 of this repository, and the plan of record is the GitHub milestones and issues listed in [roadmap-github.md](roadmap-github.md). The earlier Linear project is a read-only record. This file is a derived reading of the contracts in this directory, [go-core.md](go-core.md) and [tui.md](tui.md). It decides nothing that they decide, and where it differs from them they win. Issue ids such as `G1-01` are the tracker's stable names, and an id is never reused. Listing an issue here does not mean it is filed, started, implemented or accepted.
 
 ## Conventions
 
@@ -20,10 +20,16 @@ This document is informative. It orders the Go design of LINA Core and the termi
 6. A released row of the supported-combination table needs its fixtures and failure injections to pass ([host-protocol.md](host-protocol.md#supported-combinations)).
 7. Fixtures, corpora and evidence records in the repository are synthetic or hold only ids, codes, counts and hashes.
 8. The checks of [runtime.md](runtime.md#runtime-acceptance) land as follows: V1 in G1-31, V2 in G1-40, V3 in G1-09, V4 in G2-26 to G2-28, V5 in G2-04, V6 and V7 in G1-01.
+9. The specification comes first. Each issue names the design sections it implements, and those sections are written before the code. A pull request that changes behavior updates those sections in the same pull request. Keeping the documents in step with the code is part of done, not a later task ([work-and-delegation.md](work-and-delegation.md#work-definition)).
+10. Each phase has a headless end-to-end suite that runs in `foundation` ([foundation.md](../policy/foundation.md)). The suite drives the TUI from a scripted terminal and LINA Core through its protocol. It runs every acceptance check that a program can observe. The person's part of a phase's acceptance is a check of UI and UX only. The harness is M0-14, and the suites are M1-80, M2-50 and M3-45 of [roadmap-github.md](roadmap-github.md).
+11. One review per pull request. A high-risk contract change may get one extra independent read, and there is no standing gate of several verifiers.
+12. Design documents are written in English. Summaries for the person are in Korean.
 
 ## Phases
 
 Development starts with LINA Core and the TUI. The LINA app follows once they are usable and does not block Core work.
+
+The phases LINA 1 to LINA 3 are the milestones M1 to M3 of [roadmap-github.md](roadmap-github.md). Their names say what becomes usable. They are not versions: finishing a phase does not change the version ([versioning.md](versioning.md)).
 
 | Phase | Name | Usable at the end |
 | --- | --- | --- |
@@ -72,8 +78,8 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 
 ### 1.B Authority, tools and sandbox
 
-**G1-05 Approval tiers, Dispatch, Gate and effect ledger.** Tiers, grants, approval records, effect states.
-- Done when: a plugin tool of unknown tier runs as write; an approval holds what, where and undoable computed by Core; a standing grant revokes in one action; one idempotency key runs once; an approval pending at restart is stopped and a late button answers stale; a write on a stale revision is refused.
+**G1-05 Approvals, Dispatch, Gate and effect ledger.** The approval rule, grants, approval records, effect states.
+- Done when: a plugin tool that no service profile marks runs without asking; an approval holds what, where and undoable computed by Core; a standing grant for network access revokes in one action; one idempotency key runs once; an approval pending at restart is stopped and a late button answers stale; a write on a stale revision is refused.
 - Depends on: G1-02, G1-03, G1-04. Design refs: C-12, C-13; [main-authority.md](main-authority.md#approval).
 
 **G1-06 Speaker kinds, masking and the secret store.** Entry-path speaker kind, masking, external evidence, secret store.
@@ -321,7 +327,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 ### 2.F Records and to-dos
 
 **G2-22 Records repository and index.** Git repository, index, rebuild, outside-change detection.
-- Done when: an index rebuilt from the files equals the live index; an outside change is detected and shown and not merged; a write on a stale revision is refused; moving a record keeps its id; behaviour with thousands of files is recorded.
+- Done when: an index rebuilt from the files equals the live index; an outside change is detected and shown and not merged; a write on a stale revision is refused; moving a record keeps its id; behavior with thousands of files is recorded.
 - Depends on: G1-03, G1-05, G1-29. Design refs: C-53; [filesystem.md](filesystem.md#records-repository).
 
 **G2-23 To-do record, views, recurrence and candidates.** Fields, today rule, views, recurrence, candidates, memo promotion.
@@ -359,7 +365,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 **Acceptance (LINA 3).**
 1. A large 목표 is split into dependent tasks; a dependent is released only after its predecessor is confirmed merged; independent tasks go at once up to quota and capacity.
 2. A Node executes nothing without a grant; a reboot lands BLOCKED; revoke settles in-flight effects cancelled or unknown; a remote worker's pull request is read from GitHub.
-3. A catalog file with a bad signature is refused; a command server runs in a sandbox; a changed tool definition suspends its standing grant.
+3. A catalog file with a bad signature is refused; a command server runs in a sandbox; a changed tool definition is marked on the plugin card.
 4. A seat lease ends at the person's input, a lock or a resume.
 5. The CRW takeover reports every record imported, lost or unsupported.
 
@@ -368,15 +374,15 @@ Failure injections: a Node disconnect, a silent partition, a Node reboot, a revo
 ### 3.A Plugins
 
 **G3-01 MCP host and plugin registry.** Official Go SDK, era fallback, tool snapshots, sandbox for command servers.
-- Done when: a crash loop never blocks conversation; a command server with no sandbox does not start; a changed tool definition suspends its standing grant until approved; a name over 64 characters is shortened with a stored map; a metadata fetch to a private, loopback or link-local address is refused; an earlier-era server connects by fallback.
+- Done when: a crash loop never blocks conversation; a command server with no sandbox does not start; a changed tool definition is marked on the plugin card; a name over 64 characters is shortened with a stored map; a metadata fetch to a private, loopback or link-local address is refused; an earlier-era server connects by fallback.
 - Depends on: G1-05, G1-06, G1-07. Design refs: C-34; [integrations.md](integrations.md#host).
 
-**G3-02 Tool tiers, standing grants and on-demand tools.** Classification order, declaration order, on-demand loading.
-- Done when: an annotation never moves a tool to the outward tier; policy raises and never lowers; revoking a standing grant makes the next call ask; the always-declared tool list is byte-identical before and after a plugin is enabled.
+**G3-02 Outward-effect marks, tool annotations and on-demand tools.** The service profile mark, declaration order, on-demand loading.
+- Done when: an annotation never marks a tool as outward; a call to a tool that a service profile marks asks every time and a call to any other tool runs; the always-declared tool list is byte-identical before and after a plugin is enabled.
 - Depends on: G1-05, G1-10, G3-01. Design refs: C-34, C-12; [integrations.md](integrations.md#tool-classification).
 
-**G3-15 Plugin catalog, connect card and OAuth.** Signed catalog, registration order, PKCE, step-up, connect card.
-- Done when: a catalog file with a bad signature or an older version is rejected; each registration mode is exercised by a fixture in order; the first request asks read scopes and the first approved write steps up; a 401 refreshes once; `invalid_grant` shows needs sign-in; the connect card is a labeled block in the TUI and a question from a plugin appears as prompts.
+**G3-15 Plugin catalog, connect card and OAuth.** Signed catalog, registration order, PKCE, connect card.
+- Done when: a catalog file with a bad signature or an older version is rejected; each registration mode is exercised by a fixture in order; the first request asks the scopes the manifest or the 401 challenge names, and an `insufficient_scope` answer asks the earlier scopes together with the new ones; a 401 refreshes once; `invalid_grant` shows needs sign-in; the connect card is a labeled block in the TUI and a question from a plugin appears as prompts.
 - Depends on: G1-18, G1-21, G1-31, G3-01. Design refs: C-34, T-14; [integrations.md](integrations.md#oauth-for-mcp-servers).
 
 ### 3.B Node and devices
@@ -458,7 +464,7 @@ A given-back slice moves to the start of the next phase and is listed as not del
 | --- | --- | --- |
 | LINA 1 | Telegram (G1-25) and exchanges (G1-26), which then start LINA 2; the Hermes import (G1-27); prepared summaries (G1-38) | Epoch and recovery (G1-02), approvals (G1-05), ledger (G1-10), retraction (G1-14), the turn budget and background runs (G1-32, G1-33), restart fence (G1-24) |
 | LINA 2 | Discord (G2-21), Gemini and Grok adapters (G2-27, G2-28), skill pruning (G2-12), persona growth (G2-20), the progress digest for channels (part of G2-13) | The delegation core (G2-01, G2-02, G2-04, G2-07, G2-08, G2-18, G2-19), records (G2-22, G2-23), update (G2-14) |
-| LINA 3 | Antigravity and Devin (G3-16, G3-10), the macOS seat lease (G3-07), plan drafting (G3-17), the CRW takeover (G3-18), mobile transport (part of G3-06) | Node gate and reconcile (G3-03, G3-04), tool tiers (G3-02), splitting and parallel hand-off (G3-09) |
+| LINA 3 | Antigravity and Devin (G3-16, G3-10), the macOS seat lease (G3-07), plan drafting (G3-17), the CRW takeover (G3-18), mobile transport (part of G3-06) | Node gate and reconcile (G3-03, G3-04), outward-effect marks (G3-02), splitting and parallel hand-off (G3-09) |
 
 ## Numbers to set by measurement
 
