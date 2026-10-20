@@ -2,13 +2,90 @@
 package clientsrv
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
+	"errors"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/lina/kit/protocol"
 )
+
+func TestUnsupportedEnvelopeVersion(t *testing.T) {
+	for _, version := range []string{"2.0", "1.1", "0.9"} {
+		t.Run(version, func(t *testing.T) {
+			data, err := os.ReadFile("../../../protocol/fixtures/client/1.0/hello.json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Build the offered version as raw JSON: the 1.0 Go type cannot encode it.
+			var envelope map[string]any
+			if err := json.Unmarshal(data, &envelope); err != nil {
+				t.Fatal(err)
+			}
+			envelope["protocol"].(map[string]any)["version"] = version
+			envelope["payload"].(map[string]any)["protocol_versions"] = []string{version}
+			frame, err := json.Marshal(map[string]any{
+				"jsonrpc": "2.0", "id": "handshake", "method": "hello", "params": envelope,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			client, server := net.Pipe()
+			done := make(chan struct{})
+			go func() { defer close(done); defer server.Close(); serveConn(server) }()
+			t.Cleanup(func() { client.Close(); server.Close(); <-done })
+			client.SetDeadline(time.Now().Add(5 * time.Second))
+			if _, err := client.Write(append(frame, '\n')); err != nil {
+				t.Fatal(err)
+			}
+			reader := bufio.NewReader(client)
+			line, err := reader.ReadBytes('\n')
+			if err != nil {
+				t.Fatalf("expected unsupported_combination response before EOF: %v", err)
+			}
+			var answer response
+			if err := json.Unmarshal(line, &answer); err != nil {
+				t.Fatal(err)
+			}
+			if answer.JSONRPC != "2.0" || string(answer.ID) != `"handshake"` || answer.Result.ReplyTo == nil || *answer.Result.ReplyTo != envelope["message_id"] {
+				t.Fatalf("uncorrelated refusal: %s", line)
+			}
+			if answer.Result.Kind != protocol.KindError || answer.Result.EffectState != protocol.EffectRefused || answer.Result.Error == nil || answer.Result.Error.Code != protocol.ErrorUnsupportedCombination {
+				t.Fatalf("unexpected refusal: %s", line)
+			}
+			if _, err := reader.ReadByte(); !errors.Is(err, io.EOF) {
+				t.Fatalf("expected EOF after refusal, got %v", err)
+			}
+		})
+	}
+}
+
+func TestUnrecognizableFirstFrameCloses(t *testing.T) {
+	for _, frame := range []string{
+		`{`,
+		`{"jsonrpc":"2.0","id":"handshake","method":"hello","params":{"protocol":{"name":"client","version":"2.0"}}}`,
+	} {
+		t.Run(frame, func(t *testing.T) {
+			client, server := net.Pipe()
+			done := make(chan struct{})
+			go func() { defer close(done); defer server.Close(); serveConn(server) }()
+			t.Cleanup(func() { client.Close(); server.Close(); <-done })
+			client.SetDeadline(time.Now().Add(5 * time.Second))
+			if _, err := io.WriteString(client, frame+"\n"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := bufio.NewReader(client).ReadByte(); !errors.Is(err, io.EOF) {
+				t.Fatalf("expected EOF without a response, got %v", err)
+			}
+		})
+	}
+}
 
 func TestListenPreservesExistingPaths(t *testing.T) {
 	for _, kind := range []string{"file", "socket", "symlink", "public directory"} {

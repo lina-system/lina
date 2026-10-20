@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sync"
 	"time"
@@ -111,10 +112,10 @@ func Serve(ctx context.Context, listener *net.UnixListener) error {
 }
 
 type request struct {
-	JSONRPC string            `json:"jsonrpc"`
-	ID      json.RawMessage   `json:"id"`
-	Method  string            `json:"method"`
-	Params  protocol.Envelope `json:"params"`
+	JSONRPC string          `json:"jsonrpc"`
+	ID      json.RawMessage `json:"id"`
+	Method  string          `json:"method"`
+	Params  json.RawMessage `json:"params"`
 }
 
 type response struct {
@@ -142,13 +143,25 @@ func serveConn(conn net.Conn) {
 		default:
 			return
 		}
-		answer := reply(req.Params)
+		if !welcomed {
+			if messageID, unsupported := unsupportedHello(req.Method, req.Params); unsupported {
+				answer := reply(protocol.Envelope{MessageID: messageID})
+				refuse(&answer, protocol.ErrorUnsupportedCombination, "the empty Core supports client 1.0 only")
+				writer.Encode(response{JSONRPC: "2.0", ID: req.ID, Result: answer})
+				return
+			}
+		}
+		var envelope protocol.Envelope
+		if err := json.Unmarshal(req.Params, &envelope); err != nil {
+			return
+		}
+		answer := reply(envelope)
 		closeAfter := false
-		hello, isHello := req.Params.Payload.(protocol.Hello)
+		hello, isHello := envelope.Payload.(protocol.Hello)
 		switch {
 		case welcomed:
 			refuse(&answer, protocol.ErrorCapabilityNotNegotiated, "the empty Core grants no capabilities")
-		case req.Method != "hello" || req.Params.Kind != protocol.KindHello || !isHello || req.Params.Sender.Party != protocol.PartyClient || req.Params.Sender.ID != hello.ID:
+		case req.Method != "hello" || envelope.Kind != protocol.KindHello || !isHello || envelope.Sender.Party != protocol.PartyClient || envelope.Sender.ID != hello.ID:
 			refuse(&answer, protocol.ErrorMalformed, "expected a client hello request")
 			closeAfter = true
 		case !slices.Contains(hello.ProtocolVersions, "1.0"):
@@ -166,6 +179,40 @@ func serveConn(conn net.Conn) {
 			return
 		}
 	}
+}
+
+var versionPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
+
+// Recognize an unsupported hello before the version-specific decoder rejects
+// it. Only inspect the negotiation fields; an unknown version may add fields.
+func unsupportedHello(method string, data json.RawMessage) (string, bool) {
+	var offer struct {
+		Protocol  protocol.Protocol `json:"protocol"`
+		Kind      protocol.Kind     `json:"kind"`
+		MessageID string            `json:"message_id"`
+		Sender    protocol.Sender   `json:"sender"`
+		Payload   struct {
+			Party            protocol.Party `json:"party"`
+			ID               string         `json:"id"`
+			ProtocolVersions []string       `json:"protocol_versions"`
+		} `json:"payload"`
+	}
+	if err := json.Unmarshal(data, &offer); err != nil {
+		return "", false
+	}
+	if method != "hello" || offer.Kind != protocol.KindHello || offer.Protocol.Name != "client" ||
+		offer.Protocol.Version == "1.0" || !versionPattern.MatchString(offer.Protocol.Version) ||
+		offer.MessageID == "" || offer.Sender.Party != protocol.PartyClient ||
+		offer.Payload.Party != protocol.PartyClient || offer.Payload.ID == "" || offer.Sender.ID != offer.Payload.ID ||
+		len(offer.Payload.ProtocolVersions) == 0 {
+		return "", false
+	}
+	for _, version := range offer.Payload.ProtocolVersions {
+		if !versionPattern.MatchString(version) {
+			return "", false
+		}
+	}
+	return offer.MessageID, true
 }
 
 func reply(request protocol.Envelope) protocol.Envelope {
