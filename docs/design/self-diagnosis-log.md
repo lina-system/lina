@@ -44,6 +44,14 @@ Rules that apply across fields:
 
 The table above is the complete field list. A check that compares an event's keys against this table must accept exactly these twelve names and reject anything else.
 
+### Go emitter and code vocabulary
+
+`kit/diag` supplies the emitter and its wire codec. `Fields` accepts numeric enum types, opaque `ID` values and a numeric `Epoch`; it has no string, payload or error argument. The emitter creates a fresh random 128-bit event id and a UTC timestamp. IDs serialize as 32 lowercase hexadecimal characters, with the zero value serialized as null only for optional references. Epochs serialize as positive decimal strings, or null before an epoch is durable. Unknown enum values, malformed ids, duplicate keys, missing fields and additional fields are rejected before a record can enter the store. The same strict codec validates stored records on read; it does not redact or discard fields.
+
+The initial cause-code allowlist is `boot_started`, `turn_started`, `task_started`, `operation_started`, `operation_succeeded`, `operation_failed`, `model_failed`, `task_stopped`, `storage_failed`, `permission_denied`, `network_failed` and `effect_unknown`. The action-code allowlist is `none`, `continue`, `report_failure`, `reconcile` and `request_approval`. Adding a code requires an enum/codec change, tests and an update to this section in the same pull request; existing wire meanings are never repurposed.
+
+`Emitter.Root` creates a boot root under `os`, a turn root under `conversation` with a conversation id, or a task root under `task` with a task id. Roots have a null parent, `pending` result, `continue` action and null error class. Other events require an existing parent. Agent, epoch and Node references remain optional according to the table. Callers map their errors to the closed class and cause codes; raw errors never enter the emitter. Connecting these roots to running Core flows belongs to those flows' implementation issues.
+
 ## Redaction
 
 Redaction happens before persistence. A component never writes an event and cleans it later; the event that reaches storage is already the redacted form, and no unredacted copy exists anywhere.
@@ -86,6 +94,8 @@ Filters intersect. An event is returned only when it satisfies every filter give
 
 The response holds `events`, ordered by `time`, and `next_cursor`, which is null when no more events match.
 
+`internal/core/eventstore.Query` implements these filters as a package API. Zero ids and a zero cause code omit their filters. An empty enum list matches all values; the error-class list may include the null class. `limit` defaults to 100 and must be between 1 and 1000 when supplied. Equal timestamps are ordered by event id. The opaque cursor records the last time/id and binds to the same filters; callers may change the page size. Pages are live, not snapshots: events inserted before an already returned position do not appear in later pages. `Chain` retrieves an event's complete ancestry, root first, independently of query filters. Neither function is an authorization boundary; the conversation tool must apply access rules before querying. Both reject malformed stored records, duplicate ids, missing parents and cycles. The initial implementation scans the dedicated event database; indexing, retention and size measurements remain acceptance work.
+
 A summary that LINA produces from the query cites event ids. Every claim about a cause names the `event_id` of the event it rests on, so that the claim can be checked against the stored record. A summary without event ids is not a diagnosis.
 
 ## Storage
@@ -96,7 +106,13 @@ Events are not canon and not materials. Events never go through the canon writer
 
 Events from a Node use the same schema. A Node event is never a receipt and never confirms an effect on its own.
 
-The concrete file or database form under `system/` is not fixed here; it follows the storage rules of [runtime.md](runtime.md).
+The concrete database form under `system/` follows the storage rules of [runtime.md](runtime.md).
+
+The Go store uses a dedicated SQLite database supplied by its caller at `system/events/events.sqlite`. `Open` accepts `database/sql.DB`, reserves one connection, requests and verifies WAL and `synchronous=FULL`, and creates the `events` table. Each row stores an indexed event id and the complete, strict twelve-field JSON record. It validates existing records at open and on reads. A mutex serializes this store's writes and reads; the caller must give it exclusive writer ownership of this database. Every append commits synchronously, including failure, unknown, denied and cancelled outcomes. For those four terminal results, both the emitter and store append detach from the caller's cancellation and deadline with `context.WithoutCancel`, retain its context values, and impose an independent five-second commit timeout. Passing from emitter to store preserves that budget rather than renewing it. Thus a stopped task can record its cancelled event using its own cancelled running context; pending and successful events still honor that context. This writer never opens canon or materials and never uses the canon writer.
+
+`PrepareReserve` validates any existing reserve and attempts to allocate and sync a 256 KiB file at `system/events/reserve`, allocating bytes rather than extending a sparse file. If that attempt fails with a full disk, preparation still succeeds with the reserve reported as consumed by `Reserve.Present() == false`. Failed partial allocations are removed; symlinks, non-regular files, unsafe permissions and other storage errors still fail preparation. `Open` validates the reserve without allocating it, so an absent or consumed reserve does not prevent reopening and reading committed failure events. A complete existing reserve is reused without rewriting it. The caller supplies a classifier for its binding's typed SQLite full-disk error. On that error for a failure, unknown, denied or cancelled result, the writer releases the reserve and retries the same event once. Pending and successful events never consume the emergency reserve. A retry checks an already committed id against its complete record, so an ambiguous commit cannot duplicate it or replace another event. Other errors are not retried. A consumed reserve stays consumed unless preparation can restore it or the caller explicitly calls `Replenish` after recovering space. Explicit replenishment errors are reported and leave the reserve marked consumed; successful replenishment marks it present. The caller closes the store, reserve and supplied database in that order. Driver error messages are never returned as events or exposed by the store's error API.
+
+The SQLite binding is supplied by #39; this increment adds no driver or module dependency. Scripted `database/sql` tests establish call ordering, transaction error handling, strict record decoding and bound values, not SQLite persistence. Reopen/crash durability, real full-disk commits and reserve sizing with that binding remain unverified until binding-dependent acceptance runs.
 
 ## Diagnosis acceptance
 
@@ -119,12 +135,14 @@ Prose is not asserted. A test that compares the summary's wording, tone or lengt
 
 Passing these checks in an implementation is claimed by the implementation issue that ran them, with the event ids and query filters it used, not by this document.
 
+The #41 package tests simulate a provider failure, cancellation of a running context and a failed store write. They record each failure, query by agent and task, and build a machine-readable citation from those events alone. `diag.VerifyCitations` checks the independently supplied injection root, the cited failing event, its class and cause code, and every link to the root. It rejects empty citations, missing ids, cycles, duplicate ids, incorrect roots and mismatched codes. Tests log the generated root/failure ids and query filters and assert the exact stored key set and absence of synthetic forbidden content. They do not assert summary prose or claim a running-install model diagnosis. No protocol or TUI operation exposes this package yet; that observable scenario belongs to the issue that wires the conversation query tool.
+
 ## Deferred
 
 - The retention period and the size cap of the event store are set during implementation acceptance, after the first measurement of a running install.
 - The query tool's name and declaration, recorded with the conversation tool declarations in the release manifest ([runtime.md](runtime.md)), and its implementation are set during implementation acceptance.
-- The cause-code and action-code allowlists, and the rule for growing them, are set during implementation acceptance.
-- The concrete file or database form of the event store under `system/`, and its rotation, are set during implementation acceptance within the storage rules of [runtime.md](runtime.md).
+- Additional cause and action codes follow the growth rule above as writing components are implemented.
+- Rotation and the binding-dependent persistence and reserve measurements remain implementation acceptance work within the storage rules of [runtime.md](runtime.md).
 - The diagnosis acceptance runs themselves, including how each failure is injected and which install they run on, are set during implementation acceptance.
 - Whether and how Node events are copied to the main beyond the reports that the main authority contract already allows is set during implementation acceptance.
 - Whether an event records the person it acts for is set together with admitting people other than the owner, a backlog item on the person axis ([cognition-and-life.md](cognition-and-life.md)).
