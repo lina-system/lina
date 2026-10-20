@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { evaluateGate } from './gate.mjs';
 
-const scope = { mode: 'full', head: '1'.repeat(40), docs: true, automation: true, components: false, selectedComponents: [], unmapped: [] };
-const passed = { selection: { result: 'success' }, docs: { result: 'success' }, automation: { result: 'success' }, components: { result: 'skipped' } };
+const scope = { mode: 'full', head: '1'.repeat(40), docs: true, automation: true, dependencies: false, components: false, selectedComponents: [], unmapped: [] };
+const passed = { selection: { result: 'success' }, docs: { result: 'success' }, automation: { result: 'success' }, dependencies: { result: 'skipped' }, components: { result: 'skipped' } };
 
 test('selected checks all succeed and intentional docs-only skipping is accepted', () => {
   const full = evaluateGate(scope, passed);
@@ -57,4 +57,18 @@ test('components must succeed when selected and be skipped otherwise', () => {
     ...passed, components: { result: 'success' },
   }).result, 'failure');
   assert.equal(evaluateGate({ ...scope, components: true, selectedComponents: [] }, passed).result, 'failure');
+});
+
+test('dependencies must succeed when selected and be skipped otherwise', () => {
+  for (const selected of [true, false]) {
+    for (const result of ['success', 'failure', 'cancelled', 'pending', 'skipped', undefined]) {
+      const gate = evaluateGate({ ...scope, dependencies: selected }, {
+        ...passed, dependencies: result ? { result } : undefined,
+      });
+      assert.equal(gate.result, result === (selected ? 'success' : 'skipped') ? 'success' : 'failure');
+    }
+  }
+  for (const dependencies of [undefined, null, 'false', 1]) {
+    assert.equal(evaluateGate({ ...scope, dependencies }, passed).result, 'failure');
+  }
 });

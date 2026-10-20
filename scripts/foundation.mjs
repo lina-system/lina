@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
 // Foundation verification in one process: selection (path classification and the whitespace check),
-// then the docs, automation and Go components checks in parallel, then the gate. A passing run on a clean
+// then the docs, automation, dependencies and Go components checks in parallel, then the gate. A passing run on a clean
 // checkout of the exact candidate commit leaves its evidence as a Git note in refs/notes/foundation.
 //
 //   node scripts/foundation.mjs [--range <base>..<head>] [--full] [--no-note]
@@ -67,7 +67,7 @@ function whitespaceCheck(root, scope) {
 const seconds = (since) => Math.round((Date.now() - since) / 100) / 10;
 
 // Every check is bounded: a check that hangs fails instead of holding the run.
-const timeouts = { docs: 120_000, automation: 600_000, components: 600_000 };
+const timeouts = { docs: 120_000, automation: 600_000, dependencies: 600_000, components: 600_000 };
 
 async function runChecks(root, scope, log) {
   const env = cleanEnv();
@@ -97,16 +97,19 @@ async function runChecks(root, scope, log) {
     const suite = await runAsync(process.execPath, ['--test', ...tests], { cwd: root, env, timeoutMs: timeouts.automation });
     return { status: suite.status, output: output + suite.output };
   }) : null;
+  const dependencies = scope.dependencies ? timed('dependencies', () => runAsync(process.execPath,
+    [join(scriptsDir, 'verify/check-dependencies.mjs')],
+    { cwd: root, env, timeoutMs: timeouts.dependencies })) : null;
   const components = scope.components ? timed('components', () => runAsync(process.execPath,
     [join(scriptsDir, 'verify/check-components.mjs'), ...scope.selectedComponents],
     { cwd: root, env, timeoutMs: timeouts.components })) : null;
-  const finished = await Promise.all([docs, automation, components]);
+  const finished = await Promise.all([docs, automation, dependencies, components]);
   const results = {};
-  for (const [name, run] of [['docs', finished[0]], ['automation', finished[1]], ['components', finished[2]]]) {
+  for (const [name, run] of [['docs', finished[0]], ['automation', finished[1]], ['dependencies', finished[2]], ['components', finished[3]]]) {
     if (!run) results[name] = { result: 'skipped' };
     else {
       results[name] = { result: run.status === 0 ? 'success' : 'failure', seconds: run.seconds };
-      if (name === 'components') results[name].toolchain = run.output.match(/^go1\.\d+\.\d+$/m)?.[0];
+      if (name === 'components' || name === 'dependencies') results[name].toolchain = run.output.match(/^go1\.\d+\.\d+$/m)?.[0];
       if (run.status !== 0) log(`${name} failed:\n${run.output.trim()}`);
     }
   }
@@ -155,7 +158,7 @@ export async function foundation({ cwd = process.cwd(), range, full = false, not
     selectedComponents: scope.selectedComponents ?? [],
     tree: resolvedHead ? gitOut(root, ['rev-parse', `${resolvedHead}^{tree}`]) : null,
     checks: results, failures: gate.failures,
-    tools: { node: process.version, git: git(root, ['--version']).stdout.trim().replace(/^git version /, ''), go: results.components?.toolchain },
+    tools: { node: process.version, git: git(root, ['--version']).stdout.trim().replace(/^git version /, ''), go: results.components?.toolchain ?? results.dependencies?.toolchain },
     finished: new Date().toISOString(), seconds: Math.round((Date.now() - started) / 100) / 10,
   };
 
