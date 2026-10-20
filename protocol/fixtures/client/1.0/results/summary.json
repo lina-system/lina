@@ -32,7 +32,6 @@
       "conversation_id": "conversation-example",
       "turn_id": "turn-example",
       "task_id": null
-    },
-    "text": "Example plain text."
+    }
   }
 }

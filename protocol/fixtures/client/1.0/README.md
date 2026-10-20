@@ -15,6 +15,12 @@ Whitespace and object key order are irrelevant; exact numbers are retained.
 files. `outcomes/`, `results/`, `values/` and `versions/` add current-schema
 variants. An empty reserved payload tests only the declared wire shape.
 
+The eight result-type fixtures in `results/` are unprompted cards with
+`reply_to: null`; their payloads omit both `body` and `text`, as required for
+creation, revision and status notifications. `cases/normal_client.json` uses
+these same card files for its input and expected admitted output. They do not
+represent answers to `result_get`.
+
 Each `cases/*.json` describes a fresh receive boundary:
 
 | Field | Meaning |
