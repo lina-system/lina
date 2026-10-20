@@ -1,0 +1,25 @@
+{
+  "protocol": {
+    "name": "client",
+    "version": "1.0"
+  },
+  "kind": "error",
+  "message_id": "refusal-example",
+  "attempt_id": "refusal-attempt-1",
+  "reply_to": "hello-example",
+  "sender": {
+    "party": "core",
+    "id": "main-example"
+  },
+  "epoch": "42",
+  "sent_at": "2026-01-01T00:00:01Z",
+  "idempotency_key": null,
+  "effect_state": "refused",
+  "receipt_ref": null,
+  "source_refs": [],
+  "error": {
+    "code": "malformed",
+    "detail": "Synthetic refusal."
+  },
+  "payload": {}
+}
