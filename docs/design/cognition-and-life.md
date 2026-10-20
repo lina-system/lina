@@ -1,6 +1,6 @@
 # Cognition and LIFE
 
-This contract covers how LINA thinks beyond a single reply, for every agent the person creates. That means the Moirai engine and its three modules (Lachesis, Atropos and Klotho), the Jev fast judge, and Klotho's goal discovery, project planning and project supervision, including the QA product map. It also covers skill suggestions and the boundaries of persona growth. Product cognition features are on by default and never block basic conversation; only experimental mechanisms enter use by measurement (see Adoption rule). The contract also defines LIFE and holds LINA's backlog list. It is normative: implementations must follow it, and any change to it is made in this file and joins dev under [integration.md](../policy/integration.md).
+This contract covers how LINA thinks beyond a single reply, for every agent the person creates. That means the Moirai engine and its three modules (Lachesis, Atropos and Klotho), the Jev fast judge, and Klotho's goal discovery, project planning and project supervision, including the QA product map. It also covers how agents write and suggest skills, and persona growth. Product cognition features are on by default and never block basic conversation; only experimental mechanisms enter use by measurement (see Adoption rule). The contract also defines LIFE and holds LINA's backlog list. It is normative: implementations must follow it, and any change to it is made in this file and joins dev under [integration.md](../policy/integration.md).
 
 ## Scope
 
@@ -10,8 +10,8 @@ This contract covers:
 - the Moirai engine: its modules, the request path, background jobs and the agent or main each one runs for, the one-way flow between modules, and how the modules use each agent's persona
 - Jev: what it decides, its handoff rules, and its judgment material
 - Klotho: goal discovery, planning, progress and prediction, project supervision, the QA product map and the news feed
-- skill and plugin suggestions from repeated patterns
-- the boundaries of persona growth
+- the skills an agent writes itself, and skill and plugin suggestions from repeated patterns
+- persona growth: its boundaries and the default way a growth step is adopted
 - LIFE: the background world engine and the LIFE feed
 - the backlog list: LIFE design, multi-person operation, group conversation, object names, and a remote relay with a login of LINA's own
 
@@ -19,7 +19,7 @@ This contract does not cover:
 
 - agents, presets, what agents share and the speaker rule: [product-families.md](product-families.md#agents)
 - memory canon, personal and common knowledge, recall, corrections and deletions, persona layers and request assembly, emotion, and the skill system: [conversation-and-memory.md](conversation-and-memory.md)
-- the plan data model (goals, projects, tasks, milestones), intent card data and the work engine: [work-and-delegation.md](work-and-delegation.md)
+- the work and knowledge records (목표 (goal), 일 (project), 할 일 (to-do), 계속 챙기는 것 (area), 메모 (memo)) and the to-do record, intent card data and the work engine: [work-and-delegation.md](work-and-delegation.md)
 - materials and their derived data: [materials-and-knowledge.md](materials-and-knowledge.md)
 - intent card, plan, feed and LIFE screens: [surfaces.md](surfaces.md)
 - non-chat adapters and the packaging of background services: [runtime.md](runtime.md)
@@ -30,7 +30,7 @@ This contract does not cover:
 
 The base product is basic conversation. It is LINA Core with Atropos' minimum turn preparation and Lachesis' minimum memory, and it keeps working whatever else is missing.
 
-Product cognition features are on by default: Atropos' context selection, Lachesis' memory and recall (including the person brief), Jev, each Klotho function and skill suggestions. Each one:
+Product cognition features are on by default: Atropos' context selection, Lachesis' memory and recall (including the person model with its maintenance pass, and the person brief), Jev, each Klotho function and skill suggestions. Each one:
 
 - never blocks basic conversation. If it is missing or failing, conversation continues and only that feature is unsupported.
 - can be turned off on its own.
@@ -52,14 +52,14 @@ Moirai is the cognition engine inside LINA Core. It handles everything an agent 
 
 | Module | Time | Does | Runs in |
 | --- | --- | --- | --- |
-| Lachesis | Past: what has built up | The memory engine (facts and preferences, recall, corrections and deletions), the person brief, the material index and derived materials, growth candidates, prepared judgment material | Background |
-| Atropos | Present: what to do now | Context assembly and judgment for each turn: the intent of this request, a time-capped recall query on the current input, which memories and materials to include, compression and budget, tracking commitments and task state. Jev lives here. | Request path |
+| Lachesis | Past: what has built up | The memory engine (facts and preferences, recall, corrections and deletions), the person model and its maintenance pass, the summary trees, the import of a Hermes install and the promotion of imported history, the person brief, the material index and derived materials, growth candidates, prepared judgment material | Background |
+| Atropos | Present: what to do now | Context assembly and judgment for each turn: the intent of this request, a time-capped recall query on the current input, which memories and materials to include, compression and budget, tracking commitments, task state and the state of background runs. Jev lives here. | Request path |
 | Klotho | Future: what will come | Planning, next-action candidates, predictions with verification candidates, replanning, goal discovery, project supervision, skill suggestions, the news feed | Background |
 
 ### Canon
 
 - The three modules read and write the same canon inside LINA Core, each for a different purpose. Writer rules for memory and persona are in [conversation-and-memory.md](conversation-and-memory.md). Writer rules for materials are in [materials-and-knowledge.md](materials-and-knowledge.md).
-- The canon has a part for the whole main and a part for each agent. The main's part holds common knowledge, materials, plans and intent cards, and the prediction ledger. Each agent's part holds its personal knowledge, its persona revisions, its emotional state, its conversations, and its judgment and growth records.
+- The canon has a part for the whole main and a part for each agent. The main's part holds common knowledge, materials, the work and knowledge records, intent cards and the prediction ledger. Each agent's part holds its personal knowledge, its persona revisions, its emotional state, its conversations, and its judgment and growth records.
 - Each module keeps its own derived state, such as indexes, prepared material and candidate lists. That state is internal to the module and can be rebuilt. It is never canon.
 - The work ledger belongs to the main and is outside the modules' canon. Its writer rule is in [work-and-delegation.md](work-and-delegation.md).
 
@@ -71,7 +71,17 @@ Moirai is the cognition engine inside LINA Core. It handles everything an agent 
 - Inside `moirai-worker`, each function of Lachesis and Klotho runs as its own background job. Each job has its own schedule, budget, on/off switch and adoption record. Budgets count against one total for the main. A job that fails, runs long or exceeds its budget stops only itself and never delays another job or the request path.
 - A job that reads one agent's personal records (its conversation ledger and its personal knowledge), such as Lachesis' memory extraction from that agent's conversations, runs as that agent's job. Each item it writes becomes that agent's personal knowledge or common knowledge under the layer rule in [conversation-and-memory.md](conversation-and-memory.md#knowledge-layers).
 - A job for the whole main, such as Klotho's goal discovery, project supervision, predictions and the news feed, reads only common knowledge, plans and the work ledger. It runs once for the main, and its output is common. The agent in a conversation speaks the suggestions that come from it.
+- Background runs of LINA's sub-agents are not Moirai jobs. A conversation starts them on demand, the work engine runs them inside LINA Core, and they do not run in `moirai-worker` ([work-and-delegation.md](work-and-delegation.md#background-runs)).
 - Data flows one way. Lachesis and Klotho publish results, and Atropos reads them. Atropos never waits on a background module during a request. Its own query on the current input reads the memory index within its time cap ([conversation-and-memory.md](conversation-and-memory.md)).
+
+### Memory jobs
+
+Lachesis' memory work runs as these jobs in `moirai-worker`, each with its own schedule, budget, switch and adoption record as above. None of them runs in a turn.
+
+- **Extraction.** Reads one agent's conversations and writes items for that agent under the layer rule of [conversation-and-memory.md](conversation-and-memory.md#knowledge-layers). It creates an item whose subject is the person only from events whose speaker kind is `person`, and reads consecutive messages of the person within a short window as one utterance.
+- **Person brief and summary preparation.** The brief, and the compaction summaries and summary-tree nodes that compaction will use, are prepared as [conversation-and-memory.md](conversation-and-memory.md) defines.
+- **Maintenance pass.** One pass over the items replaces separate ad hoc review jobs. It runs once for the main over common items and once for each agent over that agent's personal items. It finds items past their `valid until` or superseded, duplicate clusters inside one subject, items whose only evidence is automation, and instruction-like text in the standing profile. It applies only what the person has pre-authorized, as a recorded choice the person can see and edit, and turns everything else into proposals that expire unanswered. It reports in a line or two and stays silent when nothing changed.
+- **Import and promotion.** The import of a Hermes install is a job the person starts. It is the one job that writes the ledgers of agents; it reads no personal record of an agent except to check a legacy reference, and it makes no model call. Promotion proposals are the job of each mapped agent: they read that agent's imported conversations, and the person confirms them in grouped batches. Promoted items take their layer by the usual rule.
 
 ### Persona in the modules
 
@@ -89,8 +99,8 @@ Jev is an optional fast judge that only Atropos uses. Atropos uses it only for c
 
 - the intent of this utterance and the response mode
 - the ranking of context candidates
-- where a request goes when the routing rules of [work-and-delegation.md](work-and-delegation.md) leave it open: an answer in the conversation, a task for the work engine, research for a worker thread, work for a device's Node, or a question to the person
-- which installed worker takes a task, among the workers whose adapters LINA supports
+- where a request goes when the routing rules of [work-and-delegation.md](work-and-delegation.md) leave it open: an answer in the conversation, a task for a worker, a background run for research or analysis, work for a device's Node, or a question to the person
+- which installed worker takes a task, when the choice rules of [work-and-delegation.md](work-and-delegation.md#choosing-the-worker) leave it open, among the workers whose adapters LINA supports and that have quota and capacity left
 
 Jev never chooses the chat model or its effort. A model change discards the prompt cache of the conversation, so the model stays the person's setting ([runtime.md](runtime.md)). When no judge is available (Jev is off or has no key, and no local judge is running), rules plus the main model provide the same function.
 
@@ -129,22 +139,23 @@ Goal discovery, planning, prediction and project supervision form one project pl
 5. risk and replanning
 6. design and quality upkeep: tidying intent cards, the QA product map, and research
 
-Every step uses the built-in plan data and the intent cards ([work-and-delegation.md](work-and-delegation.md)). No step has a store of its own. Each step, like supervision, the news feed and skill suggestions, is a separate background job with its own schedule and budget. Every step is a job for the whole main (see Request path and background).
+In this contract "project" means an 일 and the 목표 above it. Every step uses the built-in work and knowledge records and the intent cards ([work-and-delegation.md](work-and-delegation.md)). No step has a store of its own. Each step, like supervision, the news feed and skill suggestions, is a separate background job with its own schedule and budget. Every step is a job for the whole main (see Request path and background).
 
-Klotho never executes. It sends requests for code work, other work, research and skill creation to the work engine, and the work engine decides whether and how they run. The one exception is project supervision, which updates its own outputs directly: the tidy-up of intent cards and the QA product map. Even then, Klotho never touches the person's intent text ([work-and-delegation.md](work-and-delegation.md)).
+Klotho never executes. It sends requests for code work, other work, research and the creation of a skill or plugin that widens effects (see Skill suggestions) to the work engine, and the work engine decides whether and how they run. The exceptions are project supervision, which updates its own outputs directly (the tidy-up of intent cards and the QA product map), and the pruning and merging of stale skills, which are versioned skill writes that one action undoes (see Skill suggestions). Even then, Klotho never touches the person's intent text ([work-and-delegation.md](work-and-delegation.md)).
 
 ### Goal discovery
 
-- In the background, Klotho reads common knowledge and plans. It turns goals and concerns that keep coming up into initiative drafts, each stated as one sentence of the outcome.
-- Discovery stops at the draft. An initiative draft has no task list.
-- The agent in a conversation with the person presents the draft. When the person accepts an initiative draft, it becomes a goal. A goal isn't a plan yet.
-- Klotho also produces the goal drafts that the agent in the conversation proposes when a memo or a to-do grows into something LINA should track. The promotion rules are in [work-and-delegation.md](work-and-delegation.md).
+- In the background, Klotho reads common knowledge and the records. It turns goals and concerns that keep coming up into 목표 drafts, each stated as one sentence of the outcome in the person's words, with a done condition when one can be stated.
+- Discovery stops at the draft. A 목표 draft has no 일 or 할 일 list.
+- The agent in a conversation with the person presents the draft. When the person accepts a 목표 draft, it becomes a 목표. A 목표 isn't a plan yet.
+- Klotho also produces the drafts that the agent in the conversation proposes when a 메모 or a 할 일 grows into something LINA should track: a 할 일, an 일 or a 목표. The promotion rules are in [work-and-delegation.md](work-and-delegation.md).
 
 ### Planning
 
-- Goal decomposition has two entry points: an accepted initiative, and a large piece of work that the person hands over directly.
-- A plan Klotho drafts becomes a plan only at the plan confirmation point defined in [work-and-delegation.md](work-and-delegation.md).
-- Where a card's criteria and the observed state differ, Klotho may draft tasks to close the gap. Those drafts go through the same confirmation point.
+- Decomposing a 목표 into 일, and an 일 into stages and 할 일, has two entry points: an accepted 목표, and a large piece of work that the person hands over directly as an 일.
+- A plan Klotho drafts is shown to the person as a `plan_view` result and becomes a plan only at the plan confirmation point defined in [work-and-delegation.md](work-and-delegation.md).
+- Splitting a confirmed item of code work into hand-off tasks, and ordering the tasks, is the work engine's method ([work-and-delegation.md](work-and-delegation.md#splitting-and-parallel-hand-off)). It is not a second plan confirmation.
+- Where a card's criteria and the observed state differ, Klotho may draft 할 일 to close the gap. Those drafts go through the same confirmation point.
 
 ### Progress, prediction and replanning
 
@@ -156,7 +167,7 @@ Klotho never executes. It sends requests for code work, other work, research and
 
 Klotho periodically reviews repositories, plans and cards. Supervision covers:
 
-- scanning repositories and tracking drift between issue state and actual state, through the GitHub plugin ([integrations.md](integrations.md))
+- scanning repositories and tracking drift between the state of a code 할 일 and the actual state of its linked pull request and issue, through the GitHub plugin ([integrations.md](integrations.md))
 - predicting progress and completion time
 - research that helps design or learning, requested from the work engine
 - refreshing the QA product map
@@ -164,6 +175,8 @@ Klotho periodically reviews repositories, plans and cards. Supervision covers:
 - judging a repository's issues and pull requests through the GitHub plugin and reporting that judgment ([integrations.md](integrations.md))
 
 Every supervision output is a proposal or a report. None of them is approval to execute.
+
+A proposal or report reaches the person as a row in "Waiting for me" when the person must decide, and otherwise as one outcome line. The issues and pull requests it judged stay in Details ([surfaces.md](surfaces.md#default-view)).
 
 ### QA product map
 
@@ -183,31 +196,37 @@ The QA product map is a project supervision function.
 
 ## Skill suggestions
 
-- Klotho collects requests, procedures and workflows that the person repeats often. It doesn't build anything right away. Repetition in one agent's conversations is collected by that agent's job, and repetition in the work ledger by a job for the main (see Request path and background).
-- Once enough evidence builds up, the agent in the conversation suggests a skill or a plugin. The suggestion shows the evidence: when the repetition happened, how many times, and in what form.
+- Klotho collects requests, procedures and workflows that the person repeats often. It builds nothing itself. Repetition in one agent's conversations is collected by that agent's job, and repetition in the work ledger by a job for the main (see Request path and background).
+- After a non-trivial task, a correction, or a repeated procedure (one the agent noticed, or one that a Klotho candidate shows), the agent in the conversation writes a new skill or patches an existing one: the procedure, its pitfalls, and the person's preferences for that kind of work. It patches the skill it used instead of adding a near-duplicate.
+- A write that changes only a skill's procedure or instruction text, and adds no tool, connection or permission, is reversible, so it is adopted at once with no approval step. LINA Core writes it as a new version of the skill in the version space ([filesystem.md](filesystem.md#version-space)), the person is told in one line afterwards what was learned, and one action undoes it by restoring the previous version. A write the person undid isn't made again. These writes belong to skill suggestions: when that feature is off, no agent writes a skill on its own.
+- Durable facts about the person go to memory canon, and procedures go to skills, never the reverse. A correction is applied to every copy of what it corrects, including the text of a skill ([conversation-and-memory.md](conversation-and-memory.md#correction-retraction-and-deletion)).
+- Skills are loaded by index: the catalog index holds each skill's name and a one-line trigger, and a skill's body is loaded only when a turn needs it ([conversation-and-memory.md](conversation-and-memory.md#request-layout)). In the background, Klotho prunes stale skills and merges near-duplicates among the skills that the person or an agent created, as a job for the main. A prune or a merge is a skill write like any other: versioned, with the same one-line notice and one-action undo. Built-in skills ship with a release and are not touched.
+- Approval stays only where effects widen. A skill or plugin that adds executable code, a tool connection or a new permission surface is never written or adopted by the bullets above.
+- Once enough evidence builds up, the agent in the conversation suggests such a skill or plugin in one short message that follows the reply shape ([conversation-and-memory.md](conversation-and-memory.md#reply-shape)). The evidence is in the suggestion's Details: when the repetition happened, how many times, and in what form.
 - No agent presses a suggestion the person declined or put off.
 - Repetition is only a candidate signal. A repeated request or tool sequence proves neither a procedure nor consent to automate it.
 - A candidate records the distinct sessions and dates, the shared purpose, inputs and outputs, the ids of the evidence events, and any counterexamples.
-- LINA builds a skill or plugin only once the person understands what it does, when it is used, what permissions it has, and how to undo it. The understanding check runs in this order: show a summary, take questions and adjust the scope, run a reversible trial where possible, then get explicit acceptance. A button click alone doesn't count as understanding. This check covers skills and plugins that LINA proposes and builds; adding an existing plugin follows [integrations.md](integrations.md).
+- LINA builds a skill or plugin that adds executable code, a tool connection or a new permission surface only once the person understands what it does, when it is used, what permissions it has, and how to undo it. The understanding check runs in this order: show a summary (a `summary` result), take questions and adjust the scope, run a reversible trial where possible, then get explicit acceptance. A button click alone doesn't count as understanding. This check covers skills and plugins that LINA proposes and builds; adding an existing plugin follows [integrations.md](integrations.md).
 - A skill holds a procedure, instructions and completion conditions. A plugin is needed when the result requires new executable code, a tool connection or a new permission surface. A plugin that widens permissions gets a separate review.
-- Creating the skill or plugin is work for the work engine. A skill follows the meta-skill in [conversation-and-memory.md](conversation-and-memory.md). A built skill or plugin is available to every agent.
+- Creating a skill or plugin that widens effects is work for the work engine. Every new skill, whoever writes it, follows the meta-skill in [conversation-and-memory.md](conversation-and-memory.md). A skill or plugin, however it came to be, is available to every agent.
 
 ## Growth
 
-The design of persona growth is decided in implementation. This contract fixes only its boundaries:
+This contract fixes the boundaries of persona growth and the default way a growth step is adopted:
 
 - Growth is per agent. Each agent grows from its own records, and the persona it starts from is its baseline: its preset's layers for an agent created from a preset, and the layers written from the person's description for an agent created from a description.
 - Growth adoption is the only way an agent's disposition changes. It is also the only way a growth candidate becomes part of that agent's persona.
 - Lachesis produces growth candidates from that agent's records. A candidate is not growth.
-- An adopted growth step is written as a new revision of that agent's persona through the Moirai engine's write path. Which revisions count as a growth effect is defined in [conversation-and-memory.md](conversation-and-memory.md).
+- Growth writes only the growth snapshot layer, the layer that belongs to the agent ([conversation-and-memory.md](conversation-and-memory.md#layers-and-revisions)). The other layers change as that contract defines.
+- A growth step is a reversible text write, so by default it is adopted at once with no approval step. It is written as a new revision of that agent's persona through the Moirai engine's write path, and the person is told in one line afterwards what was learned. One action undoes it: undo writes a new revision that restores the previous text, so the history stays append-only, and a step the person undid isn't proposed again. Which revisions count as a growth effect is defined in [conversation-and-memory.md](conversation-and-memory.md).
 - Growth mechanisms follow the adoption rule.
 
 ## LIFE
 
-LIFE is two things: a background world engine, and a feed inside the LINA app. It is not a separate product.
+LIFE is two things: a background world engine, and a feed inside the LINA app. It is not a separate product. LIFE is unrelated to the life preset, which manages the person's own life ([conversation-and-memory.md](conversation-and-memory.md#preset-methodologies)).
 
 - The world engine keeps a world, its time, its events and the agents' daily activities going in the background. It belongs to the LINA Core family, runs on the main and is Go ([runtime.md](runtime.md)). Whether each agent has a world of its own or the agents live in one world together is set by the LIFE design item in the Backlog.
-- The LIFE feed shows an agent's activities, posts, reactions, media and conversation experiences, much like a social photo feed. It isn't connected to Instagram or any other real social network.
+- The LIFE feed shows an agent's activities, posts, reactions, media and conversation experiences, much like a social photo feed. It isn't connected to Instagram or any other real social network. Conversation experiences in the world are world events. They are not agent exchanges and never appear in the agent talk log ([conversation-and-memory.md](conversation-and-memory.md#agent-exchanges)).
 - LIFE has no separate app, installer or login. LIFE has no persona of its own; the agent in LIFE is the agent whose life it shows.
 - LINA APP is a thin client. It shows the LIFE feed and never runs the world engine ([surfaces.md](surfaces.md)).
 - The world engine never writes an agent's persona, conversations or memory canon. LIFE events reach an agent's memory only through LINA Core ([product-families.md](product-families.md)).
@@ -223,16 +242,17 @@ The following items are out of scope until each one has a design of its own.
 | --- | --- |
 | LIFE design | The world model, whether agents each have a world or live in one world together, the agents' activities in it, feed content, the connection to conversation and memory, and the packaging of the world engine |
 | Multi-person operation | The person axis: admitting people other than the owner ([product-families.md](product-families.md)), whether each person has agents of their own, more than one world, and relationships between people, including what people share and who may decide for whom, and how people other than the owner receive LINA's releases ([releases.md](../policy/releases.md)). Agents are a separate axis, and this item leaves them as they are. |
-| Group conversation | Several agents talking with the person in one conversation. In a conversation today, one agent speaks. Each conversation ledger event names the agent that spoke, and each conversation lists the agents taking part in it ([conversation-and-memory.md](conversation-and-memory.md#conversation-ledger)); group conversation is built on this model. |
-| Object names | Product names for goal, initiative, project, issue and the materials manager. Until then, documents use working names and describe objects by role and permission. |
-| Remote relay and own login | Reaching LINA Core from outside the tailnet through a relay, and a login of LINA's own. Remote access through Tailscale is defined in [runtime.md](runtime.md). |
+| Group conversation | Several agents talking with the person in one conversation. In a conversation today, one agent speaks. Each conversation ledger event names the agent that spoke, and each conversation lists the agents taking part in it ([conversation-and-memory.md](conversation-and-memory.md#conversation-ledger)); group conversation is built on this model. An agent exchange has no person, and an external channel binds one agent to a chat, so neither is a group conversation. |
+| Object names | Product names for 목표, 일, 할 일, 계속 챙기는 것, 자료 (resource), 보관 (archive), 메모 and the materials manager. The Korean words in the contracts are the default; a card sort with non-developers confirms them. Until then, documents use these words and describe objects by role and permission. |
+| Remote relay and own login | Reaching LINA Core from outside the tailnet through a relay, and a login of LINA's own. Remote access through Tailscale is defined in [runtime.md](runtime.md). The owner's ChatGPT sign-in ([runtime.md](runtime.md#lina-login)) identifies the owner to LINA Core once and is not this login. |
 
 ## Deferred
 
-- The design of persona growth, including the steps of growth adoption: decided by the first growth implementation.
+- The size of the growth snapshot layer, and the evidence a growth candidate needs before it is adopted: set during implementation acceptance of growth.
 - Jev's confidence threshold, its latency budget, the size of its judgment material, how often that material is refreshed, and the size of the held-out evaluation set: measured during implementation acceptance of Jev.
 - Which other hosted judges the adapter supports, such as a model provider's decision API: decided by measurement against Jev on the evaluation set.
 - Whether a local judge is offered, which model it starts from and when it is retrained: decided when enough labeled judgments exist to measure it against Jev on the evaluation set.
 - Thresholds and frequency of skill suggestions: measured during implementation acceptance of skill suggestions.
 - The metric and evaluation set for each regression check and each experimental mechanism, including each preset's persona-likeness set: set by its implementation before it runs.
 - The periods for repository scans, card tidy-up and QA product map refresh: set during implementation acceptance of project supervision.
+- The schedule and budget of each memory job: set during implementation acceptance of memory.

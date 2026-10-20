@@ -1,16 +1,17 @@
 # Integrations
 
-This contract fixes how LINA connects to external services. LINA's conversation engine reaches a service through a plugin: one installable integration unit with a manifest. LINA ships first-party plugins for GitHub and Google, and the person adds others one at a time. LINA Core hosts every plugin for every agent, holds the credentials LINA itself obtains, classifies each tool for approval and records every write. The contract covers the plugin system, credentials and sign-in, the rules every plugin follows, and the GitHub and Google plugins. It is normative: implementations must follow it, and any change to it is made in this file and joins dev under [integration.md](../policy/integration.md). Adding a plugin is the person's act or a first-party plugin in a release, never a change to this contract.
+This contract fixes how LINA connects to external services. LINA's conversation engine reaches a service through a plugin: one installable integration unit with a manifest. LINA ships first-party plugins for GitHub and Google and a small reviewed catalog of others, and the person can add any other MCP server. LINA Core hosts every plugin for every agent, holds the credentials LINA itself obtains, marks the tools that need approval and records every write. The contract covers the plugin system and its catalog, credentials and sign-in, the rules every plugin follows, the channels through which agents talk with the person on external messaging platforms, and the GitHub and Google plugins. It is normative: implementations must follow it, and any change to it is made in this file and joins dev under [integration.md](../policy/integration.md). Turning on a plugin is the person's act. A first-party plugin or a catalog entry is part of a release, never a change to this contract.
 
 ## Scope
 
 This contract covers:
 
-- the plugin manifest, where plugins come from, installing, turning on and removing them
-- LINA Core as the host of plugin tools
-- service profiles and the tier of each plugin tool and command
-- credentials, LINA's secret store and sign-in
+- the plugin manifest, the catalog, where else plugins come from, installing, turning on and removing them
+- LINA Core as the host of plugin tools, and the questions a server asks the person
+- service profiles and which plugin tools and commands need approval
+- credentials, LINA's secret store and sign-in, including OAuth to remote MCP servers
 - the rules every plugin follows: field ownership, change signals, external evidence, writes and failures
+- channels: connections to external messaging platforms, their credentials, pairing, bindings and scopes, and the adapter boundary
 - the GitHub plugin: the user's `gh` login and git setup, the command profile, LINA Core's own reads, field ownership in a connected part and the GitHub-specific merge rules
 - the Google plugin: the built-in connector, the user's own OAuth client, accounts, areas, consent and token failures
 
@@ -19,13 +20,14 @@ No external planning service is canonical or required ([product-families.md](pro
 This contract does not cover:
 
 - the role rule itself (no exclusive owner; enforced pre-merge safety and result records): [product-families.md](product-families.md)
-- grants, the approval tiers, standing grants, receipts and observed results: [main-authority.md](main-authority.md)
+- grants, approval, standing grants, receipts and observed results: [main-authority.md](main-authority.md)
+- approval of channel actions and who may answer an approval in a channel: [main-authority.md](main-authority.md#channels)
 - the envelope, effect states, idempotency keys, and the sign-in relay on the `client` connection: [host-protocol.md](host-protocol.md)
-- plugin tool names and declarations, the effect ledger, the sandbox and its network rule, and tools the user installs: [runtime.md](runtime.md)
+- plugin tool names and declarations, the effect ledger, the sandbox and its network rule, how a local plugin server is sandboxed, and tools the user installs: [runtime.md](runtime.md)
 - workers, which use the integrations connected in the worker itself, and delegated work, development mode, the merge slot, the protected-ref check and apply records: [work-and-delegation.md](work-and-delegation.md)
 - where the plugin registry and LINA's secrets live: [filesystem.md](filesystem.md)
 - meeting notes, connected sources in the library and deletion propagation: [materials-and-knowledge.md](materials-and-knowledge.md)
-- screens, including the plugin list in settings, approval cards, code view, CI status and the today feed: [surfaces.md](surfaces.md)
+- screens, including the plugin catalog, the connect card, the plugin list and the channel connections in settings, approval cards, code view, CI status, the today feed and the agent talk log: [surfaces.md](surfaces.md)
 - Klotho's repository supervision and its judgments: [cognition-and-life.md](cognition-and-life.md)
 - third-party plugins outside the dependency gates: [dependencies.md](../policy/dependencies.md)
 
@@ -36,8 +38,10 @@ This contract does not cover:
 A plugin's manifest states:
 
 - its name, version and description
-- its connection: an MCP server, either a local command (stdio) or a remote URL (Streamable HTTP), or a built-in connector whose code ships with LINA
-- its authentication: an OAuth sign-in that LINA performs, an API key the person enters, or the login of a command-line tool it relies on, such as `gh`
+- its connection: an MCP server, either a local command (stdio) or a remote URL (Streamable HTTP), or a built-in connector whose code ships with LINA. A local command is stated with its arguments, its working directory and the names of the environment variables it receives. A catalog entry is always a remote URL on Streamable HTTP. HTTP with SSE, which the current MCP specification deprecates, is available only as the explicit choice of a person who adds a server by URL, never as a catalog default.
+- its authentication: an OAuth sign-in that LINA performs, an API key the person enters and LINA sends as the request header the manifest names, or the login of a command-line tool it relies on, such as `gh`
+- for a server that does not publish the metadata the current MCP specification asks for: the authorization server to trust, the initial scopes, a pinned OAuth client id, and the protocol era of a known older server
+- the longest time a call to one of its tools may run before LINA Core moves the call to the background (see Host)
 - optionally, skills and instructions for using it
 - optionally, a service profile (see Service profiles)
 
@@ -45,60 +49,73 @@ Built-in connectors exist only in first-party plugins. A third-party plugin conn
 
 ### Sources
 
-- First-party plugins ship with LINA: GitHub and Google. They appear in LINA's plugin list as available.
-- The person adds any other plugin one at a time, from a local folder or a Git URL that holds a manifest.
-- Any MCP server can be wrapped as a plugin. When the person gives a remote MCP URL or a local server command, LINA writes a minimal manifest for it.
-- LINA runs no plugin catalog service.
+- First-party plugins ship with LINA: GitHub and Google. They appear in the catalog as available and carry the label "Reviewed by LINA".
+- The catalog holds reviewed third-party plugins that a person can turn on without writing anything. It is data, not a service: a small curated file, about twenty entries at first, signed and shipped in each release. LINA Core may replace it with a newer signed file from the project's release assets, by the route LINA's own updates use ([runtime.md](runtime.md)), and accepts a file only when its signature verifies against the key the installed release carries and its version is newer than the one in use. No LINA server answers catalog queries. The project owner curates the catalog and holds its signing key.
+- A catalog entry holds a manifest, a service profile written by LINA, the pinned OAuth client where the service needs one, and its label. An entry is admitted only when all of these hold: it is the vendor's own remote server, reached over HTTPS and Streamable HTTP; it signs in with OAuth and publishes protected resource metadata, or the entry pins the authorization server; the official MCP registry lists it under a namespace the vendor owns that matches the entry's URL; and its service profile names the tools that send, pay, publish, share or delete. Local command servers are not in the catalog.
+- Two labels are shown to the person in these words: "Reviewed by LINA" for a catalog entry and a first-party plugin, and "Added by you" for a plugin from any other source. A third label, "Listed in the MCP registry, not reviewed", is reserved for searching the official registry from the add flow, which the first release does not offer. LINA has no other verification labels.
+- The person adds any other plugin one at a time: from a local folder or a Git URL that holds a manifest, from a remote MCP URL, or from a local server command. When the person gives a remote MCP URL or a local server command, LINA writes a minimal manifest for it.
+- A server definition that arrives inside a folder, a Git URL plugin or a worker's workspace turns nothing on by arriving. It needs the same view of its manifest and the same approval from the person as any other plugin, and credential variables in it expand to empty.
 - LINA never searches for, reuses or imports the configuration of other apps, such as the MCP servers or plugins set up in Codex or Claude. Plugins come only from the sources above.
 
 ### Installing and turning on
 
 Installing and turning on a plugin are the person's acts. LINA never installs or turns on a plugin by itself.
 
-- Before installing, LINA shows the manifest: what the plugin connects to, how it signs in, the skills it brings and its tool tiers. A local server command is shown in full, without truncation, before it first runs.
+- Before installing or turning on a plugin, LINA shows its manifest as a card with the same fields for every plugin, in plain language: who makes it and its label; where it runs, which is the vendor's server or this computer; what the person signs in with and what the service will ask for at sign-in, in plain words, with a note that the sign-in page will show a loopback address; what it can do, in a line; what it can send, share, pay, publish or delete, which asks every time; and the pinned version, which is the version of the entry or manifest and, for a plugin from a Git URL, its commit. What asks every time comes from the service profile. For a plugin without a profile the card says that LINA does not know which tools send, pay, publish or delete. A tool the server marks `destructiveHint` shows "may delete" on the card as a hint only. A first-party plugin whose sign-in needs the person's own client, as Google's does, shows its guided setup steps on the card.
+- A person turns on a catalog plugin by opening its entry, reading the card, connecting and signing in. Nothing in this path asks the person for a command, a URL or a file.
+- A plugin the person adds shows the same card with the label "Added by you". For a local command the card shows the whole command, without truncation, labeled as running with the person's permissions, with the environment variables it receives (the values of credentials are hidden) and the sandbox allowance in Host. For a URL the card also says that the server can change its tools at any time.
 - LINA records the source and version of every plugin the person adds, the commit for one from a Git URL, and the person who added it. A plugin changes only when the person updates it.
-- A plugin is in one state: available, installed (off), on, needs sign-in, or failing with its cause.
+- A plugin is in one state: available, installed (off), on, needs sign-in, or failing with its cause. A plugin that is on also shows when its tools changed since the person turned it on (see Tool classification).
 - Skills and instructions a plugin brings join LINA's skill catalog while the plugin is on ([conversation-and-memory.md](conversation-and-memory.md)).
-- Removing a plugin turns it off, deletes the credentials LINA holds for it and removes its skills from the catalog. Its standing grants are revoked ([main-authority.md](main-authority.md)).
+- Removing a plugin turns it off, deletes the credentials LINA holds for it (a client registration kept for an authorization server is deleted with the last plugin that uses that server) and removes its skills from the catalog.
 - Nothing about plugins is asked at first run. When a plugin would help in a conversation, LINA may suggest it once. A suggestion the person declined or put off is not raised again.
 
 ### Host
 
-LINA Core is the host of every plugin. It is the MCP client of plugin servers, using the official [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk) at a pinned version, and it negotiates the protocol version with each server.
+LINA Core is the host of every plugin. It is the MCP client of plugin servers, using the official [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk) at a pinned version that implements the current specification and the fallback to earlier ones.
 
-- Plugin tools are tools of LINA's conversation engine and of LINA Core's own background features. They are named and declared as defined in [runtime.md](runtime.md). An enabled plugin is available to every agent in every conversation; there is no per-conversation switch.
-- Workers never receive plugin tools. A worker uses the integrations connected in the worker itself ([work-and-delegation.md](work-and-delegation.md)).
-- LINA uses tools, tool annotations and elicitation. An elicitation from a server reaches the conversation as a question. A URL elicitation shows the full URL and opens it only after the person agrees.
-- A local server runs as a child process of LINA Core under the user's OS user, outside the command sandbox ([runtime.md](runtime.md)). Control sits at the tool call: the approval tiers and the effect ledger.
+- **Protocol version.** LINA Core speaks the current MCP specification first. It sends the protocol version with every request, probes a local server with the specification's discover call and a remote server with a current-era request, falls back to the earlier initialize handshake when the server does not answer the probe, and remembers the result for each local process and each remote origin.
+- **Plugin tools.** Plugin tools are tools of LINA's conversation engine, of LINA Core's own background features and, as the tools that its brief names, of a background run ([work-and-delegation.md](work-and-delegation.md#background-runs)). They are named and declared as defined in [runtime.md](runtime.md). An enabled plugin is available to every agent in every conversation; there is no per-conversation switch.
+- **Workers never receive plugin tools.** A worker uses the integrations connected in the worker itself ([work-and-delegation.md](work-and-delegation.md)).
+- **Capabilities.** LINA uses tools, tool annotations and elicitation, and declares only the elicitation capability, in form and URL modes. Once the pinned SDK supports it, LINA also declares the Tasks extension. LINA never declares sampling, roots or logging and declines an earlier-era request for them, so no server can drive model calls on the person's accounts.
+- **Connections.** LINA Core connects when a tool is first needed. A remote server that is offline fails only the call that needed it. There is one connection or process for each plugin, shared by every agent. A tool list belongs to one account: LINA Core never shares a cached list between two accounts and honors the server's private cache scope.
+- **Local servers.** A local server runs as a child process of LINA Core. A server the person added by command runs inside LINA's OS sandbox ([runtime.md](runtime.md)) with the network and file allowance the person grants on its card. A first-party plugin runs outside the sandbox, as does a catalog entry that needs more than the sandbox gives, and only after the person accepts its card. Where the sandbox is unavailable, a server added by command does not start and the plugin shows failing with that cause. Control also sits at the tool call: the approval of outward or irreversible effects and the effect ledger.
+- **Long calls.** A call that can take long runs as a background job of LINA Core, bounded by the time its manifest states, and reports in the running list when it lands. Once the pinned SDK supports the Tasks extension, such a call uses the task id and poll interval the server returns, and a task that needs input becomes a question card. LINA Core waits for the SDK and builds no Tasks support of its own.
+- **Skills.** Skills and instructions that a server serves through the Skills-over-MCP extension are not loaded. Skills come only from the manifest or plugin folder the person saw at install.
 - LINA doesn't show MCP Apps interfaces (see Deferred). It uses the tool's text result.
+
+### Questions from a server
+
+A server asks the person through elicitation. LINA Core presents the request as a question in the conversation whose tool call raised it ([conversation-and-memory.md](conversation-and-memory.md)). A question raised inside a background run stops that run in the state `needs_input` ([work-and-delegation.md](work-and-delegation.md#background-runs)).
+
+- **Form mode.** The client shows the flat schema as a small form in the LINA app and as prompts in the TUI. It names the asking server on every request, lets the person edit before anything is sent, and always offers decline and cancel. LINA never fills a field from memory or conversation without showing it. A form that asks for a password, key, token or payment detail is refused and the person is told, because a server must use URL mode for those.
+- **URL mode.** The client shows the full URL with its domain highlighted and a warning for a punycode domain, asks for consent, never fetches the URL itself, and opens it through the system browser interface, never through a shell. The scheme rule of Consent through the client applies. URL mode is not MCP sign-in and does not use the sign-in relay.
+- LINA Core does not rely on a signal from the server that a URL interaction finished. It learns the outcome by sending the original request again.
+- **A call that waits for input never holds the conversation turn.** LINA Core parks the call as a background item with a question card and resumes it when the person answers. The request sent again after the answer is the same effect: the effect ledger keys it on the plugin, the tool and the argument hash ([runtime.md](runtime.md)).
 
 ### Registry
 
-LINA Core keeps one plugin registry in canon ([filesystem.md](filesystem.md)). Each entry holds the plugin's manifest and source, the recorded version and commit, its state, its account with the person the account belongs to, the hash of its local command when it has one, and a snapshot of its tools, each with its tier and the person's policy, recorded with the person who set it. A tool policy applies to every agent unless the person names agents in it; naming agents is the person's recorded choice.
+LINA Core keeps one plugin registry in canon ([filesystem.md](filesystem.md)). Each entry holds the plugin's manifest and source, the recorded version and commit, its label, its state, its account with the person the account belongs to and the account's subject or profile id, the authorization server it signed in to, the hash of its local command when it has one, the sandbox allowance the person granted to a local server, and a snapshot of its tools, each with a hash of its definition and whether the service profile marks it as outward or irreversible. A plugin has one account in the first release. Recording the account's subject lets a second account be added later without changing the registry.
 
 ## Service profiles
 
 A service profile is data in a plugin's manifest. It states:
 
 1. how LINA detects the login the plugin relies on, when it relies on one
-2. the tier of each tool or command
+2. which tools or commands are outward or irreversible effects, that is, they send, pay, publish, share or delete
 3. how to name a write's target, and how to read the service again when a write's outcome is unknown
 4. the provenance fields its results carry, such as a revision or an etag
 
-The first-party plugins carry profiles. LINA also ships profiles for major messaging services such as Slack, Microsoft Teams and Discord; a plugin for one of those services takes the shipped profile. A plugin without a profile follows the generic rules: MCP annotations, and confirmation on first use.
+The first-party plugins carry profiles. LINA also ships profiles for major messaging services such as Slack, Microsoft Teams and Discord; a plugin for one of those services takes the shipped profile. A plugin without a profile has no tool that LINA Core marks (see Tool classification). A catalog entry carries a profile that LINA wrote. When an entry reaches a gateway whose tool list differs from one person to the next, its profile names the outward or irreversible tools by name pattern. A messaging plugin acts in the person's own account when the model calls it. It is not a channel connection (see Channels): an agent's bot is the agent's own face on a platform, and a plugin send is the person's message.
 
 ### Tool classification
 
-Each plugin tool or command has one of the three approval tiers of [main-authority.md](main-authority.md): read, write, or outward or irreversible. Its tier comes from the first of these that applies:
+LINA Core marks a plugin tool or command as an outward or irreversible effect from one source: the plugin's service profile. A call to a marked tool asks every time, with the choices once and deny ([main-authority.md](main-authority.md#plugin-tools)). Every other tool of a plugin that is on is available to every agent, in the same way, and runs without asking. There are no tiers, no scopes and no per-tool settings.
 
-1. the person's tool policy, which can block a tool or raise it to outward or irreversible, never lower it
-2. the plugin's service profile
-3. the MCP annotation `readOnlyHint: true`, which makes the tool a read
-4. otherwise write
-
-- Annotations never place a tool in the outward or irreversible tier. Only a service profile or the person's policy does.
-- The shipped messaging profiles place every send tool in the outward or irreversible tier.
-- A blocked tool is never declared to the model.
+- Annotations that a server sends are untrusted and never mark a tool. `destructiveHint` is a display hint only.
+- The shipped messaging profiles mark every send tool.
+- A plugin without a profile has no marked tool. The card says so, and the agent rules still make an agent ask before it sends, pays, publishes or permanently deletes ([work-and-delegation.md](work-and-delegation.md#default-posture)).
+- LINA Core stores a hash of each tool's definition: its name, description, input schema and annotations. When a server's tool list changes, or its cache lifetime ends and LINA Core reads the list again, a tool whose definition differs from the one stored when the person turned the plugin on is marked "changed since you turned it on" on the plugin card, which shows what changed. A tool the server adds is available like any other, and the profile still decides which tools are marked.
 
 ## Credentials and sign-in
 
@@ -110,45 +127,110 @@ A plugin's credential comes from one of three places:
 
 LINA's secret store is the OS keychain. Where no keychain is available, it is files with mode 0600 in the secrets area of the state root ([filesystem.md](filesystem.md)). Only LINA Core reads it.
 
-Every account and credential LINA keeps belongs to one person and is kept under that person's id ([product-families.md](product-families.md)). A LINA admits only its owner, so only the owner's exist. Agents own no accounts: every agent uses the person's accounts under the grants and approval tiers of [main-authority.md](main-authority.md), and every use records the agent.
+Model-provider accounts keep their credentials in the same secret store, under the same rules, and use the same sign-in relay. Their flows and records are defined in [runtime.md](runtime.md#accounts-and-sign-in). They are accounts of the model path, not plugins.
+
+Every account and credential LINA keeps belongs to one person and is kept under that person's id ([product-families.md](product-families.md)). A LINA admits only its owner, so only the owner's exist. Agents own no accounts: every agent uses the person's accounts under the grants and approvals of [main-authority.md](main-authority.md), and every use records the agent. A bot account of a channel connection is the person's account too: the person creates it, LINA keeps its token under the person's id, and a binding only lets one agent speak through it.
 
 Rules:
 
 - A plugin's credential goes only to that plugin's server, in the way its manifest names (a header, or the server process's environment). It never enters a model request, a log or the sandbox.
 - No token passthrough. A token goes only to the server it was issued for, never in a URL, and LINA never forwards a token it received to another server.
-- LINA creates no service identity of its own, and never issues, injects or brokers a command-line tool's login.
+- LINA creates no service identity of its own, and never issues, injects or brokers a command-line tool's login. A command-line tool here is a tool that keeps its own login for the user, such as `gh`; the Claude adapter is LINA's own process and is not such a tool.
+- A key that a power user's definition carries, as a request header or an environment variable, goes into the secret store when it is entered and is not shown again. It is expanded only into the request or the server process it is for. A definition exported as a file never carries secret values.
 
 ### OAuth for MCP servers
 
 Sign-in to a remote MCP server follows the [MCP authorization specification](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization):
 
-- LINA finds the authorization server through the server's protected resource metadata.
-- LINA registers as a client in this order: a client ID metadata document when the owner has chosen an https URL that serves one, then dynamic client registration with `application_type: native`, then a client id the person enters. The client metadata document lists loopback redirect URIs.
+- LINA finds the authorization server through the server's protected resource metadata. When a server publishes none, LINA uses the authorization server the manifest pins. Without either, LINA does not sign in and the card says why.
+- LINA registers as a client in this order and uses the first that works:
+  1. the client the catalog entry pins: a public client id that LINA registered with that service, with no secret. LINA Core passes it explicitly and does not leave the choice to the SDK;
+  2. a client ID metadata document;
+  3. dynamic client registration with `application_type: native`, once for each authorization server, and reused, never once for each connection;
+  4. a client id the person enters, with an optional client secret that LINA keeps in its secret store.
+- The client metadata document is one static JSON file at an https URL on a domain the project owns. It lists the two loopback redirect URIs, declares no client authentication and carries LINA's name and logo. Serving a static file is not an inbound endpoint of LINA. Until the owner fixes the URL, step 2 is skipped.
+- A service that offers neither dynamic registration nor a metadata document is used only through a catalog entry that pins a client the project owner registered with that service, or through the power user's own client (step 4). LINA does not register itself as a public client with it on its own.
+- Client credentials are kept by authorization server and are never used with another one.
 - Every authorization request uses PKCE with S256 and the `resource` parameter. LINA checks `iss` in the authorization response before it sends the code.
-- Scopes come from the server's 401 challenge. On `insufficient_scope`, LINA asks for the earlier scopes together with the new ones (step-up).
-- Tokens are refreshed before they expire and after a 401. When a refresh fails, the plugin shows needs sign-in. LINA never falls back to another account, another client or a key found in the environment.
+- The first request asks for the manifest's initial scopes, or for those of the server's 401 challenge when the manifest names none. A catalog entry asks for everything its tools need in that one consent: there is no read-only start. When a server answers `insufficient_scope`, LINA asks for the earlier scopes together with the new ones.
+- Tokens are refreshed shortly before they expire and after a 401. When a refresh fails, including with `invalid_grant`, the plugin shows needs sign-in. LINA never falls back to another account, another client or a key found in the environment.
+- LINA Core fetches protected resource metadata, authorization server metadata and metadata-document URLs over HTTPS only. It blocks destinations in private, loopback, link-local and cloud-metadata ranges, and redirects to them, using a vetted library. The one exception is a server the person added at an address on their own network or on loopback: that one host is allowed, and the card says "this address is on your own network".
 
 ### Consent through the client
 
-LINA Core has no inbound endpoint, and no app UI is built with web technology ([surfaces.md](surfaces.md)). Consent runs through the client the person is using, and the sign-in belongs to the person that client connection acts for ([host-protocol.md](host-protocol.md)):
+LINA Core has no inbound endpoint, and a sign-in never happens inside the LINA app's own interface ([surfaces.md](surfaces.md#no-web-feel)). Consent runs through the client the person is using, and the sign-in belongs to the person that client connection acts for ([host-protocol.md](host-protocol.md)):
 
-1. LINA Core builds the authorization URL and keeps the PKCE verifier and the state.
-2. The LINA app or the TUI opens the URL in the system browser and receives the redirect on its own loopback port.
-3. The client relays `code`, `state` and `iss` to LINA Core over the `client` connection ([host-protocol.md](host-protocol.md)). It relays and never judges.
+1. The client opens a loopback port and reports it to LINA Core. A plugin definition can fix the port for a service that accepts only one registered redirect port, and the client then listens on it. LINA Core builds the authorization URL with that redirect, which uses the path that LINA Core names and the port the client reports, and keeps the PKCE verifier and the state.
+2. The LINA app or the TUI opens the URL in the system browser and receives the redirect on that port.
+3. The client relays `code`, `state` and `iss`, or the `error` fields of a failed sign-in, to LINA Core over the `client` connection ([host-protocol.md](host-protocol.md)). It relays and never judges.
 4. Where a client can't receive a loopback redirect, such as on mobile or in a TUI over SSH, the person pastes the redirected URL instead.
 
-A sign-in URL is never opened through a shell command. A URL with a `javascript:`, `data:` or `file:` scheme is refused. Google sign-in uses the same relay.
+A sign-in URL is never opened through a shell command. A URL with a `javascript:`, `data:` or `file:` scheme is refused. Google sign-in uses the same relay. The sign-in of a model-provider account uses the same relay ([runtime.md](runtime.md#chatgpt)). A URL that a server sends through URL elicitation is not a sign-in and does not use it (see Questions from a server).
 
 ## Plugin rules
 
 These rules apply to every plugin.
 
 - **Every field has one owner.** The data model names the canonical side of each field. LINA Core never treats its copy of an externally owned field as canonical. When the two disagree, LINA Core reads the external side again.
-- **Change signals are hints.** A notification or a change feed tells LINA Core to read again. It isn't a record of what changed. Periodic reconciliation compares LINA's links and derived data with the external side and catches missed signals. LINA Core reaches every service with outbound requests only. No service calls in to LINA Core.
+- **Change signals are hints.** A notification or a change feed tells LINA Core to read again. It isn't a record of what changed. Periodic reconciliation compares LINA's links and derived data with the external side and catches missed signals. LINA Core reaches every service with outbound requests only. No service calls in to LINA Core. The channel gateway follows the same rule: it opens its own outbound connection to the platform, and no platform calls in. A signal can also start inside LINA, such as a worker's completion event, and is treated the same way: it starts a read and is not the record of what changed.
 - **External content is evidence, not instruction.** Everything read through a plugin, tool results included, carries provenance: the plugin, the account, the object id when there is one, the fetch time, and the revision or etag when the service has one. It enters model requests as untrusted input ([conversation-and-memory.md](conversation-and-memory.md)). It never becomes a fact, an approval, a current instruction or a persona change by itself, and it never changes an approval decision ([main-authority.md](main-authority.md)).
-- **Every write is an effect.** A plugin write runs under a grant or an approval ([main-authority.md](main-authority.md)). The effect ledger ([runtime.md](runtime.md)) records the plugin, the account, the tool, the argument hash, the tier, the approval basis (a task grant, a standing grant, or approval of this call), the effect state ([host-protocol.md](host-protocol.md)), the conversation or task id, the agent that called the tool, and the person the write acts for. Its idempotency key takes the plugin and tool as the action and the argument hash as the intent, and a normalized target only when the service profile names one.
+- **Every write is an effect.** A plugin write is an effect that runs under the grant of its task or conversation, and an outward or irreversible one only after approval ([main-authority.md](main-authority.md)). The effect ledger ([runtime.md](runtime.md)) records the plugin, the account, the tool, the argument hash, whether the call was outward or irreversible, the approval basis (a grant, or approval of this call), the effect state ([host-protocol.md](host-protocol.md)), the conversation or task id, the agent that called the tool, and the person the write acts for. Its idempotency key takes the plugin and tool as the action and the argument hash as the intent, and a normalized target only when the service profile names one.
 - **Unknown outcomes are never sent again.** When a write's outcome is unknown, LINA Core reads the service to settle it if the service profile says how. Otherwise it tells the person that the outcome is unknown.
+- **A lost response stream is not a reason to send a write again.** The MCP specification tells a client to re-issue a request whose response stream was lost. LINA Core does so only for a tool that the server marks `readOnlyHint: true`, with a new request id. It never does so for any other tool: the outcome is unknown and is settled as above. Cancelling a write by closing the stream likewise leaves its outcome unknown, not undone.
 - **A failing plugin never blocks conversation.** The plugin shows as failing, with its cause, and the rest of LINA keeps working.
+
+## Channels
+
+A channel is an external messaging platform through which the person talks with an agent: a Telegram bot, a Discord bot, or another platform added later. The message gateway in LINA Core connects agents to channels. A channel connection is not a plugin: a plugin gives the model tools, and a channel connection gives the person another place to talk with an agent. An agent's bot speaks as that agent and never in the person's name; a message in the person's name goes through a messaging plugin (see Service profiles).
+
+### Connection, binding and scope
+
+- **Channel connection.** One bot account on one platform, with its token. The person creates the bot on the platform and gives LINA the token, or uses the platform's own flow for creating bots from a link where one exists. The platform flow is the default and pasting the token is the fallback. LINA ships no bot of its own and creates no service identity. The connection records the person it belongs to.
+- **Binding.** The record `(platform, bot account, chat) -> agent`, where the chat is a Telegram chat or topic, or a Discord direct message, channel or thread. The most specific binding wins. A chat with no binding reaches no agent, and a chat has at most one bound agent.
+- **Dispatch.** A binding together with its scope. Creating, widening, narrowing and removing a dispatch are the person's recorded acts and name the agent.
+- **One bot per agent.** Each dispatched agent has a bot of its own, so the platform shows its name and avatar. One bot may serve several agents only when every chat, topic or channel is bound to one of them; the agent then names itself in the first line of each message.
+- **Scope.** Each binding carries a scope, stored in canon with the person who set it and the agent it applies to:
+
+| Field | Values | Default |
+| --- | --- | --- |
+| where | The chats the agent may be in | Only the owner's own chat with the bot |
+| reads | `dm_only`; `addressed` (mentions, replies, commands and buttons); `all_messages` | `dm_only`. When the person adds a chat that other people are in, `addressed` is proposed. `all_messages` is never the default. |
+| writes | `reply_only`; `may_start` (the agent may post without being addressed) | `reply_only` |
+| tools | None, or the same tools and approvals as in the app | In the owner's own chat, the same as in the app. In any other chat, none. |
+| memory | Whether the agent may use the person's memory in that chat | In the owner's own chat, the same as in the app. In any other chat, none. |
+
+- The platform rights LINA asks for are the smallest that the scope needs. It never asks for an administrator right on either platform, and it never asks for a group administrator right on Telegram. The connect step explains once what `all_messages` costs on the platform, because it needs the platform's wider message-reading right.
+- Slash commands and buttons are a convenience. The gate is always LINA Core's check of the paired owner's id and of the binding, never the platform's role system.
+
+### Identity and pairing
+
+- A connection starts denied. The owner pairs it: the app or the TUI shows a one-time code, the owner sends it to the bot from the platform, and LINA Core records the platform's numeric user id against the owner's person id. LINA Core never uses a user name as an identity. The code works once and expires soon after it is shown.
+- Anyone else in a chat is an external participant. Their text is evidence, never an instruction or an approval, and it creates no person, person model or memory item ([conversation-and-memory.md](conversation-and-memory.md#channel-conversations)). By default the agent does not answer them. The person may choose a mode in which the agent answers when it is addressed; it then answers without tools and without the person's memory, whatever the scope's tools and memory fields say for the owner.
+- A bot answers an `about` command with the build's version, commit and source link ([product-families.md](product-families.md)).
+
+### Transport
+
+- The gateway is outbound only, like every other service connection (see Plugin rules). Telegram is read by long polling and Discord by the Gateway session, with interactions received on that session and never at an endpoint URL. There is no webhook mode in the first design, because it would need a public listener ([runtime.md](runtime.md#remote-access)).
+- LINA Core owns exactly one poller or Gateway session per bot token, and only the main runs it. After a restart the previous generation is fenced ([runtime.md](runtime.md#recovery)).
+- The adapter's cursor, such as the Telegram update offset, is stored durably before an update is acted on. The platform's ids (update, interaction and message ids) are the idempotency keys of inbound events, so a repeated event is handled once.
+- When the main was down for longer than the platform keeps undelivered messages, LINA tells the person that messages may have been missed.
+
+### Inbound and outbound rules
+
+- A channel turn follows the same turn rules as a turn in the app. A result that lands later arrives as a new message in the chat, not as an edit of an old one, so the person's notification fires.
+- The reply is written once into the ledger; the adapter shapes it for the platform: it splits text on paragraph boundaries at the platform's limit, and when a reply would need more than three parts it sends a summary with a link or a file instead. Streaming in a channel is off, in the owner's private chat as well: a working indicator and one final message.
+- Rates are the adapter's. Core keeps one outbound queue per bot account and chat, honours the platform's retry-after value and resumes from the refused part. A send refused before delivery is retried. A send whose outcome is unknown is not sent again; the reply stays in the ledger and the app shows it ([host-protocol.md](host-protocol.md#delivery)). A "blocked" or "cannot start" answer is a permanent state of that chat: the binding shows unreachable, nothing more is sent, and the person is told. Core opens no direct message to anyone except in answer to that person's action.
+- An inbound file from the paired owner is an import ([filesystem.md](filesystem.md#import-and-export)); a file from anyone else is never imported, and text in any file is data. A result that is not text reaches a channel in the form its card takes there; the card must stand alone, because the app may not be reachable from where the person reads.
+- An approval request in a channel is a message with buttons, governed by [main-authority.md](main-authority.md#channels).
+- The progress digest. The person can ask an agent in a channel how things are going. A binding that lets the agent write first may also send a digest at a time the person sets; it is off by default. The digest is one message made from the progress view ([surfaces.md](surfaces.md#progress-at-a-glance)): a first line that says how many things need the person and names the first, then one line for each running item with its name, its stage and what comes next, a mark on a line that waits on the person, at most five lines and a count of the rest. It holds no issue number, pull request, log or id, and it ends with one link that opens the progress view in the app when the app is installed. LINA Core builds the digest and the adapter only sends it.
+
+### Adapter boundary
+
+Core talks to each platform through one adapter and knows no platform limit. An adapter offers: connect and disconnect with a durable cursor; an inbound event carrying the platform's ids; send, returning a result id or an error class (retry later, permanently blocked, too long, unauthorized); edit; answer an interaction; fetch an attachment; and a static capability descriptor (text length, edit, buttons, files, threads, streaming, and which result types the channel can show). The first adapters are Telegram and Discord. A further platform is a new adapter behind this boundary, added by a release and not by a change to this contract. The adapter code is LINA's own, and its client library is a Go dependency under [dependencies.md](../policy/dependencies.md).
+
+### Credentials
+
+A bot token is an API key in the sense of "Credentials and sign-in". The person enters it once; LINA Core keeps it in the secret store under the person's id and never returns it to any client. It goes only to the platform's API through the adapter. It never enters a model request, a log, the sandbox or an event of the self-diagnosis log.
 
 ## GitHub
 
@@ -157,28 +239,36 @@ These rules apply to every plugin.
 The GitHub plugin is a first-party plugin that relies on the user's own setup: the `gh` login and git with the user's credential helper or SSH agent. LINA has no GitHub identity of its own; on GitHub, LINA's reads and writes are the user's. LINA records its GitHub writes in its own records ([work-and-delegation.md](work-and-delegation.md)). LINA has no webhook endpoint.
 
 - LINA detects the login with `gh auth status`, which names the host, the account and the token scopes. Each repository's remote names its transport: HTTPS with git's credential helper, or SSH. When `gh` is not logged in, the plugin shows needs sign-in and names the `gh` command that signs in; git transport keeps working.
-- In a conversation, the model runs `gh` and `git` as shell commands. The plugin's service profile classifies them (see Command profile), and LINA Core decides a command's network access from that tier ([runtime.md](runtime.md)).
-- LINA Core's own reads are not model tool calls: the work it coordinates, Klotho's project supervision ([cognition-and-life.md](cognition-and-life.md)), the read right before a merge, and the check of a merge a person made. LINA Core runs them with `gh` as its own child process. Reads need no approval.
+- In a conversation, the model runs `gh` and `git` as shell commands. The plugin's service profile names which of them are outward or irreversible (see Command profile), and LINA Core decides a command's network access from the profile ([runtime.md](runtime.md)).
+- LINA Core's own reads are not model tool calls: the work it coordinates, the head, review threads and check results of a delegated pull request, Klotho's project supervision ([cognition-and-life.md](cognition-and-life.md)), the read right before a merge, and the check of a merge a person made. LINA Core runs them with `gh` as its own child process. Reads need no approval.
 - When the login lacks a scope that a command needs, for example `workflow` for a push that changes workflow files, LINA tells the person the command that adds it, such as `gh auth refresh -s workflow`, and never works around it.
 - A person who works with a GitHub MCP server can add it as a plugin like any other MCP server.
 
-Workers do their GitHub work with the GitHub setup of the worker itself, on the main and on a Node device ([work-and-delegation.md](work-and-delegation.md)).
+Workers do their GitHub work with the GitHub setup of the worker itself, on the main and on a Node device: pushing the task's branch, opening and editing the pull request and replying to reviews. LINA does none of these for delegated work. Its own writes on delegated work are merging and closing the task's pull request ([work-and-delegation.md](work-and-delegation.md)).
 
-LINA's GitHub writes include pushing branches, opening and updating pull requests, replying to reviews, editing issues and merging: whatever the user's setup can do. Every write is recorded under the plugin rules. In delegated work, a push writes only the task's own branch, and a protected ref moves only through a merge that passes pre-merge safety ([work-and-delegation.md](work-and-delegation.md)).
+LINA's GitHub writes include pushing branches, opening and updating pull requests, replying to reviews, editing issues and merging: whatever the user's setup can do. Every write is recorded under the plugin rules. In delegated work, the worker's push writes only the task's own branch, and a protected ref moves only through a merge that passes pre-merge safety ([work-and-delegation.md](work-and-delegation.md)).
+
+### Completion signals
+
+GitHub cannot call in to LINA, which has no inbound endpoint, so LINA Core reads what GitHub knows, and an event inside LINA decides when ([work-and-delegation.md](work-and-delegation.md)).
+
+- A worker's completion event starts the reads. The first is one view of the pull request: its state, head SHA, review threads and the check results at that head.
+- While the checks of a task's pull request are unfinished, LINA Core watches that pull request only: one watcher per pull request, never two at once, using conditional requests and the interval that GitHub's responses ask for. The watch starts with the completion event and ends with the checks' conclusion, or with the pull request closing or merging. A rate-limit response backs the watch off and shows as "CI pending" with its cause.
+- LINA Core uses neither the repository events feed nor a webhook-forwarding tool. The feed's delay is too long, and a forwarder needs administrator rights on the repository and covers one repository at a time.
+- A notification feed is read only if the user's own `gh` credential can read it, and then as a hint under the plugin rules.
+- The periodic reconcile pass of the work engine re-reads every pull request of a task that is in progress or watched, and catches a signal that was lost.
+- A merge is confirmed by one read after the merge call returns success or the queue reports the pull request merged (see Merges).
 
 ### Command profile
 
-| Tier | Commands | Default |
-| --- | --- | --- |
-| Read | `gh pr view`, `list`, `diff` and `checks`; `gh issue view` and `list`; `gh run view`; `gh api` with GET; `git fetch`, `clone` and `pull` | Never asks |
-| Write inside a task grant | `git push` of the task's branch, `gh pr create` and `edit`, review replies, edits of the linked issue, merging the task's own pull request after pre-merge safety | Never asks |
-| Write outside a task grant | `gh issue create`, `comment` and `edit` from a conversation, labels, draft releases, merging another pull request after pre-merge safety | Asks on first use; "always allow" is available |
-| Outward or irreversible | `gh repo delete`, making a repository public, publishing a release, force-pushing a protected ref | Asks every time |
-| Any other subcommand, and `gh api` with a method other than GET | | Write |
+| Commands | Default |
+| --- | --- |
+| `gh repo delete`, making a repository public, publishing a release, force-pushing a protected ref, and `gh api` with the method DELETE | Outward or irreversible: asks every time |
+| Every other `gh` and `git` command, including a merge after pre-merge safety with the head pinned, closing the task's own pull request, issues, comments, labels and draft releases | Never asks |
 
 ### Field ownership in a connected part
 
-[work-and-delegation.md](work-and-delegation.md) defines development mode, where a goal or part of a goal is connected to a repository. In a connected part, each field has this canonical side:
+[work-and-delegation.md](work-and-delegation.md) defines development mode, where a 목표 (goal), an 일 (project) or part of one is connected to a repository. In a connected part, each field has this canonical side:
 
 | Data | Canonical side |
 | --- | --- |
@@ -186,15 +276,21 @@ LINA's GitHub writes include pushing branches, opening and updating pull request
 | Pull request state, merge state, review threads and check results | GitHub |
 | Issue title, body, labels and state | GitHub |
 | Branch protection, rulesets and required checks | GitHub |
-| Goals, plans, acceptance criteria, approved scope, decisions and grants | LINA Core |
-| The link between a task and an issue, and between a draft and a pull request | LINA Core |
-| Stage judgment and delivery judgment of delegated work | LINA Core |
+| Goals, 일, 할 일 (to-do), plans, done conditions, approved scope, decisions and grants | LINA Core |
+| The link between a code 할 일 and an issue, and between a draft and a pull request | LINA Core |
+| Tasks, their order, write areas and hand-off state | LINA Core |
+| The design-conformance review, the verdict and the apply record of delegated work | LINA Core |
+
+A GitHub issue is optional. LINA creates one for a code 할 일 only when a developer user wants it (see Command profile).
 
 ### Merges
 
 The shared role rule is in [product-families.md](product-families.md). [work-and-delegation.md](work-and-delegation.md) defines LINA Core's merge procedure, including the merge slot and the protected-ref check, and the apply records. On GitHub, these rules add:
 
 - LINA Core never uses an administrator bypass of protection rules, even when the user's credential would allow one.
+- LINA Core merges the head it read last, by passing that head to the merge call, so a commit pushed after its read is never merged unseen. If the merge is refused for a moved head, LINA Core reads the pull request again instead of merging.
+- When the repository has a merge queue, LINA Core hands the pull request to the queue and treats queued as intermediate. The queue's own tests on top of the pull requests ahead replace nothing in pre-merge safety.
+- When the repository has required checks and auto-merge, LINA Core may request the merge with the head pin after its review, so that GitHub merges when the checks pass. The checks and protection rules are the same ones, enforced by GitHub. This is off by default.
 - Right before it merges, LINA Core reads the pull request again. If someone else has already merged it, LINA Core records that merge and doesn't try again.
 - Before LINA Core records a merge made by a person as an observed result ([main-authority.md](main-authority.md)), it checks on GitHub that the merge commit exists and that the target ref points to it. It also reads the check results on that commit.
 - A merge that went in without passing required checks is recorded as observed and reported to the user. LINA Core never reverts another actor's merge without a user decision.
@@ -230,15 +326,15 @@ A company's Google Workspace administrator can block the user's client or mark i
 
 When the user connects an account, the user chooses the areas to use and consents once to the scopes of all of them. Adding an area later asks for consent to that area at that time. Full Gmail and Drive access use restricted scopes. That is allowed because the client belongs to the user.
 
-The Google profile places each area's tools in the approval tiers of [main-authority.md](main-authority.md). Deletion goes to the Google trash first, so only a deletion that can't be undone is irreversible.
+The Google profile marks, for each area, the tools that are outward or irreversible effects and ask every time ([main-authority.md](main-authority.md#plugin-tools)). Every other tool of an area runs without asking. Deletion goes to the Google trash first, so only a deletion that can't be undone is irreversible.
 
-| Area | Read | Write | Outward or irreversible |
-| --- | --- | --- | --- |
-| Gmail | Mail and threads, search | Labels, archive, drafts, move to trash | Sending, permanent deletion |
-| Calendar | Calendars and events | Events on the user's own calendars with no other attendees, such as placing a task in free time | Invitations, and changes that notify attendees |
-| Drive and Docs | Files, documents and their revisions | Creating and editing files the account owns | Sharing, permission changes, publishing, permanent deletion |
-| Contacts | Contacts | Creating and editing contacts | None |
-| Meet records | Conference records, transcripts and recordings | None | None |
+| Area | What its tools do | Asks every time |
+| --- | --- | --- |
+| Gmail | Read mail and threads, search; labels, archive, drafts, move to trash | Sending, permanent deletion |
+| Calendar | Read calendars and events; events on the user's own calendars with no other attendees, such as placing a task in free time | Invitations, and changes that notify attendees |
+| Drive and Docs | Read files, documents and their revisions; create and edit files the account owns | Sharing, permission changes, publishing, permanent deletion |
+| Contacts | Read, create and edit contacts | None |
+| Meet records | Read conference records, transcripts and recordings | None |
 
 Google is canonical for mail, events, files, contacts and meeting records. LINA keeps links and derived data, such as indexes, summaries and task candidates, and keeps them current by reconciliation. When an item is deleted in Google, LINA stops showing the data derived from it ([materials-and-knowledge.md](materials-and-knowledge.md)).
 
@@ -261,10 +357,23 @@ When a token fails, LINA Core marks that account as needing sign-in and tells th
 
 ## Deferred
 
-- The manifest file name and schema: set during implementation acceptance of the plugin system.
+- The manifest file name and schema, including the fields for the authorization server, initial scopes, pinned client, protocol era and call time limit: set during implementation acceptance of the plugin system.
 - The exact OAuth scope list for each Google area: set during implementation acceptance of that area.
-- Polling intervals and the reconciliation period of each first-party plugin: measured and set during implementation acceptance of that plugin.
+- Polling intervals, the watch interval for checks and the reconciliation period of each first-party plugin: measured and set during implementation acceptance of that plugin.
 - The messaging services that get a shipped profile: set during implementation acceptance of the plugin system.
-- Whether common MCP servers, including those on earlier protocol versions, connect through the pinned SDK: measured during implementation acceptance of the plugin system.
+- Whether every catalog entry, and common servers on earlier protocol versions, connect through the pinned SDK: a smoke test over the catalog at implementation acceptance of the plugin system.
 - Whether Google's desktop OAuth client accepts the loopback redirect of the client relay: set by the first implementation of the Google plugin.
-- Showing MCP Apps interfaces: not supported; designed as a follow-up.
+- Showing MCP Apps interfaces: not supported; designed as a follow-up. If it is added, it arrives as the reserved `app` result type ([host-protocol.md](host-protocol.md#typed-results)): the view runs in a sandbox with no network, never reaches LINA Core directly, and the tool's text result is its fallback.
+- The URL of the client metadata document: set when the project's domain is chosen; until then LINA registers dynamically.
+- The catalog file format, the signing key, who curates the catalog and which entries it holds, with their service profiles: set during implementation acceptance of the plugin system; the project owner curates the catalog and holds its signing key.
+- Timeouts of discovery and token calls, the refresh lead time and the default call time limit: measured and set during implementation acceptance of the plugin system. The starting values are 10 seconds for discovery and token calls, 30 seconds for a refresh and five minutes before expiry.
+- Support for the Tasks extension: set when the pinned SDK supports it; LINA Core builds none of its own.
+- Searching the official MCP registry from the add flow: not in the first release.
+- Narrowing a local plugin server's network to named hosts: needs a filter that the sandbox wrapper does not have ([runtime.md](runtime.md)).
+- A second account for one plugin: not in the first release.
+- Whether the token that `gh` stores can read GitHub's notifications, and whether the check-run reads honour conditional requests: measured during implementation acceptance of the GitHub plugin.
+- The lifetime of a pairing code, the rate numbers of each platform adapter and the channel client libraries: set during implementation acceptance of the channel gateway.
+- Whether the owner's own messages in a Discord server may feed LINA's memory under Discord's developer policy: the owner confirms the reading before the Discord adapter ships. Until then the default `addressed` reads only what the agent is addressed with, and no memory is written from another person's message.
+- A webhook mode for a channel, which would need a public listener: never provided.
+- Rich messages and components of a platform, such as Telegram rich messages: shown only after the adapter's capability probe, with plain text as the fallback.
+- The progress digest of a channel: its line cap, whether a regular digest can be set, and the scheme of its link: set during implementation acceptance of the channel gateway.

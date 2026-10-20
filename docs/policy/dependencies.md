@@ -1,6 +1,6 @@
 # Dependencies
 
-This policy covers code that LINA takes from outside the repository: Go modules, the Go toolchain, opencodex and the Node.js runtime it runs on, other npm packages, pinned binaries, external components, and upstream source and generated upstream code vendored into the repository. LINA Core runs all day with the user's credentials, so outside code must be pinned, reviewed like any other code, and verified by `foundation` before it can join `dev`. The rules apply from the first change that adds a dependency, and the `foundation` check enforces them.
+This policy covers code that LINA takes from outside the repository: Go modules, the Go toolchain, the npm packages of the Claude adapter and of repository tooling, pinned binaries, external components, and upstream source and generated upstream code vendored into the repository. LINA Core runs all day with the user's credentials, so outside code must be pinned, reviewed like any other code, and verified by `foundation` before it can join `dev`. The rules apply from the first change that adds a dependency, and the `foundation` check enforces them.
 
 ## Scope
 
@@ -8,15 +8,15 @@ This policy covers:
 
 - Go modules in every `go.mod` and `go.sum`
 - the Go toolchain used by `foundation` and release builds
-- npm packages in the root `package.json` and lockfile: the opencodex package and any repository tooling that needs an npm package
-- the Node.js runtime that releases ship with opencodex
-- opencodex, binaries that LINA ships or downloads, and external components
+- npm packages in the root `package.json` and lockfile: repository tooling that needs an npm package
+- the Claude adapter's lockfile, which pins the Claude Agent SDK package that LINA installs on the person's machine on first use of a Claude account ([runtime.md](../design/runtime.md))
+- binaries that LINA ships or downloads, and external components
 - upstream source and generated upstream code under `third_party/`
 - the `dependencies` check that enforces these rules
 
-Tools the user installs are outside this policy: workers such as Codex, the command-line tools that plugins rely on, and the plugins the user adds with their servers. They are not LINA dependencies. LINA records the version and source it observed for them and never pins them ([runtime.md](../design/runtime.md), [integrations.md](../design/integrations.md)). First-party plugins are LINA code and follow this policy.
+Tools the user installs are outside this policy: workers such as Codex, the command-line tools that plugins rely on, and the plugins the user adds with their servers. They are not LINA dependencies. LINA records the version and source it observed for them and never pins them ([runtime.md](../design/runtime.md), [integrations.md](../design/integrations.md)). First-party plugins are LINA code and follow this policy. Tools that only the developers of LINA run during development are outside this policy as well; they are recorded under Development-time tools.
 
-Other documents cover what each component uses and why. [runtime.md](../design/runtime.md) names the vendored upstream, the model client, opencodex, external components, the packaging, and the release manifest. The [foundation policy](foundation.md) owns path mapping and check layout.
+Other documents cover what each component uses and why. [runtime.md](../design/runtime.md) names the vendored upstream, the provider adapters, external components, the packaging, and the release manifest. The [foundation policy](foundation.md) owns path mapping and check layout.
 
 ## Go modules
 
@@ -47,11 +47,11 @@ LINA's components are Go. Their outside code comes in as Go modules.
 
 ## npm packages
 
-npm is used only for packages that run on Node.js: the opencodex package, which releases ship with the Node.js runtime it runs on, and repository tooling that needs an npm package. LINA's own components use no npm package.
+npm is used only for packages that run on Node.js: the Claude Agent SDK package that the Claude adapter installs from its own lockfile, and repository tooling that needs an npm package. LINA ships no Node.js runtime: the Claude adapter runs on the Node.js the person installed ([runtime.md](../design/runtime.md)). LINA's other components use no npm package.
 
 ### Package manager and configuration
 
-npm, which ships with the pinned Node.js runtime, is the only package manager for these packages. The root `.npmrc` contains:
+npm is the only package manager for these packages. The root `.npmrc` contains:
 
 ```ini
 registry=https://registry.npmjs.org/
@@ -73,7 +73,7 @@ Run tools from the lockfile through package scripts or `npx --no-install`. Scrip
 
 - One `package-lock.json` at the root covers every npm package. It is committed and changes only through npm, in the same change as the manifest change that causes it.
 - `foundation` and release builds install with `npm ci --ignore-scripts`, which fails if the lockfile and manifests disagree. Use `npm install` only to change dependencies, never to verify them.
-- The opencodex package that releases ship is installed from the same lockfile with `npm ci --ignore-scripts --omit=dev`. A release build resolves nothing new.
+- The Claude adapter's lockfile is committed with the adapter. On first use LINA Core installs from it with `npm ci --ignore-scripts --omit=dev`, from the public registry, and verifies the installed packages against the lockfile's integrity values; nothing new is resolved.
 - Install and build steps run in a clean worktree with no credentials. The publication stage is a separate stage that installs no packages and uses the owner's local credentials ([releases.md](releases.md)).
 
 ### No lifecycle scripts
@@ -92,14 +92,16 @@ Run tools from the lockfile through package scripts or `npx --no-install`. Scrip
 - Use the Go standard library when it covers the need, and Node.js built-in modules for repository tooling.
 - A new upstream release may be adopted as soon as it is published. No minimum release age applies to any dependency.
 - Review the dependency change as code, including its license and the module and transitive package counts that the `dependencies` check reports.
-- In-process dependencies use permissive licenses that allow their code to be distributed inside LINA's proprietary releases when their notices are kept, such as MIT, Apache-2.0, BSD, and ISC. Code under other licenses runs only as an external component ([runtime.md](../design/runtime.md)).
+- LINA is licensed under the Apache License, Version 2.0 ([LICENSE](../../LICENSE)). Every dependency linked into LINA's own binaries uses a permissive license only: MIT, Apache-2.0, BSD or ISC.
+- A component that needs copyleft code (the GPL family or similar licenses) runs only as a separate process, as an external component ([runtime.md](../design/runtime.md)).
+- Non-commercial and source-available licenses are not used anywhere.
+- Every included component keeps its notices in [THIRD-PARTY-NOTICES.md](../../THIRD-PARTY-NOTICES.md), including the `NOTICE` file of each Apache-2.0 component.
 - Update dependencies in small groups that can be reviewed together. Split bulk updates of unrelated modules or packages. The merge commit message of an update states the reason and the checks it ran, whoever made the update.
 
 ## Runtime and binaries
 
 - The `toolchain` line of `go.mod` records the Go release that `foundation` and release builds use.
-- `.node-version` records one exact Node.js version: the runtime that releases ship with opencodex after verifying it as described in [runtime.md](../design/runtime.md).
-- opencodex is a LINA dependency: the upstream npm package `@bitkyc08/opencodex` from [lidge-jun/opencodex](https://github.com/lidge-jun/opencodex). LINA's installation installs it at the version and digest the release pins, together with its Node.js runtime, and the pin follows upstream releases.
+- `.node-version` records one exact Node.js version for repository tooling and for testing the Claude adapter. Releases ship no Node.js runtime.
 - Pin every other binary that LINA ships or downloads, including sqlite-vec platform binaries and [external components](../design/runtime.md), by version and SHA-256 digest. Verify each download against its digest before extraction or execution, every time, including after a cache hit.
 - An external component ships with its license and notices.
 - The release manifest in [runtime.md](../design/runtime.md) records each pinned version and digest.
@@ -138,6 +140,14 @@ A sync updates one vendored tree in one integrated change, with a merge commit t
 
 Another change never updates vendored code as a side effect.
 
+## Development-time tools
+
+Some tools are used only by the people who develop LINA, to produce files that LINA then ships. They are not dependencies of LINA. Nothing from them is linked into a LINA binary, bundled in an installer or artifact, installed for a user, or run by a LINA install, so they have no entry in `THIRD-PARTY-NOTICES.md`, and the rules of this policy for Go modules, npm packages, pinned binaries and external components do not apply to them. What they produce is an ordinary change: it is reviewed like any other change and committed to the repository. What ships is those files, never the tool.
+
+- Harness2 (Google Research, Apache-2.0, <https://github.com/google-research/harness2>) is such a tool. Developers run the Python Harness2 as it is published, pinned to one exact release or commit, during LINA's development and continuously, to improve the files of LINA's agent harness: the persona text, guardrails, memory guidance, tool guidance, sub-agent definitions and skills. It runs on a developer's machine with the developer's own model accounts. It has no cost cap of its own and no Go port. Pin: none yet. The first development run that uses it records the exact release or commit here.
+- The loop reaches LINA only through two commands: the replay command ([runtime.md](../design/runtime.md#replay-command)) and the episode export ([conversation-and-memory.md](../design/conversation-and-memory.md#episode-export)). An episode holds conversation content from a developer's own install. Episode files are never committed to the repository and are not shared.
+- A change of the pinned version of a development-time tool is deliberate and is reviewed in its own change, like a change of any other pin.
+
 ## Exceptions
 
 `scripts/verify/dependency-exceptions.json` is the only place where a rule in this policy can be waived. Each entry names its kind (`install-script`, or `vulnerability` for a reported vulnerability that has no fixed version yet or does not reach LINA's code), the exact package or module name and version, the vulnerability id for a `vulnerability` entry, the reason, and a reference URL when one exists. Wildcards are not allowed. Each entry is reviewed in the change that adds it.
@@ -158,9 +168,10 @@ The `dependencies` check runs whenever the [foundation policy](foundation.md) se
 | Vendored trees | A file under `third_party/<name>/upstream/` is missing from `vendor.json` or does not match it, a patch record is incomplete, or the notices entry is missing or names another commit. |
 | Upstream fetch | For a changed `vendor.json`, the recorded upstream commit or generator output does not match the recorded upstream hashes, or the recorded patches do not reproduce the tree. |
 | Exceptions | An exceptions entry is malformed, uses a wildcard, or lacks a reason. |
+| Licenses | A Go module linked into a LINA binary, or an npm package that ships, has a license other than MIT, Apache-2.0, BSD or ISC, as reported by a license scanner such as `go-licenses`; or an included component has no entry in `THIRD-PARTY-NOTICES.md`. |
 
 The `foundation` output and its evidence note list the Go modules and npm packages that the change adds, removes, or updates, their versions, the total module count, and the total transitive package count.
 
 ## Deferred
 
-- The baseline `go.sum` and module count, and the opencodex lockfile and its transitive package count, are recorded by the supply-chain baseline (V6) in the first implementation issue. Exact pins are deferred in [runtime.md](../design/runtime.md).
+- The baseline `go.sum` and module count, and the Claude adapter's lockfile and its transitive package count, are recorded by the supply-chain baseline (V6) in the first implementation issue. Exact pins are deferred in [runtime.md](../design/runtime.md).

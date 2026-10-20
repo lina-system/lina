@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: Apache-2.0
 // Foundation verification in one process: selection (path classification and the whitespace check),
 // then the docs and automation checks in parallel, then the gate. A passing run on a clean
 // checkout of the exact candidate commit leaves its evidence as a Git note in refs/notes/foundation.

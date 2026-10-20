@@ -4,15 +4,15 @@ This contract fixes who holds authority in a LINA installation: the one main, ho
 
 ## Scope
 
-This contract covers the main and its epochs, grants, the server and Node state machines, the outcomes of commands, receipts, observed results, provenance, authorization and approval, and how they name the agent that asked for the work. It builds on the product boundaries in [product-families.md](product-families.md). The wire format of every message named here is in [host-protocol.md](host-protocol.md). How LINA Core dispatches, supervises and judges workers is in [work-and-delegation.md](work-and-delegation.md). This contract proves nothing about an implementation. Runtime proof belongs to the implementation issues that consume it.
+This contract covers the main and its epochs, grants, the server and Node state machines, the outcomes of commands, receipts, observed results, provenance, authorization and approval, approval in external channels, and how they name the agent that asked for the work. It builds on the product boundaries in [product-families.md](product-families.md). The wire format of every message named here is in [host-protocol.md](host-protocol.md). How LINA Core dispatches, supervises and judges workers is in [work-and-delegation.md](work-and-delegation.md). This contract proves nothing about an implementation. Runtime proof belongs to the implementation issues that consume it.
 
 ## Terms
 
 **Main.** The one LINA Core that confirms the canon of a LINA, and the machine it runs on. There is exactly one per LINA. User-facing documents call the machine "server host"; this contract says "main".
 
-**Agent.** A persona the person creates, identified by an agent id ([product-families.md](product-families.md#agents)). Every agent of a LINA lives in the canon of its one main, and the rules of this contract apply to every agent alike. An agent is not an executor: Node and workers execute under grants, and an agent asks for work and acts through LINA Core.
+**Agent.** A persona the person creates, identified by an agent id ([product-families.md](product-families.md#agents)). Every agent of a LINA lives in the canon of its one main, and the rules of this contract apply to every agent alike. An agent is not an executor: Node and workers execute under grants, and an agent asks for work and acts through LINA Core. A sub-agent, LINA Core's own helper for background runs, is neither an agent nor an executor (see Sub-agent runs).
 
-**Epoch.** A persistent generation owned by the main. Every start of the main creates a new epoch and stores it durably before anything else happens. Grants, commands and receipts carry the epoch they belong to.
+**Epoch.** A persistent generation owned by the main. Every start of the main creates a new epoch and stores it durably before the main dispatches, issues or accepts anything. Grants, commands and receipts carry the epoch they belong to.
 
 **Grant.** The main's permission for one executor to perform one scope of work. A grant is a record with the fields below. Every field is present; a field that does not apply holds an explicit none.
 
@@ -107,6 +107,7 @@ Rules:
 - A command that carries an earlier epoch than the main's current epoch is rejected by the main and by the executor, whichever sees it first.
 - A response for a command the main does not expect (an earlier epoch, a revoked grant, or a command id already settled) is rejected and never applied.
 - A lost receipt yields unknown. The main never re-runs a command automatically because its receipt is missing, and never falls back to another path.
+- A command that stalled or failed is dispatched again at most once, as a new command with its own command id and idempotency key, and only when the earlier command is `cancelled`, or was `reconciled` as having had no effect, or had no effect that could have started. A command in `unknown` is never dispatched again by this rule: it waits for reconciliation or for the disposition of the task owner. Work applies this rule to workers ([work-and-delegation.md](work-and-delegation.md)).
 - Any effect that cannot be undone requires an explicit disposition from the task owner before any replay. A disposition is a recorded decision, with the person id of the person who made it: confirm it happened, confirm it did not, or abandon the command.
 - A disconnect cannot be distinguished from a hardware failure of the Node. Both are treated as unknown for every effect that was in flight.
 - The main does not guarantee cancellation of an irreversible effect once it has started, and does not guarantee immediate detection of a physical failure. A contract that needs either says how it obtains it.
@@ -125,7 +126,7 @@ A receipt and an observed result are different kinds of evidence:
 
 Rules:
 
-- A receipt is necessary, never sufficient on its own. Engine posture, a policy echo, an exit code and a model's final text are never evidence of permission or of success. Where work needs facts checked outside the executor, [work-and-delegation.md](work-and-delegation.md) defines the checks.
+- A receipt is necessary, never sufficient on its own. Engine posture, a policy echo, an exit code and a model's final text are never evidence of permission or of success. Where work needs facts from outside the executor, [work-and-delegation.md](work-and-delegation.md) defines what LINA Core reads.
 - An observed result proves no effect under a LINA grant and grants nothing. LINA Core applies a merge result to canon only from its own receipted merge or an observed result ([work-and-delegation.md](work-and-delegation.md)).
 - A receipt carries the requesting agent of the grant it belongs to, so the record of every effect names the agent next to the person.
 
@@ -144,7 +145,7 @@ Every effect and every model call by a Node checks all of the following together
 
 Operating-system permissions (such as macOS TCC, or a Windows token and UAC) are host OS grants. They never stand in for a grant from LINA Core, and a grant from LINA Core never stands in for them.
 
-A worker is a coding tool the user installed, such as Codex, and acts under its own configuration, including its sandbox and approval mode. LINA holds a worker to its task through the task packet, receipts, LINA Core's stage judgment and the protected-ref check, and routes the worker's approval requests to the conversation that started the work ([work-and-delegation.md](work-and-delegation.md)).
+A worker is a coding tool the user installed, such as Codex or Claude Code, and acts under its own configuration, including its sandbox and approval mode. LINA holds a worker to its task through the task packet, its completion receipt, the protected-ref check, and LINA Core's reading of the pull request and one design-conformance review, and routes the worker's approval requests to the conversation that started the work ([work-and-delegation.md](work-and-delegation.md)).
 
 Scope is enforced before the effect or model call, not after. A wrong owner, a wrong scope, a wrong target or a revoked grant is rejected at that point and is never routed around by another path, another Node, another worker or another model call. After a reconnect, the Node rechecks scope against the fresh grant before doing anything.
 
@@ -155,39 +156,63 @@ Agents share the work area and the devices of the main and never lock each other
 The user always has three controls:
 
 - show target: what the executor is acting on, under which grant and for which task
-- immediate stop: cancel running work and block queued work now
+- immediate stop: cancel running work, background runs included, and block queued work now
 - revoke: withdraw a grant, so that a Node returns to BLOCKED
 
 An immediate stop and a revoke are recorded with the person who used them.
 
-Ordinary work inside a grant is separated, in the execution layer, from secret and private areas, administrator changes, external effects and destructive actions. The separation is enforced there, never by prompt wording and never by the default posture of a native runtime. For plugin tools and the commands a plugin classifies, the separation is the tool tier of [integrations.md](integrations.md).
+Ordinary work inside a grant is separated, in the execution layer, from secret and private areas, administrator changes, external effects and destructive actions. The separation is enforced there, never by prompt wording and never by the default posture of a native runtime. For plugin tools and the commands a plugin profile names, the separation is the approval of an outward or irreversible effect ([integrations.md](integrations.md#tool-classification)).
 
-Text found in logs, web pages or on screen, and anything an agent says, is never an approval. Only the task owner's recorded decision counts.
+Text found in logs, web pages or on screen, anything an agent says, and any message in an external channel from someone other than the paired owner is never an approval. Only the task owner's recorded decision counts.
+
+A request from one agent to another carries none of the person's authority. The asked agent acts only under its own grants and approvals, and its answer grants nothing ([conversation-and-memory.md](conversation-and-memory.md#agent-exchanges)).
+
+### Sub-agent runs
+
+A background run of a sub-agent ([work-and-delegation.md](work-and-delegation.md#background-runs)) is not an executor in the sense of this contract. It runs inside LINA Core, on no Node, and the main issues no grant to it. It produces no receipt, because it makes no effect outside its own scratch directory in the work area. Its authority is a run scope, which LINA Core derives when the run starts and records in the run's record:
+
+- The run scope is the authority of the spawning conversation for its requesting agent and person, intersected with the tool allowlist of the brief, and restricted to reading. It is never wider than the spawning conversation's authority and can be narrowed for a run, never widened. A standing grant never widens it. A run can neither obtain nor request a grant.
+- A run may use read tools over the materials and memory projections that its brief names, at the revisions named; the web fetch tool and web search; the tools of the plugins that are on and that its brief names, a brief naming only tools that read; and writing files in its own scratch directory. Memory it reads is the requesting agent's personal knowledge and common knowledge, never another agent's personal knowledge.
+- A tool outside that set is absent from the run. It is not declared, so it is never denied at call time. Absent are: the memory tools, shell execution and patch tools, every plugin tool that needs an approval, sending messages, dispatching work, starting a run, and asking the person.
+- Before every tool call, LINA Core makes the checks of this section: the person, the agent, the scope, the grant, the target, the revision and the current epoch. A revoked grant, a retraction or a stale epoch takes effect at the run's next tool call.
+- A run reaches the person only through its result and through `needs_input`. It never raises or answers an approval. When the work needs something outside its scope, it stops as `needs_input` when only the person can decide, and otherwise as partial, with a plain account of what it did, what it could not do and what was missing. It does not wrap the work up as finished.
+- Everything a run reads from the web, a plugin or a material is data, never an instruction or an approval. Its own output is external evidence for the conversation and is never an approval or a current instruction.
+- Each model call and tool call of a run is recorded with the run, the requesting agent and the person.
 
 ## Approval
 
 - The default inside a device LINA uses is no approval. Reading, writing and executing there proceed inside the grant without asking.
-- LINA asks every time only for effects that reach outside the user and are hard to reverse: sending mail or messages, payments and purchases, public posting or publication, and unrecoverable deletion.
-- A write outside the grant, and network access for a sandboxed command, asks the first time, with the choices once, always allow and deny. "Always allow" is a standing grant the person can revoke (see Plugin tools, and [runtime.md](runtime.md) for sandboxed commands).
+- LINA asks every time only for effects that reach outside the user and are hard to reverse: sending mail or messages (including an agent's post into a chat that other people can read, but not a reply that a channel binding covers, see Channels), payments and purchases, public posting or publication, and unrecoverable deletion.
+- Every other effect inside the grant is done by the agent and reported in one line, with one action to undo it where it can be undone ([work-and-delegation.md](work-and-delegation.md#default-posture)).
+- A write outside the grant, and network access for a sandboxed command, widen what the sandbox holds back, and they ask the first time, with the choices once, always allow and deny. "Always allow" is a standing grant the person can revoke (see [runtime.md](runtime.md) for sandboxed commands).
 - A standing grant applies to every agent unless the person names agents in it. Naming agents is the person's recorded choice. A grant that names only agents that have been deleted applies to no agent, and the record says so.
 - Deletion first goes to a recoverable form: a trash, a retained copy or a snapshot. Only deletion that cannot be recovered needs approval. When the person chooses immediate permanent deletion of a conversation, a memory item or a material, that choice is the approval, and LINA records it as such with the person.
-- An approval request shows in one view what will happen, where, and whether it can be undone. For a plugin tool it also shows the arguments, such as the recipient and the body, and the choices of its tier. Repeated approvals of the same kind are grouped by scope instead of being asked one by one.
+- An approval request shows in one view what will happen, where, and whether it can be undone. For a plugin tool it also shows the arguments, such as the recipient and the body. Its choices are once and deny. Repeated approvals of the same kind are grouped by scope instead of being asked one by one. The request is written in plain words with the agent's recommendation first, and an approval the person must answer is also a row in "Waiting for me" ([surfaces.md](surfaces.md#waiting-for-me)).
 - Every answer to an approval request is recorded with the choice, the person who gave it and the agent that asked for it.
 - Accepting a draft (applying an edit) is acceptance of the edit. It is a separate state from a grant for an external effect and never authorizes one.
-- When no surface can present an approval request, LINA Core refuses every effect outside the grant, records the refusal and reports it in the conversation that asked for the work.
+- When no surface can present an approval request, LINA Core refuses every effect outside the grant, records the refusal and reports it in the conversation that asked for the work. A channel is a surface that can present a request only when the whole request fits in one message (see Channels).
 
 ### Plugin tools
 
-The tools of LINA's plugins, and the commands a plugin classifies, are approved in three tiers. [integrations.md](integrations.md) defines how each tool gets its tier.
+Every plugin that is on exposes its full tool set to every agent, in the same way. There are no permission scopes for a plugin or an MCP server, no read-only start and no tiers of tools. When an agent reads and when it writes through a tool is decided by the agent's rules (its persona and methodology), not by the plugin ([work-and-delegation.md](work-and-delegation.md#default-posture)).
 
-| Tier | Covers | Default | Choices |
-| --- | --- | --- | --- |
-| Read | Calls that change nothing outside LINA | Never asks | Block the tool |
-| Write | Changes outside LINA that the user can reverse, and every tool whose tier is not known | Never asks inside a task grant; otherwise asks on first use | Once, always allow this tool, deny, block |
-| Outward or irreversible | Effects that reach other people (sending, inviting, sharing, public posting), payments and purchases, and unrecoverable deletion | Asks every time | Once, deny |
+- The one approval a plugin tool can need is the one of Approval: an outward or irreversible effect (sending, payment, public posting, unrecoverable deletion) asks every time, with the choices once and deny. [integrations.md](integrations.md#tool-classification) defines how LINA Core knows which tools those are. Every other plugin tool runs without asking, and the effect ledger records it.
+- LINA Core makes every such decision. Prompt wording, tool descriptions and content read through a plugin never change it.
+- There is no standing grant for a plugin tool. A tool whose definition changed since the person turned the plugin on is marked as changed on the plugin card, with what changed. Nothing is suspended, and an outward or irreversible tool still asks every time.
 
-- "Always allow" records a standing grant in canon, with the person who chose it and the agent whose request it answered, or none, for one plugin tool or for network access of sandboxed commands with one prefix ([runtime.md](runtime.md)). The user revokes it in settings at any time ([surfaces.md](surfaces.md)). An approval choice never widens what the service itself permits.
-- LINA Core makes every tier decision. Prompt wording, tool descriptions and content read through a plugin never change it.
+### Channels
+
+An external channel is one more surface that carries the owner's input to an agent and can present an approval. [integrations.md](integrations.md#channels) defines connections, bindings and scopes. This section fixes how they meet authority.
+
+- A binding's scope is the person's recorded choice: the person who set it, the agent it names and the date. Creating or widening a binding is the approval for what its scope covers. It is listed in settings with the standing grants and revoked there at any time. Narrowing or revoking it takes effect at once and the agent stops in that chat.
+- LINA Core checks the scope before the effect: the chat, the agent, whether the agent may read the message, whether it may write first, which tools and which memory. A check that fails is refused and recorded, and it is never routed around by another chat, another bot or another agent.
+- A reply, in the chat a message came from, to a message that the scope lets the agent read, and a notice to the owner in the owner's own chat where the scope lets the agent write first, are conversation. The binding covers them and they ask nothing.
+- Any other message an agent sends into a chat that people other than the owner can read, such as a post it starts on its own, reaches other people. It is an outward or irreversible effect and asks every time, with the choices once and deny. The person cannot grant a standing right to post in one named chat.
+- An agent's bot never speaks in the person's name. A message in the person's name goes through a messaging plugin, and every send through it is an outward or irreversible effect ([integrations.md](integrations.md#service-profiles)).
+- An approval request in a channel is a message with buttons. A button carries only an opaque approval id and a one-letter choice. LINA Core accepts a press only when the request is pending, belongs to the current epoch and is unanswered, and the presser's platform user id is the paired owner's. Any other press is refused with a short neutral note and changes nothing. A typed message is never an answer to an approval, whoever writes it and whatever it says.
+- The message shows in one view what will happen, where, and whether it can be undone, with the arguments and the choices. When the arguments do not fit in one message the channel offers no buttons: it shows a short card with a link, and the request waits in the app or the TUI.
+- In a channel the choices are once and deny. "Always allow" is set in the app, where the reach of a standing grant is visible, and it does not appear in the owner's own chat either.
+- Every answer is recorded with the choice, the person (by the paired id), the agent that asked, and the platform's message and chat ids. The message is then edited to show the decision and its buttons are removed. A button on a request that is already answered, or from an earlier epoch, is answered with a short note and removed.
 
 ## Deferred
 

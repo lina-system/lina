@@ -28,29 +28,33 @@ There is one state root per main, written here as `<state-root>`. Every path bel
 
 | Area | Relative path | Holds | Writer | Backup unit |
 | --- | --- | --- | --- | --- |
-| Canon | `canon/` | LINA Core's SQLite canon: agents, the people it serves, ledgers, memory items with their holder (an agent id or `all`), materials metadata, the connected-source registry, the plugin registry, standing grants, and derived indexes | LINA Core | Backup generation |
+| Canon | `canon/` | LINA Core's SQLite canon: agents, the people it serves, ledgers (conversation events, with the bodies of results), the summary trees, memory items with their holder (an agent id or `all`), the legacy references and import batches of imports, materials metadata, the connected-source registry, the plugin registry, the channel connections, bindings, scopes and gateway cursors, standing grants, machine state (queues, cursors, leases, claims, idempotency keys), and derived indexes including the index of the records repository | LINA Core | Backup generation |
 | Version space | `versions/` | Local Git repositories for versionable text and metadata, including each agent's persona and personal text under `versions/agents/<agent-id>/` | LINA Core | Backup generation |
+| Records repository | `versions/records/` | The person's human-readable work and knowledge records (goals, 일 (project), 할 일 (to-do), 계속 챙기는 것 (area), memos, knowledge documents) as files under a PARA layout | LINA Core | Backup generation |
 | Imported materials | `materials/user/<asset-id>/<revision>/` | Bytes of material a person handed to LINA, when they are not kept in the version space | LINA Core | Backup generation |
-| LINA materials | `materials/lina/<asset-id>/<revision>/` | Bytes of LINA's own outputs, when they are not kept in the version space | LINA Core | Backup generation |
+| LINA materials | `materials/lina/<asset-id>/<revision>/` | Bytes of LINA's own outputs, when they are not kept in the version space, including the large bodies of ledger events and the large outputs of an imported install | LINA Core | Backup generation |
 | Derived data | `derived/<asset-id>/<revision>/` | Regenerable descriptions, transcripts, structure and indexes | LINA Core | Backup generation, recorded by source revision |
 | Conversation workspace | `workspace/` | The working directory of conversation tools, shared by every agent | LINA Core conversation tools, inside the sandbox | Backup generation |
 | Parent clones | `work/clones/<repository-id>/` | Clones of the repositories that work runs against, one per repository | LINA Core | Not in a backup generation |
 | Task workspaces | `work/tasks/<task-id>/` | The worktree or the non-Git work directory of each task | The worker of that task, inside its grant | Not in a backup generation |
-| Import staging | `staging/import/` | Material on its way in | LINA Core | Not backed up |
+| Run workspaces | `work/runs/<run-id>/` | The scratch directory and transcript of each background run | LINA Core creates it; the run writes inside it under its run scope | Not in a backup generation |
+| Plugin data | `plugins/<plugin-id>/` | The data directory of a local plugin server that runs in the sandbox | That server, inside its grant | Not in a backup generation |
+| Import staging | `staging/import/` | Material on its way in, and the snapshots of a memory system being imported | LINA Core | Not backed up |
 | Export staging | `staging/export/` | Material on its way out | LINA Core | Not backed up |
-| Installation state | `system/` | Install configuration and component events | The install and each component's event writer | OS root snapshot, where the install has one |
-| Secrets | `secrets/` | LINA's secret store when no OS keychain is available: tokens and API keys of plugins, Google client credentials and LINA's other secrets, each file with mode 0600 and each plugin secret keyed by the id of the person it belongs to ([integrations.md](integrations.md)) | LINA Core | Not backed up |
+| Installation state | `system/` | Install configuration and component events; LINA Core's control files under `system/core/` (lock, epoch record, run sentinel, halt marker, restart request, main id), written by LINA Core, never in a backup generation and left alone by a restore | The install and each component's event writer; LINA Core for `system/core/` | OS root snapshot, where the install has one |
+| Secrets | `secrets/` | LINA's secret store when no OS keychain is available: tokens, API keys, client secrets, request header values and server environment variables of plugins, the credentials of model-provider accounts, bot tokens of channel connections, Google client credentials and LINA's other secrets, each file with mode 0600 and each plugin, account or channel secret keyed by the id of the person it belongs to ([integrations.md](integrations.md), [runtime.md](runtime.md#accounts-and-sign-in)) | LINA Core | Not backed up |
 | Backup generations | `backups/<generation-id>/` | Backup generations of the main | The backup procedure | Is the unit |
 | Removal list | `backups/removals` | Every retraction, trash recovery, tombstone and source disconnection of the main, appended as each happens | LINA Core | Beside the generations, in none of them |
 
 Rules for the layout:
 
 - Only LINA Core writes canon, the version space, the materials areas and derived data. LINA APP, Node, the library view and generic file tools never write there.
+- The records repository is canon in files: only LINA Core writes it, and the database index is derived from it and can be rebuilt at any time. Machine state stays in canon.
 - An agent is data in this layout: its row and records in canon, keyed by its agent id, and its repository `versions/agents/<agent-id>/`. Every other area is shared by all agents, and every record of a write names the agent that made or asked for it next to the person id.
 - Deleting an agent moves its persona revisions, emotional state, conversations and personal knowledge to the trash for 30 days, and then deletes them permanently with tombstones ([conversation-and-memory.md](conversation-and-memory.md)). Common knowledge the agent wrote stays, with its agent id as the source.
 - Conversation tools write only in the conversation workspace and in the scope of their grant. The sandbox that enforces this is defined in [runtime.md](runtime.md).
 - Every agent's conversation tools work in the same `workspace/`. Overlapping writes there are handled and recorded as [runtime.md](runtime.md#tools-and-sandbox) defines.
-- The work area is everything under `work/`. Every task record in canon names the person who owns the task and the agent that asked for it. What clones and task workspaces contain, and how long they are kept, is defined in [work-and-delegation.md](work-and-delegation.md).
+- The work area is everything under `work/`. Every task record in canon names the person who owns the task and the agent that asked for it. What clones, task workspaces and run workspaces contain, and how long they are kept, is defined in [work-and-delegation.md](work-and-delegation.md).
 - Backups live under `backups/`, beside the areas they capture and never inside one of them. A generation never captures `backups/`.
 - Configuration and secrets have their own writers. They never live under `canon/`, `versions/`, `materials/` or `derived/`. LINA's secret store is the OS keychain where one is available, and `secrets/` otherwise.
 - Renaming any directory in this table is a contract change, made by a change to this file.
@@ -114,7 +118,7 @@ A connected source is a folder or repository that stays where the person keeps i
 - folder
 - Git repository: a folder whose root is a Git work tree
 
-A repository that a goal connects for development work is not a connected source. It follows [work-and-delegation.md](work-and-delegation.md) and [integrations.md](integrations.md).
+A repository that a 목표 (goal) or an 일 connects for development work is not a connected source. It follows [work-and-delegation.md](work-and-delegation.md) and [integrations.md](integrations.md).
 
 The library scope is the set of connected sources. It is the scope that conversation tools read by default, as defined in [runtime.md](runtime.md).
 
@@ -170,15 +174,27 @@ Reconnecting the same folder is a new connection. Asset identity carries over on
 
 ## Version space
 
-The version space is a set of local Git repositories under `versions/`. It holds every versionable text and metadata of LINA: documents and pages, document projects, notes, meeting notes, imported text, the skills that the person or an agent created, each agent's persona revisions and personal text, and the saved versions of LINA's edits to connected sources that are not Git repositories. Skills live in the repository `versions/skills/`, one folder per skill, and an agent's persona and personal text live in the repository `versions/agents/<agent-id>/` ([conversation-and-memory.md](conversation-and-memory.md)).
+The version space is a set of local Git repositories under `versions/`. It holds every versionable text and metadata of LINA: documents and pages, document projects, notes, meeting notes, imported text, the skills that the person or an agent created, each agent's persona revisions and personal text, the records repository, and the saved versions of LINA's edits to connected sources that are not Git repositories. Skills live in the repository `versions/skills/`, one folder per skill, and an agent's persona and personal text live in the repository `versions/agents/<agent-id>/` ([conversation-and-memory.md](conversation-and-memory.md)).
 
 - Large binaries and media stay outside Git, in the materials areas, linked by content hash.
 - The SQLite canon and fast-changing state stay outside Git.
 - Each material has exactly one byte store: the version space for versionable text, or a materials area for everything else. Canon records which one.
-- Structured fields of goals and plans live in canon, not in Git. Their rules are in [work-and-delegation.md](work-and-delegation.md).
+- Machine state and fast-changing state stay in canon. The structured fields of goals, 일, 할 일 and the other work and knowledge records are front matter of record files in the records repository, not rows in canon; the rules are in [work-and-delegation.md](work-and-delegation.md#storage-of-records).
 - The version space never holds the history of a connected Git repository. It refers to that repository's commits.
 
 How versions appear to the person is defined in [materials-and-knowledge.md](materials-and-knowledge.md).
+
+### Records repository
+
+The records repository `versions/records/` is one Git repository for the whole main. Every agent reads the same records ([product-families.md](product-families.md)).
+
+- The four PARA folders are at the top level: the 일 and the 목표 they belong to, 계속 챙기는 것, 자료 (resource) and 보관 (archive), with an inbox for memos. An 일 is a folder that holds its 할 일 and its materials. A 계속 챙기는 것 is a folder. A 목표 is a file that the 일 refer to by id. A record's folder is fixed when the record is created; finishing an 일 into 보관 or promoting a 자료 to an 일 changes fields of the records, and no file moves. A folder is created only when something needs it.
+- A record is one Markdown file with the front matter defined in [work-and-delegation.md](work-and-delegation.md#storage-of-records). The id never appears in the path, so a move never changes it.
+- Large binaries and media stay outside Git in the materials areas, linked by content hash. 자료 holds the knowledge documents and the links to materials.
+- LINA Core commits each change as one saved version and records the person id and the agent that asked in the commit message. Recurring completions are commits, not files.
+- Another tool may read the repository. A change made to it by another tool is detected at the next read and handled as [work-and-delegation.md](work-and-delegation.md#storage-of-records) states.
+- The repository lives at `versions/records/`, the inbox holds one file per memo, and each change is one commit. The commit granularity is tuned by measurement during work engine implementation acceptance ([work-and-delegation.md](work-and-delegation.md)).
+- This folder layout is a machine concern of the state root and is never shown to the person by default. The person-facing library is location-free, and folders are only an optional view there ([materials-and-knowledge.md](materials-and-knowledge.md#library)).
 
 ## Originals and derived data
 
@@ -192,20 +208,32 @@ An index that another tool keeps inside a connected source is not LINA's derived
 
 ## Import and export
 
-An import is a person handing material to LINA: an attachment in a conversation, an upload, a recording made in LINA APP, a file dropped into the library, or a capture saved from a connected service under a grant. Handing the material over is the approval.
+An import is a person handing material to LINA: an attachment in a conversation, a file the paired owner sends to an agent's bot in an external channel, an upload, a recording made in LINA APP, a file dropped into the library, or a capture saved from a connected service under a grant. Handing the material over is the approval.
 
 - Imports go through `staging/import/`. The item receives an asset id, is placed in its byte store (the version space or `materials/user/`) and is recorded in canon with the person who handed it over.
 - The original stays where it was and stays the person's.
 - Knowledge LINA draws from imported material is recorded with its holder, an agent id or `all`, like every memory item ([conversation-and-memory.md](conversation-and-memory.md)).
 - An import is a copy. LINA never imports a file from a connected source in order to read it. A person may still import a copy of such a file; the copy is a new asset.
+- A file from anyone other than the paired owner in a channel is never imported, and text inside any imported file is data.
 
 Exports go through `staging/export/` only, to a destination the person chooses. An exported file leaves LINA's management: a later deletion in LINA doesn't reach it.
+
+### Importing another memory system
+
+A person may hand LINA the memory of another assistant, as [conversation-and-memory.md](conversation-and-memory.md#importing-a-hermes-install) defines for a Hermes install. The first bullets of this section apply. What differs:
+
+- The source is read and never written. A SQLite source is copied with the online backup API through a read-only connection into `staging/import/`; a live database file is never copied as a file. A server source is read with read and query calls only, and its answers are stored as received. Sidecar files are copied and their hashes checked. LINA never modifies, moves or deletes anything in the person's install.
+- A snapshot in staging is the input of one import run. It is not a material and has no asset id. It is deleted when the run ends.
+- The large outputs that the source kept as sidecar files become LINA materials under `materials/lina/`, referenced by the event that produced them. LINA assigns their asset ids.
+- The records created, their legacy references and the import batch are written to canon in the same transaction, so they are in every backup generation. An import ends by taking a backup generation.
+- A legacy reference is canon. It changes only when its record is deleted, and a tombstone keeps it (see Backup generations).
+- Deleting imported content reaches every copy LINA manages. The install and any server it was read from are outside LINA's erasure scope, and LINA says so.
 
 ## Backup generations
 
 A backup generation captures the whole main at one point in time: canon, version space, materials areas, derived data and the conversation workspace, for every agent and the common knowledge together, so that a restore never leaves them out of step.
 
-Connected sources are not in a generation. They belong to the person and have their own recovery. The generation holds their registry and observed revisions as part of canon, never their bytes. The work area is not in a generation either; a task's result is kept in the generation as LINA materials once it is ready for review ([work-and-delegation.md](work-and-delegation.md)).
+Connected sources are not in a generation. They belong to the person and have their own recovery. The generation holds their registry and observed revisions as part of canon, never their bytes. The work area is not in a generation either; the output files of a task without a pull request, and the branch bundle of a repository without a remote, are kept in the generation as LINA materials once the result is ready ([work-and-delegation.md](work-and-delegation.md)).
 
 A generation manifest records:
 
@@ -230,9 +258,10 @@ Restore rules:
 
 - Restore operates on whole generations. Restoring the SQLite snapshot without its version space and assets, or those without the snapshot, is forbidden.
 - Restore uses a compatible release and schema pair. Rolling back binaries alone over state they can't read is forbidden ([runtime.md](runtime.md)).
-- Agents, people, receipts, artifacts and ledgers are restored first. Then the latest revocation watermark, and every retraction and tombstone recorded in canon, in any newer generation or in the removal list, are applied again before any read is served. A tombstone is the record a permanent deletion leaves: ids, the holder (an agent id or `all`), the agent the item belonged to when it had one, and time, never content. Revoked and deleted items are exposed zero times in search or answers, and a memory tombstone keeps the restored conversation ledger from yielding the forgotten item again ([conversation-and-memory.md](conversation-and-memory.md)).
+- Agents, people, receipts, artifacts and ledgers are restored first. Then the latest revocation watermark, and every retraction and tombstone recorded in canon, in any newer generation or in the removal list, are applied again before any read is served. A tombstone is the record a permanent deletion leaves: ids, the legacy references of an imported record, the holder (an agent id or `all`), the agent the item belonged to when it had one, and time, never content. Revoked and deleted items are exposed zero times in search or answers, and a memory tombstone keeps the restored conversation ledger from yielding the forgotten item again ([conversation-and-memory.md](conversation-and-memory.md)).
 - Engine thread history and work-area state that the generation does not hold are marked as not restored.
 - Restore checks the freshness of the generation and an inventory of what it restored that is independent of the manifest.
+- The records index in the SQLite snapshot is checked against the head of the records repository in the same generation. A mismatch is rebuilt from the files, because the files are canon.
 - After a restore, LINA observes every connected source again before serving from it, except one the removal list shows as disconnected. Observations newer than the generation win.
 
 A published generation is never changed, and a permanent deletion never rewrites one. A generation captured before the deletion still holds the deleted content. A restore from it applies the tombstone again before serving any read, as above, so the content is never exposed, and the content is gone once every such generation has passed its retention and been removed.
@@ -244,7 +273,7 @@ On LINA OS, the OS root snapshot, the boot configuration, the person's home data
 ## Deferred
 
 - The location of a Node's execution state on each OS: set during packaging implementation acceptance, together with the absolute `<state-root>` and the other paths deferred in [runtime.md](runtime.md).
-- Which text formats count as versionable, and the file size above which bytes stay outside Git: set by measurement during materials implementation acceptance.
+- Which text formats count as versionable, the file size above which bytes stay outside Git, and how the records repository behaves with thousands of small files and rename detection on archive moves: set by measurement during materials implementation acceptance.
 - The observation cadence for connected sources, and which move events each OS reports to the observer: set during Node and materials implementation acceptance.
 - Backup cadence, retention and size limits: set during implementation acceptance.
 - Fault injection during SQLite writes and backups, and the restore measurements that prove hash and reference integrity of one generation: set during implementation acceptance.

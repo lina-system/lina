@@ -19,3 +19,11 @@ Talk about your day. Think aloud. Bring a problem. Your agents carry your shared
 LINA takes responsibility for the work and proves the result, without making you manage every step. This stance was inspired by the spirit of [ultrawork](https://github.com/code-yeongyu/oh-my-openagent/blob/dev/docs/manifesto.md).
 
 **Humanity has spent enough time implementing the clipboard interface.**
+
+## License and contributions
+
+LINA is licensed under the Apache License, Version 2.0 ([LICENSE](LICENSE), [NOTICE](NOTICE)). Third-party components keep their own licenses ([THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)). Contributions are accepted under the same license ([CONTRIBUTING.md](CONTRIBUTING.md)).
+
+This repository holds LINA Core, the terminal UI, Node and the published protocol between the app and LINA Core, all under Apache-2.0. The LINA app for desktop and mobile is closed source: it lives in a separate private repository and ships as a binary.
+
+Report a problem or an idea for any part of LINA, the app included, in this repository: problems as Issues (app problems with the `app` label), ideas in Discussions. The app can also draft a report for you; it posts only after you confirm.
