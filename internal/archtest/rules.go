@@ -95,7 +95,7 @@ func violations(root string, standard map[string]bool) ([]string, error) {
 				if layers[target] == 0 {
 					report(spec.Pos(), "unmapped", imported+" has no C-40 layer")
 				} else if core && ownerFamily != target && layers[target] >= layers[ownerFamily] {
-					report(spec.Pos(), "layer", fmt.Sprintf("%s (L%d) imports %s (L%d); imports must run downward", ownerFamily, layers[ownerFamily], target, layers[target]))
+					report(spec.Pos(), "layer", fmt.Sprintf("%s (L%d) imports %s (L%d); imports between families must run downward", ownerFamily, layers[ownerFamily], target, layers[target]))
 				}
 			}
 			if within(owner, "kit") && within(imported, rootModule) && !within(imported, rootModule+"/kit") {

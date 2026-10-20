@@ -6,5 +6,41 @@
     "full_foundation": 60
   },
   "budget_rationale": "20 seconds for the affected Go package loop; 60 seconds for full verification including the vulnerability and license gates added after the earlier component-only timing. Budgets are fixed before measurement.",
-  "measurements": null
+  "measurements": {
+    "edit_to_test": {
+      "started_at": "2026-10-20T17:30:43.906Z",
+      "edit": "Clarify the production layer-violation diagnostic to mention package families.",
+      "path": "internal/archtest/rules.go",
+      "sha256": "d969752bf90db666d800f9e381ed499d32cc19a742093229f86ba2aa23625eb6",
+      "commands": [
+        {
+          "command": "go build -mod=readonly ./internal/archtest/...",
+          "exit_code": 0,
+          "seconds": 0.07235599999999999
+        },
+        {
+          "command": "go vet -mod=readonly ./internal/archtest/...",
+          "exit_code": 0,
+          "seconds": 0.594912
+        },
+        {
+          "command": "go test -count=1 -mod=readonly ./internal/archtest/...",
+          "exit_code": 0,
+          "seconds": 0.50892
+        }
+      ],
+      "seconds": 1.176347,
+      "within_budget": true
+    }
+  },
+  "source_commit_before_edit": "d31b5fc1f9ca55a66414c2ef50552aa0047f7c61",
+  "environment": {
+    "os": "linux",
+    "arch": "x64",
+    "available_cpus": 16,
+    "go": "go1.27.3",
+    "node": "v24.20.0",
+    "actionlint": "1.7.12",
+    "cache": "Warm module and build caches; the Go source edit invalidates the affected package. go test uses -count=1. Isolated home, no credentials."
+  }
 }
