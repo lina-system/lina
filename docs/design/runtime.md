@@ -437,6 +437,8 @@ Supported platforms are defined in [product-families.md](product-families.md). A
 
 ### The `lina` command
 
+The initial skeleton recognizes `lina core`, `lina tui`, `lina version` and `lina-node version`; each reports not implemented on stderr and exits 70 until its implementation lands. Missing or unknown subcommands print usage on stderr and exit 64.
+
 LINA Core and the TUI are one executable, `lina`. Its subcommands cover these uses:
 
 | Use | What it does |
