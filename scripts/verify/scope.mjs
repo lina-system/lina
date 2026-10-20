@@ -12,11 +12,17 @@ const documents = new Set([
 const configuration = new Set(['.editorconfig', '.gitattributes', '.gitignore', '.node-version']);
 const modules = new Set(['go.mod', 'go.sum', 'go.work', 'go.work.sum', 'kit/go.mod', 'kit/go.sum']);
 
-export const componentRegistry = [
-  { name: 'kit', module: 'kit', directories: ['kit/', 'protocol/schema/', 'protocol/fixtures/'], files: [], packages: ['./...'] },
-  { name: 'lina', module: '.', directories: ['cmd/lina/', 'internal/archtest/'], files: ['doc.go'], packages: ['.', './cmd/lina/...', './internal/archtest/...'], binary: 'lina' },
-  { name: 'lina-node', module: '.', directories: ['cmd/lina-node/'], files: [], packages: ['./cmd/lina-node/...'], binary: 'lina-node' },
-];
+function registryFor(cwd) {
+  // Older trees and minimal verification fixtures may not have architecture tests yet.
+  const architecture = existsSync(join(cwd, 'internal/archtest')) ? ['./internal/archtest/...'] : [];
+  return [
+    { name: 'kit', module: 'kit', directories: ['kit/', 'protocol/schema/', 'protocol/fixtures/'], files: [], packages: ['./...'] },
+    { name: 'lina', module: '.', directories: ['cmd/lina/', 'internal/archtest/'], files: ['doc.go'], packages: ['.', './cmd/lina/...', ...architecture], binary: 'lina' },
+    { name: 'lina-node', module: '.', directories: ['cmd/lina-node/'], files: [], packages: ['./cmd/lina-node/...'], binary: 'lina-node' },
+  ];
+}
+
+export const componentRegistry = registryFor(process.cwd());
 
 function componentOf(path) {
   return componentRegistry.find(component => component.files.includes(path)
@@ -127,7 +133,7 @@ export function scopeFor({ base = '', head, full = false, cwd = process.cwd() })
     : docsOnly ? 'documents-only'
     : changed.some(path => ['modules', 'components'].includes(kind(path))) ? 'component-change'
     : changed.some(path => kind(path) === 'dependencies') ? 'dependency-change' : 'automation-change';
-  const active = componentRegistry.filter(component => inventory.some(path => componentOf(path)?.name === component.name));
+  const active = registryFor(cwd).filter(component => inventory.some(path => componentOf(path)?.name === component.name));
   const all = full || resolvedBase === null || changed.length === 0 || unmapped.length > 0
     || changed.some(path => ['automation', 'modules', 'unmapped'].includes(kind(path)))
     || changed.some(path => componentOf(path) && !active.some(component => component.name === componentOf(path).name));
