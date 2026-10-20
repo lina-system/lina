@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Releases one exact commit of dev.
 //
-//   node scripts/release.mjs --commit <sha> --tag vX.Y.Z --notes-file <file> [--publish]
+//   node scripts/release.mjs --commit <sha> --tag v0.0.1-alpha.20261020.1 --notes-file <file> [--publish]
 //                            [--remote <name>] [--out <directory>]
 //
 // The default is a dry run: every check and the build run, and nothing is pushed or published.
@@ -149,7 +149,7 @@ export function release({
   cwd = process.cwd(), commit, tag, notesFile, publish = false, remote = 'origin', outDir, log = console.error,
 }) {
   if (!/^[0-9a-f]{40}$/.test(commit ?? '')) fail('Provide --commit as an exact 40-character commit id.');
-  if (!tagPattern.test(tag ?? '')) fail('Provide --tag as a version such as v0.1.0 or v0.1.0-rc.1.');
+  if (!tagPattern.test(tag ?? '')) fail('Provide --tag as a version such as v0.0.1-alpha.20261020.1, without build metadata (+).');
   if (!notesFile) fail('Provide --notes-file with the user-facing release notes.');
   if (!/\S/.test(readFileSync(notesFile, 'utf8'))) fail('The release notes are empty.');
   const root = toplevel(cwd);
