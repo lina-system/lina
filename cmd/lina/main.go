@@ -15,8 +15,7 @@ func main() {
 			version()
 			return
 		case "tui":
-			fmt.Fprintf(os.Stderr, "lina %s: not implemented\n", os.Args[1])
-			os.Exit(70)
+			os.Exit(runTUI(os.Args[2:]))
 		}
 	}
 	fmt.Fprintln(os.Stderr, "usage: lina <core|tui|version>")

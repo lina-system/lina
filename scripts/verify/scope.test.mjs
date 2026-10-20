@@ -111,7 +111,7 @@ test('every Go component change also selects the architecture test', t => {
   assert.equal(r.classify('HEAD', { base }).components, false);
 });
 
-test('Core package edits select their tests and follow kit imports', t => {
+test('Core and client package edits select their tests and follow kit imports', t => {
   const r = repository(t);
   const files = {
     'go.mod': 'module example.invalid/lina\ngo 1.27\ntoolchain go1.27.3\n',
@@ -123,13 +123,16 @@ test('Core package edits select their tests and follow kit imports', t => {
     'cmd/lina-node/main.go': 'package main\nfunc main() {}\n',
     'internal/core/boot/boot.go': 'package boot\n',
     'internal/core/clientsrv/server.go': 'package clientsrv\nimport _ "example.invalid/lina/kit/protocol"\n',
+    'internal/clientapi/client.go': 'package clientapi\nimport _ "example.invalid/lina/kit/protocol"\n',
+    'internal/tui/ui/ui.go': 'package ui\nimport _ "example.invalid/lina/internal/clientapi"\n',
   };
   for (const [name, content] of Object.entries(files)) {
     mkdirSync(join(r.cwd, name, '..'), { recursive: true });
     writeFileSync(join(r.cwd, name), content);
   }
   const base = r.commit();
-  for (const path of ['internal/core/boot/boot.go', 'internal/core/clientsrv/server.go', 'kit/protocol/doc.go']) {
+  for (const path of ['internal/core/boot/boot.go', 'internal/core/clientsrv/server.go',
+    'internal/clientapi/client.go', 'internal/tui/ui/ui.go', 'kit/protocol/doc.go']) {
     writeFileSync(join(r.cwd, path), files[path] + '// edited\n');
     const scope = r.classify('HEAD', { base });
     assert.deepEqual(scope.unmapped, []);
@@ -140,6 +143,9 @@ test('Core package edits select their tests and follow kit imports', t => {
   const lina = componentRegistry.find(component => component.name === 'lina');
   for (const directory of ['boot', 'clientsrv']) {
     assert.ok(lina.packages.includes(`./internal/core/${directory}/...`));
+  }
+  for (const directory of ['clientapi', 'tui']) {
+    assert.ok(lina.packages.includes(`./internal/${directory}/...`));
   }
   assert.equal(kind('internal/core/unregistered/example.go'), 'unmapped');
 });

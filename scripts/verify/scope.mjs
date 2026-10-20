@@ -20,9 +20,12 @@ function registryFor(cwd) {
   const coreDirectories = ['internal/core/boot/', 'internal/core/clientsrv/'];
   const corePackages = coreDirectories.filter(directory => existsSync(join(cwd, directory)))
     .map(directory => `./${directory}...`);
+  const clientDirectories = ['internal/tui/', 'internal/clientapi/'];
+  const clientPackages = clientDirectories.filter(directory => existsSync(join(cwd, directory)))
+    .map(directory => `./${directory}...`);
   return [
     { name: 'kit', module: 'kit', directories: ['kit/', 'protocol/schema/', 'protocol/fixtures/'], files: [], packages: ['./...'] },
-    { name: 'lina', module: '.', directories: ['cmd/lina/', 'internal/archtest/', 'internal/buildinfo/', 'internal/core/manifest/', ...coreDirectories], files: ['doc.go'], packages: ['.', './cmd/lina/...', ...architecture, ...buildinfo, ...manifest, ...corePackages], binary: 'lina' },
+    { name: 'lina', module: '.', directories: ['cmd/lina/', 'internal/archtest/', 'internal/buildinfo/', 'internal/core/manifest/', ...coreDirectories, ...clientDirectories], files: ['doc.go'], packages: ['.', './cmd/lina/...', ...architecture, ...buildinfo, ...manifest, ...corePackages, ...clientPackages], binary: 'lina' },
     { name: 'lina-node', module: '.', directories: ['cmd/lina-node/'], files: [], packages: ['./cmd/lina-node/...'], binary: 'lina-node' },
   ];
 }

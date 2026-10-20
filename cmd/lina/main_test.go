@@ -30,7 +30,7 @@ func TestCommand(t *testing.T) {
 		{name: "core unknown flag", args: []string{"core", "--unknown"}, code: 64},
 		{name: "core extra argument", args: []string{"core", "--socket", "unused.sock", "extra"}, code: 64},
 		{name: "core occupied socket path", args: []string{"core", "--socket", binary}, code: 78},
-		{name: "tui", args: []string{"tui"}, code: 70},
+		{name: "tui missing socket", args: []string{"tui"}, code: 64},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			command := exec.Command(binary, tc.args...)

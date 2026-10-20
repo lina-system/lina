@@ -27,6 +27,15 @@ func TestRules(t *testing.T) {
 	for _, tc := range []struct {
 		name, file, source, want string
 	}{
+		{"TUI excludes Core", "internal/tui/ui/file.go", `package ui; import _ "` + module + `/internal/core/boot"`, "TUI"},
+		{"TUI excludes providers", "internal/tui/ui/file.go", `package ui; import _ "` + module + `/kit/provider/responses"`, "TUI"},
+		{"TUI excludes third party", "internal/tui/state/file.go", `package state; import _ "example.com/client"`, "TUI"},
+		{"TUI near prefix", "internal/tui/ui/file.go", `package ui; import _ "` + module + `/internal/clientapis"`, "TUI"},
+		{"TUI typed client", "internal/tui/ui/file.go", `package ui; import _ "` + module + `/internal/clientapi"`, ""},
+		{"TUI protocol", "internal/tui/ui/file.go", `package ui; import _ "` + module + `/kit/protocol"`, ""},
+		{"TUI design", "internal/tui/ui/file.go", `package ui; import _ "` + module + `/internal/design"`, ""},
+		{"TUI sibling", "internal/tui/ui/file.go", `package ui; import _ "` + module + `/internal/tui/state"`, ""},
+		{"TUI standard library", "internal/tui/ui/file.go", `package ui; import _ "fmt"`, ""},
 		{"upward layer", "internal/core/canon/file.go", `package canon; import _ "` + module + `/internal/core/authority"`, "layer"},
 		{"L2 upward", "internal/core/authority/file.go", `package authority; import _ "` + module + `/internal/core/ledger"`, "layer"},
 		{"L3 upward", "internal/core/ledger/file.go", `package ledger; import _ "` + module + `/internal/core/lane"`, "layer"},
