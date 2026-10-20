@@ -304,3 +304,23 @@ for (const path of ['.github/workflows/nested/ci.yml', '.github/workflows/script
     assert.deepEqual(r.classify(r.commit()).unmapped, [path]);
   });
 }
+
+for (const path of ['scripts/verify/dependency-exceptions.json', 'THIRD-PARTY-NOTICES.md']) {
+  test(`${path}: additions, modifications and deletions select dependencies without components`, t => {
+    const r = repository(t);
+    mkdirSync(join(r.cwd, path, '..'), { recursive: true });
+    writeFileSync(join(r.cwd, path), 'fixture\n');
+    const added = r.commit();
+    writeFileSync(join(r.cwd, path), 'changed fixture\n');
+    const modified = r.commit();
+    rmSync(join(r.cwd, path));
+    const deleted = r.commit();
+    for (const [base, head] of [[r.base, added], [added, modified], [modified, deleted]]) {
+      const scope = r.classify(head, { base });
+      assert.equal(scope.dependencies, true);
+      assert.equal(scope.automation, false);
+      assert.equal(scope.components, false);
+      assert.deepEqual(scope.unmapped, []);
+    }
+  });
+}

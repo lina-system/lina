@@ -1,13 +1,108 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
-// Check Go configuration, exact module pins and module sums. All Go calls are injectable.
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
+// Check Go pins, sums, vulnerabilities, licenses and notices. All Go calls are injectable.
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { execute } from './check-components.mjs';
 
 const manifests = ['go.mod', 'kit/go.mod', 'go.work'];
+const scannerTools = [
+  { module: 'golang.org/x/vuln', path: 'golang.org/x/vuln/cmd/govulncheck' },
+  { module: 'github.com/google/go-licenses/v2', path: 'github.com/google/go-licenses/v2' },
+];
+const allowedLicenses = new Set(['MIT', 'Apache-2.0', 'BSD-2-Clause', 'BSD-3-Clause', 'BSD-4-Clause', 'ISC']);
+const exceptionFile = 'scripts/verify/dependency-exceptions.json';
+
+function readExceptions(cwd) {
+  try {
+    const entries = JSON.parse(readFileSync(join(cwd, exceptionFile), 'utf8'));
+    if (!Array.isArray(entries)) throw new Error('expected an array');
+    const seen = new Set();
+    for (const entry of entries) {
+      const vulnerability = entry?.kind === 'vulnerability';
+      const keys = ['kind', 'name', 'version', 'reason', 'reference', ...(vulnerability ? ['id'] : [])];
+      if (!entry || (!vulnerability && entry.kind !== 'install-script')
+          || Object.keys(entry).some(key => !keys.includes(key))
+          || typeof entry.name !== 'string' || !/^[A-Za-z0-9@][A-Za-z0-9@._/+!-]*$/.test(entry.name)
+          || !exactVersion(vulnerability ? entry.version : `v${entry.version}`)
+          || (vulnerability && (typeof entry.id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9.:-]*$/.test(entry.id)))
+          || typeof entry.reason !== 'string' || !entry.reason.trim()) {
+        throw new Error('entry needs an exact kind, name, version, vulnerability id and nonempty reason; no wildcards or unknown fields');
+      }
+      if (entry.reference !== undefined && (typeof entry.reference !== 'string'
+          || !['https:', 'http:'].includes(new URL(entry.reference).protocol))) {
+        throw new Error('reference must be an HTTP(S) URL');
+      }
+      const key = JSON.stringify([entry.kind, entry.name, entry.version, entry.id]);
+      if (seen.has(key)) throw new Error(`duplicate exception for ${entry.name}@${entry.version}`);
+      seen.add(key);
+    }
+    return entries;
+  } catch (error) {
+    throw new Error(`${exceptionFile}: ${error.message}`);
+  }
+}
+
+// Both Go list and govulncheck emit adjacent indented JSON objects, ending at column zero.
+function goObjects(source) {
+  return JSON.parse(`[${source.trim().replace(/^}\s*\n{/gm, '},{')}]`);
+}
+
+function checkVulnerabilities(source, exceptions) {
+  const messages = goObjects(source);
+  if (messages[0]?.config?.protocol_version !== 'v1.0.0') throw new Error('govulncheck: missing or unsupported JSON protocol');
+  for (const message of messages) {
+    if (!message || typeof message !== 'object' || Object.keys(message).length !== 1
+        || !['config', 'progress', 'SBOM', 'osv', 'finding'].includes(Object.keys(message)[0])) {
+      throw new Error('govulncheck: malformed message');
+    }
+    if (!Object.hasOwn(message, 'finding')) continue;
+    const { osv, trace } = message.finding ?? {};
+    const frame = Array.isArray(trace) ? trace[0] : undefined;
+    if (typeof osv !== 'string' || !osv || typeof frame?.module !== 'string' || !frame.module || !exactVersion(frame.version)) {
+      throw new Error('govulncheck: malformed finding');
+    }
+    if (!exceptions.some(entry => entry.kind === 'vulnerability' && entry.name === frame.module
+        && entry.version === frame.version && entry.id === osv)) {
+      throw new Error(`unexcepted vulnerability ${osv}: ${frame.module}@${frame.version}`);
+    }
+  }
+}
+
+function noticeEntries(source) {
+  // A heading identifies an entry; incidental mentions and empty headings are not notices.
+  return new Set([...source.matchAll(/^## ([^\r\n]+)\r?\n([\s\S]*?)(?=^## |$(?![\s\S]))/gm)]
+    .filter(match => match[2].trim()).map(match => match[1].trim()));
+}
+
+function checkLicenses(packageSource, reportSource, ownModules, notices) {
+  const packages = goObjects(packageSource);
+  if (!packages.length || packages.some(pkg => !pkg?.ImportPath || pkg.Error || pkg.DepsErrors
+      || (!pkg.Standard && !pkg.Module?.Path))) throw new Error('malformed Go package inventory');
+  const modules = new Map(packages.filter(pkg => !pkg.Standard).map(pkg => [pkg.Module.Path, pkg.Module]));
+  const report = JSON.parse(reportSource);
+  if (!Array.isArray(report)) throw new Error('malformed license report');
+  const scanned = new Set();
+  for (const library of report) {
+    if (typeof library?.name !== 'string' || typeof library.license !== 'string') throw new Error('malformed license report');
+    // Use the longest module path so a nested external module cannot be mistaken for LINA.
+    const module = [...modules.values()].sort((a, b) => b.Path.length - a.Path.length)
+      .find(module => library.name === module.Path || library.name.startsWith(`${module.Path}/`));
+    if (!module) throw new Error(`license report names an unknown module: ${library.name}`);
+    if (ownModules.has(module.Path)) continue;
+    scanned.add(module.Path);
+    if (!allowedLicenses.has(library.license)) throw new Error(`disallowed license ${library.license || '(empty)'}: ${library.name}`);
+  }
+  for (const module of modules.values()) {
+    if (ownModules.has(module.Path)) continue;
+    if (!scanned.has(module.Path)) throw new Error(`missing license scan for ${module.Path}`);
+    // Versioned replacements name the actual upstream; local copies retain the import identity.
+    const source = module.Replace?.Version ? module.Replace.Path : module.Path;
+    if (!notices.has(source)) throw new Error(`missing THIRD-PARTY-NOTICES.md entry for ${source}`);
+  }
+}
 
 function exactVersion(version) {
   if (typeof version !== 'string') return false;
@@ -62,6 +157,7 @@ export function checkDependencies({ cwd = process.cwd(), execute: run = execute 
   };
   try {
     cwd = realpathSync(cwd);
+    const exceptions = readExceptions(cwd);
     // Reject drift before Go can select or download a different toolchain.
     const versions = manifests.map(file => {
       const source = readFileSync(join(cwd, file), 'utf8');
@@ -87,12 +183,35 @@ export function checkDependencies({ cwd = process.cwd(), execute: run = execute 
     };
     if (invoke(['env', 'GOVERSION'], cwd, env).trim() !== toolchain) throw new Error(`Expected toolchain ${toolchain}`);
     // Go's parser handles blocks, comments and quoted paths; edit -json only reads the manifest.
+    const ownModules = new Set();
     for (const file of manifests) {
       const directory = resolve(cwd, file, '..');
       const data = JSON.parse(invoke([file === 'go.work' ? 'work' : 'mod', 'edit', '-json'], directory, env));
       checkPins(data, file, cwd);
+      if (file !== 'go.work') {
+        if (!data.Module?.Path) throw new Error(`${file}: missing module path`);
+        ownModules.add(data.Module.Path);
+      }
+      if (file === 'go.mod') {
+        for (const tool of scannerTools) {
+          if (!data.Tool?.some(entry => entry.Path === tool.path)
+              || !data.Require?.some(entry => entry.Path === tool.module && exactVersion(entry.Version))) {
+            throw new Error(`go.mod: declare and pin module tool ${tool.path}`);
+          }
+        }
+      }
     }
     for (const directory of [cwd, join(cwd, 'kit')]) invoke(['mod', 'verify'], directory, env);
+    const notices = noticeEntries(readFileSync(join(cwd, 'THIRD-PARTY-NOTICES.md'), 'utf8'));
+    const template = join(temporary, 'licenses.tmpl');
+    writeFileSync(template, '[{{range $i, $lib := .}}{{if $i}},{{end}}{"name":{{printf "%q" $lib.Name}},"license":{{printf "%q" $lib.LicenseName}}}{{end}}]');
+    for (const directory of [cwd, join(cwd, 'kit')]) {
+      // JSON mode exits successfully even with findings; evaluate every finding ourselves.
+      checkVulnerabilities(invoke(['tool', 'govulncheck', '-json', './...'], directory, env), exceptions);
+      const packages = invoke(['list', '-deps', '-json', './...'], directory, env);
+      const report = invoke(['tool', 'go-licenses', 'report', '--template', template, './...'], directory, env);
+      checkLicenses(packages, report, ownModules, notices);
+    }
     return { status: 0, output, toolchain };
   } catch (error) {
     return { status: 1, output: `${output}dependencies: ${error.message}\n` };
