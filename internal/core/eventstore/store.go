@@ -40,12 +40,13 @@ type Store struct {
 // SQLite database at system/events/events.sqlite, never canon or a backup file.
 // The caller owns db and reserve and closes them after Store.Close. isFull must
 // recognize the binding's typed SQLITE_FULL error, never match an error string.
-// The reserve must already be allocated before any work can produce an event.
+// A consumed reserve does not prevent opening or reading the committed events.
+// Check reserve.Present and replenish explicitly after disk space is recovered.
 func Open(ctx context.Context, db *sql.DB, reserve *Reserve, isFull func(error) bool) (*Store, error) {
 	if db == nil || reserve == nil || isFull == nil {
 		return nil, diag.ErrInvalid
 	}
-	if err := reserve.Replenish(); err != nil {
+	if err := reserve.inspect(); err != nil {
 		return nil, ErrStorage
 	}
 	conn, err := db.Conn(ctx)
@@ -69,6 +70,8 @@ func Open(ctx context.Context, db *sql.DB, reserve *Reserve, isFull func(error) 
 // are explicit boot/turn/task events; a child can only point to a committed id.
 // All events commit synchronously, including failure/unknown/denied/cancelled.
 func (s *Store) Append(ctx context.Context, e diag.Event) error {
+	ctx, cancel := diag.CommitContext(ctx, e.Result)
+	defer cancel()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -100,7 +103,7 @@ func (s *Store) Append(ctx context.Context, e diag.Event) error {
 	// A full-disk transaction has failed; release actual preallocated disk space
 	// and retry the same id once. The SQL backend recognizes a previously committed
 	// identical id, so an ambiguous commit cannot duplicate a diagnosis event.
-	emergency := e.Result == diag.Failure || e.Result == diag.Unknown || e.Result == diag.Denied || e.Result == diag.Cancelled
+	emergency := e.Result.Terminal()
 	if err != nil && emergency && s.isFull != nil && s.isFull(err) && s.reserve != nil {
 		if releaseErr := s.reserve.Release(); releaseErr != nil {
 			return ErrStorage

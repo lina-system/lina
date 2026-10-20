@@ -185,6 +185,8 @@ func (e *Emitter) Emit(ctx context.Context, fields Fields) (Event, error) {
 	if err := fields.validate(); err != nil {
 		return Event{}, err
 	}
+	ctx, cancel := CommitContext(ctx, fields.Result)
+	defer cancel()
 	if err := ctx.Err(); err != nil {
 		return Event{}, err
 	}
