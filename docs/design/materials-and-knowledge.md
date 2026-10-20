@@ -53,7 +53,12 @@ The library is the default surface for material that isn't development work. It 
 
 - LINA manages files as bundles per unit of work, linked by content hash, and shows them as pages and collections.
 - Views by type, 일, 계속 챙기는 것, 할 일, source device or recency address the same asset id and never copy the material.
-- Connected sources appear as sources.
+- Connected sources appear as sources. They keep their real folders, and a source's real path is one more view, never the only one.
+- PARA is the organizing idea, expressed as the work units of [work-and-delegation.md](work-and-delegation.md#terms): an 일, a 계속 챙기는 것, a 자료 or 보관 is a page that holds its files, notes, results and person records, and the library never feels like folders.
+- A file attached to a page is a block that points to the file's asset id, so the same file can appear on several pages. Page text is kept as record files in the records repository, with the database as the index ([filesystem.md](filesystem.md#records-repository)).
+- Folders are an optional, secondary view, not the storage model. A person who likes folders can turn on a folder view: a nested collection tree over the same asset ids, in which one file can sit in several folders and moving a file never moves its bytes. A person who does not turn it on never sees a folder.
+- LINA decides where an item belongs from its links: the 일, 할 일, people and conversation it came from. The person corrects a placement in one action. The inbox holds the items LINA could not link yet.
+- The on-disk layout under the state root is never shown by default ([filesystem.md](filesystem.md#records-repository)). The screen design of the library is the app's.
 - The library is where 자료 and 보관 live. A 자료 is any material or knowledge document the person keeps for reference. 보관 is a state any item can enter. An archived item, and a finished 일 with its 할 일 and materials, stays searchable and is marked archived; archiving never deletes and can be undone. Deleting follows Deletion propagation.
 - Every document type has a viewer, so the person can read a document without knowing its format.
 - In a scope connected to GitHub, advanced users can open paths, a file tree, search and a code view. The GitHub plugin is defined in [integrations.md](integrations.md).

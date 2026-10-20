@@ -13,7 +13,7 @@ Numbers marked (P) are starting values to measure. A number without (P) comes fr
 | Term | Meaning |
 | --- | --- |
 | Agent | A persona the person creates ([product-families.md](product-families.md#agents)); LINA is the name of the default agent. The TUI shows its name and a mark, its initial and name, never colour alone ([surfaces.md](surfaces.md#accessibility)). |
-| Worker | A coding tool the person installed. It is never an agent and never a speaker. |
+| Worker | A coding tool the person installed. It is never an agent and never a speaker. The TUI shows a worker as its name in brackets, such as `[Codex]`, and a sub-agent as plain indented text under its persona; marks never rely on colour alone. |
 | Card | A labeled block in the conversation that stands for one thing: a result, a question, an approval, a background notice. |
 | Result | A typed result of Core ([host-protocol.md](host-protocol.md#typed-results)), shown as a card and opened on request. |
 | Running list | What LINA does in the background: in progress, waiting, landed ([surfaces.md](surfaces.md#running-list)). |
@@ -220,7 +220,7 @@ Contract: [surfaces.md](surfaces.md#agent-surfaces), [surfaces.md](surfaces.md#s
 
 - **Board:** three groups of one-line rows (Waiting for me, Running, Done). Enter unfolds a row, with keys for the actions that apply.
 - **Steering:** `/note` queues a note for the run's next step, which is the follow-up of the running list. Esc or `/stop` on a row stops it.
-- **Agent tree and lanes (developer view):** indented lines, one line per worker for lanes, hand-offs as arrows, folded to one line by default.
+- **Agent tree and lanes (developer view):** indented lines (the persona as initial and name, sub-agents as plain indented text, workers as `[name]`), one line per worker for lanes, hand-offs as arrows, folded to one line by default.
 - **Usage meter:** one line per connected account: plan, state, a block-character meter or "unknown".
 
 Settings are commands and labeled blocks, all requests to Core:

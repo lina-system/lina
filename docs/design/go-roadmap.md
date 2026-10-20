@@ -381,6 +381,8 @@ Failure injections: a Node disconnect, a silent partition, a Node reboot, a revo
 
 ### 3.B Node and devices
 
+This epic also folds in the owner's Node direction, which is not yet in the contracts: Core runs on the person's own computer by default; a device joins as a Node in one action; Nodes bid for work by capacity, load, readiness and capabilities, and work of a failed Node is offered to another; repositories are only cached on a Node; non-coding work gets read-only file copies and returns artifacts to the one canonical store on the Core machine. The contract changes come with this epic ([go-core.md](go-core.md) C-35).
+
 **G3-03 Node gate, receipt journal and transport.** `cmd/lina-node`, state machine, receipt journal, expiry.
 - Done when: a Node with no valid grant is BLOCKED after install, reboot, revoke and disconnect; an earlier-epoch command is rejected; a replayed journal entry applies once; a simulated suspend revokes the grant; a journal newer than the binary exits 78; a receipt for a changed artifact without provenance is rejected.
 - Depends on: G1-05, G1-07. Design refs: C-35; [main-authority.md](main-authority.md#node-states).

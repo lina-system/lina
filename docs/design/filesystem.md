@@ -188,12 +188,13 @@ How versions appear to the person is defined in [materials-and-knowledge.md](mat
 
 The records repository `versions/records/` is one Git repository for the whole main. Every agent reads the same records ([product-families.md](product-families.md)).
 
-- The four PARA folders are at the top level: the 일 and the 목표 they belong to, 계속 챙기는 것, 자료 (resource) and 보관 (archive), with an inbox for memos. An 일 is a folder that holds its 할 일 and its materials. A 계속 챙기는 것 is a folder. A 목표 is a file that the 일 refer to by id. A finished 일 moves to 보관 with its 할 일; finished 할 일 stay inside an active 일 until it is archived. A folder is created only when something needs it.
+- The four PARA folders are at the top level: the 일 and the 목표 they belong to, 계속 챙기는 것, 자료 (resource) and 보관 (archive), with an inbox for memos. An 일 is a folder that holds its 할 일 and its materials. A 계속 챙기는 것 is a folder. A 목표 is a file that the 일 refer to by id. A record's folder is fixed when the record is created; finishing an 일 into 보관 or promoting a 자료 to an 일 changes fields of the records, and no file moves. A folder is created only when something needs it.
 - A record is one Markdown file with the front matter defined in [work-and-delegation.md](work-and-delegation.md#storage-of-records). The id never appears in the path, so a move never changes it.
 - Large binaries and media stay outside Git in the materials areas, linked by content hash. 자료 holds the knowledge documents and the links to materials.
 - LINA Core commits each change as one saved version and records the person id and the agent that asked in the commit message. Recurring completions are commits, not files.
 - Another tool may read the repository. A change made to it by another tool is detected at the next read and handled as [work-and-delegation.md](work-and-delegation.md#storage-of-records) states.
 - Where this repository lives, the form of the inbox (one file per memo) and the commit granularity are defaults to be confirmed (open owner decision).
+- This folder layout is a machine concern of the state root and is never shown to the person by default. The person-facing library is location-free, and folders are only an optional view there ([materials-and-knowledge.md](materials-and-knowledge.md#library)).
 
 ## Originals and derived data
 
