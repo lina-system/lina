@@ -495,6 +495,25 @@ When a piece is missing:
 
 Every build from a clean commit, a development build included, writes a manifest next to its executables. Every build's manifest holds the same fields as the release manifest, listed below, and records its commit. The release manifest is the name of a release build's manifest.
 
+`node scripts/build.mjs --out <dir>` builds `lina` and `lina-node` for the host platform (`.exe` on Windows) and writes `<dir>/manifest.json`. It uses the workspace's exact Go toolchain, `CGO_ENABLED=0`, `-trimpath`, readonly module inputs, and the `internal/buildinfo.Version`, `.Commit` and `.Date` linker flags used by `lina version`. The build date is the current UTC date. On a clean commit with a local release tag, the version is the highest valid release tag on that commit, without `v`; otherwise it is `0.0.1-alpha.dev`. Building does not create or publish a release.
+
+The initial JSON object contains these required fields; later implementation issues add the remaining manifest values listed below:
+
+| Field | Format |
+| --- | --- |
+| `version` | Product version without `v`, either `0.0.1-alpha.dev` or `0.0.1-alpha.YYYYMMDD.N`. |
+| `commit` | Full lowercase Git commit hash. The version commands display its first seven characters. |
+| `date` | UTC build date, `YYYY-MM-DD`. |
+| `goToolchain` | Exact toolchain used, such as `go1.27.3`. |
+| `kitVersion` | Positive integer read from `kit/VERSION`, initially `1`. |
+| `binaries` | Array of objects with `name` (basename), `size` (positive byte count), and `sha256` (64 lowercase hexadecimal characters). Includes both `lina` and `lina-node`, with platform suffixes. |
+
+The writer removes an old manifest before building and writes a new one atomically after both binaries succeed. Uncommitted tracked, staged or nonignored untracked changes still permit a development build but suppress the manifest. A source change or a different `HEAD` detected during the build also suppresses it. The three generated output files do not count as untracked source changes; tracked files cannot be used as output artifacts.
+
+`internal/core/manifest.Read(path)` decodes the JSON and validates the required fields, valid calendar dates, full commit hash, exact toolchain, positive safe integers, unique safe binary names and SHA-256 syntax. Both binaries must be present with matching platform suffixes. Additional fields are accepted so later issues can extend the manifest. The reader validates the records; comparison with executable bytes belongs to the consuming component.
+
+Foundation runs the build script's behavioral tests and the manifest package's Go checks. A clean-build test checks sizes and SHA-256 against both produced binaries, matches their version output to the manifest, resolves the displayed commit abbreviation to the full manifest commit, and reads the generated JSON through the Go reader. Dirty-build tests verify that binaries are still built and that no stale manifest remains.
+
 - A build's version is `0.0.1-alpha.YYYYMMDD.N` for a release build, which is the number of its tag `v0.0.1-alpha.YYYYMMDD.N`, and `0.0.1-alpha.dev` with the commit for a build that is not a release ([versioning.md](versioning.md)). The commit is recorded in the build, never in the tag.
 - The supported-combination table of a build lists the peers, platforms, protocol versions and capabilities that the build supports, so the TUI and LINA Core of one build find their row. Compatibility is decided by the protocol version, never by the product version ([host-protocol.md](host-protocol.md), [versioning.md](versioning.md)).
 - A running component reads the values this design places in the release manifest, such as the request field list and the verified worker versions, from the manifest of its own build.
@@ -624,7 +643,7 @@ The first implementation issue demonstrates the runtime with these checks. Each 
 - Per-tool deadlines other than the 15 second default of the turn budget: set during implementation acceptance of the conversation engine.
 - Absolute install locations, the absolute state root, service names and socket paths per OS: set during packaging implementation acceptance.
 - The subcommand names and flags of `lina`: set by the first implementation issue.
-- The path and format of a build's manifest, how a build writes it, and its foundation check: set by the first implementation issue.
+- Additional build-manifest fields beyond the implemented provenance and binary records in [Release manifest](#release-manifest): added by the implementation issues that introduce the corresponding components and behavior.
 - Publishing binaries and their manifests: added to [releases.md](../policy/releases.md) when LINA is first packaged.
 - The default embedding model: chosen by the implementation issue that brings memory recall into answers.
 - LINA OS's own update steps (a pre-update snapshot check and an extra backup before drain): set during LINA OS implementation acceptance.

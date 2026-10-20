@@ -1,0 +1,131 @@
+// SPDX-License-Identifier: Apache-2.0
+package manifest
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func validManifest() map[string]any {
+	return map[string]any{
+		"version": "0.0.1-alpha.dev", "commit": strings.Repeat("a", 40),
+		"date": "2026-10-20", "goToolchain": "go1.27.3", "kitVersion": 1,
+		"binaries": []any{
+			map[string]any{"name": "lina", "size": 100, "sha256": strings.Repeat("b", 64)},
+			map[string]any{"name": "lina-node", "size": 200, "sha256": strings.Repeat("c", 64)},
+		},
+	}
+}
+
+func writeManifest(t *testing.T, data []byte) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "manifest.json")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func encoded(t *testing.T, value any) []byte {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func TestRead(t *testing.T) {
+	for _, version := range []string{"0.0.1-alpha.dev", "0.0.1-alpha.20261020.1"} {
+		value := validManifest()
+		value["version"] = version
+		value["future"] = map[string]any{"enabled": true}
+		value["binaries"].([]any)[0].(map[string]any)["future"] = true
+		got, err := Read(writeManifest(t, encoded(t, value)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Version != version || got.Commit != value["commit"] || got.Date != value["date"] ||
+			got.GoToolchain != value["goToolchain"] || got.KitVersion != 1 || len(got.Binaries) != 2 ||
+			got.Binaries[0].Name != "lina" || got.Binaries[0].Size != 100 || got.Binaries[0].SHA256 != strings.Repeat("b", 64) {
+			t.Fatalf("unexpected manifest: %+v", got)
+		}
+	}
+}
+
+func TestReadRejectsInvalidFields(t *testing.T) {
+	for _, field := range []string{"version", "commit", "date", "goToolchain", "kitVersion", "binaries"} {
+		t.Run("missing "+field, func(t *testing.T) {
+			value := validManifest()
+			delete(value, field)
+			if _, err := Read(writeManifest(t, encoded(t, value))); err == nil {
+				t.Fatal("accepted missing field")
+			}
+		})
+	}
+	for field, invalid := range map[string][]any{
+		"version":     {"", "v0.0.1-alpha.20261020.1", "0.0.1-alpha.20260230.1", "0.0.1-alpha.20261020.0", "1.0.0", nil},
+		"commit":      {"abcdef0", strings.Repeat("z", 40), "", nil},
+		"date":        {"2026-02-30", "2026-1-1", "2026-10-20T00:00:00Z", nil},
+		"goToolchain": {"go1.27", "1.27.3", "go1.27.3-custom", nil},
+		"kitVersion":  {0, -1, 1.5, "1", 9007199254740992, nil},
+		"binaries":    {nil, []any{}, "lina"},
+	} {
+		t.Run(field, func(t *testing.T) {
+			for _, bad := range invalid {
+				value := validManifest()
+				value[field] = bad
+				if _, err := Read(writeManifest(t, encoded(t, value))); err == nil {
+					t.Errorf("accepted %s=%v", field, bad)
+				}
+			}
+		})
+	}
+}
+
+func TestReadRejectsInvalidBinaries(t *testing.T) {
+	for field, invalid := range map[string][]any{
+		"name":   {"", "../lina", "/lina", `dir\lina`, "lina-node", nil},
+		"size":   {0, -1, 1.5, "100", nil},
+		"sha256": {"", strings.Repeat("a", 63), strings.Repeat("z", 64), nil},
+	} {
+		for _, bad := range invalid {
+			value := validManifest()
+			value["binaries"].([]any)[0].(map[string]any)[field] = bad
+			if _, err := Read(writeManifest(t, encoded(t, value))); err == nil {
+				t.Errorf("accepted binary %s=%v", field, bad)
+			}
+		}
+	}
+	value := validManifest()
+	value["binaries"] = value["binaries"].([]any)[:1]
+	if _, err := Read(writeManifest(t, encoded(t, value))); err == nil {
+		t.Fatal("accepted missing lina-node")
+	}
+}
+
+func TestReadWindowsNamesAndSHA256Commit(t *testing.T) {
+	value := validManifest()
+	value["commit"] = strings.Repeat("a", 64)
+	for _, entry := range value["binaries"].([]any) {
+		binary := entry.(map[string]any)
+		binary["name"] = binary["name"].(string) + ".exe"
+	}
+	if _, err := Read(writeManifest(t, encoded(t, value))); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReadRejectsInvalidJSONAndMissingFile(t *testing.T) {
+	for _, data := range []string{"", "{", "null", "[]", "{}", string(encoded(t, validManifest())) + "\n{}"} {
+		if _, err := Read(writeManifest(t, []byte(data))); err == nil {
+			t.Errorf("accepted %q", data)
+		}
+	}
+	if _, err := Read(filepath.Join(t.TempDir(), "missing.json")); err == nil {
+		t.Fatal("accepted missing file")
+	}
+}

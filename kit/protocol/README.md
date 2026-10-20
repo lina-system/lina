@@ -1,32 +1,84 @@
-# Client handshake skeleton
+# Client protocol types
 
-`protocol` contains handwritten Go types for the `client` 1.0 handshake in
-[envelope.json](../../protocol/schema/client/1.0/envelope.json). G1-17 replaces
-them with generated types and adds the full client schema and conformance runner.
-This package implements the existing [envelope](../../docs/design/host-protocol.md#envelope)
-and [handshake](../../docs/design/host-protocol.md#versions-and-capabilities) contract.
+[envelope.json](../../protocol/schema/client/1.0/envelope.json) is the canonical
+client 1.0 schema. It defines the envelope, the closed kind list, and the payload
+fields already specified by the [host contract](../../docs/design/host-protocol.md).
+`client.gen.go` contains the generated Go types, enum constants, payload dispatch,
+and the schema used by the codec. Do not edit it by hand.
 
-Use `encoding/json` with `protocol.Envelope`. Decoding checks the exact fields,
-including nested objects, and selects `Hello`, `Welcome`, or `ErrorPayload` for
-`Payload`. Encoding applies the same checks. All fields are required. Nullable
-fields use pointers; required arrays must be non-nil, including when empty.
-Round trips preserve JSON values, including timestamp and epoch strings; JSON
-whitespace and object key order are not significant.
+```sh
+go generate ./kit/protocol
+go test ./kit/protocol/...
+node scripts/foundation.mjs
+```
 
-The schema gives each capability a `name` and `version`. `hello` lists
-`protocol_versions`; `welcome` names the selected `protocol_version`, `main_id`,
-`epoch`, `person_id`, and `agents`. An agent carries `agent_id`, `name`, and
-`preset` (null for one created from a description). An `error` has an empty
-payload and uses the envelope's `error.code` and `error.detail`.
+The generator uses only the Go standard library. The components check regenerates
+in memory and compares the bytes with the checked-in file before building kit;
+it fails on drift or a missing file and never rewrites the candidate. For a direct
+comparison, run `go run ./internal/generate -check` from this directory. New schema
+keywords must be supported by the generator and codec together: unrecognized
+keywords, dialects, formats and references fail generation.
 
-The [fixtures](../../protocol/fixtures/client/1.0/) contain a hello and its welcome,
-plus an alternative `unsupported_combination` reply when the peer has no supported
-combination. They use synthetic identifiers. The handshake grants no capabilities
-in this skeleton. The welcome covers agents created from both a preset and a
-description. The fixture files are wire data, so they contain no extra metadata.
+Use `encoding/json` with `protocol.Envelope`. Decoding validates against the
+schema before selecting the concrete generated `Payload` type; encoding applies
+the same validation. Unknown fields, missing required fields, invalid enum values
+and invalid nulls fail, including inside nested objects. Envelope fields remain
+required, nullable fields use pointers, and required arrays must be non-nil.
+Optional payload fields use pointers with `omitempty`. Numbers use `json.Number`
+to preserve their value without a float64 rounding step. Object key order and
+JSON whitespace are not significant.
 
-This package checks wire shapes and values. Core's handshake service will select
-the highest supported version, grant capabilities, check consistency between
-identities and epochs, record outcomes, and close a refused connection. JSON-RPC
-framing, that service, supported-combination evidence, and non-handshake client
-kinds are outside this skeleton.
+The original `Hello`, `Welcome`, `ErrorPayload`, envelope, reference and closed-code
+API remains available. The [handshake fixtures](../../protocol/fixtures/client/1.0/)
+round-trip without changing JSON values. A question's flat form has `plugin_name`
+and `fields`; each field has `name`, `type`, and `choices` for a choice. A question
+answer has `answer` (`accept`, `decline`, `cancel`), with a `values` map only for
+accept. Its generated `FormValue` holds exactly one string, number or boolean.
+
+## Kind inventory
+
+Every kind below has its own generated payload type. Names use snake case on the
+wire and exported Go names, for example `output_delta`, `KindOutputDelta` and
+`OutputDelta`.
+
+| Contract family | Kinds |
+| --- | --- |
+| Handshake and errors | `hello`, `welcome`, `error` |
+| Conversation and history | `conversation_start`, `input`, `interrupt`, `history_get`, `history`, `subscribe` |
+| Stream events | `output_delta`, `item_done`, `turn_state` |
+| Approvals and questions | `approval_request`, `approval_answer`, `question`, `question_answer` |
+| Results | `result`, `result_get`, `result_edit`, `result_save` |
+| Running list and background work | `running_get`, `running`, `running_update`, `stop`, `follow_up`, `background_notice` |
+| Progress | `progress_get`, `progress`, `progress_update`, `progress_digest_get`, `progress_digest` |
+| Waiting list | `waiting_get`, `waiting`, `waiting_update`, `waiting_answer` |
+| Details and readiness | `details_get`, `details`, `readiness_failure` |
+| Agent management | `agent_request`, `agent_result` |
+| Work records | `work_request`, `work_result` |
+| Accounts | `account_request`, `account_result` |
+| Memory | `memory_request`, `memory_result`, `memory_import_progress`, `memory_promotion_batch` |
+| Channels | `channel_request`, `channel_result`, `channel_state` |
+| Agent exchanges | `agent_talk_get`, `agent_talk`, `agent_talk_entry`, `agent_talk_expand`, `agent_talk_subscribe` |
+| Connection and task control | `connected`, `disconnected`, `task_status`, `run_status`, `task_cancel`, `multi_task_control` |
+| Sign-in relay | `sign_in_listen`, `sign_in_listening`, `sign_in_open`, `sign_in_redirect` |
+
+## Reserved shapes
+
+Payloads whose fields the contract defers are closed empty objects. Each has a
+`$comment` naming the corresponding [Deferred item](../../docs/design/host-protocol.md#deferred).
+They generate distinct Go structs and can round-trip `{}`, but accept no invented
+fields. A kind's presence is not a capability grant or an implementation of its
+behavior. The conversation implementation supplies these fields later.
+
+The concrete shapes cover hello/welcome/error, the starting agent, approval
+choices, the question form and answer, the specified result card/get/edit/save
+fields, and the readiness step. Result bodies, saved references and destinations
+are reserved objects until the results issue supplies their schemas and size
+limits. This does not make results usable with real bodies yet. The codec checks
+result revisions, the preview/saved reference shape, and the save key; whether an
+edit targets a current, editable result is a Core state decision.
+
+The package handles wire shape and values. JSON-RPC framing, negotiation,
+authorization, live conversation or result behavior, and the complete conformance
+runner belong to their implementation issues. No TUI or Core behavior is added
+here. The schema evaluator implements the vocabulary used by this schema, not an
+arbitrary draft 2020-12 validator.
