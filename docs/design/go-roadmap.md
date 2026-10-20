@@ -63,6 +63,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-02 Control files, epoch, start order and idle registry.** Start order, RECOVERING, tri-state idle.
 - Done when: `kill -9` at each start step is followed by a start with a strictly higher epoch; a second `lina core` exits 69; a non-local state root exits 78; an external call without a lease does not compile; an unreadable registry reads as busy.
 - Depends on: G1-01. Design refs: C-01, C-03 to C-05; CP-01 to CP-03.
+- #36 implements control files, the lock, the durable epoch and the ten startup boundaries. Its subprocess tests kill Core after each acknowledged boundary and compare the next epoch against all previously durable epochs; before step 5 a new run has no epoch. The idle registry and leases are separate work. The `e2e/m1/` protocol scenario remains pending the #34 harness.
 
 **G1-03 Canon writer, epoch fence, halt and SQLite binding.** One writer, halt marker, SQLite binding.
 - Done when: a write under a lower epoch fails `stale_epoch` and latches the writer; a write on a reader fails with a closed code; a store newer than the binary exits 78 unchanged; injected corruption writes the halt marker and reads still work; the binding is recorded in the build manifest.
