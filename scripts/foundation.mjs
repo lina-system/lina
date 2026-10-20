@@ -11,7 +11,7 @@
 //          the checkout is dev itself (the previous dev head).
 // --full   runs every check regardless of the changed paths and checks the whitespace of HEAD.
 // --no-note  skips writing the evidence note.
-import { readdirSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -80,6 +80,13 @@ async function runChecks(root, scope, log) {
   const automation = scope.automation ? timed('automation', async () => {
     const { scripts, tests } = automationFiles();
     let output = '';
+    const workflowDir = join(root, '.github/workflows');
+    const workflows = existsSync(workflowDir) ? sourceFiles(workflowDir, /\.ya?ml$/) : [];
+    if (workflows.length) {
+      const lint = await runAsync('actionlint', workflows, { cwd: root, env, timeoutMs: timeouts.automation });
+      output += lint.output;
+      if (lint.status !== 0) return { status: 1, output: `actionlint failed:\n${output}` };
+    }
     for (const file of scripts) {
       const syntax = await runAsync(process.execPath, ['--check', file], { cwd: root, env, timeoutMs: timeouts.automation });
       output += syntax.output;
