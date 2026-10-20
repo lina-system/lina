@@ -23,9 +23,13 @@ function registryFor(cwd) {
   const clientDirectories = ['internal/tui/', 'internal/clientapi/'];
   const clientPackages = clientDirectories.filter(directory => existsSync(join(cwd, directory)))
     .map(directory => `./${directory}...`);
+  // The harness launches lina as a subprocess, so go list cannot discover its
+  // dependency on Core and the TUI. Keep it in their component so either side
+  // selects the acceptance suite, including transitive kit changes.
+  const e2e = existsSync(join(cwd, 'e2e')) ? ['./e2e/...'] : [];
   return [
     { name: 'kit', module: 'kit', directories: ['kit/', 'protocol/schema/', 'protocol/fixtures/'], files: [], packages: ['./...'] },
-    { name: 'lina', module: '.', directories: ['cmd/lina/', 'internal/archtest/', 'internal/buildinfo/', 'internal/core/manifest/', ...coreDirectories, ...clientDirectories], files: ['doc.go'], packages: ['.', './cmd/lina/...', ...architecture, ...buildinfo, ...manifest, ...corePackages, ...clientPackages], binary: 'lina' },
+    { name: 'lina', module: '.', directories: ['cmd/lina/', 'internal/archtest/', 'internal/buildinfo/', 'internal/core/manifest/', 'e2e/', ...coreDirectories, ...clientDirectories], files: ['doc.go'], packages: ['.', './cmd/lina/...', ...architecture, ...buildinfo, ...manifest, ...corePackages, ...clientPackages, ...e2e], binary: 'lina' },
     { name: 'lina-node', module: '.', directories: ['cmd/lina-node/'], files: [], packages: ['./cmd/lina-node/...'], binary: 'lina-node' },
   ];
 }
