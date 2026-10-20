@@ -86,9 +86,13 @@ func peer(t *testing.T, respond func(testRequest) []byte) (string, <-chan testRe
 			done <- nil
 			return
 		}
-		if _, err := conn.Write(data); err != nil {
-			done <- err
-			return
+		// An empty response waits for client closure without writing. Even a
+		// zero-length write can fail if cancellation already closed the peer.
+		if len(data) > 0 {
+			if _, err := conn.Write(data); err != nil {
+				done <- err
+				return
+			}
 		}
 		// The client must close on failure or Close; it sends no operations.
 		_, err = reader.ReadByte()
