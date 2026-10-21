@@ -117,6 +117,12 @@ func (m *Memory) RecallPerson(ctx context.Context, scope memory.RecallScope, in 
 	if in.Depth > 1 {
 		return PersonAnswer{}, ErrBackgroundRequired
 	}
+	if strings.TrimSpace(in.Query) == "" {
+		return PersonAnswer{}, memory.ErrInvalid
+	}
+	if in.Depth == 1 {
+		scope.ExternalModel = true
+	}
 	q := memory.Query{Text: in.Query, At: in.At, Limit: RecallItemLimit, History: in.History, PersonOnly: true}
 	hits, err := m.store.Recall(ctx, scope, q)
 	if err != nil {

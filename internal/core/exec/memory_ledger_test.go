@@ -68,7 +68,7 @@ func TestRecallPersonReadsOwnLedgerAndExcludesSecretSpans(t *testing.T) {
 		t.Fatal("secret span entered recall")
 	}
 	scope.Agent = "C"
-	answer, err = flow.RecallPerson(t.Context(), scope, PersonRecall{Question: "What drink?", At: 100})
+	answer, err = flow.RecallPerson(t.Context(), scope, PersonRecall{Question: "What drink?", Query: "tea", At: 100})
 	if err != nil || len(answer.Sources) != 0 {
 		t.Fatalf("foreign ledger read: %+v %v", answer, err)
 	}
@@ -141,7 +141,7 @@ func TestRecallPersonCountsRememberedEventOnce(t *testing.T) {
 	if _, err := flow.Remember(t.Context(), rememberInput("likes tea")); err != nil {
 		t.Fatal(err)
 	}
-	answer, err := flow.RecallPerson(t.Context(), memory.RecallScope{Agent: "A", Person: "person"}, PersonRecall{Question: "What drink?", At: 100})
+	answer, err := flow.RecallPerson(t.Context(), memory.RecallScope{Agent: "A", Person: "person"}, PersonRecall{Question: "What drink?", Query: "tea", At: 100})
 	if err != nil || len(answer.Sources) != 1 {
 		t.Fatalf("source counted through memory and ledger: %+v %v", answer, err)
 	}
