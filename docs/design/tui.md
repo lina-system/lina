@@ -538,6 +538,24 @@ The reducer, render, layout and `clientapi` packages are Charm-free, so a fallba
 
 Each run writes an evidence record: terminal and version, `TERM`, SSH or not, library revisions, declared bounds, measured values, and the result per scenario. A record missing a field is not evidence.
 
+S5 records whether each synchronized-output and grapheme-mode probe timed out.
+A timeout fails the scenario even when the probe's deadline is below 200 ms;
+an explicit reply reporting an unsupported mode still resolves the probe.
+The evidence validator requires both timeout observations before assigning a result.
+
+S10 selects the physical width mode before the first table paint. Each mode has
+an explicit availability observation; a permanently enabled mode 2027 cannot
+establish wcwidth alignment. An unavailable mode requires a mitigation and fails
+the two-mode comparison. S11 requires every width observation from 100 through
+140; a passing threshold is the first usable width and remains usable at every
+greater width in that range. SIGINT and SIGTERM cancel the scenario runner through
+its terminal-restoration paths.
+
+LN-85 delivers the harness and scenario validation. The confirmed terminal matrix,
+owner-run S1–S7 and S9–S11 evidence, and final library decision remain in
+[follow-up #371](https://github.com/thisisjun786/lina/issues/371), including #87's
+outstanding acceptance. Harness completion does not establish the spike gate.
+
 Fallbacks, in order. F1: Bubble Tea with its own probe, a quiet spinner, a lower frame rate while streaming and a frame memo. F2: a row-string renderer on Ultraviolet with changed rows only, in synchronized output. F3: tcell v3. The reducer, render, layout and `clientapi` do not change in any fallback.
 
 ## Tests, tokens and theme (T-11)

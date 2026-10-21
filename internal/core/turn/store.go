@@ -354,6 +354,11 @@ func (s *Store) Run(ctx context.Context, o Options) (out loop.Outcome, err error
 					return e
 				}
 			}
+			if state == Failed {
+				if e := failureNotice(save, tx, o.ID); e != nil {
+					return e
+				}
+			}
 			_, e := tx.ExecContext(save, "UPDATE turn_runs SET state=? WHERE id=?", state, o.ID)
 			return e
 		}}
@@ -384,8 +389,8 @@ func (s *Store) Run(ctx context.Context, o Options) (out loop.Outcome, err error
 		return out, err
 	}
 	cfg.Journal = s.Journal(o.ID)
-	// The loop supplies aborted visible text during cleanup. Commit it with
-	// the terminal state and interruption notice, through the same completion
+	// The loop supplies unfinished visible text during cleanup. Commit it with
+	// the terminal state and interruption or failure notice, through the same completion
 	// transaction used for successful replies.
 	cfg.Journal.Partial = func(_ context.Context, round int, index int64, text string) error {
 		partials = append(partials, Partial{Round: round, Index: index, Text: text})
