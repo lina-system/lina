@@ -61,8 +61,9 @@ type Preparation struct {
 	Layers          Layers
 }
 type Store struct {
-	db   *canon.Store
-	root *os.Root
+	db        *canon.Store
+	root      *os.Root
+	writeFile func(*os.File, []byte) (int, error) // Per-store fault injection for filesystem tests.
 }
 
 func Open(stateRoot string, db *canon.Store) (*Store, error) {
@@ -74,6 +75,10 @@ func Open(stateRoot string, db *canon.Store) (*Store, error) {
 		return nil, err
 	}
 	if err := privateDirs(root, "versions/agents"); err != nil {
+		root.Close()
+		return nil, err
+	}
+	if err := recoverTemporaries(root); err != nil {
 		root.Close()
 		return nil, err
 	}

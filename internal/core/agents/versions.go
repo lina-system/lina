@@ -11,10 +11,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // Each agent owns a bare Git repository. Immutable refs retain saved commits;
@@ -48,32 +50,68 @@ func syncDir(root *os.Root, path string) error {
 	}
 	return errors.Join(f.Sync(), f.Close())
 }
-func immutable(root *os.Root, path string, data []byte) error {
-	if err := privateDirs(root, filepath.Dir(path)); err != nil {
+
+// Core's control-file lock excludes other live writers. This lock also keeps
+// recovery in another Store opened in this process away from active temp files.
+var versionFiles sync.RWMutex
+
+const temporaryPrefix = ".persona-tmp-"
+
+func existingImmutable(root *os.Root, path string, data []byte) (bool, error) {
+	info, err := root.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return true, err
+	}
+	if !info.Mode().IsRegular() {
+		return true, ErrInvalid
+	}
+	old, err := root.ReadFile(path)
+	if err != nil {
+		return true, err
+	}
+	if !bytes.Equal(old, data) {
+		return true, ErrCorrupt
+	}
+	return true, nil
+}
+
+func (s *Store) immutable(path string, data []byte) (err error) {
+	versionFiles.RLock()
+	defer versionFiles.RUnlock()
+	root := s.root
+	dir := filepath.Dir(path)
+	if err := privateDirs(root, dir); err != nil {
 		return err
 	}
-	f, err := root.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	if errors.Is(err, os.ErrExist) {
-		info, e := root.Lstat(path)
-		if e != nil {
-			return e
+	if exists, err := existingImmutable(root, path, data); exists {
+		if err != nil {
+			return err
 		}
-		if !info.Mode().IsRegular() {
-			return ErrInvalid
-		}
-		old, e := root.ReadFile(path)
-		if e != nil {
-			return e
-		}
-		if !bytes.Equal(old, data) {
-			return ErrCorrupt
-		}
-		return nil
+		return syncDir(root, dir)
 	}
+	temporary := filepath.Join(dir, temporaryPrefix+newID())
+	f, err := root.OpenFile(temporary, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
 		return err
 	}
-	_, err = f.Write(data)
+	defer func() {
+		removed := root.Remove(temporary)
+		if errors.Is(removed, os.ErrNotExist) {
+			removed = nil
+		}
+		err = errors.Join(err, removed, syncDir(root, dir))
+	}()
+	write := s.writeFile
+	if write == nil {
+		write = (*os.File).Write
+	}
+	n, err := write(f, data)
+	if err == nil && n != len(data) {
+		err = io.ErrShortWrite
+	}
 	if err == nil {
 		err = f.Sync()
 	}
@@ -81,7 +119,49 @@ func immutable(root *os.Root, path string, data []byte) error {
 	if err != nil {
 		return err
 	}
-	return syncDir(root, filepath.Dir(path))
+	// Link installs complete, synced bytes atomically and never replaces a winner.
+	if err := root.Link(temporary, path); err != nil {
+		if !errors.Is(err, os.ErrExist) {
+			return err
+		}
+		exists, err := existingImmutable(root, path, data)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return os.ErrNotExist
+		}
+	}
+	return syncDir(root, dir)
+}
+
+func recoverTemporaries(root *os.Root) error {
+	versionFiles.Lock()
+	defer versionFiles.Unlock()
+	directories := make(map[string]bool)
+	err := fs.WalkDir(root.FS(), "versions/agents", func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		suffix, temporary := strings.CutPrefix(entry.Name(), temporaryPrefix)
+		if !temporary || !validID(suffix) || !entry.Type().IsRegular() {
+			return nil
+		}
+		if err := root.Remove(path); err != nil {
+			return err
+		}
+		directories[filepath.Dir(path)] = true
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	for dir := range directories {
+		if err := syncDir(root, dir); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 func repoPath(id string) string { return filepath.Join("versions", "agents", id) }
 func (s *Store) object(id, kind string, data []byte) (string, error) {
@@ -96,7 +176,7 @@ func (s *Store) object(id, kind string, data []byte) (string, error) {
 	if err := w.Close(); err != nil {
 		return "", err
 	}
-	err := immutable(s.root, filepath.Join(repoPath(id), "objects", hash[:2], hash[2:]), compressed.Bytes())
+	err := s.immutable(filepath.Join(repoPath(id), "objects", hash[:2], hash[2:]), compressed.Bytes())
 	return hash, err
 }
 func (s *Store) save(ctx context.Context, id, parent string, layers Layers, person string) (string, error) {
@@ -107,7 +187,7 @@ func (s *Store) save(ctx context.Context, id, parent string, layers Layers, pers
 		return "", ErrInvalid
 	}
 	dir := repoPath(id)
-	if err := immutable(s.root, filepath.Join(dir, "config"), []byte("[core]\nrepositoryformatversion = 0\nbare = true\n")); err != nil {
+	if err := s.immutable(filepath.Join(dir, "config"), []byte("[core]\nrepositoryformatversion = 0\nbare = true\n")); err != nil {
 		return "", err
 	}
 	data, _ := json.Marshal(layers)
@@ -130,11 +210,11 @@ func (s *Store) save(ctx context.Context, id, parent string, layers Layers, pers
 	if err != nil {
 		return "", err
 	}
-	if err := immutable(s.root, filepath.Join(dir, "refs", "revisions", commit), []byte(commit+"\n")); err != nil {
+	if err := s.immutable(filepath.Join(dir, "refs", "revisions", commit), []byte(commit+"\n")); err != nil {
 		return "", err
 	}
 	if parent == "" {
-		if err := immutable(s.root, filepath.Join(dir, "HEAD"), []byte(commit+"\n")); err != nil {
+		if err := s.immutable(filepath.Join(dir, "HEAD"), []byte(commit+"\n")); err != nil {
 			return "", err
 		}
 	}
