@@ -134,6 +134,8 @@ At step 8 the client service accepts handshakes in RECOVERING. Mutations return 
 
 Missing or invalid command arguments exit 64; lock contention exits 69; invalid state, corrupt control records or socket startup failures exit 78. SIGTERM and SIGINT stop accepting clients, close accepted connections (including incomplete handshakes), remove the owned socket and exit 0. Shutdown closes the socket service, canon and event writer in reverse acquisition order before releasing the lock. Each service receives a five-second shutdown deadline and must honor it. An orderly shutdown removes the sentinel and preserves the epoch, main id, halt marker and restart request. Startup failure unwinds acquired resources, retains any minted epoch and leaves the sentinel for the next recovery.
 
+A socket can accept a connection before its ownership record is published or its first handshake is served. Cancellation in this bind-to-publication interval finishes retiring the previous socket and publishing the new ownership record, then performs orderly shutdown, including sentinel removal. Cancellation before bind remains an interrupted startup and preserves recovery records with a nonzero exit. A publication or cleanup failure also remains nonzero; the CLI never turns a startup error containing cancellation into a successful exit.
+
 The reconcile table follows [runtime.md](runtime.md#recovery) and [main-authority.md](main-authority.md#command-outcomes):
 
 | Found | Outcome |

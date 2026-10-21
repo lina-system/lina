@@ -56,9 +56,6 @@ func runCore(args []string) int {
 		if errors.Is(err, ctlfiles.ErrLocked) {
 			return 69
 		}
-		if errors.Is(err, context.Canceled) && ctx.Err() != nil {
-			return 0
-		}
 		return 78
 	}
 	return 0

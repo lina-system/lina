@@ -32,7 +32,9 @@ func TestM1Doctor(t *testing.T) {
 	healthy := newHarness(t, binary)
 	defaultRoot := healthy.root
 	healthy.root = filepath.Join(defaultRoot, "lina")
-	if err := os.Mkdir(healthy.root, 0700); err != nil {
+	// Installation supplies canon/. A stop immediately after bind can precede
+	// Core's sandbox setup, so the fixture must not rely on that later phase.
+	if err := os.MkdirAll(filepath.Join(healthy.root, "canon"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	core := healthy.startCore()
