@@ -22,7 +22,7 @@ type terminal struct {
 	err     error // Read after done closes.
 }
 
-func (h *harness) startTUI() *terminal {
+func (h *harness) startTUI(environment ...string) *terminal {
 	h.t.Helper()
 	master, err := os.OpenFile("/dev/ptmx", os.O_RDWR|unix.O_NOCTTY|unix.O_NONBLOCK, 0)
 	if err != nil {
@@ -54,6 +54,7 @@ func (h *harness) startTUI() *terminal {
 		h.t.Fatal(err)
 	}
 	p := h.command("tui", "--socket", h.socket)
+	p.command.Env = append(p.command.Env, environment...)
 	p.command.Stdin, p.command.Stdout = slave, slave
 	p.command.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
 	p.start(h.t)
