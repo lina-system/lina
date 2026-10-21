@@ -30,9 +30,7 @@
         "kind": "item_done",
         "key": "item",
         "revision": 2,
-        "payload": {
-          "text": "complete"
-        }
+        "payload": {"text":"complete"}
       }
     ]
   }
