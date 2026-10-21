@@ -127,9 +127,9 @@ func localizedConnectionView(state Connection, t design.Tokens, ascii bool, lang
 
 // Styles converts generated semantic data into Lip Gloss styles in one place.
 type Styles struct {
-	tokens                             design.Tokens
-	options                            Options
-	Text, Muted, Accent, Title, Canvas lipgloss.Style
+	tokens                                   design.Tokens
+	options                                  Options
+	Text, Muted, Accent, Title, Canvas, Code lipgloss.Style
 }
 
 func NewStyles(options Options) Styles {
@@ -165,6 +165,10 @@ func NewStyles(options Options) Styles {
 	s.Muted = base.Foreground(paint(tokens.ColorMuted))
 	s.Accent = base.Foreground(paint(tokens.ColorAccent))
 	s.Title = s.Text.Bold(tokens.TypeTitleWeight > tokens.TypeWeight && options.Profile != Monochrome)
+	s.Code = s.Text
+	if options.Profile != Monochrome {
+		s.Code = s.Code.Background(paint(tokens.ColorSurface))
+	}
 	s.Canvas = base
 	return s
 }

@@ -16,6 +16,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/buildinfo"
 	"github.com/thisisjun786/lina/internal/core/backup"
+	"github.com/thisisjun786/lina/internal/core/boot"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"github.com/thisisjun786/lina/internal/core/manifest"
@@ -66,6 +67,9 @@ func captureBackup(ctx context.Context, root string) (backup.Manifest, error) {
 	if err = controls.Acquire(); err != nil {
 		return backup.Manifest{}, err
 	}
+	if err := backup.CheckRestore(root); err != nil {
+		return backup.Manifest{}, err
+	}
 	data, err := controls.Read("main.json")
 	if err != nil {
 		return backup.Manifest{}, err
@@ -113,7 +117,7 @@ func captureBackup(ctx context.Context, root string) (backup.Manifest, error) {
 		return backup.Manifest{}, errors.New("state root has no captured Core epoch")
 	}
 	// This command composes the same canon and conversation schemas as Core.
-	migrations := canon.Migrations()
+	migrations := boot.ApplicationMigrations()
 	db, err := canon.Open(ctx, canon.Config{Path: path, Epoch: epoch, Controls: controls, Migrations: migrations})
 	if err != nil {
 		return backup.Manifest{}, err

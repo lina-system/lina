@@ -4,8 +4,8 @@ package boot
 
 import "github.com/thisisjun786/lina/internal/core/canon"
 
-// ApplicationMigrations is the fixed canon catalog shared by Core, backup and
-// read-only diagnostics. Canon returns a fresh slice for each caller.
+// ApplicationMigrations is the fixed canon catalog shared by Core, backup,
+// restore and read-only diagnostics. Canon returns a fresh slice for each caller.
 func ApplicationMigrations() []canon.Migration {
 	return canon.Migrations()
 }

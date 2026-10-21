@@ -56,8 +56,8 @@ func TestM1BackupInstalledConversation(t *testing.T) {
 		}
 	}
 	h.stopCore(core)
-	// Reproduce the cumulative schema of the current dev installation (v14),
-	// retaining its completed conversation while removing later schema additions.
+	// Reproduce the published v14 schema, retaining its completed conversation
+	// while removing the later summary and sign-in tables.
 	legacy, err := canon.OpenSQLite(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
 	if err != nil {
 		t.Fatal(err)
