@@ -33,9 +33,7 @@ func restartDB(t *testing.T, root string, epoch uint64) *canon.Store {
 	}
 	t.Cleanup(func() { ctl.Close() })
 	ms := canon.Migrations()
-	for _, schema := range []string{turn.Schema, turn.ControlSchema, turn.OutcomeSchema} {
-		ms = append(ms, canon.Migration{Version: len(ms) + 1, SQL: schema})
-	}
+
 	return open(t, canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: epoch, Controls: ctl, Migrations: ms})
 }
 

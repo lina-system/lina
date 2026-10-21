@@ -24,6 +24,7 @@ function registryFor(cwd) {
     'internal/core/assemble/',
     'internal/core/assets/',
     'internal/core/authority/',
+    'internal/core/backup/',
     'internal/core/boot/',
     'internal/core/budget/',
     'internal/core/canon/',
@@ -36,7 +37,6 @@ function registryFor(cwd) {
     'internal/core/exec/',
     'internal/core/gateway/',
     'internal/core/guard/',
-    'internal/core/importer/',
     'internal/core/inbox/',
     'internal/core/install/',
     'internal/core/jobs/',
@@ -54,6 +54,9 @@ function registryFor(cwd) {
     'internal/core/turn/',
     'internal/core/waiting/',
   ];
+  const addonDirectories = ['internal/addons/importer/hermes/'];
+  const addonPackages = addonDirectories.filter(directory => existsSync(join(cwd, directory)))
+    .map(directory => `./${directory}...`);
   const skills = existsSync(join(cwd, 'skills')) ? ['./skills/...'] : [];
   const persona = existsSync(join(cwd, 'persona')) ? ['./persona/...'] : [];
   const corePackages = coreDirectories.filter(directory => existsSync(join(cwd, directory)))
@@ -67,7 +70,7 @@ function registryFor(cwd) {
   const e2e = existsSync(join(cwd, 'e2e')) ? ['./e2e/...'] : [];
   return [
     { name: 'kit', module: 'kit', directories: ['kit/', 'protocol/schema/', 'protocol/fixtures/'], files: [], packages: ['./...'] },
-    { name: 'lina', module: '.', directories: ['cmd/lina/', 'internal/archtest/', 'internal/buildinfo/', 'internal/core/manifest/', 'e2e/', 'persona/', 'skills/', 'testdata/korean/', 'testdata/hermes/', ...coreDirectories, ...clientDirectories], files: ['doc.go'], packages: ['.', './cmd/lina/...', ...architecture, ...buildinfo, ...manifest, ...persona, ...skills, ...corePackages, ...clientPackages, ...e2e], binary: 'lina' },
+    { name: 'lina', module: '.', directories: ['cmd/lina/', 'internal/archtest/', 'internal/buildinfo/', 'internal/core/manifest/', 'e2e/', 'persona/', 'skills/', 'testdata/korean/', 'testdata/hermes/', ...coreDirectories, ...addonDirectories, ...clientDirectories], files: ['doc.go'], packages: ['.', './cmd/lina/...', ...architecture, ...buildinfo, ...manifest, ...persona, ...skills, ...corePackages, ...addonPackages, ...clientPackages, ...e2e], binary: 'lina' },
     { name: 'moirai-worker', module: '.', directories: ['cmd/moirai-worker/', 'internal/moirai/'], files: [], packages: ['./cmd/moirai-worker/...', './internal/moirai/...'], binary: 'moirai-worker' },
     { name: 'lina-node', module: '.', directories: ['cmd/lina-node/'], files: [], packages: ['./cmd/lina-node/...'], binary: 'lina-node' },
   ];

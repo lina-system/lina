@@ -256,7 +256,7 @@ func (r *conversationRuntime) setActive(active bool) error {
 func (r *conversationRuntime) events(ctx context.Context, through string) ([]ledger.Event, error) {
 	var ids []string
 	err := r.db.Read(ctx, func(tx *canon.Tx) error {
-		query := `SELECT id FROM conv_event WHERE conversation_id=? AND (speaker_kind IN ('person','agent') OR scaffold_kind='interruption')`
+		query := `SELECT id FROM conv_event WHERE conversation_id=? AND (speaker_kind IN ('person','agent') OR scaffold_kind IN ('interruption','failure'))`
 		args := []any{r.conversation}
 		if through != "" {
 			query += ` AND (speaker_kind<>'person' OR rowid <= (SELECT rowid FROM conv_event WHERE id=?))`
@@ -297,7 +297,7 @@ func (r *conversationRuntime) seedHistory(ctx context.Context) error {
 		return err
 	}
 	for _, e := range events {
-		if e.ScaffoldKind == "interruption" {
+		if e.ScaffoldKind == "interruption" || e.ScaffoldKind == "failure" {
 			stopped, err := turn.New(r.db).Stopped(ctx, e.ParentID)
 			if err != nil {
 				return err
@@ -366,25 +366,23 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				return turn.PreparedRequest{}, err
 			}
 			request := r.route.Request(items)
-			request.Instructions = strings.Join([]string{persona.Layers.Core, persona.Layers.DefaultVoice, persona.Layers.UserVoice, persona.Layers.GrowthSnapshot}, "\n")
+			request.Instructions, err = assemble.Instructions(persona, request.Tools)
+			if err != nil {
+				return turn.PreparedRequest{}, err
+			}
 			return turn.PreparedRequest{Request: request, Assembly: turn.Assembly{AgentID: r.agent, PersonaRevision: persona.Commit}, Counter: func(request provider.Request) int {
 				n := len(request.Instructions)
 				for _, item := range request.Items {
 					n += len(item)
 				}
+				for _, tool := range request.Tools {
+					n += len(tool)
+				}
 				return n
 			}, MaxTokens: 128000}, nil
 		},
 		Acknowledge: evidence.Acknowledge, RecordRequest: evidence.RecordRequest,
-		Digest: func(request provider.Request) string {
-			data, _ := json.Marshal(struct {
-				Model        provider.ModelRef
-				Instructions string
-				Items        []provider.Item
-			}{request.Model, request.Instructions, request.Items})
-			digest := sha256.Sum256(data)
-			return hex.EncodeToString(digest[:])
-		},
+		Digest: assemble.Digest,
 	}
 	round := 0
 	var completed []ledger.Admission
@@ -457,7 +455,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		}
 	}
 	if err != nil {
-		// A stop is acknowledged only from its durable outcome. Seal the same
+		// A stop or failure is published from its durable outcome. Seal the same
 		// streamed block IDs before publishing the stored notice, matching
 		// startup history and keeping partials outside future model context.
 		stopped, readErr := turn.New(r.db).Stopped(context.WithoutCancel(ctx), input.ID)

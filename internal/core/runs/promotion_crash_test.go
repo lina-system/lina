@@ -33,7 +33,7 @@ func promotionCrashService(t *testing.T, root string, epoch uint64) (*runs.Servi
 	}
 	t.Cleanup(func() { controls.Close() })
 	ms := canon.Migrations()
-	for _, schema := range []string{runs.Schema, turn.Schema, turn.ControlSchema, turn.OutcomeSchema} {
+	for _, schema := range []string{runs.Schema} {
 		ms = append(ms, canon.Migration{Version: len(ms) + 1, SQL: schema})
 	}
 	db, err := canon.Open(t.Context(), canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: epoch, Controls: controls, Migrations: ms})

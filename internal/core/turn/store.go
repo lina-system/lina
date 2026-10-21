@@ -31,30 +31,7 @@ const (
 
 // Schema is installed by the owner in a numbered canon migration, after
 // canon.InboxSchema. The turn never opens a second writer or migrates on demand.
-const Schema = `
-CREATE TABLE turn_runs (
- id TEXT PRIMARY KEY NOT NULL,
- conversation TEXT NOT NULL,
- inbox_id INTEGER NOT NULL UNIQUE REFERENCES inbox(id),
- prepared INTEGER NOT NULL DEFAULT 0 CHECK(prepared IN (0,1)),
- state TEXT NOT NULL CHECK(state IN ('active','completed','aborted','failed'))
-);
-CREATE TABLE turn_items (
- turn_id TEXT NOT NULL REFERENCES turn_runs(id), round INTEGER NOT NULL,
- ordinal INTEGER NOT NULL, item BLOB NOT NULL,
- PRIMARY KEY(turn_id,round,ordinal)
-);
-CREATE TABLE turn_calls (
- turn_id TEXT NOT NULL REFERENCES turn_runs(id), round INTEGER NOT NULL,
- ordinal INTEGER NOT NULL, call_id TEXT NOT NULL, call BLOB NOT NULL, result BLOB,
- PRIMARY KEY(turn_id,round,ordinal), UNIQUE(turn_id,call_id)
-);
-CREATE TABLE turn_partials (
- turn_id TEXT NOT NULL REFERENCES turn_runs(id), round INTEGER NOT NULL,
- ordinal INTEGER NOT NULL, body TEXT NOT NULL,
- PRIMARY KEY(turn_id,round,ordinal)
-);
-`
+const Schema = canon.TurnSchema
 
 type Canon interface {
 	Write(context.Context, func(*canon.Tx) error) error
@@ -377,6 +354,11 @@ func (s *Store) Run(ctx context.Context, o Options) (out loop.Outcome, err error
 					return e
 				}
 			}
+			if state == Failed {
+				if e := failureNotice(save, tx, o.ID); e != nil {
+					return e
+				}
+			}
 			_, e := tx.ExecContext(save, "UPDATE turn_runs SET state=? WHERE id=?", state, o.ID)
 			return e
 		}}
@@ -407,8 +389,8 @@ func (s *Store) Run(ctx context.Context, o Options) (out loop.Outcome, err error
 		return out, err
 	}
 	cfg.Journal = s.Journal(o.ID)
-	// The loop supplies aborted visible text during cleanup. Commit it with
-	// the terminal state and interruption notice, through the same completion
+	// The loop supplies unfinished visible text during cleanup. Commit it with
+	// the terminal state and interruption or failure notice, through the same completion
 	// transaction used for successful replies.
 	cfg.Journal.Partial = func(_ context.Context, round int, index int64, text string) error {
 		partials = append(partials, Partial{Round: round, Index: index, Text: text})
