@@ -22,7 +22,7 @@ var layers = func() map[string]int {
 		"canon eventstore secrets ctlfiles guard ids",
 		"authority lifecycle budget manifest",
 		"ledger inbox agents memory retract skills records assets work timers plugins channels accounts",
-		"lane assemble compaction turn runs reply results modelpath exec exchange gateway worker reactor review ghclient progress waiting importer backup update recover clientsrv jobs mcphost",
+		"lane assemble compaction turn runs reply results modelpath exec exchange gateway worker reactor review ghclient progress waiting backup update recover clientsrv jobs mcphost",
 		"boot supervise",
 	} {
 		for _, name := range strings.Fields(names) {
@@ -105,6 +105,9 @@ func violations(root string, standard map[string]bool) ([]string, error) {
 			imported, err := strconv.Unquote(spec.Path.Value)
 			if err != nil {
 				return err
+			}
+			if !within(owner, "internal/addons") && within(imported, rootModule+"/internal/addons/importer") {
+				report(spec.Pos(), "importer", "memory importer add-ons must not be dependencies of Core or default packages: "+imported)
 			}
 			if within(imported, rootModule+"/internal/core") {
 				target := family(imported, rootModule+"/internal/core")
