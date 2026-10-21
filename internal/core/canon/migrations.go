@@ -16,3 +16,5 @@ func Migrations() []Migration {
 		{Version: 9, SQL: ledgerSearchSchema},
 		{Version: 10, SQL: memorySearchSchema},
 		{Version: 11, SQL: retractSchema + retractLineageSchema + retractViewsSchema + retractSearchSchema},
+	}
+}
