@@ -140,7 +140,12 @@ func (e *Executor) file(ctx context.Context, l lease.Lease, in tools.Input) (too
 			return resultCode(tools.Unknown, "effect_unknown"), tools.ErrUnknown
 		}
 		return result, errors.New(reply.Code)
-	case tools.None, tools.Refused, tools.Unknown:
+	case tools.Unknown:
+		if reply.Code != "effect_unknown" {
+			return resultCode(tools.Unknown, "effect_unknown"), tools.ErrUnknown
+		}
+		return result, tools.ErrUnknown
+	case tools.None, tools.Refused:
 		return resultCode(tools.Unknown, "effect_unknown"), tools.ErrUnknown
 	default:
 		return resultCode(tools.Unknown, "effect_unknown"), tools.ErrUnknown

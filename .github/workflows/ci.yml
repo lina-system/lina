@@ -68,6 +68,11 @@ jobs:
           tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP/actionlint-bin" actionlint
           echo "$RUNNER_TEMP/actionlint-bin" >> "$GITHUB_PATH"
 
+      - name: Install sandbox launcher
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes bubblewrap
+
       - name: Run foundation
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}

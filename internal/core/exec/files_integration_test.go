@@ -76,6 +76,27 @@ func TestSandboxedFileToolPatchAndTrash(t *testing.T) {
 	if err != nil || string(got) != "changed\n" {
 		t.Fatalf("patch bytes: %q %v", got, err)
 	}
+	partial := "*** Begin Patch\n*** Add File: x\n+first\n*** Add File: x/y\n+second\n*** End Patch"
+	reply, err = dispatch("partial", "apply_patch", tools.FileRequest{Patch: partial})
+	if err == nil || reply.State != tools.Unknown || len(reply.Result.Changes) == 0 {
+		t.Fatalf("partial patch lost recovery receipts: %+v %v", reply, err)
+	}
+	var applied *tools.FileReceipt
+	for i := range reply.Result.Changes {
+		if reply.Result.Changes[i].Path == "x" {
+			applied = &reply.Result.Changes[i]
+		}
+	}
+	if applied == nil || applied.Version == "" {
+		t.Fatal("missing saved version for applied file")
+	}
+	_, err = dispatch("undo-partial", "restore_file", tools.FileRequest{Path: "x", Revision: applied.After, Version: applied.Version})
+	if err != nil {
+		t.Fatalf("restore partial patch: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "x")); !os.IsNotExist(err) {
+		t.Fatalf("partial write not undone: %v", err)
+	}
 	l := lease.New(func() {})
 	defer l.Release()
 	snapshot, err := e.Snapshot(t.Context(), l)
