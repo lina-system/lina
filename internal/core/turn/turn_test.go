@@ -42,7 +42,7 @@ func database(t *testing.T) (*canon.Store, canon.Config) {
 	}
 	t.Cleanup(func() { c.Close() })
 	ms := canon.Migrations()
-	ms = append(ms, canon.Migration{Version: len(ms) + 1, SQL: canon.InboxSchema + turn.Schema})
+	ms = append(ms, canon.Migration{Version: len(ms) + 1, SQL: turn.Schema})
 	cfg := canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: 1, Controls: c, Migrations: ms}
 	return open(t, cfg), cfg
 }
