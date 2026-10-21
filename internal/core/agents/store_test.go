@@ -4,6 +4,7 @@ package agents_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -13,6 +14,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
+	"github.com/thisisjun786/lina/persona"
 )
 
 func setup(t *testing.T) (*agents.Store, *canon.Store, string) {
@@ -249,5 +251,77 @@ func TestFirstRunIsIdempotentAndOnlyNeedsChatGPT(t *testing.T) {
 	}
 	if _, err := s2.FirstRun(t.Context(), "person", false); !errors.Is(err, agents.ErrNotFound) {
 		t.Fatalf("resurrected default: %v", err)
+	}
+}
+
+func TestPreparationKeepsAgentIdentityAndOriginalOwner(t *testing.T) {
+	s, _, _ := setup(t)
+	a := create(t, s, "")
+	first, err := s.Prepare(t.Context(), "identity-first", a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	layers := first.Layers
+	layers.UserVoice = "Revised by another authorized editor"
+	if _, err := s.Revise(t.Context(), a.ID, a.Revision, layers, "editor"); err != nil {
+		t.Fatal(err)
+	}
+	next, err := s.Prepare(t.Context(), "identity-next", a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.Name != a.Name || next.OwnerPersonID != "person" || next.Layers != layers {
+		t.Fatalf("identity or owner replaced by revision author: %+v", next)
+	}
+}
+
+func TestFirstRunUpgradesOnlyShippedPlaceholderLayers(t *testing.T) {
+	for _, customCore := range []bool{false, true} {
+		t.Run(fmt.Sprint(customCore), func(t *testing.T) {
+			s, _, _ := setup(t)
+			legacy := agents.Preset{ID: "lina", Core: "<!-- SPDX-License-Identifier: Apache-2.0 -->\nLINA preset core placeholder. The project owner supplies the persona material.\n", DefaultVoice: "<!-- SPDX-License-Identifier: Apache-2.0 -->\nLINA preset default voice placeholder. The project owner supplies the voice material.\n"}
+			if customCore {
+				legacy.Core = "Owner-supplied core"
+			}
+			if err := s.UpdatePreset(t.Context(), legacy, "person"); err != nil {
+				t.Fatal(err)
+			}
+			a := create(t, s, "lina")
+			before, err := s.Prepare(t.Context(), "before-upgrade", a.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			layers := before.Layers
+			layers.UserVoice, layers.GrowthSnapshot = "Personal voice", "Personal growth"
+			if _, err := s.Revise(t.Context(), a.ID, a.Revision, layers, "person"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.FirstRun(t.Context(), "person", true); err != nil {
+				t.Fatal(err)
+			}
+			after, err := s.Prepare(t.Context(), "after-upgrade", a.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := layers
+			if !customCore {
+				want.Core = persona.LinaCore
+			}
+			want.DefaultVoice = persona.LinaDefaultVoice
+			if after.Layers != want || after.Revision != a.Revision+2 {
+				t.Fatalf("placeholder upgrade lost personal layers or did not publish: %+v", after)
+			}
+			pinned, err := s.Prepare(t.Context(), "before-upgrade", a.ID)
+			if err != nil || !reflect.DeepEqual(pinned, before) {
+				t.Fatal("upgrade changed an already prepared turn", err)
+			}
+			if _, err := s.FirstRun(t.Context(), "person", true); err != nil {
+				t.Fatal(err)
+			}
+			unchanged, err := s.Get(t.Context(), a.ID)
+			if err != nil || unchanged.Revision != after.Revision {
+				t.Fatal("upgrade was not idempotent", err)
+			}
+		})
 	}
 }

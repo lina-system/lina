@@ -11,16 +11,13 @@ import (
 	"github.com/thisisjun786/lina/internal/core/boot"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
-	"github.com/thisisjun786/lina/internal/core/turn"
 )
 
 func TestGrowthUpgradesPublishedInstalledSchemas(t *testing.T) {
 	// These are the published installed versions before growth. Never derive
 	// their order from the new ApplicationMigrations being tested.
-	published := canon.Migrations()[:12]
-	for _, sql := range []string{turn.Schema, turn.ControlSchema, turn.OutcomeSchema, accounts.SignInSchema} {
-		published = append(published, canon.Migration{Version: len(published) + 1, SQL: sql})
-	}
+	published := canon.Migrations()[:15]
+	published = append(published, canon.Migration{Version: 16, SQL: accounts.SignInSchema})
 	for version := 12; version <= 16; version++ {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
 			root := stateRoot(t)

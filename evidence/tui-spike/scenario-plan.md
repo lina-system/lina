@@ -130,14 +130,23 @@ emoji sequences. Inspect column boundaries under wcwidth and confirmed grapheme
 mode, including wrapping. Record Glamour's result separately from LINA's table
 renderer. A Glamour failure selects the own-table renderer required by T-09;
 passing another width mode cannot hide it.
+Select the physical mode before painting any table. If mode 2027 is permanently
+enabled, record only grapheme observations and a failed comparison with a
+mitigation; do not label that screen as wcwidth.
 
 **S11 — Pane.** Show the conversation, composer and a representative synthetic
 result in the side pane. Inspect widths from 100 through 140, including 120 and
 the boundaries around any proposed threshold. Record whether content and actions
 remain usable and why. The operator chooses the threshold from those observations;
 the existing 120-column default alone is not a measurement.
+Every width must have an observation. A passing threshold is the first usable
+width, and every width from it through 140 must remain usable.
 
 ## Library decision and completion
+
+The owner-run cases and final library decision are tracked in
+[follow-up #371](https://github.com/thisisjun786/lina/issues/371), separately from
+LN-85's harness delivery. #87 remains open for its real-terminal acceptance.
 
 Collect the complete scenario-by-terminal matrix before claiming acceptance.
 Record the candidate's misses without increasing any bound. Evaluate fallbacks

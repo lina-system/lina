@@ -42,7 +42,7 @@ func TestHardTurnStartsRealBackgroundRunFromDurableInput(t *testing.T) {
 			return call("background-read"), nil
 		}
 		return answer(runs.Artifact{Body: "whole result", Done: true}), nil
-	}, func(c *runs.Config) { c.PublishPromotion = turn.PublishPromotion }, turn.Schema, turn.ControlSchema, turn.OutcomeSchema)
+	}, func(c *runs.Config) { c.PublishPromotion = turn.PublishPromotion })
 	o := origin()
 	id, err := inbox.New(db).Admit(t.Context(), inbox.Input{Key: inbox.Key{Conversation: o.Conversation, Source: "client", NativeID: "input"}, Body: []byte("whole request")})
 	if err != nil {
@@ -88,7 +88,7 @@ func TestSoftTurnCanUseRealStartRunTool(t *testing.T) {
 	service, db, _ := setupWith(t, func(context.Context, provider.Request) (provider.Stream, error) {
 		t.Error("start tool ran background work before receipt")
 		return answer(runs.Artifact{}), nil
-	}, func(c *runs.Config) { c.PublishPromotion = turn.PublishPromotion }, turn.Schema, turn.ControlSchema, turn.OutcomeSchema)
+	}, func(c *runs.Config) { c.PublishPromotion = turn.PublishPromotion })
 	o := origin()
 	id, err := inbox.New(db).Admit(t.Context(), inbox.Input{Key: inbox.Key{Conversation: o.Conversation, Source: "client", NativeID: "input"}, Body: []byte("whole request")})
 	if err != nil {

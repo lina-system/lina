@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/clientapi"
+	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -154,7 +155,26 @@ func TestM2InstalledPersonaGrowth(t *testing.T) {
 	mu.Lock()
 	captured := append([]string(nil), instructions...)
 	mu.Unlock()
-	if len(captured) != 3 || captured[1] != captured[0]+candidate.Snapshot || captured[2] != captured[0] {
+	if len(captured) != 3 {
+		t.Fatalf("provider calls=%d", len(captured))
+	}
+	type persona struct {
+		AgentID       string        `json:"agent_id"`
+		Name          string        `json:"name"`
+		OwnerPersonID string        `json:"owner_person_id"`
+		Layers        agents.Layers `json:"layers"`
+	}
+	var before, grown persona
+	if err := json.Unmarshal(instructionBlock(captured[0], "persona"), &before); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(instructionBlock(captured[1], "persona"), &grown); err != nil {
+		t.Fatal(err)
+	}
+	want := before
+	want.Layers.GrowthSnapshot = candidate.Snapshot
+	withoutGrowth := strings.Replace(captured[1], string(instructionBlock(captured[1], "persona")), string(instructionBlock(captured[0], "persona")), 1)
+	if grown != want || captured[2] != captured[0] || withoutGrowth != captured[0] {
 		t.Fatal("persona changed mid-turn, another layer changed, or undo failed")
 	}
 	c.Close()
