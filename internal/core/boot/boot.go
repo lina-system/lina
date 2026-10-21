@@ -31,6 +31,9 @@ const (
 	EpochMinted
 	CanonOpened
 	EpochMirrored
+	SocketPending
+	SocketCreated
+	SocketBound
 	SocketsBound
 	Reconciled
 	Ready
@@ -49,8 +52,9 @@ type Snapshot struct {
 	State State
 }
 type Sentinel struct {
-	Epoch  string `json:"epoch"`
-	Socket string `json:"socket"`
+	Epoch         string `json:"epoch"`
+	Socket        string `json:"socket"`
+	PendingSocket string `json:"pending_socket,omitempty"`
 }
 type Recovery struct {
 	MainID    string
@@ -189,19 +193,21 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		}
 	}
 	// Starting a run does not establish ownership of the requested socket.
-	// Keep the previous run's path until a new listener has actually bound.
-	ownedSocket := ""
+	// Keep both previous paths until a new listener has actually bound. A second
+	// interrupted start must not lose an earlier run's uncompleted bind intent.
+	ownedSocket, pendingSocket := "", ""
 	if recovery.Previous != nil {
 		ownedSocket = recovery.Previous.Socket
+		pendingSocket = recovery.Previous.PendingSocket
 	}
-	writeSentinel := func(socket string) error {
-		sentinel, err := json.Marshal(Sentinel{Epoch: strconv.FormatUint(snapshot.Epoch, 10), Socket: socket})
+	writeSentinel := func(socket, pending string) error {
+		sentinel, err := json.Marshal(Sentinel{Epoch: strconv.FormatUint(snapshot.Epoch, 10), Socket: socket, PendingSocket: pending})
 		if err != nil {
 			return err
 		}
 		return store.Write("run.sentinel", sentinel)
 	}
-	if err := writeSentinel(ownedSocket); err != nil {
+	if err := writeSentinel(ownedSocket, pendingSocket); err != nil {
 		return err
 	}
 	sentinelWritten = true
@@ -237,11 +243,42 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	if err := reclaimSocket(cfg.Socket, recovery.Previous); err != nil {
 		return err
 	}
-	listener, err := clientsrv.Listen(cfg.Socket)
-	if err != nil {
+	// Never record intent for an already occupied target. Otherwise a failed
+	// start could authorize reclaiming an unrelated stale socket on the next run.
+	if _, err := os.Lstat(cfg.Socket); !errors.Is(err, os.ErrNotExist) {
+		if err != nil {
+			return fmt.Errorf("inspect socket path: %w", err)
+		}
+		return errors.New("socket path already exists")
+	}
+	// Retire an interrupted bind at another path before replacing its intent,
+	// keeping the previous owned path available if this path change fails.
+	if pendingSocket != "" && pendingSocket != cfg.Socket {
+		if err := clientsrv.PrepareSocketDirectory(pendingSocket); err != nil {
+			return err
+		}
+		if err := reclaimSocket(pendingSocket, recovery.Previous); err != nil {
+			return err
+		}
+	}
+	if err := writeSentinel(ownedSocket, cfg.Socket); err != nil {
 		return err
 	}
-	if err := writeSentinel(cfg.Socket); err != nil {
+	if err := boundary(SocketPending); err != nil {
+		return err
+	}
+	listener, err := (clientsrv.ListenConfig{AfterBind: func() error {
+		return boundary(SocketCreated)
+	}}).Listen(cfg.Socket)
+	if err != nil {
+		// A competing binder may have occupied the path after the preflight.
+		// A known failed bind must not grant ownership on a subsequent start.
+		return errors.Join(err, writeSentinel(ownedSocket, ""))
+	}
+	if err := boundary(SocketBound); err != nil {
+		return errors.Join(err, listener.Close())
+	}
+	if err := writeSentinel(cfg.Socket, ""); err != nil {
 		return errors.Join(err, listener.Close())
 	}
 	snapshot.State = Recovering
@@ -329,9 +366,12 @@ func readControls(store *ctlfiles.Store) (Recovery, error) {
 			}
 			epoch, err := strconv.ParseUint(previous.Epoch, 10, 64)
 			_, socketPresent := object["socket"]
+			pending, pendingPresent := object["pending_socket"]
 			if err != nil || strconv.FormatUint(epoch, 10) != previous.Epoch || epoch == 0 ||
 				!socketPresent || strings.TrimSpace(string(object["socket"])) == "null" ||
-				(previous.Socket != "" && !filepath.IsAbs(previous.Socket)) {
+				(previous.Socket != "" && !filepath.IsAbs(previous.Socket)) ||
+				(pendingPresent && strings.TrimSpace(string(pending)) == "null") ||
+				(previous.PendingSocket != "" && !filepath.IsAbs(previous.PendingSocket)) {
 				return recovery, errors.New("invalid run sentinel")
 			}
 			recovery.Previous = &previous
@@ -344,10 +384,10 @@ func readControls(store *ctlfiles.Store) (Recovery, error) {
 	return recovery, nil
 }
 
-// Only a socket recorded by this root's previous run may be reclaimed, while
-// holding its lock. Regular files, symlinks and live listeners are preserved.
+// Only a socket owned or attempted by this root's previous run may be reclaimed,
+// while holding its lock. Regular files, symlinks and live listeners are preserved.
 func reclaimSocket(path string, previous *Sentinel) error {
-	if previous == nil || previous.Socket != path {
+	if previous == nil || (previous.Socket != path && previous.PendingSocket != path) {
 		return nil
 	}
 	info, err := os.Lstat(path)
