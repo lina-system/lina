@@ -100,7 +100,11 @@ func TestCoreProcess(t *testing.T) {
 						if err := json.Unmarshal(line, &response); err != nil {
 							t.Fatal(err)
 						}
-						if response.Result.Error == nil || response.Result.Error.Code != protocol.ErrorCapabilityNotNegotiated {
+						answer := response.Result
+						if response.JSONRPC != "2.0" || response.ID != request.ID || answer.ReplyTo == nil || *answer.ReplyTo != request.Params.MessageID || answer.Sender != envelope.Sender || answer.Epoch != epoch || answer.Kind != protocol.KindError || answer.EffectState != protocol.EffectRefused || answer.Error == nil {
+							t.Fatalf("invalid post-handshake answer: %s", line)
+						}
+						if answer.Error.Code != protocol.ErrorCapabilityNotNegotiated {
 							t.Fatalf("unexpected post-handshake answer: %s", line)
 						}
 						// A handshake is served during recovery. Probe until Core

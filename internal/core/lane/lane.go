@@ -35,14 +35,16 @@ type running struct {
 	inputs *loop.Inputs
 }
 type conversation struct {
-	queue  []request
-	active *running
+	queue        []request
+	active       *running
+	checkNotices bool
 }
 
 // Manager is shared by all conversations of one Core instance. Use New, and
 // Close it before closing the storage or services used by its turns.
 type Manager struct {
 	mu      sync.Mutex
+	notices *Notices
 	lanes   map[string]*conversation
 	ctx     context.Context
 	cancel  context.CancelCauseFunc
@@ -107,6 +109,22 @@ func (m *Manager) run(id string, lane *conversation) {
 	for {
 		m.mu.Lock()
 		if len(lane.queue) == 0 {
+			if lane.checkNotices && !m.closed {
+				// Selection is a boundary: every already admitted input goes
+				// first. This goroutine owns delivery until the commit ends,
+				// so a new input cannot stream concurrently with that notice.
+				lane.checkNotices = false
+				m.mu.Unlock()
+				delivered, err := m.notices.deliver(m.ctx, id)
+				m.mu.Lock()
+				if delivered && err == nil {
+					lane.checkNotices = true
+				}
+				// A failure remains in canon. Only an explicit resume or a
+				// new event retries it; there is no tight retry loop.
+				m.mu.Unlock()
+				continue
+			}
 			delete(m.lanes, id)
 			m.mu.Unlock()
 			return

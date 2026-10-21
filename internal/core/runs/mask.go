@@ -47,6 +47,14 @@ func (m *masker) node(value *any, key string, depth int) (bool, error) {
 	if depth > 64 {
 		return false, ErrInvalid
 	}
+	// Sensitive field names apply to every JSON type, including numeric PINs
+	// and structured credentials; none may fall through the string-only path.
+	if sensitiveField(key) && *value != nil {
+		old, ok := (*value).(string)
+		*value = secret.Placeholder
+		return !ok || old != secret.Placeholder, nil
+	}
+
 	changed := false
 	switch v := (*value).(type) {
 	case string:
@@ -77,19 +85,7 @@ func (m *masker) node(value *any, key string, depth int) (bool, error) {
 				}
 			}
 		}
-		// Sensitive object keys also flag credentials without a recognizable shape.
-		encoded, _ := json.Marshal(v)
-		pair := key + "=" + string(encoded)
-		checked, err := secrets.Mask(pair)
-		if err != nil {
-			return false, err
-		}
-		if key != "" && checked.Text() != pair && strings.TrimPrefix(checked.Text(), key+"=") == secret.Placeholder {
-			*value = secret.Placeholder
-			m.cache[digest] = secret.Placeholder
-			return true, nil
-		}
-		checked, err = secrets.Mask(v)
+		checked, err := secrets.Mask(v)
 		if err != nil {
 			return false, err
 		}
@@ -136,4 +132,15 @@ func masked[T any](m *masker, v T) (T, error) {
 	var out T
 	err = json.Unmarshal(b, &out)
 	return out, err
+}
+
+// Match field names in their entirety. A receipt or source identifier ending
+// in "-secret" is metadata, not a credential field to replace with a string.
+func sensitiveField(key string) bool {
+	normalized := strings.NewReplacer("_", "", "-", "").Replace(strings.ToLower(key))
+	switch normalized {
+	case "apikey", "accesstoken", "refreshtoken", "clientsecret", "password", "passwd", "secret", "token":
+		return true
+	}
+	return false
 }

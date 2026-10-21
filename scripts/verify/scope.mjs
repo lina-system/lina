@@ -49,6 +49,7 @@ function registryFor(cwd) {
     'internal/core/secrets/',
     'internal/core/skills/',
     'internal/core/turn/',
+    'internal/core/waiting/',
   ];
   const skills = existsSync(join(cwd, 'skills')) ? ['./skills/...'] : [];
   const persona = existsSync(join(cwd, 'persona')) ? ['./persona/...'] : [];

@@ -1,0 +1,17 @@
+{
+  "person": "person-scenario",
+  "agent": "agent-scenario",
+  "conversation": "conversation-scenario",
+  "now": "2026-01-01T12:00:00Z",
+  "rows": [
+    {"id": "reply", "kind": "reply", "requested": "2025-12-01T12:00:00Z"},
+    {"id": "costly", "kind": "decide", "costly": true},
+    {"id": "overdue", "kind": "do", "due": "2025-12-31T12:00:00Z"},
+    {"id": "blocked", "kind": "decide", "blocking": true},
+    {"id": "finished", "kind": "do", "finished": true}
+  ],
+  "order": ["blocked", "overdue", "costly", "reply"],
+  "answer": {"id": "blocked", "value": "continue"},
+  "landings_seconds": [0, 9, 11],
+  "notice_sizes": [2, 1]
+}

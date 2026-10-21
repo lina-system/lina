@@ -157,6 +157,11 @@ func (s *Service) run(ctx context.Context, id string) error {
 	// Commit that checkpoint before authorizing/sending the next request. Steering
 	// is appended and removed from its durable queue in the same transaction.
 	cfg.Transform = func(ctx context.Context, req provider.Request) (provider.Request, error) {
+		var err error
+		req.Items, err = masked(&s.masker, req.Items)
+		if err != nil {
+			return req, err
+		}
 		if err := s.update(ctx, id, func(r *Record) error {
 			req.Items = append([]provider.Item(nil), req.Items...)
 			r.FollowUps = r.FollowUps[drained:]
@@ -239,6 +244,8 @@ func (s *Service) run(ctx context.Context, id string) error {
 	}
 	cause := context.Cause(runCtx)
 	if errors.Is(cause, ErrNeedsInput) {
+		r.NoticeVersion++
+		r.NoticeAt = s.cfg.Now().UnixNano()
 		r.State = NeedsInput
 		r.Reason = "needs_input"
 		return s.save(context.Background(), r, false)

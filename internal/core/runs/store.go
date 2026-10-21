@@ -4,6 +4,8 @@ package runs
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"time"
 
 	"github.com/thisisjun786/lina/internal/core/budget"
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -105,6 +107,9 @@ func (s *Service) Notices(ctx context.Context, conversation string) ([]Notice, e
 				return nil, err
 			}
 			outcome := r.Outcome
+			if r.State == NeedsInput {
+				outcome = InputNeeded
+			}
 			for _, c := range citations {
 				if !c.Resolved && outcome == Complete {
 					outcome = Partial
@@ -120,7 +125,13 @@ func (s *Service) Notices(ctx context.Context, conversation string) ([]Notice, e
 					}
 				}
 			}
-			out = append(out, Notice{State: r.State, ID: r.ID, Origin: r.Origin, Outcome: outcome, Result: r.Brief.Result, Material: r.Material, Citations: citations, Checks: checks, Reason: r.Reason})
+			key := fmt.Sprintf("%s:%d", r.ID, r.NoticeVersion)
+			at := r.NoticeAt
+			if r.NoticeVersion == 0 {
+				key = fmt.Sprintf("%s:legacy:%d", r.ID, r.Updated)
+				at = r.Updated
+			}
+			out = append(out, Notice{Key: key, Landed: time.Unix(0, at).UTC(), State: r.State, ID: r.ID, Origin: r.Origin, Outcome: outcome, Result: r.Brief.Result, Material: r.Material, Citations: citations, Checks: checks, Reason: r.Reason})
 		}
 	}
 	return out, nil

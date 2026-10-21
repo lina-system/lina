@@ -1,0 +1,9 @@
+{
+  "goal": "Compare the named sources",
+  "scope": "the supplied evidence",
+  "not_touch": "anything outside the evidence",
+  "done": "return the comparison",
+  "result": "document_draft",
+  "summary": "Compared the supplied sources.",
+  "artifact": "Synthetic result body that stays in its material."
+}

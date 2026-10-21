@@ -42,6 +42,8 @@ const (
 	Partial   Outcome = "partial"
 	Failed    Outcome = "failed"
 	Cancelled Outcome = "cancelled"
+	// InputNeeded is a notice outcome; the run remains nonterminal in NeedsInput.
+	InputNeeded Outcome = "needs_input"
 )
 
 type CheckKind string
@@ -83,6 +85,11 @@ type Artifact struct {
 	Citations []materials.Anchor `json:"citations,omitempty"`
 }
 type Record struct {
+	ReceiptRound                uint64
+	ScratchReceipts             map[string]ToolReceipt
+	InputAnswers                []InputAnswer
+	NoticeVersion               uint64
+	NoticeAt                    int64
 	Promotion                   *budget.Handoff
 	PromotionDigest             string
 	EffectsQuestion             *EffectQuestion
@@ -161,6 +168,8 @@ type Config struct {
 // Notice contains only landing metadata. The artifact enters a conversation
 // only when its material is explicitly read, never as a notice body.
 type Notice struct {
+	Key       string
+	Landed    time.Time
 	State     State
 	ID        string
 	Origin    Origin
