@@ -25,6 +25,53 @@ func TestSQLiteModuleDigestAndInitialization(t *testing.T) {
 	}
 }
 
+func TestPackagedSQLiteRejectsTamperingBeforeOpening(t *testing.T) {
+	if os.Getenv("LINA_TEST_PACKAGED_SQLITE_TAMPER") == "1" {
+		original := sqlite3.Binary
+		sqlite3.Binary = append([]byte(nil), original...)
+		sqlite3.Binary[len(sqlite3.Binary)-1] ^= 1
+		path := filepath.Join(t.TempDir(), "must-not-exist.sqlite")
+		if db, err := OpenSQLite(t.Context(), path); err == nil {
+			db.Close()
+			t.Fatal("accepted corrupted packaged engine")
+		} else if !strings.Contains(err.Error(), "digest mismatch") {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatal("created storage before digest verification", err)
+		}
+		return
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.CommandContext(t.Context(), executable, "-test.run=^TestPackagedSQLiteRejectsTamperingBeforeOpening$")
+	cmd.Env = append(os.Environ(), "LINA_TEST_PACKAGED_SQLITE_TAMPER=1")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%v\n%s", err, output)
+	}
+}
+
+func TestPackagedSQLiteVector(t *testing.T) {
+	db, err := OpenSQLite(t.Context(), filepath.Join(t.TempDir(), "vector.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if got := textSQL(t, db, "SELECT vec_version()"); got != "v0.1.6" {
+		t.Fatal(got)
+	}
+	execSQL(t, db, "CREATE VIRTUAL TABLE vectors USING vec0(embedding float[2])")
+	execSQL(t, db, "INSERT INTO vectors(rowid, embedding) VALUES (1, '[1,2]'), (2, '[4,6]')")
+	if got := textSQL(t, db, "SELECT rowid FROM vectors WHERE embedding MATCH '[4,6]' AND k=1"); got != "2" {
+		t.Fatal(got)
+	}
+	if got := textSQL(t, db, "SELECT vec_distance_L2('[1,2]', '[4,6]')"); got != "5" {
+		t.Fatal(got)
+	}
+}
+
 // The vector engine is an acceptance input, not a shipped or downloaded test
 // dependency. Its construction and exact digest are recorded in the evidence.
 func TestSQLiteVectorAcceptance(t *testing.T) {

@@ -12,6 +12,8 @@ node scripts/release.mjs --commit <sha> --tag <v0.0.1-alpha.YYYYMMDD.N> --notes-
 - `--tag`: the version tag of [versioning.md](../design/versioning.md), such as `v0.0.1-alpha.20261020.1`: the date of tagging in UTC, then the number of the release of that day from 1. A tag carries no build metadata (`+`).
 - `--notes-file`: a file with user-facing release notes.
 
+Binary release assembly runs on Linux with bubblewrap and working unprivileged user namespaces. It cross-builds Linux amd64 and macOS arm64; the host requirement does not limit the packaged targets. The exact Go toolchain and public module downloads must already be cached (the preceding foundation verification normally populates them). There is no unsandboxed fallback.
+
 Without `--publish`, the script validates and changes no tag, release, or branch. Pass `--publish` only when the owner has approved that release.
 
 ## Generate release notes
@@ -43,7 +45,7 @@ Any failed check stops the run before anything is built or published.
 With `--publish`, the script runs two separate stages.
 
 1. **Build:** in a clean worktree of the exact commit, with no credentials in its environment, it builds the release artifacts and their release manifest ([runtime.md](../design/runtime.md#release-manifest)). This stage verifies modules and installs packages as the [dependency policy](dependencies.md) requires.
-2. **Publication:** with the owner's local Git and GitHub credentials, it pushes the tag, creates the GitHub release for the tag in this private repository with the notes, the artifacts and the manifest, and fast-forwards `main` to the commit and pushes it. This stage fetches no modules and installs no packages.
+2. **Publication:** with the owner's local Git and GitHub credentials, it first fast-forwards `main`, pushes the immutable tag, then creates the GitHub release in this private repository with the notes, artifacts and manifest. This stage fetches no modules and installs no packages.
 
 A release carries the source at its tag, the repository's [license](../../LICENSE) and the [third-party notices](../../THIRD-PARTY-NOTICES.md). It publishes no package to any registry and deploys no service.
 
@@ -55,7 +57,7 @@ When building `lina` and `lina-node`, the build stage supplies these string vari
 | `github.com/thisisjun786/lina/internal/buildinfo.Commit` | The verified source commit SHA |
 | `github.com/thisisjun786/lina/internal/buildinfo.Date` | The build date in UTC, `YYYY-MM-DD` |
 
-Both binaries report these fields through `version` as specified in [versioning.md](../design/versioning.md#what-a-binary-reports). The source defaults remain a development version and do not change for each release. The current release script packages source; wiring binary artifacts into that script is separate from the commands' metadata support.
+Both binaries report these fields through `version` as specified in [versioning.md](../design/versioning.md#what-a-binary-reports). The source defaults remain a development version and do not change for each release. The build stage produces source and two binary archives, `lina-<version>-linux-amd64.tar.gz` and `lina-<version>-darwin-arm64.tar.gz`. Each binary archive contains `lina`, `lina-node`, their `manifest.json`, the repository license, third-party notices and the [sqlite-vec notices](../../packaging/sqlite-vec/NOTICE.md). `release-manifest.json` identifies the exact source tree, foundation evidence and each archive digest; `SHA256SUMS` covers the archives and release manifest. Both a dry run and publication build these same files from a separate clone of the exact commit, with the explicit release version. The binary build uses bubblewrap with a private filesystem, PID and network namespace: only read-only system tools, the selected toolchain, public module cache and source clone are mounted, alongside a writable output directory and temporary storage. The publisher's home, shared Git directory, processes and network are inaccessible. The stage rejects symlinks and hardlinks, bounds output sizes, verifies executable sizes and digests against each build manifest, and copies only the expected artifacts and trusted source notices. It removes its temporary clone on success or failure. This sandbox applies to binary assembly; the existing preceding foundation verification is a separate stage. These build targets do not by themselves establish V2 residency or native platform acceptance.
 
 ## Distribution
 
@@ -63,6 +65,6 @@ The main installs LINA from the GitHub release, downloaded with the installing p
 
 ## Recovery
 
-Tags are immutable. A rerun reuses an existing tag only when it identifies the same commit. The script never rewrites a tag or an existing published release.
+Tags are immutable. A local tag is reusable only when it identifies the same commit; a remote tag is never republished. The script never rewrites a tag or an existing published release.
 
-If publication succeeds but advancing `main` fails, the release still exists. Inspect the failure and rerun with the same tag and commit after correcting it. An older or divergent commit cannot replace `main`; moving it backwards is not a recovery mechanism.
+If advancing `main` fails, nothing is published and the command can be retried. If creating the GitHub release fails after `main` and the tag are pushed, the error includes the `gh release create` command to finish publication with the existing artifacts. The script refuses an already published remote tag, including one on the same commit. An older or divergent commit cannot replace `main`; moving it backwards is not a recovery mechanism.
