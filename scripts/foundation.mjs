@@ -68,7 +68,7 @@ function whitespaceCheck(root, scope) {
 const seconds = (since) => Math.round((Date.now() - since) / 100) / 10;
 
 // Every check is bounded: a check that hangs fails instead of holding the run.
-const timeouts = { docs: 120_000, automation: 600_000, dependencies: 600_000, components: componentsTimeoutMs };
+const timeouts = { docs: 120_000, automation: componentsTimeoutMs, dependencies: 600_000, components: componentsTimeoutMs };
 
 async function runChecks(root, scope, log) {
   const env = cleanEnv();

@@ -30,7 +30,9 @@ selection ----+---- docs --------+---- gate
               +---- components --+
 ```
 
-Everything runs in one process. `selection` records the exact base and candidate commits, the changed paths, the selected checks and the selection reason. It also checks Git whitespace errors: `git diff --check` over the range, or `git show --check` on the `HEAD` commit with `--full`. The selected checks run in parallel after selection. The gate only evaluates their results; it never reruns their commands. Each check has a bounded timeout.
+Everything runs in one process. `selection` records the exact base and candidate commits, the changed paths, the selected checks and the selection reason. It also checks Git whitespace errors: `git diff --check` over the range, or `git show --check` on the `HEAD` commit with `--full`. The selected checks run in parallel after selection. The gate only evaluates their results; it never reruns their commands. Each check has a bounded timeout. Component and automation checks share a
+15-minute maximum, leaving room under the CI job's 20-minute limit. Setup and
+individual short commands retain their tighter deadlines.
 
 ## Evidence
 
@@ -69,6 +71,16 @@ The scripts use Node 20 or newer and its built-in modules, Git, and actionlint o
 | full (import, vulnerability and license checks) | b9ddd15 | Linux x86-64, 16 CPUs | warm | 7.239 | 30 |
 
 The bound is U(x) = 10 * ceil(max(1.5x, x + 15) / 10) seconds of wall time, measured from the start of `foundation.mjs` to the gate's result. A mode without a measurement has no bound. The development-loop check V7 records the first local measurement of each mode ([runtime.md](../design/runtime.md#runtime-acceptance)).
+
+PR #370 measured a cold hosted full run at 595.4 seconds before the previous
+component deadline terminated its still-progressing root test suite. Automation
+finished in 559.8 seconds and dependencies in 151.1 seconds; the component check
+had completed build, vet, analysis and the kit tests and was still waiting for
+end-to-end tests. The check watchdog is now 900 seconds, the rounded U(x) for
+that observation, and automation uses the same outer bound as its cross-build
+fixtures. No checks are skipped, test results remain uncached and the process
+watchdogs still terminate genuinely stalled work. A final passing CI run records
+the completed measurement on the pull request.
 
 A run above its bound is investigated before the bound is changed. A bound changes only together with the new measurement, in the same change.
 

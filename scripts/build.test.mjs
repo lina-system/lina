@@ -33,7 +33,7 @@ function fixture(t, { timeoutScale = 1, executeCommand = execute } = {}) {
   t.after(context.close);
   const out = join(sb.dir, 'artifacts with spaces');
   // A full cross-build contains multiple Go commands. Share the same bounded
-  // allowance across targets, inside foundation's 600 s automation watchdog.
+  // allowance across targets, inside foundation's shared automation watchdog.
   const deadline = performance.now() + (componentsTimeoutMs - 5000) * timeoutScale;
   const run = (args = ['--out', out]) => {
     const timeoutMs = Math.max(1, Math.floor(deadline - performance.now()));
@@ -65,7 +65,8 @@ test('a progressing cross-build can outlive the old per-command limit', t => {
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /compiling[\s\S]*finished/);
   }
-  assert.deepEqual(budgets, [[595_000, 594_000], [445_000, 444_000]]);
+  const initial = componentsTimeoutMs - 5000;
+  assert.deepEqual(budgets, [[initial, initial - 1000], [initial - 150_000, initial - 151_000]]);
 });
 
 test('a hung cross-build fails with the command, target and elapsed time', t => {
@@ -100,7 +101,7 @@ test('cold inner Go compilations share the build deadline and can exceed 120 sec
         ? (args.includes('./internal/core/manifest/clientinfo') ? '[]' : '{}') : '', stderr: '' };
     } });
   assert.equal(manifest.target, 'darwin/arm64');
-  assert.deepEqual(budgets, [595_000, 445_000]);
+  assert.deepEqual(budgets, [componentsTimeoutMs - 5000, componentsTimeoutMs - 155_000]);
 });
 
 test('an exhausted build deadline stops before another Go command starts', t => {
