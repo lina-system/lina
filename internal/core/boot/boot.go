@@ -19,6 +19,8 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
+	"github.com/thisisjun786/lina/internal/core/manifest"
+	"github.com/thisisjun786/lina/kit/sandbox"
 )
 
 type Step uint8
@@ -48,8 +50,9 @@ const (
 )
 
 type Snapshot struct {
-	Epoch uint64
-	State State
+	Epoch   uint64
+	State   State
+	Sandbox sandbox.Status
 }
 type Sentinel struct {
 	Epoch         string `json:"epoch"`
@@ -83,12 +86,22 @@ type Services struct {
 	PeekEpoch  func(context.Context) (uint64, error)
 	OpenCanon  func(context.Context, uint64) (Canon, error)
 	Reconcile  func(context.Context, Recovery) error
+	// SandboxReady receives the same probed wrapper used by shell/file handlers.
+	// A failed probe disables those handlers only; it does not stop recovery.
+	SandboxReady func(*sandbox.Sandbox)
 }
 type Config struct {
-	StateRoot   string
-	Socket      string
-	PeerSeenMax uint64
-	Services    Services
+	// Client supplies the installed person's agents, supported rows and handlers.
+	// Boot always supplies the durable main id, epoch and recovery state itself.
+	Client clientsrv.Identity
+	// ClientManifest selects the build manifest containing supportedCombinations.
+	// An explicit path must exist and contain a valid table, including an empty
+	// table when every client combination is intentionally unsupported.
+	ClientManifest string
+	StateRoot      string
+	Socket         string
+	PeerSeenMax    uint64
+	Services       Services
 	// AfterStep observes a completed boundary. It is used by deterministic crash
 	// tests and is never configured through command arguments or the environment.
 	AfterStep func(Step, Snapshot) error
@@ -99,6 +112,23 @@ type Config struct {
 func Run(ctx context.Context, cfg Config) (result error) {
 	if cfg.StateRoot == "" || cfg.Socket == "" {
 		return errors.New("state root and socket are required")
+	}
+	if cfg.ClientManifest != "" {
+		file, err := os.Open(cfg.ClientManifest)
+		if err != nil {
+			return fmt.Errorf("open client build manifest: %w", err)
+		}
+		rows, readErr := manifest.ReadCombinations(file)
+		closeErr := file.Close()
+		if err := errors.Join(readErr, closeErr); err != nil {
+			return fmt.Errorf("read client build manifest: %w", err)
+		}
+		cfg.Client.Supported = rows
+	}
+	if cfg.Client.Supported != nil {
+		if err := manifest.ValidateCombinations(cfg.Client.Supported); err != nil {
+			return err
+		}
 	}
 	if (cfg.Services.PeekEpoch == nil) != (cfg.Services.OpenCanon == nil) {
 		return errors.New("canon requires both read-only peek and writer open")
@@ -298,7 +328,9 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	serving, cancelServe := context.WithCancel(ctx)
 	done := make(chan error, 1)
 	go func() {
-		done <- clientsrv.Serve(serving, listener, clientsrv.Identity{MainID: recovery.MainID, Epoch: strconv.FormatUint(snapshot.Epoch, 10), Recovering: recovering.Load})
+		identity := cfg.Client
+		identity.MainID, identity.Epoch, identity.Recovering = recovery.MainID, strconv.FormatUint(snapshot.Epoch, 10), recovering.Load
+		done <- clientsrv.Serve(serving, listener, identity)
 	}()
 	stack = append(stack, func(phase context.Context) error {
 		cancelServe()
@@ -320,6 +352,15 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	if err := boundary(Reconciled); err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
+	if ctx.Err() != nil {
+		return nil
+	}
+	box, closeProcesses := startSandbox(ctx, cfg.StateRoot, cfg.Socket)
+	stack = append(stack, closeProcesses)
+	snapshot.Sandbox = box.Status()
+	if cfg.Services.SandboxReady != nil {
+		cfg.Services.SandboxReady(box)
+	}
 	if len(recovery.Halt) == 0 && ctx.Err() == nil {
 		snapshot.State = Running
 		recovering.Store(false)
@@ -334,7 +375,7 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	case err := <-done:
 		// Leave one result for the reverse shutdown stack.
 		done <- err
-		if err == nil {
+		if err == nil && ctx.Err() == nil {
 			return errors.New("client service stopped before shutdown")
 		}
 		return err
