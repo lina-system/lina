@@ -2,8 +2,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+
+	"github.com/thisisjun786/lina/kit/tools"
 )
 
 func main() {
@@ -18,8 +21,10 @@ func main() {
 			return
 		case "tui":
 			os.Exit(runTUI(os.Args[2:]))
+		case "file-tool":
+			os.Exit(tools.Main(context.Background(), os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 		}
 	}
-	fmt.Fprintln(os.Stderr, "usage: lina <core|tui|install|version>")
+	fmt.Fprintln(os.Stderr, "usage: lina <core|tui|install|version|file-tool>")
 	os.Exit(64)
 }
