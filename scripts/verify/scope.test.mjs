@@ -8,6 +8,28 @@ import { git as runGit } from '../git.mjs';
 import { componentRegistry, kind, scopeFor } from './scope.mjs';
 import { evaluateGate } from './gate.mjs';
 
+test('tool executor is registered with the lina Go checks', t => {
+  const r = repository(t);
+  const base = r.git('rev-parse', 'HEAD');
+  mkdirSync(join(r.cwd, 'internal/core/exec'), { recursive: true });
+  writeFileSync(join(r.cwd, 'internal/core/exec/exec.go'), 'package exec\n');
+  const scope = r.classify(r.commit(), { base, full: true });
+  assert.deepEqual(scope.unmapped, []);
+  assert.ok(scope.selectedComponents.includes('lina'));
+  assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/exec/...'));
+});
+
+test('ledger is registered with the lina Go checks', t => {
+  const r = repository(t);
+  const base = r.git('rev-parse', 'HEAD');
+  mkdirSync(join(r.cwd, 'internal/core/ledger'), { recursive: true });
+  writeFileSync(join(r.cwd, 'internal/core/ledger/store.go'), 'package ledger\n');
+  const scope = r.classify(r.commit(), { base, full: true });
+  assert.deepEqual(scope.unmapped, []);
+  assert.ok(scope.selectedComponents.includes('lina'));
+  assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/ledger/...'));
+});
+
 test('model path configuration is registered with the lina Go checks', t => {
   const r = repository(t);
   const base = r.git('rev-parse', 'HEAD');
@@ -88,17 +110,32 @@ test('asset store is registered with the lina Go checks', t => {
 
 });
 
-test('inbox and lanes are registered with the lina Go checks', t => {
+test('memory and its executor are registered with the lina Go checks', t => {
   const r = repository(t);
   const base = r.git('rev-parse', 'HEAD');
-  for (const directory of ['inbox', 'lane']) {
+  for (const directory of ['memory', 'exec']) {
     mkdirSync(join(r.cwd, `internal/core/${directory}`), { recursive: true });
     writeFileSync(join(r.cwd, `internal/core/${directory}/store.go`), `package ${directory}\n`);
   }
   const scope = r.classify(r.commit(), { base, full: true });
   assert.deepEqual(scope.unmapped, []);
   assert.ok(scope.selectedComponents.includes('lina'));
-  for (const directory of ['inbox', 'lane']) {
+  for (const directory of ['memory', 'exec']) {
+    assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes(`./internal/core/${directory}/...`));
+  }
+});
+
+test('inbox, lanes and channel gateway are registered with the lina Go checks', t => {
+  const r = repository(t);
+  const base = r.git('rev-parse', 'HEAD');
+  for (const directory of ['inbox', 'lane', 'channels', 'gateway']) {
+    mkdirSync(join(r.cwd, `internal/core/${directory}`), { recursive: true });
+    writeFileSync(join(r.cwd, `internal/core/${directory}/store.go`), `package ${directory}\n`);
+  }
+  const scope = r.classify(r.commit(), { base, full: true });
+  assert.deepEqual(scope.unmapped, []);
+  assert.ok(scope.selectedComponents.includes('lina'));
+  for (const directory of ['inbox', 'lane', 'channels', 'gateway']) {
     assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes(`./internal/core/${directory}/...`));
   }
 });
@@ -618,6 +655,13 @@ test('brand tokens and generated data select verification while PNGs remain evid
   assert.equal(kind('internal/design/tokens_gen.go'), 'components');
   assert.equal(kind('evidence/brand/dark-connected.png'), 'docs');
   assert.equal(kind('evidence/brand/unregistered.py'), 'unmapped');
+});
+
+test('vector rebuilds select automation and their notices remain documents', () => {
+  assert.equal(kind('packaging/sqlite-vec/build.sh'), 'automation');
+  assert.equal(kind('packaging/sqlite-vec/NOTICE.md'), 'docs');
+  assert.equal(kind('packaging/sqlite-vec/README.md'), 'docs');
+  assert.equal(kind('packaging/sqlite-vec/unregistered.py'), 'unmapped');
 });
 
 test('QA guide and repository opt-in have registered verification', () => {

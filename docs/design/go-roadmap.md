@@ -111,6 +111,8 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-10 Ledger, request assembly and preparation.** Ledger fields, pure Assemble, ContextPacket, preparation steps.
 - Done when: an update of a ledger row is denied; identical input gives identical bytes; the layout order matches the contract; each failing preparation step shows one plain line and a stub provider sees zero calls; the ContextPacket is never stored.
 - Depends on: G1-03, G1-06, G1-08. Design refs: C-11, C-17; [conversation-and-memory.md](conversation-and-memory.md#request-layout).
+- #58 implements pure deterministic assembly, bounded optional ContextPacket collection and the four-step preparation runner with commit-before-dispatch evidence callbacks. Package tests cover ordered layout, budget and scope exclusions, one-line failures with zero provider calls, follow-up reuse and absence of packet bodies after SQLite reopen. It adds no client-protocol or TUI conversation endpoint.
+- #57 implements the immutable ledger tables and native admission, using the fenced canon writer, entry-derived speaker kinds and masking before storage. SQLite and real material-store scenarios cover mutation refusal, atomic admission, restart readback and unavailable bytes. Preparation and request assembly remain with their own issues; no ledger operation is exposed through the TUI or Core protocol in this increment.
 
 **G1-11 Inbox, lanes, steering and deadlines.** Inbox, lanes, steering, stop, expiry timers.
 - Done when: a duplicate key inserts one row and preserves its original bytes across restart; the acknowledgement follows the commit and no failed commit is acknowledged; each conversation runs one turn at a time while other conversations can proceed; a message during a turn is applied as steering at the next round; stop ends open calls as aborted; after `kill -9` mid-turn the input is not replayed and the conversation shows one plain line.
@@ -124,12 +126,14 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-31 Accounts and Sign in with ChatGPT.** Single refresh actor, sign-in relay, owner binding, V1 record.
 - Done when: one refresh runs at a time per account and a rotated refresh token is stored before use; a failed refresh shows needs sign-in and uses no other account; a second ChatGPT account never changes the binding; no token appears in a log, request, sandbox or client; the V1 record states what the request surface accepted.
 - Depends on: G1-06, G1-08, G1-18. Design refs: C-47; [runtime.md](runtime.md#chatgpt).
+- #80 implements the account store, serialized refresh and idle keep-alive, durable token rotation and account states. Package tests cover persistence, concurrent calls, interruption, failed refresh, turn exclusion and secret projections. The sign-in relay, issuer exchange, owner binding, protocol/TUI exposure and V1 record remain with their owning increments.
 
 ### 1.D Memory, context and skills
 
 **G1-13 Memory items, recall, person model and Korean search.** Items with holder, recall with evidence, `recall_person`, Korean search.
 - Done when: fixtures find a particle-attached three-syllable word and a two-syllable word in ledger and memory; recall for agent A returns no id held by B; a person-subject item exists only from person events; "remembered" is said only after the commit.
 - Depends on: G1-03, G1-05, G1-10, G1-12. Design refs: C-20 to C-22; [conversation-and-memory.md](conversation-and-memory.md#memory).
+- #64 implements the memory table and revision snapshots, holder/person scope checks, native person-event provenance, committed memory tool receipts, ephemeral standing profiles and bounded `recall_person`. Acceptance uses real SQLite and ledger admission; there is no client memory endpoint yet. #65 supplies the Korean indexes and fixtures.
 
 **G1-14 Retraction, trash and the removal list.** Revocation epoch, trash, tombstones, removal list.
 - Done when: after a forget, search, summaries, the ContextPacket and answers give zero hits in the next request, also after restoring an older generation; a fault leaves no half state; a tombstone never exists without its removal-list line; a forgotten item is not extracted again.
@@ -190,12 +194,14 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-40 Packaging and residency check.** Static binaries, sqlite-vec, 24-hour residency on Linux and macOS.
 - Done when: sqlite-vec loads after its digest check; services start; size, start time and resident memory and CPU stay within the budget written before the run on both platforms; the binding is recorded in the manifest.
 - Depends on: G1-03, G1-23. Design refs: [runtime.md](runtime.md#runtime-acceptance) (V2).
+- #94 supplies digest-checked embedded sqlite-vec, platform build manifests and Linux amd64/macOS arm64 release archives, with service-start acceptance on the install path. It does not substitute cross-builds for the separate native-platform and 24-hour residency measurements.
 
 ### 1.G Channels and agent exchanges
 
 **G1-25 Channel gateway and Telegram.** Pairing, bindings, scopes, long poll, outbound queue, buttons.
 - Done when: `kill -9` between receipt and reply leaves one inbox row, the matching cursor and no repeat; an unpaired sender yields no turn; the token is in no event, ledger row or child environment; READY is reached with the platform unreachable; a button from anyone but the paired owner changes nothing; a send of unknown outcome is not repeated.
 - Depends on: G1-06, G1-11, G1-12, G1-18, G1-29. Design refs: C-27; [integrations.md](integrations.md#channels).
+- #97 implements the gateway adapter contract, owner pairing, dispatch scope, atomic inbox/cursor admission and durable per-chat outbound queue. Real canon scenarios use SIGKILL at admission and send boundaries, prove no duplicate dispatch or uncertain resend, and exercise pairing, retry-after and agent-deletion binding removal. There is no channel TUI/protocol endpoint in this increment; Telegram transport, credential wiring and approval interactions remain separate work.
 
 **G1-26 Agent exchanges.** Mailbox, typed hand-off, round limit, one-line log, needs-person flag.
 - Done when: a request delivers once across `kill -9`; an acknowledgement ends the exchange without a model turn; no exchange message enters a person's conversation as a person turn; an exchange turn reads no personal knowledge; the flag is set only when the person owns the decision.
