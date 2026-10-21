@@ -67,6 +67,7 @@ func (s *Store) Start(ctx context.Context, input Request, at time.Time) (Receipt
 	if err != nil {
 		return Receipt{}, err
 	}
+	defer closeMaterial(material)
 	if existingReceipt != nil {
 		return *existingReceipt, nil
 	}
@@ -104,7 +105,7 @@ func (s *Store) Start(ctx context.Context, input Request, at time.Time) (Receipt
 	}
 	return receipt, nil
 }
-func insertMessage(ctx context.Context, tx *canon.Tx, r Record, at time.Time, material ledger.Material) error {
+func insertMessage(ctx context.Context, tx *canon.Tx, r Record, at time.Time, material ledger.MaterialWrite) error {
 	if _, err := tx.ExecContext(ctx, "INSERT INTO exch_msg(delivery_id,exchange_id,round,handoff,state) VALUES(?,?,?,?,?)", r.DeliveryID, r.ID, r.Round, encode(r.HandOff), Queued); err != nil {
 		return err
 	}
@@ -163,7 +164,7 @@ func (s *Store) Deliver(ctx context.Context, delivery string, at time.Time) (Rec
 	}
 	return receipt, nil
 }
-func finish(ctx context.Context, tx *canon.Tx, r Record, outcome Outcome, body string, at time.Time, material ...ledger.Material) error {
+func finish(ctx context.Context, tx *canon.Tx, r Record, outcome Outcome, body string, at time.Time, material ...ledger.MaterialWrite) error {
 	if _, err := tx.ExecContext(ctx, "UPDATE exch_msg SET state=?,answer=? WHERE delivery_id=?", Answered, body, r.DeliveryID); err != nil {
 		return err
 	}
@@ -236,6 +237,7 @@ func (s *Store) Answer(ctx context.Context, delivery, actor string, a Answer, at
 	if err != nil {
 		return err
 	}
+	defer closeMaterial(material)
 	return s.db.Write(ctx, func(tx *canon.Tx) error {
 		current, err := forDelivery(ctx, tx, delivery)
 		if err != nil {
@@ -261,6 +263,7 @@ func (s *Store) Continue(ctx context.Context, id string, input Request, at time.
 	if err != nil {
 		return Receipt{}, err
 	}
+	defer closeMaterial(material)
 	if existingReceipt != nil {
 		return *existingReceipt, nil
 	}

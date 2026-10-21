@@ -65,15 +65,32 @@ func TestDeliveryCommitsSharedConversationLedger(t *testing.T) {
 
 // The assets store writes through the same canon writer. This adapter proves
 // material staging happens before the exchange transaction, without recursion.
-type materialStore struct{ store *assets.Store }
+type materialStore struct {
+	store  *assets.Store
+	writer *assets.MaterialWriter
+}
 
-func (m materialStore) Save(ctx context.Context, body secrets.Masked) (ledger.Material, error) {
-	token, err := m.store.StageImport(ctx, strings.NewReader(body.Text()))
+func materials(t *testing.T, store *assets.Store) materialStore {
+	t.Helper()
+	writer, err := assets.OpenMaterialWriter(t.Context(), store)
 	if err != nil {
-		return ledger.Material{}, err
+		t.Fatal(err)
 	}
-	a, err := m.store.Handover(ctx, token, "exchange-body", assets.Lina, assets.Actor{PersonID: "owner", AgentID: "answerer"})
+	return materialStore{store, writer}
+}
+
+type materialWrite struct{ *assets.PreparedMaterial }
+
+func (p materialWrite) Insert(ctx context.Context, tx *canon.Tx) (ledger.Material, error) {
+	a, err := p.PreparedMaterial.Insert(ctx, tx)
 	return ledger.Material{ID: a.ID, Revision: a.Revision}, err
+}
+func (m materialStore) Prepare(ctx context.Context, body secrets.Masked) (ledger.MaterialWrite, error) {
+	p, err := m.writer.Prepare(ctx, strings.NewReader(body.Text()), "exchange-body", assets.Actor{PersonID: "owner", AgentID: "answerer"})
+	if err != nil {
+		return nil, err
+	}
+	return materialWrite{p}, nil
 }
 func (m materialStore) Read(ctx context.Context, ref ledger.Material) (string, error) {
 	r, err := m.store.OpenRead(ctx, ref.ID, ref.Revision)
@@ -95,7 +112,7 @@ func TestLargeExchangeUsesSharedMaterialsAndMasksSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer a.Close()
-	s := exchange.NewWithMaterials(db, materialStore{a})
+	s := exchange.NewWithMaterials(db, materials(t, a))
 	req := request()
 	token := "ghp_" + strings.Repeat("Synthetic", 5)
 	req.HandOff.Wanted = strings.Repeat("detail ", 4000) + token
@@ -130,5 +147,43 @@ func TestLargeExchangeUsesSharedMaterialsAndMasksSecrets(t *testing.T) {
 	}
 	if _, err = s.Events(ctx, r.ID); !errors.Is(err, ledger.ErrBytesUnavailable) {
 		t.Fatalf("missing bytes silently accepted: %v", err)
+	}
+}
+
+func TestLargeMailboxRollbackDoesNotRetainMaterialMetadata(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "state")
+	if err := os.Mkdir(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	db := openAt(t, root, 1)
+	a, err := assets.Open(t.Context(), root, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	material := materials(t, a)
+	req := request()
+	req.HandOff.Wanted = strings.Repeat("detail ", 4000)
+	receipt, err := exchange.NewWithMaterials(rollback{db}, material).Start(t.Context(), req, now)
+	if !errors.Is(err, rollbackError) || receipt.ID != "" {
+		t.Fatalf("rollback receipt: %+v %v", receipt, err)
+	}
+	for _, table := range []string{"assets", "asset_revisions", "conv_event", "exch_msg", "exchanges"} {
+		var n int
+		if err = db.Read(t.Context(), func(tx *canon.Tx) error {
+			return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM "+table).Scan(&n)
+		}); err != nil || n != 0 {
+			t.Fatalf("rollback retained %s rows: %d %v", table, n, err)
+		}
+	}
+	markers, err := os.ReadDir(filepath.Join(root, "staging", "material-writes"))
+	if err != nil || len(markers) != 0 {
+		t.Fatalf("unreconciled preparations: %v %v", markers, err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	receipt, err = exchange.NewWithMaterials(db, material).Start(ctx, req, now)
+	if err != nil || !receipt.Inserted {
+		t.Fatalf("writer not reusable after rollback: %+v %v", receipt, err)
 	}
 }

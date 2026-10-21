@@ -22,20 +22,28 @@ type transaction struct{ tx *canon.Tx }
 func (t transaction) Write(_ context.Context, fn func(*canon.Tx) error) error { return fn(t.tx) }
 func (t transaction) Read(_ context.Context, fn func(*canon.Tx) error) error  { return fn(t.tx) }
 
-// Material bytes are saved before acquiring the mailbox writer. Ledger admission
-// inside that writer can only publish this already-durable reference; it cannot
-// call an asset writer recursively. A failed commit can leave an unreferenced
-// revision, which has the same retention rules as ledger.Store.Admit.
-type stagedMaterial struct{ ref ledger.Material }
+// Bytes are prepared before the mailbox writer; metadata is inserted in the
+// same transaction as the event. The nested ledger borrows the prepared write:
+// only the outer flow may close it after its canon transaction returns.
+type stagedMaterial struct{ write ledger.MaterialWrite }
+type borrowedMaterial struct{ ledger.MaterialWrite }
 
-func (s stagedMaterial) Save(context.Context, secrets.Masked) (ledger.Material, error) {
-	if s.ref.ID == "" {
-		return ledger.Material{}, ledger.ErrBytesUnavailable
+func (borrowedMaterial) Close() error { return nil }
+func (s stagedMaterial) Prepare(context.Context, secrets.Masked) (ledger.MaterialWrite, error) {
+	if s.write == nil {
+		return nil, ledger.ErrBytesUnavailable
 	}
-	return s.ref, nil
+	return borrowedMaterial{s.write}, nil
 }
 func (stagedMaterial) Read(context.Context, ledger.Material) (string, error) {
 	return "", ledger.ErrBytesUnavailable
+}
+func closeMaterial(write ledger.MaterialWrite) {
+	if write != nil {
+		_ = write.Close()
+	}
+	// Cleanup cannot revoke a committed receipt. The writer's recovery marker
+	// survives cleanup errors and is reconciled on the next open.
 }
 func bodySpans(body string) []secrets.Span {
 	var spans []secrets.Span
@@ -50,22 +58,22 @@ func bodySpans(body string) []secrets.Span {
 	}
 	return spans
 }
-func (s *Store) stageBody(ctx context.Context, body string) (ledger.Material, error) {
+func (s *Store) stageBody(ctx context.Context, body string) (ledger.MaterialWrite, error) {
 	if len(body) <= ledger.InlineBytes {
-		return ledger.Material{}, nil
+		return nil, nil
 	}
 	if s.materials == nil {
-		return ledger.Material{}, ledger.ErrBytesUnavailable
+		return nil, ledger.ErrBytesUnavailable
 	}
 	masked, err := secrets.Mask(body, bodySpans(body)...)
 	if err != nil {
-		return ledger.Material{}, err
+		return nil, err
 	}
-	return s.materials.Save(ctx, masked)
+	return s.materials.Prepare(ctx, masked)
 }
-func (s *Store) prepareInput(ctx context.Context, input Request, at time.Time, id string) (Request, ledger.Material, *Receipt, error) {
+func (s *Store) prepareInput(ctx context.Context, input Request, at time.Time, id string) (Request, ledger.MaterialWrite, *Receipt, error) {
 	if !identifier(input.DeliveryID) || !identifier(input.From) || !identifier(input.To) || !timestamp(at) {
-		return Request{}, ledger.Material{}, nil, ErrInvalid
+		return Request{}, nil, nil, ErrInvalid
 	}
 	var receipt *Receipt
 	err := s.db.Read(ctx, func(tx *canon.Tx) error {
@@ -84,21 +92,21 @@ func (s *Store) prepareInput(ctx context.Context, input Request, at time.Time, i
 		return nil
 	})
 	if err != nil || receipt != nil {
-		return Request{}, ledger.Material{}, receipt, err
+		return Request{}, nil, receipt, err
 	}
 	input, err = normalize(input, at)
 	if err != nil {
-		return Request{}, ledger.Material{}, nil, err
+		return Request{}, nil, nil, err
 	}
 	material, err := s.stageBody(ctx, string(encode(input.HandOff)))
 	return input, material, nil, err
 }
 func eventID(delivery, kind string) string { return exchangeID(delivery) + "-" + kind }
-func appendEvent(ctx context.Context, tx *canon.Tx, r Record, agent, kind, body string, at time.Time, material ...ledger.Material) error {
+func appendEvent(ctx context.Context, tx *canon.Tx, r Record, agent, kind, body string, at time.Time, material ...ledger.MaterialWrite) error {
 	if !timestamp(at) {
 		return ErrInvalid
 	}
-	var ref ledger.Material
+	var ref ledger.MaterialWrite
 	if len(material) > 0 {
 		ref = material[0]
 	}

@@ -47,7 +47,7 @@ func TestExchangeThroughBackgroundRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer a.Close()
-	s := exchange.NewWithMaterials(db, materialStore{a})
+	s := exchange.NewWithMaterials(db, materials(t, a))
 	r := start(t, s)
 	var calls atomic.Int64
 	var prepared *exchange.Prepared
