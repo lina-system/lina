@@ -50,6 +50,14 @@ func claimContext(ctx context.Context, tx *canon.Tx, id, conversation, eventID s
 }
 
 func interruptNotice(ctx context.Context, tx *canon.Tx, id string, cause Interrupt) error {
+	return terminalNotice(ctx, tx, id, cause.Issuer, "interruption", cause.Text())
+}
+
+func failureNotice(ctx context.Context, tx *canon.Tx, id string) error {
+	return terminalNotice(ctx, tx, id, nil, "failure", "The reply could not be completed. Send a new message to continue.")
+}
+
+func terminalNotice(ctx context.Context, tx *canon.Tx, id string, issuer any, kind, text string) error {
 	var eventID string
 	var notice sql.NullString
 	err := tx.QueryRowContext(ctx, "SELECT input_event,notice_event FROM turn_control WHERE turn_id=?", id).Scan(&eventID, &notice)
@@ -65,17 +73,17 @@ func interruptNotice(ctx context.Context, tx *canon.Tx, id string, cause Interru
 		return err
 	}
 	digest := sha256.Sum256([]byte(id))
-	noticeID := "turn-interruption-" + hex.EncodeToString(digest[:])
+	noticeID := "turn-" + kind + "-" + hex.EncodeToString(digest[:])
 	now := time.Now().UTC()
 	_, err = events.Admit(ctx, guard.EntrySystem, ledger.Input{
 		ID: noticeID, ConversationID: source.ConversationID, ParentID: source.ID,
 		AgentID: source.AgentID, Surface: source.Surface, OccurredAt: now, RecordedAt: now,
-		TimeQuality: "recorded", Body: cause.Text(), ScaffoldKind: "interruption",
+		TimeQuality: "recorded", Body: text, ScaffoldKind: kind,
 	})
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, "UPDATE turn_control SET issuer=?,notice_event=? WHERE turn_id=?", cause.Issuer, noticeID, id)
+	_, err = tx.ExecContext(ctx, "UPDATE turn_control SET issuer=?,notice_event=? WHERE turn_id=?", issuer, noticeID, id)
 	return err
 }
 

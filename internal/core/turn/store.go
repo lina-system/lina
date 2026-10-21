@@ -372,6 +372,11 @@ func (s *Store) Run(ctx context.Context, o Options) (out loop.Outcome, err error
 					return e
 				}
 			}
+			if state == Failed {
+				if e := failureNotice(save, tx, o.ID); e != nil {
+					return e
+				}
+			}
 			_, e := tx.ExecContext(save, "UPDATE turn_runs SET state=? WHERE id=?", state, o.ID)
 			return e
 		}}

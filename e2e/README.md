@@ -26,6 +26,13 @@ streaming completion and steering sequence through the same PTY lifecycle.
 They require no personal credentials. The physical terminal spike and real-model
 acceptance remain separate.
 
+`m1/provider-failure-history.json` runs HTTP 503 and SSE EOF after a delta
+against installed Core, with input and history displayed through the real TUI
+in a 120x60 PTY. It checks the failure notice and partial before and after a
+graceful Core restart, no provider replay, and a new successful turn whose model
+context excludes the failed partial. Notice wording is captured from the live
+protocol rather than fixed in the scenario.
+
 `m1/tui-resize.json` exercises the colour conversation screen at 80x24, then
 40x12 and 120x35 through PTY resize signals. It retains a synthetic draft,
 checks header, status and composer, and compares all rows and the cursor with
