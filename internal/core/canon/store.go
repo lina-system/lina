@@ -27,10 +27,11 @@ const (
 	ErrNewerSchema
 	ErrClosed
 	ErrInvalid
+	ErrRecoveryRequired
 )
 
 func (c Code) Error() string {
-	names := [...]string{"invalid", "stale_epoch", "read_only", "store_write_halted", "schema_too_new", "closed", "invalid"}
+	names := [...]string{"invalid", "stale_epoch", "read_only", "store_write_halted", "schema_too_new", "closed", "invalid", "recovery_required"}
 	if int(c) >= len(names) {
 		return "invalid"
 	}
@@ -125,6 +126,8 @@ type Store struct {
 	lifetime         context.Context
 	cancel           context.CancelFunc
 	closeOnce        sync.Once
+	readGate         sync.RWMutex
+	readFailure      error // guarded by readGate
 }
 
 // Inspect reads the schema version and exact unsigned epoch before a writer
@@ -438,6 +441,11 @@ func (s *Store) MirrorEpoch(ctx context.Context, epoch uint64) error {
 }
 
 func (s *Store) Read(ctx context.Context, fn func(*Tx) error) error {
+	s.readGate.RLock()
+	defer s.readGate.RUnlock()
+	if s.readFailure != nil {
+		return errors.Join(ErrRecoveryRequired, s.readFailure)
+	}
 	if fn == nil {
 		return ErrInvalid
 	}
