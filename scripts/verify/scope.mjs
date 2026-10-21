@@ -24,6 +24,7 @@ function registryFor(cwd) {
     'internal/core/assemble/',
     'internal/core/assets/',
     'internal/core/authority/',
+    'internal/core/backup/',
     'internal/core/boot/',
     'internal/core/budget/',
     'internal/core/canon/',
