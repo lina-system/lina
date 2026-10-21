@@ -333,7 +333,9 @@ func (d *display) showShell(model *shellModel) error {
 	if !d.interactive || len(model.content.Blocks) == 0 {
 		return nil
 	}
-	frame := model.View().Content
+	// Plain terminals already received each notice once above. Transcript
+	// refreshes must not append that same explanation again.
+	frame := model.viewContent(false)
 	if frame == d.frame {
 		return nil
 	}
