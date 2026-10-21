@@ -54,13 +54,20 @@ type Material struct {
 }
 
 // Materials is supplied by Core's composition layer, which owns the assets
-// store. Save durably stores only masked bytes in materials/lina and returns an
-// immutable asset revision. Read must verify the revision's size and digest.
-// An unreferenced material after a failed canon commit is never a ledger event;
-// the material owner's maintenance path handles its retention.
+// store and opens its material writer before admission to recover interrupted
+// preparations. Prepare syncs only masked bytes, without retained metadata;
+// Insert publishes that metadata in the event's transaction. Read verifies the
+// immutable revision's size and digest.
 type Materials interface {
-	Save(context.Context, secrets.Masked) (Material, error)
+	Prepare(context.Context, secrets.Masked) (MaterialWrite, error)
 	Read(context.Context, Material) (string, error)
+}
+
+type MaterialWrite interface {
+	Insert(context.Context, *canon.Tx) (Material, error)
+	// Close runs after the enclosing transaction, reconciling bytes against
+	// committed canon. A durable marker must survive interrupted cleanup.
+	Close() error
 }
 
 type Input struct {
@@ -141,10 +148,10 @@ func (s *Store) Admit(ctx context.Context, entry guard.Entry, in Input) (Event, 
 
 // AdmitBatch commits an ordered group of related events in one transaction.
 // Later events may reference earlier events in the batch. Input validation,
-// masking and material writes finish before the canon transaction; a failed transaction
-// leaves no event, relation or span from the batch. Unreferenced staged material
-// revisions follow the material owner's retention policy, as with Admit.
-func (s *Store) AdmitBatch(ctx context.Context, inputs []Admission) ([]Event, error) {
+// masking and durable byte preparation finish before the canon transaction.
+// Material metadata, events, relations and spans commit together; Close
+// reconciles staged bytes after success or failure, including interrupted cleanup.
+func (s *Store) AdmitBatch(ctx context.Context, inputs []Admission) (_ []Event, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -153,32 +160,54 @@ func (s *Store) AdmitBatch(ctx context.Context, inputs []Admission) ([]Event, er
 	}
 	events := make([]Event, len(inputs))
 	for i, in := range inputs {
-		var err error
 		events[i], err = prepare(in.Entry, in.Input)
 		if err != nil {
 			return nil, err
 		}
 	}
-	for i := range events {
-		e := &events[i]
+	writes := make([]MaterialWrite, len(events))
+	defer func() {
+		for _, w := range writes {
+			if w == nil {
+				continue
+			}
+			cleanupErr := w.Close()
+			if err != nil {
+				err = errors.Join(err, cleanupErr)
+			}
+			// A housekeeping error cannot revoke an already committed batch.
+			// The durable material marker allows recovery after interrupted cleanup.
+		}
+	}()
+	for i, e := range events {
 		if len(e.Body.Text()) <= InlineBytes {
 			continue
 		}
 		if s.materials == nil {
 			return nil, ErrBytesUnavailable
 		}
-		var err error
-		e.Material, err = s.materials.Save(ctx, e.Body)
+		writes[i], err = s.materials.Prepare(ctx, e.Body)
 		if err != nil {
 			return nil, err
 		}
-		if !safeID(e.Material.ID) || e.Material.Revision <= 0 {
+		if writes[i] == nil {
 			return nil, ErrInvalid
 		}
 	}
-	err := s.db.Write(ctx, func(tx *canon.Tx) error {
-		for _, e := range events {
-			if err := writeEvent(ctx, tx, e); err != nil {
+	err = s.db.Write(ctx, func(tx *canon.Tx) error {
+		for i := range events {
+			e := &events[i]
+			if writes[i] != nil {
+				var err error
+				e.Material, err = writes[i].Insert(ctx, tx)
+				if err != nil {
+					return err
+				}
+				if !safeID(e.Material.ID) || e.Material.Revision <= 0 {
+					return ErrInvalid
+				}
+			}
+			if err := writeEvent(ctx, tx, *e); err != nil {
 				return err
 			}
 		}

@@ -171,15 +171,32 @@ func TestRecordFailureRollsBackPairAndRetries(t *testing.T) {
 
 // The production composition layer supplies this ledger/materials boundary.
 // Both stores below are real, so a restart verifies bytes as well as row IDs.
-type materialStore struct{ store *assets.Store }
+type materialStore struct {
+	store  *assets.Store
+	writer *assets.MaterialWriter
+}
 
-func (m materialStore) Save(ctx context.Context, body secrets.Masked) (ledger.Material, error) {
-	token, err := m.store.StageImport(ctx, strings.NewReader(body.Text()))
+func materials(t *testing.T, store *assets.Store) materialStore {
+	t.Helper()
+	writer, err := assets.OpenMaterialWriter(t.Context(), store)
 	if err != nil {
-		return ledger.Material{}, err
+		t.Fatal(err)
 	}
-	a, err := m.store.Handover(ctx, token, "reply-body", assets.Lina, assets.Actor{PersonID: "owner", AgentID: "agent"})
+	return materialStore{store, writer}
+}
+
+type materialWrite struct{ *assets.PreparedMaterial }
+
+func (p materialWrite) Insert(ctx context.Context, tx *canon.Tx) (ledger.Material, error) {
+	a, err := p.PreparedMaterial.Insert(ctx, tx)
 	return ledger.Material{ID: a.ID, Revision: a.Revision}, err
+}
+func (m materialStore) Prepare(ctx context.Context, body secrets.Masked) (ledger.MaterialWrite, error) {
+	p, err := m.writer.Prepare(ctx, strings.NewReader(body.Text()), "reply-body", assets.Actor{PersonID: "owner", AgentID: "agent"})
+	if err != nil {
+		return nil, err
+	}
+	return materialWrite{p}, nil
 }
 func (m materialStore) Read(ctx context.Context, ref ledger.Material) (string, error) {
 	data, err := m.store.Read(ctx, ref.ID, ref.Revision)
@@ -200,7 +217,7 @@ func TestLargeReplyAndMaskedCardSurviveRestart(t *testing.T) {
 	}
 	r := recording()
 	r.Source.SecretSpans = []secrets.Span{{Start: len(full) - len("private-value"), End: len(full)}}
-	saved, err := f.Record(t.Context(), ledger.New(db, materialStore{a}), r)
+	saved, err := f.Record(t.Context(), ledger.New(db, materials(t, a)), r)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +236,7 @@ func TestLargeReplyAndMaskedCardSurviveRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer a.Close()
-	store := ledger.New(db, materialStore{a})
+	store := ledger.New(db, materials(t, a))
 	for _, id := range []string{"reply", "card-event"} {
 		event, err := store.Get(t.Context(), id)
 		if err != nil {
@@ -256,5 +273,38 @@ func TestRecordEmptySlicesAreStable(t *testing.T) {
 	}
 	if _, err := f.Record(t.Context(), store, r); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestLargeReplyBatchRollbackRemovesBothMaterials(t *testing.T) {
+	db, cfg := database(t)
+	a, err := assets.Open(t.Context(), filepath.Dir(cfg.Path), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	writer := materials(t, a)
+	failing := &failWrite{Store: db, after: true}
+	f := filter(t, config())
+	_, _ = f.Push("Done! " + strings.Repeat("가", ledger.InlineBytes))
+	store := ledger.New(failing, writer)
+	if _, err := f.Record(t.Context(), store, recording()); err == nil {
+		t.Fatal("rollback acknowledged")
+	}
+	for _, id := range []string{"reply", "card-event"} {
+		if _, err := store.Get(t.Context(), id); !errors.Is(err, ledger.ErrNotFound) {
+			t.Fatalf("partial %s: %v", id, err)
+		}
+	}
+	manifest, err := a.Backup(t.Context(), t.TempDir())
+	if err != nil || len(manifest) != 0 {
+		t.Fatalf("unreferenced materials retained: %v %v", manifest, err)
+	}
+	if _, err := f.Record(t.Context(), store, recording()); err != nil {
+		t.Fatal(err)
+	}
+	manifest, err = a.Backup(t.Context(), t.TempDir())
+	if err != nil || len(manifest) != 2 {
+		t.Fatalf("expected paired materials: %v %v", manifest, err)
 	}
 }
