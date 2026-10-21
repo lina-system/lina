@@ -151,6 +151,8 @@ A result is the typed output of [host-protocol.md](host-protocol.md#typed-result
 - A result that the person saved is a material ([materials-and-knowledge.md](materials-and-knowledge.md#saving-a-result)). The result then takes no new revision, and the agent finds the saved place in `saved_as`. An agent never saves a result on its own.
 - Citations in a result are passage anchors and follow the evidence rules for past answers: revoked or deleted evidence is shown as such and never silently replaced.
 
+The #104 package implementation validates all eight result kinds before creating a ledger event. Invalid bodies return `malformed` only in the agent's tool result; stale edits and saves return `stale_revision`. A presentation acknowledgement includes at most 2,048 Unicode scalar values of derived text by default and no body; the full body requires `read_result`. Size limits, body fields and the save transaction are specified in [C-52](go-core.md#conversation). A saved result cannot be revised as a preview, and an uncertain save is retained for reconciliation rather than retried. Destination refusal happens before reserving the preview; interrupted record publication is recovered from its exact durable intent so it does not block unrelated later saves. Request-history assembly excludes the complete result storage events, including revisions and saved-status events, and preserves their separate bounded tool acknowledgements. An explicit `read_result` tool output is the body-reading path. Surface delivery remains part of the client-service integration.
+
 **Summary first.** For a document expected to run longer than about two screens, the agent presents a `summary` result before it writes: the outline, the key points, the decisions and open questions, what the document will and will not cover, and a length estimate. It skips this only for a document of one page or less, or when the person asks to have it written at once.
 
 - The person edits the outline in the work panel or by chat and answers the open questions. Nothing is written until the person asks for it.
@@ -316,6 +318,8 @@ The character counts are Unicode scalar values after NFC, excluding Unicode whit
 - The persona keeps its voice, and the budgets apply on top of it.
 
 **When a card replaces text.** A reply becomes one line plus a card (see [Cards and detail on request](surfaces.md#cards-and-detail-on-request)) when any of these holds: it needs more than the hard ceiling; its content is a table, a comparison, a diagram or chart, a list of four or more items, a draft document, a diff or a plan; it reports on a background job; it needs ids, paths, logs, commands or code; or it is a long document the person will keep, in which case a short summary card comes first and the document is written after the person approves the summary. The line says in a few words what the card holds.
+
+The typed-result portion (#104) supplies deterministic complete text and bounded model acknowledgements for these cards. Schema errors are private tool feedback and never become reply content or a result card. This package increment leaves streaming budgets and truncation to the separate C-51 reply-filter implementation.
 
 **Detail on request.** Detail is pulled by the person. Every card has Details, a typed follow-up gets the next layer in at most three lines plus a card, and a typed request for the whole thing opens the full version in the work panel at once. A long answer is acceptable only there, and it lands in the panel.
 

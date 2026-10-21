@@ -230,6 +230,8 @@ The Korean acceptance corpus is `testdata/korean/search.json`: both stores asser
 - Done when: a chat reply over 5 lines or 300 characters is cut at the last sentence and a card is made while the ledger keeps the reply; a body that fails the schema is refused `malformed` to the agent only; a stale revision is refused; a double save makes one record.
 - Depends on: G1-10, G1-17, G1-29. Design refs: C-51, C-52, CP-05; [conversation-and-memory.md](conversation-and-memory.md#reply-shape).
 
+The #104 typed-result increment supplies all eight closed body schemas, deterministic rendering, ledger revisions and Core result-tool bindings. Its tests cover malformed bodies without conversation events, stale edits/saves, scoped reads, one versioned record for a repeated save, and unknown effects without redispatch. Client-service/TUI delivery and C-51's streaming filter remain separate increments.
+
 **G1-35 Waiting list, running list and notices.** Waiting rows, running list, notices at turn boundaries.
 - Done when: rows rank in the contract order on a fixture; the source is re-read before a row shows; a notice is never delivered while a reply streams; notices within 10 s coalesce; answering a row records the decision with person and agent.
 - Depends on: G1-05, G1-11, G1-33. Design refs: C-55; [surfaces.md](surfaces.md#waiting-for-me).
