@@ -6,6 +6,32 @@ import (
 	"testing"
 )
 
+func TestApplicationMigrationsIncludeAssetsAndInbox(t *testing.T) {
+	for _, upgrade := range []bool{false, true} {
+		t.Run(map[bool]string{false: "fresh", true: "from_assets_v1"}[upgrade], func(t *testing.T) {
+			cfg := storeConfig(t)
+			if upgrade {
+				cfg.Migrations = []Migration{{Version: 1, SQL: schemaAssets}}
+				old := openStore(t, cfg)
+				if err := old.Close(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cfg.Migrations = Migrations()
+			s := openStore(t, cfg)
+			for _, table := range []string{"assets", "inbox"} {
+				var count int
+				err := s.Read(t.Context(), func(tx *Tx) error {
+					return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name=?", table).Scan(&count)
+				})
+				if err != nil || count != 1 {
+					t.Errorf("table %s: count=%d err=%v", table, count, err)
+				}
+			}
+		})
+	}
+}
+
 func TestAssetMigrationUpgradesAndReopensExistingCanon(t *testing.T) {
 	cfg := storeConfig(t)
 	cfg.Migrations = nil

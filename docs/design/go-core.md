@@ -399,6 +399,8 @@ type Router interface {
 
 The ordered application migrations are returned by `canon.Migrations`; table groups keep their schema in separate files. The asset tables hold stable ids and observed paths, immutable revision metadata, export delivery records and trash transitions. `assets` uses the existing fenced writer for all metadata changes and a read-only transaction for each query. File preparation and external delivery happen outside canon transactions; revision bytes are synced before their metadata is committed. A stale writer cannot replace existing revision bytes.
 
+The registry retains assets at version 1 and appends `InboxSchema` at version 2. Identical-byte edits also enter the fenced write transaction and confirm the current revision and non-trashed state before succeeding. Asset reads can stream with size and SHA-256 checked at EOF, without holding the store mutex while the consumer reads; the byte-slice convenience API refuses content over its explicit 8 MiB limit. Closing a stream before EOF releases it without establishing integrity.
+
 **C-53 Records repository and index (new).** Contract: [filesystem.md](filesystem.md#records-repository), [work-and-delegation.md](work-and-delegation.md#storage-of-records). One Git repository at `versions/records/`, behind an interface so the backend can change (a pure-Go Git library by default; the Git command as an alternative; thousands of files decide it).
 
 ```go
