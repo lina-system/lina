@@ -69,6 +69,7 @@ func (s *Service) land(ctx context.Context, r *Record, outcome Outcome) error {
 		}
 		r.Material = Ref{ID: a.ID, Revision: a.Revision}
 	}
+	r.Noticed = false
 	r.State = Landed
 	r.Outcome = outcome
 	r.Released = false

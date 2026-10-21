@@ -89,7 +89,7 @@ func (s *Service) Notices(ctx context.Context, conversation string) ([]Notice, e
 	}
 	var out []Notice
 	for _, r := range rows {
-		if r.State == Landed && !r.Noticed && r.Origin.Conversation == conversation {
+		if (r.State == Landed || r.State == NeedsInput) && !r.Noticed && r.Origin.Conversation == conversation {
 			citations, err := materials.Check(ctx, s.cfg.Assets, r.Artifact.Citations)
 			if err != nil {
 				return nil, err
@@ -110,7 +110,7 @@ func (s *Service) Notices(ctx context.Context, conversation string) ([]Notice, e
 					}
 				}
 			}
-			out = append(out, Notice{ID: r.ID, Origin: r.Origin, Outcome: outcome, Result: r.Brief.Result, Material: r.Material, Citations: citations, Checks: checks, Reason: r.Reason})
+			out = append(out, Notice{State: r.State, ID: r.ID, Origin: r.Origin, Outcome: outcome, Result: r.Brief.Result, Material: r.Material, Citations: citations, Checks: checks, Reason: r.Reason})
 		}
 	}
 	return out, nil
@@ -122,7 +122,7 @@ func (s *Service) Acknowledge(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if r.State != Landed {
+	if r.State != Landed && r.State != NeedsInput {
 		return ErrState
 	}
 	r.Noticed = true

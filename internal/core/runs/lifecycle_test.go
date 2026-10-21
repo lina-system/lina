@@ -299,3 +299,52 @@ func TestInFlightRequestIsActivityAndCheckInIsNotDeadline(t *testing.T) {
 		t.Fatalf("in-flight request treated as stalled: %+v", r)
 	}
 }
+
+func TestNeedsInputNoticeAndFollowUpReachOnlyThatRun(t *testing.T) {
+	var allowed atomic.Bool
+	var calls atomic.Int64
+	s, _, _ := setupWith(t, func(context.Context, provider.Request) (provider.Stream, error) {
+		n := calls.Add(1)
+		if n <= 2 {
+			return call(fmt.Sprint(n)), nil
+		}
+		return answer(runs.Artifact{Body: "answered", Done: true}), nil
+	}, func(c *runs.Config) {
+		tool := c.Tools["read"]
+		tool.Authorize = func(context.Context, runs.Record, provider.ToolCall) error {
+			if !allowed.Load() {
+				return runs.ErrNeedsInput
+			}
+			return nil
+		}
+		c.Tools["read"] = tool
+	})
+	id := start(t, s)
+	other := start(t, s)
+	release(t, s, id)
+	if r := wait(t, s, id); r.State != runs.NeedsInput || r.Retries != 0 {
+		t.Fatalf("needs input=%+v", r)
+	}
+	notices, err := s.Notices(t.Context(), origin().Conversation)
+	if err != nil || len(notices) != 1 || notices[0].ID != id {
+		t.Fatalf("question notice=%+v error=%v", notices, err)
+	}
+	if err := s.Acknowledge(t.Context(), id); err != nil {
+		t.Fatal(err)
+	}
+	allowed.Store(true)
+	if err := s.Follow(t.Context(), id, "use the named evidence"); err != nil {
+		t.Fatal(err)
+	}
+	if r := wait(t, s, id); r.Outcome != runs.Complete {
+		t.Fatalf("followed=%+v", r)
+	}
+	notices, err = s.Notices(t.Context(), origin().Conversation)
+	if err != nil || len(notices) != 1 || notices[0].Outcome != runs.Complete {
+		t.Fatalf("landing notice=%+v error=%v", notices, err)
+	}
+	untouched, _ := s.Get(t.Context(), other)
+	if len(untouched.FollowUps) != 0 || untouched.Released {
+		t.Fatal("steering reached another run")
+	}
+}

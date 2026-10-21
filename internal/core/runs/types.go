@@ -145,6 +145,7 @@ type Config struct {
 // Notice contains only landing metadata. The artifact enters a conversation
 // only when its material is explicitly read, never as a notice body.
 type Notice struct {
+	State     State
 	ID        string
 	Origin    Origin
 	Outcome   Outcome
