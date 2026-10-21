@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -82,20 +83,12 @@ func TestCoreProcess(t *testing.T) {
 						if !ok || envelope.Kind != protocol.KindWelcome || envelope.Error != nil || envelope.EffectState != protocol.EffectNone || !reflect.DeepEqual(welcome, want) {
 							t.Fatalf("unexpected welcome: %s", line)
 						}
-						// A welcomed connection remains usable, but grants no operations.
+						// A handshake is served during recovery. Probe until Core
+						// explicitly refuses the unavailable capability; retry only
+						// recovery refusals, never an accepted effect.
 						request.Params.MessageID = "after-welcome"
-						if err := json.NewEncoder(conn).Encode(request); err != nil {
+						if err := awaitCapabilityRefusal(conn, request); err != nil {
 							t.Fatal(err)
-						}
-						line, err := reader.ReadBytes('\n')
-						if err != nil {
-							t.Fatal(err)
-						}
-						if err := json.Unmarshal(line, &response); err != nil {
-							t.Fatal(err)
-						}
-						if response.Result.Error == nil || response.Result.Error.Code != protocol.ErrorCapabilityNotNegotiated {
-							t.Fatalf("unexpected post-handshake answer: %s", line)
 						}
 					} else {
 						if envelope.Kind != protocol.KindError || envelope.Error == nil || envelope.Error.Code != protocol.ErrorUnsupportedCombination || envelope.EffectState != protocol.EffectRefused {
@@ -124,6 +117,81 @@ func TestCoreProcess(t *testing.T) {
 				if _, err := os.Stat(filepath.Join(root, "system/core/run.sentinel")); !os.IsNotExist(err) {
 					t.Fatalf("sentinel remains after shutdown: %v", err)
 				}
+			}
+		})
+	}
+}
+
+// The connection deadline bounds the whole wait, not each retry. Unexpected
+// envelopes and transport errors are terminal rather than readiness signals.
+func awaitCapabilityRefusal(conn net.Conn, request any) error {
+	writer, reader := json.NewEncoder(conn), json.NewDecoder(conn)
+	for {
+		if err := writer.Encode(request); err != nil {
+			return err
+		}
+		var response struct {
+			Result protocol.Envelope `json:"result"`
+		}
+		if err := reader.Decode(&response); err != nil {
+			return err
+		}
+		e := response.Result
+		if e.Kind != protocol.KindError || e.EffectState != protocol.EffectRefused || e.Error == nil {
+			return fmt.Errorf("unexpected post-handshake response: %+v", e)
+		}
+		if e.Error.Code == protocol.ErrorCapabilityNotNegotiated {
+			return nil
+		}
+		if e.Error.Code != protocol.ErrorUnavailable {
+			return fmt.Errorf("unexpected post-handshake refusal: %s", e.Error.Code)
+		}
+	}
+}
+
+func TestCapabilityReadinessProbe(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		codes     []protocol.ErrorCode
+		wantError bool
+	}{
+		{"recovery then ready", []protocol.ErrorCode{protocol.ErrorUnavailable, protocol.ErrorCapabilityNotNegotiated}, false},
+		{"unexpected refusal is terminal", []protocol.ErrorCode{protocol.ErrorMalformed}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client, server := net.Pipe()
+			defer client.Close()
+			client.SetDeadline(time.Now().Add(5 * time.Second))
+			envelope := helloEnvelope(t, []string{"1.0"})
+			envelope.Kind = protocol.KindError
+			envelope.Payload = protocol.ErrorPayload{}
+			envelope.EffectState = protocol.EffectRefused
+			done := make(chan error, 1)
+			go func() {
+				defer server.Close()
+				reader, writer := json.NewDecoder(server), json.NewEncoder(server)
+				for _, code := range tc.codes {
+					var request json.RawMessage
+					if err := reader.Decode(&request); err != nil {
+						done <- err
+						return
+					}
+					envelope.Error = &protocol.Error{Code: code}
+					if err := writer.Encode(struct {
+						Result protocol.Envelope `json:"result"`
+					}{envelope}); err != nil {
+						done <- err
+						return
+					}
+				}
+				done <- nil
+			}()
+			err := awaitCapabilityRefusal(client, map[string]string{"probe": "ready"})
+			if (err != nil) != tc.wantError {
+				t.Fatalf("readiness=%v", err)
+			}
+			if err := <-done; err != nil {
+				t.Fatal(err)
 			}
 		})
 	}
