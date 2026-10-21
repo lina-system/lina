@@ -54,13 +54,20 @@ type Material struct {
 }
 
 // Materials is supplied by Core's composition layer, which owns the assets
-// store. Save durably stores only masked bytes in materials/lina and returns an
-// immutable asset revision. Read must verify the revision's size and digest.
-// An unreferenced material after a failed canon commit is never a ledger event;
-// the material owner's maintenance path handles its retention.
+// store and opens its material writer before admission to recover interrupted
+// preparations. Prepare syncs only masked bytes, without retained metadata;
+// Insert publishes that metadata in the event's transaction. Read verifies the
+// immutable revision's size and digest.
 type Materials interface {
-	Save(context.Context, secrets.Masked) (Material, error)
+	Prepare(context.Context, secrets.Masked) (MaterialWrite, error)
 	Read(context.Context, Material) (string, error)
+}
+
+type MaterialWrite interface {
+	Insert(context.Context, *canon.Tx) (Material, error)
+	// Close runs after the enclosing transaction, reconciling bytes against
+	// committed canon. A durable marker must survive interrupted cleanup.
+	Close() error
 }
 
 type Input struct {
@@ -126,7 +133,7 @@ func New(db Canon, materials Materials) *Store { return &Store{db: db, materials
 // Admit never accepts a speaker kind from the payload. The authenticated entry
 // adapter supplies entry and identity fields. A returned event acknowledges the
 // complete event, relations and span transaction, only after commit.
-func (s *Store) Admit(ctx context.Context, entry guard.Entry, in Input) (Event, error) {
+func (s *Store) Admit(ctx context.Context, entry guard.Entry, in Input) (_ Event, err error) {
 	if err := ctx.Err(); err != nil {
 		return Event{}, err
 	}
@@ -134,21 +141,40 @@ func (s *Store) Admit(ctx context.Context, entry guard.Entry, in Input) (Event, 
 	if err != nil {
 		return Event{}, err
 	}
+	var materialWrite MaterialWrite
 	if len(e.Body.Text()) > InlineBytes {
 		if s.materials == nil {
 			return Event{}, ErrBytesUnavailable
 		}
-		e.Material, err = s.materials.Save(ctx, e.Body)
+		materialWrite, err = s.materials.Prepare(ctx, e.Body)
 		if err != nil {
 			return Event{}, err
 		}
-		if !safeID(e.Material.ID) || e.Material.Revision <= 0 {
+		if materialWrite == nil {
 			return Event{}, ErrInvalid
 		}
+		defer func() {
+			cleanupErr := materialWrite.Close()
+			if err != nil {
+				err = errors.Join(err, cleanupErr)
+			}
+			// Housekeeping cannot turn a committed event into a failed admit.
+			// An interrupted cleanup is recovered from its durable marker.
+		}()
 	}
 	err = s.db.Write(ctx, func(tx *canon.Tx) error {
 		if err := references(ctx, tx, e); err != nil {
 			return err
+		}
+		if materialWrite != nil {
+			var err error
+			e.Material, err = materialWrite.Insert(ctx, tx)
+			if err != nil {
+				return err
+			}
+			if !safeID(e.Material.ID) || e.Material.Revision <= 0 {
+				return ErrInvalid
+			}
 		}
 		surface, _ := json.Marshal(e.Surface)
 		origin, _ := json.Marshal(e.Origin)
