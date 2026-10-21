@@ -6,11 +6,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -18,7 +20,26 @@ import (
 
 const operationTimeout = 10 * time.Second
 
-// Build the real command once per scenario group. Only verified Go caches and
+// TestMain owns immutable binaries shared only within this test invocation.
+// Installed state, Core processes and terminal sessions remain per scenario.
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if commandBuilds.root != "" {
+		if err := os.RemoveAll(commandBuilds.root); err != nil {
+			fmt.Fprintln(os.Stderr, "remove e2e build artifacts:", err)
+			code = 1
+		}
+	}
+	os.Exit(code)
+}
+
+var commandBuilds = struct {
+	sync.Mutex
+	root  string
+	paths map[string]string
+}{paths: make(map[string]string)}
+
+// Build each real command once per test invocation. Only verified Go caches and
 // tool locations cross into the build; child products get a fresh HOME and no
 // credentials, user configuration, display server or provider environment.
 func buildLina(t *testing.T) string {
@@ -27,7 +48,22 @@ func buildLina(t *testing.T) string {
 
 func buildCommand(t *testing.T, name string) string {
 	t.Helper()
-	home := t.TempDir()
+	commandBuilds.Lock()
+	defer commandBuilds.Unlock()
+	if path := commandBuilds.paths[name]; path != "" {
+		return path
+	}
+	if commandBuilds.root == "" {
+		root, err := os.MkdirTemp("", "lina-e2e-build-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		commandBuilds.root = root
+	}
+	home, err := os.MkdirTemp(commandBuilds.root, name+"-")
+	if err != nil {
+		t.Fatal(err)
+	}
 	env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "GOENV=off", "GOTOOLCHAIN=auto"}
 	for _, name := range []string{"GOCACHE", "GOMODCACHE", "TMPDIR"} {
 		if value, ok := os.LookupEnv(name); ok {
@@ -57,6 +93,7 @@ func buildCommand(t *testing.T, name string) string {
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build %s: %v\n%s", name, err, output)
 	}
+	commandBuilds.paths[name] = binary
 	return binary
 }
 

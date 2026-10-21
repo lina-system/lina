@@ -20,6 +20,10 @@ import (
 )
 
 func TestM1TUIMemoryAgentsInstalledCore(t *testing.T) {
+	// One immutable build serves this scenario group. Every subtest still installs
+	// it into fresh state and owns its own Core, provider and terminal processes.
+	binary := buildLina(t)
+	bundle := makeInstallBundle(t, t.TempDir(), binary, buildCommand(t, "lina-node"))
 	raw, err := os.ReadFile("m1/tui-memory-agents.json")
 	if err != nil {
 		t.Fatal(err)
@@ -43,7 +47,7 @@ func TestM1TUIMemoryAgentsInstalledCore(t *testing.T) {
 				fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n")
 			}))
 			defer provider.Close()
-			h, start := installedConversationHarness(t, provider.URL)
+			h, start := installConversationBundle(t, newHarness(t, binary), bundle, provider.URL)
 			core := start(true)
 			tap := newAccountTap(t, h, h.socket)
 			h.socket = tap.socket
@@ -77,9 +81,11 @@ func TestM1TUIMemoryAgentsInstalledCore(t *testing.T) {
 			h.stopCore(core)
 		})
 	}
+	t.Run("round trip", func(t *testing.T) { memoryAgentRoundTrip(t, binary, bundle) })
+	t.Run("without model or default agent", func(t *testing.T) { managementWithoutModelOrDefaultAgent(t, binary, bundle) })
 }
 
-func TestM1TUIMemoryAgentRoundTrip(t *testing.T) {
+func memoryAgentRoundTrip(t *testing.T, binary, bundle string) {
 	raw, err := os.ReadFile("m1/tui-memory-agents.json")
 	if err != nil {
 		t.Fatal(err)
@@ -100,7 +106,7 @@ func TestM1TUIMemoryAgentRoundTrip(t *testing.T) {
 		fmt.Fprint(w, "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Fixture answer\"}]}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n")
 	}))
 	defer provider.Close()
-	h, start := installedConversationHarness(t, provider.URL)
+	h, start := installConversationBundle(t, newHarness(t, binary), bundle, provider.URL)
 	core := start(true)
 	socket := h.socket
 	tap := newAccountTap(t, h, socket, true)
@@ -296,8 +302,8 @@ func TestM1TUIMemoryAgentRoundTrip(t *testing.T) {
 	}
 }
 
-func TestM1TUIManagementWithoutModelOrDefaultAgent(t *testing.T) {
-	h, start := installedConversationHarness(t, "")
+func managementWithoutModelOrDefaultAgent(t *testing.T, binary, bundle string) {
+	h, start := installConversationBundle(t, newHarness(t, binary), bundle, "")
 	core := start(false)
 	caps := []protocol.Capability{{Name: "agents", Version: "1.0"}, {Name: "memory", Version: "1.0"}}
 	client, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "test", caps)

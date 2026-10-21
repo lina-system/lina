@@ -50,7 +50,7 @@ process creation in test files follows the architecture rule for command
 acceptance harnesses. Future milestones can add scenario files here; new
 subpackages under `e2e/` are also covered by the registered package pattern.
 
-- State, environment and processes are isolated per scenario. Builds share only
+- State, environment and processes are isolated per scenario. Builds share immutable command binaries within one test invocation,
   Go caches and tool locations; product processes receive no inherited account,
   provider, display or user configuration environment. All fixtures are synthetic.
 - Readiness comes from socket connections and protocol/terminal observations.
