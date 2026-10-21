@@ -558,6 +558,14 @@ default state root is `$XDG_STATE_HOME/lina`, falling back to
 defaults to the directory of the executing binary. Installation validates its
 manifest, requires its target to match the host OS and architecture, and verifies
 the size and SHA-256 of the exact artifact bytes copied.
+`--persona-source <dir>` selects an absolute local checkout root containing
+`characters/lina/persona/core-v1.md` and `default-voice-v1.md`. Install checks both
+files, reports a setup warning when unavailable, and stores the path (never the
+text) in private `system/core/config.json` as `persona_source`. Missing material
+does not block installation or Core startup. To change the source in an existing
+install, edit that field in the 0600 config file; Core rereads it at the next turn.
+Older installs without the file use an unconfigured source. See
+[Presets](conversation-and-memory.md#presets) for fallback and revision behavior.
 The executable and its manifest are placed in `system/bin/`. The default client
 socket is `system/run/client.sock` under the state root; `--socket` can choose a
 shorter absolute path where the Unix socket path limit requires it.
