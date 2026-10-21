@@ -22,6 +22,7 @@ const (
 )
 
 type Waiting struct {
+	FreeText                                     bool
 	Kind                                         Kind
 	Sentence, Context, Recommendation, AgentName string
 	Answers                                      []string

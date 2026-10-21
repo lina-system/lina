@@ -10,6 +10,7 @@ import (
 	"slices"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -224,7 +225,7 @@ func (s *Service) Build(ctx context.Context, person string, opts Options) (List,
 }
 
 func eligible(i Item) bool {
-	if i.Person == "" || i.Agent == "" || i.Revision == 0 || i.Finished || i.View.Sentence == "" || len(i.View.Answers) == 0 || i.View.Effort < view.FiveMinutes || i.View.Effort > view.Longer {
+	if i.Person == "" || i.Agent == "" || i.Revision == 0 || i.Finished || i.View.Sentence == "" || (len(i.View.Answers) == 0 && !i.View.FreeText) || i.View.Effort < view.FiveMinutes || i.View.Effort > view.Longer {
 		return false
 	}
 	switch i.Reason {
@@ -308,7 +309,7 @@ func (s *Service) Answer(ctx context.Context, person string, ref Ref, value stri
 		if item.Revision != ref.Revision || !eligible(item) {
 			return ErrStale
 		}
-		if !slices.Contains(item.View.Answers, value) {
+		if (!item.View.FreeText && !slices.Contains(item.View.Answers, value)) || strings.TrimSpace(value) == "" {
 			return ErrInvalid
 		}
 		if err := answerer.Answer(ctx, tx, ref.ID, value); err != nil {

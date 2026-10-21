@@ -4,6 +4,7 @@ package runs_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
@@ -46,7 +47,7 @@ func listDB(t *testing.T) (*canon.Store, canon.Config) {
 	}
 	t.Cleanup(func() { c.Close() })
 	ms := canon.Migrations()
-	ms = append(ms, canon.Migration{Version: len(ms) + 1, SQL: runs.RunningListSchema})
+	ms = append(ms, canon.Migration{Version: len(ms) + 1, SQL: runs.Schema + runs.RunningListSchema})
 	cfg := canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: 1, Controls: c, Migrations: ms}
 	return openListDB(t, cfg), cfg
 }
@@ -140,5 +141,36 @@ func TestRunningListRejectsUnknownStateAndUnexplainedWaiting(t *testing.T) {
 	source["x"] = r
 	if _, err := list.Build(t.Context(), "person"); !errors.Is(err, runs.ErrListItem) {
 		t.Fatalf("missing reason: %v", err)
+	}
+}
+
+func TestRunListSourceReadsNativeRunRecords(t *testing.T) {
+	db, _ := listDB(t)
+	record := runs.Record{ID: "run", Origin: runs.Origin{Person: "person", Agent: "agent"}, Brief: runs.Brief{Goal: "Compare the options"}, State: runs.Working, Created: 1}
+	save := func() {
+		data, err := json.Marshal(record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Write(t.Context(), func(tx *canon.Tx) error {
+			_, err := tx.ExecContext(t.Context(), "INSERT OR REPLACE INTO background_runs(id,record) VALUES(?,?)", record.ID, data)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	list := runs.NewRunningList(db, map[string]runs.ListSource{"run": runs.RunListSource{}})
+	for _, state := range []runs.State{runs.Working, runs.Waiting, runs.NeedsInput, runs.Landed} {
+		record.State = state
+		record.Outcome = runs.Partial
+		save()
+		snapshot, err := list.Build(t.Context(), "person")
+		if err != nil || len(snapshot.Entries) != 1 {
+			t.Fatalf("native state %s: %+v %v", state, snapshot, err)
+		}
+		want := map[runs.State]string{runs.Working: "in_progress", runs.Waiting: "waiting", runs.NeedsInput: "needs_input", runs.Landed: "ready_for_review"}[state]
+		if snapshot.Entries[0].View.State != want {
+			t.Fatalf("native projection: %+v", snapshot)
+		}
 	}
 }

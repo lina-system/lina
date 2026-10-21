@@ -69,6 +69,8 @@ func (s *Service) land(ctx context.Context, r *Record, outcome Outcome) error {
 		}
 		r.Material = Ref{ID: a.ID, Revision: a.Revision}
 	}
+	r.NoticeVersion++
+	r.NoticeAt = s.cfg.Now().UnixNano()
 	r.Noticed = false
 	r.State = Landed
 	r.Outcome = outcome

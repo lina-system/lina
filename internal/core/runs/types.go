@@ -82,6 +82,9 @@ type Artifact struct {
 	Citations []materials.Anchor `json:"citations,omitempty"`
 }
 type Record struct {
+	InputAnswers                []InputAnswer
+	NoticeVersion               uint64
+	NoticeAt                    int64
 	CheckedInAt                 int64
 	Scratch                     string // relative to Config.WorkDir; only this directory is writable by run tools
 	ID                          string
@@ -145,6 +148,8 @@ type Config struct {
 // Notice contains only landing metadata. The artifact enters a conversation
 // only when its material is explicitly read, never as a notice body.
 type Notice struct {
+	Key       string
+	Landed    time.Time
 	State     State
 	ID        string
 	Origin    Origin

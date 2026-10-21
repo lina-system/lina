@@ -18,6 +18,7 @@ import (
 )
 
 type Notice struct {
+	ResultRevision                       int64
 	Surface                              ledger.Surface
 	ID, Run, Person, Agent, Conversation string
 	Outcome, Summary, Result, ResultType string
