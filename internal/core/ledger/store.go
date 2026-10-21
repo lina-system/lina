@@ -177,7 +177,7 @@ func (s *Store) Admit(ctx context.Context, entry guard.Entry, in Input) (Event, 
 				return err
 			}
 		}
-		return nil
+		return indexText(ctx, tx, e.ID, e.Body.DerivedText())
 	})
 	if err != nil {
 		return Event{}, err

@@ -162,3 +162,33 @@ func TestAbsentMaterialWriterFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestKoreanSearchOfMaterialChecksSourceBytes(t *testing.T) {
+	db, cfg := database(t)
+	root := filepath.Dir(cfg.Path)
+	a, err := assets.Open(t.Context(), root, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	s := ledger.New(db, &materialStore{store: a})
+	in := input("large-search")
+	in.Body = strings.Repeat("x", ledger.InlineBytes) + " 도서관에서 공부를 한다."
+	e := admit(t, s, guard.EntryOwner, in)
+	for _, query := range []string{"도서관", "공부"} {
+		hits, err := s.Search(t.Context(), ledger.SearchQuery{AgentID: "agent", Text: query})
+		if err != nil || len(hits) != 1 || hits[0].ID != in.ID || hits[0].Body != in.Body {
+			t.Fatalf("material search: %v %v", hits, err)
+		}
+	}
+	asset, err := a.Get(t.Context(), e.Material.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(root, asset.Path)); err != nil {
+		t.Fatal(err)
+	}
+	if hits, err := s.Search(t.Context(), ledger.SearchQuery{AgentID: "agent", Text: "공부"}); !errors.Is(err, ledger.ErrBytesUnavailable) || len(hits) != 0 {
+		t.Fatalf("missing source returned cached text: %v %v", hits, err)
+	}
+}
