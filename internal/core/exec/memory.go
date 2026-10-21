@@ -127,15 +127,29 @@ func (m *Memory) RecallPerson(ctx context.Context, scope memory.RecallScope, in 
 		result.Sources = append(result.Sources, RecallSource{Citation: Citation{ID: "memory:" + hit.ID, Revision: hit.Revision}, Text: hit.Content, Holder: hit.Holder, Evidence: hit.Evidence, Older: hit.Older})
 	}
 	if m.ledger != nil && len(result.Sources) < RecallItemLimit {
-		q.Limit = RecallItemLimit - len(result.Sources)
+		q.Limit = RecallItemLimit
 		sources, err := m.ledger(ctx, scope, q)
 		if err != nil {
 			return PersonAnswer{}, err
 		}
-		if len(sources) > q.Limit {
-			sources = sources[:q.Limit]
+		seen := map[Citation]bool{}
+		for _, source := range result.Sources {
+			for _, ref := range source.Evidence {
+				if ref.Kind == memory.Event {
+					seen[Citation{ID: "event:" + ref.ID, Revision: ref.Revision}] = true
+				}
+			}
 		}
-		result.Sources = append(result.Sources, sources...)
+		for _, source := range sources {
+			if seen[source.Citation] {
+				continue
+			}
+			result.Sources = append(result.Sources, source)
+			seen[source.Citation] = true
+			if len(result.Sources) == RecallItemLimit {
+				break
+			}
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		return PersonAnswer{}, err

@@ -129,3 +129,20 @@ func TestRememberLargeSourceAndReplayKeepsOneLineage(t *testing.T) {
 		t.Fatalf("lineage: %+v %v", hits, err)
 	}
 }
+
+func TestRecallPersonCountsRememberedEventOnce(t *testing.T) {
+	db := memoryDB(t)
+	events := ledger.New(db, nil)
+	flow := NewMemory(db, nil, nil)
+	_, err := events.Admit(t.Context(), guard.EntryOwner, ledger.Input{ID: "event", ConversationID: "conversation", AgentID: "A", PersonID: "person", Surface: ledger.Surface{Kind: "tui"}, OccurredAt: time.Unix(10, 0), RecordedAt: time.Unix(10, 0), TimeQuality: "observed", Body: "likes tea"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := flow.Remember(t.Context(), rememberInput("likes tea")); err != nil {
+		t.Fatal(err)
+	}
+	answer, err := flow.RecallPerson(t.Context(), memory.RecallScope{Agent: "A", Person: "person"}, PersonRecall{Question: "What drink?", At: 100})
+	if err != nil || len(answer.Sources) != 1 {
+		t.Fatalf("source counted through memory and ledger: %+v %v", answer, err)
+	}
+}
