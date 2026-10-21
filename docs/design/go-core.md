@@ -516,6 +516,8 @@ A preparation takes a person/agent-scoped retraction snapshot. It excludes forgo
 
 Canon readers install a connection-local ledger view that excludes forgotten source events, so ledger fallback in `recall_person` follows the same exclusions as request preparation. The immutable events remain in the main ledger for provenance; writer transactions resolve them there. Memory insert/update triggers check extraction exclusions at commit, including a job prepared before forgetting. Explicit trash recovery may restore one item whose evidence is shared with another forgotten item without removing the other item's exclusions. Permanent memory deletion removes every revision. These are package operations; no memory/retraction client endpoint is introduced here, and whole-generation backup orchestration and conversation-content deletion retain their owning flows.
 
+Retraction uses the search stores' delete triggers to remove FTS postings with their source text, and removes the ledger's Hangul bigrams and pending backfill rows in the same transaction. Index insertion triggers discard a late backfill for suppressed evidence. Recovery requeues a source only after its last exclusion is removed; the normal ledger reader rebuilds its masked search text. Tests check both query results and physical index rows, including after old-snapshot replay.
+
 **C-20 Memory items (changed).** The table has the fields of [conversation-and-memory.md](conversation-and-memory.md#memory-items). There are no storage caps; limits apply only to the rendered standing profile (lines and tokens). The write checks of that section run at commit, and a failed check refuses with the reason.
 
 ```go
