@@ -76,7 +76,10 @@
         "sign_in_listen",
         "sign_in_listening",
         "sign_in_open",
-        "sign_in_redirect"
+        "sign_in_redirect",
+        "snapshot",
+        "resync",
+        "resync_required"
       ]
     },
     "message_id": {
@@ -1266,6 +1269,54 @@
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "snapshot"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/snapshot"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "resync"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/resync"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "resync_required"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/resync_required"
+          }
+        }
+      }
     }
   ],
   "$defs": {
@@ -1607,30 +1658,57 @@
       "additionalProperties": false
     },
     "subscribe": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "topic": {
+          "$ref": "#/$defs/stream_topic"
+        },
+        "after": {
+          "$ref": "#/$defs/stream_cursor"
+        },
+        "active": {
+          "type": "boolean"
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
     "output_delta": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "stream": {
+          "$ref": "#/$defs/stream_metadata"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
     "item_done": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "stream": {
+          "$ref": "#/$defs/stream_metadata"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
     "turn_state": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "stream": {
+          "$ref": "#/$defs/stream_metadata"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
@@ -1643,6 +1721,9 @@
             "$ref": "#/$defs/approval_choice"
           },
           "minItems": 1
+        },
+        "stream": {
+          "$ref": "#/$defs/stream_metadata"
         }
       },
       "required": [
@@ -1670,6 +1751,9 @@
         },
         "form": {
           "$ref": "#/$defs/question_form"
+        },
+        "stream": {
+          "$ref": "#/$defs/stream_metadata"
         }
       },
       "required": [
@@ -1757,6 +1841,9 @@
         },
         "provenance": {
           "$ref": "#/$defs/result_provenance"
+        },
+        "stream": {
+          "$ref": "#/$defs/stream_metadata"
         }
       },
       "required": [
@@ -1879,9 +1966,15 @@
       "additionalProperties": false
     },
     "running_update": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "stream": {
+          "$ref": "#/$defs/stream_metadata"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
@@ -1900,9 +1993,15 @@
       "additionalProperties": false
     },
     "background_notice": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "stream": {
+          "$ref": "#/$defs/stream_metadata"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
@@ -1921,9 +2020,15 @@
       "additionalProperties": false
     },
     "progress_update": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "stream": {
+          "$ref": "#/$defs/stream_metadata"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
@@ -1956,9 +2061,15 @@
       "additionalProperties": false
     },
     "waiting_update": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "stream": {
+          "$ref": "#/$defs/stream_metadata"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
@@ -2031,9 +2142,15 @@
       "additionalProperties": false
     },
     "account_result": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "stream": {
+          "$ref": "#/$defs/stream_metadata"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
@@ -2080,9 +2197,15 @@
       "additionalProperties": false
     },
     "channel_state": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "stream": {
+          "$ref": "#/$defs/stream_metadata"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
@@ -2101,9 +2224,15 @@
       "additionalProperties": false
     },
     "agent_talk_entry": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "stream": {
+          "$ref": "#/$defs/stream_metadata"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
@@ -2122,30 +2251,54 @@
       "additionalProperties": false
     },
     "connected": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "stream": {
+          "$ref": "#/$defs/stream_metadata"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
     "disconnected": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "stream": {
+          "$ref": "#/$defs/stream_metadata"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
     "task_status": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "stream": {
+          "$ref": "#/$defs/stream_metadata"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
     "run_status": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "stream": {
+          "$ref": "#/$defs/stream_metadata"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
@@ -2373,6 +2526,435 @@
         "conversation_id",
         "turn_id",
         "task_id"
+      ],
+      "additionalProperties": false
+    },
+    "stream_topic": {
+      "type": "string",
+      "pattern": "^(conversation:[\\s\\S]+|results:[\\s\\S]+|running|progress|waiting|exchanges|accounts|channels|core)$"
+    },
+    "stream_cursor": {
+      "type": "object",
+      "properties": {
+        "epoch": {
+          "$ref": "#/$defs/epoch"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "epoch",
+        "seq"
+      ],
+      "additionalProperties": false
+    },
+    "stream_metadata": {
+      "type": "object",
+      "properties": {
+        "topic": {
+          "$ref": "#/$defs/stream_topic"
+        },
+        "cursor": {
+          "$ref": "#/$defs/stream_cursor"
+        },
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "topic",
+        "cursor",
+        "key",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    "stream_item": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "output_delta",
+            "item_done",
+            "turn_state",
+            "approval_request",
+            "question",
+            "result",
+            "running_update",
+            "progress_update",
+            "waiting_update",
+            "agent_talk_entry",
+            "account_result",
+            "channel_state",
+            "task_status",
+            "run_status",
+            "background_notice",
+            "connected",
+            "disconnected"
+          ],
+          "x-go-type": "Kind"
+        },
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 18446744073709551615
+        },
+        "payload": {
+          "x-go-type": "json.RawMessage"
+        }
+      },
+      "required": [
+        "kind",
+        "key",
+        "revision",
+        "payload"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "output_delta"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/output_delta"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "item_done"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/item_done"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "turn_state"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/turn_state"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "approval_request"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/approval_request"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "question"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/question"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "result"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/result"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "running_update"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/running_update"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "progress_update"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/progress_update"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "waiting_update"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/waiting_update"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "agent_talk_entry"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/agent_talk_entry"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "account_result"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/account_result"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "channel_state"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/channel_state"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "task_status"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/task_status"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "run_status"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/run_status"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "background_notice"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/background_notice"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "connected"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/connected"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "disconnected"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/disconnected"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "snapshot": {
+      "type": "object",
+      "properties": {
+        "topic": {
+          "$ref": "#/$defs/stream_topic"
+        },
+        "cursor": {
+          "$ref": "#/$defs/stream_cursor"
+        },
+        "revocation_epoch": {
+          "$ref": "#/$defs/epoch"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/stream_item"
+          }
+        }
+      },
+      "required": [
+        "topic",
+        "cursor",
+        "revocation_epoch",
+        "items"
+      ],
+      "additionalProperties": false
+    },
+    "resync": {
+      "type": "object",
+      "properties": {
+        "topic": {
+          "$ref": "#/$defs/stream_topic"
+        },
+        "cursor": {
+          "$ref": "#/$defs/stream_cursor"
+        }
+      },
+      "required": [
+        "topic",
+        "cursor"
+      ],
+      "additionalProperties": false
+    },
+    "resync_required": {
+      "type": "object",
+      "properties": {
+        "topic": {
+          "$ref": "#/$defs/stream_topic"
+        },
+        "cursor": {
+          "$ref": "#/$defs/stream_cursor"
+        }
+      },
+      "required": [
+        "topic",
+        "cursor"
       ],
       "additionalProperties": false
     }

@@ -119,6 +119,17 @@ test('Moirai source changes select its binary and Core acceptance checks', t => 
   assert.equal(componentRegistry.find(c => c.name === 'moirai-worker')?.binary, 'moirai-worker');
 });
 
+test('background runs are registered with the lina Go checks', t => {
+  const r = repository(t);
+  const base = r.git('rev-parse', 'HEAD');
+  mkdirSync(join(r.cwd, 'internal/core/runs'), { recursive: true });
+  writeFileSync(join(r.cwd, 'internal/core/runs/service.go'), 'package runs\n');
+  const scope = r.classify(r.commit(), { base, full: true });
+  assert.deepEqual(scope.unmapped, []);
+  assert.ok(scope.selectedComponents.includes('lina'));
+  assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/runs/...'));
+});
+
 test('Hermes readers and synthetic fixtures select their consumer checks', t => {
   const r = repository(t);
   const base = r.git('rev-parse', 'HEAD');
