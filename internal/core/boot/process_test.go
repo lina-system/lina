@@ -82,20 +82,31 @@ func TestCoreProcess(t *testing.T) {
 						if !ok || envelope.Kind != protocol.KindWelcome || envelope.Error != nil || envelope.EffectState != protocol.EffectNone || !reflect.DeepEqual(welcome, want) {
 							t.Fatalf("unexpected welcome: %s", line)
 						}
-						// A welcomed connection remains usable, but grants no operations.
-						request.Params.MessageID = "after-welcome"
-						if err := json.NewEncoder(conn).Encode(request); err != nil {
-							t.Fatal(err)
-						}
-						line, err := reader.ReadBytes('\n')
-						if err != nil {
-							t.Fatal(err)
-						}
-						if err := json.Unmarshal(line, &response); err != nil {
-							t.Fatal(err)
-						}
-						if response.Result.Error == nil || response.Result.Error.Code != protocol.ErrorCapabilityNotNegotiated {
-							t.Fatalf("unexpected post-handshake answer: %s", line)
+						// Handshake is served during RECOVERING. Probe until READY's
+						// explicit refusal, under the original connection deadline.
+						for attempt := 0; ; attempt++ {
+							request.Params.MessageID = "after-welcome-" + strconv.Itoa(attempt)
+							request.Params.AttemptID = request.Params.MessageID
+							if err := json.NewEncoder(conn).Encode(request); err != nil {
+								t.Fatal(err)
+							}
+							line, err := reader.ReadBytes('\n')
+							if err != nil {
+								t.Fatal(err)
+							}
+							if err := json.Unmarshal(line, &response); err != nil {
+								t.Fatal(err)
+							}
+							answer := response.Result
+							if response.JSONRPC != "2.0" || response.ID != request.ID || answer.ReplyTo == nil || *answer.ReplyTo != request.Params.MessageID || answer.Epoch != epoch || answer.Sender != envelope.Sender || answer.EffectState != protocol.EffectRefused || answer.Error == nil {
+								t.Fatalf("unexpected post-handshake answer: %s", line)
+							}
+							if answer.Error.Code == protocol.ErrorCapabilityNotNegotiated {
+								break
+							}
+							if answer.Error.Code != protocol.ErrorUnavailable {
+								t.Fatalf("unexpected post-handshake answer: %s", line)
+							}
 						}
 					} else {
 						if envelope.Kind != protocol.KindError || envelope.Error == nil || envelope.Error.Code != protocol.ErrorUnsupportedCombination || envelope.EffectState != protocol.EffectRefused {
