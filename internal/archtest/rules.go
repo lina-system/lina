@@ -38,6 +38,22 @@ var nodeKit = map[string]bool{
 	"protocol": true, "rpc": true, "diag": true, "secret": true,
 }
 
+// Worker layers are separate from Core: wire contract, read-only canon,
+// job runtime, then the command. Only the reader may import SQLite.
+func moiraiLayer(name string) int {
+	switch {
+	case within(name, "cmd/moirai-worker"):
+		return 4
+	case name == "internal/moirai":
+		return 3
+	case within(name, "internal/moirai/canon"):
+		return 2
+	case within(name, "internal/moirai/jobapi"):
+		return 1
+	}
+	return 0
+}
+
 func within(name, prefix string) bool {
 	return name == prefix || strings.HasPrefix(name, prefix+"/")
 }
@@ -100,6 +116,29 @@ func violations(root string, standard map[string]bool) ([]string, error) {
 			}
 			if within(owner, "kit") && within(imported, rootModule) && !within(imported, rootModule+"/kit") {
 				report(spec.Pos(), "kit", "kit must not import the root module: "+imported)
+			}
+			moirai := within(owner, "internal/moirai") || within(owner, "cmd/moirai-worker")
+			if moirai {
+				if moiraiLayer(owner) == 0 {
+					report(spec.Pos(), "Moirai", "unmapped worker package: "+owner)
+				}
+				if within(imported, rootModule+"/internal/moirai") {
+					target := strings.TrimPrefix(imported, rootModule+"/")
+					if moiraiLayer(target) == 0 || (owner != target && moiraiLayer(target) >= moiraiLayer(owner)) {
+						report(spec.Pos(), "Moirai", "worker imports must run downward: "+imported)
+					}
+				}
+
+				allowed := standard[imported] || within(imported, rootModule+"/internal/moirai")
+				if owner == "internal/moirai/canon" && (imported == "github.com/ncruces/go-sqlite3" || imported == "github.com/ncruces/go-sqlite3/driver" || imported == "github.com/ncruces/go-sqlite3/embed") {
+					allowed = true
+				}
+				if !allowed {
+					report(spec.Pos(), "Moirai", "worker may import only its read-only reader, job API, runtime and standard library: "+imported)
+				}
+			}
+			if core && within(imported, rootModule+"/internal/moirai") && imported != rootModule+"/internal/moirai/jobapi" {
+				report(spec.Pos(), "Moirai", "Core may import only the worker's job API contract: "+imported)
 			}
 			if within(owner, "internal/buildinfo") && !standard[imported] {
 				report(spec.Pos(), "buildinfo", "build metadata may import only the standard library: "+imported)

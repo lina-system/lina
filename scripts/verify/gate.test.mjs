@@ -72,3 +72,9 @@ test('dependencies must succeed when selected and be skipped otherwise', () => {
     assert.equal(evaluateGate({ ...scope, dependencies }, passed).result, 'failure');
   }
 });
+
+test('Moirai is a registered component and still requires successful verification', () => {
+  const selected = { ...scope, components: true, selectedComponents: ['moirai-worker'] };
+  assert.equal(evaluateGate(selected, { ...passed, components: { result: 'success' } }).result, 'success');
+  assert.equal(evaluateGate(selected, { ...passed, components: { result: 'skipped' } }).result, 'failure');
+});
