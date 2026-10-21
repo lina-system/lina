@@ -110,6 +110,13 @@ The loop behaves as follows:
 - A tool call in a response cut off by the output limit is never executed. The loop returns a result that asks the model to call again with complete arguments.
 - On abort, every open tool call receives an `aborted` result, so the recorded history stays valid for the next request.
 
+`kit/loop` implements these boundaries with the provider stream interface, a request transform, ordered before hooks, result-rewriting after hooks, and a caller-owned steering queue. It exposes streaming events to the caller while holding tool dispatch until the terminal event and clean end of stream. A stream failure returns without retry; incomplete-call results ask for complete arguments. Completed output items remain byte-for-byte evidence, while visible partials belong only to aborted history. A response runs at most eight tools concurrently; writes to one schema-normalized target run in call order without blocking other targets. Each result is committed on completion, then ordered for the model.
+
+Core's `turn.Store` claims the inbox and creates the turn atomically, records preparation before the first request, and supplies the loop's commit callbacks. Its startup recovery closes unresolved calls and refuses to replay accepted turns, including a crash between a done output item and the complete assistant call message. Tool intents and receipts use the existing authority ledger through `turn.Tool`; uncertain effects remain unknown across restart. Approval suspension returns immediately, and `turn.ResumeApproval` dispatches the stored, hash-bound arguments under a fresh deadline after the answer. The caller installs the schema through canon migrations and runs recovery before admitting work.
+
+The #55 tests exercise the loop with the Responses adapter over a scripted HTTP wire and reopen SQLite at interruption boundaries. Live provider access is not part of those tests. This increment has no client-protocol or TUI entry point; admission routing, startup composition and notifications remain with their consuming flows.
+
+
 Background runs use the same loop core with a different tool set and request (see [work-and-delegation.md](work-and-delegation.md#background-runs)). There is one loop implementation, not a second engine, and the person's input reaches a run only as a follow-up to that run.
 
 Retries and failover have one owner: LINA Core. The loop core and the SDK never retry on their own.

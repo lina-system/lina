@@ -104,6 +104,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-09 Loop core and run durability.** `kit/loop`, steering, cancellation, intent and result commits.
 - Done when: a scripted wire shows no tool from a cut-off response, one result per call in call order, an aborted result for each open call, and steering applied at the next round; no effect is applied twice across a restart.
 - Depends on: G1-05, G1-08. Design refs: C-08, CP-04; [runtime.md](runtime.md#conversation-loop).
+- #55 implements the loop and turn commit boundaries, ordered parallel tool results, steering, cancellation, and recovery without replay. Scripted Responses-wire and SQLite reopen tests cover V3 at the package boundary; no conversation capability is exposed through the client protocol yet.
 
 **G1-10 Ledger, request assembly and preparation.** Ledger fields, pure Assemble, ContextPacket, preparation steps.
 - Done when: an update of a ledger row is denied; identical input gives identical bytes; the layout order matches the contract; each failing preparation step shows one plain line and a stub provider sees zero calls; the ContextPacket is never stored.
