@@ -90,6 +90,20 @@ test('Moirai source changes select its binary and Core acceptance checks', t => 
   assert.equal(componentRegistry.find(c => c.name === 'moirai-worker')?.binary, 'moirai-worker');
 });
 
+test('Hermes readers and synthetic fixtures select their consumer checks', t => {
+  const r = repository(t);
+  const base = r.git('rev-parse', 'HEAD');
+  mkdirSync(join(r.cwd, 'internal/core/importer'), { recursive: true });
+  mkdirSync(join(r.cwd, 'testdata/hermes'), { recursive: true });
+  writeFileSync(join(r.cwd, 'internal/core/importer/snapshot.go'), 'package importer\n');
+  writeFileSync(join(r.cwd, 'testdata/hermes/schema.sql'), 'CREATE TABLE messages (id INTEGER);\n');
+  const scope = r.classify(r.commit(), { base, full: true });
+  assert.deepEqual(scope.unmapped, []);
+  assert.ok(scope.selectedComponents.includes('lina'));
+  assert.ok(componentRegistry.find(c => c.name === 'lina').packages.includes('./internal/core/importer/...'));
+  assert.equal(kind('testdata/hermes/README.md'), 'components');
+});
+
 test('budget is registered with the lina Go checks', t => {
   const r = repository(t);
   const base = r.git('rev-parse', 'HEAD');
