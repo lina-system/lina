@@ -13,6 +13,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"github.com/thisisjun786/lina/internal/core/lane"
+	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/runs"
 	"github.com/thisisjun786/lina/internal/core/waiting"
 	"github.com/thisisjun786/lina/internal/core/waiting/view"
@@ -126,7 +127,7 @@ func TestM1WaitingRunningNotices(t *testing.T) {
 		t.Fatal(h.ctx.Err())
 	}
 	for i, offset := range script.Landings {
-		n := lane.Notice{ID: script.Rows[i].ID, Run: script.Rows[i].ID, Person: script.Person, Agent: script.Agent, Conversation: script.Conversation, Outcome: "complete", Summary: "Compared the options", Result: "result", ResultType: "summary", Landed: script.Now.Add(time.Duration(offset) * time.Second)}
+		n := lane.Notice{Surface: ledger.Surface{Kind: "tui"}, ID: script.Rows[i].ID, Run: script.Rows[i].ID, Person: script.Person, Agent: script.Agent, Conversation: script.Conversation, Outcome: "complete", Summary: "Compared the options", Result: "result", ResultType: "summary", Landed: script.Now.Add(time.Duration(offset) * time.Second)}
 		if err := lanes.Notice(h.ctx, n); err != nil {
 			t.Fatal(err)
 		}

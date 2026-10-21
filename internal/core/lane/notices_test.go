@@ -12,7 +12,9 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
+	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/lane"
+	"github.com/thisisjun786/lina/internal/core/ledger"
 )
 
 func noticeDB(t *testing.T) *canon.Store {
@@ -39,7 +41,7 @@ func noticeDB(t *testing.T) *canon.Store {
 	return db
 }
 func notice(id, conv string, at time.Time) lane.Notice {
-	return lane.Notice{ID: id, Run: "run-" + id, Person: "person", Agent: "agent", Conversation: conv, Outcome: "complete", Summary: "Compared the sources", Result: "material", ResultType: "summary", Landed: at}
+	return lane.Notice{Surface: ledger.Surface{Kind: "tui"}, ID: id, Run: "run-" + id, Person: "person", Agent: "agent", Conversation: conv, Outcome: "complete", Summary: "Compared the sources", Result: "material", ResultType: "summary", Landed: at}
 }
 func TestNoticesWaitForWholeTurnAndQueuedInputThenCoalesce(t *testing.T) {
 	// SQLite has real I/O: channels establish the boundary; the sink announces
@@ -177,5 +179,51 @@ func TestFailedDeliveryRemainsDurableForResume(t *testing.T) {
 	delivered, err = restored.Delivered(t.Context(), "conversation")
 	if err != nil || len(delivered) != 1 {
 		t.Fatalf("resume: %v %v", delivered, err)
+	}
+}
+
+func TestDeliveredNoticeIsSystemEvidenceInConversationLedger(t *testing.T) {
+	db := noticeDB(t)
+	notices := lane.NewNotices(db, nil)
+	done := make(chan lane.Delivery, 1)
+	notices.OnDelivered = func(d lane.Delivery) { done <- d }
+	lanes := lane.NewWithNotices(notices)
+	defer lanes.Close(context.Background())
+	n := notice("ledger", "conversation", time.Now())
+	if err := lanes.Notice(t.Context(), n); err != nil {
+		t.Fatal(err)
+	}
+	var delivery lane.Delivery
+	select {
+	case delivery = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no committed delivery")
+	}
+	var count int
+	if err := db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM conv_event WHERE conversation_id=? AND speaker_kind='system' AND scaffold_kind='background_notice'", delivery.Conversation).Scan(&count)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var eventID string
+	if err := db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT id FROM conv_event WHERE conversation_id=?", delivery.Conversation).Scan(&eventID)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	event, err := ledger.New(db, nil).Get(t.Context(), eventID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message, err := event.Message()
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, external := message.Evidence()
+	if event.SpeakerKind != guard.System || !external || !evidence.Untrusted || evidence.Role != "user" {
+		t.Fatalf("notice acquired authority: %+v", evidence)
+	}
+	if count != 1 {
+		t.Fatalf("conversation ledger notices=%d", count)
 	}
 }

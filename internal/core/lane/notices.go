@@ -4,15 +4,20 @@ package lane
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/guard"
+	"github.com/thisisjun786/lina/internal/core/ledger"
 	"sort"
 	"time"
 )
 
 type Notice struct {
+	Surface                              ledger.Surface
 	ID, Run, Person, Agent, Conversation string
 	Outcome, Summary, Result, ResultType string
 	Landed                               time.Time
@@ -68,6 +73,9 @@ func (m *Manager) Notice(ctx context.Context, n Notice) error {
 	return nil
 }
 func validNotice(n Notice) bool {
+	if n.Surface.Kind == "" {
+		return false
+	}
 	if n.ID == "" || n.Run == "" || n.Person == "" || n.Agent == "" || n.Conversation == "" || n.Landed.IsZero() {
 		return false
 	}
@@ -202,6 +210,9 @@ func (s *Notices) deliver(ctx context.Context, conversation string) (bool, error
 				d.Notices = append(d.Notices, n)
 			}
 		}
+		if err := appendNoticeEvent(ctx, tx, d); err != nil {
+			return err
+		}
 		if s.sink != nil {
 			if err := s.sink(ctx, tx, d); err != nil {
 				return err
@@ -250,4 +261,24 @@ func (s *Notices) Delivered(ctx context.Context, conversation string) ([]Deliver
 		return rows.Err()
 	})
 	return deliveries, err
+}
+
+// Reuse the caller's fenced transaction: the ledger never opens another writer.
+type noticeTransaction struct{ tx *canon.Tx }
+
+func (t noticeTransaction) Write(_ context.Context, f func(*canon.Tx) error) error { return f(t.tx) }
+func (t noticeTransaction) Read(_ context.Context, f func(*canon.Tx) error) error  { return f(t.tx) }
+func appendNoticeEvent(ctx context.Context, tx *canon.Tx, d Delivery) error {
+	digest := sha256.Sum256([]byte(d.ID))
+	eventID := "background-notice-" + hex.EncodeToString(digest[:])
+	body, err := json.Marshal(d.Notices)
+	if err != nil {
+		return err
+	}
+	_, err = ledger.New(noticeTransaction{tx}, nil).Admit(ctx, guard.EntryBackgroundNotice, ledger.Input{
+		ID: eventID, ConversationID: d.Conversation, AgentID: d.Agent, Surface: d.Notices[0].Surface,
+		ScaffoldKind: "background_notice", OccurredAt: d.At, RecordedAt: d.At, TimeQuality: "recorded",
+		Locator: "background-notice:" + d.ID, Body: string(body),
+	})
+	return err
 }
