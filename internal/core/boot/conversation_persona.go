@@ -40,12 +40,16 @@ func (r *conversationRuntime) resolvePersonaGrant(ctx context.Context, id string
 	if !ok {
 		return grant.Grant{}, grant.Environment{}, grant.ErrGrant
 	}
-	if g.Identity.Profile == "persona-state" {
+	if g.Identity.Profile == "persona-state" || g.Identity.Profile == "persona-expression" {
 		state, err := r.agents.State(ctx, g.Identity.Agent)
 		if err != nil {
 			return grant.Grant{}, grant.Environment{}, err
 		}
-		return g, grant.Environment{Epoch: r.epoch, Now: time.Now(), OSPermitted: true, Revision: agents.StateRevision(state)}, nil
+		revision := agents.StateRevision(state)
+		if g.Identity.Profile == "persona-expression" {
+			revision = agents.ExpressionRevision(state)
+		}
+		return g, grant.Environment{Epoch: r.epoch, Now: time.Now(), OSPermitted: true, Revision: revision}, nil
 	}
 	a, err := r.agents.Get(ctx, g.Identity.Agent)
 	if err != nil {
@@ -54,7 +58,7 @@ func (r *conversationRuntime) resolvePersonaGrant(ctx context.Context, id string
 	return g, grant.Environment{Epoch: r.epoch, Now: time.Now(), OSPermitted: true, Revision: strconv.FormatInt(a.Revision, 10)}, nil
 }
 
-func (r *conversationRuntime) preparePersonaTools(ctx context.Context, turnID string, input ledger.Event, persona agents.Preparation, bindings map[string]loop.Tool) ([]assemble.Skill, assemble.ContextPacket, error) {
+func (r *conversationRuntime) preparePersonaTools(ctx context.Context, turnID string, input ledger.Event, persona agents.Preparation, at time.Time, bindings map[string]loop.Tool) ([]assemble.Skill, assemble.ContextPacket, error) {
 	versions, err := r.skills.Catalog(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -97,20 +101,48 @@ func (r *conversationRuntime) preparePersonaTools(ctx context.Context, turnID st
 		return nil, nil, err
 	}
 	scope.StateRevision = agents.StateRevision(settings)
+	scope.ExpressionRevision = agents.ExpressionRevision(settings)
 	stateAuth := auth
 	stateAuth.GrantID = turnID + ":state"
 	stateAuth.Profile = "persona-state"
 	stateAuth.Revision = scope.StateRevision
 	stateTarget := "persona-state:" + r.agent
-	stateGrant := grant.Grant{Identity: stateAuth, Expires: g.Expires, Scope: []grant.Permission{{Tool: "fill_persona_setting", Target: stateTarget, Write: true}}, Revisions: map[string]string{stateTarget: scope.StateRevision}}
+	stateGrant := grant.Grant{Identity: stateAuth, Expires: g.Expires, Scope: []grant.Permission{{Tool: "fill_persona_setting", Target: stateTarget, Write: true}, {Tool: "record_emotion", Target: stateTarget, Write: true}}, Revisions: map[string]string{stateTarget: scope.StateRevision}}
+	expressionAuth := auth
+	expressionAuth.GrantID = turnID + ":expression"
+	expressionAuth.Profile = "persona-expression"
+	expressionAuth.Revision = scope.ExpressionRevision
+	expressionTarget := "persona-expression:" + r.agent
+	expressionGrant := grant.Grant{Identity: expressionAuth, Expires: g.Expires, Scope: []grant.Permission{{Tool: "set_emotion_expression", Target: expressionTarget, Write: true}}, Revisions: map[string]string{expressionTarget: scope.ExpressionRevision}}
 	r.mu.Lock()
 	r.personaGrants[stateAuth.GrantID] = stateGrant
+	r.personaGrants[expressionAuth.GrantID] = expressionGrant
 	r.mu.Unlock()
 	settingSpec, err := coreexec.RegisterPersonaSettings(registry, r.persona, scope)
 	if err != nil {
 		return nil, nil, err
 	}
 	bindings[settingSpec.Name] = turn.Tool(registry, settingSpec, tools.Call{Auth: stateAuth}, turnID)
+	emotionSpecs, err := coreexec.RegisterEmotion(registry, r.persona, scope)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, spec := range emotionSpecs {
+		binding := stateAuth
+		if spec.Name == "set_emotion_expression" {
+			binding = expressionAuth
+		}
+		bindings[spec.Name] = turn.Tool(registry, spec, tools.Call{Auth: binding}, turnID)
+	}
+	emotion, err := agents.ProjectEmotion(settings, r.conversation, persona.Revision, at, agents.DefaultEmotionPolicy(), coreexec.SensitivePersonaInput(input))
+	if err != nil {
+		return nil, nil, err
+	}
+	emotionData, _ := json.Marshal(struct {
+		Kind  string                 `json:"kind"`
+		State agents.EmotionSnapshot `json:"state"`
+	}{"persona_emotion", emotion})
+	packet = append(packet, assemble.ContextItem{ID: "persona-emotion:" + r.agent + ":" + r.conversation, Revision: scope.StateRevision, AgentID: r.agent, Kind: assemble.Clock, Text: string(emotionData)})
 	settingData, _ := json.Marshal(struct {
 		Kind   string            `json:"kind"`
 		Values map[string]string `json:"values"`
@@ -132,10 +164,12 @@ func (r *conversationRuntime) preparePersonaTools(ctx context.Context, turnID st
 // Core admits the notice directly, so it is independent of model wording and
 // remains visible even if the follow-up provider request fails.
 func (r *conversationRuntime) personaNotice(ctx context.Context, input ledger.Event, call provider.ToolCall, result loop.Result) loop.Result {
-	if result.Code != loop.OK || call.Name != "change_persona" && call.Name != "undo_persona" {
+	if result.Code != loop.OK || call.Name != "change_persona" && call.Name != "undo_persona" && call.Name != "set_emotion_expression" {
 		return result
 	}
-	var receipt coreexec.PersonaReceipt
+	var receipt struct {
+		Notice string `json:"notice"`
+	}
 	if json.Unmarshal(result.Output, &receipt) != nil || receipt.Notice == "" {
 		return result
 	}

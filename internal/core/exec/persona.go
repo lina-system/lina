@@ -27,6 +27,7 @@ type PersonaScope struct {
 	Agent, Person, Conversation, Input string
 	Revision                           int64
 	StateRevision                      string
+	ExpressionRevision                 string
 }
 type VoiceChange struct {
 	Quote     string `json:"quote"`
@@ -48,26 +49,32 @@ type PersonaReceipt struct {
 // Persona is Core's Moirai persona write path. Only canonical owner input in
 // this conversation can support a change; provider text supplies no identity.
 type Persona struct {
-	agents *agents.Store
-	events *ledger.Store
+	agents        *agents.Store
+	events        *ledger.Store
+	now           func() time.Time
+	emotionPolicy agents.EmotionPolicy
 }
 
 func NewPersona(db *canon.Store, store *agents.Store, materials ledger.Materials) *Persona {
-	return &Persona{agents: store, events: ledger.New(db, materials)}
+	return &Persona{agents: store, events: ledger.New(db, materials), now: time.Now, emotionPolicy: agents.DefaultEmotionPolicy()}
 }
 
 func (p *Persona) confirm(ctx context.Context, scope PersonaScope, quote string) error {
+	_, err := p.confirmed(ctx, scope, quote)
+	return err
+}
+func (p *Persona) confirmed(ctx context.Context, scope PersonaScope, quote string) (ledger.Event, error) {
 	if p == nil || p.agents == nil || p.events == nil || scope.Agent == "" || scope.Person == "" || scope.Conversation == "" || scope.Input == "" || scope.Revision <= 0 || strings.TrimSpace(quote) == "" || len(quote) > 8192 {
-		return ErrPersonaEvidence
+		return ledger.Event{}, ErrPersonaEvidence
 	}
 	event, err := p.events.Get(ctx, scope.Input)
 	if err != nil {
-		return err
+		return ledger.Event{}, err
 	}
 	if event.Origin.Kind != "native" || event.Origin.Entry != guard.EntryOwner || event.SpeakerKind != guard.Person || event.PersonID != scope.Person || event.AgentID != scope.Agent || event.ConversationID != scope.Conversation || event.ReplayOf != "" || event.ScaffoldKind != "" || event.BytesUnavailable || !strings.Contains(event.Body.DerivedText(), quote) {
-		return ErrPersonaEvidence
+		return ledger.Event{}, ErrPersonaEvidence
 	}
-	return nil
+	return event, nil
 }
 
 func (p *Persona) Change(ctx context.Context, scope PersonaScope, in VoiceChange) (PersonaReceipt, error) {

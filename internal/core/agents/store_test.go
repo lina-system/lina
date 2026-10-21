@@ -115,7 +115,11 @@ func TestPresetUpdatesOnlyItsCoreAndDefaultVoice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetState(t.Context(), a.ID, agents.State{Emotion: "calm", Settings: map[string]string{"color": "blue"}}, "person"); err != nil {
+	// Reproduce a legacy state: new emotion writes must use confirmed events.
+	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(t.Context(), "UPDATE agents SET state=? WHERE id=?", []byte(`{"emotion":"calm","settings":{"color":"blue"}}`), a.ID)
+		return err
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Write(t.Context(), func(tx *canon.Tx) error {

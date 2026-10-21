@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"reflect"
 	"strings"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -40,9 +41,12 @@ type Preset struct {
 	BlankSettings []string `json:"blank_settings,omitempty"`
 }
 type State struct {
-	Emotion        string            `json:"emotion"`
-	Settings       map[string]string `json:"settings"`
-	SettingSources map[string]string `json:"setting_sources,omitempty"`
+	Emotion          string            `json:"emotion"`
+	Settings         map[string]string `json:"settings"`
+	SettingSources   map[string]string `json:"setting_sources,omitempty"`
+	Affect           *EmotionRecord    `json:"affect,omitempty"`
+	ExpressionOff    bool              `json:"expression_off,omitempty"`
+	ExpressionSource string            `json:"expression_source,omitempty"`
 }
 type Agent struct {
 	ID, Name, Preset string
@@ -204,6 +208,9 @@ func (s *Store) revision(ctx context.Context, id string, rev int64) (Preparation
 	return p, err
 }
 func (s *Store) Revise(ctx context.Context, id string, expected int64, layers Layers, person string) (Agent, error) {
+	return s.revise(ctx, id, expected, layers, person, nil)
+}
+func (s *Store) revise(ctx context.Context, id string, expected int64, layers Layers, person string, mutate func(*canon.Tx) error) (Agent, error) {
 	if !present(person) {
 		return Agent{}, ErrInvalid
 	}
@@ -221,7 +228,7 @@ func (s *Store) Revise(ctx context.Context, id string, expected int64, layers La
 	if a.Preset != "" && (old.Layers.Core != layers.Core || old.Layers.DefaultVoice != layers.DefaultVoice) {
 		return Agent{}, ErrInvalid
 	}
-	if old.Layers == layers {
+	if old.Layers == layers && mutate == nil {
 		return a, nil
 	}
 	commit, err := s.save(ctx, id, old.Commit, layers, person)
@@ -236,7 +243,13 @@ func (s *Store) Revise(ctx context.Context, id string, expected int64, layers La
 		if current.Revision != expected {
 			return ErrConflict
 		}
-		return publish(ctx, tx, id, expected+1, commit, person)
+		if err := publish(ctx, tx, id, expected+1, commit, person); err != nil {
+			return err
+		}
+		if mutate != nil {
+			return mutate(tx)
+		}
+		return nil
 	})
 	if err != nil {
 		return Agent{}, err
@@ -276,6 +289,13 @@ func (s *Store) SetState(ctx context.Context, id string, state State, person str
 	return s.db.Write(ctx, func(tx *canon.Tx) error {
 		if _, err := get(ctx, tx, id, false); err != nil {
 			return err
+		}
+		current, err := readState(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if state.Emotion != current.Emotion || !reflect.DeepEqual(state.Affect, current.Affect) || state.ExpressionOff != current.ExpressionOff || state.ExpressionSource != current.ExpressionSource {
+			return ErrInvalid
 		}
 		if _, err := tx.ExecContext(ctx, "UPDATE agents SET state=? WHERE id=?", raw, id); err != nil {
 			return err

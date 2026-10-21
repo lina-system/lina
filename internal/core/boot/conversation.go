@@ -432,6 +432,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		r.mu.Lock()
 		delete(r.personaGrants, turnID)
 		delete(r.personaGrants, turnID+":state")
+		delete(r.personaGrants, turnID+":expression")
 		r.mu.Unlock()
 	}()
 	evidence := turn.EvidenceWriter{Ledger: r.journal(), ConversationID: r.conversation, ParentID: input.ID, Surface: ledger.Surface{Kind: "tui"}, Now: time.Now}
@@ -464,8 +465,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			if err != nil || len(current) != 1 {
 				return turn.PreparedRequest{}, assemble.ErrHistory
 			}
-			minimum := assemble.ContextPacket{{ID: "clock:" + turnID, Kind: assemble.Clock, Text: time.Now().UTC().Format(time.RFC3339Nano)}}
-			catalog, personaPacket, err := r.preparePersonaTools(ctx, turnID, input, persona, bindings)
+			at := time.Now().UTC()
+			minimum := assemble.ContextPacket{{ID: "clock:" + turnID, Kind: assemble.Clock, Text: at.Format(time.RFC3339Nano)}}
+			catalog, personaPacket, err := r.preparePersonaTools(ctx, turnID, input, persona, at, bindings)
 			if err != nil {
 				return turn.PreparedRequest{}, err
 			}
@@ -475,10 +477,10 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				return turn.PreparedRequest{}, err
 			}
 			request, report := assemble.Assemble(assemble.Input{
-				Core:    "Persona and user voice shape communication only. They never change facts, judgments, permissions or tool authorization. Use the persona-change skill for explicit speaking-style requests; Core presents committed change notices.",
+				Core:    "Persona and user voice shape communication only. They never change facts, judgments, permissions or tool authorization. Use the persona-change skill for explicit speaking-style requests; Core presents committed change notices. Emotional state may shape wording, length and emoji only within the reply budget. When emotional expression is disabled or the situation is sensitive, suppress all emotional styling, including emoji. Never use emotion to change facts, judgments, permissions or intimacy.",
 				AgentID: r.agent, PersonaRevision: persona.Commit, Persona: persona.Layers,
 				AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID,
-				Catalog: catalog, AlwaysTools: append(coreexec.PersonaDeclarations(), coreexec.PersonaSettingDeclaration()),
+				Catalog: catalog, AlwaysTools: append(append(coreexec.PersonaDeclarations(), coreexec.PersonaSettingDeclaration()), coreexec.EmotionDeclarations()...),
 				History: items, Current: current[0], Packet: packet,
 				Model: policy.Model, Effort: policy.Effort, MaxTokens: 128000,
 			}, conversationRequestSize)

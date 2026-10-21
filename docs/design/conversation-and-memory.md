@@ -586,6 +586,12 @@ Each agent has its own emotion, in three layers:
 - The person can turn emotional expression off. When it is off, or when the situation is sensitive, an expression suppressor also blocks any remaining emotion.
 - An agent's emotional state, its observations of the person's emotion and the state of its relationship with the person are separate records. The latter two are memory items in that agent's personal knowledge (see "Knowledge layers"). Emotion never raises intimacy.
 
+Implementation decisions for #369: the initial numeric record uses valence and arousal in [-1, 1], with a neutral disposition baseline. A confirmed event contributes 0.25 to mood; mood decays exponentially with a 72-hour half-life, and conversation-local short emotion expires after 30 minutes. Preparation projects all three layers at one clock instant into the mandatory ContextPacket, outside the cached prefix. Follow-ups keep that prepared snapshot. These initial parameters are exercised with deterministic clock fixtures; they are not a claim of measured real-model emotional quality.
+
+The Core writer binds evidence to the current native owner input and journals each event once. Generic state replacement cannot modify emotion or its expression preference. Turning expression off retains the record and supplies only suppressed, zeroed expressive values. Admission sensitivity tags and a conservative English/Korean grief, health and crisis detector suppress immediately; a confirmed event can additionally mark its short-lived context as sensitive. The phrase detector is baseline coverage, not universal semantic classification. Expired short emotion cannot keep a later unrelated turn suppressed.
+
+Disposition adoption requires a Core-held measurement proof for the same agent, expected revision, baseline and named evaluation set, with an independent higher-is-better metric that improves. Adoption atomically appends the growth snapshot revision and disposition history. Undo appends a restoring revision and prevents the exact undone candidate from being adopted again. No automatic growth mechanism is enabled by this implementation; model JSON cannot construct an adoption proof.
+
 ## Skills
 
 - The skill catalog holds product documentation skills, usage skills for each engine (conversation, work, memory, materials and persona), and the persona-change skill.
