@@ -24,7 +24,7 @@ test('components use the pinned toolchain, readonly commands, module verificatio
   const calls = [];
   const result = checkComponents({ cwd: sb.dir, components: [kit], execute(command, args, options) {
     calls.push({ command, args, ...options });
-    return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
+    return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : args[0] === 'list' ? 'example.invalid/kit\n' : '', stderr: '' };
   } });
   assert.equal(result.status, 0, result.output);
   const commands = calls.map(call => call.args);
@@ -32,7 +32,8 @@ test('components use the pinned toolchain, readonly commands, module verificatio
     ['env', 'GOVERSION'], ['mod', 'verify'], ['mod', 'verify'],
     ['build', '-mod=readonly', './...'],
     ['vet', '-mod=readonly', './...'], ['tool', 'exhaustive', './...'],
-    ['test', '-count=1', '-mod=readonly', './...'],
+    ['list', '-mod=readonly', '-f', '{{.ImportPath}}', './...'],
+    ['test', '-count=1', '-mod=readonly', 'example.invalid/kit'],
   ]);
   for (const call of calls) {
     assert.equal(call.env.GOTOOLCHAIN, 'go1.27.3');
@@ -91,4 +92,32 @@ test('token drift and raw TUI literals stop component verification before builds
   assert.equal(result.status, 1);
   assert.ok(calls.some(call => call.command === process.execPath && call.args.includes('--check')));
   assert.ok(!calls.some(call => call.args[0]==='build'));
+});
+
+test('large selections test every concrete package once in bounded commands', t => {
+  const sb = fixture(t);
+  const packages = Array.from({length: 19}, (_, i) => `example.invalid/lina/pkg${i}`);
+  const tests = [];
+  const result = checkComponents({cwd: sb.dir, components: [kit], execute(command, args) {
+    if (args[0] === 'test') tests.push(args);
+    return {status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : args[0] === 'list' ? `${[...packages, packages[0]].join('\n')}\n` : '', stderr: ''};
+  }});
+  assert.equal(result.status, 0, result.output);
+  assert.deepEqual(tests.flatMap(args => args.slice(3)), packages);
+  assert.ok(tests.length > 1);
+  assert.ok(tests.every(args => args.length - 3 <= 8));
+  assert.ok(tests.every(args => args[1] === '-count=1' && args[2] === '-mod=readonly'));
+});
+
+test('a failed package group prevents later groups and fails verification', t => {
+  const sb = fixture(t);
+  const packages = Array.from({length: 19}, (_, i) => `example.invalid/lina/pkg${i}`);
+  let testCalls = 0;
+  const result = checkComponents({cwd: sb.dir, components: [kit], execute(command, args) {
+    if (args[0] === 'test' && ++testCalls === 2) return {status: 1, stdout: '', stderr: 'package regression\n'};
+    return {status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : args[0] === 'list' ? `${packages.join('\n')}\n` : '', stderr: ''};
+  }});
+  assert.equal(result.status, 1);
+  assert.match(result.output, /package regression/);
+  assert.equal(testCalls, 2);
 });

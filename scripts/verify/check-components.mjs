@@ -85,9 +85,20 @@ export function checkComponents({ cwd = process.cwd(), components, execute: run 
         ['build', '-mod=readonly', ...outputArgs, ...packages],
         ['vet', '-mod=readonly', ...packages],
         ['tool', 'exhaustive', ...packages],
-        ['test', '-count=1', '-mod=readonly', ...packages],
       ]) {
         if (invoke('go', args, directory).status !== 0) return { status: 1, output };
+      }
+      // Resolve overlaps once, then test each concrete package exactly once.
+      // One growing module must not consume the entire per-command watchdog
+      // before later packages (notably e2e) get their turn under CI contention.
+      const listed = invoke('go', ['list', '-mod=readonly', '-f', '{{.ImportPath}}', ...packages], directory);
+      if (listed.status !== 0) return { status: 1, output };
+      const testPackages = [...new Set(listed.stdout.trim().split(/\s+/).filter(Boolean))];
+      if (!testPackages.length) return { status: 1, output: `${output}No selected Go packages resolved for testing\n` };
+      for (let first = 0; first < testPackages.length; first += 8) {
+        if (invoke('go', ['test', '-count=1', '-mod=readonly', ...testPackages.slice(first, first + 8)], directory).status !== 0) {
+          return { status: 1, output };
+        }
       }
       for (const component of selected.filter(component => component.binary)) {
         const result = invoke(join(binaries, component.binary), [], directory);
