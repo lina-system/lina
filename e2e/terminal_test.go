@@ -36,6 +36,10 @@ func (h *harness) startTerminal(environment []string, combined bool) *terminal {
 	return h.startTerminalScreen(environment, combined, false)
 }
 func (h *harness) startTerminalScreen(environment []string, combined, screen bool) *terminal {
+	return h.startTerminalSize(environment, combined, screen, 80, 24)
+}
+
+func (h *harness) startTerminalSize(environment []string, combined, screen bool, width, height int) *terminal {
 	h.t.Helper()
 	master, err := os.OpenFile("/dev/ptmx", os.O_RDWR|unix.O_NOCTTY|unix.O_NONBLOCK, 0)
 	if err != nil {
@@ -62,7 +66,7 @@ func (h *harness) startTerminalScreen(environment []string, combined, screen boo
 	if err := unix.IoctlSetTermios(int(slave.Fd()), setTermios, mode); err != nil {
 		h.t.Fatal(err)
 	}
-	if err := unix.IoctlSetWinsize(int(slave.Fd()), unix.TIOCSWINSZ, &unix.Winsize{Row: 24, Col: 80}); err != nil {
+	if err := unix.IoctlSetWinsize(int(slave.Fd()), unix.TIOCSWINSZ, &unix.Winsize{Row: uint16(height), Col: uint16(width)}); err != nil {
 		h.t.Fatal(err)
 	}
 	p := h.command("tui", "--socket", h.socket)
@@ -75,7 +79,7 @@ func (h *harness) startTerminalScreen(environment []string, combined, screen boo
 	p.start(h.t)
 	term := &terminal{process: p, master: master, lines: make(chan string), done: make(chan struct{}), mode: *mode}
 	if screen {
-		term.screen, err = tuiterm.NewRecorder(80, 24)
+		term.screen, err = tuiterm.NewRecorder(width, height)
 		if err != nil {
 			h.t.Fatal(err)
 		}
@@ -114,6 +118,17 @@ func (h *harness) startTerminalScreen(environment []string, combined, screen boo
 		<-term.done
 	})
 	return term
+}
+
+func (h *harness) resizeTerminal(term *terminal, width, height int) {
+	h.t.Helper()
+	// Update the emulator before TIOCSWINSZ delivers SIGWINCH to the child.
+	if err := term.screen.Resize(width, height); err != nil {
+		h.t.Fatal(err)
+	}
+	if err := unix.IoctlSetWinsize(int(term.master.Fd()), unix.TIOCSWINSZ, &unix.Winsize{Row: uint16(height), Col: uint16(width)}); err != nil {
+		h.t.Fatal(err)
+	}
 }
 
 func (h *harness) expectTerminalRestored(term *terminal) {

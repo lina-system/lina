@@ -389,7 +389,9 @@ func (m *shellModel) conversationContent() string {
 		if b.Kind == protocol.KindResult {
 			transcript = append(transcript, design.Text(m.styles.options.Language, "result")+"  Ctrl+O")
 		}
-		for _, line := range cached.stream.Window(0, cached.stream.Len(), render.Config{Width: plan.Conversation.Width}, nil) {
+		// Len indexes the original width. A byte bound includes every row
+		// after narrowing too, including the final empty row after a newline.
+		for _, line := range cached.stream.Window(0, len(b.Text)+1, render.Config{Width: plan.Conversation.Width}, nil) {
 			transcript = append(transcript, line.Text)
 		}
 	}

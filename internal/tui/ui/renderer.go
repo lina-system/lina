@@ -17,6 +17,7 @@ import (
 // Input has one separate cancellable decoder; the renderer never reads stdin.
 type terminalRenderer struct {
 	last    tea.View
+	size    tea.WindowSizeMsg
 	shown   bool
 	program *tea.Program
 	done    chan struct{}
@@ -35,7 +36,7 @@ func (m renderedView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m renderedView) View() tea.View { return m.view }
 
 func startTerminalRenderer(ctx context.Context, output io.Writer, width, height int) *terminalRenderer {
-	r := &terminalRenderer{done: make(chan struct{})}
+	r := &terminalRenderer{done: make(chan struct{}), size: tea.WindowSizeMsg{Width: width, Height: height}}
 	r.program = tea.NewProgram(renderedView{}, tea.WithContext(ctx), tea.WithInput(nil), tea.WithOutput(output), tea.WithWindowSize(width, height), tea.WithoutSignalHandler(), tea.WithoutCatchPanics())
 	go func() {
 		defer close(r.done)
@@ -46,8 +47,8 @@ func startTerminalRenderer(ctx context.Context, output io.Writer, width, height 
 	}()
 	return r
 }
-func (r *terminalRenderer) show(view tea.View) error {
-	if r.shown && reflect.DeepEqual(r.last, view) {
+func (r *terminalRenderer) show(view tea.View, size tea.WindowSizeMsg) error {
+	if r.shown && r.size == size && reflect.DeepEqual(r.last, view) {
 		return nil
 	}
 	select {
@@ -57,6 +58,12 @@ func (r *terminalRenderer) show(view tea.View) error {
 		}
 		return r.err
 	default:
+		if r.size != size {
+			// Output is wrapped for raw mode, so Bubble Tea cannot query its
+			// terminal dimensions. Resize its cell buffer before the new view.
+			r.program.Send(size)
+			r.size = size
+		}
 		r.program.Send(view)
 		r.last = view
 		r.shown = true

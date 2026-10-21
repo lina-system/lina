@@ -250,6 +250,13 @@ and Page Down move through the retained conversation. Tab switches composer and
 card focus; arrows select a result card. The composer keeps its draft when an
 overlay opens or connection status changes. An identical frame and cursor is
 not submitted to the renderer, and the plain display writes no duplicate frame.
+For the colour conversation screen, each new size reaches the cell renderer
+before its reflowed view, even if the view text is unchanged. Resizing keeps the
+draft and redraws header, status and composer within the current row budget;
+cells from the previous dimensions must not survive as stale transcript rows.
+`e2e/m1/tui-resize.json` exercises 80x24 → 40x12 → 120x35 through a real PTY,
+compares every row and the cursor with a fresh client at the same size, then
+clears the retained draft and completes another exchange.
 
 ## Home, waiting for me and progress (T-12)
 
@@ -376,6 +383,8 @@ type Stream interface {
 - The hardware cursor is placed on every frame at the display width of the text before it on the wrapped row, so IME composition appears in place. The TUI never requests all-keys-as-escape-codes. Committed IME text arrives as UTF-8, one grapheme cluster at a time ([surfaces.md](surfaces.md#korean-input)).
 - Only the viewport plus overscan (P) is laid out, so cost follows viewport rows and not history. `Stream` indexes new text as it arrives. `Window` takes a retained byte anchor within a block and stops reflow at the requested row count, including after a width change. `Renderer.Draw` reads and paints only those indexed rows, retains only the current viewport cache, and returns changed-row patches; an empty patch list causes no writes. A trusted UI painter styles only closed rows after sanitizing and clipping.
 - Resize events coalesce to one reflow per 32 ms (P).
+- Conversation wrapping uses the current width; the indexed row count at the
+  old width must not truncate newly wrapped rows or the final reply.
 - An unchanged state writes zero bytes. Motion is one status glyph with no timer while deltas stream; elapsed time updates at 1 Hz (P) otherwise.
 - OSC 8 links are emitted for allowed schemes only.
 
@@ -416,6 +425,7 @@ input id for local-echo reconciliation. The acknowledgement means durable
 admission, not turn completion; further typing can be sent while the turn runs.
 A refused send restores the draft. Connection states other than Live disable
 submission without discarding edits.
+Resizing preserves the draft and its cursor without submitting it.
 
 - Paste arrives as one atomic message, is one undo step and has control sequences removed. The TUI never reads the host clipboard; paste is the terminal's.
 - Attachments are a strip above the composer and message parts that Core imports ([filesystem.md](filesystem.md#import-and-export)). The draft stays plain text.

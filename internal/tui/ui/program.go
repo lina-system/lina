@@ -298,7 +298,7 @@ func runShellCommand(command tea.Cmd, handle func(tea.Msg) error) error {
 
 func (d *display) showShell(model *shellModel) error {
 	if d.renderer != nil {
-		return d.renderer.show(model.View())
+		return d.renderer.show(model.View(), tea.WindowSizeMsg{Width: model.size.Width, Height: model.size.Height})
 	}
 	if d.interactive && d.styles.options.Profile != Monochrome {
 		frame := model.View().Content + "\n"
