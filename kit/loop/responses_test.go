@@ -53,7 +53,7 @@ func TestResponsesWireLoop(t *testing.T) {
 				}
 				return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(data)), Request: r}, nil
 			})}
-			adapter, err := responses.New(responses.Config{SDKModule: responses.SDKModule, SDKVersion: responses.SDKVersion, RequestFields: provider.FieldList{"model", "input", "store", "stream", "tools"}}, client)
+			adapter, err := responses.New(responses.Config{Adapter: "responses", RequestFields: provider.FieldList{"model", "input", "store", "stream", "tools", "include"}}, client)
 			if err != nil {
 				t.Fatal(err)
 			}
