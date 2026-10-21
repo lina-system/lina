@@ -167,7 +167,7 @@ type accountTap struct {
 	replies chan protocol.Envelope
 }
 
-func newAccountTap(t *testing.T, h *harness, target string) *accountTap {
+func newAccountTap(t *testing.T, h *harness, target string, notifications ...bool) *accountTap {
 	t.Helper()
 	tap := &accountTap{socket: filepath.Join(filepath.Dir(target), "tui-tap.sock"), replies: make(chan protocol.Envelope, 64)}
 	listener, err := net.Listen("unix", tap.socket)
@@ -201,8 +201,17 @@ func newAccountTap(t *testing.T, h *harness, target string) *accountTap {
 				tap.raw.Write(line)
 				tap.mu.Unlock()
 				if reply {
-					var rpc struct{ Result json.RawMessage }
-					if json.Unmarshal(line, &rpc) == nil && len(rpc.Result) > 0 {
+					var rpc struct{ Result, Params json.RawMessage }
+					if json.Unmarshal(line, &rpc) == nil {
+						if len(rpc.Result) == 0 && len(notifications) > 0 && notifications[0] {
+							rpc.Result = rpc.Params
+						}
+						if len(rpc.Result) == 0 {
+							if _, err := dst.Write(line); err != nil {
+								return
+							}
+							continue
+						}
 						var decoder protocol.ClientDecoder
 						e, err := decoder.Decode(rpc.Result)
 						if err == nil && e != nil {

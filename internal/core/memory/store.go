@@ -330,7 +330,8 @@ func (s *Store) recall(ctx context.Context, scope RecallScope, q Query, standing
 		restrictedJSON, _ := json.Marshal(restricted)
 		text := normalize(q.Text)
 		match := "1"
-		args := []any{q.At, q.At, scope.Person, holders[0], holders[1], q.At, scope.Projection, scope.ExternalModel, standing, q.PersonOnly, relationship, scope.Agent, scope.Person, string(restrictedJSON), q.History}
+		args := []any{q.At, q.At, scope.Person, q.ID, q.ID, holders[0], holders[1], q.At, scope.Projection, scope.ExternalModel, standing, q.PersonOnly, relationship, scope.Agent, scope.Person, string(restrictedJSON), q.History}
+
 		switch {
 		case utf8.RuneCountInString(text) >= 3:
 			match = "EXISTS(SELECT 1 FROM memory_search WHERE rowid=e.sequence AND memory_search MATCH ?)"
@@ -344,12 +345,12 @@ func (s *Store) recall(ctx context.Context, scope RecallScope, q Query, standing
 			match = "instr(e.normalized,?)>0"
 			args = append(args, text)
 		}
-		args = append(args, limit)
+		args = append(args, q.After, q.After, q.After, q.After, limit)
 		rows, err := tx.QueryContext(ctx, `WITH candidates AS MATERIALIZED (
    SELECT m.id,m.sequence,m.record,m.normalized,
    (SELECT max(r.sequence) FROM memory_revision r WHERE r.item_id=m.id) AS priority,
    ((m.valid_until<>0 AND m.valid_until<=?) OR EXISTS(SELECT 1 FROM memory_item n WHERE n.supersedes=m.id AND n.valid_from<=?)) AS older
-   FROM retract_visible_memory m WHERE m.person=? AND m.holder IN (?,?) AND m.state='active' AND m.valid_from<=?
+   FROM retract_visible_memory m WHERE m.person=? AND (?='' OR m.id=?) AND m.holder IN (?,?) AND m.state='active' AND m.valid_from<=?
    AND (?=0 OR m.scope='local') AND (?=0 OR m.scope<>'never-leaves') AND (?=0 OR m.standing=1)
    AND (?=0 OR m.subject_kind='person')
    AND (?=0 OR (m.holder=? AND m.subject_kind='person' AND m.subject_id=? AND json_extract(m.record,'$.kind')='relationship'))
@@ -357,7 +358,9 @@ func (s *Store) recall(ctx context.Context, scope RecallScope, q Query, standing
     JOIN json_each(?) blocked ON blocked.key=json_extract(refs.value,'$.id')
     WHERE json_extract(refs.value,'$.kind')='event')
    ), eligible AS MATERIALIZED (SELECT * FROM candidates WHERE ? OR NOT older)
-   SELECT e.record,e.older FROM eligible e WHERE `+match+` ORDER BY e.priority DESC,e.id LIMIT ?`, args...)
+   SELECT e.record,e.older FROM eligible e WHERE `+match+` AND (?='' OR e.priority < (SELECT max(sequence) FROM memory_revision WHERE item_id=?)
+   OR (e.priority=(SELECT max(sequence) FROM memory_revision WHERE item_id=?) AND e.id>?))
+   ORDER BY e.priority DESC,e.id LIMIT ?`, args...)
 		if err != nil {
 			return err
 		}
