@@ -43,9 +43,14 @@ type Assembly struct {
 	Skills, Items            []Reference
 }
 type PreparedRequest struct {
-	Request  provider.Request
-	Assembly Assembly
+	Request   provider.Request
+	Assembly  Assembly
+	Counter   func(provider.Request) int // Pure model counter, applied after each transform.
+	MaxTokens int
 }
+
+var ErrRequestTooLarge = errors.New("request_too_large")
+
 type Acknowledgement struct {
 	TurnID, PolicyRevision string
 	Assembly               Assembly
@@ -91,6 +96,9 @@ func (p *Preparation) failure(step Step, err error) error {
 		f.Line = "The conversation model could not be selected. Check your model settings."
 	case ContextStep:
 		f.Line = "The conversation could not be prepared. Try again."
+		if errors.Is(err, ErrRequestTooLarge) {
+			f.Line = "This request does not fit the model's limit. Choose a model with a larger limit."
+		}
 	}
 	if p.Show != nil {
 		p.Show(f)
@@ -160,7 +168,7 @@ func (p *Preparation) prepare(ctx context.Context, id string, cfg loop.Config) (
 		if err != nil {
 			return err
 		}
-		if prepared.Assembly.AgentID == "" || prepared.Assembly.PersonaRevision == "" || len(prepared.Request.Items) == 0 {
+		if prepared.Assembly.AgentID == "" || prepared.Assembly.PersonaRevision == "" || len(prepared.Request.Items) == 0 || prepared.Counter == nil || prepared.MaxTokens <= 0 {
 			return ErrInvalid
 		}
 		prepared.Assembly = cloneAssembly(prepared.Assembly)
@@ -176,6 +184,13 @@ func (p *Preparation) prepare(ctx context.Context, id string, cfg loop.Config) (
 	cfg.Stream = func(ctx context.Context, r provider.Request) (provider.Stream, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
+		}
+		tokens := prepared.Counter(r)
+		if tokens < 0 {
+			return nil, p.failure(ContextStep, ErrInvalid)
+		}
+		if tokens > prepared.MaxTokens {
+			return nil, p.failure(ContextStep, ErrRequestTooLarge)
 		}
 		hash := p.Digest(r)
 		digest, err := hex.DecodeString(hash)

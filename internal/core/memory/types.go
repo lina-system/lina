@@ -156,6 +156,7 @@ type Write struct {
 type RecallScope struct {
 	Agent, Person string
 	Projection    bool
+	ExternalModel bool // No never-leaves content or its evidence may reach a model endpoint.
 }
 
 func (s RecallScope) Holders() []Holder { return []Holder{Holder(s.Agent), All} }

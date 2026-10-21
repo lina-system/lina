@@ -323,9 +323,14 @@ func (s *Store) recall(ctx context.Context, scope RecallScope, q Query, standing
 	var hits []Hit
 	err := s.db.Read(ctx, func(tx *canon.Tx) error {
 		holders := scope.Holders()
+		restricted, err := restrictedEvents(ctx, tx, scope)
+		if err != nil {
+			return err
+		}
+		restrictedJSON, _ := json.Marshal(restricted)
 		text := normalize(q.Text)
 		match := "1"
-		args := []any{q.At, q.At, scope.Person, holders[0], holders[1], q.At, scope.Projection, standing, q.PersonOnly, q.History}
+		args := []any{q.At, q.At, scope.Person, holders[0], holders[1], q.At, scope.Projection, scope.ExternalModel, standing, q.PersonOnly, string(restrictedJSON), q.History}
 		switch {
 		case utf8.RuneCountInString(text) >= 3:
 			match = "EXISTS(SELECT 1 FROM memory_search WHERE rowid=e.sequence AND memory_search MATCH ?)"
@@ -345,8 +350,11 @@ func (s *Store) recall(ctx context.Context, scope RecallScope, q Query, standing
    (SELECT max(r.sequence) FROM memory_revision r WHERE r.item_id=m.id) AS priority,
    ((m.valid_until<>0 AND m.valid_until<=?) OR EXISTS(SELECT 1 FROM memory_item n WHERE n.supersedes=m.id AND n.valid_from<=?)) AS older
    FROM memory_item m WHERE m.person=? AND m.holder IN (?,?) AND m.state='active' AND m.valid_from<=?
-   AND (?=0 OR m.scope='local') AND (?=0 OR m.standing=1)
+   AND (?=0 OR m.scope='local') AND (?=0 OR m.scope<>'never-leaves') AND (?=0 OR m.standing=1)
    AND (?=0 OR m.subject_kind='person')
+   AND NOT EXISTS(SELECT 1 FROM json_each(m.record,'$.evidence') refs
+    JOIN json_each(?) blocked ON blocked.key=json_extract(refs.value,'$.id')
+    WHERE json_extract(refs.value,'$.kind')='event')
    ), eligible AS MATERIALIZED (SELECT * FROM candidates WHERE ? OR NOT older)
    SELECT e.record,e.older FROM eligible e WHERE `+match+` ORDER BY e.priority DESC,e.id LIMIT ?`, args...)
 		if err != nil {
@@ -362,6 +370,7 @@ func (s *Store) recall(ctx context.Context, scope RecallScope, q Query, standing
 			if err := json.Unmarshal(raw, &hit.Item); err != nil {
 				return err
 			}
+
 			for i := range hit.Evidence {
 				if hit.Evidence[i].SourceAgent != "" && hit.Evidence[i].SourceAgent != scope.Agent {
 					hit.Evidence[i].Quote = ""
@@ -408,4 +417,44 @@ func (s *Store) Profile(ctx context.Context, scope RecallScope, at int64, lines,
 		tokens -= n
 	}
 	return result, nil
+}
+
+// RestrictedEvents prevents raw ledger fallback or a second item from bypassing
+// the named scope of memory resting on the same event. It exposes ids only.
+func (s *Store) RestrictedEvents(ctx context.Context, scope RecallScope) (map[string]bool, error) {
+	if s == nil || s.db == nil || !present(scope.Agent) || scope.Agent == string(All) || !present(scope.Person) {
+		return nil, ErrInvalid
+	}
+	var ids map[string]bool
+	err := s.db.Read(ctx, func(tx *canon.Tx) error { var err error; ids, err = restrictedEvents(ctx, tx, scope); return err })
+	return ids, err
+}
+func restrictedEvents(ctx context.Context, tx *canon.Tx, scope RecallScope) (map[string]bool, error) {
+	ids := map[string]bool{}
+	if !scope.Projection && !scope.ExternalModel {
+		return ids, nil
+	}
+	holders := scope.Holders()
+	rows, err := tx.QueryContext(ctx, `SELECT record FROM memory_item WHERE person=? AND holder IN (?,?)
+  AND ((?=1 AND scope IN ('private','never-leaves')) OR (?=1 AND scope='never-leaves'))`, scope.Person, holders[0], holders[1], scope.Projection, scope.ExternalModel)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var raw []byte
+		var item Item
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(raw, &item); err != nil {
+			return nil, err
+		}
+		for _, e := range item.Evidence {
+			if e.Kind == Event {
+				ids[e.ID] = true
+			}
+		}
+	}
+	return ids, rows.Err()
 }

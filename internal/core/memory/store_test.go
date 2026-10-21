@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -36,10 +37,10 @@ func database(t *testing.T) *canon.Store {
 	return db
 }
 func proposal(agent, content string) Write {
-	return Write{Agent: agent, Person: "person", Item: Item{Kind: Fact, Content: content, Subject: Subject{Person, "person"}, Basis: Stated, Evidence: []Evidence{{Kind: Event, ID: agent, Precision: Exact}}}}
+	return Write{Agent: agent, Person: "person", Item: Item{Kind: Fact, Content: content, Subject: Subject{Person, "person"}, Basis: Stated, Evidence: []Evidence{{Kind: Event, ID: agent + "/" + content, Precision: Exact}}}}
 }
 func personOrigin(_ context.Context, _ *canon.Tx, e Evidence) (Origin, error) {
-	return Origin{Person: "person", Agent: e.ID, Speaker: guard.Person, Quote: "original statement", Scope: Local}, nil
+	return Origin{Person: "person", Agent: strings.SplitN(e.ID, "/", 2)[0], Speaker: guard.Person, Quote: "original statement", Scope: Local}, nil
 }
 func commit(t *testing.T, db *canon.Store, in Write) Item {
 	t.Helper()
