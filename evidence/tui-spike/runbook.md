@@ -5,7 +5,9 @@ The [terminal list](terminals.json) is **proposed, pending owner confirmation**:
 macOS Apple Terminal, the installed LINA OS default terminal, and Apple Terminal
 over SSH. Resolve the actual LINA OS terminal product and versions when confirming
 the list. No person has performed these runs yet, and no final library step is
-selected. This runbook does not close #87.
+selected. [Follow-up #371](https://github.com/thisisjun786/lina/issues/371) owns these
+remaining cases and the final decision. They do not block LN-85's harness delivery;
+this runbook does not close #87 or establish terminal acceptance.
 
 The commands use the [scenario runner](../../internal/tui/spike/run/terminal_test.go)
 and LN-86's recording writer. S8 runs its headless harness. The other commands
@@ -50,7 +52,7 @@ binary; rebuild after a source or dependency change.
 Start at **140 columns ×45 rows** (`stty size` prints rows then columns). Leave the
 terminal idle during automatic measurements. Ctrl+D completes interactive
 screens, except S11, which completes after its final answer. Ctrl+C cancels without
-writing a record. In S7, where key decoding is intentionally obstructed, the
+writing a record. SIGTERM also cancels through terminal restoration. In S7, where key decoding is intentionally obstructed, the
 command cancels itself after its one-second observation.
 
 ## One command per scenario
@@ -66,8 +68,8 @@ command cancels itself after its one-second observation.
 | `spike S7` | No typing is needed. The runner injects a paste start without an end marker, then `x`, through the library's input decoder. A recovery miss is recorded with the required mitigation. | About a second |
 | `spike S8` | No terminal interaction. Runs the LN-86 headless recording writer through Hangul, paste, sealed Glamour output and quit, and writes the measured record. | Under a second |
 | `spike S9` | Leave the 200-item window untouched. CPU time, output bytes and resident memory are measured after its first paint; the renderer ticker remains enabled. | 15 seconds |
-| `spike S10` | Inspect Glamour and own-renderer tables in wcwidth mode, then Ctrl+D and answer the two alignment questions. If the terminal confirms mode 2027, repeat in grapheme mode. Its original mode is restored. Unsupported grapheme mode is an explicit miss, not an invented alignment result. | About a minute |
-| `spike S11` | With at least 140 columns and 16 rows, inspect each displayed width from 100 through 140. `y` or `n` records usability and advances one column. After the final width, explain why the first usable width works, or why none does. | About a minute |
+| `spike S10` | Inspect Glamour and own-renderer tables in each available width mode, then Ctrl+D and answer the alignment questions. The mode is selected before painting. A permanently enabled mode 2027 permits only grapheme observations; unsupported grapheme mode permits only wcwidth. Either missing mode fails the comparison. The original mode is restored. | About a minute |
+| `spike S11` | With at least 140 columns and 16 rows, inspect each displayed width from 100 through 140. `y` or `n` records usability and advances one column. After the final width, explain why the first usable width works, or why none does. Every width at and above the threshold must remain usable for a pass. | About a minute |
 
 The complete [scenario plan](scenario-plan.md) explains the observations and
 unchanged bounds. A blank or unknown answer aborts the record; do not answer yes

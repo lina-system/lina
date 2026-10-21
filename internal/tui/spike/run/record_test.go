@@ -4,6 +4,7 @@ package run
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -109,6 +110,66 @@ func TestEvidenceCannotOverwriteOrInventMetadata(t *testing.T) {
 	r.Terminal.Version = ""
 	if err := saveRecord(filepath.Join(t.TempDir(), "bad.json"), r); err == nil {
 		t.Fatal("saved missing terminal version")
+	}
+}
+
+func TestPaneVerdictRequiresCompleteStableThreshold(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		change  func(map[string]any)
+		want    string
+		missing bool
+	}{
+		{name: "stable", want: "pass"},
+		{name: "missing intermediate width", change: func(v map[string]any) { delete(v, "width_105_usable") }, missing: true},
+		{name: "earlier usable width", change: func(v map[string]any) { v["width_105_usable"] = true }, want: "fail"},
+		{name: "later unusable width", change: func(v map[string]any) { v["width_111_usable"] = false }, want: "fail"},
+		{name: "no usable width", change: func(v map[string]any) {
+			v["threshold_found"] = false
+			delete(v, "threshold_columns")
+			for w := 100; w <= 140; w++ {
+				v[fmt.Sprintf("width_%d_usable", w)] = false
+			}
+		}, want: "fail"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v := map[string]any{"threshold_found": true, "threshold_columns": float64(110), "threshold_reason": "Both regions and actions remain readable."}
+			for w := 100; w <= 140; w++ {
+				v[fmt.Sprintf("width_%d_usable", w)] = w >= 110
+			}
+			if tc.change != nil {
+				tc.change(v)
+			}
+			got, err := verdict("S11", v)
+			if tc.missing {
+				if err == nil {
+					t.Fatal("accepted incomplete width observations")
+				}
+			} else if err != nil || got != tc.want {
+				t.Fatalf("verdict=%q, error=%v; want %q", got, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestTableVerdictRequiresBothPhysicalModes(t *testing.T) {
+	for _, missingMode := range []string{"", "wcwidth", "grapheme"} {
+		v := map[string]any{"mitigation": "Repeat on a terminal with switchable mode 2027."}
+		for _, mode := range []string{"wcwidth", "grapheme"} {
+			v[mode+"_supported"] = mode != missingMode
+			if mode != missingMode {
+				v["glamour_"+mode+"_aligned"] = true
+				v["own_"+mode+"_aligned"] = true
+			}
+		}
+		want := "pass"
+		if missingMode != "" {
+			want = "fail"
+		}
+		got, err := verdict("S10", v)
+		if err != nil || got != want {
+			t.Fatalf("missing %q: verdict=%q, error=%v; want %q", missingMode, got, err, want)
+		}
 	}
 }
 
