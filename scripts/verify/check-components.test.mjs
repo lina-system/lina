@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { sandbox } from '../test-fixture.mjs';
-import { checkComponents, execute } from './check-components.mjs';
+import { checkComponents, execute, componentsTimeoutMs } from './check-components.mjs';
 
 const source = fileURLToPath(new URL('../../', import.meta.url));
 function fixture(t) {
@@ -183,6 +183,6 @@ test('module tests retain a diagnostic deadline inside their process budget', t 
   assert.equal(result.status, 0, result.output);
   const suite = calls.find(call => call.args[0] === 'test');
   assert.ok(suite.args.includes('-timeout=4m'), 'Go must emit stuck-test stacks before the process guard');
-  assert.ok(suite.timeoutMs > 300_000 && suite.timeoutMs <= 600_000, 'module tests use the remaining component budget');
-  assert.ok(calls.every(call => call.timeoutMs > 0 && call.timeoutMs <= 600_000));
+  assert.ok(suite.timeoutMs > 300_000 && suite.timeoutMs <= componentsTimeoutMs, 'module tests use the remaining component budget');
+  assert.ok(calls.every(call => call.timeoutMs > 0 && call.timeoutMs <= componentsTimeoutMs));
 });
