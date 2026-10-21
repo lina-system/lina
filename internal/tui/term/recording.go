@@ -1,0 +1,133 @@
+// SPDX-License-Identifier: Apache-2.0
+
+// Package term owns terminal-library adapters and the headless spike harness.
+package term
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"io"
+	"sync"
+
+	"github.com/charmbracelet/x/vt"
+)
+
+// Cell is a parsed cell, including the zero-width continuation of a wide cell.
+type Cell struct {
+	Content string
+	Width   int
+}
+
+// Snapshot is an independent copy of the screen after an output write.
+// Coordinates are zero-based; Bytes and Writes are cumulative.
+type Snapshot struct {
+	Cells                   [][]Cell
+	CursorX, CursorY        int
+	CursorHidden, AltScreen bool
+	Bytes, Writes           int
+}
+
+// Recorder serializes writes and parses them with a VT emulator. It retains raw
+// bytes for measurement, not golden-file comparison. Use only synthetic input:
+// a recording is unbounded and can contain all displayed text.
+type Recorder struct {
+	mu       sync.Mutex
+	emulator *vt.Emulator
+	raw      bytes.Buffer
+	writes   int
+	changed  chan struct{}
+	closed   bool
+}
+
+func NewRecorder(width, height int) (*Recorder, error) {
+	if width <= 0 || height <= 0 {
+		return nil, errors.New("recording dimensions must be positive")
+	}
+	emulator := vt.NewEmulator(width, height)
+	// This is an output recorder, not a terminal-input peer. Close the response
+	// pipe so capability queries cannot block Write awaiting an absent reader.
+	// Probe/reply behavior belongs to the real-terminal S5 scenario.
+	if err := emulator.InputPipe().(io.Closer).Close(); err != nil {
+		return nil, err
+	}
+	return &Recorder{emulator: emulator, changed: make(chan struct{})}, nil
+}
+
+func (r *Recorder) Write(p []byte) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return 0, io.ErrClosedPipe
+	}
+	if len(p) == 0 {
+		return 0, nil
+	}
+	n, err := r.emulator.Write(p)
+	r.raw.Write(p[:n])
+	r.writes++
+	close(r.changed)
+	r.changed = make(chan struct{})
+	return n, err
+}
+
+func (r *Recorder) snapshot() Snapshot {
+	cursor := r.emulator.CursorPosition()
+	s := Snapshot{CursorX: cursor.X, CursorY: cursor.Y, CursorHidden: r.emulator.CursorHidden(), AltScreen: r.emulator.IsAltScreen(), Bytes: r.raw.Len(), Writes: r.writes}
+	s.Cells = make([][]Cell, r.emulator.Height())
+	for y := range s.Cells {
+		s.Cells[y] = make([]Cell, r.emulator.Width())
+		for x := range s.Cells[y] {
+			if c := r.emulator.CellAt(x, y); c != nil {
+				s.Cells[y][x] = Cell{Content: c.Content, Width: c.Width}
+			}
+		}
+	}
+	return s
+}
+
+func (r *Recorder) Snapshot() Snapshot {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.snapshot()
+}
+
+func (r *Recorder) Bytes() []byte {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return bytes.Clone(r.raw.Bytes())
+}
+
+// Wait observes the current screen and subsequent completed writes. The
+// predicate runs outside the lock on a copy. A deadline bounds failure only;
+// neither elapsed time nor a renderer ticker establishes success.
+func (r *Recorder) Wait(ctx context.Context, predicate func(Snapshot) bool) (Snapshot, error) {
+	for {
+		r.mu.Lock()
+		s, changed, closed := r.snapshot(), r.changed, r.closed
+		r.mu.Unlock()
+		if predicate(s) {
+			return s, nil
+		}
+		if closed {
+			return s, io.EOF
+		}
+		select {
+		case <-ctx.Done():
+			return s, ctx.Err()
+		case <-changed:
+		}
+	}
+}
+
+// Close wakes all waiters; the final screen and raw bytes remain inspectable.
+func (r *Recorder) Close() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return nil
+	}
+	r.closed = true
+	close(r.changed)
+	return r.emulator.Close()
+}
