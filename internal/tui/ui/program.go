@@ -21,7 +21,7 @@ import (
 
 // Offer only rendered families; the conversation discovers and maintains its
 // concrete conversation/results subscriptions after welcome.
-var shellCapabilities = []protocol.Capability{{Name: "accounts", Version: "1.0"}, {Name: "sign_in_relay", Version: "1.0"}, {Name: "conversation", Version: "1.0"}, {Name: "running", Version: "1.0"}, {Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}}
+var shellCapabilities = []protocol.Capability{{Name: "exchanges", Version: "1.0"}, {Name: "channels", Version: "1.0"}, {Name: "accounts", Version: "1.0"}, {Name: "sign_in_relay", Version: "1.0"}, {Name: "conversation", Version: "1.0"}, {Name: "running", Version: "1.0"}, {Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}}
 
 type clientPeer struct{ client *clientapi.Client }
 
@@ -121,6 +121,8 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 	defer signin.close()
 	var peer connectionPeer
 	pending := make(map[string]state.SendRequest)
+	channelPending := make(map[string]uint64)
+	talkPending := make(map[string]uint64)
 	var stopInput func() error
 	defer func() {
 		if stopInput != nil {
@@ -133,6 +135,8 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 		if begin, ok := message.(shellBegin); ok && begin.Generation > model.generation {
 			signin.close()
 			clear(pending)
+			clear(channelPending)
+			clear(talkPending)
 			model.conversation.id = ""
 		}
 		if attached, ok := message.(shellPeer); ok {
@@ -181,6 +185,38 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 			}
 			return nil
 		}
+		if request, ok := message.(shellTalkRequest); ok {
+			if request.Generation != model.generation || request.Attempt != model.talk.attempt {
+				return nil
+			}
+			if client, ok := peer.(clientPeer); ok {
+				var id string
+				var err error
+				if request.ExchangeID == "" {
+					id, err = client.client.Talk(ctx, protocol.AgentTalkGet{})
+				} else {
+					id, err = client.client.ExpandTalk(ctx, protocol.AgentTalkExpand{ExchangeID: &request.ExchangeID, Cursor: request.Cursor})
+				}
+				if err != nil {
+					return err
+				}
+				talkPending[id] = request.Attempt
+			}
+			return display.showShell(model)
+		}
+		if request, ok := message.(shellChannelRequest); ok {
+			if request.Generation != model.generation || request.Attempt != model.channels.attempt {
+				return nil
+			}
+			if client, ok := peer.(clientPeer); ok {
+				id, err := client.client.Channel(ctx, request.Request)
+				if err != nil {
+					return err
+				}
+				channelPending[id] = request.Attempt
+			}
+			return display.showShell(model)
+		}
 		if consumed, err := signin.handle(message); consumed {
 			if err != nil {
 				return err
@@ -212,6 +248,34 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 				var decoder protocol.ClientDecoder
 				e, err := decoder.Decode(frame.Data)
 				if err == nil && e != nil {
+					if e.ReplyTo != nil {
+						if attempt, ok := talkPending[*e.ReplyTo]; ok {
+							delete(talkPending, *e.ReplyTo)
+							if model.talk.open && attempt == model.talk.attempt {
+								model.talk.busy = false
+								if e.Error != nil {
+									model.talk.code = string(e.Error.Code)
+								} else if p, ok := e.Payload.(protocol.AgentTalk); ok {
+									model.talkResponse(p)
+								}
+							}
+							return display.showShell(model)
+						}
+					}
+					if e.ReplyTo != nil {
+						if attempt, ok := channelPending[*e.ReplyTo]; ok {
+							delete(channelPending, *e.ReplyTo)
+							if model.channels.open && attempt == model.channels.attempt {
+								model.channels.busy = false
+								if e.Error != nil {
+									model.channels.code = string(e.Error.Code)
+								} else if p, ok := e.Payload.(protocol.ChannelResult); ok {
+									model.channelResponse(p)
+								}
+							}
+							return display.showShell(model)
+						}
+					}
 					if consumed, err := signin.response(*e); consumed {
 						if err != nil {
 							return err

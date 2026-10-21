@@ -356,6 +356,12 @@ They never dispatch `approval_answer`, `question_answer` or `waiting_answer`.
 Opening a text card or closing its pager decides nothing; approval confirmation
 continues to require its separate typed card controls.
 
+Channel credentials use the same transient masked-field rule. `/channels`
+never places the bot token in a conversation draft, undo entry, echo or history.
+Closing the form clears its input; reconnect clears both the input and pairing
+code. Responses are matched to their connection generation and view attempt,
+so a late reply cannot reopen a closed control view.
+
 **Questions.** A form question renders its flat schema as prompts, and a URL question follows the contract, opening the URL only on an explicit key. Core refuses a form that asks for a secret, and the TUI shows the refusal. An unknown outcome of an effect is a question card with the dispositions of [main-authority.md](main-authority.md#command-outcomes). The TUI adds no option Core did not list.
 
 **Sign-in.** The TUI is the client side of one relay for plugin and model-provider sign-in. It opens a loopback listener and reports its port, opens the system browser when it runs locally, and relays `code`, `state` and `iss`, or the `error` fields, exactly as received. Over SSH it takes a pasted URL instead. A secret the person types, such as an API key, is a masked field with no undo and no history, and travels once to Core.
@@ -409,11 +415,21 @@ Settings are commands and labeled blocks, all requests to Core:
 - Accounts: `/accounts` lists the connected accounts as metadata rows with the one-line summary, add account and sign out. Labels, optional plan names and states come from Core; only the request carries the selected account id. `/signin` opens ChatGPT login even before conversation is available.
 - Plugins: the catalog, the connect card as a labeled block, the plugin list and the tools of each plugin.
 - Command network: the standing grants, with revoke.
-- Channels: connections, pairing code, bindings and scopes. A token passes to Core once and is never shown.
+- Channels: `/channels` lists connections and their bindings. `c` opens the masked Telegram token form; `p` requests a single-use pairing code to send to the bot in the platform's private chat; `r` refreshes Core state. `b` selects chat, optional topic, agent and scope before Enter submits the binding. An empty chat uses the paired private chat. Personal memory defaults on only for that private destination; another chat requires explicit opt-in. `u` selects a binding to revoke; `x` disconnects the connection. A token passes to Core once and is never shown.
 - Memory import: rehearsal report, run, promotion batches grouped, accept a whole group.
-- Agents: list, create, tune, delete. The agent talk log: one line per exchange, Enter expands.
+- Agents: list, create, tune, delete. `/talk` opens the agent talk log: one line per exchange, keyed by exchange identity. Up/Down selects and Enter requests that exchange's ledger expansion; When the expansion has more content, Enter requests the next page; Esc returns to the list. `r` requests a fresh list without duplicating rows or losing an existing selected identity. The view shows typed mailbox state, outcome and needs-person state; it derives none of these from text.
 - Expression and reply length budgets, command network grants, the developer-view switch and power settings.
 - Report a problem: the agent drafts it, the TUI shows the draft, and nothing is posted until the person confirms ([surfaces.md](surfaces.md#settings)).
+
+`/help` opens the local command reference, including `/channels` and `/talk`.
+These commands are consumed locally even when Core has not granted their
+capabilities; they then show unsupported and never become model input.
+The TUI owns only transient display state. The `channels` and `exchanges`
+capabilities are granted only when their Core services are registered. The
+installed-Core acceptance scenarios are `e2e/m1/tui-channels.json` and
+`e2e/m1/tui-talk-log.json`; unit projection tests alone do not establish their
+pairing, durable binding or real exchange-ledger acceptance.
+
 
 ## Notifications (T-15)
 
