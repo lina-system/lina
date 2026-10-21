@@ -78,6 +78,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-29 Asset store and staging.** Asset ids, revisions, hashes, staging, trash.
 - Done when: a rename keeps asset id and hash; an edit keeps the id, changes the hash and advances the revision; identical content gets two ids; an import writes only under staging until handed over; an export leaves a canon record and no staged copy; a backup detects a hash mismatch.
 - Depends on: G1-03. Design refs: C-16, C-39; [filesystem.md](filesystem.md#asset-identity).
+- #42 implements the materials store and its canon migration, staged handover and delivery, recoverable trash, and verified copying of every recorded revision for backup. Package tests use real files and SQLite; no asset operation is exposed through the TUI or Core protocol yet. Whole-generation coordination and permanent-deletion propagation remain with their owning implementations.
 
 ### 1.B Authority, tools and sandbox
 
@@ -108,7 +109,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 - Depends on: G1-03, G1-06, G1-08. Design refs: C-11, C-17; [conversation-and-memory.md](conversation-and-memory.md#request-layout).
 
 **G1-11 Inbox, lanes, steering and deadlines.** Inbox, lanes, steering, stop, expiry timers.
-- Done when: a duplicate key inserts one row; the acknowledgement follows the commit; a message during a turn is applied as steering at the next round; stop ends open calls as aborted; after `kill -9` mid-turn the input is not replayed and the conversation shows one plain line.
+- Done when: a duplicate key inserts one row and preserves its original bytes across restart; the acknowledgement follows the commit and no failed commit is acknowledged; each conversation runs one turn at a time while other conversations can proceed; a message during a turn is applied as steering at the next round; stop ends open calls as aborted; after `kill -9` mid-turn the input is not replayed and the conversation shows one plain line.
 - Depends on: G1-03, G1-09, G1-10. Design refs: C-09; [runtime.md](runtime.md#conversation-loop).
 
 **G1-12 Agents, presets, persona layers and first run.** Persona layers, presets, deletion, first run.
