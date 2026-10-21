@@ -250,7 +250,7 @@ func writeEvent(ctx context.Context, tx *canon.Tx, e Event) error {
 			return err
 		}
 	}
-	return nil
+	return indexText(ctx, tx, e.ID, e.Body.DerivedText())
 }
 
 func nullable(s string) any {

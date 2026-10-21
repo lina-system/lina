@@ -1,0 +1,19 @@
+{
+  "documents": [
+    {"id": "native-library", "origin": "native", "body": "도서관에서 책을 빌렸다."},
+    {"id": "import-library", "origin": "import", "body": "도서관에는 조용한 자리가 있다."},
+    {"id": "native-study", "origin": "native", "body": "공부를 마치고 산책했다."},
+    {"id": "import-study", "origin": "import", "body": "공부는 아침에 한다. 공부를 다시 했다."},
+    {"id": "separated-syllables", "origin": "native", "body": "공 부 공,부 공🙂부"},
+    {"id": "unrelated", "origin": "native", "body": "정원에서 꽃을 보았다."},
+    {"id": "literal-quote", "origin": "native", "body": "기록에 \"도서관\"이라고 적었다."}
+  ],
+  "queries": [
+    {"name": "particle-attached-three-syllable", "text": "도서관", "ids": ["import-library", "literal-quote", "native-library"]},
+    {"name": "particle-attached-two-syllable", "text": "공부", "ids": ["import-study", "native-study"]},
+    {"name": "two-syllable-inside-longer-word", "text": "서관", "ids": ["import-library", "literal-quote", "native-library"]},
+    {"name": "no-match", "text": "바다", "ids": []},
+    {"name": "literal-quote", "text": "\"도서관\"", "ids": ["literal-quote"]},
+    {"name": "operators-are-literal", "text": "도서관 OR 공부", "ids": []}
+  ]
+}
