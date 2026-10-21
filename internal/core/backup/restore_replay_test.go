@@ -3,12 +3,14 @@ package backup
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/compaction"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	memoryexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/internal/core/guard"
@@ -36,6 +38,14 @@ func TestRestoreReplaysRemovalsBeforeFirstReadInAnotherRoot(t *testing.T) {
 			write := memory.Write{Agent: "agent", Person: "person", Item: memory.Item{Kind: memory.Preference, Content: body, Subject: memory.Subject{Kind: memory.Person, ID: "person"}, Basis: memory.Stated, Standing: true, Evidence: []memory.Evidence{{Kind: memory.Event, ID: "source", Precision: memory.Exact}}}}
 			receipt, err := flow.Remember(t.Context(), write)
 			if err != nil {
+				t.Fatal(err)
+			}
+			tree := compaction.New(db)
+			frontier, err := tree.Frontier(t.Context(), "conversation")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tree.Publish(t.Context(), compaction.Proposal{Expected: frontier, ID: "summary", Cover: []compaction.Coverage{{EventID: "source"}}, Output: compaction.Output{Model: "fixture", PromptVersion: "v1", BuiltAt: time.Unix(20, 0), Text: body, Dropped: body}}); err != nil {
 				t.Fatal(err)
 			}
 			// Snapshot the actual SQLite store, then mutate only the current removal list.
@@ -105,6 +115,18 @@ func TestRestoreReplaysRemovalsBeforeFirstReadInAnotherRoot(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer restored.Close(context.Background())
+			if node, err := compaction.New(restored).Node(t.Context(), "summary"); !errors.Is(err, compaction.ErrUnavailable) || node.Output.Text != "" {
+				t.Fatalf("restored stale summary exposed: %+v %v", node, err)
+			}
+			var summary string
+			if err := restored.Read(t.Context(), func(tx *canon.Tx) error {
+				return tx.QueryRowContext(t.Context(), "SELECT text||dropped FROM sum_node WHERE id='summary'").Scan(&summary)
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if summary != "" {
+				t.Fatal("revoked summary content retained")
+			}
 			want := 0
 			if operation == "recover" {
 				want = 1
