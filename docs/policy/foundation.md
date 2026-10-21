@@ -28,7 +28,7 @@ selection ----+---- docs --------+---- gate
               +---- components --+
 ```
 
-Everything runs in one process. `selection` records the exact base and candidate commits, the changed paths, the selected checks and the selection reason. It also checks Git whitespace errors: `git diff --check` over the range, or `git show --check` on the `HEAD` commit with `--full`. The selected checks run in parallel after selection. The gate only evaluates their results; it never reruns their commands. Each check has a bounded timeout. Individual Go test packages have a four-minute timeout, with a five-minute command cap to include compilation and emit timeout diagnostics; other component commands retain a two-minute cap. The longer test cap accommodates native packaging and subprocess acceptance in the full suite on CI.
+Everything runs in one process. `selection` records the exact base and candidate commits, the changed paths, the selected checks and the selection reason. It also checks Git whitespace errors: `git diff --check` over the range, or `git show --check` on the `HEAD` commit with `--full`. The selected checks run in parallel after selection. The gate only evaluates their results; it never reruns their commands. Each check has a bounded timeout. Individual Go test packages have a four-minute timeout, with a five-minute command cap to include compilation and emit timeout diagnostics; other component commands retain a two-minute cap. The longer test cap accommodates native packaging and subprocess acceptance in the full suite on CI. Build-script acceptance also allows five minutes per complete build (multiple binaries and manifest helpers); its individual Go build commands retain their two-minute cap.
 
 ## Evidence
 
