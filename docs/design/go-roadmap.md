@@ -116,6 +116,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-12 Agents, presets, persona layers and first run.** Persona layers, presets, deletion, first run.
 - Done when: a new revision applies from the next turn and the preparation acknowledgement names it; a preset update changes only core and default voice; one agent's change never alters another's; a deleted agent sits in the trash 30 days and its channel bindings end at once.
 - Depends on: G1-03, G1-05, G1-29. Design refs: C-24; [conversation-and-memory.md](conversation-and-memory.md#agents-and-personas).
+- #62 implements the agent store, immutable Git persona revisions, durable per-turn persona preparation, preset fan-out, first-run initialization and recoverable 30-day trash with immediate binding termination. Package scenarios use real canon and files; account sign-in, conversation preparation and channel transport flows have no client endpoint in this increment.
 
 **G1-31 Accounts and Sign in with ChatGPT.** Single refresh actor, sign-in relay, owner binding, V1 record.
 - Done when: one refresh runs at a time per account and a rotated refresh token is stored before use; a failed refresh shows needs sign-in and uses no other account; a second ChatGPT account never changes the binding; no token appears in a log, request, sandbox or client; the V1 record states what the request surface accepted.

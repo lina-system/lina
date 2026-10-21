@@ -1,0 +1,7 @@
+{
+  "steps": [
+    {"emit": ["welcome.json"], "faults": {"duplicate": true}},
+    {"emit": ["normal/output_delta.json", "normal/item_done.json"]},
+    {"emit": ["welcome.json"], "faults": {"epoch": "43", "duplicate": true}}
+  ]
+}
