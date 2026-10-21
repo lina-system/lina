@@ -11,6 +11,7 @@ func Migrations() []Migration {
 		{Version: 4, SQL: authorityApprovalsSchema},
 		{Version: 5, SQL: agentsSchema},
 		{Version: 6, SQL: ledgerSchema},
-		{Version: 7, SQL: ledgerSearchSchema},
+		{Version: 7, SQL: memorySchema},
+		{Version: 8, SQL: ledgerSearchSchema},
 	}
 }
