@@ -1,0 +1,195 @@
+{
+  "renderer": "freeze version v0.2.2",
+  "binary_sha256": "3bf7f5c43d3cd6410cb9bc354f730e3cd6df9b268f858c2d0fb5eebfe18f0683",
+  "terminal": "Linux PTY, canonical input, echo disabled",
+  "cases": [
+    {
+      "environment": {
+        "TERM": "xterm-256color",
+        "LINA_THEME": "dark",
+        "COLORTERM": "truecolor"
+      },
+      "columns": 72,
+      "rows": 24,
+      "scenario": "live",
+      "exit": 0,
+      "renders": [
+        "dark-connecting.png",
+        "dark-connected.png",
+        "dark-quit.png"
+      ]
+    },
+    {
+      "environment": {
+        "TERM": "xterm-256color",
+        "LINA_THEME": "dark",
+        "COLORTERM": "truecolor"
+      },
+      "columns": 72,
+      "rows": 24,
+      "scenario": "refused",
+      "exit": 78,
+      "renders": [
+        "dark-refused.png"
+      ]
+    },
+    {
+      "environment": {
+        "TERM": "xterm-256color",
+        "LINA_THEME": "dark",
+        "COLORTERM": "truecolor"
+      },
+      "columns": 72,
+      "rows": 24,
+      "scenario": "stopped",
+      "exit": 69,
+      "renders": [
+        "dark-stopped.png"
+      ]
+    },
+    {
+      "environment": {
+        "TERM": "xterm-256color",
+        "LINA_THEME": "dark",
+        "COLORTERM": "truecolor"
+      },
+      "columns": 72,
+      "rows": 24,
+      "scenario": "failed",
+      "exit": 70,
+      "renders": [
+        "dark-failed.png"
+      ]
+    },
+    {
+      "environment": {
+        "TERM": "xterm-256color",
+        "LINA_THEME": "light",
+        "COLORTERM": "truecolor"
+      },
+      "columns": 72,
+      "rows": 24,
+      "scenario": "live",
+      "exit": 0,
+      "renders": [
+        "light-connecting.png",
+        "light-connected.png",
+        "light-quit.png"
+      ]
+    },
+    {
+      "environment": {
+        "TERM": "xterm-256color",
+        "LINA_THEME": "light",
+        "COLORTERM": "truecolor"
+      },
+      "columns": 72,
+      "rows": 24,
+      "scenario": "refused",
+      "exit": 78,
+      "renders": [
+        "light-refused.png"
+      ]
+    },
+    {
+      "environment": {
+        "TERM": "xterm-256color",
+        "LINA_THEME": "light",
+        "COLORTERM": "truecolor"
+      },
+      "columns": 72,
+      "rows": 24,
+      "scenario": "stopped",
+      "exit": 69,
+      "renders": [
+        "light-stopped.png"
+      ]
+    },
+    {
+      "environment": {
+        "TERM": "xterm-256color",
+        "LINA_THEME": "light",
+        "COLORTERM": "truecolor"
+      },
+      "columns": 72,
+      "rows": 24,
+      "scenario": "failed",
+      "exit": 70,
+      "renders": [
+        "light-failed.png"
+      ]
+    },
+    {
+      "environment": {
+        "TERM": "xterm",
+        "LINA_THEME": "dark",
+        "LINA_GLYPHS": "ascii"
+      },
+      "columns": 72,
+      "rows": 24,
+      "scenario": "live",
+      "exit": 0,
+      "renders": [
+        "dark-16-72-connected.png"
+      ]
+    },
+    {
+      "environment": {
+        "TERM": "xterm-256color",
+        "LINA_THEME": "dark",
+        "LINA_GLYPHS": "ascii"
+      },
+      "columns": 72,
+      "rows": 24,
+      "scenario": "live",
+      "exit": 0,
+      "renders": [
+        "dark-256-72-connected.png"
+      ]
+    },
+    {
+      "environment": {
+        "TERM": "xterm-256color",
+        "LINA_THEME": "dark",
+        "NO_COLOR": "1",
+        "LINA_GLYPHS": "ascii"
+      },
+      "columns": 72,
+      "rows": 24,
+      "scenario": "live",
+      "exit": 0,
+      "renders": [
+        "dark-none-72-connected.png"
+      ]
+    },
+    {
+      "environment": {
+        "TERM": "xterm-256color",
+        "LINA_THEME": "high-contrast",
+        "COLORTERM": "truecolor"
+      },
+      "columns": 72,
+      "rows": 24,
+      "scenario": "live",
+      "exit": 0,
+      "renders": [
+        "high-contrast-connected.png"
+      ]
+    },
+    {
+      "environment": {
+        "TERM": "xterm-256color",
+        "LINA_THEME": "light",
+        "COLORTERM": "truecolor",
+        "LINA_GLYPHS": "ascii"
+      },
+      "columns": 32,
+      "rows": 24,
+      "scenario": "live",
+      "exit": 0,
+      "renders": [
+        "light-truecolor-32-connected.png"
+      ]
+    }
+  ]
+}

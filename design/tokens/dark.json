@@ -1,0 +1,351 @@
+{
+  "$description": "LINA semantic tokens. SPDX-License-Identifier: Apache-2.0",
+  "$extensions": {
+    "lina.theme": "dark"
+  },
+  "color": {
+    "canvas": {
+      "$type": "color",
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [
+          0.09019608,
+          0.09803922,
+          0.12156863
+        ],
+        "alpha": 1,
+        "hex": "#17191F"
+      },
+      "$extensions": {
+        "lina.terminal": {
+          "ansi256": 234,
+          "ansi16": 0
+        }
+      }
+    },
+    "surface": {
+      "$type": "color",
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [
+          0.1254902,
+          0.1372549,
+          0.16862745
+        ],
+        "alpha": 1,
+        "hex": "#20232B"
+      },
+      "$extensions": {
+        "lina.terminal": {
+          "ansi256": 235,
+          "ansi16": 0
+        }
+      }
+    },
+    "text": {
+      "$type": "color",
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [
+          0.95686275,
+          0.96078431,
+          0.97647059
+        ],
+        "alpha": 1,
+        "hex": "#F4F5F9"
+      },
+      "$extensions": {
+        "lina.terminal": {
+          "ansi256": 255,
+          "ansi16": 15
+        }
+      }
+    },
+    "muted": {
+      "$type": "color",
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [
+          0.65098039,
+          0.67843137,
+          0.74117647
+        ],
+        "alpha": 1,
+        "hex": "#A6ADBD"
+      },
+      "$extensions": {
+        "lina.terminal": {
+          "ansi256": 249,
+          "ansi16": 7
+        }
+      }
+    },
+    "accent": {
+      "$type": "color",
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [
+          0.56862745,
+          0.65490196,
+          1.0
+        ],
+        "alpha": 1,
+        "hex": "#91A7FF"
+      },
+      "$extensions": {
+        "lina.terminal": {
+          "ansi256": 111,
+          "ansi16": 15
+        }
+      }
+    },
+    "line": {
+      "$type": "color",
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [
+          0.21960784,
+          0.24313725,
+          0.29803922
+        ],
+        "alpha": 1,
+        "hex": "#383E4C"
+      },
+      "$extensions": {
+        "lina.terminal": {
+          "ansi256": 238,
+          "ansi16": 8
+        }
+      }
+    }
+  },
+  "type": {
+    "body": {
+      "$type": "fontFamily",
+      "$value": [
+        "Pretendard",
+        "sans-serif"
+      ]
+    },
+    "code": {
+      "$type": "fontFamily",
+      "$value": [
+        "ui-monospace",
+        "monospace"
+      ]
+    },
+    "size": {
+      "$type": "dimension",
+      "$value": {
+        "value": 16,
+        "unit": "px"
+      }
+    },
+    "lineHeight": {
+      "$type": "number",
+      "$value": 1.5
+    },
+    "weight": {
+      "$type": "fontWeight",
+      "$value": 400
+    },
+    "titleWeight": {
+      "$type": "fontWeight",
+      "$value": 600
+    }
+  },
+  "space": {
+    "inline": {
+      "$type": "dimension",
+      "$value": {
+        "value": 8,
+        "unit": "px"
+      },
+      "$extensions": {
+        "lina.cells": 1
+      }
+    },
+    "gutter": {
+      "$type": "dimension",
+      "$value": {
+        "value": 24,
+        "unit": "px"
+      },
+      "$extensions": {
+        "lina.cells": 3
+      }
+    },
+    "section": {
+      "$type": "dimension",
+      "$value": {
+        "value": 24,
+        "unit": "px"
+      },
+      "$extensions": {
+        "lina.cells": 1
+      }
+    },
+    "page": {
+      "$type": "dimension",
+      "$value": {
+        "value": 32,
+        "unit": "px"
+      },
+      "$extensions": {
+        "lina.cells": 2
+      }
+    }
+  },
+  "radius": {
+    "card": {
+      "$type": "dimension",
+      "$value": {
+        "value": 12,
+        "unit": "px"
+      }
+    }
+  },
+  "motion": {
+    "settle": {
+      "$type": "duration",
+      "$value": {
+        "value": 160,
+        "unit": "ms"
+      }
+    },
+    "reduced": {
+      "$type": "duration",
+      "$value": {
+        "value": 0,
+        "unit": "ms"
+      }
+    }
+  },
+  "icon": {
+    "size": {
+      "$type": "dimension",
+      "$value": {
+        "value": 20,
+        "unit": "px"
+      }
+    }
+  },
+  "glyph": {
+    "unicode": {
+      "mark": {
+        "$type": "string",
+        "$value": "·"
+      },
+      "connecting": {
+        "$type": "string",
+        "$value": "◌"
+      },
+      "live": {
+        "$type": "string",
+        "$value": "●"
+      },
+      "resyncing": {
+        "$type": "string",
+        "$value": "↻"
+      },
+      "retrying": {
+        "$type": "string",
+        "$value": "↗"
+      },
+      "refused": {
+        "$type": "string",
+        "$value": "⊘"
+      },
+      "recovering": {
+        "$type": "string",
+        "$value": "◐"
+      },
+      "stopped": {
+        "$type": "string",
+        "$value": "○"
+      },
+      "failed": {
+        "$type": "string",
+        "$value": "×"
+      },
+      "quit": {
+        "$type": "string",
+        "$value": "✓"
+      },
+      "rule": {
+        "$type": "string",
+        "$value": "─"
+      },
+      "action": {
+        "$type": "string",
+        "$value": "›"
+      },
+      "waiting": {
+        "$type": "string",
+        "$value": "?"
+      },
+      "unknown": {
+        "$type": "string",
+        "$value": "?"
+      }
+    },
+    "ascii": {
+      "mark": {
+        "$type": "string",
+        "$value": "."
+      },
+      "connecting": {
+        "$type": "string",
+        "$value": "~"
+      },
+      "live": {
+        "$type": "string",
+        "$value": "*"
+      },
+      "resyncing": {
+        "$type": "string",
+        "$value": "="
+      },
+      "retrying": {
+        "$type": "string",
+        "$value": ">"
+      },
+      "refused": {
+        "$type": "string",
+        "$value": "!"
+      },
+      "recovering": {
+        "$type": "string",
+        "$value": ":"
+      },
+      "stopped": {
+        "$type": "string",
+        "$value": "o"
+      },
+      "failed": {
+        "$type": "string",
+        "$value": "x"
+      },
+      "quit": {
+        "$type": "string",
+        "$value": "+"
+      },
+      "rule": {
+        "$type": "string",
+        "$value": "-"
+      },
+      "action": {
+        "$type": "string",
+        "$value": ">"
+      },
+      "waiting": {
+        "$type": "string",
+        "$value": "?"
+      },
+      "unknown": {
+        "$type": "string",
+        "$value": "?"
+      }
+    }
+  }
+}
