@@ -26,6 +26,27 @@ func readSentinel(t *testing.T, root string) map[string]string {
 	return sentinel
 }
 
+func TestSIGKILLBetweenBindAndChmod(t *testing.T) {
+	root := stateRoot(t)
+	socket := filepath.Join(root, "run/core.sock")
+	crashAt(t, root, boot.SocketCreated)
+	info, err := os.Lstat(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("socket mode immediately after bind: %04o", info.Mode().Perm())
+	sentinel := readSentinel(t, root)
+	if sentinel["socket"] != "" || sentinel["pending_socket"] != socket {
+		t.Fatalf("kill missed pending bind: %v", sentinel)
+	}
+	if ready, err := runToReady(t, root, socket); err != nil || !ready {
+		t.Fatalf("restart after pre-chmod kill: ready=%v error=%v", ready, err)
+	}
+	if info.Mode().Type() != os.ModeSocket || info.Mode().Perm() != 0600 {
+		t.Fatalf("socket was not private from creation: %s", info.Mode())
+	}
+}
+
 func TestSIGKILLBetweenBindAndSentinelPublication(t *testing.T) {
 	for _, changePath := range []bool{false, true} {
 		name := "fresh"

@@ -105,7 +105,7 @@ func TestStartOrderAndDurableEpochBeforeCanon(t *testing.T) {
 	if err := boot.Run(ctx, cfg); err != nil {
 		t.Fatal(err)
 	}
-	want := []boot.Step{boot.RootValidated, boot.Locked, boot.EventsOpened, boot.ControlsRead, boot.EpochMinted, boot.CanonOpened, boot.EpochMirrored, boot.SocketPending, boot.SocketBound, boot.SocketsBound, boot.Reconciled, boot.Ready}
+	want := []boot.Step{boot.RootValidated, boot.Locked, boot.EventsOpened, boot.ControlsRead, boot.EpochMinted, boot.CanonOpened, boot.EpochMirrored, boot.SocketPending, boot.SocketCreated, boot.SocketBound, boot.SocketsBound, boot.Reconciled, boot.Ready}
 	if !reflect.DeepEqual(steps, want) {
 		t.Fatalf("steps=%v", steps)
 	}
@@ -188,7 +188,7 @@ func TestRecoveringServesHandshakeAndRefusesRequests(t *testing.T) {
 }
 
 func TestFailedStartReleasesLockAndPreservesEpoch(t *testing.T) {
-	for _, step := range []boot.Step{boot.EventsOpened, boot.ControlsRead, boot.EpochMinted, boot.CanonOpened, boot.EpochMirrored, boot.SocketPending, boot.SocketBound, boot.SocketsBound, boot.Reconciled} {
+	for _, step := range []boot.Step{boot.EventsOpened, boot.ControlsRead, boot.EpochMinted, boot.CanonOpened, boot.EpochMirrored, boot.SocketPending, boot.SocketCreated, boot.SocketBound, boot.SocketsBound, boot.Reconciled} {
 		t.Run(fmt.Sprint(step), func(t *testing.T) {
 			root := stateRoot(t)
 			socket := filepath.Join(root, "run/core.sock")
@@ -230,6 +230,9 @@ func TestCrashChild(t *testing.T) {
 	if os.Getenv("LINA_CRASH_CHILD") != "1" {
 		return
 	}
+	// Only this subprocess changes its ambient mask. A bind must be private
+	// even when startup inherited the usual, permissive file-creation mask.
+	syscall.Umask(0022)
 	root := os.Getenv("LINA_CRASH_ROOT")
 	target, _ := strconv.Atoi(os.Getenv("LINA_CRASH_STEP"))
 	err := boot.Run(context.Background(), boot.Config{StateRoot: root, Socket: os.Getenv("LINA_CRASH_SOCKET"), AfterStep: func(step boot.Step, snapshot boot.Snapshot) error {

@@ -32,6 +32,7 @@ const (
 	CanonOpened
 	EpochMirrored
 	SocketPending
+	SocketCreated
 	SocketBound
 	SocketsBound
 	Reconciled
@@ -266,7 +267,9 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	if err := boundary(SocketPending); err != nil {
 		return err
 	}
-	listener, err := clientsrv.Listen(cfg.Socket)
+	listener, err := (clientsrv.ListenConfig{AfterBind: func() error {
+		return boundary(SocketCreated)
+	}}).Listen(cfg.Socket)
 	if err != nil {
 		// A competing binder may have occupied the path after the preflight.
 		// A known failed bind must not grant ownership on a subsequent start.
