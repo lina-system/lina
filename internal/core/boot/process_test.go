@@ -39,7 +39,7 @@ func TestCoreProcess(t *testing.T) {
 			for iteration := range 2 {
 				epoch := strconv.Itoa(iteration + 1)
 				child := startCore(t, binary, root, socket)
-				idle := child.connect(t, socket) // Readiness is a successful connection.
+				idle := child.connect(t, socket) // Listening may precede READY.
 				for _, versions := range [][]string{{"1.0"}, {"2.0", "1.0"}, {"2.0", "1.1"}} {
 					conn := child.connect(t, socket)
 					conn.SetDeadline(time.Now().Add(5 * time.Second))
@@ -82,20 +82,34 @@ func TestCoreProcess(t *testing.T) {
 						if !ok || envelope.Kind != protocol.KindWelcome || envelope.Error != nil || envelope.EffectState != protocol.EffectNone || !reflect.DeepEqual(welcome, want) {
 							t.Fatalf("unexpected welcome: %s", line)
 						}
-						// A welcomed connection remains usable, but grants no operations.
-						request.Params.MessageID = "after-welcome"
-						if err := json.NewEncoder(conn).Encode(request); err != nil {
-							t.Fatal(err)
-						}
-						line, err := reader.ReadBytes('\n')
-						if err != nil {
-							t.Fatal(err)
-						}
-						if err := json.Unmarshal(line, &response); err != nil {
-							t.Fatal(err)
-						}
-						if response.Result.Error == nil || response.Result.Error.Code != protocol.ErrorCapabilityNotNegotiated {
-							t.Fatalf("unexpected post-handshake answer: %s", line)
+						// Handshakes are served during recovery. Observe the transition
+						// to READY through a refused, effect-free request instead of
+						// assuming startup finished by the time welcome arrived. The
+						// existing connection deadline bounds a stuck recovery.
+						for attempt := 0; ; attempt++ {
+							request.ID = "after-welcome-" + strconv.Itoa(attempt)
+							request.Params.MessageID = request.ID
+							if err := json.NewEncoder(conn).Encode(request); err != nil {
+								t.Fatal(err)
+							}
+							line, err := reader.ReadBytes('\n')
+							if err != nil {
+								t.Fatal(err)
+							}
+							if err := json.Unmarshal(line, &response); err != nil {
+								t.Fatal(err)
+							}
+							answer := response.Result
+							if response.ID != request.ID || answer.ReplyTo == nil || *answer.ReplyTo != request.Params.MessageID ||
+								answer.Kind != protocol.KindError || answer.EffectState != protocol.EffectRefused || answer.Error == nil || answer.Epoch != epoch {
+								t.Fatalf("unexpected post-handshake answer: %s", line)
+							}
+							if answer.Error.Code == protocol.ErrorCapabilityNotNegotiated {
+								break
+							}
+							if answer.Error.Code != protocol.ErrorUnavailable {
+								t.Fatalf("unexpected recovery refusal: %s", line)
+							}
 						}
 					} else {
 						if envelope.Kind != protocol.KindError || envelope.Error == nil || envelope.Error.Code != protocol.ErrorUnsupportedCombination || envelope.EffectState != protocol.EffectRefused {
