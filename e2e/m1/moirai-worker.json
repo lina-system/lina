@@ -1,0 +1,7 @@
+{
+  "job_id": "memory-maintenance",
+  "kind": "memory",
+  "inputs": [{"source": "synthetic first fact"}, {"source": "synthetic second fact"}],
+  "kill_during_sequence": 2,
+  "watermark_after_restart": 2
+}
