@@ -6,8 +6,8 @@ and small dot under one eye inform the identity without turning every screen
 into an illustration. Apple's apps and Things 3 are references for restraint,
 spacing and care, translated into terminal cells.
 
-The mark is the lowercase wordmark **lina** with a small accent dot: `lina·`.
-The dot is ordinary Unicode, with `lina.` as its ASCII form. The app uses the
+The mark is the lowercase wordmark **lina** with a small baseline accent dot: `lina.`.
+The terminal uses the same baseline period in Unicode and ASCII. The app uses the
 same wordmark and an [SVG circle](design/tokens/mark.svg), not a font icon. It remains recognizable in
 monochrome. This decides the brand mark, not the persona's facial expressions.
 
@@ -15,9 +15,11 @@ monochrome. This decides the brand mark, not the persona's facial expressions.
 
 - Let the person's content lead. Use generous margins, consistent alignment and
   empty rows between groups. Prefer a hairline to a box.
-- Keep the wordmark small and firm. Give secondary text enough contrast to read.
-- Use cobalt only for the mark, primary action, selection and Waiting for me.
-  Use neutral marks and words for other states.
+- Keep the wordmark bold and bright; state labels use regular text. Place its
+  cobalt dot on the baseline. Give secondary text enough contrast to read.
+- Use saturated cobalt for the mark, active state glyph, key, primary action,
+  selection and Waiting for me. Keep action labels and inactive state glyphs
+  secondary; state words remain readable without colour.
 - Give every state a distinct mark and a word. Keep the same information in
   ASCII and `NO_COLOR`. Never depend on animation to explain progress.
 - Use the semantic tokens. Change their source, regenerate, and inspect the result.
@@ -25,6 +27,19 @@ monochrome. This decides the brand mark, not the persona's facial expressions.
 Do not fill panels with the accent, add rainbow status colours, use heavy boxes,
 put private-use font glyphs in the terminal, or use faint text as a substitute
 for hierarchy. Avoid decorative animation and repeated branding.
+
+## Connection surface
+
+The wordmark, state and optional footer share one reading edge and one blank row
+between groups, inside the two-row page margin. There is no divider. The state
+keeps its distinct glyph and word in every profile; connected uses the filled
+active dot, while connecting uses the open dotted ring. Error and exit marks are
+neutral. A supporting line must add information; connected needs no second line.
+The footer shows `[q] Quit`: secondary brackets and label, with only the key in
+cobalt. `q`, Ctrl+C and Ctrl+D close the connection without Enter and restore the
+terminal's original mode. There is at most one action on this connection screen.
+Connection failures appear once in the panel; redirected stderr and plain output
+keep their command diagnostics.
 
 ## Tokens and terminal profiles
 
@@ -55,7 +70,7 @@ of app pixels. Duration values are milliseconds.
 
 | Role | Light | Dark | High contrast |
 | --- | --- | --- | --- |
-| color.accent | `#2F4BDB` (26 / 4) | `#91A7FF` (111 / 15) | `#ADC0FF` (153 / 15) |
+| color.accent | `#2F4BDB` (26 / 4) | `#5685FF` (69 / 15) | `#6795FF` (69 / 15) |
 | color.canvas | `#F8F9FC` (231 / 15) | `#17191F` (234 / 0) | `#000000` (16 / 0) |
 | color.line | `#CFD3DE` (252 / 7) | `#383E4C` (238 / 8) | `#FFFFFF` (231 / 15) |
 | color.muted | `#626978` (241 / 0) | `#A6ADBD` (249 / 7) | `#DDDDDD` (253 / 7) |
@@ -79,7 +94,7 @@ of app pixels. Duration values are milliseconds.
 | glyph.unicode.connecting | `"◌"` | `"◌"` | `"◌"` |
 | glyph.unicode.failed | `"×"` | `"×"` | `"×"` |
 | glyph.unicode.live | `"●"` | `"●"` | `"●"` |
-| glyph.unicode.mark | `"·"` | `"·"` | `"·"` |
+| glyph.unicode.mark | `"."` | `"."` | `"."` |
 | glyph.unicode.quit | `"✓"` | `"✓"` | `"✓"` |
 | glyph.unicode.recovering | `"◐"` | `"◐"` | `"◐"` |
 | glyph.unicode.refused | `"⊘"` | `"⊘"` | `"⊘"` |
@@ -101,7 +116,7 @@ of app pixels. Duration values are milliseconds.
 | type.code | `"ui-monospace", "monospace"` | `"ui-monospace", "monospace"` | `"ui-monospace", "monospace"` |
 | type.lineHeight | `1.5` | `1.5` | `1.5` |
 | type.size | `16px` | `16px` | `16px` |
-| type.titleWeight | `600` | `600` | `600` |
+| type.titleWeight | `700` | `700` | `700` |
 | type.weight | `400` | `400` | `400` |
 
 <!-- tokens:end -->
