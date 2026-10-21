@@ -55,10 +55,11 @@ type Create struct {
 // Preparation is the durable persona part of the turn's prepare acknowledgement.
 // The flow must complete its context/account steps before sending a model call.
 type Preparation struct {
-	TurnID, AgentID string
-	Revision        int64
-	Commit          string
-	Layers          Layers
+	TurnID, AgentID     string
+	Name, OwnerPersonID string
+	Revision            int64
+	Commit              string
+	Layers              Layers
 }
 type Store struct {
 	db        *canon.Store
@@ -290,11 +291,17 @@ func (s *Store) Prepare(ctx context.Context, turn, id string) (Preparation, erro
 	}
 	for {
 		var a Agent
+		var ownerPersonID string
 		var pinned bool
 		err := s.db.Read(ctx, func(tx *canon.Tx) error {
 			var err error
 			a, err = get(ctx, tx, id, false)
 			if err != nil {
+				return err
+			}
+			// The creating person owns the agent. A later revision's author
+			// must not replace that identity in the conversation.
+			if err = tx.QueryRowContext(ctx, "SELECT person_id FROM agent_revisions WHERE agent_id=? AND revision=1", id).Scan(&ownerPersonID); err != nil {
 				return err
 			}
 			var owner string
@@ -321,6 +328,7 @@ func (s *Store) Prepare(ctx context.Context, turn, id string) (Preparation, erro
 			return Preparation{}, err
 		}
 		p.TurnID = turn
+		p.Name, p.OwnerPersonID = a.Name, ownerPersonID
 		err = s.db.Write(ctx, func(tx *canon.Tx) error {
 			current, err := get(ctx, tx, id, false)
 			if err != nil {
@@ -362,6 +370,9 @@ type FirstRun struct {
 func (s *Store) FirstRun(ctx context.Context, person string, usableAccount bool) (FirstRun, error) {
 	if !present(person) {
 		return FirstRun{}, ErrInvalid
+	}
+	if err := s.upgradeLinaPlaceholders(ctx, person); err != nil {
+		return FirstRun{}, err
 	}
 	for {
 		var id string

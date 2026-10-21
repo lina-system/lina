@@ -26,6 +26,13 @@ streaming completion and steering sequence through the same PTY lifecycle.
 They require no personal credentials. The physical terminal spike and real-model
 acceptance remain separate.
 
+`TestM1TUIIdentityFromAgentStore` installs a synthetic named agent with four
+distinct persona layers, types "who are you" through the real TUI, and checks
+the provider stub's request for that stored identity, owner and persona, plus
+the exact enabled tool list. It checks request assembly, not model compliance
+with the persona. The current boot conversation has no connected executors,
+so its enabled list is explicitly empty.
+
 `m1/tui-resize.json` exercises the colour conversation screen at 80x24, then
 40x12 and 120x35 through PTY resize signals. It retains a synthetic draft,
 checks header, status and composer, and compares all rows and the cursor with

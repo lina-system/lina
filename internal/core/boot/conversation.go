@@ -308,25 +308,23 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				return turn.PreparedRequest{}, err
 			}
 			request := r.route.Request(items)
-			request.Instructions = strings.Join([]string{persona.Layers.Core, persona.Layers.DefaultVoice, persona.Layers.UserVoice, persona.Layers.GrowthSnapshot}, "\n")
+			request.Instructions, err = assemble.Instructions(persona, request.Tools)
+			if err != nil {
+				return turn.PreparedRequest{}, err
+			}
 			return turn.PreparedRequest{Request: request, Assembly: turn.Assembly{AgentID: r.agent, PersonaRevision: persona.Commit}, Counter: func(request provider.Request) int {
 				n := len(request.Instructions)
 				for _, item := range request.Items {
 					n += len(item)
 				}
+				for _, tool := range request.Tools {
+					n += len(tool)
+				}
 				return n
 			}, MaxTokens: 128000}, nil
 		},
 		Acknowledge: evidence.Acknowledge, RecordRequest: evidence.RecordRequest,
-		Digest: func(request provider.Request) string {
-			data, _ := json.Marshal(struct {
-				Model        provider.ModelRef
-				Instructions string
-				Items        []provider.Item
-			}{request.Model, request.Instructions, request.Items})
-			digest := sha256.Sum256(data)
-			return hex.EncodeToString(digest[:])
-		},
+		Digest: assemble.Digest,
 	}
 	round := 0
 	var completed []ledger.Admission
