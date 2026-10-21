@@ -2,11 +2,13 @@
 package lane_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -225,5 +227,31 @@ func TestDeliveredNoticeIsSystemEvidenceInConversationLedger(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("conversation ledger notices=%d", count)
+	}
+}
+
+func TestNoticeMasksSummaryBeforeOutboxPersistence(t *testing.T) {
+	db := noticeDB(t)
+	notices := lane.NewNotices(db, nil)
+	lanes := lane.NewWithNotices(notices)
+	defer lanes.Close(context.Background())
+	started, release := make(chan struct{}), make(chan struct{})
+	running := submit(t, lanes, t.Context(), "conversation", func(context.Context) error { close(started); <-release; return nil })
+	<-started
+	defer func() { close(release); <-running }()
+	n := notice("masked", "conversation", time.Now())
+	token := "sk-proj-" + strings.Repeat("A7", 24)
+	n.Summary = "Checked " + token + " in the source"
+	if err := lanes.Notice(t.Context(), n); err != nil {
+		t.Fatal(err)
+	}
+	var record []byte
+	if err := db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT record FROM lane_notices WHERE id=?", n.ID).Scan(&record)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(record, []byte(token)) {
+		t.Fatal("raw secret persisted in notice outbox")
 	}
 }

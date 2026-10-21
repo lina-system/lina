@@ -61,7 +61,19 @@ type Source interface {
 	Candidates(context.Context, *canon.Tx, string) ([]string, error)
 	Read(context.Context, *canon.Tx, string) (Item, error)
 	Done(context.Context, *canon.Tx, string) error
+}
+
+// TransactionAnswerer changes a producer's source in waiting's transaction.
+type TransactionAnswerer interface {
 	Answer(context.Context, *canon.Tx, string, string) error
+}
+
+// RecordedAnswerer is for an authority service that owns both authorization
+// and its already-attributed decision transaction. Waiting never duplicates
+// that policy or commits an approval independently of the authority service.
+type RecordedAnswerer interface {
+	AnswerRecorded(context.Context, string, Ref, string) (Decision, error)
+	RecordedDecisions(context.Context, *canon.Tx, string) ([]Decision, error)
 }
 
 type Canon interface {
@@ -262,6 +274,18 @@ func (s *Service) Answer(ctx context.Context, person string, ref Ref, value stri
 	if person == "" || ref.ID == "" || ref.Revision == 0 || source == nil || at.IsZero() {
 		return Decision{}, ErrInvalid
 	}
+	if recorder, ok := source.(RecordedAnswerer); ok {
+		decision, err := recorder.AnswerRecorded(ctx, person, ref, value)
+		if err != nil {
+			return Decision{}, err
+		}
+		decision.Ref.Source = ref.Source
+		return decision, nil
+	}
+	answerer, ok := source.(TransactionAnswerer)
+	if !ok {
+		return Decision{}, ErrInvalid
+	}
 	var decision Decision
 	err := s.db.Write(ctx, func(tx *canon.Tx) error {
 		item, err := source.Read(ctx, tx, ref.ID)
@@ -287,7 +311,7 @@ func (s *Service) Answer(ctx context.Context, person string, ref Ref, value stri
 		if !slices.Contains(item.View.Answers, value) {
 			return ErrInvalid
 		}
-		if err := source.Answer(ctx, tx, ref.ID, value); err != nil {
+		if err := answerer.Answer(ctx, tx, ref.ID, value); err != nil {
 			return err
 		}
 		decision = Decision{Ref: ref, Person: person, Agent: item.Agent, Answer: value, At: at.UTC()}
@@ -326,7 +350,38 @@ func (s *Service) Decisions(ctx context.Context, person string) ([]Decision, err
 			}
 			decisions = append(decisions, d)
 		}
-		return rows.Err()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		for name, source := range s.sources {
+			if recorder, ok := source.(RecordedAnswerer); ok {
+				records, err := recorder.RecordedDecisions(ctx, tx, person)
+				if err != nil {
+					return err
+				}
+				for _, d := range records {
+					d.Ref.Source = name
+					decisions = append(decisions, d)
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(decisions, func(i, j int) bool {
+		a, b := decisions[i], decisions[j]
+		if !a.At.Equal(b.At) {
+			return a.At.Before(b.At)
+		}
+		if a.Ref.Source != b.Ref.Source {
+			return a.Ref.Source < b.Ref.Source
+		}
+		return a.Ref.ID < b.Ref.ID
 	})
 	return decisions, err
 }

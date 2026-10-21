@@ -12,6 +12,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/internal/core/secrets"
 	"sort"
 	"time"
 )
@@ -118,6 +119,11 @@ func (m *Manager) ResumeNotices(ctx context.Context) error {
 	return nil
 }
 func (s *Notices) put(ctx context.Context, n Notice) error {
+	masked, err := secrets.Mask(n.Summary)
+	if err != nil {
+		return err
+	}
+	n.Summary = masked.DerivedText()
 	n.Landed = n.Landed.UTC()
 	data, err := json.Marshal(n)
 	if err != nil {
