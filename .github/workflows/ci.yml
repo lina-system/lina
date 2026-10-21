@@ -72,6 +72,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes bubblewrap
+          # Ubuntu's host restriction is separate from the sandbox being tested.
+          # Enable user namespaces only on this disposable acceptance runner.
+          if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          bwrap --unshare-user --unshare-pid --unshare-ipc --unshare-uts \
+            --cap-drop ALL --ro-bind / / --proc /proc --dev /dev -- /bin/true
 
       - name: Run foundation
         env:

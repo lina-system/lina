@@ -20,6 +20,8 @@ The [CI workflow](../../.github/workflows/ci.yml) runs on pull requests targetin
 
 Node comes from `.node-version` when present, otherwise Node 24. When `go.mod` exists, Go comes from its `toolchain` line; a missing toolchain fails setup. Actions are pinned to commit SHAs. The workflow installs actionlint 1.7.12 from a checksum-verified archive and the Ubuntu Bubblewrap package before verification, so the sandboxed file and command acceptance tests run against the real launcher. CI has read-only repository permissions, writes no evidence note, and never publishes or integrates a change.
 
+On the disposable Ubuntu runner, setup enables unprivileged user namespaces by clearing `kernel.apparmor_restrict_unprivileged_userns` when that host setting exists, then runs a Bubblewrap namespace smoke check before foundation. This does not change product host configuration or disable the seccomp, filesystem and network policies tested by the sandbox suite.
+
 ## Execution
 
 ```text
