@@ -169,7 +169,18 @@ func (s *Store) Delete(ctx context.Context, r Request) error     { return s.chan
 func (s *Store) Disconnect(ctx context.Context, r Request) error { return s.change(ctx, r, disconnect) }
 
 func (s *Store) change(ctx context.Context, r Request, a action) error {
-	if r.Person == "" || len(r.Targets) == 0 {
+	return s.changeMode(ctx, r, a, false)
+}
+
+// Expire permanently deletes this person's trash at its 30-day deadline.
+// Selection and deletion share the writer transaction. An empty pass writes
+// neither an epoch nor a removal-list line.
+func (s *Store) Expire(ctx context.Context, person string) error {
+	return s.changeMode(ctx, Request{Person: person}, erase, true)
+}
+
+func (s *Store) changeMode(ctx context.Context, r Request, a action, expiry bool) error {
+	if r.Person == "" || (!expiry && len(r.Targets) == 0) {
 		return ErrInvalid
 	}
 	s.mu.Lock()
@@ -186,6 +197,26 @@ func (s *Store) change(ctx context.Context, r Request, a action) error {
 		requestErr = s.db.Write(ctx, func(tx *canon.Tx) error {
 			// Resolve every target and validate all transitions before journaling any.
 			e := entry{Version: 1, Action: a, At: s.now().UnixNano(), Person: r.Person}
+			if expiry {
+				rows, err := tx.QueryContext(ctx, "SELECT kind,id FROM retract_target WHERE person=? AND state='trashed' AND at<=? ORDER BY kind,id", r.Person, e.At-int64(TrashRetention))
+				if err != nil {
+					return err
+				}
+				for rows.Next() {
+					var ref Ref
+					if err := rows.Scan(&ref.Kind, &ref.ID); err != nil {
+						rows.Close()
+						return err
+					}
+					r.Targets = append(r.Targets, ref)
+				}
+				if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+					return err
+				}
+				if len(r.Targets) == 0 {
+					return nil
+				}
+			}
 			var nonce [16]byte
 			if _, err := rand.Read(nonce[:]); err != nil {
 				return err
@@ -252,6 +283,9 @@ func transition(ctx context.Context, tx *canon.Tx, t Target, e entry) error {
 }
 
 func (s *Store) apply(ctx context.Context, tx *canon.Tx, e entry, sequence int, digest string) error {
+	if _, err := tx.ExecContext(ctx, "INSERT INTO removal_applied(sequence,id,digest) VALUES(?,?,?)", sequence, e.ID, digest); err != nil {
+		return err
+	}
 	for _, target := range e.Targets {
 		if err := s.projection.apply(ctx, tx, e, target); err != nil {
 			return err
@@ -271,8 +305,8 @@ func (s *Store) apply(ctx context.Context, tx *canon.Tx, e entry, sequence int, 
 		if err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO retract_target(kind,id,person,holder,agent,state,at,provenance) VALUES(?,?,?,?,?,?,?,?)
-ON CONFLICT(kind,id) DO UPDATE SET person=excluded.person,holder=excluded.holder,agent=excluded.agent,state=excluded.state,at=excluded.at,provenance=excluded.provenance`, target.Kind, target.ID, e.Person, target.Holder, target.Agent, state, e.At, provenance)
+		_, err = tx.ExecContext(ctx, `INSERT INTO retract_target(kind,id,person,holder,agent,state,at,provenance,operation_id) VALUES(?,?,?,?,?,?,?,?,?)
+ON CONFLICT(kind,id) DO UPDATE SET person=excluded.person,holder=excluded.holder,agent=excluded.agent,state=excluded.state,at=excluded.at,provenance=excluded.provenance,operation_id=excluded.operation_id`, target.Kind, target.ID, e.Person, target.Holder, target.Agent, state, e.At, provenance, e.ID)
 		if err != nil {
 			return err
 		}
@@ -304,9 +338,6 @@ ON CONFLICT(kind,id) DO UPDATE SET person=excluded.person,holder=excluded.holder
 	}
 	if n != 1 {
 		return ErrInvalid
-	}
-	if _, err := tx.ExecContext(ctx, "INSERT INTO removal_applied(sequence,id,digest) VALUES(?,?,?)", sequence, e.ID, digest); err != nil {
-		return err
 	}
 	return s.fail("after_apply")
 }

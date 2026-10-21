@@ -9,7 +9,7 @@ func TestRetractionMigrationPreservesOperationsOnUpgrade(t *testing.T) {
 	s := openStore(t, cfg)
 	err := s.Write(t.Context(), func(tx *Tx) error {
 		_, err := tx.ExecContext(t.Context(), `INSERT INTO removal_applied(sequence,id,digest) VALUES(1,'operation','digest');
-INSERT INTO retract_target(kind,id,person,holder,agent,state,at,provenance) VALUES('memory','item','person','all','agent','erased',10,'{}');
+INSERT INTO retract_target(kind,id,person,holder,agent,state,at,provenance,operation_id) VALUES('memory','item','person','all','agent','erased',10,'{}','operation');
 UPDATE retract_meta SET epoch=epoch+1 WHERE singleton=1;`)
 		return err
 	})

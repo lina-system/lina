@@ -98,6 +98,9 @@ func TestDurableIntentReplaysBeforeReads(t *testing.T) {
 			if err := db.Read(t.Context(), func(*canon.Tx) error { return nil }); !errors.Is(err, canon.ErrRecoveryRequired) {
 				t.Fatalf("partial state was readable: %v", err)
 			}
+			if err := s.Forget(t.Context(), Request{Person: "person-1", Targets: []Ref{{Kind: Memory, ID: "memory-1"}}}); !errors.Is(err, ErrRecovery) {
+				t.Fatalf("accepted another operation before replay: %v", err)
+			}
 			// No tombstone or epoch update escaped the rolled-back transaction.
 			if err := db.Write(t.Context(), func(tx *canon.Tx) error {
 				var n int
@@ -164,5 +167,65 @@ func TestInvalidRemovalDoesNotCloseReads(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(root, "backups", "removals"))
 	if err != nil || len(data) != 0 {
 		t.Fatalf("invalid intent journaled: %s %v", data, err)
+	}
+}
+
+func TestTrashRecoveryAndExpiryBoundaries(t *testing.T) {
+	for _, atBoundary := range []bool{false, true} {
+		t.Run(map[bool]string{false: "before_deadline", true: "at_deadline"}[atBoundary], func(t *testing.T) {
+			db, root := fixture(t)
+			seedProtocol(t, db)
+			s := protocolStore(t, db, root)
+			r := Request{Person: "person-1", Targets: []Ref{{Kind: Memory, ID: "memory-1"}}}
+			if err := s.Forget(t.Context(), r); err != nil {
+				t.Fatal(err)
+			}
+			delta := TrashRetention - time.Nanosecond
+			if atBoundary {
+				delta = TrashRetention
+			}
+			s.now = func() time.Time { return time.Unix(0, 123).Add(delta) }
+			err := s.Restore(t.Context(), r)
+			if atBoundary {
+				if !errors.Is(err, ErrInvalid) {
+					t.Fatalf("restored expired trash: %v", err)
+				}
+				if err := s.Expire(t.Context(), "person-1"); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			var state string
+			var blocks int
+			if err := db.Read(t.Context(), func(tx *canon.Tx) error {
+				if err := tx.QueryRowContext(t.Context(), "SELECT state FROM retract_target WHERE id='memory-1'").Scan(&state); err != nil {
+					return err
+				}
+				return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM retract_block").Scan(&blocks)
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if atBoundary {
+				if state != "erased" || blocks != 2 {
+					t.Fatalf("expiry state=%s blocks=%d", state, blocks)
+				}
+			} else if state != "active" || blocks != 0 {
+				t.Fatalf("recovery state=%s blocks=%d", state, blocks)
+			}
+			before, err := s.Epoch(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Expire(t.Context(), "person-1"); err != nil {
+				t.Fatal(err)
+			}
+			after, err := s.Epoch(t.Context())
+			if err != nil || after != before {
+				t.Fatalf("empty expiry advanced epoch: %d %d %v", before, after, err)
+			}
+		})
 	}
 }

@@ -15,8 +15,15 @@ CREATE TABLE retract_target (
  person TEXT NOT NULL, holder TEXT NOT NULL, agent TEXT NOT NULL,
  state TEXT NOT NULL CHECK(state IN ('trashed','active','erased','disconnected')),
  at INTEGER NOT NULL, provenance BLOB NOT NULL,
+ operation_id TEXT NOT NULL REFERENCES removal_applied(id),
  PRIMARY KEY(kind,id)
 );
+CREATE TRIGGER retract_target_requires_removal BEFORE INSERT ON retract_target
+WHEN NOT EXISTS(SELECT 1 FROM removal_applied WHERE id=NEW.operation_id)
+BEGIN SELECT RAISE(ABORT,'removal_required'); END;
+CREATE TRIGGER retract_target_update_requires_removal BEFORE UPDATE ON retract_target
+WHEN NOT EXISTS(SELECT 1 FROM removal_applied WHERE id=NEW.operation_id)
+BEGIN SELECT RAISE(ABORT,'removal_required'); END;
 CREATE TABLE retract_block (
  item_id TEXT NOT NULL, person TEXT NOT NULL, holder TEXT NOT NULL,
  event_id TEXT NOT NULL DEFAULT '', conversation_id TEXT NOT NULL DEFAULT '',
