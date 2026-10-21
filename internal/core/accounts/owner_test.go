@@ -105,3 +105,37 @@ func TestBindingRejectsEmptyIdentityWithoutWriting(t *testing.T) {
 		t.Fatalf("binding exists: %v", err)
 	}
 }
+
+func TestAdditionalProviderCannotReplaceOwnerAndFailedAdmissionRollsBack(t *testing.T) {
+	db := bindingDB(t)
+	store := NewOwnerBindings(db)
+	first := OwnerBinding{Person: "owner", Issuer: "https://auth.openai.com", Subject: "one"}
+	failed := errors.New("synthetic account persistence failure")
+	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
+		if err := admitOwner(t.Context(), tx, first, true); err != nil {
+			return err
+		}
+		return failed
+	}); !errors.Is(err, failed) {
+		t.Fatal(err)
+	}
+	if _, err := store.Get(t.Context()); !errors.Is(err, ErrOwnerUnbound) {
+		t.Fatalf("failed account created a binding: %v", err)
+	}
+	// The first successful provider sign-in also establishes an unbound owner.
+	if err := db.Write(t.Context(), func(tx *canon.Tx) error { return admitOwner(t.Context(), tx, first, false) }); err != nil {
+		t.Fatal(err)
+	}
+	second := first
+	second.Subject = "two"
+	if err := db.Write(t.Context(), func(tx *canon.Tx) error { return admitOwner(t.Context(), tx, second, false) }); err != nil {
+		t.Fatalf("additional provider account: %v", err)
+	}
+	if got, err := store.Get(t.Context()); err != nil || got != first {
+		t.Fatalf("provider replaced binding: %+v %v", got, err)
+	}
+	second.Person = "different-person"
+	if err := db.Write(t.Context(), func(tx *canon.Tx) error { return admitOwner(t.Context(), tx, second, false) }); !errors.Is(err, ErrOwnerMismatch) {
+		t.Fatalf("different person admitted: %v", err)
+	}
+}

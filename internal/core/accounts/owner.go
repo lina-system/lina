@@ -44,12 +44,13 @@ func (s *OwnerBindings) Get(ctx context.Context) (OwnerBinding, error) {
 }
 
 func (s *OwnerBindings) Bind(ctx context.Context, binding OwnerBinding) error {
-	return s.db.Write(ctx, func(tx *canon.Tx) error { return bindOwner(ctx, tx, binding) })
+	return s.db.Write(ctx, func(tx *canon.Tx) error { return admitOwner(ctx, tx, binding, true) })
 }
 
-// bindOwner is called in the same writer transaction as the successful login's
-// account metadata. The first writer wins; every later login must match it.
-func bindOwner(ctx context.Context, tx *canon.Tx, binding OwnerBinding) error {
+// admitOwner runs in the same writer transaction as successful account metadata.
+// The first sign-in binds the owner. Additional provider accounts may have a
+// different subject; a login must match the immutable owner identity exactly.
+func admitOwner(ctx context.Context, tx *canon.Tx, binding OwnerBinding, login bool) error {
 	if strings.TrimSpace(binding.Person) == "" || strings.TrimSpace(binding.Issuer) == "" || strings.TrimSpace(binding.Subject) == "" {
 		return ErrSignInInvalid
 	}
@@ -60,7 +61,7 @@ func bindOwner(ctx context.Context, tx *canon.Tx, binding OwnerBinding) error {
 	if err := tx.QueryRowContext(ctx, "SELECT person,issuer,subject FROM owner_binding WHERE singleton=1").Scan(&current.Person, &current.Issuer, &current.Subject); err != nil {
 		return err
 	}
-	if current != binding {
+	if current.Person != binding.Person || login && current != binding {
 		return ErrOwnerMismatch
 	}
 	return nil
