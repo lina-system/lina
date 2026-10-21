@@ -19,6 +19,17 @@ test('tool executor is registered with the lina Go checks', t => {
   assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/exec/...'));
 });
 
+test('ledger is registered with the lina Go checks', t => {
+  const r = repository(t);
+  const base = r.git('rev-parse', 'HEAD');
+  mkdirSync(join(r.cwd, 'internal/core/ledger'), { recursive: true });
+  writeFileSync(join(r.cwd, 'internal/core/ledger/store.go'), 'package ledger\n');
+  const scope = r.classify(r.commit(), { base, full: true });
+  assert.deepEqual(scope.unmapped, []);
+  assert.ok(scope.selectedComponents.includes('lina'));
+  assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/ledger/...'));
+});
+
 test('model path configuration is registered with the lina Go checks', t => {
   const r = repository(t);
   const base = r.git('rev-parse', 'HEAD');
@@ -629,6 +640,13 @@ test('brand tokens and generated data select verification while PNGs remain evid
   assert.equal(kind('internal/design/tokens_gen.go'), 'components');
   assert.equal(kind('evidence/brand/dark-connected.png'), 'docs');
   assert.equal(kind('evidence/brand/unregistered.py'), 'unmapped');
+});
+
+test('vector rebuilds select automation and their notices remain documents', () => {
+  assert.equal(kind('packaging/sqlite-vec/build.sh'), 'automation');
+  assert.equal(kind('packaging/sqlite-vec/NOTICE.md'), 'docs');
+  assert.equal(kind('packaging/sqlite-vec/README.md'), 'docs');
+  assert.equal(kind('packaging/sqlite-vec/unregistered.py'), 'unmapped');
 });
 
 test('QA guide and repository opt-in have registered verification', () => {
