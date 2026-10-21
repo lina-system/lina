@@ -34,14 +34,11 @@ func Listen(path string) (*net.UnixListener, error) {
 	if _, err = os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
 		return nil, jobapi.ErrUnavailable
 	}
-	l, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+	l, err := listenPrivate(path)
 	if err != nil {
 		return nil, err
 	}
-	if err = os.Chmod(path, 0600); err != nil {
-		l.Close()
-		return nil, err
-	}
+
 	return l, nil
 }
 
