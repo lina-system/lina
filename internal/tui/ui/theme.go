@@ -23,11 +23,12 @@ const (
 
 // Options are ephemeral display preferences. They never change Core state.
 type Options struct {
-	Theme    string
-	Profile  Profile
-	ASCII    bool
-	Width    int
-	Language design.Language
+	Theme         string
+	Profile       Profile
+	ASCII         bool
+	Width         int
+	Language      design.Language
+	ImmediateKeys bool
 }
 
 // Connection is a display state. Quit is a terminal transition, not a ninth

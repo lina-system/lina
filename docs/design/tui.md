@@ -416,6 +416,20 @@ It resolves state labels by catalog id and checks that an absent socket leaves
 the isolated state directory empty. Live recovery still requires the client
 service's typed stream adapter; these initial scenario steps do not establish it.
 
+`e2e/m1/tui-recovery.json` requires a real socket disconnect after the first
+welcome has appeared on the PTY, then a second handshake with a changed epoch.
+The same TUI process must show retrying, announce the changed epoch once,
+return to live and quit. A write-completion gate orders the disconnect after
+the displayed welcome; no sleep determines success. The second fake connection
+stays open until client quit. This is a separate acceptance test from injecting
+local shell messages into the recording harness.
+
+The shell model retains the reducer's history and draft while connection states
+change, ignores asynchronous messages from an older connection generation, and
+reserves the layout planner's status row at small terminal sizes. Its recording
+harness test checks readable history through retry, resync and recovery, and
+terminal restoration on quit. Local epoch notices remain outside history.
+
 The schema and receive-boundary corpus runs independently through
 `kit/protocol/conformance`. It checks that an unknown kind yields no admitted
 message, increments the client's unknown-kind count once per frame, and does not
