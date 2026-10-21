@@ -169,3 +169,21 @@ func TestRestoreRemovalListsNeverDiscardNewerHistory(t *testing.T) {
 		}
 	}
 }
+
+func TestRestoreRefusesMissingRemovalList(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "canon"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	// Even a generation with no acknowledged removals must travel with a list;
+	// silently inventing an empty list could lose a post-generation forgetting.
+	if err := prepareRestoredCanon(t.Context(), root, 20, canon.Migrations()); err == nil {
+		t.Fatal("restore invented an empty removal list")
+	}
+	if _, err := os.Stat(filepath.Join(root, "canon/canon.sqlite")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("missing removal list changed canon")
+	}
+}

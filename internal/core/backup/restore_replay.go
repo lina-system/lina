@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strconv"
 
@@ -16,6 +17,13 @@ import (
 // prepareRestoredCanon operates only on a private staging root. No store is
 // returned until removal replay and authority invalidation have both finished.
 func prepareRestoredCanon(ctx context.Context, root string, epoch uint64, migrations []canon.Migration) (result error) {
+	info, err := os.Lstat(filepath.Join(root, "backups/removals"))
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
+		return retract.ErrJournal
+	}
 	controls, err := ctlfiles.Open(root)
 	if err != nil {
 		return err
