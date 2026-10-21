@@ -79,3 +79,37 @@ func TestReconnectMissingAgentKeepsDraftUntilExplicitChoice(t *testing.T) {
 		})
 	}
 }
+
+func TestReconnectDiscoveryWithoutAgentListing(t *testing.T) {
+	m := conversationShell()
+	m.conversation.id = "main:chosen"
+	m.Update(tea.PasteMsg{Content: "preserved"})
+	m.Update(shellBegin{Generation: 2})
+	// Conversation remains granted, but welcome advertises only the default.
+	m.content.Agents = []protocol.Agent{{AgentID: "default"}}
+	request := m.discoveryHistory()
+	if request == nil || request.AgentID == nil || *request.AgentID != "chosen" || m.conversation.agentMissing {
+		t.Fatal("partial welcome invalidated a valid selection without agent listing")
+	}
+	if m.content.Draft.Text != "preserved" || !m.conversation.agentPending {
+		t.Fatal("discovery lost the draft or admitted sending before validation")
+	}
+}
+
+func TestReconnectDiscoveryUnavailableRemainsRetryable(t *testing.T) {
+	m := conversationShell()
+	m.conversation.id = "main:chosen"
+	m.Update(tea.PasteMsg{Content: "preserved"})
+	m.Update(shellBegin{Generation: 2})
+	if retry := m.discoveryFailed(protocol.ErrorUnavailable); !retry || m.conversation.agentMissing || m.status.State != Recovering {
+		t.Fatal("temporary discovery error permanently invalidated the selection")
+	}
+	m.Update(shellBegin{Generation: 3})
+	request := m.reconnectHistory([]protocol.Agent{{AgentID: "chosen"}})
+	if request == nil || *request.AgentID != "chosen" || m.content.Draft.Text != "preserved" {
+		t.Fatal("recovery did not retry the selected conversation with its draft")
+	}
+	if retry := m.discoveryFailed(protocol.ErrorOutOfScope); retry || !m.conversation.agentMissing || m.localNotice() == "" {
+		t.Fatal("authoritative refusal must require an explicit selection")
+	}
+}

@@ -11,6 +11,37 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+func (m *shellModel) discoveryHistory() *protocol.HistoryGet {
+	if m.conversation.agentMissing {
+		m.agentDiscoveryDone()
+		return nil
+	}
+	if m.conversation.id != "" {
+		agent := m.activeAgent()
+		return &protocol.HistoryGet{AgentID: &agent}
+	}
+	if len(m.content.Agents) == 0 {
+		return nil
+	}
+	return &protocol.HistoryGet{}
+}
+
+// An unavailable read says nothing about membership. Reopen the connection to
+// retry only discovery, leaving application input in the draft. Core uses
+// out_of_scope when the selected agent is no longer available to this client.
+func (m *shellModel) discoveryFailed(code protocol.ErrorCode) bool {
+	switch code {
+	case protocol.ErrorUnavailable:
+		m.status = ConnectionStatus{State: Recovering, Cause: code}
+		return true
+	case protocol.ErrorOutOfScope:
+		m.reconnectHistory(nil)
+	default:
+		m.status = connectionFailure(&clientapi.Refusal{Cause: protocol.Error{Code: code}})
+	}
+	return false
+}
+
 // A reconnect restores client focus by identity. An absent selection stays
 // blocked until the person explicitly chooses an agent, even across retries.
 // Validate against a fresh agent list: welcome may advertise only the default.

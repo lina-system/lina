@@ -135,6 +135,10 @@ with newer typing after it. The client never automatically resends that input.
 Reconnect also retains the selected agent identity. History discovery and the
 preserved draft use that agent, regardless of the welcome's agent order. A fresh
 agent list validates the selection because welcome may name only the default.
+Without the separately negotiated `agents` capability, discovery requests
+history by the retained agent id instead. An `unavailable` discovery response
+keeps the focus and draft in recovery and reopens the connection to retry these
+read-only requests; it does not infer deletion or replay conversation input.
 If the selected agent is absent, the TUI drops its unavailable conversation
 subscriptions, shows a local notice, and keeps the draft unsent. It does not
 select a fallback; sending waits for an explicit `/agents choose <id>`.
