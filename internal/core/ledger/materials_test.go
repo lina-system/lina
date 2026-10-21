@@ -21,18 +21,34 @@ import (
 // Core's composition layer owns both stores. This real-assets adapter exercises
 // the boundary without adding a forbidden production import between L3 stores.
 type materialStore struct {
-	store *assets.Store
-	saves int
+	store  *assets.Store
+	writer *assets.MaterialWriter
+	saves  int
 }
 
-func (m *materialStore) Save(ctx context.Context, body secrets.Masked) (ledger.Material, error) {
-	m.saves++
-	token, err := m.store.StageImport(ctx, strings.NewReader(body.Text()))
+func materials(t *testing.T, store *assets.Store) *materialStore {
+	t.Helper()
+	w, err := assets.OpenMaterialWriter(t.Context(), store)
 	if err != nil {
-		return ledger.Material{}, err
+		t.Fatal(err)
 	}
-	a, err := m.store.Handover(ctx, token, "ledger-body", assets.Lina, assets.Actor{PersonID: "owner", AgentID: "agent"})
+	return &materialStore{store: store, writer: w}
+}
+
+type materialWrite struct{ *assets.PreparedMaterial }
+
+func (p materialWrite) Insert(ctx context.Context, tx *canon.Tx) (ledger.Material, error) {
+	a, err := p.PreparedMaterial.Insert(ctx, tx)
 	return ledger.Material{ID: a.ID, Revision: a.Revision}, err
+}
+
+func (m *materialStore) Prepare(ctx context.Context, body secrets.Masked) (ledger.MaterialWrite, error) {
+	m.saves++
+	p, err := m.writer.Prepare(ctx, strings.NewReader(body.Text()), "ledger-body", assets.Actor{PersonID: "owner", AgentID: "agent"})
+	if err != nil {
+		return nil, err
+	}
+	return materialWrite{p}, nil
 }
 
 func (m *materialStore) Read(ctx context.Context, ref ledger.Material) (string, error) {
@@ -53,7 +69,7 @@ func TestLargeBodyUsesMaskedMaterialAndMissingBytesAreIncomplete(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer a.Close()
-	m := &materialStore{store: a}
+	m := materials(t, a)
 	s := ledger.New(db, m)
 	in := input("inline")
 	in.Body = strings.Repeat("x", ledger.InlineBytes)
@@ -98,7 +114,7 @@ func TestLargeBodyUsesMaskedMaterialAndMissingBytesAreIncomplete(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer a.Close()
-	m = &materialStore{store: a}
+	m = materials(t, a)
 	s = ledger.New(db, m)
 	got, err := s.Get(t.Context(), in.ID)
 	if err != nil || got.Body.Text() != e.Body.Text() || got.Material != e.Material || got.BytesUnavailable {
@@ -163,6 +179,70 @@ func TestAbsentMaterialWriterFailsClosed(t *testing.T) {
 	}
 }
 
+func TestFailedLargeAdmissionLeavesNoRetainedMaterial(t *testing.T) {
+	db, cfg := database(t)
+	a, err := assets.Open(t.Context(), filepath.Dir(cfg.Path), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	m := materials(t, a)
+	failure := errors.New("injected commit failure")
+	s := ledger.New(failingCanon{db, failure}, m)
+	in := input("failed-large")
+	in.Body = strings.Repeat("x", ledger.InlineBytes+1)
+	if e, err := s.Admit(t.Context(), guard.EntryOwner, in); !errors.Is(err, failure) || e.ID != "" {
+		t.Fatalf("failure: %+v %v", e, err)
+	}
+	if _, err := s.Get(t.Context(), in.ID); !errors.Is(err, ledger.ErrNotFound) {
+		t.Fatal(err)
+	}
+	manifest, err := a.Backup(t.Context(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest) != 0 {
+		t.Fatalf("failed admission retained %d material revisions in backup", len(manifest))
+	}
+	for _, pattern := range []string{"materials/lina/*/1/content", "staging/material-writes/*"} {
+		paths, err := filepath.Glob(filepath.Join(filepath.Dir(cfg.Path), pattern))
+		if err != nil || len(paths) != 0 {
+			t.Fatalf("failed admission retained bytes: %v %v", paths, err)
+		}
+	}
+}
+
+func TestDuplicateLargeAdmissionsRetainOnlyOriginalMaterial(t *testing.T) {
+	db, cfg := database(t)
+	a, err := assets.Open(t.Context(), filepath.Dir(cfg.Path), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	s := ledger.New(db, materials(t, a))
+	in := input("large")
+	in.Body = strings.Repeat("x", ledger.InlineBytes+1)
+	first := admit(t, s, guard.EntryOwner, in)
+	in.Body = strings.Repeat("y", ledger.InlineBytes+1)
+	for range 3 {
+		if e, err := s.Admit(t.Context(), guard.EntryOwner, in); err == nil || e.ID != "" {
+			t.Fatalf("duplicate: %+v %v", e, err)
+		}
+	}
+	manifest, err := a.Backup(t.Context(), t.TempDir())
+	if err != nil || len(manifest) != 1 || manifest[0].AssetID != first.Material.ID {
+		t.Fatalf("retained revisions: %+v %v", manifest, err)
+	}
+	got, err := s.Get(t.Context(), in.ID)
+	if err != nil || got.Body.Text() != first.Body.Text() {
+		t.Fatalf("original replaced: %v", err)
+	}
+	paths, err := filepath.Glob(filepath.Join(filepath.Dir(cfg.Path), "materials/lina/*/1/content"))
+	if err != nil || len(paths) != 1 {
+		t.Fatalf("retained material files: %v %v", paths, err)
+	}
+}
+
 func TestKoreanSearchOfMaterialChecksSourceBytes(t *testing.T) {
 	db, cfg := database(t)
 	root := filepath.Dir(cfg.Path)
@@ -171,7 +251,7 @@ func TestKoreanSearchOfMaterialChecksSourceBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer a.Close()
-	s := ledger.New(db, &materialStore{store: a})
+	s := ledger.New(db, materials(t, a))
 	in := input("large-search")
 	in.Body = strings.Repeat("x", ledger.InlineBytes) + " 도서관에서 공부를 한다."
 	e := admit(t, s, guard.EntryOwner, in)

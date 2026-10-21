@@ -33,7 +33,6 @@ test('Korean search corpus changes select the consuming Core tests', t => {
   assert.equal(scope.automation, false);
   assert.equal(scope.dependencies, false);
 });
-
 test('ledger is registered with the lina Go checks', t => {
   const r = repository(t);
   const base = r.git('rev-parse', 'HEAD');
