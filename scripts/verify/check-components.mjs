@@ -69,6 +69,11 @@ export function checkComponents({ cwd = process.cwd(), components, execute: run 
     if (components.some(component => component.name === 'kit') && existsSync(protocol)) {
       if (invoke('go', ['run', './internal/generate', '-check'], protocol).status !== 0) return { status: 1, output };
     }
+    // Token checks also run for component-only TUI changes, when automation
+    // is not selected. The checker compares outputs without modifying them.
+    if (components.some(component => component.name === 'lina') && existsSync(join(cwd, 'design/tokens'))) {
+      if (invoke(process.execPath, [join(cwd, 'scripts/tokens.mjs'), '--check'], cwd).status !== 0) return { status: 1, output };
+    }
     for (const module of new Set(components.map(component => component.module))) {
       const selected = components.filter(component => component.module === module);
       const packages = [...new Set(selected.flatMap(component => component.packages))];

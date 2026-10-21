@@ -565,3 +565,10 @@ for (const path of ['scripts/verify/dependency-exceptions.json', 'THIRD-PARTY-NO
     }
   });
 }
+
+test('brand tokens and generated data select verification while PNGs remain evidence', () => {
+  for (const path of ['design/tokens/light.json', 'design/tokens/tokens.css', 'DESIGN.md']) assert.equal(kind(path), 'automation');
+  assert.equal(kind('internal/design/tokens_gen.go'), 'components');
+  assert.equal(kind('evidence/brand/dark-connected.png'), 'docs');
+  assert.equal(kind('evidence/brand/unregistered.py'), 'unmapped');
+});

@@ -77,3 +77,18 @@ test('the real pinned analyzer rejects an incomplete enum switch and accepts the
   const green = checkComponents({ cwd: sb.dir, components: [kit] });
   assert.equal(green.status, 0, green.output);
 });
+
+test('token drift and raw TUI literals stop component verification before builds', t => {
+  const sb = fixture(t);
+  sb.write(sb.dir, 'design/tokens/light.json', '{}');
+  sb.write(sb.dir, 'scripts/tokens.mjs', '// fixture');
+  const calls = [];
+  const result = checkComponents({ cwd: sb.dir, components: [{name:'lina', module:'.', packages:['.']}], execute(command, args) {
+    calls.push({command, args});
+    if (args.includes('--check')) return { status:1, stdout:'', stderr:'token violation' };
+    return { status:0, stdout:args[0]==='env' ? 'go1.27.3\n' : '', stderr:'' };
+  } });
+  assert.equal(result.status, 1);
+  assert.ok(calls.some(call => call.command === process.execPath && call.args.includes('--check')));
+  assert.ok(!calls.some(call => call.args[0]==='build'));
+});

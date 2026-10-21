@@ -21,7 +21,7 @@ function registryFor(cwd) {
   const persona = existsSync(join(cwd, 'persona')) ? ['./persona/...'] : [];
   const corePackages = coreDirectories.filter(directory => existsSync(join(cwd, directory)))
     .map(directory => `./${directory}...`);
-  const clientDirectories = ['internal/tui/', 'internal/clientapi/', 'internal/fakecore/'];
+  const clientDirectories = ['internal/design/', 'internal/tui/', 'internal/clientapi/', 'internal/fakecore/'];
   const clientPackages = clientDirectories.filter(directory => existsSync(join(cwd, directory)))
     .map(directory => `./${directory}...`);
   // The harness launches lina as a subprocess, so go list cannot discover its
@@ -48,6 +48,8 @@ const goObjects = text => JSON.parse(`[${text.trim().replace(/^}\s*\n{/gm, '},{'
 export function kind(path) {
   if (path === 'scripts/verify/dependency-exceptions.json' || path === 'THIRD-PARTY-NOTICES.md') return 'dependencies';
   if (modules.has(path)) return 'modules';
+  if (path === 'DESIGN.md' || /^design\/tokens\/[^/]+\.(?:json|css|svg)$/.test(path)) return 'automation';
+  if (/^evidence\/brand\/[^/]+\.png$/.test(path)) return 'docs';
   if (componentOf(path)) return 'components';
   if (documents.has(path) || /^docs\/(?:policy|design)\/[^/]+\.md$/.test(path)
       || /^evidence\/.+\.(?:json|md)$/.test(path)) return 'docs';
