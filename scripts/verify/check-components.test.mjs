@@ -32,7 +32,7 @@ test('components use the pinned toolchain, readonly commands, module verificatio
     ['env', 'GOVERSION'], ['mod', 'verify'], ['mod', 'verify'],
     ['build', '-mod=readonly', './...'],
     ['vet', '-mod=readonly', './...'], ['tool', 'exhaustive', './...'],
-    ['test', '-count=1', '-mod=readonly', './...'],
+    ['test', '-count=1', '-timeout=4m', '-mod=readonly', './...'],
   ]);
   for (const call of calls) {
     assert.equal(call.env.GOTOOLCHAIN, 'go1.27.3');
@@ -91,4 +91,18 @@ test('token drift and raw TUI literals stop component verification before builds
   assert.equal(result.status, 1);
   assert.ok(calls.some(call => call.command === process.execPath && call.args.includes('--check')));
   assert.ok(!calls.some(call => call.args[0]==='build'));
+});
+
+test('module tests retain a diagnostic deadline inside their process budget', t => {
+  const sb = fixture(t);
+  const calls = [];
+  const result = checkComponents({ cwd: sb.dir, components: [kit], execute(command, args, options) {
+    calls.push({ command, args, ...options });
+    return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
+  } });
+  assert.equal(result.status, 0, result.output);
+  const suite = calls.find(call => call.args[0] === 'test');
+  assert.ok(suite.args.includes('-timeout=4m'), 'Go must emit stuck-test stacks before the process guard');
+  assert.equal(suite.timeoutMs, 300_000, 'the whole module includes compilation and subprocess acceptance tests');
+  assert.ok(calls.filter(call => call.args[0] !== 'test').every(call => call.timeoutMs === 120_000));
 });
