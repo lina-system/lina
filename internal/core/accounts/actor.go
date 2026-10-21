@@ -57,6 +57,7 @@ func (s *Store) run(id provider.AccountID, actor *actor) {
 	// A storage failure latches this actor: do not spin a timer or release a
 	// credential if the durable status cannot be established.
 	var fatal error
+	var retryAt time.Time
 	for {
 		a, err := s.Get(s.ctx, id)
 		if err != nil {
@@ -65,7 +66,11 @@ func (s *Store) run(id provider.AccountID, actor *actor) {
 		var wake <-chan time.Time
 		var timer *time.Timer
 		if fatal == nil && a.Status != NeedsSignIn && a.Auth == provider.LoopbackOAuth {
-			timer = time.NewTimer(dueAt(a).Sub(s.now()))
+			next := dueAt(a)
+			if retryAt.After(next) {
+				next = retryAt
+			}
+			timer = time.NewTimer(next.Sub(s.now()))
 			wake = timer.C
 		}
 		select {
@@ -95,6 +100,11 @@ func (s *Store) run(id provider.AccountID, actor *actor) {
 				continue
 			}
 			c, err := r.fn(a)
+			if err == ErrUnavailable {
+				retryAt = s.now().Add(time.Minute)
+			} else {
+				retryAt = time.Time{}
+			}
 			if err == ErrStorage {
 				fatal = err
 			}
@@ -103,6 +113,11 @@ func (s *Store) run(id provider.AccountID, actor *actor) {
 			a, err = s.Get(s.ctx, id)
 			if err == nil && a.Status != NeedsSignIn {
 				err = s.rotate(a)
+			}
+			if err == ErrUnavailable {
+				retryAt = s.now().Add(time.Minute)
+			} else {
+				retryAt = time.Time{}
 			}
 			if err == ErrStorage {
 				fatal = err
@@ -140,12 +155,14 @@ func (s *Store) rotate(a Account) error {
 	status := a.Status
 	var rotated Rotated
 	marked := false
+	var metadataErr error
 	err := s.vault.UpdateTokens(s.ctx, key(a), func(tokens secrets.Tokens) (secrets.Tokens, error) {
 		ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
 		defer cancel()
 		a.Status = NeedsSignIn
-		if err := s.save(ctx, a); err != nil {
-			return secrets.Tokens{}, err
+		metadataErr = s.save(ctx, a)
+		if metadataErr != nil {
+			return secrets.Tokens{}, metadataErr
 		}
 		marked = true
 		if s.refresh == nil || a.Auth != provider.LoopbackOAuth || !tokens.Valid(true) || (a.RefreshExpires != nil && !a.RefreshExpires.After(s.now())) {
@@ -158,9 +175,15 @@ func (s *Store) rotate(a Account) error {
 		}
 		return rotated.Tokens, nil
 	})
+	if metadataErr != nil {
+		return metadataErr
+	}
 	if err != nil {
 		if !marked && s.ctx.Err() != nil {
 			return ErrClosed
+		}
+		if !marked && err != secrets.ErrNotFound && err != secrets.ErrInvalid {
+			return ErrUnavailable
 		}
 		if !marked {
 			a.Status = NeedsSignIn

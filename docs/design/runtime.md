@@ -213,6 +213,27 @@ The person signs in to each service themself, one account per service ([Accounts
 
 The ChatGPT adapter calls the Responses API at `https://api.openai.com/v1` with the person's access token as the bearer, directly with Go's standard-library HTTP client and small request/stream JSON types. It never sends that token to a ChatGPT backend endpoint.
 
+An explicitly configured OpenAI-compatible endpoint uses the same Responses
+transport with its own API key. Core's configuration reader takes
+`LINA_RESPONSES_BASE_URL`, `LINA_RESPONSES_MODEL` and
+`LINA_RESPONSES_API_KEY` together. No setting selects a cheaper substitute model;
+missing or invalid settings refuse the configuration. With none set, this route
+is disabled. The base includes the API prefix; the adapter appends `responses`
+or `models`, preserving that prefix. HTTP and HTTPS are supported; HTTPS uses
+normal certificate verification. User information, query strings and fragments
+are refused. A custom endpoint accepts only an API-key credential, never the
+ChatGPT account's OAuth token. Redirects and retries remain disabled, and neither
+the credential nor the endpoint appears in configuration diagnostics or the
+release manifest. This configuration boundary does not itself implement the
+conversation protocol, turn execution or persistence.
+
+Real-model QA uses this Core configuration boundary and the Responses adapter
+with `LINA_QA_REAL_MODEL=1`; the [headless harness](../../e2e/README.md#real-model-mode)
+documents the opt-in environment and evidence. The fixture and real modes share
+the same streaming and temporary probe-record assertions. A client-level streamed,
+persisted conversation remains skipped until the turn loop and conversation
+surface are wired by #55 and #108; a provider probe is not evidence of that journey.
+
 - `store` is `false` and `stream` is `true`. Every request carries the full input it needs.
 - The adapter sends only fields that the Sign in with ChatGPT request surface accepts. `input` is an array. Instructions go in `instructions` or in developer-role items, never in system-role items. The fields that surface lists as unsupported (among them output limits, sampling parameters, truncation, `user`, `metadata` and `previous_response_id`) are never sent. Function and custom tools are declared in the form that surface requires. A field the surface does not document enters the request field list only after V1 shows it is accepted.
 - Stateless requests include `reasoning.encrypted_content` regardless of whether an explicit reasoning effort is set. The [reasoning guide](https://developers.openai.com/api/docs/guides/reasoning) requires at least every reasoning item, tool call and tool output since the last user message to go back in the next request unchanged. LINA never sends an item of the current turn altered or dropped. When compacting earlier turns does not bring a follow-up request below the compaction threshold, LINA ends that turn and continues in a continuation turn whose request carries a compaction summary and the person's input once, so the round trip starts fresh ([Compaction and resume](conversation-and-memory.md#compaction-and-resume)). When no compaction runs, LINA sends every earlier item back unchanged as well, because the conversation history carries them all ([Compaction and resume](conversation-and-memory.md#compaction-and-resume)).
@@ -315,7 +336,7 @@ ChatGPT is the default provider and LINA's login. The sign-in is the documented 
 - The redirect is a loopback address, `http://127.0.0.1:<port>/<fixed path>`; the path is fixed and only the port varies. The listener starts before the system browser opens. The listener belongs to the client the person is using, and the sign-in runs through the sign-in relay ([integrations.md](integrations.md#consent-through-the-client), [host-protocol.md](host-protocol.md#client-connection)): LINA Core builds the URL and keeps the PKCE verifier and the state, the client relays `code`, `state` and `iss`, and LINA Core makes the token exchange. Where a client cannot listen, the person pastes the redirected URL.
 - The fixed callback path is `/auth/callback`. A pasted URL must match the exact redirect URI of its attempt, including the port; duplicate fields, fragments, user information and mixed pasted/structured callbacks are refused. An attempt belongs to the initiating client connection, expires after ten minutes and is consumed before exchanging its code. Replacing the attempt or disconnecting cancels it. Token exchange and JWKS reads are bounded, do not follow redirects and do not retry; endpoint diagnostics never reach the client.
 - The issuer-bound refresh callback uses the saved client id, rotating refresh token and API resource, omitting scope to retain the grant. Returned scopes replace the prior scope list only after the token record is stored. The ID token is retained privately; it is never put into an authorization URL returned to a client.
-- Tokens: the access token lasts one hour. The refresh token lasts 30 days and rotates. Core's account actor stores the access and refresh tokens together before returning the new access credential. It refreshes about ten minutes before expiry, including while idle, and waits for active turns before exchanging. A durable needs-sign-in marker precedes each exchange so a restart cannot replay a possibly consumed refresh token. Failed refresh or persistence requires sign-in; there is no automatic account switch. Successful refresh preserves an existing eligibility or usage-cap state.
+- Tokens: the access token lasts one hour. The refresh token lasts 30 days and rotates. Core's account actor stores the access and refresh tokens together before returning the new access credential. It refreshes about ten minutes before expiry, including while idle, and waits for active turns before exchanging. A durable needs-sign-in marker precedes each exchange so a restart cannot replay a possibly consumed refresh token. Failed refresh or persistence requires sign-in; there is no automatic account switch. Successful refresh preserves an existing eligibility or usage-cap state. Re-sign-in stores the verified granted scopes with the replacement. A temporary keychain read failure before exchange reports credentials unavailable without invalidating the account; idle refresh retries the storage read after one minute.
 - Inference is the Responses API of Requests, with models from the service's list. A usage-limit answer is a state of the account, not an error to route around: it is shown with a "Manage usage" action, and no request moves to another billing path.
 - The plan route reports no number for quota, only error codes (see Usage and cost).
 - The flow has no device-code form. A LINA Core on a host with no browser takes the sign-in through a client's browser, by the relay. If the issuer does not accept the relay's redirect, the person adds an OpenAI API-key account instead. That is a choice the person makes in "add account", never an automatic fallback.
