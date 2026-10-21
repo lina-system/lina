@@ -75,9 +75,15 @@ func TestM1TUIConversationInstalledCore(t *testing.T) {
 		t.Fatal("no history snapshot")
 	}
 	terminal := h.startScreenTUI("TERM=xterm-256color", "COLORTERM=truecolor")
-	waitScreen(t, h, terminal, "Ctrl+D")
+	fresh := waitScreen(t, h, terminal, "Ctrl+D")
+	if text := screenText(fresh); strings.Contains(strings.ToLower(text), "unsupported") {
+		t.Fatalf("fresh install shows an unsupported placeholder: %s", text)
+	}
 	h.keys(terminal, scenario.Input+"\r")
 	snapshot := waitScreen(t, h, terminal, scenario.Reply)
+	if text := screenText(snapshot); strings.Contains(strings.ToLower(text), "unsupported") {
+		t.Fatalf("first exchange shows an unsupported placeholder: %s", text)
+	}
 	if !snapshot.AltScreen {
 		t.Fatal("conversation did not use the terminal renderer")
 	}
@@ -178,6 +184,12 @@ func installedConversationHarness(t *testing.T, providerURL string) (*harness, f
 	h := newHarness(t, buildLina(t))
 	base := h.root
 	bundle := makeInstallBundle(t, base, h.binary, buildCommand(t, "lina-node"))
+	return installConversationBundle(t, h, bundle, providerURL)
+}
+
+func installConversationBundle(t *testing.T, h *harness, bundle, providerURL string) (*harness, func(bool) *process) {
+	t.Helper()
+	base := h.root
 	bin := filepath.Join(base, "tools")
 	if err := os.Mkdir(bin, 0700); err != nil {
 		t.Fatal(err)

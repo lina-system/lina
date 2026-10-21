@@ -56,14 +56,14 @@ func Plan(size Size, caps Caps, st Shape) Layout {
 	if st.Attachments {
 		attachment = 1
 	}
-	// Unsupported regions still have a row so that missing capabilities cannot
-	// be mistaken for an empty list. Counts remain typed data, not inferred work.
-	running := 1
-	if caps.Running {
-		running = min(3, max(1, st.RunningCount))
+	// Only granted, populated lists consume rows. Missing capabilities remain
+	// typed flags; their one-time explanation belongs to the local status notice.
+	running := 0
+	if caps.Running && p.RunningCount > 0 {
+		running = min(3, p.RunningCount)
 	}
-	cards := 1
-	if caps.Cards {
+	cards := 0
+	if caps.Cards && p.CardCount > 0 {
 		cards = min(5, max(1, st.CardRows))
 	}
 	side := st.SidePane && caps.SidePane && p.Tier == Wide
@@ -71,11 +71,11 @@ func Plan(size Size, caps Caps, st Shape) Layout {
 	if used() > h {
 		side = false
 	}
-	if used() > h {
+	if used() > h && running > 1 {
 		running = 1
 		p.RunningFolded = true
 	}
-	if used() > h {
+	if used() > h && cards > 1 {
 		cards = 1
 		p.CardsFolded = true
 	}

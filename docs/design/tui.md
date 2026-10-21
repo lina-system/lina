@@ -92,7 +92,9 @@ gaps enter Resyncing until the required snapshot arrives. An `unavailable`
 subscription response shows Recovering with that cause while history remains
 readable; this is unavailable-service presentation, not an inference from peer
 text or a claim that reads prove Core mutation readiness. Resync and its fresh
-snapshot can restore the subscribed view.
+snapshot restore the subscribed view in Core's history order. A durable stopped
+outcome stays with its interrupted turn before later inputs and replies, including
+after reconnect and terminal resize.
 
 Quit (Ctrl+C with an empty draft or Ctrl+D), input EOF and termination signals close only this
 client and exit 0, including during handshake or retry. The raw terminal reader
@@ -111,6 +113,14 @@ the handshake-then-read behavior. No failure path starts Core or creates state.
 | Failed | A cause code and the next action |
 
 A changed epoch is announced once as a local notice. Remote use is `lina tui` connecting inside the tailnet ([runtime.md](runtime.md#remote-access)). A TUI run in an SSH session on the host is a local client.
+
+The conversation status row shows the latest local notice before its key hints,
+using the same localized notice as the connection shell. It stays outside
+conversation items: snapshot replay and redraw do not duplicate it, resync does
+not drop it, and a fresh client does not restore it from history. History and
+the unsent draft remain usable after reconnect. `e2e/m1/tui-epoch-notice.json`
+checks successive graceful and forced restarts of an installed Core through a
+120x60 PTY with a loopback Responses fixture.
 
 Connection presentation carries a typed cause separately from diagnostic text.
 Refused and Core-absent screens show that closed cause code, its localized label,
@@ -153,12 +163,22 @@ Messages are frames from Core, keys, paste, resize, ticks from an injected clock
 3. An async result carries the generation that launched it. An older generation is dropped.
 4. Durations come from server timestamps and the offset measured at the last snapshot, never from arrival time.
 5. Busy is set in the same call that issues a send. A failed send restores the draft merged with anything typed since.
-6. An interrupt shows "stopping" and converges on the stored partial.
+6. An interrupt shows "stopping" and converges on the stored partial. Core seals the partial under the streamed block id together with its durable stopped outcome; reopening the TUI or restarting Core restores both without resending the model request.
 7. Selection, folds and scroll key on block id and survive a resync.
 8. Local notices live outside the items, so a resync never drops them.
 9. The client acts on typed fields only. It never parses model, tool, plugin or web text for commands, ids, links, approvals or status.
 10. Every string that did not originate in the client passes `sanitize.Display` before layout: control, bidirectional and OSC sequences are removed, and styling follows truncation.
 11. A frame that fails schema validation shows a placeholder with a code and is counted.
+
+An accepted snapshot is authoritative for its topic's block order as well as
+content. Missing predecessors are inserted before surviving blocks, including a
+stopped outcome restored under its ledger id. Existing blocks and local echoes
+anchor the merge without overriding that order; other topics, unmatched local
+echoes and local notices survive. Selection, folds and scroll retain their block
+identities, and an acknowledged echo remaps those identities to its ledger item.
+`e2e/m1/tui-stopped-order.json` checks an interrupted turn followed by a successful
+reply through an installed Core restart, PTY resize and fresh TUI, and compares
+the display order with Core's snapshot without replaying model requests.
 
 The reducer accepts typed internal `Snapshot`, `Delta` and `ItemDone` projections.
 They do not define a wire format: client 1.0 still reserves the conversation
@@ -182,7 +202,7 @@ The client computes no state of work. It shows the words and marks Core sends ([
 
 ## Layout, tiers and row budget (T-07)
 
-The screen is a pure function of State and terminal size. A region whose capability was not granted shows as unsupported, never as empty ([host-protocol.md](host-protocol.md#versions-and-capabilities)).
+The screen is a pure function of State and terminal size. Core's validated welcome determines which regions are available ([host-protocol.md](host-protocol.md#versions-and-capabilities)). Running and waiting lists take no rows when empty or not granted. Missing list capabilities produce one localized, plain-language local notice outside conversation history, combining both missing lists into one explanation. Replayed welcomes and reconnects with the same capabilities do not add another notice; a later grant removes the obsolete explanation from the status line. No fallback string or peer diagnostic decides capability availability.
 
 Regions:
 
@@ -233,8 +253,10 @@ func Plan(size Size, caps Caps, st Shape) Layout // regions disjoint, sum fits, 
 - What remains is shared in a stated order of shedding: the side pane closes first, then the running strip folds to a count, then the card row folds to one summary line. A folded part keeps its count, so a count on screen always equals the list.
 - `Plan` treats negative dimensions as zero. At too-small sizes it reserves one
   status row when a cell exists and uses the remaining rows for the size notice.
-  At usable sizes the running strip starts at one to three rows and the card row
-  at one to five; each keeps one summary row when folded. The attachment strip
+  At usable sizes a granted, populated running strip starts at one to three rows
+  and a granted, populated card row at one to five; each keeps one summary row
+  when folded. Empty or ungranted lists reserve no rows, even under pressure.
+  The attachment strip
   uses one row. After the stated shedding, composer growth yields as necessary
   to preserve the transcript floor. Counts and unsupported flags remain typed
   output even when their region folds.
@@ -250,12 +272,19 @@ and Page Down move through the retained conversation. Tab switches composer and
 card focus; arrows select a result card. The composer keeps its draft when an
 overlay opens or connection status changes. An identical frame and cursor is
 not submitted to the renderer, and the plain display writes no duplicate frame.
+For the colour conversation screen, each new size reaches the cell renderer
+before its reflowed view, even if the view text is unchanged. Resizing keeps the
+draft and redraws header, status and composer within the current row budget;
+cells from the previous dimensions must not survive as stale transcript rows.
+`e2e/m1/tui-resize.json` exercises 80x24 → 40x12 → 120x35 through a real PTY,
+compares every row and the cursor with a fresh client at the same size, then
+clears the retained draft and completes another exchange.
 
 ## Home, waiting for me and progress (T-12)
 
 Contract: [surfaces.md](surfaces.md#waiting-for-me), [surfaces.md](surfaces.md#progress-at-a-glance), [work-and-delegation.md](work-and-delegation.md#progress-line).
 
-Home is the starting state of the conversation. "Waiting for me", "At a glance" and "Today" sit above the composer, with the rows and the order Core sends. This section fixes only how they are drawn and answered as text. The roadmap builds Waiting for me first. "At a glance" and "Today" appear when Core grants their capabilities, and until then the TUI shows them as unsupported (T-07).
+Home is the starting state of the conversation. "Waiting for me", "At a glance" and "Today" sit above the composer, with the rows and the order Core sends. This section fixes only how they are drawn and answered as text. The roadmap builds Waiting for me first. "At a glance" and "Today" appear when Core grants their capabilities. The running and waiting lists follow the empty and unavailable presentation of T-07.
 
 - **Waiting for me.** The rows, the five-row limit and the "+N more" count are the contract's. A key switches the order to lightest first; the TUI asks Core for it and never ranks.
 - **Answering** is one key. An approval takes the two steps of T-04. When several decisions wait, a key starts the one-at-a-time walk: the TUI shows one decision, sends the answer, and shows the next.
@@ -271,7 +300,10 @@ Home is the starting state of the conversation. "Waiting for me", "At a glance" 
 The conversation screen projects granted waiting/running topic rows in Core
 order and keeps their counts when folded. Ctrl+W and Ctrl+R open their complete
 retained text in the pager; Ctrl+P opens the granted progress topic. Missing
-capabilities remain labeled unsupported. List updates do not focus the pager or
+capabilities use the single local explanation of T-07 and leave no placeholder
+rows. Granted empty lists are hidden without an unavailable notice. Rows appear
+when Core sends items and disappear when its snapshot clears the list.
+List updates do not focus the pager or
 change the draft. Decision answering remains the typed approval/question flow
 of T-04; the composer never turns a list row into an approval.
 
@@ -322,6 +354,41 @@ continues to require its separate typed card controls.
 
 **Sign-in.** The TUI is the client side of one relay for plugin and model-provider sign-in. It opens a loopback listener and reports its port, opens the system browser when it runs locally, and relays `code`, `state` and `iss`, or the `error` fields, exactly as received. Over SSH it takes a pasted URL instead. A secret the person types, such as an API key, is a masked field with no undo and no history, and travels once to Core.
 
+The TUI negotiates `accounts` and `sign_in_relay` independently of conversation.
+Account listing and sign-out remain available when the relay is not granted;
+login and reauthorization then show the unsupported capability.
+`/signin` starts a ChatGPT login; `/accounts` opens its labeled account block,
+where Up/Down selects a metadata row, `s` reauthorizes it (or logs in when the
+list is empty), `a` adds a provider account without changing the owner binding,
+and `x` signs out the selected account. List and completion refresh the displayed
+account status; ids remain internal request targets. An account-only connection retains a composer and displays the missing
+account cause with `/signin`; entering conversation text makes no model request.
+The conversation draft survives opening and closing the account block.
+
+The client reports an ephemeral IPv4 loopback port for `/auth/callback`, or
+`cannot_listen` over SSH or when binding fails. It opens only an HTTPS
+authorization URL, with a single URL argument to the system browser launcher.
+The full URL remains available when opening fails. A pasted callback is a masked,
+bounded, transient field: it has no conversation echo, draft undo or history.
+Both callback paths forward the original URL so dynamic client-registration
+parameters reach Core unchanged. Core alone checks state, issuer and identity.
+The listener accepts one callback; submit cannot repeat an exchange. Completion,
+refusal, cancellation, timeout, disconnect and quit close the listener and join
+its tasks. Esc cancels a pending attempt by closing its client connection; normal
+connection recovery then obtains a fresh connection. Old connection and attempt
+results cannot advance a replacement sign-in.
+
+`e2e/m1/tui-accounts.json` drives the built TUI in a PTY through local loopback
+and SSH paste, using the real Core account/relay services and a synthetic signed
+issuer. It verifies durable account status and owner binding. This is synthetic
+sign-in evidence; the owner's real account and request-surface check remain #81.
+`e2e/m1/tui-accounts-installed.json` additionally installs the real binaries,
+checks the unconfigured Core's preparation message in a PTY, and runs the same
+installed Core composition with the synthetic issuer through sign-in, list and
+sign-out. Captured client traffic, terminal output and state outside the secret
+store contain no provider tokens. Model routing and live provider acceptance
+remain their own contracts.
+
 ## Agent surfaces and settings as text (T-14)
 
 Contract: [surfaces.md](surfaces.md#agent-surfaces), [surfaces.md](surfaces.md#settings). Each view is data that Core already computes. The TUI draws it as lines with keys. The roadmap builds the views with the Core feature behind each, and a view whose capability was not granted shows as unsupported (T-07).
@@ -333,7 +400,7 @@ Contract: [surfaces.md](surfaces.md#agent-surfaces), [surfaces.md](surfaces.md#s
 
 Settings are commands and labeled blocks, all requests to Core:
 
-- Accounts: the connected-accounts view with the one-line setup summary, add account, sign out.
+- Accounts: `/accounts` lists the connected accounts as metadata rows with the one-line summary, add account and sign out. Labels, optional plan names and states come from Core; only the request carries the selected account id. `/signin` opens ChatGPT login even before conversation is available.
 - Plugins: the catalog, the connect card as a labeled block, the plugin list and the tools of each plugin.
 - Command network: the standing grants, with revoke.
 - Channels: connections, pairing code, bindings and scopes. A token passes to Core once and is never shown.
@@ -376,6 +443,8 @@ type Stream interface {
 - The hardware cursor is placed on every frame at the display width of the text before it on the wrapped row, so IME composition appears in place. The TUI never requests all-keys-as-escape-codes. Committed IME text arrives as UTF-8, one grapheme cluster at a time ([surfaces.md](surfaces.md#korean-input)).
 - Only the viewport plus overscan (P) is laid out, so cost follows viewport rows and not history. `Stream` indexes new text as it arrives. `Window` takes a retained byte anchor within a block and stops reflow at the requested row count, including after a width change. `Renderer.Draw` reads and paints only those indexed rows, retains only the current viewport cache, and returns changed-row patches; an empty patch list causes no writes. A trusted UI painter styles only closed rows after sanitizing and clipping.
 - Resize events coalesce to one reflow per 32 ms (P).
+- Conversation wrapping uses the current width; the indexed row count at the
+  old width must not truncate newly wrapped rows or the final reply.
 - An unchanged state writes zero bytes. Motion is one status glyph with no timer while deltas stream; elapsed time updates at 1 Hz (P) otherwise.
 - OSC 8 links are emitted for allowed schemes only.
 
@@ -416,6 +485,7 @@ input id for local-echo reconciliation. The acknowledgement means durable
 admission, not turn completion; further typing can be sent while the turn runs.
 A refused send restores the draft. Connection states other than Live disable
 submission without discarding edits.
+Resizing preserves the draft and its cursor without submitting it.
 
 - Paste arrives as one atomic message, is one undo step and has control sequences removed. The TUI never reads the host clipboard; paste is the terminal's.
 - Attachments are a strip above the composer and message parts that Core imports ([filesystem.md](filesystem.md#import-and-export)). The draft stays plain text.
