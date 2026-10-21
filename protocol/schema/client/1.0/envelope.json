@@ -1505,6 +1505,12 @@
           "items": {
             "$ref": "#/$defs/capability"
           }
+        },
+        "peer": {
+          "type": "string"
+        },
+        "platform": {
+          "type": "string"
         }
       },
       "required": [
