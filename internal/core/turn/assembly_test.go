@@ -7,48 +7,33 @@ import (
 	"encoding/json"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/assemble"
 	"github.com/thisisjun786/lina/internal/core/assemble/atropos"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/inbox"
+	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
-// The ledger callback contract is exercised with a real fenced writer. The
-// fixture table stands for the event body sink; the turn owns no ledger tables.
+// Exercise actual ledger commits and inspect both durable records and raw SQLite
+// bytes after restart: the packet is sent, while only its references are stored.
 func TestAssemblyThroughDurableTurnNeverStoresPacket(t *testing.T) {
 	db, config := database(t)
-	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
-		_, err := tx.ExecContext(t.Context(), "CREATE TABLE evidence_fixture (body BLOB NOT NULL)")
-		return err
-	}); err != nil {
-		t.Fatal(err)
-	}
 	s := turn.New(db)
 	const packetText = "ephemeral-context-body-should-never-be-stored"
-	write := func(ctx context.Context, value any) error {
-		raw, err := json.Marshal(value)
-		if err != nil {
-			return err
-		}
-		if bytes.Contains(raw, []byte(packetText)) {
-			t.Fatal("packet in evidence callback")
-		}
-		return db.Write(ctx, func(tx *canon.Tx) error {
-			_, err := tx.ExecContext(ctx, "INSERT INTO evidence_fixture VALUES(?)", raw)
-			return err
-		})
-	}
+	events := ledger.New(db, nil)
+	writer := turn.EvidenceWriter{Ledger: events, ConversationID: "conversation", Surface: ledger.Surface{Kind: "tui"}, Now: time.Now}
 	var first provider.Request
 	for _, id := range []string{"first", "next"} {
 		p := preparation()
 		p.Digest = assemble.Digest
-		p.Acknowledge = func(ctx context.Context, a turn.Acknowledgement) error { return write(ctx, a) }
-		p.RecordRequest = func(ctx context.Context, e turn.RequestEvidence) error { return write(ctx, e) }
+		p.Acknowledge = writer.Acknowledge
+		p.RecordRequest = writer.RecordRequest
 		p.Context = func(ctx context.Context, m turn.ModelPolicy) (turn.PreparedRequest, error) {
 			packet, _, err := atropos.Packet(ctx, assemble.ContextPacket{{ID: "clock", Kind: assemble.Clock, Text: packetText}}, 0, nil)
 			if err != nil {
@@ -72,6 +57,17 @@ func TestAssemblyThroughDurableTurnNeverStoresPacket(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, err = s.Run(t.Context(), turn.Options{ID: id, Conversation: "conversation", InboxID: input.ID, Preparation: p, Loop: loop.Config{Stream: func(_ context.Context, r provider.Request) (provider.Stream, error) {
+			record, err := events.Get(t.Context(), "request:"+id+":0")
+			if err != nil {
+				t.Fatal("provider called before ledger commit", err)
+			}
+			var evidence turn.RequestEvidence
+			if err := json.Unmarshal([]byte(record.Body.Text()), &evidence); err != nil {
+				t.Fatal(err)
+			}
+			if evidence.Hash != assemble.Digest(r) || evidence.Class != provider.ModelAPI || evidence.Assembly.Items[0].ID != "clock" {
+				t.Fatal(evidence)
+			}
 			if id == "first" {
 				first = r
 			} else {
@@ -100,7 +96,19 @@ func TestAssemblyThroughDurableTurnNeverStoresPacket(t *testing.T) {
 	config.Epoch++
 	db = open(t, config)
 	s = turn.New(db)
+	events = ledger.New(db, nil)
 	for _, id := range []string{"first", "next"} {
+		ack, err := events.Get(t.Context(), "prepare:"+id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var a turn.Acknowledgement
+		if err := json.Unmarshal([]byte(ack.Body.Text()), &a); err != nil {
+			t.Fatal(err)
+		}
+		if a.PolicyRevision != "policy-1" || a.Assembly.AgentID != "agent" || a.Assembly.PersonaRevision != "r1" {
+			t.Fatal(a)
+		}
 		row, err := s.Read(t.Context(), id)
 		if err != nil || !row.Prepared || len(row.Items) != 1 {
 			t.Fatalf("%+v %v", row, err)
@@ -108,7 +116,7 @@ func TestAssemblyThroughDurableTurnNeverStoresPacket(t *testing.T) {
 	}
 	var n int
 	if err := db.Read(t.Context(), func(tx *canon.Tx) error {
-		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM evidence_fixture").Scan(&n)
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM conv_event").Scan(&n)
 	}); err != nil || n != 4 {
 		t.Fatalf("evidence=%d %v", n, err)
 	}
