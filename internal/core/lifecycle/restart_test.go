@@ -7,7 +7,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
@@ -236,5 +238,78 @@ func TestRestartStorageFailureCannotAcknowledgeOrExit(t *testing.T) {
 				t.Fatalf("failed commit reopened admission: %v", err)
 			}
 		})
+	}
+}
+
+func TestFailedDischargeRemainsOwed(t *testing.T) {
+	root := restartRoot(t)
+	s, epoch := restartStore(t, root)
+	x := restarter(t, s, epoch, lifecycle.NewRegistry(nil))
+	if _, err := x.Request(t.Context(), ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := x.Ready(); err != nil {
+		t.Fatal(err)
+	}
+	if exit, _, err := x.Step(t.Context()); !exit || err != nil {
+		t.Fatalf("commit: %v %v", exit, err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, epoch = restartStore(t, root)
+	x = restarter(t, &failingRestartStore{Store: s, fail: true}, epoch, lifecycle.NewRegistry(nil))
+	if err := x.Ready(); err == nil {
+		t.Fatal("failed discharge reached ready")
+	}
+	if !x.Status().Owed() {
+		t.Fatal("failed discharge acknowledged completion")
+	}
+	if saved, err := s.ReadRestart(); err != nil || !saved.Owed() {
+		t.Fatalf("failed discharge changed receipt: %+v %v", saved, err)
+	}
+}
+
+func TestRestartRunWakesWhenUnknownActivityRecovers(t *testing.T) {
+	s, epoch := restartStore(t, restartRoot(t))
+	read := make(chan struct{}, 1)
+	var recovered atomic.Bool
+	r := lifecycle.NewRegistry(func(context.Context) ([]lease.Activity, error) {
+		if !recovered.Load() {
+			select {
+			case read <- struct{}{}:
+			default:
+			}
+			return nil, os.ErrPermission
+		}
+		return nil, nil
+	})
+	x := restarter(t, s, epoch, r)
+	if _, err := x.Request(t.Context(), "drain"); err != nil {
+		t.Fatal(err)
+	}
+	if err := x.Ready(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- x.Run(ctx) }()
+	select {
+	case <-read:
+	case err := <-done:
+		t.Fatalf("unknown activity exited: %v", err)
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	recovered.Store(true)
+	r.Notify()
+	select {
+	case err := <-done:
+		if !errors.Is(err, lifecycle.ErrRestart) {
+			t.Fatalf("run: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
 	}
 }
