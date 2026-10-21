@@ -297,6 +297,15 @@ func (r *conversationRuntime) seedHistory(ctx context.Context) error {
 		return err
 	}
 	for _, e := range events {
+		if e.ScaffoldKind == "interruption" {
+			stopped, err := turn.New(r.db).Stopped(ctx, e.ParentID)
+			if err != nil {
+				return err
+			}
+			if err = r.publishPartials(stopped); err != nil {
+				return err
+			}
+		}
 		text := e.Body.Text()
 		speaker := protocol.ConversationSpeaker(e.SpeakerKind)
 		p := protocol.ItemDone{Text: &text, Speaker: &speaker}
@@ -310,6 +319,18 @@ func (r *conversationRuntime) seedHistory(ctx context.Context) error {
 		}
 	}
 	return r.setActive(false)
+}
+
+func (r *conversationRuntime) publishPartials(stopped turn.Stopped) error {
+	for _, p := range stopped.Partials {
+		// The provider observer numbers rounds from one, the loop from zero.
+		key := fmt.Sprintf("%s:%d:%d", stopped.TurnID, p.Round+1, p.Index)
+		speaker := protocol.ConversationSpeakerAgent
+		if err := r.publish(protocol.KindItemDone, key, protocol.ItemDone{Text: &p.Text, Speaker: &speaker}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, input ledger.Event, inboxID int64) (err error) {
@@ -436,11 +457,24 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		}
 	}
 	if err != nil {
-		text := "The reply could not be completed. Send a new message to continue."
-		var interrupted turn.Interrupt
-		if errors.As(err, &interrupted) {
-			text = interrupted.Text()
+		// A stop is acknowledged only from its durable outcome. Seal the same
+		// streamed block IDs before publishing the stored notice, matching
+		// startup history and keeping partials outside future model context.
+		stopped, readErr := turn.New(r.db).Stopped(context.WithoutCancel(ctx), input.ID)
+		if readErr == nil && stopped.NoticeID != "" {
+			if publishErr := r.publishPartials(stopped); publishErr != nil {
+				return errors.Join(err, publishErr)
+			}
+			notice, noticeErr := r.journal().Get(context.WithoutCancel(ctx), stopped.NoticeID)
+			if noticeErr != nil {
+				return errors.Join(err, noticeErr)
+			}
+			text := notice.Body.Text()
+			speaker := protocol.ConversationSpeakerSystem
+			return errors.Join(err, r.publish(protocol.KindItemDone, notice.ID, protocol.ItemDone{Text: &text, Speaker: &speaker}))
 		}
+		err = errors.Join(err, readErr)
+		text := "The reply could not be completed. Send a new message to continue."
 		_ = r.publish(protocol.KindItemDone, turnID+":status", protocol.ItemDone{Text: &text})
 	}
 	return err

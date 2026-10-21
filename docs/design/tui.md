@@ -153,7 +153,7 @@ Messages are frames from Core, keys, paste, resize, ticks from an injected clock
 3. An async result carries the generation that launched it. An older generation is dropped.
 4. Durations come from server timestamps and the offset measured at the last snapshot, never from arrival time.
 5. Busy is set in the same call that issues a send. A failed send restores the draft merged with anything typed since.
-6. An interrupt shows "stopping" and converges on the stored partial.
+6. An interrupt shows "stopping" and converges on the stored partial. Core seals the partial under the streamed block id together with its durable stopped outcome; reopening the TUI or restarting Core restores both without resending the model request.
 7. Selection, folds and scroll key on block id and survive a resync.
 8. Local notices live outside the items, so a resync never drops them.
 9. The client acts on typed fields only. It never parses model, tool, plugin or web text for commands, ids, links, approvals or status.
