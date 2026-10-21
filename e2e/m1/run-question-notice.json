@@ -1,0 +1,9 @@
+{
+  "goal": "Compare the named sources",
+  "scope": "the supplied evidence",
+  "not_touch": "anything outside the evidence",
+  "done": "return the comparison",
+  "result": "document_draft",
+  "summary": "Choose the source to compare.",
+  "needs_input": true
+}

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/assets"
+	"github.com/thisisjun786/lina/internal/core/budget"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/materials"
@@ -41,6 +42,8 @@ const (
 	Partial   Outcome = "partial"
 	Failed    Outcome = "failed"
 	Cancelled Outcome = "cancelled"
+	// InputNeeded is a notice outcome; the run remains nonterminal in NeedsInput.
+	InputNeeded Outcome = "needs_input"
 )
 
 type CheckKind string
@@ -86,6 +89,14 @@ type Record struct {
 	// of native call metadata/brief are retained, never unmasked arguments.
 	StartKey, StartDigest       string
 	StartState                  State
+	ReceiptRound                uint64
+	ScratchReceipts             map[string]ToolReceipt
+	InputAnswers                []InputAnswer
+	NoticeVersion               uint64
+	NoticeAt                    int64
+	Promotion                   *budget.Handoff
+	PromotionDigest             string
+	EffectsQuestion             *EffectQuestion
 	PendingOutcome              Outcome
 	Receipts                    map[string]ToolReceipt
 	PendingItems                []provider.Item
@@ -145,6 +156,9 @@ type Config struct {
 	Assets  MaterialStore
 	Stream  loop.StreamFunc
 	Tools   map[string]Tool
+	// PublishPromotion attaches the handle to its source turn in the same
+	// fenced transaction as run admission. Required only by StartFromTurn.
+	PublishPromotion func(context.Context, *canon.Tx, string, budget.Handle, budget.Handoff) error
 	// Authorize validates origin and scope and checks the person's shared budget.
 	// It runs at start and before every model request; ErrBudget parks a run.
 	Authorize func(context.Context, Origin, Brief) error
@@ -158,6 +172,8 @@ type Config struct {
 // Notice contains only landing metadata. The artifact enters a conversation
 // only when its material is explicitly read, never as a notice body.
 type Notice struct {
+	Key       string
+	Landed    time.Time
 	State     State
 	ID        string
 	Origin    Origin

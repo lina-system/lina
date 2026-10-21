@@ -4,7 +4,10 @@ package runs
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"time"
 
+	"github.com/thisisjun786/lina/internal/core/budget"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/kit/materials"
 )
@@ -63,6 +66,12 @@ func (s *Service) save(ctx context.Context, r Record, insert bool) error {
 	err = s.cfg.DB.Write(ctx, func(tx *canon.Tx) error {
 		if insert {
 			_, err := tx.ExecContext(ctx, "INSERT INTO background_runs(id,record) VALUES(?,?)", r.ID, b)
+			if err == nil && r.Promotion != nil {
+				if s.cfg.PublishPromotion == nil {
+					return ErrInvalid
+				}
+				err = s.cfg.PublishPromotion(ctx, tx, r.Origin.Conversation, budget.Handle{ID: r.ID, State: string(r.State)}, *r.Promotion)
+			}
 			return err
 		}
 		res, err := tx.ExecContext(ctx, "UPDATE background_runs SET record=? WHERE id=?", b, r.ID)
@@ -98,6 +107,9 @@ func (s *Service) Notices(ctx context.Context, conversation string) ([]Notice, e
 				return nil, err
 			}
 			outcome := r.Outcome
+			if r.State == NeedsInput {
+				outcome = InputNeeded
+			}
 			for _, c := range citations {
 				if !c.Resolved && outcome == Complete {
 					outcome = Partial
@@ -113,7 +125,13 @@ func (s *Service) Notices(ctx context.Context, conversation string) ([]Notice, e
 					}
 				}
 			}
-			out = append(out, Notice{State: r.State, ID: r.ID, Origin: r.Origin, Outcome: outcome, Result: r.Brief.Result, Material: r.Material, Citations: citations, Checks: checks, Reason: r.Reason})
+			key := fmt.Sprintf("%s:%d", r.ID, r.NoticeVersion)
+			at := r.NoticeAt
+			if r.NoticeVersion == 0 {
+				key = fmt.Sprintf("%s:legacy:%d", r.ID, r.Updated)
+				at = r.Updated
+			}
+			out = append(out, Notice{Key: key, Landed: time.Unix(0, at).UTC(), State: r.State, ID: r.ID, Origin: r.Origin, Outcome: outcome, Result: r.Brief.Result, Material: r.Material, Citations: citations, Checks: checks, Reason: r.Reason})
 		}
 	}
 	return out, nil

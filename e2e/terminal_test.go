@@ -11,10 +11,12 @@ import (
 	"syscall"
 	"time"
 
+	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"golang.org/x/sys/unix"
 )
 
 type terminal struct {
+	screen  *tuiterm.Recorder
 	process *process
 	master  *os.File
 	lines   chan string
@@ -23,11 +25,21 @@ type terminal struct {
 	mode    unix.Termios
 }
 
-func (h *harness) startTUI() *terminal {
-	return h.startTerminal(nil, false)
+func (h *harness) startTUI(environment ...string) *terminal {
+	return h.startTerminal(environment, false)
 }
 
+func (h *harness) startScreenTUI(environment ...string) *terminal {
+	return h.startTerminalScreen(environment, false, true)
+}
 func (h *harness) startTerminal(environment []string, combined bool) *terminal {
+	return h.startTerminalScreen(environment, combined, false)
+}
+func (h *harness) startTerminalScreen(environment []string, combined, screen bool) *terminal {
+	return h.startTerminalSize(environment, combined, screen, 80, 24)
+}
+
+func (h *harness) startTerminalSize(environment []string, combined, screen bool, width, height int) *terminal {
 	h.t.Helper()
 	master, err := os.OpenFile("/dev/ptmx", os.O_RDWR|unix.O_NOCTTY|unix.O_NONBLOCK, 0)
 	if err != nil {
@@ -54,7 +66,7 @@ func (h *harness) startTerminal(environment []string, combined bool) *terminal {
 	if err := unix.IoctlSetTermios(int(slave.Fd()), setTermios, mode); err != nil {
 		h.t.Fatal(err)
 	}
-	if err := unix.IoctlSetWinsize(int(slave.Fd()), unix.TIOCSWINSZ, &unix.Winsize{Row: 24, Col: 80}); err != nil {
+	if err := unix.IoctlSetWinsize(int(slave.Fd()), unix.TIOCSWINSZ, &unix.Winsize{Row: uint16(height), Col: uint16(width)}); err != nil {
 		h.t.Fatal(err)
 	}
 	p := h.command("tui", "--socket", h.socket)
@@ -66,9 +78,23 @@ func (h *harness) startTerminal(environment []string, combined bool) *terminal {
 	p.command.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
 	p.start(h.t)
 	term := &terminal{process: p, master: master, lines: make(chan string), done: make(chan struct{}), mode: *mode}
+	if screen {
+		term.screen, err = tuiterm.NewRecorder(width, height)
+		if err != nil {
+			h.t.Fatal(err)
+		}
+	}
 	go func() {
 		defer close(term.done)
 		defer close(term.lines)
+		if term.screen != nil {
+			_, term.err = io.Copy(term.screen, master)
+			if errors.Is(term.err, syscall.EIO) || errors.Is(term.err, os.ErrClosed) {
+				term.err = nil
+			}
+			term.screen.Close()
+			return
+		}
 		scanner := bufio.NewScanner(master)
 		for scanner.Scan() {
 			select {
@@ -92,6 +118,17 @@ func (h *harness) startTerminal(environment []string, combined bool) *terminal {
 		<-term.done
 	})
 	return term
+}
+
+func (h *harness) resizeTerminal(term *terminal, width, height int) {
+	h.t.Helper()
+	// Update the emulator before TIOCSWINSZ delivers SIGWINCH to the child.
+	if err := term.screen.Resize(width, height); err != nil {
+		h.t.Fatal(err)
+	}
+	if err := unix.IoctlSetWinsize(int(term.master.Fd()), unix.TIOCSWINSZ, &unix.Winsize{Row: uint16(height), Col: uint16(width)}); err != nil {
+		h.t.Fatal(err)
+	}
 }
 
 func (h *harness) expectTerminalRestored(term *terminal) {

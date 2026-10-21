@@ -31,6 +31,7 @@ const (
 	AwaitingPerson Code = "awaiting_person"
 	Failed         Code = "failed"
 	Unknown        Code = "unknown"
+	BudgetReached  Code = "budget_reached"
 )
 
 type Result struct {
@@ -65,11 +66,14 @@ type Config struct {
 	Observe   func(context.Context, provider.Event) error
 	Tools     map[string]Tool
 	Transform func(context.Context, provider.Request) (provider.Request, error)
-	Before    func(context.Context, provider.ToolCall) *Result
-	After     func(context.Context, provider.ToolCall, Result) Result
-	Inputs    InputQueue
-	Journal   Journal
-	Parallel  int // zero selects eight; larger values are capped at eight
+	// Admit is a pure, concurrency-safe policy check before validation and again
+	// immediately before queued execution. It must have no side effects.
+	Admit    func(context.Context, provider.ToolCall) *Result
+	Before   func(context.Context, provider.ToolCall) *Result
+	After    func(context.Context, provider.ToolCall, Result) Result
+	Inputs   InputQueue
+	Journal  Journal
+	Parallel int // zero selects eight; larger values are capped at eight
 }
 type Outcome struct {
 	// FollowUps were accepted but not applied before this Run ended.

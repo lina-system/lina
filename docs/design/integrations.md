@@ -7,6 +7,7 @@ This contract fixes how LINA connects to external services. LINA's conversation 
 This contract covers:
 
 - the plugin manifest, the catalog, where else plugins come from, installing, turning on and removing them
+- optional memory importer add-ons, one adapter per source, and their source-read grants
 - LINA Core as the host of plugin tools, and the questions a server asks the person
 - service profiles and which plugin tools and commands need approval
 - credentials, LINA's secret store and sign-in, including OAuth to remote MCP servers
@@ -69,6 +70,31 @@ Installing and turning on a plugin are the person's acts. LINA never installs or
 - Skills and instructions a plugin brings join LINA's skill catalog while the plugin is on ([conversation-and-memory.md](conversation-and-memory.md)).
 - Removing a plugin turns it off, deletes the credentials LINA holds for it (a client registration kept for an authorization server is deleted with the last plugin that uses that server) and removes its skills from the catalog.
 - Nothing about plugins is asked at first run. When a plugin would help in a conversation, LINA may suggest it once. A suggestion the person declined or put off is not raised again.
+
+### Memory importers
+
+A memory importer is an optional add-on for a tool the person used before. It appears with the other add-ons, with its source, version, supported formats and required reads on its install card. Each source has its own adapter. None is installed or enabled by default, none is an onboarding step, and Core's conversation, memory and recall work fully with no importer installed. Installing one does not start a run or discover other apps' stores or configuration. The person chooses the source and starts the import.
+
+Every adapter implements [Memory importer add-ons](conversation-and-memory.md#memory-importer-add-ons) and uses [import staging](filesystem.md#importing-another-memory-system). It runs as a background job, makes no model call, and submits writes through Core's existing write paths. Core owns the resulting canon, materials, legacy references and backups; removing an adapter leaves those usable without it. An importer copies memory records only: it never imports another tool's persona, skills, scheduled jobs, credentials, plugins or configuration.
+
+The adapter set is:
+
+| Add-on | What it would read | Status |
+| --- | --- | --- |
+| Codex | Person-selected rollout/thread records and Codex memory files, in independently verified formats. | Future; separate from the live external work memory port. |
+| Claude Code | Person-selected conversation transcripts and memory files from a prior Claude Code workspace or export. | Future. |
+| oh-my-opencode | Person-selected session records and memory artifacts from the prior tool's workspace or export. | Future. |
+| Honcho | Person-selected workspace peers, cards, conclusions, sessions, summaries and messages through a verified read API or export. | Future standalone adapter. |
+| Hermes | Per-profile lossless-context and host message databases, large-output sidecars and the install's Honcho person data. | First adapter; the owner's M1 continuity test for existing memory and work patterns. |
+| OpenClaw | Person-selected conversation/session records and memory files from a prior install or export. | Future. |
+
+These entries define intended sources, not accepted schemas or available readers. Work now covers Hermes only. Its embedded Honcho reader remains schema-gated; listing a future standalone Honcho adapter does not enable it. Each future adapter must independently verify its formats and implement the common contract before it can be offered.
+
+Grant needs:
+
+- **Local source reads.** The person hands over named files or roots for the run, including sidecars when needed. That grants read-only access to those sources, not to other apps' configuration or arbitrary home directories. SQLite reads use the online backup API on a read-only connection; no source write permission is needed.
+- **Server source reads.** The person supplies the server address and a read credential for that run. Only the adapter's verified read/query routes on that origin are allowed. The credential never enters imported records, model requests or worker jobs and is released when the reader closes. Hermes preserves its GET-only transport, redirect refusal and remote HTTPS requirement.
+- **LINA writes.** The run may write its private staging and submit imported records and materials through Core under the person's handover and confirmed maps. Rehearsal writes nothing to canon. No grant authorizes source mutation, automatic promotion or a model call during import; later promotion and embedding retain their separate person-confirmation rules.
 
 ### Host
 
@@ -227,6 +253,47 @@ A channel is an external messaging platform through which the person talks with 
 ### Adapter boundary
 
 Core talks to each platform through one adapter and knows no platform limit. An adapter offers: connect and disconnect with a durable cursor; an inbound event carrying the platform's ids; send, returning a result id or an error class (retry later, permanently blocked, too long, unauthorized); edit; answer an interaction; fetch an attachment; and a static capability descriptor (text length, edit, buttons, files, threads, streaming, and which result types the channel can show). The first adapters are Telegram and Discord. A further platform is a new adapter behind this boundary, added by a release and not by a change to this contract. The adapter code is LINA's own, and its client library is a Go dependency under [dependencies.md](../policy/dependencies.md).
+
+Telegram's initial adapter uses `github.com/PaulSonOfLars/gotgbot/v2` at
+`v2.0.0-rc.37`, with no transitive modules. It advertises text, edits,
+buttons, files and topics; streaming remains off. The adapter shapes queued text
+into at most three parts of 4096 UTF-16 units, preserving paragraph boundaries
+where possible, closing and reopening code fences across parts without trimming
+their body whitespace. Markdown prose becomes native Telegram entities with
+UTF-16 offsets; code remains literal. A definite entity-format rejection permits
+one plain-text fallback on the same destination or edited message. Unknown
+outcomes never trigger that fallback. A longer reply needs Core's summary and
+result link. Approval text remains literal. Approval
+presentation reads the canonical request and offers only once and deny; it never
+truncates arguments to make buttons fit. The request is bound durably to the
+returned bot/chat/topic/message identity, which must match before a button can
+answer it. A too-long approval remains pending for
+full presentation in the app or TUI, with a button-free link card sent by Core.
+Downloads use Telegram file IDs and validated paths at the same fixed origin,
+with a 20 MiB limit. API JSON responses are bounded at 8 MiB.
+
+An unavailable platform does not hold startup: the adapter is constructed without
+contacting Telegram, and its cancellable poller runs independently of Core's
+READY transition. Polling reads retry with bounded backoff and jitter; five
+consecutive competing-poller conflicts stop that poll generation without dropping
+updates. A strict bot/self/anonymous-author guard prevents reply loops. Sends
+return an outcome for the durable outbound queue, which owns retries and each
+part's receipt. Full representable flood waits are honored, with a shared live
+send/edit cooldown; an unrepresentable delay fails closed. Edits retain the
+supplied message identity and an explicit not-modified refusal counts as success.
+Transport failures,
+malformed responses and server failures have unknown delivery outcome and are
+never automatically sent again.
+
+### Gateway core persistence
+
+The gateway core (#97) implements the adapter boundary, pairing, bindings, admission and the outbound queue as packages. Its composition root supplies the existing fenced canon writer, installs the channel schema in a numbered migration, routes committed deliveries to the conversation coordinator, and starts adapters only after recovery. The packages contain no bot token and make no platform connection at startup.
+
+Pairing codes contain 128 random bits, are stored only as SHA-256 hashes, expire after five minutes and work once. A replacement code invalidates the previous code; it does not authorize transferring an existing pairing to a different platform user. The control flow establishes the owner's person id and the adapter supplies the platform's numeric sender id and private chat. Default owner-only admission checks that pairing, the most specific binding and its read scope. External participants do not start turns in this increment; the optional addressed-participant mode is not exposed yet.
+
+Admission uses the bot account and native event id as its durable deduplication key, independently of the currently bound conversation. The cursor comparison, receipt and accepted inbox row commit together. Repeated events do not rewind the cursor, and refused input advances the cursor without starting a turn. Dispatch happens only after commit and is never automatically repeated after an error or crash. A stored receipt acknowledges storage, not successful turn execution.
+
+The outbound queue receives a ledger reference and already shaped parts, requires that reference to name a committed agent event in the bound conversation, checks current pairing, binding and reply provenance, and records each send attempt before calling the adapter. One bot/chat has at most one in-flight send, including across its topics. A refusal before delivery retains the same part and its retry-after deadline; an uncertain outcome terminates the message without resending any part. Restart converts in-flight attempts to unknown before adapters run. A permanent block marks the chat unreachable and stops queued delivery. Binding removal and agent deletion prevent queued sends from starting. Queue records retain the reply and its delivery outcome for the consuming app view; this increment adds no client endpoint, platform transport or approval-button handler.
 
 ### Credentials
 

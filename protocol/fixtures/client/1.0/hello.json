@@ -25,6 +25,8 @@
     "protocol_versions": [
       "1.0"
     ],
-    "capabilities": []
+    "capabilities": [],
+    "peer": "lina-tui",
+    "platform": "linux/amd64"
   }
 }

@@ -66,7 +66,7 @@ func TestM1SandboxUnavailable(t *testing.T) {
 			term := h.startTUI()
 			h.expectState(term, scenario.ConnectionState)
 			h.inputRefused(client)
-			h.keys(term, "q\n")
+			h.keys(term, "\x04")
 			term.process.wait(t, 0)
 			h.inputRefused(h.client(core))
 			h.stopCore(core)

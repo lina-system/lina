@@ -3,7 +3,8 @@
 Run `go test ./e2e/...` (or `go test -count=1 -v ./e2e/...` for uncached scenario
 output). Node.js and the workspace's Go toolchain are required. The harness uses
 native Linux and macOS pseudo-terminals; it needs no window, display server,
-provider account, network service, terminal library or human input.
+provider account, external network service or human input. Conversation screens
+use the pinned terminal library and a VT emulator.
 
 The scenario builds `lina`, starts real Core with a synthetic installed identity
 and a private temporary state root, and connects a generated-type JSON-RPC client
@@ -15,14 +16,34 @@ Another handshake and request prove that TUI quit leaves Core running. Core
 then stops gracefully and removes its socket and run sentinel. Additional runs
 exercise terminal EOF and an absent Core without creating state.
 
-This is the connection-only increment of [T-01 and T-05](../docs/design/tui.md).
-Core grants no conversation capability and the schema reserves the input body,
-so the test sends `input` with an empty typed payload. The TUI displays connection
-state; the protocol client observes the refusal. This does not establish a TUI
-conversation, model reply, rendered cell layout, terminal-library spike results,
-or full phase acceptance. Those scenarios extend this harness when their
-capabilities ship, following the [phase rules](../docs/design/go-roadmap.md#phase-rules).
-No product behavior or design contract changes in this increment.
+The original connection-only scenarios still run with no configured model
+route and assert an empty input's refusal. Conversation acceptance lives in
+`m1/tui-conversation.json` and `m1/tui-conversation-stream.json`: the former
+installs the binaries, starts installed Core with a local fixture provider,
+types through the real TUI and checks parsed screen cells, input deduplication,
+Core restart and history restoration; the latter scripts the fake Core's
+streaming completion and steering sequence through the same PTY lifecycle.
+They require no personal credentials. The physical terminal spike and real-model
+acceptance remain separate.
+
+`m1/tui-interrupted-reply.json` holds a loopback Responses stream after one delta,
+stops it with Esc in the installed TUI, reopens the TUI, and restarts installed
+Core both gracefully and forcibly while that TUI reconnects. Stored snapshots
+and terminal cells must retain the partial and its stopped outcome exactly once.
+Provider call counts rule out restart replay; an explicit follow-up checks that
+aborted partial text stays outside model context.
+
+`m1/tui-stopped-order.json` stops a held Responses stream with `/stop`, completes
+a second turn, and keeps the 120x60 TUI open across an installed Core restart.
+The stopped outcome must remain between the first input and the second input
+after reconnect, a resize to 121x60 and a fresh TUI. A direct Core snapshot checks
+the authoritative order independently; exactly two provider calls rule out replay.
+
+`m1/tui-resize.json` exercises the colour conversation screen at 80x24, then
+40x12 and 120x35 through PTY resize signals. It retains a synthetic draft,
+checks header, status and composer, and compares all rows and the cursor with
+a fresh client at each size to detect stale cells. It clears the draft and
+completes another exchange after resizing, then checks terminal restoration.
 
 Helpers are test-only Go files in this package, shared by scenario tests. Keeping
 process creation in test files follows the architecture rule for command

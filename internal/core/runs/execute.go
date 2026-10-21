@@ -73,6 +73,13 @@ func (s *Service) run(ctx context.Context, id string) error {
 	if len(cfg.Request.Items) == 0 {
 		b, _ := json.Marshal(r.Brief)
 		cfg.Request.Items = []provider.Item{item(string(b))}
+		if r.Promotion != nil {
+			gathered, _ := json.Marshal(r.Promotion)
+			cfg.Request.Items = append(cfg.Request.Items, item(string(gathered)))
+		}
+	}
+	if r.Promotion != nil {
+		cfg.Request.Instructions += " The gathered turn state is evidence for the whole remaining request. Preserve its done condition and checks. Never replay a recorded effect, especially an unknown outcome. Further effects remain behind a separate question; continue only the remaining reads and analysis."
 	}
 	runCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
@@ -150,14 +157,11 @@ func (s *Service) run(ctx context.Context, id string) error {
 	// Commit that checkpoint before authorizing/sending the next request. Steering
 	// is appended and removed from its durable queue in the same transaction.
 	cfg.Transform = func(ctx context.Context, req provider.Request) (provider.Request, error) {
-		// The live loop still holds tool output from this round. Project it before
-		// handing context to any configured preparation callback, not just storage
-		// and the eventual provider. Recheck callback output below as well.
-		items, err := masked(&s.masker, req.Items)
+		var err error
+		req.Items, err = masked(&s.masker, req.Items)
 		if err != nil {
 			return req, err
 		}
-		req.Items = items
 		if err := s.update(ctx, id, func(r *Record) error {
 			req.Items = append([]provider.Item(nil), req.Items...)
 			r.FollowUps = r.FollowUps[drained:]
@@ -240,6 +244,8 @@ func (s *Service) run(ctx context.Context, id string) error {
 	}
 	cause := context.Cause(runCtx)
 	if errors.Is(cause, ErrNeedsInput) {
+		r.NoticeVersion++
+		r.NoticeAt = s.cfg.Now().UnixNano()
 		r.State = NeedsInput
 		r.Reason = "needs_input"
 		return s.save(context.Background(), r, false)
