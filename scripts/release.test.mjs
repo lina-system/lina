@@ -2,11 +2,15 @@
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
+import { createServer } from 'node:net';
 import test from 'node:test';
 import { createHash } from 'node:crypto';
 import { git, run } from './git.mjs';
 import { release } from './release.mjs';
-import { developmentRepository, sandbox, scriptsDir } from './test-fixture.mjs';
+import { developmentRepository, installBinaryBuildFixture, sandbox, scriptsDir } from './test-fixture.mjs';
+
+// Binary release assembly requires Linux user namespaces and bubblewrap.
+const releaseTest = process.platform === 'linux' ? test : test.skip;
 
 // The release functions read HOME, PATH and the gh fixture variables from the environment.
 function setup(t) {
@@ -45,6 +49,7 @@ esac
 
   const repository = developmentRepository(sb);
   const { work, remote } = repository;
+  installBinaryBuildFixture(sb, work);
   // main starts at the first commit; the release is the next dev commit.
   sb.g(work, 'push', '-q', 'origin', 'dev:refs/heads/main');
   const first = sb.g(work, 'rev-parse', 'HEAD');
@@ -66,7 +71,7 @@ const untouched = (s) => {
   assert.equal(s.ghCalls().some((line) => line.startsWith('release create')), false);
 };
 
-test('the default dry run builds a dated alpha release and publishes nothing', (t) => {
+releaseTest('the default dry run builds a dated alpha release and publishes nothing', (t) => {
   const s = setup(t);
   const summary = s.call();
   assert.equal(summary.mode, 'dry-run');
@@ -74,7 +79,9 @@ test('the default dry run builds a dated alpha release and publishes nothing', (
   assert.match(s.logs.join('\n'), /running foundation on a clean work tree/);
   untouched(s);
   const out = join(s.sb.dir, 'out');
-  assert.deepEqual(readdirSync(out).sort(), ['SHA256SUMS', 'lina-0.0.1-alpha.20261020.1-source.tar.gz', 'release-manifest.json']);
+  assert.deepEqual(readdirSync(out).sort(), ['SHA256SUMS',
+    'lina-0.0.1-alpha.20261020.1-darwin-arm64.tar.gz', 'lina-0.0.1-alpha.20261020.1-linux-amd64.tar.gz',
+    'lina-0.0.1-alpha.20261020.1-source.tar.gz', 'release-manifest.json']);
   const manifest = JSON.parse(readFileSync(join(out, 'release-manifest.json'), 'utf8'));
   assert.equal(manifest.tag, 'v0.0.1-alpha.20261020.1');
   assert.equal(manifest.version, '0.0.1-alpha.20261020.1');
@@ -86,12 +93,27 @@ test('the default dry run builds a dated alpha release and publishes nothing', (
   assert.equal(manifest.artifacts[0].sha256, createHash('sha256').update(readFileSync(archive)).digest('hex'));
   assert.ok(readFileSync(join(out, 'SHA256SUMS'), 'utf8').includes(`${manifest.artifacts[0].sha256}  lina-0.0.1-alpha.20261020.1-source.tar.gz\n`));
   assert.equal(run('tar', ['-tzf', archive], { cwd: out }).stdout.includes('lina-0.0.1-alpha.20261020.1/README.md'), true);
+  for (const target of ['linux/amd64', 'darwin/arm64']) {
+    const artifact = manifest.artifacts.find(a => a.target === target);
+    assert.ok(artifact, `missing ${target}`);
+    const path = join(out, artifact.name);
+    assert.equal(artifact.sha256, createHash('sha256').update(readFileSync(path)).digest('hex'));
+    const contents = run('tar', ['-tzf', path], { cwd: out });
+    assert.equal(contents.status, 0);
+    for (const name of ['lina', 'lina-node', 'manifest.json', 'LICENSE', 'THIRD-PARTY-NOTICES.md', 'sqlite-vec-NOTICE.md']) {
+      assert.ok(contents.stdout.split('\n').includes(name), name);
+    }
+    const built = JSON.parse(run('tar', ['-xOzf', path, 'manifest.json'], { cwd: out }).stdout);
+    assert.equal(built.commit, s.commit);
+    assert.equal(built.version, manifest.version);
+    assert.equal(built.target, target);
+  }
   // A dry run leaves no evidence note behind and no extra work tree.
   assert.notEqual(git(s.work, ['notes', '--ref=refs/notes/foundation', 'show', s.commit], { env: s.sb.env }).status, 0);
   assert.equal(s.sb.g(s.work, 'worktree', 'list').split('\n').length, 1);
 });
 
-test('recorded foundation evidence for the exact tree is used without running foundation again', (t) => {
+releaseTest('recorded foundation evidence for the exact tree is used without running foundation again', (t) => {
   const s = setup(t);
   const verified = run(process.execPath, [join(s.work, 'scripts/foundation.mjs'), '--full'], { cwd: s.work, env: s.sb.env });
   assert.equal(verified.status, 0, verified.stderr);
@@ -105,7 +127,7 @@ test('recorded foundation evidence for the exact tree is used without running fo
   assert.equal(s.call({ commit: other, outDir: join(s.sb.dir, 'out-other') }).evidence, 'rerun');
 });
 
-test('publishing fast-forwards main, pushes the tag and creates the private release with its artifacts', (t) => {
+releaseTest('publishing fast-forwards main, pushes the tag and creates the private release with its artifacts', (t) => {
   const s = setup(t);
   const summary = s.call({ publish: true });
   assert.equal(summary.mode, 'publish');
@@ -113,7 +135,8 @@ test('publishing fast-forwards main, pushes the tag and creates the private rele
   assert.equal(s.remoteRef('refs/tags/v0.0.1-alpha.20261020.1'), s.commit);
   const create = s.ghCalls().find((line) => line.startsWith('release create'));
   assert.ok(create.startsWith('release create v0.0.1-alpha.20261020.1 '));
-  for (const fragment of ['lina-0.0.1-alpha.20261020.1-source.tar.gz', 'release-manifest.json', 'SHA256SUMS', '--verify-tag', '--prerelease', `--notes-file ${s.notesFile}`]) {
+  for (const fragment of ['lina-0.0.1-alpha.20261020.1-source.tar.gz', 'lina-0.0.1-alpha.20261020.1-linux-amd64.tar.gz',
+    'lina-0.0.1-alpha.20261020.1-darwin-arm64.tar.gz', 'release-manifest.json', 'SHA256SUMS', '--verify-tag', '--prerelease', `--notes-file ${s.notesFile}`]) {
     assert.ok(create.includes(fragment), fragment);
   }
   assert.equal(s.ghCalls().filter((line) => line.startsWith('repo view')).length, 1);
@@ -123,7 +146,119 @@ test('publishing fast-forwards main, pushes the tag and creates the private rele
   assert.throws(() => s.call({ publish: true, outDir: join(s.sb.dir, 'again') }), /already exists/);
 });
 
-test('every failed condition stops before anything is pushed or published', (t) => {
+releaseTest('binary builds use the exact candidate and receive no account credentials', t => {
+  const s = setup(t);
+  s.set('GH_TOKEN', 'synthetic-do-not-forward');
+  s.set('GITHUB_TOKEN', 'synthetic-do-not-forward');
+  s.sb.write(s.work, 'scripts/build.mjs', 'throw new Error("must not build the dirty checkout");\n');
+  s.call();
+  untouched(s);
+  assert.equal(s.sb.g(s.work, 'worktree', 'list').split('\n').length, 1);
+});
+
+releaseTest('candidate build code cannot reach publisher files, processes, network or shared Git hooks', async t => {
+  const s = setup(t);
+  const secret = join(s.sb.dir, 'publisher-private');
+  writeFileSync(secret, 'synthetic-private-value');
+  const hook = join(s.work, '.git/hooks/pre-push');
+  const marker = join(s.sb.dir, 'escaped-build');
+  const source = readFileSync(join(s.work, 'scripts/build.mjs'), 'utf8');
+  const server = createServer();
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const probe = `
+import { existsSync, readFileSync, writeFileSync as tryWrite } from 'node:fs';
+import { connect } from 'node:net';
+if (existsSync(${JSON.stringify(secret)})) throw new Error('publisher files visible');
+if (existsSync('/proc/${process.pid}/environ')) throw new Error('publisher process visible');
+try { tryWrite(${JSON.stringify(hook)}, 'compromised'); } catch {}
+try { tryWrite(${JSON.stringify(marker)}, 'escaped'); } catch {}
+await new Promise((resolve, reject) => {
+  const socket = connect({ host: '127.0.0.1', port: ${server.address().port} });
+  socket.setTimeout(5000, () => { socket.destroy(); reject(new Error('network probe timed out')); });
+  socket.on('connect', () => { socket.destroy(); reject(new Error('publisher network reachable')); });
+  socket.on('error', resolve);
+});
+`;
+  const commit = s.sb.commit(s.work, 'test: hostile candidate build', { 'scripts/build.mjs': probe + source });
+  s.sb.g(s.work, 'push', '-q', 'origin', 'dev');
+  // Foundation's separately recorded evidence avoids running the intentionally
+  // hostile candidate as part of the foundation test fixture.
+  s.sb.g(s.work, 'notes', '--ref=refs/notes/foundation', 'add', '-m', JSON.stringify({
+    result: 'success', head: commit, tree: s.sb.g(s.work, 'rev-parse', `${commit}^{tree}`),
+  }), commit);
+  s.call({ commit });
+  assert.equal(existsSync(hook), false);
+  assert.equal(existsSync(marker), false);
+  assert.equal(readFileSync(secret, 'utf8'), 'synthetic-private-value');
+});
+
+releaseTest('candidate artifacts cannot use symlinks to read publisher files', t => {
+  const s = setup(t);
+  const privateFile = join(s.sb.dir, 'publisher-private');
+  writeFileSync(privateFile, 'synthetic-private-value');
+  const source = readFileSync(join(s.work, 'scripts/build.mjs'), 'utf8');
+  const commit = s.sb.commit(s.work, 'test: linked candidate output', { 'scripts/build.mjs': source + `
+import { rmSync, symlinkSync } from 'node:fs';
+rmSync(join(out, 'lina'));
+symlinkSync(${JSON.stringify(privateFile)}, join(out, 'lina'));
+` });
+  s.sb.g(s.work, 'push', '-q', 'origin', 'dev');
+  assert.throws(() => s.call({ commit }), /regular files, not links/);
+  untouched(s);
+});
+
+releaseTest('releases a fetched remote commit while the local branch remains behind', t => {
+  const s = setup(t);
+  const peer = join(s.sb.dir, 'peer');
+  s.sb.g(s.sb.dir, 'clone', '-q', s.remote, peer);
+  const commit = s.sb.commit(peer, 'docs: remote-only release', { 'docs/design/guide.md': '# New release\n' });
+  s.sb.g(peer, 'push', '-q', 'origin', 'dev');
+  s.sb.g(s.work, 'fetch', '-q', 'origin');
+  assert.equal(s.sb.g(s.work, 'rev-parse', 'dev'), s.commit);
+  assert.equal(s.call({ commit }).commit, commit);
+  untouched(s);
+});
+
+releaseTest('selects the candidate toolchain before entering the offline sandbox', t => {
+  const s = setup(t);
+  const actual = run('go', ['env', 'GOMODCACHE', 'GOROOT', 'GOVERSION'], { cwd: s.work }).stdout.trim().split('\n');
+  const commit = s.sb.commit(s.work, 'test: pinned build toolchain', {
+    'go.mod': `module example.invalid/release\ngo 1.27\ntoolchain ${actual[2]}\n`,
+  });
+  s.sb.g(s.work, 'push', '-q', 'origin', 'dev');
+  s.sb.g(s.work, 'notes', '--ref=refs/notes/foundation', 'add', '-m', JSON.stringify({
+    result: 'success', head: commit, tree: s.sb.g(s.work, 'rev-parse', `${commit}^{tree}`),
+  }), commit);
+  const wrapper = join(s.sb.dir, 'bin/go');
+  writeFileSync(wrapper, `#!/usr/bin/env node
+const fs = require('node:fs');
+if (!fs.existsSync('go.mod') || process.env.GOTOOLCHAIN !== ${JSON.stringify(actual[2])}) {
+  console.error('toolchain query must use the candidate directory and pin'); process.exit(1);
+}
+console.log(${JSON.stringify(actual.join('\n'))});
+`);
+  chmodSync(wrapper, 0o755);
+  assert.equal(s.call({ commit }).commit, commit);
+  untouched(s);
+});
+
+releaseTest('a binary build failure or digest mismatch stops publication and removes the worktree', t => {
+  const s = setup(t);
+  const source = readFileSync(join(s.work, 'scripts/build.mjs'), 'utf8');
+  for (const [name, text, failure] of [
+    ['failure', 'throw new Error("synthetic build failure");\n' + source, /Binary build failed/],
+    ['digest', source.replace("createHash('sha256').update(bytes).digest('hex')", "'0'.repeat(64)"), /digest mismatch/],
+  ]) {
+    const commit = s.sb.commit(s.work, `test: ${name}`, { 'scripts/build.mjs': text });
+    s.sb.g(s.work, 'push', '-q', 'origin', 'dev');
+    assert.throws(() => s.call({ commit, publish: true, outDir: join(s.sb.dir, name) }), failure);
+    untouched(s);
+    assert.equal(s.sb.g(s.work, 'worktree', 'list').split('\n').length, 1);
+  }
+});
+
+releaseTest('every failed condition stops before anything is pushed or published', (t) => {
   const s = setup(t);
   const emptyNotes = join(s.sb.dir, 'empty.md');
   writeFileSync(emptyNotes, ' \n');
@@ -180,7 +315,7 @@ test('every failed condition stops before anything is pushed or published', (t) 
   untouched(s);
 });
 
-test('a failed main push publishes nothing and the same release can run again', (t) => {
+releaseTest('a failed main push publishes nothing and the same release can run again', (t) => {
   const s = setup(t);
   const hook = join(s.remote, 'hooks/update');
   writeFileSync(hook, '#!/bin/sh\nif [ "$1" = refs/heads/main ] && [ -e "$(dirname "$0")/../reject-main" ]; then echo "main is locked" >&2; exit 1; fi\n');
@@ -194,7 +329,7 @@ test('a failed main push publishes nothing and the same release can run again', 
   assert.equal(s.remoteRef('refs/tags/v0.0.1-alpha.20261020.1'), s.commit);
 });
 
-test('a failed GitHub Release after the tag is reported with the command that completes it', (t) => {
+releaseTest('a failed GitHub Release after the tag is reported with the command that completes it', (t) => {
   const s = setup(t);
   s.set('GH_FAIL', '1');
   assert.throws(() => s.call({ publish: true }), (error) => /creating the GitHub Release failed/.test(error.message) && error.message.includes('gh release create v0.0.1-alpha.20261020.1 '));
@@ -202,7 +337,7 @@ test('a failed GitHub Release after the tag is reported with the command that co
   assert.equal(s.remoteRef('refs/tags/v0.0.1-alpha.20261020.1'), s.commit);
 });
 
-test('a named output directory must be empty so the release never deletes what it did not create', (t) => {
+releaseTest('a named output directory must be empty so the release never deletes what it did not create', (t) => {
   const s = setup(t);
   const out = join(s.sb.dir, 'keep');
   mkdirSync(out);
@@ -211,7 +346,7 @@ test('a named output directory must be empty so the release never deletes what i
   assert.equal(existsSync(join(out, 'precious.txt')), true);
 });
 
-test('the command line is a dry run by default and ignores GIT_* variables of its caller', (t) => {
+releaseTest('the command line is a dry run by default and ignores GIT_* variables of its caller', (t) => {
   const s = setup(t);
   const decoy = join(s.sb.dir, 'decoy');
   s.sb.g(s.sb.dir, 'init', '-q', decoy);
