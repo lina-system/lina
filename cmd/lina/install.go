@@ -33,6 +33,7 @@ func runInstallWithHost(args []string, host install.Host) int {
 	units := flags.String("unit-dir", "", "systemd user unit directory (default: XDG_CONFIG_HOME/systemd/user)")
 	bundle := flags.String("bundle", "", "verified build bundle (default: the executable's directory)")
 	socket := flags.String("socket", "", "private client socket (default: <state-root>/system/run/client.sock)")
+	personaSource := flags.String("persona-source", "", "local persona checkout root (absolute path)")
 	paths := map[string]string{}
 	flags.Func("tool", "installed tool override, name=/absolute/path (repeatable)", func(value string) error {
 		name, path, ok := strings.Cut(value, "=")
@@ -46,7 +47,7 @@ func runInstallWithHost(args []string, host install.Host) int {
 		return nil
 	})
 	flags.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: lina install [--state-root <path>] [--bundle <path>] [--unit-dir <path>] [--socket <path>] [--tool name=<path>]")
+		fmt.Fprintln(os.Stderr, "usage: lina install [--state-root <path>] [--bundle <path>] [--unit-dir <path>] [--socket <path>] [--persona-source <dir>] [--tool name=<path>]")
 	}
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -87,7 +88,7 @@ func runInstallWithHost(args []string, host install.Host) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	result, err := install.Run(ctx, install.Config{StateRoot: *root, UnitDir: *units, BundleDir: *bundle, Socket: *socket, ToolPaths: paths}, host)
+	result, err := install.Run(ctx, install.Config{StateRoot: *root, UnitDir: *units, BundleDir: *bundle, Socket: *socket, ToolPaths: paths, PersonaSource: *personaSource}, host)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "lina install: %v\n", err)
 		return 78
