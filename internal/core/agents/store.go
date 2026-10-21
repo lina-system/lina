@@ -282,6 +282,24 @@ func (s *Store) SetState(ctx context.Context, id string, state State, person str
 	})
 }
 
+// Prepared reads an existing pin without creating one or selecting a newer
+// persona revision. Replay must never call the mutating Prepare path.
+func (s *Store) Prepared(ctx context.Context, turn, id string) (Preparation, error) {
+	var revision int64
+	err := s.db.Read(ctx, func(tx *canon.Tx) error {
+		if _, err := get(ctx, tx, id, false); err != nil {
+			return err
+		}
+		return tx.QueryRowContext(ctx, "SELECT revision FROM agent_preparations WHERE turn_id=? AND agent_id=?", turn, id).Scan(&revision)
+	})
+	if err != nil {
+		return Preparation{}, err
+	}
+	p, err := s.revision(ctx, id, revision)
+	p.TurnID = turn
+	return p, err
+}
+
 // Prepare pins the current revision once per turn. Repeating a turn never
 // switches persona, including after a process restart.
 func (s *Store) Prepare(ctx context.Context, turn, id string) (Preparation, error) {
