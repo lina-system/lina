@@ -122,34 +122,36 @@ func TestOverflowClosesOnlySlowSubscription(t *testing.T) {
 }
 
 func TestCoalescingBeforeSequenceAndProtectedBoundaries(t *testing.T) {
-	h := topicHub(t, TopicOptions{})
-	_, sub := subscribe(t, h, "conversation:test", nil)
-	publish(t, h, "conversation:test", TopicEvent{Kind: protocol.KindOutputDelta, Key: "a", Data: []byte(`"hello"`)})
-	publish(t, h, "conversation:test", TopicEvent{Kind: protocol.KindOutputDelta, Key: "a", Data: []byte(`" world"`)})
-	publish(t, h, "conversation:test", TopicEvent{Kind: protocol.KindItemDone, Key: "a", Data: []byte(`{"text":"hello world"}`)})
-	for seq, want := range []string{`"hello world"`, `{"text":"hello world"}`} {
-		f := next(t, sub)
-		if f.Cursor.Seq != uint64(seq+1) || string(f.Event.Data) != want {
-			t.Fatalf("coalesced frame: %#v", f)
-		}
-	}
-	for _, kind := range []protocol.Kind{protocol.KindItemDone, protocol.KindApprovalRequest, protocol.KindQuestion} {
-		data := `{}`
-		if kind == protocol.KindApprovalRequest {
-			data = `{"choices":["once","deny"]}`
-		}
-		if kind == protocol.KindQuestion {
-			data = `{"conversation_id":"test"}`
-		}
-		for range 2 {
-			publish(t, h, "conversation:test", TopicEvent{Kind: kind, Key: "protected", Data: []byte(data)})
-		}
-		for range 2 {
-			if next(t, sub).Event.Kind != kind {
-				t.Fatal("protected event lost")
+	synctest.Test(t, func(t *testing.T) {
+		h := topicHub(t, TopicOptions{})
+		_, sub := subscribe(t, h, "conversation:test", nil)
+		publish(t, h, "conversation:test", TopicEvent{Kind: protocol.KindOutputDelta, Key: "a", Data: []byte(`"hello"`)})
+		publish(t, h, "conversation:test", TopicEvent{Kind: protocol.KindOutputDelta, Key: "a", Data: []byte(`" world"`)})
+		publish(t, h, "conversation:test", TopicEvent{Kind: protocol.KindItemDone, Key: "a", Data: []byte(`{"text":"hello world"}`)})
+		for seq, want := range []string{`"hello world"`, `{"text":"hello world"}`} {
+			f := next(t, sub)
+			if f.Cursor.Seq != uint64(seq+1) || string(f.Event.Data) != want {
+				t.Fatalf("coalesced frame: %#v", f)
 			}
 		}
-	}
+		for _, kind := range []protocol.Kind{protocol.KindItemDone, protocol.KindApprovalRequest, protocol.KindQuestion} {
+			data := `{}`
+			if kind == protocol.KindApprovalRequest {
+				data = `{"choices":["once","deny"]}`
+			}
+			if kind == protocol.KindQuestion {
+				data = `{"conversation_id":"test"}`
+			}
+			for range 2 {
+				publish(t, h, "conversation:test", TopicEvent{Kind: kind, Key: "protected", Data: []byte(data)})
+			}
+			for range 2 {
+				if next(t, sub).Event.Kind != kind {
+					t.Fatal("protected event lost")
+				}
+			}
+		}
+	})
 }
 
 func TestBatchTimeAndSize(t *testing.T) {
@@ -170,26 +172,28 @@ func TestBatchTimeAndSize(t *testing.T) {
 }
 
 func TestReplaceRowsSnapshotAndIsolation(t *testing.T) {
-	h := topicHub(t, TopicOptions{})
-	_, sub := subscribe(t, h, "progress", nil)
-	for _, data := range []string{`{"text":"1"}`, `{"text":"2"}`} {
-		publish(t, h, "progress", TopicEvent{Kind: protocol.KindProgressUpdate, Key: "p", Data: []byte(data)})
-	}
-	h.Flush("progress")
-	f := next(t, sub)
-	if f.Cursor.Seq != 1 || string(f.Event.Data) != `{"text":"2"}` {
-		t.Fatalf("row coalescing: %#v", f)
-	}
-	f.Event.Data[0] = '!'
-	start, _ := subscribe(t, h, "progress", nil)
-	if string(start.Snapshot.Items[0].Data) != `{"text":"2"}` {
-		t.Fatal("consumer mutated retained row")
-	}
-	start.Snapshot.Items[0].Data[0] = '!'
-	replay, _ := subscribe(t, h, "progress", &rpc.Cursor{Epoch: "10", Seq: 0})
-	if string(replay.Replay[0].Event.Data) != `{"text":"2"}` {
-		t.Fatal("snapshot mutated replay")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		h := topicHub(t, TopicOptions{})
+		_, sub := subscribe(t, h, "progress", nil)
+		for _, data := range []string{`{"text":"1"}`, `{"text":"2"}`} {
+			publish(t, h, "progress", TopicEvent{Kind: protocol.KindProgressUpdate, Key: "p", Data: []byte(data)})
+		}
+		h.Flush("progress")
+		f := next(t, sub)
+		if f.Cursor.Seq != 1 || string(f.Event.Data) != `{"text":"2"}` {
+			t.Fatalf("row coalescing: %#v", f)
+		}
+		f.Event.Data[0] = '!'
+		start, _ := subscribe(t, h, "progress", nil)
+		if string(start.Snapshot.Items[0].Data) != `{"text":"2"}` {
+			t.Fatal("consumer mutated retained row")
+		}
+		start.Snapshot.Items[0].Data[0] = '!'
+		replay, _ := subscribe(t, h, "progress", &rpc.Cursor{Epoch: "10", Seq: 0})
+		if string(replay.Replay[0].Event.Data) != `{"text":"2"}` {
+			t.Fatal("snapshot mutated replay")
+		}
+	})
 }
 
 func TestSubscriptionCloseAndInvalidInputs(t *testing.T) {
