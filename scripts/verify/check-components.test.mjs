@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { sandbox } from '../test-fixture.mjs';
-import { checkComponents } from './check-components.mjs';
+import { checkComponents, execute } from './check-components.mjs';
 
 const source = fileURLToPath(new URL('../../', import.meta.url));
 function fixture(t) {
@@ -18,6 +18,83 @@ function fixture(t) {
   return sb;
 }
 const kit = { name: 'kit', module: 'kit', packages: ['./...'] };
+
+test('a progressing test command can outlive the old per-command limit', t => {
+  const sb = fixture(t);
+  // Scale the legacy 120 s limit to 1 s; progress continues for 2 s.
+  // All other commands are deterministic stand-ins, leaving the real runner
+  // to exercise the selected test command's budget.
+  const args = ['-e', `
+    const progress = setInterval(() => console.log('package ok'), 50);
+    setTimeout(() => { clearInterval(progress); console.log('finished'); }, 2000);
+  `];
+  const result = checkComponents({ cwd: sb.dir, components: [kit], execute(command, goArgs, options) {
+    if (goArgs[0] === 'test') return execute(process.execPath, args, {
+      ...options, timeoutMs: Math.ceil((options.timeoutMs ?? 120_000) / 120),
+    });
+    return { status: 0, stdout: goArgs[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
+  } });
+  assert.equal(result.status, 0, result.output);
+  assert.match(result.output, /package ok[\s\S]*finished/);
+});
+
+test('a hung command fails with its name and elapsed time', t => {
+  const sb = sandbox(t);
+  sb.write(sb.dir, 'hung.mjs', `// SPDX-License-Identifier: Apache-2.0
+setInterval(() => {}, 1000);
+`);
+  const result = execute(process.execPath, ['hung.mjs'], { cwd: sb.dir, env: sb.env, timeoutMs: 200 });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /command timed out after [\d.]+ s.*hung\.mjs/);
+});
+
+test('commands across modules share a deadline instead of resetting the budget', t => {
+  const sb = fixture(t);
+  let elapsed = 0;
+  t.mock.method(performance, 'now', () => elapsed);
+  const budgets = [];
+  const result = checkComponents({ cwd: sb.dir, components: [kit, { name: 'lina', module: '.', packages: ['.'] }],
+    timeoutMs: 20_000, execute(command, args, options) {
+      budgets.push(options.timeoutMs);
+      elapsed += 1000;
+      return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
+    } });
+  assert.equal(result.status, 0, result.output);
+  assert.equal(budgets.length, 11);
+  assert.deepEqual(budgets, Array.from({ length: 11 }, (_, i) => 20_000 - i * 1000));
+});
+
+test('an exhausted components budget stops before starting another command', t => {
+  const sb = fixture(t);
+  let elapsed = 0;
+  t.mock.method(performance, 'now', () => elapsed);
+  const calls = [];
+  const result = checkComponents({ cwd: sb.dir, components: [kit], timeoutMs: 1000,
+    execute(command, args) {
+      calls.push(args);
+      elapsed = 1000;
+      return { status: 0, stdout: 'go1.27.3\n', stderr: '' };
+    } });
+  assert.equal(result.status, 1);
+  assert.deepEqual(calls, [['env', 'GOVERSION']]);
+  assert.match(result.output, /components budget exhausted after 1\.000 s before: go mod verify/);
+});
+
+test('a hung test command is capped by the remaining components budget', t => {
+  const sb = fixture(t);
+  sb.write(sb.dir, 'hung.mjs', `// SPDX-License-Identifier: Apache-2.0
+process.on('SIGTERM', () => {});
+setInterval(() => {}, 1000);
+`);
+  const result = checkComponents({ cwd: sb.dir, components: [kit], timeoutMs: 500,
+    execute(command, args, options) {
+      if (args[0] === 'test') return execute(process.execPath, ['hung.mjs'], { ...options, cwd: sb.dir });
+      return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
+    } });
+  assert.equal(result.status, 1);
+  assert.match(result.output, /\$ go test -count=1 -mod=readonly \.\/\.\.\./);
+  assert.match(result.output, /command timed out after [\d.]+ s \(budget 0\.\d+ s\): .*hung\.mjs/);
+});
 
 test('components use the pinned toolchain, readonly commands, module verification and uncached tests', t => {
   const sb = fixture(t);
