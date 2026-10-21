@@ -1,0 +1,38 @@
+{
+  "check": "V1 ChatGPT sign-in and Responses round trip",
+  "status": "not_run",
+  "live_account_verified": false,
+  "reason": "Live acceptance requires a real ChatGPT account completing LINA's own sign-in. Synthetic signed token and HTTP fixtures establish implementation behavior only.",
+  "documentation": [
+    "https://developers.openai.com/siwc/token-sharing-open-source/sign-in/",
+    "https://developers.openai.com/siwc/token-sharing-open-source/token-reference/",
+    "https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference/",
+    "https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations/",
+    "https://developers.openai.com/siwc/website/"
+  ],
+  "sign_in": {
+    "local_client": "not_run",
+    "remote_client": "not_run",
+    "dynamic_registration": "not_run",
+    "loopback_redirect": "not_run",
+    "pasted_redirect": "not_run",
+    "granted_scope_check": "not_run",
+    "id_token_verification": "not_run",
+    "refresh_rotation": "not_run"
+  },
+  "responses": {
+    "completed_turns": 0,
+    "store_false_stream_true": "not_run",
+    "encrypted_reasoning_round_trip": "not_run",
+    "function_tool": "not_run",
+    "apply_patch_function": "not_run",
+    "parallel_tool_calls": "not_run"
+  },
+  "undocumented_fields": {
+    "include": {"accepted": null, "observation": "not_run"},
+    "parallel_tool_calls": {"accepted": null, "observation": "not_run"},
+    "service_tier": {"accepted": null, "observation": "not_run"}
+  },
+  "accepted_request_fields": null,
+  "accepted_tool_declarations": null
+}

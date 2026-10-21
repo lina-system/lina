@@ -405,6 +405,10 @@ type SignIn interface {
 
 One refresh goroutine runs per account. Rotation, timing, keep-alive and failure follow [runtime.md](runtime.md#credentials), and the flows per provider are in [runtime.md](runtime.md#accounts-and-sign-in). The sign-in relay runs on the `client` connection ([integrations.md](integrations.md#consent-through-the-client)).
 
+The sign-in keeps state, nonce and PKCE verifier only in Core. Pending attempts are scoped to the initiating connection, consumed once before exchange and cancelled on replacement or disconnect. Core validates structured and pasted callbacks identically, including the issued dynamic client id and returning registration. The fixed OpenAI issuer's RS256 signature and issuer, audience, expiry, issued-at and nonce claims are checked before accepting an identity; a returning account must retain its verified subject. The token response must grant `chatgpt.tokens.use.direct` before the account can be used for inference.
+
+Owner binding is a singleton canon record independent of provider credentials. The serialized canon writer binds the first successful sign-in and compares every later login's person, issuer and subject without updating the binding. A different provider account cannot replace or delete it. Competing first sign-ins cannot both establish different owners.
+
 **C-48 Connected accounts, setup and routing (new).**
 
 ```go
