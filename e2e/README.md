@@ -26,6 +26,12 @@ streaming completion and steering sequence through the same PTY lifecycle.
 They require no personal credentials. The physical terminal spike and real-model
 acceptance remain separate.
 
+`m1/tui-resize.json` exercises the colour conversation screen at 80x24, then
+40x12 and 120x35 through PTY resize signals. It retains a synthetic draft,
+checks header, status and composer, and compares all rows and the cursor with
+a fresh client at each size to detect stale cells. It clears the draft and
+completes another exchange after resizing, then checks terminal restoration.
+
 Helpers are test-only Go files in this package, shared by scenario tests. Keeping
 process creation in test files follows the architecture rule for command
 acceptance harnesses. Future milestones can add scenario files here; new

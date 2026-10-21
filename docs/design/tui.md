@@ -182,7 +182,7 @@ The client computes no state of work. It shows the words and marks Core sends ([
 
 ## Layout, tiers and row budget (T-07)
 
-The screen is a pure function of State and terminal size. A region whose capability was not granted shows as unsupported, never as empty ([host-protocol.md](host-protocol.md#versions-and-capabilities)).
+The screen is a pure function of State and terminal size. Core's validated welcome determines which regions are available ([host-protocol.md](host-protocol.md#versions-and-capabilities)). Running and waiting lists take no rows when empty or not granted. Missing list capabilities produce one localized, plain-language local notice outside conversation history, combining both missing lists into one explanation. Replayed welcomes and reconnects with the same capabilities do not add another notice; a later grant removes the obsolete explanation from the status line. No fallback string or peer diagnostic decides capability availability.
 
 Regions:
 
@@ -233,8 +233,10 @@ func Plan(size Size, caps Caps, st Shape) Layout // regions disjoint, sum fits, 
 - What remains is shared in a stated order of shedding: the side pane closes first, then the running strip folds to a count, then the card row folds to one summary line. A folded part keeps its count, so a count on screen always equals the list.
 - `Plan` treats negative dimensions as zero. At too-small sizes it reserves one
   status row when a cell exists and uses the remaining rows for the size notice.
-  At usable sizes the running strip starts at one to three rows and the card row
-  at one to five; each keeps one summary row when folded. The attachment strip
+  At usable sizes a granted, populated running strip starts at one to three rows
+  and a granted, populated card row at one to five; each keeps one summary row
+  when folded. Empty or ungranted lists reserve no rows, even under pressure.
+  The attachment strip
   uses one row. After the stated shedding, composer growth yields as necessary
   to preserve the transcript floor. Counts and unsupported flags remain typed
   output even when their region folds.
@@ -250,12 +252,19 @@ and Page Down move through the retained conversation. Tab switches composer and
 card focus; arrows select a result card. The composer keeps its draft when an
 overlay opens or connection status changes. An identical frame and cursor is
 not submitted to the renderer, and the plain display writes no duplicate frame.
+For the colour conversation screen, each new size reaches the cell renderer
+before its reflowed view, even if the view text is unchanged. Resizing keeps the
+draft and redraws header, status and composer within the current row budget;
+cells from the previous dimensions must not survive as stale transcript rows.
+`e2e/m1/tui-resize.json` exercises 80x24 → 40x12 → 120x35 through a real PTY,
+compares every row and the cursor with a fresh client at the same size, then
+clears the retained draft and completes another exchange.
 
 ## Home, waiting for me and progress (T-12)
 
 Contract: [surfaces.md](surfaces.md#waiting-for-me), [surfaces.md](surfaces.md#progress-at-a-glance), [work-and-delegation.md](work-and-delegation.md#progress-line).
 
-Home is the starting state of the conversation. "Waiting for me", "At a glance" and "Today" sit above the composer, with the rows and the order Core sends. This section fixes only how they are drawn and answered as text. The roadmap builds Waiting for me first. "At a glance" and "Today" appear when Core grants their capabilities, and until then the TUI shows them as unsupported (T-07).
+Home is the starting state of the conversation. "Waiting for me", "At a glance" and "Today" sit above the composer, with the rows and the order Core sends. This section fixes only how they are drawn and answered as text. The roadmap builds Waiting for me first. "At a glance" and "Today" appear when Core grants their capabilities. The running and waiting lists follow the empty and unavailable presentation of T-07.
 
 - **Waiting for me.** The rows, the five-row limit and the "+N more" count are the contract's. A key switches the order to lightest first; the TUI asks Core for it and never ranks.
 - **Answering** is one key. An approval takes the two steps of T-04. When several decisions wait, a key starts the one-at-a-time walk: the TUI shows one decision, sends the answer, and shows the next.
@@ -271,7 +280,10 @@ Home is the starting state of the conversation. "Waiting for me", "At a glance" 
 The conversation screen projects granted waiting/running topic rows in Core
 order and keeps their counts when folded. Ctrl+W and Ctrl+R open their complete
 retained text in the pager; Ctrl+P opens the granted progress topic. Missing
-capabilities remain labeled unsupported. List updates do not focus the pager or
+capabilities use the single local explanation of T-07 and leave no placeholder
+rows. Granted empty lists are hidden without an unavailable notice. Rows appear
+when Core sends items and disappear when its snapshot clears the list.
+List updates do not focus the pager or
 change the draft. Decision answering remains the typed approval/question flow
 of T-04; the composer never turns a list row into an approval.
 
@@ -376,6 +388,8 @@ type Stream interface {
 - The hardware cursor is placed on every frame at the display width of the text before it on the wrapped row, so IME composition appears in place. The TUI never requests all-keys-as-escape-codes. Committed IME text arrives as UTF-8, one grapheme cluster at a time ([surfaces.md](surfaces.md#korean-input)).
 - Only the viewport plus overscan (P) is laid out, so cost follows viewport rows and not history. `Stream` indexes new text as it arrives. `Window` takes a retained byte anchor within a block and stops reflow at the requested row count, including after a width change. `Renderer.Draw` reads and paints only those indexed rows, retains only the current viewport cache, and returns changed-row patches; an empty patch list causes no writes. A trusted UI painter styles only closed rows after sanitizing and clipping.
 - Resize events coalesce to one reflow per 32 ms (P).
+- Conversation wrapping uses the current width; the indexed row count at the
+  old width must not truncate newly wrapped rows or the final reply.
 - An unchanged state writes zero bytes. Motion is one status glyph with no timer while deltas stream; elapsed time updates at 1 Hz (P) otherwise.
 - OSC 8 links are emitted for allowed schemes only.
 
@@ -416,6 +430,7 @@ input id for local-echo reconciliation. The acknowledgement means durable
 admission, not turn completion; further typing can be sent while the turn runs.
 A refused send restores the draft. Connection states other than Live disable
 submission without discarding edits.
+Resizing preserves the draft and its cursor without submitting it.
 
 - Paste arrives as one atomic message, is one undo step and has control sequences removed. The TUI never reads the host clipboard; paste is the terminal's.
 - Attachments are a strip above the composer and message parts that Core imports ([filesystem.md](filesystem.md#import-and-export)). The draft stays plain text.
