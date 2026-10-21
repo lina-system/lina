@@ -38,6 +38,9 @@ type growthRuntime struct {
 }
 
 func (r *conversationRuntime) startGrowth(ctx context.Context, main string, epoch uint64, controls *ctlfiles.Store) error {
+	if r.agent == "" {
+		return nil
+	}
 	g := &growthRuntime{id: "growth:" + r.agent, delivered: map[int64]bool{}}
 	r.growth = g
 	d, err := jobs.GrowthDefinition(r.agents, r.agent, r.person)
@@ -99,7 +102,28 @@ func (r *conversationRuntime) startGrowth(ctx context.Context, main string, epoc
 	if err = r.publishGrowth(ctx); err != nil {
 		return err
 	}
-	r.identity.Operations[protocol.KindAgentRequest] = clientsrv.Operation{Capability: protocol.Capability{Name: "growth", Version: "1.0"}, Handle: r.growthOperation}
+	management := r.identity.Operations[protocol.KindAgentRequest]
+	growthCapability := protocol.Capability{Name: "growth", Version: "1.0"}
+	required := func(e protocol.Envelope) protocol.Capability {
+		if p, ok := e.Payload.(protocol.AgentRequest); ok && p.Operation != nil {
+			switch *p.Operation {
+			case "growth_adopt", "growth_notices", "growth_undo":
+				return growthCapability
+			}
+		}
+		return management.Capability
+	}
+	r.identity.Operations[protocol.KindAgentRequest] = clientsrv.Operation{
+		Capability:             management.Capability,
+		AdditionalCapabilities: []protocol.Capability{growthCapability},
+		CapabilityFor:          required,
+		Handle: func(ctx context.Context, session clientsrv.Session, e protocol.Envelope) (clientsrv.Result, error) {
+			if required(e) == growthCapability {
+				return r.growthOperation(ctx, session, e)
+			}
+			return management.Handle(ctx, session, e)
+		},
+	}
 	return nil
 }
 
@@ -108,7 +132,7 @@ func (r *conversationRuntime) growthOperation(ctx context.Context, session clien
 		return clientsrv.Result{}, &clientsrv.OperationError{Code: code}
 	}
 	p, ok := e.Payload.(protocol.AgentRequest)
-	if !ok || p.Operation == nil || p.AgentID == nil {
+	if !ok || p.Operation == nil || p.AgentID == nil || p.Name != nil {
 		return refuse(protocol.ErrorMalformed)
 	}
 	if session.PersonID != r.person || *p.AgentID != r.agent {
@@ -218,7 +242,7 @@ func (r *conversationRuntime) publishGrowth(ctx context.Context) error {
 			return err
 		}
 		text, speaker := event.Body.Text(), protocol.ConversationSpeakerAgent
-		if err = r.publish(protocol.KindItemDone, id, protocol.ItemDone{Text: &text, Speaker: &speaker}); err != nil {
+		if err = r.publish(ctx, protocol.KindItemDone, id, protocol.ItemDone{Text: &text, Speaker: &speaker}); err != nil {
 			return err
 		}
 		r.growth.delivered[n.Revision] = true

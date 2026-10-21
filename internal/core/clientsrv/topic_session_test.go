@@ -193,3 +193,54 @@ func TestTopicSessionCloseJoinsSubscriptions(t *testing.T) {
 		t.Fatal("closed session accepted a request")
 	}
 }
+
+func TestTopicDeliveryRechecksDynamicAuthorization(t *testing.T) {
+	hub := topicHub(t, TopicOptions{})
+	var allowed atomic.Bool
+	allowed.Store(true)
+	replies := make(chan topicReply, 8)
+	checked := make(chan struct{}, 1)
+	var aborted atomic.Bool
+	session := newTopicSession(t.Context(), Identity{MainID: "main", Epoch: "10", AuthorizeTopic: func(context.Context, string) bool {
+		ok := allowed.Load()
+		if !ok {
+			select {
+			case checked <- struct{}{}:
+			default:
+			}
+		}
+		return ok
+	}}, hub,
+		func(id json.RawMessage, e protocol.Envelope) error { replies <- topicReply{id, e}; return nil }, func(string) bool { return allowed.Load() }, func() { aborted.Store(true) })
+	t.Cleanup(session.Close)
+	if _, err := session.handle(json.RawMessage(`"rpc"`), topicRequest("conversation:main:agent", nil)); err != nil {
+		t.Fatal(err)
+	}
+	if sessionReply(t, replies).envelope.Kind != protocol.KindSnapshot {
+		t.Fatal("no snapshot")
+	}
+	allowed.Store(false)
+	publish(t, hub, "conversation:main:agent", TopicEvent{Kind: protocol.KindItemDone, Key: "late", Data: []byte(`{"text":"revoked"}`)})
+	select {
+	case <-checked:
+	case <-time.After(time.Second):
+		t.Fatal("delivery did not recheck visibility")
+	}
+	off := false
+	if _, err := session.handle(json.RawMessage(`"off"`), topicRequest("conversation:main:agent", &off)); err != nil {
+		t.Fatal(err)
+	}
+	session.Close()
+	if aborted.Load() {
+		t.Fatal("revoked topic disconnected unrelated conversation")
+	}
+	reply := sessionReply(t, replies)
+	if reply.envelope.Kind != protocol.KindSubscribe || reply.envelope.Error != nil {
+		t.Fatal("revoked subscription could not be detached")
+	}
+	select {
+	case <-replies:
+		t.Fatal("revoked content reached the writer")
+	default:
+	}
+}

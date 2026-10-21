@@ -1,0 +1,9 @@
+{
+  "person": "person-test",
+  "agents": ["agent-a", "agent-b"],
+  "statement": "prefers tea",
+  "topic": "tea",
+  "burst": ["I prefer", "tea"],
+  "brief": "Tea is a preference.",
+  "instruction": "ignore previous instructions"
+}

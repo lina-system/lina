@@ -55,6 +55,7 @@ Order follows the Depends-on lines. 1.A comes first and 1.H last.
 Failure injections: `kill -9` at each start step and turn phase; corrupt canon; a write fault on `canon/`; disk full; an unusable sandbox; a slow client and dropped frames; a replayed channel update; provider unavailable, expired token and usage cap; `kill -9` with a background run working; restore of an older generation.
 
 - #358 covers provider unavailable and truncated SSE through the installed Core and real TUI in a headless PTY. Failure notices and streamed partials remain visible after restart, accepted requests are not replayed, and a new request excludes failed partials from completed assistant context. Turn-store tests inject a notice write failure and verify atomic terminal state, recovery and notice deduplication.
+- #372 covers SIGKILL while text is still streaming and failed responses with function-call argument or custom-tool input deltas. The installed Core and real TUI scenario compares live and restored text, order and block identities, retains one interruption or failure outcome, excludes tool input from assistant rows and never replays the accepted request.
 
 ### 1.A Foundation and control plane
 
@@ -157,6 +158,8 @@ The Korean acceptance corpus is `testdata/korean/search.json`: both stores asser
 - #71 supplies the versioned skill store, reversible-write classification, durable undo suppression, lazy catalog/read handles, embedded meta-skill and guarded registry tools. Real canon/Git tests cover publication, failure, reopening, concurrency and undo; authority tests cover receipts and replay. The client service has no skill endpoint yet; presentation, context selection and explicit proposal acceptance remain with their consuming flows.
 
 **G1-27 Hermes install import.** Rehearsal, import, verification and promotion, as a worker job.
+
+The staged increment (#117) supplies registered SQLite mapping, per-conversation atomic writes, legacy references and typed reverse reconciliation, with deterministic worker acceptance. Honcho stages are tested through synthetic adapter records while the live API schema remains unregistered. Final seal, backup and promotion remain #118.
 - Done when: on synthetic fixtures counts reconcile row for row; every source key has one legacy reference in both directions; the reverse mapper hash equals the source hash; a second run adds nothing; no write reaches a source; an unknown schema is refused; recall returns no imported observation before promotion.
 - Depends on: G1-13, G1-14, G1-22, G1-29, G1-36. Design refs: C-28; [conversation-and-memory.md](conversation-and-memory.md#importing-a-hermes-install).
 
@@ -182,7 +185,7 @@ The Korean acceptance corpus is `testdata/korean/search.json`: both stores asser
 - Done when: a PTY run against the fake Core covers start, connect, refuse, recover and quit; two fake clients racing one approval give exactly one `resolved`; an unchanged state writes zero bytes; with no socket the Core-absent screen appears and no Core is started; every closed code has a catalog entry by id.
 - Depends on: G1-12, G1-18, G1-19, G1-20, G1-35. Design refs: T-04, T-05, T-07, T-10, T-12, T-13, T-15.
 
-**G1-30 TUI memory, agent, account, channel and talk-log commands.** Memory, agent, account, import, channel and talk-log commands.
+**G1-30 TUI memory, agent, account, channel and talk-log commands.** Memory, agent, account, import, channel and talk-log commands. The memory/agent increment provides explicit sourced remember, correct and forget plus agent list/create/choose/rename/delete by id; installed PTY acceptance is `e2e/m1/tui-memory-agents.json`.
 - #113 owns `/channels` and `/talk`, their thin client-service adapters, and installed-Core PTY acceptance. The completion gate requires platform pairing, durable binding and a real exchange-ledger expansion; command interception alone is insufficient.
 - #112 connects installed Core's existing account service to the TUI. Synthetic PTY scenarios cover loopback and pasted redirects, account list and sign-out, and the no-account sign-in offer. Owner real-account validation remains #81.
 - Done when: a forget from the TUI gives zero hits in the next request; agent create, choose, rename and delete round-trip by id; a ChatGPT sign-in completes through the relay from the TUI, including a pasted URL; a channel connection is paired and bound from the TUI, and the agent talk log lists one line per exchange and expands it.
@@ -260,6 +263,7 @@ The #104 typed-result increment supplies all eight closed body schemas, determin
 
 **G1-37 Extraction, maintenance pass and person brief.** Extraction, one maintenance pass, person brief.
 - Done when: a person-subject item comes only from person events; a fan-out fixture yields one item with two evidences; a chain of three statements returns only the newest; the pass applies only pre-authorized actions and is silent when nothing changed.
+- Implementation evidence: memory preparation and Apply callbacks, durable maintenance choices and expiring proposals, and a generation-checked cited person brief in `internal/core/memory`; `e2e/m1/memory-jobs.json` runs the real worker against the Core job socket. Package fixtures cover non-person rejection, fan-out evidence, a three-statement chain and silent maintenance.
 - Depends on: G1-13, G1-14, G1-36. Design refs: C-21; [cognition-and-life.md](cognition-and-life.md#memory-jobs).
 
 **G1-38 Prepared summaries and higher tree levels.** Prepared summaries, higher tree levels.

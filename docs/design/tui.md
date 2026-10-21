@@ -141,6 +141,11 @@ The server side is [go-core.md](go-core.md) (C-42): topics, cursors, rings, batc
 - Epochs compare numerically, the form of CP-02 ([host-protocol.md](host-protocol.md#envelope)), without a machine-integer limit. A gap or a newer epoch requests one resync per out-of-sync topic. Duplicate cursors and revisions and older epochs are ignored; a repeated delivery never changes the display. A resync snapshot cannot roll back the accepted cursor within the same epoch and revocation epoch.
 - A different revocation epoch ([conversation-and-memory.md](conversation-and-memory.md#terms)) makes the TUI drop cached items before the snapshot applies, so a forgotten item cannot survive a reconnect.
 - Replaying a stream or a snapshot twice leaves state unchanged.
+- Completed conversation history preserves the live projection's message order
+  and content after Core restart. A reply keeps its first streamed position when
+  later queue or steering input arrives; a reply with no visible delta first
+  appears at completion. Restoration neither groups all replies ahead of later
+  input nor invents or drops turns.
 
 The client 1.0 wire carries these mechanics inside payloads as defined by [C-42](go-core.md#client-service): optional per-event `stream` metadata and the `snapshot`, `resync` and `resync_required` kinds. `e2e/m1/topic-streams.json` crosses the production client socket and generated codec, projects decoded frames into the reducer, and checks duplicate snapshots/replay plus independent topic overflow. It proves the protocol and reducer boundary. The connection shell now automatically subscribes to its granted status topics and projects notifications into the interactive view, covered by `e2e/m1/tui-stream.json`; concrete conversation and result subscriptions still require the conversation view's discovery and focus state. The T-04 rule that a replayed approval rings no second bell also relies on this cursor/revision deduplication.
 
@@ -273,7 +278,7 @@ card focus; arrows select a result card. The composer keeps its draft when an
 overlay opens or connection status changes. An identical frame and cursor is
 not submitted to the renderer, and the plain display writes no duplicate frame.
 For the colour conversation screen, each new size reaches the cell renderer
-before its reflowed view, even if the view text is unchanged. Resizing keeps the
+before its reflowed view, even if the view text is unchanged. The connection owner's latest dimensions remain authoritative: late renderer startup size messages are discarded before they can resize the cell buffer. Resizing keeps the
 draft and redraws header, status and composer within the current row budget;
 cells from the previous dimensions must not survive as stale transcript rows.
 `e2e/m1/tui-resize.json` exercises 80x24 → 40x12 → 120x35 through a real PTY,
@@ -411,7 +416,8 @@ Settings are commands and labeled blocks, all requests to Core:
 - Command network: the standing grants, with revoke.
 - Channels: `/channels` lists connections and their bindings. `c` opens the masked Telegram token form; `p` requests a single-use pairing code to send to the bot in the platform's private chat; `r` refreshes Core state. `b` selects chat, optional topic, agent and scope before Enter submits the binding. An empty chat uses the paired private chat. Personal memory defaults on only for that private destination; another chat requires explicit opt-in. `u` selects a binding to revoke; `x` disconnects the connection. A token passes to Core once and is never shown.
 - Memory import: rehearsal report, run, promotion batches grouped, accept a whole group.
-- Agents: list, create, tune, delete. `/talk` opens the agent talk log: one line per exchange, keyed by exchange identity. Up/Down selects and Enter requests that exchange's ledger expansion; When the expansion has more content, Enter requests the next page; Esc returns to the list. `r` requests a fresh list without duplicating rows or losing an existing selected identity. The view shows typed mailbox state, outcome and needs-person state; it derives none of these from text.
+- Memory and agents: [memory and agent commands](#memory-and-agent-command-requests) provide explicit remember, correct, forget, list, create, choose, rename and delete. Tuning remains its own view. The agent talk log: one line per exchange, Enter expands.
+- Agent talk: `/talk` opens the agent talk log: one line per exchange, keyed by exchange identity. Up/Down selects and Enter requests that exchange's ledger expansion; When the expansion has more content, Enter requests the next page; Esc returns to the list. `r` requests a fresh list without duplicating rows or losing an existing selected identity. The view shows typed mailbox state, outcome and needs-person state; it derives none of these from text.
 - Expression and reply length budgets, command network grants, the developer-view switch and power settings.
 - Report a problem: the agent drafts it, the TUI shows the draft, and nothing is posted until the person confirms ([surfaces.md](surfaces.md#settings)).
 
@@ -517,6 +523,12 @@ admission, not turn completion; further typing can be sent while the turn runs.
 A refused send restores the draft. Connection states other than Live disable
 submission without discarding edits.
 Resizing preserves the draft and its cursor without submitting it.
+
+`e2e/m1/conversation-history-order.json` exercises queue and ordinary steering
+input during a held provider stream through an installed Core and a 100x30 TUI.
+It compares live and restored message identities, speakers, text and order,
+checks fresh TUI renders, and requires exactly two provider calls. A final-only
+response checks that restoration preserves its later first appearance too.
 
 - Paste arrives as one atomic message, is one undo step and has control sequences removed. The TUI never reads the host clipboard; paste is the terminal's.
 - Attachments are a strip above the composer and message parts that Core imports ([filesystem.md](filesystem.md#import-and-export)). The draft stays plain text.
@@ -764,3 +776,37 @@ removed and requires connection-only startup.
 Withdrawn without an id: the hand-off pane, which the agent talk log replaces, and the work-panel worker mirror, which no contract defines.
 
 Open points, each decided by its owner or by measurement: the side-pane width (S11); Korean table rendering (S10); the terminal list of the spike gate; image paste over SSH; how the shared list of slash commands travels (a schema matter); whether a copy by OSC 52 on an explicit key fits the clipboard rule of [surfaces.md](surfaces.md#launcher) and [non-competition.md](non-competition.md), which S5 measures for support; mouse support; locales beyond Korean and English; and non-competition evidence for the TUI on a device-OS install ([non-competition.md](non-competition.md)).
+
+### Memory and agent command requests
+
+T-14 exposes `/memory` and `/agents` in the conversation footer. Each opens a
+scrollable text block with its command syntax; Esc returns to the composer.
+These commands are intercepted before conversation input, including when their
+capability is absent or their arguments are invalid. A refused or unsupported
+operation is shown locally and never becomes a model prompt.
+
+- `/memory list [query]` lists current scoped items in pages of at most 1000 rows and 512 KiB of serialized item data, with stable ids,
+  content, holder, privacy scope and source event identities. `/memory` is its
+  empty-query form. `/memory next` requests the next page with the same agent and query; an invalidated cursor requires listing again.
+- `/memory remember [--holder=all|agent] [--scope=local|private|never-leaves] <text>`
+  records an explicit person statement through Core's existing memory writer.
+  Defaults are common knowledge (`all`) and `local`. `/memory correct <id> <text>`
+  supersedes that item with a newly sourced statement, retaining its scope and
+  holder. `/memory forget <id>` uses Core's recoverable removal flow; the next
+  recall and next model request exclude it. Results acknowledge committed ids.
+- `/agents` lists ids and names. `/agents create <name>` uses the LINA preset;
+  `/agents choose <id>` changes this client's conversation and memory focus;
+  `/agents rename <id> <name>` keeps the id; `/agents delete <id>` uses the
+  existing agent trash transition and ends its bindings. Selecting another
+  agent drops the old conversation display and subscriptions, while Core keeps
+  independent lanes. Deleting the selected agent selects the first remaining
+  list entry; an empty list stays available for creation. Initialization never
+  recreates a deleted default agent.
+
+These direct management requests express the person's own action. They do not
+answer an approval or question (T-04), bind a channel, or start an agent exchange.
+`agents` and `memory` are negotiated separately from conversation and accounts.
+Their transient blocks and command drafts are not persisted by the TUI.
+`e2e/m1/tui-memory-agents.json` exercises the installed Core, generated client
+protocol and real PTY TUI against a loopback Responses fixture, including scoped
+recall, correction, forget, agent identities, conversation selection and restart.

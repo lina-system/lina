@@ -214,6 +214,21 @@ The topic hub assigns sequence numbers only after coalescing, independently for 
 A subscription without a cursor gets the latest snapshot window. A cursor from another epoch, ahead of the topic, or older than the retained ring gets `resync` followed by that window. Otherwise, replay starts strictly after the cursor and precedes the live queue. The ring retains 1,024 committed frames and the snapshot retains 200 materialized items by stable item key, including accumulated text rather than only its last delta. Each subscription has its own bounded live queue (P: 256 frames). Overflow closes that subscription with a retained `resync_required` cause; other topics and other subscribers of the same topic continue. The cause is separate from the full queue. Snapshot and replay values are independent copies. The hub is in memory for one durable Core epoch; it is not conversation persistence or a substitute for reading older history.
 
 
+Conversation display order is durable separately from ledger append order. Before
+first publishing a message key, boot records its position in canon and serializes
+that write with publication. Later deltas, completion and card replacement retain
+the position. Publication uses the caller's context on live, stopped and startup
+paths; it does not require a running conversation lane. Restart resolves those
+keys through completed ledger messages and
+committed stopped/failed partials, then selects the latest display window in that
+order. Restored partials use the live reply filter, including card identity and
+turn provenance. Legacy partials retain their checkpoint insertion order. A
+position alone supplies no content and cannot invent a turn. The native
+ledger and model-context order remain unchanged. Records from before position
+tracking retain their existing ledger-based restore order; unavailable historical
+stream timing is never guessed. The queue/steering restart scenario is
+`e2e/m1/conversation-history-order.json` (T-03, T-05, T-10).
+
 The additive client 1.0 stream payloads implement this boundary. `subscribe` optionally names `topic`, an `after` cursor, and `active` (omitted means true; false unsubscribes and cannot carry `after`). Omitting `topic` preserves the previous reserved request shape. A fresh subscription answers with `snapshot`; an unavailable cursor answers with `resync` and then sends a `snapshot` notification. A retained cursor answers with `subscribe` carrying `active: true` and the replay endpoint, followed by the replay and then live notifications. An unsubscribe answers with `active: false`. Re-subscribing replaces only that connection's subscription to the named topic.
 
 A cursor payload is `{epoch, seq}` with the CP-02 epoch string and an exact unsigned 64-bit JSON integer sequence. Stream events retain their existing kind and payload, adding optional `stream: {topic, cursor, key, revision}` metadata; previously reserved display events also accept optional `text`. Revisions identify the item's last publication. A snapshot carries `topic`, `cursor`, `revocation_epoch` and `items`; each item carries its kind, stable key, revision and that kind's validated payload. `resync` and `resync_required` carry only the affected topic and current cursor. Mechanics never add fields to the envelope. Replay keeps its logical message id, derived from main, topic and cursor, and uses a new attempt id. Snapshots replace a window, and their revocation epoch comes from the owner of the projection.
@@ -355,9 +370,9 @@ Landing uses a stable material identity, keeps verified checks separate from mod
 - Counters: ceiling breaches, and internal vocabulary, ids, hashes and paths in the default view (a word list per language as data; patterns for ids, hashes and paths). The check never judges wording. A rewrite before showing is not built.
 - Tuning: the reactions job of Lachesis recognizes the person's reactions, and Core applies the contract's step as a setting change that records its evidence. The person edits budgets in settings.
 
-The installed conversation composes this filter for each provider output item, including final items without preceding deltas and history restored after restart. On a breach it publishes an existing `result` preview at the same conversation stream key, replacing the unfinished inline sentence; subsequent text updates the card's full text. The wire projection uses `summary` for the bounded prefix and `text` for Details, leaving the reserved result-body field absent. At successful turn completion, boot adapts the filter's generated draft into the existing single ledger admission batch with every complete source. The preview has a `view_of` relation and `result` scaffold label, so request assembly does not feed its storage JSON back as a second assistant reply. No second reply filter or result engine is introduced.
+The installed conversation composes this filter for each provider output item, including final items without preceding deltas and history restored after restart. On a breach it publishes an existing `result` preview at the same conversation stream key, replacing the unfinished inline sentence; subsequent masked text updates the card preview. Before streaming, the adapter applies the same masker as ledger admission, retaining possible credential prefixes across deltas; quoted text, structured JSON and private-key blocks wait for the final item. The wire projection uses `summary` for the bounded prefix and `text` for Details, leaving the reserved result-body field absent. Details carries at most 64 KiB of UTF-8 text plus a truncation notice, including for final and restored cards, so JSON escaping and envelope metadata fit below the RPC writer limit. Full masked source and card bodies remain in durable ledger materials. At successful turn completion, boot adapts the filter's generated draft into the existing single ledger admission batch with every complete source. The preview has a `view_of` relation and `result` scaffold label, so request assembly does not feed its storage JSON back as a second assistant reply. No second reply filter or result engine is introduced.
 
-The current installed adapter uses Korean counting and the shared TUI renderer at 80 columns. Client protocol 1.0 has no surface-width or reply-language fields; dynamic width negotiation and personalized budgets are not implemented by this adapter. The TUI displays the prefix and card title, opens the complete text with Ctrl+O, and refreshes an open card as further text arrives. `e2e/m1/reply-shape.json` covers the installed LONG-QA journey and restart; its runner also checks the exact line/character ceilings, wrapping and replies without a fitting sentence.
+The current installed adapter uses Korean counting and the shared TUI renderer at 80 columns. Client protocol 1.0 has no surface-width or reply-language fields; dynamic width negotiation and personalized budgets are not implemented by this adapter. The TUI displays the prefix and card title, opens the bounded Details preview with Ctrl+O, and refreshes an open card as further text arrives. `e2e/m1/reply-shape.json` covers the installed LONG-QA journey and restart; its runner also checks the exact line/character ceilings, wrapping and replies without a fitting sentence.
 
 **C-52 Typed results (new).** Contract: [host-protocol.md](host-protocol.md#typed-results), [conversation-and-memory.md](conversation-and-memory.md#results), [materials-and-knowledge.md](materials-and-knowledge.md#saving-a-result).
 
@@ -471,6 +486,8 @@ Scripted wires establish these adapter invariants, and clean-build tests establi
 **C-46 Grok adapter (new).** A Go Agent Client Protocol client over the `grok` command on stdio, best effort. The steps are `initialize`, session create with LINA tools handed as MCP servers, prompt, updates, permission requests routed to Core's approval path, and cancel. Telemetry and trace upload are switched off explicitly. Account state comes from a cheap authenticated call, not from the command's files.
 
 **C-47 Accounts, credentials and sign-in (new).**
+
+Memory and agent management capabilities remain available without a configured model route. They use the authenticated connection person and never change account ownership or sign-in state ([T-14](tui.md#memory-and-agent-command-requests)).
 
 ```go
 // internal/core/accounts
@@ -661,6 +678,12 @@ The compaction pass counts the complete provider request at each stage, with a s
 Auxiliary summary requests use the conversation model and reasoning effort, carry only the selected segment and its direct child summary in a fresh nonce envelope, and declare no tools. The fixed summary contract travels in a developer input item because auxiliary Responses requests omit the separate instructions field. A complete terminal response and all fixed summary fields are required. Stream failure, incomplete output or publication failure leaves the unresolved events in the request path and prevents dispatch. Continuations durably record the ended turn and original input reference before fitting, rebuild the packet and send the original input once. An oversized continuation returns `request_too_large`, sends nothing, and records complete and per-part sizes. These APIs attach through the loop transform and composition callbacks; no new client-protocol or TUI endpoint is introduced.
 `compaction.Builder` resolves authorized, masked canonical event bodies and the immediate child root before invoking the auxiliary summarizer. A completed preparation can be reused after new verbatim/current-turn events arrive only when its summarized sources, root and revocation epoch are unchanged; its publication frontier is refreshed and checked again at commit. The new node and its content-free compaction audit event commit together. `Expansion.Read`, exposed through the agent-bound `exec.ExpandTool`, pages source events in ledger order across a node’s descendants, reads full material revisions, preserves secret masks and refuses retracted, foreign or unavailable sources. Missing material bytes fail the page explicitly.
 
+`Builder.QueuePreparation` is an after-delivery composition hook. It measures the complete completed-turn request against the configured compaction threshold and selects the same older-history segment as the foreground pass, including the ended turn and retaining its user tail. It enqueues only locators, a canonical-source digest, the frontier and summary-configuration identity through the registered conversation job. It starts no timer or rollup loop. Core supplies the conversation model through `GeneratePreparation` as the job's Aux callback and `ApplyPreparation` as its transactional write rule. The worker uses the existing credential-free Aux/Apply protocol. The composition binds `GenerationRevision` to reasoning effort and other summary-route settings in addition to the model, prompt version and manager mode.
+
+Only a committed Apply receipt is a worker preparation; an Aux result alone is not visible to compaction. Apply requires the exact Core-generated result for that task. Its opaque ticket receipt and watermark commit together, without a summary node or request change. Derived summary text lives only in a bounded per-conversation memory slot; it never enters generic durable Aux or Apply records. Obsolete work is acknowledged as unusable so it cannot block the next queued task. Prepared reads never wait for a running worker: absent, discarded or mismatching results fall back to the ordinary summarizer. A restart or cache eviction loses the speculative text and falls back to on-demand summarization. Every read checks source identity, root id **and revision**, revocation epoch and summary configuration. New events retained verbatim can refresh the publication frontier. Publication checks that complete frontier again. The generic job schema and budget schema are supplied by the Core composition that registers the job; this package adds no migration or installed service.
+
+A demanded compaction may condense an existing root even when there are no new raw events to summarize. Its level is still one above the child root; the unchanged protected input remains beside it. Background preparation does not enqueue root-only rollups. Retraction rebuilds all affected levels from visible direct events and freshly rebuilt children, with a single replacement commit.
+
 The summary store exposes `Frontier`, `Publish`, `Node` and `Rebuild` as internal package operations. A frontier identifies the conversation's append-only ledger count and last event, current root id and revision, and revocation epoch. Publication checks it inside canon's fenced writer, then proves that child coverage, direct covered/skipped event ids and caller-supplied verbatim event ids partition the complete ledger frontier without gaps, duplicates or foreign events. Exact event rows in `sum_cover` represent the ranges without losing skipped-event reasons; direct event ownership and child ownership are unique. A later compaction extends the current root, with its level and event time bounds derived from provenance.
 
 An epoch advance clears the affected nodes' text and dropped-detail fields and marks them invalid, including ancestors, in the removal transaction. Reads refuse invalid, degraded or older-epoch nodes. `Rebuild` prepares the tree bottom-up from visible direct event locators and freshly rebuilt immediate children, runs the supplied summarizer outside transactions, and replaces all changed nodes in one transaction only if the frontier and epoch still match. It retains node ids and links, records retracted events as skipped, and advances node revisions. A failed summarizer or write leaves the entire tree unpublished or invalid. An unrelated revocation conservatively requires stale trees to be rebuilt before use, matching preparation snapshot epoch checks.
@@ -691,6 +714,65 @@ The memory store keeps the current item and immutable revision snapshots in cano
 **C-21 Person model (changed).** The views are those of [conversation-and-memory.md](conversation-and-memory.md#person-model). `recall_person` at depth 1 makes one auxiliary request over at most N items (P: 12), with citations checked against the retrieved set and capped at 10 s. Deeper work is a background run. The person brief and the maintenance pass are jobs for `moirai-worker` ([cognition-and-life.md](cognition-and-life.md#memory-jobs)). Duplicate clusters inside one subject use normalized equality, token overlap and, when available, embedding similarity; never across subjects.
 
 The `recall_person` tool requires a nonempty retrieval query alongside the question, so an omitted query cannot silently choose the most recent items. The initial executor uses a limit of 12 combined memory items and own-ledger hits, with depth 0 as the default. Depth 1 makes one cancellable auxiliary call with a 10-second deadline and no retries. Its structured sentences retain only citations to the retrieved id and revision; sentences left without citations are dropped. A depth above 1 returns the background-required outcome to the caller. The standing profile is an ephemeral view ordered by the latest committed revision, with line and tokenizer budgets supplied by assembly. These operations are callable Core/tool services; no memory operation is exposed by the current client protocol, so acceptance uses real canon and ledger package scenarios. The indexed memory matcher and the ledger search service are described in C-22.
+
+The memory-job increment exposes Core-owned preparation, pre-dispatch checks and
+`ExtractionApply`, `MaintenanceApply` and `BriefApply` callbacks in
+`internal/core/memory`. They register with the existing job API; the worker still
+reads immutable tasks and submits their results through `Apply`. The composing
+schema owner installs `memory.JobsSchema` alongside `jobs.Schema` and the shared
+budget schema in a numbered migration. Worker startup never migrates canon.
+These are package and job-socket capabilities; installation and conversation
+composition select their schedules and model bindings. No new client command or
+TUI memory screen is introduced.
+
+Extraction scans a bounded ledger prefix for one agent, retaining the source
+cursor and revocation epoch. Only canonical person events enter an utterance;
+replay and `view_of` copies do not trigger another extraction. The configurable
+burst window is measured from the first event, and a non-person turn or a
+conversation change breaks it. Empty eligible batches require no model task.
+Core checks the prepared source text, visibility and model scope before dispatch,
+and Apply rechecks the epoch, allowed evidence set and normal memory-write rules.
+All items and the task watermark commit together; a failed batch publishes none.
+If the queued source snapshot becomes obsolete through revocation or tightened
+scope, the model callback returns an empty result with zero usage and Apply
+consumes the task without writing items. The scheduler rebuilds its replacement
+from the old source cursor against current canon, retaining eligible events.
+Obsolescence is decided before the first write; malformed current proposals and
+write failures still roll back the batch.
+Common equal statements merge evidence and ordinary recall hides each predecessor
+in a supersession chain.
+
+Maintenance reads one exact holder, including `all` for the common pass. Its
+editable choice is revision-checked and defaults to no allowed actions. It can
+clear a standing flag, merge normalized-equal duplicates or classify exclusively
+automated evidence only when that action is pre-authorized at commit. A merge
+preserves evidence and prior revisions and retracts the duplicate; subject,
+holder, scope, kind and validity boundaries are never crossed. Token Jaccard
+overlap of 0.8 (P), without configured embeddings, produces a proposal only.
+Expired and superseded items retain history. Instruction-like standing text is
+flagged with a conservative prefix detector; this is a hygiene heuristic, not an
+authorization boundary. Unanswered proposals expire after seven days (P), are
+not renewed for an unchanged finding, and reads omit proposals for obsolete item
+revisions. The pass emits at most one short notice for new proposals or applied
+changes, and no notice for a no-op. A notice callback writes in the same Apply
+transaction and may announce success only after commit.
+
+A person-brief task is prepared after delivery from at most twelve readable
+person items, standing preferences and explicitly selected recent person events.
+It is derived state scoped to the agent and person. Every surviving sentence
+cites a source from that task. Pre-dispatch and publication checks reject a
+superseded generation, changed source revision, changed scope or revocation
+epoch. An obsolete brief task returns an empty result without a model call or
+charge; Apply consumes that task without publishing, allowing the consecutive
+watermark to reach its replacement. Other failures remain failures. Empty output
+from a current task increases the next eligible turn by
+`min(base cadence + empty streak, base cadence * 8)`; useful output resets the
+streak. A ready-only read requires the same topic, still-valid evidence and a
+turn age no greater than twice the base cadence. It never waits or calls a model.
+An Aux call whose outcome is unknown retains the job API's pending reservation
+and is not silently retried. Synthetic package tests and
+`e2e/m1/memory-jobs.json` exercise these operations with the real worker binary and
+Core job socket; model quality and installed scheduling remain composition concerns.
 
 **C-22 Korean search (changed).** FTS5 with the trigram tokenizer for ledger and memory, plus a Hangul bigram posting table for words of two syllables. The acceptance set of the contract, by id, is a particle-attached three-syllable word and a two-syllable word, on the ledger (imported conversations included) and on memory. Each index records its tokenizer and fallback. Vectors are derived data in sqlite-vec when an embedding endpoint is configured.
 
@@ -725,6 +807,17 @@ Sidecars are regular files read within the handed-over root and copied exclusive
 
 Fixtures contain synthetic rows in independently reconstructed layouts matching the registered SQLite metadata, including FTS hidden and shadow columns and the two known host views. The original schema exports are not stored in the repository. No Honcho API description is registered: its public reader refuses the source before network access until a published description is obtained and registered. That registration waits for the owner to supply the Honcho address and read credential at import time. The synthetic OpenAPI fixture tests the internal HTTP mechanism only and cannot enable the public reader. These primitives expose no TUI or client-protocol operation; the later import stages provide that entry point.
 
+
+The staged importer prepares all registered SQLite rows and confirmed profile maps before a canon write. LCM messages retain numeric source order, host copies join by profile-local lineage and UID (a matching payload version stays distinct), and host-only rows follow. Compression lineage stops at explicit fork, delegation and reset markers. Honcho matching considers every matched host/LCM session copy; a unique same-session, same-role text prefix within 60 seconds is preferred, then unique exact text in that session. Ambiguous matches become standalone `honcho-only` events. Matching never supplies person proof; the existing provenance classifier runs on the complete copy set.
+
+`canon.ImportSchema` is an explicit schema fragment for the optional import host, appended after that host's existing migrations. It does not renumber the default Core migrations or enable an import command. The prepared plan applies stages 3–8 in one fenced transaction per conversation: events and relations, sidecar material records, Honcho messages, legacy summary records and the remaining history. References and per-column sensitivity spans commit with their records. Unsealed events, relations and event spans live in `import_event`, `import_event_relation` and `import_event_span`, outside `conv_event` and every native evidence view. The later seal publishes those stable event identities into the live ledger; staging alone cannot feed live reads or person-memory extraction. Legacy summaries remain outside the native summary tree, and histories never create memory. Cross-conversation links order dependent conversations after their targets; a dependency cycle is refused before writes. A failed conversation rolls back its records, references and receipt, while earlier committed conversations can be resumed.
+
+A `legacy_ref` stores the full source namespace, canonical row hash, original batch/time, preserved typed fields and the name of any field mapped to the canonical record body. The reverse mapper combines those fields with the adopted body; it reads neither the source nor a cached snapshot. SQLite NULL, integer, real, text and blob remain distinct; text/blob bytes use base64 inside the typed representation, integers retain decimal precision, and the canonical hash is SHA-256 over sorted-key JSON. Reconciliation checks every mapped row in both directions and reports per-table snapshot rows, mapped rows, distinct destinations and references. Excluded indexes, views and operational tables retain their counts and omission reasons. An unchanged conversation manifest returns without writes, even under another batch id; changed source rows, attribution or destinations conflict rather than silently rewriting an imported range.
+
+Present sidecars require the Core-owned assets material writer. Preparation syncs the verified bytes and a recovery marker; adoption inserts native material metadata and links its identity/revision to the staged output event in the same transaction. Original source fields remain reversible. The host closes the plan after its enclosing transactions; rollback removes unadopted bytes, and committed native material reads verify the stored digest. Repeating an already adopted conversation discards unused preparations and adds no material. Missing sidecars remain explicitly unavailable.
+
+The deterministic Moirai tasks carry only a conversation identity and manifest hash. Core's registered `ApplyJob` validates the task and worker echo against its prepared plan, committing the conversation with the existing job receipt and watermark. The M1 import scenario uses the real worker and Unix job service. No model or source credential reaches the worker. Live Honcho page decoding remains gated on the missing registered API description; internal synthetic adapter records exercise the Honcho stages without bypassing that gate. Staged ranges are not queued for the native search backfiller. Final verification, publication through `import_sealed`, a backup and optional promotion remain the next import increment (#118), not a consequence of a successful staging job.
+
 ## Plugins, channels and exchanges
 
 **C-34 MCP host and plugin catalog (changed).** Contract: [integrations.md](integrations.md#plugins). `mcphost` uses the pinned official Go SDK and implements the [host](integrations.md#host), the [registry](integrations.md#registry) and the [OAuth flow](integrations.md#oauth-for-mcp-servers). Design points:
@@ -736,7 +829,7 @@ Fixtures contain synthetic rows in independently reconstructed layouts matching 
 - The catalog is a signed static file (JSON plus a detached signature, the key carried by the release), replaced only by a newer version with a valid signature.
 - First-party GitHub: Core's own reads use `gh` as a child with fixed arguments (`ghclient`).
 
-**C-27 Channel gateway (changed).** Contract: [integrations.md](integrations.md#channels), [main-authority.md](main-authority.md#channels). One adapter per platform sits behind the contract's boundary.
+**C-27 Channel gateway (changed).** TUI agent choice is client focus only and does not rebind channels; deleting an agent uses the store's existing binding removal. Memory scope comes from authenticated Core selection, not a display label ([T-14](tui.md#memory-and-agent-command-requests)). Contract: [integrations.md](integrations.md#channels), [main-authority.md](main-authority.md#channels). One adapter per platform sits behind the contract's boundary.
 
 ```go
 // internal/core/gateway
@@ -829,7 +922,7 @@ The outbound queue retains the ledger reference and adapter-shaped parts. It req
 
 Package scenarios use real canon and SIGKILL barriers before admission commit, after commit and during a send. This increment adds no TUI or Core-protocol operation; platform pollers, credentials, channel approval interactions, live turn composition and app delivery views attach in their owning increments. No channel scenario can yet be driven through the #34 protocol harness.
 
-**C-25 Agent exchanges (changed).** Contract: [conversation-and-memory.md](conversation-and-memory.md#agent-exchanges).
+**C-25 Agent exchanges (changed).** Client agent selection addresses an existing agent id in the one Core; it starts no exchange and creates no per-agent engine. Management uses the existing agent store and shared conversation flow ([T-14](tui.md#memory-and-agent-command-requests)). Contract: [conversation-and-memory.md](conversation-and-memory.md#agent-exchanges).
 
 - Table `exch_msg(delivery_id, exchange_id, from, to, state)` with the mailbox states of the contract. Delivery is at least once, deduplicated by delivery id.
 - The asker runs the check it named on the typed hand-off.

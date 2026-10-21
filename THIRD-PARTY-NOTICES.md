@@ -17,6 +17,8 @@ Source: https://github.com/plastic-labs/honcho, public comparison commit `607438
 
 Scope: peers, peer cards, observations with premises and sources, conclusions with provenance, dialectic queries, session summaries and asynchronous derivation. LINA maps these to ledger evidence, revisioned memory items, generated profile views and Moirai jobs.
 
+The staged importer also references the Hermes client’s `session.py` message-author routing and `tests/test_turn_author_peers.py`, preserving per-copy authorship evidence and independently enforcing LINA’s non-person defaults.
+
 Licenses differ within the reference repository:
 
 - The Python SDK (`honcho-ai` 2.7.0) declares **Apache-2.0** in its [package metadata](https://github.com/plastic-labs/honcho/blob/607438d20c408575d1c9257f325c4885da871e82/sdks/python/pyproject.toml). Its peer and conclusion APIs are references for this design. The Apache License, Version 2.0 is available in [LICENSE](LICENSE).
@@ -53,7 +55,9 @@ Credit: Stephen Schoettler and the LCM-X contributors.
 Source: https://github.com/electricsheephq/lcm-x, supplied installation commit `709099b3a397a7893a7abae8802ebe7bf605f79e` (v0.28.0). The inspected modules and license match that revision; `tools.py` contains expand and describe at this revision.
 License: **MIT** ([upstream license](https://github.com/electricsheephq/lcm-x/blob/709099b3a397a7893a7abae8802ebe7bf605f79e/LICENSE)).
 
-Scope: lossless raw storage, depth-ranked summary DAGs, stub-first compaction, externalized outputs, exact-reference retrieval and session lineage. LINA maps these to its one ledger, derived summary tree, materials and evidence-bearing recall. No upstream source is vendored or modified.
+The staged Hermes importer in `internal/addons/importer/hermes` also derives profile-local UID/lineage and canonical-versus-version behavior from `host_uid.py` and its reference tests at this revision. It independently implements LINA transactions and reverse mapping in Go.
+
+Scope: lossless raw storage, depth-ranked summary DAGs, stub-first compaction, externalized outputs, exact-reference retrieval and session lineage. The prepared-summary implementation also references `leaf_prep.py` and its background preparation tests for source/configuration fingerprints, deferred promotion and stale-work rejection, and `dag.py` with its source traversal tests for depth-ranked provenance. The Go implementation uses Core's job receipts and revocation fences; it does not copy upstream runtime code or scheduled condensation sweeps. LINA maps these to its one ledger, derived summary tree, materials and evidence-bearing recall. No upstream source is vendored or modified.
 
 ```text
 MIT License
@@ -1229,6 +1233,40 @@ Telegram adapter and gateway: protected code formatting, fence-aware message
 splitting, flood-wait/backoff handling, idempotent edits, callback authorization
 and loop prevention. The implementation uses Go and LINA's durable admission
 and delivery contracts; no Python implementation is included.
+
+```text
+MIT License
+
+Copyright (c) 2025 Nous Research
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## Hermes Honcho plugin
+
+Source: https://github.com/plastic-labs/honcho/tree/607438d20c408575d1c9257f325c4885da871e82/hermes-plugin-honcho. License: MIT.
+
+LINA's Go memory jobs adapt the plugin's separation of human and bot evidence,
+asynchronous batch behavior, person-context result expiry and bounded additive
+backoff. Source and test observations are recorded in
+`internal/core/memory/REFERENCE.md`. Honcho server derivation is a behavioral
+reference only; no server implementation or Python runtime is included.
 
 ```text
 MIT License

@@ -234,8 +234,9 @@ func TestM2InstalledPersonaGrowth(t *testing.T) {
 	// Growth control remains usable without configuring a model account/route.
 	core = start(false)
 	c = connect()
+	operation = "growth_notices"
 	for {
-		if _, err = c.Agent(h.ctx, protocol.AgentRequest{}); err != nil {
+		if _, err = c.Agent(h.ctx, protocol.AgentRequest{Operation: &operation}); err != nil {
 			t.Fatal(err)
 		}
 		ready, err := c.Receive(h.ctx)

@@ -175,6 +175,7 @@ type ToolResult struct {
 type EventKind uint8
 
 const (
+	// Delta contains visible output text only, never tool arguments or input.
 	Delta EventKind = iota + 1
 	ItemDone
 	ToolCallReady

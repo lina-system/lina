@@ -198,7 +198,7 @@ One connection reaches every agent of the main. A conversation kind, and a quest
 
 Version 1.0 of `client` has at least these kinds: `hello` and `welcome`; starting a conversation; sending input; interrupting; reading history; subscribing to events; the stream events, which are an output delta, an item done and the turn state; an approval request and its answer; a question and its answer, where a question may carry a flat form (the name of the asking plugin and fields that are text, a number, yes or no, or a choice) and its answer is accept with the values, decline or cancel; a result, and the requests to read, edit and save one; the running list of background runs and delegated tasks with its updates, a stop and a follow-up; the background notice that delivers a landing into a conversation; the progress view with its changes and its digest; the waiting list, its changes and the answer to a row; a request for Details and its result; a readiness failure that names the preparation step that failed ([conversation-and-memory.md](conversation-and-memory.md)); agent management requests and their results; work record requests and their results; account requests and their results; memory requests and their results, including the progress of an import and a promotion batch; channel management requests, their results and channel state notices; agent talk log entries and their expansion; and an error. The Approval, Agent management, Work records, Memory, Accounts, Results, Progress, Waiting list, Details, Channels and Agent exchanges capabilities are part of version 1.0. Their payload fields are set in the schema (see Deferred).
 
-The `growth` capability (1.0) uses `agent_request` and `agent_result`. A request selects `growth_adopt`, `growth_notices` or `growth_undo` with `operation` and the bound `agent_id`. Adopt carries `candidate` (`id`, decimal-string `expected` revision, complete `snapshot`, and one-line `notice`); undo carries the decimal-string growth `revision`. Other operation-specific fields are refused. The result contains `agent_id`, current decimal-string `revision`, and `notices`, each with its revision, one-line notice and `undo_revision` handle. Unknown fields, including other persona layers and a person selector, are refused. Empty legacy reserved shapes still decode but are not admitted operations. Mutations require an eligible decider; all operations bind the connection's person and the installed agent and require capability negotiation. A stale persona write returns `stale_revision`; invalid input returns `malformed`, a foreign agent returns `out_of_scope`, and unavailable storage returns `unavailable`. Committed learning lines also enter the ordinary conversation stream and history. The agent-bound undo tool uses Core's existing effect admission. Growth is independent of a model account and remains available when conversation has no route.
+The `growth` capability (1.0) uses `agent_request` and `agent_result`. These kinds also serve agent management; each operation requires its own negotiated capability (`growth` for growth operations, `agents` for management), and fields belonging to the other operation family are refused. A request selects `growth_adopt`, `growth_notices` or `growth_undo` with `operation` and the bound `agent_id`. Adopt carries `candidate` (`id`, decimal-string `expected` revision, complete `snapshot`, and one-line `notice`); undo carries the decimal-string growth `revision`. Other operation-specific fields are refused. The result contains `agent_id`, current decimal-string `revision`, and `notices`, each with its revision, one-line notice and `undo_revision` handle. Unknown fields, including other persona layers and a person selector, are refused. Empty legacy reserved shapes still decode but are not admitted operations. Mutations require an eligible decider; all operations bind the connection's person and the installed agent and require capability negotiation. A stale persona write returns `stale_revision`; invalid input returns `malformed`, a foreign agent returns `out_of_scope`, and unavailable storage returns `unavailable`. Committed learning lines also enter the ordinary conversation stream and history. The agent-bound undo tool uses Core's existing effect admission. Growth is independent of a model account and remains available when conversation has no route.
 
 
 
@@ -363,3 +363,28 @@ Rules:
 - The JSON Schema to TypeScript type generator: chosen before the first LINA app work ([surfaces.md](surfaces.md#app-front-end)).
 - Request timeouts on the `client` and `node` connections: set by measurement during implementation acceptance of each connection.
 - The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds: set in the schema by the implementation issue that ships results.
+
+### Memory and agent management payloads
+
+Client 1.0 adds optional fields to the previously reserved `memory_request`,
+`memory_result`, `agent_request` and `agent_result` payloads. The independent
+`memory` and `agents` capabilities are version 1.0. Empty legacy shapes decode
+but an operation without its required arguments is refused as `malformed`.
+The generated schema is authoritative for field types.
+
+Memory operations are `list`, `remember`, `correct` and `forget`, scoped to an
+`agent_id` and the connection's person. `item_id` identifies a correction or
+forget target; `text` holds a query or explicit statement; optional `holder`
+and `scope` apply only to remember. List accepts optional `after` (the last visible item id), and returns optional `next` for continuation. Pages bound serialized content plus evidence to 512 KiB, leaving room below the 1 MiB transport frame. A cursor is checked within the same authenticated scope before applying the result limit. Result items carry id, revision, content,
+holder, scope and canonical evidence identities. Correct returns the new id and
+retains the target's holder and scope. Forget returns only the removed id.
+Agent operations are `list`, `create`, `choose`, `rename` and `delete`; requests
+carry `agent_id` and/or `name` as appropriate, and results return the affected id
+and current list. Choose then discovers that agent's history with `history_get`.
+
+Topic subscriptions and each stream delivery recheck that the addressed agent is still active. Deleted agent history cannot be recovered through a topic prefix.
+
+Mutating management replies use `applied` only after the existing Core service
+commits. Listing and choosing use `none`. Every reply is correlated to its
+request; neither client reconnect nor navigation repeats a mutation. Management
+requests retain conservative mutation admission during Core recovery.

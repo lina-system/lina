@@ -270,10 +270,13 @@ func (a *Adapter) Stream(ctx context.Context, l lease.Lease, r provider.Request)
 					s.mu.Unlock()
 				}
 				switch event.Type {
-				case "response.output_text.delta", "response.function_call_arguments.delta", "response.custom_tool_call_input.delta":
+				case "response.output_text.delta":
 					if !s.send(ctx, provider.Event{Kind: provider.Delta, Index: event.Index, Delta: event.Delta}) {
 						return ctx.Err()
 					}
+				case "response.function_call_arguments.delta", "response.custom_tool_call_input.delta":
+					// Tool input is authoritative only in the done item. It must
+					// never enter the assistant display or failed partial history.
 				case "response.output_item.done":
 					if seen[event.Index] {
 						return classify(wireFailure{}, 0, id)

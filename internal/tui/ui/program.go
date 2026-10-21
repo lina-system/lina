@@ -21,7 +21,7 @@ import (
 
 // Offer only rendered families; the conversation discovers and maintains its
 // concrete conversation/results subscriptions after welcome.
-var shellCapabilities = []protocol.Capability{{Name: "exchanges", Version: "1.0"}, {Name: "channels", Version: "1.0"}, {Name: "accounts", Version: "1.0"}, {Name: "sign_in_relay", Version: "1.0"}, {Name: "conversation", Version: "1.0"}, {Name: "running", Version: "1.0"}, {Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}}
+var shellCapabilities = []protocol.Capability{{Name: "agents", Version: "1.0"}, {Name: "memory", Version: "1.0"}, {Name: "exchanges", Version: "1.0"}, {Name: "channels", Version: "1.0"}, {Name: "accounts", Version: "1.0"}, {Name: "sign_in_relay", Version: "1.0"}, {Name: "conversation", Version: "1.0"}, {Name: "running", Version: "1.0"}, {Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}}
 
 type clientPeer struct{ client *clientapi.Client }
 
@@ -119,6 +119,7 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 		}
 	}}
 	defer signin.close()
+	management := &managementSession{model: model, pending: make(map[string]protocol.Payload)}
 	var peer connectionPeer
 	pending := make(map[string]state.SendRequest)
 	channelPending := make(map[string]uint64)
@@ -135,6 +136,8 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 		if begin, ok := message.(shellBegin); ok && begin.Generation > model.generation {
 			signin.close()
 			clear(pending)
+			clear(management.pending)
+			model.conversation.pager = textPager{}
 			clear(channelPending)
 			clear(talkPending)
 			model.conversation.id = ""
@@ -176,12 +179,21 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 				if terminal && display.interactive && display.styles.options.Profile != Monochrome && display.renderer == nil {
 					display.renderer = startTerminalRenderer(parent, rawTerminalWriter{display.output}, model.size.Width, model.size.Height)
 				}
-				if client, ok := peer.(clientPeer); ok && model.hasCapability("conversation") {
+				if client, ok := peer.(clientPeer); ok && model.hasCapability("conversation") && len(model.content.Agents) > 0 {
 					_, err := client.client.History(ctx, protocol.HistoryGet{})
 					if err != nil {
 						return err
 					}
 				}
+			}
+			return nil
+		}
+		if request, ok := message.(shellManagement); ok {
+			if request.Generation != model.generation {
+				return nil
+			}
+			if client, ok := peer.(clientPeer); ok {
+				return management.request(ctx, client.client, request.Request)
 			}
 			return nil
 		}
@@ -248,6 +260,14 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 				var decoder protocol.ClientDecoder
 				e, err := decoder.Decode(frame.Data)
 				if err == nil && e != nil {
+					if client, ok := peer.(clientPeer); ok {
+						if consumed, err := management.response(ctx, client.client, *e); consumed {
+							if err != nil {
+								return err
+							}
+							return display.showShell(model)
+						}
+					}
 					if e.ReplyTo != nil {
 						if attempt, ok := talkPending[*e.ReplyTo]; ok {
 							delete(talkPending, *e.ReplyTo)
