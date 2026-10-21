@@ -84,10 +84,11 @@ func TestCoreProcess(t *testing.T) {
 							t.Fatalf("unexpected welcome: %s", line)
 						}
 						// A welcomed connection remains usable, but grants no operations.
+						// Reads reach capability admission in both RECOVERING and READY.
 						request.Params.MessageID = "after-welcome"
 						request.Params.Epoch = epoch
-						request.Method = "input"
-						request.Params.Kind, request.Params.Payload = protocol.KindInput, protocol.Input{}
+						request.Method = "history_get"
+						request.Params.Kind, request.Params.Payload = protocol.KindHistoryGet, protocol.HistoryGet{}
 						if err := json.NewEncoder(conn).Encode(request); err != nil {
 							t.Fatal(err)
 						}
