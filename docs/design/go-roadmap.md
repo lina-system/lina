@@ -186,6 +186,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 - Depends on: G1-02, G1-06, G1-08. Design refs: C-01, C-02; [runtime.md](runtime.md#the-lina-command).
 
 **G1-24 Restart request and fence.** Durable request, Fence, `when_idle`, `drain`, exit 75.
+- #92 implements the durable control-file receipt, shared admission fence and lifecycle client capability. Tests cover in-flight effects, Unknown, SIGKILL boundaries, restore isolation and hot reload. `e2e/m1/restart.json` drives real Core requests, exit 75, cleanup and discharge at the replacement's higher READY epoch.
 - Done when: a request does not exit while a fake effect is in flight; unknown idle blocks; a request survives a crash and reports owed until discharged; a restore cannot resurrect it; a settings, persona or binding change mints no epoch.
 - Depends on: G1-02, G1-18, G1-23. Design refs: C-05 to C-07; [runtime.md](runtime.md#updates).
 

@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
+	"github.com/thisisjun786/lina/kit/lease"
 )
 
 var (
@@ -77,6 +78,13 @@ func (x *Restarter) Status() ctlfiles.RestartRequest {
 	x.mu.Lock()
 	defer x.mu.Unlock()
 	return x.request
+}
+
+// HoldReply prevents a requested restart from closing the client connection
+// before its durable acknowledgment has been written. The transport releases
+// this lease on both successful writes and disconnects.
+func (x *Restarter) HoldReply(ctx context.Context) (lease.Lease, error) {
+	return x.registry.Acquire(ctx, lease.Activity{Class: lease.Live, Reason: "restart acknowledgment"})
 }
 
 func (x *Restarter) save(request ctlfiles.RestartRequest) error {

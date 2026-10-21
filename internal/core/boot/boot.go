@@ -19,6 +19,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
+	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/kit/sandbox"
 )
 
@@ -88,12 +89,16 @@ type Services struct {
 	// SandboxReady receives the same probed wrapper used by shell/file handlers.
 	// A failed probe disables those handlers only; it does not stop recovery.
 	SandboxReady func(*sandbox.Sandbox)
+	// Lifecycle shares the locked restart controller with composed services.
+	// External calls must acquire their activity through Config.Activities.
+	Lifecycle func(*lifecycle.Restarter)
 }
 type Config struct {
 	StateRoot   string
 	Socket      string
 	PeerSeenMax uint64
 	Services    Services
+	Activities  *lifecycle.ActivityRegistry
 	// AfterStep observes a completed boundary. It is used by deterministic crash
 	// tests and is never configured through command arguments or the environment.
 	AfterStep func(Step, Snapshot) error
@@ -119,6 +124,7 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	}
 	var stack []func(context.Context) error
 	sentinelWritten := false
+	plannedRestart := false
 	defer func() {
 		for i := len(stack) - 1; i >= 0; i-- {
 			phase, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -129,6 +135,9 @@ func Run(ctx context.Context, cfg Config) (result error) {
 			result = store.RemoveSentinel()
 		}
 		result = errors.Join(result, store.Close())
+		if result == nil && plannedRestart {
+			result = lifecycle.ErrRestart
+		}
 	}()
 	snapshot := Snapshot{State: Starting}
 	boundary := func(step Step) error {
@@ -219,6 +228,17 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	if err := boundary(EpochMinted); err != nil {
 		return err
 	}
+	activities := cfg.Activities
+	if activities == nil {
+		activities = lifecycle.NewRegistry(nil)
+	}
+	restarter, err := lifecycle.OpenRestarter(store, snapshot.Epoch, activities)
+	if err != nil {
+		return err
+	}
+	if cfg.Services.Lifecycle != nil {
+		cfg.Services.Lifecycle(restarter)
+	}
 	var canon Canon
 	if cfg.Services.OpenCanon != nil {
 		canon, err = cfg.Services.OpenCanon(ctx, snapshot.Epoch)
@@ -303,7 +323,7 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	serving, cancelServe := context.WithCancel(ctx)
 	done := make(chan error, 1)
 	go func() {
-		done <- clientsrv.Serve(serving, listener, clientsrv.Identity{MainID: recovery.MainID, Epoch: strconv.FormatUint(snapshot.Epoch, 10), Recovering: recovering.Load})
+		done <- clientsrv.Serve(serving, listener, clientsrv.Identity{MainID: recovery.MainID, Epoch: strconv.FormatUint(snapshot.Epoch, 10), Recovering: recovering.Load, Restart: restarter})
 	}()
 	stack = append(stack, func(phase context.Context) error {
 		cancelServe()
@@ -335,6 +355,9 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		cfg.Services.SandboxReady(box)
 	}
 	if len(recovery.Halt) == 0 && ctx.Err() == nil {
+		if err := restarter.Ready(); err != nil {
+			return err
+		}
 		snapshot.State = Running
 		recovering.Store(false)
 		// Cancellation at READY is an orderly stop, including in test observers.
@@ -342,9 +365,24 @@ func Run(ctx context.Context, cfg Config) (result error) {
 			return err
 		}
 	}
+	restartContext, stopRestart := context.WithCancel(ctx)
+	restartDone := make(chan error, 1)
+	go func() { restartDone <- restarter.Run(restartContext) }()
+	// Join the observer before closing any of the stores it uses.
+	defer func() { stopRestart(); <-restartDone }()
 	select {
 	case <-ctx.Done():
 		return nil
+	case err := <-restartDone:
+		restartDone <- err
+		if errors.Is(err, lifecycle.ErrRestart) {
+			plannedRestart = true
+			return nil
+		}
+		if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+			return nil
+		}
+		return err
 	case err := <-done:
 		// Leave one result for the reverse shutdown stack.
 		done <- err
@@ -403,6 +441,9 @@ func readControls(store *ctlfiles.Store) (Recovery, error) {
 		case "halt.json":
 			recovery.Halt = data
 		case "lifecycle.json":
+			if _, err := store.ReadRestart(); err != nil {
+				return recovery, err
+			}
 			recovery.Lifecycle = data
 		}
 	}

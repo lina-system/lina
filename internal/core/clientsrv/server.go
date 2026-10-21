@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
+	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -31,6 +32,7 @@ type Identity struct {
 	MainID     string
 	Epoch      string
 	Recovering func() bool
+	Restart    *lifecycle.Restarter
 }
 
 // Listen creates a socket at mode 0600 in a private directory. An existing
@@ -138,7 +140,7 @@ func Serve(ctx context.Context, listener *net.UnixListener, identity Identity) e
 				delete(connections, conn)
 				mu.Unlock()
 			}()
-			serveConn(conn, identity)
+			serveConn(ctx, conn, identity)
 		}()
 	}
 }
@@ -156,11 +158,13 @@ type response struct {
 	Result  protocol.Envelope `json:"result"`
 }
 
-func serveConn(conn net.Conn, identity Identity) {
+func serveConn(ctx context.Context, conn net.Conn, identity Identity) {
 	reader := bufio.NewScanner(conn)
 	reader.Buffer(make([]byte, 4096), maxFrameBytes)
 	writer := json.NewEncoder(conn)
 	welcomed := false
+	clientID := ""
+	restartGranted := false
 	for reader.Scan() {
 		var req request
 		if err := json.Unmarshal(reader.Bytes(), &req); err != nil || req.JSONRPC != "2.0" {
@@ -189,8 +193,20 @@ func serveConn(conn net.Conn, identity Identity) {
 		}
 		answer := reply(envelope, identity)
 		closeAfter := false
+		finishReply := func() {}
 		hello, isHello := envelope.Payload.(protocol.Hello)
 		switch {
+		case welcomed && (envelope.Kind == protocol.KindRestartRequest || envelope.Kind == protocol.KindRestartGet):
+			switch {
+			case req.Method != string(envelope.Kind) || envelope.Sender.Party != protocol.PartyClient || envelope.Sender.ID != clientID:
+				refuse(&answer, protocol.ErrorMalformed, "request identity or method differs from the connection")
+			case envelope.Epoch != identity.Epoch:
+				refuse(&answer, protocol.ErrorStaleEpoch, "request belongs to another Core epoch")
+			case !restartGranted:
+				refuse(&answer, protocol.ErrorCapabilityNotNegotiated, "lifecycle capability was not negotiated")
+			default:
+				finishReply = restartReply(ctx, identity, envelope, &answer)
+			}
 		case welcomed && identity.Recovering != nil && identity.Recovering():
 			refuse(&answer, protocol.ErrorUnavailable, "Core is recovering")
 		case welcomed:
@@ -202,14 +218,22 @@ func serveConn(conn net.Conn, identity Identity) {
 			refuse(&answer, protocol.ErrorUnsupportedCombination, "Core supports client 1.0 only")
 			closeAfter = true
 		default:
+			caps := []protocol.Capability{}
+			restartGranted = identity.Restart != nil && slices.Contains(hello.Capabilities, lifecycleCapability)
+			if restartGranted {
+				caps = append(caps, lifecycleCapability)
+			}
 			answer.Kind = protocol.KindWelcome
 			answer.Payload = protocol.Welcome{
-				ProtocolVersion: "1.0", Capabilities: []protocol.Capability{},
+				ProtocolVersion: "1.0", Capabilities: caps,
 				MainID: identity.MainID, Epoch: identity.Epoch, PersonID: personID, Agents: []protocol.Agent{},
 			}
 			welcomed = true
+			clientID = hello.ID
 		}
-		if err := writer.Encode(response{JSONRPC: "2.0", ID: req.ID, Result: answer}); err != nil || closeAfter {
+		err := writer.Encode(response{JSONRPC: "2.0", ID: req.ID, Result: answer})
+		finishReply()
+		if err != nil || closeAfter {
 			return
 		}
 	}

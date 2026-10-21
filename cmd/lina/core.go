@@ -12,6 +12,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/boot"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
+	"github.com/thisisjun786/lina/internal/core/lifecycle"
 )
 
 func runCore(args []string) int {
@@ -34,6 +35,9 @@ func runCore(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 	if err := boot.Run(ctx, boot.Config{StateRoot: *root, Socket: *socket}); err != nil {
+		if errors.Is(err, lifecycle.ErrRestart) {
+			return 75
+		}
 		fmt.Fprintf(os.Stderr, "lina core: %v\n", err)
 		if errors.Is(err, ctlfiles.ErrLocked) {
 			return 69

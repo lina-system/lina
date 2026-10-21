@@ -24,6 +24,7 @@ var clientKinds = []string{
 	"agent_talk_get", "agent_talk", "agent_talk_entry", "agent_talk_expand", "agent_talk_subscribe",
 	"connected", "disconnected", "task_status", "run_status", "task_cancel", "multi_task_control",
 	"sign_in_listen", "sign_in_listening", "sign_in_open", "sign_in_redirect",
+	"restart_request", "restart_get", "restart_status",
 }
 
 func clientMessage(t *testing.T, kind string, payload any) map[string]any {
@@ -55,6 +56,7 @@ func roundTrip(t *testing.T, value map[string]any) Envelope {
 
 func concretePayloads() map[string]any {
 	return map[string]any{
+		"restart_status":     map[string]any{"owed": false},
 		"conversation_start": map[string]any{"agent_id": "agent-example"},
 		"approval_request":   map[string]any{"choices": []any{"once", "deny", "always_allow"}},
 		"approval_answer":    map[string]any{"choice": "once"},
