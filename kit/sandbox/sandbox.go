@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -70,39 +71,55 @@ func (s *Sandbox) Status() Status { s.mu.Lock(); defer s.mu.Unlock(); return s.s
 func (s *Sandbox) Probe(ctx context.Context, l lease.Lease) Status {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.status = s.probe(ctx, l)
+	status, err := s.probe(ctx, l)
+	if err != nil {
+		if errors.Is(err, lease.ErrInvalid) || errors.Is(err, lease.ErrReleased) {
+			return Status{Cause: "invalid_lease"}
+		}
+		return Status{Cause: "probe_cancelled"}
+	}
+	s.status = status
 	s.firstCall = false
 	return s.status
 }
-func (s *Sandbox) probe(ctx context.Context, l lease.Lease) Status {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+func (s *Sandbox) probe(parent context.Context, l lease.Lease) (Status, error) {
+	if err := lease.Do(parent, l, func(context.Context) error { return nil }); err != nil {
+		return Status{}, err
+	}
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 	defer cancel()
 	c, err := normalize(s.config)
 	if err != nil {
-		return Status{Cause: "invalid_policy"}
+		return Status{Cause: "invalid_policy"}, nil
 	}
 	launcher, err := findLauncher()
 	if err != nil {
-		return Status{Cause: err.Error()}
+		return Status{Cause: err.Error()}, nil
 	}
 	// A probe artifact is outside the writable workspace. It is removed on all
 	// paths, including a killed or failed launcher.
 	dir, err := os.MkdirTemp("", "lina-sandbox-probe-")
 	if err != nil {
-		return Status{Cause: "probe_setup_failed"}
+		return Status{Cause: "probe_setup_failed"}, nil
 	}
 	defer os.RemoveAll(dir)
 	path := filepath.Join(dir, "canary")
 	if err := os.WriteFile(path, []byte("sandbox-probe"), 0600); err != nil {
-		return Status{Cause: "probe_setup_failed"}
+		return Status{Cause: "probe_setup_failed"}, nil
 	}
 	c.ReadDenied = append(c.ReadDenied, dir)
 	script := `if [ -r "$1" ]; then exit 91; fi; ` + probeScript()
 	err = s.execute(ctx, l, launcher, c, Command{Path: "/bin/sh", Args: []string{"-c", script, "probe", path}})
-	if err != nil {
-		return Status{Cause: "probe_failed"}
+	if parent.Err() != nil {
+		return Status{}, parent.Err()
 	}
-	return Status{Available: true}
+	if errors.Is(err, lease.ErrInvalid) || errors.Is(err, lease.ErrReleased) {
+		return Status{}, err
+	}
+	if err != nil {
+		return Status{Cause: "probe_failed"}, nil
+	}
+	return Status{Available: true}, nil
 }
 
 // Run rechecks confinement before the first tool invocation, including after a
@@ -110,7 +127,12 @@ func (s *Sandbox) probe(ctx context.Context, l lease.Lease) Status {
 func (s *Sandbox) Run(ctx context.Context, l lease.Lease, command Command) error {
 	s.mu.Lock()
 	if !s.firstCall && (s.status.Available || s.status.Cause == "not_probed") {
-		s.status = s.probe(ctx, l)
+		status, err := s.probe(ctx, l)
+		if err != nil {
+			s.mu.Unlock()
+			return err
+		}
+		s.status = status
 		s.firstCall = true
 	}
 	status := s.status
@@ -237,7 +259,7 @@ func gitPaths(roots []string) ([]string, error) {
 				return err
 			}
 			if info.Mode().IsRegular() {
-				data, err := os.ReadFile(path)
+				data, err := readGitFile(path)
 				if err != nil {
 					return err
 				}
@@ -261,4 +283,50 @@ func gitPaths(roots []string) ([]string, error) {
 		}
 	}
 	return paths, nil
+}
+
+// A workspace-controlled gitdir file is not an unbounded input to Core. Check
+// the opened descriptor as well as the byte count; a concurrent replacement or
+// growth must not turn this into a device read or an enormous allocation.
+func readGitFile(path string) ([]byte, error) {
+	const limit = 4096
+	file, err := openMetadata(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Size() > limit {
+		return nil, errors.New("invalid Git metadata file")
+	}
+	data, err := io.ReadAll(io.LimitReader(file, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > limit {
+		return nil, errors.New("oversized Git metadata file")
+	}
+	return data, nil
+}
+
+// Anchor every writable ancestor of protected metadata. A readonly child mount
+// alone does not stop rename(parent), followed by replacement at the old path.
+func gitAnchors(roots, metadata []string) []string {
+	seen := map[string]bool{}
+	for _, root := range roots {
+		for _, path := range metadata {
+			for parent := filepath.Dir(path); beneath(parent, root) && parent != root; parent = filepath.Dir(parent) {
+				seen[parent] = true
+			}
+		}
+	}
+	result := make([]string, 0, len(seen))
+	for path := range seen {
+		result = append(result, path)
+	}
+	sort.Strings(result)
+	return result
 }
