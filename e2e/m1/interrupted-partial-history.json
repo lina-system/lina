@@ -1,0 +1,7 @@
+{
+  "input": "PARTIAL-HISTORY-372",
+  "partials": ["FIRST-372 continued", "SECOND-372"],
+  "tool_arguments": "TOOL-ARGUMENTS-372",
+  "next_input": "CONTINUE-372",
+  "reply": "RECOVERED-372"
+}
