@@ -42,11 +42,14 @@ func prepare(launcher string, c Config, command Command) (proc.Command, func(), 
 		fmt.Fprintf(&policy, "(allow file-write* (subpath %q))\n", path)
 		fmt.Fprintf(&policy, "(deny file-write-unlink (literal %q))\n", path)
 	}
+	for _, path := range gitAnchors(c.WriteRoots, git) {
+		fmt.Fprintf(&policy, "(deny file-write-unlink (literal %q))\n", path)
+	}
 	for _, path := range git {
 		fmt.Fprintf(&policy, "(deny file-write* (subpath %q))\n", path)
 	}
 	if command.Network {
-		policy.WriteString("(allow network*)\n")
+		policy.WriteString("(allow network*)\n(deny network-outbound (remote unix-socket))\n")
 	}
 	for _, path := range c.ReadDenied {
 		fmt.Fprintf(&policy, "(deny file-read* file-write* (subpath %q))\n", path)
