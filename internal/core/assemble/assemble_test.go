@@ -168,6 +168,7 @@ func TestInvalidAssemblyFailsClosed(t *testing.T) {
 		func(in *assemble.Input) { in.Packet[3].Revision = "" },
 		func(in *assemble.Input) { in.AgentID = "" },
 		func(in *assemble.Input) { in.Packet[0].Supersedes = []string{"clock"} },
+		func(in *assemble.Input) { in.Packet[0].ID = "clock" },
 	} {
 		in := input()
 		change(&in)
