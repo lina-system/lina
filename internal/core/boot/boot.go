@@ -20,6 +20,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"github.com/thisisjun786/lina/kit/rpc"
+	"github.com/thisisjun786/lina/kit/sandbox"
 )
 
 type Step uint8
@@ -49,8 +50,9 @@ const (
 )
 
 type Snapshot struct {
-	Epoch uint64
-	State State
+	Epoch   uint64
+	State   State
+	Sandbox sandbox.Status
 }
 type Sentinel struct {
 	Epoch         string `json:"epoch"`
@@ -84,6 +86,9 @@ type Services struct {
 	PeekEpoch  func(context.Context) (uint64, error)
 	OpenCanon  func(context.Context, uint64) (Canon, error)
 	Reconcile  func(context.Context, Recovery) error
+	// SandboxReady receives the same probed wrapper used by shell/file handlers.
+	// A failed probe disables those handlers only; it does not stop recovery.
+	SandboxReady func(*sandbox.Sandbox)
 }
 type Config struct {
 	// Client supplies the installed person's agents, supported rows and handlers.
@@ -347,6 +352,15 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	if err := boundary(Reconciled); err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
+	if ctx.Err() != nil {
+		return nil
+	}
+	box, closeProcesses := startSandbox(ctx, cfg.StateRoot, cfg.Socket)
+	stack = append(stack, closeProcesses)
+	snapshot.Sandbox = box.Status()
+	if cfg.Services.SandboxReady != nil {
+		cfg.Services.SandboxReady(box)
+	}
 	if len(recovery.Halt) == 0 && ctx.Err() == nil {
 		snapshot.State = Running
 		recovering.Store(false)
@@ -361,7 +375,7 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	case err := <-done:
 		// Leave one result for the reverse shutdown stack.
 		done <- err
-		if err == nil {
+		if err == nil && ctx.Err() == nil {
 			return errors.New("client service stopped before shutdown")
 		}
 		return err
