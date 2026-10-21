@@ -14,7 +14,7 @@ func validManifest() map[string]any {
 		"version": "0.0.1-alpha.dev", "commit": strings.Repeat("a", 40),
 		"date": "2026-10-20", "goToolchain": "go1.27.3", "kitVersion": 1,
 		"providers": map[string]any{"chatgpt": map[string]any{
-			"sdkModule": "github.com/openai/openai-go/v3", "sdkVersion": "v3.83.0", "retryCount": 0,
+			"adapter": "responses", "retryCount": 0,
 			"requestFields": []string{"model", "input", "store", "stream"},
 		}},
 		"sqlite": map[string]any{
@@ -159,6 +159,40 @@ func TestReadWindowsNamesAndSHA256Commit(t *testing.T) {
 	}
 }
 
+func TestValidateBinaryPlatforms(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		names []string
+		valid bool
+	}{
+		{"unix", []string{"lina", "lina-node"}, true},
+		{"windows", []string{"lina.exe", "lina-node.exe"}, true},
+		{"unix with windows lina", []string{"lina", "lina-node", "lina.exe"}, false},
+		{"unix with windows node", []string{"lina", "lina-node", "lina-node.exe"}, false},
+		{"windows with unix lina", []string{"lina.exe", "lina-node.exe", "lina"}, false},
+		{"windows with unix node", []string{"lina.exe", "lina-node.exe", "lina-node"}, false},
+		{"both pairs", []string{"lina", "lina-node", "lina.exe", "lina-node.exe"}, false},
+		{"mixed pair", []string{"lina", "lina-node.exe"}, false},
+		{"reverse mixed pair", []string{"lina.exe", "lina-node"}, false},
+		{"future artifacts with unix", []string{"lina", "lina-node", "lina-helper.exe", "helper"}, true},
+		{"future artifacts with windows", []string{"lina.exe", "lina-node.exe", "lina-helper", "helper.exe"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var m Manifest
+			if err := json.Unmarshal(encoded(t, validManifest()), &m); err != nil {
+				t.Fatal(err)
+			}
+			m.Binaries = nil
+			for _, name := range tc.names {
+				m.Binaries = append(m.Binaries, Binary{Name: name, Size: 100, SHA256: strings.Repeat("b", 64)})
+			}
+			if err := m.Validate(); (err == nil) != tc.valid {
+				t.Fatalf("Validate binaries %v: got %v, want valid=%v", tc.names, err, tc.valid)
+			}
+		})
+	}
+}
+
 func TestReadRejectsInvalidJSONAndMissingFile(t *testing.T) {
 	for _, data := range []string{"", "{", "null", "[]", "{}", string(encoded(t, validManifest())) + "\n{}"} {
 		if _, err := Read(writeManifest(t, []byte(data))); err == nil {
@@ -175,7 +209,7 @@ func TestReadRejectsUnsafeResponsesConfiguration(t *testing.T) {
 		func(c map[string]any) { c["retryCount"] = 1 },
 		func(c map[string]any) { delete(c, "retryCount") },
 		func(c map[string]any) { c["requestFields"] = []string{"model", "input", "store", "stream", "metadata"} },
-		func(c map[string]any) { c["sdkVersion"] = "v0.0.0" },
+		func(c map[string]any) { c["adapter"] = "unknown" },
 	} {
 		value := validManifest()
 		change(value["providers"].(map[string]any)["chatgpt"].(map[string]any))

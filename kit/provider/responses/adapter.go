@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Package responses adapts the pinned OpenAI SDK without retries or tool execution.
+// Package responses implements the Responses HTTP/SSE boundary without retries or tool execution.
 package responses
 
 import (
@@ -13,9 +13,6 @@ import (
 	"sync"
 	"time"
 
-	openai "github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/option"
-	sdk "github.com/openai/openai-go/v3/responses"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/provider"
 )
@@ -42,29 +39,44 @@ func New(config Config, client *http.Client) (*Adapter, error) {
 }
 func (*Adapter) Provider() provider.ProviderID { return provider.ChatGPT }
 func (*Adapter) Class() provider.Class         { return provider.ModelAPI }
-func (a *Adapter) options(c provider.Credential) ([]option.RequestOption, error) {
-	request, _ := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/responses", nil)
-	if err := c.Authorize(request); err != nil {
+func (a *Adapter) request(ctx context.Context, c provider.Credential, method, path string, body []byte) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, "https://api.openai.com/v1/"+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, classifyError(ctx, err, "")
+	}
+	if err := c.Authorize(req); err != nil {
 		return nil, err
 	}
-	return []option.RequestOption{option.WithBaseURL("https://api.openai.com/v1/"), option.WithMaxRetries(0), option.WithHTTPClient(a.client), option.WithHeader("Authorization", request.Header.Get("Authorization"))}, nil
-}
-func (a *Adapter) Models(ctx context.Context, l lease.Lease, c provider.Credential) (provider.ModelList, error) {
-	opts, err := a.options(c)
-	if err != nil {
-		return provider.ModelList{}, err
+	req.Header.Set("Accept", "application/json")
+	if method == http.MethodPost {
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "text/event-stream")
 	}
+	response, err := a.client.Do(req)
+	if err != nil {
+		return nil, classifyError(ctx, err, "")
+	}
+	return response, nil
+}
+
+func (a *Adapter) Models(ctx context.Context, l lease.Lease, c provider.Credential) (provider.ModelList, error) {
 	var out provider.ModelList
-	err = lease.Do(ctx, l, func(ctx context.Context) error {
-		service := openai.NewModelService(opts...)
-		var raw *http.Response
-		page, err := service.List(ctx, option.WithResponseInto(&raw))
+	err := lease.Do(ctx, l, func(ctx context.Context) error {
+		response, err := a.request(ctx, c, http.MethodGet, "models", nil)
 		if err != nil {
-			var id string
-			if raw != nil {
-				id = raw.Header.Get("x-request-id")
-			}
-			return classifyError(ctx, err, id)
+			return err
+		}
+		defer response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			return responseFailure(response)
+		}
+		var page struct {
+			Data []struct {
+				ID string `json:"id"`
+			} `json:"data"`
+		}
+		if err := json.NewDecoder(io.LimitReader(response.Body, maxEventBytes)).Decode(&page); err != nil {
+			return classifyError(ctx, err, response.Header.Get("x-request-id"))
 		}
 		for _, model := range page.Data {
 			out.Models = append(out.Models, provider.ModelRef(model.ID))
@@ -91,7 +103,7 @@ func (a *Adapter) body(r provider.Request) ([]byte, error) {
 	allowed := func(key string) bool {
 		return slices.Contains(a.config.RequestFields, key) && (len(r.Fields) == 0 || slices.Contains(r.Fields, key))
 	}
-	for _, key := range []string{"model", "input", "store", "stream"} {
+	for _, key := range []string{"model", "input", "store", "stream", "include"} {
 		if !allowed(key) {
 			return reject()
 		}
@@ -112,16 +124,18 @@ func (a *Adapter) body(r provider.Request) ([]byte, error) {
 			}
 		}
 	}
-	body := map[string]any{"model": r.Model, "store": false, "stream": true}
+	// Stateless reasoning must survive follow-up turns even when the model
+	// chooses its default effort. Effort controls only the reasoning override.
+	body := map[string]any{"model": r.Model, "store": false, "stream": true,
+		"include": []string{"reasoning.encrypted_content"}}
 	if r.Instructions != "" && r.Purpose != provider.Auxiliary && allowed("instructions") {
 		body["instructions"] = r.Instructions
 	}
 	if r.Effort != "" {
-		if !allowed("reasoning") || !allowed("include") {
+		if !allowed("reasoning") {
 			return reject()
 		}
 		body["reasoning"] = map[string]string{"effort": string(r.Effort)}
-		body["include"] = []string{"reasoning.encrypted_content"}
 	}
 	if len(r.Tools) > 0 {
 		if r.Purpose == provider.Auxiliary || !allowed("tools") {
@@ -190,10 +204,6 @@ func (a *Adapter) Stream(ctx context.Context, l lease.Lease, r provider.Request)
 	if err != nil {
 		return nil, err
 	}
-	opts, err := a.options(r.Credential)
-	if err != nil {
-		return nil, err
-	}
 	ctx, cancel := context.WithCancel(ctx)
 	s := &stream{cancel: cancel, done: make(chan struct{}), events: make(chan provider.Event), meta: provider.Meta{Class: provider.ModelAPI}}
 	ready := make(chan error, 1)
@@ -203,34 +213,34 @@ func (a *Adapter) Stream(ctx context.Context, l lease.Lease, r provider.Request)
 		defer cancel()
 		opened := false
 		err := lease.Do(ctx, l, func(ctx context.Context) error {
-			service := sdk.NewResponseService(opts...)
-			var response *http.Response
-			wire := service.NewStreaming(ctx, sdk.ResponseNewParams{}, option.WithRequestBody("application/json", body), option.WithResponseInto(&response))
-			defer wire.Close()
-			id := ""
-			if response != nil {
-				id = response.Header.Get("x-request-id")
+			response, err := a.request(ctx, r.Credential, http.MethodPost, "responses", body)
+			if err != nil {
+				return err
 			}
+			defer response.Body.Close()
+			id := response.Header.Get("x-request-id")
 			s.mu.Lock()
 			s.meta.RequestID = id
 			s.mu.Unlock()
-			if err := wire.Err(); err != nil {
-				return classifyError(ctx, err, id)
+			if response.StatusCode != http.StatusOK {
+				return responseFailure(response)
 			}
-			if response == nil || response.StatusCode != http.StatusOK {
-				return classify(wireFailure{}, status(response), id)
-			}
+			wire := newEventReader(response.Body)
+
 			opened = true
 			ready <- nil
 			pending := []provider.Event{}
 			seen := map[int64]bool{}
 			calls := map[string]bool{}
-			for wire.Next() {
-				var event wireEvent
-				current := wire.Current()
-				if err := json.Unmarshal([]byte(current.RawJSON()), &event); err != nil {
-					return classify(wireFailure{}, 0, id)
+			for {
+				event, err := wire.next()
+				if err != nil {
+					return classifyError(ctx, err, id)
 				}
+				if event.Error != nil {
+					return classify(*event.Error, 0, id)
+				}
+
 				if event.Response != nil {
 					s.mu.Lock()
 					s.meta.Usage = usage(event.Response.Usage)
@@ -289,7 +299,6 @@ func (a *Adapter) Stream(ctx context.Context, l lease.Lease, r provider.Request)
 					return classify(wireFailure{Code: event.Code, Type: event.ErrorType}, 0, id)
 				}
 			}
-			return classifyError(ctx, wire.Err(), id)
 		})
 		if !opened {
 			ready <- err
@@ -303,12 +312,6 @@ func (a *Adapter) Stream(ctx context.Context, l lease.Lease, r provider.Request)
 		return nil, err
 	}
 	return s, nil
-}
-func status(r *http.Response) int {
-	if r == nil {
-		return 0
-	}
-	return r.StatusCode
 }
 func (s *stream) send(ctx context.Context, e provider.Event) bool {
 	select {
@@ -352,6 +355,7 @@ func (s *stream) Meta() provider.Meta {
 }
 
 type wireEvent struct {
+	Error     *wireFailure    `json:"error"`
 	Type      string          `json:"type"`
 	Index     int64           `json:"output_index"`
 	Delta     string          `json:"delta"`

@@ -24,7 +24,7 @@ type transportFunc func(*http.Request) (*http.Response, error)
 func (f transportFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 func config(t *testing.T) Config {
 	t.Helper()
-	c, err := ReadConfig(strings.NewReader(`{"providers":{"chatgpt":{"sdkModule":"github.com/openai/openai-go/v3","sdkVersion":"v3.83.0","retryCount":0,"requestFields":["model","input","store","stream","instructions","tools","reasoning","include"]}}}`))
+	c, err := ReadConfig(strings.NewReader(`{"providers":{"chatgpt":{"adapter":"responses","retryCount":0,"requestFields":["model","input","store","stream","instructions","tools","reasoning","include"]}}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,10 +253,59 @@ func TestManifestFieldsAndOpaqueInput(t *testing.T) {
 	}
 }
 
+func TestEmptyEffortStillRequestsEncryptedReasoning(t *testing.T) {
+	a, count := fixture(t, config(t), func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		if string(body["store"]) != "false" || string(body["include"]) != `["reasoning.encrypted_content"]` {
+			t.Errorf("stateless reasoning request lost encrypted state: store=%s include=%s", body["store"], body["include"])
+		}
+		if _, ok := body["reasoning"]; ok {
+			t.Error("empty effort must retain the model default")
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		completed(w)
+	})
+	r := request()
+	r.Model = "fixture-reasoning-model"
+	if _, _, err := run(t, a, r); err != nil {
+		t.Fatal(err)
+	}
+	if count.Load() != 1 {
+		t.Fatalf("requests: %d", count.Load())
+	}
+}
+
+func TestEncryptedReasoningMustBeAllowedWithoutEffort(t *testing.T) {
+	for _, source := range []string{"manifest", "request"} {
+		t.Run(source, func(t *testing.T) {
+			c := config(t)
+			fields := slices.DeleteFunc(slices.Clone(c.RequestFields), func(field string) bool { return field == "include" })
+			r := request()
+			if source == "manifest" {
+				c.RequestFields = fields
+			} else {
+				r.Fields = fields
+			}
+			a, count := fixture(t, c, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				completed(w)
+			})
+			_, _, err := run(t, a, r)
+			failure(t, err, provider.NotAccepted)
+			if count.Load() != 0 {
+				t.Fatal("sent stateless request without encrypted state")
+			}
+		})
+	}
+}
+
 func TestManifestRejectsUnsafeConfiguration(t *testing.T) {
 	for _, bad := range []string{
 		`{}`, `{"providers":{"chatgpt":{}}}`,
-		`{"providers":{"chatgpt":{"sdkModule":"github.com/openai/openai-go/v3","sdkVersion":"v3.83.0","requestFields":["model","input","store","stream"]}}}`,
+		`{"providers":{"chatgpt":{"adapter":"responses","requestFields":["model","input","store","stream"]}}}`,
 	} {
 		if _, err := ReadConfig(strings.NewReader(bad)); err == nil {
 			t.Fatalf("accepted %s", bad)
@@ -491,5 +540,40 @@ func TestQuotaModelsAndMetadataSnapshot(t *testing.T) {
 	}
 	if count.Load() != 2 {
 		t.Fatal("request restarted")
+	}
+}
+
+func TestSSEFramingAndLargeDelta(t *testing.T) {
+	delta := strings.Repeat("x", 128<<10)
+	a, _ := fixture(t, config(t), func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+		fmt.Fprint(w, ": keepalive\r\n\r\nid: ignored\r\nevent: response.output_text.delta\r\n")
+		fmt.Fprintf(w, "data: {\r\ndata: \"output_index\":0,\"delta\":%q}\r\n\r\n", delta)
+		completed(w)
+	})
+	events, _, err := run(t, a, request())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 || events[0].Kind != provider.Delta || events[0].Delta != delta || events[1].Kind != provider.Terminal {
+		t.Fatal("lost framed event or large delta")
+	}
+}
+
+func TestSSECutOffAndNestedError(t *testing.T) {
+	for _, wire := range []string{
+		"data: [DONE]\n\n",
+		"data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}",
+		"event: error\ndata: {\"error\":{\"code\":\"server_error\",\"message\":\"private\"}}\n\n",
+	} {
+		a, count := fixture(t, config(t), func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(w, wire)
+		})
+		events, _, err := run(t, a, request())
+		failure(t, err, provider.Unavailable)
+		if len(events) != 0 || count.Load() != 1 {
+			t.Fatal("accepted incomplete response or retried")
+		}
 	}
 }

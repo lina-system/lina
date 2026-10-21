@@ -89,6 +89,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-06 Speaker kinds, masking and the secret store.** Entry-path speaker kind, masking, external evidence, secret store.
 - Done when: a seeded token is masked and its span is in no index, summary or export; a formatter prints a placeholder for a secret; speaker kind never comes from text; planted instructions in a tool result arrive marked as external evidence and cannot answer an approval.
 - Depends on: G1-01, G1-05, G1-29. Design refs: C-15; [conversation-and-memory.md](conversation-and-memory.md#event-fields).
+- #48 supplies the masking/projection and opaque-secret APIs, credential-store backend seam and private-file fallback. Conversation/protocol admission, OS-keychain adapters and account forms still need their owning flows; this increment does not establish speaker-kind or external-evidence acceptance.
 
 **G1-07 Sandbox, tool executor and trash.** Sandbox wrapper, network ask, file tools, recoverable deletion.
 - Done when: the start probe passes or shell and file tools turn off with a cause while conversation continues; a canary cannot read canon, secrets or the client socket; network waits for once, always allow or deny; a patch with stale context fails; a trash delete restores identical bytes.
@@ -100,7 +101,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 - Done when: scripted-wire tests cover each failure kind by code, then type, then status; no request is sent after the first output or after a failure; a cut-off response runs no tool; unreported usage is stored unknown; a field outside the manifest list is not sent.
 - Depends on: G1-02, G1-03, G1-04. Design refs: C-10, C-43, C-44.
 - #53 implements provider types, the closed failure vocabulary and fenced budget reservations/settlements. SQLite reopen tests retain unknown usage for all seven run kinds. These packages have no TUI or protocol entry point yet.
-- #54 adds the pinned Responses adapter and build-manifest settings. Scripted wires cover code/type/status failures, zero retries, truncated responses with no tool release, opaque state, unknown usage, and field filtering; build tests verify the SDK pin and retry value. Live V1 and conversation integration remain unverified.
+- #54 adds the standard-library Responses HTTP/SSE adapter and build-manifest settings. Scripted wires cover code/type/status failures, zero retries, truncated responses with no tool release, opaque state, unknown usage, and field filtering; build tests verify the adapter identity and retry value. Live V1 and conversation integration remain unverified.
 
 **G1-09 Loop core and run durability.** `kit/loop`, steering, cancellation, intent and result commits.
 - Done when: a scripted wire shows no tool from a cut-off response, one result per call in call order, an aborted result for each open call, and steering applied at the next round; no effect is applied twice across a restart.
@@ -118,6 +119,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-12 Agents, presets, persona layers and first run.** Persona layers, presets, deletion, first run.
 - Done when: a new revision applies from the next turn and the preparation acknowledgement names it; a preset update changes only core and default voice; one agent's change never alters another's; a deleted agent sits in the trash 30 days and its channel bindings end at once.
 - Depends on: G1-03, G1-05, G1-29. Design refs: C-24; [conversation-and-memory.md](conversation-and-memory.md#agents-and-personas).
+- #62 implements the agent store, immutable Git persona revisions, durable per-turn persona preparation, preset fan-out, first-run initialization and recoverable 30-day trash with immediate binding termination. Package scenarios use real canon and files; account sign-in, conversation preparation and channel transport flows have no client endpoint in this increment.
 
 **G1-31 Accounts and Sign in with ChatGPT.** Single refresh actor, sign-in relay, owner binding, V1 record.
 - Done when: one refresh runs at a time per account and a rotated refresh token is stored before use; a failed refresh shows needs sign-in and uses no other account; a second ChatGPT account never changes the binding; no token appears in a log, request, sandbox or client; the V1 record states what the request surface accepted.

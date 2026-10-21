@@ -45,7 +45,7 @@ Ids are stable. Section headings carry the ids they specify. T-02 is withdrawn: 
 
 `lina tui` is a subcommand of the `lina` binary and runs as its own process ([runtime.md](runtime.md#the-lina-command)). It holds display state only, under the rules of [surfaces.md](surfaces.md#the-lina-app-is-a-thin-client): what is on screen, layout, reading position and unsent drafts. Drafts live in memory and never on disk, because a file of drafts would be personal content outside canon.
 
-The empty TUI increment (#32) runs as `lina tui --socket <path>` with plain text input and output. `internal/clientapi` owns the Unix connection and the generated client 1.0 handshake types; `internal/tui/ui` owns the connection display and quit input. The command supplies the product version for diagnosis. This increment declares no capabilities, writes no preferences or drafts, and imports no terminal UI library. The terminal library and screens follow the T-08 spike gate.
+The empty TUI increment (#32) runs as `lina tui --socket <path>` with plain text input and output. `internal/clientapi` owns the Unix connection and the generated client 1.0 handshake types; `internal/tui/ui` owns the connection display and quit input. The command supplies the product version for diagnosis. This increment declares no capabilities and writes no preferences or drafts. The connection surface now uses Lip Gloss v2.0.6 to style usable terminals from generated tokens (T-11); pipes and terminals with unset or `dumb` TERM retain plain connection codes. It does not change terminal input modes or install an animation timer. Bubble Tea, conversation input and the remaining screens still follow the T-08 spike gate. The pure `state`, `sanitize`, `layout` and `render` packages are independently testable foundations; these pure packages add no terminal I/O or conversation wire payload.
 
 - It keeps its preferences (theme, glyph set, width settings, notification mode) in one client file, mode 0600, at the location the install fixes. A missing or bad file never blocks start.
 - It never opens canon, never runs `lina core` and never holds the lock. Every message it sends is a request that Core accepts or refuses, and when the two disagree Core wins and the TUI refreshes.
@@ -59,7 +59,7 @@ The empty TUI increment (#32) runs as `lina tui --socket <path>` with plain text
 
 `lina tui` never starts a main. The connection is in one of eight states. Each is a screen state, never an empty conversation and never a conversation item.
 
-In the empty TUI increment, a validated `welcome` prints `live` on standard output. Reading `q` or reaching end of input closes only the client connection and exits 0; other input is ignored. Input uses the terminal's existing mode, so a terminal in canonical mode delivers `q` after Enter. Failure to connect to the supplied socket reports `unavailable` on standard error and exits 69 without starting Core or creating state. A typed `unsupported_combination` refusal reports that code and exits 78. Bad arguments exit 64; malformed handshakes and other connection or input/output failures exit 70. Connection and handshake share a five-second timeout. Peer diagnostic text is not printed as terminal output. Reconnect, streaming disconnect notices, supported-range presentation and the remaining screens below belong to later increments.
+For plain output, a validated `welcome` prints `live` on standard output. On a usable terminal, the brand header and a labelled Connecting state appear before the handshake; a validated welcome draws Connected with a quit hint. A refusal, absent Core or other handshake failure draws the corresponding marked state. Quit and EOF draw Disconnected. Only these existing transitions are wired; the theme also supplies presentation data for the future states in the table. Reading `q` or reaching end of input closes only the client connection and exits 0; other input is ignored. Input uses the terminal's existing mode, so a terminal in canonical mode delivers `q` after Enter. Failure to connect to the supplied socket reports `unavailable` on standard error and exits 69 without starting Core or creating state. A typed `unsupported_combination` refusal reports that code and exits 78. Bad arguments exit 64; malformed handshakes and other connection or input/output failures exit 70. Connection and handshake share a five-second timeout. Peer diagnostic text is not printed as terminal output. Reconnect, streaming disconnect notices, supported-range presentation and the remaining screens below belong to later increments.
 
 | State | Screen |
 | --- | --- |
@@ -80,7 +80,7 @@ The server side is [go-core.md](go-core.md) (C-42): topics, cursors, rings, batc
 
 - The TUI holds `core`, `waiting`, `progress` and `running` for the whole connection, the focused conversation with its results, and further conversations as background topics up to the limit Core grants. It opens `exchanges`, `accounts` and `channels` only while their view is open.
 - The socket reader feeds a bounded channel that the reducer drains. If it fills, the topic is marked out of sync and a resync is requested. The reader never drops a frame. A slow terminal delays pixels, not state.
-- Epochs compare numerically, the form of CP-02 ([host-protocol.md](host-protocol.md#envelope)). A gap, a repeat or an epoch mismatch counts as `resync`.
+- Epochs compare numerically, the form of CP-02 ([host-protocol.md](host-protocol.md#envelope)), without a machine-integer limit. A gap or a newer epoch requests one resync per out-of-sync topic. Duplicate cursors and revisions and older epochs are ignored; a repeated delivery never changes the display. A resync snapshot cannot roll back the accepted cursor within the same epoch and revocation epoch.
 - A different revocation epoch ([conversation-and-memory.md](conversation-and-memory.md#terms)) makes the TUI drop cached items before the snapshot applies, so a forgotten item cannot survive a reconnect.
 - Replaying a stream or a snapshot twice leaves state unchanged.
 
@@ -109,6 +109,22 @@ Messages are frames from Core, keys, paste, resize, ticks from an injected clock
 9. The client acts on typed fields only. It never parses model, tool, plugin or web text for commands, ids, links, approvals or status.
 10. Every string that did not originate in the client passes `sanitize.Display` before layout: control, bidirectional and OSC sequences are removed, and styling follows truncation.
 11. A frame that fails schema validation shows a placeholder with a code and is counted.
+
+The reducer accepts typed internal `Snapshot`, `Delta` and `ItemDone` projections.
+They do not define a wire format: client 1.0 still reserves the conversation
+payload fields, and the conversation implementation supplies their adapter.
+`Frame` uses the generated schema validator, admits welcome identity and
+capabilities, counts unknown and malformed envelopes separately, and keeps
+error codes outside conversation blocks. Reserved empty payloads create no
+content. An epoch change invalidates pending effects and restores a pending
+send's draft; an authoritative echo reconciles the local block in place.
+
+`sanitize.Display` preserves structural newlines, expands tabs to four spaces,
+replaces invalid UTF-8, and removes other controls, bidi controls and terminal
+escape strings, including unterminated strings. Unsealed snapshots and deltas
+retain a value-type sanitizer continuation, so instructions and UTF-8 split
+across frames have the same filtering as contiguous input. A completed item is
+sanitized independently and replaces that continuation.
 
 The client computes no state of work. It shows the words and marks Core sends ([work-and-delegation.md](work-and-delegation.md#progress-display)), and "unknown" is shown as "unknown", never as none, zero or done.
 
@@ -165,7 +181,16 @@ func Plan(size Size, caps Caps, st Shape) Layout // regions disjoint, sum fits, 
 - The header, the status line, one composer row and a transcript floor of four rows (P) always survive.
 - The composer grows with the draft to six rows (P), then scrolls inside itself.
 - What remains is shared in a stated order of shedding: the side pane closes first, then the running strip folds to a count, then the card row folds to one summary line. A folded part keeps its count, so a count on screen always equals the list.
-- Property tests run the plan at every allowed size.
+- `Plan` treats negative dimensions as zero. At too-small sizes it reserves one
+  status row when a cell exists and uses the remaining rows for the size notice.
+  At usable sizes the running strip starts at one to three rows and the card row
+  at one to five; each keeps one summary row when folded. The attachment strip
+  uses one row. After the stated shedding, composer growth yields as necessary
+  to preserve the transcript floor. Counts and unsupported flags remain typed
+  output even when their region folds.
+- Property tests enumerate widths 0–240 and heights 0–100 with empty and crowded
+  shapes and granted and missing capabilities, and exercise threshold and
+  integer-limit dimensions. The planner itself imposes no maximum size.
 
 ## Home, waiting for me and progress (T-12)
 
@@ -258,14 +283,14 @@ type Stream interface {
 }
 ```
 
-- A closed top-level block (paragraph, closed fence, list, table, heading) is frozen into a stable prefix and cached on (block id, revision, width in cells, theme, width mode).
-- The open tail is plain text and wraps incrementally: complete lines freeze and each delta re-wraps only the last partial line. Breaks fall at whitespace, else at a grapheme boundary, never inside a cluster. An open code fence belongs to the tail until it closes.
+- A closed top-level block (paragraph, closed fence, list, table, heading) is frozen into a stable prefix and cached on (block id, revision, width in cells, theme, width mode). The plain-text foundation closes paragraphs, lists and tables at blank lines, headings at newline and fenced blocks at a matching closing fence. These conservative boundaries keep incomplete markup plain.
+- The open tail is plain text and wraps incrementally: complete lines freeze and each delta re-wraps the last partial line and its boundary row, because a late combining mark or ZWJ can extend the last cluster. Breaks fall at whitespace, else at a grapheme boundary, never inside a cluster. An open code fence belongs to the tail until it closes.
 - A block that closes is painted once, off the UI goroutine. A stale result is dropped. The visible change from plain to styled at close is accepted: rendering the whole tail on every flush grows quadratically.
 - `Seal()` at `item_done` replaces the stitched render once.
 - Markdown blocks may use Glamour one block at a time with wrap width 0, and every line it returns is re-wrapped with the `Measurer`. Tables use our own renderer.
-- One width function serves all layout: wcwidth by default, grapheme clusters once mode 2027 is confirmed, ambiguous East Asian width narrow, Hangul syllables two cells. The mode is part of the cache key.
+- One width function serves all layout: wcwidth by default, grapheme clusters once mode 2027 is confirmed, ambiguous East Asian width narrow, Hangul syllables two cells. The mode is part of the cache key. The Charm-free `Measurer` uses pinned Unicode 17 data and UAX #29 segmentation for wrapping and clipping in both modes. A cluster wider than the entire row is omitted with a typed clipped flag, never split. Cursor offsets inside a cluster clamp to its start.
 - The hardware cursor is placed on every frame at the display width of the text before it on the wrapped row, so IME composition appears in place. The TUI never requests all-keys-as-escape-codes. Committed IME text arrives as UTF-8, one grapheme cluster at a time ([surfaces.md](surfaces.md#korean-input)).
-- Only the viewport plus overscan (P) is laid out, so cost follows viewport rows and not history.
+- Only the viewport plus overscan (P) is laid out, so cost follows viewport rows and not history. `Stream` indexes new text as it arrives. `Window` takes a retained byte anchor within a block and stops reflow at the requested row count, including after a width change. `Renderer.Draw` reads and paints only those indexed rows, retains only the current viewport cache, and returns changed-row patches; an empty patch list causes no writes. A trusted UI painter styles only closed rows after sanitizing and clipping.
 - Resize events coalesce to one reflow per 32 ms (P).
 - An unchanged state writes zero bytes. Motion is one status glyph with no timer while deltas stream; elapsed time updates at 1 Hz (P) otherwise.
 - OSC 8 links are emitted for allowed schemes only.
@@ -366,7 +391,13 @@ PTY. The fake owns each accepted stream, bounds request frames to 1 MiB, and
 closes on completion, cancellation or failure. The harness owns its listener and
 joins the peer. Clock gates and I/O observations, never sleep intervals, establish
 ordering. This scenario covers the current connection screen and wire behavior;
-reducer recovery, rendering and application effects still require their own tests.
+rendering and application effects still require their own tests.
+`e2e/m1/tui-state.json` sends duplicate welcomes, reserved conversation frames
+and an epoch change over that harness's socket into `state.Reduce`. Package
+tests cover projected snapshots, replay, resync, revocation, local echoes,
+generation checks, draft recovery, clock offsets and split sanitizer input.
+These tests establish the pure reducer and existing receive boundary, without
+claiming conversation UI or an unimplemented wire payload.
 
 The schema and receive-boundary corpus runs independently through
 `kit/protocol/conformance`. It checks that an unknown kind yields no admitted
@@ -395,14 +426,15 @@ Invariants that need a test:
 - After forget and reconnect, the forgotten item is absent.
 - No line of the default view carries an id-shaped field, checked on the typed view model.
 - `sanitize.Display` is fuzzed with control, bidirectional and OSC input.
-- A width golden corpus (Hangul, mixed ASCII, emoji sequences, combining marks) guards the width function and the cursor column.
+- A width corpus (Hangul, mixed ASCII, emoji sequences, combining marks) guards cell widths and cursor columns without pinning rendered prose. The Unicode 17 grapheme conformance corpus guards segmentation; chunked-stream fuzzing compares arbitrary splits with complete input. Renderer tests count measurements and paint calls across large histories, verify stable prefix caches and changed-row application, and establish zero patches on unchanged state. Real terminal writes, IME behavior, resize scheduling and the T-08 spike remain the consuming UI's acceptance work.
 
-**Tokens and theme.** `internal/design` is generated from the one DTCG token source ([surfaces.md](surfaces.md#one-design-language)), and the foundation check regenerates it ([foundation.md](../policy/foundation.md)).
+**Tokens and theme.** `internal/design` is generated from the DTCG files in `design/tokens/` ([surfaces.md](surfaces.md#one-design-language)). `node scripts/tokens.mjs` writes Go values, CSS, the SVG mark and the token tables in `DESIGN.md`. Its `--check` mode regenerates in memory and fails on drift without changing the checkout. Foundation runs it for TUI/design component changes as well as token or automation changes ([foundation.md](../policy/foundation.md)).
 
-- Raw colours, ANSI numbers and glyph literals are banned in `internal/tui`. `tui/ui` turns the generated data into Lip Gloss styles.
-- A contrast test over the tokens requires WCAG 2.2 AA in light, dark and high contrast.
+- Raw presentation colours, ANSI colour numbers and glyph literals are banned in production `internal/tui` source. The token checker scans literals and colour constructors; comments, test fixtures and numeric Unicode measurement data are not presentation values. `tui/ui` turns generated semantic colours, spacing and glyphs into Lip Gloss styles.
+- Contrast checks require at least 4.5:1 for text, muted text and accent on canvas and surface, in light, dark and high contrast. The source also specifies tested 256-colour and 16-colour mappings. Dark ANSI16 uses bright white for the accent where standard blue cannot pass; user-redefined ANSI palettes can change physical contrast. Hairlines are decorative, never the only state indicator.
 - No state is shown by colour alone: each has a mark and a word. Glyph sets are tokens, in plain Unicode and ASCII, and none needs a private-use glyph.
-- On LINA OS the TUI follows the active Omarchy theme file ([surfaces.md](surfaces.md#platform-adaptation)).
+- Connection-screen display overrides are `LINA_THEME=light|dark|high-contrast` and `LINA_GLYPHS=ascii`. Otherwise `COLORFGBG` selects a light or dark background (dark by default); terminal capability selects RGB, 256 or 16 colours. Nonempty `NO_COLOR` preserves the layout, marks, labels and actions without escapes; subsequent states append compact lines. These overrides persist no preferences.
+- On LINA OS the complete TUI follows the active Omarchy theme file ([surfaces.md](surfaces.md#platform-adaptation)); theme-file discovery remains part of platform preferences work.
 - Every code in the closed lists has an entry in both the Korean and English catalogs, checked by id and never by wording.
 
 ## Earlier decisions and open points

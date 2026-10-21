@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Build both commands and record provenance only for a clean, unchanged commit.
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { gitOut } from './git.mjs';
@@ -20,9 +20,21 @@ function releaseVersion(tag) {
   return Number.isFinite(time) && new Date(time).toISOString().slice(0, 10) === date;
 }
 
+// Resolve existing ancestors even when the output directory has not been created.
+function outputPath(path) {
+  try {
+    return realpathSync(path);
+  } catch (error) {
+    const parent = dirname(path);
+    if (error.code !== 'ENOENT' || parent === path) throw error;
+    return join(outputPath(parent), basename(path));
+  }
+}
+
 export function build({ cwd = root, out, execute: run = execute }) {
   if (!out) throw new Error('An output directory is required');
-  out = resolve(out);
+  cwd = realpathSync(cwd);
+  out = outputPath(resolve(out));
   const names = ['lina', 'lina-node'].map(name => name + (process.platform === 'win32' ? '.exe' : ''));
   const artifacts = [...names, 'manifest.json'].map(name => relative(cwd, join(out, name)).replaceAll('\\', '/'));
   const inside = artifacts.filter(name => !name.startsWith('../'));
@@ -67,9 +79,8 @@ export function build({ cwd = root, out, execute: run = execute }) {
     const sqlite = JSON.parse(invoke(['run', '-mod=readonly', './internal/core/manifest/sqliteinfo']));
     if (!clean() || gitOut(cwd, ['rev-parse', 'HEAD']) !== commit) return null;
     const providers = JSON.parse(readFileSync(join(cwd, 'kit/provider/responses/manifest.json'), 'utf8'));
-    const sdk = JSON.parse(invoke(['list', '-m', '-json', 'github.com/openai/openai-go/v3']));
-    if (providers.chatgpt.sdkModule !== sdk.Path || providers.chatgpt.sdkVersion !== sdk.Version || providers.chatgpt.retryCount !== 0) {
-      throw new Error('Responses manifest does not match the pinned SDK or retry policy');
+    if (providers.chatgpt.adapter !== 'responses' || providers.chatgpt.retryCount !== 0) {
+      throw new Error('Responses manifest does not match the adapter or retry policy');
     }
     if (!clean() || gitOut(cwd, ['rev-parse', 'HEAD']) !== commit) return null;
     const manifest = { version, commit, date, goToolchain, kitVersion, binaries, sqlite, providers };

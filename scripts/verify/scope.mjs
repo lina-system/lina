@@ -17,10 +17,11 @@ function registryFor(cwd) {
   const architecture = existsSync(join(cwd, 'internal/archtest')) ? ['./internal/archtest/...'] : [];
   const buildinfo = existsSync(join(cwd, 'internal/buildinfo')) ? ['./internal/buildinfo/...'] : [];
   const manifest = existsSync(join(cwd, 'internal/core/manifest')) ? ['./internal/core/manifest/...'] : [];
-  const coreDirectories = ['internal/core/turn/', 'internal/core/budget/', 'internal/core/boot/', 'internal/core/clientsrv/', 'internal/core/ctlfiles/', 'internal/core/lifecycle/', 'internal/core/eventstore/', 'internal/core/canon/', 'internal/core/assets/', 'internal/core/inbox/', 'internal/core/lane/', 'internal/core/authority/'];
+  const coreDirectories = ['internal/core/turn/', 'internal/core/budget/', 'internal/core/boot/', 'internal/core/clientsrv/', 'internal/core/ctlfiles/', 'internal/core/lifecycle/', 'internal/core/eventstore/', 'internal/core/canon/', 'internal/core/assets/', 'internal/core/inbox/', 'internal/core/lane/', 'internal/core/authority/', 'internal/core/guard/', 'internal/core/agents/', 'internal/core/secrets/'];
+  const persona = existsSync(join(cwd, 'persona')) ? ['./persona/...'] : [];
   const corePackages = coreDirectories.filter(directory => existsSync(join(cwd, directory)))
     .map(directory => `./${directory}...`);
-  const clientDirectories = ['internal/tui/', 'internal/clientapi/', 'internal/fakecore/'];
+  const clientDirectories = ['internal/design/', 'internal/tui/', 'internal/clientapi/', 'internal/fakecore/'];
   const clientPackages = clientDirectories.filter(directory => existsSync(join(cwd, directory)))
     .map(directory => `./${directory}...`);
   // The harness launches lina as a subprocess, so go list cannot discover its
@@ -29,7 +30,7 @@ function registryFor(cwd) {
   const e2e = existsSync(join(cwd, 'e2e')) ? ['./e2e/...'] : [];
   return [
     { name: 'kit', module: 'kit', directories: ['kit/', 'protocol/schema/', 'protocol/fixtures/'], files: [], packages: ['./...'] },
-    { name: 'lina', module: '.', directories: ['cmd/lina/', 'internal/archtest/', 'internal/buildinfo/', 'internal/core/manifest/', 'e2e/', ...coreDirectories, ...clientDirectories], files: ['doc.go'], packages: ['.', './cmd/lina/...', ...architecture, ...buildinfo, ...manifest, ...corePackages, ...clientPackages, ...e2e], binary: 'lina' },
+    { name: 'lina', module: '.', directories: ['cmd/lina/', 'internal/archtest/', 'internal/buildinfo/', 'internal/core/manifest/', 'e2e/', 'persona/', ...coreDirectories, ...clientDirectories], files: ['doc.go'], packages: ['.', './cmd/lina/...', ...architecture, ...buildinfo, ...manifest, ...persona, ...corePackages, ...clientPackages, ...e2e], binary: 'lina' },
     { name: 'lina-node', module: '.', directories: ['cmd/lina-node/'], files: [], packages: ['./cmd/lina-node/...'], binary: 'lina-node' },
   ];
 }
@@ -47,6 +48,8 @@ const goObjects = text => JSON.parse(`[${text.trim().replace(/^}\s*\n{/gm, '},{'
 export function kind(path) {
   if (path === 'scripts/verify/dependency-exceptions.json' || path === 'THIRD-PARTY-NOTICES.md') return 'dependencies';
   if (modules.has(path)) return 'modules';
+  if (path === 'DESIGN.md' || /^design\/tokens\/[^/]+\.(?:json|css|svg)$/.test(path)) return 'automation';
+  if (/^evidence\/brand\/[^/]+\.png$/.test(path)) return 'docs';
   if (componentOf(path)) return 'components';
   if (documents.has(path) || /^docs\/(?:policy|design)\/[^/]+\.md$/.test(path)
       || /^evidence\/.+\.(?:json|md)$/.test(path)) return 'docs';
