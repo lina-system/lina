@@ -87,6 +87,18 @@ func fingerprint(ctx context.Context, root *os.Root, path string) (File, error) 
 		if err != nil {
 			return File{}, err
 		}
+		if filepath.IsAbs(entry.Link) {
+			return File{}, ErrInvalid
+		}
+		workspace, err := root.OpenRoot("workspace")
+		if err != nil {
+			return File{}, err
+		}
+		_, err = workspace.Stat(strings.TrimPrefix(entry.Path, "workspace/"))
+		workspace.Close()
+		if err != nil {
+			return File{}, errors.Join(ErrInvalid, err)
+		}
 		h := sha256.Sum256([]byte(entry.Link))
 		entry.Hash = hex.EncodeToString(h[:])
 		entry.Size = int64(len(entry.Link))
@@ -210,7 +222,7 @@ func verify(ctx context.Context, root *os.Root, m Manifest) error {
 			return ErrHashMismatch
 		}
 	}
-	repos, err := repositories(root)
+	repos, err := repositories(ctx, root, filepath.Join(root.Name(), "canon/canon.sqlite"))
 	if err != nil {
 		return err
 	}
