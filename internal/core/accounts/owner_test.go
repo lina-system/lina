@@ -29,7 +29,6 @@ func bindingDB(t *testing.T) *canon.Store {
 		t.Fatal(err)
 	}
 	migrations := canon.Migrations()
-	migrations = append(migrations, canon.Migration{Version: len(migrations) + 1, SQL: OwnerBindingSchema})
 	db, err := canon.Open(t.Context(), canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: 1, Controls: ctl, Migrations: migrations})
 	if err != nil {
 		t.Fatal(err)
