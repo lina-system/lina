@@ -14,7 +14,7 @@ func validManifest() map[string]any {
 		"version": "0.0.1-alpha.dev", "commit": strings.Repeat("a", 40),
 		"date": "2026-10-20", "goToolchain": "go1.27.3", "kitVersion": 1,
 		"providers": map[string]any{"chatgpt": map[string]any{
-			"sdkModule": "github.com/openai/openai-go/v3", "sdkVersion": "v3.83.0", "retryCount": 0,
+			"adapter": "responses", "retryCount": 0,
 			"requestFields": []string{"model", "input", "store", "stream"},
 		}},
 		"sqlite": map[string]any{
@@ -209,7 +209,7 @@ func TestReadRejectsUnsafeResponsesConfiguration(t *testing.T) {
 		func(c map[string]any) { c["retryCount"] = 1 },
 		func(c map[string]any) { delete(c, "retryCount") },
 		func(c map[string]any) { c["requestFields"] = []string{"model", "input", "store", "stream", "metadata"} },
-		func(c map[string]any) { c["sdkVersion"] = "v0.0.0" },
+		func(c map[string]any) { c["adapter"] = "unknown" },
 	} {
 		value := validManifest()
 		change(value["providers"].(map[string]any)["chatgpt"].(map[string]any))

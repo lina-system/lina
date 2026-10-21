@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Package config reads Responses build settings without importing the provider SDK.
+// Package config reads Responses build settings independently of the HTTP/SSE transport.
 package config
 
 import (
@@ -11,18 +11,16 @@ import (
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
-const SDKModule = "github.com/openai/openai-go/v3"
-const SDKVersion = "v3.83.0"
+const Adapter = "responses"
 
 type Config struct {
-	SDKModule     string             `json:"sdkModule"`
-	SDKVersion    string             `json:"sdkVersion"`
+	Adapter       string             `json:"adapter"`
 	RetryCount    int                `json:"retryCount"`
 	RequestFields provider.FieldList `json:"requestFields"`
 }
 
 // ReadConfig reads the ChatGPT portion of the build manifest. Missing settings
-// fail closed; a caller cannot accidentally enable SDK defaults or retries.
+// fail closed; a caller cannot accidentally enable implicit defaults or retries.
 func ReadConfig(r io.Reader) (Config, error) {
 	var m struct {
 		Providers map[string]json.RawMessage `json:"providers"`
@@ -57,8 +55,8 @@ func (c *Config) UnmarshalJSON(b []byte) error {
 	return c.Validate()
 }
 func (c Config) Validate() error {
-	if c.SDKModule != SDKModule || c.SDKVersion != SDKVersion || c.RetryCount != 0 {
-		return errors.New("unsupported Responses SDK configuration")
+	if c.Adapter != Adapter || c.RetryCount != 0 {
+		return errors.New("unsupported Responses adapter configuration")
 	}
 	seen := map[string]bool{}
 	for _, field := range c.RequestFields {

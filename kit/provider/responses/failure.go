@@ -5,9 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
 
-	openai "github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/packages/ssestream"
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
@@ -66,26 +66,18 @@ func classifyError(ctx context.Context, err error, id string) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	var api *openai.Error
-	if errors.As(err, &api) {
-		return classify(wireFailure{Code: api.Code, Type: api.Type}, api.StatusCode, id)
-	}
-	var stream *ssestream.StreamError
-	if errors.As(err, &stream) {
-		var payload struct {
-			wireFailure
-			Error *wireFailure `json:"error"`
-		}
-		if json.Unmarshal(stream.Event.Data, &payload) == nil {
-			if payload.Error != nil {
-				return classify(*payload.Error, 0, id)
-			}
-			return classify(payload.wireFailure, 0, id)
-		}
-	}
 	var failure *provider.Failure
 	if errors.As(err, &failure) {
 		return failure
 	}
 	return classify(wireFailure{}, 0, id)
+}
+
+func responseFailure(response *http.Response) error {
+	var payload struct {
+		Error wireFailure `json:"error"`
+	}
+	// Retain only machine identifiers, never the provider's message or body.
+	_ = json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&payload)
+	return classify(payload.Error, response.StatusCode, response.Header.Get("x-request-id"))
 }
