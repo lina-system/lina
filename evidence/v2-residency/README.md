@@ -13,6 +13,8 @@ observation does not establish protocol readiness or the 24-hour budgets.
 
 Use Linux x64 with systemd and macOS arm64 with launchd. Record the actual OS,
 distribution and version: an Ubuntu run is Ubuntu evidence, not Omarchy evidence.
+Passing its resource limits does not establish Omarchy acceptance under
+[runtime V2](../../docs/design/runtime.md#runtime-acceptance).
 Keep the machines awake and the user sessions alive. Do not use existing
 personal state or provider credentials.
 
@@ -20,7 +22,10 @@ personal state or provider credentials.
 
 Use native packaged artifacts from [#94](https://github.com/thisisjun786/lina/issues/94),
 built from the same clean source commit on both machines. Set artifact_dir to
-that directory, containing lina, manifest.json and its required engine assets.
+that directory's absolute path, containing lina, manifest.json and its required
+engine assets. Set budget_file to the absolute path of this committed budget.json;
+use the same budget and digest on both machines. No repository working directory
+is required for the commands below.
 Apply #94's verified sqlite-vec configuration before measuring; these service
 commands alone do not establish packaging or storage acceptance.
 Run the following in one shell, retaining its variables for the chosen platform.
@@ -34,7 +39,7 @@ cp -R "$artifact_dir/." "$run_dir/artifacts/"
 install -m 700 "$artifact_dir/lina" "$run_dir/artifacts/lina"
 printf '%s\n' '{"main_id":"main-v2-residency"}' > "$run_dir/state/system/core/main.json"
 cp "$artifact_dir/manifest.json" "$run_dir/results/manifest.json"
-cp evidence/v2-residency/budget.json "$run_dir/results/budget.json"
+cp "$budget_file" "$run_dir/results/budget.json"
 shasum -a 256 "$run_dir/artifacts/lina" "$run_dir/results/manifest.json" "$run_dir/results/budget.json" > "$run_dir/results/digests.txt"
 uname -sm > "$run_dir/results/platform.txt"
 ~~~
@@ -121,5 +126,7 @@ Sanitize measured summaries into evidence/v2-residency/linux-amd64.json and
 evidence/v2-residency/darwin-arm64.json: actual platform, source and budget
 commits, artifact digests, UTC interval and continuous duration, sample counts
 and gaps, startup/RSS/CPU values, limit comparisons, interruptions and whether
-the owner started/read the run. Keep raw logs, private paths and machine names
+the owner started/read the run. Include sanitized timestamped CPU/RSS samples,
+timed probe outcomes and raw-record digests so rolling limits and continuity
+can be recomputed. Keep raw logs, private paths and machine names
 out of Git. Retain failed attempts; do not relax the budget after measuring.

@@ -8,6 +8,7 @@
     {"os": "linux", "arch": "amd64", "service_manager": "systemd-user"},
     {"os": "darwin", "arch": "arm64", "service_manager": "launchd-user"}
   ],
+  "platform_acceptance": "These limits apply to the actual measured platform. Passing them on Ubuntu does not establish Omarchy acceptance under runtime V2; record the distribution as used and assess platform acceptance separately.",
   "limits": {
     "installed_core_artifact_bytes": 67108864,
     "startup_seconds": 2,
