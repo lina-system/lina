@@ -147,7 +147,7 @@ func TestAbortClosesEveryOpenCall(t *testing.T) {
 	}, func(ctx context.Context, c provider.ToolCall) loop.Result {
 		started <- struct{}{}
 		<-ctx.Done()
-		return success(c)
+		return loop.Result{ID: c.ID, Code: loop.Aborted}
 	})
 	cfg.Parallel = 2
 	go func() { defer close(done); <-started; <-started; cancel(errors.New("stop")) }()

@@ -25,10 +25,12 @@ func EffectKey(scope, action, target, intent string) string {
 
 // Tool binds a registered tool to trusted Core authorization and scope. The
 // registry remains the only dispatch path: it commits intent before the handler
-// and commits its receipt before returning. Schemas must be deterministic/pure.
+// and commits its receipt before returning. Schemas must be deterministic/pure
+// and accept their normalized JSON output when the registry revalidates custom
+// input before dispatch.
 func Tool(registry *tools.Registry, spec tools.Spec, base tools.Call, scope string) loop.Tool {
 	validate := func(c provider.ToolCall) (tools.Input, error) {
-		if registry == nil || spec.Schema == nil || scope == "" || c.ID == "" || c.Name != spec.Name || !json.Valid([]byte(c.Arguments)) {
+		if registry == nil || spec.Schema == nil || scope == "" || c.ID == "" || c.Name != spec.Name || !c.Custom && !json.Valid([]byte(c.Arguments)) {
 			return tools.Input{}, tools.ErrInvalid
 		}
 		in, err := spec.Schema(json.RawMessage(c.Arguments))
@@ -59,6 +61,9 @@ func Tool(registry *tools.Registry, spec tools.Spec, base tools.Call, scope stri
 			call := base
 			call.Name = c.Name
 			call.Args = json.RawMessage(c.Arguments)
+			if c.Custom {
+				call.Args = in.Arguments
+			}
 			call.Key = EffectKey(scope, c.Name, in.Target, c.ID)
 			result, err := registry.Dispatch(ctx, call)
 			code := loop.Unknown

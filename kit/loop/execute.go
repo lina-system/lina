@@ -91,7 +91,10 @@ func execute(ctx context.Context, cfg Config, round int, calls []provider.ToolCa
 		wg.Go(func() {
 			defer close(done)
 			r := results[i]
+			// Only calls that never enter invoke receive a synthetic abort. Once
+			// dispatched, its returned result describes the committed receipt.
 			if !blocked[i] {
+				r = Result{ID: c.ID, Code: Aborted}
 				if previous != nil {
 					select {
 					case <-previous:
@@ -107,9 +110,6 @@ func execute(ctx context.Context, cfg Config, round int, calls []provider.ToolCa
 						<-slots
 					case <-runCtx.Done():
 					}
-				}
-				if runCtx.Err() != nil {
-					r = Result{ID: c.ID, Code: Aborted}
 				}
 			}
 			results[i] = r

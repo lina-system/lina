@@ -67,15 +67,17 @@ type Config struct {
 	Transform func(context.Context, provider.Request) (provider.Request, error)
 	Before    func(context.Context, provider.ToolCall) *Result
 	After     func(context.Context, provider.ToolCall, Result) Result
-	Inputs    *Inputs
+	Inputs    InputQueue
 	Journal   Journal
 	Parallel  int // zero selects eight; larger values are capped at eight
 }
 type Outcome struct {
-	Items   []provider.Item
-	Results []Result
-	Rounds  int
-	Meta    provider.Meta
+	// FollowUps were accepted but not applied before this Run ended.
+	FollowUps []provider.Item
+	Items     []provider.Item
+	Results   []Result
+	Rounds    int
+	Meta      provider.Meta
 }
 
 func cloneItems(items []provider.Item) []provider.Item {
@@ -99,8 +101,14 @@ func offered(r provider.Request) map[string]bool {
 	return names
 }
 
-func Run(ctx context.Context, cfg Config) (Outcome, error) {
-	out := Outcome{Items: cloneItems(cfg.Request.Items)}
+func Run(ctx context.Context, cfg Config) (out Outcome, err error) {
+	out.Items = cloneItems(cfg.Request.Items)
+	if cfg.Inputs == nil {
+		cfg.Inputs = &Inputs{}
+	}
+	// Close admission and hand off anything accepted after the last drain on
+	// every return path, including invalid configuration and canceled turns.
+	defer func() { out.FollowUps = cfg.Inputs.Close() }()
 	if cfg.Stream == nil || cfg.Parallel < 0 {
 		return out, ErrConfig
 	}
@@ -154,7 +162,8 @@ func Run(ctx context.Context, cfg Config) (Outcome, error) {
 		}
 		out.Items = append(out.Items, batch.items...)
 		if len(batch.calls) == 0 {
-			// The lane owns input admission after this final boundary as a follow-up.
+			// Input admitted after this snapshot is returned by the deferred
+			// close in FollowUps; later pushes retain ownership in the lane.
 			steering := cfg.Inputs.Drain()
 			if len(steering) == 0 {
 				return out, nil
