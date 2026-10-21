@@ -11,7 +11,7 @@ import (
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
-const BudgetReached loop.Code = "budget_reached"
+const BudgetReached = loop.BudgetReached
 
 var (
 	ErrReportTools = errors.New("report_tools_forbidden")
@@ -80,15 +80,16 @@ func (b *turnBudget) configure(cfg loop.Config, report bool) loop.Config {
 		return nil
 	}
 	blocked := func(name string) bool {
-		return name != "start_run" && name != "dispatch_work" && b.gauge.Snapshot().Level != budget.Under
+		level := b.gauge.Snapshot().Level
+		return level == budget.Hard || level == budget.Soft && name != "start_run" && name != "dispatch_work"
 	}
-	before := cfg.Before
-	cfg.Before = func(ctx context.Context, c provider.ToolCall) *loop.Result {
+	admit := cfg.Admit
+	cfg.Admit = func(ctx context.Context, c provider.ToolCall) *loop.Result {
 		if blocked(c.Name) {
 			return &loop.Result{ID: c.ID, Code: BudgetReached}
 		}
-		if before != nil {
-			return before(ctx, c)
+		if admit != nil {
+			return admit(ctx, c)
 		}
 		return nil
 	}
@@ -99,12 +100,7 @@ func (b *turnBudget) configure(cfg loop.Config, report bool) loop.Config {
 			continue
 		}
 		wrapped[name] = loop.Tool{
-			Validate: func(c provider.ToolCall) (string, error) {
-				if blocked(c.Name) {
-					return "", nil // typed budget refusal precedes schema validation
-				}
-				return tool.Validate(c)
-			},
+			Validate: tool.Validate,
 			Execute: func(ctx context.Context, c provider.ToolCall) loop.Result {
 				end := b.gauge.Tool()
 				defer end()
