@@ -14,8 +14,8 @@ import (
 	"github.com/thisisjun786/lina/internal/clientapi"
 )
 
-// Run reports live only after Core welcomes the connection. q or EOF closes
-// this client; all other input is ignored and no conversation request is sent.
+// Run reports live only after Core welcomes the connection. q, Ctrl+C, Ctrl+D
+// or EOF closes this client; no conversation request is sent.
 func Run(ctx context.Context, socket, productVersion string, input io.Reader, output io.Writer) (runErr error) {
 	display := newDisplay(output)
 	// A real terminal must deliver keys immediately. Restore its original mode
