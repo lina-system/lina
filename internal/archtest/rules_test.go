@@ -27,6 +27,14 @@ func TestRules(t *testing.T) {
 	for _, tc := range []struct {
 		name, file, source, want string
 	}{
+		{"importer outside Core", "internal/core/importer/reader.go", `package importer`, "unmapped"},
+		{"Core excludes importer add-ons", "internal/core/boot/boot.go", `package boot; import _ "` + module + `/internal/addons/importer/hermes"`, "importer"},
+		{"default command excludes importer add-ons", "cmd/lina/main.go", `package main; import _ "` + module + `/internal/addons/importer/hermes"`, "importer"},
+		{"onboarding excludes importer add-ons", "internal/clientapi/onboarding.go", `package clientapi; import _ "` + module + `/internal/addons/importer/hermes"`, "importer"},
+		{"indirect importer dependency", "internal/bridge/bridge.go", `package bridge; import _ "` + module + `/internal/addons/importer/hermes/reader"`, "importer"},
+		{"importer uses Core primitives", "internal/addons/importer/hermes/reader.go", `package hermes; import _ "` + module + `/internal/core/canon"`, ""},
+		{"importer subpackage", "internal/addons/importer/hermes/reader.go", `package hermes; import _ "` + module + `/internal/addons/importer/hermes/schema"`, ""},
+		{"importer near prefix", "internal/core/boot/boot.go", `package boot; import _ "` + module + `/internal/addons/importers"`, ""},
 		{"Moirai protocol cannot import runtime", "internal/moirai/jobapi/api.go", `package jobapi; import _ "` + module + `/internal/moirai"`, "Moirai"},
 		{"Moirai reader cannot import runtime", "internal/moirai/canon/reader.go", `package canon; import _ "` + module + `/internal/moirai"`, "Moirai"},
 		{"Moirai command cannot import SQLite", "cmd/moirai-worker/main.go", `package main; import _ "github.com/ncruces/go-sqlite3"`, "Moirai"},
