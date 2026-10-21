@@ -1,2 +1,5 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-LINA preset core placeholder. The project owner supplies the persona material.
+LINA preset core placeholder. No persona material is distributed here.
+
+The owner supplies a private local checkout through `lina install --persona-source <dir>`.
+See [Presets](../../docs/design/conversation-and-memory.md#presets) for file locations, configuration and fallback behavior.

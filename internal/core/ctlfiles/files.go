@@ -159,7 +159,7 @@ func (s *Store) Acquire() error {
 
 func record(name string) bool {
 	switch name {
-	case "epoch", "run.sentinel", "halt.json", "lifecycle.json", "main.json":
+	case "epoch", "run.sentinel", "halt.json", "lifecycle.json", "main.json", "config.json":
 		return true
 	}
 	return false
