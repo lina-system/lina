@@ -66,7 +66,13 @@ export function build({ cwd = root, out, execute: run = execute }) {
     });
     const sqlite = JSON.parse(invoke(['run', '-mod=readonly', './internal/core/manifest/sqliteinfo']));
     if (!clean() || gitOut(cwd, ['rev-parse', 'HEAD']) !== commit) return null;
-    const manifest = { version, commit, date, goToolchain, kitVersion, binaries, sqlite };
+    const providers = JSON.parse(readFileSync(join(cwd, 'kit/provider/responses/manifest.json'), 'utf8'));
+    const sdk = JSON.parse(invoke(['list', '-m', '-json', 'github.com/openai/openai-go/v3']));
+    if (providers.chatgpt.sdkModule !== sdk.Path || providers.chatgpt.sdkVersion !== sdk.Version || providers.chatgpt.retryCount !== 0) {
+      throw new Error('Responses manifest does not match the pinned SDK or retry policy');
+    }
+    if (!clean() || gitOut(cwd, ['rev-parse', 'HEAD']) !== commit) return null;
+    const manifest = { version, commit, date, goToolchain, kitVersion, binaries, sqlite, providers };
     const staging = mkdtempSync(join(out, '.manifest-'));
     try {
       const temporary = join(staging, 'manifest.json');

@@ -1,0 +1,8 @@
+{
+  "chatgpt": {
+    "sdkModule": "github.com/openai/openai-go/v3",
+    "sdkVersion": "v3.83.0",
+    "retryCount": 0,
+    "requestFields": ["model", "input", "store", "stream", "instructions", "tools", "reasoning", "include"]
+  }
+}

@@ -13,6 +13,10 @@ func validManifest() map[string]any {
 	return map[string]any{
 		"version": "0.0.1-alpha.dev", "commit": strings.Repeat("a", 40),
 		"date": "2026-10-20", "goToolchain": "go1.27.3", "kitVersion": 1,
+		"providers": map[string]any{"chatgpt": map[string]any{
+			"sdkModule": "github.com/openai/openai-go/v3", "sdkVersion": "v3.83.0", "retryCount": 0,
+			"requestFields": []string{"model", "input", "store", "stream"},
+		}},
 		"sqlite": map[string]any{
 			"module": "github.com/ncruces/go-sqlite3", "version": "v0.30.5",
 			"moduleSum":     "h1:6usmTQ6khriL8oWilkAZSJM/AIpAlVL2zFrlcpDldCE=",
@@ -64,7 +68,7 @@ func TestRead(t *testing.T) {
 }
 
 func TestReadRejectsInvalidFields(t *testing.T) {
-	for _, field := range []string{"version", "commit", "date", "goToolchain", "kitVersion", "binaries", "sqlite"} {
+	for _, field := range []string{"version", "commit", "date", "goToolchain", "kitVersion", "binaries", "sqlite", "providers"} {
 		t.Run("missing "+field, func(t *testing.T) {
 			value := validManifest()
 			delete(value, field)
@@ -163,5 +167,20 @@ func TestReadRejectsInvalidJSONAndMissingFile(t *testing.T) {
 	}
 	if _, err := Read(filepath.Join(t.TempDir(), "missing.json")); err == nil {
 		t.Fatal("accepted missing file")
+	}
+}
+
+func TestReadRejectsUnsafeResponsesConfiguration(t *testing.T) {
+	for _, change := range []func(map[string]any){
+		func(c map[string]any) { c["retryCount"] = 1 },
+		func(c map[string]any) { delete(c, "retryCount") },
+		func(c map[string]any) { c["requestFields"] = []string{"model", "input", "store", "stream", "metadata"} },
+		func(c map[string]any) { c["sdkVersion"] = "v0.0.0" },
+	} {
+		value := validManifest()
+		change(value["providers"].(map[string]any)["chatgpt"].(map[string]any))
+		if _, err := Read(writeManifest(t, encoded(t, value))); err == nil {
+			t.Fatal("accepted unsafe provider settings")
+		}
 	}
 }
