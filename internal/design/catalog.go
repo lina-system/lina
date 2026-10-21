@@ -44,6 +44,9 @@ type translation struct{ en, ko string }
 // Keys are wire codes or local presentation ids, never English source text.
 // Keep both languages together so a new entry cannot omit a translation.
 var catalog = map[string]translation{
+	"agents.unavailable":     {"Selected agent unavailable", "선택한 에이전트 없음"},
+	"agents.choose_required": {"Selected agent is unavailable. Draft kept; use /agents choose <id> before sending.", "선택한 에이전트가 없습니다. 초안을 보관했습니다. /agents choose <id>로 선택 후 보내세요."},
+
 	"memory.heading": {"Memory", "기억"},
 	"agents.heading": {"Agents", "에이전트"},
 	"create":         {"Created", "생성됨"},
