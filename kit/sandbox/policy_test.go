@@ -37,6 +37,7 @@ func TestShippedSeccompPolicies(t *testing.T) {
 				{"io_uring", arch.audit, 425, 0, deny}, {"clone3 fallback", arch.audit, 435, 0, 0x50026},
 				{"thread", arch.audit, arch.clone, 0x100, allow}, {"namespace", arch.audit, arch.clone, 0x10000000, deny},
 				{"VM socket", arch.audit, arch.socket, 40, deny},
+				{"Unix socket aliases", arch.audit, arch.socket, 1, deny},
 			} {
 				if got := evalBPF(t, data, tc.audit, tc.nr, tc.arg); got != tc.want {
 					t.Fatalf("%s %s %s: %#x want %#x", arch.name, mode, tc.name, got, tc.want)

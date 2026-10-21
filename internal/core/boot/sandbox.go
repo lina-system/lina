@@ -20,7 +20,7 @@ func startSandbox(ctx context.Context, root, socket string) (*sandbox.Sandbox, f
 	// unsandboxed fallback or prevents the client service from running.
 	_ = os.Mkdir(workspace, 0700)
 	denied := []string{socket}
-	for _, name := range []string{"canon", "secrets", "system", "versions", "backups"} {
+	for _, name := range []string{"canon", "secrets", "system", "versions", "backups", "materials", "derived", "staging"} {
 		path := filepath.Join(root, name)
 		_ = os.Mkdir(path, 0700)
 		denied = append(denied, path)

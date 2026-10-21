@@ -73,6 +73,9 @@ func TestSandboxCanary(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer listener.Close()
+	if err := os.Link(socket, filepath.Join(root, "client-alias.sock")); err != nil {
+		t.Fatal(err)
+	}
 	tcp, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -97,7 +100,7 @@ func TestSandboxCanary(t *testing.T) {
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build canary: %v %s", err, out)
 	}
-	for _, network := range []bool{false, true} {
+	for _, network := range []bool{true, false} {
 		var output bytes.Buffer
 		err := box.Run(ctx, l, sandbox.Command{Path: binary, Args: []string{root, tcp.Addr().String(), strconv.FormatBool(network)}, Network: network, Stdout: &output, Stderr: &output})
 		if err != nil {
@@ -151,5 +154,74 @@ func TestProtectedPathOverridesWriteGrant(t *testing.T) {
 		if status := box.Probe(t.Context(), l); status.Available || status.Cause != "invalid_policy" {
 			t.Fatalf("overlapping grant accepted: %+v", status)
 		}
+	}
+}
+
+func TestCallerFailureDoesNotDisableSandbox(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux launcher")
+	}
+	if _, err := exec.LookPath("bwrap"); err != nil {
+		t.Skip("OS launcher absent")
+	}
+	owner := proc.NewOwner()
+	defer owner.Close(t.Context())
+	l := lease.New(func() {})
+	defer l.Release()
+	for _, invalidLease := range []bool{false, true} {
+		t.Run(strconv.FormatBool(invalidLease), func(t *testing.T) {
+			box := sandbox.New(owner, sandbox.Config{WorkDir: t.TempDir()})
+			if status := box.Probe(t.Context(), l); !status.Available {
+				t.Fatalf("startup=%+v", status)
+			}
+			ctx := t.Context()
+			callLease := l
+			want := lease.ErrInvalid
+			if invalidLease {
+				callLease = lease.Lease{}
+			} else {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				cancel()
+				want = context.Canceled
+			}
+			if err := box.Run(ctx, callLease, sandbox.Command{Path: "/bin/true"}); !errors.Is(err, want) {
+				t.Errorf("caller error=%v want %v", err, want)
+			}
+			if !box.Status().Available {
+				t.Errorf("caller failure disabled sandbox: %+v", box.Status())
+			}
+			if err := box.Run(t.Context(), l, sandbox.Command{Path: "/bin/true"}); err != nil {
+				t.Errorf("next call=%v", err)
+			}
+		})
+	}
+}
+
+func TestOversizedGitFileFailsClosed(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux launcher")
+	}
+	if _, err := exec.LookPath("bwrap"); err != nil {
+		t.Skip("OS launcher absent")
+	}
+	root := t.TempDir()
+	file, err := os.Create(filepath.Join(root, ".git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(1 << 20); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	owner := proc.NewOwner()
+	defer owner.Close(t.Context())
+	l := lease.New(func() {})
+	defer l.Release()
+	box := sandbox.New(owner, sandbox.Config{WorkDir: root})
+	if status := box.Probe(t.Context(), l); status.Available {
+		t.Fatal("oversized workspace-controlled metadata accepted")
 	}
 }
