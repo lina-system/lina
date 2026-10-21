@@ -5,11 +5,14 @@ package telegram
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 	"unicode/utf16"
 	"unicode/utf8"
 
 	"github.com/thisisjun786/lina/internal/core/authority"
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/gateway"
 	"github.com/thisisjun786/lina/kit/lease"
@@ -84,7 +87,35 @@ func (a *Adapter) PresentApproval(ctx context.Context, l lease.Lease, address ch
 	err = lease.Do(ctx, l, func(ctx context.Context) error {
 		message, callErr := a.client.sendMessage(ctx, chat, thread, text, &buttons)
 		result, callErr = sendResult(message, callErr)
+		if callErr == nil && result.Outcome == gateway.Delivered {
+			// Once Telegram returns an ID, retain the exact presentation even if
+			// the caller cancels. A failed commit makes delivery uncertain and
+			// leaves its buttons unusable; it must never trigger a resend.
+			settle, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			if err := a.db.Write(settle, func(tx *canon.Tx) error {
+				_, err := tx.ExecContext(settle, "INSERT INTO telegram_presentations(bot,chat,topic,message_id,approval_id) VALUES(?,?,?,?,?)",
+					a.bot.Key(), address.Chat, address.Topic, result.MessageID, id)
+				return err
+			}); err != nil {
+				result.Outcome = gateway.Uncertain
+				return errAdmission
+			}
+		}
 		return callErr
 	})
 	return result, err
+}
+
+func (a *Adapter) wasPresented(ctx context.Context, id string, chat, thread, message int64) (bool, error) {
+	address := a.address(chat, thread)
+	var count int
+	err := a.db.Read(ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT count(*) FROM telegram_presentations WHERE bot=? AND chat=? AND topic=? AND message_id=? AND approval_id=?",
+			a.bot.Key(), address.Chat, address.Topic, strconv.FormatInt(message, 10), id).Scan(&count)
+	})
+	if err != nil {
+		return false, errAdmission
+	}
+	return count == 1, nil
 }

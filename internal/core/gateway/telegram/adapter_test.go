@@ -117,6 +117,8 @@ func TestAdapterUsesDurableGatewayAndOwnerButtons(t *testing.T) {
 	a := f.adapter(t, roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		io.Copy(io.Discard, r.Body)
 		switch {
+		case strings.HasSuffix(r.URL.Path, "sendMessage"):
+			return response(r, 200, `{"ok":true,"result":{"message_id":19}}`), nil
 		case strings.HasSuffix(r.URL.Path, "getUpdates"):
 			polls++
 			if polls == 1 {
@@ -141,6 +143,11 @@ func TestAdapterUsesDurableGatewayAndOwnerButtons(t *testing.T) {
 			return response(r, 200, `{"ok":true,"result":true}`), nil
 		}
 	}))
+	l := lease.New(func() {})
+	defer l.Release()
+	if result, err := a.PresentApproval(ctx, l, f.address, approval.ID); err != nil || result.Outcome != gateway.Delivered {
+		t.Fatalf("present approval: %+v %v", result, err)
+	}
 	ledgerStore := ledger.New(f.db, nil)
 	g := gateway.New(f.db, func(ctx context.Context, d gateway.Delivery) error {
 		turns++

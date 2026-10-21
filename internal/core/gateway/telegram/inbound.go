@@ -26,6 +26,11 @@ import (
 const Schema = `CREATE TABLE telegram_buttons (
  inbox_id INTEGER PRIMARY KEY REFERENCES inbox(id), bot TEXT NOT NULL,
  epoch TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0 CHECK(done IN (0,1))
+);
+CREATE TABLE telegram_presentations (
+ bot TEXT NOT NULL, chat TEXT NOT NULL, topic TEXT NOT NULL, message_id TEXT NOT NULL,
+ approval_id TEXT NOT NULL REFERENCES authority_approvals(approval_id),
+ PRIMARY KEY(bot,chat,message_id)
 );`
 
 var pairCode = regexp.MustCompile(`^[a-f0-9]{32}$`)
@@ -214,7 +219,7 @@ func (a *Adapter) resumeButtons(ctx context.Context) error {
 					return err
 				})
 				return b.Person, b.Agent, err
-			}, a.approvals)
+			}, a.approvals, a.wasPresented)
 		}
 		if err := a.db.Write(ctx, func(tx *canon.Tx) error {
 			_, err := tx.ExecContext(ctx, "UPDATE telegram_buttons SET done=1 WHERE inbox_id=?", p.id)

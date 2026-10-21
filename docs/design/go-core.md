@@ -601,7 +601,11 @@ dedicated inbox source and a small pending-button table; their inbox row, pendin
 marker and cursor commit together and never dispatch a conversation turn.
 Recovery rechecks the epoch, current paired numeric sender, binding and tools
 scope and the callback message's originating bot before asking authority to
-consume a pending approval. A non-owner or foreign bot's button cannot
+consume a pending approval. `PresentApproval` durably binds the returned platform
+message ID, bot, chat and topic to the canonical request. A callback must match
+that presentation; altered callback data cannot answer a different request. A
+failed presentation commit leaves the buttons unusable and returns an uncertain
+outcome without resending. A non-owner or foreign bot's button cannot
 answer the approval or remove its buttons. The accepted decision records the
 paired person and the actual chat/message IDs. Typed text never takes this path.
 

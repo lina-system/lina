@@ -234,7 +234,9 @@ buttons, files and topics; streaming remains off. The adapter shapes queued text
 into at most three parts of 4096 UTF-16 units, preserving paragraph boundaries
 where possible. A longer reply needs Core's summary and result link. Approval
 presentation reads the canonical request and offers only once and deny; it never
-truncates arguments to make buttons fit. A too-long approval remains pending for
+truncates arguments to make buttons fit. The request is bound durably to the
+returned bot/chat/topic/message identity, which must match before a button can
+answer it. A too-long approval remains pending for
 full presentation in the app or TUI, with a button-free link card sent by Core.
 Downloads use Telegram file IDs and validated paths at the same fixed origin,
 with a 20 MiB limit. API JSON responses are bounded at 8 MiB.

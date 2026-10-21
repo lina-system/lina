@@ -16,6 +16,10 @@ import (
 // person and agent come from Core's channel store, never from callback data.
 type ownerLookup func(ctx context.Context, user, chat, thread int64) (person, agent string, err error)
 
+// presentationLookup matches an approval to the platform message whose full
+// canonical request was sent by PresentApproval. Callback data is untrusted.
+type presentationLookup func(ctx context.Context, id string, chat, thread, message int64) (bool, error)
+
 type approvalService interface {
 	Approval(context.Context, string) (authority.Approval, error)
 	Answer(context.Context, string, authority.Decider, authority.Decision) error
@@ -26,11 +30,11 @@ type buttonDecision struct {
 	note             string
 }
 
-func decideButton(ctx context.Context, epoch uint64, botID string, q gotgbot.CallbackQuery, owner ownerLookup, approvals approvalService) buttonDecision {
+func decideButton(ctx context.Context, epoch uint64, botID string, q gotgbot.CallbackQuery, owner ownerLookup, approvals approvalService, presented presentationLookup) buttonDecision {
 	refused := buttonDecision{note: "This button is unavailable."}
 	id, choice, ok := parseButton(q.Data)
 	message, accessible := q.Message.(gotgbot.Message)
-	if !ok || !accessible || q.From.Id <= 0 || q.From.IsBot || message.Chat.Id == 0 || message.MessageId <= 0 || owner == nil || approvals == nil || epoch == 0 {
+	if !ok || !accessible || q.From.Id <= 0 || q.From.IsBot || message.Chat.Id == 0 || message.MessageId <= 0 || owner == nil || approvals == nil || presented == nil || epoch == 0 {
 		return refused
 	}
 	if message.From == nil || !message.From.IsBot || strconv.FormatInt(message.From.Id, 10) != botID {
@@ -38,6 +42,10 @@ func decideButton(ctx context.Context, epoch uint64, botID string, q gotgbot.Cal
 	}
 	person, agent, err := owner(ctx, q.From.Id, message.Chat.Id, message.MessageThreadId)
 	if err != nil || person == "" || agent == "" {
+		return refused
+	}
+	matched, err := presented(ctx, id, message.Chat.Id, message.MessageThreadId, message.MessageId)
+	if err != nil || !matched {
 		return refused
 	}
 	a, err := approvals.Approval(ctx, id)

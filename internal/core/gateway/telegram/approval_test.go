@@ -80,7 +80,7 @@ func TestOnlyCurrentPairedOwnerCanAnswer(t *testing.T) {
 				return "person", tc.agent, nil
 			}
 			q := gotgbot.CallbackQuery{Id: "callback", From: gotgbot.User{Id: tc.sender}, Data: tc.payload, Message: gotgbot.Message{MessageId: 19, MessageThreadId: 3, Date: 1, From: &gotgbot.User{Id: 123456, IsBot: true}, Chat: gotgbot.Chat{Id: 12}}}
-			result := decideButton(t.Context(), tc.epoch, "123456", q, lookup, s)
+			result := decideButton(t.Context(), tc.epoch, "123456", q, lookup, s, knownPresentation)
 			after, err := s.Approval(t.Context(), before.ID)
 			if err != nil || after.State != tc.want {
 				t.Fatalf("state=%s err=%v", after.State, err)
@@ -96,7 +96,7 @@ func TestOnlyCurrentPairedOwnerCanAnswer(t *testing.T) {
 				if !result.accepted || !result.remove || after.AnsweredBy != "person" || after.ChatID != "12" || after.MessageID != "19" {
 					t.Fatal("missing authenticated decision provenance")
 				}
-				again := decideButton(t.Context(), tc.epoch, "123456", q, lookup, s)
+				again := decideButton(t.Context(), tc.epoch, "123456", q, lookup, s, knownPresentation)
 				if again.accepted || !again.remove {
 					t.Fatal("replayed decision was accepted")
 				}
@@ -110,9 +110,11 @@ func TestForeignBotButtonCannotAnswer(t *testing.T) {
 	q := gotgbot.CallbackQuery{Id: "foreign", From: gotgbot.User{Id: 100}, Data: "request_123:o",
 		Message: gotgbot.Message{MessageId: 19, Date: 1, Chat: gotgbot.Chat{Id: 12}, From: &gotgbot.User{Id: 999, IsBot: true}}}
 	owner := func(context.Context, int64, int64, int64) (string, string, error) { return "person", "agent", nil }
-	result := decideButton(t.Context(), 7, "123456", q, owner, s)
+	result := decideButton(t.Context(), 7, "123456", q, owner, s, knownPresentation)
 	after, err := s.Approval(t.Context(), before.ID)
 	if err != nil || result.accepted || result.remove || !reflect.DeepEqual(before, after) {
 		t.Fatal("a foreign bot's message changed the approval")
 	}
 }
+
+func knownPresentation(context.Context, string, int64, int64, int64) (bool, error) { return true, nil }
