@@ -1,0 +1,14 @@
+{
+  "protocol": [
+    {"request": "hello.json", "emit": ["welcome.json"], "faults": {"slow_reader": 1000000000}},
+    {"emit": ["normal/output_delta.json"], "faults": {"drop": true}},
+    {"emit": ["normal/item_done.json"], "faults": {"duplicate": true}},
+    {"request": "normal/input.json", "faults": {"recovering": true}},
+    {"request": "normal/history_get.json", "emit": ["normal/history.json"], "faults": {"recovering": true}},
+    {"request": "normal/input.json", "faults": {"refusal": "not_authorized"}},
+    {"request": "normal/input.json", "emit": ["normal/turn_state.json"]},
+    {"emit": ["normal/connected.json", "normal/output_delta.json"], "faults": {"epoch": "43", "disconnect_after": 1}}
+  ],
+  "tui": [{"request": "hello.json", "emit": ["welcome.json"]}],
+  "tui_refused": [{"request": "hello.json", "faults": {"refusal": "unsupported_combination"}}]
+}
