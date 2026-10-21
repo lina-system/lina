@@ -28,7 +28,11 @@ function fixture(t) {
   t.after(context.close);
   const out = join(sb.dir, 'artifacts with spaces');
   const run = (args = ['--out', out]) => spawnSync(process.execPath, [join(cwd, 'scripts/build.mjs'), ...args], {
-    cwd, env: context.env, encoding: 'utf8', timeout: 120_000,
+    // This invokes multiple clean Go builds, including metadata readers. A
+    // cold hosted runner can exceed two minutes while the other foundation
+    // checks compile concurrently. Keep a hang guard within the suite's
+    // ten-minute limit; artifact and metadata assertions remain unchanged.
+    cwd, env: context.env, encoding: 'utf8', timeout: 300_000,
   });
   const build = () => {
     const result = run();

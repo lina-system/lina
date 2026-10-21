@@ -59,6 +59,12 @@ The scripts use Node 20 or newer and its built-in modules, Git, and actionlint o
 
 ## Timing and budget
 
+The build-artifact test's subprocess has a five-minute hang guard within the
+automation check's ten-minute timeout. Its cold build compiles commands and
+metadata readers concurrently with other foundation checks; CI exceeded the
+former two-minute guard after the client-listener integration. This is separate
+from the measured development-loop budgets below and changes no artifact checks.
+
 | mode | commit | machine | cache | wall s | bound s |
 | --- | --- | --- | --- | ---: | ---: |
 | full | e86f7b2 | lina-os (x86-64, 20 threads) | warm | 3.6 | 20 |
