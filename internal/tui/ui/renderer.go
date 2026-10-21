@@ -24,20 +24,39 @@ type terminalRenderer struct {
 	err     error
 	once    sync.Once
 }
-type renderedView struct{ view tea.View }
+type renderedFrame struct {
+	view tea.View
+	size tea.WindowSizeMsg
+}
+type renderedView struct {
+	view tea.View
+	size tea.WindowSizeMsg
+}
 
 func (m renderedView) Init() tea.Cmd { return nil }
 func (m renderedView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if view, ok := msg.(tea.View); ok {
-		m.view = view
+	switch msg := msg.(type) {
+	case renderedFrame:
+		m.view, m.size = msg.view, msg.size
+	case tea.WindowSizeMsg:
+		if msg == m.size {
+			return m, nil
+		}
+	default:
+		return m, nil
 	}
-	return m, nil
+	// Bubble Tea applies WindowSizeMsg to its renderer before model.Update.
+	// Its asynchronous startup size (or an older queued resize command) may
+	// arrive after a newer frame. Reassert that frame's dimensions, rather than
+	// leaving a clipped frame cached forever while show skips identical views.
+	size := m.size
+	return m, func() tea.Msg { return size }
 }
 func (m renderedView) View() tea.View { return m.view }
 
 func startTerminalRenderer(ctx context.Context, output io.Writer, width, height int) *terminalRenderer {
 	r := &terminalRenderer{done: make(chan struct{}), size: tea.WindowSizeMsg{Width: width, Height: height}}
-	r.program = tea.NewProgram(renderedView{}, tea.WithContext(ctx), tea.WithInput(nil), tea.WithOutput(output), tea.WithWindowSize(width, height), tea.WithoutSignalHandler(), tea.WithoutCatchPanics())
+	r.program = tea.NewProgram(renderedView{size: r.size}, tea.WithContext(ctx), tea.WithInput(nil), tea.WithOutput(output), tea.WithWindowSize(width, height), tea.WithoutSignalHandler(), tea.WithoutCatchPanics())
 	go func() {
 		defer close(r.done)
 		_, r.err = r.program.Run()
@@ -58,13 +77,8 @@ func (r *terminalRenderer) show(view tea.View, size tea.WindowSizeMsg) error {
 		}
 		return r.err
 	default:
-		if r.size != size {
-			// Output is wrapped for raw mode, so Bubble Tea cannot query its
-			// terminal dimensions. Resize its cell buffer before the new view.
-			r.program.Send(size)
-			r.size = size
-		}
-		r.program.Send(view)
+		r.program.Send(renderedFrame{view: view, size: size})
+		r.size = size
 		r.last = view
 		r.shown = true
 		return nil
