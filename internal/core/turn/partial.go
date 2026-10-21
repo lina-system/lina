@@ -19,8 +19,8 @@ type Partial struct {
 	Text  string
 }
 
-// Stopped binds visible partials to their committed interruption outcome.
-// An empty NoticeID means no durable stop was committed for this input.
+// Stopped binds visible partials to a committed interruption or failure.
+// An empty NoticeID means no such terminal outcome was committed for this input.
 type Stopped struct {
 	TurnID, NoticeID string
 	Partials         []Partial
@@ -36,14 +36,15 @@ func savePartial(ctx context.Context, tx *canon.Tx, id string, p Partial) error 
 }
 
 // Stopped reads the existing turn store for a durable input event. It exposes
-// only aborted turns with a committed notice, so failed completion cannot be
-// presented as a successful stop. It never admits a model message or retries.
+// only aborted or failed turns with a committed notice. The notice identifies
+// the outcome; unfinished text never becomes a completed assistant message.
+// It never admits a model message or retries.
 func (s *Store) Stopped(ctx context.Context, inputEvent string) (Stopped, error) {
 	var stopped Stopped
 	err := s.db.Read(ctx, func(tx *canon.Tx) error {
 		err := tx.QueryRowContext(ctx, `SELECT r.id,c.notice_event FROM turn_runs r
    JOIN turn_control c ON c.turn_id=r.id
-   WHERE c.input_event=? AND r.state='aborted' AND c.notice_event IS NOT NULL`, inputEvent).Scan(&stopped.TurnID, &stopped.NoticeID)
+   WHERE c.input_event=? AND r.state IN ('aborted','failed') AND c.notice_event IS NOT NULL`, inputEvent).Scan(&stopped.TurnID, &stopped.NoticeID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
 		}

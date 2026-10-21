@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
+	importer "github.com/thisisjun786/lina/internal/addons/importer/hermes"
 	"github.com/thisisjun786/lina/internal/core/budget"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
-	"github.com/thisisjun786/lina/internal/core/importer"
 	"github.com/thisisjun786/lina/internal/core/jobs"
 	"github.com/thisisjun786/lina/internal/moirai/jobapi"
 )

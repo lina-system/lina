@@ -55,7 +55,7 @@ Credit: Stephen Schoettler and the LCM-X contributors.
 Source: https://github.com/electricsheephq/lcm-x, supplied installation commit `709099b3a397a7893a7abae8802ebe7bf605f79e` (v0.28.0). The inspected modules and license match that revision; `tools.py` contains expand and describe at this revision.
 License: **MIT** ([upstream license](https://github.com/electricsheephq/lcm-x/blob/709099b3a397a7893a7abae8802ebe7bf605f79e/LICENSE)).
 
-The staged Hermes importer in `internal/core/importer` also derives profile-local UID/lineage and canonical-versus-version behavior from `host_uid.py` and its reference tests at this revision. It independently implements LINA transactions and reverse mapping in Go.
+The staged Hermes importer in `internal/addons/importer/hermes` also derives profile-local UID/lineage and canonical-versus-version behavior from `host_uid.py` and its reference tests at this revision. It independently implements LINA transactions and reverse mapping in Go.
 
 Scope: lossless raw storage, depth-ranked summary DAGs, stub-first compaction, externalized outputs, exact-reference retrieval and session lineage. LINA maps these to its one ledger, derived summary tree, materials and evidence-bearing recall. No upstream source is vendored or modified.
 

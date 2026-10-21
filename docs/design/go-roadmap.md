@@ -54,6 +54,8 @@ Order follows the Depends-on lines. 1.A comes first and 1.H last.
 
 Failure injections: `kill -9` at each start step and turn phase; corrupt canon; a write fault on `canon/`; disk full; an unusable sandbox; a slow client and dropped frames; a replayed channel update; provider unavailable, expired token and usage cap; `kill -9` with a background run working; restore of an older generation.
 
+- #358 covers provider unavailable and truncated SSE through the installed Core and real TUI in a headless PTY. Failure notices and streamed partials remain visible after restart, accepted requests are not replayed, and a new request excludes failed partials from completed assistant context. Turn-store tests inject a notice write failure and verify atomic terminal state, recovery and notice deduplication.
+
 ### 1.A Foundation and control plane
 
 **G1-01 Go skeleton, modules and import rules.** Import rules as one `go test`; V6 and V7 baselines.
@@ -190,8 +192,10 @@ The staged increment (#117) supplies registered SQLite mapping, per-conversation
 ### 1.F Backup, install and restart
 
 **G1-22 Backup generations and restore.** `lina backup` and `lina restore`; removal list applied first.
+- #89 implements whole-generation capture, removal-list replay before copying, online SQLite snapshots, verified file/material inventories and manifest-last publication. Package failure scenarios include SIGKILL during copying; `e2e/m1/backup.json` drives a synthetic conversation and backup through the installed executable. Restore and its zero-exposure acceptance remain with #90.
 - Done when: a kill during copy leaves no generation; a hash mismatch fails the backup; the zero-exposure test passes also into another root; after restore non-terminal external-effect rows are unknown, leases are void and accounts show needs sign-in; the epoch never falls.
 - Depends on: G1-03, G1-11, G1-14, G1-15, G1-29. Design refs: C-32; [filesystem.md](filesystem.md#backup-generations).
+- #90 supplies the stopped-main restore CLI, independent generation checks, replay before first read, authority invalidation and recoverable publication. Package tests cover zero exposure after losing canon in the original or a second root, source removals during interruption, and process death. The M1 installed-binary scenario restores conversation history through the Core protocol and proves subsequent epoch advancement and new input.
 
 **G1-23 Install.** `lina install`: state root, services, adapter files, tool discovery.
 - Done when: install succeeds with no account and the first preparation fails with a plain cause and the sign-in offer; a foreign unit or an occupied port is refused and nothing is overwritten; versions of discovered tools are recorded and unverified ones listed.

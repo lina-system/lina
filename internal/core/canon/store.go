@@ -194,6 +194,9 @@ func Open(ctx context.Context, cfg Config) (*Store, error) {
 	if version > len(cfg.Migrations) {
 		return nil, ErrNewerSchema
 	}
+	if err := validatePublishedCatalog(ctx, cfg.Path, version, cfg.Migrations); err != nil {
+		return nil, err
+	}
 	s.lifetime, s.cancel = context.WithCancel(context.Background())
 	marker, err := cfg.Controls.Read("halt.json")
 	if err == nil {
