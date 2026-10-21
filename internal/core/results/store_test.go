@@ -25,6 +25,9 @@ type testWriter struct {
 	err   error
 }
 
+func (w *testWriter) Prepare(_ context.Context, s result.Scope, r result.Result, _ result.Destination) (PreparedSave, error) {
+	return func(ctx context.Context, ref result.SavedRef) error { return w.Save(ctx, s, r, ref) }, nil
+}
 func (w *testWriter) Save(_ context.Context, _ result.Scope, _ result.Result, ref result.SavedRef) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()

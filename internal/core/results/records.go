@@ -36,10 +36,11 @@ type ResolvePlace func(context.Context, result.Scope, result.Destination) (strin
 // Records writes initial saved records in the shared records repository. The
 // future records editor owns later versions. Core must hold its writer lock.
 type Records struct {
-	db      Canon
-	root    *os.Root
-	assets  *assets.Store
-	resolve ResolvePlace
+	db               Canon
+	root             *os.Root
+	assets           *assets.Store
+	resolve          ResolvePlace
+	afterPublication func(string) error // deterministic failure injection at durable boundaries
 }
 
 var recordsMu sync.Mutex
@@ -61,7 +62,18 @@ func OpenRecords(stateRoot string, db Canon, a *assets.Store, resolve ResolvePla
 	if err != nil {
 		return nil, err
 	}
-	return &Records{root: repo, db: db, assets: a, resolve: resolve}, nil
+	r := &Records{root: repo, db: db, assets: a, resolve: resolve}
+	recordsMu.Lock()
+	defer recordsMu.Unlock()
+	if err := r.recover(context.Background()); err != nil {
+		repo.Close()
+		return nil, err
+	}
+	if err := r.cleanStages(); err != nil {
+		repo.Close()
+		return nil, err
+	}
+	return r, nil
 }
 func (r *Records) Close() error { return r.root.Close() }
 func privateDirectories(root *os.Root, name string) error {
@@ -109,7 +121,7 @@ func (r *Records) atomic(name string, data []byte) error {
 	if err := privateDirectories(r.root, path.Dir(name)); err != nil {
 		return err
 	}
-	tmp := path.Join(path.Dir(name), ".result-"+newID())
+	tmp := path.Join(".git", ".result-stage-"+newID())
 	f, err := r.root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return err
@@ -360,31 +372,91 @@ func recordBytes(scope result.Scope, r result.Result, ref result.SavedRef) []byt
 	}
 	return []byte(fmt.Sprintf("---\nid: %s\nkind: %s\nstate: active\nversion: 1\nperson_id: %s\nagent_id: %s\nresult: %s\n---\n\n# %s\n\n%s\n", id, kind, owner, agent, raw, r.Title, r.Text))
 }
+
+// Prepare performs read-only checks before the result store reserves the save.
+// The closure keeps the authorized folder; it never resolves a different place.
+func (r *Records) Prepare(ctx context.Context, s result.Scope, value result.Result, d result.Destination) (PreparedSave, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if value.ID == "" || value.Revision <= 0 || !validScope(s) {
+		return nil, result.ErrMalformed
+	}
+	if _, err := result.Validate(value.Type, value.Body, result.Limits{}); err != nil {
+		return nil, err
+	}
+	folder, err := r.folder(ctx, s, d)
+	if err != nil {
+		return nil, err
+	}
+	if value.Type == result.FileType {
+		if r.assets == nil {
+			return nil, ErrUnavailable
+		}
+		var f result.File
+		if err := json.Unmarshal(value.Body, &f); err != nil {
+			return nil, err
+		}
+		a, err := r.assets.Get(ctx, f.Asset.ID)
+		if err != nil {
+			return nil, err
+		}
+		if a.Actor.PersonID != s.PersonID {
+			return nil, ErrOutOfScope
+		}
+		stream, err := r.assets.OpenRead(ctx, f.Asset.ID, int64(f.Asset.Revision))
+		if err != nil {
+			return nil, err
+		}
+		size, err := io.Copy(io.Discard, stream)
+		err = errors.Join(err, stream.Close())
+		if err != nil {
+			return nil, err
+		}
+		if size != f.Size {
+			return nil, result.ErrMalformed
+		}
+	}
+	value.Body = append(json.RawMessage(nil), value.Body...)
+	return func(ctx context.Context, ref result.SavedRef) error {
+		if ref.Destination != d {
+			return ErrOutOfScope
+		}
+		return r.saveResolved(ctx, s, value, ref, folder)
+	}, nil
+}
 func (r *Records) Save(ctx context.Context, s result.Scope, value result.Result, ref result.SavedRef) error {
+	publish, err := r.Prepare(ctx, s, value, ref.Destination)
+	if err != nil {
+		return err
+	}
+	return publish(ctx, ref)
+}
+func (r *Records) saveResolved(ctx context.Context, s result.Scope, value result.Result, ref result.SavedRef, folder string) error {
 	recordsMu.Lock()
 	defer recordsMu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if ref.ID == "" || ref.Version != 1 || value.ID == "" || value.Revision <= 0 || !validScope(s) {
+	if ref.ID == "" || ref.Version != 1 {
 		return result.ErrMalformed
 	}
-	if _, err := result.Validate(value.Type, value.Body, result.Limits{}); err != nil {
-		return err
-	}
-	folder, err := r.folder(ctx, s, ref.Destination)
-	if err != nil {
-		return err
-	}
+	var err error
 	if err = r.initialize(); err != nil {
 		return err
 	}
-	lock, err := r.root.OpenFile(".git/index.lock", os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err = r.recover(ctx); err != nil {
+		return err
+	}
+	token, err := r.acquire(ctx)
 	if err != nil {
 		return err
 	}
-	lock.Close()
-	defer r.root.Remove(".git/index.lock")
+	if err = r.publicationStep("lock"); err != nil {
+		return err
+	}
+	// The durable token is released on success. On failure the next open/save
+	// recovers its ownership and exact pending publication before admitting work.
 	parent, files, err := r.head()
 	if err != nil {
 		return err
@@ -411,7 +483,7 @@ func (r *Records) Save(ctx context.Context, s result.Scope, value result.Result,
 		id, _ := json.Marshal(ref.ID)
 		if bytes.HasPrefix(old, []byte("---\nid: "+string(id)+"\n")) {
 			if bytes.Equal(old, data) {
-				return nil
+				return r.release(ctx, token)
 			}
 			return ErrRecordsChanged
 		}
@@ -483,30 +555,46 @@ func (r *Records) Save(ctx context.Context, s result.Scope, value result.Result,
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	pending := publication{Parent: parent, Commit: commit, Path: name, Blob: blob}
+	if err = r.remember(ctx, token, pending); err != nil {
+		return err
+	}
+	if err = r.publicationStep("intent"); err != nil {
+		return err
+	}
 	if err = r.atomic(name, data); err != nil {
+		return err
+	}
+	if err = r.publicationStep("file"); err != nil {
 		return err
 	}
 	if err = r.atomic(".git/index", gitIndex(files)); err != nil {
 		return err
 	}
-	if err := r.atomic(".git/refs/heads/records", []byte(commit+"\n")); err != nil {
+	if err = r.publicationStep("index"); err != nil {
 		return err
 	}
-	return r.db.Write(ctx, func(tx *canon.Tx) error {
-		changed, err := tx.ExecContext(ctx, "UPDATE result_records_state SET head=? WHERE singleton=1 AND head=?", commit, parent)
-		if err != nil {
-			return err
-		}
-		n, err := changed.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if n != 1 {
-			return ErrRecordsChanged
-		}
-		return nil
-	})
+	if err = r.atomic(".git/refs/heads/records", []byte(commit+"\n")); err != nil {
+		return err
+	}
+	if err = r.publicationStep("ref"); err != nil {
+		return err
+	}
+	if err = r.checkpoint(ctx, pending); err != nil {
+		return err
+	}
+	if err = r.publicationStep("checkpoint"); err != nil {
+		return err
+	}
+	return r.release(ctx, token)
 }
+func (r *Records) publicationStep(stage string) error {
+	if r.afterPublication != nil {
+		return r.afterPublication(stage)
+	}
+	return nil
+}
+
 func (r *Records) tree(files map[string]string) (string, error) {
 	type entry struct{ name, mode, hash string }
 	var entries []entry

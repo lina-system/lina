@@ -28,7 +28,8 @@ var (
 // contain only locators; the ledger is the sole store of preview content.
 const Schema = `
 CREATE TABLE result_records_state (
- singleton INTEGER PRIMARY KEY CHECK(singleton=1), head TEXT NOT NULL
+ singleton INTEGER PRIMARY KEY CHECK(singleton=1), head TEXT NOT NULL,
+ lock_token TEXT NOT NULL DEFAULT '', pending BLOB
 );
 INSERT INTO result_records_state(singleton,head) VALUES(1,'');
 CREATE TABLE result_heads (
@@ -54,12 +55,14 @@ type Journal interface {
 	Read(context.Context, *canon.Tx, result.Scope, string) (result.Result, error)
 }
 
-// Writer promotes a result to the saved record allocated in the durable claim.
-// It must finish durable publication before returning nil. It runs outside the
-// canon transaction. An error is conservatively unknown, never auto-retried.
+// Writer resolves and authorizes a destination without publishing anything.
+// Its returned operation retains that resolution through the durable claim.
+// Both phases run outside canon transactions. Once publication starts, an error
+// remains conservatively unknown and the store never dispatches it again.
 type Writer interface {
-	Save(context.Context, result.Scope, result.Result, result.SavedRef) error
+	Prepare(context.Context, result.Scope, result.Result, result.Destination) (PreparedSave, error)
 }
+type PreparedSave func(context.Context, result.SavedRef) error
 type Config struct {
 	Journal   Journal
 	Writer    Writer
@@ -220,9 +223,36 @@ func (s *Store) Save(ctx context.Context, scope result.Scope, p result.SaveReque
 	if !validScope(scope) || p.ID == "" || p.Revision <= 0 {
 		return receipt, result.ErrMalformed
 	}
+	var snapshot result.Result
+	var prior string
+	err = s.db.Read(ctx, func(tx *canon.Tx) error {
+		var err error
+		snapshot, prior, err = s.head(ctx, tx, scope, p.ID)
+		return err
+	})
+	if err != nil {
+		return receipt, err
+	}
+	if snapshot.Revision != p.Revision {
+		return receipt, ErrStaleRevision
+	}
+	dest, err := destination(snapshot.Type, p.Destination)
+	if err != nil {
+		return receipt, err
+	}
+	key := SaveKey(p.ID, p.Revision, dest)
+	var publish PreparedSave
+	if prior == "" {
+		publish, err = s.cfg.Writer.Prepare(ctx, scope, snapshot, dest)
+		if err != nil {
+			return receipt, err
+		}
+		if publish == nil {
+			return receipt, ErrUnavailable
+		}
+	}
 	var r result.Result
 	var ref result.SavedRef
-	var key string
 	claimed := false
 	err = s.db.Write(ctx, func(tx *canon.Tx) error {
 		var existing string
@@ -234,11 +264,6 @@ func (s *Store) Save(ctx context.Context, scope result.Scope, p result.SaveReque
 		if r.Revision != p.Revision {
 			return ErrStaleRevision
 		}
-		dest, err := destination(r.Type, p.Destination)
-		if err != nil {
-			return err
-		}
-		key = SaveKey(p.ID, p.Revision, dest)
 		if existing != "" {
 			if existing != key {
 				return ErrOutOfScope
@@ -254,6 +279,9 @@ func (s *Store) Save(ctx context.Context, scope result.Scope, p result.SaveReque
 				receipt.SavedAs = &ref
 			}
 			return nil
+		}
+		if publish == nil {
+			return ErrUnavailable
 		}
 		ref = result.SavedRef{ID: newID(), Version: 1, Destination: dest}
 		raw, _ := json.Marshal(ref)
@@ -271,7 +299,7 @@ func (s *Store) Save(ctx context.Context, scope result.Scope, p result.SaveReque
 		return receipt, nil
 	}
 	receipt = result.SaveReceipt{State: "unknown"}
-	if err = s.cfg.Writer.Save(ctx, scope, r, ref); err != nil {
+	if err = publish(ctx, ref); err != nil {
 		return receipt, err
 	}
 	r.Status = "saved"
