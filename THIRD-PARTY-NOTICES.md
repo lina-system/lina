@@ -53,7 +53,7 @@ Credit: Stephen Schoettler and the LCM-X contributors.
 Source: https://github.com/electricsheephq/lcm-x, supplied installation commit `709099b3a397a7893a7abae8802ebe7bf605f79e` (v0.28.0). The inspected modules and license match that revision; `tools.py` contains expand and describe at this revision.
 License: **MIT** ([upstream license](https://github.com/electricsheephq/lcm-x/blob/709099b3a397a7893a7abae8802ebe7bf605f79e/LICENSE)).
 
-Scope: lossless raw storage, depth-ranked summary DAGs, stub-first compaction, externalized outputs, exact-reference retrieval and session lineage. LINA maps these to its one ledger, derived summary tree, materials and evidence-bearing recall. No upstream source is vendored or modified.
+Scope: lossless raw storage, depth-ranked summary DAGs, stub-first compaction, externalized outputs, exact-reference retrieval and session lineage. The prepared-summary implementation also references `leaf_prep.py` and its background preparation tests for source/configuration fingerprints, deferred promotion and stale-work rejection, and `dag.py` with its source traversal tests for depth-ranked provenance. The Go implementation uses Core's job receipts and revocation fences; it does not copy upstream runtime code or scheduled condensation sweeps. LINA maps these to its one ledger, derived summary tree, materials and evidence-bearing recall. No upstream source is vendored or modified.
 
 ```text
 MIT License

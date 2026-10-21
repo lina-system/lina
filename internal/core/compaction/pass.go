@@ -276,21 +276,11 @@ func (p Pass) Fit(ctx context.Context, v View, inTurn bool) (Fitted, error) {
 	}
 	// Summaries consume original source items, never the deterministic stubs.
 	// Publication uses exact source items, never the shortened request projection.
-	var kept []Record
-	budget := 0
-	for i := len(source) - 1; i >= 0; i-- {
-		if source[i].User {
-			n := p.itemTokens(v.Request, source[i].Item)
-			if n < 0 {
-				return Fitted{View: v}, ErrPass
-			}
-			if budget+n > p.Policy.KeepUserTokens {
-				break
-			}
-			budget += n
-			kept = append([]Record{source[i]}, kept...)
-		}
+	boundary, err := p.boundarySegment(v)
+	if err != nil {
+		return Fitted{View: v}, err
 	}
+	kept := boundary.Verbatim
 	summarize := func(verbatim []Record, preparedOnly bool) error {
 		keep := map[string]bool{}
 		for _, r := range verbatim {
@@ -302,7 +292,7 @@ func (p Pass) Fit(ctx context.Context, v View, inTurn bool) (Fitted, error) {
 				segment.Records = append(segment.Records, r)
 			}
 		}
-		if len(segment.Records) == 0 {
+		if len(segment.Records) == 0 && segment.RootID == "" {
 			return nil
 		}
 		var summary Text

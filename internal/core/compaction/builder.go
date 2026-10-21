@@ -25,17 +25,23 @@ type Builder struct {
 	Agent, Conversation string
 	Model               provider.ModelRef
 	Manager             bool
-	Now                 func() time.Time
-	NextID              func() string
-	Generate            func(context.Context, PassSegment) (Text, error)
-	mu                  sync.Mutex
-	ready               *preparedPass
+	// GenerationRevision binds reasoning effort and other summary route settings.
+	GenerationRevision string
+	// PreparationJob names the Core-registered Moirai job for this conversation.
+	PreparationJob string
+	Now            func() time.Time
+	NextID         func() string
+	Generate       func(context.Context, PassSegment) (Text, error)
+	mu             sync.Mutex
+	ready          *preparedPass
+	workerReady    *preparationResult
 }
 type preparedPass struct {
-	key       [32]byte
-	sourceKey [32]byte
-	proposal  Proposal
-	text      Text
+	key           [32]byte
+	sourceKey     [32]byte
+	configuration [32]byte
+	proposal      Proposal
+	text          Text
 }
 
 func segmentKey(segment PassSegment) [32]byte {
@@ -183,7 +189,7 @@ func (b *Builder) Summarize(ctx context.Context, segment PassSegment) (Text, err
 		return Text{}, err
 	}
 	b.mu.Lock()
-	b.ready = &preparedPass{key: segmentKey(segment), sourceKey: segmentKey(resolved), proposal: p, text: text}
+	b.ready = &preparedPass{key: segmentKey(segment), sourceKey: segmentKey(resolved), configuration: b.configuration(), proposal: p, text: text}
 	b.mu.Unlock()
 	return text, nil
 }
@@ -192,21 +198,28 @@ func (b *Builder) Prepared(ctx context.Context, segment PassSegment) (Text, bool
 	ready := b.ready
 	b.mu.Unlock()
 	if ready == nil {
-		return Text{}, false, nil
+		var err error
+		ready, err = b.workerPreparation(ctx)
+		if err != nil {
+			return Text{}, false, err
+		}
+		if ready == nil {
+			return Text{}, false, nil
+		}
 	}
 	p, resolved, err := b.capture(ctx, segment)
 	if err != nil {
 		return Text{}, false, err
 	}
-	if p.Expected.Epoch != ready.proposal.Expected.Epoch || segmentKey(resolved) != ready.sourceKey {
+	if p.Expected.Epoch != ready.proposal.Expected.Epoch || p.Expected.Root != ready.proposal.Expected.Root || p.Expected.Revision != ready.proposal.Expected.Revision || ready.configuration != b.configuration() || segmentKey(resolved) != ready.sourceKey {
 		return Text{}, false, nil
 	}
 	// New current-turn events can be retained beside an unchanged preparation.
 	// Rebase its publication fence and verbatim ids, never its summarized sources.
 	p.Output = ready.proposal.Output
-	refreshed := &preparedPass{key: segmentKey(segment), sourceKey: ready.sourceKey, proposal: p, text: ready.text}
+	refreshed := &preparedPass{key: segmentKey(segment), sourceKey: ready.sourceKey, configuration: ready.configuration, proposal: p, text: ready.text}
 	b.mu.Lock()
-	if b.ready != ready {
+	if b.ready != nil && b.ready != ready {
 		b.mu.Unlock()
 		return Text{}, false, nil
 	}
@@ -218,7 +231,7 @@ func (b *Builder) Publish(ctx context.Context, segment PassSegment, text Text) (
 	b.mu.Lock()
 	ready := b.ready
 	b.mu.Unlock()
-	if ready == nil || ready.key != segmentKey(segment) || ready.text != text {
+	if ready == nil || ready.key != segmentKey(segment) || ready.text != text || ready.configuration != b.configuration() {
 		return Published{}, ErrSummary
 	}
 	p := ready.proposal
