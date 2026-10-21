@@ -133,6 +133,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-13 Memory items, recall, person model and Korean search.** Items with holder, recall with evidence, `recall_person`, Korean search.
 - Done when: fixtures find a particle-attached three-syllable word and a two-syllable word in ledger and memory; recall for agent A returns no id held by B; a person-subject item exists only from person events; "remembered" is said only after the commit.
 - Depends on: G1-03, G1-05, G1-10, G1-12. Design refs: C-20 to C-22; [conversation-and-memory.md](conversation-and-memory.md#memory).
+- #64 implements the memory table and revision snapshots, holder/person scope checks, native person-event provenance, committed memory tool receipts, ephemeral standing profiles and bounded `recall_person`. Acceptance uses real SQLite and ledger admission; there is no client memory endpoint yet. #65 supplies the Korean indexes and fixtures.
 
 **G1-14 Retraction, trash and the removal list.** Revocation epoch, trash, tombstones, removal list.
 - Done when: after a forget, search, summaries, the ContextPacket and answers give zero hits in the next request, also after restoring an older generation; a fault leaves no half state; a tombstone never exists without its removal-list line; a forgotten item is not extracted again.
@@ -200,6 +201,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-25 Channel gateway and Telegram.** Pairing, bindings, scopes, long poll, outbound queue, buttons.
 - Done when: `kill -9` between receipt and reply leaves one inbox row, the matching cursor and no repeat; an unpaired sender yields no turn; the token is in no event, ledger row or child environment; READY is reached with the platform unreachable; a button from anyone but the paired owner changes nothing; a send of unknown outcome is not repeated.
 - Depends on: G1-06, G1-11, G1-12, G1-18, G1-29. Design refs: C-27; [integrations.md](integrations.md#channels).
+- #97 implements the gateway adapter contract, owner pairing, dispatch scope, atomic inbox/cursor admission and durable per-chat outbound queue. Real canon scenarios use SIGKILL at admission and send boundaries, prove no duplicate dispatch or uncertain resend, and exercise pairing, retry-after and agent-deletion binding removal. There is no channel TUI/protocol endpoint in this increment; Telegram transport, credential wiring and approval interactions remain separate work.
 
 **G1-26 Agent exchanges.** Mailbox, typed hand-off, round limit, one-line log, needs-person flag.
 - Done when: a request delivers once across `kill -9`; an acknowledgement ends the exchange without a model turn; no exchange message enters a person's conversation as a person turn; an exchange turn reads no personal knowledge; the flag is set only when the person owns the decision.
