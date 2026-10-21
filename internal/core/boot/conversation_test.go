@@ -72,11 +72,13 @@ func TestRestoredPartialKeepsLiveReplyProjection(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer topics.Close()
-				runtime := &conversationRuntime{topics: topics, conversation: "conversation", agent: "agent"}
+				stored, _, _, _ := managementFixture(t)
+				// Keep runtime.ctx unset: publication must use its caller's context.
+				runtime := &conversationRuntime{db: stored.db, topics: topics, conversation: "conversation", agent: "agent"}
 				if restored {
-					err = runtime.publishPartials(turn.Stopped{TurnID: "turn", Partials: []turn.Partial{{Round: 1, Index: 3, Text: stream.sent}}})
+					err = runtime.publishPartials(t.Context(), turn.Stopped{TurnID: "turn", Partials: []turn.Partial{{Round: 1, Index: 3, Text: stream.sent}}})
 				} else {
-					err = runtime.publishReply("turn:2:3", "turn", view)
+					err = runtime.publishReply(t.Context(), "turn:2:3", "turn", view)
 				}
 				if err != nil {
 					t.Fatal(err)
