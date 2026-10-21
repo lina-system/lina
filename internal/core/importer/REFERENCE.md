@@ -31,3 +31,8 @@ paths were unavailable during this implementation. No installation data is used.
 The Go tests cover canonical/version/engine binding distinctions, repeated IDs
 in different profiles, unchanged per-copy source fields, owner/automation
 attribution, missing links, rollback, round-trip hashes and idempotent replay.
+
+Identical payload versions retain a separate replay event while host copies keep
+the canonical binding. Unsealed events use private staging tables until the
+separate seal, and sidecar bytes use the native material writer’s recovery and
+transactional adoption path. These storage boundaries are LINA requirements.

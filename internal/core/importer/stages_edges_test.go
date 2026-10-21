@@ -93,7 +93,7 @@ func TestImportRejectsChangedSourceAndDestination(t *testing.T) {
 	if _, err = changed.Import(t.Context(), db); !errors.Is(err, ErrConflict) {
 		t.Fatalf("source changed: %v", err)
 	}
-	assertCount(t, db, "conv_event", 3)
+	assertCount(t, db, "import_event", 3)
 }
 func TestReverseUsesAdoptedRecordAndRejectsDamage(t *testing.T) {
 	req := importRequest(t)
@@ -210,7 +210,7 @@ func TestHonchoMatchingRetainsSpeakerEvidenceAndHistory(t *testing.T) {
 		}
 		err = db.Read(t.Context(), func(tx *canon.Tx) error {
 			var kind string
-			err := tx.QueryRowContext(t.Context(), "SELECT speaker_kind FROM conv_event WHERE id=?", ref.RecordID).Scan(&kind)
+			err := tx.QueryRowContext(t.Context(), "SELECT speaker_kind FROM import_event WHERE id=?", ref.RecordID).Scan(&kind)
 			if kind != string(want) {
 				t.Errorf("kind %s want %s", kind, want)
 			}
@@ -228,6 +228,8 @@ func TestHonchoMatchingRetainsSpeakerEvidenceAndHistory(t *testing.T) {
 }
 func TestImportSidecarsAndSensitiveBodies(t *testing.T) {
 	req := importRequest(t)
+	db := importStore(t)
+	req.Materials, _ = importMaterials(t, db)
 	secret := "password=synthetic-import-secret"
 	sqlSource(t, req.Profiles[0].LCMPath, `UPDATE messages SET content='password=synthetic-import-secret' WHERE store_id=1`)
 	data := []byte(secret)
@@ -240,11 +242,10 @@ func TestImportSidecarsAndSensitiveBodies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	db := importStore(t)
 	if _, err = p.Import(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
-	assertCount(t, db, "ev_span", 1)
+	assertCount(t, db, "import_event_span", 1)
 	assertCount(t, db, "ledger_search_text", 0)
 	if _, err = p.Verify(t.Context(), db); err != nil {
 		t.Fatal(err)
@@ -379,7 +380,7 @@ func TestDuplicateSourceRelationsKeepBothReferences(t *testing.T) {
 	if _, err = p.Verify(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
-	assertCount(t, db, "ev_rel", 1)
+	assertCount(t, db, "import_event_relation", 1)
 }
 func TestPerConversationResumeAndJobValidation(t *testing.T) {
 	req := importRequest(t)
@@ -407,7 +408,7 @@ func TestPerConversationResumeAndJobValidation(t *testing.T) {
 	}); !errors.Is(err, failure) {
 		t.Fatal(err)
 	}
-	assertCount(t, db, "conv_event", 3)
+	assertCount(t, db, "import_event", 3)
 	r, err := p.Import(t.Context(), db)
 	if err != nil {
 		t.Fatal(err)
@@ -424,5 +425,5 @@ func TestPerConversationResumeAndJobValidation(t *testing.T) {
 	if err == nil {
 		t.Fatal("accepted changed worker echo")
 	}
-	assertCount(t, db, "conv_event", 6)
+	assertCount(t, db, "import_event", 6)
 }

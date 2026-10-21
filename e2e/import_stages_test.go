@@ -114,7 +114,7 @@ func TestM1StagedImportWorker(t *testing.T) {
 		t.Fatalf("references=%d", verified.Rows)
 	}
 	if err = store.Read(h.ctx, func(tx *canon.Tx) error {
-		for table, want := range map[string]int{"conv_event": scenario.Events, "moirai_aux": 0, "memory_item": 0, "moirai_applied": 1} {
+		for table, want := range map[string]int{"import_event": scenario.Events, "conv_event": 0, "moirai_aux": 0, "memory_item": 0, "moirai_applied": 1} {
 			var n int
 			if err := tx.QueryRowContext(h.ctx, "SELECT count(*) FROM "+table).Scan(&n); err != nil {
 				return err

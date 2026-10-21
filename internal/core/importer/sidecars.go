@@ -2,10 +2,12 @@
 package importer
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"github.com/thisisjun786/lina/internal/core/assets"
 	"os"
 )
 
@@ -16,7 +18,7 @@ type Sidecar struct {
 	SnapshotPath, SHA256 string
 }
 
-func (b *profileBuilder) addSidecar(ctx context.Context, s Sidecar) error {
+func (b *profileBuilder) addSidecar(ctx context.Context, s Sidecar, writer *assets.MaterialWriter) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -47,6 +49,24 @@ func (b *profileBuilder) addSidecar(ctx context.Context, s Sidecar) error {
 	}
 	r := b.add(b.byID(e.conversation), "material", 5, sourceRow{key: s.Key, row: row})
 	r.links = []importLink{{e.id, "output", 0}}
+	if !missing {
+		if writer == nil {
+			return ErrSnapshot
+		}
+		// One output event owns one sidecar material. Ambiguity is refused.
+		for _, c := range b.conversations {
+			for _, other := range c.records {
+				if other != r && other.material != nil && other.links[0].target == e.id {
+					return ErrSnapshot
+				}
+			}
+		}
+		r.material, err = writer.Prepare(ctx, bytes.NewReader(data), "imported-output", assets.Actor{PersonID: b.profile.PersonID, AgentID: b.profile.AgentID})
+		if err != nil {
+			return err
+		}
+	}
+
 	if missing {
 		r.flags = append(r.flags, "bytes_unavailable")
 	}

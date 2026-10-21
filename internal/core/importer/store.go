@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/assets"
 	"github.com/thisisjun786/lina/internal/core/canon"
 )
 
@@ -68,9 +69,19 @@ func (p *Plan) Apply(ctx context.Context, tx *canon.Tx, index int) (Report, erro
 		return Report{}, err
 	}
 	report := Report{}
+	materials := map[string]assets.Asset{}
+	for _, r := range c.records {
+		if r.material != nil {
+			a, err := r.material.Insert(ctx, tx)
+			if err != nil {
+				return Report{}, err
+			}
+			materials[r.links[0].target] = a
+		}
+	}
 	for _, r := range c.records {
 		if r.event != nil {
-			if err := writeImportedEvent(ctx, tx, r); err != nil {
+			if err := writeImportedEvent(ctx, tx, r, materials[r.id]); err != nil {
 				return Report{}, err
 			}
 			report.AddedEvents++
@@ -137,23 +148,20 @@ func (p *Plan) Apply(ctx context.Context, tx *canon.Tx, index int) (Report, erro
 	}
 	return report, nil
 }
-func writeImportedEvent(ctx context.Context, tx *canon.Tx, r *record) error {
+func writeImportedEvent(ctx context.Context, tx *canon.Tx, r *record, material assets.Asset) error {
 	e := r.event
 	c := e.classified
 	origin, _ := json.Marshal(map[string]string{"kind": "import", "source_session": e.session})
 	surface := `{"kind":"import"}`
-	if _, err := tx.ExecContext(ctx, `INSERT INTO conv_event(id,conversation_id,parent_id,person_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,replay_of,body) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, r.id, r.conversation, nullable(e.parent), nullable(c.person), r.agent, c.kind, surface, e.occurred, e.recorded, e.quality, string(origin), nullable(e.replay), r.body); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO import_event(id,conversation_id,parent_id,person_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,replay_of,body,material_id,material_revision) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, r.id, r.conversation, nullable(e.parent), nullable(c.person), r.agent, c.kind, surface, e.occurred, e.recorded, e.quality, string(origin), nullable(e.replay), r.body, nullable(material.ID), materialRevision(material)); err != nil {
 		return err
 	}
 	for _, span := range ScanSecrets([]byte(r.body)) {
-		if _, err := tx.ExecContext(ctx, "INSERT INTO ev_span(event_id,start,end,sensitivity) VALUES(?,?,?,?)", r.id, span.Start, span.End, span.Kind); err != nil {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO import_event_span(event_id,start,end,sensitivity) VALUES(?,?,?,?)", r.id, span.Start, span.End, span.Kind); err != nil {
 			return err
 		}
 	}
-	// These are staged ranges; #118 publishes only after verification and seal.
-	// The native index backfiller must never interpret raw imported secret bytes.
-	_, err := tx.ExecContext(ctx, "DELETE FROM ledger_search_pending WHERE event_id=?", r.id)
-	return err
+	return nil
 }
 func resolve(ctx context.Context, tx *canon.Tx, key LegacyKey) (Reference, error) {
 	r := Reference{Key: key}
@@ -186,7 +194,7 @@ func References(ctx context.Context, db Canon, id string) ([]Reference, error) {
 }
 func reverse(ctx context.Context, tx *canon.Tx, key LegacyKey) (Row, error) {
 	var fields, column, body string
-	err := tx.QueryRowContext(ctx, `SELECT l.fields,l.body_column,COALESCE(e.body,r.body) FROM legacy_ref l JOIN import_record r ON r.id=l.record_id LEFT JOIN conv_event e ON e.id=r.event_id WHERE l.system=? AND l.instance=? AND l.kind=? AND l.key=?`, key.System, key.Instance, key.Kind, key.Key).Scan(&fields, &column, &body)
+	err := tx.QueryRowContext(ctx, `SELECT l.fields,l.body_column,COALESCE(e.body,r.body) FROM legacy_ref l JOIN import_record r ON r.id=l.record_id LEFT JOIN import_event e ON e.id=r.event_id WHERE l.system=? AND l.instance=? AND l.kind=? AND l.key=?`, key.System, key.Instance, key.Kind, key.Key).Scan(&fields, &column, &body)
 	if err != nil {
 		return nil, err
 	}
@@ -276,7 +284,14 @@ func (p *Plan) Verify(ctx context.Context, db Canon) (Verification, error) {
 // Distinct source relation rows can describe the same canonical edge. Keep all
 // their references while inserting the append-only ledger edge only once.
 func writeRelation(ctx context.Context, tx *canon.Tx, from, to, kind string, ordinal int) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO ev_rel(event_id,target_id,kind,ordinal)
- SELECT ?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM ev_rel WHERE event_id=? AND target_id=? AND kind=? AND ordinal=?)`, from, to, kind, ordinal, from, to, kind, ordinal)
+	_, err := tx.ExecContext(ctx, `INSERT INTO import_event_relation(event_id,target_id,kind,ordinal)
+ SELECT ?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM import_event_relation WHERE event_id=? AND target_id=? AND kind=? AND ordinal=?)`, from, to, kind, ordinal, from, to, kind, ordinal)
 	return err
+}
+
+func materialRevision(a assets.Asset) any {
+	if a.ID == "" {
+		return nil
+	}
+	return a.Revision
 }

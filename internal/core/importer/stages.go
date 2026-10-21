@@ -8,6 +8,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/assets"
 	"github.com/thisisjun786/lina/internal/core/canon"
 )
 
@@ -21,6 +22,9 @@ type Profile struct {
 	OwnerChannels                             []OwnerChannel
 }
 type Request struct {
+	// Materials is Core-owned; required for present sidecars. Prepare stages bytes
+	// and Plan.Close reconciles them after all enclosing transactions finish.
+	Materials *assets.MaterialWriter
 	BatchID   string
 	Confirmed bool
 	Profiles  []Profile
@@ -37,6 +41,7 @@ type importLink struct {
 	ordinal      int
 }
 type record struct {
+	material                            *assets.PreparedMaterial
 	id, conversation, agent, kind, body string
 	stage                               int
 	sources                             []sourceRow
@@ -105,11 +110,16 @@ func (p *Plan) Conversations() int { return len(p.conversations) }
 // Prepare performs all schema, identity, link and attribution checks before any
 // canon write. The returned plan owns its source data and does not retain a DB.
 func Prepare(ctx context.Context, req Request) (*Plan, error) { return prepare(ctx, req, nil) }
-func prepare(ctx context.Context, req Request, honcho []honchoWorkspace) (*Plan, error) {
+func prepare(ctx context.Context, req Request, honcho []honchoWorkspace) (_ *Plan, err error) {
 	if !req.Confirmed || req.BatchID == "" || len(req.Profiles) == 0 {
 		return nil, ErrSnapshot
 	}
 	p := &Plan{batch: req.BatchID}
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, p.Close())
+		}
+	}()
 	for _, profile := range req.Profiles {
 		p.profiles = append(p.profiles, profile.ID)
 	}
@@ -140,7 +150,7 @@ func prepare(ctx context.Context, req Request, honcho []honchoWorkspace) (*Plan,
 		if b == nil {
 			return nil, ErrSnapshot
 		}
-		if err := b.addSidecar(ctx, s); err != nil {
+		if err := b.addSidecar(ctx, s, req.Materials); err != nil {
 			return nil, err
 		}
 	}
@@ -169,6 +179,7 @@ func timestamp(r Row, field string) string {
 	return time.Unix(seconds, int64((n-float64(seconds))*1e9)).UTC().Format(time.RFC3339Nano)
 }
 func (p *Plan) Import(ctx context.Context, db Canon) (Report, error) {
+	defer p.Close() // durable markers preserve cleanup failures for restart recovery
 	report := Report{Tables: append([]TableCount(nil), p.inventory...)}
 	byProfile := map[string]int{}
 	for _, profile := range p.profiles {
@@ -249,4 +260,19 @@ func (p *Plan) orderConversations() error {
 		return a.Table < b.Table
 	})
 	return nil
+}
+
+// Close must run after any enclosing Core transaction, including failed job
+// adoption. Prepared material bytes have durable recovery markers until then.
+// A plan with sidecars is one adoption attempt; prepare again after a rollback.
+func (p *Plan) Close() error {
+	var failures []error
+	for _, c := range p.conversations {
+		for _, r := range c.records {
+			if r.material != nil {
+				failures = append(failures, r.material.Close())
+			}
+		}
+	}
+	return errors.Join(failures...)
 }

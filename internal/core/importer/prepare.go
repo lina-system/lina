@@ -202,14 +202,22 @@ func newProfile(ctx context.Context, p *Plan, profile Profile) (*profileBuilder,
 					target = r
 				}
 			}
-			// A distinct payload version remains its own event; a host copy of it maps there.
-			for _, binding := range candidates {
-				r := b.lcm[binding.row.integer("store_id")]
-				if binding.row.text("kind") == "version" && samePayload(row, r.sources[0].row) {
-					if target != nil && samePayload(row, target.sources[0].row) {
-						return nil, ErrSnapshot
+			// An identical version is a replay, not an ambiguous host identity.
+			// Prefer canonical when its bytes match; otherwise require a unique
+			// payload version and preserve every other source event separately.
+			if target == nil || !samePayload(row, target.sources[0].row) {
+				var version *record
+				for _, binding := range candidates {
+					r := b.lcm[binding.row.integer("store_id")]
+					if binding.row.text("kind") == "version" && samePayload(row, r.sources[0].row) {
+						if version != nil && version != r {
+							return nil, ErrSnapshot
+						}
+						version = r
 					}
-					target = r
+				}
+				if version != nil {
+					target = version
 				}
 			}
 			if target == nil {

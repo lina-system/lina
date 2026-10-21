@@ -117,7 +117,7 @@ func TestStagedImportReconcilesAndReverses(t *testing.T) {
 		t.Fatalf("second run added %+v", replay)
 	}
 	assertCount(t, db, "memory_item", 0)
-	assertCount(t, db, "conv_event", 3)
+	assertCount(t, db, "import_event", 3)
 }
 func assertCount(t *testing.T, db *canon.Store, table string, want int) {
 	t.Helper()
@@ -171,7 +171,7 @@ func TestConversationTransactionRollsBackAndResumes(t *testing.T) {
 	if !errors.Is(err, fail) {
 		t.Fatal(err)
 	}
-	for _, table := range []string{"conv_event", "legacy_ref", "import_record", "import_batch"} {
+	for _, table := range []string{"import_event", "legacy_ref", "import_record", "import_batch"} {
 		assertCount(t, db, table, 0)
 	}
 	if _, err = p.Import(t.Context(), db); err != nil {
