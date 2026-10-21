@@ -131,6 +131,8 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 ### 1.D Memory, context and skills
 
 **G1-13 Memory items, recall, person model and Korean search.** Items with holder, recall with evidence, `recall_person`, Korean search.
+
+The Korean acceptance corpus is `testdata/korean/search.json`: both stores assert returned source ids for attached particles, two-syllable words, imported text and literal queries. Store tests also check index maintenance and recall scope.
 - Done when: fixtures find a particle-attached three-syllable word and a two-syllable word in ledger and memory; recall for agent A returns no id held by B; a person-subject item exists only from person events; "remembered" is said only after the commit.
 - Depends on: G1-03, G1-05, G1-10, G1-12. Design refs: C-20 to C-22; [conversation-and-memory.md](conversation-and-memory.md#memory).
 - #64 implements the memory table and revision snapshots, holder/person scope checks, native person-event provenance, committed memory tool receipts, ephemeral standing profiles and bounded `recall_person`. Acceptance uses real SQLite and ledger admission; there is no client memory endpoint yet. #65 supplies the Korean indexes and fixtures.
@@ -146,6 +148,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-16 Skills written by agents, adopted at once, undone in one action.** Reversible-write check, notice, undo, index.
 - Done when: an instruction-only patch is adopted as a new version with a one-line notice after the commit; undo restores the previous text as a new version; a skill with executable code is not adopted this way; the index holds name and description and bodies load only when needed.
 - Depends on: G1-05, G1-10, G1-12, G1-29. Design refs: C-23; [conversation-and-memory.md](conversation-and-memory.md#skills).
+- #71 supplies the versioned skill store, reversible-write classification, durable undo suppression, lazy catalog/read handles, embedded meta-skill and guarded registry tools. Real canon/Git tests cover publication, failure, reopening, concurrency and undo; authority tests cover receipts and replay. The client service has no skill endpoint yet; presentation, context selection and explicit proposal acceptance remain with their consuming flows.
 
 **G1-27 Hermes install import.** Rehearsal, import, verification and promotion, as a worker job.
 - Done when: on synthetic fixtures counts reconcile row for row; every source key has one legacy reference in both directions; the reverse mapper hash equals the source hash; a second run adds nothing; no write reaches a source; an unknown schema is refused; recall returns no imported observation before promotion.
@@ -226,6 +229,8 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-34 Reply shape and typed results.** Reply budgets, streaming filter, `present_result`, `read_result`, `save_result`, text rendering.
 - Done when: a chat reply over 5 lines or 300 characters is cut at the last sentence and a card is made while the ledger keeps the reply; a body that fails the schema is refused `malformed` to the agent only; a stale revision is refused; a double save makes one record.
 - Depends on: G1-10, G1-17, G1-29. Design refs: C-51, C-52, CP-05; [conversation-and-memory.md](conversation-and-memory.md#reply-shape).
+
+The #104 typed-result increment supplies all eight closed body schemas, deterministic rendering, ledger revisions and Core result-tool bindings. Its tests cover malformed bodies without conversation events, stale edits/saves, scoped reads, one versioned record for a repeated save, and unknown effects without redispatch. Client-service/TUI delivery and C-51's streaming filter remain separate increments.
 
 **G1-35 Waiting list, running list and notices.** Waiting rows, running list, notices at turn boundaries.
 - The Core implementation supplies canonical approval and run-input producers, run/task projections, attributed answers, and a durable lane outbox that writes system evidence at delivery. Its isolated scenarios are `e2e/m1/waiting-running-notices.json` and `e2e/m1/run-landing-notice.json`; client waiting/running payloads and TUI rendering remain reserved for their surface implementation.

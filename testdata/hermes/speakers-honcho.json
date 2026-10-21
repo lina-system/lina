@@ -1,0 +1,13 @@
+[
+  {"id":"automated","peer":"owner","content":"I prefer brief replies.","host_ids":[10],"lcm_ids":[10]},
+  {"id":"owner","peer":"owner","content":"[cron] I prefer brief replies.","host_ids":[11],"lcm_ids":[11]},
+  {"id":"honcho-only","peer":"owner","content":"I prefer brief replies."},
+  {"id":"delegate","peer":"owner","content":"I prefer brief replies.","host_ids":[12]},
+  {"id":"tool","peer":"owner","content":"I prefer brief replies.","host_ids":[13]},
+  {"id":"system","peer":"owner","content":"I prefer brief replies.","host_ids":[14]},
+  {"id":"agent","peer":"owner","content":"I prefer brief replies.","host_ids":[15]},
+  {"id":"assistant","peer":"owner","content":"I prefer brief replies.","host_ids":[16]},
+  {"id":"external","peer":"owner","content":"I prefer brief replies.","host_ids":[17]},
+  {"id":"disagreement","peer":"owner","content":"I prefer brief replies.","lcm_ids":[18,19]},
+  {"id":"unknown","peer":"owner","content":"I prefer brief replies.","lcm_ids":[20]}
+]

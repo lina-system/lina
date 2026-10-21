@@ -1,0 +1,58 @@
+{
+  "protocol": {
+    "name": "client",
+    "version": "1.0"
+  },
+  "kind": "question",
+  "message_id": "stream-question",
+  "attempt_id": "stream-question-attempt",
+  "reply_to": null,
+  "sender": {
+    "party": "core",
+    "id": "main-example"
+  },
+  "epoch": "42",
+  "sent_at": "2026-01-01T00:00:01Z",
+  "idempotency_key": null,
+  "effect_state": "none",
+  "receipt_ref": null,
+  "source_refs": [],
+  "error": null,
+  "payload": {
+    "conversation_id": "conversation-example",
+    "form": {
+      "plugin_name": "example-plugin",
+      "fields": [
+        {
+          "name": "note",
+          "type": "text"
+        },
+        {
+          "name": "count",
+          "type": "number"
+        },
+        {
+          "name": "enabled",
+          "type": "boolean"
+        },
+        {
+          "name": "mode",
+          "type": "choice",
+          "choices": [
+            "a",
+            "b"
+          ]
+        }
+      ]
+    },
+    "stream": {
+      "topic": "conversation:stream-fixture",
+      "cursor": {
+        "epoch": "42",
+        "seq": 2
+      },
+      "key": "item",
+      "revision": 2
+    }
+  }
+}

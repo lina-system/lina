@@ -117,3 +117,27 @@ func TestOpaqueHistoryCannotPromoteToolOrModelRoles(t *testing.T) {
 		}
 	}
 }
+
+func TestResultStorageEventsNeverExposeBodyToModel(t *testing.T) {
+	makeEvent := func(kind, body string) ledger.Event {
+		masked, err := secrets.Mask(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ledger.Event{ConversationID: "conversation", AgentID: "agent", SpeakerKind: guard.Agent, Origin: ledger.Origin{Kind: "native", Entry: guard.EntryAgent}, ScaffoldKind: kind, Body: masked}
+	}
+	acknowledgement := `{"type":"function_call_output","call_id":"present","output":"bounded result acknowledgement"}`
+	events := []ledger.Event{
+		makeEvent("result", `{"result_id":"result","revision":1,"body":{"private_body":"not in model history"}}`),
+		makeEvent("provider_item", acknowledgement),
+		makeEvent("result", `{"result_id":"result","revision":2,"body":{"private_body":"replacement body"}}`),
+		makeEvent("result", `{"result_id":"result","revision":2,"status":"saved","body":{"private_body":"saved body"}}`),
+	}
+	events[1].Origin.Entry = guard.EntryTool
+	events[1].Origin.Locator = "result-tool"
+	events[1].SpeakerKind = guard.Tool
+	items, err := assemble.History(events, "conversation", "agent")
+	if err != nil || len(items) != 1 || !bytes.Equal(items[0], []byte(acknowledgement)) {
+		t.Fatalf("result history exposed storage body: %s %v", items, err)
+	}
+}
