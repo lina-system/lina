@@ -90,6 +90,12 @@ func (e *Executor) command(ctx context.Context, l lease.Lease, in tools.Input) (
 		if errors.As(runErr, &exit) && ctx.Err() == nil && snapshotErr == nil {
 			receipt.ExitCode = exit.ExitCode()
 			result.State = tools.Failed
+			if len(receipt.Changes) != 0 {
+				// A failed process may have partially applied its effect. Keep
+				// the observed revision/receipts and the authority write fence
+				// until reconciliation, rather than claim no effect occurred.
+				result.State = tools.Unknown
+			}
 		} else {
 			receipt.ExitCode = -1
 			result.State = tools.Unknown
