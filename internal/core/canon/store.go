@@ -27,10 +27,11 @@ const (
 	ErrNewerSchema
 	ErrClosed
 	ErrInvalid
+	ErrRecoveryRequired
 )
 
 func (c Code) Error() string {
-	names := [...]string{"invalid", "stale_epoch", "read_only", "store_write_halted", "schema_too_new", "closed", "invalid"}
+	names := [...]string{"invalid", "stale_epoch", "read_only", "store_write_halted", "schema_too_new", "closed", "invalid", "recovery_required"}
 	if int(c) >= len(names) {
 		return "invalid"
 	}
@@ -62,8 +63,9 @@ type Config struct {
 }
 
 // Tx exposes queries but no commit, rollback or raw connection. Callbacks run
-// synchronously; they must not retain Tx, start goroutines or perform external
-// calls. A reader's ExecContext always returns the closed read_only code.
+// synchronously; they must not retain Tx, start goroutines or perform model,
+// tool or network calls. Retraction may sync its local removal journal before
+// the corresponding canon mutation. A reader's ExecContext returns read_only.
 type Tx struct {
 	tx       *sql.Tx
 	readOnly bool
@@ -125,6 +127,8 @@ type Store struct {
 	lifetime         context.Context
 	cancel           context.CancelFunc
 	closeOnce        sync.Once
+	readGate         sync.RWMutex
+	readFailure      error // guarded by readGate
 }
 
 // Inspect reads the schema version and exact unsigned epoch before a writer
@@ -418,6 +422,11 @@ func (s *Store) submit(ctx context.Context, fn func(*Tx) error, failure error) e
 }
 
 func (s *Store) Write(ctx context.Context, fn func(*Tx) error) error {
+	s.readGate.RLock()
+	defer s.readGate.RUnlock()
+	if s.readFailure != nil {
+		return errors.Join(ErrRecoveryRequired, s.readFailure)
+	}
 	if fn == nil {
 		return ErrInvalid
 	}
@@ -438,6 +447,11 @@ func (s *Store) MirrorEpoch(ctx context.Context, epoch uint64) error {
 }
 
 func (s *Store) Read(ctx context.Context, fn func(*Tx) error) error {
+	s.readGate.RLock()
+	defer s.readGate.RUnlock()
+	if s.readFailure != nil {
+		return errors.Join(ErrRecoveryRequired, s.readFailure)
+	}
 	if fn == nil {
 		return ErrInvalid
 	}
