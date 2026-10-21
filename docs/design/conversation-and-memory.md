@@ -592,6 +592,8 @@ The Core writer binds evidence to the current native owner input and journals ea
 
 Disposition adoption requires a Core-held measurement proof for the same agent, expected revision, baseline and named evaluation set, with an independent higher-is-better metric that improves. Adoption atomically appends the growth snapshot revision and disposition history. Undo appends a restoring revision and prevents the exact undone candidate from being adopted again. No automatic growth mechanism is enabled by this implementation; model JSON cannot construct an adoption proof.
 
+Expression shaping uses a bounded presentation record alongside the emotion snapshot. Initial weights are 0.65 short emotion, 0.25 mood and 0.10 disposition; valence selects plain, warm or reserved wording beyond +/-0.15. Low arousal reduces the soft length target to two thirds of the existing budget; positive valence and arousal allow at most one emoji. Suppression selects plain wording and zero emoji. These are generation hints, not edits to factual text, authority, the person's budget or the full-answer ledger. The existing streaming filter enforces the surface ceiling. A provider-stub regression sends the same question under two prepared states, checks identical factual payloads with different wording/length/emoji, and verifies that tools and fixed instructions are unchanged. Real-model adherence remains a separate evaluation.
+
 ## Skills
 
 - The skill catalog holds product documentation skills, usage skills for each engine (conversation, work, memory, materials and persona), and the persona-change skill.

@@ -13,6 +13,7 @@ import (
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/internal/core/reply"
 	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/kit/grant"
 	"github.com/thisisjun786/lina/kit/loop"
@@ -138,6 +139,12 @@ func (r *conversationRuntime) preparePersonaTools(ctx context.Context, turnID st
 	if err != nil {
 		return nil, nil, err
 	}
+	shape, err := reply.ShapeEmotion(emotion, reply.ChatBudget())
+	if err != nil {
+		return nil, nil, err
+	}
+	shapeData, _ := json.Marshal(shape)
+	packet = append(packet, assemble.ContextItem{ID: "persona-expression:" + r.agent, Revision: scope.ExpressionRevision + ":" + scope.StateRevision, AgentID: r.agent, Kind: assemble.Commitments, Text: string(shapeData)})
 	emotionData, _ := json.Marshal(struct {
 		Kind  string                 `json:"kind"`
 		State agents.EmotionSnapshot `json:"state"`
