@@ -63,6 +63,8 @@ type conversationRuntime struct {
 	vault                       *secrets.Store
 	signin                      *accounts.SignIn
 	agents                      *agents.Store
+	controls                    *ctlfiles.Store
+	personaWarned               bool
 	lanes                       *lane.Manager
 	topics                      *clientsrv.Topics
 	route                       *modelpath.ResponsesConfig
@@ -82,7 +84,7 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err != nil {
 		return nil, err
 	}
-	r := &conversationRuntime{dispatchMu: &sync.RWMutex{}, root: root, steering: map[string][]acceptedSteering{}, ctx: ctx, db: db, route: route, activities: activities, lanes: lane.New(), person: "person:" + main}
+	r := &conversationRuntime{dispatchMu: &sync.RWMutex{}, root: root, controls: controls, steering: map[string][]acceptedSteering{}, ctx: ctx, db: db, route: route, activities: activities, lanes: lane.New(), person: "person:" + main}
 	if person != "" {
 		r.person = person
 	}
@@ -94,6 +96,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	}()
 	r.agents, err = agents.Open(root, db)
 	if err != nil {
+		return nil, err
+	}
+	if err := r.refreshPersona(ctx); err != nil {
 		return nil, err
 	}
 	first, err := r.agents.FirstRun(ctx, r.person, true)
@@ -439,6 +444,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			return turn.ModelPolicy{Model: r.route.Model, Revision: "configured", Class: provider.ModelAPI}, nil
 		},
 		Context: func(ctx context.Context, _ turn.ModelPolicy) (turn.PreparedRequest, error) {
+			if err := r.refreshPersona(ctx); err != nil {
+				return turn.PreparedRequest{}, err
+			}
 			persona, err := r.agents.Prepare(ctx, turnID, r.agent)
 			if err != nil {
 				return turn.PreparedRequest{}, err
