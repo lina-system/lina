@@ -21,17 +21,20 @@ const kit = { name: 'kit', module: 'kit', packages: ['./...'] };
 
 test('a progressing test command can outlive the old per-command limit', t => {
   const sb = fixture(t);
-  // Scale the legacy 120 s limit to 1 s; progress continues for 2 s.
-  // All other commands are deterministic stand-ins, leaving the real runner
-  // to exercise the selected test command's budget.
-  const args = ['-e', `
-    const progress = setInterval(() => console.log('package ok'), 50);
-    setTimeout(() => { clearInterval(progress); console.log('finished'); }, 2000);
-  `];
+  let elapsed = 0;
+  t.mock.method(performance, 'now', () => elapsed);
   const result = checkComponents({ cwd: sb.dir, components: [kit], execute(command, goArgs, options) {
-    if (goArgs[0] === 'test') return execute(process.execPath, args, {
-      ...options, timeoutMs: Math.ceil((options.timeoutMs ?? 120_000) / 120),
-    });
+    if (goArgs[0] === 'test') {
+      // Model progress past the old deadline without racing wall-clock timers.
+      const deadline = elapsed + (options.timeoutMs ?? 120_000);
+      let stdout = '';
+      for (let i = 0; i < 3; i++) {
+        elapsed += 50_000;
+        if (elapsed >= deadline) return { status: 1, stdout, stderr: 'test command timed out\n' };
+        stdout += 'package ok\n';
+      }
+      return { status: 0, stdout: `${stdout}finished\n`, stderr: '' };
+    }
     return { status: 0, stdout: goArgs[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
   } });
   assert.equal(result.status, 0, result.output);
