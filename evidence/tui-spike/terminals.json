@@ -1,0 +1,25 @@
+{
+  "format": 1,
+  "status": "awaiting_owner_confirmation",
+  "confirmed_list": null,
+  "proposed_list": [
+    {
+      "id": "macos-local",
+      "platform": "macOS",
+      "terminal": "Apple Terminal",
+      "ssh": false
+    },
+    {
+      "id": "lina-os-default",
+      "platform": "LINA OS",
+      "terminal": "installed default terminal",
+      "ssh": false
+    },
+    {
+      "id": "macos-ssh",
+      "platform": "macOS terminal, remote Linux application",
+      "terminal": "Apple Terminal",
+      "ssh": true
+    }
+  ]
+}
