@@ -33,6 +33,8 @@ func (identity Identity) topicCapability(topic string) (protocol.Capability, boo
 // supplies its negotiated authorization and bounded, cancellation-aware writer.
 // A nil RPC id is a notification. The listener closes the transport before
 // Close, so a blocked physical write cannot hold shutdown open.
+var errTopicRevoked = errors.New("topic visibility revoked")
+
 type topicSession struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
@@ -62,6 +64,9 @@ func (s *topicSession) send(id json.RawMessage, envelope protocol.Envelope, topi
 	s.mu.Unlock()
 	if !current {
 		return s.ctx.Err()
+	}
+	if sub != nil && s.identity.AuthorizeTopic != nil && !s.identity.AuthorizeTopic(s.ctx, topic) {
+		return errTopicRevoked
 	}
 	if err := s.ctx.Err(); err != nil {
 		return err
@@ -115,7 +120,8 @@ func (s *topicSession) handle(id json.RawMessage, request protocol.Envelope) (bo
 	if !validTopic(topic) || (subscribe.Active != nil && !*subscribe.Active && subscribe.After != nil) {
 		return true, s.refuse(id, request, protocol.ErrorMalformed)
 	}
-	if s.allowed == nil || !s.allowed(topic) {
+	removing := subscribe.Active != nil && !*subscribe.Active
+	if !removing && (s.allowed == nil || !s.allowed(topic)) {
 		return true, s.refuse(id, request, protocol.ErrorCapabilityNotNegotiated)
 	}
 	if s.hub == nil {
@@ -237,7 +243,9 @@ func (s *topicSession) run(topic string, sub *Subscription) {
 			return
 		}
 		if err := s.send(nil, envelope, topic, sub); err != nil {
-			s.fail()
+			if !errors.Is(err, errTopicRevoked) {
+				s.fail()
+			}
 			return
 		}
 	}

@@ -196,7 +196,7 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 			text := func(id string) string { return design.Text(m.styles.options.Language, id) }
 			m.openPager(strings.Join([]string{text("controls.help"),
 				"/accounts  " + text("account.heading"), "/signin  " + text("sign_in_open"),
-				"/channels  " + text("channel.heading"), "/talk  " + text("talk.heading"), "/stop  " + text("interrupt"),
+				"/memory  " + text("memory.heading"), "/agents  " + text("agents.heading"), "/channels  " + text("channel.heading"), "/talk  " + text("talk.heading"), "/stop  " + text("interrupt"),
 			}, "\n"))
 			return nil
 		}
@@ -206,6 +206,11 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 			return command
 		}
 		if handled, command := m.channelCommand(text); handled {
+			m.reduceInput(state.EditDraft{})
+			m.conversation.undo = nil
+			return command
+		}
+		if handled, command := m.managementCommand(text); handled {
 			m.reduceInput(state.EditDraft{})
 			m.conversation.undo = nil
 			return command
@@ -322,6 +327,9 @@ func (m *shellModel) refreshOpenCard() {
 
 func (m *shellModel) pagerKey(msg tea.KeyMsg, name string) tea.Cmd {
 	p := &m.conversation.pager
+	if name == "ctrl+d" {
+		return tea.Quit
+	}
 	if name == "esc" {
 		if p.searching {
 			p.searching = false
@@ -409,7 +417,7 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 	} else if notice := m.localNotice(); showNotice && notice != "" {
 		statusLine += "  " + notice
 	}
-	rows[plan.Status.Y] = clip(statusLine + "  /help  Enter  Ctrl+D")
+	rows[plan.Status.Y] = clip(statusLine + "  /help  Enter  Ctrl+D  /memory  /agents")
 	if plan.Tier == layout.TooSmall {
 		if plan.Notice.Height > 0 {
 			rows[0] = clip(design.Text(m.styles.options.Language, "shell.too_small"))
@@ -428,7 +436,12 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 	}
 	name := "LINA"
 	if len(m.content.Agents) > 0 {
-		name = m.content.Agents[0].Name
+		for _, a := range m.content.Agents {
+			if a.AgentID == m.activeAgent() {
+				name = a.Name
+				break
+			}
+		}
 	}
 	rows[plan.Header.Y] = clip(m.styles.Title.Render(name))
 	var transcript []render.StyledRow

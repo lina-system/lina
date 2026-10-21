@@ -236,3 +236,22 @@ func TestWriteDoesNotRetainSecretShapedContent(t *testing.T) {
 		t.Fatalf("secret-shaped statement accepted: %v", err)
 	}
 }
+
+func TestRecallExactIdentityPrecedesLimitAndKeepsScope(t *testing.T) {
+	db := database(t)
+	first := proposal("A", "first private statement")
+	first.Item.Holder = "A"
+	first.ExplicitHolder = true
+	item := commit(t, db, first)
+	commit(t, db, proposal("A", "newer common statement"))
+	store := New(db)
+	for _, agent := range []string{"A", "B"} {
+		hits, err := store.Recall(t.Context(), RecallScope{Person: "person", Agent: agent}, Query{ID: item.ID, Limit: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if agent == "A" && (len(hits) != 1 || hits[0].ID != item.ID) || agent == "B" && len(hits) != 0 {
+			t.Fatal("identity bypassed scope or was filtered after limit")
+		}
+	}
+}

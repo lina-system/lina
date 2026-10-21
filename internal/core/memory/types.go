@@ -162,6 +162,8 @@ type RecallScope struct {
 func (s RecallScope) Holders() []Holder { return []Holder{Holder(s.Agent), All} }
 
 type Query struct {
+	After      string // Optional last item identity in the current revision order.
+	ID         string // Optional exact identity, filtered before the result limit.
 	Text       string
 	At         int64
 	Limit      int

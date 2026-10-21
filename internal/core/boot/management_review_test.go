@@ -1,0 +1,195 @@
+// SPDX-License-Identifier: Apache-2.0
+
+package boot
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	memoryexec "github.com/thisisjun786/lina/internal/core/exec"
+	"github.com/thisisjun786/lina/internal/core/guard"
+	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/internal/core/memory"
+	"github.com/thisisjun786/lina/internal/core/retract"
+	"github.com/thisisjun786/lina/internal/core/turn"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/thisisjun786/lina/kit/protocol"
+	"github.com/thisisjun786/lina/kit/rpc"
+)
+
+func TestDeleteCancelsActiveAgentTurn(t *testing.T) {
+	r, session, a, _ := managementFixture(t)
+	defer r.lanes.Close(context.Background())
+	started := make(chan struct{})
+	result, err := r.lanes.Submit(t.Context(), "main:"+a, func(ctx context.Context) error { close(started); <-ctx.Done(); return context.Cause(ctx) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	if _, err = r.Agent(t.Context(), session, protocol.AgentRequest{Operation: textptr("delete"), AgentID: &a}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case cause := <-result:
+		var interruption turn.Interrupt
+		if !errors.As(cause, &interruption) || interruption.Issuer != turn.Person {
+			t.Fatal("deletion did not use the person interruption flow", cause)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("deleted agent's active turn was not cancelled")
+	}
+}
+func TestMemoryListFitsTransportFrame(t *testing.T) {
+	r, session, a, _ := managementFixture(t)
+	for i := 0; i < 20; i++ {
+		text := fmt.Sprintf("fixture %d ", i) + strings.Repeat("<", 16000)
+		if _, err := r.Memory(t.Context(), session, protocol.MemoryRequest{Operation: textptr("remember"), AgentID: &a, Text: &text}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err := r.Memory(t.Context(), session, protocol.MemoryRequest{Operation: textptr("list"), AgentID: &a})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(raw) >= rpc.MaxFrameBytes-4096 {
+		t.Fatalf("memory list payload exceeds frame budget: %d", len(raw))
+	}
+}
+
+func TestMemoryPagesReachEveryItem(t *testing.T) {
+	r, session, a, _ := managementFixture(t)
+	for i := 0; i < 20; i++ {
+		text := fmt.Sprintf("page %d ", i) + strings.Repeat("<", 16000)
+		if _, err := r.Memory(t.Context(), session, protocol.MemoryRequest{Operation: textptr("remember"), AgentID: &a, Text: &text}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	request := protocol.MemoryRequest{Operation: textptr("list"), AgentID: &a, Text: textptr("page")}
+	seen := map[string]bool{}
+	for pages := 0; pages < 20; pages++ {
+		result, err := r.Memory(t.Context(), session, request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := json.Marshal(result)
+		if len(raw) >= rpc.MaxFrameBytes-4096 {
+			t.Fatal("page exceeds transport")
+		}
+		if result.Items == nil {
+			t.Fatal("missing page")
+		}
+		for _, item := range *result.Items {
+			if seen[item.ItemID] {
+				t.Fatal("duplicate cursor page")
+			}
+			seen[item.ItemID] = true
+		}
+		if result.Next == nil {
+			if len(seen) != 20 {
+				t.Fatalf("pagination lost items: %d", len(seen))
+			}
+			return
+		}
+		request.After = result.Next
+	}
+	t.Fatal("pagination did not terminate")
+}
+func TestForgottenLedgerSourceCannotEnterNextModelContext(t *testing.T) {
+	r, session, a, _ := managementFixture(t)
+	r.agent = a
+	r.conversation = "main:" + a
+	now := time.Now()
+	text := "fixture sourced orchard statement"
+	event, err := ledger.New(r.db, nil).Admit(t.Context(), guard.EntryOwner, ledger.Input{ID: "source", ConversationID: r.conversation, AgentID: a, PersonID: r.person, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: text})
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := memoryexec.NewMemory(r.db, nil, nil).Remember(t.Context(), memory.Write{Person: r.person, Agent: a, Item: memory.Item{Kind: memory.Fact, Content: text, Subject: memory.Subject{Kind: memory.Person, ID: r.person}, Basis: memory.Stated, Standing: true, Evidence: []memory.Evidence{{Kind: memory.Event, ID: event.ID, Precision: memory.Exact}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, refs, epoch, err := r.modelContext(t.Context(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(before)
+	if !bytes.Contains(raw, []byte(text)) || len(refs) != 1 {
+		t.Fatal("source was not in prepared context")
+	}
+	if _, err = r.Memory(t.Context(), session, protocol.MemoryRequest{Operation: textptr("forget"), AgentID: &a, ItemID: &receipt.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if !errors.Is(r.validateModelContext(t.Context(), epoch, refs), retract.ErrStaleSnapshot) {
+		t.Fatal("old preparation remains valid")
+	}
+	after, _, _, err := r.modelContext(t.Context(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ = json.Marshal(after)
+	if bytes.Contains(raw, []byte(text)) {
+		t.Fatal("forgotten source survived in model history")
+	}
+	original, err := r.events(t.Context(), "")
+	if err != nil || len(original) != 1 {
+		t.Fatal("forget erased the person's ledger", err)
+	}
+}
+func TestCorrectionInvalidatesPreparedProfile(t *testing.T) {
+	r, session, a, _ := managementFixture(t)
+	r.agent = a
+	r.conversation = "main:" + a
+	saved, err := r.Memory(t.Context(), session, protocol.MemoryRequest{Operation: textptr("remember"), AgentID: &a, Text: textptr("old orchard")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, refs, epoch, err := r.modelContext(t.Context(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = r.validateModelContext(t.Context(), epoch, refs); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = r.Memory(t.Context(), session, protocol.MemoryRequest{Operation: textptr("correct"), AgentID: &a, ItemID: saved.ItemID, Text: textptr("new meadow")}); err != nil {
+		t.Fatal(err)
+	}
+	if !errors.Is(r.validateModelContext(t.Context(), epoch, refs), retract.ErrStaleSnapshot) {
+		t.Fatal("superseded profile would enter the next model round")
+	}
+	after, refs, epoch, err := r.modelContext(t.Context(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(after)
+	if bytes.Contains(raw, []byte("old orchard")) || !bytes.Contains(raw, []byte("new meadow")) {
+		t.Fatal("fresh preparation did not replace corrected memory")
+	}
+	if err = r.validateModelContext(t.Context(), epoch, refs); err != nil {
+		t.Fatal(err)
+	}
+}
+func TestDeletedAgentTopicAuthorization(t *testing.T) {
+	r, session, a, _ := managementFixture(t)
+	for _, prefix := range []string{"conversation:main:", "results:main:"} {
+		if !r.topicAuthorized(t.Context(), prefix+a) {
+			t.Fatal("active agent topic refused")
+		}
+	}
+	if _, err := r.Agent(t.Context(), session, protocol.AgentRequest{Operation: textptr("delete"), AgentID: &a}); err != nil {
+		t.Fatal(err)
+	}
+	for _, prefix := range []string{"conversation:main:", "results:main:"} {
+		if r.topicAuthorized(t.Context(), prefix+a) {
+			t.Fatal("deleted agent topic still authorized")
+		}
+	}
+}
