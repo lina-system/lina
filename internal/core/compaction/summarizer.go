@@ -47,11 +47,13 @@ func (a Auxiliary) Summarize(ctx context.Context, segment PassSegment) (Text, er
 	delimiter := "segment_" + hex.EncodeToString(nonce[:])
 	req := a.Request
 	req.Purpose = provider.Auxiliary
-	req.Instructions = summaryInstructions
+	// Auxiliary requests omit the adapter-level instructions field. Keep the
+	// trusted summary contract in a developer input item on the actual wire.
+	req.Instructions = ""
 	req.Tools = nil
 	req.Bridge = nil
 	req.Fields = nil
-	req.Items = []provider.Item{textItem("user", "<"+delimiter+">\n"+string(body)+"\n</"+delimiter+">")}
+	req.Items = []provider.Item{textItem("developer", summaryInstructions), textItem("user", "<"+delimiter+">\n"+string(body)+"\n</"+delimiter+">")}
 	stream, err := a.Stream(ctx, req)
 	if err != nil {
 		return Text{}, errors.Join(ErrSummary, err)
