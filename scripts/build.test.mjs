@@ -7,17 +7,22 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { sandbox } from './test-fixture.mjs';
-import { createGoContext } from './verify/check-components.mjs';
+import { componentsTimeoutMs, createGoContext, execute } from './verify/check-components.mjs';
 import { build } from './build.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 
-function fixture(t) {
+test('the pinned SQLite rebuild script has valid shell syntax', () => {
+  const result = spawnSync('bash', ['-n', join(root, 'packaging/sqlite-vec/build.sh')], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+});
+
+function fixture(t, { timeoutScale = 1, executeCommand = execute } = {}) {
   const sb = sandbox(t);
   const cwd = join(sb.dir, 'source');
   mkdirSync(cwd);
   for (const name of ['cmd/lina', 'cmd/lina-node', 'internal/buildinfo', 'kit', 'go.mod', 'go.sum', 'go.work',
-    'internal/core', 'internal/clientapi', 'internal/design', 'internal/tui', 'scripts/build.mjs', 'scripts/git.mjs', 'scripts/verify/check-components.mjs']) {
+    'internal/core', 'internal/clientapi', 'internal/design', 'internal/tui', 'persona', 'packaging', 'scripts/build.mjs', 'scripts/git.mjs', 'scripts/verify/check-components.mjs']) {
     if (!existsSync(join(root, name))) continue;
     mkdirSync(dirname(join(cwd, name)), { recursive: true });
     cpSync(join(root, name), join(cwd, name), { recursive: true });
@@ -27,9 +32,15 @@ function fixture(t) {
   const context = createGoContext(cwd);
   t.after(context.close);
   const out = join(sb.dir, 'artifacts with spaces');
-  const run = (args = ['--out', out]) => spawnSync(process.execPath, [join(cwd, 'scripts/build.mjs'), ...args], {
-    cwd, env: context.env, encoding: 'utf8', timeout: 120_000,
-  });
+  // A full cross-build contains multiple Go commands. Share the same bounded
+  // allowance across targets, inside foundation's 600 s automation watchdog.
+  const deadline = performance.now() + (componentsTimeoutMs - 5000) * timeoutScale;
+  const run = (args = ['--out', out]) => {
+    const timeoutMs = Math.max(1, Math.floor(deadline - performance.now()));
+    return executeCommand(process.execPath,
+      [join(cwd, 'scripts/build.mjs'), ...args, '--timeout-ms', String(Math.max(1, timeoutMs - 1000))],
+      { cwd, env: context.env, timeoutMs });
+  };
   const build = () => {
     const result = run();
     assert.equal(result.status, 0, result.stderr || result.error?.message);
@@ -38,12 +49,131 @@ function fixture(t) {
   return { ...sb, cwd, out, revision, run, build, env: context.env };
 }
 
+test('a progressing cross-build can outlive the old per-command limit', t => {
+  let elapsed = 0;
+  t.mock.method(performance, 'now', () => elapsed);
+  const budgets = [];
+  const f = fixture(t, { executeCommand(command, args, options) {
+    const innerBudget = Number(args[args.indexOf('--timeout-ms') + 1]);
+    budgets.push([options.timeoutMs, innerBudget]);
+    if (options.timeoutMs < 150_000 || innerBudget < 150_000) return { status: 1, stdout: 'compiling\n', stderr: 'build timed out\n' };
+    elapsed += 150_000;
+    return { status: 0, stdout: 'compiling\nfinished\n', stderr: '' };
+  } });
+  for (const target of ['linux/amd64', 'darwin/arm64']) {
+    const result = f.run(['--out', f.out, '--target', target]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /compiling[\s\S]*finished/);
+  }
+  assert.deepEqual(budgets, [[595_000, 594_000], [445_000, 444_000]]);
+});
+
+test('a hung cross-build fails with the command, target and elapsed time', t => {
+  const f = fixture(t, { timeoutScale: 1 / 3000 });
+  f.write(f.cwd, 'scripts/build.mjs', `// SPDX-License-Identifier: Apache-2.0
+setInterval(() => {}, 1000);
+`);
+  const result = f.run(['--out', f.out, '--target', 'darwin/arm64']);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /command timed out after [\d.]+ s.*build\.mjs.*--target darwin\/arm64/);
+});
+
+test('cold inner Go compilations share the build deadline and can exceed 120 seconds', t => {
+  const f = fixture(t);
+  let elapsed = 0;
+  t.mock.method(performance, 'now', () => elapsed);
+  const budgets = [];
+  const manifest = build({ cwd: f.cwd, out: f.out, target: 'darwin/arm64',
+    execute(command, args, options) {
+      if (args[0] === 'env') return { status: 0, stdout: options.env.GOTOOLCHAIN, stderr: '' };
+      if (args[0] === 'build') {
+        const budget = options.timeoutMs ?? 120_000;
+        budgets.push(budget);
+        // A controlled clock models each cold compilation needing 150 s.
+        // The fake command fails at its assigned deadline, just as execute does.
+        if (budget < 150_000) return { status: 1, stdout: 'compiling\n', stderr: 'cold compilation timed out at its command budget\n' };
+        elapsed += 150_000;
+        const binary = args[args.indexOf('-o') + 1];
+        f.write(dirname(binary), binary.split(/[\\/]/).at(-1), 'fixture executable');
+      }
+      return { status: 0, stdout: args[0] === 'run'
+        ? (args.includes('./internal/core/manifest/clientinfo') ? '[]' : '{}') : '', stderr: '' };
+    } });
+  assert.equal(manifest.target, 'darwin/arm64');
+  assert.deepEqual(budgets, [595_000, 445_000]);
+});
+
+test('an exhausted build deadline stops before another Go command starts', t => {
+  const f = fixture(t);
+  let elapsed = 0;
+  let builds = 0;
+  t.mock.method(performance, 'now', () => elapsed);
+  assert.throws(() => build({ cwd: f.cwd, out: f.out, timeoutMs: 10_000,
+    execute(command, args, options) {
+      if (args[0] === 'build') { builds++; elapsed = 10_000; }
+      return { status: 0, stdout: args[0] === 'env' ? options.env.GOTOOLCHAIN : '', stderr: '' };
+    } }), /build budget exhausted after 10\.000 s before: go build/);
+  assert.equal(builds, 1);
+});
+
+test('a hung inner compilation reports its command and cleans up its Go context', t => {
+  const f = fixture(t);
+  f.write(f.dir, 'hung.mjs', '// SPDX-License-Identifier: Apache-2.0\nsetInterval(() => {}, 1000);\n');
+  let contextHome;
+  assert.throws(() => build({ cwd: f.cwd, out: f.out,
+    execute(command, args, options) {
+      contextHome = options.env.HOME;
+      if (args[0] === 'build') return execute(process.execPath, [join(f.dir, 'hung.mjs')], {
+        ...options, timeoutMs: Math.ceil(options.timeoutMs / 3000),
+      });
+      return { status: 0, stdout: args[0] === 'env' ? options.env.GOTOOLCHAIN : '', stderr: '' };
+    } }), /go build failed: command timed out after [\d.]+ s.*hung\.mjs/);
+  assert.equal(existsSync(contextHome), false);
+});
+
+test('invalid build budgets fail before creating artifacts', t => {
+  const f = fixture(t);
+  for (const timeoutMs of [0, -1, NaN, Infinity, 1.5]) {
+    assert.throws(() => build({ cwd: f.cwd, out: f.out, timeoutMs }), /budget must be a positive integer/);
+  }
+  assert.equal(existsSync(f.out), false);
+});
+
 test('requires an output directory and rejects unknown arguments', t => {
   const f = fixture(t);
   for (const args of [[], ['--out'], ['--out', ''], ['--unknown'], ['unexpected']]) {
     const result = f.run(args);
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /usage:/i);
+  }
+});
+
+test('cross-builds Linux and macOS binaries with target metadata and an explicit release version', t => {
+  const f = fixture(t);
+  for (const target of ['linux/amd64', 'darwin/arm64']) {
+    const out = join(f.dir, target);
+    const result = f.run(['--out', out, '--target', target, '--version', '0.0.1-alpha.20261021.1']);
+    assert.equal(result.status, 0, `${target}: ${result.stderr ?? ''}${result.error?.message ?? ''}`);
+    const manifest = JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8'));
+    assert.equal(manifest.target, target);
+    assert.equal(manifest.supportedCombinations.length, 1);
+    assert.equal(manifest.supportedCombinations[0].platform, target);
+    assert.equal(manifest.version, '0.0.1-alpha.20261021.1');
+    for (const binary of manifest.binaries) {
+      const path = join(out, binary.name);
+      const bytes = readFileSync(path);
+      assert.equal(binary.sha256, createHash('sha256').update(bytes).digest('hex'));
+      const info = spawnSync('go', ['version', '-m', path], { env: f.env, encoding: 'utf8' });
+      assert.equal(info.status, 0, info.stderr);
+      assert.match(info.stdout, new RegExp(`GOOS=${target.split('/')[0]}`));
+      assert.match(info.stdout, new RegExp(`GOARCH=${target.split('/')[1]}`));
+      assert.match(info.stdout, /CGO_ENABLED=0/);
+      if (binary.name === 'lina') {
+        assert.ok(info.stdout.includes(`${manifest.sqlite.module}\t${manifest.sqlite.version}\t${manifest.sqlite.moduleSum}`),
+          'Core must link the binding recorded in its manifest');
+      }
+      assert.equal(bytes.subarray(0, 4).toString('hex'), target.startsWith('linux') ? '7f454c46' : 'cffaedfe');
+    }
   }
 });
 
@@ -83,16 +213,19 @@ test('clean builds record hashes and the same commit and metadata as both versio
     assert.match(manifest.date, /^\d{4}-\d{2}-\d{2}$/);
     assert.equal(manifest.goToolchain, f.env.GOTOOLCHAIN);
     assert.equal(manifest.kitVersion, Number(readFileSync(join(f.cwd, 'kit/VERSION'), 'utf8')));
+    const platform = spawnSync('go', ['env', 'GOOS', 'GOARCH'], { cwd: f.cwd, env: f.env, encoding: 'utf8' }).stdout.trim().split(/\r?\n/).join('/');
+    assert.deepEqual(manifest.supportedCombinations, [{ connection: 'client', peer: 'lina-tui', platform,
+      protocolVersion: '1.0', capabilities: [], evidence: ['go test ./kit/protocol/conformance'] }]);
     const module = JSON.parse(spawnSync('go', ['list', '-m', '-json', 'github.com/ncruces/go-sqlite3'], {
       cwd: f.cwd, env: f.env, encoding: 'utf8',
     }).stdout);
     assert.equal(manifest.sqlite.module, module.Path);
     assert.equal(manifest.sqlite.version, module.Version);
     assert.equal(manifest.sqlite.moduleSum, module.Sum);
-    assert.equal(manifest.sqlite.wasmSHA256, createHash('sha256').update(readFileSync(join(module.Dir, 'embed/sqlite3.wasm'))).digest('hex'));
+    assert.equal(manifest.sqlite.wasmSHA256, createHash('sha256').update(readFileSync(join(f.cwd, 'internal/core/canon/sqlite-vec.wasm'))).digest('hex'));
     assert.match(manifest.sqlite.sqliteVersion, /^3\.\d+\.\d+$/);
     assert.equal(manifest.sqlite.execution, 'wazero');
-    assert.equal(manifest.sqlite.sqliteVec, null);
+    assert.deepEqual(manifest.sqlite.sqliteVec, { version: 'v0.1.6', sha256: manifest.sqlite.wasmSHA256 });
     const providerConfig = JSON.parse(readFileSync(join(f.cwd, 'kit/provider/responses/manifest.json'), 'utf8'));
     assert.deepEqual(manifest.providers, providerConfig);
     assert.equal(manifest.providers.chatgpt.adapter, 'responses');
@@ -179,6 +312,7 @@ test('source edits or a new clean commit during a build suppress its manifest', 
     let builds = 0;
     const manifest = build({ cwd: f.cwd, out: f.out, execute: (command, args, { env }) => {
       if (args[0] === 'env') return { status: 0, stdout: env.GOTOOLCHAIN, stderr: '' };
+      if (args[0] === 'mod') return { status: 0, stdout: '', stderr: '' };
       assert.equal(command, 'go');
       assert.equal(args[0], 'build');
       const binary = args[args.indexOf('-o') + 1];

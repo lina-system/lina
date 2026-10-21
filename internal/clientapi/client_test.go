@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -123,6 +124,7 @@ func TestDialWelcome(t *testing.T) {
 	if request.JSONRPC != "2.0" || request.Method != "hello" || request.ID == "" ||
 		request.Params.Kind != protocol.KindHello || request.Params.Sender.Party != protocol.PartyClient ||
 		!ok || hello.Party != protocol.PartyClient || hello.ID != request.Params.Sender.ID ||
+		hello.Peer == nil || *hello.Peer != "lina-tui" || hello.Platform == nil || *hello.Platform != runtime.GOOS+"/"+runtime.GOARCH ||
 		hello.ProductVersion != "0.0.1-alpha.dev" || !reflect.DeepEqual(hello.ProtocolVersions, []string{"1.0"}) || len(hello.Capabilities) != 0 {
 		t.Fatalf("invalid hello: %#v", request)
 	}

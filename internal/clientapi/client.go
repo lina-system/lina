@@ -5,19 +5,22 @@
 package clientapi
 
 import (
-	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
+	"runtime"
+	"slices"
+	"sync"
 	"time"
 
 	"github.com/thisisjun786/lina/kit/protocol"
+	"github.com/thisisjun786/lina/kit/rpc"
 )
 
-const maxFrameBytes = 1 << 20
+const maxFrameBytes = rpc.MaxFrameBytes
 
 // ErrUnavailable means the client could not open the supplied socket.
 var ErrUnavailable = errors.New("Core unavailable")
@@ -33,8 +36,15 @@ func (r *Refusal) Error() string { return string(r.Cause.Code) }
 // Client is a welcomed connection. Its owner must Close it on every exit path.
 // Welcome is the negotiated identity and capability snapshot for later screens.
 type Client struct {
-	conn    net.Conn
-	Welcome protocol.Welcome
+	conn      net.Conn
+	Welcome   protocol.Welcome
+	reader    *rpc.Reader
+	writer    *rpc.Writer
+	clientID  string
+	decoder   protocol.ClientDecoder
+	receiveMu sync.Mutex
+	pendingMu sync.Mutex
+	pending   map[string]struct{}
 }
 
 func (c *Client) Close() error { return c.conn.Close() }
@@ -43,13 +53,19 @@ func (c *Client) Close() error { return c.conn.Close() }
 // offers no capabilities. The timeout bounds both connecting and negotiation;
 // the caller's earlier deadline or cancellation takes precedence.
 func Dial(ctx context.Context, socket, productVersion string) (*Client, error) {
+	return DialWithCapabilities(ctx, socket, productVersion, nil)
+}
+
+// DialWithCapabilities offers only the caller's implemented capabilities.
+// Welcome may grant any subset, never an unoffered capability or version.
+func DialWithCapabilities(ctx context.Context, socket, productVersion string, capabilities []protocol.Capability) (*Client, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", socket)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
-	client, err := handshake(ctx, conn, productVersion)
+	client, err := handshake(ctx, conn, productVersion, capabilities)
 	if err != nil {
 		conn.Close()
 		return nil, err
@@ -57,7 +73,7 @@ func Dial(ctx context.Context, socket, productVersion string) (*Client, error) {
 	return client, nil
 }
 
-func handshake(ctx context.Context, conn net.Conn, productVersion string) (*Client, error) {
+func handshake(ctx context.Context, conn net.Conn, productVersion string, capabilities []protocol.Capability) (*Client, error) {
 	deadline, _ := ctx.Deadline()
 	if err := conn.SetDeadline(deadline); err != nil {
 		return nil, err
@@ -73,6 +89,7 @@ func handshake(ctx context.Context, conn net.Conn, productVersion string) (*Clie
 		}
 	}()
 	clientID := rand.Text()
+	peer, platform := "lina-tui", runtime.GOOS+"/"+runtime.GOARCH
 	hello := protocol.Envelope{
 		Protocol: protocol.Protocol{Name: "client", Version: "1.0"},
 		Kind:     protocol.KindHello, MessageID: rand.Text(), AttemptID: rand.Text(),
@@ -80,8 +97,8 @@ func handshake(ctx context.Context, conn net.Conn, productVersion string) (*Clie
 		SentAt: time.Now().UTC().Format(time.RFC3339Nano), EffectState: protocol.EffectNone,
 		SourceRefs: []protocol.SourceRef{},
 		Payload: protocol.Hello{
-			Party: protocol.PartyClient, ID: clientID, ProductVersion: productVersion,
-			ProtocolVersions: []string{"1.0"}, Capabilities: []protocol.Capability{},
+			Party: protocol.PartyClient, ID: clientID, ProductVersion: productVersion, Peer: &peer, Platform: &platform,
+			ProtocolVersions: []string{"1.0"}, Capabilities: append([]protocol.Capability{}, capabilities...),
 		},
 	}
 	request := struct {
@@ -94,7 +111,8 @@ func handshake(ctx context.Context, conn net.Conn, productVersion string) (*Clie
 		return nil, fmt.Errorf("send hello: %w", err)
 	}
 	// Require the newline and cap allocation even when a peer never sends it.
-	line, err := bufio.NewReaderSize(conn, maxFrameBytes).ReadSlice('\n')
+	reader := rpc.NewReader(conn)
+	line, err := reader.Read()
 	if err != nil {
 		return nil, fmt.Errorf("read handshake: %w", err)
 	}
@@ -117,9 +135,17 @@ func handshake(ctx context.Context, conn net.Conn, productVersion string) (*Clie
 	}
 	welcome, ok := envelope.Payload.(protocol.Welcome)
 	if !ok || envelope.Kind != protocol.KindWelcome || envelope.Error != nil || envelope.EffectState != protocol.EffectNone ||
-		welcome.ProtocolVersion != "1.0" || welcome.MainID != envelope.Sender.ID || welcome.Epoch != envelope.Epoch || len(welcome.Capabilities) != 0 {
+		welcome.ProtocolVersion != "1.0" || welcome.MainID != envelope.Sender.ID || welcome.Epoch != envelope.Epoch {
 		return nil, errors.New("invalid welcome")
 	}
+	seen := make(map[protocol.Capability]bool)
+	for _, granted := range welcome.Capabilities {
+		if seen[granted] || !slices.Contains(capabilities, granted) {
+			return nil, errors.New("invalid granted capability")
+		}
+		seen[granted] = true
+	}
+
 	// Stop and join cancellation before clearing the handshake deadline. A
 	// successful connection must not inherit a timer that can later expire it.
 	if !stop() {
@@ -132,5 +158,5 @@ func handshake(ctx context.Context, conn net.Conn, productVersion string) (*Clie
 	if err := conn.SetDeadline(time.Time{}); err != nil {
 		return nil, err
 	}
-	return &Client{conn: conn, Welcome: welcome}, nil
+	return &Client{conn: conn, Welcome: welcome, reader: reader, writer: rpc.NewWriter(conn), clientID: clientID, pending: make(map[string]struct{})}, nil
 }

@@ -13,6 +13,7 @@ func validManifest() map[string]any {
 	return map[string]any{
 		"version": "0.0.1-alpha.dev", "commit": strings.Repeat("a", 40),
 		"date": "2026-10-20", "goToolchain": "go1.27.3", "kitVersion": 1,
+		"target": "linux/amd64",
 		"providers": map[string]any{"chatgpt": map[string]any{
 			"adapter": "responses", "retryCount": 0,
 			"requestFields": []string{"model", "input", "store", "stream"},
@@ -23,6 +24,7 @@ func validManifest() map[string]any {
 			"sqliteVersion": "3.51.2", "wasmSHA256": strings.Repeat("d", 64),
 			"execution": "wazero", "sqliteVec": nil,
 		},
+		"supportedCombinations": []any{},
 		"binaries": []any{
 			map[string]any{"name": "lina", "size": 100, "sha256": strings.Repeat("b", 64)},
 			map[string]any{"name": "lina-node", "size": 200, "sha256": strings.Repeat("c", 64)},
@@ -68,7 +70,7 @@ func TestRead(t *testing.T) {
 }
 
 func TestReadRejectsInvalidFields(t *testing.T) {
-	for _, field := range []string{"version", "commit", "date", "goToolchain", "kitVersion", "binaries", "sqlite", "providers"} {
+	for _, field := range []string{"version", "commit", "date", "target", "goToolchain", "kitVersion", "binaries", "sqlite", "providers", "supportedCombinations"} {
 		t.Run("missing "+field, func(t *testing.T) {
 			value := validManifest()
 			delete(value, field)
@@ -84,6 +86,7 @@ func TestReadRejectsInvalidFields(t *testing.T) {
 		"goToolchain": {"go1.27", "1.27.3", "go1.27.3-custom", nil},
 		"kitVersion":  {0, -1, 1.5, "1", 9007199254740992, nil},
 		"binaries":    {nil, []any{}, "lina"},
+		"target":      {"", "linux", "linux/mips", "darwin/x64", nil},
 	} {
 		t.Run(field, func(t *testing.T) {
 			for _, bad := range invalid {
@@ -149,6 +152,7 @@ func TestReadRejectsInvalidBinaries(t *testing.T) {
 
 func TestReadWindowsNamesAndSHA256Commit(t *testing.T) {
 	value := validManifest()
+	value["target"] = "windows/amd64"
 	value["commit"] = strings.Repeat("a", 64)
 	for _, entry := range value["binaries"].([]any) {
 		binary := entry.(map[string]any)
@@ -183,6 +187,9 @@ func TestValidateBinaryPlatforms(t *testing.T) {
 				t.Fatal(err)
 			}
 			m.Binaries = nil
+			if strings.HasPrefix(tc.names[0], "lina.exe") {
+				m.Target = "windows/amd64"
+			}
 			for _, name := range tc.names {
 				m.Binaries = append(m.Binaries, Binary{Name: name, Size: 100, SHA256: strings.Repeat("b", 64)})
 			}

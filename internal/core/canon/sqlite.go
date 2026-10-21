@@ -15,7 +15,6 @@ import (
 
 	"github.com/ncruces/go-sqlite3"
 	"github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
 )
 
 // OpenSQLite opens a file database with one write connection, WAL and FULL
@@ -72,6 +71,9 @@ func openSQLite(ctx context.Context, path string, reader bool) (*sql.DB, error) 
 		}
 	}
 	db, err := driver.Open(uri, func(conn *sqlite3.Conn) error {
+		if err := registerSearchFunctions(conn); err != nil {
+			return err
+		}
 		if reader {
 			return conn.Exec("PRAGMA query_only=ON")
 		}
