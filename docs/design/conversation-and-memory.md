@@ -1025,3 +1025,16 @@ A restore never brings back a retracted or deleted item, or deleted conversation
 [honcho-dialectic]: https://github.com/plastic-labs/honcho/blob/607438d20c408575d1c9257f325c4885da871e82/hermes-plugin-honcho/dialectic.py
 [honcho-observations]: https://github.com/plastic-labs/honcho/blob/607438d20c408575d1c9257f325c4885da871e82/src/schemas/internal.py
 [honcho-deriver]: https://github.com/plastic-labs/honcho/blob/607438d20c408575d1c9257f325c4885da871e82/src/deriver/queue_manager.py
+
+### Explicit TUI memory statements
+
+The [T-14 management commands](tui.md#memory-and-agent-command-requests) submit
+person statements to the existing ledger and `exec.Memory` writer. Each
+statement has its own source identity and ledger conversation, outside model
+conversation history. This keeps the removal service's conversation exclusion
+from blocking a later independent statement. Correct uses the existing
+supersession relation with fresh person evidence. Forget uses `retract` and its
+durable removal list; Core recovers that list before serving memory reads.
+The bounded standing profile for each model request uses the selected agent's
+scope and excludes `never-leaves` items. Its item ids and revisions enter the
+existing request assembly record. Model history is separately filtered through the same scoped retraction snapshot; forgetting an item does not erase the person's original ledger view. Every dispatch checks the removal epoch and current item revisions, so a correction or forget invalidates an older prepared profile, including between model rounds. Memory mutations and dispatch admission are serialized by Core. The TUI caches display data only.

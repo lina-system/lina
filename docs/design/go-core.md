@@ -472,6 +472,8 @@ Scripted wires establish these adapter invariants, and clean-build tests establi
 
 **C-47 Accounts, credentials and sign-in (new).**
 
+Memory and agent management capabilities remain available without a configured model route. They use the authenticated connection person and never change account ownership or sign-in state ([T-14](tui.md#memory-and-agent-command-requests)).
+
 ```go
 // internal/core/accounts
 type Account struct {
@@ -751,7 +753,7 @@ The deterministic Moirai tasks carry only a conversation identity and manifest h
 - The catalog is a signed static file (JSON plus a detached signature, the key carried by the release), replaced only by a newer version with a valid signature.
 - First-party GitHub: Core's own reads use `gh` as a child with fixed arguments (`ghclient`).
 
-**C-27 Channel gateway (changed).** Contract: [integrations.md](integrations.md#channels), [main-authority.md](main-authority.md#channels). One adapter per platform sits behind the contract's boundary.
+**C-27 Channel gateway (changed).** TUI agent choice is client focus only and does not rebind channels; deleting an agent uses the store's existing binding removal. Memory scope comes from authenticated Core selection, not a display label ([T-14](tui.md#memory-and-agent-command-requests)). Contract: [integrations.md](integrations.md#channels), [main-authority.md](main-authority.md#channels). One adapter per platform sits behind the contract's boundary.
 
 ```go
 // internal/core/gateway
@@ -844,7 +846,7 @@ The outbound queue retains the ledger reference and adapter-shaped parts. It req
 
 Package scenarios use real canon and SIGKILL barriers before admission commit, after commit and during a send. This increment adds no TUI or Core-protocol operation; platform pollers, credentials, channel approval interactions, live turn composition and app delivery views attach in their owning increments. No channel scenario can yet be driven through the #34 protocol harness.
 
-**C-25 Agent exchanges (changed).** Contract: [conversation-and-memory.md](conversation-and-memory.md#agent-exchanges).
+**C-25 Agent exchanges (changed).** Client agent selection addresses an existing agent id in the one Core; it starts no exchange and creates no per-agent engine. Management uses the existing agent store and shared conversation flow ([T-14](tui.md#memory-and-agent-command-requests)). Contract: [conversation-and-memory.md](conversation-and-memory.md#agent-exchanges).
 
 - Table `exch_msg(delivery_id, exchange_id, from, to, state)` with the mailbox states of the contract. Delivery is at least once, deduplicated by delivery id.
 - The asker runs the check it named on the typed hand-off.
