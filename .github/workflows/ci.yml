@@ -69,6 +69,7 @@ jobs:
           echo "$RUNNER_TEMP/actionlint-bin" >> "$GITHUB_PATH"
 
       - name: Install sandbox launcher
+        if: steps.versions.outputs.go != ''
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends bubblewrap
