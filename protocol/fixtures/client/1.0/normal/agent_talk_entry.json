@@ -18,5 +18,16 @@
   "receipt_ref": null,
   "source_refs": [],
   "error": null,
-  "payload": {}
+  "payload": {
+    "entry": {
+      "exchange_id": "exchange-example",
+      "from_agent": "agent-one",
+      "to_agent": "agent-two",
+      "subject": "Check the synthetic summary",
+      "state": "answered",
+      "outcome": "checked",
+      "needs_person": false,
+      "updated_at": "2026-01-01T00:00:00Z"
+    }
+  }
 }

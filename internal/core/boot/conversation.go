@@ -51,8 +51,10 @@ type acceptedSteering struct {
 }
 
 type conversationRuntime struct {
-	dispatchMu                  *sync.RWMutex
-	removals                    *retract.Store
+	dispatchMu *sync.RWMutex
+	removals   *retract.Store
+	channels   *channelRuntime
+
 	materials                   *conversationMaterials
 	assets                      *assets.Store
 	root                        string
@@ -76,7 +78,7 @@ type conversationRuntime struct {
 
 func conversationPath(root string) string { return filepath.Join(root, "canon", "canon.sqlite") }
 
-func startConversation(ctx context.Context, root, main string, epoch uint64, controls *ctlfiles.Store, route *modelpath.ResponsesConfig, activities *lifecycle.ActivityRegistry, person string, transport http.RoundTripper) (*conversationRuntime, error) {
+func startConversation(ctx context.Context, root, main string, epoch uint64, controls *ctlfiles.Store, route *modelpath.ResponsesConfig, activities *lifecycle.ActivityRegistry, person string, transport, channelTransport http.RoundTripper) (*conversationRuntime, error) {
 	if err := os.MkdirAll(filepath.Dir(conversationPath(root)), 0700); err != nil {
 		return nil, err
 	}
@@ -162,6 +164,16 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	for kind, op := range clientsrv.AccountOperations(r.person, r.accounts, relay) {
 		r.identity.Operations[kind] = op
 	}
+	r.channels, err = startChannels(r, epoch, channelTransport)
+	if err != nil {
+		return nil, err
+	}
+	for kind, op := range clientsrv.ChannelOperations(r.channels) {
+		r.identity.Operations[kind] = op
+	}
+	for kind, op := range clientsrv.TalkOperations(r) {
+		r.identity.Operations[kind] = op
+	}
 	for kind, op := range clientsrv.ManagementOperations(r) {
 		r.identity.Operations[kind] = op
 	}
@@ -175,6 +187,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 }
 func (r *conversationRuntime) Close(ctx context.Context) error {
 	var err error
+	if r.channels != nil {
+		r.channels.Close()
+	}
 	if r.lanes != nil {
 		err = r.lanes.Close(ctx)
 		if err != nil {

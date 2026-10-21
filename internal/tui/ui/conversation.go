@@ -191,6 +191,25 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 			return nil
 		}
 		text := strings.TrimSpace(m.content.Draft.Text)
+		if text == "/help" {
+			m.reduceInput(state.EditDraft{})
+			text := func(id string) string { return design.Text(m.styles.options.Language, id) }
+			m.openPager(strings.Join([]string{text("controls.help"),
+				"/accounts  " + text("account.heading"), "/signin  " + text("sign_in_open"),
+				"/memory  " + text("memory.heading"), "/agents  " + text("agents.heading"), "/channels  " + text("channel.heading"), "/talk  " + text("talk.heading"), "/stop  " + text("interrupt"),
+			}, "\n"))
+			return nil
+		}
+		if handled, command := m.talkCommand(text); handled {
+			m.reduceInput(state.EditDraft{})
+			m.conversation.undo = nil
+			return command
+		}
+		if handled, command := m.channelCommand(text); handled {
+			m.reduceInput(state.EditDraft{})
+			m.conversation.undo = nil
+			return command
+		}
 		if handled, command := m.managementCommand(text); handled {
 			m.reduceInput(state.EditDraft{})
 			m.conversation.undo = nil
@@ -398,7 +417,7 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 	} else if notice := m.localNotice(); showNotice && notice != "" {
 		statusLine += "  " + notice
 	}
-	rows[plan.Status.Y] = clip(statusLine + "  Enter  Ctrl+D  /memory  /agents")
+	rows[plan.Status.Y] = clip(statusLine + "  /help  Enter  Ctrl+D  /memory  /agents")
 	if plan.Tier == layout.TooSmall {
 		if plan.Notice.Height > 0 {
 			rows[0] = clip(design.Text(m.styles.options.Language, "shell.too_small"))
