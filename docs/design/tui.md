@@ -112,6 +112,14 @@ the handshake-then-read behavior. No failure path starts Core or creates state.
 
 A changed epoch is announced once as a local notice. Remote use is `lina tui` connecting inside the tailnet ([runtime.md](runtime.md#remote-access)). A TUI run in an SSH session on the host is a local client.
 
+The conversation status row shows the latest local notice before its key hints,
+using the same localized notice as the connection shell. It stays outside
+conversation items: snapshot replay and redraw do not duplicate it, resync does
+not drop it, and a fresh client does not restore it from history. History and
+the unsent draft remain usable after reconnect. `e2e/m1/tui-epoch-notice.json`
+checks successive graceful and forced restarts of an installed Core through a
+120x60 PTY with a loopback Responses fixture.
+
 Connection presentation carries a typed cause separately from diagnostic text.
 Refused and Core-absent screens show that closed cause code, its localized label,
 and the next action. Unknown causes use the catalog's unknown entry. Retry
