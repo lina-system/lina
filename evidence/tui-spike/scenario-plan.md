@@ -16,8 +16,9 @@ reached over SSH. Include Apple Terminal in S5's compatibility observations.
 Record the local terminal application and version for an SSH run, not just the
 remote shell. Do not include account names, hostnames, addresses or personal data.
 
-Write the declared bounds into the spike issue before starting the runs. Preserve
-the issue reference and the source revision of this plan with the observations.
+The bounds were [declared on #87](https://github.com/thisisjun786/lina/issues/87#issuecomment-6307893344)
+before the runs. Preserve that reference and the source revision of this plan
+with the observations.
 Use synthetic text and a disposable shell for terminal-state and paste cases.
 Restore terminal modes and stop the harness after each run.
 
