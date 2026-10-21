@@ -1,6 +1,6 @@
 # Work and delegation
 
-This contract fixes how LINA Core plans, delegates, supervises and accepts work. It covers the work engine and its ledger, the CRW contract schemas and fixtures the engine is built from, the work and knowledge records (the 목표 (goal), 일 (project), 할 일 (to-do), 계속 챙기는 것 (area) and 메모 (memo) of the person, with the to-do model), intent cards, parent and child roles, how every agent shares the work engine, background runs (LINA's own sub-agents, for research and analysis), workers (the coding tools the user installed, driven through worker adapters) and the task packet (the work definition), work tools and completion receipt they work with, the development method (the work definition, the choice of worker and the operation of the pull request), how work is split into tasks and handed off in parallel, how a finished worker is noticed by event and a stalled one is handled, how LINA Core operates a delegated pull request (it reads GitHub's review and check results, does one design-conformance review, sends only P0 and P1 findings back once, and merges or closes), how work handles effects with unknown outcomes, how results reach GitHub and get merged, and what the progress display shows. It is normative: implementations must follow it, and any change to it is made in this file and joins dev under [integration.md](../policy/integration.md). Finishing this document does not mean any part of it is implemented or accepted. Runtime proof belongs to the implementation issues that consume this contract.
+This contract fixes how LINA Core plans, delegates, supervises and accepts work. It covers the work engine and its ledger, the CRW contract schemas and fixtures the engine is built from, the work and knowledge records (the 목표 (goal), 일 (project), 할 일 (to-do), 계속 챙기는 것 (area) and 메모 (memo) of the person, with the to-do model), intent cards, parent and child roles, how every agent shares the work engine, background runs (LINA's own sub-agents, for research and analysis), workers (the coding tools the user installed, driven through worker adapters) and the task packet (the work definition), work tools and completion receipt they work with, the development method (the work definition, the choice of worker and the operation of the pull request), how work is split into tasks and handed off in parallel, how a finished worker is noticed by event and a dead or stalled one is recovered, how the worker owns a delegated pull request to green and LINA Core checks it against the work definition at merge, how work handles effects with unknown outcomes, how results reach GitHub and get merged, and what the progress display shows. It is normative: implementations must follow it, and any change to it is made in this file and joins dev under [integration.md](../policy/integration.md). Finishing this document does not mean any part of it is implemented or accepted. Runtime proof belongs to the implementation issues that consume this contract.
 
 ## Scope
 
@@ -15,7 +15,7 @@ This contract covers:
 - the development method: the work definition, the choice of worker and the operation of the pull request
 - splitting work into tasks, area leases, parallel hand-off, completion events, stall handling and the running list
 - workers: the coding tools the user installed or signed in to (Codex, Claude Code, Antigravity and Devin), the adapter boundary, the Codex adapter, compatibility, readiness, assignment, control and approvals
-- the task packet (the work definition handed to the worker), LINA's work tools and the completion receipt of a worker, and LINA Core's operation of a delivery: reading the pull request, one design-conformance review, one return of findings, and the merge or close
+- the task packet (the work definition handed to the worker), LINA's work tools and the completion receipt of a worker, the worker's review and CI fixes, and LINA Core's check of a delivery against the work definition and its merge or close
 - effects and unknown outcomes inside work
 - GitHub work on delegated tasks: what the worker writes, and LINA Core's merge or close
 - the progress display data (work cards, progress lines and the running list), observation, handover and discovery of work, and what the person is told of work: outcomes and decisions
@@ -56,7 +56,7 @@ This contract does not cover, and links instead to:
 
 **Attempt.** One run of a work thread. An attempt records the worker and its version, its thread and its turns, so that every card links to work through task, attempt, thread and turn.
 
-**Execution generation.** A numbered round of a child's work on one task. A `needs_changes` verdict, or the P0 and P1 findings sent back after the design-conformance review, opens the next execution generation on the same child.
+**Execution generation.** A numbered round of a child's work on one task. A `needs_changes` verdict for a result that misses the work definition opens the next execution generation on the same child. Review and CI fixes belong to the worker's turn and do not open a generation through LINA Core.
 
 **Binding epoch.** The generation of LINA Core's binding to a worker thread. A new binding epoch starts when control returns after a handover and when a remote thread is bound again.
 
@@ -68,7 +68,7 @@ This contract does not cover, and links instead to:
 
 **Verdict.** LINA Core's recorded judgment on a completion receipt or on a delivery.
 
-**Design-conformance review.** The one review LINA Core does of a code-change delivery: it reads the pull request's diff against the design reference of the work definition and asks whether the work was built as designed. It reports findings typed by severity from P0 (most severe) to P3 (see Judgment and delivery). It is LINA Core's own call on the person's model accounts, not a worker thread.
+**Design-conformance review.** LINA Core's check at merge that a code-change delivery meets its work definition: the done condition, scope and design reference. It is LINA Core's own call on the person's model accounts, not a worker thread. Review findings and CI failures are handled inside the worker's turn (see Judgment and delivery).
 
 **Apply record.** LINA Core's ledger record that a task's result was merged or otherwise applied, with the evidence that shows it, the agent that requested the change and, when the result was applied through an apply request, the person who accepted it. A pull request that LINA Core closes is recorded in the ledger with its reason and is not an apply record.
 
@@ -330,11 +330,11 @@ Rules:
 - Roles come only from LINA Core's link records. Titles, folders and conversation links never create a role.
 - A dependent task is released as soon as its predecessor has landed (see Parallel hand-off): for code-change work, when the merge is recorded as an apply record under a `verified` verdict, so that the dependent starts from a base that contains the predecessor. A task that no other task depends on never waits for another task.
 - A task waiting for a decision holds only itself. Independent tasks continue and are never made to wait for it.
-- The design-conformance review is not a child and not a work thread. It is LINA Core's own call; it merges nothing and records findings, not a verdict.
+- The design-conformance review is not a child and not a work thread. It is LINA Core's check against the work definition at merge, and supplies evidence for the verdict.
 
 ## Development method
 
-LINA ships no coding harness. It runs no review loop of its own around a worker, installs no hook, skill or plugin into one, and keeps no stage workflow. Codex, Claude Code, Antigravity and Devin are used as the user installed them. LINA's development role is a method, which the development preset carries ([conversation-and-memory.md](conversation-and-memory.md#preset-methodologies)). The worker writes the code, the branch and the pull request body and opens the pull request. LINA Core defines the work, chooses the worker, and operates the pull request. Everything else relies on GitHub review and CI.
+LINA ships no coding harness. It runs no review loop of its own around a worker, installs no hook, skill or plugin into one, and keeps no stage workflow. Codex, Claude Code, Antigravity and Devin are used as the user installed them. LINA's development role is a method, which the development preset carries ([conversation-and-memory.md](conversation-and-memory.md#preset-methodologies)). How to implement, split, join or interpret work is the judgment of the worker and the agent that owns the work. The worker writes the code, the branch and the pull request body, opens the pull request and owns it to green. LINA Core keeps the flow moving: start, reliable delivery with receipts, true state, recovery, the check against the work definition, merge on green and report.
 
 ### Work definition
 
@@ -358,7 +358,9 @@ LINA chooses the worker for a task from the situation, the person's subscription
 
 ### Operating the pull request
 
-After a worker finishes, LINA reads the pull request, its review threads and its check results on GitHub; does one design-conformance review; sends only P0 and P1 findings back once; and merges or closes. The worker may make small edits itself. The steps are in Judgment and delivery, and the only GitHub writes LINA makes on delegated work are merging and closing (see GitHub writes and merges).
+The worker owns its pull request to green. Inside the work thread it waits for CI and the review bots, fixes every CI failure and the P0 and P1 review findings once, and waits for the checks at the resulting head before reporting done. P2 and P3 findings are reported with the result and do not block the merge. The review and CI fix loop belongs to the worker's turn; it never goes through LINA Core as a round trip.
+
+At merge LINA Core checks the result against the work definition's done condition, scope and design reference, then merges or closes. It sends work back only when the result misses that definition, never to triage review findings or CI failures. The steps are in Judgment and delivery, and the only GitHub writes LINA Core makes on delegated work are merging and closing (see GitHub writes and merges).
 
 **Prose polish.** Once a worker has opened a pull request, a polish step runs beside the review and CI and never gates them. It rewrites only person-facing prose: the pull request body here, and likewise the issue bodies LINA drafts and release notes. Facts, code, paths and links stay unchanged, which LINA checks mechanically by comparing them before and after; when the check fails, or the polish fails, the original stays. Changes to UI copy get a polish suggestion attached to the pull request and are never committed automatically. The polish model is a provider setting: by default Argon through the person's Antigravity when they have it, and the step is skipped otherwise. It never blocks a merge.
 
@@ -385,7 +387,7 @@ LINA splits work into tasks that one worker can finish as one pull request. The 
 - Every task declares a write area in its work definition. Two tasks whose write areas overlap are dependent: LINA Core orders them and never runs them together.
 - LINA Core holds an area lease for each task from hand-off until the task has landed, is closed or is abandoned. The lease follows the liveness of the task's worker (see Liveness): a task judged abandoned frees its lease, and nothing else frees it earlier.
 - Hotspot files are shared resources: dependency manifests and lockfiles, generated code, registries and index files, changelogs, and any file that recent history shows many tasks changing. A task that needs a hotspot file takes the whole hotspot area, or the change moves into one dedicated task that the others depend on.
-- A worker cannot be trusted to stay inside its area. The design-conformance review reads the pull request's diff against the declared write area, and a change outside it is a P1 finding, which goes back once like any other finding. This is part of the one review, not a second check.
+- A worker cannot be trusted to stay inside its area. The design-conformance review reads the pull request's diff against the declared write area. A change outside it misses the work definition's scope and goes back to the worker as `needs_changes`. This is part of the check at merge, not a separate review.
 
 ### Parallel hand-off
 
@@ -465,9 +467,10 @@ Code-change work ends in a pull request that the worker opens, and goes through 
 
 - An idle thread receives `turn/start`. An active thread receives `turn/steer` with `expectedTurnId`.
 - Right before any input, LINA Core checks the thread, the turn, the process generation and the binding epoch again. A thread id alone never controls anything.
+- The protocol session and its process state establish whether a worker is active, waiting, dead or stalled; screen text never does. Recovery resumes the thread, or restarts a dead worker, once in the same work area before escalation (see Stall and failure).
 - An open question or approval blocks ordinary input to that thread.
 - A worker thread on a remote host is not controlled until that host's thread, generation and epoch are bound again.
-- `turn/interrupt` is sent only with intent to cancel. The allowed reasons are a user request, the budget cap policy, a Node policy cancel (an observed disconnect from the main, grant expiry or revocation), and the stall rule: a worker that is alive but silent past the stall rule is interrupted once so that its thread can be resumed (see Event-driven flow). Any other automatic interrupt goes to the user as a decision.
+- `turn/interrupt` is sent only with intent to cancel. The allowed reasons are a user request, the budget cap policy, a Node policy cancel (an observed disconnect from the main, grant expiry or revocation), and the stall rule: a worker that is alive but stalled past the stall rule is interrupted once so that its thread can be resumed (see Event-driven flow). Any other automatic interrupt goes to the user as a decision.
 - A cancel is final only when `turn/completed` reports `interrupted`.
 - Pause stops LINA's delivery to the work thread. It does not stop execution. Paused work never resumes automatically.
 - Close keeps files, branches, worktrees and receipts and never deletes the thread. `thread/archive` is sent only on an explicit close.
@@ -483,7 +486,7 @@ LINA Core, or the Node on a remote device, starts every worker as a child proces
 | Antigravity CLI | The result event and status of its streaming output, then process exit. Success is confirmed from the pull request, never from the exit code | No |
 | Devin | The status of its session, read about every 10 seconds only while a task is in flight and until a terminal state | Yes: the one worker with no outbound session event found |
 
-- A completion event ends a turn. It is not a delivery: a task has finished when a completion event has arrived and a pull request with a head SHA exists.
+- A completion event ends a turn. It is not a delivery. For code-change work the worker reports done only after it has waited for CI and the review bots and handled CI failures and P0 and P1 findings inside its turn (see Operating the pull request). The completion receipt names the resulting pull request and head SHA; LINA Core still checks the work definition and records the merge before the task has landed.
 - LINA installs no hook, plugin or setting in a worker to obtain a signal.
 - A worker that reports a typed failure (an error code, an authentication or billing category, a rate-limit category) produces a failure event with that type.
 
@@ -506,7 +509,7 @@ LINA Core, or the Node on a remote device, starts every worker as a child proces
 
 The completion receipt is how a worker reports back, and the only receipt a worker submits. Its schema is LINA's own and is versioned with the worker adapter, and each receipt carries the schema version it was written under. In the ledger it maps onto the pinned CRW shape by adding fields only (see Contract input from CRW).
 
-- A completion receipt names the assignment id and the execution generation, a result word, the output (for code-change work the pull request and its head SHA, otherwise the artifact paths), the GitHub writes the worker made, and the commands it ran with their outcomes. The receipt of a fix generation also states, for each P0 or P1 finding sent back, whether it is fixed or not fixed.
+- A completion receipt names the assignment id and the execution generation, a result word, the output (for code-change work the pull request and its head SHA, otherwise the artifact paths), the GitHub writes the worker made, and the commands it ran with their outcomes. It reports the outcome of CI and the worker's one pass of P0 and P1 fixes, including anything still unresolved. The receipt of a fix generation also states how the result now meets the work definition sent back by LINA Core.
 - What a receipt states is a claim. LINA Core reads it against the pull request's head and GitHub's review and check records, and for work without a pull request against the artifacts (see Judgment and delivery).
 - A turn that ends without a completion receipt is not a delivery. LINA Core records it, never reads the worker's final text as a receipt, and may ask for the receipt as ordinary follow-up input (see Control).
 - The result word is a structured field bound to the schema version:
@@ -527,10 +530,13 @@ The completion receipt is how a worker reports back, and the only receipt a work
 
 LINA Core reacts to a finished worker within seconds and does not poll for it. The reaction is one path whatever the worker: a completion event is recorded, claimed and acted on.
 
+Every task is making progress, waiting on a named thing with a deadline, or being recovered. A wait records what will wake it and when it must be checked again; an expired wait is reconciled and moved forward or recovered. Work never sits idle without one of these states.
+
 ### Completion events
 
 - A completion event is a row in LINA Core's database before anything reacts to it. Its key is task, attempt and head SHA. A claim on an event is idempotent, and an event whose head SHA is not the task's current head is ignored.
 - The same queue carries conversation messages and completion events, so one reaction path exists. A model scheduler is never the dispatcher.
+- Events for one 일 are handled together from its current ledger state, preserving each event's receipt. No coordinating thread builds a backlog of separate turns for them.
 - Reaction time is measured from the event to the first read of the pull request. The end of the flow is bounded by CI and review, which LINA does not control.
 
 ### Reaction
@@ -538,19 +544,19 @@ LINA Core reacts to a finished worker within seconds and does not poll for it. T
 When a completion event arrives and the task has a pull request, LINA Core:
 
 1. reads the pull request once: its state, head SHA, review threads and the check results at that head ([integrations.md](integrations.md#completion-signals));
-2. runs the pull request operation of Judgment and delivery; the design-conformance review does not depend on CI and runs while CI runs;
+2. runs the pull request operation of Judgment and delivery when the worker's receipt is ready; review and CI fixes remain in the work thread, and LINA Core checks the work definition at merge;
 3. when the merge has landed, releases the tasks that were waiting on it at once (see Parallel hand-off).
 
 A head that moved after LINA Core's last read is read again, and the merge is pinned to the head that LINA Core last read; the review is not repeated.
 
-Optional: when the repository has required checks and auto-merge, LINA Core may finish its review first and request the merge pinned to the head it last read, so that GitHub merges when the checks pass. The merge instant then moves to GitHub; the task lands when GitHub reports it merged. This is off by default.
+Optional: when the repository has required checks and auto-merge, LINA Core may request the merge pinned to the head it checked against the work definition after the worker has delivered green. GitHub enforces the checks at merge. The merge instant then moves to GitHub; the task lands when GitHub reports it merged. This is off by default.
 
 ### Stall and failure
 
 - A task has failed when its worker's process or session ends without a final result, or the worker reports a typed failure. A quota or rate-limit failure parks the worker (see Parallel hand-off).
-- A task has stalled when its worker's process or session is gone, or when no event has arrived for it within the longer of the stale floor (see Liveness) and twice the median duration of finished tasks of its size class, never more than three hours.
+- A dead worker is detected from the end or confirmed absence of its process or protocol session. A live worker is stalled when it makes no progress and has no named wait within its deadline for the longer of the stale floor (see Liveness) and twice the median duration of finished tasks of its size class, never more than three hours. Silence prompts a read of protocol state; screen output or a timeout reading the session never proves that it is dead. Events that repeat without progress do not reset the stall interval.
 - Every 5 minutes LINA Core re-reads, with no model call, every task marked in progress or watched, and does the same once after a restart. This catches a signal lost to a crash. It is the reconciliation of signals that integrations.md describes, and it never replaces the events.
-- A failed or stalled task is reported at once in the running list, and it is dispatched again once: the same worker thread is resumed with a short continuation, as a new attempt of the same task. When the cause is quota, the task goes to the next worker by the same choice instead. A second failure or stall goes to the person as a decision. There is no third automatic attempt.
+- A failed, dead or stalled worker is reported at once in the running list while LINA Core recovers the task. LINA Core resumes its thread with a short continuation, or restarts it when the process or session is dead, once as a new attempt of the same task in the same work area, preserving its files, branch and receipts. When the cause is quota, the task goes to the next worker by the same choice instead. Recovery comes before escalation to the person; a second failure or stall goes to the person as a decision. There is no third automatic attempt.
 - A dispatch again follows Effects and unknown outcomes: it happens only when the earlier attempt has no effect with an unknown outcome.
 - A Node that disconnects is handled by the Node rules, not the stall rule: the effects of its running turn are unknown and are reconciled first.
 - A landing that leaves another task's pull request unmergeable sends that task back once to the same worker as a rebase request. LINA Core never resolves a conflict itself, and a second failure goes to the person.
@@ -558,24 +564,23 @@ Optional: when the repository has required checks and auto-merge, LINA Core may 
 
 ## Judgment and delivery
 
-A worker returning a completion receipt and LINA Core accepting the result are completions on different layers. The worker reports; GitHub's review and checks and LINA Core's one design-conformance review decide. LINA Core re-runs no test or command, runs no check of its own on the diff or on CI, and runs no separate review by a worker. Everything else relies on GitHub review and CI.
+A worker returning a completion receipt and LINA Core accepting the result are completions on different layers. The worker owns the pull request to green: it waits for GitHub's CI and review bots, fixes every CI failure and the P0 and P1 review findings once inside its turn, and reports done only when the resulting head is green and no P0 or P1 remains. It reports an unresolved failure honestly instead of reporting done. LINA Core checks that delivery against the work definition at merge. It re-runs no test or command and runs no separate review by a worker.
 
-- A verdict is `verified` or `needs_changes`. LINA Core records it in the ledger with the records that decided it (the head SHA, the check conclusions, the open review threads and the findings), and a `needs_changes` verdict names the failing check or the finding.
-- Every task, with or without a pull request, runs on one task packet and ends in a completion receipt. Only code-change work, which has a pull request, goes through steps 4 to 8. Work without a pull request ends at step 4.
+- A verdict is `verified` or `needs_changes`. LINA Core records it in the ledger with the records that decided it (the head SHA, the check conclusions, the review records and the check against the work definition). A `needs_changes` verdict names the unmet done condition, scope or design reference; review findings and CI failures are never a separate return from LINA Core.
+- Every task, with or without a pull request, runs on one task packet and ends in a completion receipt. Only code-change work, which has a pull request, goes through steps 5 to 7. Work without a pull request ends at step 4.
 
 Delivery of every task:
 
 1. LINA Core registers the assignment before the worker's first output.
 2. For each execution generation the worker submits a completion receipt for the actual output path. It is held until the end of the turn is observed.
 3. LINA Core records the receipt in the ledger and acknowledges it.
-4. **Read.** For code-change work LINA Core reads the pull request the receipt names, once: its state, its head SHA, its review threads and the conclusions of the required checks at that head. It checks that the head matches the receipt and that the protected refs did not move. A check still running is watched until it concludes (see Event-driven flow). For work without a pull request LINA Core reads the artifacts against the done condition once, and judges `verified` or `needs_changes`.
+4. **Read.** For code-change work LINA Core reads the pull request the receipt names, once: its state, its head SHA, its review records and the conclusions of the required checks at that head. It checks that the head matches the receipt and that the protected refs did not move. A pending check or review stays a named wait with a deadline in the worker's turn (see Event-driven flow); LINA Core does not turn it into a findings round trip. For work without a pull request LINA Core reads the artifacts against the done condition once, and judges `verified` or `needs_changes`.
 
 Code-change work continues:
 
-5. **Review.** LINA Core does exactly one design-conformance review per task, of the pull request's diff against the design reference. It may run while the checks run. LINA Core types every open finding it reads, from GitHub's reviewers or from its own review, from P0 (most severe) to P3. A failing required check counts as a P1 finding that names the check, and so does a change outside the declared write area (see Write areas). No second review follows, not after the return and not after a failed check. A pull request that changes a design contract in a storage-format, security or concurrency area (see Splitting into tasks) may get one extra independent read of that change. It is a choice for that pull request, not a standing gate. No delivery is checked by a panel of several verifiers.
-6. **Return.** LINA Core sends only the P0 and P1 findings back to the same worker, once, as a new execution generation. An idle thread receives them with `turn/start`. P2 and P3 findings are not sent back: LINA Core records them with the verdict and shows them with the result, and they do not block the merge. When there is no P0 or P1 finding, there is no return. The worker may also make small edits itself at any time before the merge, such as a rebase, a fix of its own failing check or a reply to a review thread; LINA Core neither requests nor reviews them.
-7. **Read again.** After the fix receipt, LINA Core reads the pull request as in step 4 at the new head and runs no second review. A residual P0 or P1 blocks the task: the fix receipt reports a finding as not fixed, a required check fails at the new head, or a thread that requests changes is still open. LINA Core then does not merge, closes the pull request with the open findings as the reason, records the task as blocked with those findings and without a `verified` verdict, and reports to the person, who can ask for a corrected work definition (see Messages and questions). The return is not repeated.
-8. **Merge or close.** When the required checks hold at the head LINA Core last read and no P0 or P1 finding is open, LINA Core judges `verified` and merges that head through the merge slot, once the pre-merge safety rule of [product-families.md](product-families.md) holds. The merge ends as an apply record (see GitHub writes and merges), and the task has landed when one read of GitHub shows the pull request merged (see Event-driven flow). LINA Core closes a pull request, with its reason written on it, in the case of step 7 and when the task is cancelled.
+5. **Check the work definition.** At merge LINA Core checks the delivered result and the pull request's diff against the done condition, scope (including the write area) and design reference. This is the design-conformance review. It does not triage GitHub findings, classify failed checks as P1 or direct their fixes. No delivery is checked by a panel of several verifiers.
+6. **Return a missed work definition.** Only when the result misses the work definition does LINA Core send work back to the same worker, once, as a new execution generation, naming what was not met. An idle thread receives it with `turn/start`. The worker owns that generation's CI and review fixes too. After its receipt LINA Core reads the resulting head and checks the named gaps against the work definition; it starts no second review or CI fix loop. A remaining gap blocks the task and closes the pull request with that reason, without a `verified` verdict, and is reported to the person, who can ask for a corrected work definition (see Messages and questions).
+7. **Merge or close.** When the work definition is met, the required checks hold at the head LINA Core last read and no P0 or P1 finding is open, LINA Core judges `verified` and merges that head through the merge slot, once the pre-merge safety rule of [product-families.md](product-families.md) holds. P2 and P3 findings are recorded with the result and do not block the merge. A worker that reports a remaining CI failure or P0 or P1 after its fix pass has not delivered green: LINA Core closes the pull request with that reason and records the task as blocked without a `verified` verdict, rather than returning review or CI work. The merge ends as an apply record (see GitHub writes and merges), and the task has landed when one read of GitHub shows the pull request merged (see Event-driven flow). LINA Core also closes a pull request, with its reason written on it, in the case of step 6 and when the task is cancelled.
 
 Every message LINA Core sends to a work thread, and every result a work thread returns, passes through separate delivery layers: `transport_accepted`, `received`, `agreed`, `applied`, `verified`. Each layer is recorded with its own evidence, and no layer implies the next. Delivery layers are not effect states ([host-protocol.md](host-protocol.md)). A worker's background completion notice is never a delivery acknowledgement.
 
@@ -628,7 +633,7 @@ Work progress is seen only through work cards and the running list built from th
 - A card's state is one of working, waiting, paused, ready for review, input needed, stopped, failed, done or unknown. Waiting means the task is not running and names one reason: a dependency, an area held by another task, a worker out of quota, host capacity, a limit on background runs, or CI pending. Paused means LINA has stopped delivery to the work thread (see Control). Input needed shows as waiting for the user when the user owns the open question, approval or decision. Ready for review means a result is ready for the person to open; a task whose pull request LINA Core is still reading, reviewing, waiting on or merging shows as working. Done requires a `verified` verdict, plus an apply record when the task's result must be applied. A model's completion text, a `DONE` result word or a completed turn never shows done. For the person a card says in one line, in their words, where the work stands. A stage that only LINA handles, such as checking a result against the design, waiting for checks or merging, shows as working and ends as part of the outcome line.
 - A 할 일 has two separate states: its planning state (the state categories under The to-do record) and the observed state of its work card. The card never sets the planning state, except that a done card, which requires acceptance of the delivery, completes the 할 일.
 - A background run's card uses the same state words: `waiting` is waiting, `working` is working, `needs_input` is input needed, a landed run with a complete or partial result is ready for review, `failed` is failed and `cancelled` is stopped. A run never shows done, because done requires a `verified` verdict and a run's result is a claim. The running list drops a landed run once the person has opened or dismissed it ([surfaces.md](surfaces.md#running-list)).
-- Each stage of a task (the worker's run, the read of the pull request's review and checks, and for code-change work the design-conformance review, the return of findings and the merge or close) has a short summary built from actual results. A stage without results is unknown. Each summary says where its facts come from: the worker's report, GitHub (review, checks), LINA Core's own review, or unknown. The card also carries the execution record and the acceptance-criterion references. The Details of the card show these; the default card shows one line.
+- Each stage of a task (the worker's run, including its review and CI fixes, and for code-change work LINA Core's check against the work definition and the merge or close) has a short summary built from actual results. A stage without results is unknown. Each summary says where its facts come from: the worker's report, GitHub (review, checks), LINA Core's check against the work definition, or unknown. The card also carries the execution record and the acceptance-criterion references. The Details of the card show these; the default card shows one line.
 - Counts include only the required children of the current generation. Optional or superseded children, and verifiers of another revision, never count toward overall success.
 - The ladder of a delegated task (ready, accepted, posted, reported, verified, delivered to the user, confirmed by the user, accepted by LINA Core, merged or released) is the audit trail of the task. It opens in Details, each rung with the evidence that sets it, and it is not part of the default card.
 - The developer view of a card is hidden by default and turned on in settings. It adds the worker and its version, the thread id, the attempt and the receipts to the card's Details, and changes nothing in the default card. For a background run it adds the brief, the allowlist, the limits and usage, and the run's transcript. Stages, counts and times are the same as in the default view.
@@ -700,7 +705,7 @@ At the operational switch LINA takes over CRW's coordination functions and CRW r
 
 - The task state set of the ledger projection, and the list of adopted CRW schema documents and fixture domains: set by the pin record at the start gate.
 - The verified Codex versions and the judgments of the experimental fields LINA uses: set by the worker adapter round trip of the first implementation issue (V5) and recorded in the release manifest.
-- The completion receipt, question and finding schemas, their first version, and the written meaning of the severities P0 to P3 that the design-conformance review applies: set by the worker adapter implementation issue. A receipt maps onto the pinned CRW shape by adding fields only.
+- The completion receipt, question and finding schemas, their first version, and the written meaning of the review severities P0 to P3 that the worker reports: set by the worker adapter implementation issue. A receipt maps onto the pinned CRW shape by adding fields only.
 - What each worker profile (direct, single and complementary) means, and the values it records: set during work engine implementation acceptance.
 - The heartbeat interval H, the concurrency limits per repository, per worker and per area class, the stall bounds per size class, the period of the reconcile pass, the soft size budget, the defaults for background runs (concurrency and the stall check-in) and the budget caps: set by measurement during work engine implementation acceptance and tuned from LINA's own merged pull requests.
 - Retention periods for closed workspaces: set during work engine implementation acceptance.
