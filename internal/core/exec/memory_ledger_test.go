@@ -80,22 +80,22 @@ type sourceMaterials struct {
 	reads  int
 }
 
-type preparedSource struct {
+func (s *sourceMaterials) Prepare(_ context.Context, body secrets.Masked) (ledger.MaterialWrite, error) {
+	ref := ledger.Material{ID: fmt.Sprintf("source-%d", len(s.bodies)), Revision: 1}
+	return sourceMaterialWrite{store: s, ref: ref, body: body.Text()}, nil
+}
+
+type sourceMaterialWrite struct {
 	store *sourceMaterials
 	ref   ledger.Material
 	body  string
 }
 
-func (p preparedSource) Insert(context.Context, *canon.Tx) (ledger.Material, error) {
-	p.store.bodies[p.ref] = p.body
-	return p.ref, nil
+func (w sourceMaterialWrite) Insert(context.Context, *canon.Tx) (ledger.Material, error) {
+	w.store.bodies[w.ref] = w.body
+	return w.ref, nil
 }
-func (p preparedSource) Close() error { return nil }
-
-func (s *sourceMaterials) Prepare(_ context.Context, body secrets.Masked) (ledger.MaterialWrite, error) {
-	ref := ledger.Material{ID: fmt.Sprintf("source-%d", len(s.bodies)), Revision: 1}
-	return preparedSource{store: s, ref: ref, body: body.Text()}, nil
-}
+func (w sourceMaterialWrite) Close() error { return nil }
 func (s *sourceMaterials) Read(_ context.Context, ref ledger.Material) (string, error) {
 	s.reads++
 	body, ok := s.bodies[ref]
