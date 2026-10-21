@@ -14,6 +14,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/buildinfo"
 	"github.com/thisisjun786/lina/internal/core/backup"
+	"github.com/thisisjun786/lina/internal/core/boot"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"github.com/thisisjun786/lina/internal/core/manifest"
@@ -53,7 +54,7 @@ func runRestore(args []string) int {
 	for _, binary := range installed.Binaries {
 		artifacts[binary.Name] = installed.Version + "@" + installed.Commit
 	}
-	migrations := canon.Migrations()
+	migrations := boot.ApplicationMigrations()
 	restored, err := backup.Restore(ctx, backup.RestoreConfig{Root: *root, Generation: *generation, Migrations: migrations, Artifacts: artifacts})
 	if errors.Is(err, ctlfiles.ErrLocked) {
 		fmt.Fprintln(os.Stderr, "lina restore: Core is running. Stop Core before restoring.")

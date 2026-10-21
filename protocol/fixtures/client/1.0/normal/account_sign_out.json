@@ -1,0 +1,25 @@
+{
+  "protocol": {
+    "name": "client",
+    "version": "1.0"
+  },
+  "kind": "account_request",
+  "message_id": "account_sign_out-example",
+  "attempt_id": "account_sign_out-attempt",
+  "reply_to": null,
+  "sender": {
+    "party": "client",
+    "id": "client-example"
+  },
+  "epoch": "0",
+  "sent_at": "2026-01-01T00:00:00Z",
+  "idempotency_key": null,
+  "effect_state": "none",
+  "receipt_ref": null,
+  "source_refs": [],
+  "error": null,
+  "payload": {
+    "operation": "sign_out",
+    "account_id": "synthetic-account"
+  }
+}

@@ -4,6 +4,21 @@ package layout
 
 import "testing"
 
+func TestPlanHidesEmptyAndUnavailableWorkLists(t *testing.T) {
+	for _, caps := range []Caps{{}, {Running: true, Cards: true}} {
+		for _, shape := range []Shape{{}, {ComposerRows: 6, Attachments: true}} {
+			p := Plan(Size{80, 10}, caps, shape)
+			if p.Running.Height != 0 || p.Cards.Height != 0 || p.RunningFolded || p.CardsFolded {
+				t.Fatalf("empty work lists consume rows: %+v", p)
+			}
+		}
+	}
+	p := Plan(Size{80, 24}, Caps{}, Shape{RunningCount: 3, CardCount: 2, CardRows: 2})
+	if p.Running.Height != 0 || p.Cards.Height != 0 || !p.RunningUnsupported || !p.CardsUnsupported {
+		t.Fatalf("unavailable work lists must stay hidden with typed capability flags: %+v", p)
+	}
+}
+
 func TestPlanEveryTerminalSize(t *testing.T) {
 	for width := 0; width <= 240; width++ {
 		for height := 0; height <= 100; height++ {
