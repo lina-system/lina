@@ -31,20 +31,27 @@ func runTUI(args []string) int {
 		return 64
 	}
 	if err := ui.Run(context.Background(), *socket, buildinfo.Version, os.Stdin, os.Stdout); err != nil {
+		shown := ui.ErrorShown(err, os.Stderr)
 		var refusal *clientapi.Refusal
 		switch {
 		case errors.Is(err, clientapi.ErrUnavailable):
-			fmt.Fprintln(os.Stderr, "lina tui: unavailable; start Core and check --socket")
+			if !shown {
+				fmt.Fprintln(os.Stderr, "lina tui: unavailable; start Core and check --socket")
+			}
 			return 69
 		case errors.As(err, &refusal):
-			fmt.Fprintf(os.Stderr, "lina tui: %s; check Core compatibility\n", refusal)
+			if !shown {
+				fmt.Fprintf(os.Stderr, "lina tui: %s; check Core compatibility\n", refusal)
+			}
 			if refusal.Cause.Code == protocol.ErrorUnsupportedCombination {
 				return 78
 			}
 			return 70
 		default:
 			// Peer text and local paths are not safe terminal status strings.
-			fmt.Fprintln(os.Stderr, "lina tui: connection or input/output failed; check Core and terminal input")
+			if !shown {
+				fmt.Fprintln(os.Stderr, "lina tui: connection or input/output failed; check Core and terminal input")
+			}
 			return 70
 		}
 	}
