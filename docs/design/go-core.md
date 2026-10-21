@@ -57,11 +57,28 @@ Callers pass state locations, persona, skills and knowledge scope.
 | L4 | Flows: `lane`, `assemble`, `compaction`, `turn`, `runs`, `reply`, `results`, `modelpath`, `exec`, `exchange`, `gateway`, `worker`, `reactor`, `review`, `ghclient`, `progress`, `waiting`, `importer`, `backup`, `update`, `recover`, `clientsrv`, `jobs`, `mcphost` |
 | L5 | `boot`, `supervise` |
 
+The separate worker has its own downward import layers. Core may import only its `jobapi` contract, never its reader or runtime; the worker imports no Core, provider, secret, process-launch or arbitrary third-party package. The SQLite binding is allowed only in the exact read-only reader package. The ordinary architecture test enforces these boundaries.
+
+| Worker layer | Packages |
+| --- | --- |
+| W1 | `internal/moirai/jobapi` (credential-free types and Unix-socket client) |
+| W2 | `internal/moirai/canon` (read-only job snapshots) |
+| W3 | `internal/moirai` (job execution and scheduling) |
+| W4 | `cmd/moirai-worker` (command and signals) |
+
 Outside the Core layers, `internal/buildinfo` owns the linker-supplied version, commit and UTC build date and the embedded VCS fallback. It imports only the standard library and is shared by the two command entry points.
 
 Rules: imports run downward. L3 stores never import each other; L4 composes them inside one `canon.Writer.Do`. `assemble` is pure. `kit` imports nothing from the root module. `internal/node` and `cmd/lina-node` import only the standard library and the kit packages listed for Node, with one exception: `cmd/lina-node` may import the exact package `internal/buildinfo`. This exception does not extend to Node runtime packages or buildinfo subpackages. Charm libraries appear only in `tui/term` and `tui/ui`. `os/exec` appears only in `kit/proc` and `kit/sandbox`, and `os.Environ` only in `kit/proc`. Secret reveal happens in two functions. The default-view types live in a `view` package with no id fields. All of this is one ordinary `go test` (`internal/archtest`) that the components check of [foundation.md](../policy/foundation.md) already runs. It adds no gate.
 
 **C-56 Moirai worker boundary (new).** [runtime.md](runtime.md#processes) and [cognition-and-life.md](cognition-and-life.md#request-path-and-background) make `moirai-worker` an optional separate Go service. It opens canon read-only, holds no credential, and talks to Core over a 0600 Unix socket in a 0700 directory at the path the install sets ([runtime.md](runtime.md#deferred) leaves socket paths to packaging). It asks Core for two things: a model call on Core's path under the budget and the run kind (`Aux`), and a write through the Moirai write path (`Apply`), which checks the epoch fence and the write rules. Each job has a schedule, a budget, a switch and an adoption record, is idempotent, and keeps a watermark. Killing the worker leaves canon unchanged. Without the socket only background memory and planning are unsupported. A summary on demand runs in Core, so conversation never depends on the worker. The release manifest pins the worker with Core, so this socket has no version negotiation.
+
+The job API increment exposes `Aux`, `Apply` and `Report` over bounded HTTP/JSON requests on that Unix socket. The types and client live in `internal/moirai/jobapi`; `internal/core/jobs` owns the service. Core registers each job's model callback, account binding and transactional write-rule callback. Neither SQL, credentials, provider selection, tools nor persona cross this API. A Core schema owner includes `jobs.Schema` and the shared budget schema in its numbered migrations; neither serving the API nor starting a worker creates or migrates canon. Concrete memory/planning algorithms and installation remain their own roadmap increments.
+
+Core owns a job's kind (memory or planning), interval, deadline (at most two minutes), token allowance, maximum tokens per call, on/off switch and adoption record. It enqueues immutable, consecutive source tasks. The worker reads the epoch, policy, committed watermark and next task in a single `mode=ro` / `query_only` snapshot. Its reader exposes no writer. Jobs have separate deadlines and run independently; a slow or failed job does not hold up another job or the conversation path.
+
+`Aux` binds the source task to an auxiliary model call, reserves both the job allowance and shared main budget, and durably caches the result. Missing usage retains the reservation charge. A disconnected worker does not cancel Core's admitted, bounded call, so a restarted worker can recover its result without another model request. If Core stops before recording a result, the durable reservation reports an unknown outcome and is not automatically retried. This accounting and the cached auxiliary result are Core-owned bookkeeping, not an adopted memory or plan.
+
+`Apply` validates the epoch, job switch, schedule and expected watermark, then invokes the registered write rules. The accepted changes, next schedule, proposal receipt and watermark commit in one fenced canon transaction. Failure rolls all of them back. An identical proposal replay returns the receipt; a changed proposal at the same sequence conflicts. Deterministic jobs can use Apply without Aux. Killing a worker cannot write canon or advance its watermark; a Core transaction already committed remains committed. Core's fenced apply helper is also the only mutation boundary for job administration, Aux accounting and Report. Reports carry only a closed status and the current watermark; they cannot advance progress or change policy. The worker has no credential-loading path, clears inherited environment variables at entry, and never contacts a provider.
 
 ```go
 // internal/core/jobs: what moirai-worker may ask of Core.

@@ -8,6 +8,30 @@ import { git as runGit } from '../git.mjs';
 import { componentRegistry, kind, scopeFor } from './scope.mjs';
 import { evaluateGate } from './gate.mjs';
 
+test('Moirai source changes select its binary and Core acceptance checks', t => {
+  const r = repository(t);
+  for (const [name, content] of Object.entries({
+    'go.mod': 'module example.invalid/lina\ngo 1.27\ntoolchain go1.27.3\n',
+    'kit/go.mod': 'module example.invalid/lina/kit\ngo 1.27\ntoolchain go1.27.3\n',
+    'go.work': 'go 1.27\ntoolchain go1.27.3\nuse (\n.\n./kit\n)\n',
+    'doc.go': 'package lina\n', 'kit/doc.go': 'package kit\n',
+    'cmd/lina/main.go': 'package main\nfunc main(){}\n',
+    'cmd/moirai-worker/main.go': 'package main\nimport _ "example.invalid/lina/internal/moirai"\nfunc main(){}\n',
+    'internal/moirai/worker.go': 'package moirai\n',
+    'internal/archtest/imports_test.go': 'package archtest\n',
+    'e2e/moirai_test.go': 'package e2e\nimport _ "example.invalid/lina/internal/moirai"\n',
+  })) {
+    mkdirSync(join(r.cwd, name, '..'), { recursive: true });
+    writeFileSync(join(r.cwd, name), content);
+  }
+  const base = r.commit();
+  writeFileSync(join(r.cwd, 'internal/moirai/worker.go'), 'package moirai\n// changed\n');
+  const scope = r.classify('HEAD', { base });
+  assert.deepEqual(scope.unmapped, []);
+  assert.deepEqual(scope.selectedComponents, ['lina', 'moirai-worker']);
+  assert.equal(componentRegistry.find(c => c.name === 'moirai-worker')?.binary, 'moirai-worker');
+});
+
 test('budget is registered with the lina Go checks', t => {
   const r = repository(t);
   const base = r.git('rev-parse', 'HEAD');
