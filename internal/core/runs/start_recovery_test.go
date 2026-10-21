@@ -197,3 +197,38 @@ func TestPreparationCallbackNeverReceivesRawToolSecrets(t *testing.T) {
 		t.Fatalf("outcome=%s preparations=%d", r.Outcome, prepared.Load())
 	}
 }
+
+func TestCommittedStartReceiptSurvivesLaterBudgetHold(t *testing.T) {
+	var held atomic.Bool
+	s, _, _ := setupWith(t, func(context.Context, provider.Request) (provider.Stream, error) {
+		t.Error("unexpected execution")
+		return nil, nil
+	}, func(c *runs.Config) {
+		c.Authorize = func(context.Context, runs.Origin, runs.Brief) error {
+			if held.Load() {
+				return runs.ErrBudget
+			}
+			return nil
+		}
+	})
+	c := startCall(t, brief())
+	first := startReceipt(t, s, origin(), c)
+	held.Store(true)
+	got := s.StartTool(origin()).Execute(t.Context(), c)
+	if got.Code != loop.OK {
+		t.Fatalf("committed receipt blocked by later budget: %+v", got)
+	}
+	var receipt runs.Receipt
+	if err := json.Unmarshal(got.Output, &receipt); err != nil || receipt != first {
+		t.Fatalf("replay=%+v err=%v", receipt, err)
+	}
+	changed := brief()
+	changed.Done = "changed"
+	if got := s.StartTool(origin()).Execute(t.Context(), startCall(t, changed)); got.Code != loop.Invalid {
+		t.Fatalf("conflicting replay: %+v", got)
+	}
+	c.ID = "new-call"
+	if got := s.StartTool(origin()).Execute(t.Context(), c); got.Code != loop.Denied {
+		t.Fatalf("new admission bypassed budget: %+v", got)
+	}
+}

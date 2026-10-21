@@ -111,19 +111,10 @@ func startIdentity(o Origin, call string) string {
 	return hex.EncodeToString(digest[:])
 }
 
-func (s *Service) start(ctx context.Context, o Origin, b Brief, call string) (string, State, error) {
-	o.Epoch = s.cfg.Epoch
-	if !valid(o, b) {
-		return "", "", ErrInvalid
-	}
-	if err := s.cfg.Authorize(ctx, o, b); err != nil {
-		return "", "", err
-	}
-	// Round-trip the brief to detach caller-owned slices.
-	data, _ := json.Marshal(b)
-	var detached Brief
-	_ = json.Unmarshal(data, &detached)
-	b = detached
+// replayStart reads an already committed receipt, without admitting new work.
+// The native origin/call binding is trusted; budget and account holds may have
+// changed since admission and cannot invalidate a lost receipt.
+func (s *Service) replayStart(ctx context.Context, key, digest string) (string, State, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -133,11 +124,51 @@ func (s *Service) start(ctx context.Context, o Origin, b Brief, call string) (st
 	if err != nil {
 		return "", "", err
 	}
+	for _, r := range rows {
+		if r.StartKey != key {
+			continue
+		}
+		if r.StartDigest != digest {
+			return "", "", ErrInvalid
+		}
+		return r.ID, r.StartState, nil
+	}
+	return "", "", nil
+}
+
+func (s *Service) start(ctx context.Context, o Origin, b Brief, call string) (string, State, error) {
+	o.Epoch = s.cfg.Epoch
+	if !valid(o, b) {
+		return "", "", ErrInvalid
+	}
+	// Round-trip the brief to detach caller-owned slices.
+	data, _ := json.Marshal(b)
+	var detached Brief
+	_ = json.Unmarshal(data, &detached)
+	b = detached
 	var key, digest string
 	if call != "" {
 		key = startIdentity(o, call)
 		sum := sha256.Sum256(data)
 		digest = hex.EncodeToString(sum[:])
+		if id, state, err := s.replayStart(ctx, key, digest); err != nil || id != "" {
+			return id, state, err
+		}
+	}
+	if err := s.cfg.Authorize(ctx, o, b); err != nil {
+		return "", "", err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return "", "", ErrClosed
+	}
+	rows, err := s.records(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	// Another caller may have committed while authorization was in progress.
+	if call != "" {
 		for _, prior := range rows {
 			if prior.StartKey != key {
 				continue
