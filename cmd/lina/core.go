@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/thisisjun786/lina/internal/core/boot"
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 )
 
@@ -33,6 +34,13 @@ func runCore(args []string) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
+	if version, err := canon.SQLiteVectorVersion(); err != nil || version != canon.SQLiteVecVersion {
+		if err == nil {
+			err = fmt.Errorf("unexpected sqlite-vec version %q", version)
+		}
+		fmt.Fprintf(os.Stderr, "lina core: initialize SQLite: %v\n", err)
+		return 78
+	}
 	if err := boot.Run(ctx, boot.Config{StateRoot: *root, Socket: *socket}); err != nil {
 		fmt.Fprintf(os.Stderr, "lina core: %v\n", err)
 		if errors.Is(err, ctlfiles.ErrLocked) {
