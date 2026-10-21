@@ -140,3 +140,22 @@ func TestContinuationInputOnceAndNoPriorRoundTrip(t *testing.T) {
 		t.Fatalf("%v sends=%d", err, sends)
 	}
 }
+
+func TestCounterAlwaysReceivesConversationModel(t *testing.T) {
+	p, v := fixturePass()
+	p.Count = func(r provider.Request) int {
+		if r.Model != "model" {
+			t.Fatal("counter lost model")
+		}
+		return countBytes(r)
+	}
+	p.Summarize = func(context.Context, PassSegment) (Text, error) {
+		return Text{Requests: "open", Topics: "topic", Actions: "none", Values: "42", Omitted: "details"}, nil
+	}
+	p.Publish = func(context.Context, PassSegment, Text) (Published, error) {
+		return Published{ID: "root", Item: message("summary")}, nil
+	}
+	if _, err := p.Fit(t.Context(), v, false); err != nil {
+		t.Fatal(err)
+	}
+}

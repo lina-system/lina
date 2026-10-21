@@ -94,3 +94,31 @@ func TestContinuationLedgerSurvivesOversizeWithoutCopyingInput(t *testing.T) {
 		t.Fatalf("ended=%d err=%v", ended, err)
 	}
 }
+
+func TestContinuationRecordFailureRollsBackEndedTurn(t *testing.T) {
+	db, _ := passDB(t)
+	events := ledger.New(db, nil)
+	now := time.Unix(100, 0)
+	if _, err := events.Admit(t.Context(), guard.EntryOwner, ledger.Input{ID: "input", ConversationID: "conversation", PersonID: "owner", AgentID: "agent", Surface: ledger.Surface{Kind: "app"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "question"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(t.Context(), `CREATE TABLE ended_turn(id TEXT PRIMARY KEY)`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	journal := ContinuationLedger{DB: db, Agent: "agent", Conversation: "conversation", EventID: "input", At: now, End: func(ctx context.Context, tx *canon.Tx, id string) error {
+		_, err := tx.ExecContext(ctx, `INSERT INTO ended_turn VALUES(?)`, id)
+		return err
+	}}
+	if err := journal.Record(t.Context(), ContinuationRecord{EndedTurn: "ended", InputID: "input"}); err == nil {
+		t.Fatal("duplicate event accepted")
+	}
+	var count int
+	if err := db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), `SELECT count(*) FROM ended_turn`).Scan(&count)
+	}); err != nil || count != 0 {
+		t.Fatalf("partial end: %d %v", count, err)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 import "github.com/thisisjun786/lina/kit/provider"
@@ -68,6 +69,7 @@ type PassSegment struct {
 	RootID            string
 	Root              provider.Item
 	Records, Verbatim []Record
+	Protected         []Record
 }
 type Text struct {
 	Requests string `json:"unanswered_requests"`
@@ -78,7 +80,7 @@ type Text struct {
 }
 
 func (t Text) valid() bool {
-	return t.Requests != "" && t.Topics != "" && t.Actions != "" && t.Values != "" && t.Omitted != ""
+	return strings.TrimSpace(t.Requests) != "" && strings.TrimSpace(t.Topics) != "" && strings.TrimSpace(t.Actions) != "" && strings.TrimSpace(t.Values) != "" && strings.TrimSpace(t.Omitted) != ""
 }
 
 type Pass struct {
@@ -200,8 +202,17 @@ func (p Pass) setup(v View) (Pass, error) {
 	}
 	return p, nil
 }
-func (p Pass) itemTokens(item provider.Item) int {
-	return p.Count(provider.Request{Items: []provider.Item{item}}) - p.Count(provider.Request{})
+func (p Pass) itemTokens(base provider.Request, item provider.Item) int {
+	base.Instructions = ""
+	base.Tools = nil
+	base.Items = nil
+	before := p.Count(base)
+	base.Items = []provider.Item{item}
+	after := p.Count(base)
+	if before < 0 || after < before {
+		return -1
+	}
+	return after - before
 }
 
 // Fit never emits a request on failure. Its returned View retains every event
@@ -235,7 +246,7 @@ func (p Pass) Fit(ctx context.Context, v View, inTurn bool) (Fitted, error) {
 	tail := 0
 	for i := len(v.History) - 1; i >= 0; i-- {
 		e := &v.History[i]
-		tokens := p.itemTokens(e.Item)
+		tokens := p.itemTokens(v.Request, e.Item)
 		if tokens < 0 {
 			return Fitted{View: v}, ErrPass
 		}
@@ -256,7 +267,7 @@ func (p Pass) Fit(ctx context.Context, v View, inTurn bool) (Fitted, error) {
 		}
 		obj["output"], _ = json.Marshal(fmt.Sprintf("%s; expand event %s for the full output", e.Note, e.ID))
 		stub, _ := json.Marshal(obj)
-		if p.itemTokens(stub) < tokens {
+		if p.itemTokens(v.Request, stub) < tokens {
 			e.Item = stub
 		}
 	}
@@ -269,7 +280,10 @@ func (p Pass) Fit(ctx context.Context, v View, inTurn bool) (Fitted, error) {
 	budget := 0
 	for i := len(source) - 1; i >= 0; i-- {
 		if source[i].User {
-			n := p.itemTokens(source[i].Item)
+			n := p.itemTokens(v.Request, source[i].Item)
+			if n < 0 {
+				return Fitted{View: v}, ErrPass
+			}
 			if budget+n > p.Policy.KeepUserTokens {
 				break
 			}
@@ -282,7 +296,7 @@ func (p Pass) Fit(ctx context.Context, v View, inTurn bool) (Fitted, error) {
 		for _, r := range verbatim {
 			keep[r.ID] = true
 		}
-		segment := PassSegment{RootID: v.RootID, Root: append(provider.Item(nil), v.Root...), Verbatim: copyRecords(verbatim)}
+		segment := PassSegment{RootID: v.RootID, Root: append(provider.Item(nil), v.Root...), Verbatim: copyRecords(verbatim), Protected: append([]Record{v.Input}, copyRecords(v.Active)...)}
 		for _, r := range source {
 			if !keep[r.ID] {
 				segment.Records = append(segment.Records, r)
@@ -376,20 +390,28 @@ func (p Pass) Continue(ctx context.Context, v View, c Continuation) (Fitted, err
 	if err = c.Record(ctx, ContinuationRecord{c.EndedTurn, c.InputID}); err != nil {
 		return Fitted{View: v}, err
 	}
+	failed := func(cause error) (Fitted, error) {
+		sizes, countErr := p.measure(v)
+		var logErr error
+		if countErr == nil {
+			logErr = c.Log(ctx, sizes)
+		}
+		return Fitted{View: v, Sizes: sizes}, errors.Join(cause, countErr, logErr)
+	}
 	segment := PassSegment{RootID: v.RootID, Root: append(provider.Item(nil), v.Root...), Records: append(copyRecords(v.History), copyRecords(v.Active)...), Verbatim: []Record{v.Input}}
 	summary, err := p.Summarize(ctx, segment)
 	if err != nil {
-		return Fitted{View: v}, err
+		return failed(err)
 	}
 	if !summary.valid() {
-		return Fitted{View: v}, ErrPass
+		return failed(ErrPass)
 	}
 	root, err := p.Publish(ctx, segment, summary)
 	if err != nil {
-		return Fitted{View: v}, err
+		return failed(err)
 	}
 	if root.ID == "" || !json.Valid(root.Item) {
-		return Fitted{View: v}, ErrPass
+		return failed(ErrPass)
 	}
 	v = copyView(v)
 	v.Root, v.RootID = root.Item, root.ID

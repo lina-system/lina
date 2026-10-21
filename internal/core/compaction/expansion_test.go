@@ -56,3 +56,15 @@ func TestExpansionReturnsExactScopedMaskedEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestExpansionRefusesForgottenSourcesAndInvalidatedNodes(t *testing.T) {
+	db, s, removals, _ := fixture(t)
+	publish(t, s, proposal(t, s, "leaf"))
+	expansion := Expansion{DB: db, Events: ledger.New(db, nil), NodeEvents: s.ExpandEvents}
+	forget(t, db, removals)
+	for _, id := range []string{"event:e1", "node:leaf"} {
+		if raw, err := expansion.Read(t.Context(), "agent", id, 0, 50); err == nil || len(raw) != 0 {
+			t.Fatalf("forgotten source returned %s", raw)
+		}
+	}
+}
