@@ -14,7 +14,6 @@ import (
 	"syscall"
 	"time"
 
-	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/term"
 	"github.com/thisisjun786/lina/internal/clientapi"
 	terminalkeys "github.com/thisisjun786/lina/internal/tui/term"
@@ -107,24 +106,28 @@ var errQuit = errors.New("TUI quit requested")
 // watchTerminalInput owns all terminal reads, including during negotiation.
 // Closing its cancellation resources never closes the caller's input file.
 func watchTerminalInput(ctx context.Context, input *os.File) (context.Context, func() error, error) {
-	reader, err := uv.NewCancelReader(input)
-	if err != nil {
-		return nil, nil, err
-	}
 	ctx, cancel := context.WithCancelCause(ctx)
 	done := make(chan struct{})
+	var inputErr error // Read only after done closes.
 	go func() {
 		defer close(done)
-		if err := readQuit(reader); err != nil {
-			cancel(err)
+		var gate terminalkeys.Gate
+		inputErr = terminalkeys.ReadKeys(ctx, input, func(key terminalkeys.Key) bool {
+			if !gate.Admit(key, terminalkeys.Toggle, time.Now()) {
+				return true
+			}
+			return key.Name != "q" && key.Name != "ctrl+c" && key.Name != "ctrl+d"
+		})
+		if inputErr != nil {
+			cancel(inputErr)
 		} else {
 			cancel(errQuit)
 		}
 	}()
 	return ctx, func() error {
-		reader.Cancel()
+		cancel(context.Canceled)
 		<-done // Join the sole reader before restoring the terminal mode.
-		return reader.Close()
+		return inputErr
 	}, nil
 }
 

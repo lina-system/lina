@@ -323,6 +323,11 @@ Key classes are Toggle, Edit and Approve. Every key event passes one `Admit` gat
 and release events remain explicit even if the keyboard capability reply has
 not arrived. Unknown key classes and event types are rejected.
 
+The terminal input adapter decodes enhanced keys before dispatch and excludes
+paste and terminal replies from key actions. Cancellation drains pending decoder
+events without dispatching them, joins the input reader, and closes only its own
+cancellation resources before the caller restores terminal mode.
+
 **Mid-turn input** is steering by default and applies at the next round boundary ([runtime.md](runtime.md#conversation-loop)). `/queue` makes the input a follow-up. `/stop` cancels.
 
 **The composer** is the Bubbles `textarea`; `textinput` is not used.
