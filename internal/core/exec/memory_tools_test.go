@@ -16,7 +16,7 @@ import (
 
 func TestRememberToolRefusesCommitFailure(t *testing.T) {
 	db := memoryDB(t)
-	flow := NewMemory(db, source, nil, nil)
+	flow := newMemory(db, source, nil, nil)
 	// The insert callback succeeds; the deferred FK fails SQLite's COMMIT.
 	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
 		_, err := tx.ExecContext(t.Context(), `CREATE TABLE commit_probe(id TEXT REFERENCES memory_item(id) DEFERRABLE INITIALLY DEFERRED);
@@ -64,7 +64,7 @@ func TestRememberToolRefusesCommitFailure(t *testing.T) {
 }
 func TestRecallToolBindsScopeAndRejectsUnknownArguments(t *testing.T) {
 	db := memoryDB(t)
-	flow := NewMemory(db, source, nil, nil)
+	flow := newMemory(db, source, nil, nil)
 	if _, err := flow.Remember(t.Context(), rememberInput("likes tea")); err != nil {
 		t.Fatal(err)
 	}

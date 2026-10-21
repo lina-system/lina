@@ -42,8 +42,8 @@ const (
 )
 
 type Subject struct {
-	Kind SubjectKind
-	ID   string
+	Kind SubjectKind `json:"kind"`
+	ID   string      `json:"id,omitempty"`
 }
 type Holder string
 
@@ -95,37 +95,41 @@ const (
 // Evidence's metadata is filled from canon, never trusted from a proposed item.
 // Quote is removed on recall when the evidence belongs to another agent.
 type Evidence struct {
-	Kind        EvidenceKind
-	ID          string
-	Revision    int64
-	Precision   Precision
-	SourceAgent string
-	OccurredAt  int64
-	Quote       string
+	Kind        EvidenceKind `json:"kind"`
+	ID          string       `json:"id"`
+	Revision    int64        `json:"revision,omitempty"`
+	Precision   Precision    `json:"precision"`
+	SourceAgent string       `json:"source_agent,omitempty"`
+	OccurredAt  int64        `json:"occurred_at,omitempty"`
+	Quote       string       `json:"quote,omitempty"`
 }
 type Item struct {
-	ID                        string
-	Kind                      Kind
-	Content, Gloss            string
-	Holder                    Holder
-	Person                    string
-	Subject                   Subject
-	SourcePerson, SourceAgent string
-	Evidence                  []Evidence
-	ValidFrom, ValidUntil     int64
-	Basis                     Basis
-	Scope                     Scope
-	Revision                  int64
-	State                     State
-	Standing                  bool
-	Supersedes                string
-	Sensitivity               []string
+	ID           string     `json:"id,omitempty"`
+	Kind         Kind       `json:"kind"`
+	Content      string     `json:"content"`
+	Gloss        string     `json:"gloss,omitempty"`
+	Holder       Holder     `json:"holder,omitempty"`
+	Person       string     `json:"person,omitempty"`
+	Subject      Subject    `json:"subject"`
+	SourcePerson string     `json:"source_person,omitempty"`
+	SourceAgent  string     `json:"source_agent,omitempty"`
+	Evidence     []Evidence `json:"evidence"`
+	ValidFrom    int64      `json:"valid_from,omitempty"`
+	ValidUntil   int64      `json:"valid_until,omitempty"`
+	Basis        Basis      `json:"basis"`
+	Scope        Scope      `json:"scope,omitempty"`
+	Revision     int64      `json:"revision,omitempty"`
+	State        State      `json:"state,omitempty"`
+	Standing     bool       `json:"standing,omitempty"`
+	Supersedes   string     `json:"supersedes,omitempty"`
+	Sensitivity  []string   `json:"sensitivity,omitempty"`
 }
 
 // Origin is read by the flow from the canonical source, including its actual
 // scope, current availability and verification verdict. Unsupported sources
 // must return ErrEvidence; a model cannot provide this resolver.
 type Origin struct {
+	ID            string // Canonical event id after replay/view lineage resolution.
 	Person, Agent string
 	Speaker       guard.SpeakerKind
 	Quote         string

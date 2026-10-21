@@ -46,7 +46,7 @@ func source(context.Context, *canon.Tx, memory.Evidence) (memory.Origin, error) 
 }
 func TestRememberReceiptRequiresCommit(t *testing.T) {
 	db := memoryDB(t)
-	flow := NewMemory(db, source, nil, nil)
+	flow := newMemory(db, source, nil, nil)
 	failed := errors.New("injected_commit_failure")
 	flow.write = func(ctx context.Context, fn func(*canon.Tx) error) error {
 		return db.Write(ctx, func(tx *canon.Tx) error {
@@ -86,7 +86,7 @@ func TestRecallPersonDepthAndCitations(t *testing.T) {
 		}
 		return []Sentence{{Text: "Supported.", Citations: []Citation{r.Sources[0].Citation, {ID: "foreign", Revision: 1}}}, {Text: "Unsupported.", Citations: []Citation{{ID: "foreign", Revision: 1}}}, {Text: "Uncited."}, {Text: "Wrong revision.", Citations: []Citation{{ID: r.Sources[0].ID, Revision: 99}}}}, nil
 	}
-	flow := NewMemory(db, source, nil, aux)
+	flow := newMemory(db, source, nil, aux)
 	for i := 0; i < 15; i++ {
 		if _, err := flow.Remember(t.Context(), rememberInput(fmt.Sprintf("fact %d", i))); err != nil {
 			t.Fatal(err)
@@ -109,7 +109,7 @@ func TestRecallPersonDiscardsCancelledAuxiliaryOutput(t *testing.T) {
 	db := memoryDB(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	flow := NewMemory(db, source, nil, func(_ context.Context, r RecallRequest) ([]Sentence, error) {
+	flow := newMemory(db, source, nil, func(_ context.Context, r RecallRequest) ([]Sentence, error) {
 		cancel()
 		return []Sentence{{Text: "late", Citations: []Citation{r.Sources[0].Citation}}}, nil
 	})

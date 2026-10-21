@@ -208,3 +208,30 @@ func TestWriteChecksAndDefaultLayers(t *testing.T) {
 		}
 	}
 }
+
+func TestProfileUsesLatestRevisionAndHasNoPersistentCopy(t *testing.T) {
+	db := database(t)
+	s := New(db)
+	scope := RecallScope{Agent: "A", Person: "person"}
+	a := proposal("A", "older item")
+	a.Item.Standing = true
+	old := commit(t, db, a)
+	b := proposal("A", "newer item")
+	b.Item.Standing = true
+	commit(t, db, b)
+	a.Agent = "B"
+	a.Item.Evidence[0].ID = "B"
+	commit(t, db, a)
+	profile, err := s.Profile(t.Context(), scope, 100, 1, 10, func(string) int { return 1 })
+	if err != nil || len(profile) != 1 || profile[0].ID != old.ID || profile[0].Revision != 2 {
+		t.Fatalf("latest revision was not first: %+v %v", profile, err)
+	}
+}
+func TestWriteDoesNotRetainSecretShapedContent(t *testing.T) {
+	db := database(t)
+	in := proposal("A", "api_key=synthetic-secret-value")
+	err := db.Write(t.Context(), func(tx *canon.Tx) error { _, err := Insert(t.Context(), tx, in, personOrigin); return err })
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("secret-shaped statement accepted: %v", err)
+	}
+}

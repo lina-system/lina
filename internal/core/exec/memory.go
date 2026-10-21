@@ -28,14 +28,15 @@ type Memory struct {
 	store   *memory.Store
 	write   func(context.Context, func(*canon.Tx) error) error
 	resolve memory.ResolveEvidence
+	prepare func(context.Context, memory.Write) (memory.ResolveEvidence, error)
 	ledger  LedgerSearch
 	aux     Auxiliary
 }
 
-// NewMemory is bound by the trusted Core flow. Resolve and ledger must read
+// newMemory is bound by the trusted Core flow. Resolve and ledger must read
 // canonical sources, and auxiliary must use the configured model/budget path,
 // honor cancellation and make exactly one request without tools or retries.
-func NewMemory(db *canon.Store, resolve memory.ResolveEvidence, ledger LedgerSearch, aux Auxiliary) *Memory {
+func newMemory(db *canon.Store, resolve memory.ResolveEvidence, ledger LedgerSearch, aux Auxiliary) *Memory {
 	m := &Memory{store: memory.New(db), resolve: resolve, ledger: ledger, aux: aux}
 	if db != nil {
 		m.write = db.Write
@@ -57,8 +58,16 @@ func (m *Memory) Remember(ctx context.Context, in memory.Write) (RememberReceipt
 	if m == nil || m.write == nil {
 		return RememberReceipt{}, memory.ErrInvalid
 	}
+	resolve := m.resolve
+	if m.prepare != nil {
+		var err error
+		resolve, err = m.prepare(ctx, in)
+		if err != nil {
+			return RememberReceipt{}, err
+		}
+	}
 	var item memory.Item
-	err := m.write(ctx, func(tx *canon.Tx) error { var err error; item, err = memory.Insert(ctx, tx, in, m.resolve); return err })
+	err := m.write(ctx, func(tx *canon.Tx) error { var err error; item, err = memory.Insert(ctx, tx, in, resolve); return err })
 	if err != nil {
 		return RememberReceipt{}, err
 	}

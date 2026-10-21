@@ -17,8 +17,9 @@ CREATE INDEX memory_candidates ON memory_item(person,holder,state,scope,valid_fr
 CREATE INDEX memory_duplicates ON memory_item(person,subject_kind,subject_id,holder,normalized);
 CREATE INDEX memory_successors ON memory_item(supersedes);
 CREATE TABLE memory_revision (
+ sequence INTEGER PRIMARY KEY AUTOINCREMENT,
  item_id TEXT NOT NULL REFERENCES memory_item(id), revision INTEGER NOT NULL CHECK(revision>0),
  record BLOB NOT NULL CHECK(json_valid(record)),
- PRIMARY KEY(item_id,revision)
+ UNIQUE(item_id,revision)
 );
 `

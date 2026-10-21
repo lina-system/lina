@@ -12,6 +12,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/guard"
+	"github.com/thisisjun786/lina/internal/core/secrets"
 )
 
 type Store struct{ db *canon.Store }
@@ -57,6 +58,12 @@ func defaultHolder(in Write) Holder {
 }
 func validate(in Write) (Item, error) {
 	item := in.Item
+	for _, text := range []string{item.Content, item.Gloss} {
+		masked, err := secrets.Mask(text)
+		if err != nil || masked.Text() != text {
+			return Item{}, ErrInvalid
+		}
+	}
 	if !present(in.Agent) || in.Agent == string(All) || !present(in.Person) || !validKind(item.Kind) || !validBasis(item.Basis) || !present(item.Content) || item.ID != "" || item.Revision != 0 || item.State != "" || len(item.Evidence) == 0 || item.ValidFrom < 0 || item.ValidUntil < 0 || item.ValidUntil != 0 && item.ValidUntil <= item.ValidFrom {
 		return Item{}, ErrInvalid
 	}
@@ -154,6 +161,9 @@ func Insert(ctx context.Context, tx *canon.Tx, in Write, resolve ResolveEvidence
 		if origin.Speaker == guard.ExternalParticipant || origin.Person != in.Person || origin.Agent != "" && origin.Agent != in.Agent || origin.PlanEnded {
 			return Item{}, ErrEvidence
 		}
+		if in.Item.Scope == "" && scopeRank(origin.Scope) > scopeRank(item.Scope) {
+			item.Scope = origin.Scope
+		}
 		if !validScope(origin.Scope) || scopeRank(item.Scope) < scopeRank(origin.Scope) {
 			return Item{}, ErrScope
 		}
@@ -168,6 +178,9 @@ func Insert(ctx context.Context, tx *canon.Tx, in Write, resolve ResolveEvidence
 		}
 		if origin.Speaker == guard.Person {
 			item.SourcePerson = in.Person
+		}
+		if e.Kind == Event && origin.ID != "" {
+			e.ID = origin.ID
 		}
 		e.SourceAgent = origin.Agent
 		e.OccurredAt = origin.OccurredAt
@@ -280,7 +293,7 @@ func Insert(ctx context.Context, tx *canon.Tx, in Write, resolve ResolveEvidence
 	return item, nil
 }
 func revision(ctx context.Context, tx *canon.Tx, item Item, raw []byte) error {
-	_, err := tx.ExecContext(ctx, "INSERT INTO memory_revision VALUES(?,?,?)", item.ID, item.Revision, raw)
+	_, err := tx.ExecContext(ctx, "INSERT INTO memory_revision(item_id,revision,record) VALUES(?,?,?)", item.ID, item.Revision, raw)
 	return err
 }
 func readItem(ctx context.Context, tx *canon.Tx, id string) (Item, error) {
@@ -314,7 +327,7 @@ func (s *Store) recall(ctx context.Context, scope RecallScope, q Query, standing
    FROM memory_item m WHERE m.person=? AND m.holder IN (?,?) AND m.state='active' AND m.valid_from<=?
    AND (?=0 OR m.scope='local') AND (?=0 OR m.standing=1)
    AND (?=0 OR m.subject_kind='person')
-   ORDER BY m.sequence DESC`, q.At, q.At, scope.Person, holders[0], holders[1], q.At, scope.Projection, standing, q.PersonOnly)
+   ORDER BY (SELECT max(r.sequence) FROM memory_revision r WHERE r.item_id=m.id) DESC,m.id`, q.At, q.At, scope.Person, holders[0], holders[1], q.At, scope.Projection, standing, q.PersonOnly)
 		if err != nil {
 			return err
 		}
