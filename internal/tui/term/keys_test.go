@@ -11,16 +11,20 @@ func TestAdmit(t *testing.T) {
 	now := time.Unix(100, 0)
 	for _, class := range []KeyClass{Toggle, Edit, Approve} {
 		for _, event := range []KeyEvent{Press, Repeat, Release} {
-			var gate Gate
-			want := event == Press || event == Repeat && class == Edit
-			if got := gate.Admit(Key{Event: event, Events: true}, class, now); got != want {
-				t.Errorf("class=%d event=%d: got %v, want %v", class, event, got, want)
+			for _, events := range []bool{false, true} {
+				var gate Gate
+				want := event == Press || event == Repeat && class == Edit
+				if got := gate.Admit(Key{Event: event, Events: events}, class, now); got != want {
+					t.Errorf("class=%d event=%d events=%v: got %v, want %v", class, event, events, got, want)
+				}
 			}
 		}
 	}
 	var gate Gate
-	if gate.Admit(Key{Event: KeyEvent(255), Events: true}, Edit, now) || gate.Admit(Key{}, KeyClass(255), now) {
-		t.Fatal("unknown event or action admitted")
+	for _, events := range []bool{false, true} {
+		if gate.Admit(Key{Event: KeyEvent(255), Events: events}, Edit, now) || gate.Admit(Key{}, KeyClass(255), now) {
+			t.Fatal("unknown event or action admitted")
+		}
 	}
 }
 

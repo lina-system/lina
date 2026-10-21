@@ -48,15 +48,18 @@ func (g *Gate) Admit(key Key, class KeyClass, now time.Time) bool {
 	default:
 		return false
 	}
-	if key.Events {
-		switch key.Event {
-		case Press:
+	// Explicit event types remain authoritative before capability negotiation.
+	// Events controls only whether a press needs the legacy card barrier.
+	switch key.Event {
+	case Press:
+		if key.Events {
 			return true
-		case Repeat:
-			return class == Edit
-		case Release:
-			return false
 		}
+	case Repeat:
+		return class == Edit
+	case Release:
+		return false
+	default:
 		return false
 	}
 	return class != Approve || !g.hasCard || now.Sub(g.cardChanged) >= ApprovalDeadTime
