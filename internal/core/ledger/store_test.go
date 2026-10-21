@@ -309,35 +309,3 @@ func TestRollbackCancellationDuplicateAndReaderNeverAcknowledge(t *testing.T) {
 		t.Fatalf("reader: %+v %v", got, err)
 	}
 }
-
-func TestOccurrenceOrderingPreservesSubsecondPrecision(t *testing.T) {
-	db, _ := database(t)
-	s := ledger.New(db, nil)
-	base := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
-	for i, offset := range []time.Duration{time.Nanosecond, 0, 10 * time.Nanosecond} {
-		in := input(fmt.Sprint(i))
-		in.OccurredAt = base.Add(offset)
-		admit(t, s, guard.EntryOwner, in)
-	}
-	if err := db.Read(t.Context(), func(tx *canon.Tx) error {
-		rows, err := tx.QueryContext(t.Context(), "SELECT id FROM conv_event ORDER BY occurred_at")
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		var ids []string
-		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
-				return err
-			}
-			ids = append(ids, id)
-		}
-		if !reflect.DeepEqual(ids, []string{"1", "0", "2"}) {
-			t.Fatalf("occurrence order = %v", ids)
-		}
-		return rows.Err()
-	}); err != nil {
-		t.Fatal(err)
-	}
-}

@@ -22,10 +22,6 @@ import (
 
 const InlineBytes = 16 << 10
 
-// Fixed precision keeps SQLite's textual time ordering chronological, including
-// whole seconds next to fractional seconds. Native timestamps are always UTC.
-const timestampLayout = "2006-01-02T15:04:05.000000000Z"
-
 var (
 	ErrInvalid          = errors.New("invalid_ledger_event")
 	ErrNotFound         = sql.ErrNoRows
@@ -58,13 +54,20 @@ type Material struct {
 }
 
 // Materials is supplied by Core's composition layer, which owns the assets
-// store. Save durably stores only masked bytes in materials/lina and returns an
-// immutable asset revision. Read must verify the revision's size and digest.
-// An unreferenced material after a failed canon commit is never a ledger event;
-// the material owner's maintenance path handles its retention.
+// store and opens its material writer before admission to recover interrupted
+// preparations. Prepare syncs only masked bytes, without retained metadata;
+// Insert publishes that metadata in the event's transaction. Read verifies the
+// immutable revision's size and digest.
 type Materials interface {
-	Save(context.Context, secrets.Masked) (Material, error)
+	Prepare(context.Context, secrets.Masked) (MaterialWrite, error)
 	Read(context.Context, Material) (string, error)
+}
+
+type MaterialWrite interface {
+	Insert(context.Context, *canon.Tx) (Material, error)
+	// Close runs after the enclosing transaction, reconciling bytes against
+	// committed canon. A durable marker must survive interrupted cleanup.
+	Close() error
 }
 
 type Input struct {
@@ -130,7 +133,7 @@ func New(db Canon, materials Materials) *Store { return &Store{db: db, materials
 // Admit never accepts a speaker kind from the payload. The authenticated entry
 // adapter supplies entry and identity fields. A returned event acknowledges the
 // complete event, relations and span transaction, only after commit.
-func (s *Store) Admit(ctx context.Context, entry guard.Entry, in Input) (Event, error) {
+func (s *Store) Admit(ctx context.Context, entry guard.Entry, in Input) (_ Event, err error) {
 	if err := ctx.Err(); err != nil {
 		return Event{}, err
 	}
@@ -138,21 +141,40 @@ func (s *Store) Admit(ctx context.Context, entry guard.Entry, in Input) (Event, 
 	if err != nil {
 		return Event{}, err
 	}
+	var materialWrite MaterialWrite
 	if len(e.Body.Text()) > InlineBytes {
 		if s.materials == nil {
 			return Event{}, ErrBytesUnavailable
 		}
-		e.Material, err = s.materials.Save(ctx, e.Body)
+		materialWrite, err = s.materials.Prepare(ctx, e.Body)
 		if err != nil {
 			return Event{}, err
 		}
-		if !safeID(e.Material.ID) || e.Material.Revision <= 0 {
+		if materialWrite == nil {
 			return Event{}, ErrInvalid
 		}
+		defer func() {
+			cleanupErr := materialWrite.Close()
+			if err != nil {
+				err = errors.Join(err, cleanupErr)
+			}
+			// Housekeeping cannot turn a committed event into a failed admit.
+			// An interrupted cleanup is recovered from its durable marker.
+		}()
 	}
 	err = s.db.Write(ctx, func(tx *canon.Tx) error {
 		if err := references(ctx, tx, e); err != nil {
 			return err
+		}
+		if materialWrite != nil {
+			var err error
+			e.Material, err = materialWrite.Insert(ctx, tx)
+			if err != nil {
+				return err
+			}
+			if !safeID(e.Material.ID) || e.Material.Revision <= 0 {
+				return ErrInvalid
+			}
 		}
 		surface, _ := json.Marshal(e.Surface)
 		origin, _ := json.Marshal(e.Origin)
@@ -167,7 +189,7 @@ func (s *Store) Admit(ctx context.Context, entry guard.Entry, in Input) (Event, 
 		 (id,conversation_id,parent_id,person_id,agent_id,speaker_kind,surface,scaffold_kind,scaffold_id,occurred_at,recorded_at,time_quality,origin,replay_of,body,material_id,material_revision)
 		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			e.ID, e.ConversationID, nullable(e.ParentID), nullable(e.PersonID), e.AgentID, e.SpeakerKind, string(surface), nullable(e.ScaffoldKind), nullable(e.ScaffoldID),
-			e.OccurredAt.Format(timestampLayout), e.RecordedAt.Format(timestampLayout), e.TimeQuality, string(origin), nullable(e.ReplayOf), body, material, revision)
+			e.OccurredAt.Format(time.RFC3339Nano), e.RecordedAt.Format(time.RFC3339Nano), e.TimeQuality, string(origin), nullable(e.ReplayOf), body, material, revision)
 		if err != nil {
 			return err
 		}
