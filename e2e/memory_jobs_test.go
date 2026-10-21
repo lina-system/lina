@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thisisjun786/lina/internal/core/budget"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"github.com/thisisjun786/lina/internal/core/guard"
@@ -53,7 +52,7 @@ func TestM1MemoryJobs(t *testing.T) {
 	}
 	t.Cleanup(func() { controls.Close() })
 	migrations := canon.Migrations()
-	migrations = append(migrations, canon.Migration{Version: len(migrations) + 1, SQL: jobs.Schema + ";" + budget.Schema + ";" + memory.JobsSchema})
+	migrations = append(migrations, canon.Migration{Version: len(migrations) + 1, SQL: memory.JobsSchema})
 	path := filepath.Join(state, "canon.db")
 	db, err := canon.Open(h.ctx, canon.Config{Path: path, Epoch: 1, Controls: controls, Migrations: migrations})
 	if err != nil {

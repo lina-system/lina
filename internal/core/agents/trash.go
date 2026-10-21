@@ -130,7 +130,7 @@ func (s *Store) Expire(ctx context.Context, now time.Time) error {
 			if _, err := tx.ExecContext(ctx, "INSERT INTO agent_tombstones VALUES(?,?)", d.id, time.Unix(0, d.at).Add(TrashRetention).UnixNano()); err != nil {
 				return err
 			}
-			for _, table := range []string{"agent_preparations", "agent_bindings", "agent_revisions", "agent_actions"} {
+			for _, table := range []string{"agent_growth_steps", "agent_preparations", "agent_bindings", "agent_revisions", "agent_actions"} {
 				if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE agent_id=?", d.id); err != nil {
 					return err
 				}

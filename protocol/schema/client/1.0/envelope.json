@@ -2300,7 +2300,10 @@
             "create",
             "choose",
             "rename",
-            "delete"
+            "delete",
+            "growth_adopt",
+            "growth_notices",
+            "growth_undo"
           ]
         },
         "agent_id": {
@@ -2310,9 +2313,17 @@
         "name": {
           "type": "string",
           "minLength": 1
+        },
+        "candidate": {
+          "$ref": "#/$defs/growth_candidate"
+        },
+        "revision": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,18}$"
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "required": []
     },
     "agent_result": {
       "type": "object",
@@ -2330,9 +2341,20 @@
           "items": {
             "$ref": "#/$defs/agent"
           }
+        },
+        "revision": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,18}$"
+        },
+        "notices": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/growth_notice"
+          }
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "required": []
     },
     "work_request": {
       "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
@@ -4084,6 +4106,57 @@
         "kind",
         "text",
         "at"
+      ],
+      "additionalProperties": false
+    },
+    "growth_candidate": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expected": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,18}$"
+        },
+        "snapshot": {
+          "type": "string",
+          "maxLength": 262144
+        },
+        "notice": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "id",
+        "expected",
+        "snapshot",
+        "notice"
+      ],
+      "additionalProperties": false
+    },
+    "growth_notice": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,18}$"
+        },
+        "notice": {
+          "type": "string",
+          "minLength": 1
+        },
+        "undo_revision": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,18}$"
+        }
+      },
+      "required": [
+        "revision",
+        "notice",
+        "undo_revision"
       ],
       "additionalProperties": false
     },

@@ -10,7 +10,6 @@ import (
 	"time"
 
 	importer "github.com/thisisjun786/lina/internal/addons/importer/hermes"
-	"github.com/thisisjun786/lina/internal/core/budget"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"github.com/thisisjun786/lina/internal/core/jobs"
@@ -74,7 +73,7 @@ func TestM1StagedImportWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	migrations := canon.Migrations()
-	migrations = append(migrations, canon.Migration{Version: len(migrations) + 1, SQL: jobs.Schema + budget.Schema})
+
 	path := filepath.Join(h.root, "canon.sqlite")
 	store, err := canon.Open(h.ctx, canon.Config{Path: path, Epoch: 1, Controls: controls, Migrations: migrations})
 	if err != nil {

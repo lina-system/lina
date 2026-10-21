@@ -12,8 +12,12 @@ import (
 // Handlers must honor cancellation and must not retain the request payload.
 type Operation struct {
 	Capability protocol.Capability
-	Handle     func(context.Context, Session, protocol.Envelope) (Result, error)
-	Disconnect func(Session)
+	// AdditionalCapabilities share this wire kind; CapabilityFor selects the
+	// one required by each request before the handler is called.
+	AdditionalCapabilities []protocol.Capability
+	CapabilityFor          func(protocol.Envelope) protocol.Capability
+	Handle                 func(context.Context, Session, protocol.Envelope) (Result, error)
+	Disconnect             func(Session)
 }
 
 // Session contains connection facts established by Core. No request payload
