@@ -235,9 +235,11 @@ Never a row: an item from a shared or group inbox that is not addressed to the p
 
 Order. The default order is: first what is blocking, meaning something waits on the person right now (the agent is idle without the answer, or a deadline falls within 24 hours), and then what is overdue; then irreversible or costly decisions before reversible ones; then the soonest due date, then the oldest unanswered request. The person can switch the order to lightest first (about 5 minutes, about 30 minutes, longer); a client asks Core for the order the person chose and never ranks. Rows are drawn in at most three groups: decide, do and reply, or the effort groups of the lightest-first order.
 
+Core uses source identity only to break otherwise equal ranks, keeping refreshes stable. In the default order, an upcoming deadline through exactly 24 hours counts as blocking; an overdue item comes next unless it also blocks an agent right now. Lightest-first uses the same default order within each effort group. The count is computed before the Home limit is applied.
+
 Size. Home shows at most five rows and the count of the rest ("+7 more"); the whole list opens in the work panel. When the list is empty, this view says so in one line ("nothing to decide now"). No reply and no other view carries that line.
 
-Answering. A row is answered in one tap or one word. When several decisions wait, the person can ask LINA to go through them one at a time: LINA asks one decision, records the answer and asks the next. A change to the list after an agent's action shows as a quiet badge; it never interrupts a reply that is being written or read.
+Answering. A row is answered in one tap or one word. Core re-reads the source and its answer mapping, refuses an outdated row or a different person, and records the source change and the answer with the person and requesting agent in one transaction. Repeated answers cannot create a second decision. When several decisions wait, the person can ask LINA to go through them one at a time: LINA asks one decision, records the answer and asks the next. A change to the list after an agent's action shows as a quiet badge; it never interrupts a reply that is being written or read.
 
 ### Design at a glance
 
@@ -422,6 +424,7 @@ One list shows everything LINA is doing in the background for the person: backgr
 - A row is one run or task, with a one-line summary in plain words of what it does for the person. Rows are in three groups: in progress, waiting (not running, with one visible reason: a dependency, an area held by another task, a worker out of quota, host capacity, CI pending, a limit on background runs, or the person) and landed. Rows that need the person (input needed) and rows ready for review come first.
 - The state words are those of the work cards ([work-and-delegation.md](work-and-delegation.md#progress-display)): working is in progress; waiting for a slot is waiting; input needed is "Waiting for me"; a landed complete or partial result is ready for review; failed and stopped are landed with their label. A landed row leaves the list once the person has opened or dismissed it, and stays reachable from its conversation.
 - A task that stalls or fails shows its state word on its row until it has been dispatched again once; a second failure becomes a decision for the person under "Waiting for me".
+- Within the attention-first ordering, ties use oldest start time and then a stable source key. An opened or dismissed landed row stays hidden after restart; an active row stays visible when opened.
 - A row opens its work card. The card opens the result in the work panel. The developer view adds the run's brief, limits, usage and transcript.
 - The list appears on Home as a compact strip, as the sidebar entry Running, as a count in the conversation header or beside the composer (for example "2 running, 1 waiting for you"), and in the TUI status line. The count is hidden when it is zero.
 - A question about progress is answered in one line from the state of the list, without interrupting any run. "Also check X" reaches that run as a follow-up.
