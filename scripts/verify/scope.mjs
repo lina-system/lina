@@ -29,6 +29,7 @@ function registryFor(cwd) {
     'internal/core/canon/',
     'internal/core/channels/',
     'internal/core/clientsrv/',
+    'internal/core/compaction/',
     'internal/core/ctlfiles/',
     'internal/core/eventstore/',
     'internal/core/exec/',
