@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
 	"syscall"
 	"testing"
@@ -86,6 +87,9 @@ func TestCoreProcess(t *testing.T) {
 						// to READY through a refused, effect-free request instead of
 						// assuming startup finished by the time welcome arrived. The
 						// existing connection deadline bounds a stuck recovery.
+						request.Params.Epoch = epoch
+						request.Method = "input"
+						request.Params.Kind, request.Params.Payload = protocol.KindInput, protocol.Input{}
 						for attempt := 0; ; attempt++ {
 							request.ID = "after-welcome-" + strconv.Itoa(attempt)
 							request.Params.MessageID = request.ID
@@ -154,6 +158,8 @@ func helloEnvelope(t *testing.T, versions []string) protocol.Envelope {
 		t.Fatal(err)
 	}
 	hello := envelope.Payload.(protocol.Hello)
+	platform := runtime.GOOS + "/" + runtime.GOARCH
+	hello.Platform = &platform
 	hello.ProtocolVersions = versions
 	hello.Capabilities = []protocol.Capability{{Name: "conversation", Version: "1.0"}}
 	envelope.Payload = hello
