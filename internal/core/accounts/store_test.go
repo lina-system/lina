@@ -677,3 +677,42 @@ func TestRefreshExpiryTriggersBeforeLongerAccessExpiry(t *testing.T) {
 		}
 	})
 }
+
+func TestCredentialAuthorizationHeader(t *testing.T) {
+	for _, tc := range []struct {
+		name, token string
+		valid       bool
+	}{
+		{"bearer", "header-fixture", true},
+		{"empty", "", false},
+		{"carriage-return", "invalid\rheader", false},
+		{"line-feed", "invalid\nheader", false},
+		{"nul", "invalid\x00header", false},
+		{"control", "invalid\x01header", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			credential := provider.NewCredential("account", provider.LoopbackOAuth, tc.token)
+			req, err := http.NewRequest(http.MethodPost, "https://example.invalid/responses", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = credential.Authorize(req)
+			if tc.valid {
+				if err != nil || req.Header.Get("Authorization") != "Bearer header-fixture" {
+					t.Fatal("incorrect authorization header", err)
+				}
+				if credential.String() != "[credential]" || credential.GoString() != "[credential]" {
+					t.Fatal("public representation changed")
+				}
+			} else {
+				var failure *provider.Failure
+				if !errors.As(err, &failure) || failure.Kind != provider.NeedsSignIn {
+					t.Fatal("invalid bearer was accepted")
+				}
+				if req.Header.Get("Authorization") != "" {
+					t.Fatal("invalid bearer reached a header")
+				}
+			}
+		})
+	}
+}
