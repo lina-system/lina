@@ -37,15 +37,15 @@ func (g *gate) Begin(_ context.Context, c tools.Call, _ tools.Spec, _ tools.Inpu
 }
 func (*gate) Finish(context.Context, tools.Ticket, tools.Result) error { return nil }
 
-type leaser struct{}
+type resultLeaser struct{}
 
-func (leaser) Acquire(context.Context, lease.Activity) (lease.Lease, error) {
+func (resultLeaser) Acquire(context.Context, lease.Activity) (lease.Lease, error) {
 	return lease.New(func() {}), nil
 }
 func TestMalformedOnlyReturnsToAgent(t *testing.T) {
 	g := &gate{}
 	s := &service{}
-	r := tools.NewRegistry(g, leaser{})
+	r := tools.NewRegistry(g, resultLeaser{})
 	bindings, err := coreexec.ResultTools(r, s, result.Scope{PersonID: "person", AgentID: "agent", ConversationID: "conversation", TurnID: "turn"}, authorize, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -63,7 +63,7 @@ func TestSaveNeedsCurrentTurnRequestAndStableKey(t *testing.T) {
 	c := provider.ToolCall{ID: "one", Name: "save_result", Arguments: string(raw)}
 	s := &service{}
 	g := &gate{}
-	bindings, err := coreexec.ResultTools(tools.NewRegistry(g, leaser{}), s, scope, authorize, nil)
+	bindings, err := coreexec.ResultTools(tools.NewRegistry(g, resultLeaser{}), s, scope, authorize, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestSaveNeedsCurrentTurnRequestAndStableKey(t *testing.T) {
 	if !strings.Contains(string(out.Output), `"not_authorized"`) || s.saves != 0 || len(g.keys) != 0 {
 		t.Fatal(out, s.saves, g.keys)
 	}
-	bindings, err = coreexec.ResultTools(tools.NewRegistry(g, leaser{}), s, scope, authorize, &req)
+	bindings, err = coreexec.ResultTools(tools.NewRegistry(g, resultLeaser{}), s, scope, authorize, &req)
 	if err != nil {
 		t.Fatal(err)
 	}

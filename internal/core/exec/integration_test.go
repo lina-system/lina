@@ -74,7 +74,7 @@ func TestResultToolsThroughAuthorityLedgerAndRecords(t *testing.T) {
 	}
 	bind := func(intent *result.SaveRequest) map[string]loop.Tool {
 		t.Helper()
-		b, err := coreexec.ResultTools(tools.NewRegistry(auth, leaser{}), service, scope, func(_ context.Context, name string, _ tools.Input) (tools.Call, error) {
+		b, err := coreexec.ResultTools(tools.NewRegistry(auth, resultLeaser{}), service, scope, func(_ context.Context, name string, _ tools.Input) (tools.Call, error) {
 			a := identity
 			a.GrantID = name
 			return tools.Call{Auth: a}, nil
