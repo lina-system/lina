@@ -65,6 +65,7 @@ func TestExecutorRejectsVersionStorageInsideWorkRoot(t *testing.T) {
 }
 
 func TestCommandCannotReadRetainedVersionsAndRecordsFailedWrites(t *testing.T) {
+	requireSandbox(t)
 	root, versions := t.TempDir(), t.TempDir()
 	if err := os.Chmod(versions, 0700); err != nil {
 		t.Fatal(err)

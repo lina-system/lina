@@ -2,10 +2,24 @@
 package tools
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestManifestClosesDescriptorsBetweenEntries(t *testing.T) {
+	f, root, _ := fileStore(t)
+	for i := 0; i < 900; i++ {
+		if err := os.WriteFile(filepath.Join(root, fmt.Sprint(i)), []byte("data"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err := f.Execute(t.Context(), FileRequest{Operation: "manifest"})
+	if err != nil || len(result.Manifest) != 900 {
+		t.Fatalf("manifest: entries=%d error=%v", len(result.Manifest), err)
+	}
+}
 
 func TestManifestRecordsCreatedChangedAndDeletedPaths(t *testing.T) {
 	f, root, _ := fileStore(t)
