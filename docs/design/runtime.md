@@ -108,7 +108,16 @@ The loop behaves as follows:
 - The inner loop runs tool calls and input that arrives while a turn runs (steering). The outer loop runs follow-up input after a turn ends.
 - Tool calls of one response run in parallel, and their results return in the original call order. Argument validation and pre-tool checks run in order, before any call starts.
 - A tool call in a response cut off by the output limit is never executed. The loop returns a result that asks the model to call again with complete arguments.
-- On abort, every open tool call receives an `aborted` result, so the recorded history stays valid for the next request.
+- On abort, calls that never started receive an `aborted` result. Started calls retain their executor result, including a success or unknown outcome already committed by authority, so the recorded history agrees with the effect receipt.
+
+`kit/loop` implements these boundaries with the provider stream interface, a request transform, ordered before hooks, result-rewriting after hooks, and a caller-owned steering queue. It exposes streaming events to the caller while holding tool dispatch until the terminal event and clean end of stream. A stream failure returns without retry; incomplete-call results ask for complete arguments. Completed output items remain byte-for-byte evidence, while visible partials belong only to aborted history. A response runs at most eight tools concurrently; writes to one schema-normalized target run in call order without blocking other targets. Each result is committed on completion, then ordered for the model. Custom-call text is normalized by the registered schema before dispatch; function-call arguments and all normalized dispatch arguments must be valid JSON.
+
+`Run` closes steering admission atomically on every normal or error return and hands pending input back in `Outcome.FollowUps`. This includes input accepted between the final empty drain and the handoff. Once closed, `Inputs.Push` returns false; the lane keeps that input and routes it to a fresh queue for the next turn. Input is never left in a closed steering queue.
+
+Core's `turn.Store` claims the inbox and creates the turn atomically, records preparation before the first request, and supplies the loop's commit callbacks. Its startup recovery closes unresolved calls and refuses to replay accepted turns, including a crash between a done output item and the complete assistant call message. Tool intents and receipts use the existing authority ledger through `turn.Tool`; uncertain effects remain unknown across restart. Approval suspension returns immediately, and `turn.ResumeApproval` dispatches the stored, hash-bound arguments under a fresh deadline after the answer. The caller installs the schema through canon migrations and runs recovery before admitting work.
+
+The #55 tests exercise the loop with the Responses adapter over a scripted HTTP wire and reopen SQLite at interruption boundaries. Live provider access is not part of those tests. This increment has no client-protocol or TUI entry point; admission routing, startup composition and notifications remain with their consuming flows.
+
 
 Background runs use the same loop core with a different tool set and request (see [work-and-delegation.md](work-and-delegation.md#background-runs)). There is one loop implementation, not a second engine, and the person's input reaches a run only as a follow-up to that run.
 
