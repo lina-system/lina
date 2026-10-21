@@ -155,6 +155,8 @@ The Korean acceptance corpus is `testdata/korean/search.json`: both stores asser
 - #71 supplies the versioned skill store, reversible-write classification, durable undo suppression, lazy catalog/read handles, embedded meta-skill and guarded registry tools. Real canon/Git tests cover publication, failure, reopening, concurrency and undo; authority tests cover receipts and replay. The client service has no skill endpoint yet; presentation, context selection and explicit proposal acceptance remain with their consuming flows.
 
 **G1-27 Hermes install import.** Rehearsal, import, verification and promotion, as a worker job.
+
+The staged increment (#117) supplies registered SQLite mapping, per-conversation atomic writes, legacy references and typed reverse reconciliation, with deterministic worker acceptance. Honcho stages are tested through synthetic adapter records while the live API schema remains unregistered. Final seal, backup and promotion remain #118.
 - Done when: on synthetic fixtures counts reconcile row for row; every source key has one legacy reference in both directions; the reverse mapper hash equals the source hash; a second run adds nothing; no write reaches a source; an unknown schema is refused; recall returns no imported observation before promotion.
 - Depends on: G1-13, G1-14, G1-22, G1-29, G1-36. Design refs: C-28; [conversation-and-memory.md](conversation-and-memory.md#importing-a-hermes-install).
 

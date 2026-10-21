@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package importer reads external memory stores into private import staging.
-// It does not write canon or infer schema compatibility. Speaker classification
-// reads provenance from registered snapshots after identity matching.
+// Snapshot readers never write a source or infer schema compatibility. Prepared
+// import plans write canon through its fenced writer after identity matching.
 package importer
 
 import (
