@@ -41,7 +41,7 @@ func TestCoreProcess(t *testing.T) {
 			for iteration := range 2 {
 				epoch := strconv.Itoa(iteration + 1)
 				child := startCore(t, binary, root, socket)
-				idle := child.connect(t, socket) // The socket serves handshakes during recovery.
+				idle := child.connect(t, socket) // Listening may precede READY.
 				for _, versions := range [][]string{{"1.0"}, {"2.0", "1.0"}, {"2.0", "1.1"}} {
 					conn := child.connect(t, socket)
 					conn.SetDeadline(time.Now().Add(5 * time.Second))

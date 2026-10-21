@@ -1,0 +1,10 @@
+{
+  "topic": "progress",
+  "text": "STREAM-ITEM-42",
+  "steps": [
+    {"request": "hello.json", "emit": ["welcome.json"]},
+    {"request": "subscribe-core.json", "emit": ["snapshot-core.json"]},
+    {"request": "subscribe-topic.json", "emit": ["outcomes/unavailable.json", "resync-topic.json", "snapshot-topic.json"]},
+    {"request": "hello.json"}
+  ]
+}
