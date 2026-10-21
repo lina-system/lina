@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { sandbox } from './test-fixture.mjs';
+import { git } from './git.mjs';
 import { createGoContext, execute } from './verify/check-components.mjs';
 import { build, buildTimeoutMs } from './build.mjs';
 
@@ -21,8 +22,12 @@ function fixture(t, { timeoutScale = 1, executeCommand = execute } = {}) {
   const sb = sandbox(t);
   const cwd = join(sb.dir, 'source');
   mkdirSync(cwd);
-  for (const name of ['cmd/lina', 'cmd/lina-node', 'internal/buildinfo', 'kit', 'go.mod', 'go.sum', 'go.work',
-    'internal/core', 'internal/clientapi', 'internal/design', 'internal/tui', 'persona', 'packaging', 'scripts/build.mjs', 'scripts/git.mjs', 'scripts/verify/check-components.mjs']) {
+  // Export the source tree, including new packages and embedded assets, without
+  // repository metadata or ignored build/runtime files. Package allowlists drift
+  // whenever a command acquires another local dependency.
+  const sources = git(root, ['ls-files', '-z', '--cached', '--others', '--exclude-standard']);
+  assert.equal(sources.status, 0, sources.stderr);
+  for (const name of sources.stdout.split('\0').filter(Boolean)) {
     if (!existsSync(join(root, name))) continue;
     mkdirSync(dirname(join(cwd, name)), { recursive: true });
     cpSync(join(root, name), join(cwd, name), { recursive: true });

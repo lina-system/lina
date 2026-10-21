@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"github.com/thisisjun786/lina/internal/core/replay"
+	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"io"
 	"net/http"
@@ -53,7 +54,7 @@ func TestM1ReplayExportInstalledCore(t *testing.T) {
 	core.start(t)
 	h.connect(core).Close()
 	terminal := h.startScreenTUI("TERM=xterm-256color")
-	waitScreen(t, h, terminal, "Ctrl+D")
+	waitScreen(t, h, terminal, design.Text(design.English, "live"))
 	h.keys(terminal, scenario.Input+"\r")
 	waitScreen(t, h, terminal, scenario.Reply)
 	h.keys(terminal, "\x04")
