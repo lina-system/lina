@@ -64,6 +64,7 @@ type Account struct {
 type Rotated struct {
 	Tokens                        secrets.Tokens
 	AccessExpires, RefreshExpires *time.Time
+	Scopes                        []string // nil preserves the previously granted scopes.
 }
 
 // Refresher is the trusted issuer exchange seam. It receives only this account's
@@ -257,6 +258,9 @@ func (s *Store) replace(ctx context.Context, a Account, r Rotated) error {
 	return s.finish(ctx, a, r, OK)
 }
 func (s *Store) finish(ctx context.Context, a Account, r Rotated, status Status) error {
+	if r.Scopes != nil {
+		a.Scopes = slices.Clone(r.Scopes)
+	}
 	a.AccessExpires = r.AccessExpires
 	a.RefreshExpires = r.RefreshExpires
 	a.LastSuccess = s.now()

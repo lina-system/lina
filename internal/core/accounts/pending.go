@@ -33,6 +33,7 @@ type pendingSignIn struct {
 }
 type pendingSignIns struct {
 	mu       sync.Mutex
+	closed   bool
 	attempts map[string]*pendingSignIn
 	now      func() time.Time
 	exchange func(context.Context, authorization, Relayed) (authorizedTokens, error)
@@ -55,6 +56,9 @@ func (s *pendingSignIns) begin(ctx context.Context, connection, hostID string, s
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return Pending{}, ErrClosed
+	}
 	for id, attempt := range s.attempts {
 		if attempt.connection == connection || !now.Before(attempt.authorization.expires) || attempt.ctx.Err() != nil {
 			attempt.cancel()

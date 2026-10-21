@@ -33,6 +33,7 @@ var (
 // Relayed is an untrusted browser callback, or the URL the person pasted.
 // Tokens and the PKCE verifier are never part of the client relay.
 type Relayed struct {
+	ConnectionID     string `json:"-"` // Trusted connection identity supplied by Core.
 	Code             string `json:"code,omitempty"`
 	State            string `json:"state,omitempty"`
 	Issuer           string `json:"iss,omitempty"`
