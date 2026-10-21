@@ -206,8 +206,17 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	if err := boundary(ControlsRead); err != nil {
 		return err
 	}
+	ownsConversation := cfg.Conversation != nil
+	if !ownsConversation && cfg.Services.PeekEpoch == nil {
+		_, statErr := os.Lstat(conversationPath(cfg.StateRoot))
+		if statErr == nil {
+			ownsConversation = true
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			return statErr
+		}
+	}
 	var highest uint64
-	if cfg.Conversation != nil {
+	if ownsConversation {
 		highest, err = canon.PeekEpoch(ctx, conversationPath(cfg.StateRoot))
 	} else if cfg.Services.PeekEpoch != nil {
 		highest, err = cfg.Services.PeekEpoch(ctx)
@@ -270,12 +279,14 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		cfg.Services.Lifecycle(restarter)
 	}
 	var canon Canon
-	if cfg.Conversation != nil {
+	if ownsConversation {
 		runtime, openErr := startConversation(ctx, cfg.StateRoot, recovery.MainID, snapshot.Epoch, store, cfg.Conversation, activities)
 		if openErr != nil {
 			return openErr
 		}
-		cfg.Client = runtime.identity
+		if cfg.Conversation != nil {
+			cfg.Client = runtime.identity
+		}
 		canon = runtime.db
 		stack = append(stack, runtime.Close)
 	} else if cfg.Services.OpenCanon != nil {

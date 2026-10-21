@@ -19,6 +19,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/assemble"
+	"github.com/thisisjun786/lina/internal/core/assets"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
@@ -45,6 +46,8 @@ type acceptedSteering struct {
 }
 
 type conversationRuntime struct {
+	materials                   *conversationMaterials
+	assets                      *assets.Store
 	root                        string
 	steering                    map[string][]acceptedSteering
 	ctx                         context.Context
@@ -87,6 +90,16 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	}
 	r.agent = first.Agent.ID
 	r.conversation = "main:" + r.agent
+	r.assets, err = assets.Open(ctx, root, db)
+	if err != nil {
+		return nil, err
+	}
+	writer, err := assets.OpenMaterialWriter(ctx, r.assets)
+	if err != nil {
+		return nil, err
+	}
+	r.materials = &conversationMaterials{store: r.assets, writer: writer, actor: assets.Actor{PersonID: r.person, AgentID: r.agent}}
+
 	if err = turn.New(db).Recover(ctx); err != nil {
 		return nil, err
 	}
@@ -117,6 +130,9 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 	if r.agents != nil {
 		err = errors.Join(err, r.agents.Close())
 	}
+	if r.assets != nil {
+		err = errors.Join(err, r.assets.Close())
+	}
 	if r.db != nil {
 		err = errors.Join(err, r.db.Close(ctx))
 	}
@@ -143,11 +159,6 @@ func (r *conversationRuntime) History(ctx context.Context, s clientsrv.Session, 
 	return protocol.History{ConversationID: &r.conversation, AgentID: &r.agent}, nil
 }
 
-type conversationTx struct{ tx *canon.Tx }
-
-func (t conversationTx) Write(_ context.Context, f func(*canon.Tx) error) error { return f(t.tx) }
-func (t conversationTx) Read(_ context.Context, f func(*canon.Tx) error) error  { return f(t.tx) }
-
 func (r *conversationRuntime) Input(ctx context.Context, s clientsrv.Session, p protocol.Input) (protocol.ItemDone, error) {
 	if err := r.authorize(s, p.ConversationID); err != nil {
 		return protocol.ItemDone{}, err
@@ -160,23 +171,13 @@ func (r *conversationRuntime) Input(ctx context.Context, s clientsrv.Session, p 
 	}
 	digest := sha256.Sum256([]byte(r.person + "\x00" + r.conversation + "\x00" + *p.InputID))
 	eventID := "input:" + hex.EncodeToString(digest[:])
-	var receipt inbox.Receipt
-	var event ledger.Event
-	err = r.db.Write(ctx, func(tx *canon.Tx) error {
-		var err error
-		receipt, err = inbox.Insert(ctx, tx, inbox.Input{Key: inbox.Key{Conversation: r.conversation, Source: "client", NativeID: *p.InputID}, Body: []byte(masked.Text())})
-		if err != nil {
-			return err
-		}
-		journal := ledger.New(conversationTx{tx}, nil)
-		if !receipt.Inserted {
-			event, err = journal.Get(ctx, eventID)
-			return err
-		}
-		now := time.Now()
-		event, err = journal.Admit(ctx, guard.EntryOwner, ledger.Input{ID: eventID, ConversationID: r.conversation, PersonID: r.person, AgentID: r.agent, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Locator: *p.InputID, Body: *p.Text})
-		return err
-	})
+	admission := &conversationAdmission{db: r.db, input: inbox.Input{Key: inbox.Key{Conversation: r.conversation, Source: "client", NativeID: *p.InputID}, Body: []byte(masked.Text())}}
+	now := time.Now()
+	event, err := ledger.New(admission, r.materials).Admit(ctx, guard.EntryOwner, ledger.Input{ID: eventID, ConversationID: r.conversation, PersonID: r.person, AgentID: r.agent, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Locator: *p.InputID, Body: *p.Text})
+	receipt := admission.receipt
+	if errors.Is(err, errAdmittedInput) {
+		event, err = r.journal().Get(ctx, eventID)
+	}
 	if err != nil {
 		return protocol.ItemDone{}, err
 	}
@@ -243,7 +244,7 @@ func (r *conversationRuntime) events(ctx context.Context, through string) ([]led
 		return nil, err
 	}
 	var events []ledger.Event
-	journal := ledger.New(r.db, nil)
+	journal := r.journal()
 	for i := len(ids) - 1; i >= 0; i-- {
 		event, err := journal.Get(ctx, ids[i])
 		if err != nil {
@@ -286,7 +287,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 	}
 	defer activity.Release()
 	var items []provider.Item
-	evidence := turn.EvidenceWriter{Ledger: ledger.New(r.db, nil), ConversationID: r.conversation, ParentID: input.ID, Surface: ledger.Surface{Kind: "tui"}, Now: time.Now}
+	evidence := turn.EvidenceWriter{Ledger: r.journal(), ConversationID: r.conversation, ParentID: input.ID, Surface: ledger.Surface{Kind: "tui"}, Now: time.Now}
 	prep := &turn.Preparation{
 		VerifyBuild: r.verifyBuild,
 		Account:     func(context.Context) (provider.Credential, error) { return r.route.Request(nil).Credential, nil },
@@ -328,6 +329,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		},
 	}
 	round := 0
+	var completed []ledger.Admission
 	out, err := turn.New(r.db).Run(ctx, turn.Options{ID: turnID, Conversation: r.conversation, InboxID: inboxID, InputEvent: input.ID, Preparation: prep, Loop: loop.Config{
 		Inputs: &conversationInputs{runtime: r, inputs: inputs},
 		Stream: func(ctx context.Context, request provider.Request) (provider.Stream, error) {
@@ -357,19 +359,30 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 					}
 				}
 				now := time.Now()
-				saved, err := ledger.New(r.db, nil).Admit(ctx, guard.EntryAgent, ledger.Input{ID: key, ConversationID: r.conversation, ParentID: input.ID, AgentID: r.agent, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: text.String()})
-				if err != nil {
-					return err
-				}
-				value := saved.Body.Text()
-				speaker := protocol.ConversationSpeakerAgent
-				return r.publish(protocol.KindItemDone, key, protocol.ItemDone{Text: &value, Speaker: &speaker})
+				completed = append(completed, ledger.Admission{Entry: guard.EntryAgent, Input: ledger.Input{ID: key, ConversationID: r.conversation, ParentID: input.ID, AgentID: r.agent, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: text.String()}})
+				return nil
 			case provider.ToolCallReady, provider.Terminal:
 				return nil
 			}
 			return nil
 		},
 	}})
+	// Provider ItemDone is provisional until the complete turn succeeds. The
+	// turn journal retains provider evidence on failure, outside final history.
+	if err == nil && len(completed) > 0 {
+		var saved []ledger.Event
+		saved, err = r.journal().AdmitBatch(ctx, completed)
+		if err == nil {
+			for _, item := range saved {
+				value := item.Body.Text()
+				speaker := protocol.ConversationSpeakerAgent
+				if publishErr := r.publish(protocol.KindItemDone, item.ID, protocol.ItemDone{Text: &value, Speaker: &speaker}); publishErr != nil {
+					err = publishErr
+					break
+				}
+			}
+		}
+	}
 	// Late steering remains durable. A follow-up starts through the same lane and
 	// turn store, never by retrying a completed model request.
 	for _, body := range out.FollowUps {

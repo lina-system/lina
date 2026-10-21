@@ -46,38 +46,8 @@ func TestM1TUIConversationInstalledCore(t *testing.T) {
 		fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n")
 	}))
 	defer provider.Close()
-	h := newHarness(t, buildLina(t))
-	base := h.root
-	bundle := makeInstallBundle(t, base, h.binary, buildCommand(t, "lina-node"))
-	bin := filepath.Join(base, "tools")
-	if err = os.Mkdir(bin, 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err = os.WriteFile(filepath.Join(bin, "systemctl"), []byte("#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\ncase \"$2\" in show) printf 'not-found\\n';; daemon-reload|enable) exit 0;; *) exit 97;; esac\n"), 0700); err != nil {
-		t.Fatal(err)
-	}
-	root := filepath.Join(base, "state")
-	p := h.command("install", "--state-root", root, "--unit-dir", filepath.Join(base, "units"), "--bundle", bundle)
-	p.command.Env = append(p.command.Env, "PATH="+bin)
-	p.start(t)
-	p.wait(t, 0)
-	data, err = os.ReadFile(filepath.Join(root, "system/install.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var installed install.Result
-	if err = json.Unmarshal(data, &installed); err != nil {
-		t.Fatal(err)
-	}
-	h.binary, h.root, h.socket = filepath.Join(root, "system/bin/lina"), root, installed.Socket
-	start := func() *process {
-		core := h.command("core", "--state-root", root, "--socket", h.socket)
-		core.command.Env = append(core.command.Env, "LINA_RESPONSES_BASE_URL="+provider.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
-		core.start(t)
-		h.connect(core).Close()
-		return core
-	}
-	core := start()
+	h, start := installedConversationHarness(t, provider.URL)
+	core := start(true)
 	client, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "test", []protocol.Capability{{Name: "conversation", Version: "1.0"}})
 	if err != nil {
 		t.Fatal(err)
@@ -152,13 +122,23 @@ func TestM1TUIConversationInstalledCore(t *testing.T) {
 	h.expectTerminalRestored(terminal)
 	client.Close()
 	h.stopCore(core)
-	core = start()
+	core = start(true)
 	// Restarting Core and reopening the client restores the ledger without replay.
 	again := h.startScreenTUI("TERM=xterm-256color")
 	waitScreen(t, h, again, scenario.Reply)
 	h.keys(again, "\x04")
 	again.process.wait(t, 0)
 	h.expectTerminalRestored(again)
+	h.stopCore(core)
+	core = start(false)
+	plain, err := clientapi.Dial(h.ctx, h.socket, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plain.Welcome.Capabilities) != 0 {
+		t.Fatal("unconfigured Core retained model handlers")
+	}
+	plain.Close()
 	h.stopCore(core)
 	if modelCalls.Load() != 1 {
 		t.Fatalf("duplicate or restart repeated the model call: %d", modelCalls.Load())
@@ -191,4 +171,43 @@ func waitScreen(t *testing.T, h *harness, terminal *terminal, text string) tuite
 		t.Fatalf("screen missing %q: %v; cells=%s", text, err, screenText(snapshot))
 	}
 	return snapshot
+}
+
+func installedConversationHarness(t *testing.T, providerURL string) (*harness, func(bool) *process) {
+	t.Helper()
+	h := newHarness(t, buildLina(t))
+	base := h.root
+	bundle := makeInstallBundle(t, base, h.binary, buildCommand(t, "lina-node"))
+	bin := filepath.Join(base, "tools")
+	if err := os.Mkdir(bin, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "systemctl"), []byte("#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\ncase \"$2\" in show) printf 'not-found\\n';; daemon-reload|enable) exit 0;; *) exit 97;; esac\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(base, "state")
+	p := h.command("install", "--state-root", root, "--unit-dir", filepath.Join(base, "units"), "--bundle", bundle)
+	p.command.Env = append(p.command.Env, "PATH="+bin)
+	p.start(t)
+	p.wait(t, 0)
+	data, err := os.ReadFile(filepath.Join(root, "system/install.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var installed install.Result
+	if err := json.Unmarshal(data, &installed); err != nil {
+		t.Fatal(err)
+	}
+	h.binary, h.root, h.socket = filepath.Join(root, "system/bin/lina"), root, installed.Socket
+	start := func(configured bool) *process {
+		core := h.command("core", "--state-root", root, "--socket", h.socket)
+		if configured {
+			core.command.Env = append(core.command.Env, "LINA_RESPONSES_BASE_URL="+providerURL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
+		}
+		core.start(t)
+		h.connect(core).Close()
+		return core
+	}
+
+	return h, start
 }

@@ -610,6 +610,12 @@ with the fixture Responses provider, types in the real TUI, checks reply cells,
 and reopens the conversation. It exercises the existing Core turn, lane and
 ledger composition; a direct provider call is not its acceptance proof. The
 real-model journey remains #312 and the physical terminal spike remains T-08.
+`e2e/m1/conversation-admission.json` verifies large Unicode inputs and replies
+through durable materials, secret removal before model input, and restart
+readback. `e2e/m1/conversation-failure.json` verifies that a provider item followed
+by a failed response is absent from completed history and the next model request.
+The installed conversation scenario also restarts Core with its model route
+removed and requires connection-only startup.
 
 ## Earlier decisions and open points
 

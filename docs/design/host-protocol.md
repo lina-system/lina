@@ -242,19 +242,25 @@ The socket's authenticated person and Core-selected agent supply attribution;
 input cannot choose a speaker or person. A foreign conversation or agent is
 refused as `out_of_scope`. Only concrete authorized conversation/result topics
 are installed. Each input id is deduplicated within the conversation before
-model work is admitted. Inbox and masked ledger input commit in one transaction;
+model work is admitted. Large masked text uses the existing durable material writer, with verified
+material reads on restart. Inbox and masked ledger input commit in one transaction;
 acknowledgement is durable admission. It is not a claim that the reply finished.
 A duplicate returns the original admission and never starts a second turn.
 
 Boot composes the socket handlers with the existing lane, turn, persona,
 assembly and ledger packages. The configured Responses route remains Core-only.
 Preparation verifies the installed executable against its manifest and records
-persona/request evidence. Streaming items replace one stable topic key; history
+persona/request evidence. Provider items remain provisional until the complete turn succeeds; failed
+response evidence stays in the turn journal and never becomes ordinary completed
+agent history. Successful items replace one stable topic key; history
 is seeded from the durable ledger after restart. Interrupt and shutdown use the
 existing turn cancellation and recovery path; accepted model requests are never
 replayed on restart. The command currently installs this conversation service
 when the explicit Responses model route is configured. An unconfigured install
-retains its connection-only capabilities and unsupported composer.
+retains its connection-only capabilities and unsupported composer. Removing
+the model route after a conversation run still opens and fences its existing
+canon database for recovery; it disables model handlers without blocking Core
+startup.
 
 The generated receivers exercise `conversation/` fixtures on both sides.
 `e2e/m1/tui-conversation-stream.json` covers the scripted socket/TUI sequence;
