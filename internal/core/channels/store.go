@@ -91,7 +91,7 @@ type Binding struct {
 }
 
 // Schema is installed once by the composition root in a numbered migration,
-// after canon.Migrations. It extends agent_bindings rather than owning a second
+// after canon.Migrations (including the ledger). It extends agent_bindings rather than owning a second
 // agent mapping, so agent trash/expiry atomically removes channel dispatches.
 const Schema = `
 CREATE TABLE channel_connections (
@@ -117,7 +117,7 @@ CREATE TABLE channel_receipts (
 CREATE TABLE channel_outbound (
  sequence INTEGER PRIMARY KEY, id TEXT NOT NULL UNIQUE,
  address TEXT NOT NULL, bot TEXT NOT NULL, chat TEXT NOT NULL, topic TEXT NOT NULL,
- agent TEXT NOT NULL, ledger_ref TEXT NOT NULL, reply_to TEXT NOT NULL, parts BLOB NOT NULL,
+ agent TEXT NOT NULL, ledger_ref TEXT NOT NULL REFERENCES conv_event(id), reply_to TEXT NOT NULL, parts BLOB NOT NULL,
  next_part INTEGER NOT NULL DEFAULT 0, attempt INTEGER NOT NULL DEFAULT 0, state TEXT NOT NULL DEFAULT 'queued'
  CHECK(state IN ('queued','sending','sent','unknown','blocked','refused')),
  retry_at INTEGER NOT NULL DEFAULT 0, message_ids BLOB NOT NULL DEFAULT '[]'
@@ -214,8 +214,8 @@ func Resolve(ctx context.Context, tx *canon.Tx, a Address) (Binding, error) {
 	b := Binding{Address: a}
 	var data []byte
 	err := tx.QueryRowContext(ctx, `SELECT c.topic,a.agent_id,a.person_id,c.conversation,c.scope,c.unreachable
- FROM channel_bindings c JOIN agent_bindings a ON a.channel=c.address JOIN agents g ON g.id=a.agent_id
- WHERE c.bot=? AND c.chat=? AND (c.topic=? OR c.topic='') AND g.trashed_at=0
+ FROM channel_bindings c JOIN agent_bindings a ON a.channel=c.address JOIN agents g ON g.id=a.agent_id JOIN channel_connections owner ON owner.bot=c.bot
+ WHERE owner.sender<>'' AND owner.person=a.person_id AND c.bot=? AND c.chat=? AND (c.topic=? OR c.topic='') AND g.trashed_at=0
  ORDER BY (c.topic=?) DESC LIMIT 1`, a.Bot.Key(), a.Chat, a.Topic, a.Topic).Scan(&b.Topic, &b.Agent, &b.Person, &b.Conversation, &data, &b.Unreachable)
 	if err != nil {
 		return Binding{}, err

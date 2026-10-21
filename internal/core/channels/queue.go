@@ -61,6 +61,14 @@ func (s *Store) Enqueue(ctx context.Context, m Message) error {
 		if b.Agent != m.Agent || b.Unreachable {
 			return ErrDenied
 		}
+		// The queue cannot invent a reply: its immutable ledger event must
+		// already exist and belong to this dispatch's agent and conversation.
+		if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM conv_event WHERE id=? AND speaker_kind='agent' AND agent_id=? AND conversation_id=?", m.LedgerRef, m.Agent, b.Conversation).Scan(&n); err != nil {
+			return err
+		}
+		if n != 1 {
+			return ErrDenied
+		}
 		if m.ReplyTo != "" {
 			if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM channel_receipts WHERE bot=? AND native_id=? AND address=? AND agent=? AND inbox_id IS NOT NULL`, m.Bot.Key(), m.ReplyTo, m.Address.Key(), m.Agent).Scan(&n); err != nil {
 				return err
