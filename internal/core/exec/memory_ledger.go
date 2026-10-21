@@ -65,8 +65,8 @@ func NewMemory(db *canon.Store, materials ledger.Materials, aux Auxiliary) *Memo
 		}
 		var ids []string
 		err = db.Read(ctx, func(tx *canon.Tx) error {
-			rows, err := tx.QueryContext(ctx, `SELECT id FROM conv_event WHERE person_id=? AND agent_id=? AND speaker_kind='person' AND replay_of IS NULL AND unixepoch(occurred_at)<=?
-    AND NOT EXISTS(SELECT 1 FROM ev_rel WHERE event_id=conv_event.id AND kind='view_of')
+			rows, err := tx.QueryContext(ctx, `SELECT id FROM retract_visible_event WHERE person_id=? AND agent_id=? AND speaker_kind='person' AND replay_of IS NULL AND unixepoch(occurred_at)<=?
+    AND NOT EXISTS(SELECT 1 FROM ev_rel WHERE event_id=retract_visible_event.id AND kind='view_of')
     ORDER BY julianday(occurred_at) DESC,id`, scope.Person, scope.Agent, q.At)
 			if err != nil {
 				return err

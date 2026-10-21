@@ -100,7 +100,7 @@ func (s *Store) Search(ctx context.Context, q SearchQuery) ([]SearchHit, error) 
 	args = append(args, q.Limit)
 	var ids []string
 	err := s.db.Read(ctx, func(tx *canon.Tx) error {
-		rows, err := tx.QueryContext(ctx, "SELECT e.id FROM conv_event e JOIN ledger_search_text d ON d.event_id=e.id WHERE "+where+" ORDER BY julianday(e.occurred_at) DESC,e.id LIMIT ?", args...)
+		rows, err := tx.QueryContext(ctx, "SELECT e.id FROM retract_visible_event e JOIN ledger_search_text d ON d.event_id=e.id WHERE "+where+" ORDER BY julianday(e.occurred_at) DESC,e.id LIMIT ?", args...)
 		if err != nil {
 			return err
 		}
@@ -136,7 +136,7 @@ func (s *Store) backfillSearch(ctx context.Context, agent string) error {
 		var ids []string
 		err := s.db.Read(ctx, func(tx *canon.Tx) error {
 			rows, err := tx.QueryContext(ctx, `SELECT p.event_id FROM ledger_search_pending p
-			 JOIN conv_event e ON e.id=p.event_id WHERE e.agent_id=? ORDER BY p.event_id LIMIT 128`, agent)
+			 JOIN retract_visible_event e ON e.id=p.event_id WHERE e.agent_id=? ORDER BY p.event_id LIMIT 128`, agent)
 			if err != nil {
 				return err
 			}
@@ -173,7 +173,7 @@ func (s *Store) searchSource(ctx context.Context, id string) (SearchHit, error) 
 	err := s.db.Read(ctx, func(tx *canon.Tx) error {
 		var origin, occurred string
 		if err := tx.QueryRowContext(ctx, `SELECT id,conversation_id,agent_id,body,material_id,material_revision,origin,speaker_kind,occurred_at
-		 FROM conv_event WHERE id=?`, id).Scan(&hit.ID, &hit.ConversationID, &hit.AgentID, &text, &materialID, &revision, &origin, &hit.SpeakerKind, &occurred); err != nil {
+		 FROM retract_visible_event WHERE id=?`, id).Scan(&hit.ID, &hit.ConversationID, &hit.AgentID, &text, &materialID, &revision, &origin, &hit.SpeakerKind, &occurred); err != nil {
 			return err
 		}
 		if err := json.Unmarshal([]byte(origin), &hit.Origin); err != nil {

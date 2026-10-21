@@ -34,12 +34,15 @@ CREATE INDEX retract_conversation_exclusion ON retract_block(person,conversation
 CREATE TRIGGER memory_no_forgotten_insert BEFORE INSERT ON memory_item
 WHEN NEW.state='active' AND (
  EXISTS(SELECT 1 FROM retract_target r WHERE r.kind='memory' AND r.id=NEW.id AND r.state<>'active') OR
+ EXISTS(SELECT 1 FROM json_each(NEW.record,'$.evidence') e JOIN retract_excluded_event x ON x.event_id=json_extract(e.value,'$.id')
+ JOIN retract_target r ON r.kind='memory' AND r.id=x.item_id
+ WHERE json_extract(e.value,'$.kind')='event' AND r.person=NEW.person) OR
  EXISTS(SELECT 1 FROM json_each(NEW.record,'$.evidence') e JOIN retract_block b ON b.person=NEW.person
  WHERE json_extract(e.value,'$.kind')='event' AND
  (b.event_id=json_extract(e.value,'$.id') OR b.conversation_id=(SELECT conversation_id FROM conv_event WHERE id=json_extract(e.value,'$.id')))) OR
- EXISTS(SELECT 1 FROM json_each(NEW.record,'$.evidence') e JOIN retract_target r
- ON r.kind='memory' AND r.id=json_extract(e.value,'$.id')
- WHERE json_extract(e.value,'$.kind')='item' AND r.state<>'active')
+ EXISTS(SELECT 1 FROM json_each(NEW.record,'$.evidence') e JOIN retract_memory_exclusion r
+ ON r.id=json_extract(e.value,'$.id')
+ WHERE json_extract(e.value,'$.kind')='item')
 )
 BEGIN SELECT RAISE(ABORT,'forgotten_evidence'); END;
 CREATE TRIGGER memory_no_forgotten_update BEFORE UPDATE ON memory_item
@@ -47,12 +50,15 @@ WHEN NEW.state='active'
 AND NOT(OLD.state='trashed' AND EXISTS(SELECT 1 FROM retract_target r WHERE r.kind='memory' AND r.id=NEW.id AND r.state='active'))
 AND (
  EXISTS(SELECT 1 FROM retract_target r WHERE r.kind='memory' AND r.id=NEW.id AND r.state<>'active') OR
+ EXISTS(SELECT 1 FROM json_each(NEW.record,'$.evidence') e JOIN retract_excluded_event x ON x.event_id=json_extract(e.value,'$.id')
+ JOIN retract_target r ON r.kind='memory' AND r.id=x.item_id
+ WHERE json_extract(e.value,'$.kind')='event' AND r.person=NEW.person) OR
  EXISTS(SELECT 1 FROM json_each(NEW.record,'$.evidence') e JOIN retract_block b ON b.person=NEW.person
  WHERE json_extract(e.value,'$.kind')='event' AND
  (b.event_id=json_extract(e.value,'$.id') OR b.conversation_id=(SELECT conversation_id FROM conv_event WHERE id=json_extract(e.value,'$.id')))) OR
- EXISTS(SELECT 1 FROM json_each(NEW.record,'$.evidence') e JOIN retract_target r
- ON r.kind='memory' AND r.id=json_extract(e.value,'$.id')
- WHERE json_extract(e.value,'$.kind')='item' AND r.state<>'active')
+ EXISTS(SELECT 1 FROM json_each(NEW.record,'$.evidence') e JOIN retract_memory_exclusion r
+ ON r.id=json_extract(e.value,'$.id')
+ WHERE json_extract(e.value,'$.kind')='item')
 )
 BEGIN SELECT RAISE(ABORT,'forgotten_evidence'); END;
 `

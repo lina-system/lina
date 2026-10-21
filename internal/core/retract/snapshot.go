@@ -14,7 +14,9 @@ var ErrStaleSnapshot = errors.New("stale_retraction_snapshot")
 // preparation. Its private sets cannot be mutated by callers. The composition
 // root filters packet references and ledger history through Visible, uses
 // DerivedValid for summaries, and Validate before dispatch. It never persists
-// a ContextPacket. The zero value refuses all input.
+// a ContextPacket. This checks revocation, not ownership or permission: callers
+// must first obtain authorized candidates through their store's scoped reads.
+// The zero value refuses all input.
 type Snapshot struct {
 	Epoch         uint64
 	ready         bool
@@ -82,6 +84,39 @@ AND (holder='all' OR holder=? OR (holder='' AND (agent='' OR agent=?)))`, person
 				return err
 			}
 			v.denied[ref] = true
+		}
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return err
+		}
+		rows, err = tx.QueryContext(ctx, `SELECT m.id FROM memory_item m JOIN retract_memory_exclusion x ON x.id=m.id
+WHERE m.person=? AND (m.holder='all' OR m.holder=?)`, person, agent)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return err
+			}
+			v.denied[Ref{Kind: Memory, ID: id}] = true
+		}
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return err
+		}
+		rows, err = tx.QueryContext(ctx, `SELECT x.event_id FROM retract_excluded_event x
+JOIN retract_target r ON r.kind='memory' AND r.id=x.item_id
+WHERE r.person=? AND (r.holder='all' OR r.holder=?)`, person, agent)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return err
+			}
+			v.denied[Ref{Kind: Event, ID: id}] = true
 		}
 		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 			return err

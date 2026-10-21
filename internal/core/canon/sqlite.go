@@ -76,9 +76,6 @@ func openSQLite(ctx context.Context, path string, reader bool) (*sql.DB, error) 
 			return err
 		}
 		if reader {
-			if err := installRetractionViews(conn); err != nil {
-				return err
-			}
 			return conn.Exec("PRAGMA query_only=ON")
 		}
 		stmt, _, err := conn.Prepare("PRAGMA journal_mode=WAL")
