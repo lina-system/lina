@@ -7,10 +7,8 @@ package assets
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -26,6 +24,7 @@ var (
 	ErrStaleRevision = errors.New("stale_revision")
 	ErrTrashed       = errors.New("asset_trashed")
 	ErrHashMismatch  = errors.New("asset_hash_mismatch")
+	ErrTooLarge      = errors.New("asset_too_large")
 )
 
 type Area string
@@ -257,10 +256,24 @@ func (s *Store) Edit(ctx context.Context, id string, base int64, body io.Reader,
 	if err != nil {
 		return Asset{}, err
 	}
-	if next.Hash == a.Hash {
-		return a, removeFile(s.root, next.Path)
-	}
+	unchanged := next.Hash == a.Hash
 	err = s.db.Write(ctx, func(tx *canon.Tx) error {
+		// Even a no-op must pass the epoch fence and check the base and trash
+		// state in this write transaction, after the input has been consumed.
+		current, err := scanAsset(tx.QueryRowContext(ctx, assetQuery+" WHERE a.id=?", id))
+		if err != nil {
+			return err
+		}
+		if current.TrashedAt != 0 {
+			return ErrTrashed
+		}
+		if current.Revision != base {
+			return ErrStaleRevision
+		}
+		if unchanged {
+			a = current
+			return nil
+		}
 		result, err := tx.ExecContext(ctx, "UPDATE assets SET revision=?,person_id=?,agent_id=? WHERE id=? AND revision=? AND trashed_at=0", next.Revision, actor.PersonID, actor.AgentID, id, base)
 		if err != nil {
 			return err
@@ -276,6 +289,9 @@ func (s *Store) Edit(ctx context.Context, id string, base int64, body io.Reader,
 	})
 	if err != nil {
 		return Asset{}, errors.Join(err, removeFile(s.root, next.Path))
+	}
+	if unchanged {
+		return a, removeFile(s.root, next.Path)
 	}
 	return next, nil
 }
@@ -294,26 +310,4 @@ func (s *Store) revision(ctx context.Context, id string, rev int64) (r Revision,
 		err = ErrInvalid
 	}
 	return
-}
-
-func (s *Store) Read(ctx context.Context, id string, rev int64) ([]byte, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	r, err := s.revision(ctx, id, rev)
-	if err != nil {
-		return nil, err
-	}
-	f, err := openRegular(s.root, r.Path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	data, err := io.ReadAll(contextReader{ctx, f})
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(data)) != r.Size || fmt.Sprintf("%x", sha256.Sum256(data)) != r.Hash {
-		return nil, ErrHashMismatch
-	}
-	return data, ctx.Err()
 }

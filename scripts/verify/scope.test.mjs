@@ -8,21 +8,6 @@ import { git as runGit } from '../git.mjs';
 import { componentRegistry, kind, scopeFor } from './scope.mjs';
 import { evaluateGate } from './gate.mjs';
 
-test('inbox and lanes are registered with the lina Go checks', t => {
-  const r = repository(t);
-  const base = r.git('rev-parse', 'HEAD');
-  for (const directory of ['inbox', 'lane']) {
-    mkdirSync(join(r.cwd, `internal/core/${directory}`), { recursive: true });
-    writeFileSync(join(r.cwd, `internal/core/${directory}/store.go`), `package ${directory}\n`);
-  }
-  const scope = r.classify(r.commit(), { base, full: true });
-  assert.deepEqual(scope.unmapped, []);
-  assert.ok(scope.selectedComponents.includes('lina'));
-  for (const directory of ['inbox', 'lane']) {
-    assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes(`./internal/core/${directory}/...`));
-  }
-});
-
 test('secret store is registered with the lina Go checks', t => {
   const r = repository(t);
   const base = r.git('rev-parse', 'HEAD');
@@ -43,6 +28,21 @@ test('asset store is registered with the lina Go checks', t => {
   assert.deepEqual(scope.unmapped, []);
   assert.ok(scope.selectedComponents.includes('lina'));
   assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/assets/...'));
+});
+
+test('inbox and lanes are registered with the lina Go checks', t => {
+  const r = repository(t);
+  const base = r.git('rev-parse', 'HEAD');
+  for (const directory of ['inbox', 'lane']) {
+    mkdirSync(join(r.cwd, `internal/core/${directory}`), { recursive: true });
+    writeFileSync(join(r.cwd, `internal/core/${directory}/store.go`), `package ${directory}\n`);
+  }
+  const scope = r.classify(r.commit(), { base, full: true });
+  assert.deepEqual(scope.unmapped, []);
+  assert.ok(scope.selectedComponents.includes('lina'));
+  for (const directory of ['inbox', 'lane']) {
+    assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes(`./internal/core/${directory}/...`));
+  }
 });
 
 test('canon binding is registered with the lina Go checks', t => {
