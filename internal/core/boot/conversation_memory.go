@@ -18,14 +18,14 @@ import (
 
 // modelContext filters both ledger evidence and memory through the same scoped
 // removal view. The person's original ledger remains available to the UI.
-func (r *conversationRuntime) modelContext(ctx context.Context, through string) ([]provider.Item, []turn.Reference, uint64, error) {
+func (r *conversationRuntime) modelContext(ctx context.Context, through string) ([]provider.Item, []turn.Reference, uint64, []ledger.Event, error) {
 	snapshot, err := r.removals.Snapshot(ctx, r.person, r.agent)
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, 0, nil, err
 	}
 	events, err := r.events(ctx, through)
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, 0, nil, err
 	}
 	visible := make([]ledger.Event, 0, len(events))
 	for _, event := range events {
@@ -35,11 +35,11 @@ func (r *conversationRuntime) modelContext(ctx context.Context, through string) 
 	}
 	history, err := assemble.History(visible, r.conversation, r.agent)
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, 0, nil, err
 	}
 	profile, err := memory.New(r.db).Profile(ctx, memory.RecallScope{Person: r.person, Agent: r.agent, ExternalModel: true}, time.Now().Unix(), 32, 4096, func(text string) int { return len(text) })
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, 0, nil, err
 	}
 	refs := make([]turn.Reference, 0, len(profile))
 	items := make([]provider.Item, 0, len(profile)+len(history))
@@ -51,7 +51,7 @@ func (r *conversationRuntime) modelContext(ctx context.Context, through string) 
 		raw, _ := json.Marshal(map[string]string{"role": "user", "content": "Remembered statement (" + hit.ID + "): " + hit.Content})
 		items = append(items, provider.Item(raw))
 	}
-	return append(items, history...), refs, snapshot.Epoch, nil
+	return append(items, history...), refs, snapshot.Epoch, visible, nil
 }
 
 func (r *conversationRuntime) validateModelContext(ctx context.Context, epoch uint64, refs []turn.Reference) error {

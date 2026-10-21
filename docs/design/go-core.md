@@ -58,7 +58,7 @@ Callers pass state locations, persona, skills and knowledge scope.
 | L1 | `canon` (writer, fence, migrations), `eventstore`, `secrets`, `ctlfiles`, `guard` (masking), `ids` |
 | L2 | `authority` (gate, grants, approvals, effect ledger), `lifecycle`, `budget`, `manifest` |
 | L3 | One store per table group: `ledger`, `inbox`, `agents`, `memory`, `retract`, `skills`, `records`, `assets`, `work`, `timers`, `plugins`, `channels`, `accounts` |
-| L4 | Flows: `lane`, `assemble`, `compaction`, `turn`, `runs`, `reply`, `results`, `modelpath`, `exec`, `exchange`, `gateway`, `worker`, `reactor`, `review`, `ghclient`, `progress`, `waiting`, `backup`, `update`, `recover`, `clientsrv`, `jobs`, `mcphost`, `install` |
+| L4 | Flows: `lane`, `assemble`, `compaction`, `turn`, `runs`, `replay`, `reply`, `results`, `modelpath`, `exec`, `exchange`, `gateway`, `worker`, `reactor`, `review`, `ghclient`, `progress`, `waiting`, `backup`, `update`, `recover`, `clientsrv`, `jobs`, `mcphost`, `install` |
 | L5 | `boot`, `supervise` |
 
 The separate worker has its own downward import layers. Core may import only its `jobapi` contract, never its reader or runtime; the worker imports no Core, provider, secret, process-launch or arbitrary third-party package. The SQLite binding is allowed only in the exact read-only reader package. The ordinary architecture test enforces these boundaries.
@@ -213,6 +213,21 @@ The topic hub assigns sequence numbers only after coalescing, independently for 
 
 A subscription without a cursor gets the latest snapshot window. A cursor from another epoch, ahead of the topic, or older than the retained ring gets `resync` followed by that window. Otherwise, replay starts strictly after the cursor and precedes the live queue. The ring retains 1,024 committed frames and the snapshot retains 200 materialized items by stable item key, including accumulated text rather than only its last delta. Each subscription has its own bounded live queue (P: 256 frames). Overflow closes that subscription with a retained `resync_required` cause; other topics and other subscribers of the same topic continue. The cause is separate from the full queue. Snapshot and replay values are independent copies. The hub is in memory for one durable Core epoch; it is not conversation persistence or a substitute for reading older history.
 
+
+Conversation display order is durable separately from ledger append order. Before
+first publishing a message key, boot records its position in canon and serializes
+that write with publication. Later deltas, completion and card replacement retain
+the position. Publication uses the caller's context on live, stopped and startup
+paths; it does not require a running conversation lane. Restart resolves those
+keys through completed ledger messages and
+committed stopped/failed partials, then selects the latest display window in that
+order. Restored partials use the live reply filter, including card identity and
+turn provenance. Legacy partials retain their checkpoint insertion order. A
+position alone supplies no content and cannot invent a turn. The native
+ledger and model-context order remain unchanged. Records from before position
+tracking retain their existing ledger-based restore order; unavailable historical
+stream timing is never guessed. The queue/steering restart scenario is
+`e2e/m1/conversation-history-order.json` (T-03, T-05, T-10).
 
 The additive client 1.0 stream payloads implement this boundary. `subscribe` optionally names `topic`, an `after` cursor, and `active` (omitted means true; false unsubscribes and cannot carry `after`). Omitting `topic` preserves the previous reserved request shape. A fresh subscription answers with `snapshot`; an unavailable cursor answers with `resync` and then sends a `snapshot` notification. A retained cursor answers with `subscribe` carrying `active: true` and the replay endpoint, followed by the replay and then live notifications. An unsubscribe answers with `active: false`. Re-subscribing replaces only that connection's subscription to the named topic.
 
@@ -1016,6 +1031,39 @@ type Definition struct {
 - Dependencies are swapped by interface. `Journal` and the effect ledger are discarding implementations, so a replay cannot write. Read tools run live; network reads and effect calls are answered by the recorded result; a turn with an unrecorded effect is excluded. Usage is a run kind of its own.
 - `lina export` writes JSON Lines episodes and a manifest (counts, left-out reasons, revocation epoch) to `staging/export/`. Nothing is selected by default, only turns that start from a `person` event qualify, and secrets stay masked.
 - The improvement loop that calls these commands is a development-time tool and is not in the product.
+
+The installed commands use the negotiated `replay/1.0` client capability. The
+client sends an explicit selection or one turn reference; Core supplies the
+existing canon reader, ledger material reader, pinned persona reader and model
+adapter. `replay` is an L4 flow with a read-only database interface, not a second
+store. Material bytes are verified outside canon read snapshots, then read from
+a per-operation revision cache inside a fresh visibility snapshot. A retraction
+or material trash during that read prevents publication. The kit loop runs in a network-blocked subprocess with a fresh scratch
+directory. Core brokers provider streams through pipes without sending a
+credential into the child. The journal is empty; the read registry has a
+discarding gate that refuses writes, outward calls and network tools. `expand`
+and deterministic `recall_person` use existing local services, with the original
+clock and current scope/revocation checks. Other calls require an exact recorded
+name/argument match; a current effect receipt is selected by the original
+scope/tool/target/call key, never by matching reply text.
+
+Native preparation records the ordered ledger event ids and content revisions
+actually projected into the model request, leaving generated result-card
+scaffolds out, along with
+model, effort, tool declarations, requested fields, turn-time agent name/owner
+and instruction format alongside its existing
+assembly references and digest. This does not retain a transient ContextPacket
+or credentials. The identity-aware format calls the same `assemble.Instructions`
+builder as live turns; the recorded identity is used even if the agent is later
+renamed. Legacy layer-only records retain their original assembly format.
+A producer that lacks reconstructible assembly evidence is
+excluded with `missing_assembly`; replay never substitutes today's history or
+persona. Current assistant reply events and the structured source references in recorded
+recall/expand results are checked too; removing a reply or a tool source excludes
+the whole dependent turn. All exported source bytes and every replay dispatch are checked against
+the current revocation epoch. Episode-file input is rehydrated from those exact
+local source identities, so an old export cannot resurrect forgotten content.
+
 
 ## Node
 

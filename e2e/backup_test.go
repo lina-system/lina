@@ -57,12 +57,12 @@ func TestM1BackupInstalledConversation(t *testing.T) {
 	}
 	h.stopCore(core)
 	// Reproduce the published v14 schema, retaining its completed conversation
-	// while removing later summary, sign-in, channel and exchange tables.
+	// while removing later summary, sign-in, channel, exchange and display-order tables.
 	legacy, err := canon.OpenSQLite(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = legacy.ExecContext(h.ctx, `DROP TABLE exch_waiting; DROP TABLE exch_event; DROP TABLE exch_msg; DROP TABLE exchanges; DROP TABLE telegram_presentations; DROP TABLE telegram_buttons; DROP TABLE channel_outbound; DROP TABLE channel_receipts; DROP TABLE channel_actions; DROP TABLE channel_bindings; DROP TABLE channel_connections; DROP TRIGGER sum_revoke; DROP VIEW sum_affected; DROP TABLE sum_cover; DROP TABLE sum_edge; DROP TABLE sum_node; DROP TABLE sign_in_identities; DROP TABLE sign_in_host; DROP TABLE owner_binding; PRAGMA user_version=14;`)
+	_, err = legacy.ExecContext(h.ctx, `DROP TABLE conversation_order; DROP TABLE exch_waiting; DROP TABLE exch_event; DROP TABLE exch_msg; DROP TABLE exchanges; DROP TABLE telegram_presentations; DROP TABLE telegram_buttons; DROP TABLE channel_outbound; DROP TABLE channel_receipts; DROP TABLE channel_actions; DROP TABLE channel_bindings; DROP TABLE channel_connections; DROP TRIGGER sum_revoke; DROP VIEW sum_affected; DROP TABLE sum_cover; DROP TABLE sum_edge; DROP TABLE sum_node; DROP TABLE sign_in_identities; DROP TABLE sign_in_host; DROP TABLE owner_binding; PRAGMA user_version=14;`)
 	legacy.Close()
 	if err != nil {
 		t.Fatal(err)
