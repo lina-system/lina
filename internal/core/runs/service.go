@@ -280,6 +280,7 @@ func (s *Service) Follow(ctx context.Context, id, note string) error {
 	}
 	r.FollowUps = append(r.FollowUps, note)
 	if r.State == NeedsInput {
+		r.Noticed = false
 		r.State = Waiting
 		r.Reason = ""
 	}

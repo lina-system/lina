@@ -305,7 +305,7 @@ func TestNeedsInputNoticeAndFollowUpReachOnlyThatRun(t *testing.T) {
 	var calls atomic.Int64
 	s, _, _ := setupWith(t, func(context.Context, provider.Request) (provider.Stream, error) {
 		n := calls.Add(1)
-		if n <= 2 {
+		if n <= 3 {
 			return call(fmt.Sprint(n)), nil
 		}
 		return answer(runs.Artifact{Body: "answered", Done: true}), nil
@@ -328,6 +328,19 @@ func TestNeedsInputNoticeAndFollowUpReachOnlyThatRun(t *testing.T) {
 	notices, err := s.Notices(t.Context(), origin().Conversation)
 	if err != nil || len(notices) != 1 || notices[0].ID != id {
 		t.Fatalf("question notice=%+v error=%v", notices, err)
+	}
+	if err := s.Acknowledge(t.Context(), id); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Follow(t.Context(), id, "clarify the evidence request"); err != nil {
+		t.Fatal(err)
+	}
+	if r := wait(t, s, id); r.State != runs.NeedsInput {
+		t.Fatalf("second question=%+v", r)
+	}
+	notices, err = s.Notices(t.Context(), origin().Conversation)
+	if err != nil || len(notices) != 1 || notices[0].State != runs.NeedsInput {
+		t.Fatalf("second question notice=%+v error=%v", notices, err)
 	}
 	if err := s.Acknowledge(t.Context(), id); err != nil {
 		t.Fatal(err)
