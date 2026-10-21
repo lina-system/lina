@@ -84,11 +84,20 @@ func libraryPins(t *testing.T) map[string]string {
 // output, Bubble Tea rendering, and VT parsing. Its waits observe output cells;
 // the deadline only makes a broken run terminate. It does not measure IME or S9.
 func TestS8(t *testing.T) {
-	t.Run("normal", func(t *testing.T) { testS8(t, false) })
-	t.Run("startup-flush", func(t *testing.T) { testS8(t, true) })
+	var normal, startup []byte
+	t.Run("normal", func(t *testing.T) { normal = testS8(t, false) })
+	t.Run("startup-flush", func(t *testing.T) { startup = testS8(t, true) })
+	// Publish the normal recording only after both scenarios ran and passed.
+	// A failed or filtered-out regression must not produce passing evidence.
+	if t.Failed() || len(normal) == 0 || len(startup) == 0 || *evidenceOutput == "" {
+		return
+	}
+	if err := os.WriteFile(*evidenceOutput, append(normal, '\n'), 0644); err != nil {
+		t.Fatal(err)
+	}
 }
 
-func testS8(t *testing.T, delayInit bool) {
+func testS8(t *testing.T, delayInit bool) []byte {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
@@ -187,11 +196,7 @@ func testS8(t *testing.T, delayInit bool) {
 		t.Fatal(err)
 	}
 	t.Logf("S8: %s", data)
-	if *evidenceOutput != "" && !delayInit {
-		if err := os.WriteFile(*evidenceOutput, append(data, '\n'), 0644); err != nil {
-			t.Fatal(err)
-		}
-	}
+	return data
 }
 
 func TestRecordedEvidence(t *testing.T) {
