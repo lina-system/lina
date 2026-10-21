@@ -89,7 +89,7 @@ func Light() Tokens {
 		GlyphUnicodeConnecting: "◌",
 		GlyphUnicodeFailed:     "×",
 		GlyphUnicodeLive:       "●",
-		GlyphUnicodeMark:       "·",
+		GlyphUnicodeMark:       ".",
 		GlyphUnicodeQuit:       "✓",
 		GlyphUnicodeRecovering: "◐",
 		GlyphUnicodeRefused:    "⊘",
@@ -111,14 +111,14 @@ func Light() Tokens {
 		TypeCode:               "ui-monospace, monospace",
 		TypeLineHeight:         1.5,
 		TypeSize:               Dimension{PX: 16, Cells: 0},
-		TypeTitleWeight:        600,
+		TypeTitleWeight:        700,
 		TypeWeight:             400,
 	}
 }
 
 func Dark() Tokens {
 	return Tokens{
-		ColorAccent:            Color{Hex: "#91A7FF", ANSI256: 111, ANSI16: 15},
+		ColorAccent:            Color{Hex: "#5685FF", ANSI256: 69, ANSI16: 15},
 		ColorCanvas:            Color{Hex: "#17191F", ANSI256: 234, ANSI16: 0},
 		ColorLine:              Color{Hex: "#383E4C", ANSI256: 238, ANSI16: 8},
 		ColorMuted:             Color{Hex: "#A6ADBD", ANSI256: 249, ANSI16: 7},
@@ -142,7 +142,7 @@ func Dark() Tokens {
 		GlyphUnicodeConnecting: "◌",
 		GlyphUnicodeFailed:     "×",
 		GlyphUnicodeLive:       "●",
-		GlyphUnicodeMark:       "·",
+		GlyphUnicodeMark:       ".",
 		GlyphUnicodeQuit:       "✓",
 		GlyphUnicodeRecovering: "◐",
 		GlyphUnicodeRefused:    "⊘",
@@ -164,14 +164,14 @@ func Dark() Tokens {
 		TypeCode:               "ui-monospace, monospace",
 		TypeLineHeight:         1.5,
 		TypeSize:               Dimension{PX: 16, Cells: 0},
-		TypeTitleWeight:        600,
+		TypeTitleWeight:        700,
 		TypeWeight:             400,
 	}
 }
 
 func HighContrast() Tokens {
 	return Tokens{
-		ColorAccent:            Color{Hex: "#ADC0FF", ANSI256: 153, ANSI16: 15},
+		ColorAccent:            Color{Hex: "#6795FF", ANSI256: 69, ANSI16: 15},
 		ColorCanvas:            Color{Hex: "#000000", ANSI256: 16, ANSI16: 0},
 		ColorLine:              Color{Hex: "#FFFFFF", ANSI256: 231, ANSI16: 15},
 		ColorMuted:             Color{Hex: "#DDDDDD", ANSI256: 253, ANSI16: 7},
@@ -195,7 +195,7 @@ func HighContrast() Tokens {
 		GlyphUnicodeConnecting: "◌",
 		GlyphUnicodeFailed:     "×",
 		GlyphUnicodeLive:       "●",
-		GlyphUnicodeMark:       "·",
+		GlyphUnicodeMark:       ".",
 		GlyphUnicodeQuit:       "✓",
 		GlyphUnicodeRecovering: "◐",
 		GlyphUnicodeRefused:    "⊘",
@@ -217,7 +217,7 @@ func HighContrast() Tokens {
 		TypeCode:               "ui-monospace, monospace",
 		TypeLineHeight:         1.5,
 		TypeSize:               Dimension{PX: 16, Cells: 0},
-		TypeTitleWeight:        600,
+		TypeTitleWeight:        700,
 		TypeWeight:             400,
 	}
 }
