@@ -78,6 +78,12 @@ Every material carries an asset id. The asset id, the revision, the content hash
 
 An asset id is assigned when LINA first records a file: at import, when LINA produces it, or when LINA first observes it in a connected source.
 
+For materials-area bytes, the asset store assigns a random 128-bit id independently of the SHA-256 content hash. Revisions are increasing positive integers, starting at 1; a write of identical bytes is a no-op. Edits require the current base revision and retain earlier bytes. The observed path is metadata, separate from the internal byte path `materials/<user|lina>/<asset-id>/<revision>/content`. A rename changes that metadata without moving revision bytes. Existing revision files are never overwritten; an interrupted write can leave a gap in revision numbering.
+
+An identical-byte edit still checks the epoch fence, current base revision and active (not trashed) state in a canon write transaction after consuming the input. It returns the same authority errors as a changed edit and removes its temporary copies. `assets.OpenRead` streams revision bytes without holding the store mutex during consumption; size and SHA-256 are verified at EOF, with a mismatch returned as `asset_hash_mismatch`. The caller must read through that terminal result and close the stream; an early close does not verify it. The byte-slice convenience `Read` has an explicit 8 MiB limit (`MaxReadBytes`) and returns `asset_too_large` for larger recorded or actual content, which must use the stream API.
+
+The store records the person and asking agent with each metadata change, revision, export and trash transition. Trashing hides every revision from normal reads and export while preserving its bytes for recovery and backup; restoring keeps the id, revisions and hashes. The store's durable trash transitions are inputs to the removal-list and permanent-deletion coordinator, which owns the 30-day expiry and deletion propagation described in [materials-and-knowledge.md](materials-and-knowledge.md#inside-lina).
+
 The revision depends on where the bytes live:
 
 | Where the bytes live | Revision |
@@ -218,6 +224,10 @@ An import is a person handing material to LINA: an attachment in a conversation,
 
 Exports go through `staging/export/` only, to a destination the person chooses. An exported file leaves LINA's management: a later deletion in LINA doesn't reach it.
 
+For binary materials, staging an import creates only an opaque-token file under `staging/import/`, with no material or canon asset row. Handover publishes durable revision bytes before committing their metadata through the fenced canon writer, then removes the staged copy. A refused canon write removes the unpublished copy and retains the import for the caller. Pending import tokens survive reopening the store.
+
+An export copies and verifies the requested revision into `staging/export/`, records its destination, person, agent, revision and hash in canon, then invokes the grant-owning caller's delivery operation outside the canon transaction. Successful delivery is recorded as delivered and the staged copy is removed. A failed or interrupted delivery remains unknown and is never retried automatically. Reopening removes abandoned export staging without repeating delivery. The caller checks the destination grant before invoking export; the asset store never chooses or writes an external destination itself.
+
 ### Importing another memory system
 
 A person may hand LINA the memory of another assistant, as [conversation-and-memory.md](conversation-and-memory.md#importing-a-hermes-install) defines for a Hermes install. The first bullets of this section apply. What differs:
@@ -253,6 +263,8 @@ The backup procedure must:
 2. Take a consistent SQLite snapshot with the online backup API. Copying database and WAL files is never a backup.
 3. Record the head of every version-space repository, copy the repositories and the asset bytes, and verify every hash against the manifest.
 4. Publish the manifest last. A generation without a published manifest doesn't exist.
+
+The asset store supplies the materials portion of this procedure: it copies every recorded revision, including recoverable trash, and checks size and SHA-256 against canon both during copying and by reading the copy back. Verification of an existing copy uses the captured manifest's hashes. A mismatch fails the operation and yields no successful manifest; the backup coordinator discards the unpublished partial generation. Staging and unrecorded files are excluded. This package operation does not replace the whole-generation coordinator or the SQLite online snapshot.
 
 Restore rules:
 
