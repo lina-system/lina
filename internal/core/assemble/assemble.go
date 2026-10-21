@@ -210,7 +210,7 @@ func Assemble(in Input, counter Counter) (provider.Request, Report) {
 	r.Items = append(r.Items, clone(in.History)...)
 	prefix := len(r.Items)
 	var packet ContextPacket
-	seen := map[string]bool{}
+	seen := map[string]Kind{}
 	for _, item := range in.Packet {
 		reason := Reason("")
 		switch {
@@ -218,7 +218,10 @@ func Assemble(in Input, counter Counter) (provider.Request, Report) {
 			reason = OutOfScope
 		case item.Retracted || item.Secret:
 			reason = Excluded
-		case seen[item.ID]:
+		case seen[item.ID] != 0:
+			if seen[item.ID] != item.Kind {
+				return fail(Invalid)
+			}
 			reason = Duplicate
 		}
 		if reason != "" {
@@ -228,7 +231,7 @@ func Assemble(in Input, counter Counter) (provider.Request, Report) {
 		if item.ID == "" || group(item.Kind) == 0 || ((item.Kind == SkillBody || item.Kind == Material) && item.Revision == "") {
 			return fail(Invalid)
 		}
-		seen[item.ID] = true
+		seen[item.ID] = item.Kind
 		packet = append(packet, item)
 	}
 	superseded := map[string]bool{}
