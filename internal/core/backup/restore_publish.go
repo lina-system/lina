@@ -130,6 +130,9 @@ func resumeRestore(root *os.Root, after func(string) error) error {
 			return err
 		}
 	}
+	if err := restoreBoundary(after, "complete"); err != nil {
+		return err
+	}
 	retired := "staging/restore.retired-" + rand.Text()
 	if err := root.Rename(restorePending, retired); err != nil {
 		return err

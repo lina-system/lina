@@ -70,26 +70,6 @@ func Restore(ctx context.Context, cfg RestoreConfig) (result Manifest, err error
 		}
 		return restoreBoundary(cfg.boundary, at)
 	}
-	if pending := CheckRestore(targetPath); pending != nil {
-		if !errors.Is(pending, ErrRestorePending) {
-			return result, pending
-		}
-		if err := regularPath(root, restorePending+"/plan.json"); err != nil {
-			return result, err
-		}
-		data, e := root.ReadFile(restorePending + "/plan.json")
-		if e != nil {
-			return result, e
-		}
-		var plan restorePlan
-		if json.Unmarshal(data, &plan) != nil || plan.Generation != generationPath || plan.Manifest.MainID != main.ID || !maps.Equal(plan.Manifest.Artifacts, cfg.Artifacts) {
-			return result, ErrRestorePending
-		}
-		if err := resumeRestore(root, boundary); err != nil {
-			return result, err
-		}
-		return plan.Manifest, nil
-	}
 	// A generation moved to an archive still has its sibling removal list. If
 	// it remains in an installed main, exclude that main's writer as well.
 	sourceState := filepath.Dir(filepath.Dir(generationPath))
@@ -107,6 +87,35 @@ func Restore(ctx context.Context, cfg RestoreConfig) (result Manifest, err error
 			return result, e
 		}
 	}
+	if pending := CheckRestore(targetPath); pending != nil {
+		if !errors.Is(pending, ErrRestorePending) {
+			return result, pending
+		}
+		if err := regularPath(root, restorePending+"/plan.json"); err != nil {
+			return result, err
+		}
+		data, e := root.ReadFile(restorePending + "/plan.json")
+		if e != nil {
+			return result, e
+		}
+		var plan restorePlan
+		if json.Unmarshal(data, &plan) != nil || plan.Generation != generationPath || plan.Manifest.MainID != main.ID || !maps.Equal(plan.Manifest.Artifacts, cfg.Artifacts) {
+			return result, ErrRestorePending
+		}
+		if err := resumeRestore(root, func(at string) error {
+			if err := boundary(at); err != nil {
+				return err
+			}
+			if at == "complete" {
+				return finalizeRestore(ctx, root, controls, targetPath, generationPath, plan.Manifest, cfg.Migrations)
+			}
+			return nil
+		}); err != nil {
+			return result, err
+		}
+		return plan.Manifest, nil
+	}
+
 	m, err := Verify(ctx, generationPath)
 	if err != nil {
 		return result, err
@@ -121,9 +130,18 @@ func Restore(ctx context.Context, cfg RestoreConfig) (result Manifest, err error
 	if err := validateRestoreLayout(m); err != nil {
 		return result, err
 	}
-	if info, e := root.Lstat("canon"); e == nil && !info.IsDir() {
-		return result, ErrInvalid
-	} else if e != nil && !errors.Is(e, os.ErrNotExist) {
+	for _, area := range []string{"canon", "versions", "materials", "derived", "workspace", "backups", "staging"} {
+		if info, e := root.Lstat(area); e == nil && !info.IsDir() {
+			return result, ErrInvalid
+		} else if e != nil && !errors.Is(e, os.ErrNotExist) {
+			return result, e
+		}
+	}
+	if _, e := root.Lstat("canon/canon.sqlite"); e == nil {
+		if err := regularPath(root, "canon/canon.sqlite"); err != nil {
+			return result, err
+		}
+	} else if !errors.Is(e, os.ErrNotExist) {
 		return result, e
 	}
 	current := filepath.Join(targetPath, "canon/canon.sqlite")
@@ -224,7 +242,15 @@ func Restore(ctx context.Context, cfg RestoreConfig) (result Manifest, err error
 	if err := boundary("prepared"); err != nil {
 		return result, err
 	}
-	if err := commitRestore(root, prepared, boundary); err != nil {
+	if err := commitRestore(root, prepared, func(at string) error {
+		if err := boundary(at); err != nil {
+			return err
+		}
+		if at == "complete" {
+			return finalizeRestore(ctx, root, controls, targetPath, generationPath, m, cfg.Migrations)
+		}
+		return nil
+	}); err != nil {
 		return result, err
 	}
 	return m, nil

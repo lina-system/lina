@@ -67,6 +67,9 @@ func captureBackup(ctx context.Context, root string) (backup.Manifest, error) {
 	if err = controls.Acquire(); err != nil {
 		return backup.Manifest{}, err
 	}
+	if err := backup.CheckRestore(root); err != nil {
+		return backup.Manifest{}, err
+	}
 	data, err := controls.Read("main.json")
 	if err != nil {
 		return backup.Manifest{}, err

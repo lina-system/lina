@@ -35,7 +35,11 @@ func prepareRestoredCanon(ctx context.Context, root string, epoch uint64, migrat
 	if err := controls.Write("epoch", []byte(strconv.FormatUint(epoch, 10))); err != nil {
 		return err
 	}
-	db, err := canon.Open(ctx, canon.Config{Path: filepath.Join(root, "canon/canon.sqlite"), Epoch: epoch, Controls: controls, Migrations: migrations})
+	return reconcileRestoredCanon(ctx, filepath.Join(root, "canon/canon.sqlite"), root, epoch, controls, migrations)
+}
+
+func reconcileRestoredCanon(ctx context.Context, path, root string, epoch uint64, controls *ctlfiles.Store, migrations []canon.Migration) (result error) {
+	db, err := canon.Open(ctx, canon.Config{Path: path, Epoch: epoch, Controls: controls, Migrations: migrations})
 	if err != nil {
 		return err
 	}

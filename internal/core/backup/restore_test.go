@@ -53,6 +53,14 @@ func TestRestoreWholeGenerationToSameAndDifferentRoot(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(cfg.Root, "workspace/note"), []byte("captured"), 0600); err != nil {
 				t.Fatal(err)
 			}
+			if err := cfg.Canon.Write(t.Context(), func(tx *canon.Tx) error {
+				_, err := tx.ExecContext(t.Context(), `INSERT INTO authority_effects VALUES('pending','fingerprint','{"Key":"pending","State":"none","Outward":true,"Epoch":1}',1);
+    INSERT INTO authority_targets VALUES('target','rev','agent','pending');
+    INSERT INTO accounts VALUES('account','{"ID":"account","Status":"ok"}');`)
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
 			m, err := Create(t.Context(), cfg)
 			if err != nil {
 				t.Fatal(err)
@@ -98,6 +106,23 @@ func TestRestoreWholeGenerationToSameAndDifferentRoot(t *testing.T) {
 			_, epoch, err := canon.Inspect(t.Context(), filepath.Join(target, "canon/canon.sqlite"))
 			if err != nil || epoch != 45 {
 				t.Fatalf("epoch %d %v", epoch, err)
+			}
+			reader, err := canon.OpenSQLiteReader(t.Context(), filepath.Join(target, "canon/canon.sqlite"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var effect, account, claim string
+			var running bool
+			err = reader.QueryRowContext(t.Context(), "SELECT json_extract(record,'$.State'),running FROM authority_effects WHERE effect_key='pending'").Scan(&effect, &running)
+			if err == nil {
+				err = reader.QueryRowContext(t.Context(), "SELECT json_extract(record,'$.Status') FROM accounts WHERE id='account'").Scan(&account)
+			}
+			if err == nil {
+				err = reader.QueryRowContext(t.Context(), "SELECT active_key FROM authority_targets WHERE target='target'").Scan(&claim)
+			}
+			reader.Close()
+			if err != nil || effect != "unknown" || running || account != "needs_sign_in" || claim != "" {
+				t.Fatalf("restored authority: %s %v %s %s %v", effect, running, account, claim, err)
 			}
 			if _, err := Verify(t.Context(), options.Generation); err != nil {
 				t.Fatalf("generation mutated: %v", err)
@@ -243,5 +268,89 @@ func TestRestoreZeroExposureAfterLosingSourceCanon(t *testing.T) {
 				t.Fatal("forgotten evidence extracted after restore")
 			}
 		})
+	}
+}
+
+func TestRestoreRejectsLinkedTargetBeforePublication(t *testing.T) {
+	cfg, store := fixture(t)
+	material(t, store)
+	m, err := Create(t.Context(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.Close()
+	cfg.Canon.Close(context.Background())
+	cfg.Controls.(*ctlfiles.Store).Close()
+	target := filepath.Join(t.TempDir(), "target")
+	restoreTarget(t, target, "80")
+	if err := os.Symlink(t.TempDir(), filepath.Join(target, "materials")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Restore(t.Context(), RestoreConfig{Root: target, Generation: filepath.Join(cfg.Root, "backups", m.GenerationID), Artifacts: cfg.Artifacts, Migrations: canon.Migrations()}); err == nil {
+		t.Fatal("linked target accepted")
+	}
+	if err := CheckRestore(target); err != nil {
+		t.Fatalf("validation began partial publication: %v", err)
+	}
+}
+
+func TestRestoreResumeAppliesRemovalsRecordedDuringInterruption(t *testing.T) {
+	cfg, store := fixture(t)
+	_, err := ledger.New(cfg.Canon, nil).Admit(t.Context(), guard.EntryOwner, ledger.Input{ID: "source", ConversationID: "conversation", AgentID: "agent", PersonID: "person", Surface: ledger.Surface{Kind: "tui"}, OccurredAt: time.Unix(10, 0), RecordedAt: time.Unix(10, 0), TimeQuality: "observed", Body: "synthetic violet"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := memoryexec.NewMemory(cfg.Canon, nil, nil).Remember(t.Context(), memory.Write{Agent: "agent", Person: "person", Item: memory.Item{Kind: memory.Preference, Content: "synthetic violet", Subject: memory.Subject{Kind: memory.Person, ID: "person"}, Basis: memory.Stated, Evidence: []memory.Evidence{{Kind: memory.Event, ID: "source", Precision: memory.Exact}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := Create(t.Context(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.Close()
+	cfg.Canon.Close(context.Background())
+	cfg.Controls.(*ctlfiles.Store).Close()
+	target := filepath.Join(t.TempDir(), "target")
+	restoreTarget(t, target, "80")
+	options := RestoreConfig{Root: target, Generation: filepath.Join(cfg.Root, "backups", m.GenerationID), Artifacts: cfg.Artifacts, Migrations: canon.Migrations(), boundary: func(at string) error {
+		if at == "installed:canon" {
+			return errors.New("interrupted")
+		}
+		return nil
+	}}
+	if _, err := Restore(t.Context(), options); err == nil {
+		t.Fatal("missing interruption")
+	}
+	live, assets := fixtureAt(t, cfg.Root)
+	removals, err := retract.Open(t.Context(), retract.Config{Canon: live.Canon, Root: live.Root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := removals.Forget(t.Context(), retract.Request{Person: "person", Targets: []retract.Ref{{Kind: retract.Memory, ID: receipt.ID}}}); err != nil {
+		t.Fatal(err)
+	}
+	options.boundary = nil
+	if _, err := Restore(t.Context(), options); !errors.Is(err, ctlfiles.ErrLocked) {
+		t.Errorf("resume ignored running source: %v", err)
+	}
+	removals.Close()
+	assets.Close()
+	live.Canon.Close(context.Background())
+	live.Controls.(*ctlfiles.Store).Close()
+	if _, err := Restore(t.Context(), options); err != nil {
+		t.Fatal(err)
+	}
+	db, err := canon.OpenSQLiteReader(t.Context(), filepath.Join(target, "canon/canon.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var count int
+	if err := db.QueryRowContext(t.Context(), "SELECT count(*) FROM retract_visible_memory WHERE id=?", receipt.ID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatal("resumed restore exposed a newly forgotten item")
 	}
 }
