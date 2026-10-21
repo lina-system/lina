@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/rivo/uniseg"
+	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -19,8 +20,13 @@ var ErrUTF8 = errors.New("reply delta is not valid UTF-8")
 // payload while the protocol's result body remains reserved.
 type Draft struct {
 	Blocks      []Paragraph `json:"blocks"`
-	FromSummary *string     `json:"from_summary"`
+	FromSummary *SummaryRef `json:"from_summary"`
 }
+type SummaryRef struct {
+	ResultID string `json:"result_id"`
+	Revision int    `json:"revision"`
+}
+
 type Paragraph struct {
 	Kind string `json:"kind"`
 	Text string `json:"text"`
@@ -53,6 +59,10 @@ type Filter struct {
 	renderLines func(string) int
 	full        strings.Builder
 	cut         bool
+	closed      bool
+	recording   *Recording
+	recorded    Recorded
+	journal     *ledger.Store
 }
 
 func NewFilter(c Config) (*Filter, error) {
@@ -71,6 +81,9 @@ func (f *Filter) FullText() string { return f.full.String() }
 // changing state. Combining sequences may span deltas: counting normalizes the
 // accumulated text, leaving display and ledger bytes intact.
 func (f *Filter) Push(delta string) (View, error) {
+	if f.closed {
+		return View{}, ErrClosed
+	}
 	if !utf8.ValidString(delta) {
 		return View{}, ErrUTF8
 	}
