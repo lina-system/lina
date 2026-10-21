@@ -4,8 +4,10 @@ package agents
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/persona"
 )
 
 func presetAgents(ctx context.Context, tx *canon.Tx, id string) ([]Agent, error) {
@@ -28,6 +30,10 @@ func presetAgents(ctx context.Context, tx *canon.Tx, id string) ([]Agent, error)
 // UpdatePreset publishes all affected agents atomically. Their filled settings,
 // emotion, user voice and growth remain theirs, including while in the trash.
 func (s *Store) UpdatePreset(ctx context.Context, p Preset, person string) error {
+	return s.updatePreset(ctx, p, person, nil)
+}
+
+func (s *Store) updatePreset(ctx context.Context, p Preset, person string, expected *Preset) error {
 	if !present(p.ID) || !present(person) {
 		return ErrInvalid
 	}
@@ -62,6 +68,15 @@ func (s *Store) UpdatePreset(ctx context.Context, p Preset, person string) error
 	}
 	raw, _ := json.Marshal(p)
 	return s.db.Write(ctx, func(tx *canon.Tx) error {
+		if expected != nil {
+			current, err := preset(ctx, tx, p.ID)
+			if err != nil {
+				return err
+			}
+			if !samePreset(current, *expected) {
+				return ErrConflict
+			}
+		}
 		current, err := presetAgents(ctx, tx, p.ID)
 		if err != nil {
 			return err
@@ -86,4 +101,39 @@ func (s *Store) UpdatePreset(ctx context.Context, p Preset, person string) error
 		}
 		return nil
 	})
+}
+
+// Only the exact shipped placeholders are eligible. Owner-supplied material and
+// each agent's personal layers remain intact; existing turns keep their revision.
+func (s *Store) upgradeLinaPlaceholders(ctx context.Context, person string) error {
+	const core = "<!-- SPDX-License-Identifier: Apache-2.0 -->\nLINA preset core placeholder. The project owner supplies the persona material.\n"
+	const voice = "<!-- SPDX-License-Identifier: Apache-2.0 -->\nLINA preset default voice placeholder. The project owner supplies the voice material.\n"
+	for {
+		var before Preset
+		err := s.db.Read(ctx, func(tx *canon.Tx) error {
+			var err error
+			before, err = preset(ctx, tx, "lina")
+			return err
+		})
+		if errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		next := before
+		if next.Core == core {
+			next.Core = persona.LinaCore
+		}
+		if next.DefaultVoice == voice {
+			next.DefaultVoice = persona.LinaDefaultVoice
+		}
+		if samePreset(before, next) {
+			return nil
+		}
+		err = s.updatePreset(ctx, next, person, &before)
+		if !errors.Is(err, ErrConflict) {
+			return err
+		}
+	}
 }

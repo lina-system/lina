@@ -64,18 +64,21 @@ func TestPersonaBlankFilledFromConversationAndPreparedAfterRestart(t *testing.T)
 	var calls atomic.Int32
 	var prefix string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request struct{ Input, Tools []json.RawMessage }
+		var request struct {
+			Input, Tools []json.RawMessage
+			Instructions string
+		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Error(err)
 			return
 		}
 		n := calls.Add(1)
-		if len(request.Input) < 6 {
+		if len(request.Input) < 1 {
 			t.Error("missing stable prefix")
 			emitResponse(w, "Failed.", true)
 			return
 		}
-		fixed := string(mustJSON(t, request.Input[:6]))
+		fixed := request.Instructions + string(mustJSON(t, request.Input[:1]))
 		if n == 1 {
 			prefix = fixed
 		} else if fixed != prefix {

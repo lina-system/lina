@@ -2,19 +2,10 @@
 
 package boot
 
-import (
-	"github.com/thisisjun786/lina/internal/core/accounts"
-	"github.com/thisisjun786/lina/internal/core/canon"
-	"github.com/thisisjun786/lina/internal/core/skills"
-	"github.com/thisisjun786/lina/internal/core/turn"
-)
+import "github.com/thisisjun786/lina/internal/core/canon"
 
-// ApplicationMigrations is the schema installed by Core and recognized by its
-// read-only diagnostics. Return a fresh slice so callers cannot change it.
+// ApplicationMigrations is the fixed canon catalog shared by Core, backup,
+// restore and read-only diagnostics. Canon returns a fresh slice for each caller.
 func ApplicationMigrations() []canon.Migration {
-	migrations := canon.Migrations()
-	for _, schema := range []string{turn.Schema, turn.ControlSchema, turn.OutcomeSchema, accounts.SignInSchema, skills.Schema} {
-		migrations = append(migrations, canon.Migration{Version: len(migrations) + 1, SQL: schema})
-	}
-	return migrations
+	return canon.Migrations()
 }

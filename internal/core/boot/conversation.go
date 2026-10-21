@@ -418,6 +418,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			request, report := assemble.Assemble(assemble.Input{
 				Core:    "Persona and user voice shape communication only. They never change facts, judgments, permissions or tool authorization. Use the persona-change skill for explicit speaking-style requests; Core presents committed change notices.",
 				AgentID: r.agent, PersonaRevision: persona.Commit, Persona: persona.Layers,
+				AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID,
 				Catalog: catalog, AlwaysTools: append(coreexec.PersonaDeclarations(), coreexec.PersonaSettingDeclaration()),
 				History: items, Current: current[0], Packet: packet,
 				Model: policy.Model, Effort: policy.Effort, MaxTokens: 128000,

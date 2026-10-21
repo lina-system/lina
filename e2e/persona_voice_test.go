@@ -24,27 +24,29 @@ func emitPersonaCall(w http.ResponseWriter, id, name string, args any) {
 func TestPersonaChangeByAskingAndUndoAcrossRestart(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request struct{ Input, Tools []json.RawMessage }
+		var request struct {
+			Input, Tools []json.RawMessage
+			Instructions string
+		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Error(err)
 			return
 		}
 		n := calls.Add(1)
-		if len(request.Input) < 6 {
-			t.Error("missing prepared persona layers")
-			emitResponse(w, "Failed.", true)
-			return
+		var persona struct {
+			Layers struct {
+				UserVoice string `json:"user_voice"`
+			} `json:"layers"`
 		}
-		var voice struct{ Role, Content string }
-		if err := json.Unmarshal(request.Input[3], &voice); err != nil {
+		if err := json.Unmarshal(instructionBlock(request.Instructions, "persona"), &persona); err != nil {
 			t.Error(err)
 		}
 		want := ""
 		if n >= 3 && n <= 5 {
 			want = "fixture casual voice"
 		}
-		if voice.Role != "developer" || voice.Content != want {
-			t.Errorf("request %d applied voice %q; want %q", n, voice.Content, want)
+		if persona.Layers.UserVoice != want {
+			t.Errorf("request %d applied voice %q; want %q", n, persona.Layers.UserVoice, want)
 		}
 		toolNames := map[string]bool{}
 		for _, raw := range request.Tools {

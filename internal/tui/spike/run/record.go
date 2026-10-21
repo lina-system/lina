@@ -131,6 +131,11 @@ func verdict(id string, values map[string]any) (string, error) {
 			a.atMost(p+"_resolve_ms", 200)
 			a.flag(p + "_supported")
 		}
+		for _, p := range []string{"sync", "grapheme"} {
+			if a.flag(p + "_timed_out") {
+				a.failed = true
+			}
+		}
 		if a.flag("reply_leaked") {
 			a.failed = true
 		}
@@ -165,16 +170,12 @@ func verdict(id string, values map[string]any) (string, error) {
 		a.atMost("peak_resident_mib", 80)
 		a.equals("window_items", 200)
 	case "S10":
-		if !a.flag("grapheme_supported") {
-			a.flag("glamour_wcwidth_aligned")
-			a.flag("own_wcwidth_aligned")
-			a.text("mitigation")
-			if a.err != nil {
-				return "", a.err
-			}
-			return "fail", nil
-		}
 		for _, mode := range []string{"wcwidth", "grapheme"} {
+			if !a.flag(mode + "_supported") {
+				a.text("mitigation")
+				a.failed = true
+				continue
+			}
 			glamour := a.flag("glamour_" + mode + "_aligned")
 			a.require("own_" + mode + "_aligned")
 			if !glamour {
@@ -199,12 +200,11 @@ func verdict(id string, values map[string]any) (string, error) {
 		if threshold < 100 || threshold > 140 || threshold != math.Trunc(threshold) {
 			a.failed = true
 		}
-		for _, w := range []int{100, 120, 140} {
-			a.flag(fmt.Sprintf("width_%d_usable", w))
-		}
-		a.require(fmt.Sprintf("width_%d_usable", int(threshold)))
-		if threshold > 100 && a.flag(fmt.Sprintf("width_%d_usable", int(threshold)-1)) {
-			a.failed = true
+		for w := 100; w <= 140; w++ {
+			usable := a.flag(fmt.Sprintf("width_%d_usable", w))
+			if usable != (float64(w) >= threshold) {
+				a.failed = true
+			}
 		}
 	default:
 		return "", errors.New("unknown scenario")
