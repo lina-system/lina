@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -101,6 +102,8 @@ type Config struct {
 	// Boot always supplies the durable main id, epoch and recovery state itself.
 	Client       clientsrv.Identity
 	Conversation *modelpath.ResponsesConfig
+	// SignInTransport is an in-process test seam; production uses the fixed issuer.
+	SignInTransport http.RoundTripper
 	// ClientManifest selects the build manifest containing supportedCombinations.
 	// An explicit path must exist and contain a valid table, including an empty
 	// table when every client combination is intentionally unsupported.
@@ -174,6 +177,12 @@ func Run(ctx context.Context, cfg Config) (result error) {
 				return err
 			}
 		}
+		// Once bind makes the socket connectable, finish retiring the previous
+		// socket and publishing ownership before honoring cancellation. Clearing
+		// the sentinel earlier could discard the previous socket's recovery path.
+		if step == SocketCreated || step == SocketBound {
+			return nil
+		}
 		return ctx.Err()
 	}
 	if err := boundary(RootValidated); err != nil {
@@ -206,7 +215,7 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	if err := boundary(ControlsRead); err != nil {
 		return err
 	}
-	ownsConversation := cfg.Conversation != nil
+	ownsConversation := cfg.Conversation != nil || cfg.Services.OpenCanon == nil
 	if !ownsConversation && cfg.Services.PeekEpoch == nil {
 		_, statErr := os.Lstat(conversationPath(cfg.StateRoot))
 		if statErr == nil {
@@ -217,6 +226,15 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	}
 	var highest uint64
 	if ownsConversation {
+		if _, statErr := os.Lstat(conversationPath(cfg.StateRoot)); errors.Is(statErr, os.ErrNotExist) {
+			entries, readErr := os.ReadDir(filepath.Dir(conversationPath(cfg.StateRoot)))
+			if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+				return readErr
+			}
+			if len(entries) != 0 {
+				return errors.New("existing canon requires a canon service")
+			}
+		}
 		highest, err = canon.PeekEpoch(ctx, conversationPath(cfg.StateRoot))
 	} else if cfg.Services.PeekEpoch != nil {
 		highest, err = cfg.Services.PeekEpoch(ctx)
@@ -279,14 +297,14 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		cfg.Services.Lifecycle(restarter)
 	}
 	var canon Canon
-	if ownsConversation {
-		runtime, openErr := startConversation(ctx, cfg.StateRoot, recovery.MainID, snapshot.Epoch, store, cfg.Conversation, activities)
+	if ownsConversation && len(recovery.Halt) == 0 {
+		runtime, openErr := startConversation(ctx, cfg.StateRoot, recovery.MainID, snapshot.Epoch, store, cfg.Conversation, activities, cfg.Client.PersonID, cfg.SignInTransport)
 		if openErr != nil {
 			return openErr
 		}
-		if cfg.Conversation != nil {
-			cfg.Client = runtime.identity
-		}
+		supported := cfg.Client.Supported
+		cfg.Client = runtime.identity
+		cfg.Client.Supported = supported
 		canon = runtime.db
 		stack = append(stack, runtime.Close)
 	} else if cfg.Services.OpenCanon != nil {
@@ -387,6 +405,11 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		}
 	})
 	if err := boundary(SocketsBound); err != nil {
+		// Ownership is now durable and the listener is on the shutdown stack.
+		// A signal here is an orderly stop, even before the first handshake.
+		if err == context.Canceled && ctx.Err() == context.Canceled {
+			return nil
+		}
 		return err
 	}
 	if cfg.Services.Reconcile != nil {

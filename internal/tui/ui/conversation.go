@@ -186,6 +186,15 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 			return nil
 		}
 		text := strings.TrimSpace(m.content.Draft.Text)
+		if handled, command := m.accountCommand(text); handled {
+			m.reduceInput(state.EditDraft{})
+			m.conversation.undo = nil
+			return command
+		}
+		if !m.hasCapability("conversation") {
+			m.accounts = accountView{open: true, code: "needs_sign_in"}
+			return nil
+		}
 		if text == "/stop" {
 			m.reduceInput(state.EditDraft{})
 			if m.content.TurnActive {
@@ -342,15 +351,18 @@ func (m *shellModel) pagerFind() {
 	}
 }
 
-func (m *shellModel) conversationContent() string {
+func (m *shellModel) conversationContent(showNotice bool) string {
 	plan := m.conversationPlan()
 	rows := make([]string, m.size.Height)
 	clip := func(s string) string { return ansi.Truncate(s, m.size.Width, "") }
 	status := m.styles.presentation(m.status)
-	rows[plan.Status.Y] = clip(status.Mark + " " + status.Label + "  Enter  Ctrl+D")
+	statusLine := status.Mark + " " + status.Label
 	if m.status.Cause != "" {
-		rows[plan.Status.Y] = clip(rows[plan.Status.Y] + " " + status.Detail)
+		statusLine += " " + status.Detail
+	} else if notice := m.localNotice(); showNotice && notice != "" {
+		statusLine += "  " + notice
 	}
+	rows[plan.Status.Y] = clip(statusLine + "  Enter  Ctrl+D")
 	if plan.Tier == layout.TooSmall {
 		if plan.Notice.Height > 0 {
 			rows[0] = clip(design.Text(m.styles.options.Language, "shell.too_small"))
@@ -374,6 +386,19 @@ func (m *shellModel) conversationContent() string {
 	rows[plan.Header.Y] = clip(m.styles.Title.Render(name))
 	var transcript []render.StyledRow
 	plainRow := func(text string) render.StyledRow { return render.StyledRow{Spans: []render.Span{{Text: text}}} }
+	if !m.hasCapability("conversation") {
+		code := "account.empty"
+		if !m.accountsKnown {
+			code = "account.loading"
+		}
+		for _, row := range m.accountRows {
+			if row.Status == "ok" {
+				code = "account.ready"
+				break
+			}
+		}
+		transcript = append(transcript, plainRow(design.Text(m.styles.options.Language, code)+"  /accounts"))
+	}
 	for _, b := range m.content.Blocks {
 		if b.Topic == "core" || b.Topic == "running" || b.Topic == "waiting" || b.Topic == "progress" || b.Kind == protocol.KindTurnState {
 			continue
@@ -400,17 +425,12 @@ func (m *shellModel) conversationContent() string {
 		}
 		rows[plan.Conversation.Y+y] = clip(m.styles.markdownRow(line))
 	}
-	drawTopic := func(topic string, region layout.Rect, unsupported string) {
-		if !m.hasCapability(topic) {
-			rows[region.Y] = clip(design.Text(m.styles.options.Language, unsupported))
+	drawTopic := func(topic string, region layout.Rect) {
+		if region.Height == 0 {
 			return
 		}
 		blocks := m.topicBlocks(topic)
 		label := design.Text(m.styles.options.Language, topic) + " " + strconv.Itoa(len(blocks))
-		if len(blocks) == 0 {
-			rows[region.Y] = clip(label)
-			return
-		}
 		for i := 0; i < region.Height && i < len(blocks); i++ {
 			rows[region.Y+i] = clip(label + "  " + blocks[i].Text)
 		}
@@ -418,8 +438,8 @@ func (m *shellModel) conversationContent() string {
 			rows[region.Y+region.Height-1] = clip(label + "  +" + strconv.Itoa(len(blocks)-region.Height+1))
 		}
 	}
-	drawTopic("running", plan.Running, "shell.running")
-	drawTopic("waiting", plan.Cards, "shell.cards")
+	drawTopic("running", plan.Running)
+	drawTopic("waiting", plan.Cards)
 	if plan.Attachments.Height > 0 {
 		rows[plan.Attachments.Y] = clip(strings.Join(m.content.Draft.Attachments, "  "))
 	}
