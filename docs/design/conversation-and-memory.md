@@ -47,6 +47,8 @@ It builds on these documents and does not repeat them:
 
 **Agent exchange.** A background conversation between exactly two agents, one that asks and one that answers, with no person turn. It is held in the conversation ledger and shown to the person as a log of one line per exchange.
 
+**Manager session.** The owning persona's long-lived agent thread for a managed 목표 or 일 (project). It accumulates project context across event-driven turns, with its parent role and lifecycle defined in [work-and-delegation.md](work-and-delegation.md#manager-session-lifecycle).
+
 **Speaker kind.** Who the content of a ledger event comes from, set by the path the input entered LINA: `person`, `agent`, `external_participant` (a human in a shared chat of an external channel who is not the paired owner), `automation`, `forwarded`, `system` or `tool`. It is separate from the role a model API gives a message ([Event fields](#event-fields)).
 
 **Summary tree.** The derived record of what each summary covers: its nodes cover exact ledger events and can be expanded back to them. The summary a request uses is the root of the tree ([Summary tree](#summary-tree)).
@@ -57,7 +59,7 @@ It builds on these documents and does not repeat them:
 
 **Legacy reference.** A source system's own key for something that was imported, such as an old message or summary node id. It resolves to the LINA record that holds the imported content.
 
-**Turn.** One input from the person and everything the agent does to answer it: preparation, model requests, tool calls and the delivered answer. A turn whose follow-up request stays at or above the compaction threshold after earlier turns are compacted continues in a continuation turn that answers the same input ([Compaction and resume](#compaction-and-resume)). A turn records the person id of the person whose input it answers and the agent id of the agent that answers it ([product-families.md](product-families.md)). A report turn is the one kind of turn that answers no input from the person: it answers a background notice, and it records the person the reported run was done for (see [Background results](#background-results)).
+**Turn.** One input from the person and everything the agent does to answer it: preparation, model requests, tool calls and the delivered answer. A turn whose follow-up request stays at or above the compaction threshold after earlier turns are compacted continues in a continuation turn that answers the same input ([Compaction and resume](#compaction-and-resume)). A turn records the person id of the person whose input it answers and the agent id of the agent that answers it ([product-families.md](product-families.md)). Report turns and manager turns answer no new input from the person: a report turn answers a background notice, and a manager turn answers its project's event batch. They record the person the work is done for without attributing the triggering input to that person (see [Background results](#background-results) and [Manager session context](#manager-session-context)).
 
 **Background run.** One execution of one of LINA's own sub-agents for one brief, started from a conversation and run in the background by LINA Core. Its record and rules are in [work-and-delegation.md](work-and-delegation.md#background-runs).
 
@@ -163,6 +165,16 @@ A result is the typed output of [host-protocol.md](host-protocol.md#typed-result
 - When the main conversation turns to a specific artifact, the agent moves to that artifact's thread and says so in one line; one action returns to the main conversation.
 - Between the threads of one agent, sourced facts, decisions and materials are shared, and the results of that agent's ledger search (see "Recall with evidence") read what was said in any of its threads, with their ledger event ids. A search result never becomes an instruction or an approval. Follow-up instructions, approvals, cancellations and control handovers are bound to the id of their target task or thread and never become permission anywhere else.
 - A conversation thread is not a work thread. Work threads belong to the work engine ([work-and-delegation.md](work-and-delegation.md)). How threads appear on screen is defined in [surfaces.md](surfaces.md).
+
+### Manager session context
+
+The manager session keeps one accumulating context per managed 목표 or 일, bound to its owning persona. LINA Core stores its inputs, agent turns, tool results and event receipts losslessly in the conversation ledger from the first turn. The work ledger remains canon for task state and verdicts; project context cites those records and never replaces them.
+
+- A project event resumes the same session. Core supplies the pending project events as one batch, and the manager reads current work and external state before acting. The session retains earlier briefs, decisions, deliveries and follow-ups through the ledger and its summary tree. Parallel fallback turns keep their event claims and source references, and their receipted results enter the manager's next turn ([work-and-delegation.md](work-and-delegation.md#manager-session-lifecycle)).
+- Compaction and resume use the lossless store and derived summaries under [Compaction and resume](#compaction-and-resume). Summaries expand back to original events, never erase them and follow the same retraction rules. For a manager turn the active input is the current event batch under the existing project delegation, not a new utterance by the person. Summary text alone never authorizes work. A code update restarts execution and resumes that context after Core reconciles in-flight effects.
+- Speaker kind comes from the trusted entry route, never the model's `user` role or prompt wording. Automated event batches and continuations retain their automation or system origin, manager replies are agent events, and worker reports retain their external origin. A forwarded instruction cites the original person's event without becoming another person turn.
+- Only the person's own turns can feed the person model. Manager prompts, event batches, worker reports, manager replies and their summaries are project context, never evidence of the person's preferences or statements. Verified work results may enter common knowledge under the existing work-result rules without becoming person-model evidence.
+- The person can read the session in the project's Details. This view supplies no input or approval; steering still comes through the person's conversation with its task or project binding.
 
 ### Channel conversations
 
@@ -349,7 +361,7 @@ Compaction is recorded as a ledger event that names its input range. It never de
 
 Every summary is written by an auxiliary reasoning request to the conversation model ([runtime.md](runtime.md)), whether it is prepared in the background or built when needed, so a prepared summary has the same quality as one built on the spot.
 
-The summary is a handoff for reference. It opens with a fixed note: the summary records earlier turns, the person's latest input is the active request, and work that appears only in the summary is not resumed unless the latest input asks for it.
+The summary is a handoff for reference. It opens with a fixed note: the summary records earlier turns, the person's latest input is the active request, and work that appears only in the summary is not resumed unless the latest input asks for it. In a manager session the note instead identifies the current project event batch and existing delegation as the active input; it never presents an automated event as the person's words (see Manager session context).
 
 The summary holds, in fixed sections, the person's requests that are still unanswered, the topics discussed and what was concluded on each, completed actions with their outcomes, and specific values that must not be lost, such as names, numbers, paths, result ids and quoted wording. Commitments, decisions and open state are not repeated in it, because the ContextPacket carries them every turn.
 
@@ -440,12 +452,12 @@ Core mechanisms it relies on: the to-do record and the candidate objects of [wor
 
 #### Development management (dev preset)
 
-Core mechanisms it relies on: the work engine's records, dispatch, delivery receipts, completion events and claims, protocol session state and recovery, quota and capacity readers, write-area overlap, the spawn-time capability check, the check against the work definition at merge, the source label on each stage summary and the running list. These are defined in [work-and-delegation.md](work-and-delegation.md); the splitting and parallel-flow rules there are not repeated here.
+Core mechanisms it relies on: the work engine's records, manager session lifecycle, dispatch and Node bids, delivery receipts, completion events and claims, protocol session state and recovery, quota and capacity readers, write-area overlap, the spawn-time capability check, merge execution, QA after each merge, the source label on each stage summary and the running list. The check against the work definition is the owning persona's judgment in its manager session. These are defined in [work-and-delegation.md](work-and-delegation.md); the splitting and parallel-flow rules there are not repeated here.
 
 1. The person sees a one-line status and, only when blocked, a decision card. The work definition, the pull request and the review text appear only on request.
 2. A work definition states what, why, scope, what not to touch (and who owns it), one done condition that a command or a CI job can check, the design reference (contract and section) and a declared write area. It contains no review procedure.
 3. Given a pile of old defects, first have an agent mark each as fixed, remaining or not reproducible, with evidence, then create the tasks.
-4. Treat agent reports as claims. A failing log from before the fix proves the test is real and is not a current failure. Every status line says where its facts come from: an agent report, GitHub (review and checks), LINA Core's check against the work definition, or unknown.
+4. Treat agent reports as claims. A failing log from before the fix proves the test is real and is not a current failure. Every status line says where its facts come from: an agent report, GitHub (review and checks), the manager's check against the work definition, or unknown.
 5. When the base moved, the authoring agent resolves its own conflicts on instruction; the operator does not edit.
 6. Never overwrite or delete a file the task did not create: move it aside, record it and report once.
 7. Merged is not live. Record "merged, not yet live" until the running instance has the change, and check its first run.
@@ -453,9 +465,9 @@ Core mechanisms it relies on: the work engine's records, dispatch, delivery rece
 9. Gates apply only to irreversible effects; elsewhere record and warn.
 10. For a developer user: write state changes when they happen; cancel obsolete items with a comment and never delete them; give requirement changes as correction notes, not body edits; batch fixes that fit the current 목표 instead of creating backlog entries.
 11. Any agent can file a tool or feature request; it becomes a work definition and the tool has an owner.
-12. The worker owns its pull request to green: it waits for CI and the review bots and fixes every CI failure and the P0 and P1 review findings once inside its turn before reporting done. LINA Core checks the done condition, scope and design reference at merge, then merges or closes; it sends work back only for a missed work definition, never for review or CI triage.
-13. Every task is making progress, waiting on a named thing with a deadline, or being recovered. Detect a dead or stalled worker from its protocol session, resume or restart it once in the same work area before escalation, and handle events for one 일 together so no coordinating thread builds a backlog.
-14. How to implement, split, join or interpret belongs to the worker and the agent that owns the work. LINA Core keeps the flow moving with start, reliable delivery and receipts, true state, recovery, merge on green and report; it puts no harness around the work.
+12. The per-task worker owns its pull request to green: it waits for CI and the review bots and fixes every CI failure and the P0 and P1 review findings once inside its turn before reporting done. The manager checks the done condition, scope and design reference at merge, then Core merges or closes; work goes back only for a missed work definition, never for review or CI triage.
+13. Every task is making progress, waiting on a named thing with a deadline, or being recovered. Core detects a dead or stalled worker from its protocol session and resumes or restarts it once in the same work area before escalation, preserving its review-fix record. It batches a project's events into one manager turn and uses parallel fallback past the busy wait limit.
+14. The owning persona works in one long-lived manager session per managed 목표 or 일. It chooses the next issues by dependencies and milestone order, writes briefs, starts stacked work on open predecessors when slots and write areas permit, checks deliveries, decides merges and files follow-ups. How to implement, split, join or interpret belongs to that persona and the worker. Core enforces permissions and keeps the flow moving with receipts, leases, Node bids, recovery, merge execution and QA after each merge; it puts no judgment in code.
 
 #### Knowledge and people management (knowledge preset)
 
@@ -634,6 +646,8 @@ Memory has two layers. Personal knowledge is held by one agent and known only to
 ### Person model
 
 LINA's model of the person is one store with several views. The store is the memory items and the ledger; the views are generated from them, so a view cannot drift from a second copy of itself.
+
+Only the person's own turns feed this model. A manager session's accumulating project context is separate: automated prompts, events, agent judgments, worker reports and summaries never become the person's words, regardless of the model message role used to carry them (see Manager session context).
 
 - **Standing profile.** The active items flagged `standing` that the conversation's agent can read, newest valid revision first, capped in lines and in tokens. Lachesis flags stable, undated facts and preferences about the person as `standing`, and the person can flag or unflag any item. A flag lapses when its item is no longer valid. The profile is rendered when a ContextPacket needs it and is not stored. How the person likes this agent to talk is a preference of that agent (item 6.2 of the request layout), not part of the profile.
 - **Conclusions with sources.** A conclusion about the person is a memory item whose evidence is ledger events. The same conclusion reached through two agents is one common item with two pieces of evidence, never a copy per agent. What two agents know differently comes from the holder.
