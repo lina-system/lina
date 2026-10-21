@@ -79,7 +79,10 @@ func TestCoreProcess(t *testing.T) {
 						welcome, ok := envelope.Payload.(protocol.Welcome)
 						want := protocol.Welcome{
 							ProtocolVersion: "1.0", MainID: "main-test", Epoch: epoch,
-							PersonID: "person-placeholder", Agents: []protocol.Agent{}, Capabilities: []protocol.Capability{},
+							PersonID: "person:main-test", Agents: welcome.Agents, Capabilities: []protocol.Capability{},
+						}
+						if len(welcome.Agents) != 1 || welcome.Agents[0].AgentID == "" {
+							t.Fatal("missing installed agent")
 						}
 						if !ok || envelope.Kind != protocol.KindWelcome || envelope.Error != nil || envelope.EffectState != protocol.EffectNone || !reflect.DeepEqual(welcome, want) {
 							t.Fatalf("unexpected welcome: %s", line)

@@ -146,6 +146,7 @@ The Korean acceptance corpus is `testdata/korean/search.json`: both stores asser
 **G1-15 Compaction, summary tree and raw recovery.** Compaction steps, continuation turn, summary tree, `expand`.
 - Done when: a failed summarizer publishes no node and the events stay in the request; a stale-frontier publish fails; `expand` returns the exact range of a fact stated before compaction; a continuation that does not fit sends nothing and logs sizes; a retraction rebuilds the node.
 - Depends on: G1-08, G1-10, G1-13, G1-14. Design refs: C-18; [conversation-and-memory.md](conversation-and-memory.md#compaction-and-resume).
+- #69 implements summary tables, exact coverage and single-parent checks, frontier/epoch-fenced publication, and atomic bottom-up rebuilding after retraction. Real SQLite scenarios cover concurrent changes, summarizer/storage failures, migration and reopen. This is a package API; request compaction, provider wiring, continuation and `expand` remain with their consuming flows, and no client/TUI scenario is introduced here.
 
 **G1-16 Skills written by agents, adopted at once, undone in one action.** Reversible-write check, notice, undo, index.
 - Done when: an instruction-only patch is adopted as a new version with a one-line notice after the commit; undo restores the previous text as a new version; a skill with executable code is not adopted this way; the index holds name and description and bodies load only when needed.
@@ -179,6 +180,7 @@ The Korean acceptance corpus is `testdata/korean/search.json`: both stores asser
 - Depends on: G1-12, G1-18, G1-19, G1-20, G1-35. Design refs: T-04, T-05, T-07, T-10, T-12, T-13, T-15.
 
 **G1-30 TUI memory, agent, account, channel and talk-log commands.** Memory, agent, account, import, channel and talk-log commands.
+- #112 connects installed Core's existing account service to the TUI. Synthetic PTY scenarios cover loopback and pasted redirects, account list and sign-out, and the no-account sign-in offer. Owner real-account validation remains #81.
 - Done when: a forget from the TUI gives zero hits in the next request; agent create, choose, rename and delete round-trip by id; a ChatGPT sign-in completes through the relay from the TUI, including a pasted URL; a channel connection is paired and bound from the TUI, and the agent talk log lists one line per exchange and expands it.
 - Depends on: G1-12, G1-13, G1-14, G1-16, G1-21, G1-25, G1-26, G1-31. Design refs: T-04, T-14, C-25, C-27, C-47.
 

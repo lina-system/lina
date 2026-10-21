@@ -75,9 +75,15 @@ func TestM1TUIConversationInstalledCore(t *testing.T) {
 		t.Fatal("no history snapshot")
 	}
 	terminal := h.startScreenTUI("TERM=xterm-256color", "COLORTERM=truecolor")
-	waitScreen(t, h, terminal, "Ctrl+D")
+	fresh := waitScreen(t, h, terminal, "Ctrl+D")
+	if text := screenText(fresh); strings.Contains(strings.ToLower(text), "unsupported") {
+		t.Fatalf("fresh install shows an unsupported placeholder: %s", text)
+	}
 	h.keys(terminal, scenario.Input+"\r")
 	snapshot := waitScreen(t, h, terminal, scenario.Reply)
+	if text := screenText(snapshot); strings.Contains(strings.ToLower(text), "unsupported") {
+		t.Fatalf("first exchange shows an unsupported placeholder: %s", text)
+	}
 	if !snapshot.AltScreen {
 		t.Fatal("conversation did not use the terminal renderer")
 	}

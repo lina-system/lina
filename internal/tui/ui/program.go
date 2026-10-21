@@ -21,7 +21,7 @@ import (
 
 // Offer only rendered families; the conversation discovers and maintains its
 // concrete conversation/results subscriptions after welcome.
-var shellCapabilities = []protocol.Capability{{Name: "conversation", Version: "1.0"}, {Name: "running", Version: "1.0"}, {Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}}
+var shellCapabilities = []protocol.Capability{{Name: "accounts", Version: "1.0"}, {Name: "sign_in_relay", Version: "1.0"}, {Name: "conversation", Version: "1.0"}, {Name: "running", Version: "1.0"}, {Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}}
 
 type clientPeer struct{ client *clientapi.Client }
 
@@ -112,6 +112,13 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 			<-done
 		}
 	}()
+	signin := &signInSession{ctx: ctx, model: model, remote: remoteTerminal(), open: openSignInBrowser, publish: func(flow context.Context, message tea.Msg) {
+		select {
+		case events <- programEvent{message: message, acknowledged: make(chan error, 1)}:
+		case <-flow.Done():
+		}
+	}}
+	defer signin.close()
 	var peer connectionPeer
 	pending := make(map[string]state.SendRequest)
 	var stopInput func() error
@@ -124,11 +131,15 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 	var handle func(tea.Msg) error
 	handle = func(message tea.Msg) error {
 		if begin, ok := message.(shellBegin); ok && begin.Generation > model.generation {
+			signin.close()
 			clear(pending)
 			model.conversation.id = ""
 		}
 		if attached, ok := message.(shellPeer); ok {
 			peer = attached.Peer
+			if client, ok := peer.(clientPeer); ok {
+				signin.peer = client.client
+			}
 			w := peer.Welcome()
 			envelope := protocol.Envelope{Protocol: protocol.Protocol{Name: "client", Version: "1.0"}, Kind: protocol.KindWelcome, MessageID: "local-welcome", AttemptID: "local-welcome", Sender: protocol.Sender{Party: protocol.PartyCore, ID: w.MainID}, Epoch: w.Epoch, SentAt: time.Now().UTC().Format(time.RFC3339Nano), EffectState: protocol.EffectNone, SourceRefs: []protocol.SourceRef{}, Payload: w}
 			data, err := json.Marshal(envelope)
@@ -139,7 +150,7 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 			if err := runShellCommand(cmd, handle); err != nil {
 				return err
 			}
-			if len(w.Capabilities) > 0 {
+			if model.hasCapability("conversation") || model.hasCapability("waiting") || model.hasCapability("running") || model.hasCapability("progress") {
 				if err := handle(shellSubscription{Generation: attached.Generation, Request: protocol.Subscribe{Topic: stringPointer("core")}}); err != nil {
 					return err
 				}
@@ -152,11 +163,16 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 					}
 				}
 			}
-			if model.hasCapability("conversation") {
+			if model.hasCapability("accounts") {
+				if err := signin.start(protocol.AccountRequest{Operation: stringPointer("list")}); err != nil {
+					return err
+				}
+			}
+			if model.hasComposer() {
 				if terminal && display.interactive && display.styles.options.Profile != Monochrome && display.renderer == nil {
 					display.renderer = startTerminalRenderer(parent, rawTerminalWriter{display.output}, model.size.Width, model.size.Height)
 				}
-				if client, ok := peer.(clientPeer); ok {
+				if client, ok := peer.(clientPeer); ok && model.hasCapability("conversation") {
 					_, err := client.client.History(ctx, protocol.HistoryGet{})
 					if err != nil {
 						return err
@@ -164,6 +180,12 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 				}
 			}
 			return nil
+		}
+		if consumed, err := signin.handle(message); consumed {
+			if err != nil {
+				return err
+			}
+			return display.showShell(model)
 		}
 		if effect, ok := message.(shellEffect); ok && effect.Generation == model.generation {
 			if client, ok := peer.(clientPeer); ok {
@@ -190,6 +212,12 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 				var decoder protocol.ClientDecoder
 				e, err := decoder.Decode(frame.Data)
 				if err == nil && e != nil {
+					if consumed, err := signin.response(*e); consumed {
+						if err != nil {
+							return err
+						}
+						return display.showShell(model)
+					}
 					if e.ReplyTo != nil {
 						if sent, ok := pending[*e.ReplyTo]; ok {
 							model.reduceInput(state.SendResult{Gen: sent.Gen, Key: sent.Key, Failed: e.Error != nil})
@@ -330,10 +358,12 @@ func (d *display) showShell(model *shellModel) error {
 	if err := d.showStatus(model.status); err != nil {
 		return err
 	}
-	if !d.interactive || len(model.content.Blocks) == 0 {
+	if !d.interactive || len(model.content.Blocks) == 0 && !model.hasComposer() && !model.accounts.open {
 		return nil
 	}
-	frame := model.View().Content
+	// Plain terminals already received each notice once above. Transcript
+	// refreshes must not append that same explanation again.
+	frame := model.viewContent(false)
 	if frame == d.frame {
 		return nil
 	}
