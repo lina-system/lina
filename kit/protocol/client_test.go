@@ -76,6 +76,11 @@ func concretePayloads() map[string]any {
 		"result_edit":       map[string]any{"result_id": "result-example", "base_revision": float64(1), "body": map[string]any{}},
 		"result_save":       map[string]any{"result_id": "result-example", "revision": float64(1), "destination": map[string]any{}},
 		"readiness_failure": map[string]any{"step": "preparation-example"},
+		"account_request":   map[string]any{"operation": "sign_in", "provider": "chatgpt", "purpose": "login"},
+		"account_result":    map[string]any{"operation": "sign_in", "account_id": "account-example", "status": "ok"},
+		"sign_in_listening": map[string]any{"port": float64(32123)},
+		"sign_in_open":      map[string]any{"url": "https://auth.openai.com/api/accounts/authorize?state=synthetic"},
+		"sign_in_redirect":  map[string]any{"code": "synthetic", "state": "synthetic"},
 	}
 }
 

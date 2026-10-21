@@ -18,5 +18,7 @@
   "receipt_ref": null,
   "source_refs": [],
   "error": null,
-  "payload": {}
+  "payload": {
+    "url": "http://127.0.0.1:32123/auth/callback?code=synthetic&state=synthetic&client_id=oaiapp_example"
+  }
 }

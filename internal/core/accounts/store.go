@@ -274,6 +274,21 @@ func (s *Store) Replace(ctx context.Context, id provider.AccountID, r Rotated) e
 	_, err := s.call(ctx, id, func(a Account) (provider.Credential, error) { return provider.Credential{}, s.replace(ctx, a, r) })
 	return err
 }
+
+// Refresh requests one serialized exchange for an explicitly selected account.
+// It is used after an authenticated rejection and by owner acceptance checks.
+func (s *Store) Refresh(ctx context.Context, id provider.AccountID) error {
+	_, err := s.call(ctx, id, func(a Account) (provider.Credential, error) {
+		if a.Status == NeedsSignIn {
+			return provider.Credential{}, failure(a.Status)
+		}
+		if a.Auth != provider.LoopbackOAuth {
+			return provider.Credential{}, ErrInvalid
+		}
+		return provider.Credential{}, s.rotate(a)
+	})
+	return err
+}
 func (s *Store) SetStatus(ctx context.Context, id provider.AccountID, status Status) error {
 	if !status.valid() {
 		return ErrInvalid

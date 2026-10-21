@@ -22,11 +22,14 @@ var (
 )
 
 type v1ResponsesReport struct {
-	CompletedTurns     int             `json:"completed_turns"`
-	EncryptedRoundTrip bool            `json:"encrypted_reasoning_round_trip"`
-	ParallelCalls      bool            `json:"parallel_tool_calls"`
-	ApplyPatch         bool            `json:"apply_patch_function"`
-	Fields             map[string]bool `json:"accepted_fields"`
+	CompletedTurns       int             `json:"completed_turns"`
+	EncryptedRoundTrip   bool            `json:"encrypted_reasoning_round_trip"`
+	ParallelCalls        bool            `json:"parallel_tool_calls"`
+	ApplyPatch           bool            `json:"apply_patch_function"`
+	Fields               map[string]bool `json:"accepted_fields"`
+	RequestFields        []string        `json:"accepted_request_fields"`
+	ToolDeclarations     json.RawMessage `json:"accepted_tool_declarations"`
+	StoreFalseStreamTrue bool            `json:"store_false_stream_true"`
 }
 
 var v1RequestFields = provider.FieldList{"model", "input", "store", "stream", "instructions", "reasoning", "include"}
@@ -46,6 +49,8 @@ func probeV1Responses(ctx context.Context, credential provider.Credential, model
 			return report, err
 		}
 		report.CompletedTurns++
+		report.StoreFalseStreamTrue = true
+		report.RequestFields = []string{"model", "input", "store", "stream", "include", "reasoning"}
 		report.Fields["include"] = true
 		encrypted := false
 		for _, item := range items {
@@ -82,6 +87,7 @@ func probeV1Responses(ctx context.Context, credential provider.Credential, model
 			}
 			report.ParallelCalls = seen["probe_echo"] && seen["apply_patch"]
 			report.ApplyPatch = seen["apply_patch"]
+			report.ToolDeclarations = json.RawMessage(v1Tools)
 			if !report.ParallelCalls {
 				return report, errV1Incomplete
 			}
@@ -103,6 +109,9 @@ func probeV1Responses(ctx context.Context, credential provider.Credential, model
 		accepted, err := probeV1Field(ctx, credential, model, field, value, transport)
 		if err == nil || errors.Is(err, errV1Rejected) {
 			report.Fields[field] = accepted
+			if accepted {
+				report.RequestFields = append(report.RequestFields, field)
+			}
 		}
 		if err != nil && !errors.Is(err, errV1Rejected) {
 			return report, err
