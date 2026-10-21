@@ -52,7 +52,6 @@ func newAdapterFixture(t *testing.T) *adapterFixture {
 		t.Fatal(err)
 	}
 	ms := canon.Migrations()
-	ms = append(ms, canon.Migration{Version: len(ms) + 1, SQL: channels.Schema}, canon.Migration{Version: len(ms) + 2, SQL: Schema})
 	db, err := canon.Open(t.Context(), canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: 7, Controls: ctl, Migrations: ms})
 	if err != nil {
 		t.Fatal(err)

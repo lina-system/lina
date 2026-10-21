@@ -29,7 +29,6 @@ func openAt(t *testing.T, root string, epoch uint64, extraSchemas ...string) *ca
 	}
 	t.Cleanup(func() { ctl.Close() })
 	migrations := canon.Migrations()
-	migrations = append(migrations, canon.Migration{Version: len(migrations) + 1, SQL: exchange.Schema})
 	for _, schema := range extraSchemas {
 		migrations = append(migrations, canon.Migration{Version: len(migrations) + 1, SQL: schema})
 	}

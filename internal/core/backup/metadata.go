@@ -2,7 +2,7 @@
 package backup
 
 import (
-	"bytes"
+	"bufio"
 	"compress/zlib"
 	"context"
 	"crypto/sha1" // Git object identity, not an authorization primitive.
@@ -221,20 +221,33 @@ func verifyCommit(ctx context.Context, root *os.Root, dir, head string) error {
 		return err
 	}
 	defer reader.Close()
-	raw, err := io.ReadAll(io.LimitReader(contextReader{ctx, reader}, (1<<20)+1))
+	// Only the Git header needs buffering. Persona commit bodies have no size
+	// limit at creation, so hash them incrementally using their declared length.
+	buffered := bufio.NewReaderSize(contextReader{ctx, reader}, 64)
+	header, err := buffered.ReadSlice(0)
 	if err != nil {
 		return err
 	}
-	if len(raw) > 1<<20 {
+	size, err := strconv.ParseInt(strings.TrimSuffix(strings.TrimPrefix(string(header), "commit "), "\x00"), 10, 64)
+	if err != nil || size < 0 || string(header) != "commit "+strconv.FormatInt(size, 10)+"\x00" {
 		return ErrInvalid
 	}
-	digest := sha1.Sum(raw)
-	if hex.EncodeToString(digest[:]) != head {
+	digest := sha1.New()
+	digest.Write(header)
+	if _, err := io.CopyN(digest, buffered, size); err != nil {
+		return err
+	}
+	// Reading through EOF also verifies zlib's checksum and rejects extra bytes.
+	if _, err := buffered.ReadByte(); err == nil {
+		return ErrInvalid
+	} else if !errors.Is(err, io.EOF) {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if hex.EncodeToString(digest.Sum(nil)) != head {
 		return ErrHashMismatch
-	}
-	header, body, ok := bytes.Cut(raw, []byte{0})
-	if !ok || string(header) != "commit "+strconv.Itoa(len(body)) {
-		return ErrInvalid
 	}
 	return nil
 }

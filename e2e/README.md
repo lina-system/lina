@@ -6,8 +6,9 @@ native Linux and macOS pseudo-terminals; it needs no window, display server,
 provider account, external network service or human input. Conversation screens
 use the pinned terminal library and a VT emulator.
 
-The scenario builds `lina`, starts real Core with a synthetic installed identity
-and a private temporary state root, and connects a generated-type JSON-RPC client
+The suite builds each command once per test run and removes the shared binaries
+after all scenarios finish. Each scenario starts real Core with a synthetic
+installed identity and a private temporary state root, and connects a generated-type JSON-RPC client
 to its Unix socket. A second process runs real `lina tui` with a controlling PTY
 at 80 by 24 cells. The script waits for the `live` connection-state code, sends an
 `input` request through the protocol client, checks the correlated
@@ -72,9 +73,11 @@ process creation in test files follows the architecture rule for command
 acceptance harnesses. Future milestones can add scenario files here; new
 subpackages under `e2e/` are also covered by the registered package pattern.
 
-- State, environment and processes are isolated per scenario. Builds share only
-  Go caches and tool locations; product processes receive no inherited account,
-  provider, display or user configuration environment. All fixtures are synthetic.
+- State, environment and processes are isolated per scenario. Scenarios share
+  immutable command binaries built from the current source; installation tests
+  copy them into private bundles. Builds inherit only Go caches and tool locations;
+  product processes receive no inherited account, provider, display or user
+  configuration environment. All fixtures are synthetic.
 - Readiness comes from socket connections and protocol/terminal observations.
   Socket startup retries are bounded; there are no fixed sleeps. A recovering
   Core may explicitly refuse an input probe as `unavailable`; only that refusal
