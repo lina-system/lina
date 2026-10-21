@@ -32,7 +32,7 @@ func TestM1ReplayExportInstalledCore(t *testing.T) {
 	var mu sync.Mutex
 	var instructions []string
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
+		call := calls.Add(1)
 		var request struct{ Instructions string }
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Error(err)
@@ -40,7 +40,11 @@ func TestM1ReplayExportInstalledCore(t *testing.T) {
 		mu.Lock()
 		instructions = append(instructions, request.Instructions)
 		mu.Unlock()
-		emitResponse(w, scenario.Reply, true)
+		reply := scenario.Reply
+		if call == 1 {
+			reply += "\n" + strings.Repeat("Synthetic detail.\n", 100)
+		}
+		emitResponse(w, reply, true)
 	}))
 	defer provider.Close()
 	h, _ := installedConversationHarness(t, provider.URL)
@@ -143,6 +147,11 @@ func TestM1ReplayExportInstalledCore(t *testing.T) {
 	}
 	if ep.Input.Text != large {
 		t.Fatal("large material-backed input lost")
+	}
+	for _, ref := range ep.Evidence.Assembly.History {
+		if strings.HasPrefix(ref.ID, "result:") {
+			t.Fatal("generated result card entered request assembly evidence")
+		}
 	}
 	if !strings.Contains(string(data), scenario.Input) || ep.Input.ID == "" || len(ep.Evidence.Assembly.History) == 0 {
 		t.Fatal("export lost original evidence")

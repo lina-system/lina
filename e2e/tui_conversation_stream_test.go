@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -171,6 +172,7 @@ func TestM1TUIConversationStream(t *testing.T) {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
+	quitVerified := false
 	go func() {
 		conn, err := listener.Accept()
 		if err == nil {
@@ -181,7 +183,13 @@ func TestM1TUIConversationStream(t *testing.T) {
 	t.Cleanup(func() {
 		cancel()
 		listener.Close()
-		if err := <-done; !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) {
+		err := <-done
+		// A verified quit may close with unread duplicate/idle notifications.
+		// Unix sockets can report that close as reset instead of EOF.
+		if quitVerified && errors.Is(err, syscall.ECONNRESET) {
+			return
+		}
+		if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) {
 			t.Errorf("scripted conversation: %v", err)
 		}
 	})
@@ -198,4 +206,5 @@ func TestM1TUIConversationStream(t *testing.T) {
 	h.keys(terminal, "\x04")
 	terminal.process.wait(t, 0)
 	h.expectTerminalRestored(terminal)
+	quitVerified = true
 }

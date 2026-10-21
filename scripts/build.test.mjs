@@ -7,8 +7,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { sandbox } from './test-fixture.mjs';
-import { componentsTimeoutMs, createGoContext, execute } from './verify/check-components.mjs';
-import { build } from './build.mjs';
+import { createGoContext, execute } from './verify/check-components.mjs';
+import { build, buildTimeoutMs } from './build.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -33,8 +33,8 @@ function fixture(t, { timeoutScale = 1, executeCommand = execute } = {}) {
   t.after(context.close);
   const out = join(sb.dir, 'artifacts with spaces');
   // A full cross-build contains multiple Go commands. Share the same bounded
-  // allowance across targets, inside foundation's shared automation watchdog.
-  const deadline = performance.now() + (componentsTimeoutMs - 5000) * timeoutScale;
+  // allowance across targets, inside foundation's 600 s automation watchdog.
+  const deadline = performance.now() + buildTimeoutMs * timeoutScale;
   const run = (args = ['--out', out]) => {
     const timeoutMs = Math.max(1, Math.floor(deadline - performance.now()));
     return executeCommand(process.execPath,
@@ -65,7 +65,7 @@ test('a progressing cross-build can outlive the old per-command limit', t => {
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /compiling[\s\S]*finished/);
   }
-  const initial = componentsTimeoutMs - 5000;
+  const initial = buildTimeoutMs;
   assert.deepEqual(budgets, [[initial, initial - 1000], [initial - 150_000, initial - 151_000]]);
 });
 
@@ -101,7 +101,7 @@ test('cold inner Go compilations share the build deadline and can exceed 120 sec
         ? (args.includes('./internal/core/manifest/clientinfo') ? '[]' : '{}') : '', stderr: '' };
     } });
   assert.equal(manifest.target, 'darwin/arm64');
-  assert.deepEqual(budgets, [componentsTimeoutMs - 5000, componentsTimeoutMs - 155_000]);
+  assert.deepEqual(budgets, [buildTimeoutMs, buildTimeoutMs - 150_000]);
 });
 
 test('an exhausted build deadline stops before another Go command starts', t => {
