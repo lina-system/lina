@@ -224,6 +224,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 - Depends on: G1-10, G1-17, G1-29. Design refs: C-51, C-52, CP-05; [conversation-and-memory.md](conversation-and-memory.md#reply-shape).
 
 **G1-35 Waiting list, running list and notices.** Waiting rows, running list, notices at turn boundaries.
+- The Core implementation supplies canonical approval and run-input producers, run/task projections, attributed answers, and a durable lane outbox that writes system evidence at delivery. Its isolated scenarios are `e2e/m1/waiting-running-notices.json` and `e2e/m1/run-landing-notice.json`; client waiting/running payloads and TUI rendering remain reserved for their surface implementation.
 - Done when: rows rank in the contract order on a fixture; the source is re-read before a row shows; a notice is never delivered while a reply streams; notices within 10 s coalesce; answering a row records the decision with person and agent.
 - Depends on: G1-05, G1-11, G1-33. Design refs: C-55; [surfaces.md](surfaces.md#waiting-for-me).
 
