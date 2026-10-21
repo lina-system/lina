@@ -5,9 +5,50 @@ package ui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/lina/internal/design"
+	"github.com/thisisjun786/lina/kit/protocol"
 )
+
+func TestConnectionCauseAndRetryMetadata(t *testing.T) {
+	styles := NewStyles(Options{Profile: Monochrome, Language: design.Korean, Width: 100})
+	for _, code := range []protocol.ErrorCode{protocol.ErrorUnavailable, protocol.ErrorUnsupportedCombination, protocol.ErrorNotAuthorized} {
+		status := ConnectionStatus{State: Refused, Cause: code}
+		view := styles.presentation(status)
+		if !strings.Contains(view.Detail, string(code)) || !strings.Contains(view.Detail, design.Text(design.Korean, string(code))) {
+			t.Fatal("typed cause missing")
+		}
+	}
+	view := styles.presentation(ConnectionStatus{State: Retrying, Attempt: 3, NextTry: 2 * time.Second})
+	if !strings.Contains(view.Detail, "3") || !strings.Contains(view.Detail, "2s") {
+		t.Fatal("retry metadata missing")
+	}
+	view = styles.presentation(ConnectionStatus{State: Failed, Cause: "\x1b]52;bad\a"})
+	if strings.ContainsAny(view.Detail, "\x1b\a") || strings.Contains(view.Detail, "52;") {
+		t.Fatal("unknown cause exposed")
+	}
+	var output strings.Builder
+	d := display{output: &output, styles: styles, interactive: true}
+	first := ConnectionStatus{State: Refused, Cause: protocol.ErrorUnavailable}
+	if err := d.showStatus(first); err != nil {
+		t.Fatal(err)
+	}
+	n := output.Len()
+	if err := d.showStatus(first); err != nil {
+		t.Fatal(err)
+	}
+	if output.Len() != n {
+		t.Fatal("unchanged status wrote bytes")
+	}
+	first.Cause = protocol.ErrorNotAuthorized
+	if err := d.showStatus(first); err != nil {
+		t.Fatal(err)
+	}
+	if output.Len() == n {
+		t.Fatal("changed cause did not refresh")
+	}
+}
 
 func TestConnectionCatalogAndReadOnlyStates(t *testing.T) {
 	seen := map[string]bool{}

@@ -16,7 +16,7 @@ type display struct {
 	styles      Styles
 	interactive bool
 	rows        int
-	last        Connection
+	last        ConnectionStatus
 	shown       bool
 }
 
@@ -35,29 +35,33 @@ func newDisplay(output io.Writer) *display {
 	return d
 }
 
-func (d *display) show(state Connection) (err error) {
-	if d.shown && d.last == state {
+func (d *display) show(state Connection) error {
+	return d.showStatus(ConnectionStatus{State: state})
+}
+
+func (d *display) showStatus(status ConnectionStatus) (err error) {
+	if d.shown && d.last == status {
 		return nil
 	}
 	defer func() {
 		if err == nil {
-			d.last, d.shown = state, true
+			d.last, d.shown = status, true
 		}
 	}()
 	if !d.interactive {
-		if state == Live {
+		if status.State == Live {
 			_, err := fmt.Fprintln(d.output, "live")
 			return err
 		}
 		return nil
 	}
-	frame := d.styles.Screen(state)
+	frame := d.styles.ScreenStatus(status)
 	rows := strings.Count(frame, "\n")
 	// NO_COLOR emits no escapes at all. After the initial brand panel, append
 	// only the new labelled state so a monochrome transcript remains compact.
 	if d.rows > 0 {
 		if d.styles.options.Profile == Monochrome {
-			v := localizedConnectionView(state, d.styles.tokens, d.styles.options.ASCII, d.styles.options.Language)
+			v := d.styles.presentation(status)
 			gutter := strings.Repeat(" ", d.styles.tokens.SpaceGutter.Cells)
 			text := gutter + v.Mark + " " + v.Label + "\n" + gutter + v.Detail
 			if v.Action != "" {

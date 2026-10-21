@@ -9,8 +9,11 @@ import (
 	"context"
 	"errors"
 	"io"
+	"time"
 
 	"github.com/thisisjun786/lina/internal/clientapi"
+	"github.com/thisisjun786/lina/internal/tui/term"
+	"github.com/thisisjun786/lina/kit/protocol"
 )
 
 // Run reports live only after Core welcomes the connection. q or EOF closes
@@ -23,14 +26,17 @@ func Run(ctx context.Context, socket, productVersion string, input io.Reader, ou
 	client, err := clientapi.Dial(ctx, socket, productVersion)
 	if err != nil {
 		state := Failed
+		cause := protocol.ErrorMalformed
 		var refusal *clientapi.Refusal
 		switch {
 		case errors.Is(err, clientapi.ErrUnavailable):
 			state = Stopped
+			cause = protocol.ErrorUnavailable
 		case errors.As(err, &refusal):
 			state = Refused
+			cause = refusal.Cause.Code
 		}
-		if writeErr := display.show(state); writeErr != nil {
+		if writeErr := display.showStatus(ConnectionStatus{State: state, Cause: cause}); writeErr != nil {
 			return errors.Join(err, writeErr)
 		}
 		return err
@@ -40,6 +46,7 @@ func Run(ctx context.Context, socket, productVersion string, input io.Reader, ou
 		return err
 	}
 	reader := bufio.NewReader(input)
+	var gate term.Gate
 	for {
 		key, err := reader.ReadByte()
 		if errors.Is(err, io.EOF) {
@@ -48,7 +55,7 @@ func Run(ctx context.Context, socket, productVersion string, input io.Reader, ou
 		if err != nil {
 			return err
 		}
-		if key == 'q' {
+		if gate.Admit(term.Key{Name: string(key)}, term.Toggle, time.Now()) && key == 'q' {
 			return display.show(Quit)
 		}
 	}

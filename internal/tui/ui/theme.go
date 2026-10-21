@@ -159,8 +159,12 @@ func NewStyles(options Options) Styles {
 
 // Screen keeps a single reading edge, a small mark and one active action.
 func (s Styles) Screen(state Connection) string {
+	return s.ScreenStatus(ConnectionStatus{State: state})
+}
+
+func (s Styles) ScreenStatus(connection ConnectionStatus) string {
 	t := s.tokens
-	view := localizedConnectionView(state, t, s.options.ASCII, s.options.Language)
+	view := s.presentation(connection)
 	mark, rule, action := t.GlyphUnicodeMark, t.GlyphUnicodeRule, t.GlyphUnicodeAction
 	if s.options.ASCII {
 		mark, rule, action = t.GlyphAsciiMark, t.GlyphAsciiRule, t.GlyphAsciiAction

@@ -168,4 +168,6 @@ var catalog = map[string]translation{
 	"connection.unknown":        {"The connection state is unknown.", "연결 상태를 알 수 없습니다."},
 	"action.quit":               {"q  Quit", "q  종료"},
 	"action.quit_line":          {"q + Enter  Quit", "q + Enter  종료"},
+	"connection.attempt":        {"Attempt", "시도"},
+	"connection.next_try":       {"Next try in", "다음 시도까지"},
 }
