@@ -190,6 +190,7 @@ The Korean acceptance corpus is `testdata/korean/search.json`: both stores asser
 **G1-23 Install.** `lina install`: state root, services, adapter files, tool discovery.
 - Done when: install succeeds with no account and the first preparation fails with a plain cause and the sign-in offer; a foreign unit or an occupied port is refused and nothing is overwritten; versions of discovered tools are recorded and unverified ones listed.
 - Depends on: G1-02, G1-06, G1-08. Design refs: C-01, C-02; [runtime.md](runtime.md#the-lina-command).
+- #91 adds verified bundle installation, private state and identity creation, systemd user units, optional adapter/worker artifacts and bounded tool discovery. The install scenario launches the actual installed Core command, checks its identity through the protocol and connects the TUI. A package integration exercises G1-10 preparation after account-free installation: the account step fails with its sign-in offer and no provider request. The current client protocol still reserves conversation/account operations; this is not evidence of a completed sign-in or model conversation. Automated service registration uses a scripted manager; the real systemd parser validates the generated units.
 
 **G1-24 Restart request and fence.** Durable request, Fence, `when_idle`, `drain`, exit 75.
 - Done when: a request does not exit while a fake effect is in flight; unknown idle blocks; a request survives a crash and reports owed until discharged; a restore cannot resurrect it; a settings, persona or binding change mints no epoch.
