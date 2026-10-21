@@ -27,6 +27,7 @@ func Migrations() []Migration {
 		{Version: 13, SQL: TurnControlSchema},
 		{Version: 14, SQL: TurnOutcomeSchema},
 		{Version: 15, SQL: compactionSchema},
+		{Version: 16, SQL: AccountSignInSchema},
 	}
 }
 
@@ -53,6 +54,7 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 		table   string
 	}{
 		{11, "retract_meta"}, {12, "turn_runs"}, {12, "turn_items"}, {12, "turn_calls"}, {12, "turn_partials"}, {13, "turn_control"}, {14, "turn_outcome"}, {15, "sum_node"}, {15, "sum_edge"}, {15, "sum_cover"},
+		{16, "owner_binding"}, {16, "sign_in_host"}, {16, "sign_in_identities"},
 	} {
 		var count int
 		if err = db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name=?", entry.table).Scan(&count); err != nil {

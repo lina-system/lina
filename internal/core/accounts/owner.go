@@ -19,12 +19,7 @@ var (
 
 // OwnerBindingSchema belongs in a numbered canon migration. Provider accounts
 // have independent lifetimes; removing one must never remove this binding.
-const OwnerBindingSchema = `CREATE TABLE owner_binding (
-	singleton INTEGER PRIMARY KEY CHECK (singleton=1),
-	person TEXT NOT NULL CHECK (length(person)>0),
-	issuer TEXT NOT NULL CHECK (length(issuer)>0),
-	subject TEXT NOT NULL CHECK (length(subject)>0)
-);`
+const OwnerBindingSchema = canon.AccountOwnerBindingSchema
 
 type OwnerBinding struct{ Person, Issuer, Subject string }
 
