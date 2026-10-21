@@ -22,7 +22,7 @@ function fixture(t, { timeoutScale = 1, executeCommand = execute } = {}) {
   const cwd = join(sb.dir, 'source');
   mkdirSync(cwd);
   for (const name of ['cmd/lina', 'cmd/lina-node', 'internal/buildinfo', 'kit', 'go.mod', 'go.sum', 'go.work',
-    'internal/core', 'internal/clientapi', 'internal/design', 'internal/tui', 'persona', 'packaging', 'scripts/build.mjs', 'scripts/git.mjs', 'scripts/verify/check-components.mjs']) {
+    'internal/core', 'internal/clientapi', 'internal/design', 'internal/tui', 'internal/moirai/jobapi', 'persona', 'packaging', 'scripts/build.mjs', 'scripts/git.mjs', 'scripts/verify/check-components.mjs']) {
     if (!existsSync(join(root, name))) continue;
     mkdirSync(dirname(join(cwd, name)), { recursive: true });
     cpSync(join(root, name), join(cwd, name), { recursive: true });
@@ -215,7 +215,7 @@ test('clean builds record hashes and the same commit and metadata as both versio
     assert.equal(manifest.kitVersion, Number(readFileSync(join(f.cwd, 'kit/VERSION'), 'utf8')));
     const platform = spawnSync('go', ['env', 'GOOS', 'GOARCH'], { cwd: f.cwd, env: f.env, encoding: 'utf8' }).stdout.trim().split(/\r?\n/).join('/');
     assert.deepEqual(manifest.supportedCombinations, [{ connection: 'client', peer: 'lina-tui', platform,
-      protocolVersion: '1.0', capabilities: [{ name: 'accounts', version: '1.0' }, { name: 'sign_in_relay', version: '1.0' }, { name: 'lifecycle', version: '1.0' }, { name: 'conversation', version: '1.0' }], evidence: ['go test ./kit/protocol/conformance', 'go test ./e2e -run TestPlannedRestart', 'go test ./e2e -run TestM1TUIConversationInstalledCore', 'go test ./e2e -run TestM1TUIAccountsInstalledCore'] }]);
+      protocolVersion: '1.0', capabilities: [{ name: 'accounts', version: '1.0' }, { name: 'sign_in_relay', version: '1.0' }, { name: 'lifecycle', version: '1.0' }, { name: 'conversation', version: '1.0' }, { name: 'growth', version: '1.0' }], evidence: ['go test ./kit/protocol/conformance', 'go test ./e2e -run TestPlannedRestart', 'go test ./e2e -run TestM1TUIConversationInstalledCore', 'go test ./e2e -run TestM1TUIAccountsInstalledCore', 'go test ./e2e -run TestM2InstalledPersonaGrowth'] }]);
     const module = JSON.parse(spawnSync('go', ['list', '-m', '-json', 'github.com/ncruces/go-sqlite3'], {
       cwd: f.cwd, env: f.env, encoding: 'utf8',
     }).stdout);
