@@ -4,5 +4,5 @@ package canon
 // Migrations returns the ordered application schema. Published versions stay
 // fixed; new table groups append a migration in integration order.
 func Migrations() []Migration {
-	return []Migration{{Version: 1, SQL: schemaAssets}}
+	return []Migration{{Version: 1, SQL: schemaAssets}, {Version: 2, SQL: authorityEffectsSchema}, {Version: 3, SQL: authorityApprovalsSchema}}
 }
