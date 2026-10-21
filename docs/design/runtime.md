@@ -581,6 +581,8 @@ Every external dependency, vendored source and bundled binary follows [dependenc
 
 LINA OS composes pinned artifacts. Replacing the OS and migrating or rolling back state schemas are separate operations.
 
+Core's restart request is durable in `system/core/lifecycle.json`, outside every backup generation. `when_idle` continues admitting work while waiting; explicit `drain` closes admission and waits for existing effects, streams and read-only calls. Both use the admission fence in [C-05–C-07](go-core.md#start-recovery-idle-and-update), and Unknown activity blocks both. No timeout forces a restart. A successful fence durably records commitment before orderly shutdown and planned exit 75. The request remains owed across a crash until a later epoch reaches READY and records discharge; a crash before commitment leaves the request pending for another safe attempt. Restore leaves the control record alone. Changes to settings, persona and bindings do not request restart or advance the epoch.
+
 An update runs in this order:
 
 1. Drain: settle in-flight effects and record any whose outcome is unknown.
