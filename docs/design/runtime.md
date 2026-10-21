@@ -124,6 +124,8 @@ The lane's steering and stop controls target only its active turn. Steering is c
 
 For a turn bound to its input ledger event, the stop or restart interruption is one plain system line in that conversation. The ledger append and terminal turn state commit together, so a failed append leaves recovery retryable. Recovery after a process kill closes open calls, keeps completed receipts, records the restart line once and never reissues the accepted input. The surface and speaking agent come from the durable input event. This is exercised through the real lane, turn store, ledger and a killed child process; client conversation routing remains with the client-service increment.
 
+When a streaming reply is stopped, its visible partials in the existing turn store commit with the aborted state and interruption line through the same atomic completion transaction as successful replies. Core seals the streamed block identities from that stored outcome and restores them before the interruption line after a restart. These partials are masked before storage and remain display-only aborted history, outside subsequent model requests. A failed terminal transaction cannot acknowledge a durable stop. The installed Core and headless TUI scenario `e2e/m1/tui-interrupted-reply.json` checks Esc, client reopen, graceful and forced Core restart, and no model request replay.
+
 The #55 tests exercise the loop with the Responses adapter over a scripted HTTP wire and reopen SQLite at interruption boundaries. Live provider access is not part of those tests. This increment has no client-protocol or TUI entry point; admission routing, startup composition and notifications remain with their consuming flows.
 
 

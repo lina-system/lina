@@ -33,6 +33,19 @@ the exact enabled tool list. It checks request assembly, not model compliance
 with the persona. The current boot conversation has no connected executors,
 so its enabled list is explicitly empty.
 
+`m1/tui-interrupted-reply.json` holds a loopback Responses stream after one delta,
+stops it with Esc in the installed TUI, reopens the TUI, and restarts installed
+Core both gracefully and forcibly while that TUI reconnects. Stored snapshots
+and terminal cells must retain the partial and its stopped outcome exactly once.
+Provider call counts rule out restart replay; an explicit follow-up checks that
+aborted partial text stays outside model context.
+
+`m1/tui-stopped-order.json` stops a held Responses stream with `/stop`, completes
+a second turn, and keeps the 120x60 TUI open across an installed Core restart.
+The stopped outcome must remain between the first input and the second input
+after reconnect, a resize to 121x60 and a fresh TUI. A direct Core snapshot checks
+the authoritative order independently; exactly two provider calls rule out replay.
+
 `m1/tui-resize.json` exercises the colour conversation screen at 80x24, then
 40x12 and 120x35 through PTY resize signals. It retains a synthetic draft,
 checks header, status and composer, and compares all rows and the cursor with
