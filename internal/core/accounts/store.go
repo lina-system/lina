@@ -41,11 +41,12 @@ func (s Status) valid() bool {
 }
 
 var (
-	ErrInvalid  = errors.New("invalid_account")
-	ErrNotFound = errors.New("account_not_found")
-	ErrConflict = errors.New("account_conflict")
-	ErrStorage  = errors.New("account_storage_failed")
-	ErrClosed   = errors.New("account_store_closed")
+	ErrInvalid     = errors.New("invalid_account")
+	ErrNotFound    = errors.New("account_not_found")
+	ErrConflict    = errors.New("account_conflict")
+	ErrStorage     = errors.New("account_storage_failed")
+	ErrUnavailable = errors.New("account_credentials_unavailable")
+	ErrClosed      = errors.New("account_store_closed")
 )
 
 type PlanRef struct{ Name, Source string }
@@ -62,6 +63,8 @@ type Account struct {
 	Plan                          *PlanRef
 }
 type Rotated struct {
+	// Scopes is the verified grant; nil retains the existing scopes.
+	Scopes                        []string
 	Tokens                        secrets.Tokens
 	AccessExpires, RefreshExpires *time.Time
 }
@@ -123,9 +126,9 @@ func Open(ctx context.Context, db *canon.Store, vault *secrets.Store, refresh Re
 }
 func (s *Store) Close() {
 	s.closeOnce.Do(func() {
+		s.cancel()
 		s.mu.Lock()
 		s.closed = true
-		s.cancel()
 		s.mu.Unlock()
 		s.wg.Wait()
 		owners.Delete(s.db)
@@ -242,25 +245,45 @@ func validRotation(a Account, r Rotated, now time.Time) bool {
 	return (r.AccessExpires == nil || r.AccessExpires.After(now)) && (r.RefreshExpires == nil || r.RefreshExpires.After(now))
 }
 func (s *Store) replace(ctx context.Context, a Account, r Rotated) error {
+	ctx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(s.ctx, cancel)
+	defer stop()
+	defer cancel()
 	if !validRotation(a, r, s.now()) {
 		return ErrInvalid
 	}
-	a.Status = NeedsSignIn
-	if err := s.save(ctx, a); err != nil {
-		return err
+	if a.Auth == provider.ObservedCLILogin {
+		return s.finish(ctx, a, r, OK)
 	}
-	if a.Auth != provider.ObservedCLILogin {
-		if err := s.vault.PutTokens(key(a), r.Tokens); err != nil {
-			return ErrStorage
+	var metadataErr error
+	err := s.vault.ReplaceTokens(ctx, key(a), r.Tokens, func() error {
+		a.Status = NeedsSignIn
+		metadataErr = s.save(s.ctx, a)
+		return metadataErr
+	}, func() error {
+		metadataErr = s.finish(s.ctx, a, r, OK)
+		return metadataErr
+	})
+	if metadataErr != nil {
+		return metadataErr
+	}
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
 		}
+		return ErrUnavailable
 	}
-	return s.finish(ctx, a, r, OK)
+	return nil
 }
+
 func (s *Store) finish(ctx context.Context, a Account, r Rotated, status Status) error {
 	a.AccessExpires = r.AccessExpires
 	a.RefreshExpires = r.RefreshExpires
 	a.LastSuccess = s.now()
 	a.Status = status
+	if r.Scopes != nil {
+		a.Scopes = slices.Clone(r.Scopes)
+	}
 	if a.Provider == provider.ChatGPT && a.Auth == provider.LoopbackOAuth && !slices.Contains(a.Scopes, "chatgpt.tokens.use.direct") {
 		a.Status = NotEligible
 	}
@@ -321,9 +344,15 @@ func (s *Store) Credential(ctx context.Context, id provider.AccountID) (provider
 			if err != nil {
 				return provider.Credential{}, err
 			}
+			if err := failure(a.Status); err != nil {
+				return provider.Credential{}, err
+			}
 		}
 		tokens, err := s.vault.GetTokens(key(a))
 		if err != nil {
+			if err != secrets.ErrNotFound && err != secrets.ErrInvalid {
+				return provider.Credential{}, ErrUnavailable
+			}
 			a.Status = NeedsSignIn
 			if err := s.save(s.ctx, a); err != nil {
 				return provider.Credential{}, err

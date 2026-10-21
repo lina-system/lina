@@ -109,3 +109,29 @@ func TestRotationReservationBlocksMutationsAndReleasesOnCancellation(t *testing.
 		end()
 	})
 }
+
+func TestReplacementKeepsTurnExclusionThroughMetadataCommit(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := tokenStore(t)
+		key := secrets.Key{Person: "person", Service: "provider", Name: "account"}
+		committing, release := make(chan struct{}), make(chan struct{})
+		done := make(chan error, 1)
+		go func() {
+			done <- s.ReplaceTokens(t.Context(), key, secrets.NewTokens("access-fixture", "refresh-fixture"), func() error { return nil }, func() error { close(committing); <-release; return nil })
+		}()
+		<-committing
+		began := make(chan struct{})
+		go func() { end := s.BeginTurn(); close(began); end() }()
+		synctest.Wait()
+		select {
+		case <-began:
+			t.Fatal("turn entered before metadata commit")
+		default:
+		}
+		close(release)
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+		<-began
+	})
+}

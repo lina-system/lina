@@ -98,37 +98,79 @@ func (s *Store) UpdateTokens(ctx context.Context, key Key, fn func(Tokens) (Toke
 	if !key.valid() || fn == nil {
 		return ErrInvalid
 	}
+	release, err := s.reserveTokens(ctx, key)
+	if err != nil {
+		return err
+	}
+	defer release()
 	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return ErrClosed
+	}
+	current, err := s.readTokens(key)
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	next, err := fn(current)
+	if err != nil {
+		return ErrUpdate
+	}
+	return s.writeTokens(key, next)
+}
+
+// ReplaceTokens reserves a sign-in replacement without requiring old tokens.
+// before records intent and after commits metadata; both run outside the mutex
+// but inside turn exclusion. Callbacks must not call Store. Their errors are
+// sanitized, just like exchange errors. Cancellation before admission changes
+// nothing; after admission the replacement must finish or fail closed.
+func (s *Store) ReplaceTokens(ctx context.Context, key Key, next Tokens, before, after func() error) error {
+	if !key.valid() || !next.Valid(false) || before == nil || after == nil {
+		return ErrInvalid
+	}
+	release, err := s.reserveTokens(ctx, key)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if before() != nil {
+		return ErrUpdate
+	}
+	if err := s.writeTokens(key, next); err != nil {
+		return err
+	}
+	if after() != nil {
+		return ErrUpdate
+	}
+	return nil
+}
+
+func (s *Store) reserveTokens(ctx context.Context, key Key) (func(), error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for !s.closed && (s.turns != 0 || s.updating[key]) {
 		changed := s.changed
 		s.mu.Unlock()
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			s.mu.Lock()
+			return nil, ctx.Err()
 		case <-changed:
 		}
 		s.mu.Lock()
 	}
 	if s.closed {
-		s.mu.Unlock()
-		return ErrClosed
+		return nil, ErrClosed
 	}
 	if err := ctx.Err(); err != nil {
-		s.mu.Unlock()
-		return err
-	}
-	current, err := s.readTokens(key)
-	if err != nil {
-		s.mu.Unlock()
-		return err
+		return nil, err
 	}
 	s.updating[key] = true
-	s.mu.Unlock()
-	defer func() { s.mu.Lock(); delete(s.updating, key); s.signal(); s.mu.Unlock() }()
-	next, err := fn(current)
-	if err != nil {
-		return ErrUpdate
-	}
+	return func() { s.mu.Lock(); delete(s.updating, key); s.signal(); s.mu.Unlock() }, nil
+}
+
+func (s *Store) writeTokens(key Key, next Tokens) error {
 	if !next.Valid(false) {
 		return ErrInvalid
 	}
@@ -139,8 +181,7 @@ func (s *Store) UpdateTokens(ctx context.Context, key Key, fn func(Tokens) (Toke
 	if s.closed {
 		return ErrClosed
 	}
-	// Even if the caller was canceled after a successful exchange, persist the
-	// rotated token: cancellation must not discard the only usable refresh token.
+	// Never discard a successfully exchanged rotating token on cancellation.
 	return storageError(s.backend.Write(key, raw))
 }
 func (s *Store) signal() { close(s.changed); s.changed = make(chan struct{}) }

@@ -435,6 +435,8 @@ func TestIdleRefreshAndKeepAlive(t *testing.T) {
 }
 
 type faultVault struct {
+	failRead         atomic.Bool
+	reads            atomic.Int32
 	values           map[secrets.Key][]byte
 	fail             atomic.Bool
 	writing, release chan struct{}
@@ -442,6 +444,10 @@ type faultVault struct {
 }
 
 func (v *faultVault) Read(k secrets.Key) ([]byte, error) {
+	v.reads.Add(1)
+	if v.failRead.Load() {
+		return nil, errors.New("keychain unavailable")
+	}
 	b, ok := v.values[k]
 	if !ok {
 		return nil, secrets.ErrNotFound
@@ -714,5 +720,184 @@ func TestCredentialAuthorizationHeader(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestReplacementWaitsForTurnWithoutDisablingAccount(t *testing.T) {
+	for _, canceled := range []bool{false, true} {
+		t.Run(fmt.Sprint(canceled), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				f := setup(t, nil)
+				add(t, f, "one")
+				end := f.vault.BeginTurn()
+				defer end()
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				done := make(chan error, 1)
+				go func() { done <- f.s.Replace(ctx, "one", rotated("signed-in-access", "signed-in-refresh")) }()
+				synctest.Wait()
+				a, err := f.s.Get(t.Context(), "one")
+				if err != nil || a.Status != OK {
+					t.Fatal("waiting replacement disabled account", a, err)
+				}
+				if canceled {
+					cancel()
+					if err := <-done; !errors.Is(err, context.Canceled) {
+						t.Fatal(err)
+					}
+					end()
+				} else {
+					end()
+					if err := <-done; err != nil {
+						t.Fatal(err)
+					}
+				}
+				c, err := f.s.Credential(t.Context(), "one")
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := "Bearer signed-in-access"
+				if canceled {
+					want = "Bearer access-original"
+				}
+				if bearer(t, c) != want {
+					t.Fatal("incorrect replacement credential")
+				}
+			})
+		})
+	}
+}
+func TestVerifiedReplacementUpdatesGrantedScopes(t *testing.T) {
+	f := setup(t, nil)
+	a := account("one")
+	a.Scopes = []string{"openid"}
+	if err := f.s.Add(t.Context(), a, rotated("access", "refresh")); err != nil {
+		t.Fatal(err)
+	}
+	r := rotated("signed-in-access", "signed-in-refresh")
+	r.Scopes = []string{"openid", "chatgpt.tokens.use.direct"}
+	if err := f.s.Replace(t.Context(), a.ID, r); err != nil {
+		t.Fatal(err)
+	}
+	c, err := f.s.Credential(t.Context(), a.ID)
+	if err != nil || bearer(t, c) != "Bearer signed-in-access" {
+		t.Fatal("renewed grant stayed ineligible", err)
+	}
+	got, err := f.s.Get(t.Context(), a.ID)
+	if err != nil || len(got.Scopes) != 2 || got.Status != OK {
+		t.Fatal(got, err)
+	}
+	r.Scopes = []string{}
+	if err := f.s.Replace(t.Context(), a.ID, r); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.Credential(t.Context(), a.ID); err == nil || err.Error() != string(NotEligible) {
+		t.Fatal("removed grant remained eligible", err)
+	}
+}
+func TestKeychainReadRecoveryDoesNotRequireSignIn(t *testing.T) {
+	for _, refresh := range []bool{false, true} {
+		t.Run(fmt.Sprint(refresh), func(t *testing.T) {
+			backend := &faultVault{values: make(map[secrets.Key][]byte)}
+			var calls atomic.Int32
+			f := setup(t, func(context.Context, Account, secret.Secret) (Rotated, error) {
+				calls.Add(1)
+				return rotated("access-rotated", "refresh-rotated"), nil
+			}, backend)
+			add(t, f, "one")
+			if refresh {
+				due(t, f, "one")
+			}
+			backend.failRead.Store(true)
+			c, err := f.s.Credential(t.Context(), "one")
+			if err == nil || c.Account != "" {
+				t.Fatal("keychain failure admitted credentials")
+			}
+			a, err := f.s.Get(t.Context(), "one")
+			if err != nil || a.Status != OK {
+				t.Fatal("keychain outage invalidated account", a, err)
+			}
+			if calls.Load() != 0 {
+				t.Fatal("refresh contacted issuer without tokens")
+			}
+			backend.failRead.Store(false)
+			c, err = f.s.Credential(t.Context(), "one")
+			if err != nil {
+				t.Fatal("keychain recovery requires sign-in", err)
+			}
+			want := "Bearer access-original"
+			if refresh {
+				want = "Bearer access-rotated"
+			}
+			if bearer(t, c) != want {
+				t.Fatal("incorrect recovered credential")
+			}
+		})
+	}
+}
+
+func TestKeychainOutageBacksOffAndRecoversIdleRefresh(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		backend := &faultVault{values: make(map[secrets.Key][]byte)}
+		var calls atomic.Int32
+		f := setup(t, func(context.Context, Account, secret.Secret) (Rotated, error) {
+			calls.Add(1)
+			return rotated("access-rotated", "refresh-rotated"), nil
+		}, backend)
+		add(t, f, "one")
+		backend.failRead.Store(true)
+		reads := backend.reads.Load()
+		time.Sleep(50 * time.Minute)
+		synctest.Wait()
+		if calls.Load() != 0 || backend.reads.Load() != reads+1 {
+			t.Fatal("unexpected idle exchange or reads")
+		}
+		time.Sleep(59 * time.Second)
+		synctest.Wait()
+		if backend.reads.Load() != reads+1 {
+			t.Fatal("keychain outage caused retry loop")
+		}
+		backend.failRead.Store(false)
+		time.Sleep(time.Second)
+		synctest.Wait()
+		if calls.Load() != 1 {
+			t.Fatal("idle refresh did not resume after keychain recovery")
+		}
+		c, err := f.s.Credential(t.Context(), "one")
+		if err != nil || bearer(t, c) != "Bearer access-rotated" || calls.Load() != 1 {
+			t.Fatal("idle outage did not recover", err)
+		}
+	})
+}
+func TestCloseCancelsReplacementWaitingForTurn(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		f := setup(t, nil)
+		add(t, f, "one")
+		end := f.vault.BeginTurn()
+		defer end()
+		done := make(chan error, 1)
+		go func() { done <- f.s.Replace(context.Background(), "one", rotated("new-access", "new-refresh")) }()
+		synctest.Wait()
+		f.s.Close()
+		if err := <-done; err != ErrClosed && !errors.Is(err, context.Canceled) {
+			t.Fatal(err)
+		}
+		a, err := f.s.Get(t.Context(), "one")
+		if err != nil || a.Status != OK {
+			t.Fatal(a, err)
+		}
+	})
+}
+func TestRefreshCannotReleaseCredentialWithRemovedScope(t *testing.T) {
+	f := setup(t, func(context.Context, Account, secret.Secret) (Rotated, error) {
+		r := rotated("new-access", "new-refresh")
+		r.Scopes = []string{"openid"}
+		return r, nil
+	})
+	add(t, f, "one")
+	due(t, f, "one")
+	c, err := f.s.Credential(t.Context(), "one")
+	if err == nil || err.Error() != string(NotEligible) || c.Account != "" {
+		t.Fatal("removed scope admitted a call", err)
 	}
 }
