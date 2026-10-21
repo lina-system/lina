@@ -21,6 +21,7 @@ type Manifest struct {
 	GoToolchain string   `json:"goToolchain"`
 	KitVersion  int64    `json:"kitVersion"`
 	Binaries    []Binary `json:"binaries"`
+	SQLite      SQLite   `json:"sqlite"`
 }
 
 // Binary describes one artifact next to manifest.json. SHA256 is lowercase hex.
@@ -57,6 +58,9 @@ func Read(path string) (Manifest, error) {
 
 // Validate checks the required metadata and artifact records.
 func (m Manifest) Validate() error {
+	if err := m.SQLite.Validate(); err != nil {
+		return fmt.Errorf("SQLite: %w", err)
+	}
 	if m.Version != "0.0.1-alpha.dev" {
 		match := versionPattern.FindStringSubmatch(m.Version)
 		if match == nil {

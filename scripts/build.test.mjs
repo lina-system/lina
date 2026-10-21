@@ -63,6 +63,16 @@ test('clean builds record hashes and the same commit and metadata as both versio
     assert.match(manifest.date, /^\d{4}-\d{2}-\d{2}$/);
     assert.equal(manifest.goToolchain, f.env.GOTOOLCHAIN);
     assert.equal(manifest.kitVersion, Number(readFileSync(join(f.cwd, 'kit/VERSION'), 'utf8')));
+    const module = JSON.parse(spawnSync('go', ['list', '-m', '-json', 'github.com/ncruces/go-sqlite3'], {
+      cwd: f.cwd, env: f.env, encoding: 'utf8',
+    }).stdout);
+    assert.equal(manifest.sqlite.module, module.Path);
+    assert.equal(manifest.sqlite.version, module.Version);
+    assert.equal(manifest.sqlite.moduleSum, module.Sum);
+    assert.equal(manifest.sqlite.wasmSHA256, createHash('sha256').update(readFileSync(join(module.Dir, 'embed/sqlite3.wasm'))).digest('hex'));
+    assert.match(manifest.sqlite.sqliteVersion, /^3\.\d+\.\d+$/);
+    assert.equal(manifest.sqlite.execution, 'wazero');
+    assert.equal(manifest.sqlite.sqliteVec, null);
     assert.deepEqual(manifest.binaries.map(binary => binary.name), ['lina', 'lina-node'].map(name => name + (process.platform === 'win32' ? '.exe' : '')));
     for (const binary of manifest.binaries) {
       const path = join(f.out, binary.name);
