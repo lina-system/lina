@@ -131,6 +131,8 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 ### 1.D Memory, context and skills
 
 **G1-13 Memory items, recall, person model and Korean search.** Items with holder, recall with evidence, `recall_person`, Korean search.
+
+The Korean acceptance corpus is `testdata/korean/search.json`: both stores assert returned source ids for attached particles, two-syllable words, imported text and literal queries. Store tests also check index maintenance and recall scope.
 - Done when: fixtures find a particle-attached three-syllable word and a two-syllable word in ledger and memory; recall for agent A returns no id held by B; a person-subject item exists only from person events; "remembered" is said only after the commit.
 - Depends on: G1-03, G1-05, G1-10, G1-12. Design refs: C-20 to C-22; [conversation-and-memory.md](conversation-and-memory.md#memory).
 - #64 implements the memory table and revision snapshots, holder/person scope checks, native person-event provenance, committed memory tool receipts, ephemeral standing profiles and bounded `recall_person`. Acceptance uses real SQLite and ledger admission; there is no client memory endpoint yet. #65 supplies the Korean indexes and fixtures.
@@ -146,6 +148,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-16 Skills written by agents, adopted at once, undone in one action.** Reversible-write check, notice, undo, index.
 - Done when: an instruction-only patch is adopted as a new version with a one-line notice after the commit; undo restores the previous text as a new version; a skill with executable code is not adopted this way; the index holds name and description and bodies load only when needed.
 - Depends on: G1-05, G1-10, G1-12, G1-29. Design refs: C-23; [conversation-and-memory.md](conversation-and-memory.md#skills).
+- #71 supplies the versioned skill store, reversible-write classification, durable undo suppression, lazy catalog/read handles, embedded meta-skill and guarded registry tools. Real canon/Git tests cover publication, failure, reopening, concurrency and undo; authority tests cover receipts and replay. The client service has no skill endpoint yet; presentation, context selection and explicit proposal acceptance remain with their consuming flows.
 
 **G1-27 Hermes install import.** Rehearsal, import, verification and promotion, as a worker job.
 - Done when: on synthetic fixtures counts reconcile row for row; every source key has one legacy reference in both directions; the reverse mapper hash equals the source hash; a second run adds nothing; no write reaches a source; an unknown schema is refused; recall returns no imported observation before promotion.
@@ -186,6 +189,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-23 Install.** `lina install`: state root, services, adapter files, tool discovery.
 - Done when: install succeeds with no account and the first preparation fails with a plain cause and the sign-in offer; a foreign unit or an occupied port is refused and nothing is overwritten; versions of discovered tools are recorded and unverified ones listed.
 - Depends on: G1-02, G1-06, G1-08. Design refs: C-01, C-02; [runtime.md](runtime.md#the-lina-command).
+- #91 adds verified bundle installation, private state and identity creation, systemd user units, optional adapter/worker artifacts and bounded tool discovery. The install scenario launches the actual installed Core command, checks its identity through the protocol and connects the TUI. A package integration exercises G1-10 preparation after account-free installation: the account step fails with its sign-in offer and no provider request. The current client protocol still reserves conversation/account operations; this is not evidence of a completed sign-in or model conversation. Automated service registration uses a scripted manager; the real systemd parser validates the generated units.
 
 **G1-24 Restart request and fence.** Durable request, Fence, `when_idle`, `drain`, exit 75.
 - #92 implements the durable control-file receipt, shared admission fence and lifecycle client capability. Tests cover in-flight effects, Unknown, SIGKILL boundaries, restore isolation and hot reload. `e2e/m1/restart.json` drives real Core requests, exit 75, cleanup and discharge at the replacement's higher READY epoch.
@@ -202,6 +206,8 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-25 Channel gateway and Telegram.** Pairing, bindings, scopes, long poll, outbound queue, buttons.
 - Done when: `kill -9` between receipt and reply leaves one inbox row, the matching cursor and no repeat; an unpaired sender yields no turn; the token is in no event, ledger row or child environment; READY is reached with the platform unreachable; a button from anyone but the paired owner changes nothing; a send of unknown outcome is not repeated.
 - Depends on: G1-06, G1-11, G1-12, G1-18, G1-29. Design refs: C-27; [integrations.md](integrations.md#channels).
+- #97 implements the gateway adapter contract, owner pairing, dispatch scope, atomic inbox/cursor admission and durable per-chat outbound queue. Real canon scenarios use SIGKILL at admission and send boundaries, prove no duplicate dispatch or uncertain resend, and exercise pairing, retry-after and agent-deletion binding removal. There is no channel TUI/protocol endpoint in this increment; Telegram transport, credential wiring and approval interactions remain separate work.
+- #98 adds Telegram long polling, secret-store token injection, current-owner approval interactions, and the adapter's send/edit/file boundary. Package tests cover masked inbox and ledger input, child environment isolation and non-owner/foreign-bot rejection. `e2e/m1/telegram.json` exercises real Core startup and socket requests while the platform transport is unreachable. These checks use synthetic credentials; live account setup and public channel settings are not established by this adapter increment.
 
 **G1-26 Agent exchanges.** Mailbox, typed hand-off, round limit, one-line log, needs-person flag.
 - Done when: a request delivers once across `kill -9`; an acknowledgement ends the exchange without a model turn; no exchange message enters a person's conversation as a person turn; an exchange turn reads no personal knowledge; the flag is set only when the person owns the decision.
@@ -226,6 +232,8 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-34 Reply shape and typed results.** Reply budgets, streaming filter, `present_result`, `read_result`, `save_result`, text rendering.
 - Done when: a chat reply over 5 lines or 300 characters is cut at the last sentence and a card is made while the ledger keeps the reply; a body that fails the schema is refused `malformed` to the agent only; a stale revision is refused; a double save makes one record.
 - Depends on: G1-10, G1-17, G1-29. Design refs: C-51, C-52, CP-05; [conversation-and-memory.md](conversation-and-memory.md#reply-shape).
+
+The #104 typed-result increment supplies all eight closed body schemas, deterministic rendering, ledger revisions and Core result-tool bindings. Its tests cover malformed bodies without conversation events, stale edits/saves, scoped reads, one versioned record for a repeated save, and unknown effects without redispatch. Client-service/TUI delivery and C-51's streaming filter remain separate increments.
 
 **G1-35 Waiting list, running list and notices.** Waiting rows, running list, notices at turn boundaries.
 - Done when: rows rank in the contract order on a fixture; the source is re-read before a row shows; a notice is never delivered while a reply streams; notices within 10 s coalesce; answering a row records the decision with person and agent.

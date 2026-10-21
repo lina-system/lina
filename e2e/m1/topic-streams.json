@@ -1,0 +1,21 @@
+{
+  "topic": "conversation:stream-scenario",
+  "other_topic": "core",
+  "epoch": "10",
+  "ring_size": 2,
+  "snapshot_size": 2,
+  "queue_size": 2,
+  "history": [
+    {"kind": "item_done", "key": "first", "data": {"text": "first"}},
+    {"kind": "item_done", "key": "second", "data": {"text": "second"}},
+    {"kind": "item_done", "key": "third", "data": {"text": "third"}}
+  ],
+  "gap_after": {"epoch": "10", "seq": 0},
+  "resume_after": {"epoch": "10", "seq": 1},
+  "snapshot_keys": ["second", "third"],
+  "overflow": [
+    {"kind": "question", "key": "question-1", "data": {"conversation_id": "stream-scenario"}},
+    {"kind": "question", "key": "question-2", "data": {"conversation_id": "stream-scenario"}},
+    {"kind": "question", "key": "question-3", "data": {"conversation_id": "stream-scenario"}}
+  ]
+}

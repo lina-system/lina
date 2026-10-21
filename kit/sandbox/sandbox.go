@@ -206,9 +206,6 @@ func normalize(c Config) (Config, error) {
 			return c, errors.New("invalid protected path")
 		}
 	}
-	if err := checkProtectedPaths(c.ReadDenied); err != nil {
-		return c, err
-	}
 	for i, path := range c.WriteRoots {
 		path, err = canonical(path)
 		if err != nil || path == "/" {

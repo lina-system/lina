@@ -70,7 +70,7 @@ The worker reads its committed watermark and Core-owned deterministic/model poli
 
 Provider adapters are never registered with the service manager: they start with LINA Core and end with it. The ChatGPT and Gemini adapters are Go inside LINA Core and open no process.
 
-The current runnable Core increment is `lina core --state-root <path> --socket <path>`. After parsing its arguments and before boot changes state, it verifies and initializes the embedded SQLite engine and probes the pinned sqlite-vec version; a digest or initialization failure exits 78 without opening a client socket. It requires an existing private local state root with the installed main id, holds its non-blocking lock, durably advances its epoch and serves the client 1.0 handshake with that identity and epoch. The socket is 0600 in a 0700 directory. Handshakes work during RECOVERING; READY follows reconciliation. SIGTERM or SIGINT closes clients, removes the socket and run sentinel and exits 0, preserving the epoch. Tests use connection and startup-boundary acknowledgements rather than fixed startup delays. Concrete event, canon and reconciliation services attach through the startup coordinator; an existing canon store is refused until its implementation is linked. Installation and service units remain G1-23 work. [go-core.md C-01, C-03, C-04 and C-42](go-core.md) define the control-file formats, start order and handshake behavior.
+The current runnable Core increment is `lina core --state-root <path> --socket <path>`. After parsing its arguments and before boot changes state, it verifies and initializes the embedded SQLite engine and probes the pinned sqlite-vec version; a digest or initialization failure exits 78 without opening a client socket. It requires an existing private local state root with the installed main id, holds its non-blocking lock, durably advances its epoch and serves the client 1.0 handshake with that identity and epoch. The socket is 0600 in a 0700 directory. Handshakes work during RECOVERING; READY follows reconciliation. SIGTERM or SIGINT closes clients, removes the socket and run sentinel and exits 0, preserving the epoch. Tests use connection and startup-boundary acknowledgements rather than fixed startup delays. Concrete event, canon and reconciliation services attach through the startup coordinator; an existing canon store is refused until its implementation is linked. The install command supplies the identity and user service as described under The lina command. [go-core.md C-01, C-03, C-04 and C-42](go-core.md) define the control-file formats, start order and handshake behavior.
 
 ## Vendored source
 
@@ -440,8 +440,6 @@ On Windows the wrapper runs commands only inside a verified Windows sandbox. A v
 
 LINA Core checks on start, and before the first tool call, that the sandbox works on this host. Unprivileged user namespaces, AppArmor restrictions and hardened kernels can each disable bubblewrap. When the sandbox is missing or fails, conversation continues, only shell and file tools are unsupported, and the user sees why.
 
-Linux also checks the existing host layout before each launch. A protected regular file with multiple hard links, or a bind-mount alias of a protected tree outside the denied paths, makes the policy unavailable; masking one pathname cannot protect those aliases through the readonly root mount. The check includes nested mounted trees, bounds mount metadata to 4 MiB and protected-tree traversal to 100,000 entries, and fails closed on unreadable metadata. Namespace-handle pseudo-files are not host filesystem trees. These checks assume the trusted host does not concurrently reconfigure mounts or create new aliases during a sandboxed call.
-
 The wrapper's `lina-sandbox-1` policy ships compiled seccomp programs for Linux amd64 and arm64, with separate blocked-network and authorized-network variants. Other Linux architectures fail closed. The source, pinned Codex provenance and regeneration instructions live in `kit/sandbox/policy/README.md`. The filter rejects alternate syscall ABIs, namespace and mount changes, process inspection, kernel keyrings, io_uring and VM sockets. It forces `clone3` callers to fall back to filtered `clone`. Authorized network permits IP sockets without removing filesystem masks or syscall restrictions. Host Unix-socket connections remain denied in both modes, including hard-linked socket aliases; local socket pairs remain available for subprocess IPC.
 
 Core passes the canon, secrets, system, version, backup, materials, derived and staging areas and its client socket as protected paths. The wrapper resolves symlinks and refuses writable grants overlapping those paths. Existing Git metadata in writable roots, including nested repositories and gitdir indirections, is mounted read-only. Its writable ancestors are anchored against rename/replacement. Gitdir files are opened without following symlinks or blocking on special files, checked as regular files and read with a 4 KiB limit. The probe uses the actual launcher and a synthetic denied-read canary, verifies Linux seccomp and no-new-privileges, and has a five-second deadline. The first tool call repeats it; an unavailable wrapper never starts a command. A canceled caller or invalid/released lease does not latch a confinement failure or consume that first-call recheck. Causes are stable codes (`launcher_missing`, `unsupported_platform`, `unsupported_architecture`, `invalid_policy`, `probe_setup_failed`, `probe_failed`); explicit probes also report transient `probe_cancelled` or `invalid_lease` without changing the wrapper’s availability. Core exposes the status to its tool composition and reports `shell_file_tools_unsupported` with the cause while leaving the client service running. The current connection-only protocol does not yet carry a tool-status view.
@@ -505,7 +503,7 @@ Supported platforms are defined in [product-families.md](product-families.md). A
 
 ### The `lina` command
 
-The initial skeleton recognizes `lina core`, `lina tui`, `lina version` and `lina-node version`; each reports not implemented on stderr and exits 70 until its implementation lands. Missing or unknown subcommands print usage on stderr and exit 64.
+The command recognizes `lina core`, `lina tui`, `lina install`, `lina version` and `lina-node version`. Missing or unknown subcommands print usage on stderr and exit 64.
 
 LINA Core and the TUI are one executable, `lina`. Its subcommands cover these uses:
 
@@ -519,6 +517,73 @@ LINA Core and the TUI are one executable, `lina`. Its subcommands cover these us
 | Replay | Re-runs a recorded turn sandboxed and without effects, optionally under candidate harness files, and writes the result as files. It is a development tool and runs only when it is called ([Replay command](#replay-command)). |
 | Episode export | Writes recorded turns of the chosen conversations out of the ledger into the export staging area for use outside LINA ([conversation-and-memory.md](conversation-and-memory.md#episode-export)) |
 | Version | Prints the version, the commit and the build date of the build ([versioning.md](versioning.md)) |
+
+`lina install` supports a Linux main with a working systemd user manager. Its
+default state root is `$XDG_STATE_HOME/lina`, falling back to
+`~/.local/state/lina`; its default user unit directory is
+`$XDG_CONFIG_HOME/systemd/user`, falling back to `~/.config/systemd/user`.
+`--state-root`, `--unit-dir` and `--bundle` accept absolute paths. The bundle
+defaults to the directory of the executing binary. Installation validates its
+manifest, requires its target to match the host OS and architecture, and verifies
+the size and SHA-256 of the exact artifact bytes copied.
+The executable and its manifest are placed in `system/bin/`. The default client
+socket is `system/run/client.sock` under the state root; `--socket` can choose a
+shorter absolute path where the Unix socket path limit requires it.
+
+Every state directory is private (0700); identity, inventory, configuration and
+adapter files are 0600 and installed executables are 0700. Install creates the
+filesystem contract's empty directories without opening canon or writing an
+account credential. It supplies the durable random main identity. The unit
+`lina-core.service` starts the installed executable as the current OS user with
+explicit root and socket arguments. A bundled `moirai-worker` receives its own
+`lina-moirai.service`, ordered after and dependent on Core, with
+`--canon <state-root>/canon/canon.sqlite` and
+`--socket <state-root>/system/run/moirai.sock`. No provider adapter receives
+a service unit.
+
+The current Core command does not connect canon or the job API. A bundled
+worker and its unit are installed but left disabled, and background memory
+and planning are reported unavailable with that cause. Enabling the worker
+requires the increment that connects those Core services; a copied executable
+or a successful systemd start job is not evidence of worker readiness.
+
+Preflight refuses an existing state root, socket, named service, service
+override or enablement link, and refuses linked destination ancestors. An
+in-state client socket must be below `system/run/`, and socket paths overlapping
+install destinations or the worker socket are refused before any writes. An
+explicit install-layer TCP address check holds a probe listener through file
+publication and refuses occupied ports; the current Core service uses Unix IPC
+and does not expose a TCP listener. Refusal precedes state creation and service
+registration. New files are created exclusively. Failure before startup rolls
+back only entries created by this attempt. Once service startup has been
+attempted, an error retains the install for diagnosis because a service may
+already be running. Install exits 78 on failure and never treats an existing
+install as authorization to replace its identity, repair its files or restart
+its services.
+
+The inventory in `system/tools.json` records the resolved executable path,
+bounded `--version` output, observed status and the bundle's verified version
+list. `--tool name=/absolute/path` overrides PATH discovery for a named tool.
+Probes are bounded, missing or unstartable tools do not block installation, and
+unverified versions are listed together with the verified versions and remain
+usable. A missing verified list is empty, never an implicit verification.
+`system/install.json` records the identity, socket, tools and missing optional
+components. The bundle's optional `verifiedTools` and `installFiles` fields are
+described in [packaging](../../packaging/README.md). Adapter files and their
+lockfile are copied only after digest verification; no SDK or user tool is
+downloaded during install. Until the build includes Claude adapter artifacts,
+that provider is reported unavailable. Missing background-worker artifacts
+affect only background memory and planning. Installation never signs in to a
+provider; the first preparation still has to pass the account check and offer
+the ChatGPT sign-in when no account is usable.
+
+The installation acceptance scenario observes the installed Core identity and
+TUI connection through the existing client protocol. Account-free preparation
+is exercised through the actual turn preparation flow with an empty credential
+record: it fails at the account step, reports one line with the sign-in offer,
+and sends no provider request. The current conversation/account protocol
+operations remain reserved; installation does not introduce a second
+preparation or sign-in implementation.
 
 ### Provider adapters
 

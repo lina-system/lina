@@ -17,6 +17,7 @@ import (
 // Manifest identifies a clean source commit and the binaries produced from it.
 // Additional JSON fields are allowed as later components add their metadata.
 type Manifest struct {
+	SupportedCombinations []Combination                    `json:"supportedCombinations"`
 	Version               string                           `json:"version"`
 	Commit                string                           `json:"commit"`
 	Date                  string                           `json:"date"`
@@ -26,7 +27,6 @@ type Manifest struct {
 	Binaries              []Binary                         `json:"binaries"`
 	SQLite                SQLite                           `json:"sqlite"`
 	Providers             map[string]responseconfig.Config `json:"providers"`
-	SupportedCombinations []Combination                    `json:"supportedCombinations"`
 }
 
 // Binary describes one artifact next to manifest.json. SHA256 is lowercase hex.

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/guard"
@@ -306,8 +307,8 @@ func readItem(ctx context.Context, tx *canon.Tx, id string) (Item, error) {
 	return item, err
 }
 
-// Recall returns current, scoped records. Text matching is deliberately a
-// literal substring scan until the indexed Korean search in #65 is installed.
+// Recall returns current, scoped records through the trigram and Hangul bigram
+// indexes. The person/holder/validity set is materialized before text matching.
 func (s *Store) Recall(ctx context.Context, scope RecallScope, q Query) ([]Hit, error) {
 	return s.recall(ctx, scope, q, false)
 }
@@ -326,12 +327,36 @@ func (s *Store) recall(ctx context.Context, scope RecallScope, q Query, standing
 		if err != nil {
 			return err
 		}
-		rows, err := tx.QueryContext(ctx, `SELECT m.record,
+		restrictedJSON, _ := json.Marshal(restricted)
+		text := normalize(q.Text)
+		match := "1"
+		args := []any{q.At, q.At, scope.Person, holders[0], holders[1], q.At, scope.Projection, scope.ExternalModel, standing, q.PersonOnly, string(restrictedJSON), q.History}
+		switch {
+		case utf8.RuneCountInString(text) >= 3:
+			match = "EXISTS(SELECT 1 FROM memory_search WHERE rowid=e.sequence AND memory_search MATCH ?)"
+			args = append(args, canon.TrigramPhrase(text))
+		case len(canon.HangulBigrams(text)) == 1:
+			match = "EXISTS(SELECT 1 FROM memory_search_bigram b WHERE b.item_id=e.id AND b.gram=?)"
+			args = append(args, text)
+		case text != "":
+			// Preserve short non-Hangul literal queries; neither index can
+			// represent these. Only the already-scoped set is scanned.
+			match = "instr(e.normalized,?)>0"
+			args = append(args, text)
+		}
+		args = append(args, limit)
+		rows, err := tx.QueryContext(ctx, `WITH candidates AS MATERIALIZED (
+   SELECT m.id,m.sequence,m.record,m.normalized,
+   (SELECT max(r.sequence) FROM memory_revision r WHERE r.item_id=m.id) AS priority,
    ((m.valid_until<>0 AND m.valid_until<=?) OR EXISTS(SELECT 1 FROM memory_item n WHERE n.supersedes=m.id AND n.valid_from<=?)) AS older
    FROM memory_item m WHERE m.person=? AND m.holder IN (?,?) AND m.state='active' AND m.valid_from<=?
    AND (?=0 OR m.scope='local') AND (?=0 OR m.scope<>'never-leaves') AND (?=0 OR m.standing=1)
    AND (?=0 OR m.subject_kind='person')
-   ORDER BY (SELECT max(r.sequence) FROM memory_revision r WHERE r.item_id=m.id) DESC,m.id`, q.At, q.At, scope.Person, holders[0], holders[1], q.At, scope.Projection, scope.ExternalModel, standing, q.PersonOnly)
+   AND NOT EXISTS(SELECT 1 FROM json_each(m.record,'$.evidence') refs
+    JOIN json_each(?) blocked ON blocked.key=json_extract(refs.value,'$.id')
+    WHERE json_extract(refs.value,'$.kind')='event')
+   ), eligible AS MATERIALIZED (SELECT * FROM candidates WHERE ? OR NOT older)
+   SELECT e.record,e.older FROM eligible e WHERE `+match+` ORDER BY e.priority DESC,e.id LIMIT ?`, args...)
 		if err != nil {
 			return err
 		}
@@ -345,19 +370,7 @@ func (s *Store) recall(ctx context.Context, scope RecallScope, q Query, standing
 			if err := json.Unmarshal(raw, &hit.Item); err != nil {
 				return err
 			}
-			blocked := false
-			for _, e := range hit.Evidence {
-				if e.Kind == Event && restricted[e.ID] {
-					blocked = true
-					break
-				}
-			}
-			if blocked {
-				continue
-			}
-			if hit.Older && !q.History || !strings.Contains(normalize(hit.Content), normalize(q.Text)) {
-				continue
-			}
+
 			for i := range hit.Evidence {
 				if hit.Evidence[i].SourceAgent != "" && hit.Evidence[i].SourceAgent != scope.Agent {
 					hit.Evidence[i].Quote = ""
@@ -421,9 +434,11 @@ func restrictedEvents(ctx context.Context, tx *canon.Tx, scope RecallScope) (map
 	if !scope.Projection && !scope.ExternalModel {
 		return ids, nil
 	}
-	holders := scope.Holders()
-	rows, err := tx.QueryContext(ctx, `SELECT record FROM memory_item WHERE person=? AND holder IN (?,?)
-  AND ((?=1 AND scope IN ('private','never-leaves')) OR (?=1 AND scope='never-leaves'))`, scope.Person, holders[0], holders[1], scope.Projection, scope.ExternalModel)
+	// This internal deny set spans the person's holders: common memory must
+	// not launder an event protected by another agent's private memory. Only
+	// event ids leave this function; recall candidates keep their holder filter.
+	rows, err := tx.QueryContext(ctx, `SELECT record FROM memory_item WHERE person=?
+  AND ((?=1 AND scope IN ('private','never-leaves')) OR (?=1 AND scope='never-leaves'))`, scope.Person, scope.Projection, scope.ExternalModel)
 	if err != nil {
 		return nil, err
 	}

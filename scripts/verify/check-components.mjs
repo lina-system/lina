@@ -7,17 +7,22 @@ import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-export function execute(command, args, { cwd, env }) {
-  // The selected root suite includes many real command/Core subprocesses.
-  // Give Go time to report its own test timeout before the process watchdog.
-  const timeout = command === 'go' && args[0] === 'test' ? 300_000 : 120_000;
-  const result = spawnSync(command, args, { cwd, env, encoding: 'utf8', timeout, maxBuffer: 64 * 1024 * 1024 });
-  return { status: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.error ? `${result.stderr ?? ''}${result.error.message}\n` : result.stderr ?? '' };
+export const componentsTimeoutMs = 600_000;
+
+export function execute(command, args, { cwd, env, timeoutMs = 120_000 }) {
+  const started = performance.now();
+  const result = spawnSync(command, args, {
+    cwd, env, encoding: 'utf8', timeout: timeoutMs, killSignal: 'SIGKILL', maxBuffer: 64 * 1024 * 1024,
+  });
+  const error = result.error?.code === 'ETIMEDOUT'
+    ? `command timed out after ${((performance.now() - started) / 1000).toFixed(3)} s (budget ${timeoutMs / 1000} s): ${command} ${args.join(' ')}`
+    : result.error?.message;
+  return { status: result.error ? 1 : result.status ?? 1, stdout: result.stdout ?? '', stderr: `${result.stderr ?? ''}${error ? `${error}\n` : ''}` };
 }
 
 // No account credentials or user Go/Git configuration reach package loading, builds or tests.
 // Downloads retain Go's public proxy/checksum defaults; only verified download caches are shared.
-export function createGoContext(cwd) {
+export function createGoContext(cwd, { timeoutMs = 120_000 } = {}) {
   const versions = ['go.mod', 'kit/go.mod', 'go.work'].map(name => {
     const source = readFileSync(join(cwd, name), 'utf8');
     return { go: source.match(/^go\s+(\S+)/m)?.[1], toolchain: source.match(/^toolchain\s+(\S+)/m)?.[1] };
@@ -30,7 +35,7 @@ export function createGoContext(cwd) {
   const inherited = Object.fromEntries(['PATH', 'SystemRoot', 'SYSTEMROOT', 'WINDIR', 'TMPDIR', 'TMP', 'TEMP', 'GOCACHE', 'GOMODCACHE']
     .filter(name => process.env[name] !== undefined).map(name => [name, process.env[name]]));
   const cache = execute('go', ['env', 'GOCACHE', 'GOMODCACHE'], {
-    cwd, env: { ...inherited, HOME: homedir(), GOENV: 'off', GOTOOLCHAIN: 'local' },
+    cwd, timeoutMs, env: { ...inherited, HOME: homedir(), GOENV: 'off', GOTOOLCHAIN: 'local' },
   });
   if (cache.status !== 0) throw new Error(`Cannot locate Go caches: ${cache.stderr}`);
   const [gocache, gomodcache] = cache.stdout.trim().split(/\r?\n/);
@@ -48,12 +53,25 @@ export function createGoContext(cwd) {
   };
 }
 
-export function checkComponents({ cwd = process.cwd(), components, execute: run = execute }) {
+export function checkComponents({ cwd = process.cwd(), components, execute: run = execute,
+  // Leave time for diagnostics and cleanup before foundation's outer watchdog.
+  timeoutMs = componentsTimeoutMs - 5000 }) {
   if (!Array.isArray(components) || components.length === 0) throw new Error('Select at least one registered component');
-  const context = createGoContext(cwd);
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('Components budget must be positive');
+  const started = performance.now();
+  const deadline = started + timeoutMs;
+  const context = createGoContext(cwd, { timeoutMs: Math.min(30_000, timeoutMs) });
   let output = '';
   const invoke = (command, args, directory) => {
-    const result = run(command, args, { cwd: directory, env: context.env });
+    const remaining = Math.floor(deadline - performance.now());
+    // Package-wide work grows with the selected module. It can use the remaining
+    // check budget; short setup and usage commands retain tighter limits.
+    const limit = command === 'go'
+      ? ({ env: 30_000, mod: 120_000, run: 120_000 }[args[0]] ?? remaining)
+      : 30_000;
+    const result = remaining > 0
+      ? run(command, args, { cwd: directory, env: context.env, timeoutMs: Math.min(limit, remaining) })
+      : { status: 1, stdout: '', stderr: `components budget exhausted after ${((performance.now() - started) / 1000).toFixed(3)} s before: ${command} ${args.join(' ')}\n` };
     output += `$ ${command} ${args.join(' ')}\n${result.stdout}${result.stderr}`;
     return result;
   };
@@ -88,7 +106,7 @@ export function checkComponents({ cwd = process.cwd(), components, execute: run 
         ['build', '-mod=readonly', ...outputArgs, ...packages],
         ['vet', '-mod=readonly', ...packages],
         ['tool', 'exhaustive', ...packages],
-        ['test', '-timeout=4m', '-count=1', '-mod=readonly', ...packages],
+        ['test', '-count=1', '-mod=readonly', ...packages],
       ]) {
         if (invoke('go', args, directory).status !== 0) return { status: 1, output };
       }

@@ -24,6 +24,7 @@ var clientKinds = []string{
 	"agent_talk_get", "agent_talk", "agent_talk_entry", "agent_talk_expand", "agent_talk_subscribe",
 	"connected", "disconnected", "task_status", "run_status", "task_cancel", "multi_task_control",
 	"sign_in_listen", "sign_in_listening", "sign_in_open", "sign_in_redirect",
+	"snapshot", "resync", "resync_required",
 	"restart_request", "restart_get", "restart_status",
 }
 
@@ -78,6 +79,16 @@ func concretePayloads() map[string]any {
 		"result_edit":       map[string]any{"result_id": "result-example", "base_revision": float64(1), "body": map[string]any{}},
 		"result_save":       map[string]any{"result_id": "result-example", "revision": float64(1), "destination": map[string]any{}},
 		"readiness_failure": map[string]any{"step": "preparation-example"},
+		"snapshot": map[string]any{
+			"topic": "conversation:example", "cursor": map[string]any{"epoch": "7", "seq": float64(2)},
+			"revocation_epoch": "0",
+			"items": []any{map[string]any{
+				"kind": "item_done", "key": "item-example", "revision": float64(2),
+				"payload": map[string]any{"text": "complete"},
+			}},
+		},
+		"resync":          map[string]any{"topic": "conversation:example", "cursor": map[string]any{"epoch": "7", "seq": float64(2)}},
+		"resync_required": map[string]any{"topic": "conversation:example", "cursor": map[string]any{"epoch": "7", "seq": float64(2)}},
 	}
 }
 

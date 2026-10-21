@@ -31,6 +31,9 @@ type TopicOptions struct {
 	QueueSize     int
 	BatchBytes    int
 	BatchInterval time.Duration
+	// RevocationEpoch identifies the projection used to seed this hub.
+	// Retraction and rebuilding that projection belong to its owning service.
+	RevocationEpoch string
 }
 
 // TopicEvent is an application-projected row. Key is stable within a topic.
@@ -40,6 +43,8 @@ type TopicEvent struct {
 	Kind protocol.Kind   `json:"kind"`
 	Key  string          `json:"key"`
 	Data json.RawMessage `json:"data"`
+	// Revision is assigned at publication, independently of caller input.
+	Revision uint64 `json:"revision"`
 }
 
 type TopicFrame struct {
@@ -49,9 +54,10 @@ type TopicFrame struct {
 }
 
 type TopicSnapshot struct {
-	Topic  string       `json:"topic"`
-	Cursor rpc.Cursor   `json:"cursor"`
-	Items  []TopicEvent `json:"items"`
+	Topic           string       `json:"topic"`
+	Cursor          rpc.Cursor   `json:"cursor"`
+	Items           []TopicEvent `json:"items"`
+	RevocationEpoch string       `json:"revocation_epoch"`
 }
 
 // TopicStart is delivered before reading Subscription.Next. A missing or stale
@@ -84,6 +90,12 @@ type Topics struct {
 
 func NewTopics(epoch string, options TopicOptions) (*Topics, error) {
 	if err := (rpc.Cursor{Epoch: epoch}).Validate(); err != nil {
+		return nil, err
+	}
+	if options.RevocationEpoch == "" {
+		options.RevocationEpoch = "0"
+	}
+	if err := (rpc.Cursor{Epoch: options.RevocationEpoch}).Validate(); err != nil {
 		return nil, err
 	}
 	if options.RingSize < 0 || options.SnapshotSize < 0 || options.QueueSize < 0 || options.BatchBytes < 0 || options.BatchInterval < 0 {
@@ -154,6 +166,7 @@ func mergeEvents(a, b TopicEvent) (TopicEvent, bool) {
 		_ = json.Unmarshal(a.Data, &first)
 		_ = json.Unmarshal(b.Data, &second)
 		a.Data, _ = json.Marshal(first + second)
+		a.Revision = b.Revision
 		return a, true
 	}
 	return cloneEvent(b), true
@@ -163,6 +176,19 @@ func (h *Topics) Publish(name string, event TopicEvent) error {
 	if !validTopic(name) {
 		return ErrInvalidTopic
 	}
+	if err := validateEvent(event); err != nil {
+		return err
+	}
+	event = cloneEvent(event)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closed {
+		return ErrTopicClosed
+	}
+	return h.publish(name, h.topic(name), event)
+}
+
+func validateEvent(event TopicEvent) error {
 	if event.Key == "" || event.Kind == "" || !json.Valid(event.Data) {
 		return ErrInvalidEvent
 	}
@@ -172,13 +198,50 @@ func (h *Topics) Publish(name string, event TopicEvent) error {
 			return ErrInvalidEvent
 		}
 	}
-	event = cloneEvent(event)
+	return nil
+}
+
+// PublishBatch publishes a committed group without allowing snapshots or live
+// readers to observe a partial group. All inputs are validated first. The live
+// queue remains bounded: a group larger than its capacity overflows that
+// subscription, which recovers from the completed snapshot. No network write
+// happens under the publication lock.
+func (h *Topics) PublishBatch(name string, events []TopicEvent) error {
+	if !validTopic(name) {
+		return ErrInvalidTopic
+	}
+	group := make([]TopicEvent, len(events))
+	for i, event := range events {
+		if err := validateEvent(event); err != nil {
+			return err
+		}
+		group[i] = cloneEvent(event)
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.closed {
 		return ErrTopicClosed
 	}
 	t := h.topic(name)
+	// Reserve the worst-case number of sequences before changing state. Pending
+	// associative events may use fewer, but a group can never wrap mid-flight.
+	needed := uint64(len(group))
+	if t.pending != nil {
+		needed++
+	}
+	if needed > ^uint64(0)-t.seq {
+		return ErrSequenceExhausted
+	}
+	for _, event := range group {
+		if err := h.publish(name, t, event); err != nil {
+			return err
+		}
+	}
+	h.flush(name, t)
+	return nil
+}
+
+func (h *Topics) publish(name string, t *topicState, event TopicEvent) error {
 	if t.seq == ^uint64(0) {
 		return ErrSequenceExhausted
 	}
@@ -249,6 +312,7 @@ func (h *Topics) flush(name string, t *topicState) {
 
 func (h *Topics) emit(name string, t *topicState, event TopicEvent) {
 	t.seq++
+	event.Revision = t.seq
 	frame := TopicFrame{Topic: name, Cursor: rpc.Cursor{Epoch: h.epoch, Seq: t.seq}, Event: event}
 	if len(t.ring) < h.options.RingSize {
 		t.ring = append(t.ring, frame)
@@ -310,7 +374,7 @@ func (h *Topics) Subscribe(name string, after *rpc.Cursor) (TopicStart, *Subscri
 	}
 	gap := after != nil && (after.Epoch != h.epoch || after.Seq < oldest || after.Seq > t.seq)
 	if after == nil || gap {
-		snapshot := &TopicSnapshot{Topic: name, Cursor: rpc.Cursor{Epoch: h.epoch, Seq: t.seq}, Items: make([]TopicEvent, len(t.items))}
+		snapshot := &TopicSnapshot{Topic: name, Cursor: rpc.Cursor{Epoch: h.epoch, Seq: t.seq}, Items: make([]TopicEvent, len(t.items)), RevocationEpoch: h.options.RevocationEpoch}
 		for i, item := range t.items {
 			snapshot.Items[i] = cloneEvent(item)
 		}

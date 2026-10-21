@@ -147,9 +147,6 @@ func fileResult(reply tools.FileReply) (tools.Result, error) {
 	case tools.Unknown:
 		// Unknown is not success, but its retained versions are the only safe
 		// recovery path after a partial multi-file commit. Preserve the reply.
-		if reply.Code != "effect_unknown" {
-			return resultCode(tools.Unknown, "effect_unknown"), tools.ErrUnknown
-		}
 		return result, tools.ErrUnknown
 	case tools.None, tools.Refused:
 		return resultCode(tools.Unknown, "effect_unknown"), tools.ErrUnknown
