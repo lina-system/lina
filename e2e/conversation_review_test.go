@@ -134,7 +134,7 @@ func TestM1ConversationLargeUnicodeAndMasking(t *testing.T) {
 	frames := admittedTurn(t, h, c, conversation, "large", large+" password="+scenario.Secret)
 	found := false
 	for _, e := range frames {
-		if item, ok := e.Payload.(protocol.ItemDone); ok && item.Text != nil && *item.Text == scenario.Reply {
+		if item, ok := e.Payload.(protocol.Result); ok && item.Type == protocol.ResultTypeDocumentDraft && item.Text != nil && *item.Text == scenario.Reply && item.Summary == "" {
 			found = true
 		}
 	}

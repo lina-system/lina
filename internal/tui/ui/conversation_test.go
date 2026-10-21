@@ -4,6 +4,7 @@ package ui
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -89,6 +90,46 @@ func TestConversationPagerShowsFullCardAndPreservesDraft(t *testing.T) {
 	m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	if m.content.Draft.Text != "DRAFT-108" || m.content.Stopping {
 		t.Fatal("closing pager changed draft or interrupted turn")
+	}
+}
+
+func TestConversationResultReplacesStreamWithCard(t *testing.T) {
+	m := conversationShell()
+	topic := "conversation:fixture"
+	m.Update(shellData{Generation: 1, Message: state.Snapshot{Epoch: "1", Revocation: "1", Topic: topic}})
+	project := func(kind protocol.Kind, payload protocol.Payload) {
+		t.Helper()
+		p, err := projectStream(protocol.Envelope{Epoch: "1", Kind: kind, Payload: payload})
+		if err != nil {
+			t.Fatal(err)
+		}
+		m.Update(shellData{Generation: 1, Message: p.message})
+	}
+	metadata := func(seq string) *protocol.StreamMetadata {
+		return &protocol.StreamMetadata{Topic: topic, Key: "reply", Cursor: protocol.StreamCursor{Epoch: "1", Seq: json.Number(seq)}, Revision: json.Number(seq)}
+	}
+	partial := "완결된 문장. 미완성"
+	project(protocol.KindOutputDelta, protocol.OutputDelta{Stream: metadata("1"), Text: &partial})
+	full := partial + strings.Repeat(" 긴 내용", 100) + " DETAIL-END"
+	project(protocol.KindResult, protocol.Result{Stream: metadata("2"), Title: "CARD-102", Summary: "완결된 문장.", Text: &full})
+	view := m.View().Content
+	if len(m.content.Blocks) != 1 || !strings.Contains(view, "완결된 문장.") || !strings.Contains(view, "CARD-102") || !strings.Contains(view, "Ctrl+O") || strings.Contains(view, "미완성") || strings.Contains(view, "DETAIL-END") {
+		t.Fatalf("result did not replace the unfinished stream with a bounded card: %s", view)
+	}
+	m.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+	if m.conversation.pager.text != full {
+		t.Fatal("card lost full text in Details")
+	}
+}
+
+func TestConversationOpenCardReceivesRemainingReply(t *testing.T) {
+	m := conversationShell()
+	topic := "conversation:fixture"
+	m.Update(shellData{Generation: 1, Message: state.Snapshot{Epoch: "1", Revocation: "1", Topic: topic, Items: []state.Block{{ID: "card", Kind: protocol.KindResult, Text: "SUMMARY-102", Body: "PARTIAL-102", Done: true}}}})
+	m.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+	m.Update(shellData{Generation: 1, Message: state.ItemDone{Epoch: "1", Topic: topic, Cursor: 1, Block: state.Block{ID: "card", Kind: protocol.KindResult, Text: "SUMMARY-102", Body: "PARTIAL-102\nEND-102", Revision: 1, Done: true}}})
+	if !strings.Contains(m.View().Content, "END-102") {
+		t.Fatal("open result retained an incomplete streaming preview")
 	}
 }
 

@@ -21,7 +21,7 @@ type Cmd func(context.Context) Msg
 type Block struct {
 	ID, Topic, EchoKey, Text string
 	Speaker                  protocol.ConversationSpeaker
-	Body                     string
+	Body, Title              string
 	TurnKnown, TurnActive    bool
 	Revision                 uint64
 	Kind                     protocol.Kind
