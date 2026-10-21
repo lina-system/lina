@@ -115,14 +115,18 @@ func TestM1MemoryJobs(t *testing.T) {
 	}
 	definitions["brief"] = jobs.Definition{Agent: fixture.Agents[0], Account: "synthetic", Provider: provider.ChatGPT,
 		Model: func(ctx context.Context, c jobs.Call) (jobs.Result, error) {
-			calls.Add(1)
 			var input memory.BriefTask
 			if err := json.Unmarshal(c.Input, &input); err != nil {
 				return jobs.Result{}, err
 			}
 			if err := mem.CheckBrief(ctx, input, clock.Load(), resolve); err != nil {
+				if errors.Is(err, memory.ErrJobConflict) {
+					zero := int64(0)
+					return jobs.Result{Output: json.RawMessage(`[]`), Usage: provider.Usage{Input: &zero, Output: &zero}}, nil
+				}
 				return jobs.Result{}, err
 			}
+			calls.Add(1)
 			output, _ := json.Marshal([]memory.BriefSentence{{Text: fixture.Brief, Citations: []memory.Evidence{input.Sources[0].Evidence}}})
 			return jobs.Result{Output: output}, nil
 		},
@@ -211,8 +215,20 @@ func TestM1MemoryJobs(t *testing.T) {
 		t.Fatalf("brief ready=%t %v", ready, err)
 	}
 	enqueue("brief", 1, brief)
+	newer, ready, err := mem.PrepareBrief(h.ctx, scope, fixture.Topic, 2, 2, clock.Load()+10, nil, resolve)
+	if err != nil || !ready {
+		t.Fatalf("newer brief ready=%t %v", ready, err)
+	}
+	enqueue("brief", 2, newer)
 	run()
-	answer, err := mem.PersonBrief(h.ctx, scope, fixture.Topic, 2, clock.Load()+10, resolve)
+	if calls.Load() != 2 || jobWatermark(t, db, "brief") != 1 {
+		t.Fatal("obsolete brief called the model or blocked the queue")
+	}
+	run()
+	if jobWatermark(t, db, "brief") != 2 {
+		t.Fatal("latest brief did not progress")
+	}
+	answer, err := mem.PersonBrief(h.ctx, scope, fixture.Topic, 3, clock.Load()+10, resolve)
 	if err != nil || len(answer) != 1 || len(answer[0].Citations) != 1 {
 		t.Fatalf("brief: %+v %v", answer, err)
 	}

@@ -720,7 +720,10 @@ person items, standing preferences and explicitly selected recent person events.
 It is derived state scoped to the agent and person. Every surviving sentence
 cites a source from that task. Pre-dispatch and publication checks reject a
 superseded generation, changed source revision, changed scope or revocation
-epoch. Empty output increases the next eligible turn by
+epoch. An obsolete brief task returns an empty result without a model call or
+charge; Apply consumes that task without publishing, allowing the consecutive
+watermark to reach its replacement. Other failures remain failures. Empty output
+from a current task increases the next eligible turn by
 `min(base cadence + empty streak, base cadence * 8)`; useful output resets the
 streak. A ready-only read requires the same topic, still-valid evidence and a
 turn age no greater than twice the base cadence. It never waits or calls a model.

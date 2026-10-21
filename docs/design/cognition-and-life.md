@@ -102,7 +102,8 @@ available as history.
 
 Briefs retain per-sentence citations and a generation plus revocation epoch.
 Only the latest task can publish, and changed evidence prevents both dispatch
-and publication. Reads take a ready result for the same agent, person and topic,
+and publication. An obsolete brief task is consumed without publishing or making
+a model call, so it cannot block the newer task behind its watermark. Reads take a ready result for the same agent, person and topic,
 with bounded turn age, and never wait on background work. Empty results back off
 on the configured cadence. The concrete callback and schema composition,
 initial thresholds and executable acceptance scenario are specified in

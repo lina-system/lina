@@ -193,7 +193,9 @@ func PublishBrief(ctx context.Context, tx *canon.Tx, task BriefTask, sentences [
 
 // CheckBrief is the Core model callback's pre-dispatch guard. A queued task may
 // have become obsolete before the worker requests Aux; no bytes from that task
-// may be sent to a model until this check succeeds. Apply checks again later.
+// may be sent to a model until this check succeeds. ErrJobConflict means the
+// callback must return an empty JSON array with zero usage, without a model
+// call, so Apply can consume the obsolete task. Apply checks again later.
 func (s *Store) CheckBrief(ctx context.Context, task BriefTask, at int64, resolve ResolveEvidence) error {
 	if s == nil || s.db == nil || resolve == nil || at < 0 {
 		return ErrInvalid
@@ -208,7 +210,11 @@ func (s *Store) CheckBrief(ctx context.Context, task BriefTask, at int64, resolv
 		if task.Generation == 0 || current.Completed || !bytes.Equal(expected, actual) {
 			return ErrJobConflict
 		}
-		return validateBriefSources(ctx, tx, task, task.Scope, at, resolve)
+		err = validateBriefSources(ctx, tx, task, task.Scope, at, resolve)
+		if obsoleteBrief(err) {
+			return ErrJobConflict
+		}
+		return err
 	})
 }
 
@@ -230,7 +236,7 @@ func (s *Store) PersonBrief(ctx context.Context, scope RecallScope, topic string
 			return nil
 		}
 		if err := validateBriefSources(ctx, tx, task, scope, at, resolve); err != nil {
-			if errors.Is(err, ErrJobConflict) || errors.Is(err, ErrEvidence) || errors.Is(err, ErrScope) || errors.Is(err, sql.ErrNoRows) {
+			if obsoleteBrief(err) {
 				return nil
 			}
 			return err
@@ -350,6 +356,19 @@ func BriefApply(agent, person string, now func() int64, resolve ResolveEvidence)
 		if input.Scope.Person != person || input.Scope.Agent != agent {
 			return ErrScope
 		}
-		return PublishBrief(ctx, tx, input, sentences, now(), resolve)
+		if input.Generation < 1 {
+			return ErrInvalid
+		}
+		err := PublishBrief(ctx, tx, input, sentences, now(), resolve)
+		// Reject publication but consume an obsolete task, otherwise the job's
+		// consecutive watermark would prevent its replacement from ever running.
+		if obsoleteBrief(err) {
+			return nil
+		}
+		return err
 	}
+}
+
+func obsoleteBrief(err error) bool {
+	return errors.Is(err, ErrJobConflict) || errors.Is(err, ErrEvidence) || errors.Is(err, ErrScope) || errors.Is(err, sql.ErrNoRows)
 }
