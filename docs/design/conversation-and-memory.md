@@ -107,7 +107,7 @@ It builds on these documents and does not repeat them:
 
 Every event carries, besides its parent id and the person id or agent id above:
 
-- `speaker_kind`, set by the path the input entered LINA: a message from the person, a message from someone else in a shared chat of an external channel, the delivery of a scheduled job, a background notice, a message from another agent, forwarded content, a system line, or a tool output. It is never decided by matching text. An imported event has no entry path, so the importer sets the kind from marker text and records that it did. Only events of kind `person` can be the evidence of an item whose subject is the person (see "Memory items").
+- `speaker_kind`, set by the path the input entered LINA: a message from the person, a message from someone else in a shared chat of an external channel, the delivery of a scheduled job, a background notice, a message from another agent, forwarded content, a system line, or a tool output. It is never decided by matching text. For an imported event, the source records must establish the original route and speaker (see "Importing a Hermes install"); a source's `user` role alone does not establish a person turn. Only events of kind `person` can be the evidence of an item whose subject is the person (see "Memory items").
 - `surface`, the way the event arrived or was produced: the TUI, the LINA app, a channel with its platform and chat ids, or an agent exchange.
 - `scaffold_kind`, for text that LINA or a tool wrapped around an input, such as a skill invocation, a scheduled-job prompt, a background notice or a summary echo. Scaffold text is stored once, and the events that use it refer to it.
 - `occurred_at`, the time of the event in UTC, and `recorded_at`, the time its source wrote it. `time_quality` says how `occurred_at` was learned: `observed`, `recorded` or `write_time_only`. Filters, ordering across sources and the time bounds of summary nodes use `occurred_at`. Day, week and month buckets use the person's time zone.
@@ -327,6 +327,17 @@ A background run lands on its own schedule. Its result re-enters the conversatio
 
 LINA Core owns the conversation record, its compaction and its resume, because model requests keep nothing on the server ([runtime.md](runtime.md)).
 
+The behavioral reference is **LCM-X**, ported into LINA's Go Core and its existing writer boundaries. The reference modules below describe behavior to adopt, not a Python runtime dependency or permission to copy source. [Third-party notices](../../THIRD-PARTY-NOTICES.md#memory-design-references) identify the reference revisions and licenses.
+
+| Adopted LCM-X behavior and reference | LINA mapping |
+| --- | --- |
+| Lossless raw storage: [`store.py`][lcm-store] | The append-only conversation ledger is the raw store; compaction changes the request projection, never the original events. |
+| Stub-first compaction and measured thresholds: [`compaction.py`][lcm-compaction], [`compaction_policy.py`][lcm-policy] | Try deterministic notes for old tool outputs before a model summary, preserve the fresh tail and tool pairs, then measure the complete request again. Stop when it is below LINA's configured threshold; never drop unsummarized events to claim it fits. The defaults and continuation fallback are specified below. |
+| Externalized large outputs with recoverable refs: [`externalize.py`][lcm-externalize] | An oversized body is an immutable material revision referenced by its ledger event. Its note retains that event's locator; `expand` resolves the full body, with sensitivity and deletion rules still enforced. Missing bytes are reported, never replaced by a supposedly complete preview. |
+| Lineage across compactions and resumed sessions: [`store.py`][lcm-store], [`host_uid.py`][lcm-host-uid] | Conversation, parent, compaction and continuation events preserve identity and covered ranges; `replay_of`, `view_of` and legacy references identify copies. Resume reads this lineage instead of importing the compacted request as a new transcript. |
+
+LINA deliberately does not adopt a second host/plugin transcript or host-list rewrite reconciliation: Core already owns the only ledger. LCM-X's exact threshold ratios, per-host recovery machinery and session rotation are not copied: LINA measures its adapter's complete request and uses the continuation protocol below. Losslessness never exempts a body from secret masking or the person's deletion.
+
 Compaction runs at a turn boundary, before LINA builds the turn's first request, in this order:
 
 1. Compaction starts when the request input would reach 90% of the model's context window, as the model's adapter reports it. This is a default and is configurable.
@@ -364,6 +375,12 @@ On restart LINA resumes the conversation from the ledger. What LINA Core stops a
 ### Summary tree
 
 Compaction leaves a derived record of what each summary covers. The record is a tree over the ledger events of a conversation, so any summary can be followed back to the exact events it came from.
+
+LINA adopts LCM-X's depth-ranked summary DAG ([`dag.py`][lcm-dag]): a leaf summarizes raw events at depth 0, and a parent summarizes lower-depth nodes, yielding d1, d2 and further levels as needed. In LINA, `sum_node` holds the derived text and provenance, `sum_edge` holds child links, and `sum_cover` identifies the exact ledger coverage. A parent's level is one above its deepest summary child. Depth is compression depth, never confidence or independent evidence. The compaction root may also cover new raw events alongside its previous root, as described below.
+
+LCM-X's atomic node/provenance publication and prepared leaves ([`dag.py`][lcm-dag], [`leaf_prep.py`][lcm-leaf-prep]) map to one Core publication transaction that checks coverage, the expected frontier and the revocation epoch. A stale preparation publishes nothing. Expansion follows child ids down to events and material revisions, including detail omitted from the summary. Retraction invalidates the affected node and ancestors.
+
+LINA deliberately uses the single-parent tree form of a DAG: the one conversation history needs one unambiguous coverage frontier, not overlapping parents that can count the same event twice. It does not adopt scheduled rollups for every depth or calendar period: higher nodes are built only for an actual compaction or navigation need, and never become memory items.
 
 - **Node.** A node records its conversation, its level, the exact ledger event ids it covers, the events it deliberately skipped with a reason (a replay copy, scaffold text, a summary echo), its parent and its children, the model that built it and the prompt version, the time it was built, the revocation epoch it was built at, its status, its text, and a separate field for the detail it dropped. Parent and child links are rows of a table, not a list inside a node. A node and an event range each have at most one parent.
 - **Leaves and root.** The summary of a compaction (step 3) is a node. A compaction after an earlier one makes its node the parent of the earlier node and of the events since, so the summary a request uses is the root of the tree. A node never enters a request on its own: only the root does, and only at compaction, so the request layout and its cached prefix are unchanged. Nodes that group other nodes in another way, such as by period, are built only when a conversation has accumulated several compactions, and no always-on job builds them.
@@ -635,6 +652,18 @@ Memory has two layers. Personal knowledge is held by one agent and known only to
 
 LINA's model of the person is one store with several views. The store is the memory items and the ledger; the views are generated from them, so a view cannot drift from a second copy of itself.
 
+The behavioral reference is **Honcho**: its peer/context/conclusion APIs and the Hermes client's use of them. The Go implementation keeps the following behavior inside LINA's canon and Moirai write path.
+
+| Adopted Honcho behavior and reference | LINA mapping |
+| --- | --- |
+| Peers and observer/subject separation: [`peer.py`][honcho-peer], [`session.py`][honcho-session] | A person peer maps to the person id, an assistant peer to an agent id, and another participant to its external identity. The observed peer maps to an item's subject; the observer maps to its source agent and holder under the knowledge-layer rules. A common fact remains one item across observers. |
+| Short peer cards plus query-relevant conclusions: [`session_context.py`][honcho-context] | The card becomes the standing profile rendered from active, readable memory revisions; topic-relevant items and the person brief accompany it in the ContextPacket. Each line remains traceable to its items. |
+| Conclusions with provenance: [`conclusions.py`][honcho-conclusions] | A conclusion becomes a typed memory item with its source events, validity, basis and revision; linked premises remain evidence references. Explicit, deductive and inductive bases are mapped under "Learning the person". |
+| Dialectic query over stored observations: [`peer.py`][honcho-peer], [`dialectic.py`][honcho-dialectic] | `recall_person` retrieves evidence and, at depth 1, synthesizes an answer with a citation for every sentence. Deeper reasoning runs in a background job; an answer is derived output, not a new fact on its own. |
+| Session summaries alongside raw messages: [`session_context.py`][honcho-context] | The conversation ledger retains the messages; the summary tree supplies the derived session handoff. A summary never supplies evidence for a person item. Imported Honcho summaries stay unverified history. |
+
+LINA deliberately does not adopt a separately mutable peer card or duplicate conclusion stores per observer: views and holders express those distinctions without divergent copies. It does not require the Honcho service or upload a second transcript to it: memory canon stays in Core, with model calls governed by LINA's configured adapters and scope rules. Multi-pass dialectic in a foreground turn is not adopted because it would bypass the turn's bounded latency.
+
 - **Standing profile.** The active items flagged `standing` that the conversation's agent can read, newest valid revision first, capped in lines and in tokens. Lachesis flags stable, undated facts and preferences about the person as `standing`, and the person can flag or unflag any item. A flag lapses when its item is no longer valid. The profile is rendered when a ContextPacket needs it and is not stored. How the person likes this agent to talk is a preference of that agent (item 6.2 of the request layout), not part of the profile.
 - **Conclusions with sources.** A conclusion about the person is a memory item whose evidence is ledger events. The same conclusion reached through two agents is one common item with two pieces of evidence, never a copy per agent. What two agents know differently comes from the holder.
 - **Searchable raw messages.** The ledger stays searchable in full (see "Recall with evidence"), so the person model never replaces the words it rests on.
@@ -647,6 +676,21 @@ The first Core tool requires a nonempty retrieval query alongside the question; 
 ### Learning the person
 
 What an agent learns about its person, and how. What is learned is stored as memory items or as records, under the rules of this contract; the structure of the person model is defined by the memory model above.
+
+LINA adopts Honcho's distinction between explicit observations and deductions or inductions with premises ([`conclusions.py`][honcho-conclusions], [`src/schemas/internal.py`][honcho-observations]). These are ways an item is supported, not additional kinds of memory:
+
+| Honcho behavior | LINA mapping |
+| --- | --- |
+| Explicit observation | An atomic statement with `basis=stated`, the person's original quote and exact source event ids. Extraction by a model does not turn a direct statement into an inference. |
+| Deductive observation | `basis=derived`, identified as a deduction with its premise item ids and revisions and the ledger events supporting them. The conclusion never outranks a stated fact. |
+| Inductive observation | `basis=derived`, identified as an induction with its supporting item revisions, pattern and uncertainty. Repeated independent person events support a pattern; replay, summaries and repeated extraction of one event do not add support. |
+| Reinforcement and corrections | Merge independent evidence for the same subject and statement, keeping one item id; corrections and `supersedes` preserve the chain and recall chooses the newest valid statement. |
+| Asynchronous deriver cadence: [`src/deriver/queue_manager.py`][honcho-deriver] | Lachesis processes new committed person events in bounded batches on the extraction job's schedule, groups a burst into one utterance and resumes from its committed progress. No new eligible events means no extraction call; failed work remains pending. Writes use the Moirai transaction, never a second writer. |
+| Background dialectic cadence: [`dialectic.py`][honcho-dialectic] | The person-brief job prepares relevant context after delivery, backs off unproductive work and discards superseded or stale results. Atropos reads only a ready, topic-matching result and never waits for it. Cadence values belong to the job's measured schedule and budget. |
+
+At commit, every premise chain of a person-subject item must resolve to the person's own ledger events. Native admission records the actual person, agent, worker, system or other bot from the trusted route; a worker notice or bot relay retains its non-person kind and source identity even when a model API transports it as `user`. Import is an origin, not proof of a human speaker: the importer cross-checks host and LCM records before accepting a Honcho person label. Automated or agent-authored events can inform other-subject memory under the existing rules, never the person model.
+
+LINA deliberately rejects learning a person's facts from assistant text, summary text or a `user` role without speaker provenance: these would attribute words to the person that they never said. It does not adopt unreferenced conclusions or inference that silently overwrites a statement: both lose the evidence needed for correction. Honcho's server task machinery and fixed cadence values are replaced by the existing [memory jobs](cognition-and-life.md#memory-jobs), not by another scheduler.
 
 | Learn | From, and how often | Confirmation and correction |
 | --- | --- | --- |
@@ -703,6 +747,18 @@ When the person asks an agent to remember, correct or forget something, the conv
 - Every memory write, from a tool or from an action, goes through the Moirai engine's write path.
 
 ### Recall with evidence
+
+LINA adopts the complementary LCM-X and Honcho retrieval behaviors below through its existing ledger search, `expand` and `recall_person` tools; the reference names describe capabilities, not a requirement for a second tool namespace.
+
+| Reference capability | LINA behavior and evidence |
+| --- | --- |
+| LCM-X `grep`: [`tools.py`][lcm-tools] | Search raw ledger text and summary navigation nodes with time, speaker and origin filters. Return event ids and nearby messages; Korean full-text search keeps LINA's tokenizer and two-syllable fallback. |
+| LCM-X `recall`: [`tools.py`][lcm-tools] | Combine lexical and semantic candidates across the agent's conversations, including older compacted ranges. Summary hits lead to raw events; current-topic ranking never widens the agent/person/scope boundary. Memory-item recall adds current item revisions and their evidence. |
+| LCM-X `expand` and `describe`: [`expand_tools.py`][lcm-expand] | `expand` pages through node children, exact events or material bodies. Its description view exposes a node's depth, source range, child refs, omitted detail, provenance and availability so the caller can choose what to expand without treating the summary as evidence. |
+| LCM-X evidence packs and exact refs: [`evidence_pack.py`][lcm-evidence] | A bounded recall result groups exact source refs, verified quotes, source times and item revisions. An event span identifies its event and body/material revision and range; the resolver checks the quote against that source. Duplicate lineage counts once. Missing, masked, revoked or unresolved refs are reported as unavailable; budget cuts report omitted coverage instead of claiming a complete answer. |
+| Honcho dialectic: [`peer.py`][honcho-peer], [`dialectic.py`][honcho-dialectic] | `recall_person` answers a question from the retrieved pack, with citations to the items or events actually used, within the depth and time limits of "Person model". No supporting evidence means no asserted personal fact. |
+
+LINA deliberately does not adopt profile-wide retrieval without holder checks, summary text as final evidence, or dialectic-created observations as a side effect of a read: authorization, exact sources and the single memory write path apply to every result. LCM-X's integer store ids and sidecar filenames remain import legacy references; native tools use LINA's opaque event, node and material identities.
 
 - Recall for a conversation reads only the personal knowledge of the conversation's agent and common knowledge.
 - Recall returns only `active` items at their current revision that are valid now. Retracted, trashed and superseded revisions are never returned. An item past its `valid until`, or replaced through `supersedes`, is returned only as history, marked as older, when the question is about the past or about a change.
@@ -768,6 +824,8 @@ What each source object becomes:
 | Search indexes, embeddings, rollups, lifecycle state | Nothing; they are named in the import report | Rebuilt if wanted |
 
 Each conversation id of the lossless context database becomes one imported conversation of the mapped agent. A scheduled-run session is its own imported conversation, hidden from the default list. The source session id is kept as a legacy reference. Events chain by parent id in source order. A Honcho message is matched to a host or lossless-context event by session, role, the start of its text and a time window, with a text-only fallback inside the same session. The match rate and the unmatched messages are in the report.
+
+Speaker provenance is checked separately from message matching. Host and lossless-context source metadata, role, session kind and the person's confirmed channel/peer map must establish who actually spoke. Text similarity or marker text can locate a candidate or scaffold, but never establish `speaker_kind`. A Honcho message labelled as the person inherits that label only when its matched host or LCM event proves a person turn on the person's own channel. Scheduled prompts, manager or worker notices, bot relays, other-agent messages, system lines and tool outputs are relabelled to their actual non-person kind, retaining source identity. A Honcho-only message, missing provenance or conflicting source records defaults to non-person external evidence until its origin is proven; the Honcho peer name alone is insufficient. The report counts relabelled and unproven events per profile. Promotion and extraction use the resolved kind and never treat these events as the person's words. This classification adds provenance without changing sealed source bytes.
 
 Identifiers:
 
@@ -862,3 +920,21 @@ A restore never brings back a retracted or deleted item, or deleted conversation
 - The bound on the part of a result's text that the model sees, and the size limit of a preview's file bytes held in the ledger: set by measurement during implementation acceptance of the conversation engine.
 - The reply budgets, the size of a tuning step and the reaction classes: starting values set in Reply shape, tuned by measurement with real use and kept per person.
 - The file format and the manifest fields of an episode export: set with the first development run that uses the replay command ([runtime.md](runtime.md#replay-command)).
+
+[lcm-store]: https://github.com/electricsheephq/lcm-x/blob/e25f184da7f0f6f2e90db62a28b0610d76615d2d/store.py
+[lcm-compaction]: https://github.com/electricsheephq/lcm-x/blob/e25f184da7f0f6f2e90db62a28b0610d76615d2d/compaction.py
+[lcm-policy]: https://github.com/electricsheephq/lcm-x/blob/e25f184da7f0f6f2e90db62a28b0610d76615d2d/compaction_policy.py
+[lcm-externalize]: https://github.com/electricsheephq/lcm-x/blob/e25f184da7f0f6f2e90db62a28b0610d76615d2d/externalize.py
+[lcm-host-uid]: https://github.com/electricsheephq/lcm-x/blob/e25f184da7f0f6f2e90db62a28b0610d76615d2d/host_uid.py
+[lcm-dag]: https://github.com/electricsheephq/lcm-x/blob/e25f184da7f0f6f2e90db62a28b0610d76615d2d/dag.py
+[lcm-leaf-prep]: https://github.com/electricsheephq/lcm-x/blob/e25f184da7f0f6f2e90db62a28b0610d76615d2d/leaf_prep.py
+[lcm-tools]: https://github.com/electricsheephq/lcm-x/blob/e25f184da7f0f6f2e90db62a28b0610d76615d2d/tools.py
+[lcm-expand]: https://github.com/electricsheephq/lcm-x/blob/e25f184da7f0f6f2e90db62a28b0610d76615d2d/expand_tools.py
+[lcm-evidence]: https://github.com/electricsheephq/lcm-x/blob/e25f184da7f0f6f2e90db62a28b0610d76615d2d/evidence_pack.py
+[honcho-peer]: https://github.com/plastic-labs/honcho/blob/607438d20c408575d1c9257f325c4885da871e82/sdks/python/src/honcho/peer.py
+[honcho-session]: https://github.com/plastic-labs/honcho/blob/607438d20c408575d1c9257f325c4885da871e82/hermes-plugin-honcho/session.py
+[honcho-context]: https://github.com/plastic-labs/honcho/blob/607438d20c408575d1c9257f325c4885da871e82/hermes-plugin-honcho/session_context.py
+[honcho-conclusions]: https://github.com/plastic-labs/honcho/blob/607438d20c408575d1c9257f325c4885da871e82/sdks/python/src/honcho/conclusions.py
+[honcho-dialectic]: https://github.com/plastic-labs/honcho/blob/607438d20c408575d1c9257f325c4885da871e82/hermes-plugin-honcho/dialectic.py
+[honcho-observations]: https://github.com/plastic-labs/honcho/blob/607438d20c408575d1c9257f325c4885da871e82/src/schemas/internal.py
+[honcho-deriver]: https://github.com/plastic-labs/honcho/blob/607438d20c408575d1c9257f325c4885da871e82/src/deriver/queue_manager.py
