@@ -211,7 +211,7 @@ func (s *Store) AdmitBatch(ctx context.Context, inputs []Admission) (_ []Event, 
 				return err
 			}
 		}
-		return indexText(ctx, tx, e.ID, e.Body.DerivedText())
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -250,7 +250,7 @@ func writeEvent(ctx context.Context, tx *canon.Tx, e Event) error {
 			return err
 		}
 	}
-	return nil
+	return indexText(ctx, tx, e.ID, e.Body.DerivedText())
 }
 
 func nullable(s string) any {
