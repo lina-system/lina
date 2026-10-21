@@ -1,0 +1,4 @@
+{
+  "command": "/talk",
+  "reply": "SYNTHETIC-TALK-COMMAND-WAS-SENT-AS-CHAT"
+}

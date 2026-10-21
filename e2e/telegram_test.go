@@ -81,7 +81,6 @@ func TestM1TelegramUnreachable(t *testing.T) {
 	cfg.Services.PeekEpoch = func(context.Context) (uint64, error) { return 0, nil }
 	cfg.Services.OpenCanon = func(ctx context.Context, epoch uint64) (boot.Canon, error) {
 		ms := canon.Migrations()
-		ms = append(ms, canon.Migration{Version: len(ms) + 1, SQL: channels.Schema}, canon.Migration{Version: len(ms) + 2, SQL: telegram.Schema})
 		var err error
 		db, err = canon.Open(ctx, canon.Config{Path: filepath.Join(storeRoot, "canon.sqlite"), Epoch: epoch, Controls: ctl, Migrations: ms})
 		return db, err
