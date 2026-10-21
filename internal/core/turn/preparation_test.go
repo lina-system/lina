@@ -24,7 +24,7 @@ func preparation() *turn.Preparation {
 			return turn.ModelPolicy{Model: "model", Effort: "medium", Revision: "policy-1", Class: provider.ModelAPI}, nil
 		},
 		Context: func(context.Context, turn.ModelPolicy) (turn.PreparedRequest, error) {
-			return turn.PreparedRequest{Request: provider.Request{Items: []provider.Item{json.RawMessage(`{"role":"user","content":"input"}`)}}, Assembly: turn.Assembly{AgentID: "agent", PersonaRevision: "persona-1", Items: []turn.Reference{{ID: "context-1"}}}}, nil
+			return turn.PreparedRequest{MaxTokens: 100, Counter: func(r provider.Request) int { return len(r.Items) }, Request: provider.Request{Items: []provider.Item{json.RawMessage(`{"role":"user","content":"input"}`)}}, Assembly: turn.Assembly{AgentID: "agent", PersonaRevision: "persona-1", Items: []turn.Reference{{ID: "context-1"}}}}, nil
 		},
 		Acknowledge:   func(context.Context, turn.Acknowledgement) error { return nil },
 		RecordRequest: func(context.Context, turn.RequestEvidence) error { return nil },
@@ -160,5 +160,30 @@ func TestPreparedRequestRetainedAcrossFollowUp(t *testing.T) {
 	row, _ := s.Read(t.Context(), "turn")
 	if len(row.Items) != 0 {
 		t.Fatal("input packet persisted as history")
+	}
+}
+
+func TestFollowUpBudgetStopsBeforeRecordingOrDispatch(t *testing.T) {
+	db, _ := database(t)
+	s := turn.New(db)
+	p := preparation()
+	build := p.Context
+	p.Context = func(ctx context.Context, m turn.ModelPolicy) (turn.PreparedRequest, error) {
+		r, err := build(ctx, m)
+		r.MaxTokens = 1
+		r.Counter = func(r provider.Request) int { return len(r.Items) }
+		return r, err
+	}
+	inputs := &loop.Inputs{}
+	calls, recorded, shown := 0, 0, 0
+	p.RecordRequest = func(context.Context, turn.RequestEvidence) error { recorded++; return nil }
+	p.Show = func(turn.PreparationFailure) { shown++ }
+	_, err := s.Run(t.Context(), turn.Options{ID: "turn", Conversation: "conversation", InboxID: admit(t, db), Preparation: p, Loop: loop.Config{Inputs: inputs, Stream: func(context.Context, provider.Request) (provider.Stream, error) {
+		calls++
+		inputs.Push(json.RawMessage(`{"role":"user","content":"more input"}`))
+		return &stream{[]provider.Event{{Kind: provider.Terminal}}}, nil
+	}}})
+	if !errors.Is(err, turn.ErrRequestTooLarge) || calls != 1 || recorded != 1 || shown != 1 {
+		t.Fatalf("err=%v calls=%d recorded=%d shown=%d", err, calls, recorded, shown)
 	}
 }
