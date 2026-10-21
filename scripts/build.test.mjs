@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { sandbox } from './test-fixture.mjs';
-import { createGoContext } from './verify/check-components.mjs';
+import { componentsTimeoutMs, createGoContext, execute } from './verify/check-components.mjs';
 import { build } from './build.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -17,7 +17,7 @@ test('the pinned SQLite rebuild script has valid shell syntax', () => {
   assert.equal(result.status, 0, result.stderr);
 });
 
-function fixture(t) {
+function fixture(t, { timeoutScale = 1 } = {}) {
   const sb = sandbox(t);
   const cwd = join(sb.dir, 'source');
   mkdirSync(cwd);
@@ -32,8 +32,11 @@ function fixture(t) {
   const context = createGoContext(cwd);
   t.after(context.close);
   const out = join(sb.dir, 'artifacts with spaces');
-  const run = (args = ['--out', out]) => spawnSync(process.execPath, [join(cwd, 'scripts/build.mjs'), ...args], {
-    cwd, env: context.env, encoding: 'utf8', timeout: 120_000,
+  // A full cross-build contains multiple Go commands. Share the same bounded
+  // allowance across targets, inside foundation's 600 s automation watchdog.
+  const deadline = performance.now() + (componentsTimeoutMs - 5000) * timeoutScale;
+  const run = (args = ['--out', out]) => execute(process.execPath, [join(cwd, 'scripts/build.mjs'), ...args], {
+    cwd, env: context.env, timeoutMs: Math.max(1, Math.floor(deadline - performance.now())),
   });
   const build = () => {
     const result = run();
@@ -42,6 +45,29 @@ function fixture(t) {
   };
   return { ...sb, cwd, out, revision, run, build, env: context.env };
 }
+
+test('a progressing cross-build can outlive the old per-command limit', t => {
+  const f = fixture(t, { timeoutScale: 1 / 120 });
+  // Exercise the same CLI wrapper as real cross-builds, scaling the old limit
+  // to 1 s and substituting a 2 s progressing build for cold compilation.
+  f.write(f.cwd, 'scripts/build.mjs', `// SPDX-License-Identifier: Apache-2.0
+const progress = setInterval(() => console.log('compiling'), 50);
+setTimeout(() => { clearInterval(progress); console.log('finished'); }, 2000);
+`);
+  const result = f.run(['--out', f.out, '--target', 'darwin/arm64']);
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}${result.error?.message ?? ''}`);
+  assert.match(result.stdout, /compiling[\s\S]*finished/);
+});
+
+test('a hung cross-build fails with the command, target and elapsed time', t => {
+  const f = fixture(t, { timeoutScale: 1 / 3000 });
+  f.write(f.cwd, 'scripts/build.mjs', `// SPDX-License-Identifier: Apache-2.0
+setInterval(() => {}, 1000);
+`);
+  const result = f.run(['--out', f.out, '--target', 'darwin/arm64']);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /command timed out after [\d.]+ s.*build\.mjs.*--target darwin\/arm64/);
+});
 
 test('requires an output directory and rejects unknown arguments', t => {
   const f = fixture(t);
