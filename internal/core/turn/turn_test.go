@@ -41,7 +41,8 @@ func database(t *testing.T, schemas ...string) (*canon.Store, canon.Config) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { c.Close() })
-	ms := canon.Migrations()
+	// Explicit schemas exercise historical runtime-only migrations.
+	ms := canon.Migrations()[:11]
 	if len(schemas) == 0 {
 		schemas = []string{turn.Schema, turn.ControlSchema, turn.OutcomeSchema}
 	}

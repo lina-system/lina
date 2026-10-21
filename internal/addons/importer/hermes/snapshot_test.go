@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-package importer
+package hermes
 
 import (
 	"bytes"
@@ -23,7 +23,7 @@ import (
 
 func fixture(t *testing.T, name string) []byte {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("../../../testdata/hermes", name))
+	b, err := os.ReadFile(filepath.Join("../../../../testdata/hermes", name))
 	if err != nil {
 		t.Fatal(err)
 	}
