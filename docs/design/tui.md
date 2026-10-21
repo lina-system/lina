@@ -45,7 +45,7 @@ Ids are stable. Section headings carry the ids they specify. T-02 is withdrawn: 
 
 `lina tui` is a subcommand of the `lina` binary and runs as its own process ([runtime.md](runtime.md#the-lina-command)). It holds display state only, under the rules of [surfaces.md](surfaces.md#the-lina-app-is-a-thin-client): what is on screen, layout, reading position and unsent drafts. Drafts live in memory and never on disk, because a file of drafts would be personal content outside canon.
 
-The empty TUI increment (#32) runs as `lina tui --socket <path>` with plain text input and output. `internal/clientapi` owns the Unix connection and the generated client 1.0 handshake types; `internal/tui/ui` owns the connection display and quit input. The command supplies the product version for diagnosis. This increment declares no capabilities, writes no preferences or drafts, and imports no terminal UI library. The terminal library and screens follow the T-08 spike gate.
+The empty TUI increment (#32) runs as `lina tui --socket <path>` with plain text input and output. `internal/clientapi` owns the Unix connection and the generated client 1.0 handshake types; `internal/tui/ui` owns the connection display and quit input. The command supplies the product version for diagnosis. This increment declares no capabilities, writes no preferences or drafts, and imports no terminal UI library. The terminal library and screens follow the T-08 spike gate. The pure `state`, `sanitize`, `layout` and `render` packages are independently testable foundations; this increment adds no terminal I/O or conversation wire payload.
 
 - It keeps its preferences (theme, glyph set, width settings, notification mode) in one client file, mode 0600, at the location the install fixes. A missing or bad file never blocks start.
 - It never opens canon, never runs `lina core` and never holds the lock. Every message it sends is a request that Core accepts or refuses, and when the two disagree Core wins and the TUI refreshes.
@@ -181,7 +181,16 @@ func Plan(size Size, caps Caps, st Shape) Layout // regions disjoint, sum fits, 
 - The header, the status line, one composer row and a transcript floor of four rows (P) always survive.
 - The composer grows with the draft to six rows (P), then scrolls inside itself.
 - What remains is shared in a stated order of shedding: the side pane closes first, then the running strip folds to a count, then the card row folds to one summary line. A folded part keeps its count, so a count on screen always equals the list.
-- Property tests run the plan at every allowed size.
+- `Plan` treats negative dimensions as zero. At too-small sizes it reserves one
+  status row when a cell exists and uses the remaining rows for the size notice.
+  At usable sizes the running strip starts at one to three rows and the card row
+  at one to five; each keeps one summary row when folded. The attachment strip
+  uses one row. After the stated shedding, composer growth yields as necessary
+  to preserve the transcript floor. Counts and unsupported flags remain typed
+  output even when their region folds.
+- Property tests enumerate widths 0–240 and heights 0–100 with empty and crowded
+  shapes and granted and missing capabilities, and exercise threshold and
+  integer-limit dimensions. The planner itself imposes no maximum size.
 
 ## Home, waiting for me and progress (T-12)
 
@@ -274,14 +283,14 @@ type Stream interface {
 }
 ```
 
-- A closed top-level block (paragraph, closed fence, list, table, heading) is frozen into a stable prefix and cached on (block id, revision, width in cells, theme, width mode).
-- The open tail is plain text and wraps incrementally: complete lines freeze and each delta re-wraps only the last partial line. Breaks fall at whitespace, else at a grapheme boundary, never inside a cluster. An open code fence belongs to the tail until it closes.
+- A closed top-level block (paragraph, closed fence, list, table, heading) is frozen into a stable prefix and cached on (block id, revision, width in cells, theme, width mode). The plain-text foundation closes paragraphs, lists and tables at blank lines, headings at newline and fenced blocks at a matching closing fence. These conservative boundaries keep incomplete markup plain.
+- The open tail is plain text and wraps incrementally: complete lines freeze and each delta re-wraps the last partial line and its boundary row, because a late combining mark or ZWJ can extend the last cluster. Breaks fall at whitespace, else at a grapheme boundary, never inside a cluster. An open code fence belongs to the tail until it closes.
 - A block that closes is painted once, off the UI goroutine. A stale result is dropped. The visible change from plain to styled at close is accepted: rendering the whole tail on every flush grows quadratically.
 - `Seal()` at `item_done` replaces the stitched render once.
 - Markdown blocks may use Glamour one block at a time with wrap width 0, and every line it returns is re-wrapped with the `Measurer`. Tables use our own renderer.
-- One width function serves all layout: wcwidth by default, grapheme clusters once mode 2027 is confirmed, ambiguous East Asian width narrow, Hangul syllables two cells. The mode is part of the cache key.
+- One width function serves all layout: wcwidth by default, grapheme clusters once mode 2027 is confirmed, ambiguous East Asian width narrow, Hangul syllables two cells. The mode is part of the cache key. The Charm-free `Measurer` uses pinned Unicode 17 data and UAX #29 segmentation for wrapping and clipping in both modes. A cluster wider than the entire row is omitted with a typed clipped flag, never split. Cursor offsets inside a cluster clamp to its start.
 - The hardware cursor is placed on every frame at the display width of the text before it on the wrapped row, so IME composition appears in place. The TUI never requests all-keys-as-escape-codes. Committed IME text arrives as UTF-8, one grapheme cluster at a time ([surfaces.md](surfaces.md#korean-input)).
-- Only the viewport plus overscan (P) is laid out, so cost follows viewport rows and not history.
+- Only the viewport plus overscan (P) is laid out, so cost follows viewport rows and not history. `Stream` indexes new text as it arrives. `Window` takes a retained byte anchor within a block and stops reflow at the requested row count, including after a width change. `Renderer.Draw` reads and paints only those indexed rows, retains only the current viewport cache, and returns changed-row patches; an empty patch list causes no writes. A trusted UI painter styles only closed rows after sanitizing and clipping.
 - Resize events coalesce to one reflow per 32 ms (P).
 - An unchanged state writes zero bytes. Motion is one status glyph with no timer while deltas stream; elapsed time updates at 1 Hz (P) otherwise.
 - OSC 8 links are emitted for allowed schemes only.
@@ -417,7 +426,7 @@ Invariants that need a test:
 - After forget and reconnect, the forgotten item is absent.
 - No line of the default view carries an id-shaped field, checked on the typed view model.
 - `sanitize.Display` is fuzzed with control, bidirectional and OSC input.
-- A width golden corpus (Hangul, mixed ASCII, emoji sequences, combining marks) guards the width function and the cursor column.
+- A width corpus (Hangul, mixed ASCII, emoji sequences, combining marks) guards cell widths and cursor columns without pinning rendered prose. The Unicode 17 grapheme conformance corpus guards segmentation; chunked-stream fuzzing compares arbitrary splits with complete input. Renderer tests count measurements and paint calls across large histories, verify stable prefix caches and changed-row application, and establish zero patches on unchanged state. Real terminal writes, IME behavior, resize scheduling and the T-08 spike remain the consuming UI's acceptance work.
 
 **Tokens and theme.** `internal/design` is generated from the one DTCG token source ([surfaces.md](surfaces.md#one-design-language)), and the foundation check regenerates it ([foundation.md](../policy/foundation.md)).
 
