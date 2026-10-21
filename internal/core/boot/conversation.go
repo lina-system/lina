@@ -20,7 +20,6 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/accounts"
 	"github.com/thisisjun786/lina/internal/core/agents"
-	"github.com/thisisjun786/lina/internal/core/assemble"
 	"github.com/thisisjun786/lina/internal/core/assets"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
@@ -31,7 +30,6 @@ import (
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/internal/core/manifest"
-	"github.com/thisisjun786/lina/internal/core/memory"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
 	"github.com/thisisjun786/lina/internal/core/retract"
 	"github.com/thisisjun786/lina/internal/core/secrets"
@@ -50,6 +48,7 @@ type acceptedSteering struct {
 }
 
 type conversationRuntime struct {
+	dispatchMu                  *sync.RWMutex
 	removals                    *retract.Store
 	materials                   *conversationMaterials
 	assets                      *assets.Store
@@ -80,7 +79,7 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err != nil {
 		return nil, err
 	}
-	r := &conversationRuntime{root: root, steering: map[string][]acceptedSteering{}, ctx: ctx, db: db, route: route, activities: activities, lanes: lane.New(), person: "person:" + main}
+	r := &conversationRuntime{dispatchMu: &sync.RWMutex{}, root: root, steering: map[string][]acceptedSteering{}, ctx: ctx, db: db, route: route, activities: activities, lanes: lane.New(), person: "person:" + main}
 	if person != "" {
 		r.person = person
 	}
@@ -128,7 +127,7 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err != nil {
 		return nil, err
 	}
-	r.identity = clientsrv.Identity{PersonID: r.person, Agents: []protocol.Agent{{AgentID: r.agent, Name: first.Agent.Name}}, Operations: clientsrv.ConversationOperations(&conversationRouter{root: r, views: map[string]*conversationRuntime{r.agent: r}}), Topics: r.topics, TopicCapabilities: map[string]protocol.Capability{
+	r.identity = clientsrv.Identity{PersonID: r.person, Agents: []protocol.Agent{{AgentID: r.agent, Name: first.Agent.Name}}, Operations: clientsrv.ConversationOperations(&conversationRouter{root: r, views: map[string]*conversationRuntime{r.agent: r}}), Topics: r.topics, AuthorizeTopic: r.topicAuthorized, TopicCapabilities: map[string]protocol.Capability{
 		"core": clientsrv.ConversationCapability, "conversation:": clientsrv.ConversationCapability, "results:": clientsrv.ConversationCapability,
 	}}
 	if r.agent == "" {
@@ -371,6 +370,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 	defer activity.Release()
 	var items []provider.Item
 	var memoryEpoch uint64
+	var memoryRefs []turn.Reference
 	evidence := turn.EvidenceWriter{Ledger: r.journal(), ConversationID: r.conversation, ParentID: input.ID, Surface: ledger.Surface{Kind: "tui"}, Now: time.Now}
 	prep := &turn.Preparation{
 		VerifyBuild: r.verifyBuild,
@@ -383,33 +383,13 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			if err != nil {
 				return turn.PreparedRequest{}, err
 			}
-			events, err := r.events(ctx, input.ID)
+			items, memoryRefs, memoryEpoch, err = r.modelContext(ctx, input.ID)
 			if err != nil {
 				return turn.PreparedRequest{}, err
 			}
-			items, err = assemble.History(events, r.conversation, r.agent)
-			if err != nil {
-				return turn.PreparedRequest{}, err
-			}
-			memoryEpoch, err = r.removals.Epoch(ctx)
-			if err != nil {
-				return turn.PreparedRequest{}, err
-			}
-			profile, err := memory.New(r.db).Profile(ctx, memory.RecallScope{Person: r.person, Agent: r.agent, ExternalModel: true}, time.Now().Unix(), 32, 4096, func(text string) int { return len(text) })
-			if err != nil {
-				return turn.PreparedRequest{}, err
-			}
-			refs := make([]turn.Reference, 0, len(profile))
-			memoryItems := make([]provider.Item, 0, len(profile))
-			for _, hit := range profile {
-				refs = append(refs, turn.Reference{ID: hit.ID, Revision: strconv.FormatInt(hit.Revision, 10)})
-				raw, _ := json.Marshal(map[string]string{"role": "user", "content": "Remembered statement (" + hit.ID + "): " + hit.Content})
-				memoryItems = append(memoryItems, provider.Item(raw))
-			}
-			items = append(memoryItems, items...)
 			request := r.route.Request(items)
 			request.Instructions = strings.Join([]string{persona.Layers.Core, persona.Layers.DefaultVoice, persona.Layers.UserVoice, persona.Layers.GrowthSnapshot}, "\n")
-			return turn.PreparedRequest{Request: request, Assembly: turn.Assembly{AgentID: r.agent, PersonaRevision: persona.Commit, Items: refs}, Counter: func(request provider.Request) int {
+			return turn.PreparedRequest{Request: request, Assembly: turn.Assembly{AgentID: r.agent, PersonaRevision: persona.Commit, Items: memoryRefs}, Counter: func(request provider.Request) int {
 				n := len(request.Instructions)
 				for _, item := range request.Items {
 					n += len(item)
@@ -443,9 +423,11 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		Inputs: &conversationInputs{runtime: r, inputs: inputs},
 		Stream: func(ctx context.Context, request provider.Request) (provider.Stream, error) {
 			round++
+			r.dispatchMu.RLock()
+			defer r.dispatchMu.RUnlock()
 			// Never dispatch a cached preparation after a committed forget. This also
 			// fences follow-up rounds; the existing turn flow records the refusal.
-			if err := r.removals.Validate(ctx, memoryEpoch); err != nil {
+			if err := r.validateModelContext(ctx, memoryEpoch, memoryRefs); err != nil {
 				return nil, err
 			}
 			if _, err := r.agents.Get(ctx, r.agent); err != nil {

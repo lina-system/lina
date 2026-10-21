@@ -715,9 +715,9 @@ These commands are intercepted before conversation input, including when their
 capability is absent or their arguments are invalid. A refused or unsupported
 operation is shown locally and never becomes a model prompt.
 
-- `/memory list [query]` lists up to 1000 current scoped items with stable ids,
+- `/memory list [query]` lists current scoped items in pages of at most 1000 rows and 512 KiB of serialized item data, with stable ids,
   content, holder, privacy scope and source event identities. `/memory` is its
-  empty-query form.
+  empty-query form. `/memory next` requests the next page with the same agent and query; an invalidated cursor requires listing again.
 - `/memory remember [--holder=all|agent] [--scope=local|private|never-leaves] <text>`
   records an explicit person statement through Core's existing memory writer.
   Defaults are common knowledge (`all`) and `local`. `/memory correct <id> <text>`

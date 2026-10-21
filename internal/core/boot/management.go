@@ -18,6 +18,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/memory"
 	"github.com/thisisjun786/lina/internal/core/retract"
+	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -89,7 +90,14 @@ func (r *conversationRuntime) Agent(ctx context.Context, s clientsrv.Session, p 
 				return result, malformedManagement()
 			}
 			// Stop the existing lane before removing this persona from admission.
-			r.lanes.Stop("main:"+*p.AgentID, nil)
+			r.lanes.Stop("main:"+*p.AgentID, turn.Interrupt{Issuer: turn.Person})
+			// Cancel first so a provider waiting for headers releases its
+			// dispatch read lock before we fence later requests.
+			if r.dispatchMu != nil {
+				r.dispatchMu.Lock()
+				defer r.dispatchMu.Unlock()
+			}
+			r.lanes.Stop("main:"+*p.AgentID, turn.Interrupt{Issuer: turn.Person})
 			err = r.agents.Delete(ctx, *p.AgentID, s.PersonID, time.Now())
 		}
 		if err != nil {
@@ -122,12 +130,26 @@ func (r *conversationRuntime) Memory(ctx context.Context, s clientsrv.Session, p
 		return
 	}
 	result.Operation = p.Operation
+	if *p.Operation != "list" && r.dispatchMu != nil {
+		r.dispatchMu.Lock()
+		defer r.dispatchMu.Unlock()
+	}
 	scope := memory.RecallScope{Person: s.PersonID, Agent: *p.AgentID}
 	store := memory.New(r.db)
 	query := memory.Query{At: time.Now().Unix(), Limit: 1000}
 	if *p.Operation == "list" {
 		if p.ItemID != nil || p.Holder != nil || p.Scope != nil {
 			return result, malformedManagement()
+		}
+		if p.After != nil {
+			cursor, e := store.Recall(ctx, scope, memory.Query{ID: *p.After, At: query.At, Limit: 1})
+			if e != nil {
+				return result, e
+			}
+			if len(cursor) != 1 {
+				return result, outsideManagement()
+			}
+			query.After = *p.After
 		}
 		if p.Text != nil {
 			query.Text = *p.Text
@@ -137,15 +159,36 @@ func (r *conversationRuntime) Memory(ctx context.Context, s clientsrv.Session, p
 			return result, e
 		}
 		items := make([]protocol.MemorySummary, 0, len(hits))
+		size := 0
 		for _, h := range hits {
 			evidence := []string{}
 			for _, e := range h.Evidence {
 				evidence = append(evidence, string(e.Kind)+":"+e.ID)
 			}
-			items = append(items, protocol.MemorySummary{ItemID: h.ID, Content: h.Content, Holder: string(h.Holder), Scope: string(h.Scope), Revision: json.Number(strconv.FormatInt(h.Revision, 10)), Evidence: evidence})
+			item := protocol.MemorySummary{ItemID: h.ID, Content: h.Content, Holder: string(h.Holder), Scope: string(h.Scope), Revision: json.Number(strconv.FormatInt(h.Revision, 10)), Evidence: evidence}
+			raw, e := json.Marshal(item)
+			if e != nil {
+				return result, e
+			}
+			// Leave half the transport frame for envelope, metadata and JSON overhead.
+			if size+len(raw)+1 > 512<<10 {
+				if len(items) == 0 {
+					return result, &clientsrv.OperationError{Code: protocol.ErrorUnavailable}
+				}
+				result.Next = &items[len(items)-1].ItemID
+				break
+			}
+			size += len(raw) + 1
+			items = append(items, item)
+		}
+		if len(items) == query.Limit {
+			result.Next = &items[len(items)-1].ItemID
 		}
 		result.Items = &items
 		return
+	}
+	if p.After != nil {
+		return result, malformedManagement()
 	}
 	var previous memory.Item
 	if *p.Operation == "correct" || *p.Operation == "forget" {

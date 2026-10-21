@@ -344,7 +344,7 @@ func (s *Store) recall(ctx context.Context, scope RecallScope, q Query, standing
 			match = "instr(e.normalized,?)>0"
 			args = append(args, text)
 		}
-		args = append(args, limit)
+		args = append(args, q.After, q.After, q.After, q.After, limit)
 		rows, err := tx.QueryContext(ctx, `WITH candidates AS MATERIALIZED (
    SELECT m.id,m.sequence,m.record,m.normalized,
    (SELECT max(r.sequence) FROM memory_revision r WHERE r.item_id=m.id) AS priority,
@@ -356,7 +356,9 @@ func (s *Store) recall(ctx context.Context, scope RecallScope, q Query, standing
     JOIN json_each(?) blocked ON blocked.key=json_extract(refs.value,'$.id')
     WHERE json_extract(refs.value,'$.kind')='event')
    ), eligible AS MATERIALIZED (SELECT * FROM candidates WHERE ? OR NOT older)
-   SELECT e.record,e.older FROM eligible e WHERE `+match+` ORDER BY e.priority DESC,e.id LIMIT ?`, args...)
+   SELECT e.record,e.older FROM eligible e WHERE `+match+` AND (?='' OR e.priority < (SELECT max(sequence) FROM memory_revision WHERE item_id=?)
+   OR (e.priority=(SELECT max(sequence) FROM memory_revision WHERE item_id=?) AND e.id>?))
+   ORDER BY e.priority DESC,e.id LIMIT ?`, args...)
 		if err != nil {
 			return err
 		}

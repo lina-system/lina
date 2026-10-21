@@ -2513,6 +2513,10 @@
             "private",
             "never-leaves"
           ]
+        },
+        "after": {
+          "type": "string",
+          "minLength": 1
         }
       },
       "additionalProperties": false
@@ -2533,6 +2537,10 @@
           "items": {
             "$ref": "#/$defs/memory_summary"
           }
+        },
+        "next": {
+          "type": "string",
+          "minLength": 1
         }
       },
       "additionalProperties": false

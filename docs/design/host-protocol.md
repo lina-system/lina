@@ -372,12 +372,14 @@ The generated schema is authoritative for field types.
 Memory operations are `list`, `remember`, `correct` and `forget`, scoped to an
 `agent_id` and the connection's person. `item_id` identifies a correction or
 forget target; `text` holds a query or explicit statement; optional `holder`
-and `scope` apply only to remember. Result items carry id, revision, content,
+and `scope` apply only to remember. List accepts optional `after` (the last visible item id), and returns optional `next` for continuation. Pages bound serialized content plus evidence to 512 KiB, leaving room below the 1 MiB transport frame. A cursor is checked within the same authenticated scope before applying the result limit. Result items carry id, revision, content,
 holder, scope and canonical evidence identities. Correct returns the new id and
 retains the target's holder and scope. Forget returns only the removed id.
 Agent operations are `list`, `create`, `choose`, `rename` and `delete`; requests
 carry `agent_id` and/or `name` as appropriate, and results return the affected id
 and current list. Choose then discovers that agent's history with `history_get`.
+
+Topic subscriptions and each stream delivery recheck that the addressed agent is still active. Deleted agent history cannot be recovered through a topic prefix.
 
 Mutating management replies use `applied` only after the existing Core service
 commits. Listing and choosing use `none`. Every reply is correlated to its

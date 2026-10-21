@@ -34,7 +34,7 @@ func (s *conversationRouter) view(ctx context.Context, session clientsrv.Session
 	r := s.root
 	materials := *r.materials
 	materials.actor.AgentID = agent
-	view := &conversationRuntime{materials: &materials, assets: r.assets, root: r.root, steering: map[string][]acceptedSteering{}, ctx: r.ctx, db: r.db, accounts: r.accounts, vault: r.vault, agents: r.agents, lanes: r.lanes, topics: r.topics, route: r.route, activities: r.activities, person: r.person, agent: agent, conversation: "main:" + agent, removals: r.removals}
+	view := &conversationRuntime{dispatchMu: r.dispatchMu, materials: &materials, assets: r.assets, root: r.root, steering: map[string][]acceptedSteering{}, ctx: r.ctx, db: r.db, accounts: r.accounts, vault: r.vault, agents: r.agents, lanes: r.lanes, topics: r.topics, route: r.route, activities: r.activities, person: r.person, agent: agent, conversation: "main:" + agent, removals: r.removals}
 	if err := view.seedHistory(ctx); err != nil {
 		return nil, err
 	}

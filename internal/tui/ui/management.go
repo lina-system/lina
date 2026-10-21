@@ -31,7 +31,7 @@ func (m *shellModel) managementHelp(kind string) string {
 	if kind == "agents" {
 		return "/agents\n/agents create <name>\n/agents choose <id>\n/agents rename <id> <name>\n/agents delete <id>"
 	}
-	return "/memory\n/memory list <query>\n/memory remember <text>\n/memory correct <id> <text>\n/memory forget <id>\nremember: --holder=all|agent --scope=local|private|never-leaves"
+	return "/memory\n/memory list <query>\n/memory next\n/memory remember <text>\n/memory correct <id> <text>\n/memory forget <id>\nremember: --holder=all|agent --scope=local|private|never-leaves"
 }
 func cutCommand(s string) (string, string) {
 	first, rest, _ := strings.Cut(strings.TrimSpace(s), " ")
@@ -49,6 +49,16 @@ func (m *shellModel) managementCommand(text string) (bool, tea.Cmd) {
 		return true, nil
 	}
 	op, args := cutCommand(rest)
+	if kind == "memory" && op == "next" {
+		if args != "" || m.memoryPage == nil || m.memoryPage.AgentID == nil || *m.memoryPage.AgentID != m.activeAgent() {
+			m.openPager(help)
+			return true, nil
+		}
+		request := *m.memoryPage
+		generation := m.generation
+		m.openPager(help)
+		return true, func() tea.Msg { return shellManagement{Generation: generation, Request: request} }
+	}
 	if op == "" {
 		op = "list"
 	}
@@ -164,10 +174,20 @@ func (s *managementSession) response(ctx context.Context, c *clientapi.Client, e
 	}
 	switch p := e.Payload.(type) {
 	case protocol.MemoryResult:
-		if _, ok := request.(protocol.MemoryRequest); !ok || p.Operation == nil {
+		original, ok := request.(protocol.MemoryRequest)
+		if !ok || p.Operation == nil {
 			return true, errStream
 		}
+		m.memoryPage = nil
+		if p.Next != nil {
+			next := original
+			next.After = p.Next
+			m.memoryPage = &next
+		}
 		lines := []string{design.Text(m.styles.options.Language, *p.Operation), m.managementHelp("memory"), ""}
+		if p.Next != nil {
+			lines = append(lines, "/memory next")
+		}
 		if p.ItemID != nil {
 			lines = append(lines, design.Text(m.styles.options.Language, *p.Operation)+" "+*p.ItemID)
 		}

@@ -82,6 +82,7 @@ func TestM1TUIMemoryAgentsInstalledCore(t *testing.T) {
 		})
 	}
 	t.Run("round trip", func(t *testing.T) { memoryAgentRoundTrip(t, binary, bundle) })
+	t.Run("paged memory", func(t *testing.T) { memoryAgentPages(t, binary, bundle) })
 	t.Run("without model or default agent", func(t *testing.T) { managementWithoutModelOrDefaultAgent(t, binary, bundle) })
 }
 
@@ -258,6 +259,19 @@ func memoryAgentRoundTrip(t *testing.T, binary, bundle string) {
 	if deleted.AgentID == nil || *deleted.AgentID != second || deleted.Agents == nil || len(*deleted.Agents) != 1 || (*deleted.Agents)[0].AgentID != original {
 		t.Fatal("delete did not remove the selected id")
 	}
+	watcher, err := clientapi.DialWithCapabilities(h.ctx, socket, "test", []protocol.Capability{{Name: "conversation", Version: "1.0"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	topic := "conversation:main:" + second
+	if _, err = watcher.Subscribe(h.ctx, protocol.Subscribe{Topic: &topic}); err != nil {
+		t.Fatal(err)
+	}
+	refused, err := watcher.Receive(h.ctx)
+	if err != nil || refused.Error == nil {
+		t.Fatal("deleted agent history remained subscribable", err)
+	}
+	watcher.Close()
 	h.keys(terminal, "\x04")
 	terminal.process.wait(t, 0)
 	h.expectTerminalRestored(terminal)
@@ -359,6 +373,81 @@ func managementWithoutModelOrDefaultAgent(t *testing.T, binary, bundle string) {
 			waitScreen(t, h, terminal, *p.ItemID)
 			break
 		}
+	}
+	h.keys(terminal, "\x04")
+	terminal.process.wait(t, 0)
+	h.expectTerminalRestored(terminal)
+	h.socket = socket
+	h.stopCore(core)
+}
+
+func memoryAgentPages(t *testing.T, binary, bundle string) {
+	h, start := installConversationBundle(t, newHarness(t, binary), bundle, "")
+	core := start(false)
+	socket := h.socket
+	client, err := clientapi.DialWithCapabilities(h.ctx, socket, "test", []protocol.Capability{{Name: "memory", Version: "1.0"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent := client.Welcome.Agents[0].AgentID
+	raw, err := os.ReadFile("m1/tui-memory-agents.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var scenario struct {
+		PageItems int `json:"page_items"`
+	}
+	if err = json.Unmarshal(raw, &scenario); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < scenario.PageItems; i++ {
+		op, text := "remember", fmt.Sprintf("paged %d ", i)+strings.Repeat("<", 16000)
+		if _, err = client.Memory(h.ctx, protocol.MemoryRequest{Operation: &op, AgentID: &agent, Text: &text}); err != nil {
+			t.Fatal(err)
+		}
+		e, err := client.Receive(h.ctx)
+		if err != nil || e.Error != nil {
+			t.Fatal("page setup refused", err)
+		}
+	}
+	client.Close()
+	tap := newAccountTap(t, h, socket)
+	h.socket = tap.socket
+	terminal := h.startScreenTUI("TERM=xterm-256color")
+	waitScreen(t, h, terminal, "Ctrl+D")
+	h.keys(terminal, "/memory list paged\r")
+	seen := map[string]bool{}
+	for page := 0; page < scenario.PageItems; page++ {
+		var result protocol.MemoryResult
+		for {
+			e := tap.next(t, h)
+			if e.Error != nil {
+				t.Fatal(e.Error.Code)
+			}
+			if p, ok := e.Payload.(protocol.MemoryResult); ok {
+				result = p
+				break
+			}
+		}
+		if result.Items == nil || len(*result.Items) == 0 {
+			t.Fatal("empty memory page")
+		}
+		for _, item := range *result.Items {
+			if seen[item.ItemID] {
+				t.Fatal("page repeated an item")
+			}
+			seen[item.ItemID] = true
+		}
+		waitScreen(t, h, terminal, (*result.Items)[0].ItemID)
+		if result.Next == nil {
+			break
+		}
+		h.keys(terminal, "\x1b")
+		waitScreen(t, h, terminal, "Ctrl+D")
+		h.keys(terminal, "/memory next\r")
+	}
+	if len(seen) != scenario.PageItems {
+		t.Fatal("TUI pagination lost memory")
 	}
 	h.keys(terminal, "\x04")
 	terminal.process.wait(t, 0)
