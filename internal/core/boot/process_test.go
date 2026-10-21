@@ -82,20 +82,35 @@ func TestCoreProcess(t *testing.T) {
 						if !ok || envelope.Kind != protocol.KindWelcome || envelope.Error != nil || envelope.EffectState != protocol.EffectNone || !reflect.DeepEqual(welcome, want) {
 							t.Fatalf("unexpected welcome: %s", line)
 						}
-						// A welcomed connection remains usable, but grants no operations.
-						request.Params.MessageID = "after-welcome"
-						if err := json.NewEncoder(conn).Encode(request); err != nil {
-							t.Fatal(err)
-						}
-						line, err := reader.ReadBytes('\n')
-						if err != nil {
-							t.Fatal(err)
-						}
-						if err := json.Unmarshal(line, &response); err != nil {
-							t.Fatal(err)
-						}
-						if response.Result.Error == nil || response.Result.Error.Code != protocol.ErrorCapabilityNotNegotiated {
-							t.Fatalf("unexpected post-handshake answer: %s", line)
+						// A handshake is available during RECOVERING. Wait for a
+						// protocol observation of READY, within the connection's
+						// existing deadline. Only an explicit unavailable refusal
+						// permits another fresh, effect-free readiness probe.
+						request.Method = "input"
+						request.Params.Kind, request.Params.Payload = protocol.KindInput, protocol.Input{}
+						request.Params.Epoch = epoch
+						for probe := 0; ; probe++ {
+							request.ID = "ready-" + strconv.Itoa(probe)
+							request.Params.MessageID, request.Params.AttemptID = request.ID, request.ID
+							if err := json.NewEncoder(conn).Encode(request); err != nil {
+								t.Fatal(err)
+							}
+							line, err := reader.ReadBytes('\n')
+							if err != nil {
+								t.Fatal(err)
+							}
+							if err := json.Unmarshal(line, &response); err != nil {
+								t.Fatal(err)
+							}
+							if response.ID != request.ID || response.Result.ReplyTo == nil || *response.Result.ReplyTo != request.ID || response.Result.EffectState != protocol.EffectRefused || response.Result.Error == nil {
+								t.Fatalf("unexpected readiness answer: %s", line)
+							}
+							if response.Result.Error.Code == protocol.ErrorCapabilityNotNegotiated {
+								break
+							}
+							if response.Result.Error.Code != protocol.ErrorUnavailable {
+								t.Fatalf("unexpected readiness refusal: %s", line)
+							}
 						}
 					} else {
 						if envelope.Kind != protocol.KindError || envelope.Error == nil || envelope.Error.Code != protocol.ErrorUnsupportedCombination || envelope.EffectState != protocol.EffectRefused {
