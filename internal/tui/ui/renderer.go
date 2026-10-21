@@ -26,6 +26,21 @@ type terminalRenderer struct {
 }
 type renderedView struct{ view tea.View }
 
+// The connection owner's input decoder is the sole size source. Bubble Tea
+// sends its startup size asynchronously; that stale message must not undo a
+// newer size already forwarded with a view.
+type rendererWindowSize tea.WindowSizeMsg
+
+func rendererMessages(_ tea.Model, message tea.Msg) tea.Msg {
+	switch message := message.(type) {
+	case rendererWindowSize:
+		return tea.WindowSizeMsg(message)
+	case tea.WindowSizeMsg:
+		return nil
+	}
+	return message
+}
+
 func (m renderedView) Init() tea.Cmd { return nil }
 func (m renderedView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if view, ok := msg.(tea.View); ok {
@@ -37,7 +52,7 @@ func (m renderedView) View() tea.View { return m.view }
 
 func startTerminalRenderer(ctx context.Context, output io.Writer, width, height int) *terminalRenderer {
 	r := &terminalRenderer{done: make(chan struct{}), size: tea.WindowSizeMsg{Width: width, Height: height}}
-	r.program = tea.NewProgram(renderedView{}, tea.WithContext(ctx), tea.WithInput(nil), tea.WithOutput(output), tea.WithWindowSize(width, height), tea.WithoutSignalHandler(), tea.WithoutCatchPanics())
+	r.program = tea.NewProgram(renderedView{}, tea.WithContext(ctx), tea.WithInput(nil), tea.WithOutput(output), tea.WithWindowSize(width, height), tea.WithFilter(rendererMessages), tea.WithoutSignalHandler(), tea.WithoutCatchPanics())
 	go func() {
 		defer close(r.done)
 		_, r.err = r.program.Run()
@@ -61,7 +76,7 @@ func (r *terminalRenderer) show(view tea.View, size tea.WindowSizeMsg) error {
 		if r.size != size {
 			// Output is wrapped for raw mode, so Bubble Tea cannot query its
 			// terminal dimensions. Resize its cell buffer before the new view.
-			r.program.Send(size)
+			r.program.Send(rendererWindowSize(size))
 			r.size = size
 		}
 		r.program.Send(view)
