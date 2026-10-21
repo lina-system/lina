@@ -32,18 +32,29 @@ type Column struct {
 }
 
 // SQLiteSchema is a trusted, independently verified source schema, never a
-// descriptor learned from the database being imported. Tables is exhaustive;
-// SQLite's own sqlite_* objects are excluded. Column order is significant.
+// descriptor learned from the database being imported. Tables and Views are
+// exhaustive; SQLite's own sqlite_* objects are excluded. Column order matters.
 type SQLiteSchema struct {
 	Version int
 	Tables  map[string][]Column
+	Views   map[string][]Column
 }
 
 // SnapshotSQLite checks metadata before online backup, then checks the copied
 // schema again before exposing the snapshot (a live source may change between
 // the two). The destination is a new file under the caller's import staging.
 // It must not exist. Failure removes only a destination created by this call.
-func SnapshotSQLite(ctx context.Context, source, destination string, known SQLiteSchema) (err error) {
+func SnapshotSQLite(ctx context.Context, source, destination string, kind SQLiteSource) error {
+	known, ok := registeredSQLiteSchemas[kind]
+	if !ok {
+		return fmt.Errorf("%w: unregistered SQLite source %q", ErrSchema, kind)
+	}
+	return snapshotSQLite(ctx, source, destination, known)
+}
+
+// snapshotSQLite is the descriptor-driven mechanism; only registered layouts
+// are exposed by the production entry point above.
+func snapshotSQLite(ctx context.Context, source, destination string, known SQLiteSchema) (err error) {
 	if err = ctx.Err(); err != nil {
 		return err
 	}
@@ -98,28 +109,30 @@ func checkSQLite(ctx context.Context, db *sql.DB, known SQLiteSchema) error {
 	if err != nil {
 		return err
 	}
-	var names []string
+	type object struct{ name, kind string }
+	var objects []object
 	for rows.Next() {
 		var name, kind string
 		if err = rows.Scan(&name, &kind); err != nil {
 			rows.Close()
 			return err
 		}
-		if kind != "table" {
-			rows.Close()
-			return fmt.Errorf("%w: unexpected view %q", ErrSchema, name)
-		}
-		names = append(names, name)
+		objects = append(objects, object{name, kind})
 	}
 	if err = errors.Join(rows.Err(), rows.Close()); err != nil {
 		return err
 	}
-	actual := make(map[string]bool, len(names))
-	for _, name := range names {
-		actual[name] = true
-		columns, ok := known.Tables[name]
+	actual := make(map[object]bool, len(objects))
+	for _, item := range objects {
+		name, kind := item.name, item.kind
+		actual[item] = true
+		expected := known.Tables
+		if kind == "view" {
+			expected = known.Views
+		}
+		columns, ok := expected[name]
 		if !ok {
-			return fmt.Errorf("%w: unexpected table %q", ErrSchema, name)
+			return fmt.Errorf("%w: unexpected %s %q", ErrSchema, kind, name)
 		}
 		rows, err := tx.QueryContext(ctx, "SELECT name,type,\"notnull\",dflt_value,pk,hidden FROM pragma_table_xinfo(?) ORDER BY cid", name)
 		if err != nil {
@@ -141,26 +154,28 @@ func checkSQLite(ctx context.Context, db *sql.DB, known SQLiteSchema) error {
 			// Name the structural difference without echoing default expressions.
 			for i := 0; i < max(len(got), len(columns)); i++ {
 				if i >= len(got) {
-					return fmt.Errorf("%w: table %q missing column %q", ErrSchema, name, columns[i].Name)
+					return fmt.Errorf("%w: %s %q missing column %q", ErrSchema, kind, name, columns[i].Name)
 				}
 				if i >= len(columns) {
-					return fmt.Errorf("%w: table %q unexpected column %q", ErrSchema, name, got[i].Name)
+					return fmt.Errorf("%w: %s %q unexpected column %q", ErrSchema, kind, name, got[i].Name)
 				}
 				if !reflect.DeepEqual(got[i], columns[i]) {
-					return fmt.Errorf("%w: table %q column %d (%q): name/type/nullability/default/key/hidden differs", ErrSchema, name, i, columns[i].Name)
+					return fmt.Errorf("%w: %s %q column %d (%q): name/type/nullability/default/key/hidden differs", ErrSchema, kind, name, i, columns[i].Name)
 				}
 			}
 		}
 	}
 	var missing []string
-	for name := range known.Tables {
-		if !actual[name] {
-			missing = append(missing, name)
+	for kind, expected := range map[string]map[string][]Column{"table": known.Tables, "view": known.Views} {
+		for name := range expected {
+			if !actual[object{name, kind}] {
+				missing = append(missing, kind+" "+name)
+			}
 		}
 	}
 	if len(missing) > 0 {
 		sort.Strings(missing)
-		return fmt.Errorf("%w: missing tables %s", ErrSchema, strings.Join(missing, ", "))
+		return fmt.Errorf("%w: missing objects %s", ErrSchema, strings.Join(missing, ", "))
 	}
 	return tx.Commit()
 }

@@ -69,7 +69,7 @@ func TestSQLiteSnapshotIncludesCommittedWALAndNeverWritesSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	dest := filepath.Join(t.TempDir(), "snapshot.sqlite")
-	if err = SnapshotSQLite(t.Context(), path, dest, syntheticSchema()); err != nil {
+	if err = snapshotSQLite(t.Context(), path, dest, syntheticSchema()); err != nil {
 		t.Fatal(err)
 	}
 	reader, err := canon.OpenSQLiteReader(t.Context(), dest)
@@ -91,7 +91,7 @@ func TestSQLiteSnapshotIncludesCommittedWALAndNeverWritesSource(t *testing.T) {
 	if info, err := os.Stat(dest); err != nil || info.Mode().Perm() != 0600 {
 		t.Fatal("snapshot is not private", err)
 	}
-	if err = SnapshotSQLite(t.Context(), path, path, syntheticSchema()); !errors.Is(err, os.ErrExist) {
+	if err = snapshotSQLite(t.Context(), path, path, syntheticSchema()); !errors.Is(err, os.ErrExist) {
 		t.Fatalf("source overwrite: %v", err)
 	}
 }
@@ -110,7 +110,7 @@ func TestSQLiteGateRefusesUnknownBeforePublishingSnapshot(t *testing.T) {
 				t.Fatal(err)
 			}
 			dest := filepath.Join(t.TempDir(), "snapshot.sqlite")
-			err := SnapshotSQLite(t.Context(), path, dest, syntheticSchema())
+			err := snapshotSQLite(t.Context(), path, dest, syntheticSchema())
 			if !errors.Is(err, ErrSchema) || !strings.Contains(err.Error(), tc.difference) {
 				t.Fatalf("difference not reported: %v", err)
 			}
@@ -124,7 +124,7 @@ func TestSQLiteGateRefusesUnknownBeforePublishingSnapshot(t *testing.T) {
 func TestSQLiteFailureDoesNotCreateSourceOrOverwriteDestination(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "missing.sqlite")
 	dest := filepath.Join(t.TempDir(), "snapshot.sqlite")
-	if err := SnapshotSQLite(t.Context(), missing, dest, syntheticSchema()); err == nil {
+	if err := snapshotSQLite(t.Context(), missing, dest, syntheticSchema()); err == nil {
 		t.Fatal("missing source accepted")
 	}
 	if _, err := os.Stat(missing); !errors.Is(err, os.ErrNotExist) {
@@ -134,7 +134,7 @@ func TestSQLiteFailureDoesNotCreateSourceOrOverwriteDestination(t *testing.T) {
 	if err := os.WriteFile(dest, []byte("keep"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := SnapshotSQLite(t.Context(), path, dest, syntheticSchema()); !errors.Is(err, os.ErrExist) {
+	if err := snapshotSQLite(t.Context(), path, dest, syntheticSchema()); !errors.Is(err, os.ErrExist) {
 		t.Fatal(err)
 	}
 	if string(fileBytes(t, dest)) != "keep" {
@@ -142,10 +142,10 @@ func TestSQLiteFailureDoesNotCreateSourceOrOverwriteDestination(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if err := SnapshotSQLite(ctx, path, dest, syntheticSchema()); !errors.Is(err, context.Canceled) {
+	if err := snapshotSQLite(ctx, path, dest, syntheticSchema()); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
-	if err := SnapshotSQLite(t.Context(), path, dest, SQLiteSchema{}); !errors.Is(err, ErrSchema) {
+	if err := snapshotSQLite(t.Context(), path, dest, SQLiteSchema{}); !errors.Is(err, ErrSchema) {
 		t.Fatal("empty schema accepted", err)
 	}
 }
@@ -166,7 +166,7 @@ func TestHonchoSchemaGateAndRawGETSnapshot(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	reader, err := OpenHoncho(t.Context(), srv.URL, "/openapi.json", api, secret.New("synthetic-read-credential"))
+	reader, err := openHoncho(t.Context(), srv.URL, "/openapi.json", api, secret.New("synthetic-read-credential"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func TestHonchoUnknownSchemaDoesNotReadData(t *testing.T) {
 	} {
 		calls := 0
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++; w.Write(body) }))
-		reader, err := OpenHoncho(t.Context(), srv.URL, "/openapi.json", expected, secret.New("synthetic"))
+		reader, err := openHoncho(t.Context(), srv.URL, "/openapi.json", expected, secret.New("synthetic"))
 		if reader != nil {
 			reader.Close()
 		}
@@ -250,7 +250,7 @@ func TestHonchoRedirectAndFailureNeverPublish(t *testing.T) {
 				w.Write([]byte("secret response must not become an error"))
 			}))
 			defer srv.Close()
-			reader, err := OpenHoncho(t.Context(), srv.URL, "/openapi.json", api, secret.New("synthetic"))
+			reader, err := openHoncho(t.Context(), srv.URL, "/openapi.json", api, secret.New("synthetic"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -304,7 +304,7 @@ func TestSidecarCopyVerifiesHashAndLeavesSourceUntouched(t *testing.T) {
 func TestSnapshotDestinationMustBeOutsideSource(t *testing.T) {
 	path, _ := sourceDB(t)
 	destination := filepath.Join(filepath.Dir(path), "new.sqlite")
-	if err := SnapshotSQLite(t.Context(), path, destination, syntheticSchema()); !errors.Is(err, ErrReadOnly) {
+	if err := snapshotSQLite(t.Context(), path, destination, syntheticSchema()); !errors.Is(err, ErrReadOnly) {
 		t.Fatalf("source directory accepted as staging: %v", err)
 	}
 	if _, err := os.Stat(destination); !errors.Is(err, os.ErrNotExist) {
@@ -339,7 +339,7 @@ func TestHonchoTruncatedResponseCleansPartialSnapshot(t *testing.T) {
 		w.Write([]byte("partial"))
 	}))
 	defer srv.Close()
-	h, err := OpenHoncho(t.Context(), srv.URL, "/openapi.json", api, secret.New("synthetic"))
+	h, err := openHoncho(t.Context(), srv.URL, "/openapi.json", api, secret.New("synthetic"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -362,7 +362,7 @@ func TestSQLiteColumnMetadataGate(t *testing.T) {
 		known := syntheticSchema()
 		columns := known.Tables["messages"]
 		mutate(&columns[1])
-		if err := SnapshotSQLite(t.Context(), path, filepath.Join(t.TempDir(), "snapshot"), known); !errors.Is(err, ErrSchema) {
+		if err := snapshotSQLite(t.Context(), path, filepath.Join(t.TempDir(), "snapshot"), known); !errors.Is(err, ErrSchema) {
 			t.Fatalf("changed column descriptor accepted: %v", err)
 		}
 	}
@@ -379,7 +379,7 @@ func TestHonchoRefusesRemotePlaintextBeforeSendingCredential(t *testing.T) {
 	http.DefaultTransport = transport
 	t.Cleanup(func() { http.DefaultTransport = original; transport.CloseIdleConnections() })
 	for _, address := range []string{"http://example.invalid", "http://example.invalid:8080"} {
-		reader, err := OpenHoncho(t.Context(), address, "/openapi.json", fixture(t, "openapi-synthetic.json"), secret.New("synthetic-read-credential"))
+		reader, err := openHoncho(t.Context(), address, "/openapi.json", fixture(t, "openapi-synthetic.json"), secret.New("synthetic-read-credential"))
 		if reader != nil {
 			reader.Close()
 		}

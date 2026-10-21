@@ -51,10 +51,27 @@ type Honcho struct {
 	closed     bool
 }
 
-// OpenHoncho compares the published description to an independently verified
+// OpenHoncho refuses an unregistered source before making a network request.
+// No published Honcho description has been supplied yet. Registration requires
+// the owner's address and run-scoped read credential to fetch and verify it;
+// synthetic HTTP fixtures are never accepted by this production entry point.
+func OpenHoncho(ctx context.Context, address, apiPath string, credential secret.Secret) (*Honcho, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if len(registeredHonchoDescription) == 0 {
+		return nil, fmt.Errorf("%w: Honcho published API description is not registered", ErrSchema)
+	}
+	return openHoncho(ctx, address, apiPath, registeredHonchoDescription, credential)
+}
+
+// Empty until a published description is independently verified and registered.
+var registeredHonchoDescription []byte
+
+// openHoncho compares the published description to an independently verified
 // API document before any data request. JSON formatting and object-key order
 // are immaterial; every schema value must match. Unknown versions fail closed.
-func OpenHoncho(ctx context.Context, address, apiPath string, accepted []byte, credential secret.Secret) (*Honcho, error) {
+func openHoncho(ctx context.Context, address, apiPath string, accepted []byte, credential secret.Secret) (*Honcho, error) {
 	expected, err := apiDocument(accepted)
 	if err != nil {
 		return nil, err
