@@ -15,14 +15,8 @@ CREATE TABLE memory_search_bigram (
 CREATE INDEX memory_search_bigram_item ON memory_search_bigram(item_id);
 CREATE TRIGGER memory_search_insert AFTER INSERT ON memory_search_text BEGIN
  INSERT INTO memory_search(rowid,body) VALUES(NEW.sequence,NEW.body);
- INSERT OR IGNORE INTO memory_search_bigram(gram,item_id)
- WITH RECURSIVE positions(n) AS (
-  SELECT 1 WHERE length(NEW.body)>=2
-  UNION ALL SELECT n+1 FROM positions WHERE n+1<length(NEW.body)
- )
- SELECT substr(NEW.body,n,2),NEW.item_id FROM positions
- WHERE unicode(substr(NEW.body,n,1)) BETWEEN 44032 AND 55203
-   AND unicode(substr(NEW.body,n+1,1)) BETWEEN 44032 AND 55203;
+ INSERT INTO memory_search_bigram(gram,item_id)
+ SELECT value,NEW.item_id FROM json_each(lina_hangul_bigrams(NEW.body));
 END;
 CREATE TRIGGER memory_search_delete AFTER DELETE ON memory_search_text BEGIN
  INSERT INTO memory_search(memory_search,rowid,body) VALUES('delete',OLD.sequence,OLD.body);

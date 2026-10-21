@@ -7,6 +7,7 @@ import (
 	"os"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -158,5 +159,52 @@ func TestMemoryIndexAndSourceBecomeVisibleTogether(t *testing.T) {
 		if err != nil || len(hits) != 1 || hits[0].ID != item.ID {
 			t.Fatalf("committed memory: %v %v", hits, err)
 		}
+	}
+}
+
+func TestKoreanRecallChecksRestrictedEvidenceBeforeLimit(t *testing.T) {
+	db := database(t)
+	allowed := commit(t, db, proposal("B", "도서관에서 공부한다."))
+	restricted := proposal("A", "a private statement")
+	restricted.Item.Scope = NeverLeaves
+	commit(t, db, restricted)
+	// The latest local item cites the same event as never-leaves memory. A
+	// result limit before that evidence restriction would hide the allowed hit.
+	leaky := proposal("A", "도서관에서 공부를 더 한다.")
+	leaky.Item.Evidence[0].ID = restricted.Item.Evidence[0].ID
+	commit(t, db, leaky)
+	for _, scope := range []RecallScope{
+		{Agent: "A", Person: "person", ExternalModel: true},
+		{Agent: "A", Person: "person", Projection: true},
+	} {
+		for _, text := range []string{"도서관", "공부"} {
+			hits, err := New(db).Recall(t.Context(), scope, Query{Text: text, Limit: 1})
+			if err != nil || len(hits) != 1 || hits[0].ID != allowed.ID {
+				t.Fatalf("restricted evidence bypassed/consumed limit: %v %v", hits, err)
+			}
+		}
+	}
+}
+
+func TestKoreanIndexOfLongMemoryDeduplicatesPostings(t *testing.T) {
+	db := database(t)
+	item := commit(t, db, proposal("A", strings.Repeat("공부 ", 8192)+"도서관에서"))
+	for _, query := range []string{"공부", "도서관"} {
+		hits, err := New(db).Recall(t.Context(), RecallScope{Agent: "A", Person: "person"}, Query{Text: query})
+		if err != nil || len(hits) != 1 || hits[0].ID != item.ID {
+			t.Fatalf("long memory: %d hits, %v", len(hits), err)
+		}
+	}
+	if err := db.Read(t.Context(), func(tx *canon.Tx) error {
+		var count int
+		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM memory_search_bigram WHERE item_id=? AND gram='공부'", item.ID).Scan(&count); err != nil {
+			return err
+		}
+		if count != 1 {
+			t.Fatalf("duplicate postings: %d", count)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 }

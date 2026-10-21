@@ -47,3 +47,33 @@ func TestTrigramPhraseIsLiteral(t *testing.T) {
 		}
 	}
 }
+
+func TestSQLiteHangulBigrams(t *testing.T) {
+	db, err := OpenSQLite(t.Context(), filepath.Join(t.TempDir(), "bigrams.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, text := range []string{"도서관에서 공부 공부를 한다", "공 부 공🙂부", "", "가힣"} {
+		rows, err := db.QueryContext(t.Context(), "SELECT value FROM json_each(lina_hangul_bigrams(?)) ORDER BY value", text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for rows.Next() {
+			var pair string
+			if err := rows.Scan(&pair); err != nil {
+				rows.Close()
+				t.Fatal(err)
+			}
+			got = append(got, pair)
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		rows.Close()
+		if !reflect.DeepEqual(got, HangulBigrams(text)) {
+			t.Fatalf("SQL bigrams: %q", got)
+		}
+	}
+}

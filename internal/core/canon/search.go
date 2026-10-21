@@ -2,9 +2,31 @@
 package canon
 
 import (
+	"encoding/json"
 	"sort"
 	"strings"
+
+	"github.com/ncruces/go-sqlite3"
 )
+
+// SQLite triggers and migration backfills share the same extractor as native
+// ledger admission. Go walks the text once; a recursive substr() SQL loop would
+// repeatedly traverse a long UTF-8 value for every syllable pair.
+func registerSearchFunctions(conn *sqlite3.Conn) error {
+	return conn.CreateFunction("lina_hangul_bigrams", 1, sqlite3.DETERMINISTIC|sqlite3.INNOCUOUS, func(ctx sqlite3.Context, args ...sqlite3.Value) {
+		pairs := HangulBigrams(args[0].Text())
+		if len(pairs) == 0 {
+			ctx.ResultText("[]")
+			return
+		}
+		data, err := json.Marshal(pairs)
+		if err != nil {
+			ctx.ResultError(err)
+			return
+		}
+		ctx.ResultText(string(data))
+	})
+}
 
 // HangulBigrams returns distinct adjacent pairs of composed Hangul syllables
 // in stable order. Spaces, punctuation and other scripts separate runs: index
