@@ -33,6 +33,13 @@ the exact enabled tool list. It checks request assembly, not model compliance
 with the persona. The current boot conversation has no connected executors,
 so its enabled list is explicitly empty.
 
+`m1/provider-failure-history.json` runs HTTP 503 and SSE EOF after a delta
+against installed Core, with input and history displayed through the real TUI
+in a 120x60 PTY. It checks the failure notice and partial before and after a
+graceful Core restart, no provider replay, and a new successful turn whose model
+context excludes the failed partial. Notice wording is captured from the live
+protocol rather than fixed in the scenario.
+
 `m1/tui-interrupted-reply.json` holds a loopback Responses stream after one delta,
 stops it with Esc in the installed TUI, reopens the TUI, and restarts installed
 Core both gracefully and forcibly while that TUI reconnects. Stored snapshots

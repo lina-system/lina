@@ -3,6 +3,7 @@
 package run
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -50,8 +51,7 @@ func runTables(ctx context.Context, q *observations) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	supported := probe.setting == 1 || probe.setting == 2 || probe.setting == 3
-	values := map[string]any{"grapheme_supported": supported, "mode_2027_report": probe.setting, "mode_2027_probe_ms": probe.elapsed}
+	values := map[string]any{"mode_2027_report": probe.setting, "mode_2027_probe_ms": probe.elapsed}
 	// Restore the observed initial mode even when the operator cancels a screen.
 	if probe.setting == 1 || probe.setting == 2 {
 		defer func() {
@@ -75,9 +75,15 @@ func runTables(ctx context.Context, q *observations) (map[string]any, error) {
 		name  string
 		width render.WidthMode
 	}{{"wcwidth", render.WCWidth}, {"grapheme", render.Graphemes}} {
-		if mode.width == render.Graphemes && !supported {
-			values["mitigation"] = "Keep wcwidth on this terminal. Exercise mode 2027 on a terminal that confirms it before accepting both width modes; use the own-table renderer on a Glamour alignment miss."
-			break
+		// Select the width mode before the renderer can paint its initial frame.
+		supported, err := prepareTableMode(os.Stdout, probe.setting, mode.width)
+		if err != nil {
+			return nil, err
+		}
+		values[mode.name+"_supported"] = supported
+		if !supported {
+			values["mitigation"] = "Compare both width modes on a terminal that allows mode 2027 to be toggled; a permanently set mode cannot establish wcwidth alignment. Use the own-table renderer on a Glamour alignment miss."
+			continue
 		}
 		content := mode.name + "; inspect the same cell boundaries in both tables. Ctrl+D continues.\nGlamour:\n" + painted + "\nOwn table renderer:\n" + ownTable(mode.width)
 		s, err := startSession(ctx, &screen{text: content}, os.Stdin)
@@ -88,15 +94,6 @@ func runTables(ctx context.Context, q *observations) (map[string]any, error) {
 			defer s.close()
 			if s.height < 20 {
 				return errors.New("S10 requires at least 20 rows to inspect both tables")
-			}
-			if probe.setting == 1 || probe.setting == 2 {
-				suffix := "l"
-				if mode.width == render.Graphemes {
-					suffix = "h"
-				}
-				if _, err := fmt.Fprintf(s.output, "\x1b[?2027%s", suffix); err != nil {
-					return err
-				}
 			}
 			s.program.Send(frameMsg{text: content, sequence: 1})
 			if err := s.output.waitFrame(ctx, 1); err != nil {
@@ -121,6 +118,23 @@ func runTables(ctx context.Context, q *observations) (map[string]any, error) {
 	values["own_tables_selected"] = ownSelected
 	values["method"] = "Owner compares physical columns; mode 2027 is enabled only after a supporting DECRPM reply and its initial state is restored. Unsupported grapheme mode is recorded as a miss, never inferred from width arithmetic."
 	return values, nil
+}
+
+// prepareTableMode reports whether this physical mode can be observed and
+// switches mutable modes before any table cells are written.
+func prepareTableMode(output io.Writer, setting int, mode render.WidthMode) (bool, error) {
+	if setting == 1 || setting == 2 {
+		suffix := "l"
+		if mode == render.Graphemes {
+			suffix = "h"
+		}
+		_, err := fmt.Fprintf(output, "\x1b[?2027%s", suffix)
+		return err == nil, err
+	}
+	if setting == 3 {
+		return mode == render.Graphemes, nil
+	}
+	return mode == render.WCWidth, nil
 }
 
 func paneContent(width int) string {
@@ -214,6 +228,32 @@ func TestOwnTableCellBoundaries(t *testing.T) {
 			if fmt.Sprint(columns) != fmt.Sprint(expected) {
 				t.Fatalf("mode %d: columns %v differ from %v", mode, columns, expected)
 			}
+		}
+	}
+}
+
+func TestTableModeSelection(t *testing.T) {
+	for _, tc := range []struct {
+		setting   int
+		mode      render.WidthMode
+		supported bool
+		output    string
+	}{
+		{1, render.WCWidth, true, "\x1b[?2027l"},
+		{1, render.Graphemes, true, "\x1b[?2027h"},
+		{2, render.WCWidth, true, "\x1b[?2027l"},
+		{2, render.Graphemes, true, "\x1b[?2027h"},
+		{3, render.WCWidth, false, ""},
+		{3, render.Graphemes, true, ""},
+		{4, render.WCWidth, true, ""},
+		{4, render.Graphemes, false, ""},
+		{0, render.WCWidth, true, ""},
+		{0, render.Graphemes, false, ""},
+	} {
+		var output bytes.Buffer
+		got, err := prepareTableMode(&output, tc.setting, tc.mode)
+		if err != nil || got != tc.supported || output.String() != tc.output {
+			t.Fatalf("setting %d, mode %d: supported=%v output=%q error=%v", tc.setting, tc.mode, got, output.String(), err)
 		}
 	}
 }
