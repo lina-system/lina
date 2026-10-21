@@ -120,6 +120,10 @@ The loop behaves as follows:
 
 Core's `turn.Store` claims the inbox and creates the turn atomically, records preparation before the first request, and supplies the loop's commit callbacks. Its startup recovery closes unresolved calls and refuses to replay accepted turns, including a crash between a done output item and the complete assistant call message. Tool intents and receipts use the existing authority ledger through `turn.Tool`; uncertain effects remain unknown across restart. Approval suspension returns immediately, and `turn.ResumeApproval` dispatches the stored, hash-bound arguments under a fresh deadline after the answer. The caller installs the schema through canon migrations and runs recovery before admitting work.
 
+The lane's steering and stop controls target only its active turn. Steering is consumed at the next round boundary; queue closure or cancellation returns ownership of later input to admission for a follow-up. A stop preserves the typed issuer and waits for started tools to return before releasing the lane. Preparation failure also closes steering admission and returns its pending input.
+
+For a turn bound to its input ledger event, the stop or restart interruption is one plain system line in that conversation. The ledger append and terminal turn state commit together, so a failed append leaves recovery retryable. Recovery after a process kill closes open calls, keeps completed receipts, records the restart line once and never reissues the accepted input. The surface and speaking agent come from the durable input event. This is exercised through the real lane, turn store, ledger and a killed child process; client conversation routing remains with the client-service increment.
+
 The #55 tests exercise the loop with the Responses adapter over a scripted HTTP wire and reopen SQLite at interruption boundaries. Live provider access is not part of those tests. This increment has no client-protocol or TUI entry point; admission routing, startup composition and notifications remain with their consuming flows.
 
 
