@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/core/assets"
+	"github.com/thisisjun786/lina/internal/core/budget"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"github.com/thisisjun786/lina/internal/core/runs"
@@ -23,7 +24,7 @@ import (
 func setup(t *testing.T, stream loop.StreamFunc) (*runs.Service, *canon.Store, *assets.Store) {
 	return setupWith(t, stream, nil)
 }
-func setupWith(t *testing.T, stream loop.StreamFunc, configure func(*runs.Config)) (*runs.Service, *canon.Store, *assets.Store) {
+func setupWith(t *testing.T, stream loop.StreamFunc, configure func(*runs.Config), schemas ...string) (*runs.Service, *canon.Store, *assets.Store) {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "state")
 	if err := os.Mkdir(root, 0700); err != nil {
@@ -39,6 +40,9 @@ func setupWith(t *testing.T, stream loop.StreamFunc, configure func(*runs.Config
 	}
 	migrations := canon.Migrations()
 	migrations = append(migrations, canon.Migration{Version: len(migrations) + 1, SQL: runs.Schema})
+	for _, schema := range schemas {
+		migrations = append(migrations, canon.Migration{Version: len(migrations) + 1, SQL: schema})
+	}
 	db, err := canon.Open(t.Context(), canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: 1, Controls: controls, Migrations: migrations})
 	if err != nil {
 		t.Fatal(err)
@@ -55,6 +59,9 @@ func setupWith(t *testing.T, stream loop.StreamFunc, configure func(*runs.Config
 		}}},
 		"shell": {Declaration: json.RawMessage(`{"type":"function","name":"shell"}`)},
 	}}
+	// Unit scenarios inject publication; full turn scenarios replace this with
+	// turn.PublishPromotion and verify both records in the shared transaction.
+	cfg.PublishPromotion = func(context.Context, *canon.Tx, string, budget.Handle, budget.Handoff) error { return nil }
 	if configure != nil {
 		configure(&cfg)
 	}

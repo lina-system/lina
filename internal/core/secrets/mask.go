@@ -56,6 +56,7 @@ var shapes = []*regexp.Regexp{
 	regexp.MustCompile(`(?:sk-(?:proj-|ant-api[0-9]+-)?[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AIza[A-Za-z0-9_-]{35}|xox[baprs]-[A-Za-z0-9-]{10,}|(?:AKIA|ASIA)[A-Z0-9]{16})`),
 	regexp.MustCompile(`eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+`),
 }
+
 // Recognize our exact placeholder before the unquoted-value alternative, so
 // rechecking a masked record leaves punctuation after the placeholder intact.
 var assignment = regexp.MustCompile(`(?i)\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|secret|token)["']?\s*[:=]\s*((?-i:` + regexp.QuoteMeta(secret.Placeholder) + `)|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^\s,;"'<>]+)`)
@@ -68,6 +69,10 @@ var privateKey = regexp.MustCompile(`-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----`
 func Mask(text string, flagged ...Span) (Masked, error) {
 	if !utf8.ValidString(text) {
 		return Masked{}, ErrSpan
+	}
+	trimmed := strings.TrimSpace(text)
+	if (strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[")) && json.Valid([]byte(text)) {
+		return maskJSON(text, flagged)
 	}
 	spans := append([]Span(nil), flagged...)
 	for _, span := range spans {

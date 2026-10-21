@@ -11,7 +11,7 @@ import (
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
-const StartToolName = "start_background_run"
+const StartToolName = "start_run"
 
 type Receipt struct {
 	ID    string `json:"id"`

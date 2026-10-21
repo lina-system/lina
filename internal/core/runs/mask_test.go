@@ -19,6 +19,22 @@ func TestRejectedMaskInputCannotBypassValidationFromCache(t *testing.T) {
 	}
 }
 
+func TestNestedCredentialJSONRemainsValidAfterMasking(t *testing.T) {
+	body, _ := json.Marshal(map[string]string{"nested": `{"token":"synthetic-nested"}`})
+	var m masker
+	masked, err := m.json(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record map[string]string
+	if err := json.Unmarshal(masked, &record); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(masked), "synthetic-nested") || !json.Valid([]byte(record["nested"])) {
+		t.Fatalf("nested credential data was retained or corrupted: %s", masked)
+	}
+}
+
 func TestSensitiveJSONFieldsMaskEveryValueType(t *testing.T) {
 	var m masker
 	for _, raw := range []string{`{"password":123456}`, `{"token":[123456,"synthetic-value"]}`, `{"api_key":{"value":"synthetic-value"}}`, `{"client_secret":true}`} {

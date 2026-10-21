@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/assets"
+	"github.com/thisisjun786/lina/internal/core/budget"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/materials"
@@ -89,6 +90,9 @@ type Record struct {
 	InputAnswers                []InputAnswer
 	NoticeVersion               uint64
 	NoticeAt                    int64
+	Promotion                   *budget.Handoff
+	PromotionDigest             string
+	EffectsQuestion             *EffectQuestion
 	PendingOutcome              Outcome
 	Receipts                    map[string]ToolReceipt
 	PendingItems                []provider.Item
@@ -148,6 +152,9 @@ type Config struct {
 	Assets  MaterialStore
 	Stream  loop.StreamFunc
 	Tools   map[string]Tool
+	// PublishPromotion attaches the handle to its source turn in the same
+	// fenced transaction as run admission. Required only by StartFromTurn.
+	PublishPromotion func(context.Context, *canon.Tx, string, budget.Handle, budget.Handoff) error
 	// Authorize validates origin and scope and checks the person's shared budget.
 	// It runs at start and before every model request; ErrBudget parks a run.
 	Authorize func(context.Context, Origin, Brief) error
