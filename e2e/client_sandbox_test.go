@@ -36,8 +36,11 @@ func TestM1ClientAdmissionSandbox(t *testing.T) {
 			return nil
 		}
 		defer cancel()
-		if box == nil || !box.Status().Available {
-			return fmt.Errorf("actual Core sandbox unavailable: %+v", box)
+		if box == nil {
+			return fmt.Errorf("Core did not supply a sandbox")
+		}
+		if status := box.Status(); !status.Available {
+			return fmt.Errorf("actual Core sandbox unavailable: %s", status.Cause)
 		}
 		args := []string{"-test.run=^TestM1SocketCanary$", "--", h.socket, "allowed"}
 		control := exec.CommandContext(ctx, os.Args[0], args...)

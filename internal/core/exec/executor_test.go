@@ -91,7 +91,7 @@ func TestCommandCannotReadRetainedVersionsAndRecordsFailedWrites(t *testing.T) {
 	if parseErr := json.Unmarshal(result.Body, &receipt); parseErr != nil {
 		t.Fatal(parseErr)
 	}
-	if err == nil || result.State != tools.Failed || receipt.ExitCode != 3 || len(receipt.Changes) != 1 || receipt.Changes[0].Path != "note" {
+	if err == nil || result.State != tools.Unknown || result.Revision == "" || receipt.ExitCode != 3 || len(receipt.Changes) != 1 || receipt.Changes[0].Path != "note" {
 		t.Fatalf("receipt: %+v %v", receipt, err)
 	}
 }
