@@ -84,6 +84,8 @@ type Artifact struct {
 	Citations []materials.Anchor `json:"citations,omitempty"`
 }
 type Record struct {
+	ReceiptRound                uint64
+	ScratchReceipts             map[string]ToolReceipt
 	InputAnswers                []InputAnswer
 	NoticeVersion               uint64
 	NoticeAt                    int64
