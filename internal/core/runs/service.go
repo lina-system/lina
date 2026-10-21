@@ -138,6 +138,9 @@ func (s *Service) start(ctx context.Context, o Origin, b Brief, promotion *budge
 	now := s.cfg.Now().UnixNano()
 	r := Record{ID: hex.EncodeToString(id), Origin: o, Brief: b, State: Waiting, Created: now, LastEvent: now}
 	r.Promotion = promotion
+	if promotion != nil {
+		r.PromotionDigest = promotionDigest(b, promotion)
+	}
 	if promotion != nil && len(promotion.Effects) > 0 {
 		r.EffectsQuestion = &EffectQuestion{RunID: r.ID, Turn: o.Turn, State: "awaiting_person", Effects: promotion.Effects}
 	}

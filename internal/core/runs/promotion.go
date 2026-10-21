@@ -2,8 +2,9 @@
 package runs
 
 import (
-	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 
 	"github.com/thisisjun786/lina/internal/core/budget"
@@ -99,13 +100,16 @@ func samePromotion(r Record, o Origin) bool {
 }
 
 func sameGathered(r Record, b Brief, h *budget.Handoff) bool {
-	previous, _ := json.Marshal(struct {
-		Brief Brief
-		State *budget.Handoff
-	}{r.Brief, r.Promotion})
+	return r.PromotionDigest == promotionDigest(b, h)
+}
+
+// Compare original admission bytes by digest: persistence masks credential-like
+// values, and neither masked collisions nor masking itself may change identity.
+func promotionDigest(b Brief, h *budget.Handoff) string {
 	current, _ := json.Marshal(struct {
 		Brief Brief
 		State *budget.Handoff
 	}{b, h})
-	return bytes.Equal(previous, current)
+	digest := sha256.Sum256(current)
+	return hex.EncodeToString(digest[:])
 }

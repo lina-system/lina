@@ -84,6 +84,7 @@ type Artifact struct {
 }
 type Record struct {
 	Promotion                   *budget.Handoff
+	PromotionDigest             string
 	EffectsQuestion             *EffectQuestion
 	PendingOutcome              Outcome
 	Receipts                    map[string]ToolReceipt

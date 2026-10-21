@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -218,5 +219,39 @@ func TestStartFromTurnRejectsMismatchedIdentityAndChangedReplay(t *testing.T) {
 	h.Results = nil
 	if _, err := s.StartFromTurn(t.Context(), origin(), brief(), h); !errors.Is(err, runs.ErrInvalid) {
 		t.Fatal(err)
+	}
+}
+
+func TestPromotionReplaySurvivesPersistenceMasking(t *testing.T) {
+	var cfg runs.Config
+	s, _, _ := setupWith(t, func(context.Context, provider.Request) (provider.Stream, error) {
+		t.Error("unreleased promotion called a model")
+		return answer(runs.Artifact{}), nil
+	}, func(c *runs.Config) { cfg = *c })
+	h := gathered()
+	h.Input = "api_key=synthetic-credential-value"
+	first, err := s.StartFromTurn(t.Context(), origin(), brief(), h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := s.Get(t.Context(), first.ID)
+	if err != nil || strings.Contains(r.Promotion.Input, "synthetic-credential-value") {
+		t.Fatalf("promotion input was not masked: %+v %v", r.Promotion, err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := runs.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { reopened.Close() })
+	again, err := reopened.StartFromTurn(t.Context(), origin(), brief(), h)
+	if err != nil || again.ID != first.ID {
+		t.Fatalf("masked promotion replay rejected or duplicated: first=%+v again=%+v err=%v", first, again, err)
+	}
+	h.Input = "api_key=different-synthetic-credential"
+	if _, err := reopened.StartFromTurn(t.Context(), origin(), brief(), h); !errors.Is(err, runs.ErrInvalid) {
+		t.Fatalf("different inputs with the same mask were accepted: %v", err)
 	}
 }
