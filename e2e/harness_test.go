@@ -6,11 +6,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -18,7 +20,25 @@ import (
 
 const operationTimeout = 10 * time.Second
 
-// Build the real command once per scenario group. Only verified Go caches and
+var commandBuilds struct {
+	sync.Mutex
+	directory string
+	binaries  map[string]string
+}
+
+func TestMain(m *testing.M) {
+	commandBuilds.binaries = make(map[string]string)
+	code := m.Run()
+	if commandBuilds.directory != "" {
+		if err := os.RemoveAll(commandBuilds.directory); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			code = 1
+		}
+	}
+	os.Exit(code)
+}
+
+// Build each real command once per test run. Only verified Go caches and
 // tool locations cross into the build; child products get a fresh HOME and no
 // credentials, user configuration, display server or provider environment.
 func buildLina(t *testing.T) string {
@@ -27,7 +47,24 @@ func buildLina(t *testing.T) string {
 
 func buildCommand(t *testing.T, name string) string {
 	t.Helper()
-	home := t.TempDir()
+	commandBuilds.Lock()
+	defer commandBuilds.Unlock()
+	if binary, ok := commandBuilds.binaries[name]; ok {
+		return binary
+	}
+	// Sandbox helper subprocesses also enter TestMain, but never build a
+	// command and may have no writable temporary directory.
+	if commandBuilds.directory == "" {
+		directory, err := os.MkdirTemp("", "lina-e2e-commands-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		commandBuilds.directory = directory
+	}
+	home, err := os.MkdirTemp(commandBuilds.directory, name+"-")
+	if err != nil {
+		t.Fatal(err)
+	}
 	env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "GOENV=off", "GOTOOLCHAIN=auto"}
 	for _, name := range []string{"GOCACHE", "GOMODCACHE", "TMPDIR"} {
 		if value, ok := os.LookupEnv(name); ok {
@@ -57,6 +94,7 @@ func buildCommand(t *testing.T, name string) string {
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build %s: %v\n%s", name, err, output)
 	}
+	commandBuilds.binaries[name] = binary
 	return binary
 }
 

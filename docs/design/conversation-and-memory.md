@@ -210,6 +210,10 @@ An agent exchange is a conversation between exactly two agents, one that asks an
 - **Voice.** Each preset's default voice layer carries one line for how its agent writes to other agents. The register is plain and short.
 - **Deleting an agent.** An exchange stays as a record of the other agent, and the deleted agent is named by its id. The deleted agent's personal knowledge is erased as under "Agents".
 
+The initial mailbox implementation uses four request/answer rounds. A checked answer can be followed by another typed request between the same agents; an acknowledgement closes the exchange without a model turn and cannot be continued. On a missed reply deadline, the implementation chooses the flag-and-stop path: the log shows `expired`, with no automatic model retry and no new "needs the person" flag. An accepted exchange turn is never replayed after a crash. Duplicate delivery retains the original content even when the retry arrives after expiry.
+
+The mailbox's native events are appended to the conversation ledger under the exchange's own conversation id, with fixed agent provenance and no person id. Mailbox state and ledger admission commit atomically; large bodies use pinned material revisions. Preparation has only persona, common-knowledge and named-material readers, strips secret spans from their model-bound projections, and supplies a fresh background model request with no personal-knowledge tools. Secret-shaped identifiers and evidence references are refused before mailbox persistence. The waiting flag is created only by a trusted ownership lookup for the exact typed decision in the same transaction as the waiting row; an agent's claim of person ownership is not sufficient. The package exposes a log and expansion for later surface adapters; client protocol, notifications and conversation result notices are not wired by this increment. See [C-25](go-core.md#plugins-channels-and-exchanges) for the storage and run-coordinator boundaries.
+
 ### Episode export
 
 The ledger can be exported as episodes: recorded turns written out for use outside LINA. The purpose is the development of LINA's own harness files, which [runtime.md](runtime.md#replay-command) defines with the replay command: a developer's loop improves them by re-running episodes with `lina replay`. LINA ships no such loop, and an install exports nothing unless the person runs the export.
@@ -243,6 +247,7 @@ Mandatory retraction checks and permission checks finish during preparation, bef
 
 - LINA Core assembles every instruction in a request. A request carries no base instructions of a coding worker; LINA Core puts the agent's persona and the context in directly.
 - The fixed persona layers of the conversation's agent go into the developer-role instructions of every request. No other agent's persona enters the request.
+- The instructions identify the active agent by its stored name and id, and the owner recorded when that agent was created; a later persona editor is not a new owner. They carry the four prepared persona layers once, in order, and an explicit enabled-tool list derived from that request's actual tool declarations, including an empty list when no tools are connected. Introductions use the agent's identity. The underlying model or provider is discussed only when the person asks about the model, without inventing details.
 - The ContextPacket goes in as input items. LINA's own memory and materials take the developer role. External evidence takes the user role and is marked untrusted. Messages from an external participant of a channel, and the other agent's messages in an agent exchange, are external evidence too: the history carries them as user-role items marked untrusted, with their origin.
 - Where each part sits is fixed by the request layout below.
 - Duplicate and superseded context across turns is resolved during assembly, not left to the model.
@@ -321,7 +326,9 @@ The character counts are Unicode scalar values after NFC, excluding Unicode whit
 
 **When a card replaces text.** A reply becomes one line plus a card (see [Cards and detail on request](surfaces.md#cards-and-detail-on-request)) when any of these holds: it needs more than the hard ceiling; its content is a table, a comparison, a diagram or chart, a list of four or more items, a draft document, a diff or a plan; it reports on a background job; it needs ids, paths, logs, commands or code; or it is a long document the person will keep, in which case a short summary card comes first and the document is written after the person approves the summary. The line says in a few words what the card holds.
 
-The typed-result portion (#104) supplies deterministic complete text and bounded model acknowledgements for these cards. Schema errors are private tool feedback and never become reply content or a result card. This package increment leaves streaming budgets and truncation to the separate C-51 reply-filter implementation.
+The typed-result portion (#104) supplies deterministic complete text and bounded model acknowledgements for these cards. Schema errors are private tool feedback and never become reply content or a result card. The installed conversation connects C-51's existing filter to streaming output, final items and restored history. A generated `document_draft` replaces the original reply row with the bounded sentence prefix and a card; Details opens the complete text and follows updates to that same card while it streams. The full source and linked preview commit with turn completion in one ledger batch. Generated card storage is excluded from subsequent model history, which retains the complete source once.
+
+This installed path uses the Korean hard ceiling and the TUI's wrapping at the 80-column acceptance size. Client protocol 1.0 does not convey terminal width or a reply-language setting; width negotiation and per-person language/budget settings remain separate work. Resizing the TUI reflows the bounded text but does not change Core's counting width. The `LONG-QA` scenario in `e2e/m1/reply-shape.json` exercises the installed Core, streamed 80-line response, real 80×24 TUI, full Details, ledger and restart recovery.
 
 **Detail on request.** Detail is pulled by the person. Every card has Details, a typed follow-up gets the next layer in at most three lines plus a card, and a typed request for the whole thing opens the full version in the work panel at once. A long answer is acceptable only there, and it lands in the panel.
 
@@ -433,6 +440,8 @@ The current agent store records the trash transition and ends bindings atomicall
 - Apart from the sign-in, the first run asks nothing before the first conversation. The short intake of [Learning the person](#learning-the-person) happens inside the conversation, is offered and never required, and every question in it can be skipped.
 
 Initialization is recorded once in canon and is safe to repeat across concurrent calls and restarts. An explicitly deleted default is not recreated by initialization. The store returns a ChatGPT sign-in requirement when no account is usable; it adds no required persona questions. The conversation surface and Core account flow consume that requirement when wired; this store increment exposes no client operation.
+
+The shipped LINA core and default voice provide an interim companion identity and a warm, plain voice. At initialization, an existing preset layer that still exactly matches the original shipped placeholder receives this material through the normal versioned preset update. Owner-supplied layers, user voice and growth remain intact, and already prepared turns keep their pinned revision. This upgrade is idempotent and needs no new storage format.
 
 ### Presets
 
@@ -970,7 +979,7 @@ A restore never brings back a retracted or deleted item, or deleted conversation
 
 ## Deferred
 
-- The interim core and voice text used while `persona/lina/` holds no material yet: written by the implementation issue that ships the first conversation product. When the material arrives, the agents created from the LINA preset receive it as the next revision of their core and default voice layers.
+- Further owner-authored persona and world material for `persona/lina/`: when supplied, agents created from the LINA preset receive it through a versioned update of their core and default voice layers. The interim material is defined under First run.
 - The exact front matter keys of `SKILL.md`: set by the implementation issue that ships the first conversation product.
 - Emotion names, values and decay rates: set by measurement during development and recorded in the implementation issue.
 - The ContextPacket assembly time cap: set by latency measurement during implementation acceptance of the conversation engine.

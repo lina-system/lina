@@ -6,8 +6,9 @@ native Linux and macOS pseudo-terminals; it needs no window, display server,
 provider account, external network service or human input. Conversation screens
 use the pinned terminal library and a VT emulator.
 
-The scenario builds `lina`, starts real Core with a synthetic installed identity
-and a private temporary state root, and connects a generated-type JSON-RPC client
+The suite builds each command once per test run and removes the shared binaries
+after all scenarios finish. Each scenario starts real Core with a synthetic
+installed identity and a private temporary state root, and connects a generated-type JSON-RPC client
 to its Unix socket. A second process runs real `lina tui` with a controlling PTY
 at 80 by 24 cells. The script waits for the `live` connection-state code, sends an
 `input` request through the protocol client, checks the correlated
@@ -25,6 +26,20 @@ Core restart and history restoration; the latter scripts the fake Core's
 streaming completion and steering sequence through the same PTY lifecycle.
 They require no personal credentials. The physical terminal spike and real-model
 acceptance remain separate.
+
+`TestM1TUIIdentityFromAgentStore` installs a synthetic named agent with four
+distinct persona layers, types "who are you" through the real TUI, and checks
+the provider stub's request for that stored identity, owner and persona, plus
+the exact enabled tool list. It checks request assembly, not model compliance
+with the persona. The current boot conversation has no connected executors,
+so its enabled list is explicitly empty.
+
+`m1/provider-failure-history.json` runs HTTP 503 and SSE EOF after a delta
+against installed Core, with input and history displayed through the real TUI
+in a 120x60 PTY. It checks the failure notice and partial before and after a
+graceful Core restart, no provider replay, and a new successful turn whose model
+context excludes the failed partial. Notice wording is captured from the live
+protocol rather than fixed in the scenario.
 
 `m1/tui-interrupted-reply.json` holds a loopback Responses stream after one delta,
 stops it with Esc in the installed TUI, reopens the TUI, and restarts installed
@@ -50,9 +65,11 @@ process creation in test files follows the architecture rule for command
 acceptance harnesses. Future milestones can add scenario files here; new
 subpackages under `e2e/` are also covered by the registered package pattern.
 
-- State, environment and processes are isolated per scenario. Builds share only
-  Go caches and tool locations; product processes receive no inherited account,
-  provider, display or user configuration environment. All fixtures are synthetic.
+- State, environment and processes are isolated per scenario. Scenarios share
+  immutable command binaries built from the current source; installation tests
+  copy them into private bundles. Builds inherit only Go caches and tool locations;
+  product processes receive no inherited account, provider, display or user
+  configuration environment. All fixtures are synthetic.
 - Readiness comes from socket connections and protocol/terminal observations.
   Socket startup retries are bounded; there are no fixed sleeps. A recovering
   Core may explicitly refuse an input probe as `unavailable`; only that refusal

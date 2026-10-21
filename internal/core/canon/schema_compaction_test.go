@@ -36,7 +36,12 @@ func TestSummaryTablesPublishAtomically(t *testing.T) {
 func TestSummaryMigrationPreservesLedgerAndRevocationEpoch(t *testing.T) {
 	cfg := storeConfig(t)
 	all := Migrations()
-	cfg.Migrations = all[:len(all)-1]
+	for i, m := range all {
+		if m.SQL == compactionSchema {
+			cfg.Migrations = all[:i]
+			break
+		}
+	}
 	db := openStore(t, cfg)
 	if err := db.Write(t.Context(), func(tx *Tx) error {
 		_, err := tx.ExecContext(t.Context(), ledgerFixture+"UPDATE retract_meta SET epoch=9;")

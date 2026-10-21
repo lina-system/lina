@@ -42,10 +42,12 @@ func (s *Service) StartTool(origin Origin) loop.Tool {
 		if err != nil {
 			return loop.Result{ID: c.ID, Code: loop.Invalid}
 		}
-		id, state, err := s.Start(ctx, origin, b)
+		id, state, err := s.startWithCall(ctx, origin, b, nil, c.ID)
 		if err != nil {
 			code := loop.Denied
-			if err != ErrBudget {
+			if err == ErrInvalid {
+				code = loop.Invalid
+			} else if err != ErrBudget {
 				code = loop.Failed
 			}
 			return loop.Result{ID: c.ID, Code: code}

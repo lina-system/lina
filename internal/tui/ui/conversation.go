@@ -33,6 +33,8 @@ type conversationView struct {
 type textPager struct {
 	open      bool
 	text      string
+	cardID    string
+	followEnd bool
 	offset    int
 	query     string
 	searching bool
@@ -164,6 +166,9 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	case "ctrl+o":
 		m.openPager(m.cardText())
+		if card, ok := m.selectedCard(); ok {
+			m.conversation.pager.cardID = card.ID
+		}
 		return nil
 	case "ctrl+w":
 		m.openPager(m.topicText("waiting"))
@@ -249,7 +254,7 @@ func (m *shellModel) resultCards() []state.Block {
 	}
 	return cards
 }
-func (m *shellModel) cardText() string {
+func (m *shellModel) selectedCard() (state.Block, bool) {
 	cards := m.resultCards()
 	if len(cards) > 0 {
 		index := m.conversation.selected
@@ -257,7 +262,12 @@ func (m *shellModel) cardText() string {
 			index = len(cards) - 1
 		}
 		index = min(index, len(cards)-1)
-		b := cards[index]
+		return cards[index], true
+	}
+	return state.Block{}, false
+}
+func (m *shellModel) cardText() string {
+	if b, ok := m.selectedCard(); ok {
 		if b.Body != "" {
 			return b.Body
 		}
@@ -273,6 +283,22 @@ func (m *shellModel) cardText() string {
 }
 func (m *shellModel) openPager(text string) {
 	m.conversation.pager = textPager{open: true, text: sanitize.Display(text)}
+}
+
+func (m *shellModel) refreshOpenCard() {
+	p := &m.conversation.pager
+	if !p.open || p.cardID == "" {
+		return
+	}
+	for _, card := range m.resultCards() {
+		if card.ID == p.cardID {
+			p.text = sanitize.Display(card.Body)
+			if p.followEnd {
+				p.offset = len(m.pagerLines())
+			}
+			return
+		}
+	}
 }
 
 func (m *shellModel) pagerKey(msg tea.KeyMsg, name string) tea.Cmd {
@@ -300,6 +326,7 @@ func (m *shellModel) pagerKey(msg tea.KeyMsg, name string) tea.Cmd {
 		}
 		return nil
 	}
+	p.followEnd = false
 	switch name {
 	case "q", "ctrl+o":
 		p.open = false
@@ -314,6 +341,7 @@ func (m *shellModel) pagerKey(msg tea.KeyMsg, name string) tea.Cmd {
 	case "home":
 		p.offset = 0
 	case "end":
+		p.followEnd = true
 		p.offset = len(m.pagerLines())
 	case "/":
 		p.searching = true
@@ -384,7 +412,8 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		name = m.content.Agents[0].Name
 	}
 	rows[plan.Header.Y] = clip(m.styles.Title.Render(name))
-	var transcript []string
+	var transcript []render.StyledRow
+	plainRow := func(text string) render.StyledRow { return render.StyledRow{Spans: []render.Span{{Text: text}}} }
 	if !m.hasCapability("conversation") {
 		code := "account.empty"
 		if !m.accountsKnown {
@@ -396,7 +425,7 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 				break
 			}
 		}
-		transcript = append(transcript, design.Text(m.styles.options.Language, code)+"  /accounts")
+		transcript = append(transcript, plainRow(design.Text(m.styles.options.Language, code)+"  /accounts"))
 	}
 	for _, b := range m.content.Blocks {
 		if b.Topic == "core" || b.Topic == "running" || b.Topic == "waiting" || b.Topic == "progress" || b.Kind == protocol.KindTurnState {
@@ -407,18 +436,14 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 			continue
 		}
 		if b.Local || b.Speaker == protocol.ConversationSpeakerPerson {
-			transcript = append(transcript, design.Text(m.styles.options.Language, "person"))
+			transcript = append(transcript, plainRow(design.Text(m.styles.options.Language, "person")))
 		} else if b.Speaker == protocol.ConversationSpeakerAgent || b.Kind == protocol.KindOutputDelta {
-			transcript = append(transcript, name)
+			transcript = append(transcript, plainRow(name))
 		}
 		if b.Kind == protocol.KindResult {
-			transcript = append(transcript, design.Text(m.styles.options.Language, "result")+"  Ctrl+O")
+			transcript = append(transcript, plainRow(design.Text(m.styles.options.Language, "result")+"  "+sanitize.Display(b.Title)+"  Ctrl+O"))
 		}
-		// Len indexes the original width. A byte bound includes every row
-		// after narrowing too, including the final empty row after a newline.
-		for _, line := range cached.stream.Window(0, len(b.Text)+1, render.Config{Width: plan.Conversation.Width}, nil) {
-			transcript = append(transcript, line.Text)
-		}
+		transcript = append(transcript, cached.stream.Markdown(render.Config{Width: plan.Conversation.Width, Theme: m.styles.options.Theme}, m.styles.listBullet(), parseMarkdown)...)
 	}
 	m.conversation.scroll = min(m.conversation.scroll, max(0, len(transcript)-plan.Conversation.Height))
 	start := max(0, len(transcript)-plan.Conversation.Height-m.conversation.scroll)
@@ -426,7 +451,7 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		if y >= plan.Conversation.Height {
 			break
 		}
-		rows[plan.Conversation.Y+y] = clip(line)
+		rows[plan.Conversation.Y+y] = clip(m.styles.markdownRow(line))
 	}
 	drawTopic := func(topic string, region layout.Rect) {
 		if region.Height == 0 {

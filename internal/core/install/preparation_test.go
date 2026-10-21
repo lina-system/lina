@@ -33,9 +33,7 @@ func TestFirstPreparationOffersSignInWithoutCallingProvider(t *testing.T) {
 		t.Fatal(err)
 	}
 	migrations := canon.Migrations()
-	for _, schema := range []string{turn.Schema, turn.ControlSchema, turn.OutcomeSchema} {
-		migrations = append(migrations, canon.Migration{Version: len(migrations) + 1, SQL: schema})
-	}
+
 	db, err := canon.Open(t.Context(), canon.Config{Path: filepath.Join(cfg.StateRoot, "canon/canon.sqlite"), Epoch: 1, Controls: controls, Migrations: migrations})
 	if err != nil {
 		t.Fatal(err)
