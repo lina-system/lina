@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -18,16 +19,50 @@ import (
 
 const operationTimeout = 10 * time.Second
 
-// Build the real command once per scenario group. Only verified Go caches and
+var commandBuilds struct {
+	sync.Mutex
+	root     string
+	binaries map[string]string
+}
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if commandBuilds.root != "" {
+		if err := os.RemoveAll(commandBuilds.root); err != nil {
+			code = 1
+		}
+	}
+	os.Exit(code)
+}
+
+// Build each real command once per test process. Only verified Go caches and
 // tool locations cross into the build; child products get a fresh HOME and no
 // credentials, user configuration, display server or provider environment.
+// Scenarios share immutable executable bytes, never state or test results.
+// Installed scenarios still copy those bytes into their own verified bundles.
 func buildLina(t *testing.T) string {
 	return buildCommand(t, "lina")
 }
 
 func buildCommand(t *testing.T, name string) string {
 	t.Helper()
-	home := t.TempDir()
+	commandBuilds.Lock()
+	defer commandBuilds.Unlock()
+	if binary := commandBuilds.binaries[name]; binary != "" {
+		return binary
+	}
+	if commandBuilds.root == "" {
+		var err error
+		commandBuilds.root, err = os.MkdirTemp("", "lina-e2e-commands-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		commandBuilds.binaries = map[string]string{}
+	}
+	home := filepath.Join(commandBuilds.root, name)
+	if err := os.MkdirAll(home, 0700); err != nil {
+		t.Fatal(err)
+	}
 	env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "GOENV=off", "GOTOOLCHAIN=auto"}
 	for _, name := range []string{"GOCACHE", "GOMODCACHE", "TMPDIR"} {
 		if value, ok := os.LookupEnv(name); ok {
@@ -57,6 +92,10 @@ func buildCommand(t *testing.T, name string) string {
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build %s: %v\n%s", name, err, output)
 	}
+	if err := os.Chmod(binary, 0500); err != nil {
+		t.Fatal(err)
+	}
+	commandBuilds.binaries[name] = binary
 	return binary
 }
 
