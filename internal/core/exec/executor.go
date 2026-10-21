@@ -127,6 +127,10 @@ func (e *Executor) file(ctx context.Context, l lease.Lease, in tools.Input) (too
 		}
 		return resultCode(tools.Unknown, "effect_unknown"), err
 	}
+	return fileResult(reply)
+}
+
+func fileResult(reply tools.FileReply) (tools.Result, error) {
 	body, _ := json.Marshal(reply)
 	result := tools.Result{State: reply.State, Body: body, Revision: reply.Result.Revision}
 	switch reply.State {
@@ -140,7 +144,11 @@ func (e *Executor) file(ctx context.Context, l lease.Lease, in tools.Input) (too
 			return resultCode(tools.Unknown, "effect_unknown"), tools.ErrUnknown
 		}
 		return result, errors.New(reply.Code)
-	case tools.None, tools.Refused, tools.Unknown:
+	case tools.Unknown:
+		// Unknown is not success, but its retained versions are the only safe
+		// recovery path after a partial multi-file commit. Preserve the reply.
+		return result, tools.ErrUnknown
+	case tools.None, tools.Refused:
 		return resultCode(tools.Unknown, "effect_unknown"), tools.ErrUnknown
 	default:
 		return resultCode(tools.Unknown, "effect_unknown"), tools.ErrUnknown

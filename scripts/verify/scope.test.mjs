@@ -29,7 +29,6 @@ test('ledger is registered with the lina Go checks', t => {
   assert.ok(scope.selectedComponents.includes('lina'));
   assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/ledger/...'));
 });
-
 test('tool executor is registered with the lina Go checks', t => {
   const r = repository(t);
   const base = r.git('rev-parse', 'HEAD');

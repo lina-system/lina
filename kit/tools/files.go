@@ -38,6 +38,9 @@ type FileReceipt struct {
 	Before  string `json:"before"`
 	After   string `json:"after"`
 	Version string `json:"version"`
+	// Recovery locates the actual captured inode, including any concurrent
+	// edits. It is retained even after success for writers with open descriptors.
+	Recovery string `json:"recovery,omitempty"`
 }
 type FileResult struct {
 	Content  []byte               `json:"content,omitempty"`
@@ -63,6 +66,7 @@ func (s snapshot) revision() string {
 
 type savedVersion struct {
 	Path                          string
+	Recovery                      string
 	Before, After                 snapshot
 	BeforeRevision, AfterRevision string
 }
@@ -74,6 +78,9 @@ type savedVersion struct {
 type Files struct {
 	mu             sync.Mutex
 	root, versions *os.Root
+	// observe is an internal deterministic syscall-boundary test seam. It is
+	// never set by OpenFiles or decoded from requests.
+	observe func(string)
 }
 
 func OpenFiles(root, versions string) (*Files, error) {
@@ -241,8 +248,8 @@ func (f *Files) load(name, target string) (snapshot, error) {
 }
 
 // Execute checks every patch context before effects. Each write rechecks the
-// snapshot at the destination, retains and fsyncs both versions, then replaces
-// by rename. An interrupted multi-file commit is unknown with recoverable
+// snapshot at the destination, retains and fsyncs both versions, then captures
+// the actual inode and publishes without clobbering. Interrupted commits retain
 // receipts; it is never reported as an atomic multi-file transaction.
 func (f *Files) Execute(ctx context.Context, req FileRequest) (FileResult, error) {
 	f.mu.Lock()
@@ -332,17 +339,25 @@ func (f *Files) Execute(ctx context.Context, req FileRequest) (FileResult, error
 		if len(after[name].Content) > MaxFileBytes {
 			return FileResult{}, ErrFileSize
 		}
-		id, err := f.save(savedVersion{Path: name, Before: before[name], After: after[name]})
+		recovery := ""
+		if !before[name].Absent {
+			var err error
+			recovery, err = f.reserveRecovery(name)
+			if err != nil {
+				return FileResult{}, err
+			}
+		}
+		id, err := f.save(savedVersion{Path: name, Recovery: recovery, Before: before[name], After: after[name]})
 		if err != nil {
 			return FileResult{}, err
 		}
-		result.Changes = append(result.Changes, FileReceipt{name, before[name].revision(), after[name].revision(), id})
+		result.Changes = append(result.Changes, FileReceipt{Path: name, Before: before[name].revision(), After: after[name].revision(), Version: id, Recovery: recovery})
 	}
 	mutated := false
-	for _, name := range names {
+	for i, name := range names {
 		err := ctx.Err()
 		if err == nil {
-			err = f.replace(name, before[name], after[name])
+			err = f.replace(name, before[name], after[name], result.Changes[i].Recovery)
 		}
 		if err != nil {
 			if mutated || errors.Is(err, ErrUnknown) {
@@ -361,7 +376,29 @@ func (f *Files) Execute(ctx context.Context, req FileRequest) (FileResult, error
 	}
 	return result, nil
 }
-func (f *Files) replace(name string, old, next snapshot) error {
+
+const recoveryPrefix = ".lina-recovery-"
+
+// Capture is a same-filesystem rename. The durable version record identifies
+// its slot before the first rename, even when the private version store is on
+// another filesystem. Do not unlink captures: an editor may still hold the inode.
+func (f *Files) reserveRecovery(name string) (string, error) {
+	dir, _, err := f.parent(name, false)
+	if err != nil {
+		return "", err
+	}
+	defer dir.Close()
+	slot := recoveryPrefix + rand.Text()
+	if err := dir.Mkdir(slot, 0700); err != nil {
+		return "", err
+	}
+	if err := syncDir(dir); err != nil {
+		return "", err
+	}
+	return path.Join(path.Dir(name), slot, "file"), nil
+}
+
+func (f *Files) replace(name string, old, next snapshot, recovery string) error {
 	dir, base, err := f.parent(name, !next.Absent)
 	if err != nil {
 		return err
@@ -382,19 +419,70 @@ func (f *Files) replace(name string, old, next snapshot) error {
 	if current.revision() != old.revision() {
 		return ErrFileRevision
 	}
-	if next.Absent {
-		err = dir.Remove(base)
-	} else if old.Absent {
-		// Link publishes without clobbering a file created since the absence check.
-		err = dir.Link(temp, base)
-	} else {
-		err = dir.Rename(temp, base)
+	if f.observe != nil {
+		f.observe("checked")
 	}
-	if err != nil {
-		return err
+	capture := ""
+	if !old.Absent {
+		capture = path.Join(path.Base(path.Dir(recovery)), "file")
+		if recovery == "" || !strings.HasPrefix(path.Dir(capture), recoveryPrefix) {
+			return ErrInvalid
+		}
+		if err := dir.Rename(base, capture); err != nil {
+			return errors.Join(ErrUnknown, err)
+		}
+		// Sync the captured inode and both directory entries before continuing.
+		capturedDir, err := dir.OpenRoot(path.Dir(capture))
+		if err != nil {
+			return errors.Join(ErrUnknown, err)
+		}
+		file, err := openFileNoFollow(capturedDir, "file")
+		if err == nil {
+			err = errors.Join(file.Sync(), file.Close())
+		}
+		err = errors.Join(err, syncDir(capturedDir), syncDir(dir))
+		capturedDir.Close()
+		if err != nil {
+			return errors.Join(ErrUnknown, err)
+		}
+		if f.observe != nil {
+			f.observe("captured")
+		}
+		captured, err := readSnapshot(dir, capture)
+		if err != nil || captured.revision() != old.revision() {
+			// Restore only into an absent destination. A later external replacement
+			// always wins. Keep the capture and receipt even when restoration works.
+			restoreErr := dir.Link(capture, base)
+			return errors.Join(ErrUnknown, ErrFileRevision, err, restoreErr, syncDir(dir))
+		}
+	}
+	if !next.Absent {
+		// Link is the no-clobber publication primitive for BOTH create and replace.
+		if err := dir.Link(temp, base); err != nil {
+			if capture != "" {
+				return errors.Join(ErrUnknown, err)
+			}
+			return errors.Join(ErrFileRevision, err)
+		}
 	}
 	if err = syncDir(dir); err != nil {
 		return errors.Join(ErrUnknown, err)
+	}
+	if f.observe != nil {
+		f.observe("published")
+	}
+	// Detect observed in-place edits and destination recreation without trying a
+	// destructive rollback. The captured inode remains readable after this worker
+	// exits, including writes made later through an already-open descriptor.
+	if capture != "" {
+		captured, err := readSnapshot(dir, capture)
+		if err != nil || captured.revision() != old.revision() {
+			return errors.Join(ErrUnknown, ErrFileRevision, err)
+		}
+	}
+	published, err := readSnapshot(dir, base)
+	if err != nil || published.revision() != next.revision() {
+		return errors.Join(ErrUnknown, ErrFileRevision, err)
 	}
 	return nil
 }
