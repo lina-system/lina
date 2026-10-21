@@ -273,7 +273,7 @@ card focus; arrows select a result card. The composer keeps its draft when an
 overlay opens or connection status changes. An identical frame and cursor is
 not submitted to the renderer, and the plain display writes no duplicate frame.
 For the colour conversation screen, each new size reaches the cell renderer
-before its reflowed view, even if the view text is unchanged. Resizing keeps the
+before its reflowed view, even if the view text is unchanged. The connection owner's latest dimensions remain authoritative: late renderer startup size messages are discarded before they can resize the cell buffer. Resizing keeps the
 draft and redraws header, status and composer within the current row budget;
 cells from the previous dimensions must not survive as stale transcript rows.
 `e2e/m1/tui-resize.json` exercises 80x24 → 40x12 → 120x35 through a real PTY,
