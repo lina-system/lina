@@ -59,6 +59,8 @@ The scripts use Node 20 or newer and its built-in modules, Git, and actionlint o
 
 ## Timing and budget
 
+The build-script integration tests allow five minutes for each complete build invocation, which runs several Go commands sequentially. Each Go command retains its two-minute limit, and the automation suite retains its ten-minute limit. A cold CI cross-build exhausted the previous two-minute aggregate limit while the component check passed; timeout diagnostics include the target and subprocess error.
+
 | mode | commit | machine | cache | wall s | bound s |
 | --- | --- | --- | --- | ---: | ---: |
 | full | e86f7b2 | lina-os (x86-64, 20 threads) | warm | 3.6 | 20 |

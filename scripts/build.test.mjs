@@ -32,8 +32,10 @@ function fixture(t) {
   const context = createGoContext(cwd);
   t.after(context.close);
   const out = join(sb.dir, 'artifacts with spaces');
+  // A cold build runs several Go commands sequentially, each capped at two
+  // minutes. Give the whole invocation room within foundation's ten-minute cap.
   const run = (args = ['--out', out]) => spawnSync(process.execPath, [join(cwd, 'scripts/build.mjs'), ...args], {
-    cwd, env: context.env, encoding: 'utf8', timeout: 120_000,
+    cwd, env: context.env, encoding: 'utf8', timeout: 300_000,
   });
   const build = () => {
     const result = run();
@@ -57,7 +59,7 @@ test('cross-builds Linux and macOS binaries with target metadata and an explicit
   for (const target of ['linux/amd64', 'darwin/arm64']) {
     const out = join(f.dir, target);
     const result = f.run(['--out', out, '--target', target, '--version', '0.0.1-alpha.20261021.1']);
-    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.status, 0, `${target}: ${result.stderr ?? ''}${result.error?.message ?? ''}`);
     const manifest = JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8'));
     assert.equal(manifest.target, target);
     assert.equal(manifest.supportedCombinations.length, 1);
