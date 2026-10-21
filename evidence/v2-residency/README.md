@@ -3,8 +3,13 @@
 Part of [#95](https://github.com/thisisjun786/lina/issues/95). The owner chooses
 the machines, starts each run and reads the results. No run has happened.
 [budget.json](budget.json) was committed before measurement: 64 MiB installed
-Core artifacts, 2 seconds to readiness, 256 MiB peak RSS, 1% mean CPU and 5% per
-60-second window; one logical CPU is 100%. Each run lasts 86,400 seconds.
+Core artifacts, 2 seconds to readiness, 256 MiB peak RSS, 1% mean CPU and 5% in
+any rolling 60-second window; one logical CPU is 100%. Each run lasts 86,400 seconds.
+
+The [owner-reported pre-run baseline](baseline.json) is a development executable
+of 7.3 MiB, socket ready in 27 ms, observed RSS of 6.9 MiB, and no CPU ticks over
+30 seconds idle. Platform and source commit were not supplied. This short
+observation does not establish protocol readiness or the 24-hour budgets.
 
 Use Linux x64 with systemd and macOS arm64 with launchd. Record the actual OS,
 distribution and version: an Ubuntu run is Ubuntu evidence, not Omarchy evidence.
@@ -94,8 +99,8 @@ physical footprint is not RSS. Validate the collector on that OS before the run.
 
 From readiness, probe the protocol every 60 seconds, including both endpoints,
 with a two-second deadline and unchanged main identity/epoch. Compute CPU as
-100 times CPU-seconds divided by actual elapsed seconds, for consecutive
-60-second windows and the complete run. A sample gap over two seconds, failed
+100 times CPU-seconds divided by actual elapsed seconds, for rolling
+60-second windows at every sample and the complete run. A sample gap over two seconds, failed
 probe, restart, suspension or missing peak-RSS measurement prevents a pass.
 Record uncompressed sizes and hashes of every required Core artifact.
 

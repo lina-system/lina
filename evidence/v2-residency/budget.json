@@ -20,6 +20,7 @@
     "resource_sample_interval_seconds": 1,
     "max_resource_sample_gap_seconds": 2,
     "cpu_window_seconds": 60,
+    "cpu_window_stride_seconds": 1,
     "health_probe_interval_seconds": 60,
     "health_probe_timeout_seconds": 2,
     "one_logical_cpu_percent": 100,
@@ -39,7 +40,7 @@
     "startup_seconds": "Monotonic elapsed time from requesting service start to a correlated protocol response proving recovery completed, including service-manager and measurement-launcher overhead.",
     "peak_resident_bytes": "Maximum OS resident high-water mark for the Core process from process start through final shutdown; initialization included, physical footprint and monitor RSS excluded.",
     "mean_cpu_percent": "100 times the Core user-plus-system CPU counter delta divided by the complete post-readiness residency interval; health-probe work included.",
-    "max_cpu_window_percent": "Maximum of the same CPU calculation over consecutive 60-second windows starting at readiness, using actual elapsed time for each window and including any final partial window; no division by CPU count."
+    "max_cpu_window_percent": "At most five percent in any rolling 60-second window during residency, evaluated at every one-second resource sample using actual elapsed time; no division by CPU count."
   },
   "rationale": "A 64 MiB installed Core target bounds distribution cost; a two-second readiness target bounds service startup; 256 MiB leaves room for Go and the SQLite engine while retaining a bounded resident service; one percent mean idle CPU and five percent per minute detect sustained idle activity. These are pre-run acceptance targets, not measurements.",
   "failure_policy": "Missing platform evidence, missing or invalid counters, excessive sampling gaps, missed or failed health probes, restarts, suspension, changed artifacts, or a short run prevent acceptance. An exceeded limit is a failed result and reopens the runtime choice; limits are not increased after observing a run."
