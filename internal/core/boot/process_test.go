@@ -83,6 +83,25 @@ func TestCoreProcess(t *testing.T) {
 						if !ok || envelope.Kind != protocol.KindWelcome || envelope.Error != nil || envelope.EffectState != protocol.EffectNone || !reflect.DeepEqual(welcome, want) {
 							t.Fatalf("unexpected welcome: %s", line)
 						}
+						// A welcomed connection remains usable, but grants no operations.
+						// Reads reach capability admission in both RECOVERING and READY.
+						request.Params.MessageID = "after-welcome"
+						request.Params.Epoch = epoch
+						request.Method = "history_get"
+						request.Params.Kind, request.Params.Payload = protocol.KindHistoryGet, protocol.HistoryGet{}
+						if err := json.NewEncoder(conn).Encode(request); err != nil {
+							t.Fatal(err)
+						}
+						line, err := reader.ReadBytes('\n')
+						if err != nil {
+							t.Fatal(err)
+						}
+						if err := json.Unmarshal(line, &response); err != nil {
+							t.Fatal(err)
+						}
+						if response.Result.Error == nil || response.Result.Error.Code != protocol.ErrorCapabilityNotNegotiated {
+							t.Fatalf("unexpected post-handshake answer: %s", line)
+						}
 						// Handshakes are served during recovery. Observe the transition
 						// to READY through a refused, effect-free request instead of
 						// assuming startup finished by the time welcome arrived. The
