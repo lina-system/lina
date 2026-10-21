@@ -147,7 +147,13 @@ func NewWithMaterials(db Canon, materials ledger.Materials) *Store {
 }
 
 func identifier(s string) bool {
-	return len(s) > 0 && len(s) <= 256 && utf8.ValidString(s) && strings.IndexFunc(s, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) < 0
+	if len(s) == 0 || len(s) > 256 || !utf8.ValidString(s) || strings.IndexFunc(s, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
+		return false
+	}
+	// Opaque identifiers must retain their exact meaning. Refuse secret-shaped
+	// values instead of masking them into a different reference or check name.
+	masked, err := secrets.Mask(s)
+	return err == nil && masked.Text() == s
 }
 func present(s string) bool          { return strings.TrimSpace(s) != "" }
 func line(s string) bool             { return present(s) && strings.IndexFunc(s, unicode.IsControl) < 0 }

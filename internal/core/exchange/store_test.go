@@ -18,7 +18,7 @@ import (
 
 var now = time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 
-func openAt(t *testing.T, root string, epoch uint64) *canon.Store {
+func openAt(t *testing.T, root string, epoch uint64, extraSchemas ...string) *canon.Store {
 	t.Helper()
 	ctl, err := ctlfiles.Open(root)
 	if err != nil {
@@ -30,6 +30,9 @@ func openAt(t *testing.T, root string, epoch uint64) *canon.Store {
 	t.Cleanup(func() { ctl.Close() })
 	migrations := canon.Migrations()
 	migrations = append(migrations, canon.Migration{Version: len(migrations) + 1, SQL: exchange.Schema})
+	for _, schema := range extraSchemas {
+		migrations = append(migrations, canon.Migration{Version: len(migrations) + 1, SQL: schema})
+	}
 	db, err := canon.Open(t.Context(), canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: epoch, Controls: ctl, Migrations: migrations})
 	if err != nil {
 		t.Fatal(err)

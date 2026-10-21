@@ -10,6 +10,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/guard"
+	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
@@ -28,6 +29,12 @@ type Prepared struct {
 	ExchangeID, DeliveryID, Agent string
 	Persona                       agents.Preparation
 	Request                       provider.Request
+}
+
+// Projection excludes secret spans even when a reader supplies raw bytes.
+func project(text string) (string, error) {
+	masked, err := secrets.Mask(text, bodySpans(text)...)
+	return masked.DerivedText(), err
 }
 
 func message(role, text string) provider.Item {
@@ -87,12 +94,24 @@ func (s *Store) Prepare(ctx context.Context, delivery, actor string, at time.Tim
 		return Prepared{}, err
 	}
 	layers := persona.Layers
-	req := provider.Request{Purpose: provider.Background, Instructions: strings.Join([]string{layers.Core, layers.DefaultVoice, layers.UserVoice, layers.GrowthSnapshot}, "\n\n")}
+	instructions, err := project(strings.Join([]string{layers.Core, layers.DefaultVoice, layers.UserVoice, layers.GrowthSnapshot}, "\n\n"))
+	if err != nil {
+		return Prepared{}, err
+	}
+	req := provider.Request{Purpose: provider.Background, Instructions: instructions}
 	for _, text := range common {
+		text, err = project(text)
+		if err != nil {
+			return Prepared{}, err
+		}
 		req.Items = append(req.Items, message("developer", text))
 	}
 	for _, ref := range r.HandOff.Materials {
 		text, err := knowledge.Material(ctx, ref)
+		if err != nil {
+			return Prepared{}, err
+		}
+		text, err = project(text)
 		if err != nil {
 			return Prepared{}, err
 		}
