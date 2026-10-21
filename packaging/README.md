@@ -10,6 +10,9 @@ Installation requires a working user manager and never signs in to a provider.
 directory. All supplied locations must be absolute paths. The default private
 client socket is `<state-root>/system/run/client.sock`; `--socket` overrides it
 when the default would exceed the Unix socket path limit.
+The state-root path cannot contain quotes, backslashes or control characters,
+which systemd rejects in an executable path. Spaces, dollar signs and percent
+signs are supported and escaped according to systemd's argument rules.
 
 The installer checks the build manifest and the SHA-256 and size of every byte
 it installs. It copies `lina` and `manifest.json` into `system/bin/`, creates the
@@ -21,7 +24,7 @@ an existing service.
 
 When the bundle's binary records include `moirai-worker`, its verified bytes
 are installed beside `lina`. `lina-moirai.service` depends on Core and starts
-the worker with `--state-root <root> --socket <root>/system/run/moirai.sock`.
+the worker with `--canon <root>/canon/canon.sqlite --socket <root>/system/run/moirai.sock`.
 Without that artifact the installer reports background memory and planning
 unavailable and creates no worker service.
 

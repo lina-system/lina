@@ -11,11 +11,21 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/thisisjun786/lina/internal/core/install"
 )
 
-// The production host is supplied by kit/proc when LN-50 is integrated.
+func runInstall(args []string) int {
+	host := install.NewProcessHost()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		host.Close(ctx)
+	}()
+	return runInstallWithHost(args, host)
+}
+
 func runInstallWithHost(args []string, host install.Host) int {
 	flags := flag.NewFlagSet("lina install", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)

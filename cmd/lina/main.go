@@ -11,6 +11,8 @@ func main() {
 		switch os.Args[1] {
 		case "core":
 			os.Exit(runCore(os.Args[2:]))
+		case "install":
+			os.Exit(runInstall(os.Args[2:]))
 		case "version":
 			version()
 			return
@@ -18,6 +20,6 @@ func main() {
 			os.Exit(runTUI(os.Args[2:]))
 		}
 	}
-	fmt.Fprintln(os.Stderr, "usage: lina <core|tui|version>")
+	fmt.Fprintln(os.Stderr, "usage: lina <core|tui|install|version>")
 	os.Exit(64)
 }

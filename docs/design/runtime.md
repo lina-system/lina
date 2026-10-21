@@ -70,7 +70,7 @@ The worker reads its committed watermark and Core-owned deterministic/model poli
 
 Provider adapters are never registered with the service manager: they start with LINA Core and end with it. The ChatGPT and Gemini adapters are Go inside LINA Core and open no process.
 
-The current runnable Core increment is `lina core --state-root <path> --socket <path>`. It requires an existing private local state root with the installed main id, holds its non-blocking lock, durably advances its epoch and serves the client 1.0 handshake with that identity and epoch. The socket is 0600 in a 0700 directory. Handshakes work during RECOVERING; READY follows reconciliation. SIGTERM or SIGINT closes clients, removes the socket and run sentinel and exits 0, preserving the epoch. Tests use connection and startup-boundary acknowledgements rather than fixed startup delays. Concrete event, canon and reconciliation services attach through the startup coordinator; an existing canon store is refused until its implementation is linked. Installation and service units remain G1-23 work. [go-core.md C-01, C-03, C-04 and C-42](go-core.md) define the control-file formats, start order and handshake behavior.
+The current runnable Core increment is `lina core --state-root <path> --socket <path>`. It requires an existing private local state root with the installed main id, holds its non-blocking lock, durably advances its epoch and serves the client 1.0 handshake with that identity and epoch. The socket is 0600 in a 0700 directory. Handshakes work during RECOVERING; READY follows reconciliation. SIGTERM or SIGINT closes clients, removes the socket and run sentinel and exits 0, preserving the epoch. Tests use connection and startup-boundary acknowledgements rather than fixed startup delays. Concrete event, canon and reconciliation services attach through the startup coordinator; an existing canon store is refused until its implementation is linked. The install command supplies the identity and user service as described under The lina command. [go-core.md C-01, C-03, C-04 and C-42](go-core.md) define the control-file formats, start order and handshake behavior.
 
 ## Vendored source
 
@@ -502,8 +502,9 @@ filesystem contract's empty directories without opening canon or writing an
 account credential. It supplies the durable random main identity. The unit
 `lina-core.service` starts the installed executable as the current OS user with
 explicit root and socket arguments. A bundled `moirai-worker` receives its own
-`lina-moirai.service`, ordered after and dependent on Core, with `--state-root`
-and `--socket <state-root>/system/run/moirai.sock`. No provider adapter receives
+`lina-moirai.service`, ordered after and dependent on Core, with
+`--canon <state-root>/canon/canon.sqlite` and
+`--socket <state-root>/system/run/moirai.sock`. No provider adapter receives
 a service unit.
 
 Preflight refuses an existing state root, socket, named service, service
@@ -533,6 +534,14 @@ that provider is reported unavailable. Missing background-worker artifacts
 affect only background memory and planning. Installation never signs in to a
 provider; the first preparation still has to pass the account check and offer
 the ChatGPT sign-in when no account is usable.
+
+The installation acceptance scenario observes the installed Core identity and
+TUI connection through the existing client protocol. Account-free preparation
+is exercised through the actual turn preparation flow with an empty credential
+record: it fails at the account step, reports one line with the sign-in offer,
+and sends no provider request. The current conversation/account protocol
+operations remain reserved; installation does not introduce a second
+preparation or sign-in implementation.
 
 ### Provider adapters
 
