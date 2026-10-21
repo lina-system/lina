@@ -112,3 +112,23 @@ func TestAccountAddUsesProviderPurposeAndSignOutUsesSelectedID(t *testing.T) {
 		t.Fatal("add account requested an owner login")
 	}
 }
+
+func TestAccountManagementWithoutSignInRelay(t *testing.T) {
+	m := accountShell()
+	m.content.Capabilities = []protocol.Capability{{Name: "accounts", Version: "1.0"}}
+	m.Update(tea.PasteMsg{Content: "/accounts"})
+	_, command := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if command == nil {
+		t.Fatal("account management requires an unrelated relay capability")
+	}
+	request := command().(shellAccountRequest).Request
+	if request.Operation == nil || *request.Operation != "list" {
+		t.Fatal("account list was not requested")
+	}
+	m.accounts = accountView{open: true}
+	m.accountRows = []protocol.AccountSummary{{AccountID: "existing", Label: "Existing", Status: "ok"}}
+	_, command = m.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
+	if command != nil || m.accounts.code != "capability_not_negotiated" {
+		t.Fatal("reauthorization ignored the missing relay capability")
+	}
+}

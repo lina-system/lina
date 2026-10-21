@@ -323,6 +323,8 @@ continues to require its separate typed card controls.
 **Sign-in.** The TUI is the client side of one relay for plugin and model-provider sign-in. It opens a loopback listener and reports its port, opens the system browser when it runs locally, and relays `code`, `state` and `iss`, or the `error` fields, exactly as received. Over SSH it takes a pasted URL instead. A secret the person types, such as an API key, is a masked field with no undo and no history, and travels once to Core.
 
 The TUI negotiates `accounts` and `sign_in_relay` independently of conversation.
+Account listing and sign-out remain available when the relay is not granted;
+login and reauthorization then show the unsupported capability.
 `/signin` starts a ChatGPT login; `/accounts` opens its labeled account block,
 where Up/Down selects a metadata row, `s` reauthorizes it (or logs in when the
 list is empty), `a` adds a provider account without changing the owner binding,

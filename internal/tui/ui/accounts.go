@@ -34,7 +34,9 @@ type shellCancelSignIn struct{ Generation uint64 }
 func (m *shellModel) canSignIn() bool {
 	return m.hasCapability("accounts") && m.hasCapability("sign_in_relay")
 }
-func (m *shellModel) hasComposer() bool { return m.hasCapability("conversation") || m.canSignIn() }
+func (m *shellModel) hasComposer() bool {
+	return m.hasCapability("conversation") || m.hasCapability("accounts")
+}
 
 func (m *shellModel) startSignIn(purpose string) tea.Cmd {
 	m.accounts = accountView{open: true, busy: true, stage: "sign_in_listen"}
@@ -110,6 +112,10 @@ func (m *shellModel) accountKey(msg tea.KeyMsg) tea.Cmd {
 			return m.accountRequest(protocol.AccountRequest{Operation: stringPointer("sign_out"), AccountID: &id})
 		}
 		if key.Name == "s" {
+			if !m.canSignIn() {
+				m.accounts.code = "capability_not_negotiated"
+				return nil
+			}
 			if len(m.accountRows) > 0 {
 				id := m.accountRows[m.accounts.selected].AccountID
 				m.accounts = accountView{open: true, busy: true, stage: "sign_in_listen"}
