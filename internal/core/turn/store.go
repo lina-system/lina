@@ -272,8 +272,10 @@ type Options struct {
 	ID, Conversation string
 	InboxID          int64
 	// InputEvent binds the accepted ledger input for durable stop/restart notices.
-	InputEvent    string
-	Prepare       func(context.Context) error
+	InputEvent string
+	Prepare    func(context.Context) error
+	// Preparation is the complete four-step path; Prepare is the low-level hook.
+	Preparation   *Preparation
 	Loop          loop.Config
 	Budget        *budget.Gauge // carry into a continuation; nil starts a new budget
 	ReceivedAt    time.Time     // original receipt time, excluding preparation from tool time
@@ -354,15 +356,26 @@ func (s *Store) Run(ctx context.Context, o Options) (out loop.Outcome, err error
 			return e
 		}))
 	}()
-	if o.Prepare != nil {
+	cfg := o.Loop
+	if o.Preparation != nil {
+		if o.Prepare != nil {
+			return out, o.Preparation.failure(ContextStep, ErrInvalid)
+		}
+		cfg, err = o.Preparation.prepare(ctx, o.ID, cfg)
+		if err != nil {
+			return out, err
+		}
+	} else if o.Prepare != nil {
 		if err = o.Prepare(ctx); err != nil {
 			return out, err
 		}
 	}
 	if err = s.Prepared(ctx, o.ID); err != nil {
+		if o.Preparation != nil {
+			err = o.Preparation.failure(ContextStep, err)
+		}
 		return out, err
 	}
-	cfg := o.Loop
 	cfg.Journal = s.Journal(o.ID)
 	out, err = loop.Run(ctx, b.configure(cfg, o.Report))
 	if errors.Is(err, errPromote) {
