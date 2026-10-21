@@ -611,7 +611,7 @@ The release manifest records:
 - the supported-combination table ([host-protocol.md](host-protocol.md))
 - the Claude adapter: its version, its digest and the digest of its lockfile; and the sign-in client settings of the ChatGPT adapter (issuer, scopes, resource and app name hint)
 
-The current `supportedCombinations` section has one client 1.0 row for peer `lina-tui` on the build's native `GOOS/GOARCH`, with the current empty capability list and evidence `go test ./kit/protocol/conformance`. The listener and build writer obtain this row from the same compiled manifest definition. Product version is absent from the compatibility key.
+The current `supportedCombinations` section has one client 1.0 row for peer `lina-tui` on the selected build target's `GOOS/GOARCH`, with the current empty capability list and evidence `go test ./kit/protocol/conformance`. The listener and build writer obtain this row from the same compiled manifest definition. Product version is absent from the compatibility key.
 
 The manifest pins only LINA's own artifacts and dependencies: its components, the app shell (with the engine it bundles, where that is Electron), and the external components LINA ships. A change to a pinned value (an SDK, the Claude adapter's lockfile, a request field list, a sign-in scope, environment rules, retry values) lands in the same change as its manifest change.
 

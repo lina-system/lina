@@ -80,7 +80,18 @@ func TestSandboxedFileToolPatchAndTrash(t *testing.T) {
 	l := lease.New(func() {})
 	defer l.Release()
 	snapshot, err := e.Snapshot(t.Context(), l)
-	if err != nil || len(snapshot.Manifest) != 2 {
+	want := map[string]string{
+		"binary":                           created.Result.Revision,
+		"note":                             reply.Result.Changes[0].After,
+		deleted.Result.Changes[0].Recovery: deleted.Result.Changes[0].Before,
+		reply.Result.Changes[0].Recovery:   reply.Result.Changes[0].Before,
+	}
+	if err != nil || len(want) != 4 || len(snapshot.Manifest) != len(want) {
 		t.Fatalf("snapshot: %+v %v", snapshot, err)
+	}
+	for path, revision := range want {
+		if path == "" || snapshot.Manifest[path].Revision != revision {
+			t.Fatalf("missing current or captured bytes for %q: %+v", path, snapshot.Manifest)
+		}
 	}
 }

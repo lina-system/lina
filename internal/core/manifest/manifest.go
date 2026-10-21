@@ -21,12 +21,12 @@ type Manifest struct {
 	Version               string                           `json:"version"`
 	Commit                string                           `json:"commit"`
 	Date                  string                           `json:"date"`
+	Target                string                           `json:"target"`
 	GoToolchain           string                           `json:"goToolchain"`
 	KitVersion            int64                            `json:"kitVersion"`
 	Binaries              []Binary                         `json:"binaries"`
 	SQLite                SQLite                           `json:"sqlite"`
 	Providers             map[string]responseconfig.Config `json:"providers"`
-	Target                string                           `json:"target"`
 }
 
 // Binary describes one artifact next to manifest.json. SHA256 is lowercase hex.
@@ -69,6 +69,7 @@ func (m Manifest) Validate() error {
 	if err := ValidateCombinations(m.SupportedCombinations); err != nil {
 		return err
 	}
+
 	switch m.Target {
 	case "linux/amd64", "linux/arm64", "darwin/amd64", "darwin/arm64", "windows/amd64", "windows/arm64":
 	default:
