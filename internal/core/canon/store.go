@@ -426,7 +426,13 @@ func (s *Store) Write(ctx context.Context, fn func(*Tx) error) error {
 
 func (s *Store) MirrorEpoch(ctx context.Context, epoch uint64) error {
 	if epoch != s.epoch {
+		if s.halted {
+			return ErrStaleEpoch
+		}
 		return s.submit(ctx, nil, ErrStaleEpoch)
+	}
+	if s.halted {
+		return nil
 	}
 	return s.Write(ctx, func(*Tx) error { return nil })
 }

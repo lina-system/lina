@@ -357,6 +357,42 @@ func TestCorruptionHaltsDurablyAndPreservesReads(t *testing.T) {
 	}
 }
 
+func TestHaltedStoreMirrorsMatchingEpochWithoutWriting(t *testing.T) {
+	cfg := storeConfig(t)
+	s := openStore(t, cfg)
+	if err := s.Write(t.Context(), insertItem); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Write(t.Context(), func(*Tx) error { return sqlite3.CORRUPT }); !errors.Is(err, ErrWriteHalted) {
+		t.Fatalf("halt store: %v", err)
+	}
+	marker, err := cfg.Controls.Read("halt.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	s = openStore(t, cfg)
+	if err := s.MirrorEpoch(t.Context(), cfg.Epoch); err != nil {
+		t.Fatalf("matching epoch: %v", err)
+	}
+	if err := s.MirrorEpoch(t.Context(), cfg.Epoch+1); !errors.Is(err, ErrStaleEpoch) {
+		t.Fatalf("mismatched epoch: %v", err)
+	}
+	if err := s.Write(t.Context(), insertItem); !errors.Is(err, ErrWriteHalted) {
+		t.Fatalf("write while halted: %v", err)
+	}
+	if got := itemCount(t, s); got != 1 {
+		t.Fatalf("read count: %d", got)
+	}
+	after, err := cfg.Controls.Read("halt.json")
+	if err != nil || !reflect.DeepEqual(marker, after) {
+		t.Fatalf("halt marker changed: %s %v", after, err)
+	}
+}
+
 func TestFullAndRecoverableIOErrorsDoNotHalt(t *testing.T) {
 	for _, failure := range []error{sqlite3.FULL, sqlite3.IOERR_READ} {
 		cfg := storeConfig(t)
