@@ -23,8 +23,8 @@ type terminal struct {
 	mode    unix.Termios
 }
 
-func (h *harness) startTUI() *terminal {
-	return h.startTerminal(nil, false)
+func (h *harness) startTUI(environment ...string) *terminal {
+	return h.startTerminal(environment, false)
 }
 
 func (h *harness) startTerminal(environment []string, combined bool) *terminal {

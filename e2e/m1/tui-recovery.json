@@ -1,0 +1,9 @@
+{
+  "connections": [
+    [{"request": "hello.json", "emit": ["welcome.json"], "faults": {"disconnect_after": 1}}],
+    [
+      {"request": "hello.json", "emit": ["welcome.json"], "faults": {"epoch": "43"}},
+      {"request": "hello.json"}
+    ]
+  ]
+}
