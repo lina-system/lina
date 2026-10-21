@@ -41,7 +41,7 @@ func (m *Memory) RememberTool(binding memory.Write) (tools.Spec, tools.Handler) 
 			if err := decodeMemoryArgs(raw, &item); err != nil {
 				return tools.Input{}, err
 			}
-			if strings.TrimSpace(item.Content) == "" || item.ID != "" || item.Revision != 0 || item.State != "" || item.Person != "" || item.SourceAgent != "" || item.SourcePerson != "" || len(item.Evidence) == 0 {
+			if strings.TrimSpace(item.Content) == "" || item.ID != "" || item.Revision != 0 || item.State != "" || item.Person != "" || item.Holder != "" || item.Scope != "" || item.SourceAgent != "" || item.SourcePerson != "" || len(item.Evidence) == 0 {
 				return tools.Input{}, tools.ErrInvalid
 			}
 			canonical, err := json.Marshal(item)
@@ -55,6 +55,8 @@ func (m *Memory) RememberTool(binding memory.Write) (tools.Spec, tools.Handler) 
 		if err := decodeMemoryArgs(in.Arguments, &request.Item); err != nil {
 			return tools.Result{State: tools.Failed}, err
 		}
+		request.Item.Holder = binding.Item.Holder
+		request.Item.Scope = binding.Item.Scope
 		receipt, err := m.Remember(ctx, request)
 		if err != nil {
 			return tools.Result{State: tools.Failed}, err
@@ -77,7 +79,7 @@ func (m *Memory) RememberTool(binding memory.Write) (tools.Spec, tools.Handler) 
 func (m *Memory) RecallPersonTool(scope memory.RecallScope, now func() int64) (tools.Spec, tools.Handler) {
 	type args struct {
 		Question string `json:"question"`
-		Query    string `json:"query,omitempty"`
+		Query    string `json:"query"`
 		Depth    int    `json:"depth,omitempty"`
 		History  bool   `json:"history,omitempty"`
 	}
@@ -88,7 +90,7 @@ func (m *Memory) RecallPersonTool(scope memory.RecallScope, now func() int64) (t
 			if err := decodeMemoryArgs(raw, &request); err != nil {
 				return tools.Input{}, err
 			}
-			if strings.TrimSpace(request.Question) == "" || request.Depth < 0 {
+			if strings.TrimSpace(request.Question) == "" || request.Depth < 0 || request.Depth <= 1 && strings.TrimSpace(request.Query) == "" {
 				return tools.Input{}, tools.ErrInvalid
 			}
 			canonical, err := json.Marshal(request)

@@ -92,11 +92,11 @@ func TestRecallPersonDepthAndCitations(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	result, err := flow.RecallPerson(t.Context(), scope, PersonRecall{Question: "What is known?", At: 100})
+	result, err := flow.RecallPerson(t.Context(), scope, PersonRecall{Question: "What is known?", Query: "fact", At: 100})
 	if err != nil || calls != 0 || len(result.Sources) != 12 || len(result.Answer) != 0 {
 		t.Fatalf("depth zero: %+v %v, calls=%d", result, err, calls)
 	}
-	result, err = flow.RecallPerson(t.Context(), scope, PersonRecall{Question: "What is known?", Depth: 1, At: 100})
+	result, err = flow.RecallPerson(t.Context(), scope, PersonRecall{Question: "What is known?", Query: "fact", Depth: 1, At: 100})
 	if err != nil || calls != 1 || len(result.Answer) != 1 || len(result.Answer[0].Citations) != 1 {
 		t.Fatalf("citation validation: %+v %v", result, err)
 	}
@@ -116,7 +116,7 @@ func TestRecallPersonDiscardsCancelledAuxiliaryOutput(t *testing.T) {
 	if _, err := flow.Remember(t.Context(), rememberInput("likes tea")); err != nil {
 		t.Fatal(err)
 	}
-	result, err := flow.RecallPerson(ctx, memory.RecallScope{Agent: "A", Person: "person"}, PersonRecall{Question: "What?", Depth: 1, At: 100})
+	result, err := flow.RecallPerson(ctx, memory.RecallScope{Agent: "A", Person: "person"}, PersonRecall{Question: "What?", Query: "tea", Depth: 1, At: 100})
 	if !errors.Is(err, context.Canceled) || len(result.Answer) != 0 {
 		t.Fatalf("late output accepted: %+v %v", result, err)
 	}

@@ -72,7 +72,7 @@ func TestRecallToolBindsScopeAndRejectsUnknownArguments(t *testing.T) {
 	if _, err := spec.Schema(json.RawMessage(`{"question":"What?","agent":"A"}`)); err == nil {
 		t.Fatal("model could override agent scope")
 	}
-	in, err := spec.Schema(json.RawMessage(`{"question":"What?"}`))
+	in, err := spec.Schema(json.RawMessage(`{"question":"What?","query":"tea"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
