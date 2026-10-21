@@ -66,7 +66,7 @@ func TestKoreanSearch(t *testing.T) {
 		}
 		for _, query := range corpus.Queries {
 			t.Run(query.Name, func(t *testing.T) {
-				hits, err := s.Search(t.Context(), ledger.SearchQuery{AgentID: "agent", Text: query.Text})
+				hits, err := s.Search(t.Context(), ledger.SearchQuery{AgentID: "agent", PersonID: "owner", Text: query.Text})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -104,7 +104,7 @@ func TestKoreanSearchExcludesSecretSpansAndRollbacks(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, query := range []string{"도서관", "공부", "비밀", "REDACTED"} {
-		hits, err := s.Search(t.Context(), ledger.SearchQuery{AgentID: "agent", Text: query})
+		hits, err := s.Search(t.Context(), ledger.SearchQuery{AgentID: "agent", PersonID: "owner", Text: query})
 		if err != nil || len(hits) != 0 {
 			t.Fatalf("query %q: hits=%v, err=%v", query, hits, err)
 		}
@@ -142,7 +142,7 @@ func TestKoreanSearchMigrationAndMetadata(t *testing.T) {
 	db = open(t, cfg)
 	s := ledger.New(db, nil)
 	for _, query := range []string{"도서관", "공부"} {
-		hits, err := s.Search(t.Context(), ledger.SearchQuery{AgentID: "agent", Text: query})
+		hits, err := s.Search(t.Context(), ledger.SearchQuery{AgentID: "agent", PersonID: "owner", Text: query})
 		if err != nil || len(hits) != 1 || hits[0].ID != "old" {
 			t.Fatalf("backfill: %v %v", hits, err)
 		}
@@ -185,7 +185,7 @@ func TestKoreanSearchFiltersBeforeLimitAndKeepsReplayOptIn(t *testing.T) {
 		admit(t, s, guard.EntryOwner, in)
 	}
 	for _, text := range []string{"도서관", "공부"} {
-		q := ledger.SearchQuery{AgentID: "agent", Text: text, Limit: 1, Origin: "native", SpeakerKind: guard.Person}
+		q := ledger.SearchQuery{AgentID: "agent", PersonID: "owner", Text: text, Limit: 1, Origin: "native", SpeakerKind: guard.Person}
 		hits, err := s.Search(t.Context(), q)
 		if err != nil || len(hits) != 1 || hits[0].ID != "original" {
 			t.Fatalf("filters before limit: %v %v", hits, err)
@@ -209,7 +209,7 @@ func TestKoreanSearchPublishesOnlyAtCommit(t *testing.T) {
 	observer := observingCanon{db, func() {
 		observed = true
 		for _, query := range []string{"도서관", "공부"} {
-			hits, err := s.Search(t.Context(), ledger.SearchQuery{AgentID: "agent", Text: query})
+			hits, err := s.Search(t.Context(), ledger.SearchQuery{AgentID: "agent", PersonID: "owner", Text: query})
 			if err != nil || len(hits) != 0 {
 				t.Fatalf("uncommitted index visible: %v %v", hits, err)
 			}
@@ -219,9 +219,62 @@ func TestKoreanSearchPublishesOnlyAtCommit(t *testing.T) {
 	in.Body = "도서관에서 공부한다."
 	admit(t, ledger.New(observer, nil), guard.EntryOwner, in)
 	for _, query := range []string{"도서관", "공부"} {
-		hits, err := s.Search(t.Context(), ledger.SearchQuery{AgentID: "agent", Text: query})
+		hits, err := s.Search(t.Context(), ledger.SearchQuery{AgentID: "agent", PersonID: "owner", Text: query})
 		if !observed || err != nil || len(hits) != 1 || hits[0].ID != in.ID {
 			t.Fatalf("committed index missing: %v %v", hits, err)
 		}
+	}
+}
+
+func TestKoreanSearchIsolatesPeopleAndTheirReplies(t *testing.T) {
+	db, _ := database(t)
+	s := ledger.New(db, nil)
+	for _, person := range []string{"owner", "other-person"} {
+		in := input(person)
+		in.PersonID, in.ConversationID = person, person+"-conversation"
+		in.Body = "도서관에서 공부를 한다."
+		admit(t, s, guard.EntryOwner, in)
+		in.ID, in.PersonID = person+"-reply", ""
+		admit(t, s, guard.EntryAgent, in)
+		in = input(person + "-ambiguous")
+		in.PersonID, in.ConversationID, in.Body = person, "ambiguous", "도서관에서 공부한다."
+		admit(t, s, guard.EntryOwner, in)
+	}
+	orphan := input("orphan-reply")
+	orphan.PersonID, orphan.ConversationID, orphan.Body = "", "orphan", "도서관에서 공부한다."
+	admit(t, s, guard.EntryAgent, orphan)
+	for _, person := range []string{"owner", "other-person"} {
+		for _, text := range []string{"도서관", "공부"} {
+			hits, err := s.Search(t.Context(), ledger.SearchQuery{AgentID: "agent", PersonID: person, Text: text})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var ids []string
+			for _, hit := range hits {
+				ids = append(ids, hit.ID)
+			}
+			sort.Strings(ids)
+			if want := []string{person, person + "-reply"}; !reflect.DeepEqual(ids, want) {
+				t.Fatalf("person %q: ids=%v want=%v", person, ids, want)
+			}
+		}
+	}
+	if _, err := s.Search(t.Context(), ledger.SearchQuery{AgentID: "agent", Text: "공부"}); !errors.Is(err, ledger.ErrInvalid) {
+		t.Fatalf("missing person scope: %v", err)
+	}
+	// A pending private source must not even be read for somebody else's
+	// search: missing foreign material cannot fail or disclose that query.
+	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO conv_event
+		 (id,conversation_id,person_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,material_id,material_revision)
+		 VALUES('foreign-pending','foreign-pending','other-person','agent','person','{"kind":"app"}',
+		 '2026-01-02T00:00:00Z','2026-01-02T00:00:00Z','recorded','{"kind":"import"}','missing-material',1)`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	hits, err := s.Search(t.Context(), ledger.SearchQuery{AgentID: "agent", PersonID: "owner", Text: "공부", Limit: 1})
+	if err != nil || len(hits) != 1 || hits[0].ID != "owner" {
+		t.Fatalf("foreign backfill affected owner: %v %v", hits, err)
 	}
 }

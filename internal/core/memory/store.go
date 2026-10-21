@@ -434,9 +434,11 @@ func restrictedEvents(ctx context.Context, tx *canon.Tx, scope RecallScope) (map
 	if !scope.Projection && !scope.ExternalModel {
 		return ids, nil
 	}
-	holders := scope.Holders()
-	rows, err := tx.QueryContext(ctx, `SELECT record FROM memory_item WHERE person=? AND holder IN (?,?)
-  AND ((?=1 AND scope IN ('private','never-leaves')) OR (?=1 AND scope='never-leaves'))`, scope.Person, holders[0], holders[1], scope.Projection, scope.ExternalModel)
+	// This internal deny set spans the person's holders: common memory must
+	// not launder an event protected by another agent's private memory. Only
+	// event ids leave this function; recall candidates keep their holder filter.
+	rows, err := tx.QueryContext(ctx, `SELECT record FROM memory_item WHERE person=?
+  AND ((?=1 AND scope IN ('private','never-leaves')) OR (?=1 AND scope='never-leaves'))`, scope.Person, scope.Projection, scope.ExternalModel)
 	if err != nil {
 		return nil, err
 	}

@@ -208,3 +208,30 @@ func TestKoreanIndexOfLongMemoryDeduplicatesPostings(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestKoreanRecallCannotBypassAnotherHoldersProtectedEvent(t *testing.T) {
+	db := database(t)
+	allowed := commit(t, db, proposal("B", "도서관에서 공부한다."))
+	protected := proposal("A", "a protected statement")
+	protected.Item.Holder, protected.ExplicitHolder = "A", true
+	protected.Item.Scope = NeverLeaves
+	commit(t, db, protected)
+	common := proposal("A", "도서관에서 공부를 더 한다.")
+	common.Item.Evidence[0].ID = protected.Item.Evidence[0].ID
+	commit(t, db, common)
+	for _, scope := range []RecallScope{
+		{Agent: "B", Person: "person", ExternalModel: true},
+		{Agent: "B", Person: "person", Projection: true},
+	} {
+		for _, text := range []string{"도서관", "공부"} {
+			hits, err := New(db).Recall(t.Context(), scope, Query{Text: text, Limit: 1})
+			if err != nil || len(hits) != 1 || hits[0].ID != allowed.ID {
+				t.Fatalf("foreign protected event reached recall: %v %v", hits, err)
+			}
+		}
+		ids, err := New(db).RestrictedEvents(t.Context(), scope)
+		if err != nil || !ids[protected.Item.Evidence[0].ID] {
+			t.Fatalf("shared event deny set missing restriction: %v %v", ids, err)
+		}
+	}
+}
