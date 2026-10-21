@@ -11,15 +11,20 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"github.com/thisisjun786/lina/internal/moirai/jobapi"
 )
 
-// Listen never reclaims an existing path. Core owns stale-socket recovery while
-// holding its state-root lock. No worker credential is needed on this socket.
-func Listen(path string) (*net.UnixListener, error) {
+// Listen requires Core's held state-root lock for recovery and binding. The
+// caller keeps that lock for the listener's lifetime. Only a private socket
+// whose connection probe is refused may be reclaimed after a crashed Core.
+func Listen(path string, controls *ctlfiles.Store) (*net.UnixListener, error) {
+	if controls == nil || !controls.Locked() {
+		return nil, jobapi.ErrUnavailable
+	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
@@ -31,8 +36,8 @@ func Listen(path string) (*net.UnixListener, error) {
 	if err = ctlfiles.ValidatePrivateDirectory(info); err != nil {
 		return nil, err
 	}
-	if _, err = os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
-		return nil, jobapi.ErrUnavailable
+	if err := reclaimSocket(path); err != nil {
+		return nil, err
 	}
 	l, err := listenPrivate(path)
 	if err != nil {
@@ -40,6 +45,30 @@ func Listen(path string) (*net.UnixListener, error) {
 	}
 
 	return l, nil
+}
+
+func reclaimSocket(path string) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode().Type() != os.ModeSocket || info.Mode().Perm() != 0600 {
+		return jobapi.ErrUnavailable
+	}
+	conn, err := net.DialTimeout("unix", path, 100*time.Millisecond)
+	if err == nil {
+		conn.Close()
+		return jobapi.ErrUnavailable
+	}
+	// Timeouts, permission failures and other uncertain probes never authorize
+	// unlinking. The Core lock serializes recovery with another legitimate Core.
+	if !errors.Is(err, syscall.ECONNREFUSED) {
+		return errors.Join(jobapi.ErrUnavailable, err)
+	}
+	return os.Remove(path)
 }
 
 // Serve owns its listener and connections. A disconnected worker does not

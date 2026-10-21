@@ -13,11 +13,18 @@ import (
 	"github.com/thisisjun786/lina/internal/core/budget"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
+	"github.com/thisisjun786/lina/internal/moirai"
+	readcanon "github.com/thisisjun786/lina/internal/moirai/canon"
 	"github.com/thisisjun786/lina/internal/moirai/jobapi"
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
 func fixture(t *testing.T) (*Service, *canon.Store, *int) {
+	s, store, calls, _ := fixtureWithControls(t)
+	return s, store, calls
+}
+
+func fixtureWithControls(t *testing.T) (*Service, *canon.Store, *int, *ctlfiles.Store) {
 	t.Helper()
 	root := t.TempDir()
 	if err := os.Chmod(root, 0700); err != nil {
@@ -60,7 +67,7 @@ func fixture(t *testing.T) (*Service, *canon.Store, *int) {
 	if err = service.Enqueue(t.Context(), "memory", jobapi.Task{Sequence: 1, Input: json.RawMessage(`{"source":"synthetic"}`)}); err != nil {
 		t.Fatal(err)
 	}
-	return service, store, calls
+	return service, store, calls, controls
 }
 
 func TestApplyAtomicIdempotentAndFenced(t *testing.T) {
@@ -263,5 +270,107 @@ func TestCanonFenceRejectsCurrentRequestAfterEpochAdvance(t *testing.T) {
 		return err
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDeterministicJobNeedsNoModel(t *testing.T) {
+	s, store, _ := fixture(t)
+	if err := s.SetEnabled(t.Context(), "memory", false); err != nil {
+		t.Fatal(err)
+	}
+	cfg := s.cfg
+	cfg.Limit = 0
+	cfg.Definitions = map[string]Definition{"import": {Agent: "agent", Apply: s.cfg.Definitions["memory"].Apply}}
+	s, err := New(cfg)
+	if err != nil {
+		t.Fatalf("deterministic definition without a model/account: %v", err)
+	}
+	var job jobapi.Job
+	if err := json.Unmarshal([]byte(`{"ID":"import","Kind":"memory","Enabled":true,"Deterministic":true,"Every":60000000000,"Timeout":1000000000,"Budget":0,"MaxTokens":0,"Adoption":"baseline"}`), &job); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Register(t.Context(), job); err != nil {
+		t.Fatalf("zero model allowance: %v", err)
+	}
+	input := json.RawMessage(`{"imported":"synthetic fact"}`)
+	if err := s.Enqueue(t.Context(), "import", jobapi.Task{Sequence: 1, Input: input}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Aux(t.Context(), jobapi.AuxRequest{Epoch: 1, JobID: "import", Through: 1}); !errors.Is(err, jobapi.ErrInvalid) {
+		t.Fatalf("Core permitted model route for deterministic job: %v", err)
+	}
+	var path string
+	if err := store.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT file FROM pragma_database_list WHERE name='main'").Scan(&path)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := readcanon.Open(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	api := &observedAux{Service: s}
+	if err := (moirai.Worker{Reader: reader, Core: api}).Once(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if api.calls != 0 {
+		t.Fatalf("deterministic worker made %d Aux calls", api.calls)
+	}
+	if err := store.Read(t.Context(), func(tx *canon.Tx) error {
+		j, err := readJob(t.Context(), tx, "import")
+		if err != nil {
+			return err
+		}
+		if j.Watermark != 1 {
+			t.Fatalf("watermark=%d", j.Watermark)
+		}
+		var body []byte
+		if err = tx.QueryRowContext(t.Context(), "SELECT body FROM accepted WHERE sequence=1").Scan(&body); err != nil {
+			return err
+		}
+		if string(body) != string(input) {
+			t.Fatalf("proposal=%s", body)
+		}
+		for _, table := range []string{"budget_usage", "moirai_aux"} {
+			var count int
+			if err = tx.QueryRowContext(t.Context(), "SELECT count(*) FROM "+table).Scan(&count); err != nil {
+				return err
+			}
+			if count != 0 {
+				t.Fatalf("unexpected %s rows: %d", table, count)
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type observedAux struct {
+	*Service
+	calls int
+}
+
+func (a *observedAux) Aux(ctx context.Context, r jobapi.AuxRequest) (jobapi.AuxResult, error) {
+	a.calls++
+	return a.Service.Aux(ctx, r)
+}
+
+func TestModelJobCannotRegisterWithoutModelOrAllowance(t *testing.T) {
+	s, _, _ := fixture(t)
+	job := jobapi.Job{ID: "memory", Kind: jobapi.Memory, Enabled: true, Every: time.Minute, Timeout: time.Second, Adoption: "baseline"}
+	if err := s.Register(t.Context(), job); !errors.Is(err, jobapi.ErrInvalid) {
+		t.Fatalf("model job without allowance: %v", err)
+	}
+	cfg := s.cfg
+	cfg.Definitions = map[string]Definition{"memory": {Agent: "agent", Apply: s.cfg.Definitions["memory"].Apply}}
+	withoutModel, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job.Budget, job.MaxTokens = 10, 10
+	if err = withoutModel.Register(t.Context(), job); !errors.Is(err, jobapi.ErrInvalid) {
+		t.Fatalf("model job without model: %v", err)
 	}
 }

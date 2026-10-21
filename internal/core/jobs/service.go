@@ -42,7 +42,8 @@ type Result struct {
 }
 
 // Definition is registered by Core, never deserialized from worker input. Model
-// runs on Core's model path without tools or persona. Apply enforces the job's
+// runs on Core's model path without tools or persona; deterministic jobs need
+// no Model or account binding. Apply enforces the job's
 // write rules inside the same transaction as its receipt and watermark.
 type Definition struct {
 	Agent    string
@@ -66,7 +67,7 @@ func New(cfg Config) (*Service, error) {
 	}
 	defs := make(map[string]Definition, len(cfg.Definitions))
 	for id, d := range cfg.Definitions {
-		if id == "" || d.Agent == "" || d.Account == "" || d.Provider == "" || d.Model == nil || d.Apply == nil {
+		if id == "" || d.Agent == "" || d.Apply == nil || (d.Model != nil && (d.Account == "" || d.Provider == "")) {
 			return nil, jobapi.ErrInvalid
 		}
 		defs[id] = d
@@ -121,7 +122,11 @@ func saveJob(ctx context.Context, tx *canon.Tx, j jobapi.Job) error {
 	return err
 }
 func (s *Service) Register(ctx context.Context, j jobapi.Job) error {
-	if _, ok := s.cfg.Definitions[j.ID]; !ok || !j.Kind.Valid() || j.Every <= 0 || j.Timeout <= 0 || j.Timeout > 2*time.Minute || j.Budget < 0 || j.MaxTokens <= 0 || j.MaxTokens > j.Budget || j.Adoption == "" || j.Watermark != 0 {
+	d, ok := s.cfg.Definitions[j.ID]
+	if !ok || !j.Kind.Valid() || j.Every <= 0 || j.Timeout <= 0 || j.Timeout > 2*time.Minute || j.Budget < 0 || j.MaxTokens < 0 || j.MaxTokens > j.Budget || j.Adoption == "" || j.Watermark != 0 {
+		return jobapi.ErrInvalid
+	}
+	if !j.Deterministic && (j.MaxTokens == 0 || d.Model == nil) {
 		return jobapi.ErrInvalid
 	}
 	data, err := json.Marshal(j)
@@ -204,6 +209,9 @@ func (s *Service) Aux(ctx context.Context, r jobapi.AuxRequest) (jobapi.AuxResul
 		j, task, err = s.check(ctx, tx, r.JobID, r.From, r.Through)
 		if err != nil {
 			return err
+		}
+		if j.Deterministic || d.Model == nil {
+			return jobapi.ErrInvalid
 		}
 		err = tx.QueryRowContext(ctx, "SELECT reservation,output FROM moirai_aux WHERE job=? AND sequence=?", r.JobID, r.Through).Scan(&reservation, &output)
 		if err == nil {

@@ -27,11 +27,15 @@ func (w Worker) Step(ctx context.Context, work jobapi.Work) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, work.Job.Timeout+5*time.Second)
 	defer cancel()
-	r, err := w.Core.Aux(ctx, jobapi.AuxRequest{Epoch: work.Epoch, JobID: work.Job.ID, From: work.Job.Watermark, Through: work.Task.Sequence})
-	if err != nil {
-		return err
+	output := work.Task.Input
+	if !work.Job.Deterministic {
+		r, err := w.Core.Aux(ctx, jobapi.AuxRequest{Epoch: work.Epoch, JobID: work.Job.ID, From: work.Job.Watermark, Through: work.Task.Sequence})
+		if err != nil {
+			return err
+		}
+		output = r.Output
 	}
-	applied, err := w.Core.Apply(ctx, jobapi.Proposal{Epoch: work.Epoch, JobID: work.Job.ID, From: work.Job.Watermark, Through: work.Task.Sequence, Output: r.Output})
+	applied, err := w.Core.Apply(ctx, jobapi.Proposal{Epoch: work.Epoch, JobID: work.Job.ID, From: work.Job.Watermark, Through: work.Task.Sequence, Output: output})
 	if err != nil {
 		return err
 	}

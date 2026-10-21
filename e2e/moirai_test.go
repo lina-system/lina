@@ -111,7 +111,7 @@ func TestM1MoiraiCrashResume(t *testing.T) {
 		}
 	}
 	socket := filepath.Join(state, "run", "jobs.sock")
-	stopService := startJobService(t, h.ctx, service, socket)
+	stopService := startJobService(t, h.ctx, service, socket, controls)
 	worker := func() *process {
 		child := *h
 		child.binary = workerBinary
@@ -191,7 +191,7 @@ func TestM1MoiraiCrashResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stopService = startJobService(t, h.ctx, service, socket)
+	stopService = startJobService(t, h.ctx, service, socket, controls)
 	resumed := worker()
 	resumed.wait(t, 0)
 	if got := jobWatermark(t, store, scenario.JobID); got != scenario.Watermark {
@@ -296,9 +296,9 @@ func canonSnapshot(t *testing.T, store *canon.Store) string {
 	return out.String()
 }
 
-func startJobService(t *testing.T, ctx context.Context, service *jobs.Service, socket string) func() {
+func startJobService(t *testing.T, ctx context.Context, service *jobs.Service, socket string, controls *ctlfiles.Store) func() {
 	t.Helper()
-	listener, err := jobs.Listen(socket)
+	listener, err := jobs.Listen(socket, controls)
 	if err != nil {
 		t.Fatal(err)
 	}

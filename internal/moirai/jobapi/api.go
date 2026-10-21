@@ -33,9 +33,12 @@ func (k Kind) Valid() bool { return k == Memory || k == Planning }
 // Job is durable Core-owned policy and progress. No account or credential is
 // exposed to the worker. Budget is a token allowance until Core reconfigures it.
 type Job struct {
-	ID                string
-	Kind              Kind
-	Enabled           bool
+	ID      string
+	Kind    Kind
+	Enabled bool
+	// Deterministic is Core-owned policy: Task.Input is the proposal, with no Aux call.
+	// Its zero value preserves the model route for existing jobs.
+	Deterministic     bool
 	Every, Timeout    time.Duration
 	Budget, MaxTokens int64
 	Adoption          string

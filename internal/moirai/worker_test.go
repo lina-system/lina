@@ -3,6 +3,7 @@ package moirai
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync/atomic"
 	"testing"
@@ -117,3 +118,62 @@ func TestDaemonDoesNotDuplicateActiveJobAndJoinsCancellation(t *testing.T) {
 		t.Fatalf("concurrent calls=%d", core.calls.Load())
 	}
 }
+
+// Decode persisted Core policy so this regression also exercises an older
+// snapshot reader's handling of the deterministic flag before the fix exists.
+func TestStepUsesCoreDeterministicPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		deterministic bool
+		allowance     int64
+	}{
+		{"deterministic without model allowance", true, 0},
+		{"deterministic with unused allowance", true, 10},
+		{"model without allowance", false, 0},
+		{"model with allowance", false, 10},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := json.Marshal(map[string]any{"ID": "job", "Deterministic": tc.deterministic, "Budget": tc.allowance, "MaxTokens": tc.allowance, "Timeout": time.Second})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var job jobapi.Job
+			if err := json.Unmarshal(data, &job); err != nil {
+				t.Fatal(err)
+			}
+			api := &routeAPI{allowance: tc.allowance}
+			input := json.RawMessage(`{"imported":"synthetic fact"}`)
+			err = (Worker{Core: api}).Step(t.Context(), jobapi.Work{Epoch: 1, Job: job, Task: jobapi.Task{Sequence: 1, Input: input}})
+			if tc.deterministic {
+				if err != nil || api.auxCalls != 0 || len(api.applied) != 1 || string(api.applied[0].Output) != string(input) {
+					t.Fatalf("deterministic step: Aux=%d Apply=%v error=%v", api.auxCalls, api.applied, err)
+				}
+			} else if tc.allowance == 0 {
+				if !errors.Is(err, jobapi.ErrBudget) || api.auxCalls != 1 || len(api.applied) != 0 {
+					t.Fatalf("model policy bypassed: %+v %v", api, err)
+				}
+			} else if err != nil || api.auxCalls != 1 || len(api.applied) != 1 || string(api.applied[0].Output) != `{"model":"result"}` {
+				t.Fatalf("model route: %+v %v", api, err)
+			}
+		})
+	}
+}
+
+type routeAPI struct {
+	allowance int64
+	auxCalls  int
+	applied   []jobapi.Proposal
+}
+
+func (a *routeAPI) Aux(context.Context, jobapi.AuxRequest) (jobapi.AuxResult, error) {
+	a.auxCalls++
+	if a.allowance == 0 {
+		return jobapi.AuxResult{}, jobapi.ErrBudget
+	}
+	return jobapi.AuxResult{Output: json.RawMessage(`{"model":"result"}`)}, nil
+}
+func (a *routeAPI) Apply(_ context.Context, p jobapi.Proposal) (jobapi.Applied, error) {
+	a.applied = append(a.applied, p)
+	return jobapi.Applied{Watermark: p.Through}, nil
+}
+func (*routeAPI) Report(context.Context, string, jobapi.JobState) error { return nil }
