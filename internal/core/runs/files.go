@@ -49,6 +49,10 @@ func (s *Service) transcript(id, kind string, value any) error {
 	if err != nil {
 		return err
 	}
+	body, err = s.masker.json(body)
+	if err != nil {
+		return err
+	}
 	path := filepath.Join("runs", id, "transcript.jsonl")
 	if info, err := s.root.Lstat(path); err == nil {
 		if !info.Mode().IsRegular() || info.Mode().Perm() != 0600 {

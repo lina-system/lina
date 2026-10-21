@@ -82,6 +82,11 @@ type Artifact struct {
 	Citations []materials.Anchor `json:"citations,omitempty"`
 }
 type Record struct {
+	PendingOutcome              Outcome
+	Receipts                    map[string]ToolReceipt
+	PendingItems                []provider.Item
+	PendingCalls                []provider.ToolCall
+	Uncertain                   bool
 	CheckedInAt                 int64
 	Scratch                     string // relative to Config.WorkDir; only this directory is writable by run tools
 	ID                          string
@@ -125,11 +130,15 @@ type Canon interface {
 	Read(context.Context, func(*canon.Tx) error) error
 	Write(context.Context, func(*canon.Tx) error) error
 }
+type MaterialStore interface {
+	materials.Reader
+	SaveRunResult(context.Context, string, []byte, assets.Actor) (assets.Asset, error)
+}
 type Config struct {
 	Epoch   uint64 // current Core epoch, supplied by the composition root
 	WorkDir string // private Core work area, not a conversation workspace
 	DB      Canon
-	Assets  *assets.Store
+	Assets  MaterialStore
 	Stream  loop.StreamFunc
 	Tools   map[string]Tool
 	// Authorize validates origin and scope and checks the person's shared budget.
