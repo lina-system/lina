@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
 	"syscall"
 	"testing"
@@ -87,6 +88,9 @@ func TestCoreProcess(t *testing.T) {
 						// explicitly refuses the unavailable capability; retry only
 						// recovery refusals, never an accepted effect.
 						request.Params.MessageID = "after-welcome"
+						request.Params.Epoch = epoch
+						request.Method = "input"
+						request.Params.Kind, request.Params.Payload = protocol.KindInput, protocol.Input{}
 						if err := awaitCapabilityRefusal(conn, request); err != nil {
 							t.Fatal(err)
 						}
@@ -208,6 +212,8 @@ func helloEnvelope(t *testing.T, versions []string) protocol.Envelope {
 		t.Fatal(err)
 	}
 	hello := envelope.Payload.(protocol.Hello)
+	platform := runtime.GOOS + "/" + runtime.GOARCH
+	hello.Platform = &platform
 	hello.ProtocolVersions = versions
 	hello.Capabilities = []protocol.Capability{{Name: "conversation", Version: "1.0"}}
 	envelope.Payload = hello
