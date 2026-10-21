@@ -97,7 +97,7 @@ test('cold inner Go compilations share the build deadline and can exceed 120 sec
         f.write(dirname(binary), binary.split(/[\\/]/).at(-1), 'fixture executable');
       }
       return { status: 0, stdout: args[0] === 'run'
-        ? (args.at(-1).endsWith('/clientinfo') ? '[]' : '{}') : '', stderr: '' };
+        ? (args.includes('./internal/core/manifest/clientinfo') ? '[]' : '{}') : '', stderr: '' };
     } });
   assert.equal(manifest.target, 'darwin/arm64');
   assert.deepEqual(budgets, [595_000, 445_000]);
@@ -156,7 +156,8 @@ test('cross-builds Linux and macOS binaries with target metadata and an explicit
     assert.equal(result.status, 0, result.stderr);
     const manifest = JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8'));
     assert.equal(manifest.target, target);
-    assert.deepEqual(manifest.supportedCombinations.map(row => row.platform), [target]);
+    assert.equal(manifest.supportedCombinations.length, 1);
+    assert.equal(manifest.supportedCombinations[0].platform, target);
     assert.equal(manifest.version, '0.0.1-alpha.20261021.1');
     for (const binary of manifest.binaries) {
       const path = join(out, binary.name);

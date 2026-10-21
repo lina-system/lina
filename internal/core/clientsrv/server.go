@@ -35,6 +35,11 @@ type Identity struct {
 	// Supported is the build's complete table; a non-nil empty table denies all
 	// combinations. Peer and platform always come from hello.
 	Supported []Combination
+	// Topics is the current epoch's projection. TopicCapabilities lists the
+	// installed topic families and the capability each requires. Conversation
+	// and result families use "conversation:" and "results:" keys.
+	Topics            *Topics
+	TopicCapabilities map[string]protocol.Capability
 }
 
 // Listen creates a socket at mode 0600 in a private directory. An existing
@@ -187,10 +192,26 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 		return
 	}
 	reader := rpc.NewReader(conn)
-	writer := json.NewEncoder(conn)
+	writer := rpc.NewWriter(conn)
 	welcomed := false
 	clientID := ""
 	capabilities := []protocol.Capability{}
+	topics := newTopicSession(ctx, identity, identity.Topics,
+		func(id json.RawMessage, envelope protocol.Envelope) error {
+			if id != nil {
+				return writer.Write(ctx, response{JSONRPC: "2.0", ID: id, Result: envelope})
+			}
+			return writer.Write(ctx, struct {
+				JSONRPC string            `json:"jsonrpc"`
+				Method  protocol.Kind     `json:"method"`
+				Params  protocol.Envelope `json:"params"`
+			}{"2.0", envelope.Kind, envelope})
+		},
+		func(topic string) bool {
+			capability, installed := identity.topicCapability(topic)
+			return installed && slices.Contains(capabilities, capability)
+		}, func() { conn.Close() })
+	defer func() { conn.Close(); topics.Close() }()
 	for {
 		line, err := reader.Read()
 		if err != nil {
@@ -213,7 +234,7 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 			if messageID, unsupported := unsupportedHello(req.Method, req.Params); unsupported {
 				answer := reply(protocol.Envelope{MessageID: messageID}, identity)
 				refuse(&answer, protocol.ErrorUnsupportedCombination, "no supported client combination")
-				writer.Encode(response{JSONRPC: "2.0", ID: req.ID, Result: answer})
+				writer.Write(ctx, response{JSONRPC: "2.0", ID: req.ID, Result: answer})
 				return
 			}
 		}
@@ -231,6 +252,13 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 			selected, granted, supported = negotiate(identity.Supported, *hello.Peer, *hello.Platform, hello.ProtocolVersions, hello.Capabilities)
 		}
 		granted = slices.DeleteFunc(granted, func(capability protocol.Capability) bool {
+			if identity.Topics != nil {
+				for _, installed := range identity.TopicCapabilities {
+					if installed == capability {
+						return false
+					}
+				}
+			}
 			for _, operation := range identity.Operations {
 				if operation.Handle != nil && operation.Capability == capability {
 					return false
@@ -251,6 +279,12 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 		case welcomed && identity.Recovering != nil && identity.Recovering() && !readOnlyKinds[envelope.Kind]:
 			refuse(&answer, protocol.ErrorUnavailable, "Core is recovering")
 		case welcomed:
+			if handled, err := topics.handle(req.ID, envelope); handled {
+				if err != nil {
+					return
+				}
+				continue
+			}
 			operation, exists := identity.Operations[envelope.Kind]
 			if !exists || operation.Handle == nil || !slices.Contains(capabilities, operation.Capability) {
 				refuse(&answer, protocol.ErrorCapabilityNotNegotiated, "capability not negotiated")
@@ -279,7 +313,7 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 			clientID = hello.ID
 			capabilities = granted
 		}
-		if err := writer.Encode(response{JSONRPC: "2.0", ID: req.ID, Result: answer}); err != nil || closeAfter {
+		if err := writer.Write(ctx, response{JSONRPC: "2.0", ID: req.ID, Result: answer}); err != nil || closeAfter {
 			return
 		}
 	}

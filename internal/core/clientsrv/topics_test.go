@@ -316,3 +316,60 @@ func TestSequenceExhaustionAndOptions(t *testing.T) {
 		t.Fatal("sequence wrapped")
 	}
 }
+
+func TestSnapshotKeepsLatestItemRevision(t *testing.T) {
+	h := topicHub(t, TopicOptions{})
+	for _, part := range []string{`"a"`, `"b"`} {
+		publish(t, h, "conversation:test", TopicEvent{Kind: protocol.KindOutputDelta, Key: "item", Data: []byte(part)})
+		h.Flush("conversation:test")
+	}
+	start, _ := subscribe(t, h, "conversation:test", nil)
+	item := start.Snapshot.Items[0]
+	if item.Revision != 2 || string(item.Data) != `"ab"` {
+		t.Fatalf("snapshot lost latest revision: %#v", item)
+	}
+	if start.Snapshot.RevocationEpoch != "0" {
+		t.Fatal("missing initial revocation epoch")
+	}
+}
+
+func TestSnapshotCarriesProjectionRevocation(t *testing.T) {
+	h := topicHub(t, TopicOptions{RevocationEpoch: "9"})
+	start, _ := subscribe(t, h, "core", nil)
+	if start.Snapshot.RevocationEpoch != "9" {
+		t.Fatal("projection revocation lost")
+	}
+	if invalid, err := NewTopics("10", TopicOptions{RevocationEpoch: "01"}); err == nil {
+		invalid.Close()
+		t.Fatal("noncanonical revocation accepted")
+	}
+}
+
+func TestAtomicPublicationGroupOverflowIsDeterministic(t *testing.T) {
+	h := topicHub(t, TopicOptions{QueueSize: 2})
+	_, hot := subscribe(t, h, "conversation:test", nil)
+	_, other := subscribe(t, h, "core", nil)
+	events := []TopicEvent{
+		{Kind: protocol.KindItemDone, Key: "a", Data: []byte(`{}`)},
+		{Kind: protocol.KindItemDone, Key: "b", Data: []byte(`{}`)},
+		{Kind: protocol.KindItemDone, Key: "c", Data: []byte(`{}`)},
+	}
+	if err := h.PublishBatch("conversation:test", events); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hot.Next(t.Context()); !errors.Is(err, rpc.ErrResyncRequired) {
+		t.Fatal(err)
+	}
+	publish(t, h, "core", TopicEvent{Kind: protocol.KindTurnState, Key: "state", Data: []byte(`{}`)})
+	if next(t, other).Cursor.Seq != 1 {
+		t.Fatal("other topic closed")
+	}
+	invalid := append(events, TopicEvent{Kind: protocol.KindItemDone, Key: "invalid", Data: []byte(`bad`)})
+	if err := h.PublishBatch("conversation:test", invalid); !errors.Is(err, ErrInvalidEvent) {
+		t.Fatal(err)
+	}
+	start, _ := subscribe(t, h, "conversation:test", nil)
+	if start.Snapshot.Cursor.Seq != 3 {
+		t.Fatal("invalid group partially published")
+	}
+}

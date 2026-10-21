@@ -11,7 +11,6 @@ import (
 	"io/fs"
 	"path"
 	"slices"
-	"strings"
 )
 
 type FileStamp struct {
@@ -32,9 +31,6 @@ func (f *Files) manifest(ctx context.Context) (FileResult, error) {
 		}
 		if err := ctx.Err(); err != nil {
 			return err
-		}
-		if entry.IsDir() && strings.HasPrefix(path.Base(name), recoveryPrefix) {
-			return fs.SkipDir
 		}
 		entries++
 		if entries > 10000 {

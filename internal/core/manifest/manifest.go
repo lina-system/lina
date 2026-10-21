@@ -18,10 +18,10 @@ import (
 // Additional JSON fields are allowed as later components add their metadata.
 type Manifest struct {
 	SupportedCombinations []Combination                    `json:"supportedCombinations"`
-	Target                string                           `json:"target"`
 	Version               string                           `json:"version"`
 	Commit                string                           `json:"commit"`
 	Date                  string                           `json:"date"`
+	Target                string                           `json:"target"`
 	GoToolchain           string                           `json:"goToolchain"`
 	KitVersion            int64                            `json:"kitVersion"`
 	Binaries              []Binary                         `json:"binaries"`

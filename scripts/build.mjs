@@ -98,11 +98,7 @@ export function build({ cwd = root, out, target, version: requestedVersion, exec
       return { name, size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
     });
     const sqlite = JSON.parse(invoke(['run', '-mod=readonly', './internal/core/manifest/sqliteinfo']));
-    // The metadata reader executes on the build host. The packaged TUI and
-    // listener use the requested target, so retain the compiled table's peer,
-    // protocol and evidence while stamping its platform for that target.
-    const supportedCombinations = JSON.parse(invoke(['run', '-mod=readonly', './internal/core/manifest/clientinfo']))
-      .map(row => ({ ...row, platform: target }));
+    const supportedCombinations = JSON.parse(invoke(['run', '-mod=readonly', './internal/core/manifest/clientinfo', target]));
     if (!clean() || gitOut(cwd, ['rev-parse', 'HEAD']) !== commit) return null;
     const providers = JSON.parse(readFileSync(join(cwd, 'kit/provider/responses/manifest.json'), 'utf8'));
     if (providers.chatgpt.adapter !== 'responses' || providers.chatgpt.retryCount !== 0) {

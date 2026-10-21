@@ -7,6 +7,7 @@ This contract fixes how LINA connects to external services. LINA's conversation 
 This contract covers:
 
 - the plugin manifest, the catalog, where else plugins come from, installing, turning on and removing them
+- optional memory importer add-ons, one adapter per source, and their source-read grants
 - LINA Core as the host of plugin tools, and the questions a server asks the person
 - service profiles and which plugin tools and commands need approval
 - credentials, LINA's secret store and sign-in, including OAuth to remote MCP servers
@@ -69,6 +70,31 @@ Installing and turning on a plugin are the person's acts. LINA never installs or
 - Skills and instructions a plugin brings join LINA's skill catalog while the plugin is on ([conversation-and-memory.md](conversation-and-memory.md)).
 - Removing a plugin turns it off, deletes the credentials LINA holds for it (a client registration kept for an authorization server is deleted with the last plugin that uses that server) and removes its skills from the catalog.
 - Nothing about plugins is asked at first run. When a plugin would help in a conversation, LINA may suggest it once. A suggestion the person declined or put off is not raised again.
+
+### Memory importers
+
+A memory importer is an optional add-on for a tool the person used before. It appears with the other add-ons, with its source, version, supported formats and required reads on its install card. Each source has its own adapter. None is installed or enabled by default, none is an onboarding step, and Core's conversation, memory and recall work fully with no importer installed. Installing one does not start a run or discover other apps' stores or configuration. The person chooses the source and starts the import.
+
+Every adapter implements [Memory importer add-ons](conversation-and-memory.md#memory-importer-add-ons) and uses [import staging](filesystem.md#importing-another-memory-system). It runs as a background job, makes no model call, and submits writes through Core's existing write paths. Core owns the resulting canon, materials, legacy references and backups; removing an adapter leaves those usable without it. An importer copies memory records only: it never imports another tool's persona, skills, scheduled jobs, credentials, plugins or configuration.
+
+The adapter set is:
+
+| Add-on | What it would read | Status |
+| --- | --- | --- |
+| Codex | Person-selected rollout/thread records and Codex memory files, in independently verified formats. | Future; separate from the live external work memory port. |
+| Claude Code | Person-selected conversation transcripts and memory files from a prior Claude Code workspace or export. | Future. |
+| oh-my-opencode | Person-selected session records and memory artifacts from the prior tool's workspace or export. | Future. |
+| Honcho | Person-selected workspace peers, cards, conclusions, sessions, summaries and messages through a verified read API or export. | Future standalone adapter. |
+| Hermes | Per-profile lossless-context and host message databases, large-output sidecars and the install's Honcho person data. | First adapter; the owner's M1 continuity test for existing memory and work patterns. |
+| OpenClaw | Person-selected conversation/session records and memory files from a prior install or export. | Future. |
+
+These entries define intended sources, not accepted schemas or available readers. Work now covers Hermes only. Its embedded Honcho reader remains schema-gated; listing a future standalone Honcho adapter does not enable it. Each future adapter must independently verify its formats and implement the common contract before it can be offered.
+
+Grant needs:
+
+- **Local source reads.** The person hands over named files or roots for the run, including sidecars when needed. That grants read-only access to those sources, not to other apps' configuration or arbitrary home directories. SQLite reads use the online backup API on a read-only connection; no source write permission is needed.
+- **Server source reads.** The person supplies the server address and a read credential for that run. Only the adapter's verified read/query routes on that origin are allowed. The credential never enters imported records, model requests or worker jobs and is released when the reader closes. Hermes preserves its GET-only transport, redirect refusal and remote HTTPS requirement.
+- **LINA writes.** The run may write its private staging and submit imported records and materials through Core under the person's handover and confirmed maps. Rehearsal writes nothing to canon. No grant authorizes source mutation, automatic promotion or a model call during import; later promotion and embedding retain their separate person-confirmation rules.
 
 ### Host
 

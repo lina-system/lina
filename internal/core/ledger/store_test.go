@@ -20,7 +20,7 @@ import (
 	"github.com/thisisjun786/lina/kit/secret"
 )
 
-func database(t *testing.T) (*canon.Store, canon.Config) {
+func database(t *testing.T, migrations ...[]canon.Migration) (*canon.Store, canon.Config) {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "state")
 	if err := os.Mkdir(root, 0700); err != nil {
@@ -35,6 +35,9 @@ func database(t *testing.T) (*canon.Store, canon.Config) {
 		t.Fatal(err)
 	}
 	cfg := canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: 1, Controls: controls, Migrations: canon.Migrations()}
+	if len(migrations) > 0 {
+		cfg.Migrations = migrations[0]
+	}
 	return open(t, cfg), cfg
 }
 
