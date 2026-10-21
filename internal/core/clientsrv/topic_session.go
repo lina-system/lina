@@ -6,11 +6,28 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 
 	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/rpc"
 )
+
+func (identity Identity) topicCapability(topic string) (protocol.Capability, bool) {
+	if !validTopic(topic) || identity.Topics == nil || identity.Topics.epoch != identity.Epoch {
+		return protocol.Capability{}, false
+	}
+	if capability, ok := identity.TopicCapabilities[topic]; ok {
+		return capability, true
+	}
+	for _, prefix := range []string{"conversation:", "results:"} {
+		if strings.HasPrefix(topic, prefix) {
+			capability, ok := identity.TopicCapabilities[prefix]
+			return capability, ok
+		}
+	}
+	return protocol.Capability{}, false
+}
 
 // topicSession owns the subscriptions of one welcomed connection. The listener
 // supplies its negotiated authorization and bounded, cancellation-aware writer.

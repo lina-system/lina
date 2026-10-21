@@ -3,17 +3,71 @@
 package e2e_test
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
+	"net"
 	"os"
 	"reflect"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/tui/state"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/rpc"
 )
+
+func startTopicsProtocol(t *testing.T, h *harness, hub *clientsrv.Topics, epoch string) *client {
+	t.Helper()
+	listener, err := clientsrv.Listen(h.socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	capability := protocol.Capability{Name: "conversation", Version: "1.0"}
+	rows := clientsrv.LocalCombinations()
+	for i := range rows {
+		rows[i].Capabilities = []protocol.Capability{capability}
+	}
+	ctx, cancel := context.WithCancel(h.ctx)
+	done := make(chan error, 1)
+	go func() {
+		done <- clientsrv.Serve(ctx, listener, clientsrv.Identity{
+			MainID: "main-e2e", Epoch: epoch, Supported: rows,
+			Topics: hub, TopicCapabilities: map[string]protocol.Capability{"conversation:": capability, "core": capability},
+			// The same subscription path must remain available during recovery.
+			Recovering: func() bool { return true },
+		})
+	}()
+	t.Cleanup(func() {
+		cancel()
+		listener.Close()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Error(err)
+			}
+		case <-time.After(operationTimeout):
+			t.Error("topic listener did not stop")
+		}
+	})
+	conn, err := net.Dial("unix", h.socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	c := &client{conn: conn, reader: bufio.NewReaderSize(conn, 1<<20)}
+	hello := clientHello([]string{"1.0"})
+	hello.Capabilities = []protocol.Capability{capability}
+	answer := c.call(t, protocol.KindHello, hello)
+	welcome, ok := answer.Payload.(protocol.Welcome)
+	if !ok || answer.Kind != protocol.KindWelcome || !reflect.DeepEqual(welcome.Capabilities, hello.Capabilities) || welcome.Epoch != epoch {
+		t.Fatalf("stream welcome: %#v", answer)
+	}
+	c.welcome = welcome
+	return c
+}
 
 type topicScenario struct {
 	Topic        string                 `json:"topic"`

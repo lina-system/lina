@@ -39,6 +39,14 @@ only unknown kinds whose common envelope is otherwise valid. Recovery cases end
 with a valid envelope. An unknown kind is repeated to check that counts represent
 frames, without claiming application deduplication.
 
+The stream cases add `snapshot`, `resync` and `resync_required`, optional
+metadata for existing event kinds, subscribe/unsubscribe requests and the
+maximum uint64 cursor. Invalid cursors cover noncanonical epochs, negative or
+out-of-range sequences and a string where an integer is required. Existing
+reserved empty payloads remain in their original cases. The M1 topic scenario
+separately establishes replay idempotence and topic-local overflow over Core's
+client socket; conformance alone checks the shape and exact values.
+
 The runner checks the adapters' own counters and refusal codes; it does not
 compute a passing outcome from expected data. Adapters must use a fresh receiver
 for each case. Round-trip comparisons do not pass JSON numbers through float64.
