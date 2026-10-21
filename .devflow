@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: Apache-2.0
+# Fresh real-use QA on merged dev revisions; product data stays temporary.
+DV_QA=1
