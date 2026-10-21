@@ -15,6 +15,10 @@ import (
 // Verbatim names events retained alongside the root in the request, not inputs
 // to this summary. A failed publication returns no usable node.
 func (s *Store) Publish(ctx context.Context, p Proposal) (Node, error) {
+	return s.publish(ctx, p, nil)
+}
+
+func (s *Store) publish(ctx context.Context, p Proposal, audit func(*canon.Tx) error) (Node, error) {
 	if strings.TrimSpace(p.ID) == "" || !validOutput(p.Output) {
 		return Node{}, ErrInvalid
 	}
@@ -41,6 +45,9 @@ func (s *Store) Publish(ctx context.Context, p Proposal) (Node, error) {
 			if _, err := tx.ExecContext(ctx, "INSERT INTO sum_cover(node_id,event_id,ordinal,reason) VALUES(?,?,?,?)", n.ID, c.EventID, i, c.Reason); err != nil {
 				return err
 			}
+		}
+		if audit != nil {
+			return audit(tx)
 		}
 		return nil
 	})
