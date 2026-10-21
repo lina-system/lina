@@ -20,7 +20,7 @@ function registryFor(cwd) {
   const coreDirectories = ['internal/core/boot/', 'internal/core/clientsrv/', 'internal/core/ctlfiles/', 'internal/core/lifecycle/', 'internal/core/eventstore/', 'internal/core/canon/'];
   const corePackages = coreDirectories.filter(directory => existsSync(join(cwd, directory)))
     .map(directory => `./${directory}...`);
-  const clientDirectories = ['internal/tui/', 'internal/clientapi/'];
+  const clientDirectories = ['internal/tui/', 'internal/clientapi/', 'internal/fakecore/'];
   const clientPackages = clientDirectories.filter(directory => existsSync(join(cwd, directory)))
     .map(directory => `./${directory}...`);
   // The harness launches lina as a subprocess, so go list cannot discover its
