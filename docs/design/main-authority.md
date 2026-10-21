@@ -181,6 +181,8 @@ A background run of a sub-agent ([work-and-delegation.md](work-and-delegation.md
 
 ## Approval
 
+Core validates a tool's arguments before checking authority or claiming its effect key. A durable effect claim precedes execution, and its result is recorded separately: no storage transaction spans a tool call. A repeated key returns the first recorded result or unknown, including after restart; it never executes again. A stale write is refused before the handler and records the observed revision and, when Core knows it, the previous writing agent. An unresolved effect reserves its target until reconciliation so another call cannot silently overwrite it.
+
 - The default inside a device LINA uses is no approval. Reading, writing and executing there proceed inside the grant without asking.
 - LINA asks every time only for effects that reach outside the user and are hard to reverse: sending mail or messages (including an agent's post into a chat that other people can read, but not a reply that a channel binding covers, see Channels), payments and purchases, public posting or publication, and unrecoverable deletion.
 - Every other effect inside the grant is done by the agent and reported in one line, with one action to undo it where it can be undone ([work-and-delegation.md](work-and-delegation.md#default-posture)).
