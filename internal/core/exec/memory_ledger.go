@@ -116,8 +116,8 @@ func (r transactionReader) Write(context.Context, func(*canon.Tx) error) error {
 
 type materialBodies map[ledger.Material]string
 
-func (c materialBodies) Save(context.Context, secrets.Masked) (ledger.Material, error) {
-	return ledger.Material{}, memory.ErrEvidence
+func (c materialBodies) Prepare(context.Context, secrets.Masked) (ledger.MaterialWrite, error) {
+	return nil, memory.ErrEvidence
 }
 func (c materialBodies) Read(_ context.Context, ref ledger.Material) (string, error) {
 	body, ok := c[ref]
