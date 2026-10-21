@@ -68,17 +68,14 @@ jobs:
           tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP/actionlint-bin" actionlint
           echo "$RUNNER_TEMP/actionlint-bin" >> "$GITHUB_PATH"
 
-      - name: Install sandbox launcher
+      - name: Install release build sandbox
         run: |
           sudo apt-get update
-          sudo apt-get install --yes bubblewrap
-          # Ubuntu's host restriction is separate from the sandbox being tested.
-          # Enable user namespaces only on this disposable acceptance runner.
-          if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
-            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          fi
-          bwrap --unshare-user --unshare-pid --unshare-ipc --unshare-uts \
-            --cap-drop ALL --ro-bind / / --proc /proc --dev /dev -- /bin/true
+          sudo apt-get install --yes --no-install-recommends bubblewrap
+          # Permit network setup inside unprivileged namespaces on this
+          # disposable runner. Actual builds retain full namespace isolation.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          bwrap --unshare-all --ro-bind / / -- /bin/true
 
       - name: Run foundation
         env:

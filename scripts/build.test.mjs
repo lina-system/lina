@@ -12,12 +12,17 @@ import { build } from './build.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 
+test('the pinned SQLite rebuild script has valid shell syntax', () => {
+  const result = spawnSync('bash', ['-n', join(root, 'packaging/sqlite-vec/build.sh')], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+});
+
 function fixture(t) {
   const sb = sandbox(t);
   const cwd = join(sb.dir, 'source');
   mkdirSync(cwd);
   for (const name of ['cmd/lina', 'cmd/lina-node', 'internal/buildinfo', 'kit', 'go.mod', 'go.sum', 'go.work',
-    'internal/core', 'internal/clientapi', 'internal/design', 'internal/tui', 'scripts/build.mjs', 'scripts/git.mjs', 'scripts/verify/check-components.mjs']) {
+    'internal/core', 'internal/clientapi', 'internal/design', 'internal/tui', 'persona', 'packaging', 'scripts/build.mjs', 'scripts/git.mjs', 'scripts/verify/check-components.mjs']) {
     if (!existsSync(join(root, name))) continue;
     mkdirSync(dirname(join(cwd, name)), { recursive: true });
     cpSync(join(root, name), join(cwd, name), { recursive: true });
@@ -47,6 +52,34 @@ test('requires an output directory and rejects unknown arguments', t => {
     const result = f.run(args);
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /usage:/i);
+  }
+});
+
+test('cross-builds Linux and macOS binaries with target metadata and an explicit release version', t => {
+  const f = fixture(t);
+  for (const target of ['linux/amd64', 'darwin/arm64']) {
+    const out = join(f.dir, target);
+    const result = f.run(['--out', out, '--target', target, '--version', '0.0.1-alpha.20261021.1']);
+    assert.equal(result.status, 0, result.stderr);
+    const manifest = JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8'));
+    assert.equal(manifest.target, target);
+    assert.ok(manifest.supportedCombinations.every(row => row.platform === target));
+    assert.equal(manifest.version, '0.0.1-alpha.20261021.1');
+    for (const binary of manifest.binaries) {
+      const path = join(out, binary.name);
+      const bytes = readFileSync(path);
+      assert.equal(binary.sha256, createHash('sha256').update(bytes).digest('hex'));
+      const info = spawnSync('go', ['version', '-m', path], { env: f.env, encoding: 'utf8' });
+      assert.equal(info.status, 0, info.stderr);
+      assert.match(info.stdout, new RegExp(`GOOS=${target.split('/')[0]}`));
+      assert.match(info.stdout, new RegExp(`GOARCH=${target.split('/')[1]}`));
+      assert.match(info.stdout, /CGO_ENABLED=0/);
+      if (binary.name === 'lina') {
+        assert.ok(info.stdout.includes(`${manifest.sqlite.module}\t${manifest.sqlite.version}\t${manifest.sqlite.moduleSum}`),
+          'Core must link the binding recorded in its manifest');
+      }
+      assert.equal(bytes.subarray(0, 4).toString('hex'), target.startsWith('linux') ? '7f454c46' : 'cffaedfe');
+    }
   }
 });
 
@@ -95,10 +128,10 @@ test('clean builds record hashes and the same commit and metadata as both versio
     assert.equal(manifest.sqlite.module, module.Path);
     assert.equal(manifest.sqlite.version, module.Version);
     assert.equal(manifest.sqlite.moduleSum, module.Sum);
-    assert.equal(manifest.sqlite.wasmSHA256, createHash('sha256').update(readFileSync(join(module.Dir, 'embed/sqlite3.wasm'))).digest('hex'));
+    assert.equal(manifest.sqlite.wasmSHA256, createHash('sha256').update(readFileSync(join(f.cwd, 'internal/core/canon/sqlite-vec.wasm'))).digest('hex'));
     assert.match(manifest.sqlite.sqliteVersion, /^3\.\d+\.\d+$/);
     assert.equal(manifest.sqlite.execution, 'wazero');
-    assert.equal(manifest.sqlite.sqliteVec, null);
+    assert.deepEqual(manifest.sqlite.sqliteVec, { version: 'v0.1.6', sha256: manifest.sqlite.wasmSHA256 });
     const providerConfig = JSON.parse(readFileSync(join(f.cwd, 'kit/provider/responses/manifest.json'), 'utf8'));
     assert.deepEqual(manifest.providers, providerConfig);
     assert.equal(manifest.providers.chatgpt.adapter, 'responses');
@@ -185,6 +218,7 @@ test('source edits or a new clean commit during a build suppress its manifest', 
     let builds = 0;
     const manifest = build({ cwd: f.cwd, out: f.out, execute: (command, args, { env }) => {
       if (args[0] === 'env') return { status: 0, stdout: env.GOTOOLCHAIN, stderr: '' };
+      if (args[0] === 'mod') return { status: 0, stdout: '', stderr: '' };
       assert.equal(command, 'go');
       assert.equal(args[0], 'build');
       const binary = args[args.indexOf('-o') + 1];
