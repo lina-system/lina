@@ -42,6 +42,7 @@ func (e *OperationError) Error() string { return string(e.Code) }
 // Unlisted kinds fail closed as mutations. Reserved management payloads may
 // contain writes; they cannot become reads merely by registering a handler.
 var readOnlyKinds = map[protocol.Kind]bool{
+	protocol.KindRestartGet: true,
 	protocol.KindHistoryGet: true, protocol.KindSubscribe: true,
 	protocol.KindResultGet: true, protocol.KindRunningGet: true,
 	protocol.KindProgressGet: true, protocol.KindProgressDigestGet: true,

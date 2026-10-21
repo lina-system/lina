@@ -215,7 +215,7 @@ test('clean builds record hashes and the same commit and metadata as both versio
     assert.equal(manifest.kitVersion, Number(readFileSync(join(f.cwd, 'kit/VERSION'), 'utf8')));
     const platform = spawnSync('go', ['env', 'GOOS', 'GOARCH'], { cwd: f.cwd, env: f.env, encoding: 'utf8' }).stdout.trim().split(/\r?\n/).join('/');
     assert.deepEqual(manifest.supportedCombinations, [{ connection: 'client', peer: 'lina-tui', platform,
-      protocolVersion: '1.0', capabilities: [], evidence: ['go test ./kit/protocol/conformance'] }]);
+      protocolVersion: '1.0', capabilities: [{ name: 'lifecycle', version: '1.0' }], evidence: ['go test ./kit/protocol/conformance', 'go test ./e2e -run TestPlannedRestart'] }]);
     const module = JSON.parse(spawnSync('go', ['list', '-m', '-json', 'github.com/ncruces/go-sqlite3'], {
       cwd: f.cwd, env: f.env, encoding: 'utf8',
     }).stdout);

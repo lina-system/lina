@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
+	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/internal/core/manifest"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/rpc"
@@ -33,6 +34,7 @@ type Identity struct {
 	MainID     string
 	Epoch      string
 	Recovering func() bool
+	Restart    *lifecycle.Restarter
 	// Supported is the build's complete table; a non-nil empty table denies all
 	// combinations. Peer and platform always come from hello.
 	Supported []Combination
@@ -284,6 +286,7 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 		}
 		answer := reply(envelope, identity)
 		closeAfter := false
+		finishReply := func() {}
 		hello, isHello := envelope.Payload.(protocol.Hello)
 		var selected string
 		var granted []protocol.Capability
@@ -292,6 +295,9 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 			selected, granted, supported = negotiate(identity.Supported, *hello.Peer, *hello.Platform, hello.ProtocolVersions, hello.Capabilities)
 		}
 		granted = slices.DeleteFunc(granted, func(capability protocol.Capability) bool {
+			if capability == lifecycleCapability && identity.Restart != nil {
+				return false
+			}
 			if identity.Topics != nil {
 				for _, installed := range identity.TopicCapabilities {
 					if installed == capability {
@@ -318,6 +324,12 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 			refuse(&answer, protocol.ErrorUnavailable, "Core is recovering")
 		case welcomed && (envelope.Kind == protocol.KindApprovalAnswer || envelope.Kind == protocol.KindQuestionAnswer || envelope.Kind == protocol.KindWaitingAnswer) && !peer.canDecide():
 			refuse(&answer, protocol.ErrorNotAuthorized, "client is not an eligible decider")
+		case welcomed && (envelope.Kind == protocol.KindRestartRequest || envelope.Kind == protocol.KindRestartGet):
+			if identity.Restart == nil || !slices.Contains(capabilities, lifecycleCapability) {
+				refuse(&answer, protocol.ErrorCapabilityNotNegotiated, "lifecycle capability was not negotiated")
+			} else {
+				finishReply = restartReply(ctx, identity, envelope, &answer)
+			}
 		case welcomed:
 			if handled, err := topics.handle(req.ID, envelope); handled {
 				if err != nil {
@@ -361,7 +373,9 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 			clientID = hello.ID
 			capabilities = granted
 		}
-		if err := writer.Write(ctx, response{JSONRPC: "2.0", ID: req.ID, Result: answer}); err != nil || closeAfter {
+		err = writer.Write(ctx, response{JSONRPC: "2.0", ID: req.ID, Result: answer})
+		finishReply()
+		if err != nil || closeAfter {
 			return
 		}
 	}

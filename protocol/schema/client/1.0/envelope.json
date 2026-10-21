@@ -79,7 +79,10 @@
         "sign_in_redirect",
         "snapshot",
         "resync",
-        "resync_required"
+        "resync_required",
+        "restart_request",
+        "restart_get",
+        "restart_status"
       ]
     },
     "message_id": {
@@ -1314,6 +1317,54 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/resync_required"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "restart_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/restart_request"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "restart_get"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/restart_get"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "restart_status"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/restart_status"
           }
         }
       }
@@ -3295,6 +3346,57 @@
       "required": [
         "topic",
         "cursor"
+      ],
+      "additionalProperties": false
+    },
+    "restart_mode": {
+      "type": "string",
+      "enum": [
+        "when_idle",
+        "drain"
+      ]
+    },
+    "restart_request": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/restart_mode"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "restart_get": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "restart_status": {
+      "type": "object",
+      "properties": {
+        "owed": {
+          "type": "boolean"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        },
+        "mode": {
+          "$ref": "#/$defs/restart_mode"
+        },
+        "requested_epoch": {
+          "$ref": "#/$defs/epoch"
+        },
+        "committed_epoch": {
+          "$ref": "#/$defs/epoch"
+        },
+        "discharged_epoch": {
+          "$ref": "#/$defs/epoch"
+        }
+      },
+      "required": [
+        "owed"
       ],
       "additionalProperties": false
     }

@@ -92,5 +92,5 @@ func ClientCombinations() []Combination {
 
 // ClientCombinationsFor describes the target selected by the build writer.
 func ClientCombinationsFor(target string) []Combination {
-	return []Combination{{Connection: "client", Peer: TUIPeer, Platform: target, ProtocolVersion: "1.0", Capabilities: []protocol.Capability{}, Evidence: []string{"go test ./kit/protocol/conformance"}}}
+	return []Combination{{Connection: "client", Peer: TUIPeer, Platform: target, ProtocolVersion: "1.0", Capabilities: []protocol.Capability{{Name: "lifecycle", Version: "1.0"}}, Evidence: []string{"go test ./kit/protocol/conformance", "go test ./e2e -run TestPlannedRestart"}}}
 }

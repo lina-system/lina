@@ -193,6 +193,7 @@ The Korean acceptance corpus is `testdata/korean/search.json`: both stores asser
 - #91 adds verified bundle installation, private state and identity creation, systemd user units, optional adapter/worker artifacts and bounded tool discovery. The install scenario launches the actual installed Core command, checks its identity through the protocol and connects the TUI. A package integration exercises G1-10 preparation after account-free installation: the account step fails with its sign-in offer and no provider request. The current client protocol still reserves conversation/account operations; this is not evidence of a completed sign-in or model conversation. Automated service registration uses a scripted manager; the real systemd parser validates the generated units.
 
 **G1-24 Restart request and fence.** Durable request, Fence, `when_idle`, `drain`, exit 75.
+- #92 implements the durable control-file receipt, shared admission fence and lifecycle client capability. Tests cover in-flight effects, Unknown, SIGKILL boundaries, restore isolation and hot reload. `e2e/m1/restart.json` drives real Core requests, exit 75, cleanup and discharge at the replacement's higher READY epoch.
 - Done when: a request does not exit while a fake effect is in flight; unknown idle blocks; a request survives a crash and reports owed until discharged; a restore cannot resurrect it; a settings, persona or binding change mints no epoch.
 - Depends on: G1-02, G1-18, G1-23. Design refs: C-05 to C-07; [runtime.md](runtime.md#updates).
 
