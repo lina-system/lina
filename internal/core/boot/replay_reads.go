@@ -28,11 +28,11 @@ func (r *conversationRuntime) replayReads(source replay.Source, ep replay.Episod
 		tool := turn.Tool(registry, spec, tools.Call{Auth: grant.Request{Person: r.person, Agent: r.agent}}, "replay:"+ep.TurnID)
 		execute := tool.Execute
 		tool.Execute = func(ctx context.Context, call provider.ToolCall) loop.Result {
-			if source.Validate(ctx, ep.RevocationEpoch) != nil {
+			if source.ValidateEpisode(ctx, ep) != nil {
 				return loop.Result{ID: call.ID, Code: loop.Denied}
 			}
 			result := execute(ctx, call)
-			if source.Validate(ctx, ep.RevocationEpoch) != nil {
+			if source.ValidateEpisode(ctx, ep) != nil {
 				return loop.Result{ID: call.ID, Code: loop.Denied}
 			}
 			return result

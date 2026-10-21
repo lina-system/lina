@@ -414,3 +414,24 @@ func TestBuiltinNoOpCannotPoisonUndo(t *testing.T) {
 		t.Fatalf("undo: %+v %v", body, err)
 	}
 }
+
+func TestReadCommitKeepsHistoricalSkillBody(t *testing.T) {
+	s, _, _ := fixture(t, fstest.MapFS{"example/SKILL.md": {Data: []byte(document("builtin instruction"))}})
+	old, err := s.ReadCommit(t.Context(), "example", "builtin:fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := apply(t, s, 0, "first adopted instruction")
+	apply(t, s, 1, "latest instruction")
+	pinned, err := s.ReadCommit(t.Context(), "example", first.Version.Commit)
+	if err != nil || pinned.Version != first.Version || pinned.Files["SKILL.md"].Text != document("first adopted instruction") {
+		t.Fatalf("pinned=%+v err=%v", pinned, err)
+	}
+	builtin, err := s.ReadCommit(t.Context(), "example", "builtin:fixture")
+	if err != nil || builtin.Files["SKILL.md"].Text != old.Files["SKILL.md"].Text {
+		t.Fatalf("builtin=%+v err=%v", builtin, err)
+	}
+	if _, err = s.ReadCommit(t.Context(), "example", "unavailable-commit"); !errors.Is(err, ErrNotFound) {
+		t.Fatal(err)
+	}
+}

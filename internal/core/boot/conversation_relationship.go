@@ -21,22 +21,24 @@ func (r *conversationRuntime) relationshipPacket(ctx context.Context, at time.Ti
 	}
 	var packet assemble.ContextPacket
 	for _, hit := range hits {
-		raw, err := json.Marshal(struct {
-			Kind        string       `json:"kind"`
-			Observation string       `json:"observation"`
-			Basis       memory.Basis `json:"basis"`
-		}{"relationship_view", hit.Content, hit.Basis})
-		if err != nil {
-			return nil, err
-		}
-		item := assemble.ContextItem{ID: "memory:" + hit.ID, Revision: strconv.FormatInt(hit.Revision, 10), AgentID: r.agent, Kind: assemble.Memory, Origin: "personal-memory:" + hit.ID, Text: string(raw)}
-		for _, ref := range hit.Evidence {
-			item.Evidence = append(item.Evidence, assemble.Ref{ID: ref.ID})
-		}
-		if hit.Supersedes != "" {
-			item.Supersedes = []string{"memory:" + hit.Supersedes}
-		}
+		item := relationshipContext(hit.Item, r.agent)
 		packet = append(packet, item)
 	}
 	return packet, nil
+}
+
+func relationshipContext(hit memory.Item, agent string) assemble.ContextItem {
+	raw, _ := json.Marshal(struct {
+		Kind        string       `json:"kind"`
+		Observation string       `json:"observation"`
+		Basis       memory.Basis `json:"basis"`
+	}{"relationship_view", hit.Content, hit.Basis})
+	item := assemble.ContextItem{ID: "memory:" + hit.ID, Revision: strconv.FormatInt(hit.Revision, 10), AgentID: agent, Kind: assemble.Memory, Origin: "personal-memory:" + hit.ID, Text: string(raw)}
+	for _, ref := range hit.Evidence {
+		item.Evidence = append(item.Evidence, assemble.Ref{ID: ref.ID})
+	}
+	if hit.Supersedes != "" {
+		item.Supersedes = []string{"memory:" + hit.Supersedes}
+	}
+	return item
 }

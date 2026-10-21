@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/agents"
@@ -69,6 +70,8 @@ type Manifest struct {
 // interface deliberately has no write method. Project is the existing assembler.
 type Source struct {
 	Instructions InstructionBuilder
+	Rebuild      func(Episode, []Context, []provider.Item) ([]provider.Item, error)
+	Skill        func(context.Context, string, string) (string, string, error)
 	DB           Reader
 	Materials    ledger.Materials
 	Persona      func(context.Context, string, string) (agents.Preparation, error)
@@ -167,6 +170,8 @@ func visible(ctx context.Context, tx *canon.Tx, scope Scope, id string) error {
 func (s Source) loadSnapshot(ctx context.Context, scope Scope, id string) (Episode, error) {
 	ep := Episode{Version: 1, TurnID: id, Reply: []provider.Item{}, Calls: []Call{}, History: []Event{}}
 	var history []ledger.Event
+	var packet []Context
+	var profile []provider.Item
 	err := s.DB.Read(ctx, func(tx *canon.Tx) error {
 		var inputID, state string
 		if err := tx.QueryRowContext(ctx, "SELECT t.conversation,t.state,c.input_event FROM turn_runs t JOIN turn_control c ON c.turn_id=t.id WHERE t.id=?", id).Scan(&ep.Conversation, &state, &inputID); err != nil {
@@ -193,23 +198,33 @@ func (s Source) loadSnapshot(ctx context.Context, scope Scope, id string) (Episo
 			}
 			return e, err
 		}
-		input, err := get(inputID)
-		if err != nil {
+		// Inspect only the scoped, text-free assembly before removal-gated
+		// content so a forgotten packet source retains its specific reason.
+		var speaker string
+		if err := tx.QueryRowContext(ctx, "SELECT speaker_kind FROM conv_event WHERE id=?", inputID).Scan(&speaker); err != nil {
 			return err
 		}
-		if input.PersonID != scope.Person || input.SpeakerKind != guard.Person || input.Origin.Kind != "native" || input.ReplayOf != "" || input.ScaffoldKind != "" {
+		if speaker != "person" {
 			return Exclusion("not_person_turn")
 		}
-		ep.Input = eventValue(input)
-		ep.Clock = input.OccurredAt
-		ep.Zone = "UTC"
-		evidence, err := get("request:" + id + ":0")
+		var owned int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM conv_event e WHERE e.id=? AND e.agent_id=? AND e.person_id=? AND e.conversation_id=?
+         AND NOT EXISTS(SELECT 1 FROM conv_event other WHERE other.conversation_id=e.conversation_id AND other.speaker_kind='person' AND other.person_id<>?)`, inputID, scope.Agent, scope.Person, ep.Conversation, scope.Person).Scan(&owned); err != nil {
+			return err
+		}
+		if owned != 1 {
+			return Exclusion("restricted_content")
+		}
+		evidence, err := journal.Get(ctx, "request:"+id+":0")
 		if err != nil {
 			var exclusion Exclusion
-			if errors.As(err, &exclusion) {
+			if errors.As(err, &exclusion) || errors.Is(err, sql.ErrNoRows) || errors.Is(err, ledger.ErrBytesUnavailable) {
 				return Exclusion("missing_assembly")
 			}
 			return err
+		}
+		if evidence.AgentID != scope.Agent || evidence.ConversationID != ep.Conversation || evidence.ScaffoldKind != "request_assembly" {
+			return Exclusion("missing_assembly")
 		}
 		if err = json.Unmarshal([]byte(evidence.Body.Text()), &ep.Evidence); err != nil {
 			return Exclusion("missing_assembly")
@@ -220,9 +235,30 @@ func (s Source) loadSnapshot(ctx context.Context, scope Scope, id string) (Episo
 		}
 		// Older producers did not record reconstructible context source kinds. Do
 		// not replace those packets with today's memory or silently drop them.
-		if len(a.Items) > 0 || len(a.Skills) > 0 {
+		if a.InstructionFormat == "persona-v1" {
+			if a.OwnerPersonID != scope.Person {
+				return Exclusion("missing_assembly")
+			}
+			packet, profile, err = s.contextSnapshot(ctx, tx, scope, ep)
+			if err != nil {
+				return err
+			}
+		} else if len(a.Items) > 0 || len(a.Skills) > 0 {
 			return Exclusion("missing_assembly")
 		}
+		if err := visible(ctx, tx, scope, evidence.ID); err != nil {
+			return err
+		}
+		input, err := get(inputID)
+		if err != nil {
+			return err
+		}
+		if input.PersonID != scope.Person || input.SpeakerKind != guard.Person || input.Origin.Kind != "native" || input.ReplayOf != "" || input.ScaffoldKind != "" {
+			return Exclusion("not_person_turn")
+		}
+		ep.Input = eventValue(input)
+		ep.Clock = input.OccurredAt
+		ep.Zone = "UTC"
 		hasInput := false
 		for _, ref := range a.History {
 			e, err := get(ref.ID)
@@ -411,6 +447,21 @@ func (s Source) loadSnapshot(ctx context.Context, scope Scope, id string) (Episo
 		return Episode{}, err
 	}
 	ep.Items, err = s.Project(history, ep.Conversation, scope.Agent)
+	if err == nil && ep.Evidence.Assembly.InstructionFormat == "persona-v1" {
+		if s.Rebuild == nil || s.Skill == nil {
+			return Episode{}, Exclusion("missing_assembly")
+		}
+		for i := range packet {
+			c := &packet[i]
+			if c.Source.Source == "skill-v1" {
+				c.Description, c.Text, err = s.Skill(ctx, strings.TrimPrefix(c.Source.ID, "skill:"), c.Source.Revision)
+				if err != nil {
+					return Episode{}, err
+				}
+			}
+		}
+		ep.Items, err = s.Rebuild(ep, packet, profile)
+	}
 	if err == nil {
 		original, e := Request(ep, nil, "", "", s.Instructions)
 		if e != nil {
@@ -423,7 +474,7 @@ func (s Source) loadSnapshot(ctx context.Context, scope Scope, id string) (Episo
 	}
 
 	if err == nil {
-		err = s.Validate(ctx, ep.RevocationEpoch)
+		err = s.ValidateEpisode(ctx, ep)
 	}
 	return ep, err
 }

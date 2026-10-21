@@ -227,7 +227,7 @@ The ledger can be exported as episodes: recorded turns written out for use outsi
   includes its start and excludes its end. With no selection flags, the export
   contains zero episodes. A partial selection is invalid.
 
-- The export reads the ledger and nothing else. It writes no ledger event and no memory item, makes no model call and changes no state of LINA. Its files go to `staging/export/` ([filesystem.md](filesystem.md#import-and-export)) with a manifest of the counts, the left-out reasons and the revocation epoch at export time. An exported file leaves LINA's management: a later deletion in LINA does not reach it, and LINA says so when it exports.
+- The export reads the ledger and the exact source revisions named by its assembly evidence. It writes no ledger event and no memory item, makes no model call and changes no state of LINA. Its files go to `staging/export/` ([filesystem.md](filesystem.md#import-and-export)) with a manifest of the counts, the left-out reasons and the revocation epoch at export time. An exported file leaves LINA's management: a later deletion in LINA does not reach it, and LINA says so when it exports.
 
 The first export format is version 1: `episodes.jsonl` contains one JSON object
 per turn, and `manifest.json` records `selected`, `exported`, `left_out`,
@@ -242,6 +242,25 @@ exported copy. Native ledger masking and the existing JSON-aware secret scanner
 cover input, persona and recorded tool/provider output. Missing source evidence,
 incomplete/non-person turns, restricted content and unrecorded effect results
 are counted by reason; storage failures fail the operation.
+
+New persona turns record `persona-v1` assembly evidence: the preparation clock,
+ordered history, profile references and typed packet source locators. Replay and
+export rebuild the exact selected items, catalog and fixed instruction format,
+then require the original request digest before accepting an episode. Skills
+are read by their recorded commit, never from the current catalog head.
+
+Only the persona-owned revision, expression, emotion and settings projections
+may retain their masked text as ledger material. Each projection's `Revision`
+is the SHA-256 of those exact bytes; its source locator names that immutable
+material revision. This preserves clock-dependent emotion and earlier mutable
+agent state without introducing a general ContextPacket store. Relationship
+memory and every personal Memory/Profile/PersonBrief projection must instead
+be re-read from its original ID and revision, under current scope and removal
+rules. Missing, forgotten or retracted memory excludes the whole dependent
+turn as `forgotten`; a changed revision or scope excludes it as `source_changed`.
+The manifest counts these reasons. Unknown source formats, old producers with
+insufficient assembly evidence, and digest mismatches remain `missing_assembly`;
+reconstruction never substitutes current content or drops a missing item.
 
 ## Turns
 
@@ -608,6 +627,13 @@ Each agent has its own emotion, in three layers:
 - An agent's emotional state, its observations of the person's emotion and the state of its relationship with the person are separate records. The latter two are memory items in that agent's personal knowledge (see "Knowledge layers"). Emotion never raises intimacy.
 
 Implementation decisions for #369: the initial numeric record uses valence and arousal in [-1, 1], with a neutral disposition baseline. A confirmed event contributes 0.25 to mood; mood decays exponentially with a 72-hour half-life, and conversation-local short emotion expires after 30 minutes. Preparation projects all three layers at one clock instant into the mandatory ContextPacket, outside the cached prefix. Follow-ups keep that prepared snapshot. These initial parameters are exercised with deterministic clock fixtures; they are not a claim of measured real-model emotional quality.
+
+The four persona-owned packet projections are pinned at preparation as described
+under [Episode export](#episode-export). Their content revisions identify the
+exact projected text, separately from the mutable state revisions used for write
+authorization. Later decay, settings edits, expression changes or persona edits
+cannot replace a recorded turn's projection. Relationship memory remains a
+memory-store reference and is never copied into persona replay materials.
 
 The Core writer binds evidence to the current native owner input and journals each event once. Generic state replacement cannot modify emotion or its expression preference. Turning expression off retains the record and supplies only suppressed, zeroed expressive values. Admission sensitivity tags and a conservative English/Korean grief, health and crisis detector suppress immediately; a confirmed event can additionally mark its short-lived context as sensitive. The phrase detector is baseline coverage, not universal semantic classification. Expired short emotion cannot keep a later unrelated turn suppressed.
 
