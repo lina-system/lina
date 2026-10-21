@@ -569,6 +569,8 @@ The manifest pins only LINA's own artifacts and dependencies: its components, th
 
 LINA Core, Node and the desktop LINA app each have a packaging and resident budget. The budget covers artifact size, start time, and resident memory and CPU over 24 hours, measured with OS instrumentation. It is declared before the measurement runs and recorded with the result.
 
+V2's Core service budget is declared in [budget.json](../../evidence/v2-residency/budget.json): 64 MiB of installed Core artifacts, two seconds from the service-start request to protocol readiness, 256 MiB peak RSS including initialization, 1% mean CPU and 5% CPU in each consecutive 60-second window, with one logical CPU equal to 100%. It applies to the same-commit Omarchy x64 and macOS arm64 runs with fresh synthetic state, the packaged SQLite and verified sqlite-vec configuration, periodic protocol health checks, and no provider calls. The [measurement procedure](../../evidence/v2-residency/README.md) defines instrumentation, continuity and evidence. These limits are declared before measurement; neither native 24-hour result has been recorded, and platform acceptance is still unestablished. The desktop app budget and measurements remain separate work.
+
 ## Supply chain
 
 Every external dependency, vendored source and bundled binary follows [dependencies.md](../policy/dependencies.md). Its gates run in the local foundation verification from the first commit ([foundation.md](../policy/foundation.md)).
@@ -657,7 +659,7 @@ The first implementation issue demonstrates the runtime with these checks. Each 
 
 ## Deferred
 
-- The packaging and resident budget for LINA Core, Node and the desktop LINA app: declared in the first implementation issue before the V2 measurement runs (for the app, before its first packaged measurement), and recorded with its result. A result outside the budget reopens the language choice, and for the desktop app it reopens the shell choice.
+- The native V2 measurements against the declared Core budget, including the macOS Core run that stands in for Node's runtime budget. The desktop LINA app budget is declared before its first packaged measurement and recorded with the result. A result outside the budget reopens the language choice, and for the desktop app it reopens the shell choice.
 - The development-loop budget: declared before the V7 measurement and recorded with its result. A result outside the budget reopens the language choice.
 - The SQLite binding is selected by #39 and recorded in the build manifest. The full V2 residency and platform acceptance remains to be measured; the binding evidence distinguishes package checks and cross-builds from that acceptance.
 - The Windows sandbox mechanism of the kit's sandbox wrapper: chosen and verified by the Windows Node implementation, which cannot be accepted without it.
