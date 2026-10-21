@@ -105,7 +105,7 @@ func TestStartOrderAndDurableEpochBeforeCanon(t *testing.T) {
 	if err := boot.Run(ctx, cfg); err != nil {
 		t.Fatal(err)
 	}
-	want := []boot.Step{boot.RootValidated, boot.Locked, boot.EventsOpened, boot.ControlsRead, boot.EpochMinted, boot.CanonOpened, boot.EpochMirrored, boot.SocketsBound, boot.Reconciled, boot.Ready}
+	want := []boot.Step{boot.RootValidated, boot.Locked, boot.EventsOpened, boot.ControlsRead, boot.EpochMinted, boot.CanonOpened, boot.EpochMirrored, boot.SocketPending, boot.SocketBound, boot.SocketsBound, boot.Reconciled, boot.Ready}
 	if !reflect.DeepEqual(steps, want) {
 		t.Fatalf("steps=%v", steps)
 	}
@@ -188,7 +188,7 @@ func TestRecoveringServesHandshakeAndRefusesRequests(t *testing.T) {
 }
 
 func TestFailedStartReleasesLockAndPreservesEpoch(t *testing.T) {
-	for _, step := range []boot.Step{boot.EventsOpened, boot.ControlsRead, boot.EpochMinted, boot.CanonOpened, boot.EpochMirrored, boot.SocketsBound, boot.Reconciled} {
+	for _, step := range []boot.Step{boot.EventsOpened, boot.ControlsRead, boot.EpochMinted, boot.CanonOpened, boot.EpochMirrored, boot.SocketPending, boot.SocketBound, boot.SocketsBound, boot.Reconciled} {
 		t.Run(fmt.Sprint(step), func(t *testing.T) {
 			root := stateRoot(t)
 			socket := filepath.Join(root, "run/core.sock")
@@ -232,7 +232,7 @@ func TestCrashChild(t *testing.T) {
 	}
 	root := os.Getenv("LINA_CRASH_ROOT")
 	target, _ := strconv.Atoi(os.Getenv("LINA_CRASH_STEP"))
-	err := boot.Run(context.Background(), boot.Config{StateRoot: root, Socket: filepath.Join(root, "run/core.sock"), AfterStep: func(step boot.Step, snapshot boot.Snapshot) error {
+	err := boot.Run(context.Background(), boot.Config{StateRoot: root, Socket: os.Getenv("LINA_CRASH_SOCKET"), AfterStep: func(step boot.Step, snapshot boot.Snapshot) error {
 		if int(step) == target {
 			if err := json.NewEncoder(os.Stdout).Encode(snapshot); err != nil {
 				return err
@@ -249,8 +249,13 @@ func TestCrashChild(t *testing.T) {
 
 func crashAt(t *testing.T, root string, step boot.Step) boot.Snapshot {
 	t.Helper()
+	return crashAtSocket(t, root, filepath.Join(root, "run/core.sock"), step)
+}
+
+func crashAtSocket(t *testing.T, root, socket string, step boot.Step) boot.Snapshot {
+	t.Helper()
 	command := exec.Command(os.Args[0], "-test.run=^TestCrashChild$")
-	command.Env = append(os.Environ(), "LINA_CRASH_CHILD=1", "LINA_CRASH_ROOT="+root, "LINA_CRASH_STEP="+strconv.Itoa(int(step)))
+	command.Env = append(os.Environ(), "LINA_CRASH_CHILD=1", "LINA_CRASH_ROOT="+root, "LINA_CRASH_SOCKET="+socket, "LINA_CRASH_STEP="+strconv.Itoa(int(step)))
 	input, err := command.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -337,6 +342,9 @@ func TestBadControlRecordsStopBeforeEpochMint(t *testing.T) {
 		{"main.json", `{}`}, {"main.json", `null`}, {"main.json", `{"main_id":" "}`},
 		{"run.sentinel", `{"epoch":"01","socket":"/unused"}`}, {"run.sentinel", `{}`},
 		{"run.sentinel", `{"epoch":"1"}`}, {"run.sentinel", `{"epoch":"1","socket":null}`},
+		{"run.sentinel", `{"epoch":"1","socket":"","pending_socket":"relative.sock"}`},
+		{"run.sentinel", `{"epoch":"1","socket":"","pending_socket":null}`},
+		{"run.sentinel", `{"epoch":"1","socket":"","pending_socket":42}`},
 		{"halt.json", `broken`}, {"lifecycle.json", `null`},
 	} {
 		t.Run(tc.name+tc.data, func(t *testing.T) {
@@ -344,7 +352,7 @@ func TestBadControlRecordsStopBeforeEpochMint(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(root, "system/core", tc.name), []byte(tc.data), 0600); err != nil {
 				t.Fatal(err)
 			}
-			if err := boot.Run(context.Background(), boot.Config{StateRoot: root, Socket: filepath.Join(root, "run/core.sock")}); err == nil {
+			if _, err := runToReady(t, root, filepath.Join(root, "run/core.sock")); err == nil {
 				t.Fatal("bad control record accepted")
 			}
 			if _, err := os.Stat(filepath.Join(root, "system/core/epoch")); !os.IsNotExist(err) {
