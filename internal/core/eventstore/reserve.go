@@ -146,13 +146,16 @@ func allocateReserve(f *os.File) error {
 	}
 	return f.Sync()
 }
+
+// Release consumes the reserve. An absent file is already released; other
+// removal errors and directory sync failures still report storage failure.
 func (r *Reserve) Release() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.closed {
 		return ErrClosed
 	}
-	if err := r.root.Remove("reserve"); err != nil {
+	if err := r.root.Remove("reserve"); err != nil && !os.IsNotExist(err) {
 		return ErrStorage
 	}
 	r.present = false
