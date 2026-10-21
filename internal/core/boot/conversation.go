@@ -298,7 +298,7 @@ func (r *conversationRuntime) setActive(active bool) error {
 func (r *conversationRuntime) events(ctx context.Context, through string) ([]ledger.Event, error) {
 	var ids []string
 	err := r.db.Read(ctx, func(tx *canon.Tx) error {
-		query := `SELECT id FROM conv_event WHERE conversation_id=? AND (speaker_kind IN ('person','agent') OR scaffold_kind='interruption')`
+		query := `SELECT id FROM conv_event WHERE conversation_id=? AND (speaker_kind IN ('person','agent') OR scaffold_kind IN ('interruption','failure'))`
 		args := []any{r.conversation}
 		if through != "" {
 			query += ` AND (speaker_kind<>'person' OR rowid <= (SELECT rowid FROM conv_event WHERE id=?))`
@@ -342,7 +342,7 @@ func (r *conversationRuntime) seedHistory(ctx context.Context) error {
 		if e.ScaffoldKind == "result" {
 			continue // The source projects its card at the original reply position.
 		}
-		if e.ScaffoldKind == "interruption" {
+		if e.ScaffoldKind == "interruption" || e.ScaffoldKind == "failure" {
 			stopped, err := turn.New(r.db).Stopped(ctx, e.ParentID)
 			if err != nil {
 				return err
@@ -578,7 +578,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		}
 	}
 	if err != nil {
-		// A stop is acknowledged only from its durable outcome. Seal the same
+		// A stop or failure is published from its durable outcome. Seal the same
 		// streamed block IDs before publishing the stored notice, matching
 		// startup history and keeping partials outside future model context.
 		stopped, readErr := turn.New(r.db).Stopped(context.WithoutCancel(ctx), input.ID)
