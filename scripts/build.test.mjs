@@ -73,6 +73,14 @@ test('clean builds record hashes and the same commit and metadata as both versio
     assert.match(manifest.sqlite.sqliteVersion, /^3\.\d+\.\d+$/);
     assert.equal(manifest.sqlite.execution, 'wazero');
     assert.equal(manifest.sqlite.sqliteVec, null);
+    const providerConfig = JSON.parse(readFileSync(join(f.cwd, 'kit/provider/responses/manifest.json'), 'utf8'));
+    assert.deepEqual(manifest.providers, providerConfig);
+    const sdk = JSON.parse(spawnSync('go', ['list', '-m', '-json', 'github.com/openai/openai-go/v3'], {
+      cwd: f.cwd, env: f.env, encoding: 'utf8',
+    }).stdout);
+    assert.equal(manifest.providers.chatgpt.sdkModule, sdk.Path);
+    assert.equal(manifest.providers.chatgpt.sdkVersion, sdk.Version);
+    assert.equal(manifest.providers.chatgpt.retryCount, 0);
     assert.deepEqual(manifest.binaries.map(binary => binary.name), ['lina', 'lina-node'].map(name => name + (process.platform === 'win32' ? '.exe' : '')));
     for (const binary of manifest.binaries) {
       const path = join(f.out, binary.name);
