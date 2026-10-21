@@ -72,6 +72,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends bubblewrap
+          # Permit network setup inside unprivileged namespaces on this
+          # disposable runner. Actual builds retain full namespace isolation.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          bwrap --unshare-all --ro-bind / / -- /bin/true
 
       - name: Run foundation
         env:

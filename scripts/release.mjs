@@ -138,6 +138,9 @@ export function buildReleaseArtifacts(root, { commit, tag, evidence, evidenceSou
   const isolatedGit = { env: { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' } };
   try {
     gitOut(root, ['-c', 'core.hooksPath=/dev/null', 'clone', '--quiet', '--no-local', '--no-hardlinks', '--no-checkout', root, candidate], isolatedGit);
+    // The approved object may exist only in the publisher's remote-tracking
+    // refs, which clone's default branch refspec does not transfer.
+    gitOut(candidate, ['-c', 'core.hooksPath=/dev/null', 'fetch', '--quiet', '--no-tags', root, commit], isolatedGit);
     gitOut(candidate, ['-c', 'core.hooksPath=/dev/null', 'checkout', '--quiet', '--detach', commit], isolatedGit);
     gitOut(candidate, ['config', '--remove-section', 'remote.origin'], isolatedGit);
     // Use an allowlist here: run() merges the caller's environment and cannot
@@ -149,11 +152,20 @@ export function buildReleaseArtifacts(root, { commit, tag, evidence, evidenceSou
       GOENV: 'off', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0',
     };
     // Mount public modules read-only; compilation caches stay inside the sandbox.
-    const caches = spawnSync('go', ['env', 'GOMODCACHE', 'GOROOT'], { encoding: 'utf8',
-      env: { ...env, HOME: process.env.HOME, GOCACHE: process.env.GOCACHE, GOMODCACHE: process.env.GOMODCACHE } });
+    let toolchain = 'local';
+    const module = join(candidate, 'go.mod');
+    if (existsSync(module)) {
+      if (!lstatSync(module).isFile()) fail('Candidate go.mod must be a regular file');
+      toolchain = readFileSync(module, 'utf8').match(/^toolchain (go1\.\d+\.\d+)$/m)?.[1];
+      if (!toolchain) fail('Candidate must pin an exact Go toolchain');
+    }
+    const caches = spawnSync('go', ['env', 'GOMODCACHE', 'GOROOT', 'GOVERSION'], { cwd: candidate, encoding: 'utf8',
+      env: { ...env, HOME: process.env.HOME, GOCACHE: process.env.GOCACHE, GOMODCACHE: process.env.GOMODCACHE,
+        GOTOOLCHAIN: toolchain, GOPROXY: 'off', GOSUMDB: 'off' } });
     if (caches.status !== 0) fail(`Cannot locate Go caches: ${caches.stderr}`);
-    const [moduleCache, goRoot] = caches.stdout.trim().split('\n');
+    const [moduleCache, goRoot, actualToolchain] = caches.stdout.trim().split('\n');
     if (!moduleCache || !goRoot) fail('Go did not identify its toolchain and module cache');
+    if (toolchain !== 'local' && toolchain !== actualToolchain) fail('Go did not select the candidate toolchain');
     if (process.platform !== 'linux') fail('Release binary builds require a Linux host with bubblewrap');
     const modules = existsSync(moduleCache) ? realpathSync(moduleCache) : join(parent, 'empty-modules');
     if (!existsSync(modules)) mkdirSync(modules);

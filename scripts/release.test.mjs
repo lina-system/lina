@@ -208,6 +208,41 @@ symlinkSync(${JSON.stringify(privateFile)}, join(out, 'lina'));
   untouched(s);
 });
 
+releaseTest('releases a fetched remote commit while the local branch remains behind', t => {
+  const s = setup(t);
+  const peer = join(s.sb.dir, 'peer');
+  s.sb.g(s.sb.dir, 'clone', '-q', s.remote, peer);
+  const commit = s.sb.commit(peer, 'docs: remote-only release', { 'docs/design/guide.md': '# New release\n' });
+  s.sb.g(peer, 'push', '-q', 'origin', 'dev');
+  s.sb.g(s.work, 'fetch', '-q', 'origin');
+  assert.equal(s.sb.g(s.work, 'rev-parse', 'dev'), s.commit);
+  assert.equal(s.call({ commit }).commit, commit);
+  untouched(s);
+});
+
+releaseTest('selects the candidate toolchain before entering the offline sandbox', t => {
+  const s = setup(t);
+  const actual = run('go', ['env', 'GOMODCACHE', 'GOROOT', 'GOVERSION'], { cwd: s.work }).stdout.trim().split('\n');
+  const commit = s.sb.commit(s.work, 'test: pinned build toolchain', {
+    'go.mod': `module example.invalid/release\ngo 1.27\ntoolchain ${actual[2]}\n`,
+  });
+  s.sb.g(s.work, 'push', '-q', 'origin', 'dev');
+  s.sb.g(s.work, 'notes', '--ref=refs/notes/foundation', 'add', '-m', JSON.stringify({
+    result: 'success', head: commit, tree: s.sb.g(s.work, 'rev-parse', `${commit}^{tree}`),
+  }), commit);
+  const wrapper = join(s.sb.dir, 'bin/go');
+  writeFileSync(wrapper, `#!/usr/bin/env node
+const fs = require('node:fs');
+if (!fs.existsSync('go.mod') || process.env.GOTOOLCHAIN !== ${JSON.stringify(actual[2])}) {
+  console.error('toolchain query must use the candidate directory and pin'); process.exit(1);
+}
+console.log(${JSON.stringify(actual.join('\n'))});
+`);
+  chmodSync(wrapper, 0o755);
+  assert.equal(s.call({ commit }).commit, commit);
+  untouched(s);
+});
+
 releaseTest('a binary build failure or digest mismatch stops publication and removes the worktree', t => {
   const s = setup(t);
   const source = readFileSync(join(s.work, 'scripts/build.mjs'), 'utf8');
