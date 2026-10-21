@@ -53,8 +53,8 @@ func TestCrashAfterTurnCompletionPreservesReply(t *testing.T) {
 		input := inputEvent(t, db.Store)
 		_, err := turn.New(db).Run(t.Context(), turn.Options{
 			ID: "turn", Conversation: "conversation", InboxID: admit(t, db.Store), InputEvent: input,
-			Complete: func(ctx context.Context, commit func(*canon.Tx) error) error {
-				_, err := ledger.New(db, nil).AdmitBatchWith(ctx, []ledger.Admission{completionReply()}, commit)
+			Complete: func(ctx context.Context, db turn.Canon) error {
+				_, err := ledger.New(db, nil).AdmitBatch(ctx, []ledger.Admission{completionReply()})
 				return err
 			},
 			Loop: loop.Config{Stream: func(context.Context, provider.Request) (provider.Stream, error) {
@@ -138,17 +138,12 @@ func TestCompletionAndRepliesRollbackTogether(t *testing.T) {
 			var saved []ledger.Event
 			calls := 0
 			opts := turn.Options{ID: "turn", Conversation: "conversation", InboxID: admit(t, db), InputEvent: input,
-				Complete: func(ctx context.Context, commit func(*canon.Tx) error) error {
+				Complete: func(ctx context.Context, db turn.Canon) error {
+					if failure == "completion" {
+						return db.Write(ctx, func(*canon.Tx) error { return errors.New("completion refused") })
+					}
 					var err error
-					saved, err = ledger.New(db, nil).AdmitBatchWith(ctx, []ledger.Admission{first, second}, func(tx *canon.Tx) error {
-						if err := commit(tx); err != nil {
-							return err
-						}
-						if failure == "completion" {
-							return errors.New("completion refused")
-						}
-						return nil
-					})
+					saved, err = ledger.New(db, nil).AdmitBatch(ctx, []ledger.Admission{first, second})
 					return err
 				},
 				Loop: loop.Config{Stream: func(context.Context, provider.Request) (provider.Stream, error) {
@@ -190,7 +185,7 @@ func TestUnsuccessfulTurnsSkipCompletion(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			_, err := store.Run(ctx, turn.Options{ID: "turn", Conversation: "conversation", InboxID: admit(t, db),
-				Complete: func(context.Context, func(*canon.Tx) error) error {
+				Complete: func(context.Context, turn.Canon) error {
 					t.Fatal("unsuccessful turn admitted a reply")
 					return nil
 				},
@@ -213,5 +208,31 @@ func TestUnsuccessfulTurnsSkipCompletion(t *testing.T) {
 				t.Fatalf("state=%s want=%s err=%v", row.State, want, err)
 			}
 		})
+	}
+}
+
+func TestCompletionPreparationKeepsTurnContext(t *testing.T) {
+	db, _ := database(t)
+	input := inputEvent(t, db)
+	// Assert the deadline boundary directly, without waiting for a slow disk or
+	// relying on a scheduler to finish before a timeout.
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	wantDeadline, _ := ctx.Deadline()
+	_, err := turn.New(db).Run(ctx, turn.Options{ID: "turn", Conversation: "conversation", InboxID: admit(t, db), InputEvent: input,
+		Complete: func(preparation context.Context, db turn.Canon) error {
+			deadline, ok := preparation.Deadline()
+			if !ok || !deadline.Equal(wantDeadline) {
+				t.Errorf("reply preparation inherited the cleanup deadline: got %v, want live turn deadline %v", deadline, wantDeadline)
+			}
+			_, err := ledger.New(db, nil).AdmitBatch(preparation, []ledger.Admission{completionReply()})
+			return err
+		},
+		Loop: loop.Config{Stream: func(context.Context, provider.Request) (provider.Stream, error) {
+			return &stream{events: []provider.Event{{Kind: provider.Terminal}}}, nil
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }

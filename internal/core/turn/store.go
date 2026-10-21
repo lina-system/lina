@@ -278,10 +278,12 @@ type Options struct {
 	// Preparation is the complete four-step path; Prepare is the low-level hook.
 	Preparation *Preparation
 	// Complete commits successful completion with the caller's durable replies.
-	// It must run the supplied write in the same fenced transaction as reply
-	// admission and return only after commit. Nil uses the turn store's writer.
+	// Preparation uses the live turn context. The supplied canon adapter adds
+	// completion and a five-second deadline to its Write transaction, after any
+	// reply material preparation. The callback must use that adapter for exactly
+	// one write and return only after commit. Nil writes completion alone.
 	// Failed or interrupted turns never invoke Complete.
-	Complete      func(context.Context, func(*canon.Tx) error) error
+	Complete      func(context.Context, Canon) error
 	Loop          loop.Config
 	Budget        *budget.Gauge // carry into a continuation; nil starts a new budget
 	ReceivedAt    time.Time     // original receipt time, excluding preparation from tool time
@@ -350,13 +352,7 @@ func (s *Store) Run(ctx context.Context, o Options) (out loop.Outcome, err error
 		if ctx.Err() != nil {
 			state = Aborted
 		}
-		save, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer cancel()
-		write := s.db.Write
-		if state == Completed && o.Complete != nil {
-			write = o.Complete
-		}
-		err = errors.Join(err, write(save, func(tx *canon.Tx) error {
+		completion := completionCanon{Canon: s.db, complete: func(save context.Context, tx *canon.Tx) error {
 			if e := active(save, tx, o.ID); e != nil {
 				return e
 			}
@@ -378,7 +374,12 @@ func (s *Store) Run(ctx context.Context, o Options) (out loop.Outcome, err error
 			}
 			_, e := tx.ExecContext(save, "UPDATE turn_runs SET state=? WHERE id=?", state, o.ID)
 			return e
-		}))
+		}}
+		if state == Completed && o.Complete != nil {
+			err = errors.Join(err, o.Complete(ctx, completion))
+		} else {
+			err = errors.Join(err, completion.Write(context.WithoutCancel(ctx), func(*canon.Tx) error { return nil }))
+		}
 	}()
 	cfg := o.Loop
 	if o.Preparation != nil {
@@ -424,4 +425,23 @@ func (s *Store) Run(ctx context.Context, o Options) (out loop.Outcome, err error
 		}
 	}
 	return out, err
+}
+
+// The ledger prepares material bytes before calling Write and cleans them up
+// after it returns. Start the bounded terminal write here, so neither operation
+// consumes its transaction deadline or runs under the canon writer lock.
+type completionCanon struct {
+	Canon
+	complete func(context.Context, *canon.Tx) error
+}
+
+func (c completionCanon) Write(ctx context.Context, fn func(*canon.Tx) error) error {
+	save, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	return c.Canon.Write(save, func(tx *canon.Tx) error {
+		if err := c.complete(save, tx); err != nil {
+			return err
+		}
+		return fn(tx)
+	})
 }

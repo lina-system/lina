@@ -331,12 +331,12 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 	round := 0
 	var completed []ledger.Admission
 	var saved []ledger.Event
-	complete := func(ctx context.Context, commit func(*canon.Tx) error) error {
+	complete := func(ctx context.Context, db turn.Canon) error {
 		if len(completed) == 0 {
-			return r.db.Write(ctx, commit)
+			return db.Write(ctx, func(*canon.Tx) error { return nil })
 		}
 		var err error
-		saved, err = r.journal().AdmitBatchWith(ctx, completed, commit)
+		saved, err = ledger.New(db, r.materials).AdmitBatch(ctx, completed)
 		return err
 	}
 	out, err := turn.New(r.db).Run(ctx, turn.Options{ID: turnID, Conversation: r.conversation, InboxID: inboxID, InputEvent: input.ID, Preparation: prep, Complete: complete, Loop: loop.Config{
