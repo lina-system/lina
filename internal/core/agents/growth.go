@@ -178,11 +178,6 @@ func (s *Store) UndoGrowth(ctx context.Context, id, person string, u GrowthUndo)
 		if err != nil {
 			return err
 		}
-		if suppressed, err := growthSuppressed(ctx, tx, id, "", growthHash(before.Layers.GrowthSnapshot)); err != nil {
-			return err
-		} else if suppressed {
-			return ErrGrowthUndone
-		}
 		layers := current.Layers
 		layers.GrowthSnapshot = before.Layers.GrowthSnapshot
 		commit, err := s.save(ctx, id, current.Commit, layers, person)

@@ -186,3 +186,29 @@ func TestGrowthUndoCannotSkipLaterStepWithSameSnapshot(t *testing.T) {
 		t.Fatalf("skipped later growth: %v", err)
 	}
 }
+
+func TestGrowthUndoCanRestoreBaselineAfterUndoingClearStep(t *testing.T) {
+	s, _, _ := setup(t)
+	a := create(t, s, "")
+	first, err := s.AdoptGrowth(t.Context(), a.ID, "person", agents.GrowthCandidate{ID: "fixture-first", Expected: 1, Snapshot: "fixture-growth", Notice: "fixture-notice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clear, err := s.AdoptGrowth(t.Context(), a.ID, "person", agents.GrowthCandidate{ID: "fixture-clear", Expected: 2, Snapshot: "", Notice: "fixture-clear-notice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.UndoGrowth(t.Context(), a.ID, "person", clear.Undo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.UndoGrowth(t.Context(), a.ID, "person", first.Undo); err != nil {
+		t.Fatalf("explicit undo could not restore baseline: %v", err)
+	}
+	got, err := s.Prepare(t.Context(), "fixture-baseline-restored", a.ID)
+	if err != nil || got.Revision != 5 || got.Layers.GrowthSnapshot != "" {
+		t.Fatalf("baseline=%+v %v", got, err)
+	}
+	if _, err = s.AdoptGrowth(t.Context(), a.ID, "person", agents.GrowthCandidate{ID: "fixture-renamed-first", Expected: 5, Snapshot: "fixture-growth", Notice: "fixture-notice"}); !errors.Is(err, agents.ErrGrowthUndone) {
+		t.Fatalf("proposal suppression lost: %v", err)
+	}
+}
