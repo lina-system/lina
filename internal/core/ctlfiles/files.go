@@ -22,6 +22,10 @@ type Store struct {
 	lock *os.File
 }
 
+// Locked reports whether this owner holds the stable Core lock. Callers must
+// keep it held for the complete lifetime of storage services they construct.
+func (s *Store) Locked() bool { return s != nil && s.lock != nil }
+
 // Open validates an existing local state root and creates its private control
 // directories. Installation owns creation of the root and main.json.
 func Open(path string) (*Store, error) {
