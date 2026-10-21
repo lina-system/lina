@@ -3,6 +3,7 @@
 package telegram
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,9 +11,12 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/lina/kit/lease"
+	"github.com/thisisjun786/lina/kit/proc"
 	"github.com/thisisjun786/lina/kit/secret"
 )
 
@@ -123,4 +127,43 @@ func TestPollRequestCancellation(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancellation=%v", err)
 	}
+}
+
+func TestBotTokenDoesNotEnterChildEnvironment(t *testing.T) {
+	c, _ := newClient(secret.New(testToken), roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		io.Copy(io.Discard, r.Body)
+		return response(r, 200, `{"ok":true,"result":[]}`), nil
+	}))
+	if _, err := c.call(t.Context(), "getUpdates", nil); err != nil {
+		t.Fatal(err)
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := proc.NewOwner()
+	defer owner.Close(context.Background())
+	l := lease.New(func() {})
+	defer l.Release()
+	var output bytes.Buffer
+	err = owner.Run(t.Context(), l, proc.Command{
+		Path: executable, Args: []string{"-test.run=^TestTelegramChildEnvironment$"},
+		Env: append(proc.InheritedEnvironment(), "LINA_TELEGRAM_ENV_CHILD=1"), Stdout: &output, Stderr: &output,
+	})
+	if err != nil || strings.Contains(output.String(), testToken) {
+		t.Fatalf("child environment check: %v", err)
+	}
+}
+
+func TestTelegramChildEnvironment(t *testing.T) {
+	if os.Getenv("LINA_TELEGRAM_ENV_CHILD") != "1" {
+		return
+	}
+	// Report a code rather than dumping any inherited credentials.
+	for _, entry := range os.Environ() {
+		if strings.Contains(entry, testToken) {
+			os.Exit(9)
+		}
+	}
+	os.Exit(0)
 }
