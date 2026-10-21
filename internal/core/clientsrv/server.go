@@ -12,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"slices"
 	"sync"
 	"time"
@@ -34,10 +33,8 @@ type Identity struct {
 	Epoch      string
 	Recovering func() bool
 	// Supported is the build's complete table; a non-nil empty table denies all
-	// combinations. Peer and Platform identify the local transport profile.
+	// combinations. Peer and platform always come from hello.
 	Supported []Combination
-	Peer      string
-	Platform  string
 }
 
 // Listen creates a socket at mode 0600 in a private directory. An existing
@@ -179,12 +176,6 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 	// The generated codec currently speaks only client 1.0. A manifest row
 	// cannot make the binary implement another version.
 	identity.Supported = slices.DeleteFunc(slices.Clone(identity.Supported), func(row Combination) bool { return row.ProtocolVersion != "1.0" })
-	if identity.Peer == "" {
-		identity.Peer = "tui"
-	}
-	if identity.Platform == "" {
-		identity.Platform = runtime.GOOS + "/" + runtime.GOARCH
-	}
 	if identity.PersonID == "" {
 		identity.PersonID = personID
 	}
@@ -233,7 +224,12 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 		answer := reply(envelope, identity)
 		closeAfter := false
 		hello, isHello := envelope.Payload.(protocol.Hello)
-		selected, granted, supported := negotiate(identity.Supported, identity.Peer, identity.Platform, hello.ProtocolVersions, hello.Capabilities)
+		var selected string
+		var granted []protocol.Capability
+		var supported bool
+		if hello.Peer != nil && hello.Platform != nil {
+			selected, granted, supported = negotiate(identity.Supported, *hello.Peer, *hello.Platform, hello.ProtocolVersions, hello.Capabilities)
+		}
 		granted = slices.DeleteFunc(granted, func(capability protocol.Capability) bool {
 			for _, operation := range identity.Operations {
 				if operation.Handle != nil && operation.Capability == capability {

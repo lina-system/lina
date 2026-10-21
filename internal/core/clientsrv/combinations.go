@@ -63,6 +63,5 @@ func EpochNumber(epoch string) (uint64, error) {
 	return n, nil
 }
 
-// LocalCombinations lists the same-build development TUI profile. Packaged
-// builds supply their explicit table through Identity.Supported.
+// LocalCombinations is the compiled table also emitted by the build writer.
 func LocalCombinations() []Combination { return manifest.ClientCombinations() }

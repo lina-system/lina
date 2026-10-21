@@ -18,7 +18,7 @@ import (
 	"github.com/thisisjun786/lina/kit/sandbox"
 )
 
-func TestM1SandboxCannotConnectClient(t *testing.T) {
+func TestM1ClientAdmissionSandbox(t *testing.T) {
 	h := newHarness(t, "")
 	dir := filepath.Join(h.root, "system", "core")
 	if err := os.MkdirAll(dir, 0700); err != nil {

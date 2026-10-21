@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
 	"syscall"
 	"testing"
@@ -143,6 +144,8 @@ func helloEnvelope(t *testing.T, versions []string) protocol.Envelope {
 		t.Fatal(err)
 	}
 	hello := envelope.Payload.(protocol.Hello)
+	platform := runtime.GOOS + "/" + runtime.GOARCH
+	hello.Platform = &platform
 	hello.ProtocolVersions = versions
 	hello.Capabilities = []protocol.Capability{{Name: "conversation", Version: "1.0"}}
 	envelope.Payload = hello

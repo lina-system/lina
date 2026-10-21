@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -97,6 +98,10 @@ func testHello(t *testing.T) protocol.Envelope {
 	if err := json.Unmarshal(data, &hello); err != nil {
 		t.Fatal(err)
 	}
+	payload := hello.Payload.(protocol.Hello)
+	platform := runtime.GOOS + "/" + runtime.GOARCH
+	payload.Platform = &platform
+	hello.Payload = payload
 	return hello
 }
 

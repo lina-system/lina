@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/core/boot"
@@ -21,6 +22,9 @@ type admissionScenario struct {
 	SandboxConnect string `json:"sandboxConnect"`
 	Cases          []struct {
 		Name     string             `json:"name"`
+		Omit     []string           `json:"omit"`
+		Peer     *string            `json:"peer"`
+		Platform *string            `json:"platform"`
 		Versions []string           `json:"versions"`
 		Halted   bool               `json:"halted"`
 		Refusal  protocol.ErrorCode `json:"refusal"`
@@ -59,7 +63,20 @@ func TestM1ClientAdmission(t *testing.T) {
 			core := h.startCore()
 			conn := h.connect(core)
 			c := &client{conn: conn, reader: bufio.NewReaderSize(conn, 1<<20)}
-			answer := c.call(t, protocol.KindHello, protocol.Hello{Party: protocol.PartyClient, ID: "client-e2e", ProductVersion: "unrelated-product-version", ProtocolVersions: tc.Versions, Capabilities: []protocol.Capability{}})
+			hello := clientHello(tc.Versions)
+			if tc.Peer != nil {
+				hello.Peer = tc.Peer
+			}
+			if tc.Platform != nil {
+				hello.Platform = tc.Platform
+			}
+			if slices.Contains(tc.Omit, "peer") {
+				hello.Peer = nil
+			}
+			if slices.Contains(tc.Omit, "platform") {
+				hello.Platform = nil
+			}
+			answer := c.call(t, protocol.KindHello, hello)
 			if tc.Halted {
 				welcome, ok := answer.Payload.(protocol.Welcome)
 				if !ok || answer.Kind != protocol.KindWelcome {
@@ -122,7 +139,7 @@ func TestM1DescendantClient(t *testing.T) {
 	}
 	defer conn.Close()
 	c := &client{conn: conn, reader: bufio.NewReaderSize(conn, 1<<20)}
-	answer := c.call(t, protocol.KindHello, protocol.Hello{Party: protocol.PartyClient, ID: "client-e2e", ProductVersion: "0.0.0-dev", ProtocolVersions: []string{"1.0"}, Capabilities: []protocol.Capability{}})
+	answer := c.call(t, protocol.KindHello, clientHello([]string{"1.0"}))
 	welcome, ok := answer.Payload.(protocol.Welcome)
 	if !ok {
 		t.Fatalf("hello: %+v", answer)

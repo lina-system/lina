@@ -3,6 +3,7 @@ package clientsrv
 
 import (
 	"bufio"
+	"io"
 	"net"
 	"reflect"
 	"testing"
@@ -69,3 +70,56 @@ func TestEpochNumber(t *testing.T) {
 		}
 	}
 }
+
+func TestHelloRequiresListedPeerAndPlatform(t *testing.T) {
+	row := LocalCombinations()[0]
+	// The old listener guessed this transport profile instead of reading hello.
+	row.Peer = "tui"
+	for _, tc := range []struct {
+		name           string
+		peer, platform *string
+		supported      bool
+	}{
+		{"listed", &row.Peer, &row.Platform, true},
+		{"missing peer", nil, &row.Platform, false},
+		{"missing platform", &row.Peer, nil, false},
+		{"missing both", nil, nil, false},
+		{"unlisted peer", stringPointer("unlisted-app"), &row.Platform, false},
+		{"unlisted platform", &row.Peer, stringPointer("unlisted/target"), false},
+		{"empty peer", stringPointer(""), &row.Platform, false},
+		{"empty platform", &row.Peer, stringPointer(""), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client, server := net.Pipe()
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				defer server.Close()
+				serveConn(server, Identity{MainID: "main-test", Epoch: "1", Supported: []Combination{row}})
+			}()
+			t.Cleanup(func() { client.Close(); server.Close(); <-done })
+			client.SetDeadline(time.Now().Add(5 * time.Second))
+			reader := bufio.NewReader(client)
+			req := testHello(t)
+			hello := req.Payload.(protocol.Hello)
+			hello.Peer, hello.Platform = tc.peer, tc.platform
+			hello.ProductVersion = "tui-linux/amd64-1.0"
+			req.Payload = hello
+			answer := exchange(t, client, reader, req)
+			if tc.supported {
+				if answer.Kind != protocol.KindWelcome {
+					t.Fatalf("listed hello: %+v", answer)
+				}
+			} else {
+				if answer.Error == nil || answer.Error.Code != protocol.ErrorUnsupportedCombination {
+					t.Fatalf("unlisted hello: %+v", answer)
+				}
+				if _, err := reader.ReadByte(); err != io.EOF {
+					t.Fatalf("refused connection remained open: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func stringPointer(value string) *string { return &value }
