@@ -10,6 +10,7 @@ replace github.com/thisisjun786/lina/kit => ./kit
 
 require (
 	charm.land/lipgloss/v2 v2.0.6
+	github.com/PaulSonOfLars/gotgbot/v2 v2.0.0-rc.37
 	github.com/charmbracelet/x/ansi v0.11.8
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/ncruces/go-sqlite3 v0.30.5
