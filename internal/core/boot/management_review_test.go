@@ -117,7 +117,7 @@ func TestForgottenLedgerSourceCannotEnterNextModelContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	before, refs, epoch, err := r.modelContext(t.Context(), "")
+	before, refs, epoch, _, err := r.modelContext(t.Context(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestForgottenLedgerSourceCannotEnterNextModelContext(t *testing.T) {
 	if !errors.Is(r.validateModelContext(t.Context(), epoch, refs), retract.ErrStaleSnapshot) {
 		t.Fatal("old preparation remains valid")
 	}
-	after, _, _, err := r.modelContext(t.Context(), "")
+	after, _, _, _, err := r.modelContext(t.Context(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestCorrectionInvalidatesPreparedProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, refs, epoch, err := r.modelContext(t.Context(), "")
+	_, refs, epoch, _, err := r.modelContext(t.Context(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ func TestCorrectionInvalidatesPreparedProfile(t *testing.T) {
 	if !errors.Is(r.validateModelContext(t.Context(), epoch, refs), retract.ErrStaleSnapshot) {
 		t.Fatal("superseded profile would enter the next model round")
 	}
-	after, refs, epoch, err := r.modelContext(t.Context(), "")
+	after, refs, epoch, _, err := r.modelContext(t.Context(), "")
 	if err != nil {
 		t.Fatal(err)
 	}

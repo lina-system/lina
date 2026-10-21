@@ -52,9 +52,10 @@ type acceptedSteering struct {
 }
 
 type conversationRuntime struct {
-	dispatchMu *sync.RWMutex
-	removals   *retract.Store
-	channels   *channelRuntime
+	replaySocket string
+	dispatchMu   *sync.RWMutex
+	removals     *retract.Store
+	channels     *channelRuntime
 
 	materials                   *conversationMaterials
 	assets                      *assets.Store
@@ -166,6 +167,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	}
 	relay := clientsrv.NewSignInRelay(r.person, r.signin)
 	for kind, op := range clientsrv.AccountOperations(r.person, r.accounts, relay) {
+		r.identity.Operations[kind] = op
+	}
+	for kind, op := range clientsrv.ReplayOperations(r) {
 		r.identity.Operations[kind] = op
 	}
 	r.channels, err = startChannels(r, epoch, channelTransport)
@@ -571,6 +575,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 	}
 	defer activity.Release()
 	var items []provider.Item
+	var events []ledger.Event
 	var memoryEpoch uint64
 	var memoryRefs []turn.Reference
 	evidence := turn.EvidenceWriter{Ledger: r.journal(), ConversationID: r.conversation, ParentID: input.ID, Surface: ledger.Surface{Kind: "tui"}, Now: time.Now}
@@ -588,7 +593,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			if err != nil {
 				return turn.PreparedRequest{}, err
 			}
-			items, memoryRefs, memoryEpoch, err = r.modelContext(ctx, input.ID)
+			items, memoryRefs, memoryEpoch, events, err = r.modelContext(ctx, input.ID)
 			if err != nil {
 				return turn.PreparedRequest{}, err
 			}
@@ -597,7 +602,19 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			if err != nil {
 				return turn.PreparedRequest{}, err
 			}
-			return turn.PreparedRequest{Request: request, Assembly: turn.Assembly{AgentID: r.agent, PersonaRevision: persona.Commit, Items: memoryRefs}, Counter: func(request provider.Request) int {
+			assembly := turn.Assembly{AgentID: r.agent, PersonaRevision: persona.Commit, InstructionFormat: "agent-v1", AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID, Items: memoryRefs}
+			for _, event := range events {
+				projected, err := assemble.History([]ledger.Event{event}, r.conversation, r.agent)
+				if err != nil {
+					return turn.PreparedRequest{}, err
+				}
+				if len(projected) == 0 {
+					continue
+				}
+				digest := sha256.Sum256([]byte(event.Body.Text()))
+				assembly.History = append(assembly.History, turn.Reference{ID: event.ID, Revision: hex.EncodeToString(digest[:])})
+			}
+			return turn.PreparedRequest{Request: request, Assembly: assembly, Counter: func(request provider.Request) int {
 				n := len(request.Instructions)
 				for _, item := range request.Items {
 					n += len(item)
