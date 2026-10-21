@@ -43,12 +43,10 @@ type Recorded struct {
 	Card  *ledger.Event
 }
 
-// Record freezes the stream and commits its full source before the card event.
-// Success acknowledges both commits. A failed card write leaves the source
-// durable and can be retried on this Filter with the same store and metadata;
-// it never appends the source again. After a process restart, the source event
-// is still readable even if no card was committed. Record does not save a
-// preview as a material on the person's behalf.
+// Record freezes the stream and commits the full source and linked card in one
+// ledger transaction. A crash leaves both events or neither. Failed writes can
+// be retried with the same store and metadata; success never duplicates either
+// event. Record does not save a preview on the person's behalf.
 func (f *Filter) Record(ctx context.Context, journal *ledger.Store, r Recording) (Recorded, error) {
 	if journal == nil {
 		return Recorded{}, ErrConfig
@@ -70,43 +68,48 @@ func (f *Filter) Record(ctx context.Context, journal *ledger.Store, r Recording)
 		f.closed = true
 	}
 	if f.recorded.Reply.ID == "" {
-		event, err := journal.Admit(ctx, guard.EntryAgent, r.Source)
-		if err != nil {
-			return Recorded{}, err
-		}
-		f.recorded.Reply = event
-	}
-	if f.cut && f.recorded.Card == nil {
-		source := f.recorded.Reply
-		text := source.Body.Text() // preserve mandatory admission masking in the card
-		card := Card{Preview: Preview{Type: protocol.ResultTypeDocumentDraft, Status: protocol.ResultStatusPreview, Text: text,
-			Body: Draft{Blocks: []Paragraph{{Kind: "paragraph", Text: text}}}},
-			ResultID: r.ResultID, Revision: 1, Title: r.Title, Summary: r.Summary, RevisedBy: source.AgentID,
-			Provenance: protocol.ResultProvenance{AgentID: source.AgentID, ConversationID: source.ConversationID, TurnID: r.TurnID}}
-		body, err := json.Marshal(card)
-		if err != nil {
-			return Recorded{}, err
-		}
-		in := ledger.Input{ID: r.CardEventID, ConversationID: source.ConversationID, ParentID: source.ID, AgentID: source.AgentID,
-			Surface: source.Surface, OccurredAt: source.OccurredAt, RecordedAt: source.RecordedAt, TimeQuality: source.TimeQuality,
-			Body: string(body), Relations: []ledger.Relation{{TargetID: source.ID, Kind: "view_of", Ordinal: 0}}}
-		// JSON repeats the original text in its body and derived text. Keep the
-		// secret flags on every placeholder, without retaining any original offsets.
-		for offset := 0; offset < len(in.Body); {
-			at := strings.Index(in.Body[offset:], secret.Placeholder)
-			if at < 0 {
-				break
+		inputs := []ledger.Admission{{Entry: guard.EntryAgent, Input: r.Source}}
+		if f.cut {
+			source := r.Source
+			masked, err := secrets.Mask(source.Body, source.SecretSpans...)
+			if err != nil {
+				return Recorded{}, err
 			}
-			start := offset + at
-			offset = start + len(secret.Placeholder)
-			in.SecretSpans = append(in.SecretSpans, secrets.Span{Start: start, End: offset, Sensitivity: "secret"})
+			text := masked.Text()
+			card := Card{Preview: Preview{Type: protocol.ResultTypeDocumentDraft, Status: protocol.ResultStatusPreview, Text: text,
+				Body: Draft{Blocks: []Paragraph{{Kind: "paragraph", Text: text}}}},
+				ResultID: r.ResultID, Revision: 1, Title: r.Title, Summary: r.Summary, RevisedBy: source.AgentID,
+				Provenance: protocol.ResultProvenance{AgentID: source.AgentID, ConversationID: source.ConversationID, TurnID: r.TurnID}}
+			body, err := json.Marshal(card)
+			if err != nil {
+				return Recorded{}, err
+			}
+			in := ledger.Input{ID: r.CardEventID, ConversationID: source.ConversationID, ParentID: source.ID, AgentID: source.AgentID,
+				Surface: source.Surface, OccurredAt: source.OccurredAt, RecordedAt: source.RecordedAt, TimeQuality: source.TimeQuality,
+				Body: string(body), Relations: []ledger.Relation{{TargetID: source.ID, Kind: "view_of", Ordinal: 0}}}
+			// JSON repeats the original text in its body and derived text. Keep the
+			// secret flags on every placeholder, without retaining any original offsets.
+			for offset := 0; offset < len(in.Body); {
+				at := strings.Index(in.Body[offset:], secret.Placeholder)
+				if at < 0 {
+					break
+				}
+				start := offset + at
+				offset = start + len(secret.Placeholder)
+				in.SecretSpans = append(in.SecretSpans, secrets.Span{Start: start, End: offset, Sensitivity: "secret"})
+			}
+			inputs = append(inputs, ledger.Admission{Entry: guard.EntryAgent, Input: in})
 		}
-		event, err := journal.Admit(ctx, guard.EntryAgent, in)
+		events, err := journal.AdmitBatch(ctx, inputs)
 		if err != nil {
 			return Recorded{}, err
 		}
-		f.recorded.Card = &event
+		f.recorded.Reply = events[0]
+		if f.cut {
+			f.recorded.Card = &events[1]
+		}
 	}
+
 	result := Recorded{Reply: cloneEvent(f.recorded.Reply)}
 	if f.recorded.Card != nil {
 		card := cloneEvent(*f.recorded.Card)

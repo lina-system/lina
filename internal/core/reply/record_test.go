@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -117,21 +118,29 @@ func TestRecordFullReplyAndPreviewSurviveRestart(t *testing.T) {
 type failWrite struct {
 	*canon.Store
 	writes int
-	failAt int
+	after  bool
 }
 
 func (s *failWrite) Write(ctx context.Context, fn func(*canon.Tx) error) error {
 	s.writes++
-	if s.writes == s.failAt {
+	if s.writes != 1 {
+		return s.Store.Write(ctx, fn)
+	}
+	if !s.after {
 		return errors.New("injected commit failure")
 	}
-	return s.Store.Write(ctx, fn)
+	return s.Store.Write(ctx, func(tx *canon.Tx) error {
+		if err := fn(tx); err != nil {
+			return err
+		}
+		return errors.New("injected rollback")
+	})
 }
-func TestRecordFailureRetainsSourceAndRetriesPreview(t *testing.T) {
-	for _, at := range []int{1, 2} {
-		t.Run(string(rune('0'+at)), func(t *testing.T) {
+func TestRecordFailureRollsBackPairAndRetries(t *testing.T) {
+	for _, after := range []bool{false, true} {
+		t.Run(fmt.Sprint(after), func(t *testing.T) {
 			db, _ := database(t)
-			dbFail := &failWrite{Store: db, failAt: at}
+			dbFail := &failWrite{Store: db, after: after}
 			store := ledger.New(dbFail, nil)
 			f := filter(t, config())
 			full := "Done! " + strings.Repeat("가", 301)
@@ -139,17 +148,17 @@ func TestRecordFailureRetainsSourceAndRetriesPreview(t *testing.T) {
 			if _, err := f.Record(t.Context(), store, recording()); err == nil {
 				t.Fatal("failed commit acknowledged")
 			}
-			_, err := store.Get(t.Context(), "card-event")
-			if !errors.Is(err, ledger.ErrNotFound) {
-				t.Fatalf("partial card: %v", err)
-			}
-			source, err := store.Get(t.Context(), "reply")
-			if at == 2 && (err != nil || source.Body.Text() != full) {
-				t.Fatalf("lost full source: %v", err)
+			for _, id := range []string{"reply", "card-event"} {
+				if _, err := store.Get(t.Context(), id); !errors.Is(err, ledger.ErrNotFound) {
+					t.Fatalf("partial %s: %v", id, err)
+				}
 			}
 			saved, err := f.Record(t.Context(), store, recording())
 			if err != nil || saved.Card == nil {
 				t.Fatalf("retry=%+v %v", saved, err)
+			}
+			if dbFail.writes != 2 {
+				t.Fatalf("reply/card need one atomic write, got %d attempts", dbFail.writes)
 			}
 			changed := recording()
 			changed.ResultID = "different"
