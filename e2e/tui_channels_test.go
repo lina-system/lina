@@ -12,6 +12,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"github.com/thisisjun786/lina/internal/core/exchange"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
+	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -232,7 +233,19 @@ func TestM1TUIChannelPairing(t *testing.T) {
 	if len((*bound.Connections)[0].Bindings) != 1 || (*bound.Connections)[0].Bindings[0].Chat != "42" {
 		t.Fatal("binding missing")
 	}
-	waitScreen(t, h, terminal, "42")
+	// Match the chat as a complete binding field: a random pairing code can
+	// contain the same digits before the binding response has been rendered.
+	if _, err := terminal.screen.Wait(h.ctx, func(snapshot tuiterm.Snapshot) bool {
+		for _, line := range strings.Split(screenText(snapshot), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) > 1 && fields[0] == "42" {
+				return true
+			}
+		}
+		return false
+	}); err != nil {
+		t.Fatal("binding row was not rendered")
+	}
 	h.keys(terminal, "x")
 	disconnected := next()
 	if (*disconnected.Connections)[0].Status != "disconnected" || len((*disconnected.Connections)[0].Bindings) != 0 {
