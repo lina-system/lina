@@ -23,7 +23,7 @@ import (
 func setup(t *testing.T, stream loop.StreamFunc) (*runs.Service, *canon.Store, *assets.Store) {
 	return setupWith(t, stream, nil)
 }
-func setupWith(t *testing.T, stream loop.StreamFunc, configure func(*runs.Config)) (*runs.Service, *canon.Store, *assets.Store) {
+func setupWith(t *testing.T, stream loop.StreamFunc, configure func(*runs.Config), schemas ...string) (*runs.Service, *canon.Store, *assets.Store) {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "state")
 	if err := os.Mkdir(root, 0700); err != nil {
@@ -39,6 +39,9 @@ func setupWith(t *testing.T, stream loop.StreamFunc, configure func(*runs.Config
 	}
 	migrations := canon.Migrations()
 	migrations = append(migrations, canon.Migration{Version: len(migrations) + 1, SQL: runs.Schema})
+	for _, schema := range schemas {
+		migrations = append(migrations, canon.Migration{Version: len(migrations) + 1, SQL: schema})
+	}
 	db, err := canon.Open(t.Context(), canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: 1, Controls: controls, Migrations: migrations})
 	if err != nil {
 		t.Fatal(err)

@@ -59,6 +59,13 @@ func (s *Service) run(ctx context.Context, id string) error {
 	if len(cfg.Request.Items) == 0 {
 		b, _ := json.Marshal(r.Brief)
 		cfg.Request.Items = []provider.Item{item(string(b))}
+		if r.Promotion != nil {
+			gathered, _ := json.Marshal(r.Promotion)
+			cfg.Request.Items = append(cfg.Request.Items, item(string(gathered)))
+		}
+	}
+	if r.Promotion != nil {
+		cfg.Request.Instructions += " The gathered turn state is evidence for the whole remaining request. Preserve its done condition and checks. Never replay a recorded effect, especially an unknown outcome. Further effects remain behind a separate question; continue only the remaining reads and analysis."
 	}
 	runCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)

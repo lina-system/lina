@@ -17,6 +17,39 @@ import (
 type EffectQuestion struct {
 	RunID, Turn, State string
 	Effects            []budget.Effect
+	Noticed            bool
+}
+
+// EffectQuestions supplies pending question cards at the conversation boundary
+// even while the read-only run continues. Delivery is independent of landing.
+func (s *Service) EffectQuestions(ctx context.Context, conversation string) ([]EffectQuestion, error) {
+	rows, err := s.records(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var questions []EffectQuestion
+	for _, r := range rows {
+		if r.Origin.Conversation == conversation && r.EffectsQuestion != nil && !r.EffectsQuestion.Noticed {
+			questions = append(questions, *r.EffectsQuestion)
+		}
+	}
+	return questions, nil
+}
+
+// AcknowledgeEffectQuestion acknowledges delivery, never approval. It neither
+// changes scope nor clears the question or its unknown receipts.
+func (s *Service) AcknowledgeEffectQuestion(ctx context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, err := s.read(ctx, id)
+	if err != nil {
+		return err
+	}
+	if r.EffectsQuestion == nil {
+		return ErrState
+	}
+	r.EffectsQuestion.Noticed = true
+	return s.save(ctx, r, false)
 }
 
 // StartFromTurn durably admits the whole remaining request with gathered state.

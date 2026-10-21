@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/assets"
+	"github.com/thisisjun786/lina/internal/core/budget"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/materials"
@@ -82,6 +83,8 @@ type Artifact struct {
 	Citations []materials.Anchor `json:"citations,omitempty"`
 }
 type Record struct {
+	Promotion                   *budget.Handoff
+	EffectsQuestion             *EffectQuestion
 	CheckedInAt                 int64
 	Scratch                     string // relative to Config.WorkDir; only this directory is writable by run tools
 	ID                          string

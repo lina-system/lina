@@ -271,6 +271,12 @@ The #61 increment adds `lane.Manager.SubmitLoop`, `Steer` and `Stop`. Each submi
 
 Report requests declare no tools. A provider that attempts a tool call during a report gets no execution and no second model request for its results; Core records the rejected calls and returns `report_tools_forbidden`. The fenced `turn_outcome` row is created with the claim and finalized with the turn state. It keeps waiting time, placement counters and the returned run handle. The reactions job writes absolute, nonnegative quality counters idempotently through `SetQuality`; it cannot tune the meter. Existing installations add `turn.OutcomeSchema` as a numbered migration after their turn schema.
 
+`runs.Service.StartFromTurn` admits one durable run per originating turn, preserving the original inbox payload, active-turn output items, steering, ordered results and effect keys. It excludes unrelated prepared history, persona and memory context. A repeated admission with the same state returns the same handle; changed state is refused. The supplied brief keeps the whole request's goal, done condition and checks. Its tool scope is narrowed to reads, and gathered state enters as evidence under background instructions. The composition root consumes the committed handle before calling `Release`, as for ordinary run starts. The conversation start tool is named `start_run`, so it remains available at Soft.
+
+When promotion carries effects, the run record also holds an `awaiting_person` question for further effects. Reads and analysis continue; no effect is declared in the run. The question preserves known and unknown receipts, grants no authority for unspecified future actions, and remains pending when the analysis lands. The run cannot claim the whole request complete while that question remains. Concrete later effects belong to the work engine's normal authorization path; an unknown earlier effect is never replayed.
+
+These APIs have no conversation capability in the Core client protocol or TUI yet. Scripted providers, real canon and the real background service exercise promotion and landing; client admission, question-card rendering, and composition-root release attach in their owning flows.
+
 **C-50 Background runs (new).** The sub-agent layer of [work-and-delegation.md](work-and-delegation.md#background-runs), built on the loop core.
 
 - `runs.Start` returns in milliseconds with `working` or `waiting` (or `refused: budget`). A run is a goroutine in Core.
