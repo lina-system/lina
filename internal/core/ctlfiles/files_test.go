@@ -35,6 +35,9 @@ func TestLockKeepsOneInode(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer second.Close()
+	if !first.Locked() || second.Locked() {
+		t.Fatal("lock ownership report is incorrect")
+	}
 	if err := second.Acquire(); !errors.Is(err, ErrLocked) {
 		t.Fatalf("second lock = %v", err)
 	}
@@ -46,6 +49,9 @@ func TestLockKeepsOneInode(t *testing.T) {
 	}
 	if err := first.Close(); err != nil {
 		t.Fatal(err)
+	}
+	if first.Locked() {
+		t.Fatal("closed store reports a held lock")
 	}
 	if err := second.Acquire(); err != nil {
 		t.Fatal(err)

@@ -1,0 +1,124 @@
+{
+  "schema": 1,
+  "issue": 39,
+  "date": "2026-10-21",
+  "decision": {
+    "binding": "github.com/ncruces/go-sqlite3",
+    "version": "v0.30.5",
+    "moduleSum": "h1:6usmTQ6khriL8oWilkAZSJM/AIpAlVL2zFrlcpDldCE=",
+    "sqliteVersion": "3.51.2",
+    "engineSHA256": "9189d7287b2b90540d71c0c25ef202d1610a240230ef1e437369e3542c6ef2f2",
+    "execution": "wazero",
+    "cgo": false,
+    "reason": "Retains a configurable Wasm engine for optional sqlite-vec while providing FTS5, online backup and CGO_ENABLED=0 builds. Newer wasm2go binding releases use a different extension integration."
+  },
+  "alternatives": [
+    {
+      "binding": "github.com/mattn/go-sqlite3",
+      "assessment": "Native extension loading and online backup, but requires cgo and a C toolchain; not selected for the CGO_ENABLED=0 packaging contract."
+    },
+    {
+      "binding": "modernc.org/sqlite",
+      "assessment": "Cgo-free SQLite and FTS5/backup, but no supported sqlite-vec integration was established in this evaluation."
+    }
+  ],
+  "checks": {
+    "wal_full_fts5": {
+      "result": "pass",
+      "tests": [
+        "TestSQLiteWALFullFTS5AndReopen"
+      ],
+      "observed": "journal_mode=wal, synchronous=2 on replacement connections; FTS5 query after reopen; mode=ro plus query_only readers reject writes."
+    },
+    "online_backup": {
+      "result": "pass",
+      "tests": [
+        "TestSQLiteOnlineBackupReadsLiveWAL",
+        "TestSQLiteFailures"
+      ],
+      "observed": "Backup init/step/finish on a read-only live-WAL source during an uncommitted writer transaction; restored FTS5 contains only committed data; integrity_check=ok; existing destinations and source cannot be overwritten; canceled backup leaves no destination."
+    },
+    "manifest": {
+      "result": "pass",
+      "command": "node --test scripts/build.test.mjs",
+      "observed": "Clean builds identify the actual binding version and module sum, hash the embedded Wasm bytes, match both binary digests and version output, and pass the Go manifest reader. Dirty builds emit no manifest."
+    },
+    "optional_module": {
+      "result": "pass",
+      "test": "TestSQLiteModuleDigestAndInitialization",
+      "observed": "Incorrect/malformed digests are rejected; verified bytes survive replacement of the source file; an initialized engine cannot be changed."
+    },
+    "sqlite_vec": {
+      "result": "pass",
+      "shipped": false,
+      "version": "v0.1.6",
+      "sqliteVersion": "3.51.2",
+      "moduleSHA256": "2eaa33d000922ae5369d6fbf55be07ae03f68ebb7bf82ec49e2657282e37718a",
+      "command": "LINA_TEST_VECTOR_WASM=<custom-engine.wasm> LINA_TEST_VECTOR_SHA256=2eaa33d000922ae5369d6fbf55be07ae03f68ebb7bf82ec49e2657282e37718a CGO_ENABLED=0 go test -count=1 -v ./internal/core/canon/... -run TestSQLiteVectorAcceptance",
+      "observed": "UseSQLiteWASM verifies and selects the engine. vec_version()=v0.1.6; vec0 nearest-neighbor query returns row 2; vec_distance_L2([1,2],[4,6])=5. WAL/FULL, FTS5 and live online backup also pass with this engine.",
+      "defaultSuite": "Skipped unless the optional acceptance engine and its digest are supplied. Default builds record sqliteVec=null."
+    },
+    "static_build": {
+      "result": "pass",
+      "toolchain": "go1.27.3",
+      "command": "CGO_ENABLED=0 go build -mod=readonly -trimpath -o <out>/sqliteinfo ./internal/core/manifest/sqliteinfo",
+      "linuxAMD64": {
+        "format": "ELF x86-64, statically linked",
+        "bytes": 10825474,
+        "ran": true,
+        "elapsedSeconds": 0.2,
+        "maxRSSKiB": 135140
+      },
+      "darwinARM64": {
+        "command": "CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -mod=readonly -trimpath -o <out>/sqliteinfo-darwin-arm64 ./internal/core/manifest/sqliteinfo",
+        "format": "Mach-O arm64",
+        "bytes": 10431666,
+        "crossBuildOnly": true
+      },
+      "measurementScope": "Storage metadata executable linked with and initializing the actual binding; one warm-cache run, not a product residency measurement."
+    }
+  },
+  "vectorProbeConstruction": {
+    "bindingSource": "github.com/ncruces/go-sqlite3@v0.30.5 (Go checksum verified)",
+    "vectorSource": {
+      "module": "github.com/asg017/sqlite-vec-go-bindings",
+      "version": "v0.1.6",
+      "sum": "h1:Nx0jAzyS38XpkKznJ9xQjFXz2X9tI7KqjwVxV8RNoww=",
+      "files": [
+        "cgo/sqlite-vec.c",
+        "cgo/sqlite-vec.h"
+      ]
+    },
+    "tools": [
+      {
+        "name": "wasi-sdk",
+        "version": "29.0-x86_64-linux",
+        "sha256": "87d1d1a2879d139cdc624b968efad3d4a97b8078cdff95e63ac88ecafd1a0171"
+      },
+      {
+        "name": "binaryen",
+        "version": "125-x86_64-linux",
+        "sha256": "7c3bc16599c8274a04d34a504fe4be2047884f900e0e2da2f6fb9cd667183be4"
+      }
+    ],
+    "steps": [
+      "Copy the checksum-verified binding module to a disposable directory. Fetch SQLite 3.51.2 with sqlite3/download.sh (SHA3-256 e0f7ae1c28c4fa551a2ffe8bdfafafa90613dabcef9553050892d02240b44f1d) and apply the binding's busy_timeout.patch and vfs_find.patch. The module archive omits vfs/tests/mptest/wasm and vfs/tests/speedtest1/wasm; create those directories before running the upstream download script.",
+      "Copy the two pinned sqlite-vec source files into sqlite3/. Add #include \"sqlite-vec.c\" before the bindings in sqlite3/main.c and register sqlite3_vec_init with sqlite3_auto_extension after sqlite3_initialize in its constructor.",
+      "Install the checksum-verified development tools into tools/wasi-sdk and tools/binaryen of the disposable copy. Run bash embed/build.sh. Hash embed/sqlite3.wasm and run the optional acceptance command above."
+    ],
+    "incompatiblePrebuilt": "The sqlite-vec-go-bindings v0.1.6 prebuilt Wasm engine fails initialization with an atomic-feature error under this binding. It is not used; the probe links sqlite-vec into the selected binding's own engine."
+  },
+  "remaining": [
+    "No vector engine is distributed or activated by this change. Shipping one requires manifest pinning, notices and platform acceptance.",
+    "Full V2 24-hour Linux/macOS residency and performance budgets are not established. macOS execution was not tested.",
+    "Writer fencing, forward migrations, halt behavior and Core startup integration are outside #39."
+  ],
+  "sourceSHA256": {
+    "internal/core/canon/sqlite.go": "ed2f5f7b45117ba75dc49e85ca882f8ad8f5e90c35dd57dc7d1d2be87392d89c",
+    "internal/core/canon/module.go": "ac1a80857dc6d886be6658a35f27d7672431baabd6b736d5489ca1e1c7733851",
+    "internal/core/canon/sqlite_test.go": "9d5d45eb57ea5d351dbf09f90842ec32b600e0578d6cfb72ff49d6104595c251",
+    "internal/core/canon/module_test.go": "090fe0785bfd8b243b2cd6b626f4e7d02b901d9e9d6a127be968f7d0f331fe17",
+    "internal/core/manifest/sqlite.go": "bcc207b625453e2c5d9f3318ce78de1b033c8621b060cac72db4943160f89636",
+    "scripts/build.mjs": "a4628fb24038323f906572b9931321ef7ac7d55de70222a0ff904b793a8083fc"
+  }
+}

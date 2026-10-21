@@ -64,7 +64,9 @@ export function build({ cwd = root, out, execute: run = execute }) {
       const bytes = readFileSync(join(out, name));
       return { name, size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
     });
-    const manifest = { version, commit, date, goToolchain, kitVersion, binaries };
+    const sqlite = JSON.parse(invoke(['run', '-mod=readonly', './internal/core/manifest/sqliteinfo']));
+    if (!clean() || gitOut(cwd, ['rev-parse', 'HEAD']) !== commit) return null;
+    const manifest = { version, commit, date, goToolchain, kitVersion, binaries, sqlite };
     const staging = mkdtempSync(join(out, '.manifest-'));
     try {
       const temporary = join(staging, 'manifest.json');
