@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "issue": 95,
+  "check": "V2",
+  "reported_on": "2026-10-21",
+  "source": "owner-reported",
+  "build": "development",
+  "source_commit": null,
+  "platform": null,
+  "measurements": {
+    "executable_mib": 7.3,
+    "socket_ready_ms": 27,
+    "observed_rss_mib": 6.9,
+    "idle_observation_seconds": 30,
+    "cpu_ticks_delta": 0
+  },
+  "scope": "Pre-run reference from a short development-build observation. The owner did not supply platform, source commit, instrumentation or exact byte counts. Socket readiness does not establish protocol readiness; observed RSS does not establish lifetime peak RSS; executable size does not include all required packaged assets. No 24-hour residency result is claimed."
+}
