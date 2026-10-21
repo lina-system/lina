@@ -2,11 +2,15 @@
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
+import { createServer } from 'node:net';
 import test from 'node:test';
 import { createHash } from 'node:crypto';
 import { git, run } from './git.mjs';
 import { release } from './release.mjs';
 import { developmentRepository, installBinaryBuildFixture, sandbox, scriptsDir } from './test-fixture.mjs';
+
+// Binary release assembly requires Linux user namespaces and bubblewrap.
+const releaseTest = process.platform === 'linux' ? test : test.skip;
 
 // The release functions read HOME, PATH and the gh fixture variables from the environment.
 function setup(t) {
@@ -67,7 +71,7 @@ const untouched = (s) => {
   assert.equal(s.ghCalls().some((line) => line.startsWith('release create')), false);
 };
 
-test('the default dry run builds a dated alpha release and publishes nothing', (t) => {
+releaseTest('the default dry run builds a dated alpha release and publishes nothing', (t) => {
   const s = setup(t);
   const summary = s.call();
   assert.equal(summary.mode, 'dry-run');
@@ -109,7 +113,7 @@ test('the default dry run builds a dated alpha release and publishes nothing', (
   assert.equal(s.sb.g(s.work, 'worktree', 'list').split('\n').length, 1);
 });
 
-test('recorded foundation evidence for the exact tree is used without running foundation again', (t) => {
+releaseTest('recorded foundation evidence for the exact tree is used without running foundation again', (t) => {
   const s = setup(t);
   const verified = run(process.execPath, [join(s.work, 'scripts/foundation.mjs'), '--full'], { cwd: s.work, env: s.sb.env });
   assert.equal(verified.status, 0, verified.stderr);
@@ -123,7 +127,7 @@ test('recorded foundation evidence for the exact tree is used without running fo
   assert.equal(s.call({ commit: other, outDir: join(s.sb.dir, 'out-other') }).evidence, 'rerun');
 });
 
-test('publishing fast-forwards main, pushes the tag and creates the private release with its artifacts', (t) => {
+releaseTest('publishing fast-forwards main, pushes the tag and creates the private release with its artifacts', (t) => {
   const s = setup(t);
   const summary = s.call({ publish: true });
   assert.equal(summary.mode, 'publish');
@@ -142,7 +146,7 @@ test('publishing fast-forwards main, pushes the tag and creates the private rele
   assert.throws(() => s.call({ publish: true, outDir: join(s.sb.dir, 'again') }), /already exists/);
 });
 
-test('binary builds use the exact candidate and receive no account credentials', t => {
+releaseTest('binary builds use the exact candidate and receive no account credentials', t => {
   const s = setup(t);
   s.set('GH_TOKEN', 'synthetic-do-not-forward');
   s.set('GITHUB_TOKEN', 'synthetic-do-not-forward');
@@ -152,7 +156,59 @@ test('binary builds use the exact candidate and receive no account credentials',
   assert.equal(s.sb.g(s.work, 'worktree', 'list').split('\n').length, 1);
 });
 
-test('a binary build failure or digest mismatch stops publication and removes the worktree', t => {
+releaseTest('candidate build code cannot reach publisher files, processes, network or shared Git hooks', async t => {
+  const s = setup(t);
+  const secret = join(s.sb.dir, 'publisher-private');
+  writeFileSync(secret, 'synthetic-private-value');
+  const hook = join(s.work, '.git/hooks/pre-push');
+  const marker = join(s.sb.dir, 'escaped-build');
+  const source = readFileSync(join(s.work, 'scripts/build.mjs'), 'utf8');
+  const server = createServer();
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const probe = `
+import { existsSync, readFileSync, writeFileSync as tryWrite } from 'node:fs';
+import { connect } from 'node:net';
+if (existsSync(${JSON.stringify(secret)})) throw new Error('publisher files visible');
+if (existsSync('/proc/${process.pid}/environ')) throw new Error('publisher process visible');
+try { tryWrite(${JSON.stringify(hook)}, 'compromised'); } catch {}
+try { tryWrite(${JSON.stringify(marker)}, 'escaped'); } catch {}
+await new Promise((resolve, reject) => {
+  const socket = connect({ host: '127.0.0.1', port: ${server.address().port} });
+  socket.setTimeout(5000, () => { socket.destroy(); reject(new Error('network probe timed out')); });
+  socket.on('connect', () => { socket.destroy(); reject(new Error('publisher network reachable')); });
+  socket.on('error', resolve);
+});
+`;
+  const commit = s.sb.commit(s.work, 'test: hostile candidate build', { 'scripts/build.mjs': probe + source });
+  s.sb.g(s.work, 'push', '-q', 'origin', 'dev');
+  // Foundation's separately recorded evidence avoids running the intentionally
+  // hostile candidate as part of the foundation test fixture.
+  s.sb.g(s.work, 'notes', '--ref=refs/notes/foundation', 'add', '-m', JSON.stringify({
+    result: 'success', head: commit, tree: s.sb.g(s.work, 'rev-parse', `${commit}^{tree}`),
+  }), commit);
+  s.call({ commit });
+  assert.equal(existsSync(hook), false);
+  assert.equal(existsSync(marker), false);
+  assert.equal(readFileSync(secret, 'utf8'), 'synthetic-private-value');
+});
+
+releaseTest('candidate artifacts cannot use symlinks to read publisher files', t => {
+  const s = setup(t);
+  const privateFile = join(s.sb.dir, 'publisher-private');
+  writeFileSync(privateFile, 'synthetic-private-value');
+  const source = readFileSync(join(s.work, 'scripts/build.mjs'), 'utf8');
+  const commit = s.sb.commit(s.work, 'test: linked candidate output', { 'scripts/build.mjs': source + `
+import { rmSync, symlinkSync } from 'node:fs';
+rmSync(join(out, 'lina'));
+symlinkSync(${JSON.stringify(privateFile)}, join(out, 'lina'));
+` });
+  s.sb.g(s.work, 'push', '-q', 'origin', 'dev');
+  assert.throws(() => s.call({ commit }), /regular files, not links/);
+  untouched(s);
+});
+
+releaseTest('a binary build failure or digest mismatch stops publication and removes the worktree', t => {
   const s = setup(t);
   const source = readFileSync(join(s.work, 'scripts/build.mjs'), 'utf8');
   for (const [name, text, failure] of [
@@ -167,7 +223,7 @@ test('a binary build failure or digest mismatch stops publication and removes th
   }
 });
 
-test('every failed condition stops before anything is pushed or published', (t) => {
+releaseTest('every failed condition stops before anything is pushed or published', (t) => {
   const s = setup(t);
   const emptyNotes = join(s.sb.dir, 'empty.md');
   writeFileSync(emptyNotes, ' \n');
@@ -224,7 +280,7 @@ test('every failed condition stops before anything is pushed or published', (t) 
   untouched(s);
 });
 
-test('a failed main push publishes nothing and the same release can run again', (t) => {
+releaseTest('a failed main push publishes nothing and the same release can run again', (t) => {
   const s = setup(t);
   const hook = join(s.remote, 'hooks/update');
   writeFileSync(hook, '#!/bin/sh\nif [ "$1" = refs/heads/main ] && [ -e "$(dirname "$0")/../reject-main" ]; then echo "main is locked" >&2; exit 1; fi\n');
@@ -238,7 +294,7 @@ test('a failed main push publishes nothing and the same release can run again', 
   assert.equal(s.remoteRef('refs/tags/v0.0.1-alpha.20261020.1'), s.commit);
 });
 
-test('a failed GitHub Release after the tag is reported with the command that completes it', (t) => {
+releaseTest('a failed GitHub Release after the tag is reported with the command that completes it', (t) => {
   const s = setup(t);
   s.set('GH_FAIL', '1');
   assert.throws(() => s.call({ publish: true }), (error) => /creating the GitHub Release failed/.test(error.message) && error.message.includes('gh release create v0.0.1-alpha.20261020.1 '));
@@ -246,7 +302,7 @@ test('a failed GitHub Release after the tag is reported with the command that co
   assert.equal(s.remoteRef('refs/tags/v0.0.1-alpha.20261020.1'), s.commit);
 });
 
-test('a named output directory must be empty so the release never deletes what it did not create', (t) => {
+releaseTest('a named output directory must be empty so the release never deletes what it did not create', (t) => {
   const s = setup(t);
   const out = join(s.sb.dir, 'keep');
   mkdirSync(out);
@@ -255,7 +311,7 @@ test('a named output directory must be empty so the release never deletes what i
   assert.equal(existsSync(join(out, 'precious.txt')), true);
 });
 
-test('the command line is a dry run by default and ignores GIT_* variables of its caller', (t) => {
+releaseTest('the command line is a dry run by default and ignores GIT_* variables of its caller', (t) => {
   const s = setup(t);
   const decoy = join(s.sb.dir, 'decoy');
   s.sb.g(s.sb.dir, 'init', '-q', decoy);

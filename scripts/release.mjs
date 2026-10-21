@@ -18,7 +18,7 @@
 // main push leaves nothing published, so the same command can run again. main moves only
 // forward and nothing is force-pushed.
 import { createHash } from 'node:crypto';
-import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -121,7 +121,7 @@ function requirePrivateRepository(root) {
 }
 
 // Builds the artifacts from the exact commit without account credentials.
-function build(root, { commit, tag, evidence, evidenceSource, out }) {
+export function buildReleaseArtifacts(root, { commit, tag, evidence, evidenceSource, out }) {
   const version = tag.slice(1);
   mkdirSync(out, { recursive: true });
   if (readdirSync(out).length) fail(`The output directory is not empty: ${out}`);
@@ -134,8 +134,12 @@ function build(root, { commit, tag, evidence, evidenceSource, out }) {
   const artifacts = [describe(archive)];
   const parent = mkdtempSync(join(tmpdir(), 'lina-release-build-'));
   const candidate = join(parent, 'candidate');
-  gitOut(root, ['worktree', 'add', '--quiet', '--detach', candidate, commit]);
+  // Clone objects rather than linking a worktree to the publisher's Git data.
+  const isolatedGit = { env: { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' } };
   try {
+    gitOut(root, ['-c', 'core.hooksPath=/dev/null', 'clone', '--quiet', '--no-local', '--no-hardlinks', '--no-checkout', root, candidate], isolatedGit);
+    gitOut(candidate, ['-c', 'core.hooksPath=/dev/null', 'checkout', '--quiet', '--detach', commit], isolatedGit);
+    gitOut(candidate, ['config', '--remove-section', 'remote.origin'], isolatedGit);
     // Use an allowlist here: run() merges the caller's environment and cannot
     // remove credentials merely by omitting them from its env argument.
     const home = join(parent, 'home');
@@ -144,28 +148,62 @@ function build(root, { commit, tag, evidence, evidenceSource, out }) {
       PATH: process.env.PATH, HOME: home, XDG_CONFIG_HOME: home,
       GOENV: 'off', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0',
     };
-    // Reuse only public Go caches, never user configuration or credentials.
-    const caches = spawnSync('go', ['env', 'GOCACHE', 'GOMODCACHE'], { encoding: 'utf8',
+    // Mount public modules read-only; compilation caches stay inside the sandbox.
+    const caches = spawnSync('go', ['env', 'GOMODCACHE', 'GOROOT'], { encoding: 'utf8',
       env: { ...env, HOME: process.env.HOME, GOCACHE: process.env.GOCACHE, GOMODCACHE: process.env.GOMODCACHE } });
     if (caches.status !== 0) fail(`Cannot locate Go caches: ${caches.stderr}`);
-    [env.GOCACHE, env.GOMODCACHE] = caches.stdout.trim().split('\n');
+    const [moduleCache, goRoot] = caches.stdout.trim().split('\n');
+    if (!moduleCache || !goRoot) fail('Go did not identify its toolchain and module cache');
+    if (process.platform !== 'linux') fail('Release binary builds require a Linux host with bubblewrap');
+    const modules = existsSync(moduleCache) ? realpathSync(moduleCache) : join(parent, 'empty-modules');
+    if (!existsSync(modules)) mkdirSync(modules);
     for (const target of ['linux/amd64', 'darwin/arm64']) {
       const output = join(parent, target.replace('/', '-'));
-      const built = spawnSync(process.execPath, [join(candidate, 'scripts/build.mjs'), '--out', output,
-        '--target', target, '--version', version], { cwd: candidate, env, encoding: 'utf8', timeout: 300_000 });
+      mkdirSync(output);
+      const mounts = ['/usr', '/bin', '/lib', '/lib64'].filter(existsSync).flatMap(path => ['--ro-bind', path, path]);
+      const sandboxArgs = [
+        '--unshare-all', '--die-with-parent', '--new-session', '--cap-drop', 'ALL', '--clearenv',
+        ...mounts, '--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp',
+        '--dir', '/tools', '--ro-bind', realpathSync(process.execPath), '/tools/node',
+        '--ro-bind', realpathSync(goRoot), '/toolchain', '--ro-bind', modules, '/modules',
+        '--ro-bind', candidate, '/source', '--bind', output, '/output', '--chdir', '/source',
+        '--setenv', 'PATH', '/toolchain/bin:/tools:/usr/bin:/bin',
+        '--setenv', 'HOME', '/tmp', '--setenv', 'XDG_CONFIG_HOME', '/tmp',
+        '--setenv', 'GOROOT', '/toolchain', '--setenv', 'GOMODCACHE', '/modules',
+        '--setenv', 'GOCACHE', '/tmp/go-build', '--setenv', 'GOTOOLCHAIN', 'local',
+        '--setenv', 'GOENV', 'off', '--setenv', 'GOPROXY', 'off', '--setenv', 'GOSUMDB', 'off',
+        '--setenv', 'GIT_CONFIG_NOSYSTEM', '1', '--setenv', 'GIT_CONFIG_GLOBAL', '/dev/null',
+        '/tools/node', '/source/scripts/build.mjs', '--out', '/output', '--target', target, '--version', version,
+      ];
+      const built = spawnSync('bwrap', sandboxArgs, { env, encoding: 'utf8', timeout: 300_000 });
       if (built.status !== 0) fail(`Binary build failed for ${target}: ${built.stderr || built.error?.message}`);
+      // Never follow candidate-controlled links while copying artifacts out of
+      // the sandbox. Background descendants die with its PID namespace.
+      const regular = (path, limit) => {
+        const info = lstatSync(path);
+        if (!info.isFile() || info.nlink !== 1 || info.size <= 0 || info.size > limit) {
+          fail('Release inputs must be bounded regular files, not links');
+        }
+      };
+      regular(join(output, 'manifest.json'), 1 << 20);
       const metadata = JSON.parse(readFileSync(join(output, 'manifest.json'), 'utf8'));
       if (metadata.commit !== commit || metadata.version !== version || metadata.target !== target) {
         fail(`Binary manifest does not identify the release for ${target}`);
       }
       for (const name of ['lina', 'lina-node']) {
+        regular(join(output, name), 1 << 30);
         const binary = metadata.binaries?.find(binary => binary.name === name);
         if (!binary || binary.size !== statSync(join(output, name)).size || binary.sha256 !== sha256(join(output, name))) {
           fail(`Binary manifest digest mismatch for ${target}/${name}`);
         }
       }
-      for (const name of ['LICENSE', 'THIRD-PARTY-NOTICES.md']) copyFileSync(join(candidate, name), join(output, name));
-      copyFileSync(join(candidate, 'packaging/sqlite-vec/NOTICE.md'), join(output, 'sqlite-vec-NOTICE.md'));
+      for (const [source, name] of [['LICENSE', 'LICENSE'], ['THIRD-PARTY-NOTICES.md', 'THIRD-PARTY-NOTICES.md'],
+        ['packaging/sqlite-vec/NOTICE.md', 'sqlite-vec-NOTICE.md']]) {
+        regular(join(candidate, source), 1 << 20);
+        // Discard all unexpected output, including any attempted license link.
+        rmSync(join(output, name), { recursive: true, force: true });
+        copyFileSync(join(candidate, source), join(output, name));
+      }
       const path = join(out, `lina-${version}-${target.replace('/', '-')}.tar.gz`);
       const packed = spawnSync('tar', ['-czf', path, '-C', output, 'lina', 'lina-node', 'manifest.json',
         'LICENSE', 'THIRD-PARTY-NOTICES.md', 'sqlite-vec-NOTICE.md'], { env, encoding: 'utf8' });
@@ -174,7 +212,6 @@ function build(root, { commit, tag, evidence, evidenceSource, out }) {
       artifacts.push({ ...describe(path), target });
     }
   } finally {
-    git(root, ['worktree', 'remove', '--force', candidate]);
     rmSync(parent, { recursive: true, force: true });
   }
   writeFileSync(manifest, `${JSON.stringify({
@@ -213,7 +250,7 @@ export function release({
   // caller names must be empty, so a release never deletes anything it did not create.
   const out = outDir ?? join(commonDir(root), 'lina-release', tag);
   if (!outDir) rmSync(out, { recursive: true, force: true });
-  const files = build(root, { commit, tag, evidence, evidenceSource, out });
+  const files = buildReleaseArtifacts(root, { commit, tag, evidence, evidenceSource, out });
   const summary = {
     mode: publish ? 'publish' : 'dry-run', commit, tag, evidence: evidenceSource, artifacts: files,
     steps: ['push main (fast-forward)', `push ${tag}`, 'create the private GitHub Release'],

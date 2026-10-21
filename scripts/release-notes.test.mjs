@@ -159,7 +159,7 @@ test('the CLI uses its working repository despite inherited GIT_* variables', (t
   assert.match(readFileSync(s.out, 'utf8'), /feat: correct repository \(#1\)/);
 });
 
-test('generated notes are accepted by the release CLI with a local remote and stub gh', (t) => {
+test('generated notes are accepted by the release CLI with a local remote and stub gh', { skip: process.platform !== 'linux' }, (t) => {
   const s = setup(t);
   s.sb.g(s.work, 'push', '-q', 'origin', 'dev:refs/heads/main');
   installBinaryBuildFixture(s.sb, s.work);
