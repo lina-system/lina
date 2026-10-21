@@ -64,7 +64,7 @@ type Published struct {
 	Item provider.Item
 }
 
-type Segment struct {
+type PassSegment struct {
 	RootID            string
 	Root              provider.Item
 	Records, Verbatim []Record
@@ -84,11 +84,11 @@ func (t Text) valid() bool {
 type Pass struct {
 	Policy    Policy
 	Count     func(provider.Request) int
-	Summarize func(context.Context, Segment) (Text, error)
+	Summarize func(context.Context, PassSegment) (Text, error)
 	// Prepared returns immediately. Only a completed preparation for this exact
 	// segment/frontier/epoch may be used; publication rechecks those conditions.
-	Prepared func(context.Context, Segment) (Text, bool, error)
-	Publish  func(context.Context, Segment, Text) (Published, error)
+	Prepared func(context.Context, PassSegment) (Text, bool, error)
+	Publish  func(context.Context, PassSegment, Text) (Published, error)
 }
 type Fitted struct {
 	View    View
@@ -282,7 +282,7 @@ func (p Pass) Fit(ctx context.Context, v View, inTurn bool) (Fitted, error) {
 		for _, r := range verbatim {
 			keep[r.ID] = true
 		}
-		segment := Segment{RootID: v.RootID, Root: append(provider.Item(nil), v.Root...), Verbatim: copyRecords(verbatim)}
+		segment := PassSegment{RootID: v.RootID, Root: append(provider.Item(nil), v.Root...), Verbatim: copyRecords(verbatim)}
 		for _, r := range source {
 			if !keep[r.ID] {
 				segment.Records = append(segment.Records, r)
@@ -376,7 +376,7 @@ func (p Pass) Continue(ctx context.Context, v View, c Continuation) (Fitted, err
 	if err = c.Record(ctx, ContinuationRecord{c.EndedTurn, c.InputID}); err != nil {
 		return Fitted{View: v}, err
 	}
-	segment := Segment{RootID: v.RootID, Root: append(provider.Item(nil), v.Root...), Records: append(copyRecords(v.History), copyRecords(v.Active)...), Verbatim: []Record{v.Input}}
+	segment := PassSegment{RootID: v.RootID, Root: append(provider.Item(nil), v.Root...), Records: append(copyRecords(v.History), copyRecords(v.Active)...), Verbatim: []Record{v.Input}}
 	summary, err := p.Summarize(ctx, segment)
 	if err != nil {
 		return Fitted{View: v}, err

@@ -29,9 +29,9 @@ func fixturePass() (Pass, View) {
 func TestFailedSummaryKeepsEventsAndPublishesNothing(t *testing.T) {
 	p, v := fixturePass()
 	failed := errors.New("summarizer unavailable")
-	p.Summarize = func(context.Context, Segment) (Text, error) { return Text{}, failed }
+	p.Summarize = func(context.Context, PassSegment) (Text, error) { return Text{}, failed }
 	published := 0
-	p.Publish = func(context.Context, Segment, Text) (Published, error) {
+	p.Publish = func(context.Context, PassSegment, Text) (Published, error) {
 		published++
 		return Published{ID: "root", Item: message("summary")}, nil
 	}
@@ -44,7 +44,7 @@ func TestStubsPrecedeSummaryAndPreserveCurrentRoundTrip(t *testing.T) {
 	p, v := fixturePass()
 	v.History = []Record{{ID: "call", Item: provider.Item(`{"type":"function_call","call_id":"c","name":"read_file","arguments":"{}"}`)}, {ID: "output", Item: provider.Item(`{"type":"function_call_output","call_id":"c","output":"` + strings.Repeat("x", 2200) + `"}`), Note: "read_file completed"}, {ID: "tail", Item: message(strings.Repeat("t", 120)), User: true}}
 	v.Active = []Record{{ID: "reason", Item: provider.Item(`{"type":"reasoning","encrypted_content":"opaque"}`)}}
-	p.Summarize = func(context.Context, Segment) (Text, error) {
+	p.Summarize = func(context.Context, PassSegment) (Text, error) {
 		t.Fatal("summary before deterministic fit")
 		return Text{}, nil
 	}
@@ -62,10 +62,10 @@ func TestStubsPrecedeSummaryAndPreserveCurrentRoundTrip(t *testing.T) {
 func TestOversizeContinuationRecordsSizesAndSendsNothing(t *testing.T) {
 	p, v := fixturePass()
 	v.Input.Item = message(strings.Repeat("q", 2200))
-	p.Summarize = func(context.Context, Segment) (Text, error) {
+	p.Summarize = func(context.Context, PassSegment) (Text, error) {
 		return Text{Requests: "open", Topics: "topic", Actions: "none", Values: "42", Omitted: "details"}, nil
 	}
-	p.Publish = func(context.Context, Segment, Text) (Published, error) {
+	p.Publish = func(context.Context, PassSegment, Text) (Published, error) {
 		return Published{ID: "root", Item: message("summary")}, nil
 	}
 	var steps []string
@@ -87,11 +87,11 @@ func TestInTurnPreparedThenWholeTailKeepsNewRootLineage(t *testing.T) {
 	v.Active = []Record{{ID: "active", Item: message(strings.Repeat("a", 900))}}
 	prepared := 0
 	published := 0
-	p.Prepared = func(_ context.Context, s Segment) (Text, bool, error) {
+	p.Prepared = func(_ context.Context, s PassSegment) (Text, bool, error) {
 		prepared++
 		return Text{Requests: "open", Topics: "topic", Actions: "none", Values: "42", Omitted: "details"}, true, nil
 	}
-	p.Publish = func(_ context.Context, s Segment, _ Text) (Published, error) {
+	p.Publish = func(_ context.Context, s PassSegment, _ Text) (Published, error) {
 		published++
 		if published == 2 && (s.RootID != "first" || len(s.Records) != 1 || s.Records[0].ID != "tail") {
 			t.Fatalf("lost parent lineage: %+v", s)
@@ -110,13 +110,13 @@ func TestInTurnPreparedThenWholeTailKeepsNewRootLineage(t *testing.T) {
 func TestContinuationInputOnceAndNoPriorRoundTrip(t *testing.T) {
 	p, v := fixturePass()
 	v.Active = []Record{{ID: "opaque", Item: provider.Item(`{"type":"reasoning","encrypted_content":"old-round"}`)}}
-	p.Summarize = func(_ context.Context, s Segment) (Text, error) {
+	p.Summarize = func(_ context.Context, s PassSegment) (Text, error) {
 		if len(s.Records) != 2 || len(s.Verbatim) != 1 || s.Verbatim[0].ID != "input" {
 			t.Fatalf("bad coverage: %+v", s)
 		}
 		return Text{Requests: "open", Topics: "topic", Actions: "none", Values: "42", Omitted: "details"}, nil
 	}
-	p.Publish = func(context.Context, Segment, Text) (Published, error) {
+	p.Publish = func(context.Context, PassSegment, Text) (Published, error) {
 		return Published{ID: "root", Item: message("summary")}, nil
 	}
 	sends := 0

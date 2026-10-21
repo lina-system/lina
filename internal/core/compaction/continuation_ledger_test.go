@@ -63,10 +63,10 @@ func TestContinuationLedgerSurvivesOversizeWithoutCopyingInput(t *testing.T) {
 	}
 	p, v := fixturePass()
 	v.Input.Item = message(strings.Repeat("q", 2200))
-	p.Summarize = func(context.Context, Segment) (Text, error) {
+	p.Summarize = func(context.Context, PassSegment) (Text, error) {
 		return Text{Requests: "open", Topics: "topic", Actions: "none", Values: "42", Omitted: "details"}, nil
 	}
-	p.Publish = func(context.Context, Segment, Text) (Published, error) {
+	p.Publish = func(context.Context, PassSegment, Text) (Published, error) {
 		return Published{ID: "root", Item: message("summary")}, nil
 	}
 	_, err = p.Continue(t.Context(), v, Continuation{EndedTurn: "ended", InputID: input.ID, Record: journal.Record, Log: journal.Log, Packet: func(context.Context) ([]json.RawMessage, error) { return v.Packet, nil }, Send: func(context.Context, provider.Request) error { return errors.New("must not send") }})

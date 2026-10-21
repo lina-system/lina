@@ -14,7 +14,7 @@ import (
 func TestLoopTransformBlocksDispatchOnSummaryFailure(t *testing.T) {
 	p, v := fixturePass()
 	failed := errors.New("summary failed")
-	p.Summarize = func(context.Context, Segment) (Text, error) { return Text{}, failed }
+	p.Summarize = func(context.Context, PassSegment) (Text, error) { return Text{}, failed }
 	s, err := NewSession(p, v, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -31,11 +31,11 @@ func TestLoopTransformBlocksDispatchOnSummaryFailure(t *testing.T) {
 func TestSessionPreservesCompactedPrefixAcrossAppends(t *testing.T) {
 	p, v := fixturePass()
 	calls := 0
-	p.Summarize = func(context.Context, Segment) (Text, error) {
+	p.Summarize = func(context.Context, PassSegment) (Text, error) {
 		calls++
 		return Text{Requests: "open", Topics: "topic", Actions: "none", Values: "42", Omitted: "details"}, nil
 	}
-	p.Publish = func(context.Context, Segment, Text) (Published, error) {
+	p.Publish = func(context.Context, PassSegment, Text) (Published, error) {
 		return Published{ID: "root", Item: message("summary")}, nil
 	}
 	s, err := NewSession(p, v, func(_ context.Context, items []provider.Item) ([]Record, error) {

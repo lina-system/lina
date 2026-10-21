@@ -5,7 +5,13 @@ import "testing"
 
 func TestRetractionMigrationPreservesOperationsOnUpgrade(t *testing.T) {
 	cfg := storeConfig(t)
-	cfg.Migrations = Migrations()[:len(Migrations())-1]
+	all := Migrations()
+	for i, migration := range all {
+		if migration.SQL == retractSchema+retractLineageSchema+retractViewsSchema+retractSearchSchema {
+			cfg.Migrations = all[:i]
+			break
+		}
+	}
 	s := openStore(t, cfg)
 	if err := s.Close(t.Context()); err != nil {
 		t.Fatal(err)

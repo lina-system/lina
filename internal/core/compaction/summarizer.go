@@ -27,7 +27,7 @@ type Auxiliary struct {
 	Stream  func(context.Context, provider.Request) (provider.Stream, error)
 }
 
-func (a Auxiliary) Summarize(ctx context.Context, segment Segment) (Text, error) {
+func (a Auxiliary) Summarize(ctx context.Context, segment PassSegment) (Text, error) {
 	if a.Stream == nil || a.Request.Model == "" {
 		return Text{}, ErrSummary
 	}
