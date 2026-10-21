@@ -49,8 +49,7 @@ func (h *harness) startTerminal(environment []string, combined bool) *terminal {
 	}
 	// Start in canonical mode, as a shell would. The application must arrange
 	// immediate key delivery and restore this mode when it exits.
-	mode.Lflag |= unix.ICANON
-	mode.Lflag &^= unix.ECHO | unix.ECHONL
+	mode.Lflag |= unix.ICANON | unix.ECHO
 	mode.Cc[unix.VEOF] = 4
 	if err := unix.IoctlSetTermios(int(slave.Fd()), setTermios, mode); err != nil {
 		h.t.Fatal(err)
