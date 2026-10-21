@@ -53,6 +53,7 @@ type closure struct {
 }
 
 type Stream struct {
+	markdown                   *markdownCache
 	closures                   []closure
 	id                         string
 	config                     Config
@@ -120,6 +121,7 @@ func (s *Stream) Seal(revision uint64, text string) {
 	s.sealed = true
 	s.filter = sanitize.Stream{}
 	s.closures = nil
+	s.markdown = nil
 	s.text.Reset()
 	s.text.WriteString(sanitize.Display(text))
 	s.lines = wrap(s.text.String(), s.config.Width, s.measurer, 0, revision)

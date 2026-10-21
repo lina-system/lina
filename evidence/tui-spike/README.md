@@ -1,7 +1,10 @@
 # TUI spike harness and evidence
 
 For the owner-operated S1–S11 commands, see the [terminal runbook](runbook.md).
-The matrix is still pending owner confirmation and the human runs remain open.
+The matrix is still pending owner confirmation. The owner-run cases and final
+library decision are tracked in [follow-up #371](https://github.com/thisisjun786/lina/issues/371).
+LN-85 delivers the runnable harness and validation; its completion does not
+claim real-terminal acceptance or close #87.
 
 This increment implements S8 of [T-08](../../docs/design/tui.md#library-choice-risks-and-spike-gate-t-08).
 It pins Bubble Tea 2.1.0, Bubbles 2.2.1 (`textarea` only), Lip Gloss 2.0.6,
@@ -11,7 +14,7 @@ in [go.mod](../../go.mod) and [go.sum](../../go.sum).
 
 [terminals.json](terminals.json) records the proposed real-terminal matrix.
 Owner confirmation is pending; `confirmed_list` remains null until the owner
-confirms it. This does not block #86. Confirm the list before #87's real-terminal
+confirms it. This does not block the harness work in #85 or #86. Confirm the list before #87's real-terminal
 runs. Resolve the installed LINA OS default's product name at that point, and
 capture each terminal's actual version and `TERM` in every run record. The
 matrix covers macOS, LINA OS's default, and SSH, including Apple Terminal's

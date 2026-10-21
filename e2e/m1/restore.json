@@ -1,0 +1,4 @@
+{
+  "targets": ["same", "other"],
+  "invalid_arguments": [[], ["--generation", "missing"], ["--state-root", "missing"]]
+}

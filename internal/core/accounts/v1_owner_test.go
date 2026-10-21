@@ -81,7 +81,6 @@ func TestV1OwnerSignIn(t *testing.T) {
 		t.Fatal("acceptance state is in use")
 	}
 	migrations := canon.Migrations()
-	migrations = append(migrations, canon.Migration{Version: len(migrations) + 1, SQL: accounts.SignInSchema})
 	db, err := canon.Open(ctx, canon.Config{Path: filepath.Join(*v1State, "canon.sqlite"), Epoch: 1, Controls: controls, Migrations: migrations})
 	if err != nil {
 		t.Fatal("cannot open acceptance canon")

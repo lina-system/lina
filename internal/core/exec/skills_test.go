@@ -33,7 +33,6 @@ func TestSkillToolsCommitNoticeReadUndoAndRefuseCode(t *testing.T) {
 		t.Fatal(err)
 	}
 	migrations := canon.Migrations()
-	migrations = append(migrations, canon.Migration{Version: len(migrations) + 1, SQL: skills.Schema})
 	db, err := canon.Open(t.Context(), canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: 1, Controls: ctl, Migrations: migrations})
 	if err != nil {
 		t.Fatal(err)
