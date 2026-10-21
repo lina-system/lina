@@ -20,18 +20,8 @@ import (
 	"github.com/thisisjun786/lina/internal/core/inbox"
 )
 
-// Schema is installed in a numbered canon migration after channels.Schema.
-// An approval input is durable before it is answered, and never starts a turn.
-// Recovery only rechecks authority; Answer itself is one-shot and epoch-fenced.
-const Schema = `CREATE TABLE telegram_buttons (
- inbox_id INTEGER PRIMARY KEY REFERENCES inbox(id), bot TEXT NOT NULL,
- epoch TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0 CHECK(done IN (0,1))
-);
-CREATE TABLE telegram_presentations (
- bot TEXT NOT NULL, chat TEXT NOT NULL, topic TEXT NOT NULL, message_id TEXT NOT NULL,
- approval_id TEXT NOT NULL REFERENCES authority_approvals(approval_id),
- PRIMARY KEY(bot,chat,message_id)
-);`
+// Schema is included at its fixed version in canon.Migrations.
+const Schema = canon.TelegramSchema
 
 var pairCode = regexp.MustCompile(`^[a-f0-9]{32}$`)
 

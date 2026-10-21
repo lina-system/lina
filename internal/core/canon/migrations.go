@@ -28,8 +28,11 @@ func Migrations() []Migration {
 		{Version: 14, SQL: TurnOutcomeSchema},
 		{Version: 15, SQL: compactionSchema},
 		{Version: 16, SQL: AccountSignInSchema},
-		{Version: 17, SQL: GrowthSchema},
-		{Version: 18, SQL: MoiraiJobsSchema + BudgetSchema},
+		{Version: 17, SQL: ChannelsSchema},
+		{Version: 18, SQL: TelegramSchema},
+		{Version: 19, SQL: ExchangeSchema},
+		{Version: 20, SQL: GrowthSchema},
+		{Version: 21, SQL: MoiraiJobsSchema + BudgetSchema},
 	}
 }
 
@@ -57,7 +60,10 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 	}{
 		{11, "retract_meta"}, {12, "turn_runs"}, {12, "turn_items"}, {12, "turn_calls"}, {12, "turn_partials"}, {13, "turn_control"}, {14, "turn_outcome"}, {15, "sum_node"}, {15, "sum_edge"}, {15, "sum_cover"},
 		{16, "owner_binding"}, {16, "sign_in_host"}, {16, "sign_in_identities"},
-		{17, "agent_growth_steps"}, {18, "moirai_jobs"}, {18, "budget_usage"},
+		{17, "channel_connections"}, {17, "channel_bindings"}, {17, "channel_actions"}, {17, "channel_receipts"}, {17, "channel_outbound"},
+		{18, "telegram_buttons"}, {18, "telegram_presentations"},
+		{19, "exchanges"}, {19, "exch_msg"}, {19, "exch_event"}, {19, "exch_waiting"},
+		{20, "agent_growth_steps"}, {21, "moirai_jobs"}, {21, "budget_usage"},
 	} {
 		var count int
 		if err = db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name=?", entry.table).Scan(&count); err != nil {

@@ -17,8 +17,8 @@ func TestGrowthUpgradesPublishedInstalledSchemas(t *testing.T) {
 	// These are the published installed versions before growth. Never derive
 	// their order from the new ApplicationMigrations being tested.
 	published := canon.Migrations()[:15]
-	published = append(published, canon.Migration{Version: 16, SQL: accounts.SignInSchema})
-	for version := 12; version <= 16; version++ {
+	published = append(published, canon.Migration{Version: 16, SQL: accounts.SignInSchema}, canon.Migration{Version: 17, SQL: canon.ChannelsSchema}, canon.Migration{Version: 18, SQL: canon.TelegramSchema}, canon.Migration{Version: 19, SQL: canon.ExchangeSchema})
+	for version := 12; version <= 19; version++ {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
 			root := stateRoot(t)
 			ctl, err := ctlfiles.Open(root)
