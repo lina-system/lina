@@ -65,11 +65,12 @@ func TestM1TUIRecovery(t *testing.T) {
 	stop := context.AfterFunc(ctx, func() { listener.Close() })
 	defer stop()
 	observed := make(chan struct{})
+	fixtures := tuiFixtures(t)
 	done := make(chan error, 1)
 	go func() {
 		for index, steps := range scenario.Connections {
 			clock := &scenarioClock{now: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
-			core, err := fakecore.New(os.DirFS("../protocol/fixtures/client/1.0"), clock, steps)
+			core, err := fakecore.New(fixtures, clock, steps)
 			if err != nil {
 				done <- err
 				return

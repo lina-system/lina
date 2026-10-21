@@ -18,6 +18,8 @@ type display struct {
 	rows        int
 	last        ConnectionStatus
 	shown       bool
+	notices     int
+	frame       string
 }
 
 func (d *display) write(text string) error {

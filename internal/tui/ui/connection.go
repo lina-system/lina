@@ -33,6 +33,9 @@ func (s Styles) presentation(status ConnectionStatus) connectionPresentation {
 			code = "unknown"
 		}
 		v.Detail = design.Text(s.options.Language, code) + " (" + code + "). " + v.Detail
+		if status.Cause == protocol.ErrorUnsupportedCombination {
+			v.Detail += " " + design.Text(s.options.Language, "connection.client_protocol") + " 1.0; " + design.Text(s.options.Language, "connection.core_protocol") + " " + design.Text(s.options.Language, "unknown")
+		}
 	}
 	if status.State == Retrying {
 		v.Detail += " " + design.Text(s.options.Language, "connection.attempt") + " " + strconv.FormatUint(status.Attempt, 10)

@@ -42,7 +42,7 @@ func TestM1TUIShell(t *testing.T) {
 					h := newHarness(t, binary)
 					var done <-chan error
 					if test.steps != nil {
-						done = h.fakeCore(test.steps)
+						done = h.fakeCore(test.steps, true)
 					}
 					term := h.startTUI("TERM=xterm-256color", "NO_COLOR=1", "LC_ALL="+locale)
 					expectCatalogState(t, h, term, language, "connecting")

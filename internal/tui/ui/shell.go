@@ -99,6 +99,16 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			var decoder protocol.ClientDecoder
 			envelope, err := decoder.Decode(frame.Data)
 			if err == nil && envelope != nil {
+				if envelope.Error != nil {
+					status := Refused
+					if envelope.Error.Code == protocol.ErrorUnavailable {
+						status = Recovering
+					}
+					if envelope.Error.Code == protocol.ErrorMalformed {
+						status = Failed
+					}
+					m.status = ConnectionStatus{State: status, Cause: envelope.Error.Code}
+				}
 				projection, err := projectStream(*envelope)
 				if err != nil {
 					m.status = ConnectionStatus{State: Failed, Cause: protocol.ErrorMalformed}

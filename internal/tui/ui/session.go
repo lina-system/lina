@@ -29,6 +29,10 @@ type connectionPeer interface {
 
 type connectionDial func(context.Context) (connectionPeer, error)
 type connectionWait func(context.Context, time.Duration) error
+type shellPeer struct {
+	Generation uint64
+	Peer       connectionPeer
+}
 
 type publicationError struct{ error }
 
@@ -106,6 +110,10 @@ func connectionLoop(ctx context.Context, dial connectionDial, wait connectionWai
 				}
 			}
 			mainID, epoch = welcome.MainID, welcome.Epoch
+			if err := publish(shellPeer{Generation: generation, Peer: peer}); err != nil {
+				peer.Close()
+				return err
+			}
 			if err := show(ConnectionStatus{State: Live}); err != nil {
 				peer.Close()
 				return err

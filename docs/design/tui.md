@@ -45,7 +45,23 @@ Ids are stable. Section headings carry the ids they specify. T-02 is withdrawn: 
 
 `lina tui` is a subcommand of the `lina` binary and runs as its own process ([runtime.md](runtime.md#the-lina-command)). It holds display state only, under the rules of [surfaces.md](surfaces.md#the-lina-app-is-a-thin-client): what is on screen, layout, reading position and unsent drafts. Drafts live in memory and never on disk, because a file of drafts would be personal content outside canon.
 
-The empty TUI increment (#32) runs as `lina tui --socket <path>` with plain text input and output. `internal/clientapi` owns the Unix connection and the generated client 1.0 handshake types; `internal/tui/ui` owns the connection display and quit input. The command supplies the product version for diagnosis. This increment declares no capabilities and writes no preferences or drafts. The connection surface now uses Lip Gloss v2.0.6 to style usable terminals from generated tokens (T-11); pipes and terminals with unset or `dumb` TERM retain plain connection codes. Terminal input uses raw mode for single-key quit, with one cancellable reader from negotiation through the connected state. The TUI stops and joins that reader and restores the original terminal settings on return, including termination by SIGTERM, SIGINT or SIGHUP. It installs no animation timer. Bubble Tea, conversation input and the remaining screens still follow the T-08 spike gate. The pure `state`, `sanitize`, `layout` and `render` packages are independently testable foundations; these pure packages add no terminal I/O or conversation wire payload.
+`lina tui --socket <path>` is a separate thin-client process. `internal/clientapi`
+owns the Unix socket, the generated client 1.0 handshake and the validated
+receive/subscription API. The TUI offers the generic text-stream capabilities
+it renders (`conversation`, `running`, `progress`, `waiting`); Core grants only
+its installed subset. The shell subscribes to `core` when any of these is granted
+and to the matching running/progress/waiting topics. No conversation input,
+approval, or other effect is sent by this increment. The command supplies the
+product version for diagnosis, persists no preferences or drafts, and never
+starts Core.
+
+The connection surface uses Lip Gloss and the generated tokens. Usable terminals
+show localized states and retained stream content; unset/dumb TERM and pipes keep
+the plain `live` status. Terminal input uses raw mode and one cancellable decoded
+key reader from negotiation through shutdown. Cleanup joins the reader and restores
+terminal settings on every return, including SIGTERM, SIGINT and SIGHUP. There is
+no animation timer. The shell model also runs through the Bubble Tea recording
+harness; final library acceptance remains the T-08 spike gate.
 
 - It keeps its preferences (theme, glyph set, width settings, notification mode) in one client file, mode 0600, at the location the install fixes. A missing or bad file never blocks start.
 - It never opens canon, never runs `lina core` and never holds the lock. Every message it sends is a request that Core accepts or refuses, and when the two disagree Core wins and the TUI refreshes.
@@ -59,7 +75,28 @@ The empty TUI increment (#32) runs as `lina tui --socket <path>` with plain text
 
 `lina tui` never starts a main. The connection is in one of eight states. Each is a screen state, never an empty conversation and never a conversation item.
 
-For plain output, a validated `welcome` prints `live` on standard output. On a usable terminal, the brand header and a labelled Connecting state appear before the handshake; a validated welcome draws Connected with a quit hint. A refusal, absent Core or other handshake failure draws the corresponding marked state. Quit and EOF draw Disconnected. Only these existing transitions are wired; the theme also supplies presentation data for the future states in the table. Reading `q`, Ctrl+C or Ctrl+D, or reaching end of input, closes only the client connection and exits 0; other input is ignored. Terminal input enters raw mode before negotiation, so quit needs no Enter and remains available while a Core handshake is pending. Quit cancels that handshake instead of waiting for its five-second timeout. While raw mode is active, SIGTERM, externally sent SIGINT and SIGHUP also cancel negotiation or the wait for input and exit through the same normal-termination path with status 0. One reader owns terminal input throughout; cleanup interrupts and joins it before restoring the original terminal settings and releasing signal handling. Nonterminal input keeps the handshake-then-read behavior. Failure to connect to the supplied socket reports `unavailable` on standard error and exits 69 without starting Core or creating state. A typed `unsupported_combination` refusal reports that code and exits 78. Bad arguments exit 64; malformed handshakes and other connection or input/output failures exit 70. Connection and handshake share a five-second timeout. Peer diagnostic text is not printed as terminal output. Reconnect, streaming disconnect notices, supported-range presentation and the remaining screens below belong to later increments.
+A validated welcome enters Live. Initial absence shows the Core-absent screen
+and exits 69; initial `unsupported_combination` shows Refused and exits 78. Bad
+arguments exit 64; malformed handshakes, invalid session frames and other terminal
+failures exit 70. Connection and handshake share a five-second timeout. The
+refusal screen shows the client's supported protocol (1.0); the Core's supported
+range is unknown because the current refusal payload carries no range. Peer
+`detail` is never parsed or printed as UI.
+
+After a live connection is lost, the same process enters Retrying with attempt
+and delay, retains its window read-only, and opens a new connection. It never
+replays application requests. A new epoch produces one local notice; a different
+main id or older epoch fails closed. Typed `resync`/`resync_required` and detected
+gaps enter Resyncing until the required snapshot arrives. An `unavailable`
+subscription response shows Recovering with that cause while history remains
+readable; this is unavailable-service presentation, not an inference from peer
+text or a claim that reads prove Core mutation readiness. Resync and its fresh
+snapshot can restore the subscribed view.
+
+Quit (`q`, Ctrl+C or Ctrl+D), input EOF and termination signals close only this
+client and exit 0, including during handshake or retry. The raw terminal reader
+ignores releases, toggle repeats and pasted quit text. Nonterminal input keeps
+the handshake-then-read behavior. No failure path starts Core or creates state.
 
 | State | Screen |
 | --- | --- |
@@ -420,8 +457,8 @@ claiming conversation UI or an unimplemented wire payload.
 `e2e/m1/tui-shell.json` exercises the built TUI through the same PTY lifecycle
 in English and Korean: connecting, welcome, refusal, absent Core and quit.
 It resolves state labels by catalog id and checks that an absent socket leaves
-the isolated state directory empty. Live recovery still requires the client
-service's typed stream adapter; these initial scenario steps do not establish it.
+the isolated state directory empty. The separate recovery and stream scenarios
+below cover post-handshake behavior.
 
 `e2e/m1/tui-recovery.json` requires a real socket disconnect after the first
 welcome has appeared on the PTY, then a second handshake with a changed epoch.
@@ -430,6 +467,21 @@ return to live and quit. A write-completion gate orders the disconnect after
 the displayed welcome; no sleep determines success. The second fake connection
 stays open until client quit. This is a separate acceptance test from injecting
 local shell messages into the recording harness.
+
+The client adapter retains the handshake reader, so a welcome and immediately
+following notification in one socket read lose no bytes. `Subscribe` sends one
+request and returns its correlation id; `Receive` yields responses and notifications
+in wire order, enforcing Core identity, epoch, framing and correlation. Unknown
+kinds use the generated decoder's ignore/count rule. Cancellation during a read
+closes the connection rather than preserving an ambiguous partial frame. At most
+64 subscription requests may await replies. Tests exercise this API against the
+real LN-78 listener, including snapshots, retained replies, overflow isolation,
+resubscription, unsubscribe and reads during server recovery.
+
+`e2e/m1/tui-stream.json` drives the built TUI through a real PTY: negotiate the
+text-stream capability, subscribe, display an unavailable-service cause, resync,
+render snapshot text, and quit with terminal restoration. Its in-memory fixture
+variants use generated types; the shared schema and conformance corpus are unchanged.
 
 The shell model retains the reducer's history and draft while connection states
 change, ignores asynchronous messages from an older connection generation, and
@@ -443,9 +495,10 @@ that close; display errors terminate instead of reconnecting. Initial absence
 and refusal terminate immediately. After a live connection is lost, retry delays
 start at one second, double to a 32-second cap (P), and remain cancellable. The
 loop retries connections only, never application requests. A different main id
-or a lower epoch on reconnect fails closed. The production receive adapter and
-the PTY recovery scenario together establish that these rules cross the socket;
-the injected lifecycle tests alone do not.
+or a lower epoch on reconnect fails closed. The production adapter uses
+`clientapi.Receive` and `Subscribe`. The PTY recovery scenario establishes
+reconnect across the socket; the injected lifecycle
+tests cover cancellation and failure boundaries independently.
 
 The shell projects LN-78's generated stream payloads into the existing reducer:
 snapshots replace a topic window, output deltas append by revision, and completed

@@ -1,0 +1,9 @@
+{
+  "topic": "core",
+  "text": "STREAM-ITEM-42",
+  "steps": [
+    {"request": "hello.json", "emit": ["welcome.json"]},
+    {"request": "subscribe-core.json", "emit": ["outcomes/unavailable.json", "resync-core.json", "snapshot-core.json"]},
+    {"request": "hello.json"}
+  ]
+}
