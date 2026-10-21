@@ -61,3 +61,30 @@ func TestManifestRecordsCreatedChangedAndDeletedPaths(t *testing.T) {
 		}
 	}
 }
+
+func TestManifestIncludesUserDirectoriesWithRecoveryPrefix(t *testing.T) {
+	f, root, _ := fileStore(t)
+	name := "notes/.lina-recovery-drafts/plan.txt"
+	file := filepath.Join(root, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(file), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte("before"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	before, err := f.Execute(t.Context(), FileRequest{Operation: "manifest"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte("after"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	after, err := f.Execute(t.Context(), FileRequest{Operation: "manifest"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	changes := ManifestDiff(before.Manifest, after.Manifest)
+	if len(changes) != 1 || changes[0].Path != name || changes[0].Before == changes[0].After || before.Revision == after.Revision {
+		t.Fatalf("user writes were omitted from receipt: %+v", changes)
+	}
+}

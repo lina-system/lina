@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
 	"syscall"
 	"testing"
@@ -40,7 +41,7 @@ func TestCoreProcess(t *testing.T) {
 			for iteration := range 2 {
 				epoch := strconv.Itoa(iteration + 1)
 				child := startCore(t, binary, root, socket)
-				idle := child.connect(t, socket) // Readiness is a successful connection.
+				idle := child.connect(t, socket) // Listening may precede READY.
 				for _, versions := range [][]string{{"1.0"}, {"2.0", "1.0"}, {"2.0", "1.1"}} {
 					conn := child.connect(t, socket)
 					conn.SetDeadline(time.Now().Add(5 * time.Second))
@@ -83,10 +84,32 @@ func TestCoreProcess(t *testing.T) {
 						if !ok || envelope.Kind != protocol.KindWelcome || envelope.Error != nil || envelope.EffectState != protocol.EffectNone || !reflect.DeepEqual(welcome, want) {
 							t.Fatalf("unexpected welcome: %s", line)
 						}
+						// A welcomed connection remains usable, but grants no operations.
+						// Reads reach capability admission in both RECOVERING and READY.
+						request.Params.MessageID = "after-welcome"
+						request.Params.Epoch = epoch
+						request.Method = "history_get"
+						request.Params.Kind, request.Params.Payload = protocol.KindHistoryGet, protocol.HistoryGet{}
+						if err := json.NewEncoder(conn).Encode(request); err != nil {
+							t.Fatal(err)
+						}
+						line, err := reader.ReadBytes('\n')
+						if err != nil {
+							t.Fatal(err)
+						}
+						if err := json.Unmarshal(line, &response); err != nil {
+							t.Fatal(err)
+						}
+						if response.Result.Error == nil || response.Result.Error.Code != protocol.ErrorCapabilityNotNegotiated {
+							t.Fatalf("unexpected post-handshake answer: %s", line)
+						}
 						// A handshake is served during recovery. Probe until Core
 						// explicitly refuses the unavailable capability; retry only
 						// recovery refusals, never an accepted effect.
-						request.Params.MessageID = "after-welcome"
+						request.Params.MessageID = "after-recovery"
+						request.Params.Epoch = epoch
+						request.Method = "input"
+						request.Params.Kind, request.Params.Payload = protocol.KindInput, protocol.Input{}
 						if err := awaitCapabilityRefusal(conn, request); err != nil {
 							t.Fatal(err)
 						}
@@ -208,6 +231,8 @@ func helloEnvelope(t *testing.T, versions []string) protocol.Envelope {
 		t.Fatal(err)
 	}
 	hello := envelope.Payload.(protocol.Hello)
+	platform := runtime.GOOS + "/" + runtime.GOARCH
+	hello.Platform = &platform
 	hello.ProtocolVersions = versions
 	hello.Capabilities = []protocol.Capability{{Name: "conversation", Version: "1.0"}}
 	envelope.Payload = hello

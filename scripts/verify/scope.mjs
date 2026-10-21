@@ -17,7 +17,39 @@ function registryFor(cwd) {
   const architecture = existsSync(join(cwd, 'internal/archtest')) ? ['./internal/archtest/...'] : [];
   const buildinfo = existsSync(join(cwd, 'internal/buildinfo')) ? ['./internal/buildinfo/...'] : [];
   const manifest = existsSync(join(cwd, 'internal/core/manifest')) ? ['./internal/core/manifest/...'] : [];
-  const coreDirectories = ['internal/core/install/', 'internal/core/modelpath/', 'internal/core/accounts/', 'internal/core/assemble/', 'internal/core/ledger/', 'internal/core/jobs/', 'internal/core/skills/', 'internal/core/exec/', 'internal/core/turn/', 'internal/core/budget/', 'internal/core/boot/', 'internal/core/clientsrv/', 'internal/core/ctlfiles/', 'internal/core/lifecycle/', 'internal/core/eventstore/', 'internal/core/canon/', 'internal/core/assets/', 'internal/core/inbox/', 'internal/core/lane/', 'internal/core/authority/', 'internal/core/guard/', 'internal/core/agents/', 'internal/core/secrets/', 'internal/core/memory/', 'internal/core/channels/', 'internal/core/gateway/', 'internal/core/importer/', 'internal/core/reply/'];
+  // Keep registrations sorted, one per line, so independent additions can merge.
+  const coreDirectories = [
+    'internal/core/accounts/',
+    'internal/core/agents/',
+    'internal/core/assemble/',
+    'internal/core/assets/',
+    'internal/core/authority/',
+    'internal/core/boot/',
+    'internal/core/budget/',
+    'internal/core/canon/',
+    'internal/core/channels/',
+    'internal/core/clientsrv/',
+    'internal/core/ctlfiles/',
+    'internal/core/eventstore/',
+    'internal/core/exec/',
+    'internal/core/gateway/',
+    'internal/core/guard/',
+    'internal/core/importer/',
+    'internal/core/inbox/',
+    'internal/core/install/',
+    'internal/core/jobs/',
+    'internal/core/lane/',
+    'internal/core/ledger/',
+    'internal/core/lifecycle/',
+    'internal/core/memory/',
+    'internal/core/modelpath/',
+    'internal/core/reply/',
+    'internal/core/results/',
+    'internal/core/runs/',
+    'internal/core/secrets/',
+    'internal/core/skills/',
+    'internal/core/turn/',
+  ];
   const skills = existsSync(join(cwd, 'skills')) ? ['./skills/...'] : [];
   const persona = existsSync(join(cwd, 'persona')) ? ['./persona/...'] : [];
   const corePackages = coreDirectories.filter(directory => existsSync(join(cwd, directory)))
@@ -31,7 +63,7 @@ function registryFor(cwd) {
   const e2e = existsSync(join(cwd, 'e2e')) ? ['./e2e/...'] : [];
   return [
     { name: 'kit', module: 'kit', directories: ['kit/', 'protocol/schema/', 'protocol/fixtures/'], files: [], packages: ['./...'] },
-    { name: 'lina', module: '.', directories: ['cmd/lina/', 'internal/archtest/', 'internal/buildinfo/', 'internal/core/manifest/', 'e2e/', 'persona/', 'skills/', 'testdata/hermes/', ...coreDirectories, ...clientDirectories], files: ['doc.go'], packages: ['.', './cmd/lina/...', ...architecture, ...buildinfo, ...manifest, ...persona, ...skills, ...corePackages, ...clientPackages, ...e2e], binary: 'lina' },
+    { name: 'lina', module: '.', directories: ['cmd/lina/', 'internal/archtest/', 'internal/buildinfo/', 'internal/core/manifest/', 'e2e/', 'persona/', 'skills/', 'testdata/korean/', 'testdata/hermes/', ...coreDirectories, ...clientDirectories], files: ['doc.go'], packages: ['.', './cmd/lina/...', ...architecture, ...buildinfo, ...manifest, ...persona, ...skills, ...corePackages, ...clientPackages, ...e2e], binary: 'lina' },
     { name: 'moirai-worker', module: '.', directories: ['cmd/moirai-worker/', 'internal/moirai/'], files: [], packages: ['./cmd/moirai-worker/...', './internal/moirai/...'], binary: 'moirai-worker' },
     { name: 'lina-node', module: '.', directories: ['cmd/lina-node/'], files: [], packages: ['./cmd/lina-node/...'], binary: 'lina-node' },
   ];
