@@ -8,6 +8,9 @@ import (
 	"context"
 	"errors"
 	"sync"
+
+	"github.com/thisisjun786/lina/kit/loop"
+	"github.com/thisisjun786/lina/kit/provider"
 )
 
 var (
@@ -23,10 +26,17 @@ type request struct {
 	ctx    context.Context
 	turn   Turn
 	result chan error
+	inputs *loop.Inputs
 }
 
+type running struct {
+	ctx    context.Context
+	cancel context.CancelCauseFunc
+	inputs *loop.Inputs
+}
 type conversation struct {
 	queue        []request
+	active       *running
 	checkNotices bool
 }
 
@@ -55,6 +65,22 @@ func New() *Manager {
 // Input received during a turn must go through the turn's steering path, not
 // be submitted as another turn here.
 func (m *Manager) Submit(ctx context.Context, id string, turn Turn) (<-chan error, error) {
+	return m.submit(ctx, id, turn, nil)
+}
+
+// SubmitLoop queues a turn with a fresh steering queue. The callback owns the
+// queue's Close handoff, including failures before the model loop starts.
+// Only already committed input may be passed to Steer. False leaves ownership
+// with admission, which submits a follow-up instead of discarding the input.
+func (m *Manager) SubmitLoop(ctx context.Context, id string, run func(context.Context, *loop.Inputs) error) (<-chan error, error) {
+	if run == nil {
+		return nil, ErrInvalid
+	}
+	inputs := &loop.Inputs{}
+	return m.submit(ctx, id, func(ctx context.Context) error { return run(ctx, inputs) }, inputs)
+}
+
+func (m *Manager) submit(ctx context.Context, id string, turn Turn, inputs *loop.Inputs) (<-chan error, error) {
 	if id == "" || turn == nil {
 		return nil, ErrInvalid
 	}
@@ -66,7 +92,7 @@ func (m *Manager) Submit(ctx context.Context, id string, turn Turn) (<-chan erro
 	if m.closed {
 		return nil, ErrClosed
 	}
-	job := request{ctx: ctx, turn: turn, result: make(chan error, 1)}
+	job := request{ctx: ctx, turn: turn, result: make(chan error, 1), inputs: inputs}
 	lane := m.lanes[id]
 	if lane == nil {
 		lane = &conversation{}
@@ -106,24 +132,54 @@ func (m *Manager) run(id string, lane *conversation) {
 		job := lane.queue[0]
 		lane.queue[0] = request{}
 		lane.queue = lane.queue[1:]
+		ctx, cancel := context.WithCancelCause(job.ctx)
+		lane.active = &running{ctx: ctx, cancel: cancel, inputs: job.inputs}
 		m.mu.Unlock()
-		job.result <- m.execute(job)
+		err := m.execute(ctx, cancel, job)
+		m.mu.Lock()
+		lane.active = nil
+		m.mu.Unlock()
+		job.result <- err
 		close(job.result)
 	}
 }
 
-func (m *Manager) execute(job request) error {
+func (m *Manager) execute(ctx context.Context, cancel context.CancelCauseFunc, job request) error {
+	defer cancel(nil)
 	if err := context.Cause(m.ctx); err != nil {
 		return err
 	}
-	ctx, cancel := context.WithCancelCause(job.ctx)
 	stop := context.AfterFunc(m.ctx, func() { cancel(ErrClosed) })
 	defer stop()
-	defer cancel(nil)
 	if err := context.Cause(ctx); err != nil {
 		return err
 	}
 	return job.turn(ctx)
+}
+
+// Steer snapshots an input for the active turn's next round. It never targets
+// queued turns and refuses input after cancellation or the loop's Close.
+func (m *Manager) Steer(id string, item provider.Item) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	lane := m.lanes[id]
+	if m.closed || lane == nil || lane.active == nil || lane.active.ctx.Err() != nil {
+		return false
+	}
+	return lane.active.inputs.Push(item)
+}
+
+// Stop cancels only the currently active turn, preserving the caller's typed
+// cause. It does not release the lane until that turn and its tools return.
+func (m *Manager) Stop(id string, cause error) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	lane := m.lanes[id]
+	if cause == nil || lane == nil || lane.active == nil {
+		return false
+	}
+	lane.active.cancel(cause)
+	return true
 }
 
 // Close rejects submissions, cancels active turns and skips queued turns. It

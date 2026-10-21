@@ -73,6 +73,10 @@ type Record struct {
 }
 
 func (s *Store) Claim(ctx context.Context, id, conversation string, inboxID int64) error {
+	return s.claim(ctx, id, conversation, inboxID, "")
+}
+
+func (s *Store) claim(ctx context.Context, id, conversation string, inboxID int64, inputEvent string) error {
 	if id == "" || conversation == "" || inboxID <= 0 {
 		return ErrInvalid
 	}
@@ -92,7 +96,10 @@ func (s *Store) Claim(ctx context.Context, id, conversation string, inboxID int6
 			return ErrInvalid
 		}
 		_, err := tx.ExecContext(ctx, "INSERT INTO turn_runs(id,conversation,inbox_id,state) VALUES(?,?,?,?)", id, conversation, inboxID, Active)
-		return err
+		if err != nil {
+			return err
+		}
+		return claimContext(ctx, tx, id, conversation, inputEvent)
 	})
 }
 func active(ctx context.Context, tx *canon.Tx, id string) error {
@@ -175,6 +182,9 @@ func (s *Store) Journal(id string) loop.Journal {
 // remain intact; unresolved effects are owned by authority's unknown state.
 func (s *Store) Recover(ctx context.Context) error {
 	return s.db.Write(ctx, func(tx *canon.Tx) error {
+		if err := recoverNotices(ctx, tx); err != nil {
+			return err
+		}
 		if err := recoverItems(ctx, tx); err != nil {
 			return err
 		}
@@ -257,12 +267,25 @@ func (s *Store) Read(ctx context.Context, id string) (Record, error) {
 type Options struct {
 	ID, Conversation string
 	InboxID          int64
-	Prepare          func(context.Context) error
-	Loop             loop.Config
+	// InputEvent binds the accepted input's ledger identity for durable stop
+	// and restart notices. The owner installs ControlSchema before use.
+	InputEvent string
+	Prepare    func(context.Context) error
+	Loop       loop.Config
 }
 
 func (s *Store) Run(ctx context.Context, o Options) (out loop.Outcome, err error) {
-	if err = s.Claim(ctx, o.ID, o.Conversation, o.InboxID); err != nil {
+	// Preparation and claim failures occur before loop.Run owns the queue.
+	// Close is idempotent, so this also preserves its normal handoff.
+	defer func() {
+		if o.Loop.Inputs != nil {
+			out.FollowUps = append(out.FollowUps, o.Loop.Inputs.Close()...)
+		}
+		if ctx.Err() != nil {
+			err = errors.Join(err, context.Cause(ctx))
+		}
+	}()
+	if err = s.claim(ctx, o.ID, o.Conversation, o.InboxID, o.InputEvent); err != nil {
 		return out, err
 	}
 	defer func() {
@@ -278,6 +301,18 @@ func (s *Store) Run(ctx context.Context, o Options) (out loop.Outcome, err error
 		err = errors.Join(err, s.db.Write(save, func(tx *canon.Tx) error {
 			if e := active(save, tx, o.ID); e != nil {
 				return e
+			}
+			if state == Aborted {
+				cause := Interrupt{Issuer: Shutdown}
+				var typed Interrupt
+				if errors.As(context.Cause(ctx), &typed) {
+					cause = typed
+				} else if errors.Is(context.Cause(ctx), context.DeadlineExceeded) {
+					cause.Issuer = Watchdog
+				}
+				if e := interruptNotice(save, tx, o.ID, cause); e != nil {
+					return e
+				}
 			}
 			_, e := tx.ExecContext(save, "UPDATE turn_runs SET state=? WHERE id=?", state, o.ID)
 			return e
