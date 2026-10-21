@@ -22,13 +22,13 @@ const maxBundleBytes = 1 << 20
 type Store struct {
 	db        Canon
 	root      *os.Root
-	builtins  fs.FS
+	builtins  BuiltinFS
 	index     map[string]Version
 	writeFile func(*os.File, []byte) (int, error)
 }
 
-func Open(stateRoot string, db Canon, builtins fs.FS) (*Store, error) {
-	if db == nil {
+func Open(stateRoot string, db Canon, builtins BuiltinFS) (*Store, error) {
+	if db == nil || builtins != nil && !line(builtins.SkillRevision()) {
 		return nil, ErrInvalid
 	}
 	root, err := os.OpenRoot(stateRoot)
@@ -60,6 +60,11 @@ func Open(stateRoot string, db Canon, builtins fs.FS) (*Store, error) {
 				if err != nil {
 					break
 				}
+				if v.Name != id {
+					err = ErrInvalid
+					break
+				}
+				v.Commit = "builtin:" + builtins.SkillRevision()
 				s.index[id] = v
 			}
 		}
@@ -102,7 +107,7 @@ func builtinMetadata(fsys fs.FS, id string) (Version, error) {
 		row.Reset()
 	}
 	name, description, err := metadata(header.String() + "placeholder")
-	return Version{ID: id, Name: name, Description: description, Commit: "builtin"}, err
+	return Version{ID: id, Name: name, Description: description}, err
 }
 func (s *Store) builtin(id string) (Bundle, error) {
 	if _, ok := s.index[id]; !ok {
@@ -207,7 +212,7 @@ func (s *Store) Read(ctx context.Context, v Version) (Body, error) {
 	}
 	var files Bundle
 	var err error
-	if v.Commit == "builtin" && v.Revision == 0 {
+	if strings.HasPrefix(v.Commit, "builtin:") && v.Revision == 0 {
 		if s.index[v.ID] != v {
 			return Body{}, ErrNotFound
 		}
@@ -259,7 +264,7 @@ func (s *Store) files(r record) (Bundle, error) {
 	if r.deleted {
 		return Bundle{}, nil
 	}
-	if r.Commit == "builtin" {
+	if strings.HasPrefix(r.Commit, "builtin:") {
 		return s.builtin(r.ID)
 	}
 	files, err := s.load(r.Commit, r.ID)
@@ -372,6 +377,9 @@ func (s *Store) change(ctx context.Context, id string, expected int64, build fun
 			current.Name, current.Description, err = metadata(files["SKILL.md"].Text)
 			if err != nil {
 				return err
+			}
+			if current.Name != id {
+				return ErrInvalid
 			}
 		}
 		current.Commit, err = s.save(ctx, parent, id, files)

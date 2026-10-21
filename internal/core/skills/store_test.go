@@ -40,7 +40,15 @@ func fixture(t *testing.T, builtins fs.FS) (*Store, *canon.Store, string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close(context.Background()) })
-	s, err := Open(root, db, builtins)
+	var source BuiltinFS
+	if builtins != nil {
+		if versioned, ok := builtins.(BuiltinFS); ok {
+			source = versioned
+		} else {
+			source = versionedFS{FS: builtins, revision: "fixture"}
+		}
+	}
+	s, err := Open(root, db, source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -349,5 +357,38 @@ func TestBuiltinIndexReadsOnlyFrontMatter(t *testing.T) {
 	entries, err := s.Catalog(t.Context())
 	if err != nil || len(entries) != 1 {
 		t.Fatalf("catalog: %+v %v", entries, err)
+	}
+}
+
+func TestNameMustIdentifyItsFolder(t *testing.T) {
+	s, _, _ := fixture(t, nil)
+	_, err := s.Patch(t.Context(), Patch{ID: "different", Files: Bundle{"SKILL.md": {Text: document("Instructions.")}}})
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("name alias accepted: %v", err)
+	}
+}
+
+// Each compiled generation supplies an immutable identity without loading bodies.
+type versionedFS struct {
+	fs.FS
+	revision string
+}
+
+func (f versionedFS) SkillRevision() string { return f.revision }
+func TestBuiltinHandleCannotReadAnotherGeneration(t *testing.T) {
+	original := versionedFS{FS: fstest.MapFS{"example/SKILL.md": {Data: []byte(document("Release A."))}}, revision: "release-a"}
+	s, db, root := fixture(t, original)
+	entries, err := s.Catalog(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := versionedFS{FS: fstest.MapFS{"example/SKILL.md": {Data: []byte(document("Release B."))}}, revision: "release-b"}
+	next, err := Open(root, db, updated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer next.Close()
+	if body, err := next.Read(t.Context(), entries[0]); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("old handle resolved to new text: %+v %v", body, err)
 	}
 }

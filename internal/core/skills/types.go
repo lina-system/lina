@@ -42,6 +42,14 @@ type Canon interface {
 	Write(context.Context, func(*canon.Tx) error) error
 }
 
+// BuiltinFS supplies a build-time identity covering every embedded file. It
+// lets the index issue generation-scoped handles without reading skill bodies.
+// The same identity must never designate different bytes.
+type BuiltinFS interface {
+	fs.FS
+	SkillRevision() string
+}
+
 // File is text plus its executable mode. The automatic path never accepts code.
 type File struct {
 	Text       string `json:"text"`
