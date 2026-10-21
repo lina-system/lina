@@ -191,6 +191,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-40 Packaging and residency check.** Static binaries, sqlite-vec, 24-hour residency on Linux and macOS.
 - Done when: sqlite-vec loads after its digest check; services start; size, start time and resident memory and CPU stay within the budget written before the run on both platforms; the binding is recorded in the manifest.
 - Depends on: G1-03, G1-23. Design refs: [runtime.md](runtime.md#runtime-acceptance) (V2).
+- #94 supplies digest-checked embedded sqlite-vec, platform build manifests and Linux amd64/macOS arm64 release archives, with service-start acceptance on the install path. It does not substitute cross-builds for the separate native-platform and 24-hour residency measurements.
 
 ### 1.G Channels and agent exchanges
 
