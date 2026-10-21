@@ -33,7 +33,7 @@ function fixture(t) {
   t.after(context.close);
   const out = join(sb.dir, 'artifacts with spaces');
   const run = (args = ['--out', out]) => spawnSync(process.execPath, [join(cwd, 'scripts/build.mjs'), ...args], {
-    cwd, env: context.env, encoding: 'utf8', timeout: 120_000,
+    cwd, env: context.env, encoding: 'utf8', timeout: 300_000,
   });
   const build = () => {
     const result = run();
@@ -57,9 +57,11 @@ test('cross-builds Linux and macOS binaries with target metadata and an explicit
   for (const target of ['linux/amd64', 'darwin/arm64']) {
     const out = join(f.dir, target);
     const result = f.run(['--out', out, '--target', target, '--version', '0.0.1-alpha.20261021.1']);
-    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.status, 0, result.stderr || result.error?.message);
     const manifest = JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8'));
     assert.equal(manifest.target, target);
+    assert.equal(manifest.supportedCombinations.length, 1);
+    assert.equal(manifest.supportedCombinations[0].platform, target);
     assert.equal(manifest.version, '0.0.1-alpha.20261021.1');
     for (const binary of manifest.binaries) {
       const path = join(out, binary.name);
@@ -115,6 +117,9 @@ test('clean builds record hashes and the same commit and metadata as both versio
     assert.match(manifest.date, /^\d{4}-\d{2}-\d{2}$/);
     assert.equal(manifest.goToolchain, f.env.GOTOOLCHAIN);
     assert.equal(manifest.kitVersion, Number(readFileSync(join(f.cwd, 'kit/VERSION'), 'utf8')));
+    const platform = spawnSync('go', ['env', 'GOOS', 'GOARCH'], { cwd: f.cwd, env: f.env, encoding: 'utf8' }).stdout.trim().split(/\r?\n/).join('/');
+    assert.deepEqual(manifest.supportedCombinations, [{ connection: 'client', peer: 'lina-tui', platform,
+      protocolVersion: '1.0', capabilities: [], evidence: ['go test ./kit/protocol/conformance'] }]);
     const module = JSON.parse(spawnSync('go', ['list', '-m', '-json', 'github.com/ncruces/go-sqlite3'], {
       cwd: f.cwd, env: f.env, encoding: 'utf8',
     }).stdout);

@@ -18,7 +18,7 @@ The script clears `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and every other `
 
 The [CI workflow](../../.github/workflows/ci.yml) runs on pull requests targeting `dev` and pushes to `dev`, with one job named `foundation` on `ubuntu-24.04`. It checks out the event's `github.sha` with full history and without persisting Git credentials: the pull request merge commit from `refs/pull/<number>/merge`, or the pushed commit. It runs `node scripts/foundation.mjs --range <base>..<head> --no-note`, using the pull request's base SHA and that merge commit SHA, or the push's before and after SHAs. This verifies the proposed merge result even when the pull request branch is behind `dev`. A new branch push without a previous commit uses `--full --no-note`.
 
-Node comes from `.node-version` when present, otherwise Node 24. When `go.mod` exists, Go comes from its `toolchain` line; a missing toolchain fails setup. Actions are pinned to commit SHAs. The workflow installs actionlint 1.7.12 from a checksum-verified archive before verification. CI has read-only repository permissions, writes no evidence note, and never publishes or integrates a change.
+Node comes from `.node-version` when present, otherwise Node 24. When `go.mod` exists, Go comes from its `toolchain` line; a missing toolchain fails setup. Actions are pinned to commit SHAs. The workflow installs actionlint 1.7.12 from a checksum-verified archive before verification. CI installs bubblewrap so the real Linux sandbox scenarios execute, including client-socket isolation. It has read-only repository permissions, writes no evidence note, and never publishes or integrates a change.
 
 ## Execution
 
@@ -28,7 +28,7 @@ selection ----+---- docs --------+---- gate
               +---- components --+
 ```
 
-Everything runs in one process. `selection` records the exact base and candidate commits, the changed paths, the selected checks and the selection reason. It also checks Git whitespace errors: `git diff --check` over the range, or `git show --check` on the `HEAD` commit with `--full`. The selected checks run in parallel after selection. The gate only evaluates their results; it never reruns their commands. Each check has a bounded timeout.
+Everything runs in one process. `selection` records the exact base and candidate commits, the changed paths, the selected checks and the selection reason. It also checks Git whitespace errors: `git diff --check` over the range, or `git show --check` on the `HEAD` commit with `--full`. The selected checks run in parallel after selection. The gate only evaluates their results; it never reruns their commands. Each check has a bounded timeout. Individual Go test packages have a four-minute timeout, with a five-minute command cap to include compilation and emit timeout diagnostics; other component commands retain a two-minute cap. The longer test cap accommodates native packaging and subprocess acceptance in the full suite on CI. Build-script acceptance also allows five minutes per complete build (multiple binaries and manifest helpers); its individual Go build commands retain their two-minute cap.
 
 ## Evidence
 

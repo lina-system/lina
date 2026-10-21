@@ -32,7 +32,7 @@ test('components use the pinned toolchain, readonly commands, module verificatio
     ['env', 'GOVERSION'], ['mod', 'verify'], ['mod', 'verify'],
     ['build', '-mod=readonly', './...'],
     ['vet', '-mod=readonly', './...'], ['tool', 'exhaustive', './...'],
-    ['test', '-count=1', '-mod=readonly', './...'],
+    ['test', '-count=1', '-timeout=4m', '-mod=readonly', './...'],
   ]);
   for (const call of calls) {
     assert.equal(call.env.GOTOOLCHAIN, 'go1.27.3');
