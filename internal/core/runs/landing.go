@@ -57,6 +57,10 @@ func (s *Service) land(ctx context.Context, r *Record, outcome Outcome) error {
 	if len(r.Artifact.Missing) > 0 && outcome == Complete {
 		outcome = Partial
 	}
+	if r.EffectsQuestion != nil && outcome == Complete {
+		outcome = Partial
+		r.Artifact.Missing = append(r.Artifact.Missing, "Further effects await a separate authorized decision.")
+	}
 	if r.Artifact.Body != "" || len(r.Checkpoint) > 0 {
 		body, err := json.Marshal(struct {
 			Type       string
