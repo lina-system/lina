@@ -95,3 +95,21 @@ func TestClosedSteeringQueueReturnsOwnershipToCaller(t *testing.T) {
 		}
 	})
 }
+
+func TestSteeringOrdinaryTurnIsRejected(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		lanes := lane.New()
+		defer lanes.Close(context.Background())
+		release := make(chan struct{})
+		result := submit(t, lanes, t.Context(), "conversation", func(context.Context) error { <-release; return nil })
+		synctest.Wait()
+		accepted := lanes.Steer("conversation", provider.Item(`{"role":"user","content":"follow-up"}`))
+		close(release)
+		if err := <-result; err != nil {
+			t.Fatal(err)
+		}
+		if accepted {
+			t.Fatal("ordinary turn consumed steering instead of retaining caller ownership")
+		}
+	})
+}
