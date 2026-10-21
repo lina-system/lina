@@ -583,3 +583,8 @@ test('brand tokens and generated data select verification while PNGs remain evid
   assert.equal(kind('evidence/brand/dark-connected.png'), 'docs');
   assert.equal(kind('evidence/brand/unregistered.py'), 'unmapped');
 });
+
+test('QA guide and repository opt-in have registered verification', () => {
+  assert.equal(kind('docs/qa.md'), 'docs');
+  assert.equal(kind('.devflow'), 'automation');
+});

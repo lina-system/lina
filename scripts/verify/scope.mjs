@@ -7,9 +7,9 @@ import { git, gitOut, resolveCommit } from '../git.mjs';
 import { createGoContext, execute } from './check-components.mjs';
 
 const documents = new Set([
-  'README.md', 'MANIFESTO.md', 'LICENSE', 'THIRD-PARTY-NOTICES.md', 'SECURITY.md', 'AGENTS.md', 'CONTRIBUTING.md', 'NOTICE',
+  'README.md', 'MANIFESTO.md', 'LICENSE', 'THIRD-PARTY-NOTICES.md', 'SECURITY.md', 'AGENTS.md', 'CONTRIBUTING.md', 'NOTICE', 'docs/qa.md',
 ]);
-const configuration = new Set(['.editorconfig', '.gitattributes', '.gitignore', '.node-version']);
+const configuration = new Set(['.editorconfig', '.gitattributes', '.gitignore', '.node-version', '.devflow']);
 const modules = new Set(['go.mod', 'go.sum', 'go.work', 'go.work.sum', 'kit/go.mod', 'kit/go.sum']);
 
 function registryFor(cwd) {
