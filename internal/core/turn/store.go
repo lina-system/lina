@@ -9,6 +9,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/budget"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/provider"
@@ -53,7 +54,7 @@ CREATE TABLE turn_partials (
  ordinal INTEGER NOT NULL, body TEXT NOT NULL,
  PRIMARY KEY(turn_id,round,ordinal)
 );
-`
+` + OutcomeSchema
 
 type Canon interface {
 	Write(context.Context, func(*canon.Tx) error) error
@@ -92,7 +93,10 @@ func (s *Store) Claim(ctx context.Context, id, conversation string, inboxID int6
 			return ErrInvalid
 		}
 		_, err := tx.ExecContext(ctx, "INSERT INTO turn_runs(id,conversation,inbox_id,state) VALUES(?,?,?,?)", id, conversation, inboxID, Active)
-		return err
+		if err != nil {
+			return err
+		}
+		return saveOutcome(ctx, tx, id, TurnOutcome{Meter: (budget.Meter{}).Start(id, time.Now()).Snapshot()})
 	})
 }
 func active(ctx context.Context, tx *canon.Tx, id string) error {
@@ -259,12 +263,42 @@ type Options struct {
 	InboxID          int64
 	Prepare          func(context.Context) error
 	Loop             loop.Config
+	Budget           *budget.Gauge // carry into a continuation; nil starts a new budget
+	ReceivedAt       time.Time     // original receipt time, excluding preparation from tool time
+	Continuation     string        // prior turn segment in this conversation, retaining meter and effects
+	Report           bool
+	StartFromTurn    func(context.Context, budget.Handoff) (budget.Handle, error)
 }
 
 func (s *Store) Run(ctx context.Context, o Options) (out loop.Outcome, err error) {
+	gauge := o.Budget
+	var effects []budget.Effect
+	if o.Continuation != "" {
+		prior, e := s.Read(ctx, o.Continuation)
+		if e != nil {
+			return out, e
+		}
+		if prior.Conversation != o.Conversation || prior.State == Active || o.Report {
+			return out, ErrInvalid
+		}
+		previous, e := s.Outcome(ctx, o.Continuation)
+		if e != nil {
+			return out, e
+		}
+		if gauge == nil {
+			gauge = (budget.Meter{}).Continue(previous.Meter)
+		}
+		effects = previous.Effects
+	}
 	if err = s.Claim(ctx, o.ID, o.Conversation, o.InboxID); err != nil {
 		return out, err
 	}
+	if gauge == nil {
+		gauge = (budget.Meter{}).Start(o.ID, o.ReceivedAt)
+	}
+	b := &turnBudget{gauge: gauge, effects: effects}
+	ctx = context.WithValue(ctx, budgetContextKey{}, b)
+	var handle budget.Handle
 	defer func() {
 		state := Completed
 		if err != nil {
@@ -277,6 +311,9 @@ func (s *Store) Run(ctx context.Context, o Options) (out loop.Outcome, err error
 		defer cancel()
 		err = errors.Join(err, s.db.Write(save, func(tx *canon.Tx) error {
 			if e := active(save, tx, o.ID); e != nil {
+				return e
+			}
+			if e := saveOutcome(save, tx, o.ID, TurnOutcome{Meter: gauge.Snapshot(), Handle: handle, Effects: b.effects}); e != nil {
 				return e
 			}
 			_, e := tx.ExecContext(save, "UPDATE turn_runs SET state=? WHERE id=?", state, o.ID)
@@ -293,5 +330,15 @@ func (s *Store) Run(ctx context.Context, o Options) (out loop.Outcome, err error
 	}
 	cfg := o.Loop
 	cfg.Journal = s.Journal(o.ID)
-	return loop.Run(ctx, cfg)
+	out, err = loop.Run(ctx, b.configure(cfg, o.Report))
+	if errors.Is(err, errPromote) {
+		if o.StartFromTurn == nil {
+			return out, err
+		}
+		handle, err = o.StartFromTurn(ctx, budget.Handoff{Turn: o.ID, Items: out.Items, Results: out.Results, Effects: b.effects})
+		if err == nil && (handle.ID == "" || handle.State != "working" && handle.State != "waiting") {
+			err = ErrInvalid
+		}
+	}
+	return out, err
 }
