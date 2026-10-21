@@ -22,6 +22,10 @@ import (
 
 const InlineBytes = 16 << 10
 
+// Fixed precision keeps SQLite's textual time ordering chronological, including
+// whole seconds next to fractional seconds. Native timestamps are always UTC.
+const timestampLayout = "2006-01-02T15:04:05.000000000Z"
+
 var (
 	ErrInvalid          = errors.New("invalid_ledger_event")
 	ErrNotFound         = sql.ErrNoRows
@@ -163,7 +167,7 @@ func (s *Store) Admit(ctx context.Context, entry guard.Entry, in Input) (Event, 
 		 (id,conversation_id,parent_id,person_id,agent_id,speaker_kind,surface,scaffold_kind,scaffold_id,occurred_at,recorded_at,time_quality,origin,replay_of,body,material_id,material_revision)
 		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			e.ID, e.ConversationID, nullable(e.ParentID), nullable(e.PersonID), e.AgentID, e.SpeakerKind, string(surface), nullable(e.ScaffoldKind), nullable(e.ScaffoldID),
-			e.OccurredAt.Format(time.RFC3339Nano), e.RecordedAt.Format(time.RFC3339Nano), e.TimeQuality, string(origin), nullable(e.ReplayOf), body, material, revision)
+			e.OccurredAt.Format(timestampLayout), e.RecordedAt.Format(timestampLayout), e.TimeQuality, string(origin), nullable(e.ReplayOf), body, material, revision)
 		if err != nil {
 			return err
 		}
