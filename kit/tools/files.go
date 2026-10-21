@@ -40,9 +40,10 @@ type FileReceipt struct {
 	Version string `json:"version"`
 }
 type FileResult struct {
-	Content  []byte        `json:"content,omitempty"`
-	Revision string        `json:"revision"`
-	Changes  []FileReceipt `json:"changes,omitempty"`
+	Content  []byte               `json:"content,omitempty"`
+	Revision string               `json:"revision"`
+	Changes  []FileReceipt        `json:"changes,omitempty"`
+	Manifest map[string]FileStamp `json:"manifest,omitempty"`
 }
 type snapshot struct {
 	Content []byte
@@ -252,6 +253,9 @@ func (f *Files) Execute(ctx context.Context, req FileRequest) (FileResult, error
 	}
 	if err := ctx.Err(); err != nil {
 		return result, err
+	}
+	if req.Operation == "manifest" {
+		return f.manifest(ctx)
 	}
 	before := map[string]snapshot{}
 	after := map[string]snapshot{}

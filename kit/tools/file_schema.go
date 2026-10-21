@@ -43,6 +43,12 @@ func FileSpec(name, scope string) (Spec, error) {
 }
 
 func ValidateFileRequest(req FileRequest) error {
+	if req.Operation == "manifest" {
+		if req.Path != "" || req.Revision != "" || len(req.Content) > 0 || req.Patch != "" || req.Version != "" {
+			return ErrInvalid
+		}
+		return nil
+	}
 	if len(req.Content) > MaxFileBytes {
 		return ErrFileSize
 	}
