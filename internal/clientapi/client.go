@@ -5,7 +5,6 @@
 package clientapi
 
 import (
-	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -15,9 +14,10 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/kit/protocol"
+	"github.com/thisisjun786/lina/kit/rpc"
 )
 
-const maxFrameBytes = 1 << 20
+const maxFrameBytes = rpc.MaxFrameBytes
 
 // ErrUnavailable means the client could not open the supplied socket.
 var ErrUnavailable = errors.New("Core unavailable")
@@ -94,7 +94,7 @@ func handshake(ctx context.Context, conn net.Conn, productVersion string) (*Clie
 		return nil, fmt.Errorf("send hello: %w", err)
 	}
 	// Require the newline and cap allocation even when a peer never sends it.
-	line, err := bufio.NewReaderSize(conn, maxFrameBytes).ReadSlice('\n')
+	line, err := rpc.NewReader(conn).Read()
 	if err != nil {
 		return nil, fmt.Errorf("read handshake: %w", err)
 	}

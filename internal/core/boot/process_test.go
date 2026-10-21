@@ -84,6 +84,9 @@ func TestCoreProcess(t *testing.T) {
 						}
 						// A welcomed connection remains usable, but grants no operations.
 						request.Params.MessageID = "after-welcome"
+						request.Params.Epoch = epoch
+						request.Method = "input"
+						request.Params.Kind, request.Params.Payload = protocol.KindInput, protocol.Input{}
 						if err := json.NewEncoder(conn).Encode(request); err != nil {
 							t.Fatal(err)
 						}
