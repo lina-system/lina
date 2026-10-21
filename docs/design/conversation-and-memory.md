@@ -555,6 +555,10 @@ A persona preparation acknowledgement durably binds a turn id, agent id, revisio
 - How an agent talks, when the person sets it directly, goes into that agent's user voice layer through the persona-change skill. A preference that shows in conversation is a Preference memory item and reaches the request as a standing preference in item 6.2 (see Request layout). Each preference is held in only one of the two. Reply length is the one exception: it is held only in the reply budgets (see Reply shape).
 - An agent's disposition changes only through the growth adoption procedure in [cognition-and-life.md](cognition-and-life.md).
 
+The conversational persona-change path binds its agent, person, conversation and expected revision from the prepared turn. A change or undo must quote the current native input from that person; a tool result, forwarded message, replay, missing source or another participant's words cannot authorize it. The tool may change only user voice. The same prepared turn, including tool follow-ups, retains its original persona; the next preparation selects the committed revision. A repeated identical voice does not create another revision or notice.
+
+After the persona write and its effect receipt commit, Core admits one system-originated notice to the conversation, independently of the provider's follow-up wording. The change receipt includes a revision handle for one-action undo, including an undo requested in conversation. Undo requires that handle still to be current and that it represents a voice-only change, then appends a revision restoring the previous voice. It never rewrites history or undoes a preset or growth change. The built-in persona-change procedure and the current revision enter the ContextPacket; the four fixed persona layers still have one injection path.
+
 ### Emotion
 
 Each agent has its own emotion, in three layers:
