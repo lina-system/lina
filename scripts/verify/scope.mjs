@@ -45,6 +45,7 @@ function registryFor(cwd) {
     'internal/core/modelpath/',
     'internal/core/reply/',
     'internal/core/results/',
+    'internal/core/retract/',
     'internal/core/runs/',
     'internal/core/secrets/',
     'internal/core/skills/',

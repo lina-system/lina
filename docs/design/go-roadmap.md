@@ -141,6 +141,7 @@ The Korean acceptance corpus is `testdata/korean/search.json`: both stores asser
 **G1-14 Retraction, trash and the removal list.** Revocation epoch, trash, tombstones, removal list.
 - Done when: after a forget, search, summaries, the ContextPacket and answers give zero hits in the next request, also after restoring an older generation; a fault leaves no half state; a tombstone never exists without its removal-list line; a forgotten item is not extracted again.
 - Depends on: G1-10, G1-13. Design refs: C-19; [filesystem.md](filesystem.md#backup-generations).
+- #66 implements the durable removal journal, canon recovery barrier, memory trash/recovery/expiry, content-free tombstones, extraction exclusions and preparation snapshots. Real-store scenarios cover recall, ledger fallback, profiles, summaries, ContextPackets and scripted answers after forgetting and after restoring an older SQLite snapshot with the latest removal list; process-death scenarios cover the journal/transaction boundary. The packages expose no TUI or Core client operation yet; whole-generation restore remains G1-22.
 
 **G1-15 Compaction, summary tree and raw recovery.** Compaction steps, continuation turn, summary tree, `expand`.
 - Done when: a failed summarizer publishes no node and the events stay in the request; a stale-frontier publish fails; `expand` returns the exact range of a fact stated before compaction; a continuation that does not fit sends nothing and logs sizes; a retraction rebuilds the node.
