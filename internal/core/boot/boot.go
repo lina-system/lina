@@ -104,6 +104,8 @@ type Config struct {
 	Conversation *modelpath.ResponsesConfig
 	// SignInTransport is an in-process test seam; production uses the fixed issuer.
 	SignInTransport http.RoundTripper
+	// ChannelTransport is an in-process platform test seam; production uses Telegram.
+	ChannelTransport http.RoundTripper
 	// ClientManifest selects the build manifest containing supportedCombinations.
 	// An explicit path must exist and contain a valid table, including an empty
 	// table when every client combination is intentionally unsupported.
@@ -298,7 +300,7 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	}
 	var canon Canon
 	if ownsConversation && len(recovery.Halt) == 0 {
-		runtime, openErr := startConversation(ctx, cfg.StateRoot, recovery.MainID, snapshot.Epoch, store, cfg.Conversation, activities, cfg.Client.PersonID, cfg.SignInTransport)
+		runtime, openErr := startConversation(ctx, cfg.StateRoot, recovery.MainID, snapshot.Epoch, store, cfg.Conversation, activities, cfg.Client.PersonID, cfg.SignInTransport, cfg.ChannelTransport)
 		if openErr != nil {
 			return openErr
 		}

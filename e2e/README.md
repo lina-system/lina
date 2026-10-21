@@ -45,6 +45,14 @@ checks header, status and composer, and compares all rows and the cursor with
 a fresh client at each size to detect stale cells. It clears the draft and
 completes another exchange after resizing, then checks terminal restoration.
 
+`m1/tui-channels.json` opens the installed channel controls and drives token
+entry, private-chat pairing, binding and disconnect through the real TUI and
+boot composition. A separate Core test process retains the production peer
+ancestry checks; only Telegram HTTP replies are scripted. Boot package tests
+also reopen the poller against durable connection and secret state.
+`m1/tui-talk-log.json` seeds a durable exchange, restarts installed Core, and
+checks one summary row and its explicit ledger expansion without a model call.
+
 Helpers are test-only Go files in this package, shared by scenario tests. Keeping
 process creation in test files follows the architecture rule for command
 acceptance harnesses. Future milestones can add scenario files here; new

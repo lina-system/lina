@@ -530,6 +530,12 @@ is needed for this client acceptance check.
 
 Owner binding is a singleton canon record independent of provider credentials. The serialized canon writer binds the first successful sign-in and compares every later login's person, issuer and subject without updating the binding. A different provider account cannot replace or delete it. Competing first sign-ins cannot both establish different owners.
 
+Channel token forms are separate from account sign-in and conversation input.
+Their typed `channel_request` carries the token only on `connect`; metadata and
+results contain no token. The existing secret store remains the credential
+owner. A client cannot nominate a person or claim decider eligibility in this
+payload.
+
 **C-48 Connected accounts, setup and routing (new).**
 
 ```go
@@ -743,6 +749,28 @@ type Admitter interface{ Admit(ctx context.Context, e Inbound) error } // inbox 
 - A non-owner message is an `external_participant` event ([conversation-and-memory.md](conversation-and-memory.md#channel-conversations)).
 - The progress digest is built by Core, and the adapter only sends it.
 
+`clientsrv.ChannelOperations` is a thin adapter over Core's channel control
+service. `channel_request` selects list, connect, pair, bind, unbind or disconnect;
+it rejects mixed forms before dispatch. Mutations require the socket's decider
+eligibility; the service authorizes the session's person and selected agent.
+`channel_result` projects connections, bindings and scopes, or a pairing code
+with its expiration. Pairing identity still comes from the platform adapter,
+never from a sender id typed into the TUI. The reserved 1.0 payloads remain
+valid to decode; empty control requests perform no action.
+
+Boot installs the channel, Telegram and exchange schemas after the published
+application migrations and registers both control capabilities even without a
+model route. Channel tokens enter only the private secret store. Boot resumes
+one Telegram poller per connected bot; private-chat pairing uses the adapter's
+numeric sender identity and a single-use, five-minute code. Refresh reads the
+committed pairing and binding scope. Disconnect joins the poller, revokes bindings
+and pairing, blocks pending outbound work and removes the credential, retaining
+ownership and delivery receipts so reconnect cannot transfer ownership or replay
+old input. Core shutdown joins pollers before closing their stores. Ordinary
+bound channel messages remain in the durable gateway inbox; channel turn execution
+and outbound reply scheduling attach through their owning flows.
+
+
 The Telegram adapter uses the pinned `gotgbot/v2` client for individual API calls;
 LINA owns the polling loop. Construction is local and starts no platform request.
 Main runs `Adapter.Run` under its lifecycle context independently of READY. A
@@ -801,6 +829,16 @@ The #100 package increment installs `exchange.Schema` through a caller-supplied 
 Answers include evidence references and explicit-zone timestamps. The asker's named check runs outside the writer; a failed check leaves the exchange open, and the subsequent commit rechecks that the same delivery is still open. An acknowledgement is a terminal mailbox write with no preparation or check. `NeedPerson` uses the authority coordinator's resolver, bound to the exact delivery and decision and reading through the current transaction; only a nonempty person owner can create the flag and its waiting row. Neither hand-off text nor expiry supplies ownership. Completion clears the waiting row.
 
 `exch_event` indexes the immutable `conv_event` ledger through foreign keys. Ledger admission and mailbox mutation share one canon transaction; the native entry is fixed to `EntryAgentExchange`, with the exchange as its conversation, surface `agent_exchange`, the sending agent and no person id. Lifecycle events point to their request event as parent. Every expanded event is agent-origin external evidence. Large bodies are prepared through the ledger material adapter before acquiring the writer; material metadata, ledger revision pointers and the mailbox then commit together. The outer mailbox flow closes the prepared write only after its transaction ends, retaining committed bytes and reconciling rolled-back preparations. Missing material bytes refuse expansion or model preparation. The one-line log projects each exchange and its latest ledger event; expansion is explicit. Hand-off and answer prose is secret-masked before persistence. Secret-shaped identifiers, material/evidence references and check names are refused without changing their meaning. Persona, common-knowledge and named-material projections strip secret spans before entering the model request, even if a reader returns raw bytes. This package does not add a TUI or client-protocol capability: scheduler/run wiring, turn-boundary notices and notification settings attach in their owning flows. Acceptance here uses real canon, actual `SIGKILL` at queue/delivery/read boundaries, and a scripted model boundary; there is no newly observable protocol behavior for an `e2e/m1/` scenario.
+
+`clientsrv.TalkOperations` exposes read-only `agent_talk_get` and
+`agent_talk_expand` through the `exchanges` capability. The existing exchange
+service supplies the rows and ledger events after authorizing the session's
+person and agent scope. `agent_talk` carries either compact entries or the
+selected exchange id and its ordered events. The client keeps display selection
+only; it creates no exchange store, model turn or personal-memory input.
+Boot projects the durable exchange store and ledger materials for the installed
+owner, checking that both participant agents remain active before expansion.
+
 
 ## Work engine
 

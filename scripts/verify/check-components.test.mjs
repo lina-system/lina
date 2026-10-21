@@ -95,7 +95,7 @@ setInterval(() => {}, 1000);
       return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
     } });
   assert.equal(result.status, 1);
-  assert.match(result.output, /\$ go test -count=1 -mod=readonly \.\/\.\.\./);
+  assert.match(result.output, /\$ go test -count=1 -timeout=4m -mod=readonly \.\/\.\.\./);
   assert.match(result.output, /command timed out after [\d.]+ s \(budget 0\.\d+ s\): .*hung\.mjs/);
 });
 
@@ -183,6 +183,6 @@ test('module tests retain a diagnostic deadline inside their process budget', t 
   assert.equal(result.status, 0, result.output);
   const suite = calls.find(call => call.args[0] === 'test');
   assert.ok(suite.args.includes('-timeout=4m'), 'Go must emit stuck-test stacks before the process guard');
-  assert.equal(suite.timeoutMs, 300_000, 'the whole module includes compilation and subprocess acceptance tests');
-  assert.ok(calls.filter(call => call.args[0] !== 'test').every(call => call.timeoutMs === 120_000));
+  assert.ok(suite.timeoutMs > 300_000 && suite.timeoutMs <= 600_000, 'module tests use the remaining component budget');
+  assert.ok(calls.every(call => call.timeoutMs > 0 && call.timeoutMs <= 600_000));
 });
