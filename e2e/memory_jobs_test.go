@@ -95,14 +95,18 @@ func TestM1MemoryJobs(t *testing.T) {
 	for _, agent := range fixture.Agents {
 		definitions["extract-"+agent] = jobs.Definition{Agent: agent, Account: "synthetic", Provider: provider.ChatGPT,
 			Model: func(ctx context.Context, c jobs.Call) (jobs.Result, error) {
-				calls.Add(1)
 				var batch memory.ExtractionBatch
 				if err := json.Unmarshal(c.Input, &batch); err != nil {
 					return jobs.Result{}, err
 				}
 				if err := mem.CheckExtraction(ctx, batch, resolve); err != nil {
+					if errors.Is(err, memory.ErrJobConflict) {
+						zero := int64(0)
+						return jobs.Result{Output: json.RawMessage(`[]`), Usage: provider.Usage{Input: &zero, Output: &zero}}, nil
+					}
 					return jobs.Result{}, err
 				}
+				calls.Add(1)
 				if c.Kind != provider.Auxiliary || len(batch.Utterances) != 1 {
 					return jobs.Result{}, errors.New("wrong extraction route or burst")
 				}
@@ -281,5 +285,32 @@ func TestM1MemoryJobs(t *testing.T) {
 	}
 	if err := mem.CheckExtraction(h.ctx, batch, resolve); err == nil {
 		t.Fatal("queued extraction bypassed tightened scope")
+	}
+	// An obsolete extraction must not hold Watermark+1 forever. Rebuild the
+	// replacement from the old source cursor, preserving eligible work.
+	extractionID := "extract-" + scope.Agent
+	enqueue(extractionID, 2, batch)
+	if err := db.Write(h.ctx, func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(h.ctx, "UPDATE retract_meta SET epoch=epoch+1")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := mem.PrepareExtraction(h.ctx, scope, batch.After, len(fixture.Burst)+1, 30*time.Second, resolve)
+	if err != nil || len(fresh.Utterances) != 1 || len(fresh.Utterances[0].Events) != 1 {
+		t.Fatalf("fresh extraction: %+v %v", fresh, err)
+	}
+	enqueue(extractionID, 3, fresh)
+	run()
+	if calls.Load() != 3 || jobWatermark(t, db, extractionID) != 2 {
+		t.Fatal("obsolete extraction dispatched or blocked its replacement")
+	}
+	run()
+	if calls.Load() != 4 || jobWatermark(t, db, extractionID) != 3 {
+		t.Fatal("fresh extraction did not run")
+	}
+	current, err := mem.Recall(h.ctx, scope, memory.Query{Text: fixture.Statement, At: clock.Load() + 100})
+	if err != nil || len(current) != 1 || len(current[0].Evidence) != 3 {
+		t.Fatalf("replacement lost eligible evidence: %+v %v", current, err)
 	}
 }

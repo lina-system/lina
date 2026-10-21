@@ -697,6 +697,12 @@ conversation change breaks it. Empty eligible batches require no model task.
 Core checks the prepared source text, visibility and model scope before dispatch,
 and Apply rechecks the epoch, allowed evidence set and normal memory-write rules.
 All items and the task watermark commit together; a failed batch publishes none.
+If the queued source snapshot becomes obsolete through revocation or tightened
+scope, the model callback returns an empty result with zero usage and Apply
+consumes the task without writing items. The scheduler rebuilds its replacement
+from the old source cursor against current canon, retaining eligible events.
+Obsolescence is decided before the first write; malformed current proposals and
+write failures still roll back the batch.
 Common equal statements merge evidence and ordinary recall hides each predecessor
 in a supersession chain.
 

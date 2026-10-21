@@ -178,60 +178,74 @@ func ApplyExtraction(ctx context.Context, tx *canon.Tx, batch ExtractionBatch, i
 // CheckExtraction is called by Core's model callback immediately before Aux
 // dispatch. It checks both the revocation epoch and named scopes, since a scope
 // can tighten after a task was enqueued without changing that epoch.
+// On ErrJobConflict the Core model callback returns [] with zero usage without
+// dispatching. The scheduler rebuilds a replacement from batch.After, so still
+// eligible events are not lost when Apply consumes the obsolete task.
 func (s *Store) CheckExtraction(ctx context.Context, batch ExtractionBatch, resolve ResolveEvidence) error {
 	if s == nil || s.db == nil || resolve == nil || !present(batch.Agent) || batch.Agent == string(All) || !present(batch.Person) {
 		return ErrInvalid
 	}
-	return s.db.Read(ctx, func(tx *canon.Tx) error {
-		var epoch int64
-		if err := tx.QueryRowContext(ctx, "SELECT epoch FROM retract_meta WHERE singleton=1").Scan(&epoch); err != nil {
-			return err
-		}
-		if epoch != batch.Revocation {
-			return ErrJobConflict
-		}
-		blocked, err := restrictedEvents(ctx, tx, RecallScope{Agent: batch.Agent, Person: batch.Person, ExternalModel: true})
-		if err != nil {
-			return err
-		}
-		for _, utterance := range batch.Utterances {
-			var texts []string
-			for _, ref := range utterance.Events {
-				if ref.Kind != Event || ref.Precision != Exact || blocked[ref.ID] {
-					return ErrEvidence
-				}
-				var visible int
-				if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM retract_visible_event WHERE id=?", ref.ID).Scan(&visible); err != nil {
-					return err
-				}
-				if visible != 1 {
-					return ErrEvidence
-				}
-				origin, err := resolve(ctx, tx, ref)
-				if err != nil {
-					return err
-				}
-				if origin.Speaker != guard.Person || origin.Person != batch.Person || origin.Agent != batch.Agent || origin.PlanEnded {
-					return ErrPersonEvidence
-				}
-				if !validScope(origin.Scope) || origin.Scope == NeverLeaves {
-					return ErrScope
-				}
-				text, err := maskedJobText(origin.Quote)
-				if err != nil {
-					return err
-				}
-				if text != ref.Quote {
-					return ErrJobConflict
-				}
-				texts = append(texts, text)
+	return s.db.Read(ctx, func(tx *canon.Tx) error { return checkPreparedExtraction(ctx, tx, batch, resolve) })
+}
+
+func checkPreparedExtraction(ctx context.Context, tx *canon.Tx, batch ExtractionBatch, resolve ResolveEvidence) error {
+	var epoch int64
+	if err := tx.QueryRowContext(ctx, "SELECT epoch FROM retract_meta WHERE singleton=1").Scan(&epoch); err != nil {
+		return err
+	}
+	if epoch != batch.Revocation {
+		return ErrJobConflict
+	}
+	blocked, err := restrictedEvents(ctx, tx, RecallScope{Agent: batch.Agent, Person: batch.Person, ExternalModel: true})
+	if err != nil {
+		return err
+	}
+	for _, utterance := range batch.Utterances {
+		var texts []string
+		for _, ref := range utterance.Events {
+			if ref.Kind != Event || ref.Precision != Exact {
+				return ErrEvidence
 			}
-			if strings.Join(texts, "\n") != utterance.Text {
+			if blocked[ref.ID] {
 				return ErrJobConflict
 			}
+			var visible int
+			if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM retract_visible_event WHERE id=?", ref.ID).Scan(&visible); err != nil {
+				return err
+			}
+			if visible != 1 {
+				return ErrJobConflict
+			}
+			origin, err := resolve(ctx, tx, ref)
+			if err != nil {
+				return err
+			}
+			if origin.PlanEnded {
+				return ErrJobConflict
+			}
+			if origin.Speaker != guard.Person || origin.Person != batch.Person || origin.Agent != batch.Agent {
+				return ErrPersonEvidence
+			}
+			if !validScope(origin.Scope) {
+				return ErrScope
+			}
+			if origin.Scope == NeverLeaves {
+				return ErrJobConflict
+			}
+			text, err := maskedJobText(origin.Quote)
+			if err != nil {
+				return err
+			}
+			if text != ref.Quote {
+				return ErrJobConflict
+			}
+			texts = append(texts, text)
 		}
-		return nil
-	})
+		if strings.Join(texts, "\n") != utterance.Text {
+			return ErrJobConflict
+		}
+	}
+	return nil
 }
 
 // ExtractionApply binds the job to its agent and person at registration, and
@@ -248,6 +262,17 @@ func ExtractionApply(agent, person string, resolve ResolveEvidence) func(context
 		}
 		if err := json.Unmarshal(output, &items); err != nil {
 			return ErrInvalid
+		}
+		if tx == nil || resolve == nil {
+			return ErrInvalid
+		}
+		// Determine obsolescence before the first item write. Never swallow an
+		// error from ApplyExtraction after it has begun inserting a batch.
+		if err := checkPreparedExtraction(ctx, tx, batch, resolve); err != nil {
+			if errors.Is(err, ErrJobConflict) {
+				return nil
+			}
+			return err
 		}
 		return ApplyExtraction(ctx, tx, batch, items, resolve)
 	}

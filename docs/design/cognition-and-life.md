@@ -88,7 +88,10 @@ rules in `internal/core/memory`, using the existing worker's Aux/Apply/Report
 path. Extraction is bounded to one agent's canonical person events, groups a
 short burst without counting replay copies, and commits its items with its task
 watermark. Empty eligible input makes no extraction model call. Prepared tasks
-are checked again before model dispatch and before publication.
+are checked again before model dispatch and before publication. An obsolete
+extraction task is consumed without a model call or item writes; its replacement
+is rebuilt from the prior source cursor against current canon so still-eligible
+events are not skipped.
 
 The maintenance choice is a durable, revision-checked record for the person and
 holder. Its default allows no action. The pass may clear standing flags, merge
