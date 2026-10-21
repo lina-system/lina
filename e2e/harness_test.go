@@ -94,6 +94,9 @@ func buildCommand(t *testing.T, name string) string {
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build %s: %v\n%s", name, err, output)
 	}
+	if err := os.Chmod(binary, 0500); err != nil {
+		t.Fatal(err)
+	}
 	commandBuilds.binaries[name] = binary
 	return binary
 }

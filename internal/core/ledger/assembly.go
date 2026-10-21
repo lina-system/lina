@@ -12,7 +12,10 @@ type Assembly struct {
 	AgentName                string `json:",omitempty"`
 	OwnerPersonID            string `json:",omitempty"`
 	Skills, Items            []Reference
-	History                  []Reference `json:",omitempty"`
+	History                  []Reference     `json:",omitempty"`
+	Profile                  []Reference     `json:",omitempty"`
+	Context                  []ContextSource `json:",omitempty"`
+	PreparedAt               string          `json:",omitempty"`
 }
 
 // RequestEvidence records enough configuration to rebuild a request without
@@ -26,4 +29,13 @@ type RequestEvidence struct {
 	Effort       provider.Effort     `json:",omitempty"`
 	Tools        []provider.ToolDecl `json:",omitempty"`
 	Fields       provider.FieldList  `json:",omitempty"`
+}
+
+// ContextSource is a text-free source locator, not a stored ContextPacket.
+// Material is permitted only for the four persona-owned state projections.
+type ContextSource struct {
+	Reference
+	Source   string
+	Material *Material   `json:",omitempty"`
+	Evidence []Reference `json:",omitempty"`
 }

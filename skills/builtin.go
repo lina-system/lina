@@ -5,7 +5,7 @@ package skills
 
 import "embed"
 
-//go:embed meta/SKILL.md
+//go:embed meta/SKILL.md persona-change/SKILL.md
 var files embed.FS
 
 // Builtins exposes immutable files. Core indexes front matter and reads bodies
@@ -18,5 +18,5 @@ type CatalogFS struct{ embed.FS }
 // SkillRevision covers every embedded path and its content. The regression test
 // requires this identity to change whenever an embedded skill changes.
 func (CatalogFS) SkillRevision() string {
-	return "be6df01212af7205494dfdb49843731751d6dc1a0c1f971284eb4ac5ec57ccd8"
+	return "83d164824c02878f646fda04aa895711721e2d9ec8ac551589efca6d1e26cc30"
 }
