@@ -11,5 +11,6 @@ func Migrations() []Migration {
 		{Version: 4, SQL: authorityApprovalsSchema},
 		{Version: 5, SQL: agentsSchema},
 		{Version: 6, SQL: accountsSchema},
+		{Version: 7, SQL: ledgerSchema},
 	}
 }
