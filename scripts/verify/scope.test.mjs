@@ -662,6 +662,13 @@ test('brand tokens and generated data select verification while PNGs remain evid
   assert.equal(kind('evidence/brand/unregistered.py'), 'unmapped');
 });
 
+test('vector rebuilds select automation and their notices remain documents', () => {
+  assert.equal(kind('packaging/sqlite-vec/build.sh'), 'automation');
+  assert.equal(kind('packaging/sqlite-vec/NOTICE.md'), 'docs');
+  assert.equal(kind('packaging/sqlite-vec/README.md'), 'docs');
+  assert.equal(kind('packaging/sqlite-vec/unregistered.py'), 'unmapped');
+});
+
 test('QA guide and repository opt-in have registered verification', () => {
   assert.equal(kind('docs/qa.md'), 'docs');
   assert.equal(kind('.devflow'), 'automation');

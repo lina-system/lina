@@ -26,6 +26,7 @@ type Manifest struct {
 	Binaries              []Binary                         `json:"binaries"`
 	SQLite                SQLite                           `json:"sqlite"`
 	Providers             map[string]responseconfig.Config `json:"providers"`
+	Target                string                           `json:"target"`
 }
 
 // Binary describes one artifact next to manifest.json. SHA256 is lowercase hex.
@@ -68,7 +69,11 @@ func (m Manifest) Validate() error {
 	if err := ValidateCombinations(m.SupportedCombinations); err != nil {
 		return err
 	}
-
+	switch m.Target {
+	case "linux/amd64", "linux/arm64", "darwin/amd64", "darwin/arm64", "windows/amd64", "windows/arm64":
+	default:
+		return fmt.Errorf("target must name a supported build OS/architecture")
+	}
 	chatgpt, ok := m.Providers["chatgpt"]
 	if !ok {
 		return fmt.Errorf("providers must include chatgpt")
@@ -122,6 +127,9 @@ func (m Manifest) Validate() error {
 	}
 	if !(seen["lina"] && seen["lina-node"] || seen["lina.exe"] && seen["lina-node.exe"]) {
 		return fmt.Errorf("binaries must include lina and lina-node for the same platform")
+	}
+	if strings.HasPrefix(m.Target, "windows/") != seen["lina.exe"] {
+		return fmt.Errorf("binary suffixes do not match target")
 	}
 	return nil
 }
