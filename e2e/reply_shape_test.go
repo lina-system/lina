@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -73,7 +74,7 @@ func TestM1ReplyShapeLONGQA(t *testing.T) {
 	core := start(true)
 	c, conversation := conversationClient(t, h)
 	screenTUI := h.startScreenTUI("TERM=xterm-256color")
-	waitScreen(t, h, screenTUI, "Ctrl+D")
+	waitScreen(t, h, screenTUI, design.Text(design.English, "live"))
 	h.keys(screenTUI, scenario.Input+"\r")
 	var visible string
 	var card protocol.Result
