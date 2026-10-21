@@ -146,6 +146,7 @@ The Korean acceptance corpus is `testdata/korean/search.json`: both stores asser
 **G1-15 Compaction, summary tree and raw recovery.** Compaction steps, continuation turn, summary tree, `expand`.
 - Done when: a failed summarizer publishes no node and the events stay in the request; a stale-frontier publish fails; `expand` returns the exact range of a fact stated before compaction; a continuation that does not fit sends nothing and logs sizes; a retraction rebuilds the node.
 - Depends on: G1-08, G1-10, G1-13, G1-14. Design refs: C-18; [conversation-and-memory.md](conversation-and-memory.md#compaction-and-resume).
+- #70 supplies the request-fitting pass, auxiliary summary validation, continuation dispatch guard and scoped `expand` tool boundary. Package scenarios verify failure preservation, exact evidence recovery and no dispatch above the threshold; client-protocol and TUI wiring remain in their consuming flows.
 
 **G1-16 Skills written by agents, adopted at once, undone in one action.** Reversible-write check, notice, undo, index.
 - Done when: an instruction-only patch is adopted as a new version with a one-line notice after the commit; undo restores the previous text as a new version; a skill with executable code is not adopted this way; the index holds name and description and bodies load only when needed.
