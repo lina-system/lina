@@ -99,6 +99,9 @@ func Run(ctx context.Context, cfg Config, host Host) (result Result, resultErr e
 	if b.files["moirai-worker"] != nil {
 		units = append(units, "lina-moirai.service")
 	}
+	if err := validateSocketLocation(cfg, units); err != nil {
+		return result, err
+	}
 	systemctl, err := host.LookPath("systemctl")
 	if err != nil {
 		return result, errors.New("systemd user service manager is unavailable")
@@ -156,6 +159,8 @@ func Run(ctx context.Context, cfg Config, host Host) (result Result, resultErr e
 	}
 	if b.files["moirai-worker"] == nil {
 		result.Unavailable = append(result.Unavailable, "Background memory and planning: moirai-worker is not included")
+	} else {
+		result.Unavailable = append(result.Unavailable, "Background memory and planning: Core job service is not connected in this build; worker activation is deferred")
 	}
 	var changes changes
 	serviceAttempted := false
@@ -224,10 +229,34 @@ func Run(ctx context.Context, cfg Config, host Host) (result Result, resultErr e
 		return result, errors.New("systemd could not reload the new service")
 	}
 	serviceAttempted = true
-	for _, name := range units {
-		if _, err := host.Run(ctx, systemctl, "--user", "enable", "--now", filepath.Join(cfg.UnitDir, name)); err != nil {
-			return result, fmt.Errorf("systemd could not enable and start %s; the new installation is retained for diagnosis", name)
-		}
+	// The current Core command exposes only client IPC. Retain a bundled worker
+	// and its unit, but do not enable it until the canon/job service is wired.
+	if _, err := host.Run(ctx, systemctl, "--user", "enable", "--now", filepath.Join(cfg.UnitDir, "lina-core.service")); err != nil {
+		return result, errors.New("systemd could not enable and start Core; the new installation is retained for diagnosis")
 	}
 	return result, nil
+}
+
+func withinPath(parent, child string) bool {
+	rel, err := filepath.Rel(parent, child)
+	return err == nil && (rel == "." || filepath.IsLocal(rel))
+}
+
+func validateSocketLocation(cfg Config, units []string) error {
+	// Core owns the other state areas and creates control files during boot.
+	// Keep sockets in the run area or a separately selected private directory.
+	run := filepath.Join(cfg.StateRoot, "system/run")
+	if withinPath(cfg.Socket, cfg.StateRoot) || (withinPath(cfg.StateRoot, cfg.Socket) && (cfg.Socket == run || !withinPath(run, cfg.Socket))) {
+		return errors.New("a client socket inside the state root must be below system/run")
+	}
+	reserved := []string{cfg.UnitDir, filepath.Join(run, "moirai.sock")}
+	for _, name := range units {
+		reserved = append(reserved, filepath.Join(cfg.UnitDir, name), filepath.Join(cfg.UnitDir, name+".d"), filepath.Join(cfg.UnitDir, "default.target.wants", name))
+	}
+	for _, path := range reserved {
+		if withinPath(cfg.Socket, path) {
+			return errors.New("client socket conflicts with an installation path")
+		}
+	}
+	return nil
 }

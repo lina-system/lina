@@ -26,6 +26,10 @@ an existing service.
 When the bundle's binary records include `moirai-worker`, its verified bytes
 are installed beside `lina`. `lina-moirai.service` depends on Core and starts
 the worker with `--canon <root>/canon/canon.sqlite --socket <root>/system/run/moirai.sock`.
+The current Core command does not yet connect canon and the job API, so the
+installer reports background jobs unavailable and leaves that worker unit
+disabled. Its presence is not a readiness claim. Activation belongs to the
+increment that connects those Core services.
 Without that artifact the installer reports background memory and planning
 unavailable and creates no worker service.
 
@@ -45,7 +49,10 @@ Missing or failed probes are recorded; discovered versions outside the verified
 list remain usable and are printed as unverified together with that list.
 
 Any existing state root, unit, unit override, enablement link or socket is a
-conflict. Linked destination ancestors are refused. Before service startup,
+conflict. Linked destination ancestors are refused, and
+socket paths that overlap install destinations are refused as well. A socket
+inside the state root must be below `system/run/`; Core owns the other areas.
+Before service startup,
 failure removes only entries created by this attempt. Once startup is attempted,
 the installation is retained on failure because the service may have started;
 the command reports failure and leaves the evidence available for diagnosis.

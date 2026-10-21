@@ -202,15 +202,16 @@ func TestOptionalWorkerGetsOwnUserService(t *testing.T) {
 	if err != nil || info.Mode().Perm() != 0700 {
 		t.Fatal("worker is not executable")
 	}
+	blocked := false
 	for _, cause := range result.Unavailable {
-		if strings.Contains(cause, "moirai-worker") {
-			t.Fatal("included worker reported absent")
-		}
+		blocked = blocked || strings.Contains(cause, "Core job service")
+	}
+	if !blocked {
+		t.Fatal("included worker advertised without a Core job service")
 	}
 	for _, call := range host.calls {
-		if strings.Contains(call, "enable --now") && strings.HasSuffix(call, filepath.Join(cfg.UnitDir, "lina-moirai.service")) {
-			return
+		if strings.Contains(call, "enable") && strings.HasSuffix(call, filepath.Join(cfg.UnitDir, "lina-moirai.service")) {
+			t.Fatal("enabled an unusable worker service")
 		}
 	}
-	t.Fatal("optional worker not enabled")
 }

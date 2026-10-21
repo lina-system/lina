@@ -533,8 +533,16 @@ explicit root and socket arguments. A bundled `moirai-worker` receives its own
 `--socket <state-root>/system/run/moirai.sock`. No provider adapter receives
 a service unit.
 
+The current Core command does not connect canon or the job API. A bundled
+worker and its unit are installed but left disabled, and background memory
+and planning are reported unavailable with that cause. Enabling the worker
+requires the increment that connects those Core services; a copied executable
+or a successful systemd start job is not evidence of worker readiness.
+
 Preflight refuses an existing state root, socket, named service, service
 override or enablement link, and refuses linked destination ancestors. An
+in-state client socket must be below `system/run/`, and socket paths overlapping
+install destinations or the worker socket are refused before any writes. An
 explicit install-layer TCP address check holds a probe listener through file
 publication and refuses occupied ports; the current Core service uses Unix IPC
 and does not expose a TCP listener. Refusal precedes state creation and service
