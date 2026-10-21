@@ -133,3 +133,21 @@ func TestStopAbortsOpenCallsWithTypedCause(t *testing.T) {
 		})
 	}
 }
+
+func TestFourStepPreparationFailureHandsBackSteering(t *testing.T) {
+	db, _ := database(t)
+	inputs := &loop.Inputs{}
+	item := provider.Item(`{"role":"user","content":"pending direction"}`)
+	inputs.Push(item)
+	p := preparation()
+	failure := errors.New("account unavailable")
+	p.Account = func(context.Context) (provider.Credential, error) { return provider.Credential{}, failure }
+	requests := 0
+	out, err := turn.New(db).Run(t.Context(), turn.Options{ID: "turn", Conversation: "conversation", InboxID: admit(t, db), Preparation: p, Loop: loop.Config{Inputs: inputs, Stream: func(context.Context, provider.Request) (provider.Stream, error) {
+		requests++
+		return reviewResponse(), nil
+	}}})
+	if !errors.Is(err, failure) || requests != 0 || len(out.FollowUps) != 1 || string(out.FollowUps[0]) != string(item) || inputs.Push(item) {
+		t.Fatalf("err=%v requests=%d handoff=%s", err, requests, out.FollowUps)
+	}
+}
