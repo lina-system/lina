@@ -50,7 +50,7 @@ func TestAssemblyThroughDurableTurnNeverStoresPacket(t *testing.T) {
 			for _, ref := range report.Items {
 				a.Items = append(a.Items, turn.Reference{ID: ref.ID, Revision: ref.Revision})
 			}
-			return turn.PreparedRequest{Request: r, Assembly: a}, nil
+			return turn.PreparedRequest{Request: r, Assembly: a, MaxTokens: 100, Counter: func(r provider.Request) int { return len(r.Items) }}, nil
 		}
 		input, err := inbox.New(db).Admit(t.Context(), inbox.Input{Key: inbox.Key{Conversation: "conversation", Source: "client", NativeID: id}, Body: []byte("input")})
 		if err != nil {
