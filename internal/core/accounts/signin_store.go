@@ -61,7 +61,6 @@ func (s *Store) admitSignIn(ctx context.Context, person, hostID string, selected
 		// an unusable record; no credential can be released by an account actor.
 		cleanup := context.WithoutCancel(ctx)
 		_ = s.vault.Delete(key(saved))
-		_ = s.vault.Delete(idTokenKey(saved))
 		_ = s.db.Write(cleanup, func(tx *canon.Tx) error {
 			_, err := tx.ExecContext(cleanup, "DELETE FROM accounts WHERE id=?", saved.ID)
 			return err
@@ -70,12 +69,6 @@ func (s *Store) admitSignIn(ctx context.Context, person, hostID string, selected
 	}
 	s.start(saved.ID)
 	return saved, nil
-}
-
-func idTokenKey(a Account) secrets.Key {
-	k := key(a)
-	k.Name += ".id-token"
-	return k
 }
 
 func (s *Store) persistSignIn(ctx context.Context, a Account, binding OwnerBinding, login bool, t authorizedTokens) error {
@@ -90,33 +83,35 @@ func (s *Store) persistSignIn(ctx context.Context, a Account, binding OwnerBindi
 	marker.Status = NeedsSignIn
 	marker.AccessExpires = nil
 	marker.RefreshExpires = nil
-	if err := s.save(ctx, marker); err != nil {
+	var admissionErr error
+	err := s.vault.ReplaceTokens(ctx, key(a), rotation.Tokens, func() error {
+		admissionErr = s.save(ctx, marker)
+		return admissionErr
+	}, func() error {
+		admissionErr = s.db.Write(ctx, func(tx *canon.Tx) error {
+			if err := admitOwner(ctx, tx, binding, login); err != nil {
+				return err
+			}
+			var issuer, subject string
+			err := tx.QueryRowContext(ctx, "SELECT issuer,subject FROM sign_in_identities WHERE account_id=?", a.ID).Scan(&issuer, &subject)
+			if errors.Is(err, sql.ErrNoRows) {
+				_, err = tx.ExecContext(ctx, "INSERT INTO sign_in_identities(account_id,issuer,subject) VALUES(?,?,?)", a.ID, binding.Issuer, binding.Subject)
+			} else if err == nil && (issuer != binding.Issuer || subject != binding.Subject) {
+				return ErrSignInIdentity
+			}
+			if err != nil {
+				return err
+			}
+			return put(ctx, tx, a)
+		})
+		return admissionErr
+	})
+	if admissionErr != nil {
+		err = admissionErr
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
-	if err := s.vault.PutTokens(key(a), rotation.Tokens); err != nil {
-		return ErrStorage
-	}
-	// Retain the ID token privately, without placing id_token_hint in a URL
-	// relayed to the client: a credential must never cross that boundary.
-	if err := s.vault.Put(idTokenKey(a), []byte(t.tokens.ID)); err != nil {
-		return ErrStorage
-	}
-	err := s.db.Write(ctx, func(tx *canon.Tx) error {
-		if err := admitOwner(ctx, tx, binding, login); err != nil {
-			return err
-		}
-		var issuer, subject string
-		err := tx.QueryRowContext(ctx, "SELECT issuer,subject FROM sign_in_identities WHERE account_id=?", a.ID).Scan(&issuer, &subject)
-		if errors.Is(err, sql.ErrNoRows) {
-			_, err = tx.ExecContext(ctx, "INSERT INTO sign_in_identities(account_id,issuer,subject) VALUES(?,?,?)", a.ID, binding.Issuer, binding.Subject)
-		} else if err == nil && (issuer != binding.Issuer || subject != binding.Subject) {
-			return ErrSignInIdentity
-		}
-		if err != nil {
-			return err
-		}
-		return put(ctx, tx, a)
-	})
 	if errors.Is(err, ErrOwnerMismatch) || errors.Is(err, ErrSignInIdentity) {
 		return err
 	}

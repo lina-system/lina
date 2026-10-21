@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -197,4 +198,28 @@ func TestClosedSignInCannotStartAnotherAttempt(t *testing.T) {
 	if _, err := s.Begin(t.Context(), provider.ChatGPT, RelayCaps{ConnectionID: "connection", Purpose: Login}); !errors.Is(err, ErrClosed) {
 		t.Fatalf("closed sign-in restarted: %v", err)
 	}
+}
+
+func TestSignInReplacementWaitsForActiveTurn(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		f, s, wire := signInSetup(t)
+		first, err := completeSignIn(t, s, wire, Login, "subject-one", "", false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		release := f.vault.BeginTurn()
+		done := make(chan error, 1)
+		go func() { _, err := completeSignIn(t, s, wire, Login, "subject-one", first.ID, false); done <- err }()
+		synctest.Wait()
+		select {
+		case err := <-done:
+			release()
+			t.Fatalf("replacement did not wait: %v", err)
+		default:
+		}
+		release()
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	})
 }
