@@ -23,7 +23,7 @@ func (s *Service) update(ctx context.Context, id string, fn func(*Record) error)
 	if err != nil {
 		return err
 	}
-	if r.State == Landed {
+	if r.State == Landed || r.PendingOutcome == Cancelled {
 		return ErrState
 	}
 	if err = fn(&r); err != nil {
@@ -46,6 +46,20 @@ func (s *Service) touch(ctx context.Context, id string) error {
 	return s.update(ctx, id, func(r *Record) error { r.LastEvent = s.cfg.Now().UnixNano(); return nil })
 }
 func (s *Service) run(ctx context.Context, id string) error {
+	s.mu.Lock()
+	pending, err := s.read(ctx, id)
+	if err == nil && pending.PendingOutcome != "" {
+		err = s.land(ctx, &pending, pending.PendingOutcome)
+		s.mu.Unlock()
+		return err
+	}
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	if err := s.update(ctx, id, func(r *Record) error { appendRound(r, true); r.PendingItems = nil; return nil }); err != nil {
+		return err
+	}
 	r, err := s.read(ctx, id)
 	if err != nil {
 		return err
@@ -108,6 +122,14 @@ func (s *Service) run(ctx context.Context, id string) error {
 				if err := s.touch(ctx, id); err != nil {
 					return loop.Result{ID: c.ID, Code: loop.Aborted}
 				}
+				cached, err := s.beginTool(ctx, id, c)
+				if err != nil {
+					cancel(err)
+					return loop.Result{ID: c.ID, Code: loop.Denied}
+				}
+				if cached != nil {
+					return *cached
+				}
 				s.activity(id, 1)
 				result := tool.Handler.Execute(ctx, c)
 				s.activity(id, -1)
@@ -129,7 +151,7 @@ func (s *Service) run(ctx context.Context, id string) error {
 	// is appended and removed from its durable queue in the same transaction.
 	cfg.Transform = func(ctx context.Context, req provider.Request) (provider.Request, error) {
 		var err error
-		req.Items, err = maskedItems(req.Items)
+		req.Items, err = masked(&s.masker, req.Items)
 		if err != nil {
 			return req, err
 		}
@@ -138,6 +160,8 @@ func (s *Service) run(ctx context.Context, id string) error {
 			r.FollowUps = r.FollowUps[drained:]
 			drained = 0
 			r.Checkpoint = req.Items
+			r.PendingItems = nil
+			r.PendingCalls = nil
 			return nil
 		}); err != nil {
 			return req, err
@@ -156,7 +180,7 @@ func (s *Service) run(ctx context.Context, id string) error {
 			}
 			req.Items = items
 		}
-		req.Items, err = maskedItems(req.Items)
+		req.Items, err = masked(&s.masker, req.Items)
 		return req, err
 	}
 	cfg.Stream = func(ctx context.Context, req provider.Request) (provider.Stream, error) {
@@ -176,24 +200,7 @@ func (s *Service) run(ctx context.Context, id string) error {
 		}}, nil
 	}
 	cfg.Observe = func(ctx context.Context, _ provider.Event) error { return s.touch(ctx, id) }
-	// Completed assistant items are kept even if the following stream fails.
-	cfg.Journal.Item = func(ctx context.Context, _ int, _ int64, b provider.Item) error {
-		return s.update(ctx, id, func(r *Record) error {
-			if err := s.transcript(id, "item", b); err != nil {
-				return err
-			}
-			if a, ok := artifact([]provider.Item{b}); ok {
-				r.Artifact = a
-			}
-			return nil
-		})
-	}
-	cfg.Journal.Result = func(ctx context.Context, _ int, _ int, result loop.Result) error {
-		return s.update(ctx, id, func(r *Record) error { return s.transcript(id, "tool_result", result) })
-	}
-	cfg.Journal.Partial = func(ctx context.Context, _ int, _ int64, text string) error {
-		return s.update(ctx, id, func(r *Record) error { return s.transcript(id, "partial", text) })
-	}
+	cfg.Journal = s.checkpointJournal(id)
 	out, runErr := loop.Run(runCtx, cfg)
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -206,18 +213,24 @@ func (s *Service) run(ctx context.Context, id string) error {
 	}
 	if r.State == Landed {
 		return nil
-	} // cancellation always wins over late completion
+	}
+	if r.PendingOutcome == Cancelled {
+		return s.land(context.Background(), &r, Cancelled)
+	}
+	// cancellation always wins over late completion
 	if a, ok := artifact(out.Items); ok {
 		r.Artifact = a
 	}
 	if runErr == nil {
 		r.Checkpoint = out.Items
+		r.PendingItems = nil
+		r.PendingCalls = nil
 		if len(r.FollowUps) > 0 { // input arrived after the final model snapshot
 			r.State = Waiting
 			return s.save(context.Background(), r, false)
 		}
 		outcome := Complete
-		if !r.Artifact.Done || r.Artifact.Body == "" || scopeFailed.Load() {
+		if !r.Artifact.Done || r.Artifact.Body == "" || scopeFailed.Load() || r.Uncertain {
 			outcome = failureOutcome(r)
 		}
 		return s.land(context.Background(), &r, outcome)

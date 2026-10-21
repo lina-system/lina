@@ -57,7 +57,7 @@ func (s *Service) save(ctx context.Context, r Record, insert bool) error {
 	r.Updated = s.cfg.Now().UnixNano()
 	b, err := json.Marshal(r)
 	if err == nil {
-		b, err = maskedJSON(b)
+		b, err = s.masker.json(b)
 	}
 	if err != nil {
 		return err

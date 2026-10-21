@@ -3,25 +3,38 @@ package runs
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"strings"
+	"sync"
 
 	"github.com/thisisjun786/lina/internal/core/secrets"
-	"github.com/thisisjun786/lina/kit/provider"
 	"github.com/thisisjun786/lina/kit/secret"
 )
 
-// Mask JSON values rather than its serialized text: replacing a quoted secret
-// in encoded JSON can otherwise break the record. UseNumber preserves exact
-// counters and revisions. Unchanged provider items keep their original bytes.
-func maskedJSON(data []byte) ([]byte, error) {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
+// Redact decoded strings, including provider JSON embedded inside strings.
+// Masking an encoded JSON document directly can remove its structural quotes.
+// Unchanged provider items keep their exact bytes and number representations.
+// Only digests and masked outputs are cached; raw credentials are never cache
+// keys or values. Repeated checkpoints need not rescan unchanged strings.
+type masker struct {
+	mu    sync.Mutex
+	cache map[[32]byte]string
+}
+
+func (m *masker) json(data []byte) ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.cache) > 4096 || m.cache == nil {
+		m.cache = map[[32]byte]string{}
+	}
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
 	var value any
-	if err := decoder.Decode(&value); err != nil {
+	if err := d.Decode(&value); err != nil {
 		return nil, err
 	}
-	value, changed, err := maskValue(value)
+	changed, err := m.node(&value, "", 0)
 	if err != nil {
 		return nil, err
 	}
@@ -30,79 +43,97 @@ func maskedJSON(data []byte) ([]byte, error) {
 	}
 	return json.Marshal(value)
 }
-func maskValue(value any) (any, bool, error) {
-	switch v := value.(type) {
+func (m *masker) node(value *any, key string, depth int) (bool, error) {
+	if depth > 64 {
+		return false, ErrInvalid
+	}
+	changed := false
+	switch v := (*value).(type) {
 	case string:
-		text, err := maskedText(v)
-		return text, text != v, err
-	case []any:
-		changed := false
-		for i, entry := range v {
-			next, c, err := maskValue(entry)
-			if err != nil {
-				return nil, false, err
-			}
-			v[i] = next
-			changed = changed || c
+		encodedKey, _ := json.Marshal([2]string{key, v})
+		digest := sha256.Sum256(encodedKey)
+		if cached, ok := m.cache[digest]; ok {
+			*value = cached
+			return cached != v, nil
 		}
-		return v, changed, nil
-	case map[string]any:
-		changed := false
-		out := make(map[string]any, len(v))
-		for key, entry := range v {
-			maskedKey, err := secrets.Mask(key)
-			if err != nil {
-				return nil, false, err
-			}
-			outputKey := maskedKey.Text()
-			if _, exists := out[outputKey]; exists {
-				return nil, false, ErrInvalid
-			}
-			changed = changed || outputKey != key
-			// Reuse the central detector for sensitive field names, including
-			// unshaped values such as {"api_key":"synthetic-value"}.
-			probe := key + `="synthetic-field-value"`
-			field, err := secrets.Mask(probe)
-			if err != nil {
-				return nil, false, err
-			}
-			if field.Text() != probe && entry != nil {
-				out[outputKey] = secret.Placeholder
-				if text, ok := entry.(string); !ok || text != secret.Placeholder {
+		original := v
+		trimmed := strings.TrimSpace(v)
+		if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
+			d := json.NewDecoder(strings.NewReader(v))
+			d.UseNumber()
+			var nested any
+			if json.Valid([]byte(v)) && d.Decode(&nested) == nil {
+				edited, err := m.node(&nested, "", depth+1)
+				if err != nil {
+					return false, err
+				}
+				if edited {
+					b, err := json.Marshal(nested)
+					if err != nil {
+						return false, err
+					}
+					v = string(b)
 					changed = true
 				}
-				continue
 			}
-			next, c, err := maskValue(entry)
-			if err != nil {
-				return nil, false, err
-			}
-			out[outputKey] = next
-			changed = changed || c
 		}
-		return out, changed, nil
-	default:
-		return value, false, nil
-	}
-}
-func maskedText(text string) (string, error) {
-	trimmed := strings.TrimSpace(text)
-	// Tool outputs and result bodies can contain JSON encoded inside a string.
-	if (strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[")) && json.Valid([]byte(text)) {
-		data, err := maskedJSON([]byte(text))
-		return string(data), err
-	}
-	masked, err := secrets.Mask(text)
-	return masked.Text(), err
-}
-func maskedItems(items []provider.Item) ([]provider.Item, error) {
-	out := make([]provider.Item, len(items))
-	for i, item := range items {
-		data, err := maskedJSON(item)
+		// Sensitive object keys also flag credentials without a recognizable shape.
+		encoded, _ := json.Marshal(v)
+		pair := key + "=" + string(encoded)
+		checked, err := secrets.Mask(pair)
 		if err != nil {
-			return nil, err
+			return false, err
 		}
-		out[i] = data
+		if key != "" && checked.Text() != pair && strings.TrimPrefix(checked.Text(), key+"=") == secret.Placeholder {
+			*value = secret.Placeholder
+			m.cache[digest] = secret.Placeholder
+			return true, nil
+		}
+		checked, err = secrets.Mask(v)
+		if err != nil {
+			return false, err
+		}
+		*value = checked.Text()
+		m.cache[digest] = checked.Text()
+		return checked.Text() != original, nil
+	case []any:
+		for i := range v {
+			edited, err := m.node(&v[i], "", depth+1)
+			if err != nil {
+				return false, err
+			}
+			changed = changed || edited
+		}
+	case map[string]any:
+		for k, child := range v {
+			edited, err := m.node(&child, k, depth+1)
+			if err != nil {
+				return false, err
+			}
+			var name any = k
+			renamed, err := m.node(&name, "", depth+1)
+			if err != nil {
+				return false, err
+			}
+			if renamed {
+				delete(v, k)
+				changed = true
+			}
+			v[name.(string)] = child
+			changed = changed || edited
+		}
 	}
-	return out, nil
+	return changed, nil
+}
+func masked[T any](m *masker, v T) (T, error) {
+	b, err := json.Marshal(v)
+	if err == nil {
+		b, err = m.json(b)
+	}
+	if err != nil {
+		return v, err
+	}
+	var out T
+	err = json.Unmarshal(b, &out)
+	return out, err
 }

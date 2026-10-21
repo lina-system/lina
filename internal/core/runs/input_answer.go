@@ -22,7 +22,7 @@ func (s *Service) AnswerInput(ctx context.Context, person, id string, revision u
 		return ErrInvalid
 	}
 	var err error
-	value, err = maskedText(value)
+	value, err = masked(&s.masker, value)
 	if err != nil {
 		return err
 	}
