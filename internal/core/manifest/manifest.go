@@ -99,6 +99,9 @@ func (m Manifest) Validate() error {
 			return fmt.Errorf("binary %q sha256 must be 64 lowercase hex characters", binary.Name)
 		}
 	}
+	if (seen["lina"] || seen["lina-node"]) && (seen["lina.exe"] || seen["lina-node.exe"]) {
+		return fmt.Errorf("LINA binaries must use matching platform suffixes")
+	}
 	if !(seen["lina"] && seen["lina-node"] || seen["lina.exe"] && seen["lina-node.exe"]) {
 		return fmt.Errorf("binaries must include lina and lina-node for the same platform")
 	}
