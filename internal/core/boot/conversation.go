@@ -260,8 +260,12 @@ func (r *conversationRuntime) seedHistory(ctx context.Context) error {
 		return err
 	}
 	for _, e := range events {
-		if e.ScaffoldKind == "failure" {
-			if err = r.publishFailedPartials(ctx, e.ID); err != nil {
+		if e.ScaffoldKind == "interruption" || e.ScaffoldKind == "failure" {
+			stopped, err := turn.New(r.db).Stopped(ctx, e.ParentID)
+			if err != nil {
+				return err
+			}
+			if err = r.publishPartials(stopped); err != nil {
 				return err
 			}
 		}
@@ -278,6 +282,18 @@ func (r *conversationRuntime) seedHistory(ctx context.Context) error {
 		}
 	}
 	return r.setActive(false)
+}
+
+func (r *conversationRuntime) publishPartials(stopped turn.Stopped) error {
+	for _, p := range stopped.Partials {
+		// The provider observer numbers rounds from one, the loop from zero.
+		key := fmt.Sprintf("%s:%d:%d", stopped.TurnID, p.Round+1, p.Index)
+		speaker := protocol.ConversationSpeakerAgent
+		if err := r.publish(protocol.KindItemDone, key, protocol.ItemDone{Text: &p.Text, Speaker: &speaker}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, input ledger.Event, inboxID int64) (err error) {
@@ -404,15 +420,15 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		}
 	}
 	if err != nil {
-		var noticeID string
-		readErr := r.db.Read(context.WithoutCancel(ctx), func(tx *canon.Tx) error {
-			return tx.QueryRowContext(context.WithoutCancel(ctx), `SELECT notice_event FROM turn_control c JOIN turn_runs r ON r.id=c.turn_id WHERE r.id=? AND r.state='failed'`, turnID).Scan(&noticeID)
-		})
-		if readErr == nil {
-			if publishErr := r.publishFailedPartials(context.WithoutCancel(ctx), noticeID); publishErr != nil {
+		// A stop or failure is published from its durable outcome. Seal the same
+		// streamed block IDs before publishing the stored notice, matching
+		// startup history and keeping partials outside future model context.
+		stopped, readErr := turn.New(r.db).Stopped(context.WithoutCancel(ctx), input.ID)
+		if readErr == nil && stopped.NoticeID != "" {
+			if publishErr := r.publishPartials(stopped); publishErr != nil {
 				return errors.Join(err, publishErr)
 			}
-			notice, noticeErr := r.journal().Get(context.WithoutCancel(ctx), noticeID)
+			notice, noticeErr := r.journal().Get(context.WithoutCancel(ctx), stopped.NoticeID)
 			if noticeErr != nil {
 				return errors.Join(err, noticeErr)
 			}
@@ -420,54 +436,11 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			speaker := protocol.ConversationSpeakerSystem
 			return errors.Join(err, r.publish(protocol.KindItemDone, notice.ID, protocol.ItemDone{Text: &text, Speaker: &speaker}))
 		}
+		err = errors.Join(err, readErr)
 		text := "The reply could not be completed. Send a new message to continue."
-		var interrupted turn.Interrupt
-		if errors.As(err, &interrupted) {
-			text = interrupted.Text()
-		}
 		_ = r.publish(protocol.KindItemDone, turnID+":status", protocol.ItemDone{Text: &text})
 	}
 	return err
-}
-
-// Failed partials are a projection of the existing turn journal. They remain
-// outside completed assistant context and converge on their original live key.
-func (r *conversationRuntime) publishFailedPartials(ctx context.Context, noticeID string) error {
-	type partial struct {
-		key, text string
-	}
-	var partials []partial
-	err := r.db.Read(ctx, func(tx *canon.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT p.turn_id,p.round,p.ordinal,p.body FROM turn_partials p JOIN turn_control c ON c.turn_id=p.turn_id WHERE c.notice_event=? ORDER BY p.round,p.ordinal`, noticeID)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var id, body string
-			var round int
-			var index int64
-			if err := rows.Scan(&id, &round, &index, &body); err != nil {
-				return err
-			}
-			masked, err := secrets.Mask(body)
-			if err != nil {
-				return err
-			}
-			partials = append(partials, partial{fmt.Sprintf("%s:%d:%d", id, round+1, index), masked.Text()})
-		}
-		return rows.Err()
-	})
-	if err != nil {
-		return err
-	}
-	for _, p := range partials {
-		speaker := protocol.ConversationSpeakerAgent
-		if err := r.publish(protocol.KindItemDone, p.key, protocol.ItemDone{Text: &p.text, Speaker: &speaker}); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // Drained steering belongs to this turn; only the queue's final undrained

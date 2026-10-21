@@ -50,14 +50,14 @@ func claimContext(ctx context.Context, tx *canon.Tx, id, conversation, eventID s
 }
 
 func interruptNotice(ctx context.Context, tx *canon.Tx, id string, cause Interrupt) error {
-	return terminalNotice(ctx, tx, id, cause.Issuer, "interruption", cause.Text())
+	return terminalNotice(ctx, tx, id, &cause.Issuer, "interruption", cause.Text())
 }
 
 func failureNotice(ctx context.Context, tx *canon.Tx, id string) error {
 	return terminalNotice(ctx, tx, id, nil, "failure", "The reply could not be completed. Send a new message to continue.")
 }
 
-func terminalNotice(ctx context.Context, tx *canon.Tx, id string, issuer any, kind, text string) error {
+func terminalNotice(ctx context.Context, tx *canon.Tx, id string, issuer *Issuer, kind, text string) error {
 	var eventID string
 	var notice sql.NullString
 	err := tx.QueryRowContext(ctx, "SELECT input_event,notice_event FROM turn_control WHERE turn_id=?", id).Scan(&eventID, &notice)

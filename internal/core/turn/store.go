@@ -175,8 +175,7 @@ func (s *Store) Journal(id string) loop.Journal {
 		},
 		Partial: func(ctx context.Context, round int, index int64, text string) error {
 			return write(ctx, func(tx *canon.Tx) error {
-				_, err := tx.ExecContext(ctx, "INSERT INTO turn_partials(turn_id,round,ordinal,body) VALUES(?,?,?,?)", id, round, index, text)
-				return err
+				return savePartial(ctx, tx, id, Partial{Round: round, Index: index, Text: text})
 			})
 		},
 	}
@@ -344,6 +343,7 @@ func (s *Store) Run(ctx context.Context, o Options) (out loop.Outcome, err error
 	b := &turnBudget{gauge: gauge, effects: gathered.Effects}
 	ctx = context.WithValue(ctx, budgetContextKey{}, b)
 	var handle budget.Handle
+	var partials []Partial
 	defer func() {
 		state := Completed
 		if err != nil {
@@ -355,6 +355,11 @@ func (s *Store) Run(ctx context.Context, o Options) (out loop.Outcome, err error
 		completion := completionCanon{Canon: s.db, complete: func(save context.Context, tx *canon.Tx) error {
 			if e := active(save, tx, o.ID); e != nil {
 				return e
+			}
+			for _, partial := range partials {
+				if e := savePartial(save, tx, o.ID, partial); e != nil {
+					return e
+				}
 			}
 			gathered.Effects = b.effects
 			if e := saveOutcome(save, tx, o.ID, TurnOutcome{Meter: gauge.Snapshot(), Handle: handle, Gathered: gathered}); e != nil {
@@ -407,6 +412,13 @@ func (s *Store) Run(ctx context.Context, o Options) (out loop.Outcome, err error
 		return out, err
 	}
 	cfg.Journal = s.Journal(o.ID)
+	// The loop supplies unfinished visible text during cleanup. Commit it with
+	// the terminal state and interruption or failure notice, through the same completion
+	// transaction used for successful replies.
+	cfg.Journal.Partial = func(_ context.Context, round int, index int64, text string) error {
+		partials = append(partials, Partial{Round: round, Index: index, Text: text})
+		return nil
+	}
 	out, err = loop.Run(ctx, b.configure(cfg, o.Report))
 	// Only the active turn's additions belong in promotion. Prepared history,
 	// persona and memory packets remain scoped to the conversation request.

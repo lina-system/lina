@@ -33,6 +33,13 @@ graceful Core restart, no provider replay, and a new successful turn whose model
 context excludes the failed partial. Notice wording is captured from the live
 protocol rather than fixed in the scenario.
 
+`m1/tui-interrupted-reply.json` holds a loopback Responses stream after one delta,
+stops it with Esc in the installed TUI, reopens the TUI, and restarts installed
+Core both gracefully and forcibly while that TUI reconnects. Stored snapshots
+and terminal cells must retain the partial and its stopped outcome exactly once.
+Provider call counts rule out restart replay; an explicit follow-up checks that
+aborted partial text stays outside model context.
+
 `m1/tui-resize.json` exercises the colour conversation screen at 80x24, then
 40x12 and 120x35 through PTY resize signals. It retains a synthetic draft,
 checks header, status and composer, and compares all rows and the cursor with

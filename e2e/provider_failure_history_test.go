@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -68,7 +69,7 @@ func TestM1ProviderFailureHistory(t *testing.T) {
 			terminal := h.startTerminalSize([]string{"TERM=xterm-256color"}, false, true, 120, 60)
 			waitScreen(t, h, terminal, "Ctrl+D")
 			h.keys(terminal, input+"\r")
-			var notice string
+			var notice, noticeKey, partialKey string
 			for {
 				frame, err := client.Receive(h.ctx)
 				if err != nil {
@@ -76,6 +77,12 @@ func TestM1ProviderFailureHistory(t *testing.T) {
 				}
 				if item, ok := frame.Payload.(protocol.ItemDone); ok && item.Text != nil && *item.Text != input && *item.Text != scenario.Partial {
 					notice = *item.Text
+					if item.Stream != nil {
+						noticeKey = item.Stream.Key
+					}
+				}
+				if delta, ok := frame.Payload.(protocol.OutputDelta); ok && delta.Stream != nil {
+					partialKey = delta.Stream.Key
 				}
 				if state, ok := frame.Payload.(protocol.TurnState); ok && state.Active != nil && !*state.Active {
 					break
@@ -89,13 +96,15 @@ func TestM1ProviderFailureHistory(t *testing.T) {
 				waitScreen(t, h, terminal, scenario.Partial)
 			}
 			t.Logf("before restart: input=true notice=true partial=%t provider_calls=%d", truncated, calls.Load())
-			h.keys(terminal, "\x04")
-			terminal.process.wait(t, 0)
-			h.expectTerminalRestored(terminal)
+			before := client.Welcome.Epoch
 			client.Close()
 			h.stopCore(core)
+			waitScreen(t, h, terminal, design.Text(design.English, "retrying"))
 			core = start(true)
 			client, conversation = conversationClient(t, h)
+			if client.Welcome.Epoch == before {
+				t.Fatal("restart did not advance epoch")
+			}
 			topic := "conversation:" + conversation
 			if _, err = client.Subscribe(h.ctx, protocol.Subscribe{Topic: &topic}); err != nil {
 				t.Fatal(err)
@@ -110,19 +119,46 @@ func TestM1ProviderFailureHistory(t *testing.T) {
 			if !hasNotice || truncated && !hasPartial {
 				t.Fatalf("failed outcome lost after restart: notice=%t partial=%t", hasNotice, hasPartial)
 			}
-			again := h.startTerminalSize([]string{"TERM=xterm-256color"}, false, true, 120, 60)
-			waitScreen(t, h, again, notice)
+			history, ok := snapshot.Payload.(protocol.Snapshot)
+			if !ok {
+				t.Fatalf("expected history snapshot, got %s", snapshot.Kind)
+			}
+			counts := map[string]int{}
+			for _, row := range history.Items {
+				if row.Kind != protocol.KindItemDone {
+					continue
+				}
+				var item protocol.ItemDone
+				if err := json.Unmarshal(row.Payload, &item); err != nil {
+					t.Fatal(err)
+				}
+				if item.Text == nil {
+					continue
+				}
+				counts[*item.Text]++
+				if *item.Text == notice && (row.Key != noticeKey || item.Speaker == nil || *item.Speaker != protocol.ConversationSpeakerSystem) {
+					t.Fatal("failure notice changed identity or lost its system speaker")
+				}
+				if *item.Text == scenario.Partial && row.Key != partialKey {
+					t.Fatal("partial did not converge on the original streamed block")
+				}
+			}
+			if counts[input] != 1 || counts[notice] != 1 || truncated && counts[scenario.Partial] != 1 {
+				t.Fatalf("restored history contains missing or duplicate outcomes: %v", counts)
+			}
+			waitScreen(t, h, terminal, design.Text(design.English, "live"))
+			waitScreen(t, h, terminal, notice)
 			if truncated {
-				waitScreen(t, h, again, scenario.Partial)
+				waitScreen(t, h, terminal, scenario.Partial)
 			}
 			if calls.Load() != 1 {
 				t.Fatalf("restart replayed failed request: calls=%d", calls.Load())
 			}
 			admittedTurn(t, h, client, conversation, "next", scenario.NextInput)
-			waitScreen(t, h, again, scenario.Reply)
-			h.keys(again, "\x04")
-			again.process.wait(t, 0)
-			h.expectTerminalRestored(again)
+			waitScreen(t, h, terminal, scenario.Reply)
+			h.keys(terminal, "\x04")
+			terminal.process.wait(t, 0)
+			h.expectTerminalRestored(terminal)
 			client.Close()
 			h.stopCore(core)
 			if calls.Load() != 2 {
