@@ -54,7 +54,7 @@ CREATE TABLE turn_partials (
  ordinal INTEGER NOT NULL, body TEXT NOT NULL,
  PRIMARY KEY(turn_id,round,ordinal)
 );
-` + OutcomeSchema
+`
 
 type Canon interface {
 	Write(context.Context, func(*canon.Tx) error) error
@@ -402,6 +402,11 @@ func (s *Store) Run(ctx context.Context, o Options) (out loop.Outcome, err error
 	gathered.Effects = b.effects
 	if errors.Is(err, errPromote) {
 		if o.StartFromTurn == nil {
+			return out, err
+		}
+		if err = s.db.Write(ctx, func(tx *canon.Tx) error {
+			return saveOutcome(ctx, tx, o.ID, TurnOutcome{Meter: gauge.Snapshot(), Gathered: gathered})
+		}); err != nil {
 			return out, err
 		}
 		handle, err = o.StartFromTurn(ctx, gathered)

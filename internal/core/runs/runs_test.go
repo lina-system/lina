@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/core/assets"
+	"github.com/thisisjun786/lina/internal/core/budget"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"github.com/thisisjun786/lina/internal/core/runs"
@@ -58,6 +59,9 @@ func setupWith(t *testing.T, stream loop.StreamFunc, configure func(*runs.Config
 		}}},
 		"shell": {Declaration: json.RawMessage(`{"type":"function","name":"shell"}`)},
 	}}
+	// Unit scenarios inject publication; full turn scenarios replace this with
+	// turn.PublishPromotion and verify both records in the shared transaction.
+	cfg.PublishPromotion = func(context.Context, *canon.Tx, string, budget.Handle, budget.Handoff) error { return nil }
 	if configure != nil {
 		configure(&cfg)
 	}

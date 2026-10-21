@@ -145,6 +145,9 @@ type Config struct {
 	Assets  MaterialStore
 	Stream  loop.StreamFunc
 	Tools   map[string]Tool
+	// PublishPromotion attaches the handle to its source turn in the same
+	// fenced transaction as run admission. Required only by StartFromTurn.
+	PublishPromotion func(context.Context, *canon.Tx, string, budget.Handle, budget.Handoff) error
 	// Authorize validates origin and scope and checks the person's shared budget.
 	// It runs at start and before every model request; ErrBudget parks a run.
 	Authorize func(context.Context, Origin, Brief) error

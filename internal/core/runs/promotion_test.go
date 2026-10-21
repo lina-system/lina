@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/budget"
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/inbox"
 	"github.com/thisisjun786/lina/internal/core/runs"
 	"github.com/thisisjun786/lina/internal/core/turn"
@@ -41,7 +42,7 @@ func TestHardTurnStartsRealBackgroundRunFromDurableInput(t *testing.T) {
 			return call("background-read"), nil
 		}
 		return answer(runs.Artifact{Body: "whole result", Done: true}), nil
-	}, nil, turn.Schema, turn.ControlSchema)
+	}, func(c *runs.Config) { c.PublishPromotion = turn.PublishPromotion }, turn.Schema, turn.ControlSchema, turn.OutcomeSchema)
 	o := origin()
 	id, err := inbox.New(db).Admit(t.Context(), inbox.Input{Key: inbox.Key{Conversation: o.Conversation, Source: "client", NativeID: "input"}, Body: []byte("whole request")})
 	if err != nil {
@@ -87,7 +88,7 @@ func TestSoftTurnCanUseRealStartRunTool(t *testing.T) {
 	service, db, _ := setupWith(t, func(context.Context, provider.Request) (provider.Stream, error) {
 		t.Error("start tool ran background work before receipt")
 		return answer(runs.Artifact{}), nil
-	}, nil, turn.Schema, turn.ControlSchema)
+	}, func(c *runs.Config) { c.PublishPromotion = turn.PublishPromotion }, turn.Schema, turn.ControlSchema, turn.OutcomeSchema)
 	o := origin()
 	id, err := inbox.New(db).Admit(t.Context(), inbox.Input{Key: inbox.Key{Conversation: o.Conversation, Source: "client", NativeID: "input"}, Body: []byte("whole request")})
 	if err != nil {
@@ -253,5 +254,24 @@ func TestPromotionReplaySurvivesPersistenceMasking(t *testing.T) {
 	h.Input = "api_key=different-synthetic-credential"
 	if _, err := reopened.StartFromTurn(t.Context(), origin(), brief(), h); !errors.Is(err, runs.ErrInvalid) {
 		t.Fatalf("different inputs with the same mask were accepted: %v", err)
+	}
+}
+
+func TestPromotionPublicationFailureRollsBackRunAdmission(t *testing.T) {
+	failure := errors.New("publication failed")
+	service, db, _ := setupWith(t, func(context.Context, provider.Request) (provider.Stream, error) {
+		t.Error("failed promotion reached a model")
+		return answer(runs.Artifact{}), nil
+	}, func(c *runs.Config) {
+		c.PublishPromotion = func(context.Context, *canon.Tx, string, budget.Handle, budget.Handoff) error { return failure }
+	})
+	if _, err := service.StartFromTurn(t.Context(), origin(), brief(), gathered()); !errors.Is(err, failure) {
+		t.Fatal(err)
+	}
+	var count int
+	if err := db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM background_runs").Scan(&count)
+	}); err != nil || count != 0 {
+		t.Fatalf("failed publication left an orphan run: count=%d err=%v", count, err)
 	}
 }
