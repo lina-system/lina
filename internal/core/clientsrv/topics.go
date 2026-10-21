@@ -198,6 +198,19 @@ func validateEvent(event TopicEvent) error {
 			return ErrInvalidEvent
 		}
 	}
+	// Use the same generated codec as delivery before mutating the ring or
+	// snapshot. A syntactically valid but unsendable row must not poison a
+	// topic, and a bad batch must consume no sequence numbers.
+	validated := event
+	validated.Revision = 1 // Publication assigns the actual revision later.
+	identity := Identity{MainID: "validation", Epoch: "1"}
+	cursor := rpc.Cursor{Epoch: "1", Seq: 1}
+	if _, err := topicFrameEnvelope(identity, TopicFrame{Topic: "core", Cursor: cursor, Event: validated}); err != nil {
+		return ErrInvalidEvent
+	}
+	if _, err := topicSnapshotEnvelope(identity, TopicSnapshot{Topic: "core", Cursor: cursor, RevocationEpoch: "0", Items: []TopicEvent{validated}}); err != nil {
+		return ErrInvalidEvent
+	}
 	return nil
 }
 

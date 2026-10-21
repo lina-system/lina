@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -175,6 +176,9 @@ type response struct {
 }
 
 func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerIdentity) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	connectionID := rand.Text()
 	if identity.Supported == nil {
 		identity.Supported = LocalCombinations()
 	}
@@ -192,10 +196,40 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 		return
 	}
 	reader := rpc.NewReader(conn)
-	writer := rpc.NewWriter(conn)
 	welcomed := false
 	clientID := ""
 	capabilities := []protocol.Capability{}
+	// Observe EOF while an operation is blocked in an issuer exchange. A
+	// connection that goes away must cancel that exchange before admission.
+	frames := make(chan []byte)
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		defer close(frames)
+		for {
+			line, err := reader.Read()
+			if err != nil {
+				cancel()
+				return
+			}
+			select {
+			case frames <- slices.Clone(line):
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	defer func() { cancel(); conn.Close(); <-readDone }()
+	defer func() {
+		cancel()
+		session := Session{ConnectionID: connectionID, PersonID: identity.PersonID, Epoch: epoch, ClientID: clientID, Capabilities: capabilities}
+		for _, operation := range identity.Operations {
+			if operation.Disconnect != nil {
+				operation.Disconnect(session)
+			}
+		}
+	}()
+	writer := rpc.NewWriter(conn)
 	topics := newTopicSession(ctx, identity, identity.Topics,
 		func(id json.RawMessage, envelope protocol.Envelope) error {
 			if id != nil {
@@ -213,9 +247,15 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 		}, func() { conn.Close() })
 	defer func() { conn.Close(); topics.Close() }()
 	for {
-		line, err := reader.Read()
-		if err != nil {
+		var line []byte
+		select {
+		case <-ctx.Done():
 			return
+		case next, ok := <-frames:
+			if !ok {
+				return
+			}
+			line = next
 		}
 		var req request
 		if err := json.Unmarshal(line, &req); err != nil || req.JSONRPC != "2.0" {
@@ -289,12 +329,20 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 			if !exists || operation.Handle == nil || !slices.Contains(capabilities, operation.Capability) {
 				refuse(&answer, protocol.ErrorCapabilityNotNegotiated, "capability not negotiated")
 			} else {
-				session := Session{PersonID: identity.PersonID, Epoch: epoch, ClientID: clientID, CanDecide: peer.canDecide()}
+				session := Session{ConnectionID: connectionID, PersonID: identity.PersonID, Epoch: epoch, ClientID: clientID, CanDecide: peer.canDecide(), Capabilities: capabilities}
 				result, err := operation.Handle(ctx, session, envelope)
 				if err != nil {
-					refuse(&answer, protocol.ErrorUnavailable, "operation unavailable")
+					code := protocol.ErrorUnavailable
+					var failure *OperationError
+					if errors.As(err, &failure) {
+						code = failure.Code
+					}
+					refuse(&answer, code, string(code))
 				} else {
 					answer.Kind, answer.Payload = result.Kind, result.Payload
+					if result.Effect != "" {
+						answer.EffectState = result.Effect
+					}
 				}
 			}
 		case req.Method != "hello" || envelope.Kind != protocol.KindHello || !isHello || envelope.Sender.Party != protocol.PartyClient || envelope.Sender.ID != hello.ID:

@@ -2135,15 +2135,88 @@
       "additionalProperties": false
     },
     "account_request": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "operation": {
+          "type": "string",
+          "const": "sign_in"
+        },
+        "provider": {
+          "type": "string",
+          "const": "chatgpt"
+        },
+        "purpose": {
+          "type": "string",
+          "enum": [
+            "login",
+            "provider"
+          ]
+        },
+        "account_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
       "required": [],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "anyOf": [
+              {
+                "required": [
+                  "operation"
+                ]
+              },
+              {
+                "required": [
+                  "provider"
+                ]
+              },
+              {
+                "required": [
+                  "purpose"
+                ]
+              },
+              {
+                "required": [
+                  "account_id"
+                ]
+              }
+            ]
+          },
+          "then": {
+            "required": [
+              "operation",
+              "provider",
+              "purpose"
+            ]
+          }
+        }
+      ]
     },
     "account_result": {
       "type": "object",
       "properties": {
+        "operation": {
+          "type": "string",
+          "const": "sign_in"
+        },
+        "account_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "needs_sign_in",
+            "not_eligible",
+            "usage_capped"
+          ]
+        },
         "stream": {
           "$ref": "#/$defs/stream_metadata"
         },
@@ -2152,7 +2225,37 @@
         }
       },
       "required": [],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "anyOf": [
+              {
+                "required": [
+                  "operation"
+                ]
+              },
+              {
+                "required": [
+                  "account_id"
+                ]
+              },
+              {
+                "required": [
+                  "status"
+                ]
+              }
+            ]
+          },
+          "then": {
+            "required": [
+              "operation",
+              "account_id",
+              "status"
+            ]
+          }
+        }
+      ]
     },
     "memory_request": {
       "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
@@ -2317,32 +2420,269 @@
       "additionalProperties": false
     },
     "sign_in_listen": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "$comment": "Request a listener for the fixed /auth/callback path before opening the browser."
     },
     "sign_in_listening": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "cannot_listen": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
       "required": [],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "port"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "cannot_listen"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "required": [
+                "port"
+              ],
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "cannot_listen"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "required": [
+                "cannot_listen"
+              ],
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "port"
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
     },
     "sign_in_open": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "url": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384,
+          "pattern": "^https?://[^\\s]+$"
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
     "sign_in_redirect": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "state": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "iss": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "error": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "error_description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "error_uri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "url": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        }
+      },
       "required": [],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "code"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "state"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "iss"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "error"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "error_description"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "error_uri"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "url"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "required": [
+                "url"
+              ],
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "code"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "state"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "iss"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "error"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "error_description"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "error_uri"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "required": [
+                "code",
+                "state"
+              ],
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "url"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "error"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "error_description"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "error_uri"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "required": [
+                "error",
+                "state"
+              ],
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "url"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "code"
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
     },
     "approval_choice": {
       "type": "string",

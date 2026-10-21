@@ -56,7 +56,7 @@ func next(t *testing.T, sub *Subscription) TopicFrame {
 func TestTopicsGapSnapshotAndReplay(t *testing.T) {
 	h := topicHub(t, TopicOptions{RingSize: 2, SnapshotSize: 2})
 	for _, id := range []string{"a", "b", "c"} {
-		publish(t, h, "conversation:test", TopicEvent{Kind: protocol.KindItemDone, Key: id, Data: []byte(`{"done":true}`)})
+		publish(t, h, "conversation:test", TopicEvent{Kind: protocol.KindItemDone, Key: id, Data: []byte(`{"text":"complete"}`)})
 	}
 	for _, cursor := range []*rpc.Cursor{nil, {Epoch: "9", Seq: 3}, {Epoch: "10", Seq: 0}, {Epoch: "10", Seq: 4}} {
 		start, _ := subscribe(t, h, "conversation:test", cursor)
@@ -103,7 +103,7 @@ func TestOverflowClosesOnlySlowSubscription(t *testing.T) {
 	_, fast := subscribe(t, h, "waiting", nil)
 	_, other := subscribe(t, h, "core", nil)
 	for _, id := range []string{"a", "b"} {
-		publish(t, h, "waiting", TopicEvent{Kind: protocol.KindQuestion, Key: id, Data: []byte(`{}`)})
+		publish(t, h, "waiting", TopicEvent{Kind: protocol.KindQuestion, Key: id, Data: []byte(`{"conversation_id":"test"}`)})
 		if f := next(t, fast); f.Event.Key != id {
 			t.Fatal(f)
 		}
@@ -122,27 +122,36 @@ func TestOverflowClosesOnlySlowSubscription(t *testing.T) {
 }
 
 func TestCoalescingBeforeSequenceAndProtectedBoundaries(t *testing.T) {
-	h := topicHub(t, TopicOptions{})
-	_, sub := subscribe(t, h, "conversation:test", nil)
-	publish(t, h, "conversation:test", TopicEvent{Kind: protocol.KindOutputDelta, Key: "a", Data: []byte(`"hello"`)})
-	publish(t, h, "conversation:test", TopicEvent{Kind: protocol.KindOutputDelta, Key: "a", Data: []byte(`" world"`)})
-	publish(t, h, "conversation:test", TopicEvent{Kind: protocol.KindItemDone, Key: "a", Data: []byte(`{"text":"hello world"}`)})
-	for seq, want := range []string{`"hello world"`, `{"text":"hello world"}`} {
-		f := next(t, sub)
-		if f.Cursor.Seq != uint64(seq+1) || string(f.Event.Data) != want {
-			t.Fatalf("coalesced frame: %#v", f)
-		}
-	}
-	for _, kind := range []protocol.Kind{protocol.KindItemDone, protocol.KindApprovalRequest, protocol.KindQuestion} {
-		for range 2 {
-			publish(t, h, "conversation:test", TopicEvent{Kind: kind, Key: "protected", Data: []byte(`{}`)})
-		}
-		for range 2 {
-			if next(t, sub).Event.Kind != kind {
-				t.Fatal("protected event lost")
+	synctest.Test(t, func(t *testing.T) {
+		h := topicHub(t, TopicOptions{})
+		_, sub := subscribe(t, h, "conversation:test", nil)
+		publish(t, h, "conversation:test", TopicEvent{Kind: protocol.KindOutputDelta, Key: "a", Data: []byte(`"hello"`)})
+		publish(t, h, "conversation:test", TopicEvent{Kind: protocol.KindOutputDelta, Key: "a", Data: []byte(`" world"`)})
+		publish(t, h, "conversation:test", TopicEvent{Kind: protocol.KindItemDone, Key: "a", Data: []byte(`{"text":"hello world"}`)})
+		for seq, want := range []string{`"hello world"`, `{"text":"hello world"}`} {
+			f := next(t, sub)
+			if f.Cursor.Seq != uint64(seq+1) || string(f.Event.Data) != want {
+				t.Fatalf("coalesced frame: %#v", f)
 			}
 		}
-	}
+		for _, kind := range []protocol.Kind{protocol.KindItemDone, protocol.KindApprovalRequest, protocol.KindQuestion} {
+			data := `{}`
+			if kind == protocol.KindApprovalRequest {
+				data = `{"choices":["once","deny"]}`
+			}
+			if kind == protocol.KindQuestion {
+				data = `{"conversation_id":"test"}`
+			}
+			for range 2 {
+				publish(t, h, "conversation:test", TopicEvent{Kind: kind, Key: "protected", Data: []byte(data)})
+			}
+			for range 2 {
+				if next(t, sub).Event.Kind != kind {
+					t.Fatal("protected event lost")
+				}
+			}
+		}
+	})
 }
 
 func TestBatchTimeAndSize(t *testing.T) {
@@ -163,26 +172,28 @@ func TestBatchTimeAndSize(t *testing.T) {
 }
 
 func TestReplaceRowsSnapshotAndIsolation(t *testing.T) {
-	h := topicHub(t, TopicOptions{})
-	_, sub := subscribe(t, h, "progress", nil)
-	for _, data := range []string{`{"percent":1}`, `{"percent":2}`} {
-		publish(t, h, "progress", TopicEvent{Kind: protocol.KindProgressUpdate, Key: "p", Data: []byte(data)})
-	}
-	h.Flush("progress")
-	f := next(t, sub)
-	if f.Cursor.Seq != 1 || string(f.Event.Data) != `{"percent":2}` {
-		t.Fatalf("row coalescing: %#v", f)
-	}
-	f.Event.Data[0] = '!'
-	start, _ := subscribe(t, h, "progress", nil)
-	if string(start.Snapshot.Items[0].Data) != `{"percent":2}` {
-		t.Fatal("consumer mutated retained row")
-	}
-	start.Snapshot.Items[0].Data[0] = '!'
-	replay, _ := subscribe(t, h, "progress", &rpc.Cursor{Epoch: "10", Seq: 0})
-	if string(replay.Replay[0].Event.Data) != `{"percent":2}` {
-		t.Fatal("snapshot mutated replay")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		h := topicHub(t, TopicOptions{})
+		_, sub := subscribe(t, h, "progress", nil)
+		for _, data := range []string{`{"text":"1"}`, `{"text":"2"}`} {
+			publish(t, h, "progress", TopicEvent{Kind: protocol.KindProgressUpdate, Key: "p", Data: []byte(data)})
+		}
+		h.Flush("progress")
+		f := next(t, sub)
+		if f.Cursor.Seq != 1 || string(f.Event.Data) != `{"text":"2"}` {
+			t.Fatalf("row coalescing: %#v", f)
+		}
+		f.Event.Data[0] = '!'
+		start, _ := subscribe(t, h, "progress", nil)
+		if string(start.Snapshot.Items[0].Data) != `{"text":"2"}` {
+			t.Fatal("consumer mutated retained row")
+		}
+		start.Snapshot.Items[0].Data[0] = '!'
+		replay, _ := subscribe(t, h, "progress", &rpc.Cursor{Epoch: "10", Seq: 0})
+		if string(replay.Replay[0].Event.Data) != `{"text":"2"}` {
+			t.Fatal("snapshot mutated replay")
+		}
+	})
 }
 
 func TestSubscriptionCloseAndInvalidInputs(t *testing.T) {
@@ -371,5 +382,42 @@ func TestAtomicPublicationGroupOverflowIsDeterministic(t *testing.T) {
 	start, _ := subscribe(t, h, "conversation:test", nil)
 	if start.Snapshot.Cursor.Seq != 3 {
 		t.Fatal("invalid group partially published")
+	}
+}
+
+func TestTopicPublicationRejectsUnsendablePayloadBeforeCommit(t *testing.T) {
+	for _, batch := range []bool{false, true} {
+		t.Run(fmt.Sprint(batch), func(t *testing.T) {
+			h := topicHub(t, TopicOptions{})
+			valid := TopicEvent{Kind: protocol.KindItemDone, Key: "valid", Data: []byte(`{"text":"complete"}`)}
+			for _, invalid := range []TopicEvent{
+				{Kind: protocol.KindItemDone, Key: "invalid", Data: []byte(`{"unexpected":true}`)},
+				{Kind: protocol.KindQuestion, Key: "invalid", Data: []byte(`{}`)},
+				{Kind: protocol.KindHello, Key: "invalid", Data: []byte(`{}`)},
+				{Kind: protocol.KindOutputDelta, Key: "invalid", Data: []byte(`null`)},
+			} {
+				var err error
+				if batch {
+					err = h.PublishBatch("core", []TopicEvent{valid, invalid})
+				} else {
+					err = h.Publish("core", invalid)
+				}
+				if !errors.Is(err, ErrInvalidEvent) {
+					t.Fatalf("unusable payload committed: %v", err)
+				}
+			}
+			start, _ := subscribe(t, h, "core", nil)
+			if start.Snapshot.Cursor.Seq != 0 || len(start.Snapshot.Items) != 0 {
+				t.Fatal("invalid publication changed the snapshot")
+			}
+			publish(t, h, "core", valid)
+			start, _ = subscribe(t, h, "core", nil)
+			if start.Snapshot.Cursor.Seq != 1 {
+				t.Fatal("invalid payload consumed a sequence")
+			}
+			if _, err := topicSnapshotEnvelope(Identity{MainID: "main", Epoch: "10"}, *start.Snapshot); err != nil {
+				t.Fatalf("valid snapshot cannot be sent: %v", err)
+			}
+		})
 	}
 }
