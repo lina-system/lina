@@ -72,6 +72,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes bubblewrap
+          # Ubuntu 24.04 restricts unprivileged user namespaces with AppArmor.
+          # This disposable test VM must permit the namespaces that bwrap tests.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          bwrap --unshare-user --ro-bind / / --proc /proc --dev /dev /bin/true
 
       - name: Run foundation
         env:
