@@ -142,7 +142,7 @@ The start tool's implementation has a receipt barrier: Core commits the id and i
 
 ### The run record
 
-The work ledger holds one record per run: the run id, the requesting agent, the conversation and turn that asked (or the promotion at the hard budget, or the job), the person the run is done for, the brief and its references, the allowlist and run scope, the usage so far, the state, a checkpoint after each completed tool round trip, the result artifact and the times. Usage records name the run and the requesting agent. The transcript of a run is kept in its run directory in the work area, and the developer view shows it.
+The work ledger holds one record per run: the run id, the native start-call identity and brief digests with the original receipt, the requesting agent, the conversation and turn that asked (or the promotion at the hard budget, or the job), the person the run is done for, the brief and its references, the allowlist and run scope, the usage so far, the state, a checkpoint after each completed tool round trip, the result artifact and the times. Usage records name the run and the requesting agent. The transcript of a run is kept in its run directory in the work area, and the developer view shows it.
 
 ### Limits
 
@@ -179,6 +179,8 @@ The implementation retains checks as structured evidence: a successful named too
 
 ### Durability
 
+- A repeated start tool call is scoped by its trusted origin and native call id. It returns the same committed receipt even after restart, refuses a different brief under that identity, and does not allocate a second run or capacity slot.
+- Recovery restarts already-released queued work without requiring unrelated activity. Unreleased receipts and explicit budget/account holds remain parked; recovered work directories are recreated from durable state before execution.
 - A run is a durable record. It survives a restart of LINA Core: a run that was working is resumed once from its last checkpoint under the new epoch, and a second interruption lands it as failed, or as partial when it holds something usable, with an honest account. A run makes no effect outside its scratch directory, so no effect is left unknown.
 - At its expected time without having landed (15 minutes by default), a run gets one check-in from LINA Core: a read of its progress, with no model call. The expected time is a point to look, not a limit, and a run that is making progress goes on. A run that records no model or tool event for the stale interval (see Liveness) is stalled; LINA Core resumes it once from its checkpoint, and if it stalls again it lands as failed, or as partial when it holds something usable, with an honest account of what was done and what was not. No wall time ends a run.
 - A run is resumable from its checkpoints. A partial result keeps its artifact, so a follow-up run can continue from it.

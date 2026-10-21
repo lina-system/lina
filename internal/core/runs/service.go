@@ -4,6 +4,7 @@ package runs
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -95,6 +96,22 @@ func capacity(rows []Record, o Origin) bool {
 // avoids a goroutine race between returning the receipt and the first call.
 // The caller's turn context is used only for admission, never for execution.
 func (s *Service) Start(ctx context.Context, o Origin, b Brief) (string, State, error) {
+	return s.start(ctx, o, b, "")
+}
+
+// The native origin and call identity are bound outside the model arguments.
+// Epoch is excluded: a lost receipt is still the same call after Core restarts.
+func startIdentity(o Origin, call string) string {
+	o.Epoch = 0
+	raw, _ := json.Marshal(struct {
+		Origin Origin
+		Call   string
+	}{o, call})
+	digest := sha256.Sum256(raw)
+	return hex.EncodeToString(digest[:])
+}
+
+func (s *Service) start(ctx context.Context, o Origin, b Brief, call string) (string, State, error) {
 	o.Epoch = s.cfg.Epoch
 	if !valid(o, b) {
 		return "", "", ErrInvalid
@@ -116,12 +133,27 @@ func (s *Service) Start(ctx context.Context, o Origin, b Brief) (string, State, 
 	if err != nil {
 		return "", "", err
 	}
+	var key, digest string
+	if call != "" {
+		key = startIdentity(o, call)
+		sum := sha256.Sum256(data)
+		digest = hex.EncodeToString(sum[:])
+		for _, prior := range rows {
+			if prior.StartKey != key {
+				continue
+			}
+			if prior.StartDigest != digest {
+				return "", "", ErrInvalid
+			}
+			return prior.ID, prior.StartState, nil
+		}
+	}
 	id := make([]byte, 16)
 	if _, err := rand.Read(id); err != nil {
 		return "", "", err
 	}
 	now := s.cfg.Now().UnixNano()
-	r := Record{ID: hex.EncodeToString(id), Origin: o, Brief: b, State: Waiting, Created: now, LastEvent: now}
+	r := Record{ID: hex.EncodeToString(id), Origin: o, Brief: b, State: Waiting, Created: now, LastEvent: now, StartKey: key, StartDigest: digest}
 	r.Scratch = filepath.Join("runs", r.ID, "scratch")
 	if err := s.prepareFiles(r.ID); err != nil {
 		return "", "", err
@@ -140,6 +172,7 @@ func (s *Service) Start(ctx context.Context, o Origin, b Brief) (string, State, 
 	if capacity(rows, o) {
 		r.State = Working
 	}
+	r.StartState = r.State
 	if err := s.save(ctx, r, true); err != nil {
 		return "", "", err
 	}
@@ -312,7 +345,8 @@ func (s *Service) Stop(ctx context.Context, id string) error {
 
 // Recover runs before admitting work in the new Core epoch. Waiting/account
 // holds and cancelled records are unchanged; only interrupted working runs
-// consume the one persisted retry. Execution resumes after Release.
+// consume the one persisted retry and require Release. Already released queued
+// runs are scheduled after the recovery writes finish.
 func (s *Service) Recover(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -326,6 +360,9 @@ func (s *Service) Recover(ctx context.Context) error {
 	for _, r := range rows {
 		if r.State == Landed {
 			continue
+		}
+		if err := s.prepareFiles(r.ID); err != nil {
+			return err
 		}
 		r.Origin.Epoch = s.cfg.Epoch
 		if r.PendingOutcome != "" {
@@ -356,7 +393,7 @@ func (s *Service) Recover(ctx context.Context) error {
 			return err
 		}
 	}
-	return nil
+	return s.schedule(ctx)
 }
 
 // CheckProgress is called by Core's liveness timer. Age is never a deadline:
