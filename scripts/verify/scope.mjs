@@ -34,6 +34,7 @@ function registryFor(cwd) {
     'internal/core/compaction/',
     'internal/core/ctlfiles/',
     'internal/core/eventstore/',
+    'internal/core/exchange/',
     'internal/core/exec/',
     'internal/core/gateway/',
     'internal/core/guard/',

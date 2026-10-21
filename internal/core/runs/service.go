@@ -97,7 +97,7 @@ func capacity(rows []Record, o Origin) bool {
 // avoids a goroutine race between returning the receipt and the first call.
 // The caller's turn context is used only for admission, never for execution.
 func (s *Service) Start(ctx context.Context, o Origin, b Brief) (string, State, error) {
-	return s.start(ctx, o, b, nil, "")
+	return s.start(ctx, o, b, nil)
 }
 
 // The native origin and call identity are bound outside the model arguments.
@@ -137,7 +137,11 @@ func (s *Service) replayStart(ctx context.Context, key, digest string) (string, 
 	return "", "", nil
 }
 
-func (s *Service) start(ctx context.Context, o Origin, b Brief, promotion *budget.Handoff, call string) (string, State, error) {
+func (s *Service) start(ctx context.Context, o Origin, b Brief, promotion *budget.Handoff) (string, State, error) {
+	return s.startWithCall(ctx, o, b, promotion, "")
+}
+
+func (s *Service) startWithCall(ctx context.Context, o Origin, b Brief, promotion *budget.Handoff, call string) (string, State, error) {
 	o.Epoch = s.cfg.Epoch
 	if !valid(o, b) {
 		return "", "", ErrInvalid

@@ -42,7 +42,7 @@ func (s *Service) StartTool(origin Origin) loop.Tool {
 		if err != nil {
 			return loop.Result{ID: c.ID, Code: loop.Invalid}
 		}
-		id, state, err := s.start(ctx, origin, b, nil, c.ID)
+		id, state, err := s.startWithCall(ctx, origin, b, nil, c.ID)
 		if err != nil {
 			code := loop.Denied
 			if err == ErrInvalid {

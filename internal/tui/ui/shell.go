@@ -147,6 +147,7 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		var commands []state.Cmd
 		m.content, commands = state.Reduce(m.content, msg.Message)
+		m.refreshOpenCard()
 		m.refreshBlocks()
 		for _, block := range m.content.Blocks {
 			if block.Kind == protocol.KindTurnState && block.TurnKnown {

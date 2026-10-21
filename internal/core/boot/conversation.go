@@ -32,8 +32,10 @@ import (
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/internal/core/manifest"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
+	"github.com/thisisjun786/lina/internal/core/reply"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/internal/core/turn"
+	"github.com/thisisjun786/lina/internal/tui/render"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/protocol"
@@ -60,6 +62,8 @@ type conversationRuntime struct {
 	vault                       *secrets.Store
 	signin                      *accounts.SignIn
 	agents                      *agents.Store
+	controls                    *ctlfiles.Store
+	personaWarned               bool
 	lanes                       *lane.Manager
 	topics                      *clientsrv.Topics
 	route                       *modelpath.ResponsesConfig
@@ -79,7 +83,7 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err != nil {
 		return nil, err
 	}
-	r := &conversationRuntime{root: root, steering: map[string][]acceptedSteering{}, ctx: ctx, db: db, route: route, activities: activities, lanes: lane.New(), person: "person:" + main}
+	r := &conversationRuntime{root: root, controls: controls, steering: map[string][]acceptedSteering{}, ctx: ctx, db: db, route: route, activities: activities, lanes: lane.New(), person: "person:" + main}
 	if person != "" {
 		r.person = person
 	}
@@ -91,6 +95,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	}()
 	r.agents, err = agents.Open(root, db)
 	if err != nil {
+		return nil, err
+	}
+	if err := r.refreshPersona(ctx); err != nil {
 		return nil, err
 	}
 	first, err := r.agents.FirstRun(ctx, r.person, true)
@@ -262,7 +269,47 @@ func (r *conversationRuntime) publish(kind protocol.Kind, key string, payload an
 	if err != nil {
 		return err
 	}
-	return r.topics.Publish("conversation:"+r.conversation, clientsrv.TopicEvent{Kind: kind, Key: key, Data: data, AgentID: r.agent})
+	agent := r.agent
+	if kind == protocol.KindResult {
+		// Results carry attribution in provenance, not an agent_id wire field.
+		agent = ""
+	}
+	return r.topics.Publish("conversation:"+r.conversation, clientsrv.TopicEvent{Kind: kind, Key: key, Data: data, AgentID: agent})
+}
+
+// The installed conversation currently has no negotiated surface width or
+// language setting. Use the Korean ceiling and the acceptance surface's 80
+// columns, with the same wrapping as the TUI. Keep policy in the existing filter.
+func conversationFilter() (*reply.Filter, error) {
+	return reply.NewFilter(reply.Config{Budget: reply.ChatCeiling(), Language: "ko", RenderLines: func(text string) int {
+		if text == "" {
+			return 0
+		}
+		stream := render.NewStream("reply", render.Config{Width: 80}, nil)
+		stream.Seal(1, text)
+		return stream.Len()
+	}})
+}
+
+func (r *conversationRuntime) replyCard(key, turnID string, view reply.View) reply.Card {
+	return reply.Card{Preview: *view.Card, ResultID: "result:" + key, Revision: 1,
+		Title: "Full reply", Summary: view.Text, RevisedBy: r.agent,
+		Provenance: protocol.ResultProvenance{AgentID: r.agent, ConversationID: r.conversation, TurnID: turnID}}
+}
+
+func (r *conversationRuntime) publishReply(key, turnID string, view reply.View) error {
+	if view.Card != nil {
+		card := r.replyCard(key, turnID, view)
+		// The existing wire format carries complete rendered text for the pager;
+		// the typed document body remains in the ledger, not its reserved field.
+		return r.publish(protocol.KindResult, key, protocol.Result{
+			ResultID: card.ResultID, Revision: "1", Type: card.Type, Status: card.Status,
+			Title: card.Title, Summary: card.Summary, Text: &card.Text,
+			RevisedBy: card.RevisedBy, Provenance: card.Provenance,
+		})
+	}
+	speaker := protocol.ConversationSpeakerAgent
+	return r.publish(protocol.KindItemDone, key, protocol.ItemDone{Text: &view.Text, Speaker: &speaker})
 }
 func (r *conversationRuntime) setActive(active bool) error {
 	return r.publish(protocol.KindTurnState, "turn", protocol.TurnState{Active: &active})
@@ -312,6 +359,9 @@ func (r *conversationRuntime) seedHistory(ctx context.Context) error {
 		return err
 	}
 	for _, e := range events {
+		if e.ScaffoldKind == "result" {
+			continue // The source projects its card at the original reply position.
+		}
 		if e.ScaffoldKind == "interruption" || e.ScaffoldKind == "failure" {
 			stopped, err := turn.New(r.db).Stopped(ctx, e.ParentID)
 			if err != nil {
@@ -322,6 +372,20 @@ func (r *conversationRuntime) seedHistory(ctx context.Context) error {
 			}
 		}
 		text := e.Body.Text()
+		if e.SpeakerKind == guard.Agent {
+			filter, err := conversationFilter()
+			if err != nil {
+				return err
+			}
+			view, err := filter.Push(text)
+			if err != nil {
+				return err
+			}
+			if err = r.publishReply(e.ID, "turn:"+e.ParentID, view); err != nil {
+				return err
+			}
+			continue
+		}
 		speaker := protocol.ConversationSpeaker(e.SpeakerKind)
 		p := protocol.ItemDone{Text: &text, Speaker: &speaker}
 		if e.SpeakerKind == guard.Person {
@@ -368,6 +432,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			return turn.ModelPolicy{Model: r.route.Model, Revision: "configured", Class: provider.ModelAPI}, nil
 		},
 		Context: func(ctx context.Context, _ turn.ModelPolicy) (turn.PreparedRequest, error) {
+			if err := r.refreshPersona(ctx); err != nil {
+				return turn.PreparedRequest{}, err
+			}
 			persona, err := r.agents.Prepare(ctx, turnID, r.agent)
 			if err != nil {
 				return turn.PreparedRequest{}, err
@@ -400,14 +467,47 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		Digest: assemble.Digest,
 	}
 	round := 0
+	filters := map[string]*reply.Filter{}
 	var completed []ledger.Admission
 	var saved []ledger.Event
 	complete := func(ctx context.Context, db turn.Canon) error {
 		if len(completed) == 0 {
 			return db.Write(ctx, func(*canon.Tx) error { return nil })
 		}
+		// Adapt the existing filter's generated draft into the same batch as all
+		// completed items. Turn completion, sources and cards commit together.
+		var batch []ledger.Admission
+		for _, item := range completed {
+			batch = append(batch, item)
+			masked, err := secrets.Mask(item.Input.Body)
+			if err != nil {
+				return err
+			}
+			filter, err := conversationFilter()
+			if err != nil {
+				return err
+			}
+			view, err := filter.Push(masked.Text())
+			if err != nil {
+				return err
+			}
+			if view.Card != nil {
+				card := r.replyCard(item.Input.ID, turnID, view)
+				body, err := json.Marshal(card)
+				if err != nil {
+					return err
+				}
+				source := item.Input
+				batch = append(batch, ledger.Admission{Entry: guard.EntryAgent, Input: ledger.Input{
+					ID: card.ResultID, ParentID: source.ID, ConversationID: source.ConversationID, AgentID: source.AgentID,
+					Surface: source.Surface, OccurredAt: source.OccurredAt, RecordedAt: source.RecordedAt, TimeQuality: source.TimeQuality,
+					ScaffoldKind: "result", Body: string(body),
+					Relations: []ledger.Relation{{TargetID: source.ID, Kind: "view_of"}},
+				}})
+			}
+		}
 		var err error
-		saved, err = ledger.New(db, r.materials).AdmitBatch(ctx, completed)
+		saved, err = ledger.New(db, r.materials).AdmitBatch(ctx, batch)
 		return err
 	}
 	out, err := turn.New(r.db).Run(ctx, turn.Options{ID: turnID, Conversation: r.conversation, InboxID: inboxID, InputEvent: input.ID, Preparation: prep, Complete: complete, Loop: loop.Config{
@@ -420,6 +520,24 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			key := fmt.Sprintf("%s:%d:%d", turnID, round, e.Index)
 			switch e.Kind {
 			case provider.Delta:
+				filter := filters[key]
+				if filter == nil {
+					var err error
+					filter, err = conversationFilter()
+					if err != nil {
+						return err
+					}
+					filters[key] = filter
+				}
+				view, err := filter.Push(e.Delta)
+				if err != nil {
+					return err
+				}
+				if view.Cut {
+					// A result replaces the same stream row, retracting the unfinished
+					// sentence while retaining all subsequent text in its preview.
+					return r.publishReply(key, turnID, view)
+				}
 				return r.publish(protocol.KindOutputDelta, key, e.Delta)
 			case provider.ItemDone:
 				var item struct {
@@ -451,9 +569,20 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 	// commit together. Publication can be recovered from history after a crash.
 	if err == nil {
 		for _, item := range saved {
-			value := item.Body.Text()
-			speaker := protocol.ConversationSpeakerAgent
-			if publishErr := r.publish(protocol.KindItemDone, item.ID, protocol.ItemDone{Text: &value, Speaker: &speaker}); publishErr != nil {
+			if item.ScaffoldKind == "result" {
+				continue
+			}
+			filter, filterErr := conversationFilter()
+			if filterErr != nil {
+				err = filterErr
+				break
+			}
+			view, filterErr := filter.Push(item.Body.Text())
+			if filterErr != nil {
+				err = filterErr
+				break
+			}
+			if publishErr := r.publishReply(item.ID, turnID, view); publishErr != nil {
 				err = publishErr
 				break
 			}
