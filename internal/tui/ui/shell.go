@@ -248,7 +248,7 @@ func (m *shellModel) refreshBlocks() {
 }
 
 func (m *shellModel) View() tea.View {
-	view := tea.NewView(m.viewContent())
+	view := tea.NewView(m.viewContent(true))
 	view.AltScreen = true
 	view.ReportFocus = true
 	view.KeyboardEnhancements.ReportEventTypes = true
@@ -264,7 +264,31 @@ func (m *shellModel) View() tea.View {
 	return view
 }
 
-func (m *shellModel) viewContent() string {
+// Notices stay outside history. A capability notice is no longer current when
+// a later welcome grants a different set of lists.
+func (m *shellModel) localNotice() string {
+	for i := len(m.content.Notices) - 1; i >= 0; i-- {
+		code := m.content.Notices[i].Code
+		switch code {
+		case "shell.lists_unavailable":
+			if m.hasCapability("running") || m.hasCapability("waiting") {
+				continue
+			}
+		case "shell.running_unavailable":
+			if m.hasCapability("running") || !m.hasCapability("waiting") {
+				continue
+			}
+		case "shell.waiting_unavailable":
+			if !m.hasCapability("running") || m.hasCapability("waiting") {
+				continue
+			}
+		}
+		return design.Text(m.styles.options.Language, code)
+	}
+	return ""
+}
+
+func (m *shellModel) viewContent(showNotice bool) string {
 	if m.size.Width <= 0 || m.size.Height <= 0 {
 		return ""
 	}
@@ -272,7 +296,7 @@ func (m *shellModel) viewContent() string {
 		return m.accountContent()
 	}
 	if m.hasComposer() && m.status.State.active() {
-		return m.conversationContent()
+		return m.conversationContent(showNotice)
 	}
 	plan := layout.Plan(m.size, layout.Caps{}, layout.Shape{ComposerRows: 1})
 	status := m.styles.presentation(m.status)
@@ -280,9 +304,8 @@ func (m *shellModel) viewContent() string {
 	if m.status.Cause != "" || m.status.State == Retrying {
 		statusLine += "  " + status.Detail
 	}
-	if len(m.content.Notices) > 0 {
-		notice := m.content.Notices[len(m.content.Notices)-1]
-		statusLine += "  " + design.Text(m.styles.options.Language, notice.Code)
+	if notice := m.localNotice(); showNotice && notice != "" {
+		statusLine += "  " + notice
 	}
 	clip := func(text string) string { return ansi.Truncate(text, m.size.Width, "") }
 	if plan.Tier == layout.TooSmall {
@@ -295,9 +318,8 @@ func (m *shellModel) viewContent() string {
 	}
 	if len(m.content.Blocks) == 0 || !m.status.State.active() {
 		lines := strings.Split(strings.TrimSuffix(m.styles.ScreenStatus(m.status), "\n"), "\n")
-		if len(m.content.Notices) > 0 {
-			notice := m.content.Notices[len(m.content.Notices)-1]
-			lines = append(lines, clip(m.styles.Muted.Render(design.Text(m.styles.options.Language, notice.Code))))
+		if notice := m.localNotice(); showNotice && notice != "" {
+			lines = append(lines, clip(m.styles.Muted.Render(notice)))
 		}
 		if len(lines) > m.size.Height {
 			lines = lines[:m.size.Height]
@@ -312,8 +334,6 @@ func (m *shellModel) viewContent() string {
 	}
 	rows[plan.Header.Y] = clip(m.styles.Title.Render(name))
 	rows[plan.Status.Y] = clip(m.styles.Text.Render(statusLine))
-	rows[plan.Running.Y] = clip(m.styles.Muted.Render(design.Text(m.styles.options.Language, "shell.running")))
-	rows[plan.Cards.Y] = clip(m.styles.Muted.Render(design.Text(m.styles.options.Language, "shell.cards")))
 	rows[plan.Composer.Y] = clip(m.styles.Muted.Render(design.Text(m.styles.options.Language, "shell.composer")))
 	start := 0
 	for i, block := range m.content.Blocks {

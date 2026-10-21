@@ -177,6 +177,12 @@ func Run(ctx context.Context, cfg Config) (result error) {
 				return err
 			}
 		}
+		// Once bind makes the socket connectable, finish retiring the previous
+		// socket and publishing ownership before honoring cancellation. Clearing
+		// the sentinel earlier could discard the previous socket's recovery path.
+		if step == SocketCreated || step == SocketBound {
+			return nil
+		}
 		return ctx.Err()
 	}
 	if err := boundary(RootValidated); err != nil {
@@ -399,6 +405,11 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		}
 	})
 	if err := boundary(SocketsBound); err != nil {
+		// Ownership is now durable and the listener is on the shutdown stack.
+		// A signal here is an orderly stop, even before the first handshake.
+		if err == context.Canceled && ctx.Err() == context.Canceled {
+			return nil
+		}
 		return err
 	}
 	if cfg.Services.Reconcile != nil {
