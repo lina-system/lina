@@ -11,11 +11,16 @@ import (
 )
 
 type display struct {
+	renderer    *terminalRenderer
 	output      io.Writer
 	styles      Styles
 	interactive bool
 	rawOutput   bool
 	rows        int
+	last        ConnectionStatus
+	shown       bool
+	notices     int
+	frame       string
 }
 
 func (d *display) write(text string) error {
@@ -43,19 +48,34 @@ func newDisplay(output io.Writer) *display {
 }
 
 func (d *display) show(state Connection) error {
+	if d.renderer != nil {
+		return nil
+	}
+	return d.showStatus(ConnectionStatus{State: state})
+}
+
+func (d *display) showStatus(status ConnectionStatus) (err error) {
+	if d.shown && d.last == status {
+		return nil
+	}
+	defer func() {
+		if err == nil {
+			d.last, d.shown = status, true
+		}
+	}()
 	if !d.interactive {
-		if state == Live {
+		if status.State == Live {
 			return d.write("live\n")
 		}
 		return nil
 	}
-	frame := d.styles.Screen(state)
+	frame := d.styles.ScreenStatus(status)
 	rows := strings.Count(frame, "\n")
 	// NO_COLOR emits no escapes at all. After the initial brand panel, append
 	// only the new labelled state so a monochrome transcript remains compact.
 	if d.rows > 0 {
 		if d.styles.options.Profile == Monochrome {
-			v := connectionView(state, d.styles.tokens, d.styles.options.ASCII)
+			v := d.styles.presentation(status)
 			gutter := strings.Repeat(" ", d.styles.tokens.SpaceGutter.Cells)
 			text := gutter + v.Mark + " " + v.Label
 			if v.Detail != "" {
@@ -68,7 +88,7 @@ func (d *display) show(state Connection) error {
 		}
 		frame = ansi.CursorUp(d.rows) + ansi.EraseScreenBelow + frame
 	}
-	err := d.write(frame)
+	err = d.write(frame)
 	d.rows = rows
 	return err
 }

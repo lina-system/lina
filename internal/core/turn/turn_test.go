@@ -28,7 +28,7 @@ type leaser struct{}
 func (leaser) Acquire(context.Context, lease.Activity) (lease.Lease, error) {
 	return lease.New(func() {}), nil
 }
-func database(t *testing.T) (*canon.Store, canon.Config) {
+func database(t *testing.T, schemas ...string) (*canon.Store, canon.Config) {
 	root := filepath.Join(t.TempDir(), "state")
 	if err := os.Mkdir(root, 0700); err != nil {
 		t.Fatal(err)
@@ -42,7 +42,12 @@ func database(t *testing.T) (*canon.Store, canon.Config) {
 	}
 	t.Cleanup(func() { c.Close() })
 	ms := canon.Migrations()
-	ms = append(ms, canon.Migration{Version: len(ms) + 1, SQL: turn.Schema})
+	if len(schemas) == 0 {
+		schemas = []string{turn.Schema, turn.ControlSchema, turn.OutcomeSchema}
+	}
+	for _, schema := range schemas {
+		ms = append(ms, canon.Migration{Version: len(ms) + 1, SQL: schema})
+	}
 	cfg := canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: 1, Controls: c, Migrations: ms}
 	return open(t, cfg), cfg
 }

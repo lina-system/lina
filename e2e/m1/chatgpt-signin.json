@@ -1,0 +1,9 @@
+{
+  "person_id": "owner-synthetic",
+  "steps": [
+    {"purpose": "login", "subject": "subject-one", "callback": "structured", "outcome": "applied", "owner_subject": "subject-one"},
+    {"purpose": "login", "subject": "subject-two", "callback": "pasted", "outcome": "not_authorized", "owner_subject": "subject-one"},
+    {"purpose": "provider", "subject": "subject-two", "callback": "pasted", "outcome": "applied", "owner_subject": "subject-one"},
+    {"purpose": "login", "subject": "subject-one", "callback": "structured", "outcome": "applied", "owner_subject": "subject-one"}
+  ]
+}

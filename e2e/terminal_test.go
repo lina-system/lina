@@ -11,10 +11,12 @@ import (
 	"syscall"
 	"time"
 
+	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"golang.org/x/sys/unix"
 )
 
 type terminal struct {
+	screen  *tuiterm.Recorder
 	process *process
 	master  *os.File
 	lines   chan string
@@ -23,11 +25,17 @@ type terminal struct {
 	mode    unix.Termios
 }
 
-func (h *harness) startTUI() *terminal {
-	return h.startTerminal(nil, false)
+func (h *harness) startTUI(environment ...string) *terminal {
+	return h.startTerminal(environment, false)
 }
 
+func (h *harness) startScreenTUI(environment ...string) *terminal {
+	return h.startTerminalScreen(environment, false, true)
+}
 func (h *harness) startTerminal(environment []string, combined bool) *terminal {
+	return h.startTerminalScreen(environment, combined, false)
+}
+func (h *harness) startTerminalScreen(environment []string, combined, screen bool) *terminal {
 	h.t.Helper()
 	master, err := os.OpenFile("/dev/ptmx", os.O_RDWR|unix.O_NOCTTY|unix.O_NONBLOCK, 0)
 	if err != nil {
@@ -66,9 +74,23 @@ func (h *harness) startTerminal(environment []string, combined bool) *terminal {
 	p.command.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
 	p.start(h.t)
 	term := &terminal{process: p, master: master, lines: make(chan string), done: make(chan struct{}), mode: *mode}
+	if screen {
+		term.screen, err = tuiterm.NewRecorder(80, 24)
+		if err != nil {
+			h.t.Fatal(err)
+		}
+	}
 	go func() {
 		defer close(term.done)
 		defer close(term.lines)
+		if term.screen != nil {
+			_, term.err = io.Copy(term.screen, master)
+			if errors.Is(term.err, syscall.EIO) || errors.Is(term.err, os.ErrClosed) {
+				term.err = nil
+			}
+			term.screen.Close()
+			return
+		}
 		scanner := bufio.NewScanner(master)
 		for scanner.Scan() {
 			select {

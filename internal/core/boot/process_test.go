@@ -6,12 +6,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
 	"syscall"
 	"testing"
@@ -39,7 +41,7 @@ func TestCoreProcess(t *testing.T) {
 			for iteration := range 2 {
 				epoch := strconv.Itoa(iteration + 1)
 				child := startCore(t, binary, root, socket)
-				idle := child.connect(t, socket) // Readiness is a successful connection.
+				idle := child.connect(t, socket) // Listening may precede READY.
 				for _, versions := range [][]string{{"1.0"}, {"2.0", "1.0"}, {"2.0", "1.1"}} {
 					conn := child.connect(t, socket)
 					conn.SetDeadline(time.Now().Add(5 * time.Second))
@@ -83,7 +85,11 @@ func TestCoreProcess(t *testing.T) {
 							t.Fatalf("unexpected welcome: %s", line)
 						}
 						// A welcomed connection remains usable, but grants no operations.
+						// Reads reach capability admission in both RECOVERING and READY.
 						request.Params.MessageID = "after-welcome"
+						request.Params.Epoch = epoch
+						request.Method = "history_get"
+						request.Params.Kind, request.Params.Payload = protocol.KindHistoryGet, protocol.HistoryGet{}
 						if err := json.NewEncoder(conn).Encode(request); err != nil {
 							t.Fatal(err)
 						}
@@ -94,8 +100,22 @@ func TestCoreProcess(t *testing.T) {
 						if err := json.Unmarshal(line, &response); err != nil {
 							t.Fatal(err)
 						}
-						if response.Result.Error == nil || response.Result.Error.Code != protocol.ErrorCapabilityNotNegotiated {
+						answer := response.Result
+						if response.JSONRPC != "2.0" || response.ID != request.ID || answer.ReplyTo == nil || *answer.ReplyTo != request.Params.MessageID || answer.Sender != envelope.Sender || answer.Epoch != epoch || answer.Kind != protocol.KindError || answer.EffectState != protocol.EffectRefused || answer.Error == nil {
+							t.Fatalf("invalid post-handshake answer: %s", line)
+						}
+						if answer.Error.Code != protocol.ErrorCapabilityNotNegotiated {
 							t.Fatalf("unexpected post-handshake answer: %s", line)
+						}
+						// A handshake is served during recovery. Probe until Core
+						// explicitly refuses the unavailable capability; retry only
+						// recovery refusals, never an accepted effect.
+						request.Params.MessageID = "after-recovery"
+						request.Params.Epoch = epoch
+						request.Method = "input"
+						request.Params.Kind, request.Params.Payload = protocol.KindInput, protocol.Input{}
+						if err := awaitCapabilityRefusal(conn, request); err != nil {
+							t.Fatal(err)
 						}
 					} else {
 						if envelope.Kind != protocol.KindError || envelope.Error == nil || envelope.Error.Code != protocol.ErrorUnsupportedCombination || envelope.EffectState != protocol.EffectRefused {
@@ -129,6 +149,81 @@ func TestCoreProcess(t *testing.T) {
 	}
 }
 
+// The connection deadline bounds the whole wait, not each retry. Unexpected
+// envelopes and transport errors are terminal rather than readiness signals.
+func awaitCapabilityRefusal(conn net.Conn, request any) error {
+	writer, reader := json.NewEncoder(conn), json.NewDecoder(conn)
+	for {
+		if err := writer.Encode(request); err != nil {
+			return err
+		}
+		var response struct {
+			Result protocol.Envelope `json:"result"`
+		}
+		if err := reader.Decode(&response); err != nil {
+			return err
+		}
+		e := response.Result
+		if e.Kind != protocol.KindError || e.EffectState != protocol.EffectRefused || e.Error == nil {
+			return fmt.Errorf("unexpected post-handshake response: %+v", e)
+		}
+		if e.Error.Code == protocol.ErrorCapabilityNotNegotiated {
+			return nil
+		}
+		if e.Error.Code != protocol.ErrorUnavailable {
+			return fmt.Errorf("unexpected post-handshake refusal: %s", e.Error.Code)
+		}
+	}
+}
+
+func TestCapabilityReadinessProbe(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		codes     []protocol.ErrorCode
+		wantError bool
+	}{
+		{"recovery then ready", []protocol.ErrorCode{protocol.ErrorUnavailable, protocol.ErrorCapabilityNotNegotiated}, false},
+		{"unexpected refusal is terminal", []protocol.ErrorCode{protocol.ErrorMalformed}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client, server := net.Pipe()
+			defer client.Close()
+			client.SetDeadline(time.Now().Add(5 * time.Second))
+			envelope := helloEnvelope(t, []string{"1.0"})
+			envelope.Kind = protocol.KindError
+			envelope.Payload = protocol.ErrorPayload{}
+			envelope.EffectState = protocol.EffectRefused
+			done := make(chan error, 1)
+			go func() {
+				defer server.Close()
+				reader, writer := json.NewDecoder(server), json.NewEncoder(server)
+				for _, code := range tc.codes {
+					var request json.RawMessage
+					if err := reader.Decode(&request); err != nil {
+						done <- err
+						return
+					}
+					envelope.Error = &protocol.Error{Code: code}
+					if err := writer.Encode(struct {
+						Result protocol.Envelope `json:"result"`
+					}{envelope}); err != nil {
+						done <- err
+						return
+					}
+				}
+				done <- nil
+			}()
+			err := awaitCapabilityRefusal(client, map[string]string{"probe": "ready"})
+			if (err != nil) != tc.wantError {
+				t.Fatalf("readiness=%v", err)
+			}
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func helloEnvelope(t *testing.T, versions []string) protocol.Envelope {
 	t.Helper()
 	data, err := os.ReadFile("../../../protocol/fixtures/client/1.0/hello.json")
@@ -140,6 +235,8 @@ func helloEnvelope(t *testing.T, versions []string) protocol.Envelope {
 		t.Fatal(err)
 	}
 	hello := envelope.Payload.(protocol.Hello)
+	platform := runtime.GOOS + "/" + runtime.GOARCH
+	hello.Platform = &platform
 	hello.ProtocolVersions = versions
 	hello.Capabilities = []protocol.Capability{{Name: "conversation", Version: "1.0"}}
 	envelope.Payload = hello

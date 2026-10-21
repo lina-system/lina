@@ -24,6 +24,8 @@ var clientKinds = []string{
 	"agent_talk_get", "agent_talk", "agent_talk_entry", "agent_talk_expand", "agent_talk_subscribe",
 	"connected", "disconnected", "task_status", "run_status", "task_cancel", "multi_task_control",
 	"sign_in_listen", "sign_in_listening", "sign_in_open", "sign_in_redirect",
+	"snapshot", "resync", "resync_required",
+	"restart_request", "restart_get", "restart_status",
 }
 
 func clientMessage(t *testing.T, kind string, payload any) map[string]any {
@@ -55,6 +57,7 @@ func roundTrip(t *testing.T, value map[string]any) Envelope {
 
 func concretePayloads() map[string]any {
 	return map[string]any{
+		"restart_status":     map[string]any{"owed": false},
 		"conversation_start": map[string]any{"agent_id": "agent-example"},
 		"approval_request":   map[string]any{"choices": []any{"once", "deny", "always_allow"}},
 		"approval_answer":    map[string]any{"choice": "once"},
@@ -76,6 +79,21 @@ func concretePayloads() map[string]any {
 		"result_edit":       map[string]any{"result_id": "result-example", "base_revision": float64(1), "body": map[string]any{}},
 		"result_save":       map[string]any{"result_id": "result-example", "revision": float64(1), "destination": map[string]any{}},
 		"readiness_failure": map[string]any{"step": "preparation-example"},
+		"account_request":   map[string]any{"operation": "sign_in", "provider": "chatgpt", "purpose": "login"},
+		"account_result":    map[string]any{"operation": "sign_in", "account_id": "account-example", "status": "ok"},
+		"sign_in_listening": map[string]any{"port": float64(32123)},
+		"sign_in_open":      map[string]any{"url": "https://auth.openai.com/api/accounts/authorize?state=synthetic"},
+		"sign_in_redirect":  map[string]any{"code": "synthetic", "state": "synthetic"},
+		"snapshot": map[string]any{
+			"topic": "conversation:example", "cursor": map[string]any{"epoch": "7", "seq": float64(2)},
+			"revocation_epoch": "0",
+			"items": []any{map[string]any{
+				"kind": "item_done", "key": "item-example", "revision": float64(2),
+				"payload": map[string]any{"text": "complete"},
+			}},
+		},
+		"resync":          map[string]any{"topic": "conversation:example", "cursor": map[string]any{"epoch": "7", "seq": float64(2)}},
+		"resync_required": map[string]any{"topic": "conversation:example", "cursor": map[string]any{"epoch": "7", "seq": float64(2)}},
 	}
 }
 

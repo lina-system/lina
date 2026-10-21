@@ -169,7 +169,11 @@ The TUI and the LINA app on every platform talk to LINA Core over the `client` c
 
 The empty TUI increment (#32) implements the local client of the empty Core handshake: one newline-delimited JSON-RPC 2.0 `hello` request, offering client 1.0 and no capabilities. It validates the generated response envelope, JSON-RPC request id, `reply_to`, Core sender, selected version, main id, epoch and granted capabilities before reporting the connection as live. A refusal remains a typed error code; clients never infer compatibility from its diagnostic detail. The connection stays open until the person quits or input ends, then closes without sending a conversation request or stopping Core. Malformed or oversized handshake frames fail the connection; the frame limit is 1 MiB, matching the empty Core. This increment implements no reconnect, stream or conversation operations.
 
-Every client connection acts for one person ([product-families.md](product-families.md)). LINA Core settles the person during the handshake and names the person id in `welcome`. Every later message on the connection is that person's: a message, an answer to a question or an approval, a cancel, a sign-in relay, an agent management request. A LINA admits only its owner, so a client on the local socket or inside the tailnet acts for the owner.
+The local admission boundary checks the Unix peer's OS user before reading `hello`. The client 1.0 hello has optional string fields `peer` and `platform`. The TUI sends `peer: "lina-tui"` and its compiled `GOOS/GOARCH` as `platform`. These fields remain optional in the wire schema; handshake admission refuses a missing, empty or unlisted value with `unsupported_combination` and closes the connection. Core never infers either field from product version or its own platform. Core's table grants only capabilities also declared by installed handlers. A table entry cannot add a protocol codec to the binary, and an unlisted combination receives `unsupported_combination` followed by connection close. Product versions remain diagnostic only.
+
+After welcome, every request must retain the client sender id and the welcomed decimal epoch; mismatches are refused as `not_authorized` and `stale_epoch`. RECOVERING refuses mutations with `unavailable` before dispatch while negotiated read and subscription handlers remain usable. Answers through approval, question and waiting-list kinds require kernel-authenticated process ancestry outside Core's descendant tree. Unknown ancestry or a changed process identity refuses the answer; neither a payload nor a product version supplies decider facts. The same-user process Core did not start remains the stated residual risk in [C-42](go-core.md#client-service).
+
+Every client connection acts for one person ([product-families.md](product-families.md)). LINA Core settles the person during the handshake and names the person id in `welcome`. Every later message on the connection is that person's: a message, an answer to a question or an approval, a cancel, a sign-in relay, an agent management request. A LINA admits only its owner, so a client on the local socket or inside the tailnet acts for the owner. During RECOVERING, every mutation receives `unavailable` after sender and epoch validation and before decider or capability dispatch. Reads and subscriptions retain their negotiated admission paths.
 
 One connection reaches every agent of the main. A conversation kind, and a question asked in a conversation, names the conversation by its conversation id, and the conversation's participating agents follow from it. A request that starts a conversation names its participating agent by agent id. Every history item and every conversation event carries the agent id of the agent that spoke or acted, next to the person id where a person acted ([product-families.md](product-families.md)). A system-originated event, such as a background notice, carries the agent id of the conversation's agent and is marked as system-originated.
 
@@ -182,8 +186,9 @@ One connection reaches every agent of the main. A conversation kind, and a quest
 | Accounts | List the person's model-provider accounts with their plan, status and quota rows; start a sign-in; add an API-key account; sign out or remove an account; change the model policy ([runtime.md](runtime.md#accounts-and-sign-in)). LINA Core records each change with the person id. A credential never travels to a client; a key the person types travels once, from the client to LINA Core. |
 | Task | Answer the questions of a task or background run, receive task and run status events, read the running list, cancel a task or stop a background run, send a follow-up to a background run |
 | Approval | Answer approval requests with their choices: once or deny, and always allow where the request offers it ([main-authority.md](main-authority.md)) |
-| Sign-in relay | Listen on a loopback port for a sign-in redirect and report the port to LINA Core, or report that it cannot listen; open a sign-in URL from LINA Core in the system browser; and return the redirect's `code`, `state` and `iss`, or its `error` fields, or the URL the person pasted ([integrations.md](integrations.md)). The sign-in of a plugin and the sign-in of a model-provider account use the same relay. |
+| Sign-in relay | `sign_in_listen` asks for a listener at the fixed `/auth/callback` path. `sign_in_listening` reports either `port` (1–65535) or a nonempty `cannot_listen` reason. `sign_in_open` carries `url` for the system browser. `sign_in_redirect` carries `code`, `state` and optional `iss`; or `error`, `state`, optional `iss`, `error_description` and `error_uri`; or the complete callback `url`, including a URL the person pasted ([integrations.md](integrations.md)). The sign-in of a plugin and the sign-in of a model-provider account use the same relay. |
 | Multi-task control | Control several tasks or background runs at once, including stop all |
+| Lifecycle | With `lifecycle` 1.0 negotiated, request a safe Core restart and read its durable owed/discharged status. |
 | Results | Receive typed results, read one by id, edit, save ([Typed results](#typed-results)) |
 | Progress | Read the progress view: a line for each running 목표 and 일 with its name, its stage and bar, what just finished, what comes next and whether it waits on the person, and the rows that need the person on top; receive changes to it; and ask for its digest, the short form that a channel shows ([surfaces.md](surfaces.md#progress-at-a-glance)). LINA Core computes the view and the digest, and a client only draws them. |
 | Waiting list | Read the list of what the person must do or decide in the order LINA Core ranks it, receive changes to it, ask for another of its orders, and answer a row |
@@ -193,10 +198,19 @@ One connection reaches every agent of the main. A conversation kind, and a quest
 
 Version 1.0 of `client` has at least these kinds: `hello` and `welcome`; starting a conversation; sending input; interrupting; reading history; subscribing to events; the stream events, which are an output delta, an item done and the turn state; an approval request and its answer; a question and its answer, where a question may carry a flat form (the name of the asking plugin and fields that are text, a number, yes or no, or a choice) and its answer is accept with the values, decline or cancel; a result, and the requests to read, edit and save one; the running list of background runs and delegated tasks with its updates, a stop and a follow-up; the background notice that delivers a landing into a conversation; the progress view with its changes and its digest; the waiting list, its changes and the answer to a row; a request for Details and its result; a readiness failure that names the preparation step that failed ([conversation-and-memory.md](conversation-and-memory.md)); agent management requests and their results; work record requests and their results; account requests and their results; memory requests and their results, including the progress of an import and a promotion batch; channel management requests, their results and channel state notices; agent talk log entries and their expansion; and an error. The Approval, Agent management, Work records, Memory, Accounts, Results, Progress, Waiting list, Details, Channels and Agent exchanges capabilities are part of version 1.0. Their payload fields are set in the schema (see Deferred).
 
+
+The ChatGPT relay starts with `account_request` carrying `operation: sign_in`, `provider: chatgpt`, `purpose: login` or `provider`, and an optional saved `account_id`. Core returns `sign_in_listen`, accepts the listener report, then returns `sign_in_open`. Completion returns `account_result` with `operation: sign_in`, `account_id` and the account `status`; tokens, the PKCE verifier and canonical identity claims are not client fields. Every payload remains closed to additional properties. These are minor-compatible additions: legacy empty payloads still decode, while the installed sign-in service requires the fields for its current phase and refuses an empty or out-of-order operation. A nonempty account request/result must carry its complete sign-in shape.
+
+The connection owns one pending attempt and replies use the envelope's `reply_to`; a new sign-in replaces the old attempt and disconnect cancels it. Initial dynamic registration uses the complete callback `url` so the issuer's issued `client_id` survives the relay without adding a credential or registration field to the wire. Returning registration may use the structured callback, because Core already holds its client id. Pasted and listener-captured URLs undergo the same exact redirect validation in Core.
+
 Rules:
+
+- Lifecycle kinds are `restart_request`, `restart_get` and `restart_status`. A request has an optional `mode` (`when_idle` by default, or explicit `drain`); get is empty. Status always has `owed`; an existing request also has `request_id`, `mode` and `requested_epoch`, with `committed_epoch` and `discharged_epoch` only after those transitions are durable. All epochs use the envelope's decimal-string format. The service checks the connection's sender, JSON-RPC method and current epoch, requires the negotiated capability, refuses restart mutations while RECOVERING, and permits status reads during recovery. A different mode while a request is owed returns `duplicate`; storage or drain-admission failures return `unavailable`. No lifecycle payload supplies a force timeout or changes settings. A successful request acknowledgment precedes planned shutdown, and an uncertain/disconnected acknowledgment can be recovered through status after reconnect.
 
 - A client never writes canon. Every client message is a request that LINA Core accepts or refuses. What a client displays comes from LINA Core events.
 - After a reconnect, a client reads state from LINA Core again. It never replays its own display as truth.
+- Each subscribed topic has its own `(epoch, seq)` cursor. A client applies only the next sequence of its current epoch and ignores duplicates. A sequence gap or a newer epoch requires a snapshot before applying more deltas. Core replays frames strictly after a retained cursor; an unavailable cursor produces `resync` followed by a snapshot at a single publication boundary. A fresh subscription starts with that snapshot. A snapshot replaces the topic's window; it does not append duplicate items or reset another topic. Coalescing happens before assigning sequence numbers, so a combined text or replacement-row frame consumes one sequence. An overflowing subscription ends with `resync_required`; other subscriptions and the connection remain usable. The retention and batching bounds are in [C-42](go-core.md#client-service).
+- Client 1.0's stream additions are new kinds (`snapshot`, `resync`, `resync_required`) and optional fields on existing payloads. The envelope, hello and welcome shapes are unchanged by the stream increment. The exact request, event metadata, snapshot item and notification fields are specified in [C-42](go-core.md#client-service) and generated from the combined client schema. Existing reserved empty payloads still round-trip; a shape alone grants no operation. Every new kind has a conformance fixture, with additional stream-event, subscription, maximum-cursor and invalid-cursor cases.
 - A client never reaches a model provider, a provider adapter or a worker directly. Everything passes through LINA Core.
 - On desktop, the LINA app's shell holds the `client` connection (the local socket or the tailnet) and relays frames to the interface over a validated channel. The interface never opens a socket of its own, and the shell refuses any message that the schema of the negotiated version does not allow. The client side of the app is one TypeScript implementation that passes the conformance fixtures wherever it runs. The shell offers the connection to the interface through one bridge interface that is the same in every shell, so that the shell of an operating system can be replaced without a change to the interface or to the protocol ([surfaces.md](surfaces.md#app-front-end)).
 - On mobile, a WebView host cannot use the local socket. The app connects with a WebSocket on LINA Core's tailnet address that carries the same JSON-RPC messages. This adds a transport, not a connection: the handshake, the kinds and the rules are the same. Where a mobile host does not allow that connection, a small native stream plugin in the host carries the same frames. The mobile transport check decides between them ([surfaces.md](surfaces.md#platform-adaptation)).
@@ -205,6 +219,54 @@ Rules:
 - A channel is not a client connection. A message from an external channel never reaches LINA Core on `client`: the channel adapter inside LINA Core receives it, and LINA Core records it as a conversation event. An approval answered by a button in a channel is recorded by LINA Core as an approval answer with the platform's ids; it is not carried on `client`.
 - No `client` message ever carries a channel token back to a client. A client passes a token to LINA Core once, when the person adds a connection.
 - A background notice is sent to clients at the turn boundary at which LINA Core delivers it ([conversation-and-memory.md](conversation-and-memory.md#background-results)). A running-list update may arrive at any time and is display state only.
+
+### Conversation payloads
+
+The first conversation product defines these additive client 1.0 fields. They
+remain optional in the schema so previous reserved empty bodies still decode;
+installed handlers reject missing operation inputs as `malformed`. Codec
+acceptance alone does not grant a capability.
+
+| Kind | Fields and behavior |
+| --- | --- |
+| `history_get` | Optional `agent_id` or `conversation_id` selects an authorized main conversation. With neither, Core selects its default agent. |
+| `conversation_start` | Existing `agent_id`; returns the same main-conversation discovery response. |
+| `history` | `conversation_id`, `agent_id`, and optional `snapshot`. The installed implementation discovers the concrete conversation; its subscription delivers the authoritative window. |
+| `input` | Nonempty `conversation_id`, `input_id`, `text` (at most 16,384 Unicode characters), and optional `mode` (`steer` or `queue`). Missing mode means steering when a turn is active and a new turn otherwise. Queue starts a follow-up through the same conversation lane. |
+| `interrupt` | Nonempty `conversation_id`; cancels the active turn with the person's typed cause. It does not terminate Core, close the client or cancel unrelated work. |
+| `item_done` | Existing `text` and stream metadata, with optional `echo_key`, `speaker` (`person`, `agent`, `system`), `agent_id`, and `person_id`. `echo_key` is the admitted input id, allowing replacement of one local echo. |
+| `output_delta` | Existing text delta and stream metadata, with optional `agent_id`. The same topic/key becomes the completed item. |
+| `turn_state` | Existing stream metadata and optional `active` boolean plus `agent_id`. Clients do not parse activity from display text. |
+
+The socket's authenticated person and Core-selected agent supply attribution;
+input cannot choose a speaker or person. A foreign conversation or agent is
+refused as `out_of_scope`. Only concrete authorized conversation/result topics
+are installed. Each input id is deduplicated within the conversation before
+model work is admitted. Large masked text uses the existing durable material writer, with verified
+material reads on restart. Inbox and masked ledger input commit in one transaction;
+acknowledgement is durable admission. It is not a claim that the reply finished.
+A duplicate returns the original admission and never starts a second turn.
+
+Boot composes the socket handlers with the existing lane, turn, persona,
+assembly and ledger packages. The configured Responses route remains Core-only.
+Preparation verifies the installed executable against its manifest and records
+persona/request evidence. Provider items remain provisional until the complete turn succeeds; failed
+response evidence stays in the turn journal and never becomes ordinary completed
+agent history. Successful items replace one stable topic key; history
+is seeded from the durable ledger after restart. Interrupt and shutdown use the
+existing turn cancellation and recovery path; accepted model requests are never
+replayed on restart. The command currently installs this conversation service
+when the explicit Responses model route is configured. An unconfigured install
+retains its connection-only capabilities and unsupported composer. Removing
+the model route after a conversation run still opens and fences its existing
+canon database for recovery; it disables model handlers without blocking Core
+startup.
+
+The generated receivers exercise `conversation/` fixtures on both sides.
+`e2e/m1/tui-conversation-stream.json` covers the scripted socket/TUI sequence;
+`e2e/m1/tui-conversation.json` covers an installed Core and TUI with a fixture
+provider. Real model credentials and real model validation are outside these
+fixtures.
 
 ## Typed results
 
@@ -287,5 +349,4 @@ Rules:
 
 - The JSON Schema to TypeScript type generator: chosen before the first LINA app work ([surfaces.md](surfaces.md#app-front-end)).
 - Request timeouts on the `client` and `node` connections: set by measurement during implementation acceptance of each connection.
-- The payload fields of the `client` 1.0 kinds: set in the schema by the implementation issue that ships the first conversation product.
 - The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds: set in the schema by the implementation issue that ships results.

@@ -45,10 +45,12 @@ type ReadActivities func(context.Context) ([]lease.Activity, error)
 // ActivityRegistry combines leases in this process with caller-owned activity.
 // Use NewRegistry; a nil or zero registry is unreadable and counts as busy.
 type ActivityRegistry struct {
-	mu     sync.Mutex
-	active map[*lease.Activity]struct{}
-	read   ReadActivities
-	edges  chan struct{}
+	mu        sync.Mutex
+	active    map[*lease.Activity]struct{}
+	read      ReadActivities
+	edges     chan struct{}
+	prepared  *attempt
+	committed bool
 }
 
 // NewRegistry starts an empty lease registry. A nil reader is appropriate only
@@ -68,6 +70,10 @@ func (r *ActivityRegistry) Acquire(ctx context.Context, activity lease.Activity)
 		return lease.Lease{}, errors.New("activity registry is unavailable")
 	}
 	r.mu.Lock()
+	if r.prepared != nil {
+		r.mu.Unlock()
+		return lease.Lease{}, ErrFenced
+	}
 	r.active[&activity] = struct{}{}
 	r.mu.Unlock()
 	r.Notify()

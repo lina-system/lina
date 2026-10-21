@@ -18,6 +18,22 @@ func saveResult(ctx context.Context, j Journal, round, index int, r Result) erro
 	defer cancel()
 	return j.Result(save, round, index, r)
 }
+func admission(ctx context.Context, cfg Config, c provider.ToolCall) *Result {
+	if cfg.Admit == nil {
+		return nil
+	}
+	r := cfg.Admit(ctx, c)
+	if r == nil {
+		return nil
+	}
+	result := *r
+	result.ID = c.ID
+	if result.Code == "" {
+		result.Code = Denied
+	}
+	return &result
+}
+
 func invoke(ctx context.Context, cfg Config, tool Tool, c provider.ToolCall) (r Result) {
 	r = Result{ID: c.ID, Code: Unknown}
 	defer func() {
@@ -25,16 +41,20 @@ func invoke(ctx context.Context, cfg Config, tool Tool, c provider.ToolCall) (r 
 			r = Result{ID: c.ID, Code: Unknown}
 		}
 	}()
-	r = tool.Execute(ctx, c)
-	if cfg.After != nil {
-		r = cfg.After(ctx, c, r)
+	if denied := admission(ctx, cfg, c); denied != nil {
+		r = *denied
+	} else {
+		r = tool.Execute(ctx, c)
+		if cfg.After != nil {
+			r = cfg.After(ctx, c, r)
+		}
 	}
 	r.ID = c.ID
 	if len(r.Output) > 0 && !json.Valid(r.Output) {
 		return Result{ID: c.ID, Code: Unknown}
 	}
 	switch r.Code {
-	case OK, Invalid, Denied, Unavailable, Aborted, Incomplete, AwaitingPerson, Failed, Unknown:
+	case OK, Invalid, Denied, Unavailable, Aborted, Incomplete, AwaitingPerson, Failed, Unknown, BudgetReached:
 	default:
 		r = Result{ID: c.ID, Code: Unknown}
 	}
@@ -48,7 +68,9 @@ func execute(ctx context.Context, cfg Config, round int, calls []provider.ToolCa
 	for i, c := range calls {
 		r := Result{ID: c.ID}
 		t, ok := cfg.Tools[c.Name]
-		if !ok || !offered[c.Name] || t.Validate == nil || t.Execute == nil {
+		if denied := admission(ctx, cfg, c); denied != nil {
+			r = *denied
+		} else if !ok || !offered[c.Name] || t.Validate == nil || t.Execute == nil {
 			r.Code = Unavailable
 		} else if target, err := t.Validate(c); err != nil {
 			r.Code = Invalid

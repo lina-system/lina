@@ -60,6 +60,7 @@ wire and exported Go names, for example `output_delta`, `KindOutputDelta` and
 | Agent exchanges | `agent_talk_get`, `agent_talk`, `agent_talk_entry`, `agent_talk_expand`, `agent_talk_subscribe` |
 | Connection and task control | `connected`, `disconnected`, `task_status`, `run_status`, `task_cancel`, `multi_task_control` |
 | Sign-in relay | `sign_in_listen`, `sign_in_listening`, `sign_in_open`, `sign_in_redirect` |
+| Core lifecycle | `restart_request`, `restart_get`, `restart_status` |
 
 ## Reserved shapes
 

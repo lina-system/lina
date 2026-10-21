@@ -79,7 +79,7 @@ func TestLayoutAndDeterministicBytes(t *testing.T) {
 		var item struct{ Role string }
 		json.Unmarshal(raw, &item)
 		wantRole := "developer"
-		if i == 15 {
+		if i >= 13 && i <= 15 {
 			wantRole = "user"
 		}
 		if item.Role != wantRole {

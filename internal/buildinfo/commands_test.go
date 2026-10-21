@@ -55,9 +55,10 @@ func TestVersions(t *testing.T) {
 }
 
 func TestVersionsOutsideRepository(t *testing.T) {
-	// Build actual command sources from a source export, without a .git directory.
+	// Build actual command sources from a source export, without VCS metadata.
+	// Disable stamping explicitly so an unrelated parent repository cannot affect it.
 	root := t.TempDir()
-	for _, dir := range []string{"cmd/lina", "cmd/lina-node", "internal/buildinfo", "internal/core", "internal/clientapi", "internal/design", "internal/tui", "kit"} {
+	for _, dir := range []string{"cmd/lina", "cmd/lina-node", "internal/buildinfo", "internal/core", "internal/clientapi", "internal/design", "internal/tui", "persona", "kit"} {
 		if err := os.CopyFS(filepath.Join(root, dir), os.DirFS(filepath.Join("../..", dir))); err != nil {
 			t.Fatal(err)
 		}
@@ -73,12 +74,12 @@ func TestVersionsOutsideRepository(t *testing.T) {
 	}
 	for _, name := range []string{"lina", "lina-node"} {
 		t.Run(name, func(t *testing.T) {
-			checkVersion(t, build(t, root, name, ""), "0.0.1-alpha.dev (commit unknown)\n")
+			checkVersion(t, build(t, root, name, "", "-buildvcs=false"), "0.0.1-alpha.dev (commit unknown)\n")
 		})
 	}
 }
 
-func build(t *testing.T, root, name, flags string) string {
+func build(t *testing.T, root, name, flags string, options ...string) string {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		name += ".exe"
@@ -88,6 +89,7 @@ func build(t *testing.T, root, name, flags string) string {
 	if flags != "" {
 		args = append(args, "-ldflags", flags)
 	}
+	args = append(args, options...)
 	args = append(args, "./cmd/"+strings.TrimSuffix(name, ".exe"))
 	command := exec.Command("go", args...)
 	command.Dir = root
