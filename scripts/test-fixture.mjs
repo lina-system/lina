@@ -3,7 +3,7 @@
 // with the GIT_* variables of the test process removed and with no access to the real user or
 // system Git configuration.
 import assert from 'node:assert/strict';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -107,6 +107,4 @@ writeFileSync(join(out, 'manifest.json'), JSON.stringify({ version, commit, targ
   sb.write(work, 'LICENSE', 'Fixture license\n');
   sb.write(work, 'THIRD-PARTY-NOTICES.md', 'Fixture notices\n');
   sb.write(work, 'packaging/sqlite-vec/NOTICE.md', 'Fixture vector notice\n');
-  sb.write(work, 'scripts/verify/scope.mjs', readFileSync(join(work, 'scripts/verify/scope.mjs'), 'utf8')
-    .replace("const documents = new Set([", "const documents = new Set(['packaging/sqlite-vec/NOTICE.md',"));
 }

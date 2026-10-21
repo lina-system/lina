@@ -12,6 +12,11 @@ import { build } from './build.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 
+test('the pinned SQLite rebuild script has valid shell syntax', () => {
+  const result = spawnSync('bash', ['-n', join(root, 'packaging/sqlite-vec/build.sh')], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+});
+
 function fixture(t) {
   const sb = sandbox(t);
   const cwd = join(sb.dir, 'source');
