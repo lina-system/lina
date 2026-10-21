@@ -53,6 +53,14 @@ func (a *Adapter) address(chat, thread int64) channels.Address {
 	return address
 }
 
+// LINA's owner-only channel contract needs no bot-to-bot traffic. This strict
+// loop guard rejects every bot and our own account, including an echo with a
+// missing is_bot flag. Anonymous channel authors cannot impersonate an owner.
+// Receipts still advance, so refused traffic cannot stall the long poll cursor.
+func (a *Adapter) human(sender *gotgbot.User) bool {
+	return sender != nil && sender.Id > 0 && !sender.IsBot && strconv.FormatInt(sender.Id, 10) != a.bot.Account
+}
+
 func (a *Adapter) runUpdates(ctx context.Context, in gateway.Admitter, previous string, offset int64) error {
 	return a.client.poll(ctx, offset, func(ctx context.Context, u gotgbot.Update, next int64) error {
 		cursor := strconv.FormatInt(next, 10)
@@ -61,7 +69,7 @@ func (a *Adapter) runUpdates(ctx context.Context, in gateway.Admitter, previous 
 			if err := a.admitButton(ctx, *q, id, previous, cursor); err != nil {
 				return err
 			}
-		} else if m := u.Message; m != nil && m.From != nil && !m.From.IsBot && m.From.Id > 0 && m.Chat.Id != 0 && m.MessageId > 0 {
+		} else if m := u.Message; m != nil && a.human(m.From) && m.SenderChat == nil && m.Chat.Id != 0 && m.MessageId > 0 {
 			address := a.address(m.Chat.Id, m.MessageThreadId)
 			paired := false
 			if m.Chat.Type == "private" {
@@ -141,7 +149,7 @@ func (a *Adapter) admitButton(ctx context.Context, q gotgbot.CallbackQuery, id, 
 		address := channels.Address{Bot: a.bot}
 		var row int64
 		agent := ""
-		if m, ok := q.Message.(gotgbot.Message); ok && q.From.Id > 0 && !q.From.IsBot {
+		if m, ok := q.Message.(gotgbot.Message); ok && a.human(&q.From) {
 			address = a.address(m.Chat.Id, m.MessageThreadId)
 			b, err := channels.AdmitScope(ctx, tx, address, strconv.FormatInt(q.From.Id, 10), m.Chat.Type == "private", true)
 			if err != nil && !errors.Is(err, channels.ErrDenied) && !errors.Is(err, sql.ErrNoRows) {

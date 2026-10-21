@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf16"
 	"unicode/utf8"
 
 	"github.com/thisisjun786/lina/internal/core/authority"
@@ -25,25 +24,7 @@ func Shape(text, summary, link string) ([]string, error) {
 	if text == "" || !utf8.ValidString(text) {
 		return nil, &failure{class: "too_long"}
 	}
-	var parts []string
-	for text != "" && len(parts) < 4 {
-		units, end := 0, 0
-		for index, r := range text {
-			units += utf16.RuneLen(r)
-			if units > 4096 {
-				break
-			}
-			end = index + utf8.RuneLen(r)
-		}
-		if end < len(text) {
-			if paragraph := strings.LastIndex(text[:end], "\n\n"); paragraph >= 0 {
-				end = paragraph + 2
-			}
-		}
-		parts = append(parts, text[:end])
-		text = text[end:]
-	}
-	if len(parts) <= 3 && text == "" {
+	if parts := splitText(text); len(parts) > 0 {
 		return parts, nil
 	}
 	fallback := summary + "\n" + link

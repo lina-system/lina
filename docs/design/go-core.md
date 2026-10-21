@@ -628,6 +628,14 @@ outcome without resending. A non-owner or foreign bot's button cannot
 answer the approval or remove its buttons. The accepted decision records the
 paired person and the actual chat/message IDs. Typed text never takes this path.
 
+The adapter renders Markdown as native Telegram entities, preserves fenced code
+across shaped parts, and keeps approval arguments literal. Its send/edit cooldown
+honors the full platform flood wait while the gateway queue owns durable retry
+deadlines and per-part receipts. Only an explicit formatting refusal allows a
+plain fallback; unknown outcomes are never resent. Edits retain their message
+identity, and streaming remains off. Poll conflicts have a bounded retry budget;
+bot/self/anonymous-authored input cannot start reply loops.
+
 The library receives a placeholder credential. A private HTTPS transport inserts
 the secret token only for Telegram's fixed API origin, refuses redirects and
 returns sanitized errors. Decoded token echoes are masked before admission.

@@ -229,10 +229,15 @@ A channel is an external messaging platform through which the person talks with 
 Core talks to each platform through one adapter and knows no platform limit. An adapter offers: connect and disconnect with a durable cursor; an inbound event carrying the platform's ids; send, returning a result id or an error class (retry later, permanently blocked, too long, unauthorized); edit; answer an interaction; fetch an attachment; and a static capability descriptor (text length, edit, buttons, files, threads, streaming, and which result types the channel can show). The first adapters are Telegram and Discord. A further platform is a new adapter behind this boundary, added by a release and not by a change to this contract. The adapter code is LINA's own, and its client library is a Go dependency under [dependencies.md](../policy/dependencies.md).
 
 Telegram's initial adapter uses `github.com/PaulSonOfLars/gotgbot/v2` at
-`v2.0.0-rc.37`, with no transitive modules. It advertises plain text, edits,
+`v2.0.0-rc.37`, with no transitive modules. It advertises text, edits,
 buttons, files and topics; streaming remains off. The adapter shapes queued text
 into at most three parts of 4096 UTF-16 units, preserving paragraph boundaries
-where possible. A longer reply needs Core's summary and result link. Approval
+where possible, closing and reopening code fences across parts without trimming
+their body whitespace. Markdown prose becomes native Telegram entities with
+UTF-16 offsets; code remains literal. A definite entity-format rejection permits
+one plain-text fallback on the same destination or edited message. Unknown
+outcomes never trigger that fallback. A longer reply needs Core's summary and
+result link. Approval text remains literal. Approval
 presentation reads the canonical request and offers only once and deny; it never
 truncates arguments to make buttons fit. The request is bound durably to the
 returned bot/chat/topic/message identity, which must match before a button can
@@ -243,8 +248,14 @@ with a 20 MiB limit. API JSON responses are bounded at 8 MiB.
 
 An unavailable platform does not hold startup: the adapter is constructed without
 contacting Telegram, and its cancellable poller runs independently of Core's
-READY transition. Polling reads may retry with bounded backoff; sends make one
-attempt and return an outcome for the durable outbound queue. Transport failures,
+READY transition. Polling reads retry with bounded backoff and jitter; five
+consecutive competing-poller conflicts stop that poll generation without dropping
+updates. A strict bot/self/anonymous-author guard prevents reply loops. Sends
+return an outcome for the durable outbound queue, which owns retries and each
+part's receipt. Full representable flood waits are honored, with a shared live
+send/edit cooldown; an unrepresentable delay fails closed. Edits retain the
+supplied message identity and an explicit not-modified refusal counts as success.
+Transport failures,
 malformed responses and server failures have unknown delivery outcome and are
 never automatically sent again.
 

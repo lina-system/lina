@@ -33,6 +33,7 @@ func (c *client) poll(ctx context.Context, offset int64, admit func(context.Cont
 		return errAdmission
 	}
 	delay := time.Second
+	conflicts := 0
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -51,6 +52,16 @@ func (c *client) poll(ctx context.Context, offset int64, admit func(context.Cont
 				if f.class == "unauthorized" || f.class == "blocked" {
 					return f
 				}
+				if f.class == "conflict" {
+					conflicts++
+					if conflicts >= 5 {
+						return f
+					}
+					wait = time.Duration(10+conflicts*10) * time.Second
+				} else {
+					conflicts = 0
+				}
+				wait += c.jitter(wait)
 				if f.retryAfter > wait {
 					wait = f.retryAfter
 				}
@@ -66,6 +77,7 @@ func (c *client) poll(ctx context.Context, offset int64, admit func(context.Cont
 			return errResponse
 		}
 		delay = time.Second
+		conflicts = 0
 		for _, u := range updates {
 			if u.UpdateId < offset {
 				continue

@@ -79,7 +79,7 @@ func TestPollOutageAndRateLimitUseCancellableBackoff(t *testing.T) {
 				if rateLimited {
 					want = 7 * time.Second
 				}
-				if delay != want {
+				if delay < want || delay > want+time.Second/4 {
 					t.Fatalf("backoff=%v, want=%v", delay, want)
 				}
 				cancel()

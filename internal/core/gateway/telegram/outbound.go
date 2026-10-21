@@ -5,6 +5,7 @@ package telegram
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"unicode/utf16"
 	"unicode/utf8"
 
@@ -26,6 +27,10 @@ func textFits(text string, limit int) bool {
 }
 
 func (c *client) sendMessage(ctx context.Context, chat, thread int64, text string, buttons *gotgbot.InlineKeyboardMarkup) (int64, error) {
+	return c.sendText(ctx, chat, thread, text, buttons, false)
+}
+
+func (c *client) sendText(ctx context.Context, chat, thread int64, text string, buttons *gotgbot.InlineKeyboardMarkup, formatted bool) (int64, error) {
 	if !textFits(text, 4096) {
 		return 0, &failure{class: "too_long"}
 	}
@@ -36,7 +41,7 @@ func (c *client) sendMessage(ctx context.Context, chat, thread int64, text strin
 	if buttons != nil {
 		params["reply_markup"] = buttons
 	}
-	data, err := c.call(ctx, "sendMessage", params)
+	data, err := c.textCall(ctx, "sendMessage", params, formatted)
 	if err != nil {
 		return 0, err
 	}
@@ -48,14 +53,43 @@ func (c *client) sendMessage(ctx context.Context, chat, thread int64, text strin
 }
 
 func (c *client) editMessage(ctx context.Context, chat, message int64, text string, buttons *gotgbot.InlineKeyboardMarkup) error {
+	return c.editText(ctx, chat, message, text, buttons, false)
+}
+
+func (c *client) editText(ctx context.Context, chat, message int64, text string, buttons *gotgbot.InlineKeyboardMarkup, formatted bool) error {
 	if !textFits(text, 4096) {
 		return &failure{class: "too_long"}
 	}
 	if buttons == nil {
 		buttons = &gotgbot.InlineKeyboardMarkup{InlineKeyboard: [][]gotgbot.InlineKeyboardButton{}}
 	}
-	_, err := c.call(ctx, "editMessageText", map[string]any{"chat_id": chat, "message_id": message, "text": text, "reply_markup": buttons})
+	_, err := c.textCall(ctx, "editMessageText", map[string]any{"chat_id": chat, "message_id": message, "text": text, "reply_markup": buttons}, formatted)
+	var f *failure
+	if errors.As(err, &f) && f.class == "not_modified" {
+		return nil
+	}
 	return err
+}
+
+func (c *client) textCall(ctx context.Context, method string, params map[string]any, formatted bool) (json.RawMessage, error) {
+	plain := params["text"].(string)
+	if formatted {
+		text, entities := formatMessage(plain)
+		if len(entities) > 0 {
+			params["text"], params["entities"] = text, entities
+		}
+	}
+	data, err := c.call(ctx, method, params)
+	var f *failure
+	if errors.As(err, &f) && f.class == "format_rejected" && params["entities"] != nil {
+		// A definite parse refusal has no delivery effect. Retain the same
+		// destination/message/keyboard, and fall back once. Never retry an
+		// ambiguous response, timeout, or any part that already has a receipt.
+		params["text"] = plain
+		delete(params, "entities")
+		return c.call(ctx, method, params)
+	}
+	return data, err
 }
 
 func (c *client) answerCallback(ctx context.Context, id, text string) error {

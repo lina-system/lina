@@ -13,6 +13,7 @@ require (
 	charm.land/bubbletea/v2 v2.1.0
 	charm.land/glamour/v2 v2.0.1
 	charm.land/lipgloss/v2 v2.0.6
+	github.com/PaulSonOfLars/gotgbot/v2 v2.0.0-rc.37
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/ultraviolet v0.0.0-20261008173134-6b8d4baf91b4
 	github.com/charmbracelet/x/ansi v0.11.9
@@ -20,11 +21,11 @@ require (
 	github.com/charmbracelet/x/vt v0.1.0
 	github.com/ncruces/go-sqlite3 v0.30.5
 	github.com/thisisjun786/lina/kit v0.0.0
+	github.com/yuin/goldmark v1.7.8
 	golang.org/x/sys v0.49.0
 )
 
 require (
-	github.com/PaulSonOfLars/gotgbot/v2 v2.0.0-rc.37 // indirect
 	github.com/alecthomas/chroma/v2 v2.14.0 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect
@@ -55,7 +56,6 @@ require (
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/tetratelabs/wazero v1.11.0 // indirect
 	github.com/xo/terminfo v1.0.0 // indirect
-	github.com/yuin/goldmark v1.7.8 // indirect
 	github.com/yuin/goldmark-emoji v1.0.5 // indirect
 	go.opencensus.io v0.24.0 // indirect
 	golang.org/x/mod v0.42.0 // indirect

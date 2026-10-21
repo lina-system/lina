@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
+	"math/rand/v2"
 	"net/http"
 	"regexp"
 	"strings"
@@ -131,10 +133,17 @@ type failure struct {
 func (e *failure) Error() string { return "telegram_" + e.class }
 
 type client struct {
-	api   *gotgbot.BaseBotClient
-	http  *http.Client
-	token secret.Secret
-	pause func(context.Context, time.Duration) error
+	api    *gotgbot.BaseBotClient
+	http   *http.Client
+	token  secret.Secret
+	pause  func(context.Context, time.Duration) error
+	jitter func(time.Duration) time.Duration
+	now    func() time.Time
+	// Serialize writes and share Telegram's flood cooldown between sends and
+	// edits. Durable retries belong to Core's outbound queue; this is only a
+	// live-client guard against concurrent callers bypassing that deadline.
+	writes    chan struct{}
+	notBefore time.Time
 }
 
 func newClient(token secret.Secret, next http.RoundTripper) (*client, error) {
@@ -148,10 +157,25 @@ func newClient(token secret.Secret, next http.RoundTripper) (*client, error) {
 		Timeout:       35 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return errTransport },
 	}
-	return &client{api: &gotgbot.BaseBotClient{Client: *h}, http: h, token: token, pause: pause}, nil
+	return &client{api: &gotgbot.BaseBotClient{Client: *h}, http: h, token: token, pause: pause,
+		now: time.Now, writes: make(chan struct{}, 1),
+		jitter: func(d time.Duration) time.Duration { return time.Duration(rand.Int64N(int64(d/4) + 1)) },
+	}, nil
 }
 
 func (c *client) call(ctx context.Context, method string, params map[string]any) (json.RawMessage, error) {
+	write := method == "sendMessage" || method == "editMessageText"
+	if write {
+		select {
+		case c.writes <- struct{}{}:
+			defer func() { <-c.writes }()
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		if wait := c.notBefore.Sub(c.now()); wait > 0 {
+			return nil, &failure{class: "retry_later", retryAfter: wait}
+		}
+	}
 	data, err := c.api.RequestWithContext(ctx, opaqueToken, method, params, &gotgbot.RequestOpts{Timeout: 35 * time.Second, APIURL: apiOrigin})
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
@@ -166,14 +190,31 @@ func (c *client) call(ctx context.Context, method string, params map[string]any)
 			return nil, &failure{class: "unauthorized"}
 		case 403:
 			return nil, &failure{class: "blocked"}
+		case 409:
+			return nil, &failure{class: "conflict"}
 		case 429:
 			delay := time.Second
-			if api.ResponseParams != nil && api.ResponseParams.RetryAfter > 0 && api.ResponseParams.RetryAfter <= 86400 {
+			if api.ResponseParams != nil && api.ResponseParams.RetryAfter > 0 {
+				// An unrepresentable delay must not wrap or become an early
+				// retry. Fail closed; normal flood waits retain their full value.
+				if api.ResponseParams.RetryAfter > math.MaxInt64/int64(time.Second) {
+					return nil, &failure{class: "unknown"}
+				}
 				delay = time.Duration(api.ResponseParams.RetryAfter) * time.Second
+			}
+			if write {
+				c.notBefore = c.now().Add(delay)
 			}
 			return nil, &failure{class: "retry_later", retryAfter: delay}
 		case 400:
-			if strings.Contains(strings.ToLower(api.Description), "message is too long") {
+			description := strings.ToLower(api.Description)
+			if method == "editMessageText" && strings.Contains(description, "message is not modified") {
+				return nil, &failure{class: "not_modified"}
+			}
+			if strings.Contains(description, "can't parse entities") || strings.Contains(description, "cannot parse entities") {
+				return nil, &failure{class: "format_rejected"}
+			}
+			if strings.Contains(description, "message is too long") {
 				return nil, &failure{class: "too_long"}
 			}
 			return nil, &failure{class: "rejected"}

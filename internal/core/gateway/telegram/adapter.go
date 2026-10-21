@@ -121,7 +121,7 @@ func (a *Adapter) Send(ctx context.Context, l lease.Lease, o gateway.Outbound) (
 		return result, err
 	}
 	err = lease.Do(ctx, l, func(ctx context.Context) error {
-		id, callErr := a.client.sendMessage(ctx, chat, thread, o.Text, nil)
+		id, callErr := a.client.sendText(ctx, chat, thread, o.Text, nil, true)
 		result, callErr = sendResult(id, callErr)
 		return callErr
 	})
@@ -159,7 +159,7 @@ func (a *Adapter) Edit(ctx context.Context, ref gateway.MsgRef, o gateway.Outbou
 	if err != nil || id <= 0 {
 		return channels.ErrInvalid
 	}
-	return a.client.editMessage(ctx, chat, id, o.Text, nil)
+	return a.client.editText(ctx, chat, id, o.Text, nil, true)
 }
 func (a *Adapter) Answer(ctx context.Context, ref gateway.InteractionRef, text string) error {
 	if ref.Bot != a.bot || ref.ID == "" {
