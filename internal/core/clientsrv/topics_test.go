@@ -244,15 +244,18 @@ func TestConcurrentPublishAndSnapshotReplay(t *testing.T) {
 		}
 		done <- nil
 	}()
-	_, sub := subscribe(t, h, "core", nil)
+	start, sub := subscribe(t, h, "core", nil)
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
 	h.mu.Lock()
 	frames := append([]TopicFrame(nil), sub.queue...)
 	h.mu.Unlock()
-	for i := 1; i < len(frames); i++ {
-		if frames[i].Cursor.Seq != frames[i-1].Cursor.Seq+1 {
+	if uint64(len(frames)) != 500-start.Snapshot.Cursor.Seq {
+		t.Fatal("snapshot/live handoff lost a concurrent publication")
+	}
+	for i := range frames {
+		if frames[i].Cursor.Seq != start.Snapshot.Cursor.Seq+uint64(i)+1 {
 			t.Fatal("concurrent publication gap")
 		}
 	}
