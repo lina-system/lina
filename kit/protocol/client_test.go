@@ -24,6 +24,7 @@ var clientKinds = []string{
 	"agent_talk_get", "agent_talk", "agent_talk_entry", "agent_talk_expand", "agent_talk_subscribe",
 	"connected", "disconnected", "task_status", "run_status", "task_cancel", "multi_task_control",
 	"sign_in_listen", "sign_in_listening", "sign_in_open", "sign_in_redirect",
+	"snapshot", "resync", "resync_required",
 }
 
 func clientMessage(t *testing.T, kind string, payload any) map[string]any {
@@ -81,6 +82,16 @@ func concretePayloads() map[string]any {
 		"sign_in_listening": map[string]any{"port": float64(32123)},
 		"sign_in_open":      map[string]any{"url": "https://auth.openai.com/api/accounts/authorize?state=synthetic"},
 		"sign_in_redirect":  map[string]any{"code": "synthetic", "state": "synthetic"},
+		"snapshot": map[string]any{
+			"topic": "conversation:example", "cursor": map[string]any{"epoch": "7", "seq": float64(2)},
+			"revocation_epoch": "0",
+			"items": []any{map[string]any{
+				"kind": "item_done", "key": "item-example", "revision": float64(2),
+				"payload": map[string]any{"text": "complete"},
+			}},
+		},
+		"resync":          map[string]any{"topic": "conversation:example", "cursor": map[string]any{"epoch": "7", "seq": float64(2)}},
+		"resync_required": map[string]any{"topic": "conversation:example", "cursor": map[string]any{"epoch": "7", "seq": float64(2)}},
 	}
 }
 
