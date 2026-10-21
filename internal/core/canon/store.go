@@ -63,8 +63,9 @@ type Config struct {
 }
 
 // Tx exposes queries but no commit, rollback or raw connection. Callbacks run
-// synchronously; they must not retain Tx, start goroutines or perform external
-// calls. A reader's ExecContext always returns the closed read_only code.
+// synchronously; they must not retain Tx, start goroutines or perform model,
+// tool or network calls. Retraction may sync its local removal journal before
+// the corresponding canon mutation. A reader's ExecContext returns read_only.
 type Tx struct {
 	tx       *sql.Tx
 	readOnly bool

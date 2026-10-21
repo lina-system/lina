@@ -510,6 +510,10 @@ Tables: `sum_node`, `sum_edge` (child unique) and `sum_cover` (event ranges and 
 
 **C-19 Retraction (kept).** One transaction suppresses the targets, deletes index rows, invalidates derived rows by revocation epoch and advances it ([conversation-and-memory.md](conversation-and-memory.md#correction-retraction-and-deletion)). The removal list `backups/removals` is fsynced before the tombstone commits.
 
+The removal coordinator resolves identities and evidence from canon, then syncs one content-free removal intent before committing its canon changes. The intent is the recovery decision: if canon cannot commit after that sync, reads remain closed until replay completes. `canon.Store.Reconcile` drains existing readers, excludes new readers during the change, and keeps them closed on recovery failure. Startup opens and recovers the coordinator before publishing the canon store to consumers. Replay checks the removal list against canon's acknowledged prefix and applies missing operations in one transaction; repeated replay changes neither the targets nor the epoch.
+
+A preparation takes a person/agent-scoped retraction snapshot. It excludes forgotten item references and their source events from model input, and excludes stale summaries and other derived input by epoch. Before dispatch it checks that the snapshot's epoch still holds. Extraction checks both the cited event ids and their conversations while the item is in trash and after permanent deletion. Recovery is available strictly before 30 days; expiry selects and deletes eligible trash in the same writer transaction. Tombstones retain identity and provenance, with a reference to their acknowledged removal operation, and never retain content.
+
 **C-20 Memory items (changed).** The table has the fields of [conversation-and-memory.md](conversation-and-memory.md#memory-items). There are no storage caps; limits apply only to the rendered standing profile (lines and tokens). The write checks of that section run at commit, and a failed check refuses with the reason.
 
 ```go
