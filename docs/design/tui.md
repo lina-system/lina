@@ -132,6 +132,20 @@ status writes nothing. The key gate also covers the legacy quit input. Connectio
 including one in the same epoch, restores an unacknowledged input into the draft
 with newer typing after it. The client never automatically resends that input.
 
+Reconnect also retains the selected agent identity. History discovery and the
+preserved draft use that agent, regardless of the welcome's agent order. A fresh
+agent list validates the selection because welcome may name only the default.
+Without the separately negotiated `agents` capability, discovery requests
+history by the retained agent id instead. An `unavailable` discovery response
+keeps the focus and draft in recovery and reopens the connection to retry these
+read-only requests; it does not infer deletion or replay conversation input.
+If the selected agent is absent, the TUI drops its unavailable conversation
+subscriptions, shows a local notice, and keeps the draft unsent. It does not
+select a fallback; sending waits for an explicit `/agents choose <id>`.
+`e2e/m1/tui-agent-reconnect.json` checks graceful and forced installed-Core
+restarts, the provider request's persona identity and history, and a removed
+selection with a retained draft.
+
 ## Streams on the client (T-03)
 
 The server side is [go-core.md](go-core.md) (C-42): topics, cursors, rings, batching and heartbeat. This section is the client side.
@@ -426,6 +440,10 @@ Settings are commands and labeled blocks, all requests to Core:
 - Agent talk: `/talk` opens the agent talk log: one line per exchange, keyed by exchange identity. Up/Down selects and Enter requests that exchange's ledger expansion; When the expansion has more content, Enter requests the next page; Esc returns to the list. `r` requests a fresh list without duplicating rows or losing an existing selected identity. The view shows typed mailbox state, outcome and needs-person state; it derives none of these from text.
 - Expression and reply length budgets, command network grants, the developer-view switch and power settings.
 - Report a problem: the agent drafts it, the TUI shows the draft, and nothing is posted until the person confirms ([surfaces.md](surfaces.md#settings)).
+
+Agent choice is client focus and survives reconnect (T-05). A missing selection
+requires an explicit new choice before conversation input can be sent; listing,
+creating or deleting another agent does not redirect the retained draft.
 
 `/help` opens the local command reference, including `/channels` and `/talk`.
 These commands are consumed locally even when Core has not granted their
@@ -806,7 +824,9 @@ operation is shown locally and never becomes a model prompt.
   existing agent trash transition and ends its bindings. Selecting another
   agent drops the old conversation display and subscriptions, while Core keeps
   independent lanes. Deleting the selected agent selects the first remaining
-  list entry; an empty list stays available for creation. Initialization never
+  list entry when that deletion is the client's own action; a selection lost
+  across reconnect instead requires an explicit choice (T-05). An empty list
+  stays available for creation. Initialization never
   recreates a deleted default agent.
 
 These direct management requests express the person's own action. They do not
