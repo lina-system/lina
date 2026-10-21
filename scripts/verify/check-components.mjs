@@ -7,8 +7,8 @@ import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-export function execute(command, args, { cwd, env, timeout = 120_000 }) {
-  const result = spawnSync(command, args, { cwd, env, encoding: 'utf8', timeout, maxBuffer: 64 * 1024 * 1024 });
+export function execute(command, args, { cwd, env }) {
+  const result = spawnSync(command, args, { cwd, env, encoding: 'utf8', timeout: 120_000, maxBuffer: 64 * 1024 * 1024 });
   return { status: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.error ? `${result.stderr ?? ''}${result.error.message}\n` : result.stderr ?? '' };
 }
 
@@ -49,8 +49,8 @@ export function checkComponents({ cwd = process.cwd(), components, execute: run 
   if (!Array.isArray(components) || components.length === 0) throw new Error('Select at least one registered component');
   const context = createGoContext(cwd);
   let output = '';
-  const invoke = (command, args, directory, timeout = 120_000) => {
-    const result = run(command, args, { cwd: directory, env: context.env, timeout });
+  const invoke = (command, args, directory) => {
+    const result = run(command, args, { cwd: directory, env: context.env });
     output += `$ ${command} ${args.join(' ')}\n${result.stdout}${result.stderr}`;
     return result;
   };
@@ -87,10 +87,7 @@ export function checkComponents({ cwd = process.cwd(), components, execute: run 
         ['tool', 'exhaustive', ...packages],
         ['test', '-count=1', '-mod=readonly', ...packages],
       ]) {
-        // The E2E package includes a two-minute packaging build plus process
-        // scenarios. Its enclosing uncached suite must outlive that inner cap.
-        const timeout = args[0] === 'test' ? 300_000 : 120_000;
-        if (invoke('go', args, directory, timeout).status !== 0) return { status: 1, output };
+        if (invoke('go', args, directory).status !== 0) return { status: 1, output };
       }
       for (const component of selected.filter(component => component.binary)) {
         const result = invoke(join(binaries, component.binary), [], directory);
