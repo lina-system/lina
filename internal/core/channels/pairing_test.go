@@ -29,7 +29,6 @@ func store(t *testing.T) (*channels.Store, *canon.Store) {
 	}
 	t.Cleanup(func() { ctl.Close() })
 	migrations := canon.Migrations()
-	migrations = append(migrations, canon.Migration{Version: len(migrations) + 1, SQL: channels.Schema})
 	db, err := canon.Open(t.Context(), canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: 1, Controls: ctl, Migrations: migrations})
 	if err != nil {
 		t.Fatal(err)

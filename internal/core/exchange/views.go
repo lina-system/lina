@@ -107,7 +107,10 @@ func (s *Store) Expire(ctx context.Context, at time.Time) error {
 			if at.Before(r.HandOff.Deadline) {
 				continue
 			}
-			if _, err = tx.ExecContext(ctx, "UPDATE exchanges SET outcome=? WHERE id=?", Expired, id); err != nil {
+			if _, err = tx.ExecContext(ctx, "UPDATE exchanges SET outcome=?,needs_person=0 WHERE id=?", Expired, id); err != nil {
+				return err
+			}
+			if _, err = tx.ExecContext(ctx, "DELETE FROM exch_waiting WHERE exchange_id=?", id); err != nil {
 				return err
 			}
 			if err = appendEvent(ctx, tx, r, r.To, string(Expired), "", at); err != nil {
