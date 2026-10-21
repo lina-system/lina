@@ -451,6 +451,20 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 			}
 			invalidated = s.setEpoch(w.Epoch)
 			s.Capabilities = slices.Clone(w.Capabilities)
+			running := slices.ContainsFunc(w.Capabilities, func(c protocol.Capability) bool { return c.Name == "running" })
+			waiting := slices.ContainsFunc(w.Capabilities, func(c protocol.Capability) bool { return c.Name == "waiting" })
+			code := ""
+			switch {
+			case !running && !waiting:
+				code = "shell.lists_unavailable"
+			case !running:
+				code = "shell.running_unavailable"
+			case !waiting:
+				code = "shell.waiting_unavailable"
+			}
+			if code != "" {
+				s.notice(Notice{ID: code, Code: code})
+			}
 			s.Agents = slices.Clone(w.Agents)
 			for i := range s.Agents {
 				s.Agents[i].Name = sanitize.Display(s.Agents[i].Name)
