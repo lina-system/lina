@@ -7,8 +7,8 @@ import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-export function execute(command, args, { cwd, env }) {
-  const result = spawnSync(command, args, { cwd, env, encoding: 'utf8', timeout: 120_000, maxBuffer: 64 * 1024 * 1024 });
+export function execute(command, args, { cwd, env, timeoutMs = 120_000 }) {
+  const result = spawnSync(command, args, { cwd, env, encoding: 'utf8', timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 });
   return { status: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.error ? `${result.stderr ?? ''}${result.error.message}\n` : result.stderr ?? '' };
 }
 
@@ -50,7 +50,10 @@ export function checkComponents({ cwd = process.cwd(), components, execute: run 
   const context = createGoContext(cwd);
   let output = '';
   const invoke = (command, args, directory) => {
-    const result = run(command, args, { cwd: directory, env: context.env });
+    // One test command includes every selected package and the subprocess
+    // acceptance suite. Its guard must cover their aggregate cold-run time.
+    const timeoutMs = command === 'go' && args[0] === 'test' ? 300_000 : 120_000;
+    const result = run(command, args, { cwd: directory, env: context.env, timeoutMs });
     output += `$ ${command} ${args.join(' ')}\n${result.stdout}${result.stderr}`;
     return result;
   };

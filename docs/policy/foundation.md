@@ -64,6 +64,10 @@ automation check's ten-minute timeout. Its cold build compiles commands and
 metadata readers concurrently with other foundation checks; CI exceeded the
 former two-minute guard after the client-listener integration. This is separate
 from the measured development-loop budgets below and changes no artifact checks.
+The combined Go test command likewise has a five-minute guard because it includes
+all selected packages and the subprocess acceptance scenarios; other component
+commands retain their two-minute guard and the component check retains its
+ten-minute deadline.
 
 | mode | commit | machine | cache | wall s | bound s |
 | --- | --- | --- | --- | ---: | ---: |
