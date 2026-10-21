@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -17,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/accounts"
 	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/assemble"
 	"github.com/thisisjun786/lina/internal/core/assets"
@@ -52,6 +54,9 @@ type conversationRuntime struct {
 	steering                    map[string][]acceptedSteering
 	ctx                         context.Context
 	db                          *canon.Store
+	accounts                    *accounts.Store
+	vault                       *secrets.Store
+	signin                      *accounts.SignIn
 	agents                      *agents.Store
 	lanes                       *lane.Manager
 	topics                      *clientsrv.Topics
@@ -64,16 +69,18 @@ type conversationRuntime struct {
 
 func conversationPath(root string) string { return filepath.Join(root, "canon", "canon.sqlite") }
 
-func startConversation(ctx context.Context, root, main string, epoch uint64, controls *ctlfiles.Store, route *modelpath.ResponsesConfig, activities *lifecycle.ActivityRegistry) (*conversationRuntime, error) {
-	migrations := canon.Migrations()
-	for _, schema := range []string{turn.Schema, turn.ControlSchema, turn.OutcomeSchema} {
-		migrations = append(migrations, canon.Migration{Version: len(migrations) + 1, SQL: schema})
+func startConversation(ctx context.Context, root, main string, epoch uint64, controls *ctlfiles.Store, route *modelpath.ResponsesConfig, activities *lifecycle.ActivityRegistry, person string, transport http.RoundTripper) (*conversationRuntime, error) {
+	if err := os.MkdirAll(filepath.Dir(conversationPath(root)), 0700); err != nil {
+		return nil, err
 	}
-	db, err := canon.Open(ctx, canon.Config{Path: conversationPath(root), Epoch: epoch, Controls: controls, Migrations: migrations})
+	db, err := canon.Open(ctx, canon.Config{Path: conversationPath(root), Epoch: epoch, Controls: controls, Migrations: ApplicationMigrations()})
 	if err != nil {
 		return nil, err
 	}
 	r := &conversationRuntime{root: root, steering: map[string][]acceptedSteering{}, ctx: ctx, db: db, route: route, activities: activities, lanes: lane.New(), person: "person:" + main}
+	if person != "" {
+		r.person = person
+	}
 	success := false
 	defer func() {
 		if !success {
@@ -110,6 +117,27 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	r.identity = clientsrv.Identity{PersonID: r.person, Agents: []protocol.Agent{{AgentID: r.agent, Name: first.Agent.Name}}, Operations: clientsrv.ConversationOperations(r), Topics: r.topics, TopicCapabilities: map[string]protocol.Capability{
 		"core": clientsrv.ConversationCapability, "conversation:" + r.conversation: clientsrv.ConversationCapability, "results:" + r.conversation: clientsrv.ConversationCapability,
 	}}
+	if route == nil {
+		r.identity.Topics = nil
+		r.identity.TopicCapabilities = nil
+		r.identity.Operations = make(map[protocol.Kind]clientsrv.Operation)
+	}
+	r.vault, err = secrets.OpenFiles(root)
+	if err != nil {
+		return nil, err
+	}
+	r.accounts, err = accounts.Open(ctx, db, r.vault, accounts.ChatGPTRefresher(activities, transport))
+	if err != nil {
+		return nil, err
+	}
+	r.signin, err = accounts.NewSignIn(ctx, accounts.SignInConfig{Store: r.accounts, Person: r.person, Leaser: activities, Transport: transport})
+	if err != nil {
+		return nil, err
+	}
+	relay := clientsrv.NewSignInRelay(r.person, r.signin)
+	for kind, op := range clientsrv.AccountOperations(r.person, r.accounts, relay) {
+		r.identity.Operations[kind] = op
+	}
 	if err = r.seedHistory(ctx); err != nil {
 		return nil, err
 	}
@@ -123,6 +151,15 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+	}
+	if r.signin != nil {
+		r.signin.Close()
+	}
+	if r.accounts != nil {
+		r.accounts.Close()
+	}
+	if r.vault != nil {
+		r.vault.Close()
 	}
 	if r.topics != nil {
 		r.topics.Close()
