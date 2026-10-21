@@ -445,6 +445,7 @@ type Stream interface {
   callback and remains free of external dependencies. The shared `Measurer` wraps the visible text before
   the UI adds terminal styles. List continuations align under their content;
   code retains literal text and whitespace. Escaped syntax remains literal.
+  Unsupported HTML blocks and inline HTML display their literal source text.
   Tables use our own renderer.
 - Conversation spans use theme text, accent and surface tokens: bold and italic
   retain their attributes, code uses the surface background, and links use

@@ -61,6 +61,8 @@ func parseMarkdown(source, bullet string) []render.MarkdownBlock {
 			return []render.Span{{Text: value, Style: style}}
 		case *ast.String:
 			return []render.Span{{Text: sanitize.Display(string(node.Value)), Style: style}}
+		case *ast.RawHTML:
+			return []render.Span{{Text: sanitize.Display(string(node.Segments.Value(data))), Style: style}}
 		case *ast.Emphasis:
 			if node.Level == 2 {
 				style.Bold = true
@@ -111,6 +113,14 @@ func parseMarkdown(source, bullet string) []render.MarkdownBlock {
 					first = false
 				}
 			}
+		case *ast.HTMLBlock:
+			var raw strings.Builder
+			raw.Write(node.Lines().Value(data))
+			if node.HasClosure() {
+				raw.Write(node.ClosureLine.Value(data))
+			}
+			value := sanitize.Display(strings.TrimSuffix(raw.String(), "\n"))
+			blocks = append(blocks, render.MarkdownBlock{Spans: []render.Span{{Text: value}}, Prefix: prefix, Indent: indent})
 		case *ast.FencedCodeBlock, *ast.CodeBlock:
 			var code strings.Builder
 			for i := 0; i < n.Lines().Len(); i++ {

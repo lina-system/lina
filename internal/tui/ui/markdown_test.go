@@ -76,6 +76,23 @@ func TestConversationMarkdownElements(t *testing.T) {
 	}
 }
 
+func TestConversationMarkdownLiteralHTML(t *testing.T) {
+	for _, tc := range []struct{ name, source, want string }{
+		{"block", "<div>hello</div>", "<div>hello</div>"},
+		{"mixed", "**before**\n\n<div>hello</div>\n\n*after*", "before\n\n<div>hello</div>\n\nafter"},
+		{"inline", "before <span title=\"&amp; **literal**\">hello</span> after", "before <span title=\"&amp; **literal**\">hello</span> after"},
+		{"multiline", "<script>\n**literal** &amp;\n</script>", "<script>\n**literal** &amp;\n</script>"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := conversationShell()
+			m.Update(shellData{Generation: 1, Message: state.Snapshot{Epoch: "1", Revocation: "1", Topic: "conversation:fixture", Items: []state.Block{{ID: "html", Revision: 1, Text: tc.source, Done: true}}}})
+			if got := ansi.Strip(markdownTranscript(m)); got != tc.want {
+				t.Fatalf("rendered text = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestConversationMarkdownStreamingMarkers(t *testing.T) {
 	for _, source := range []string{"**굵게**", "__굵게__", "_기울임_", "*기울임*", "`code`", "[문서](https://example.com)", "- 항목\n", "```go\ncode\n```\n"} {
 		t.Run(source, func(t *testing.T) {
