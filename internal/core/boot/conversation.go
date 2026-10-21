@@ -330,7 +330,16 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 	}
 	round := 0
 	var completed []ledger.Admission
-	out, err := turn.New(r.db).Run(ctx, turn.Options{ID: turnID, Conversation: r.conversation, InboxID: inboxID, InputEvent: input.ID, Preparation: prep, Loop: loop.Config{
+	var saved []ledger.Event
+	complete := func(ctx context.Context, db turn.Canon) error {
+		if len(completed) == 0 {
+			return db.Write(ctx, func(*canon.Tx) error { return nil })
+		}
+		var err error
+		saved, err = ledger.New(db, r.materials).AdmitBatch(ctx, completed)
+		return err
+	}
+	out, err := turn.New(r.db).Run(ctx, turn.Options{ID: turnID, Conversation: r.conversation, InboxID: inboxID, InputEvent: input.ID, Preparation: prep, Complete: complete, Loop: loop.Config{
 		Inputs: &conversationInputs{runtime: r, inputs: inputs},
 		Stream: func(ctx context.Context, request provider.Request) (provider.Stream, error) {
 			round++
@@ -367,19 +376,15 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			return nil
 		},
 	}})
-	// Provider ItemDone is provisional until the complete turn succeeds. The
-	// turn journal retains provider evidence on failure, outside final history.
-	if err == nil && len(completed) > 0 {
-		var saved []ledger.Event
-		saved, err = r.journal().AdmitBatch(ctx, completed)
-		if err == nil {
-			for _, item := range saved {
-				value := item.Body.Text()
-				speaker := protocol.ConversationSpeakerAgent
-				if publishErr := r.publish(protocol.KindItemDone, item.ID, protocol.ItemDone{Text: &value, Speaker: &speaker}); publishErr != nil {
-					err = publishErr
-					break
-				}
+	// Provider ItemDone stays provisional until completion and reply admission
+	// commit together. Publication can be recovered from history after a crash.
+	if err == nil {
+		for _, item := range saved {
+			value := item.Body.Text()
+			speaker := protocol.ConversationSpeakerAgent
+			if publishErr := r.publish(protocol.KindItemDone, item.ID, protocol.ItemDone{Text: &value, Speaker: &speaker}); publishErr != nil {
+				err = publishErr
+				break
 			}
 		}
 	}
