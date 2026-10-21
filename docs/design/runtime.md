@@ -190,7 +190,32 @@ LINA Core can re-run a recorded turn, sandboxed and without effects, so that a c
 - A replay rebuilds the request from the turn's assembly list. A memory item or material that has since been retracted, trashed or forgotten is left out, and the clock is the turn's original clock.
 - A replay uses the kit's loop core with the candidate files, on the model and effort that the turn used unless the caller names others. It runs in the sandbox with network blocked and with a scratch directory of its own, and it never touches the working directory of a conversation.
 - A turn that only answered replays in full. A turn that read replays with LINA's local read tools live and the results of its network reads taken from the ledger. A turn whose tool call had an effect replays with that call answered by the recorded result, and is left out of the replay when no result was recorded. A replay never runs an effect and never writes the effect ledger or the conversation ledger.
-- A replay's usage is recorded as a run kind of its own, with the model account it used, and counts against the total budget ([Usage and cost](#usage-and-cost)).
+- A replay's usage is recorded in its output as a run kind of its own, with the model account it used and each provider round. The installed development command writes no canon state, including budget reservations or settlements; its usage artifacts are separate from the install's budget totals ([Usage and cost](#usage-and-cost)).
+
+The installed invocation is `lina replay <episode-file|turn-id> --socket <path>
+--out <new-directory>`. `--model` and `--effort` override the recorded choices;
+`--turn <id>` selects one episode from a multi-line export. An existing output
+directory is refused before making a model call. The output contains
+`replay.json`, `reply.json`, `tool-results.json`, `usage.json` and `manifest.json`.
+Usage records identify `kind=replay`, the account and each provider round. An
+excluded turn produces only the manifest, including its reason and count.
+
+`--candidates <directory>` accepts UTF-8 `core.md`, `default-voice.md`,
+`user-voice.md` and `growth-snapshot.md` text. Present files replace those pinned
+persona layers; absent files retain the original layer. Candidate files are
+instruction text, never executable code. Records from producers without exact
+history, model or reconstructible context/skill assembly are counted as
+`missing_assembly`. The command does not invent missing evidence. An episode
+file names evidence of the connected install and must still pass its current
+scope and removal checks. The original ledger clock is UTC; it is retained in
+the episode and used for deterministic local recall.
+
+The Core client protocol adds `export_request`, `export_result`,
+`replay_request` and `replay_result` under the optional `replay/1.0` capability.
+These operations are unavailable during recovery. The CLI owns external input
+and output paths; Core owns export staging and never accepts a replay output
+path or a candidate directory from the wire. No command starts Core implicitly.
+
 
 ## Model path
 
@@ -277,7 +302,7 @@ The Gemini adapter assembles its own stream by the same rules: deltas drive live
 ### Usage and cost
 
 - Usage comes from what each provider reports: the `usage` of a model-API response, the usage an agent runtime reports with a turn, and the usage events a worker reports, such as Codex's `thread/tokenUsage/updated`. An unreported value is unknown, never zero.
-- The total budget covers conversation requests (turns in external channels and turns of agent exchanges included), background runs, the model calls of background jobs, worker threads, the sub-threads a worker starts, auxiliary reasoning and replays. Every agent draws on the one budget, and each usage record names the agent it served, the account it used and, for a background run, the run.
+- The total budget covers conversation requests (turns in external channels and turns of agent exchanges included), background runs, the model calls of background jobs, worker threads, the sub-threads a worker starts, auxiliary reasoning. Development replays report their usage in output artifacts without changing canon or its budget totals. Every agent draws on the one budget, and each usage record names the agent it served, the account it used and, for a background run, the run.
 - Budget totals count tokens. A cost figure is shown only when the provider or runtime reports one, and is labelled an estimate when it is computed on the client (the Claude runtime's is). A plan route has no cost. Catalog prices and zero values are not actual cost.
 - LINA Core reserves and settles the budget. At the limit the conversation stops sending requests, a background run waits with its checkpoint and says what is done and what is not instead of being wrapped up, and workers are interrupted under the budget policy of [work-and-delegation.md](work-and-delegation.md). The Codex goal token budget is not used. This budget is the person's usage; it is not the turn budget, which only decides where work runs ([Turn budget](#turn-budget)).
 - A worker's model, route and cost are known only as far as the worker reports them.
@@ -812,4 +837,4 @@ The first implementation issue demonstrates the runtime with these checks. Each 
 - Where a model's context window comes from when its adapter reports none: set by the implementation issue that ships the provider adapters.
 - Narrowing a plugin server's network to named hosts: needs a filter in the sandbox wrapper; chosen at implementation acceptance of the plugin system, and until then the allowance is network on or off.
 - The starting values of the turn budget (acknowledgement, soft and hard budget, tool deadline), which only set the hand-off point: tuned by measurement during implementation acceptance of the conversation engine, on waiting time and completion quality together (rework, corrections and "that is not what I asked"), never on waiting time alone.
-- Whether a replay needs raw request bodies beyond the assembly list: decided by the first development run that uses the replay command.
+- Replay uses immutable history references, pinned persona and recorded request configuration; missing reconstructible assembly excludes the turn. Raw ContextPackets remain unstored.

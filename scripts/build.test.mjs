@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { sandbox } from './test-fixture.mjs';
+import { git } from './git.mjs';
 import { createGoContext, execute } from './verify/check-components.mjs';
 import { build, buildTimeoutMs } from './build.mjs';
 
@@ -21,8 +22,13 @@ function fixture(t, { timeoutScale = 1, executeCommand = execute } = {}) {
   const sb = sandbox(t);
   const cwd = join(sb.dir, 'source');
   mkdirSync(cwd);
-  for (const name of ['cmd/lina', 'cmd/lina-node', 'internal/buildinfo', 'kit', 'go.mod', 'go.sum', 'go.work',
-    'internal/core', 'internal/clientapi', 'internal/design', 'internal/moirai', 'internal/tui', 'persona', 'skills', 'packaging', 'scripts/build.mjs', 'scripts/git.mjs', 'scripts/verify/check-components.mjs']) {
+  // Export the source tree, including new packages and embedded assets, without
+  // repository metadata or ignored build/runtime files. Package allowlists drift
+  // whenever a command acquires another local dependency.
+  const sources = git(root, ['ls-files', '-z', '--cached', '--others', '--exclude-standard']);
+  assert.equal(sources.status, 0, sources.stderr);
+  for (const name of sources.stdout.split('\0').filter(Boolean)) {
+
     if (!existsSync(join(root, name))) continue;
     mkdirSync(dirname(join(cwd, name)), { recursive: true });
     cpSync(join(root, name), join(cwd, name), { recursive: true });
@@ -65,7 +71,8 @@ test('a progressing cross-build can outlive the old per-command limit', t => {
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /compiling[\s\S]*finished/);
   }
-  assert.deepEqual(budgets, [[595_000, 594_000], [445_000, 444_000]]);
+  const initial = buildTimeoutMs;
+  assert.deepEqual(budgets, [[initial, initial - 1000], [initial - 150_000, initial - 151_000]]);
 });
 
 test('a hung cross-build fails with the command, target and elapsed time', t => {
@@ -100,7 +107,7 @@ test('cold inner Go compilations share the build deadline and can exceed 120 sec
         ? (args.includes('./internal/core/manifest/clientinfo') ? '[]' : '{}') : '', stderr: '' };
     } });
   assert.equal(manifest.target, 'darwin/arm64');
-  assert.deepEqual(budgets, [595_000, 445_000]);
+  assert.deepEqual(budgets, [buildTimeoutMs, buildTimeoutMs - 150_000]);
 });
 
 test('an exhausted build deadline stops before another Go command starts', t => {
@@ -215,7 +222,7 @@ test('clean builds record hashes and the same commit and metadata as both versio
     assert.equal(manifest.kitVersion, Number(readFileSync(join(f.cwd, 'kit/VERSION'), 'utf8')));
     const platform = spawnSync('go', ['env', 'GOOS', 'GOARCH'], { cwd: f.cwd, env: f.env, encoding: 'utf8' }).stdout.trim().split(/\r?\n/).join('/');
     assert.deepEqual(manifest.supportedCombinations, [{ connection: 'client', peer: 'lina-tui', platform,
-      protocolVersion: '1.0', capabilities: [{ name: 'agents', version: '1.0' }, { name: 'memory', version: '1.0' }, { name: 'exchanges', version: '1.0' }, { name: 'channels', version: '1.0' }, { name: 'accounts', version: '1.0' }, { name: 'sign_in_relay', version: '1.0' }, { name: 'lifecycle', version: '1.0' }, { name: 'conversation', version: '1.0' }], evidence: ['go test ./kit/protocol/conformance', 'go test ./e2e -run TestPlannedRestart', 'go test ./e2e -run TestM1TUIConversationInstalledCore', 'go test ./e2e -run TestM1TUIAccountsInstalledCore', 'go test ./e2e -run TestM1TUIChannel', 'go test ./e2e -run TestM1TUITalkLogInstalledCore', 'go test ./e2e -run TestM1TUIMemoryAgentsInstalledCore'] }]);
+      protocolVersion: '1.0', capabilities: [{ name: 'agents', version: '1.0' }, { name: 'memory', version: '1.0' }, { name: 'exchanges', version: '1.0' }, { name: 'channels', version: '1.0' }, { name: 'accounts', version: '1.0' }, { name: 'sign_in_relay', version: '1.0' }, { name: 'lifecycle', version: '1.0' }, { name: 'conversation', version: '1.0' }, { name: 'replay', version: '1.0' }], evidence: ['go test ./kit/protocol/conformance', 'go test ./e2e -run TestPlannedRestart', 'go test ./e2e -run TestM1TUIConversationInstalledCore', 'go test ./e2e -run TestM1TUIAccountsInstalledCore', 'go test ./e2e -run TestM1TUIChannel', 'go test ./e2e -run TestM1TUITalkLogInstalledCore', 'go test ./e2e -run TestM1TUIMemoryAgentsInstalledCore', 'go test ./e2e -run TestM1ReplayExportInstalledCore'] }]);
     const module = JSON.parse(spawnSync('go', ['list', '-m', '-json', 'github.com/ncruces/go-sqlite3'], {
       cwd: f.cwd, env: f.env, encoding: 'utf8',
     }).stdout);

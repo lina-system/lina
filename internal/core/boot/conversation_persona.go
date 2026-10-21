@@ -203,7 +203,7 @@ func (r *conversationRuntime) personaNotice(ctx context.Context, input ledger.Ev
 	if err == nil {
 		text := event.Body.Text()
 		speaker := protocol.ConversationSpeakerSystem
-		err = r.publish(protocol.KindItemDone, event.ID, protocol.ItemDone{Text: &text, Speaker: &speaker})
+		err = r.publish(ctx, protocol.KindItemDone, event.ID, protocol.ItemDone{Text: &text, Speaker: &speaker})
 	}
 	if err != nil {
 		result.Code = loop.Unknown
