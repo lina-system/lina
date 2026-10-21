@@ -19,9 +19,10 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
-// The shell renders the generic text stream of these capabilities. Feature
-// actions (approvals, editing results, sending messages) are not advertised.
-var shellCapabilities = []protocol.Capability{{Name: "conversation", Version: "1.0"}, {Name: "running", Version: "1.0"}, {Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}}
+// The shell renders these connection-wide status streams. Conversation
+// discovery, focus and result subscriptions belong to the conversation view;
+// do not advertise that capability until those concrete topics are maintained.
+var shellCapabilities = []protocol.Capability{{Name: "running", Version: "1.0"}, {Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}}
 
 type clientPeer struct{ client *clientapi.Client }
 

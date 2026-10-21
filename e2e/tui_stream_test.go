@@ -49,17 +49,20 @@ func TestM1TUIStream(t *testing.T) {
 	}
 	e := load("welcome.json")
 	welcome := e.Payload.(protocol.Welcome)
-	welcome.Capabilities = []protocol.Capability{{Name: "conversation", Version: "1.0"}}
+	welcome.Capabilities = []protocol.Capability{{Name: "progress", Version: "1.0"}}
 	e.Payload = welcome
 	put("welcome.json", e)
 	e = load("streams/subscribe.json")
-	e.Payload = protocol.Subscribe{Topic: &script.Topic}
+	coreTopic := "core"
+	e.Payload = protocol.Subscribe{Topic: &coreTopic}
 	put("subscribe-core.json", e)
+	e.Payload = protocol.Subscribe{Topic: &script.Topic}
+	put("subscribe-topic.json", e)
 	e = load("normal/resync.json")
 	r := e.Payload.(protocol.Resync)
 	r.Topic = script.Topic
 	e.Payload = r
-	put("resync-core.json", e)
+	put("resync-topic.json", e)
 	e = load("normal/snapshot.json")
 	s := e.Payload.(protocol.Snapshot)
 	s.Topic = script.Topic
@@ -68,6 +71,9 @@ func TestM1TUIStream(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.Items[0].Payload = body
+	e.Payload = s
+	put("snapshot-topic.json", e)
+	s.Topic, s.Items = coreTopic, []protocol.StreamItem{}
 	e.Payload = s
 	put("snapshot-core.json", e)
 	h := newHarness(t, buildLina(t))

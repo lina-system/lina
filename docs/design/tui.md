@@ -47,10 +47,12 @@ Ids are stable. Section headings carry the ids they specify. T-02 is withdrawn: 
 
 `lina tui --socket <path>` is a separate thin-client process. `internal/clientapi`
 owns the Unix socket, the generated client 1.0 handshake and the validated
-receive/subscription API. The TUI offers the generic text-stream capabilities
-it renders (`conversation`, `running`, `progress`, `waiting`); Core grants only
+receive/subscription API. The connection shell offers the status-stream capabilities
+it subscribes to and renders (`running`, `progress`, `waiting`); Core grants only
 its installed subset. The shell subscribes to `core` when any of these is granted
-and to the matching running/progress/waiting topics. No conversation input,
+and to the matching running/progress/waiting topics. Conversation discovery,
+focus and concrete conversation/result subscriptions belong to the conversation
+view increment; this shell does not offer that capability. No conversation input,
 approval, or other effect is sent by this increment. The command supplies the
 product version for diagnosis, persists no preferences or drafts, and never
 starts Core.
@@ -128,7 +130,7 @@ The server side is [go-core.md](go-core.md) (C-42): topics, cursors, rings, batc
 - A different revocation epoch ([conversation-and-memory.md](conversation-and-memory.md#terms)) makes the TUI drop cached items before the snapshot applies, so a forgotten item cannot survive a reconnect.
 - Replaying a stream or a snapshot twice leaves state unchanged.
 
-The client 1.0 wire carries these mechanics inside payloads as defined by [C-42](go-core.md#client-service): optional per-event `stream` metadata and the `snapshot`, `resync` and `resync_required` kinds. `e2e/m1/topic-streams.json` crosses the production client socket and generated codec, projects decoded frames into the reducer, and checks duplicate snapshots/replay plus independent topic overflow. It proves the protocol and reducer boundary; automatic stream subscription and notification projection in the interactive TUI remain the client integration's work. The T-04 rule that a replayed approval rings no second bell also relies on this cursor/revision deduplication.
+The client 1.0 wire carries these mechanics inside payloads as defined by [C-42](go-core.md#client-service): optional per-event `stream` metadata and the `snapshot`, `resync` and `resync_required` kinds. `e2e/m1/topic-streams.json` crosses the production client socket and generated codec, projects decoded frames into the reducer, and checks duplicate snapshots/replay plus independent topic overflow. It proves the protocol and reducer boundary. The connection shell now automatically subscribes to its granted status topics and projects notifications into the interactive view, covered by `e2e/m1/tui-stream.json`; concrete conversation and result subscriptions still require the conversation view's discovery and focus state. The T-04 rule that a replayed approval rings no second bell also relies on this cursor/revision deduplication.
 
 ## State model and presentation kinds (T-06)
 
