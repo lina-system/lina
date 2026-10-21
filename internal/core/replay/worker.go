@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/proc"
@@ -263,9 +264,11 @@ func Sandboxed(ctx context.Context, cfg SandboxConfig, initial WorkerInput) (out
 	}
 }
 
-// Request applies candidate text as data selected by the developer. Absent
-// layers retain the exact pinned revision; no current persona is consulted.
-func Request(ep Episode, candidates map[string]string, model, effort string) (provider.Request, error) {
+// InstructionBuilder is the existing pure assembly function supplied by boot.
+type InstructionBuilder func(agents.Preparation, []provider.ToolDecl) (string, error)
+
+// Request applies candidate text to pinned layers and the recorded identity.
+func Request(ep Episode, candidates map[string]string, model, effort string, build InstructionBuilder) (provider.Request, error) {
 	p := ep.Persona
 	for name, text := range candidates {
 		switch filepath.ToSlash(name) {
@@ -281,7 +284,23 @@ func Request(ep Episode, candidates map[string]string, model, effort string) (pr
 			return provider.Request{}, ErrInvalid
 		}
 	}
-	r := provider.Request{Model: ep.Evidence.Model, Effort: ep.Evidence.Effort, Instructions: strings.Join([]string{p.Core, p.DefaultVoice, p.UserVoice, p.GrowthSnapshot}, "\n"), Items: ep.Items, Tools: ep.Evidence.Tools, Fields: ep.Evidence.Fields, Purpose: provider.Replay}
+	instructions := strings.Join([]string{p.Core, p.DefaultVoice, p.UserVoice, p.GrowthSnapshot}, "\n")
+	switch ep.Evidence.Assembly.InstructionFormat {
+	case "": // Exact legacy layer assembly, still checked against its digest.
+	case "agent-v1":
+		a := ep.Evidence.Assembly
+		if build == nil || a.AgentName == "" || a.OwnerPersonID == "" {
+			return provider.Request{}, Exclusion("missing_assembly")
+		}
+		var err error
+		instructions, err = build(agents.Preparation{AgentID: a.AgentID, Name: a.AgentName, OwnerPersonID: a.OwnerPersonID, Layers: p}, ep.Evidence.Tools)
+		if err != nil {
+			return provider.Request{}, err
+		}
+	default:
+		return provider.Request{}, Exclusion("missing_assembly")
+	}
+	r := provider.Request{Model: ep.Evidence.Model, Effort: ep.Evidence.Effort, Instructions: instructions, Items: ep.Items, Tools: ep.Evidence.Tools, Fields: ep.Evidence.Fields, Purpose: provider.Replay}
 	if model != "" {
 		r.Model = provider.ModelRef(model)
 	}

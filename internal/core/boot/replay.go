@@ -21,7 +21,7 @@ import (
 )
 
 func (r *conversationRuntime) replaySource() replay.Source {
-	return replay.Source{Digest: assemble.Digest, DB: r.db, Materials: r.materials, Persona: r.agents.Prepared, Project: func(events []ledger.Event, conversation, agent string) ([]provider.Item, error) {
+	return replay.Source{Instructions: assemble.Instructions, Digest: assemble.Digest, DB: r.db, Materials: r.materials, Persona: r.agents.Prepared, Project: func(events []ledger.Event, conversation, agent string) ([]provider.Item, error) {
 		return assemble.History(events, conversation, agent)
 	}}
 }
@@ -136,7 +136,7 @@ func (r *conversationRuntime) Replay(ctx context.Context, s clientsrv.Session, p
 	if p.Effort != nil {
 		effort = *p.Effort
 	}
-	request, err := replay.Request(ep, candidates, model, effort)
+	request, err := replay.Request(ep, candidates, model, effort, assemble.Instructions)
 	if err != nil {
 		return protocol.ReplayResult{}, replayFailure(err)
 	}

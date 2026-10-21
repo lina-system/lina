@@ -370,8 +370,11 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				return turn.PreparedRequest{}, err
 			}
 			request := r.route.Request(items)
-			request.Instructions = strings.Join([]string{persona.Layers.Core, persona.Layers.DefaultVoice, persona.Layers.UserVoice, persona.Layers.GrowthSnapshot}, "\n")
-			assembly := turn.Assembly{AgentID: r.agent, PersonaRevision: persona.Commit}
+			request.Instructions, err = assemble.Instructions(persona, request.Tools)
+			if err != nil {
+				return turn.PreparedRequest{}, err
+			}
+			assembly := turn.Assembly{AgentID: r.agent, PersonaRevision: persona.Commit, InstructionFormat: "agent-v1", AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID}
 			for _, event := range events {
 				digest := sha256.Sum256([]byte(event.Body.Text()))
 				assembly.History = append(assembly.History, turn.Reference{ID: event.ID, Revision: hex.EncodeToString(digest[:])})
@@ -380,6 +383,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				n := len(request.Instructions)
 				for _, item := range request.Items {
 					n += len(item)
+				}
+				for _, tool := range request.Tools {
+					n += len(tool)
 				}
 				return n
 			}, MaxTokens: 128000}, nil

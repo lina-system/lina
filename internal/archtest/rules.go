@@ -22,7 +22,7 @@ var layers = func() map[string]int {
 		"canon eventstore secrets ctlfiles guard ids",
 		"authority lifecycle budget manifest",
 		"ledger inbox agents memory retract skills records assets work timers plugins channels accounts",
-		"lane assemble compaction turn runs replay reply results modelpath exec exchange gateway worker reactor review ghclient progress waiting importer backup update recover clientsrv jobs mcphost install",
+		"lane assemble compaction turn runs replay reply results modelpath exec exchange gateway worker reactor review ghclient progress waiting backup update recover clientsrv jobs mcphost install",
 		"boot supervise",
 	} {
 		for _, name := range strings.Fields(names) {
@@ -106,6 +106,9 @@ func violations(root string, standard map[string]bool) ([]string, error) {
 			if err != nil {
 				return err
 			}
+			if !within(owner, "internal/addons") && within(imported, rootModule+"/internal/addons/importer") {
+				report(spec.Pos(), "importer", "memory importer add-ons must not be dependencies of Core or default packages: "+imported)
+			}
 			if within(imported, rootModule+"/internal/core") {
 				target := family(imported, rootModule+"/internal/core")
 				if layers[target] == 0 {
@@ -149,8 +152,13 @@ func violations(root string, standard map[string]bool) ([]string, error) {
 					within(imported, rootModule+"/kit/protocol")
 				charm := within(imported, "github.com/charmbracelet") || within(imported, "charm.land")
 				terminal := within(owner, "internal/tui/term") || within(owner, "internal/tui/ui")
-				if !allowed && !(charm && terminal) {
-					report(spec.Pos(), "TUI", "only the standard library, clientapi, design, protocol and TUI packages are allowed: "+imported)
+				// Goldmark supplies semantic Markdown spans only at the UI adapter.
+				// Keep the pure reducer/render/layout layers dependency-free.
+				markdown := within(owner, "internal/tui/ui") && (imported == "github.com/yuin/goldmark" ||
+					imported == "github.com/yuin/goldmark/ast" || imported == "github.com/yuin/goldmark/text" ||
+					imported == "github.com/yuin/goldmark/util")
+				if !allowed && !(charm && terminal) && !markdown {
+					report(spec.Pos(), "TUI", "only standard/internal client dependencies and permitted UI/terminal libraries are allowed: "+imported)
 				}
 			}
 			if (within(imported, "github.com/charmbracelet") || within(imported, "charm.land")) && !within(owner, "internal/tui/term") && !within(owner, "internal/tui/ui") {

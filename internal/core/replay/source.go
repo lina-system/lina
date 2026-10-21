@@ -68,11 +68,12 @@ type Manifest struct {
 // Source borrows the running Core's services. It opens no store and its database
 // interface deliberately has no write method. Project is the existing assembler.
 type Source struct {
-	DB        Reader
-	Materials ledger.Materials
-	Persona   func(context.Context, string, string) (agents.Preparation, error)
-	Project   func([]ledger.Event, string, string) ([]provider.Item, error)
-	Digest    func(provider.Request) string
+	Instructions InstructionBuilder
+	DB           Reader
+	Materials    ledger.Materials
+	Persona      func(context.Context, string, string) (agents.Preparation, error)
+	Project      func([]ledger.Event, string, string) ([]provider.Item, error)
+	Digest       func(provider.Request) string
 }
 type readTx struct{ tx *canon.Tx }
 
@@ -411,7 +412,7 @@ func (s Source) loadSnapshot(ctx context.Context, scope Scope, id string) (Episo
 	}
 	ep.Items, err = s.Project(history, ep.Conversation, scope.Agent)
 	if err == nil {
-		original, e := Request(ep, nil, "", "")
+		original, e := Request(ep, nil, "", "", s.Instructions)
 		if e != nil {
 			return Episode{}, e
 		}

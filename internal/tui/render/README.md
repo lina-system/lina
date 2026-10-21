@@ -20,7 +20,7 @@ For resize, retain the item's id and a `Row.Offset` anchor, then call
 `Stream.Window` with the new width and required row count including overscan.
 It stops measuring at the end of that window; it does not reflow the history.
 `Rows` adapts its result to `Source`. The UI owns resize coalescing and worker
-scheduling; the current connection-only CLI does not yet use these packages.
+scheduling. The conversation uses `Stream.Markdown` for semantic Markdown rows.
 
 `Measurer` serves wrapping, truncation and cursor placement. The default
 `Unicode` implementation uses per-codepoint cell widths; select `Graphemes`
@@ -34,7 +34,9 @@ The segmentation algorithm implements Unicode 17 UAX #29, with the upstream
 conformance corpus in `testdata/GraphemeBreakTest.txt`. Range tables are Unicode
 data, not an imported implementation; their notice is in
 [THIRD-PARTY-NOTICES.md](../../../THIRD-PARTY-NOTICES.md). The implementation
-imports only the standard library and the sibling sanitizer.
+uses only the standard library and the sibling sanitizer. The UI supplies the
+Markdown parser through a function boundary; no external parser or Charm package
+enters this layer.
 
 To reproduce the tables, download these Unicode 17.0.0 files into one directory:
 
@@ -53,3 +55,13 @@ The generator rejects input with a different SHA-256 digest. Compare the output
 with `internal/tui/render/unicode_tables.go` before replacing that file. Ordinary
 tests are offline and verify the pinned grapheme conformance corpus as well as
 Hangul, combining, emoji, cursor, clipping and streaming properties.
+
+`Stream.Markdown` projects closed blocks into semantic spans for emphasis, code,
+lists and links. It wraps visible text with the same Unicode measurer, then the
+UI paints only visible rows using generated theme tokens. Closed prefixes retain
+their parsed spans and wrapped rows across appends. The open tail consumes new
+bytes once, withholding pending Markdown delimiters and link destinations; it
+keeps literal text inside code. `Seal` replaces that preview with the
+CommonMark parse of the authoritative text, including reference definitions.
+Malformed or escaped syntax in a sealed item remains literal. ANSI and OSC are
+never admitted as source styling, including after Markdown entity decoding.

@@ -130,7 +130,7 @@ The test enforces the import rules in [go-core.md C-40](../design/go-core.md#pro
 
 - Core package families and their descendants use the C-40 layer table. A package under `internal/core` absent from that table fails as unmapped. Imports between different families must go strictly downward, including the ban on imports between L3 stores. Imports within one family are allowed; Go checks cycles.
 - Moirai follows the separate C-40 worker layers: job API, read-only reader, runtime and command. It cannot import Core, providers or secret packages; SQLite imports belong only to its reader. Core may import only the worker job API contract.
-- Kit cannot import the root module. Charm imports (`github.com/charmbracelet/` and `charm.land/`) belong only to `internal/tui/term` and `internal/tui/ui`.
+- Kit cannot import the root module. Charm imports (`github.com/charmbracelet/` and `charm.land/`) belong only to `internal/tui/term` and `internal/tui/ui`. Only `internal/tui/ui` may import the pinned Goldmark root, `ast`, `text` and `util` packages for semantic Markdown projection; the exception does not admit other external libraries or Goldmark subpackages.
 - `os/exec` belongs only to `kit/proc` and `kit/sandbox`; references to `os.Environ`, including aliases, dot imports and function values, belong only to `kit/proc`.
 - `internal/node` and `cmd/lina-node` may import the Go standard library and the C-35 kit families `grant`, `lease`, `sandbox`, `proc`, `protocol`, `rpc`, `diag` and `secret`. The command entry point `cmd/lina-node` may also import the exact package `internal/buildinfo`, which may itself import only the standard library.
 
