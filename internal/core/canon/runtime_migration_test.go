@@ -72,7 +72,7 @@ INSERT INTO turn_runs(id,conversation,inbox_id,prepared,state) VALUES('old-turn'
 					if state != "completed" {
 						t.Fatal("old turn changed")
 					}
-					for _, table := range []string{"turn_control", "turn_outcome", "retract_meta", "sum_node", "owner_binding", "sign_in_host", "sign_in_identities"} {
+					for _, table := range []string{"turn_control", "turn_outcome", "retract_meta", "sum_node", "owner_binding", "sign_in_host", "sign_in_identities", "channel_connections", "telegram_buttons", "exchanges"} {
 						var n int
 						if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM "+table).Scan(&n); err != nil {
 							return err

@@ -14,8 +14,11 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/protocol"
+	"github.com/thisisjun786/lina/kit/rpc"
+	"github.com/thisisjun786/lina/kit/secret"
 )
 
 func TestM1ReplyShapeLONGQA(t *testing.T) {
@@ -211,4 +214,135 @@ func TestM1ReplyShapeFinalItemCeilings(t *testing.T) {
 	}
 	c.Close()
 	h.stopCore(core)
+}
+
+func TestM1ReplyShapeCredentialMasking(t *testing.T) {
+	credential := "sk-" + strings.Repeat("a", 24)
+	cases := []struct {
+		name   string
+		deltas []string
+	}{
+		{"inline", []string{"Credential: " + credential + " safe. "}},
+		{"card", []string{strings.Repeat("Public sentence. ", 30), credential + " safe. "}},
+		{"split", []string{"Credential: sk-", strings.Repeat("a", 12), strings.Repeat("a", 12) + " safe. "}},
+		{"quoted", []string{"password=\"synthetic ", "private value\" safe. "}},
+		{"private-key", []string{"-----BEGIN PRIVATE ", "KEY-----\nsynthetic-private-body\n", "-----END PRIVATE KEY-----\n"}},
+	}
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tc := cases[int(calls.Add(1))-1]
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, delta := range tc.deltas {
+			data, _ := json.Marshal(map[string]any{"type": "response.output_text.delta", "output_index": 0, "delta": delta})
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			w.(http.Flusher).Flush()
+		}
+		emitResponse(w, strings.Join(tc.deltas, ""), true)
+	}))
+	defer server.Close()
+	h, start := installedConversationHarness(t, server.URL)
+	core := start(true)
+	c, conversation := conversationClient(t, h)
+	defer c.Close()
+	defer h.stopCore(core)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			frames := admittedTurn(t, h, c, conversation, tc.name, tc.name)
+			var streamed, final string
+			for _, frame := range frames {
+				switch p := frame.Payload.(type) {
+				case protocol.OutputDelta:
+					if p.Text != nil {
+						streamed += *p.Text
+					}
+				case protocol.ItemDone:
+					if p.Speaker != nil && *p.Speaker == protocol.ConversationSpeakerAgent && p.Text != nil {
+						final = *p.Text
+					}
+				case protocol.Result:
+					if p.Text != nil {
+						final = *p.Text
+					}
+					streamed += p.Summary
+				}
+				data, _ := json.Marshal(frame)
+				for _, forbidden := range []string{credential, strings.Repeat("a", 12), "synthetic", "private value"} {
+					if strings.Contains(string(data), forbidden) {
+						t.Errorf("client frame exposed credential bytes (%s)", frame.Kind)
+					}
+				}
+			}
+			masked, err := secrets.Mask(strings.Join(tc.deltas, ""))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if final != masked.Text() || !strings.Contains(final, secret.Placeholder) {
+				t.Error("final reply does not match ledger masking")
+			}
+			if strings.Contains(streamed, credential) {
+				t.Error("streamed deltas reconstruct unmasked credential")
+			}
+		})
+	}
+}
+
+func TestM1ReplyShapeLargeFrames(t *testing.T) {
+	for _, tc := range []struct{ name, full string }{
+		{"over-one-MiB", "Start. " + strings.Repeat("large text ", (1<<20)/10+1)},
+		{"escaped-json", "Start. " + strings.Repeat("<한>\n", 180000)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				// A single large delta and the final item must both fit client transport.
+				data, _ := json.Marshal(map[string]any{"type": "response.output_text.delta", "output_index": 0, "delta": tc.full})
+				fmt.Fprintf(w, "data: %s\n\n", data)
+				w.(http.Flusher).Flush()
+				emitResponse(w, tc.full, true)
+			}))
+			defer server.Close()
+			h, start := installedConversationHarness(t, server.URL)
+			core := start(true)
+			c, conversation := conversationClient(t, h)
+			frames := admittedTurn(t, h, c, conversation, tc.name, "large reply")
+			cards := 0
+			for _, frame := range frames {
+				data, err := json.Marshal(frame)
+				if err != nil || len(data) >= rpc.MaxFrameBytes {
+					t.Errorf("oversized client frame: %d, %v", len(data), err)
+				}
+				if p, ok := frame.Payload.(protocol.Result); ok {
+					cards++
+					if p.Text == nil || !strings.HasPrefix(*p.Text, "Start.") || len(*p.Text) >= len(tc.full) {
+						t.Error("missing bounded preview")
+					}
+				}
+			}
+			if cards < 2 {
+				t.Errorf("got %d cards, want streamed and final", cards)
+			}
+			c.Close()
+			h.stopCore(core)
+			db, err := canon.OpenSQLiteReader(h.ctx, filepath.Join(h.root, "canon", "canon.sqlite"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var material string
+			var revision int
+			err = db.QueryRow(`SELECT material_id, material_revision FROM conv_event WHERE speaker_kind='agent' AND scaffold_kind IS NULL`).Scan(&material, &revision)
+			db.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, err := os.ReadFile(filepath.Join(h.root, "materials", "lina", material, fmt.Sprint(revision), "content"))
+			if err != nil || string(body) != tc.full {
+				t.Fatalf("complete reply material lost: %v", err)
+			}
+			// Restored history must also be deliverable on the same bounded transport.
+			core = start(true)
+			c, _ = conversationClient(t, h)
+			c.Close()
+			h.stopCore(core)
+		})
+	}
 }

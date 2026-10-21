@@ -17,7 +17,6 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
-	"github.com/thisisjun786/lina/persona"
 )
 
 var (
@@ -402,7 +401,7 @@ func (s *Store) FirstRun(ctx context.Context, person string, usableAccount bool)
 		})
 		var a Agent
 		if errors.Is(err, sql.ErrNoRows) {
-			p := Preset{ID: "lina", Core: persona.LinaCore, DefaultVoice: persona.LinaDefaultVoice}
+			p := Preset{ID: "lina"}
 			raw, _ := json.Marshal(p)
 			err = s.db.Write(ctx, func(tx *canon.Tx) error {
 				_, err := tx.ExecContext(ctx, "INSERT INTO agent_presets VALUES(?,?) ON CONFLICT(id) DO NOTHING", p.ID, raw)

@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
+	"github.com/thisisjun786/lina/persona"
 )
 
 // Host is the process boundary. Tests use a scripted service manager and tools.
@@ -33,6 +34,7 @@ type Config struct {
 	Socket        string
 	ListenAddress string
 	ToolPaths     map[string]string
+	PersonaSource string
 }
 
 type Tool struct {
@@ -56,6 +58,10 @@ func Run(ctx context.Context, cfg Config, host Host) (result Result, resultErr e
 	}
 	if host == nil {
 		return result, errors.New("installation requires a process host")
+	}
+	coreConfig := ctlfiles.Config{PersonaSource: cfg.PersonaSource}
+	if err := coreConfig.Validate(); err != nil {
+		return result, err
 	}
 	for _, path := range []string{cfg.StateRoot, cfg.UnitDir, cfg.BundleDir} {
 		if !filepath.IsAbs(path) || filepath.Clean(path) != path || strings.ContainsAny(path, "\x00\r\n") {
@@ -154,6 +160,9 @@ func Run(ctx context.Context, cfg Config, host Host) (result Result, resultErr e
 	}
 	result.MainID = "main-" + hex.EncodeToString(id[:])
 	result.Socket = cfg.Socket
+	if _, _, err := persona.LoadLina(cfg.PersonaSource); err != nil {
+		result.Unavailable = append(result.Unavailable, persona.SetupWarning)
+	}
 	if b.files["adapters/claude/package-lock.json"] == nil {
 		result.Unavailable = append(result.Unavailable, "Claude adapter files are not included in this build")
 	}
@@ -211,7 +220,7 @@ func Run(ctx context.Context, cfg Config, host Host) (result Result, resultErr e
 			return result, err
 		}
 	}
-	for name, value := range map[string]any{"system/core/main.json": map[string]string{"main_id": result.MainID}, "system/tools.json": result.Tools, "system/install.json": result} {
+	for name, value := range map[string]any{"system/core/main.json": map[string]string{"main_id": result.MainID}, "system/core/config.json": coreConfig, "system/tools.json": result.Tools, "system/install.json": result} {
 		data, err := json.MarshalIndent(value, "", "  ")
 		if err != nil {
 			return result, err
