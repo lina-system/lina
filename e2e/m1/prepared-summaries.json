@@ -1,0 +1,8 @@
+{
+  "job_id": "conversation-preparation",
+  "fact": "Synthetic reservation number: 42.",
+  "padding_repetitions": 300,
+  "context_window": 1500,
+  "keep_user_tokens": 100,
+  "levels": 3
+}
