@@ -211,6 +211,10 @@ func (s *Store) Rename(ctx context.Context, id, observedPath string, actor Actor
 func (s *Store) Edit(ctx context.Context, id string, base int64, body io.Reader, actor Actor) (a Asset, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.edit(ctx, id, base, body, actor)
+}
+
+func (s *Store) edit(ctx context.Context, id string, base int64, body io.Reader, actor Actor) (a Asset, err error) {
 	if !actor.valid() {
 		return a, ErrInvalid
 	}
