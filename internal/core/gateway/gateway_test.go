@@ -33,7 +33,7 @@ func openDB(t *testing.T, root string, epoch uint64) *canon.Store {
 	}
 	t.Cleanup(func() { ctl.Close() })
 	ms := canon.Migrations()
-	ms = append(ms, canon.Migration{Version: len(ms) + 1, SQL: channels.Schema + turn.Schema})
+	ms = append(ms, canon.Migration{Version: len(ms) + 1, SQL: channels.Schema}, canon.Migration{Version: len(ms) + 2, SQL: turn.Schema}, canon.Migration{Version: len(ms) + 3, SQL: turn.ControlSchema})
 	db, err := canon.Open(t.Context(), canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: epoch, Controls: ctl, Migrations: ms})
 	if err != nil {
 		t.Fatal(err)
