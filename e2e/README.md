@@ -144,3 +144,9 @@ real TUI. A loopback Responses fixture detects command leakage, verifies memory
 inclusion before and after correction/forget, and checks privacy scopes. The
 same scenario round-trips agent create/choose/rename/delete by id, sends a turn
 in the chosen lane and verifies persistent deletion after Core restart.
+
+The Core boot crash-test binary shares a private, invocation-scoped SQLite Wasm
+compilation cache with its exec children. Canon still verifies the module bytes,
+and each child opens fresh database/runtime state. Only compiled code is reused;
+all tests still run uncached. The parent removes the cache after joining children.
+This test-only setup reduces repeated compiler work on small CI runners.
