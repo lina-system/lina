@@ -28,7 +28,7 @@ selection ----+---- docs --------+---- gate
               +---- components --+
 ```
 
-Everything runs in one process. `selection` records the exact base and candidate commits, the changed paths, the selected checks and the selection reason. It also checks Git whitespace errors: `git diff --check` over the range, or `git show --check` on the `HEAD` commit with `--full`. The selected checks run in parallel after selection. The gate only evaluates their results; it never reruns their commands. Each check has a bounded timeout. Individual Go test packages have a four-minute timeout, with a five-minute command cap to include compilation and emit timeout diagnostics; other component commands retain a two-minute cap. The longer test cap accommodates native packaging and subprocess acceptance in the full suite on CI.
+Everything runs in one process. `selection` records the exact base and candidate commits, the changed paths, the selected checks and the selection reason. It also checks Git whitespace errors: `git diff --check` over the range, or `git show --check` on the `HEAD` commit with `--full`. The selected checks run in parallel after selection. The gate only evaluates their results; it never reruns their commands. Each check has a bounded timeout. Individual Go test packages have a four-minute timeout, with a five-minute command cap to include compilation and emit timeout diagnostics; other component commands retain a two-minute cap. The longer test cap accommodates native packaging and subprocess acceptance in the full suite on CI. Build-script acceptance also allows five minutes per complete build (multiple binaries and manifest helpers); its individual Go build commands retain their two-minute cap.
 
 ## Evidence
 
@@ -58,8 +58,6 @@ Deleted paths and both sides of a rename participate. A `.md` suffix alone does 
 The scripts use Node 20 or newer and its built-in modules, Git, and actionlint on `PATH` for workflow validation and its regression tests. Linux release-assembly tests also require bubblewrap and working unprivileged user namespaces; CI installs bubblewrap, permits unprivileged user namespaces on its disposable Ubuntu runner and probes namespace setup before testing. Actual builds retain filesystem, PID and network isolation. Those platform-specific release tests are skipped on other hosts; the ordinary cross-build and Go tests still run. Use actionlint 1.7.12 to match CI; ShellCheck is used by actionlint when installed. Go components also need the exact Go toolchain named in the workspace.
 
 ## Timing and budget
-
-The build-script integration tests allow five minutes for each complete build invocation, which runs several Go commands sequentially. Each Go command retains its two-minute limit, and the automation suite retains its ten-minute limit. A cold CI cross-build exhausted the previous two-minute aggregate limit while the component check passed; timeout diagnostics include the target and subprocess error.
 
 | mode | commit | machine | cache | wall s | bound s |
 | --- | --- | --- | --- | ---: | ---: |
