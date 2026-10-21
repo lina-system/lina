@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"runtime"
 	"strings"
 
 	"github.com/thisisjun786/lina/internal/core/manifest"
@@ -44,6 +45,9 @@ func readBundle(dir string) (bundle, error) {
 	}
 	if err = m.Validate(); err != nil {
 		return b, err
+	}
+	if m.Target != runtime.GOOS+"/"+runtime.GOARCH {
+		return b, errors.New("bundle target does not match this host")
 	}
 	var extra struct {
 		VerifiedTools map[string][]string `json:"verifiedTools"`

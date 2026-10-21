@@ -171,6 +171,7 @@ func makeInstallBundle(t *testing.T, base, lina, node string) string {
 	}
 	// Synthetic provenance, exact hashes of the artifacts built by this scenario.
 	m := map[string]any{"version": "0.0.1-alpha.dev", "commit": strings.Repeat("a", 40), "date": "2026-10-20", "goToolchain": "go1.27.3", "kitVersion": 1,
+		"target":    runtime.GOOS + "/" + runtime.GOARCH,
 		"providers": map[string]any{"chatgpt": map[string]any{"adapter": "responses", "retryCount": 0, "requestFields": []string{"model", "input", "store", "stream"}}},
 		"sqlite":    map[string]any{"module": "github.com/ncruces/go-sqlite3", "version": "v0.30.5", "moduleSum": "h1:6usmTQ6khriL8oWilkAZSJM/AIpAlVL2zFrlcpDldCE=", "sqliteVersion": "3.51.2", "wasmSHA256": strings.Repeat("d", 64), "execution": "wazero", "sqliteVec": nil}, "binaries": binaries}
 	data, err := json.Marshal(m)

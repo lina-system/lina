@@ -516,7 +516,8 @@ default state root is `$XDG_STATE_HOME/lina`, falling back to
 `$XDG_CONFIG_HOME/systemd/user`, falling back to `~/.config/systemd/user`.
 `--state-root`, `--unit-dir` and `--bundle` accept absolute paths. The bundle
 defaults to the directory of the executing binary. Installation validates its
-manifest and verifies the size and SHA-256 of the exact artifact bytes copied.
+manifest, requires its target to match the host OS and architecture, and verifies
+the size and SHA-256 of the exact artifact bytes copied.
 The executable and its manifest are placed in `system/bin/`. The default client
 socket is `system/run/client.sock` under the state root; `--socket` can choose a
 shorter absolute path where the Unix socket path limit requires it.

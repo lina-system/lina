@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -125,6 +126,30 @@ func TestPublicSocketDirectoryIsRefusedBeforeInstall(t *testing.T) {
 	}
 	if _, err := os.Stat(cfg.StateRoot); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("created unusable installation")
+	}
+}
+
+func TestWrongPlatformBundleDoesNotWrite(t *testing.T) {
+	cfg, host := fixture(t)
+	data, err := os.ReadFile(filepath.Join(cfg.BundleDir, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err = json.Unmarshal(data, &m); err != nil {
+		t.Fatal(err)
+	}
+	m["target"] = "darwin/" + runtime.GOARCH
+	data, err = json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(cfg.BundleDir, "manifest.json"), data, 0600)
+	if _, err := Run(t.Context(), cfg, host); err == nil {
+		t.Fatal("accepted another platform's artifacts")
+	}
+	if _, err := os.Stat(cfg.StateRoot); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("wrote state for an incompatible bundle")
 	}
 }
 

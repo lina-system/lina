@@ -15,7 +15,8 @@ which systemd rejects in an executable path. Spaces, dollar signs and percent
 signs are supported and escaped according to systemd's argument rules.
 
 The installer checks the build manifest and the SHA-256 and size of every byte
-it installs. It copies `lina` and `manifest.json` into `system/bin/`, creates the
+it installs, and requires the manifest target to match the host OS and architecture.
+It copies `lina` and `manifest.json` into `system/bin/`, creates the
 private filesystem layout, writes a random `system/core/main.json` identity,
 and records installation details and tool observations in `system/install.json`
 and `system/tools.json`. The service runs the installed executable with explicit
