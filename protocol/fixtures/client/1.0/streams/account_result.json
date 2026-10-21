@@ -1,0 +1,32 @@
+{
+  "protocol": {
+    "name": "client",
+    "version": "1.0"
+  },
+  "kind": "account_result",
+  "message_id": "stream-account_result",
+  "attempt_id": "stream-account_result-attempt",
+  "reply_to": null,
+  "sender": {
+    "party": "core",
+    "id": "main-example"
+  },
+  "epoch": "42",
+  "sent_at": "2026-01-01T00:00:01Z",
+  "idempotency_key": null,
+  "effect_state": "none",
+  "receipt_ref": null,
+  "source_refs": [],
+  "error": null,
+  "payload": {
+    "stream": {
+      "topic": "conversation:stream-fixture",
+      "cursor": {
+        "epoch": "42",
+        "seq": 2
+      },
+      "key": "item",
+      "revision": 2
+    }
+  }
+}

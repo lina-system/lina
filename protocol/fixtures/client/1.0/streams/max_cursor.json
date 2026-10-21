@@ -1,0 +1,28 @@
+{
+  "protocol": {
+    "name": "client",
+    "version": "1.0"
+  },
+  "kind": "subscribe",
+  "message_id": "stream-max",
+  "attempt_id": "stream-max-attempt",
+  "reply_to": null,
+  "sender": {
+    "party": "client",
+    "id": "client-example"
+  },
+  "epoch": "0",
+  "sent_at": "2026-01-01T00:00:00Z",
+  "idempotency_key": null,
+  "effect_state": "none",
+  "receipt_ref": null,
+  "source_refs": [],
+  "error": null,
+  "payload": {
+    "topic": "conversation:stream-fixture",
+    "after": {
+      "epoch": "18446744073709551615",
+      "seq": 18446744073709551615
+    }
+  }
+}

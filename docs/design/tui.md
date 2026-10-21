@@ -91,6 +91,8 @@ The server side is [go-core.md](go-core.md) (C-42): topics, cursors, rings, batc
 - A different revocation epoch ([conversation-and-memory.md](conversation-and-memory.md#terms)) makes the TUI drop cached items before the snapshot applies, so a forgotten item cannot survive a reconnect.
 - Replaying a stream or a snapshot twice leaves state unchanged.
 
+The client 1.0 wire carries these mechanics inside payloads as defined by [C-42](go-core.md#client-service): optional per-event `stream` metadata and the `snapshot`, `resync` and `resync_required` kinds. `e2e/m1/topic-streams.json` crosses the production client socket and generated codec, projects decoded frames into the reducer, and checks duplicate snapshots/replay plus independent topic overflow. It proves the protocol and reducer boundary; automatic stream subscription and notification projection in the interactive TUI remain the client integration's work. The T-04 rule that a replayed approval rings no second bell also relies on this cursor/revision deduplication.
+
 ## State model and presentation kinds (T-06)
 
 Every change of UI state goes through one pure function.
