@@ -33,6 +33,17 @@ test('Korean search corpus changes select the consuming Core tests', t => {
   assert.equal(scope.automation, false);
   assert.equal(scope.dependencies, false);
 });
+
+test('tool executor is registered with the lina Go checks', t => {
+  const r = repository(t);
+  const base = r.git('rev-parse', 'HEAD');
+  mkdirSync(join(r.cwd, 'internal/core/exec'), { recursive: true });
+  writeFileSync(join(r.cwd, 'internal/core/exec/exec.go'), 'package exec\n');
+  const scope = r.classify(r.commit(), { base, full: true });
+  assert.deepEqual(scope.unmapped, []);
+  assert.ok(scope.selectedComponents.includes('lina'));
+  assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/exec/...'));
+});
 test('ledger is registered with the lina Go checks', t => {
   const r = repository(t);
   const base = r.git('rev-parse', 'HEAD');
@@ -139,17 +150,17 @@ test('memory and its executor are registered with the lina Go checks', t => {
   }
 });
 
-test('inbox and lanes are registered with the lina Go checks', t => {
+test('inbox, lanes and channel gateway are registered with the lina Go checks', t => {
   const r = repository(t);
   const base = r.git('rev-parse', 'HEAD');
-  for (const directory of ['inbox', 'lane']) {
+  for (const directory of ['inbox', 'lane', 'channels', 'gateway']) {
     mkdirSync(join(r.cwd, `internal/core/${directory}`), { recursive: true });
     writeFileSync(join(r.cwd, `internal/core/${directory}/store.go`), `package ${directory}\n`);
   }
   const scope = r.classify(r.commit(), { base, full: true });
   assert.deepEqual(scope.unmapped, []);
   assert.ok(scope.selectedComponents.includes('lina'));
-  for (const directory of ['inbox', 'lane']) {
+  for (const directory of ['inbox', 'lane', 'channels', 'gateway']) {
     assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes(`./internal/core/${directory}/...`));
   }
 });
