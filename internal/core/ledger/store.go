@@ -130,85 +130,127 @@ type Store struct {
 
 func New(db Canon, materials Materials) *Store { return &Store{db: db, materials: materials} }
 
+// Admission binds an event to its trusted entry path.
+type Admission struct {
+	Entry guard.Entry
+	Input Input
+}
+
 // Admit never accepts a speaker kind from the payload. The authenticated entry
-// adapter supplies entry and identity fields. A returned event acknowledges the
-// complete event, relations and span transaction, only after commit.
-func (s *Store) Admit(ctx context.Context, entry guard.Entry, in Input) (_ Event, err error) {
-	if err := ctx.Err(); err != nil {
-		return Event{}, err
-	}
-	e, err := prepare(entry, in)
+// adapter supplies entry and identity fields. It acknowledges only after commit.
+func (s *Store) Admit(ctx context.Context, entry guard.Entry, in Input) (Event, error) {
+	events, err := s.AdmitBatch(ctx, []Admission{{Entry: entry, Input: in}})
 	if err != nil {
 		return Event{}, err
 	}
-	var materialWrite MaterialWrite
-	if len(e.Body.Text()) > InlineBytes {
-		if s.materials == nil {
-			return Event{}, ErrBytesUnavailable
-		}
-		materialWrite, err = s.materials.Prepare(ctx, e.Body)
+	return events[0], nil
+}
+
+// AdmitBatch commits an ordered group of related events in one transaction.
+// Later events may reference earlier events in the batch. Input validation,
+// masking and durable byte preparation finish before the canon transaction.
+// Material metadata, events, relations and spans commit together; Close
+// reconciles staged bytes after success or failure, including interrupted cleanup.
+func (s *Store) AdmitBatch(ctx context.Context, inputs []Admission) (_ []Event, err error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if len(inputs) == 0 {
+		return nil, ErrInvalid
+	}
+	events := make([]Event, len(inputs))
+	for i, in := range inputs {
+		events[i], err = prepare(in.Entry, in.Input)
 		if err != nil {
-			return Event{}, err
+			return nil, err
 		}
-		if materialWrite == nil {
-			return Event{}, ErrInvalid
-		}
-		defer func() {
-			cleanupErr := materialWrite.Close()
+	}
+	writes := make([]MaterialWrite, len(events))
+	defer func() {
+		for _, w := range writes {
+			if w == nil {
+				continue
+			}
+			cleanupErr := w.Close()
 			if err != nil {
 				err = errors.Join(err, cleanupErr)
 			}
-			// Housekeeping cannot turn a committed event into a failed admit.
-			// An interrupted cleanup is recovered from its durable marker.
-		}()
+			// A housekeeping error cannot revoke an already committed batch.
+			// The durable material marker allows recovery after interrupted cleanup.
+		}
+	}()
+	for i, e := range events {
+		if len(e.Body.Text()) <= InlineBytes {
+			continue
+		}
+		if s.materials == nil {
+			return nil, ErrBytesUnavailable
+		}
+		writes[i], err = s.materials.Prepare(ctx, e.Body)
+		if err != nil {
+			return nil, err
+		}
+		if writes[i] == nil {
+			return nil, ErrInvalid
+		}
 	}
 	err = s.db.Write(ctx, func(tx *canon.Tx) error {
-		if err := references(ctx, tx, e); err != nil {
-			return err
-		}
-		if materialWrite != nil {
-			var err error
-			e.Material, err = materialWrite.Insert(ctx, tx)
-			if err != nil {
-				return err
+		for i := range events {
+			e := &events[i]
+			if writes[i] != nil {
+				var err error
+				e.Material, err = writes[i].Insert(ctx, tx)
+				if err != nil {
+					return err
+				}
+				if !safeID(e.Material.ID) || e.Material.Revision <= 0 {
+					return ErrInvalid
+				}
 			}
-			if !safeID(e.Material.ID) || e.Material.Revision <= 0 {
-				return ErrInvalid
-			}
-		}
-		surface, _ := json.Marshal(e.Surface)
-		origin, _ := json.Marshal(e.Origin)
-		var body any = e.Body.Text()
-		var material, revision any
-		if e.Material.ID != "" {
-			body = nil
-			material = e.Material.ID
-			revision = e.Material.Revision
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO conv_event
-		 (id,conversation_id,parent_id,person_id,agent_id,speaker_kind,surface,scaffold_kind,scaffold_id,occurred_at,recorded_at,time_quality,origin,replay_of,body,material_id,material_revision)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-			e.ID, e.ConversationID, nullable(e.ParentID), nullable(e.PersonID), e.AgentID, e.SpeakerKind, string(surface), nullable(e.ScaffoldKind), nullable(e.ScaffoldID),
-			e.OccurredAt.Format(time.RFC3339Nano), e.RecordedAt.Format(time.RFC3339Nano), e.TimeQuality, string(origin), nullable(e.ReplayOf), body, material, revision)
-		if err != nil {
-			return err
-		}
-		for _, r := range e.Relations {
-			if _, err := tx.ExecContext(ctx, "INSERT INTO ev_rel(event_id,target_id,kind,ordinal) VALUES(?,?,?,?)", e.ID, r.TargetID, r.Kind, r.Ordinal); err != nil {
-				return err
-			}
-		}
-		for _, span := range e.Spans {
-			if _, err := tx.ExecContext(ctx, "INSERT INTO ev_span(event_id,start,end,sensitivity) VALUES(?,?,?,?)", e.ID, span.Start, span.End, span.Sensitivity); err != nil {
+			if err := writeEvent(ctx, tx, *e); err != nil {
 				return err
 			}
 		}
 		return indexText(ctx, tx, e.ID, e.Body.DerivedText())
 	})
 	if err != nil {
-		return Event{}, err
+		return nil, err
 	}
-	return e, nil
+	return events, nil
+}
+
+func writeEvent(ctx context.Context, tx *canon.Tx, e Event) error {
+	if err := references(ctx, tx, e); err != nil {
+		return err
+	}
+	surface, _ := json.Marshal(e.Surface)
+	origin, _ := json.Marshal(e.Origin)
+	var body any = e.Body.Text()
+	var material, revision any
+	if e.Material.ID != "" {
+		body = nil
+		material = e.Material.ID
+		revision = e.Material.Revision
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO conv_event
+	 (id,conversation_id,parent_id,person_id,agent_id,speaker_kind,surface,scaffold_kind,scaffold_id,occurred_at,recorded_at,time_quality,origin,replay_of,body,material_id,material_revision)
+	 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		e.ID, e.ConversationID, nullable(e.ParentID), nullable(e.PersonID), e.AgentID, e.SpeakerKind, string(surface), nullable(e.ScaffoldKind), nullable(e.ScaffoldID),
+		e.OccurredAt.Format(time.RFC3339Nano), e.RecordedAt.Format(time.RFC3339Nano), e.TimeQuality, string(origin), nullable(e.ReplayOf), body, material, revision)
+	if err != nil {
+		return err
+	}
+	for _, r := range e.Relations {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO ev_rel(event_id,target_id,kind,ordinal) VALUES(?,?,?,?)", e.ID, r.TargetID, r.Kind, r.Ordinal); err != nil {
+			return err
+		}
+	}
+	for _, span := range e.Spans {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO ev_span(event_id,start,end,sensitivity) VALUES(?,?,?,?)", e.ID, span.Start, span.End, span.Sensitivity); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func nullable(s string) any {

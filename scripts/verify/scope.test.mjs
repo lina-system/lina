@@ -34,6 +34,17 @@ test('Korean search corpus changes select the consuming Core tests', t => {
   assert.equal(scope.dependencies, false);
 });
 
+test('reply filtering is registered with the lina Go checks', t => {
+  const r = repository(t);
+  const base = r.git('rev-parse', 'HEAD');
+  mkdirSync(join(r.cwd, 'internal/core/reply'), { recursive: true });
+  writeFileSync(join(r.cwd, 'internal/core/reply/filter.go'), 'package reply\n');
+  const scope = r.classify(r.commit(), { base, full: true });
+  assert.deepEqual(scope.unmapped, []);
+  assert.ok(scope.selectedComponents.includes('lina'));
+  assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/reply/...'));
+});
+
 test('tool executor is registered with the lina Go checks', t => {
   const r = repository(t);
   const base = r.git('rev-parse', 'HEAD');
