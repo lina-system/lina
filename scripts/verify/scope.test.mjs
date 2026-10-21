@@ -28,7 +28,6 @@ test('ledger is registered with the lina Go checks', t => {
   assert.deepEqual(scope.unmapped, []);
   assert.ok(scope.selectedComponents.includes('lina'));
   assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/ledger/...'));
-
 });
 
 test('model path configuration is registered with the lina Go checks', t => {
