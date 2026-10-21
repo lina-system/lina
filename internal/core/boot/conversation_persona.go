@@ -41,6 +41,9 @@ func (r *conversationRuntime) resolvePersonaGrant(ctx context.Context, id string
 	if !ok {
 		return grant.Grant{}, grant.Environment{}, grant.ErrGrant
 	}
+	if g.Identity.Profile == "relationship" {
+		return g, grant.Environment{Epoch: r.epoch, Now: time.Now(), OSPermitted: true, Revision: g.Identity.Revision}, nil
+	}
 	if g.Identity.Profile == "persona-state" || g.Identity.Profile == "persona-expression" {
 		state, err := r.agents.State(ctx, g.Identity.Agent)
 		if err != nil {
@@ -164,6 +167,20 @@ func (r *conversationRuntime) preparePersonaTools(ctx context.Context, turnID st
 		refs = append(refs, assemble.Ref{ID: id})
 	}
 	packet = append(packet, assemble.ContextItem{ID: "persona-settings:" + r.agent, Revision: scope.StateRevision, AgentID: r.agent, Kind: assemble.Commitments, Origin: "persona-record:" + r.agent, Text: string(settingData), Evidence: refs})
+	relationshipAuth := auth
+	relationshipAuth.GrantID = turnID + ":relationship"
+	relationshipAuth.Profile = "relationship"
+	relationshipAuth.Revision = "1"
+	relationshipTarget := "relationship:" + r.agent
+	relationshipGrant := grant.Grant{Identity: relationshipAuth, Expires: g.Expires, Scope: []grant.Permission{{Tool: "record_relationship", Target: relationshipTarget, Write: true}}, Revisions: map[string]string{relationshipTarget: "1"}}
+	r.mu.Lock()
+	r.personaGrants[relationshipAuth.GrantID] = relationshipGrant
+	r.mu.Unlock()
+	relationshipSpec, err := coreexec.RegisterRelationship(registry, r.persona, scope)
+	if err != nil {
+		return nil, nil, err
+	}
+	bindings[relationshipSpec.Name] = turn.Tool(registry, relationshipSpec, tools.Call{Auth: relationshipAuth}, turnID)
 	return catalog, packet, nil
 }
 

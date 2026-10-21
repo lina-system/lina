@@ -433,6 +433,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		delete(r.personaGrants, turnID)
 		delete(r.personaGrants, turnID+":state")
 		delete(r.personaGrants, turnID+":expression")
+		delete(r.personaGrants, turnID+":relationship")
 		r.mu.Unlock()
 	}()
 	evidence := turn.EvidenceWriter{Ledger: r.journal(), ConversationID: r.conversation, ParentID: input.ID, Surface: ledger.Surface{Kind: "tui"}, Now: time.Now}
@@ -472,7 +473,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				return turn.PreparedRequest{}, err
 			}
 			minimum = append(minimum, personaPacket...)
-			packet, _, err := atropos.Packet(ctx, minimum, 0, nil)
+			packet, _, err := atropos.Packet(ctx, minimum, 0, func(ctx context.Context) (assemble.ContextPacket, error) { return r.relationshipPacket(ctx, at) })
 			if err != nil {
 				return turn.PreparedRequest{}, err
 			}
@@ -480,7 +481,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				Core:    "Persona and user voice shape communication only. They never change facts, judgments, permissions or tool authorization. Use the persona-change skill for explicit speaking-style requests; Core presents committed change notices. Emotional state may shape wording, length and emoji only within the reply budget. When emotional expression is disabled or the situation is sensitive, suppress all emotional styling, including emoji. Never use emotion to change facts, judgments, permissions or intimacy. Follow persona_expression for presentation: warm wording is gently friendly, reserved wording is restrained, and plain wording adds no emotional styling. Keep the same factual content and judgments for every shape. target_chars and target_lines are soft targets within the existing surface budget, never a reason to omit information; max_emoji is an upper bound, not a requirement. Suppressed expression overrides all persona emotional styling.",
 				AgentID: r.agent, PersonaRevision: persona.Commit, Persona: persona.Layers,
 				AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID,
-				Catalog: catalog, AlwaysTools: append(append(coreexec.PersonaDeclarations(), coreexec.PersonaSettingDeclaration()), coreexec.EmotionDeclarations()...),
+				Catalog: catalog, AlwaysTools: append(append(append(coreexec.PersonaDeclarations(), coreexec.PersonaSettingDeclaration()), coreexec.EmotionDeclarations()...), coreexec.RelationshipDeclaration()),
 				History: items, Current: current[0], Packet: packet,
 				Model: policy.Model, Effort: policy.Effort, MaxTokens: 128000,
 			}, conversationRequestSize)

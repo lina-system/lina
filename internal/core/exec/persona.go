@@ -49,6 +49,7 @@ type PersonaReceipt struct {
 // Persona is Core's Moirai persona write path. Only canonical owner input in
 // this conversation can support a change; provider text supplies no identity.
 type Persona struct {
+	memory        *Memory
 	agents        *agents.Store
 	events        *ledger.Store
 	now           func() time.Time
@@ -56,7 +57,7 @@ type Persona struct {
 }
 
 func NewPersona(db *canon.Store, store *agents.Store, materials ledger.Materials) *Persona {
-	return &Persona{agents: store, events: ledger.New(db, materials), now: time.Now, emotionPolicy: agents.DefaultEmotionPolicy()}
+	return &Persona{memory: NewMemory(db, materials, nil), agents: store, events: ledger.New(db, materials), now: time.Now, emotionPolicy: agents.DefaultEmotionPolicy()}
 }
 
 func (p *Persona) confirm(ctx context.Context, scope PersonaScope, quote string) error {
