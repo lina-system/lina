@@ -89,6 +89,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-06 Speaker kinds, masking and the secret store.** Entry-path speaker kind, masking, external evidence, secret store.
 - Done when: a seeded token is masked and its span is in no index, summary or export; a formatter prints a placeholder for a secret; speaker kind never comes from text; planted instructions in a tool result arrive marked as external evidence and cannot answer an approval.
 - Depends on: G1-01, G1-05, G1-29. Design refs: C-15; [conversation-and-memory.md](conversation-and-memory.md#event-fields).
+- #48 supplies the masking/projection and opaque-secret APIs, credential-store backend seam and private-file fallback. Conversation/protocol admission, OS-keychain adapters and account forms still need their owning flows; this increment does not establish speaker-kind or external-evidence acceptance.
 
 **G1-07 Sandbox, tool executor and trash.** Sandbox wrapper, network ask, file tools, recoverable deletion.
 - Done when: the start probe passes or shell and file tools turn off with a cause while conversation continues; a canary cannot read canon, secrets or the client socket; network waits for once, always allow or deny; a patch with stale context fails; a trash delete restores identical bytes.

@@ -23,6 +23,17 @@ test('inbox and lanes are registered with the lina Go checks', t => {
   }
 });
 
+test('secret store is registered with the lina Go checks', t => {
+  const r = repository(t);
+  const base = r.git('rev-parse', 'HEAD');
+  mkdirSync(join(r.cwd, 'internal/core/secrets'), { recursive: true });
+  writeFileSync(join(r.cwd, 'internal/core/secrets/store.go'), 'package secrets\n');
+  const scope = r.classify(r.commit(), { base, full: true });
+  assert.deepEqual(scope.unmapped, []);
+  assert.ok(scope.selectedComponents.includes('lina'));
+  assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/secrets/...'));
+});
+
 test('asset store is registered with the lina Go checks', t => {
   const r = repository(t);
   const base = r.git('rev-parse', 'HEAD');
