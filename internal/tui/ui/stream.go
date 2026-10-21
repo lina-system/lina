@@ -48,6 +48,11 @@ func (m *shellModel) subscribeSnapshot(topic string) tea.Cmd {
 	return func() tea.Msg { return request }
 }
 
+type resyncSignal struct {
+	topic  string
+	closed bool
+}
+
 func (m *shellModel) markResync(p streamProjection) tea.Cmd {
 	if m.content.Epoch != "" {
 		cursor := protocol.StreamCursor{Epoch: m.content.Epoch, Seq: json.Number(strconv.FormatUint(m.content.Topics[p.topic].Cursor, 10))}
@@ -55,10 +60,14 @@ func (m *shellModel) markResync(p streamProjection) tea.Cmd {
 			return nil
 		}
 	}
-	if seen, ok := m.resyncSeen[p.topic]; ok && compareStreamCursor(p.cursor, seen) <= 0 {
+	signal := resyncSignal{topic: p.topic, closed: p.request}
+	if seen, ok := m.resyncSeen[signal]; ok && compareStreamCursor(p.cursor, seen) <= 0 {
 		return nil
 	}
-	m.resyncSeen[p.topic], m.resyncPending[p.topic] = p.cursor, p.cursor
+	m.resyncSeen[signal] = p.cursor
+	if floor, exists := m.resyncPending[p.topic]; !exists || compareStreamCursor(p.cursor, floor) > 0 {
+		m.resyncPending[p.topic] = p.cursor
+	}
 	m.status = ConnectionStatus{State: Resyncing}
 	if p.request {
 		return m.subscribeSnapshot(p.topic)

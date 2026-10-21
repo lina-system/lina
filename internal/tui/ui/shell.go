@@ -56,7 +56,7 @@ type shellModel struct {
 	now           func() time.Time
 	blocks        map[string]shellBlock
 	resyncPending map[string]protocol.StreamCursor
-	resyncSeen    map[string]protocol.StreamCursor
+	resyncSeen    map[resyncSignal]protocol.StreamCursor
 }
 
 func newShell(options Options, now func() time.Time) *shellModel {
@@ -66,7 +66,7 @@ func newShell(options Options, now func() time.Time) *shellModel {
 	styles := NewStyles(options)
 	return &shellModel{generation: 1, status: ConnectionStatus{State: Connecting}, styles: styles,
 		size: layout.Size{Width: styles.options.Width, Height: 24}, now: now, blocks: make(map[string]shellBlock),
-		resyncPending: make(map[string]protocol.StreamCursor), resyncSeen: make(map[string]protocol.StreamCursor)}
+		resyncPending: make(map[string]protocol.StreamCursor), resyncSeen: make(map[resyncSignal]protocol.StreamCursor)}
 }
 
 func (m *shellModel) Init() tea.Cmd          { return nil }
@@ -81,10 +81,14 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Generation > m.generation {
 			m.generation = msg.Generation
 			m.status = ConnectionStatus{State: Retrying}
+			m.resyncSeen = make(map[resyncSignal]protocol.StreamCursor)
 		}
 	case shellConnection:
 		if msg.Generation == m.generation {
 			m.status = msg.Status
+			if m.status.State == Live && (m.hasGap() || len(m.resyncPending) > 0) {
+				m.status.State = Resyncing
+			}
 		}
 	case shellData:
 		if msg.Generation != m.generation {
@@ -234,7 +238,7 @@ func (m *shellModel) viewContent() string {
 		rows[plan.Status.Y] = clip(statusLine)
 		return strings.Join(rows, "\n")
 	}
-	if len(m.content.Blocks) == 0 {
+	if len(m.content.Blocks) == 0 || !m.status.State.active() {
 		lines := strings.Split(strings.TrimSuffix(m.styles.ScreenStatus(m.status), "\n"), "\n")
 		if len(m.content.Notices) > 0 {
 			notice := m.content.Notices[len(m.content.Notices)-1]

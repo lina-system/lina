@@ -14,6 +14,7 @@ import (
 	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/internal/tui/state"
 	"github.com/thisisjun786/lina/internal/tui/term"
+	"github.com/thisisjun786/lina/kit/protocol"
 )
 
 func TestShellConnectionStatesRetainWindow(t *testing.T) {
@@ -29,7 +30,7 @@ func TestShellConnectionStatesRetainWindow(t *testing.T) {
 		if m.mutationsAllowed() != (connection == Live) {
 			t.Fatalf("mutation admission for %s", connection.Code())
 		}
-		if !strings.Contains(ansi.Strip(m.View().Content), "한글 history") {
+		if connection.active() && !strings.Contains(ansi.Strip(m.View().Content), "한글 history") {
 			t.Fatalf("connection %s hid the readable history", connection.Code())
 		}
 	}
@@ -38,6 +39,24 @@ func TestShellConnectionStatesRetainWindow(t *testing.T) {
 	m.Update(shellData{Generation: 1, Message: state.EditDraft{Draft: state.Draft{Text: "stale"}}})
 	if m.status.State != Retrying || !reflect.DeepEqual(m.content, before) {
 		t.Fatal("stale connection changed window")
+	}
+}
+
+func TestShellAbsentScreenKeepsHistoryOffScreen(t *testing.T) {
+	m := newShell(Options{Width: 80, Profile: Monochrome}, time.Now)
+	m.Update(shellData{Generation: 1, Message: state.Snapshot{Epoch: "42", Revocation: "1", Topic: "conversation:example", Cursor: 1, Items: []state.Block{{ID: "item", Text: "RETAINED-HISTORY", Revision: 1, Done: true}}}})
+	for _, connection := range []Connection{Stopped, Refused, Failed} {
+		m.Update(shellConnection{Generation: 1, Status: ConnectionStatus{State: connection, Cause: protocol.ErrorUnavailable}})
+		view := ansi.Strip(m.View().Content)
+		if strings.Contains(view, "RETAINED-HISTORY") || strings.Contains(view, design.Text(design.English, "shell.composer")) {
+			t.Fatal("connection failure displayed a conversation surface")
+		}
+		if !strings.Contains(view, design.Text(design.English, connection.Code())) || !strings.Contains(view, string(protocol.ErrorUnavailable)) {
+			t.Fatal("failure cause absent")
+		}
+		if len(m.content.Blocks) != 1 {
+			t.Fatal("hidden history was discarded")
+		}
 	}
 }
 

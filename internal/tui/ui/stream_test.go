@@ -150,6 +150,28 @@ func TestShellOverflowRequestsOnlyAffectedTopic(t *testing.T) {
 	}
 }
 
+func TestShellOverflowAfterResyncStillReopensSubscription(t *testing.T) {
+	m := newShell(Options{Width: 80}, time.Now)
+	m.Update(shellData{Generation: 1, Message: state.Frame{Data: streamFixture(t, "normal/snapshot")}})
+	m.Update(shellData{Generation: 1, Message: state.Frame{Data: streamFixture(t, "normal/resync")}})
+	_, cmd := m.Update(shellData{Generation: 1, Message: state.Frame{Data: streamFixture(t, "normal/resync_required")}})
+	if cmd == nil {
+		t.Fatal("overflow after resync failed to reopen closed subscription")
+	}
+	if _, ok := cmd().(shellSubscription); !ok {
+		t.Fatal("wrong overflow command")
+	}
+	m.Update(shellBegin{Generation: 2})
+	_, cmd = m.Update(shellData{Generation: 2, Message: state.Frame{Data: streamFixture(t, "normal/resync_required")}})
+	if cmd == nil {
+		t.Fatal("new connection inherited old overflow deduplication")
+	}
+	m.Update(shellConnection{Generation: 2, Status: ConnectionStatus{State: Live}})
+	if m.status.State != Resyncing || m.mutationsAllowed() {
+		t.Fatal("welcome enabled mutations before pending resync finished")
+	}
+}
+
 func TestShellGapCannotBeHealedByOlderEpochSnapshot(t *testing.T) {
 	m := newShell(Options{Width: 80}, time.Now)
 	m.Update(shellData{Generation: 1, Message: state.Frame{Data: streamFixture(t, "normal/snapshot")}})
