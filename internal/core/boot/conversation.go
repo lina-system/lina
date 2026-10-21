@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/lina/internal/core/accounts"
 	"github.com/thisisjun786/lina/internal/core/agents"
@@ -271,20 +272,90 @@ func conversationFilter() (*reply.Filter, error) {
 	}})
 }
 
+// Keep possible credential prefixes private until the admission masker can
+// recognize their complete shape. Mask the accumulated prefix so assignment
+// and authorization context survives provider delta boundaries. Quoted values,
+// structured JSON and PEM blocks wait for the authoritative final item rather
+// than exposing an incomplete value or private-key header.
+type conversationReplyStream struct {
+	filter *reply.Filter
+	raw    strings.Builder
+	sent   string
+}
+
+func (s *conversationReplyStream) Push(delta string) (reply.View, string, error) {
+	if !utf8.ValidString(delta) {
+		return reply.View{}, "", reply.ErrUTF8
+	}
+	s.raw.WriteString(delta)
+	text := s.raw.String()
+	trimmed := strings.TrimSpace(text)
+	if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
+		return reply.View{}, "", nil
+	}
+	if start := strings.Index(text, "-----"); start >= 0 {
+		text = text[:start]
+	}
+	// A quoted assignment can contain whitespace or escaped delimiters. Do not
+	// expose any of it before the complete item is available to the masker.
+	if start := strings.IndexAny(text, "\"'"); start >= 0 {
+		text = text[:start]
+	}
+	end := len(text)
+	// Shape detectors can match inside a word. Hold from any complete or
+	// unfinished introducer in the last token, including a split PEM marker.
+	// These introducers correspond to secrets.Mask's credential shapes; the
+	// masker itself remains the authority for replacing complete values.
+	tokenStart := strings.LastIndexAny(text, " \t\r\n") + 1
+	for i := tokenStart; i < end; i++ {
+		for _, prefix := range []string{"sk-", "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_", "AIza", "xoxb-", "xoxa-", "xoxp-", "xoxr-", "xoxs-", "AKIA", "ASIA", "eyJ", "-----"} {
+			if strings.HasPrefix(text[i:], prefix) || strings.HasPrefix(prefix, text[i:]) {
+				end = i
+				break
+			}
+		}
+	}
+	masked, err := secrets.Mask(text[:end])
+	if err != nil {
+		return reply.View{}, "", err
+	}
+	if !strings.HasPrefix(masked.Text(), s.sent) {
+		return reply.View{}, "", errors.New("reply masking changed a published prefix")
+	}
+	next := masked.Text()[len(s.sent):]
+	if next == "" {
+		return reply.View{}, "", nil
+	}
+	s.sent = masked.Text()
+	view, err := s.filter.Push(next)
+	return view, next, err
+}
+
 func (r *conversationRuntime) replyCard(key, turnID string, view reply.View) reply.Card {
 	return reply.Card{Preview: *view.Card, ResultID: "result:" + key, Revision: 1,
 		Title: "Full reply", Summary: view.Text, RevisedBy: r.agent,
 		Provenance: protocol.ResultProvenance{AgentID: r.agent, ConversationID: r.conversation, TurnID: turnID}}
 }
 
+const conversationPreviewBytes = 64 << 10
+
 func (r *conversationRuntime) publishReply(key, turnID string, view reply.View) error {
 	if view.Card != nil {
 		card := r.replyCard(key, turnID, view)
-		// The existing wire format carries complete rendered text for the pager;
-		// the typed document body remains in the ledger, not its reserved field.
+		// Bound the wire preview independently of the complete ledger card.
+		// Even JSON's worst-case six-byte escapes leave ample envelope space
+		// below the RPC writer's 1 MiB limit.
+		text := card.Text
+		if len(text) > conversationPreviewBytes {
+			end := conversationPreviewBytes
+			for !utf8.RuneStart(text[end]) {
+				end--
+			}
+			text = text[:end] + "\n… Preview truncated; full reply retained in conversation history."
+		}
 		return r.publish(protocol.KindResult, key, protocol.Result{
 			ResultID: card.ResultID, Revision: "1", Type: card.Type, Status: card.Status,
-			Title: card.Title, Summary: card.Summary, Text: &card.Text,
+			Title: card.Title, Summary: card.Summary, Text: &text,
 			RevisedBy: card.RevisedBy, Provenance: card.Provenance,
 		})
 	}
@@ -444,7 +515,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		Digest: assemble.Digest,
 	}
 	round := 0
-	filters := map[string]*reply.Filter{}
+	filters := map[string]*conversationReplyStream{}
 	var completed []ledger.Admission
 	var saved []ledger.Event
 	complete := func(ctx context.Context, db turn.Canon) error {
@@ -499,23 +570,26 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			case provider.Delta:
 				filter := filters[key]
 				if filter == nil {
-					var err error
-					filter, err = conversationFilter()
+					base, err := conversationFilter()
 					if err != nil {
 						return err
 					}
+					filter = &conversationReplyStream{filter: base}
 					filters[key] = filter
 				}
-				view, err := filter.Push(e.Delta)
+				view, delta, err := filter.Push(e.Delta)
 				if err != nil {
 					return err
+				}
+				if delta == "" {
+					return nil
 				}
 				if view.Cut {
 					// A result replaces the same stream row, retracting the unfinished
 					// sentence while retaining all subsequent text in its preview.
 					return r.publishReply(key, turnID, view)
 				}
-				return r.publish(protocol.KindOutputDelta, key, e.Delta)
+				return r.publish(protocol.KindOutputDelta, key, delta)
 			case provider.ItemDone:
 				var item struct {
 					Type, Role string
