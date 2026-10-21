@@ -327,7 +327,7 @@ A background run lands on its own schedule. Its result re-enters the conversatio
 
 LINA Core owns the conversation record, its compaction and its resume, because model requests keep nothing on the server ([runtime.md](runtime.md)).
 
-The behavioral reference is **LCM-X**, ported into LINA's Go Core and its existing writer boundaries. The reference modules below describe behavior to adopt, not a Python runtime dependency or permission to copy source. [Third-party notices](../../THIRD-PARTY-NOTICES.md#memory-design-references) identify the reference revisions and licenses.
+The behavioral reference is **LCM-X v0.28.0** at the supplied installation revision `709099b`, ported into LINA's Go Core and its existing writer boundaries. The reference modules below describe behavior to adopt, not a Python runtime dependency or permission to copy source. [Third-party notices](../../THIRD-PARTY-NOTICES.md#memory-design-references) identify the reference revisions and licenses.
 
 | Adopted LCM-X behavior and reference | LINA mapping |
 | --- | --- |
@@ -652,7 +652,7 @@ Memory has two layers. Personal knowledge is held by one agent and known only to
 
 LINA's model of the person is one store with several views. The store is the memory items and the ledger; the views are generated from them, so a view cannot drift from a second copy of itself.
 
-The behavioral reference is **Honcho**: its peer/context/conclusion APIs and the Hermes client's use of them. The Go implementation keeps the following behavior inside LINA's canon and Moirai write path.
+The behavioral reference is **Honcho**: its peer/context/conclusion APIs and the Hermes client's use of them. The supplied Hermes client sources (manifest version 1.0.0) were checked against the public reference revision linked below; their differences are recorded under "Learning the person". The Go implementation keeps the following behavior inside LINA's canon and Moirai write path.
 
 | Adopted Honcho behavior and reference | LINA mapping |
 | --- | --- |
@@ -686,7 +686,11 @@ LINA adopts Honcho's distinction between explicit observations and deductions or
 | Inductive observation | `basis=derived`, identified as an induction with its supporting item revisions, pattern and uncertainty. Repeated independent person events support a pattern; replay, summaries and repeated extraction of one event do not add support. |
 | Reinforcement and corrections | Merge independent evidence for the same subject and statement, keeping one item id; corrections and `supersedes` preserve the chain and recall chooses the newest valid statement. |
 | Asynchronous deriver cadence: [`src/deriver/queue_manager.py`][honcho-deriver] | Lachesis processes new committed person events in bounded batches on the extraction job's schedule, groups a burst into one utterance and resumes from its committed progress. No new eligible events means no extraction call; failed work remains pending. Writes use the Moirai transaction, never a second writer. |
-| Background dialectic cadence: [`dialectic.py`][honcho-dialectic] | The person-brief job prepares relevant context after delivery, backs off unproductive work and discards superseded or stale results. Atropos reads only a ready, topic-matching result and never waits for it. Cadence values belong to the job's measured schedule and budget. |
+| Background dialectic cadence: [`dialectic.py`][honcho-dialectic] | The person-brief job prepares relevant context after delivery, backs off unproductive work and expires old results, as the supplied client does. LINA additionally rejects results from superseded jobs or invalidated evidence before publication. Atropos reads only a ready, topic-matching result and never waits for it. Cadence values belong to the job's measured schedule and budget. |
+
+The supplied client's `dialectic.py` expires results by turn age but lacks the newer public revision's publication-token guard against superseded jobs. Its first-turn retrieval waits also differ from the public revision's added wait on a resumed process. Neither client wait policy overrides LINA's ready-only person brief and bounded `recall_person` request path. The server schema and deriver are behavioral references only; no server implementation is ported.
+
+The supplied client also filters automated prompts, excludes unattended runs from human-memory sync and keeps bot-authored turns in separate sessions without human-card or conclusion writes. LINA preserves that separation through trusted route identities; text markers and process-environment heuristics cannot prove a person speaker.
 
 At commit, every premise chain of a person-subject item must resolve to the person's own ledger events. Native admission records the actual person, agent, worker, system or other bot from the trusted route; a worker notice or bot relay retains its non-person kind and source identity even when a model API transports it as `user`. Import is an origin, not proof of a human speaker: the importer cross-checks host and LCM records before accepting a Honcho person label. Automated or agent-authored events can inform other-subject memory under the existing rules, never the person model.
 
@@ -754,7 +758,7 @@ LINA adopts the complementary LCM-X and Honcho retrieval behaviors below through
 | --- | --- |
 | LCM-X `grep`: [`tools.py`][lcm-tools] | Search raw ledger text and summary navigation nodes with time, speaker and origin filters. Return event ids and nearby messages; Korean full-text search keeps LINA's tokenizer and two-syllable fallback. |
 | LCM-X `recall`: [`tools.py`][lcm-tools] | Combine lexical and semantic candidates across the agent's conversations, including older compacted ranges. Summary hits lead to raw events; current-topic ranking never widens the agent/person/scope boundary. Memory-item recall adds current item revisions and their evidence. |
-| LCM-X `expand` and `describe`: [`expand_tools.py`][lcm-expand] | `expand` pages through node children, exact events or material bodies. Its description view exposes a node's depth, source range, child refs, omitted detail, provenance and availability so the caller can choose what to expand without treating the summary as evidence. |
+| LCM-X `expand` and `describe`: [`tools.py`][lcm-expand] | `expand` pages through node children, exact events or material bodies. Its description view exposes a node's depth, source range, child refs, omitted detail, provenance and availability so the caller can choose what to expand without treating the summary as evidence. |
 | LCM-X evidence packs and exact refs: [`evidence_pack.py`][lcm-evidence] | A bounded recall result groups exact source refs, verified quotes, source times and item revisions. An event span identifies its event and body/material revision and range; the resolver checks the quote against that source. Duplicate lineage counts once. Missing, masked, revoked or unresolved refs are reported as unavailable; budget cuts report omitted coverage instead of claiming a complete answer. |
 | Honcho dialectic: [`peer.py`][honcho-peer], [`dialectic.py`][honcho-dialectic] | `recall_person` answers a question from the retrieved pack, with citations to the items or events actually used, within the depth and time limits of "Person model". No supporting evidence means no asserted personal fact. |
 
@@ -921,16 +925,16 @@ A restore never brings back a retracted or deleted item, or deleted conversation
 - The reply budgets, the size of a tuning step and the reaction classes: starting values set in Reply shape, tuned by measurement with real use and kept per person.
 - The file format and the manifest fields of an episode export: set with the first development run that uses the replay command ([runtime.md](runtime.md#replay-command)).
 
-[lcm-store]: https://github.com/electricsheephq/lcm-x/blob/e25f184da7f0f6f2e90db62a28b0610d76615d2d/store.py
-[lcm-compaction]: https://github.com/electricsheephq/lcm-x/blob/e25f184da7f0f6f2e90db62a28b0610d76615d2d/compaction.py
-[lcm-policy]: https://github.com/electricsheephq/lcm-x/blob/e25f184da7f0f6f2e90db62a28b0610d76615d2d/compaction_policy.py
-[lcm-externalize]: https://github.com/electricsheephq/lcm-x/blob/e25f184da7f0f6f2e90db62a28b0610d76615d2d/externalize.py
-[lcm-host-uid]: https://github.com/electricsheephq/lcm-x/blob/e25f184da7f0f6f2e90db62a28b0610d76615d2d/host_uid.py
-[lcm-dag]: https://github.com/electricsheephq/lcm-x/blob/e25f184da7f0f6f2e90db62a28b0610d76615d2d/dag.py
-[lcm-leaf-prep]: https://github.com/electricsheephq/lcm-x/blob/e25f184da7f0f6f2e90db62a28b0610d76615d2d/leaf_prep.py
-[lcm-tools]: https://github.com/electricsheephq/lcm-x/blob/e25f184da7f0f6f2e90db62a28b0610d76615d2d/tools.py
-[lcm-expand]: https://github.com/electricsheephq/lcm-x/blob/e25f184da7f0f6f2e90db62a28b0610d76615d2d/expand_tools.py
-[lcm-evidence]: https://github.com/electricsheephq/lcm-x/blob/e25f184da7f0f6f2e90db62a28b0610d76615d2d/evidence_pack.py
+[lcm-store]: https://github.com/electricsheephq/lcm-x/blob/709099b3a397a7893a7abae8802ebe7bf605f79e/store.py
+[lcm-compaction]: https://github.com/electricsheephq/lcm-x/blob/709099b3a397a7893a7abae8802ebe7bf605f79e/compaction.py
+[lcm-policy]: https://github.com/electricsheephq/lcm-x/blob/709099b3a397a7893a7abae8802ebe7bf605f79e/compaction_policy.py
+[lcm-externalize]: https://github.com/electricsheephq/lcm-x/blob/709099b3a397a7893a7abae8802ebe7bf605f79e/externalize.py
+[lcm-host-uid]: https://github.com/electricsheephq/lcm-x/blob/709099b3a397a7893a7abae8802ebe7bf605f79e/host_uid.py
+[lcm-dag]: https://github.com/electricsheephq/lcm-x/blob/709099b3a397a7893a7abae8802ebe7bf605f79e/dag.py
+[lcm-leaf-prep]: https://github.com/electricsheephq/lcm-x/blob/709099b3a397a7893a7abae8802ebe7bf605f79e/leaf_prep.py
+[lcm-tools]: https://github.com/electricsheephq/lcm-x/blob/709099b3a397a7893a7abae8802ebe7bf605f79e/tools.py
+[lcm-expand]: https://github.com/electricsheephq/lcm-x/blob/709099b3a397a7893a7abae8802ebe7bf605f79e/tools.py
+[lcm-evidence]: https://github.com/electricsheephq/lcm-x/blob/709099b3a397a7893a7abae8802ebe7bf605f79e/evidence_pack.py
 [honcho-peer]: https://github.com/plastic-labs/honcho/blob/607438d20c408575d1c9257f325c4885da871e82/sdks/python/src/honcho/peer.py
 [honcho-session]: https://github.com/plastic-labs/honcho/blob/607438d20c408575d1c9257f325c4885da871e82/hermes-plugin-honcho/session.py
 [honcho-context]: https://github.com/plastic-labs/honcho/blob/607438d20c408575d1c9257f325c4885da871e82/hermes-plugin-honcho/session_context.py

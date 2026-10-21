@@ -13,7 +13,7 @@ The memory and compaction behavior in [Conversation and memory](docs/design/conv
 ### Honcho
 
 Credit: Plastic Labs (Honcho and its SDKs), and Nous Research (the Hermes Honcho client).
-Source: https://github.com/plastic-labs/honcho, reference commit `607438d20c408575d1c9257f325c4885da871e82`.
+Source: https://github.com/plastic-labs/honcho, public comparison commit `607438d20c408575d1c9257f325c4885da871e82`. The Hermes client was also read from supplied source-only installation files with manifest version 1.0.0; no installation commit was supplied. Public links identify the comparison revision, not an asserted exact revision of those files.
 
 Scope: peers, peer cards, observations with premises and sources, conclusions with provenance, dialectic queries, session summaries and asynchronous derivation. LINA maps these to ledger evidence, revisioned memory items, generated profile views and Moirai jobs.
 
@@ -21,7 +21,7 @@ Licenses differ within the reference repository:
 
 - The Python SDK (`honcho-ai` 2.7.0) declares **Apache-2.0** in its [package metadata](https://github.com/plastic-labs/honcho/blob/607438d20c408575d1c9257f325c4885da871e82/sdks/python/pyproject.toml). Its peer and conclusion APIs are references for this design. The Apache License, Version 2.0 is available in [LICENSE](LICENSE).
 - The Hermes client is **MIT**, with the [license and notice](https://github.com/plastic-labs/honcho/blob/607438d20c408575d1c9257f325c4885da871e82/hermes-plugin-honcho/LICENSE) reproduced below.
-- The Honcho server is **AGPL-3.0**, as its [root license](https://github.com/plastic-labs/honcho/blob/607438d20c408575d1c9257f325c4885da871e82/LICENSE) states. Its observation schema and deriver are behavioral references only; server code is neither copied nor bundled. The SDK's Apache-2.0 declaration does not license the server under Apache-2.0.
+- The Honcho server is **AGPL-3.0**, as its [root license](https://github.com/plastic-labs/honcho/blob/607438d20c408575d1c9257f325c4885da871e82/LICENSE) states. Its observation schema and deriver are behavioral references only; no server implementation is ported, copied or bundled. The SDK's Apache-2.0 declaration does not license the server under Apache-2.0.
 
 ```text
 MIT License
@@ -50,8 +50,8 @@ SOFTWARE.
 ### LCM-X
 
 Credit: Stephen Schoettler and the LCM-X contributors.
-Source: https://github.com/electricsheephq/lcm-x, reference commit `e25f184da7f0f6f2e90db62a28b0610d76615d2d`.
-License: **MIT** ([upstream license](https://github.com/electricsheephq/lcm-x/blob/e25f184da7f0f6f2e90db62a28b0610d76615d2d/LICENSE)).
+Source: https://github.com/electricsheephq/lcm-x, supplied installation commit `709099b3a397a7893a7abae8802ebe7bf605f79e` (v0.28.0). The inspected modules and license match that revision; `tools.py` contains expand and describe at this revision.
+License: **MIT** ([upstream license](https://github.com/electricsheephq/lcm-x/blob/709099b3a397a7893a7abae8802ebe7bf605f79e/LICENSE)).
 
 Scope: lossless raw storage, depth-ranked summary DAGs, stub-first compaction, externalized outputs, exact-reference retrieval and session lineage. LINA maps these to its one ledger, derived summary tree, materials and evidence-bearing recall. No upstream source is vendored or modified.
 
