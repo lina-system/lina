@@ -30,3 +30,16 @@ redirect refusal and exact response bytes using in-process servers.
 `sidecar.txt` contains an intentionally synthetic credential assignment for
 byte-preserving copy and sensitivity tests. No source rows, account details,
 credentials or operational state from an install belong in these fixtures.
+
+`speakers-state.sql` and `speakers-lcm.sql` add synthetic provenance scenarios to
+the registered layouts. `speakers-honcho.json` is a test-only set of owner-peer
+claims and pre-matched row references, not a registered Honcho API response.
+The rows cover automated prompts attributed to the owner, genuine owner turns
+(including misleading marker text), Honcho-only messages, delegation, agent,
+tool and system messages, conflicting sources and unknown provenance. LCM-only
+messages also inherit automated and shared-chat restrictions from an available
+host session even when its message rows are absent. Without that host session,
+an interactive LCM row remains unproven despite a confirmed session map. Tests
+check per-profile report counts, immutable source bytes, candidate eligibility,
+and rejection by the person-memory writer. Source matching and promotion
+approval remain separate stages; these fixtures do not claim to implement them.
