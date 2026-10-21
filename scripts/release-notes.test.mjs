@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import { delimiter, join } from 'node:path';
 import test from 'node:test';
 import { run } from './git.mjs';
-import { developmentRepository, sandbox, scriptsDir } from './test-fixture.mjs';
+import { developmentRepository, installBinaryBuildFixture, sandbox, scriptsDir } from './test-fixture.mjs';
 
 function setup(t) {
   const sb = sandbox(t);
@@ -162,6 +162,7 @@ test('the CLI uses its working repository despite inherited GIT_* variables', (t
 test('generated notes are accepted by the release CLI with a local remote and stub gh', (t) => {
   const s = setup(t);
   s.sb.g(s.work, 'push', '-q', 'origin', 'dev:refs/heads/main');
+  installBinaryBuildFixture(s.sb, s.work);
   const commit = s.merge(1, 'feat: release notes', ['feature']);
   s.sb.g(s.work, 'push', '-q', 'origin', 'dev');
   const generated = s.call();

@@ -18,7 +18,8 @@
 // main push leaves nothing published, so the same command can run again. main moves only
 // forward and nothing is force-pushed.
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -129,16 +130,63 @@ function build(root, { commit, tag, evidence, evidenceSource, out }) {
   if (archived.status !== 0) fail(`git archive failed: ${archived.stderr.trim()}`);
   const manifest = join(out, 'release-manifest.json');
   const describe = (path) => ({ name: path.slice(out.length + 1), bytes: statSync(path).size, sha256: sha256(path) });
+  const files = [archive];
+  const artifacts = [describe(archive)];
+  const parent = mkdtempSync(join(tmpdir(), 'lina-release-build-'));
+  const candidate = join(parent, 'candidate');
+  gitOut(root, ['worktree', 'add', '--quiet', '--detach', candidate, commit]);
+  try {
+    // Use an allowlist here: run() merges the caller's environment and cannot
+    // remove credentials merely by omitting them from its env argument.
+    const home = join(parent, 'home');
+    mkdirSync(home);
+    const env = {
+      PATH: process.env.PATH, HOME: home, XDG_CONFIG_HOME: home,
+      GOENV: 'off', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0',
+    };
+    // Reuse only public Go caches, never user configuration or credentials.
+    const caches = spawnSync('go', ['env', 'GOCACHE', 'GOMODCACHE'], { encoding: 'utf8',
+      env: { ...env, HOME: process.env.HOME, GOCACHE: process.env.GOCACHE, GOMODCACHE: process.env.GOMODCACHE } });
+    if (caches.status !== 0) fail(`Cannot locate Go caches: ${caches.stderr}`);
+    [env.GOCACHE, env.GOMODCACHE] = caches.stdout.trim().split('\n');
+    for (const target of ['linux/amd64', 'darwin/arm64']) {
+      const output = join(parent, target.replace('/', '-'));
+      const built = spawnSync(process.execPath, [join(candidate, 'scripts/build.mjs'), '--out', output,
+        '--target', target, '--version', version], { cwd: candidate, env, encoding: 'utf8', timeout: 300_000 });
+      if (built.status !== 0) fail(`Binary build failed for ${target}: ${built.stderr || built.error?.message}`);
+      const metadata = JSON.parse(readFileSync(join(output, 'manifest.json'), 'utf8'));
+      if (metadata.commit !== commit || metadata.version !== version || metadata.target !== target) {
+        fail(`Binary manifest does not identify the release for ${target}`);
+      }
+      for (const name of ['lina', 'lina-node']) {
+        const binary = metadata.binaries?.find(binary => binary.name === name);
+        if (!binary || binary.size !== statSync(join(output, name)).size || binary.sha256 !== sha256(join(output, name))) {
+          fail(`Binary manifest digest mismatch for ${target}/${name}`);
+        }
+      }
+      for (const name of ['LICENSE', 'THIRD-PARTY-NOTICES.md']) copyFileSync(join(candidate, name), join(output, name));
+      copyFileSync(join(candidate, 'packaging/sqlite-vec/NOTICE.md'), join(output, 'sqlite-vec-NOTICE.md'));
+      const path = join(out, `lina-${version}-${target.replace('/', '-')}.tar.gz`);
+      const packed = spawnSync('tar', ['-czf', path, '-C', output, 'lina', 'lina-node', 'manifest.json',
+        'LICENSE', 'THIRD-PARTY-NOTICES.md', 'sqlite-vec-NOTICE.md'], { env, encoding: 'utf8' });
+      if (packed.status !== 0) fail(`Cannot package ${target}: ${packed.stderr || packed.error?.message}`);
+      files.push(path);
+      artifacts.push({ ...describe(path), target });
+    }
+  } finally {
+    git(root, ['worktree', 'remove', '--force', candidate]);
+    rmSync(parent, { recursive: true, force: true });
+  }
   writeFileSync(manifest, `${JSON.stringify({
     schema: 1, tag, version, prerelease: tag.includes('-'),
     commit, tree: gitOut(root, ['rev-parse', `${commit}^{tree}`]),
     commit_date: gitOut(root, ['show', '-s', '--format=%cI', commit]),
     foundation: { source: evidenceSource, result: evidence.result, mode: evidence.mode, finished: evidence.finished },
-    artifacts: [describe(archive)],
+    artifacts,
   }, null, 2)}\n`);
   const sums = join(out, 'SHA256SUMS');
-  writeFileSync(sums, [archive, manifest].map((path) => `${sha256(path)}  ${path.slice(out.length + 1)}`).join('\n') + '\n');
-  return [archive, manifest, sums];
+  writeFileSync(sums, [...files, manifest].map((path) => `${sha256(path)}  ${path.slice(out.length + 1)}`).join('\n') + '\n');
+  return [...files, manifest, sums];
 }
 
 /**

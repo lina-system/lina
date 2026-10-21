@@ -3,7 +3,7 @@
 // with the GIT_* variables of the test process removed and with no access to the real user or
 // system Git configuration.
 import assert from 'node:assert/strict';
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -79,4 +79,34 @@ export function cloneOf(sb, remote, name) {
   sb.g(sb.dir, 'clone', '-q', remote, dir);
   sb.g(dir, 'checkout', '-q', '-B', 'dev', 'origin/dev');
   return dir;
+}
+
+/** Install a deterministic binary builder for release orchestration fixtures. */
+export function installBinaryBuildFixture(sb, work) {
+  // Exercise release orchestration with a deterministic stand-in for Go builds.
+  // The real build script's suite verifies the actual executables.
+  sb.write(work, 'scripts/build.mjs', `// SPDX-License-Identifier: Apache-2.0
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { parseArgs } from 'node:util';
+const { values: { out, target, version } } = parseArgs({ options: {
+  out: { type: 'string' }, target: { type: 'string' }, version: { type: 'string' },
+} });
+if (process.env.GH_TOKEN || process.env.GITHUB_TOKEN) throw new Error('build received credentials');
+const commit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+mkdirSync(out, { recursive: true });
+const binaries = ['lina', 'lina-node'].map(name => {
+  const bytes = Buffer.from(name + target + version + commit);
+  writeFileSync(join(out, name), bytes);
+  return { name, size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
+});
+writeFileSync(join(out, 'manifest.json'), JSON.stringify({ version, commit, target, binaries }));
+`);
+  sb.write(work, 'LICENSE', 'Fixture license\n');
+  sb.write(work, 'THIRD-PARTY-NOTICES.md', 'Fixture notices\n');
+  sb.write(work, 'packaging/sqlite-vec/NOTICE.md', 'Fixture vector notice\n');
+  sb.write(work, 'scripts/verify/scope.mjs', readFileSync(join(work, 'scripts/verify/scope.mjs'), 'utf8')
+    .replace("const documents = new Set([", "const documents = new Set(['packaging/sqlite-vec/NOTICE.md',"));
 }

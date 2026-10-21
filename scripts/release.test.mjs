@@ -6,7 +6,7 @@ import test from 'node:test';
 import { createHash } from 'node:crypto';
 import { git, run } from './git.mjs';
 import { release } from './release.mjs';
-import { developmentRepository, sandbox, scriptsDir } from './test-fixture.mjs';
+import { developmentRepository, installBinaryBuildFixture, sandbox, scriptsDir } from './test-fixture.mjs';
 
 // The release functions read HOME, PATH and the gh fixture variables from the environment.
 function setup(t) {
@@ -45,6 +45,7 @@ esac
 
   const repository = developmentRepository(sb);
   const { work, remote } = repository;
+  installBinaryBuildFixture(sb, work);
   // main starts at the first commit; the release is the next dev commit.
   sb.g(work, 'push', '-q', 'origin', 'dev:refs/heads/main');
   const first = sb.g(work, 'rev-parse', 'HEAD');
@@ -74,7 +75,9 @@ test('the default dry run builds a dated alpha release and publishes nothing', (
   assert.match(s.logs.join('\n'), /running foundation on a clean work tree/);
   untouched(s);
   const out = join(s.sb.dir, 'out');
-  assert.deepEqual(readdirSync(out).sort(), ['SHA256SUMS', 'lina-0.0.1-alpha.20261020.1-source.tar.gz', 'release-manifest.json']);
+  assert.deepEqual(readdirSync(out).sort(), ['SHA256SUMS',
+    'lina-0.0.1-alpha.20261020.1-darwin-arm64.tar.gz', 'lina-0.0.1-alpha.20261020.1-linux-amd64.tar.gz',
+    'lina-0.0.1-alpha.20261020.1-source.tar.gz', 'release-manifest.json']);
   const manifest = JSON.parse(readFileSync(join(out, 'release-manifest.json'), 'utf8'));
   assert.equal(manifest.tag, 'v0.0.1-alpha.20261020.1');
   assert.equal(manifest.version, '0.0.1-alpha.20261020.1');
@@ -86,6 +89,21 @@ test('the default dry run builds a dated alpha release and publishes nothing', (
   assert.equal(manifest.artifacts[0].sha256, createHash('sha256').update(readFileSync(archive)).digest('hex'));
   assert.ok(readFileSync(join(out, 'SHA256SUMS'), 'utf8').includes(`${manifest.artifacts[0].sha256}  lina-0.0.1-alpha.20261020.1-source.tar.gz\n`));
   assert.equal(run('tar', ['-tzf', archive], { cwd: out }).stdout.includes('lina-0.0.1-alpha.20261020.1/README.md'), true);
+  for (const target of ['linux/amd64', 'darwin/arm64']) {
+    const artifact = manifest.artifacts.find(a => a.target === target);
+    assert.ok(artifact, `missing ${target}`);
+    const path = join(out, artifact.name);
+    assert.equal(artifact.sha256, createHash('sha256').update(readFileSync(path)).digest('hex'));
+    const contents = run('tar', ['-tzf', path], { cwd: out });
+    assert.equal(contents.status, 0);
+    for (const name of ['lina', 'lina-node', 'manifest.json', 'LICENSE', 'THIRD-PARTY-NOTICES.md', 'sqlite-vec-NOTICE.md']) {
+      assert.ok(contents.stdout.split('\n').includes(name), name);
+    }
+    const built = JSON.parse(run('tar', ['-xOzf', path, 'manifest.json'], { cwd: out }).stdout);
+    assert.equal(built.commit, s.commit);
+    assert.equal(built.version, manifest.version);
+    assert.equal(built.target, target);
+  }
   // A dry run leaves no evidence note behind and no extra work tree.
   assert.notEqual(git(s.work, ['notes', '--ref=refs/notes/foundation', 'show', s.commit], { env: s.sb.env }).status, 0);
   assert.equal(s.sb.g(s.work, 'worktree', 'list').split('\n').length, 1);
@@ -113,7 +131,8 @@ test('publishing fast-forwards main, pushes the tag and creates the private rele
   assert.equal(s.remoteRef('refs/tags/v0.0.1-alpha.20261020.1'), s.commit);
   const create = s.ghCalls().find((line) => line.startsWith('release create'));
   assert.ok(create.startsWith('release create v0.0.1-alpha.20261020.1 '));
-  for (const fragment of ['lina-0.0.1-alpha.20261020.1-source.tar.gz', 'release-manifest.json', 'SHA256SUMS', '--verify-tag', '--prerelease', `--notes-file ${s.notesFile}`]) {
+  for (const fragment of ['lina-0.0.1-alpha.20261020.1-source.tar.gz', 'lina-0.0.1-alpha.20261020.1-linux-amd64.tar.gz',
+    'lina-0.0.1-alpha.20261020.1-darwin-arm64.tar.gz', 'release-manifest.json', 'SHA256SUMS', '--verify-tag', '--prerelease', `--notes-file ${s.notesFile}`]) {
     assert.ok(create.includes(fragment), fragment);
   }
   assert.equal(s.ghCalls().filter((line) => line.startsWith('repo view')).length, 1);
@@ -121,6 +140,31 @@ test('publishing fast-forwards main, pushes the tag and creates the private rele
   assert.equal(JSON.parse(s.sb.g(s.work, 'notes', '--ref=refs/notes/foundation', 'show', s.commit)).result, 'success');
   // Tags are immutable: the same release cannot run twice.
   assert.throws(() => s.call({ publish: true, outDir: join(s.sb.dir, 'again') }), /already exists/);
+});
+
+test('binary builds use the exact candidate and receive no account credentials', t => {
+  const s = setup(t);
+  s.set('GH_TOKEN', 'synthetic-do-not-forward');
+  s.set('GITHUB_TOKEN', 'synthetic-do-not-forward');
+  s.sb.write(s.work, 'scripts/build.mjs', 'throw new Error("must not build the dirty checkout");\n');
+  s.call();
+  untouched(s);
+  assert.equal(s.sb.g(s.work, 'worktree', 'list').split('\n').length, 1);
+});
+
+test('a binary build failure or digest mismatch stops publication and removes the worktree', t => {
+  const s = setup(t);
+  const source = readFileSync(join(s.work, 'scripts/build.mjs'), 'utf8');
+  for (const [name, text, failure] of [
+    ['failure', 'throw new Error("synthetic build failure");\n' + source, /Binary build failed/],
+    ['digest', source.replace("createHash('sha256').update(bytes).digest('hex')", "'0'.repeat(64)"), /digest mismatch/],
+  ]) {
+    const commit = s.sb.commit(s.work, `test: ${name}`, { 'scripts/build.mjs': text });
+    s.sb.g(s.work, 'push', '-q', 'origin', 'dev');
+    assert.throws(() => s.call({ commit, publish: true, outDir: join(s.sb.dir, name) }), failure);
+    untouched(s);
+    assert.equal(s.sb.g(s.work, 'worktree', 'list').split('\n').length, 1);
+  }
 });
 
 test('every failed condition stops before anything is pushed or published', (t) => {
