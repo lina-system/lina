@@ -230,7 +230,7 @@ per turn, and `manifest.json` records `selected`, `exported`, `left_out`,
 `left_out_reasons` and `revocation_epoch`. An episode carries `turn_id`,
 `conversation_id`, the original input and ordered history with exact ids and
 content revisions, the request evidence, pinned persona, model input items,
-recorded replies and calls/results, the next eligible person event with its
+recorded replies with `reply_refs` and calls/results, the next eligible person event with its
 relations, `clock`, `zone` and `revocation_epoch`. Files are private and appear
 as one completed directory under `staging/export/`. The CLI prints that directory
 and the manifest, and explains that later deletion in LINA cannot remove the

@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/agents"
@@ -47,6 +48,7 @@ type Episode struct {
 	History         []Event                `json:"history"`
 	Persona         agents.Layers          `json:"persona"`
 	Items           []provider.Item        `json:"items"`
+	ReplyRefs       []ledger.Reference     `json:"reply_refs,omitempty"`
 	Reply           []provider.Item        `json:"reply"`
 	Calls           []Call                 `json:"calls"`
 	Next            []Event                `json:"next,omitempty"`
@@ -228,25 +230,50 @@ func (s Source) Load(ctx context.Context, scope Scope, id string) (Episode, erro
 		if !hasInput {
 			return Exclusion("missing_assembly")
 		}
-		rows, err := tx.QueryContext(ctx, "SELECT item FROM turn_items WHERE turn_id=? ORDER BY round,ordinal", id)
+		rows, err := tx.QueryContext(ctx, "SELECT round,ordinal,item FROM turn_items WHERE turn_id=? ORDER BY round,ordinal", id)
 		if err != nil {
 			return err
 		}
+		type output struct {
+			round   int
+			ordinal int64
+			item    []byte
+		}
+		var outputs []output
 		for rows.Next() {
-			var item []byte
-			if err = rows.Scan(&item); err != nil {
+			var o output
+			if err = rows.Scan(&o.round, &o.ordinal, &o.item); err != nil {
 				rows.Close()
 				return err
 			}
-			masked, err := maskJSON(item)
-			if err != nil {
-				rows.Close()
-				return err
-			}
-			ep.Reply = append(ep.Reply, masked)
+			outputs = append(outputs, o)
 		}
 		if err = errors.Join(rows.Err(), rows.Close()); err != nil {
 			return err
+		}
+		for _, o := range outputs {
+			var header struct{ Type, Role string }
+			if json.Unmarshal(o.item, &header) != nil {
+				return Exclusion("missing_source")
+			}
+			if header.Role == "assistant" && (header.Type == "message" || header.Type == "") {
+				// Native completion uses the provider round (one-based) and item index
+				// as the immutable output event identity. Do not search by reply text.
+				event, err := get(fmt.Sprintf("%s:%d:%d", id, o.round+1, o.ordinal))
+				if err != nil {
+					return err
+				}
+				if event.ParentID != inputID || event.ConversationID != ep.Conversation || event.SpeakerKind != guard.Agent {
+					return Exclusion("missing_source")
+				}
+				value := eventValue(event)
+				ep.ReplyRefs = append(ep.ReplyRefs, ledger.Reference{ID: value.ID, Revision: value.Revision})
+			}
+			masked, err := maskJSON(o.item)
+			if err != nil {
+				return err
+			}
+			ep.Reply = append(ep.Reply, masked)
 		}
 		rows, err = tx.QueryContext(ctx, "SELECT call,result FROM turn_calls WHERE turn_id=? ORDER BY round,ordinal", id)
 		if err != nil {
@@ -312,6 +339,9 @@ func (s Source) Load(ctx context.Context, scope Scope, id string) (Episode, erro
 					}
 				}
 				call.Result = &loop.Result{ID: call.Call.ID, Code: code, Output: body}
+			}
+			if err := callReferences(ctx, tx, scope, *call); err != nil {
+				return err
 			}
 			if !LocalRead(call.Call.Name) && !usable(call.Result) {
 				return Exclusion("recorded_result_unavailable")

@@ -895,7 +895,9 @@ model, effort, tool declarations and requested fields alongside its existing
 assembly references and digest. This does not retain a transient ContextPacket
 or credentials. A producer that lacks reconstructible assembly evidence is
 excluded with `missing_assembly`; replay never substitutes today's history or
-persona. All exported source bytes and every replay dispatch are checked against
+persona. Current assistant reply events and the structured source references in recorded
+recall/expand results are checked too; removing a reply or a tool source excludes
+the whole dependent turn. All exported source bytes and every replay dispatch are checked against
 the current revocation epoch. Episode-file input is rehydrated from those exact
 local source identities, so an old export cannot resurrect forgotten content.
 

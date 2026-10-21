@@ -291,3 +291,57 @@ func TestExportRefusesPrivateEvidenceAndDirectRetractions(t *testing.T) {
 		})
 	}
 }
+
+func TestExportExcludesTurnDependingOnForgottenRecallResult(t *testing.T) {
+	db, source, _ := fixture(t)
+	id := seed(t, db, "input", guard.EntryOwner)
+	call := provider.ToolCall{ID: "recall", Name: "recall_person", Arguments: `{"question":"What is remembered?","query":"violet"}`}
+	result := loop.Result{ID: call.ID, Code: loop.OK, Output: json.RawMessage(`{"Sources":[{"ID":"memory:forgotten","Revision":1,"Text":"revoked synthetic detail","Evidence":[]}],"Answer":[]}`)}
+	raw, _ := json.Marshal(call)
+	answer, _ := json.Marshal(result)
+	err := db.Write(t.Context(), func(tx *canon.Tx) error {
+		if _, err := tx.ExecContext(t.Context(), "INSERT INTO turn_calls(turn_id,round,ordinal,call_id,call,result) VALUES(?,0,0,?,?,?)", id, call.ID, raw, answer); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(t.Context(), "INSERT INTO removal_applied VALUES(1,'removal','digest')"); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(t.Context(), "INSERT INTO retract_target VALUES('memory','forgotten','person','agent','agent','erased',0,'{}','removal')")
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, m, err := source.Episodes(t.Context(), replay.Scope{Person: "person", Agent: "agent"}, selection())
+	if err != nil || m.Exported != 0 || m.LeftOut != 1 {
+		t.Fatalf("forgotten tool evidence exported: %+v %v", m, err)
+	}
+}
+
+func TestExportExcludesRetractedReplyEvenWhenInputRemainsVisible(t *testing.T) {
+	db, source, _ := fixture(t)
+	id := seed(t, db, "input", guard.EntryOwner)
+	now := time.Date(2026, 1, 2, 2, 4, 6, 0, time.UTC)
+	replyID := id + ":1:0"
+	_, err := ledger.New(db, nil).Admit(t.Context(), guard.EntryAgent, ledger.Input{ID: replyID, ConversationID: "conversation", ParentID: "input", AgentID: "agent", Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "removed synthetic reply"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = db.Write(t.Context(), func(tx *canon.Tx) error {
+		if _, err := tx.ExecContext(t.Context(), "INSERT INTO turn_items(turn_id,round,ordinal,item) VALUES(?,0,0,?)", id, []byte(`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"removed synthetic reply"}]}`)); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(t.Context(), "INSERT INTO removal_applied VALUES(1,'removal','digest')"); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(t.Context(), "INSERT INTO retract_target VALUES('event',?,'person','','agent','trashed',0,'{}','removal')", replyID)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, m, err := source.Episodes(t.Context(), replay.Scope{Person: "person", Agent: "agent"}, selection())
+	if err != nil || m.Exported != 0 || m.LeftOut != 1 {
+		t.Fatalf("retracted reply exported: %+v %v", m, err)
+	}
+}
