@@ -22,7 +22,7 @@ function fixture(t, { timeoutScale = 1, executeCommand = execute } = {}) {
   const cwd = join(sb.dir, 'source');
   mkdirSync(cwd);
   for (const name of ['cmd/lina', 'cmd/lina-node', 'internal/buildinfo', 'kit', 'go.mod', 'go.sum', 'go.work',
-    'internal/core', 'internal/clientapi', 'internal/design', 'internal/tui', 'persona', 'skills', 'packaging', 'scripts/build.mjs', 'scripts/git.mjs', 'scripts/verify/check-components.mjs']) {
+    'internal/core', 'internal/clientapi', 'internal/design', 'internal/moirai', 'internal/tui', 'persona', 'skills', 'packaging', 'scripts/build.mjs', 'scripts/git.mjs', 'scripts/verify/check-components.mjs']) {
     if (!existsSync(join(root, name))) continue;
     mkdirSync(dirname(join(cwd, name)), { recursive: true });
     cpSync(join(root, name), join(cwd, name), { recursive: true });
