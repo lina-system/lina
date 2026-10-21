@@ -393,6 +393,8 @@ type Router interface {
 
 **C-16 Canon file and writer (kept).** `canon/` holds the SQLite database. It has three classes of data: canonical rows; FTS tables written in the same transaction as their source; and model-written derived rows stamped with the revocation epoch. One writer goroutine owns one write connection. Readers open `query_only`. WAL and `synchronous=FULL`. No transaction spans a model, tool, Node or network call. Migrations are forward-only. The SQLite binding is chosen by [V2](runtime.md#runtime-acceptance) against four needs: FTS5, the online backup API, an optional sqlite-vec load verified against a manifest digest, and static builds. sqlite-vec is the optional embedding feature; with no embedding endpoint, recall uses FTS5.
 
+The ordered application migrations are returned by `canon.Migrations`; table groups keep their schema in separate files. The asset tables hold stable ids and observed paths, immutable revision metadata, export delivery records and trash transitions. `assets` uses the existing fenced writer for all metadata changes and a read-only transaction for each query. File preparation and external delivery happen outside canon transactions; revision bytes are synced before their metadata is committed. A stale writer cannot replace existing revision bytes.
+
 **C-53 Records repository and index (new).** Contract: [filesystem.md](filesystem.md#records-repository), [work-and-delegation.md](work-and-delegation.md#storage-of-records). One Git repository at `versions/records/`, behind an interface so the backend can change (a pure-Go Git library by default; the Git command as an alternative; thousands of files decide it).
 
 ```go
@@ -583,6 +585,8 @@ type Definition struct {
 ## Storage, backup and diagnosis
 
 **C-39 Data placement (changed).** The areas are those of [filesystem.md](filesystem.md#state-root-and-layout). The Go owners: `canon` owns `canon/`; `ctlfiles` and `eventstore` own `system/`; `records`, `skills` and `agents` own `versions/`; `assets` owns `materials/` and `derived/`; `work` owns `work/`; `backup` owns `backups/`; `secrets` owns `secrets/`. Credentials are not backed up. Node execution state is outside the state root.
+
+`assets` also owns import and export staging. Its materials implementation uses private directories and files, paths confined to an open state-root handle, random ids, increasing revision directories and SHA-256 hashes. Rename updates the observed path; edit preserves the id and older bytes. Its backup operation copies and verifies all recorded material revisions, including trash, into an unpublished generation supplied by the backup coordinator. The store has no TUI or protocol operation yet; package tests exercise real files and canon for identity, staging, export, trash and backup corruption. Version-space text, derived-data production, whole-generation backup, and coordinated permanent deletion retain their respective owners.
 
 **C-32 Backup and restore (kept).** The procedure and the restore rules are those of [filesystem.md](filesystem.md#backup-generations). The manifest adds the epoch record at capture. Restore runs with the main stopped and never lowers the epoch. It also rebuilds the records index if its head differs from the repository, marks non-terminal external-effect rows unknown, voids leases and claims, and shows each account as needing sign-in. Zero-exposure test: forget an item after generation G, wipe the state root, restore G with the removal list, search by id.
 
