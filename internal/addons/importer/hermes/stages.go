@@ -27,6 +27,7 @@ type Request struct {
 	Materials *assets.MaterialWriter
 	BatchID   string
 	Confirmed bool
+	Rehearsal bool
 	Profiles  []Profile
 	Sidecars  []Sidecar
 }
@@ -69,6 +70,7 @@ type TableCount struct {
 }
 type Plan struct {
 	batch         string
+	rehearsal     bool
 	people        map[string]string
 	mappings      []ProfileMapping
 	profiles      []string
@@ -116,7 +118,7 @@ func prepare(ctx context.Context, req Request, honcho []honchoWorkspace) (_ *Pla
 	if !req.Confirmed || req.BatchID == "" || len(req.Profiles) == 0 {
 		return nil, ErrSnapshot
 	}
-	p := &Plan{batch: req.BatchID, people: map[string]string{}}
+	p := &Plan{batch: req.BatchID, rehearsal: req.Rehearsal, people: map[string]string{}}
 	defer func() {
 		if err != nil {
 			err = errors.Join(err, p.Close())
@@ -183,6 +185,9 @@ func timestamp(r Row, field string) string {
 	return time.Unix(seconds, int64((n-float64(seconds))*1e9)).UTC().Format(time.RFC3339Nano)
 }
 func (p *Plan) Import(ctx context.Context, db Canon) (Report, error) {
+	if p.rehearsal {
+		return Report{}, ErrSnapshot
+	}
 	defer p.Close() // durable markers preserve cleanup failures for restart recovery
 	report := Report{Tables: append([]TableCount(nil), p.inventory...)}
 	byProfile := map[string]int{}

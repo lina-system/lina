@@ -26,14 +26,16 @@ func (b *profileBuilder) addSidecar(ctx context.Context, s Sidecar, writer *asse
 	if e == nil || e.event == nil || s.Key.System != string(HermesLCM) || s.Event.System != string(HermesLCM) || s.Key.Instance != b.profile.ID || s.Key.Kind != "sidecars" || s.Key.Key == "" {
 		return ErrSourceMissing
 	}
-	hash, err := hex.DecodeString(s.SHA256)
-	if err != nil || len(hash) != 32 || hex.EncodeToString(hash) != s.SHA256 {
-		return ErrSnapshot
-	}
 	data, err := os.ReadFile(s.SnapshotPath)
 	missing := errors.Is(err, os.ErrNotExist)
 	if err != nil && !missing {
 		return err
+	}
+	if !missing || s.SHA256 != "" {
+		hash, err := hex.DecodeString(s.SHA256)
+		if err != nil || len(hash) != 32 || hex.EncodeToString(hash) != s.SHA256 {
+			return ErrSnapshot
+		}
 	}
 	if !missing {
 		sum := sha256.Sum256(data)
@@ -43,6 +45,9 @@ func (b *profileBuilder) addSidecar(ctx context.Context, s Sidecar, writer *asse
 	}
 	row := Row{}
 	row["sha256"], _ = value(s.SHA256)
+	if s.SHA256 == "" {
+		row["sha256"], _ = value(nil)
+	}
 	row["bytes"], _ = value(data)
 	if missing {
 		row["bytes"], _ = value(nil)
@@ -50,7 +55,7 @@ func (b *profileBuilder) addSidecar(ctx context.Context, s Sidecar, writer *asse
 	r := b.add(b.byID(e.conversation), "material", 5, sourceRow{key: s.Key, row: row})
 	r.links = []importLink{{e.id, "output", 0}}
 	if !missing {
-		if writer == nil {
+		if writer == nil && !b.p.rehearsal {
 			return ErrSnapshot
 		}
 		// One output event owns one sidecar material. Ambiguity is refused.
@@ -61,9 +66,11 @@ func (b *profileBuilder) addSidecar(ctx context.Context, s Sidecar, writer *asse
 				}
 			}
 		}
-		r.material, err = writer.Prepare(ctx, bytes.NewReader(data), "imported-output", assets.Actor{PersonID: b.profile.PersonID, AgentID: b.profile.AgentID})
-		if err != nil {
-			return err
+		if writer != nil && !b.p.rehearsal {
+			r.material, err = writer.Prepare(ctx, bytes.NewReader(data), "imported-output", assets.Actor{PersonID: b.profile.PersonID, AgentID: b.profile.AgentID})
+			if err != nil {
+				return err
+			}
 		}
 	}
 

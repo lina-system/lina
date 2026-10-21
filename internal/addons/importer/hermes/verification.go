@@ -52,6 +52,15 @@ func verifyInterpretation(ctx context.Context, tx *canon.Tx, c *conversation) er
 			a, b := r.links[0], r.links[1]
 			edges[edge{a.target, b.target, b.kind, b.ordinal}] = true
 		}
+		if r.kind == "material" && !hasFlag(r, "bytes_unavailable") {
+			if len(r.links) != 1 || len(r.sources) != 1 {
+				return ErrConflict
+			}
+			expectedHash := r.sources[0].row.text("sha256")
+			if err := count(`SELECT count(*) FROM import_event e JOIN asset_revisions a ON a.asset_id=e.material_id AND a.revision=e.material_revision WHERE e.id=? AND a.hash=?`, 1, r.links[0].target, expectedHash); err != nil {
+				return err
+			}
+		}
 		if e := r.event; e != nil {
 			if err := count(`SELECT count(*) FROM import_event WHERE id=? AND conversation_id=? AND coalesce(parent_id,'')=? AND coalesce(person_id,'')=? AND agent_id=? AND speaker_kind=? AND occurred_at=? AND recorded_at=? AND time_quality=? AND coalesce(replay_of,'')=? AND body=?`, 1, r.id, r.conversation, e.parent, e.classified.person, r.agent, e.classified.kind, e.occurred, e.recorded, e.quality, e.replay, r.body); err != nil {
 				return err

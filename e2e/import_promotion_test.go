@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -52,6 +53,13 @@ func TestM1ImportRehearsalPromotion(t *testing.T) {
 	}
 	db.Close()
 	source := t.TempDir()
+	output := []byte(`{"kind":"tool_result","role":"tool","session_id":"synthetic-session","content":"synthetic large output","content_chars":22,"content_bytes":22,"created_at":103}`)
+	if err = os.Mkdir(filepath.Join(source, "lcm-large-outputs"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(source, "lcm-large-outputs", "output.json"), output, 0600); err != nil {
+		t.Fatal(err)
+	}
 	for _, kind := range []string{"lcm", "state"} {
 		ddl, err := os.ReadFile("../testdata/hermes/" + kind + ".sql")
 		if err != nil {
@@ -65,7 +73,7 @@ func TestM1ImportRehearsalPromotion(t *testing.T) {
 			t.Fatal(err)
 		}
 		if kind == "lcm" {
-			if _, err = src.Exec("UPDATE host_uid_bindings SET lineage_key='home:synthetic-session'"); err != nil {
+			if _, err = src.Exec(`UPDATE host_uid_bindings SET lineage_key='home:synthetic-session'; INSERT INTO messages(store_id,session_id,source,conversation_id,role,content,timestamp) VALUES(3,'synthetic-session','cli','synthetic-conversation','tool','[Externalized tool output: chars=22; ref=output.json]',103),(4,'synthetic-session','cli','synthetic-conversation','tool','[Externalized tool output: chars=22; ref=missing.json]',104)`); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -73,20 +81,30 @@ func TestM1ImportRehearsalPromotion(t *testing.T) {
 	}
 	snapshot := func() map[string]string {
 		result := map[string]string{}
-		entries, err := os.ReadDir(source)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, entry := range entries {
-			data, err := os.ReadFile(filepath.Join(source, entry.Name()))
+		err := filepath.WalkDir(source, func(path string, entry fs.DirEntry, err error) error {
 			if err != nil {
-				t.Fatal(err)
+				return err
 			}
 			info, err := entry.Info()
 			if err != nil {
-				t.Fatal(err)
+				return err
 			}
-			result[entry.Name()] = fmt.Sprintf("%x:%d:%s", sha256.Sum256(data), info.ModTime().UnixNano(), info.Mode())
+			var data []byte
+			if !entry.IsDir() {
+				data, err = os.ReadFile(path)
+				if err != nil {
+					return err
+				}
+			}
+			relative, err := filepath.Rel(source, path)
+			if err != nil {
+				return err
+			}
+			result[relative] = fmt.Sprintf("%x:%d:%s", sha256.Sum256(data), info.ModTime().UnixNano(), info.Mode())
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
 		}
 		return result
 	}
@@ -122,7 +140,13 @@ func TestM1ImportRehearsalPromotion(t *testing.T) {
 		client.Close()
 		h.stopCore(core)
 	}
-	run("--rehearse")
+	rehearsal := run("--rehearse")
+	var report struct {
+		Rehearsal struct{ MissingBytes []string }
+	}
+	if err = json.Unmarshal(rehearsal.stdout.Bytes(), &report); err != nil || len(report.Rehearsal.MissingBytes) != 1 {
+		t.Fatalf("missing output not reported: %+v %v", report, err)
+	}
 	recall(0)
 	// Seal and back up without approving a memory cluster.
 	run("--confirm-import", "--promote", "none")
@@ -136,7 +160,7 @@ func TestM1ImportRehearsalPromotion(t *testing.T) {
 		}
 		defer db.Close()
 		var result string
-		for _, table := range []string{"conv_event", "import_record", "legacy_ref", "import_promotion", "memory_item", "memory_revision"} {
+		for _, table := range []string{"conv_event", "import_record", "legacy_ref", "import_promotion", "memory_item", "memory_revision", "assets", "asset_revisions"} {
 			var n int
 			if err = db.QueryRowContext(h.ctx, "SELECT count(*) FROM "+table).Scan(&n); err != nil {
 				t.Fatal(err)
@@ -156,6 +180,9 @@ func TestM1ImportRehearsalPromotion(t *testing.T) {
 		m, err := backup.Verify(h.ctx, filepath.Join(h.root, "backups", g.Name()))
 		if err != nil {
 			t.Fatal(err)
+		}
+		if len(m.Assets) != 1 || m.Assets[0].Hash != fmt.Sprintf("%x", sha256.Sum256(output)) {
+			t.Fatalf("backup omitted original sidecar: %+v", m.Assets)
 		}
 		saved, err := canon.OpenSQLiteReader(h.ctx, filepath.Join(h.root, "backups", g.Name(), m.SQLite.Path))
 		if err != nil {

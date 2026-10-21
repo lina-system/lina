@@ -48,7 +48,7 @@ func manifest(c *conversation) string {
 // inside the caller's fenced transaction. It can be registered as a Core job
 // Apply callback; the deterministic worker needs no model or writable database.
 func (p *Plan) Apply(ctx context.Context, tx *canon.Tx, index int) (Report, error) {
-	if index < 0 || index >= len(p.conversations) {
+	if p.rehearsal || index < 0 || index >= len(p.conversations) {
 		return Report{}, ErrSnapshot
 	}
 	c := p.conversations[index]

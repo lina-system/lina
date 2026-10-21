@@ -209,6 +209,23 @@ func (s *Store) searchSource(ctx context.Context, id string) (SearchHit, error) 
 	if err != nil {
 		return SearchHit{}, err
 	}
+	if hit.Origin.Kind == "import" && materialID.Valid {
+		event, err := s.Get(ctx, id)
+		if err != nil {
+			return SearchHit{}, err
+		}
+		hit.Body = event.Body.DerivedText()
+		return hit, nil
+	}
+	if hit.Origin.Kind == "import" {
+		_, missing, err := s.importedOutput(ctx, id, text.String)
+		if err != nil {
+			return SearchHit{}, err
+		}
+		if missing {
+			return SearchHit{}, ErrBytesUnavailable
+		}
+	}
 	if materialID.Valid {
 		if s.materials == nil {
 			return SearchHit{}, ErrBytesUnavailable

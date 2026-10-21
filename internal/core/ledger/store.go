@@ -440,6 +440,14 @@ func (s *Store) Get(ctx context.Context, id string) (Event, error) {
 			return e, errors.Join(ErrBytesUnavailable, err)
 		}
 	}
+	if e.Origin.Kind == "import" {
+		masked, missing, err := s.importedOutput(ctx, e.ID, text)
+		if err != nil || missing {
+			e.BytesUnavailable = true
+			return e, errors.Join(ErrBytesUnavailable, err)
+		}
+		text = masked.Text()
+	}
 	var secretSpans []secrets.Span
 	for _, span := range e.Spans {
 		if !validSpan(text, span) {

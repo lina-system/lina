@@ -18,6 +18,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/addons/importer/hermes"
 	"github.com/thisisjun786/lina/internal/buildinfo"
+	"github.com/thisisjun786/lina/internal/core/assets"
 	"github.com/thisisjun786/lina/internal/core/backup"
 	"github.com/thisisjun786/lina/internal/core/boot"
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -33,6 +34,7 @@ func runImportHermes(args []string) int {
 	person := flags.String("person", "", "confirmed person id")
 	lcm := flags.String("lcm", "lcm.db", "LCM database path relative to the source directory")
 	state := flags.String("state", "state.db", "host database path relative to the source directory")
+	sidecars := flags.String("sidecars-dir", "lcm-large-outputs", "sidecar directory relative to the source")
 	owner := flags.String("owner-session", "", "comma-separated confirmed owner CLI sessions; other routes remain unproven")
 	rehearse := flags.Bool("rehearse", false, "print rehearsal only, without writing canon")
 	confirm := flags.Bool("confirm-import", false, "confirm source profile, destination and owner maps, then import")
@@ -58,7 +60,7 @@ func runImportHermes(args []string) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
-	err := importHermes(ctx, *root, *source, *lcm, *state, hermes.Profile{ID: *profile, AgentID: *agent, PersonID: *person}, *owner, *rehearse, *confirm, *promote, hermes.PromotionPolicy{Horizon: *horizon}, os.Stdin, os.Stdout)
+	err := importHermes(ctx, *root, *source, *lcm, *state, *sidecars, hermes.Profile{ID: *profile, AgentID: *agent, PersonID: *person}, *owner, *rehearse, *confirm, *promote, hermes.PromotionPolicy{Horizon: *horizon}, os.Stdin, os.Stdout)
 	if errors.Is(err, ctlfiles.ErrLocked) {
 		fmt.Fprintln(os.Stderr, "lina import-hermes: Core is running. Stop Core first, then rerun the command.")
 		return 69
@@ -70,7 +72,7 @@ func runImportHermes(args []string) int {
 	return 0
 }
 
-func importHermes(ctx context.Context, root, source, lcm, state string, profile hermes.Profile, owner string, rehearse, confirm bool, promote string, policy hermes.PromotionPolicy, input io.Reader, output io.Writer) error {
+func importHermes(ctx context.Context, root, source, lcm, state, sidecarsDir string, profile hermes.Profile, owner string, rehearse, confirm bool, promote string, policy hermes.PromotionPolicy, input io.Reader, output io.Writer) error {
 	source, err := filepath.EvalSymlinks(source)
 	if err != nil {
 		return err
@@ -127,7 +129,12 @@ func importHermes(ctx context.Context, root, source, lcm, state string, profile 
 			profile.OwnerChannels = append(profile.OwnerChannels, hermes.OwnerChannel{Source: "cli", SessionID: session})
 		}
 	}
-	plan, err := hermes.Prepare(ctx, hermes.Request{BatchID: "import-" + rand.Text(), Confirmed: true, Profiles: []hermes.Profile{profile}})
+	sidecars, err := hermes.DiscoverSidecars(ctx, source, sidecarsDir, staging, []hermes.Profile{profile})
+	if err != nil {
+		return err
+	}
+	request := hermes.Request{BatchID: "import-" + rand.Text(), Confirmed: true, Rehearsal: true, Profiles: []hermes.Profile{profile}, Sidecars: sidecars}
+	plan, err := hermes.Prepare(ctx, request)
 	if err != nil {
 		return err
 	}
@@ -227,6 +234,22 @@ func importHermes(ctx context.Context, root, source, lcm, state string, profile 
 	if err != nil {
 		return err
 	}
+	materials, err := assets.Open(ctx, root, db)
+	if err != nil {
+		return err
+	}
+	defer materials.Close()
+	writer, err := assets.OpenMaterialWriter(ctx, materials)
+	if err != nil {
+		return err
+	}
+	request.Materials = writer
+	request.Rehearsal = false
+	plan, err = hermes.Prepare(ctx, request)
+	if err != nil {
+		return err
+	}
+	defer plan.Close()
 	imported, err := plan.Import(ctx, db)
 	if err != nil {
 		return err

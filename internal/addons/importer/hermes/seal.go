@@ -3,8 +3,10 @@ package hermes
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"time"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/secrets"
@@ -86,19 +88,45 @@ func (p *Plan) publishConversation(ctx context.Context, tx *canon.Tx, c *convers
 			continue
 		}
 		e := r.event
+		var material sql.NullString
+		var materialRevision sql.NullInt64
+		if err := tx.QueryRowContext(ctx, "SELECT material_id,material_revision FROM import_event WHERE id=?", r.id).Scan(&material, &materialRevision); err != nil {
+			return err
+		}
+		display := r.body
+		if material.Valid {
+			found := false
+			for _, attachment := range c.records {
+				if attachment.kind == "material" && len(attachment.links) == 1 && attachment.links[0].target == r.id {
+					display = attachment.sources[0].row.text("bytes")
+					found = true
+					break
+				}
+			}
+			if !found {
+				return ErrConflict
+			}
+			if !utf8.ValidString(display) {
+				display = "[binary imported material]"
+			}
+		}
 		// Originals and byte-addressed flags stay in import_event for lossless
 		// reverse mapping; live consumers use the native masked representation.
 		var spans []secrets.Span
-		for _, s := range ScanSecrets([]byte(r.body)) {
+		for _, s := range ScanSecrets([]byte(display)) {
 			spans = append(spans, secrets.Span{Start: s.Start, End: s.End, Sensitivity: s.Kind})
 		}
-		masked, err := secrets.Mask(r.body, spans...)
+		masked, err := secrets.Mask(display, spans...)
 		if err != nil {
 			return err
 		}
+		var body any = masked.Text()
+		if material.Valid {
+			body = nil
+		}
 		origin, _ := json.Marshal(map[string]string{"kind": "import", "locator": r.id, "source_session": e.session})
-		_, err = tx.ExecContext(ctx, `INSERT INTO conv_event(id,conversation_id,parent_id,person_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,replay_of,body)
-   VALUES(?,?,?,?,?,?,'{"kind":"import"}',?,?,?,?,?,?)`, r.id, r.conversation, nullable(e.parent), nullable(e.classified.person), r.agent, e.classified.kind, e.occurred, e.recorded, e.quality, string(origin), nullable(e.replay), masked.Text())
+		_, err = tx.ExecContext(ctx, `INSERT INTO conv_event(id,conversation_id,parent_id,person_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,replay_of,body,material_id,material_revision)
+   VALUES(?,?,?,?,?,?,'{"kind":"import"}',?,?,?,?,?,?,?,?)`, r.id, r.conversation, nullable(e.parent), nullable(e.classified.person), r.agent, e.classified.kind, e.occurred, e.recorded, e.quality, string(origin), nullable(e.replay), body, material, materialRevision)
 		if err != nil {
 			return err
 		}
