@@ -23,6 +23,7 @@ import (
 )
 
 func TestSandboxedNetworkApprovalControlsActualConnection(t *testing.T) {
+	requireSandbox(t)
 	lina := buildLina(t)
 	canary := filepath.Join(t.TempDir(), "network-canary")
 	build := osexec.Command("go", "build", "-o", canary, "../../../kit/tools/testdata/network")
