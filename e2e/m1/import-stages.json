@@ -1,0 +1,8 @@
+{
+  "job_id": "hermes-staged-import",
+  "profile": "synthetic-profile",
+  "agent": "synthetic-agent",
+  "person": "synthetic-person",
+  "expected_events": 3,
+  "expected_references": 9
+}
