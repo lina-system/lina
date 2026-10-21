@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/memory"
@@ -79,11 +80,22 @@ type sourceMaterials struct {
 	reads  int
 }
 
-func (s *sourceMaterials) Save(_ context.Context, body secrets.Masked) (ledger.Material, error) {
+func (s *sourceMaterials) Prepare(_ context.Context, body secrets.Masked) (ledger.MaterialWrite, error) {
 	ref := ledger.Material{ID: fmt.Sprintf("source-%d", len(s.bodies)), Revision: 1}
-	s.bodies[ref] = body.Text()
-	return ref, nil
+	return sourceMaterialWrite{store: s, ref: ref, body: body.Text()}, nil
 }
+
+type sourceMaterialWrite struct {
+	store *sourceMaterials
+	ref   ledger.Material
+	body  string
+}
+
+func (w sourceMaterialWrite) Insert(context.Context, *canon.Tx) (ledger.Material, error) {
+	w.store.bodies[w.ref] = w.body
+	return w.ref, nil
+}
+func (w sourceMaterialWrite) Close() error { return nil }
 func (s *sourceMaterials) Read(_ context.Context, ref ledger.Material) (string, error) {
 	s.reads++
 	body, ok := s.bodies[ref]
