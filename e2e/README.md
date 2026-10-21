@@ -52,3 +52,54 @@ dependencies also select it through foundation's import graph. Foundation builds
 vets, analyzes and runs the suite uncached with the other component tests. The
 selection regression exercises full runs, component-only diffs, transitive kit
 changes and the documents-only exclusion in a disposable Git repository.
+
+## Real model mode
+
+For QA and acceptance, use the intended real model (currently `claude-opus-5-5`),
+not a cheaper substitute. Configure these variables outside the repository:
+
+| Variable | Meaning |
+| --- | --- |
+| `LINA_QA_REAL_MODEL` | Set to `1` to opt into external model calls. |
+| `LINA_RESPONSES_BASE_URL` | The endpoint's API prefix; the adapter appends `/responses` or `/models`. |
+| `LINA_RESPONSES_MODEL` | The exact model to test. There is no default or fallback model. |
+| `LINA_RESPONSES_API_KEY` | The endpoint's API key, supplied by the environment. |
+
+After setting the endpoint, model and key privately, run:
+
+```sh
+export LINA_QA_REAL_MODEL=1
+export LINA_RESPONSES_BASE_URL LINA_RESPONSES_MODEL LINA_RESPONSES_API_KEY
+go test -count=1 -v ./e2e -run 'TestResponsesRoundTrip|TestRealModelHeadlessConversation'
+```
+
+Keep endpoint values and credentials out of shell tracing, logs, reports and
+commits. HTTPS uses normal certificate verification. Custom endpoints accept
+API keys only; ChatGPT OAuth credentials cannot be redirected to them. No request
+retries, redirects or substitute billing paths are enabled.
+
+`TestResponsesRoundTrip/fixture` and `/real` run the same Core-side journey through
+`internal/core/modelpath.ResponsesFromEnv` and the Responses adapter: send a
+synthetic user message, observe nonempty live deltas, receive completed assistant
+items and a terminal event, release the model lease, and save and reread a private
+probe record in a temporary state directory. Only final items are saved; deltas
+are display data. The probe record is a test artifact, not a canon turn. Output
+contains event counts and outcomes, never the endpoint, key or model reply. The
+test removes its state on completion, including failure.
+
+Real tests skip when the opt-in switch or key is absent, including credential-free
+CI and foundation. With both present, invalid configuration, an unavailable
+endpoint or a broken stream fails the provider journey. Ordinary fixture tests
+still run. Builds and ordinary product subprocesses retain their isolated
+environment; credentials stay in the explicitly opted-in Core-side probe.
+
+`TestRealModelHeadlessConversation` is the pending client journey. With real mode
+enabled it starts actual Core in temporary state, performs the client handshake,
+verifies the current input refusal and shuts Core down, then reports **SKIP**.
+Core currently grants no conversation capability and its payload fields are
+reserved. #55 and #108 must wire conversation input, streaming and canon
+persistence before this test can assert the full TUI/headless journey. At that
+point it must replace the refusal/skip with those assertions and pass the same
+explicit provider configuration to Core. A successful provider probe does not
+establish a client-level streamed or persisted turn. This PR adds no turn loop,
+conversation schema, or CLI conversation route.

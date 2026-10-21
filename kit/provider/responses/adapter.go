@@ -7,9 +7,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,13 +21,30 @@ import (
 )
 
 type Adapter struct {
-	config Config
-	client *http.Client
+	config     Config
+	client     *http.Client
+	baseURL    string
+	apiKeyOnly bool
 }
 
 var _ provider.Adapter = (*Adapter)(nil)
 
 func New(config Config, client *http.Client) (*Adapter, error) {
+	return newAdapter(config, client, "https://api.openai.com/v1", false)
+}
+
+// NewWithBaseURL selects an explicitly configured Responses-compatible API-key
+// endpoint. It never accepts the ChatGPT account's OAuth credential.
+// The base includes the API prefix; both models and responses append to it.
+func NewWithBaseURL(config Config, client *http.Client, baseURL string) (*Adapter, error) {
+	u, err := url.Parse(baseURL)
+	if err != nil || u == nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.Contains(baseURL, "#") {
+		return nil, errors.New("invalid Responses base URL")
+	}
+	return newAdapter(config, client, strings.TrimRight(u.String(), "/"), true)
+}
+
+func newAdapter(config Config, client *http.Client, baseURL string, apiKeyOnly bool) (*Adapter, error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
@@ -35,12 +55,15 @@ func New(config Config, client *http.Client) (*Adapter, error) {
 	copy := *client
 	// Redirects are another request, and must never replay a model call.
 	copy.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &Adapter{config: config, client: &copy}, nil
+	return &Adapter{config: config, client: &copy, baseURL: baseURL, apiKeyOnly: apiKeyOnly}, nil
 }
 func (*Adapter) Provider() provider.ProviderID { return provider.ChatGPT }
 func (*Adapter) Class() provider.Class         { return provider.ModelAPI }
 func (a *Adapter) request(ctx context.Context, c provider.Credential, method, path string, body []byte) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, method, "https://api.openai.com/v1/"+path, bytes.NewReader(body))
+	if a.apiKeyOnly && c.Kind != provider.APIKey {
+		return nil, &provider.Failure{Kind: provider.NotAccepted}
+	}
+	req, err := http.NewRequestWithContext(ctx, method, a.baseURL+"/"+path, bytes.NewReader(body))
 	if err != nil {
 		return nil, classifyError(ctx, err, "")
 	}
