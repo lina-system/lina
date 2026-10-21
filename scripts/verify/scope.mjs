@@ -17,7 +17,7 @@ function registryFor(cwd) {
   const architecture = existsSync(join(cwd, 'internal/archtest')) ? ['./internal/archtest/...'] : [];
   const buildinfo = existsSync(join(cwd, 'internal/buildinfo')) ? ['./internal/buildinfo/...'] : [];
   const manifest = existsSync(join(cwd, 'internal/core/manifest')) ? ['./internal/core/manifest/...'] : [];
-  const coreDirectories = ['internal/core/ledger/', 'internal/core/jobs/', 'internal/core/turn/', 'internal/core/budget/', 'internal/core/boot/', 'internal/core/clientsrv/', 'internal/core/ctlfiles/', 'internal/core/lifecycle/', 'internal/core/eventstore/', 'internal/core/canon/', 'internal/core/retract/', 'internal/core/assets/', 'internal/core/inbox/', 'internal/core/lane/', 'internal/core/authority/', 'internal/core/guard/', 'internal/core/agents/', 'internal/core/secrets/'];
+  const coreDirectories = ['internal/core/assemble/', 'internal/core/ledger/', 'internal/core/jobs/', 'internal/core/turn/', 'internal/core/budget/', 'internal/core/boot/', 'internal/core/clientsrv/', 'internal/core/ctlfiles/', 'internal/core/lifecycle/', 'internal/core/eventstore/', 'internal/core/canon/', 'internal/core/retract/', 'internal/core/assets/', 'internal/core/inbox/', 'internal/core/lane/', 'internal/core/authority/', 'internal/core/guard/', 'internal/core/agents/', 'internal/core/secrets/'];
   const persona = existsSync(join(cwd, 'persona')) ? ['./persona/...'] : [];
   const corePackages = coreDirectories.filter(directory => existsSync(join(cwd, directory)))
     .map(directory => `./${directory}...`);
