@@ -1,0 +1,5 @@
+{
+  "command": "/channels",
+  "reply": "SYNTHETIC-CHANNEL-COMMAND-WAS-SENT-AS-CHAT",
+  "token": "123456:synthetic_token_for_test"
+}
