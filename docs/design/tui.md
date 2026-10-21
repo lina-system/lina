@@ -447,6 +447,17 @@ or a lower epoch on reconnect fails closed. The production receive adapter and
 the PTY recovery scenario together establish that these rules cross the socket;
 the injected lifecycle tests alone do not.
 
+The shell projects LN-78's generated stream payloads into the existing reducer:
+snapshots replace a topic window, output deltas append by revision, and completed
+items replace streamed text. Topic/key pairs have distinct internal block ids.
+Cursor and revision numbers are decoded exactly, including unsigned 64-bit
+limits and JSON integer exponent notation. A payload cursor must match its
+envelope epoch. Explicit resync and overflow retain the visible window; overflow
+requests a fresh subscription for only the affected topic. Replays do not issue
+duplicate requests. A newer observed cursor is a floor for the replacement
+snapshot, so an old-epoch response cannot restore Live. Revocation snapshots
+drop the reducer's cached content and the shell's rendering cache together.
+
 The schema and receive-boundary corpus runs independently through
 `kit/protocol/conformance`. It checks that an unknown kind yields no admitted
 message, increments the client's unknown-kind count once per frame, and does not

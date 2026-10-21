@@ -1,0 +1,243 @@
+// SPDX-License-Identifier: Apache-2.0
+
+package ui
+
+import (
+	"encoding/json"
+	"errors"
+	"math/big"
+	"strconv"
+	"time"
+
+	tea "charm.land/bubbletea/v2"
+	"github.com/thisisjun786/lina/internal/tui/state"
+	"github.com/thisisjun786/lina/kit/protocol"
+)
+
+func compareStreamCursor(a, b protocol.StreamCursor) int {
+	aEpoch, _ := strconv.ParseUint(a.Epoch, 10, 64)
+	bEpoch, _ := strconv.ParseUint(b.Epoch, 10, 64)
+	if aEpoch < bEpoch {
+		return -1
+	}
+	if aEpoch > bEpoch {
+		return 1
+	}
+	aSeq, _ := streamNumber(a.Seq)
+	bSeq, _ := streamNumber(b.Seq)
+	if aSeq < bSeq {
+		return -1
+	}
+	if aSeq > bSeq {
+		return 1
+	}
+	return 0
+}
+
+func (m *shellModel) hasGap() bool {
+	for _, topic := range m.content.Topics {
+		if topic.OutOfSync {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *shellModel) subscribeSnapshot(topic string) tea.Cmd {
+	request := shellSubscription{Generation: m.generation, Request: protocol.Subscribe{Topic: &topic}}
+	return func() tea.Msg { return request }
+}
+
+func (m *shellModel) markResync(p streamProjection) tea.Cmd {
+	if m.content.Epoch != "" {
+		cursor := protocol.StreamCursor{Epoch: m.content.Epoch, Seq: json.Number(strconv.FormatUint(m.content.Topics[p.topic].Cursor, 10))}
+		if compareStreamCursor(p.cursor, cursor) < 0 {
+			return nil
+		}
+	}
+	if seen, ok := m.resyncSeen[p.topic]; ok && compareStreamCursor(p.cursor, seen) <= 0 {
+		return nil
+	}
+	m.resyncSeen[p.topic], m.resyncPending[p.topic] = p.cursor, p.cursor
+	m.status = ConnectionStatus{State: Resyncing}
+	if p.request {
+		return m.subscribeSnapshot(p.topic)
+	}
+	return nil // Core's resync already promises a snapshot on this subscription.
+}
+
+var errStream = errors.New("invalid stream projection")
+
+type streamProjection struct {
+	message                   state.Msg
+	topic                     string
+	cursor                    protocol.StreamCursor
+	snapshot, resync, request bool
+}
+
+// projectStream consumes only LN-78's generated payloads. It converts the wire
+// view into the existing pure reducer's messages; it defines no wire fields.
+func projectStream(envelope protocol.Envelope) (streamProjection, error) {
+	p := streamProjection{}
+	switch payload := envelope.Payload.(type) {
+	case protocol.Snapshot:
+		seq, err := streamNumber(payload.Cursor.Seq)
+		if err != nil || payload.Cursor.Epoch != envelope.Epoch {
+			return p, errStream
+		}
+		items := make([]state.Block, 0, len(payload.Items))
+		for _, item := range payload.Items {
+			revision, err := streamNumber(item.Revision)
+			if err != nil {
+				return p, err
+			}
+			body, err := streamItemPayload(item)
+			if err != nil {
+				return p, err
+			}
+			_, text := streamFields(body)
+			block := state.Block{ID: streamKey(payload.Topic, item.Key), Kind: item.Kind, Revision: revision, Done: item.Kind != protocol.KindOutputDelta}
+			if text != nil {
+				block.Text = *text
+			}
+			items = append(items, block)
+		}
+		sent, _ := time.Parse(time.RFC3339Nano, envelope.SentAt)
+		p = streamProjection{topic: payload.Topic, cursor: payload.Cursor, snapshot: true, message: state.Snapshot{Epoch: payload.Cursor.Epoch, Revocation: payload.RevocationEpoch, Topic: payload.Topic, Cursor: seq, Items: items, ServerTime: sent}}
+	case protocol.Resync:
+		p = streamProjection{topic: payload.Topic, cursor: payload.Cursor, resync: true}
+	case protocol.ResyncRequired:
+		p = streamProjection{topic: payload.Topic, cursor: payload.Cursor, resync: true, request: true}
+	default:
+		metadata, text := streamFields(envelope.Payload)
+		if metadata == nil {
+			return p, nil
+		}
+		seq, err := streamNumber(metadata.Cursor.Seq)
+		if err != nil {
+			return p, err
+		}
+		revision, err := streamNumber(metadata.Revision)
+		if err != nil {
+			return p, err
+		}
+		value := ""
+		if text != nil {
+			value = *text
+		}
+		p.topic, p.cursor = metadata.Topic, metadata.Cursor
+		if envelope.Kind == protocol.KindOutputDelta {
+			p.message = state.Delta{Epoch: metadata.Cursor.Epoch, Topic: metadata.Topic, ID: streamKey(metadata.Topic, metadata.Key), Cursor: seq, Revision: revision, Text: value}
+		} else {
+			p.message = state.ItemDone{Epoch: metadata.Cursor.Epoch, Topic: metadata.Topic, Cursor: seq, Block: state.Block{ID: streamKey(metadata.Topic, metadata.Key), Kind: envelope.Kind, Revision: revision, Text: value}}
+		}
+	}
+	if p.cursor.Epoch != envelope.Epoch {
+		return streamProjection{}, errStream
+	}
+	if _, err := streamNumber(p.cursor.Seq); err != nil {
+		return streamProjection{}, err
+	}
+	return p, nil
+}
+
+// Topic keys are unique within a topic. Length-prefix the topic to avoid
+// collisions between two valid topic/key pairs; this id is never displayed.
+func streamKey(topic, key string) string { return strconv.Itoa(len(topic)) + ":" + topic + key }
+
+func streamNumber(number json.Number) (uint64, error) {
+	if !json.Valid([]byte(number)) {
+		return 0, errStream
+	}
+	rational, ok := new(big.Rat).SetString(string(number))
+	if !ok || !rational.IsInt() || !rational.Num().IsUint64() {
+		return 0, errStream
+	}
+	return rational.Num().Uint64(), nil
+}
+
+func streamFields(payload protocol.Payload) (*protocol.StreamMetadata, *string) {
+	switch p := payload.(type) {
+	case protocol.OutputDelta:
+		return p.Stream, p.Text
+	case protocol.ItemDone:
+		return p.Stream, p.Text
+	case protocol.TurnState:
+		return p.Stream, p.Text
+	case protocol.ApprovalRequest:
+		return p.Stream, nil
+	case protocol.Question:
+		return p.Stream, nil
+	case protocol.Result:
+		return p.Stream, &p.Summary
+	case protocol.RunningUpdate:
+		return p.Stream, p.Text
+	case protocol.ProgressUpdate:
+		return p.Stream, p.Text
+	case protocol.WaitingUpdate:
+		return p.Stream, p.Text
+	case protocol.AgentTalkEntry:
+		return p.Stream, p.Text
+	case protocol.AccountResult:
+		return p.Stream, p.Text
+	case protocol.ChannelState:
+		return p.Stream, p.Text
+	case protocol.TaskStatus:
+		return p.Stream, p.Text
+	case protocol.RunStatus:
+		return p.Stream, p.Text
+	case protocol.BackgroundNotice:
+		return p.Stream, p.Text
+	case protocol.Connected:
+		return p.Stream, p.Text
+	case protocol.Disconnected:
+		return p.Stream, p.Text
+	}
+	return nil, nil
+}
+
+func decodeStreamItem[T protocol.Payload](data []byte) (protocol.Payload, error) {
+	var p T
+	err := json.Unmarshal(data, &p)
+	return p, err
+}
+
+func streamItemPayload(item protocol.StreamItem) (protocol.Payload, error) {
+	switch string(item.Kind) {
+	case "output_delta":
+		return decodeStreamItem[protocol.OutputDelta](item.Payload)
+	case "item_done":
+		return decodeStreamItem[protocol.ItemDone](item.Payload)
+	case "turn_state":
+		return decodeStreamItem[protocol.TurnState](item.Payload)
+	case "approval_request":
+		return decodeStreamItem[protocol.ApprovalRequest](item.Payload)
+	case "question":
+		return decodeStreamItem[protocol.Question](item.Payload)
+	case "result":
+		return decodeStreamItem[protocol.Result](item.Payload)
+	case "running_update":
+		return decodeStreamItem[protocol.RunningUpdate](item.Payload)
+	case "progress_update":
+		return decodeStreamItem[protocol.ProgressUpdate](item.Payload)
+	case "waiting_update":
+		return decodeStreamItem[protocol.WaitingUpdate](item.Payload)
+	case "agent_talk_entry":
+		return decodeStreamItem[protocol.AgentTalkEntry](item.Payload)
+	case "account_result":
+		return decodeStreamItem[protocol.AccountResult](item.Payload)
+	case "channel_state":
+		return decodeStreamItem[protocol.ChannelState](item.Payload)
+	case "task_status":
+		return decodeStreamItem[protocol.TaskStatus](item.Payload)
+	case "run_status":
+		return decodeStreamItem[protocol.RunStatus](item.Payload)
+	case "background_notice":
+		return decodeStreamItem[protocol.BackgroundNotice](item.Payload)
+	case "connected":
+		return decodeStreamItem[protocol.Connected](item.Payload)
+	case "disconnected":
+		return decodeStreamItem[protocol.Disconnected](item.Payload)
+	}
+	return nil, errStream
+}

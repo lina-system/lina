@@ -15,6 +15,7 @@ import (
 	"github.com/thisisjun786/lina/internal/tui/sanitize"
 	"github.com/thisisjun786/lina/internal/tui/state"
 	"github.com/thisisjun786/lina/internal/tui/term"
+	"github.com/thisisjun786/lina/kit/protocol"
 )
 
 // These are local projections, not another wire format. The connection owner
@@ -32,6 +33,10 @@ type shellEffect struct {
 	Generation uint64
 	Message    state.Msg
 }
+type shellSubscription struct {
+	Generation uint64
+	Request    protocol.Subscribe
+}
 
 type shellBlock struct {
 	text     string
@@ -41,15 +46,17 @@ type shellBlock struct {
 }
 
 type shellModel struct {
-	generation uint64
-	status     ConnectionStatus
-	content    state.State
-	styles     Styles
-	size       layout.Size
-	gate       term.Gate
-	events     bool
-	now        func() time.Time
-	blocks     map[string]shellBlock
+	generation    uint64
+	status        ConnectionStatus
+	content       state.State
+	styles        Styles
+	size          layout.Size
+	gate          term.Gate
+	events        bool
+	now           func() time.Time
+	blocks        map[string]shellBlock
+	resyncPending map[string]protocol.StreamCursor
+	resyncSeen    map[string]protocol.StreamCursor
 }
 
 func newShell(options Options, now func() time.Time) *shellModel {
@@ -58,7 +65,8 @@ func newShell(options Options, now func() time.Time) *shellModel {
 	}
 	styles := NewStyles(options)
 	return &shellModel{generation: 1, status: ConnectionStatus{State: Connecting}, styles: styles,
-		size: layout.Size{Width: styles.options.Width, Height: 24}, now: now, blocks: make(map[string]shellBlock)}
+		size: layout.Size{Width: styles.options.Width, Height: 24}, now: now, blocks: make(map[string]shellBlock),
+		resyncPending: make(map[string]protocol.StreamCursor), resyncSeen: make(map[string]protocol.StreamCursor)}
 }
 
 func (m *shellModel) Init() tea.Cmd          { return nil }
@@ -82,9 +90,53 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Generation != m.generation {
 			return m, nil
 		}
+		var projected *streamProjection
+		if frame, ok := msg.Message.(state.Frame); ok {
+			var decoder protocol.ClientDecoder
+			envelope, err := decoder.Decode(frame.Data)
+			if err == nil && envelope != nil {
+				projection, err := projectStream(*envelope)
+				if err != nil {
+					m.status = ConnectionStatus{State: Failed, Cause: protocol.ErrorMalformed}
+					return m, nil
+				}
+				if projection.topic != "" {
+					if projection.resync {
+						return m, m.markResync(projection)
+					}
+					if floor, pending := m.resyncPending[projection.topic]; pending && (!projection.snapshot || compareStreamCursor(projection.cursor, floor) < 0) {
+						return m, nil
+					}
+					msg.Message = projection.message
+					if snapshot, ok := msg.Message.(state.Snapshot); ok {
+						snapshot.ClientTime = m.now()
+						msg.Message = snapshot
+					}
+					projected = &projection
+				}
+			}
+		}
 		var commands []state.Cmd
 		m.content, commands = state.Reduce(m.content, msg.Message)
 		m.refreshBlocks()
+		if projected != nil && m.content.Topics[projected.topic].OutOfSync {
+			if floor, exists := m.resyncPending[projected.topic]; !exists || compareStreamCursor(projected.cursor, floor) > 0 {
+				m.resyncPending[projected.topic] = projected.cursor
+			}
+		}
+		if projected != nil && projected.snapshot {
+			topic := m.content.Topics[projected.topic]
+			seq, _ := streamNumber(projected.cursor.Seq)
+			if m.content.Epoch == projected.cursor.Epoch && topic.Cursor >= seq && !topic.OutOfSync {
+				delete(m.resyncPending, projected.topic)
+			}
+			if len(m.resyncPending) == 0 && !m.hasGap() && m.status.State == Resyncing {
+				m.status = ConnectionStatus{State: Live}
+			}
+		}
+		if m.hasGap() {
+			m.status = ConnectionStatus{State: Resyncing}
+		}
 		var effects []tea.Cmd
 		for _, command := range commands {
 			generation := m.generation
@@ -93,6 +145,13 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			})
 		}
 		return m, tea.Batch(effects...)
+	case shellEffect:
+		if msg.Generation != m.generation {
+			return m, nil
+		}
+		if request, ok := msg.Message.(state.ResyncRequest); ok && request.Gen == m.content.Gen {
+			return m, m.subscribeSnapshot(request.Topic)
+		}
 	case tea.WindowSizeMsg:
 		m.size = layout.Size{Width: max(0, msg.Width), Height: max(0, msg.Height)}
 		options := m.styles.options
