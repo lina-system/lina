@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Build both commands and record provenance only for a clean, unchanged commit.
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { gitOut } from './git.mjs';
@@ -20,9 +20,21 @@ function releaseVersion(tag) {
   return Number.isFinite(time) && new Date(time).toISOString().slice(0, 10) === date;
 }
 
+// Resolve existing ancestors even when the output directory has not been created.
+function outputPath(path) {
+  try {
+    return realpathSync(path);
+  } catch (error) {
+    const parent = dirname(path);
+    if (error.code !== 'ENOENT' || parent === path) throw error;
+    return join(outputPath(parent), basename(path));
+  }
+}
+
 export function build({ cwd = root, out, execute: run = execute }) {
   if (!out) throw new Error('An output directory is required');
-  out = resolve(out);
+  cwd = realpathSync(cwd);
+  out = outputPath(resolve(out));
   const names = ['lina', 'lina-node'].map(name => name + (process.platform === 'win32' ? '.exe' : ''));
   const artifacts = [...names, 'manifest.json'].map(name => relative(cwd, join(out, name)).replaceAll('\\', '/'));
   const inside = artifacts.filter(name => !name.startsWith('../'));
