@@ -175,6 +175,7 @@ The manager session keeps one accumulating context per managed 목표 or 일, bo
 - Speaker kind comes from the trusted entry route, never the model's `user` role or prompt wording. Automated event batches and continuations retain their automation or system origin, manager replies are agent events, and worker reports retain their external origin. A forwarded instruction cites the original person's event without becoming another person turn.
 - Only the person's own turns can feed the person model. Manager prompts, event batches, worker reports, manager replies and their summaries are project context, never evidence of the person's preferences or statements. Verified work results may enter common knowledge under the existing work-result rules without becoming person-model evidence.
 - The person can read the session in the project's Details. This view supplies no input or approval; steering still comes through the person's conversation with its task or project binding.
+- Deleting the owning persona ends the manager binding and trashes its conversation under the agent-deletion rules. The person's explicit project reassignment starts the replacement manager's context from the preserved work records and permitted common knowledge, not from the deleted persona's private history. Pending deliveries remain bound to their tasks and receipts and are checked by the replacement manager ([work-and-delegation.md](work-and-delegation.md#manager-session-lifecycle)).
 
 ### Channel conversations
 
