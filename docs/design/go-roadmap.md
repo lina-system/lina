@@ -185,6 +185,7 @@ The Korean acceptance corpus is `testdata/korean/search.json`: both stores asser
 ### 1.F Backup, install and restart
 
 **G1-22 Backup generations and restore.** `lina backup` and `lina restore`; removal list applied first.
+- #89 implements whole-generation capture, removal-list replay before copying, online SQLite snapshots, verified file/material inventories and manifest-last publication. Package failure scenarios include SIGKILL during copying; `e2e/m1/backup.json` drives a synthetic conversation and backup through the installed executable. Restore and its zero-exposure acceptance remain with #90.
 - Done when: a kill during copy leaves no generation; a hash mismatch fails the backup; the zero-exposure test passes also into another root; after restore non-terminal external-effect rows are unknown, leases are void and accounts show needs sign-in; the epoch never falls.
 - Depends on: G1-03, G1-11, G1-14, G1-15, G1-29. Design refs: C-32; [filesystem.md](filesystem.md#backup-generations).
 
