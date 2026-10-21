@@ -7,8 +7,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { sandbox } from './test-fixture.mjs';
-import { componentsTimeoutMs, createGoContext, execute } from './verify/check-components.mjs';
-import { build } from './build.mjs';
+import { createGoContext, execute } from './verify/check-components.mjs';
+import { build, buildTimeoutMs } from './build.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -34,7 +34,7 @@ function fixture(t, { timeoutScale = 1, executeCommand = execute } = {}) {
   const out = join(sb.dir, 'artifacts with spaces');
   // A full cross-build contains multiple Go commands. Share the same bounded
   // allowance across targets, inside foundation's 600 s automation watchdog.
-  const deadline = performance.now() + (componentsTimeoutMs - 5000) * timeoutScale;
+  const deadline = performance.now() + buildTimeoutMs * timeoutScale;
   const run = (args = ['--out', out]) => {
     const timeoutMs = Math.max(1, Math.floor(deadline - performance.now()));
     return executeCommand(process.execPath,

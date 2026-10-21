@@ -19,17 +19,20 @@ function fixture(t) {
 }
 const kit = { name: 'kit', module: 'kit', packages: ['./...'] };
 
-test('a progressing test command can outlive the old per-command limit', t => {
+test('cold compilation leaves enough shared budget for the module test suite', t => {
   const sb = fixture(t);
   let elapsed = 0;
   t.mock.method(performance, 'now', () => elapsed);
   const result = checkComponents({ cwd: sb.dir, components: [kit], execute(command, goArgs, options) {
+    // CI spent about 200 s preparing the suite before its 395 s remainder
+    // expired. Include that preparation in the same deterministic deadline.
+    if (goArgs[0] === 'build') elapsed += 200_000;
     if (goArgs[0] === 'test') {
       // Model progress past the old deadline without racing wall-clock timers.
       const deadline = elapsed + (options.timeoutMs ?? 120_000);
       let stdout = '';
       for (let i = 0; i < 3; i++) {
-        elapsed += 50_000;
+        elapsed += 150_000;
         if (elapsed >= deadline) return { status: 1, stdout, stderr: 'test command timed out\n' };
         stdout += 'package ok\n';
       }
@@ -95,7 +98,7 @@ setInterval(() => {}, 1000);
       return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
     } });
   assert.equal(result.status, 1);
-  assert.match(result.output, /\$ go test -count=1 -mod=readonly \.\/\.\.\./);
+  assert.match(result.output, /\$ go test -count=1 -timeout=4m -mod=readonly \.\/\.\.\./);
   assert.match(result.output, /command timed out after [\d.]+ s \(budget 0\.\d+ s\): .*hung\.mjs/);
 });
 
@@ -112,7 +115,7 @@ test('components use the pinned toolchain, readonly commands, module verificatio
     ['env', 'GOVERSION'], ['mod', 'verify'], ['mod', 'verify'],
     ['build', '-mod=readonly', './...'],
     ['vet', '-mod=readonly', './...'], ['tool', 'exhaustive', './...'],
-    ['test', '-count=1', '-mod=readonly', './...'],
+    ['test', '-count=1', '-timeout=4m', '-mod=readonly', './...'],
   ]);
   for (const call of calls) {
     assert.equal(call.env.GOTOOLCHAIN, 'go1.27.3');
@@ -171,4 +174,18 @@ test('token drift and raw TUI literals stop component verification before builds
   assert.equal(result.status, 1);
   assert.ok(calls.some(call => call.command === process.execPath && call.args.includes('--check')));
   assert.ok(!calls.some(call => call.args[0]==='build'));
+});
+
+test('module tests retain a diagnostic deadline inside their process budget', t => {
+  const sb = fixture(t);
+  const calls = [];
+  const result = checkComponents({ cwd: sb.dir, components: [kit], execute(command, args, options) {
+    calls.push({ command, args, ...options });
+    return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
+  } });
+  assert.equal(result.status, 0, result.output);
+  const suite = calls.find(call => call.args[0] === 'test');
+  assert.ok(suite.args.includes('-timeout=4m'), 'Go must emit stuck-test stacks before the process guard');
+  assert.ok(suite.timeoutMs > 240_000, 'the shared budget leaves time for Go timeout diagnostics');
+  assert.ok(suite.timeoutMs <= 895_000, 'the test command retains the shared components deadline');
 });
