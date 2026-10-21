@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -243,14 +244,26 @@ func TestSchemaAndTypesAgree(t *testing.T) {
 			if object.Type != "object" || object.AdditionalProperties == nil || *object.AdditionalProperties {
 				t.Fatal("schema must declare a closed object")
 			}
-			if len(object.Properties) != typ.NumField() || len(object.Required) != typ.NumField() {
+			if len(object.Properties) != typ.NumField() {
 				t.Fatal("schema and Go field counts differ")
 			}
+			requiredCount := 0
 			for i := 0; i < typ.NumField(); i++ {
-				field := typ.Field(i).Tag.Get("json")
-				if _, ok := object.Properties[field]; !ok || !slices.Contains(object.Required, field) {
-					t.Fatalf("schema missing required field %s", field)
+				tag := strings.Split(typ.Field(i).Tag.Get("json"), ",")
+				field := tag[0]
+				if _, ok := object.Properties[field]; !ok {
+					t.Fatalf("schema missing property %s", field)
 				}
+				optional := slices.Contains(tag[1:], "omitempty")
+				if slices.Contains(object.Required, field) == optional {
+					t.Fatalf("schema required membership differs from json tag for %s", field)
+				}
+				if !optional {
+					requiredCount++
+				}
+			}
+			if len(object.Required) != requiredCount {
+				t.Fatal("schema required count differs from non-omitempty fields")
 			}
 		})
 	}
