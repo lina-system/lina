@@ -111,6 +111,8 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-10 Ledger, request assembly and preparation.** Ledger fields, pure Assemble, ContextPacket, preparation steps.
 - Done when: an update of a ledger row is denied; identical input gives identical bytes; the layout order matches the contract; each failing preparation step shows one plain line and a stub provider sees zero calls; the ContextPacket is never stored.
 - Depends on: G1-03, G1-06, G1-08. Design refs: C-11, C-17; [conversation-and-memory.md](conversation-and-memory.md#request-layout).
+- #58 implements pure deterministic assembly, bounded optional ContextPacket collection and the four-step preparation runner with commit-before-dispatch evidence callbacks. Package tests cover ordered layout, budget and scope exclusions, one-line failures with zero provider calls, follow-up reuse and absence of packet bodies after SQLite reopen. It adds no client-protocol or TUI conversation endpoint.
+- #57 implements the immutable ledger tables and native admission, using the fenced canon writer, entry-derived speaker kinds and masking before storage. SQLite and real material-store scenarios cover mutation refusal, atomic admission, restart readback and unavailable bytes. Preparation and request assembly remain with their own issues; no ledger operation is exposed through the TUI or Core protocol in this increment.
 
 **G1-11 Inbox, lanes, steering and deadlines.** Inbox, lanes, steering, stop, expiry timers.
 - Done when: a duplicate key inserts one row and preserves its original bytes across restart; the acknowledgement follows the commit and no failed commit is acknowledged; each conversation runs one turn at a time while other conversations can proceed; a message during a turn is applied as steering at the next round; stop ends open calls as aborted; after `kill -9` mid-turn the input is not replayed and the conversation shows one plain line.
@@ -191,6 +193,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-40 Packaging and residency check.** Static binaries, sqlite-vec, 24-hour residency on Linux and macOS.
 - Done when: sqlite-vec loads after its digest check; services start; size, start time and resident memory and CPU stay within the budget written before the run on both platforms; the binding is recorded in the manifest.
 - Depends on: G1-03, G1-23. Design refs: [runtime.md](runtime.md#runtime-acceptance) (V2).
+- #94 supplies digest-checked embedded sqlite-vec, platform build manifests and Linux amd64/macOS arm64 release archives, with service-start acceptance on the install path. It does not substitute cross-builds for the separate native-platform and 24-hour residency measurements.
 
 ### 1.G Channels and agent exchanges
 
