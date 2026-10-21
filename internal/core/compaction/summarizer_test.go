@@ -54,7 +54,7 @@ func TestAuxiliarySummaryUsesOnlySegmentAndRejectsIncompleteStream(t *testing.T)
 			} else if !errors.Is(err, ErrSummary) {
 				t.Fatalf("accepted truncated summary: %v", err)
 			}
-			if !stream.closed || sent.Purpose != provider.Auxiliary || sent.Model != "conversation-model" || len(sent.Tools) != 0 || sent.Bridge != nil || len(sent.Items) != 1 || strings.Contains(string(sent.Items[0]), "unrelated current input") || !strings.Contains(string(sent.Items[0]), "fact") {
+			if !stream.closed || sent.Purpose != provider.Auxiliary || sent.Model != "conversation-model" || len(sent.Tools) != 0 || sent.Bridge != nil || len(sent.Items) != 2 || strings.Contains(string(sent.Items[0]), "unrelated current input") || !strings.Contains(string(sent.Items[1]), "fact") {
 				t.Fatalf("bad auxiliary request: %+v", sent)
 			}
 		})
