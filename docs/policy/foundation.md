@@ -59,16 +59,6 @@ The scripts use Node 20 or newer and its built-in modules, Git, and actionlint o
 
 ## Timing and budget
 
-The build-artifact test's subprocess has a five-minute hang guard within the
-automation check's ten-minute timeout. Its cold build compiles commands and
-metadata readers concurrently with other foundation checks; CI exceeded the
-former two-minute guard after the client-listener integration. This is separate
-from the measured development-loop budgets below and changes no artifact checks.
-The combined Go test command likewise has a five-minute guard because it includes
-all selected packages and the subprocess acceptance scenarios; other component
-commands retain their two-minute guard and the component check retains its
-ten-minute deadline.
-
 | mode | commit | machine | cache | wall s | bound s |
 | --- | --- | --- | --- | ---: | ---: |
 | full | e86f7b2 | lina-os (x86-64, 20 threads) | warm | 3.6 | 20 |
@@ -160,6 +150,10 @@ Markdown under `third_party/` is upstream content. The docs check skips it becau
 The component check requires matching `go` and exact `toolchain` directives in both module manifests and `go.work`, sets `GOTOOLCHAIN` to that release, and checks the Go version actually used. It verifies module sums before building, including the root module that supplies the analyzer when only kit is selected. Commands sharing a module run together with their package patterns. Go subprocesses use an isolated home directory and an allowlist of environment variables, with user Go/Git configuration disabled; proxy and checksum settings retain Go's defaults. All Go builds and analyzer package loading use `-mod=readonly`, and builds use `CGO_ENABLED=0`.
 
 Component registration implements the `components` gate. The separate `dependencies` check implements the current Go dependency policy checks, including vulnerability scanning, exception validation, and license and notice checks. Dependency-change counts, npm checks (including application of install-script exceptions), non-Go component notices, vendored-tree integrity and upstream-fetch checks remain future work. Notice checks establish entry presence, not the legal completeness of the notice text. `go mod verify` checks downloaded module contents against cached hashes; readonly component builds also enforce the manifest and checksum inputs needed by those builds.
+
+The component check shares a 595-second command budget, leaving five seconds for diagnostics and cleanup before foundation's 600-second outer timeout. Go environment queries, token checks and command usage checks have a 30-second limit; module verification and protocol generation have a 120-second limit. Builds, vet, the exhaustive analyzer and uncached tests may use the remaining shared budget, so a progressing module test run can exceed 120 seconds as its package count grows. Every command's limit is capped by the remaining budget; it never resets between commands or modules. Output does not extend the overall deadline. A subprocess timeout fails verification and reports the command, its arguments, elapsed time and assigned budget.
+
+Build regression fixtures also share a 595-second allowance across their build CLI calls, including both cross-build targets, under automation's 600-second watchdog. They pass the remaining budget to `scripts/build.mjs --timeout-ms <milliseconds>`, reserving one second for the CLI to report failures before its wrapper expires. The build script defaults to 595 seconds when invoked directly. Its inner Go builds share the remaining deadline, with environment queries capped at 30 seconds and module verification and metadata generation at 120 seconds. Inner commands and the fixture wrapper use the same timeout diagnostics.
 
 Both checks reuse the machine's Go module and npm download caches, which `go.sum` and lockfile integrity verify, and never cache `node_modules` or results: `go test` runs with `-count=1`, so no cached test result counts. Adding either check changes the full-mode run, so the change that registers the first component records a new full-mode measurement and bound in the timing table.
 
