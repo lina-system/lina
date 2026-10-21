@@ -191,6 +191,10 @@ An agent exchange is a conversation between exactly two agents, one that asks an
 - **Voice.** Each preset's default voice layer carries one line for how its agent writes to other agents. The register is plain and short.
 - **Deleting an agent.** An exchange stays as a record of the other agent, and the deleted agent is named by its id. The deleted agent's personal knowledge is erased as under "Agents".
 
+The initial mailbox implementation uses four request/answer rounds. A checked answer can be followed by another typed request between the same agents; an acknowledgement closes the exchange without a model turn and cannot be continued. On a missed reply deadline, the implementation chooses the flag-and-stop path: the log shows `expired`, with no automatic model retry and no new "needs the person" flag. An accepted exchange turn is never replayed after a crash. Duplicate delivery retains the original content even when the retry arrives after expiry.
+
+The mailbox's native events form an append-only exchange ledger, separate from person-conversation admission. Preparation has only persona, common-knowledge and named-material readers, and supplies a fresh background model request with no personal-knowledge tools. The waiting flag is created only by a trusted ownership lookup for the exact typed decision in the same transaction as the waiting row; an agent's claim of person ownership is not sufficient. The package exposes a log and expansion for later surface adapters; client protocol, notifications and conversation result notices are not wired by this increment. See [C-25](go-core.md#plugins-channels-and-exchanges) for the storage and run-coordinator boundaries.
+
 ### Episode export
 
 The ledger can be exported as episodes: recorded turns written out for use outside LINA. The purpose is the development of LINA's own harness files, which [runtime.md](runtime.md#replay-command) defines with the replay command: a developer's loop improves them by re-running episodes with `lina replay`. LINA ships no such loop, and an install exports nothing unless the person runs the export.
