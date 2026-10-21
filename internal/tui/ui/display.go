@@ -16,6 +16,8 @@ type display struct {
 	styles      Styles
 	interactive bool
 	rows        int
+	last        Connection
+	shown       bool
 }
 
 func newDisplay(output io.Writer) *display {
@@ -33,7 +35,15 @@ func newDisplay(output io.Writer) *display {
 	return d
 }
 
-func (d *display) show(state Connection) error {
+func (d *display) show(state Connection) (err error) {
+	if d.shown && d.last == state {
+		return nil
+	}
+	defer func() {
+		if err == nil {
+			d.last, d.shown = state, true
+		}
+	}()
 	if !d.interactive {
 		if state == Live {
 			_, err := fmt.Fprintln(d.output, "live")
@@ -47,7 +57,7 @@ func (d *display) show(state Connection) error {
 	// only the new labelled state so a monochrome transcript remains compact.
 	if d.rows > 0 {
 		if d.styles.options.Profile == Monochrome {
-			v := connectionView(state, d.styles.tokens, d.styles.options.ASCII)
+			v := localizedConnectionView(state, d.styles.tokens, d.styles.options.ASCII, d.styles.options.Language)
 			gutter := strings.Repeat(" ", d.styles.tokens.SpaceGutter.Cells)
 			text := gutter + v.Mark + " " + v.Label + "\n" + gutter + v.Detail
 			if v.Action != "" {
@@ -58,7 +68,7 @@ func (d *display) show(state Connection) error {
 		}
 		frame = ansi.CursorUp(d.rows) + ansi.EraseScreenBelow + frame
 	}
-	_, err := io.WriteString(d.output, frame)
+	_, err = io.WriteString(d.output, frame)
 	d.rows = rows
 	return err
 }

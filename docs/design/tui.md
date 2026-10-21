@@ -311,6 +311,11 @@ Keys are a proposal and data in `tui/ui`. No contract fixes them.
 
 Key classes are Toggle, Edit and Approve. Every key event passes one `Admit` gate: releases are ignored, repeats are dropped for Toggle and Approve, and Edit keys may repeat. Without key events from the terminal every key counts as a press, and approval cards add a dead time after any change of card (P).
 
+`term.Gate.Admit` takes an injected timestamp. The legacy approval barrier is
+250 ms (P), restarted when a card or its group revision changes. Explicit repeat
+and release events remain explicit even if the keyboard capability reply has
+not arrived. Unknown key classes and event types are rejected.
+
 **Mid-turn input** is steering by default and applies at the next round boundary ([runtime.md](runtime.md#conversation-loop)). `/queue` makes the input a follow-up. `/stop` cancels.
 
 **The composer** is the Bubbles `textarea`; `textinput` is not used.
@@ -436,6 +441,13 @@ Invariants that need a test:
 - Connection-screen display overrides are `LINA_THEME=light|dark|high-contrast` and `LINA_GLYPHS=ascii`. Otherwise `COLORFGBG` selects a light or dark background (dark by default); terminal capability selects RGB, 256 or 16 colours. Nonempty `NO_COLOR` preserves the layout, marks, labels and actions without escapes; subsequent states append compact lines. These overrides persist no preferences.
 - On LINA OS the complete TUI follows the active Omarchy theme file ([surfaces.md](surfaces.md#platform-adaptation)); theme-file discovery remains part of platform preferences work.
 - Every code in the closed lists has an entry in both the Korean and English catalogs, checked by id and never by wording.
+
+The connection shell resolves labels and next actions through
+`internal/design` catalog ids. `LC_ALL`, then `LC_MESSAGES`, then `LANG` selects
+Korean for `ko` locales; other or missing locales use English. Unsupported ids
+render the catalog's unknown label, never peer text. The coverage test walks
+every enum in the client schema, including nested enums, and requires both
+languages. Repeating the same connection state emits no additional bytes.
 
 ## Earlier decisions and open points
 
