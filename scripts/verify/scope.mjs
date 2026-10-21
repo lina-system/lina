@@ -17,7 +17,7 @@ function registryFor(cwd) {
   const architecture = existsSync(join(cwd, 'internal/archtest')) ? ['./internal/archtest/...'] : [];
   const buildinfo = existsSync(join(cwd, 'internal/buildinfo')) ? ['./internal/buildinfo/...'] : [];
   const manifest = existsSync(join(cwd, 'internal/core/manifest')) ? ['./internal/core/manifest/...'] : [];
-  const coreDirectories = ['internal/core/runs/', 'internal/core/modelpath/', 'internal/core/accounts/', 'internal/core/assemble/', 'internal/core/jobs/', 'internal/core/ledger/', 'internal/core/memory/', 'internal/core/exec/', 'internal/core/turn/', 'internal/core/budget/', 'internal/core/boot/', 'internal/core/clientsrv/', 'internal/core/ctlfiles/', 'internal/core/lifecycle/', 'internal/core/eventstore/', 'internal/core/canon/', 'internal/core/assets/', 'internal/core/inbox/', 'internal/core/channels/', 'internal/core/gateway/', 'internal/core/lane/', 'internal/core/authority/', 'internal/core/guard/', 'internal/core/agents/', 'internal/core/secrets/'];
+  const coreDirectories = ['internal/core/runs/', 'internal/core/modelpath/', 'internal/core/accounts/', 'internal/core/assemble/', 'internal/core/jobs/', 'internal/core/ledger/', 'internal/core/memory/', 'internal/core/exec/', 'internal/core/turn/', 'internal/core/budget/', 'internal/core/boot/', 'internal/core/clientsrv/', 'internal/core/ctlfiles/', 'internal/core/lifecycle/', 'internal/core/eventstore/', 'internal/core/canon/', 'internal/core/assets/', 'internal/core/inbox/', 'internal/core/channels/', 'internal/core/gateway/', 'internal/core/lane/', 'internal/core/authority/', 'internal/core/guard/', 'internal/core/agents/', 'internal/core/secrets/', 'internal/core/importer/'];
   const persona = existsSync(join(cwd, 'persona')) ? ['./persona/...'] : [];
   const corePackages = coreDirectories.filter(directory => existsSync(join(cwd, directory)))
     .map(directory => `./${directory}...`);
@@ -30,7 +30,7 @@ function registryFor(cwd) {
   const e2e = existsSync(join(cwd, 'e2e')) ? ['./e2e/...'] : [];
   return [
     { name: 'kit', module: 'kit', directories: ['kit/', 'protocol/schema/', 'protocol/fixtures/'], files: [], packages: ['./...'] },
-    { name: 'lina', module: '.', directories: ['cmd/lina/', 'internal/archtest/', 'internal/buildinfo/', 'internal/core/manifest/', 'e2e/', 'persona/', ...coreDirectories, ...clientDirectories], files: ['doc.go'], packages: ['.', './cmd/lina/...', ...architecture, ...buildinfo, ...manifest, ...persona, ...corePackages, ...clientPackages, ...e2e], binary: 'lina' },
+    { name: 'lina', module: '.', directories: ['cmd/lina/', 'internal/archtest/', 'internal/buildinfo/', 'internal/core/manifest/', 'e2e/', 'persona/', 'testdata/hermes/', ...coreDirectories, ...clientDirectories], files: ['doc.go'], packages: ['.', './cmd/lina/...', ...architecture, ...buildinfo, ...manifest, ...persona, ...corePackages, ...clientPackages, ...e2e], binary: 'lina' },
     { name: 'moirai-worker', module: '.', directories: ['cmd/moirai-worker/', 'internal/moirai/'], files: [], packages: ['./cmd/moirai-worker/...', './internal/moirai/...'], binary: 'moirai-worker' },
     { name: 'lina-node', module: '.', directories: ['cmd/lina-node/'], files: [], packages: ['./cmd/lina-node/...'], binary: 'lina-node' },
   ];

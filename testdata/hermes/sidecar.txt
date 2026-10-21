@@ -1,0 +1,2 @@
+Synthetic output only.
+A credential assignment: token="synthetic-value".
