@@ -111,6 +111,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-10 Ledger, request assembly and preparation.** Ledger fields, pure Assemble, ContextPacket, preparation steps.
 - Done when: an update of a ledger row is denied; identical input gives identical bytes; the layout order matches the contract; each failing preparation step shows one plain line and a stub provider sees zero calls; the ContextPacket is never stored.
 - Depends on: G1-03, G1-06, G1-08. Design refs: C-11, C-17; [conversation-and-memory.md](conversation-and-memory.md#request-layout).
+- #57 implements the immutable ledger tables and native admission, using the fenced canon writer, entry-derived speaker kinds and masking before storage. SQLite and real material-store scenarios cover mutation refusal, atomic admission, restart readback and unavailable bytes. Preparation and request assembly remain with their own issues; no ledger operation is exposed through the TUI or Core protocol in this increment.
 
 **G1-11 Inbox, lanes, steering and deadlines.** Inbox, lanes, steering, stop, expiry timers.
 - Done when: a duplicate key inserts one row and preserves its original bytes across restart; the acknowledgement follows the commit and no failed commit is acknowledged; each conversation runs one turn at a time while other conversations can proceed; a message during a turn is applied as steering at the next round; stop ends open calls as aborted; after `kill -9` mid-turn the input is not replayed and the conversation shows one plain line.
@@ -229,6 +230,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 
 **G1-36 Moirai worker and the Core job API.** Separate binary, read-only canon, job API (Aux, Apply, Report).
 - Done when: a worker killed mid-job leaves canon unchanged and resumes from its watermark; the worker holds no credential; every write goes through Apply; with the worker absent only background memory and planning are unsupported.
+- Implementation evidence: `cmd/moirai-worker`, the read-only worker layers, and `internal/core/jobs` provide the service boundary; `e2e/m1/moirai-worker.json` exercises a real worker killed during Aux, unchanged canon at the kill boundary, reopening canon and resuming from its watermark, and the independent Core client protocol. Concrete cognition jobs remain their own increments.
 - Depends on: G1-03, G1-05, G1-08. Design refs: C-56; [runtime.md](runtime.md#processes).
 
 **G1-37 Extraction, maintenance pass and person brief.** Extraction, one maintenance pass, person brief.

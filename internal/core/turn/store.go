@@ -74,6 +74,10 @@ type Record struct {
 }
 
 func (s *Store) Claim(ctx context.Context, id, conversation string, inboxID int64) error {
+	return s.claim(ctx, id, conversation, inboxID, "")
+}
+
+func (s *Store) claim(ctx context.Context, id, conversation string, inboxID int64, inputEvent string) error {
 	if id == "" || conversation == "" || inboxID <= 0 {
 		return ErrInvalid
 	}
@@ -96,7 +100,10 @@ func (s *Store) Claim(ctx context.Context, id, conversation string, inboxID int6
 		if err != nil {
 			return err
 		}
-		return saveOutcome(ctx, tx, id, TurnOutcome{Meter: (budget.Meter{}).Start(id, time.Now()).Snapshot()})
+		if err := saveOutcome(ctx, tx, id, TurnOutcome{Meter: (budget.Meter{}).Start(id, time.Now()).Snapshot()}); err != nil {
+			return err
+		}
+		return claimContext(ctx, tx, id, conversation, inputEvent)
 	})
 }
 func active(ctx context.Context, tx *canon.Tx, id string) error {
@@ -179,6 +186,9 @@ func (s *Store) Journal(id string) loop.Journal {
 // remain intact; unresolved effects are owned by authority's unknown state.
 func (s *Store) Recover(ctx context.Context) error {
 	return s.db.Write(ctx, func(tx *canon.Tx) error {
+		if err := recoverNotices(ctx, tx); err != nil {
+			return err
+		}
 		if err := recoverItems(ctx, tx); err != nil {
 			return err
 		}
@@ -261,16 +271,28 @@ func (s *Store) Read(ctx context.Context, id string) (Record, error) {
 type Options struct {
 	ID, Conversation string
 	InboxID          int64
-	Prepare          func(context.Context) error
-	Loop             loop.Config
-	Budget           *budget.Gauge // carry into a continuation; nil starts a new budget
-	ReceivedAt       time.Time     // original receipt time, excluding preparation from tool time
-	Continuation     string        // prior turn segment in this conversation, retaining meter and effects
-	Report           bool
-	StartFromTurn    func(context.Context, budget.Handoff) (budget.Handle, error)
+	// InputEvent binds the accepted ledger input for durable stop/restart notices.
+	InputEvent    string
+	Prepare       func(context.Context) error
+	Loop          loop.Config
+	Budget        *budget.Gauge // carry into a continuation; nil starts a new budget
+	ReceivedAt    time.Time     // original receipt time, excluding preparation from tool time
+	Continuation  string        // prior turn segment in this conversation, retaining meter and effects
+	Report        bool
+	StartFromTurn func(context.Context, budget.Handoff) (budget.Handle, error)
 }
 
 func (s *Store) Run(ctx context.Context, o Options) (out loop.Outcome, err error) {
+	// Preparation and claim failures occur before loop.Run owns the queue.
+	// Close is idempotent, so this also preserves its normal handoff.
+	defer func() {
+		if o.Loop.Inputs != nil {
+			out.FollowUps = append(out.FollowUps, o.Loop.Inputs.Close()...)
+		}
+		if ctx.Err() != nil {
+			err = errors.Join(err, context.Cause(ctx))
+		}
+	}()
 	gauge := o.Budget
 	var effects []budget.Effect
 	if o.Continuation != "" {
@@ -290,7 +312,7 @@ func (s *Store) Run(ctx context.Context, o Options) (out loop.Outcome, err error
 		}
 		effects = previous.Effects
 	}
-	if err = s.Claim(ctx, o.ID, o.Conversation, o.InboxID); err != nil {
+	if err = s.claim(ctx, o.ID, o.Conversation, o.InboxID, o.InputEvent); err != nil {
 		return out, err
 	}
 	if gauge == nil {
@@ -315,6 +337,18 @@ func (s *Store) Run(ctx context.Context, o Options) (out loop.Outcome, err error
 			}
 			if e := saveOutcome(save, tx, o.ID, TurnOutcome{Meter: gauge.Snapshot(), Handle: handle, Effects: b.effects}); e != nil {
 				return e
+			}
+			if state == Aborted {
+				cause := Interrupt{Issuer: Shutdown}
+				var typed Interrupt
+				if errors.As(context.Cause(ctx), &typed) {
+					cause = typed
+				} else if errors.Is(context.Cause(ctx), context.DeadlineExceeded) {
+					cause.Issuer = Watchdog
+				}
+				if e := interruptNotice(save, tx, o.ID, cause); e != nil {
+					return e
+				}
 			}
 			_, e := tx.ExecContext(save, "UPDATE turn_runs SET state=? WHERE id=?", state, o.ID)
 			return e
