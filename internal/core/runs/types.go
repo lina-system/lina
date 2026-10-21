@@ -85,14 +85,18 @@ type Artifact struct {
 	Citations []materials.Anchor `json:"citations,omitempty"`
 }
 type Record struct {
-	ReceiptRound                uint64
-	ScratchReceipts             map[string]ToolReceipt
-	InputAnswers                []InputAnswer
-	NoticeVersion               uint64
-	NoticeAt                    int64
-	Promotion                   *budget.Handoff
-	PromotionDigest             string
-	EffectsQuestion             *EffectQuestion
+	ReceiptRound    uint64
+	ScratchReceipts map[string]ToolReceipt
+	InputAnswers    []InputAnswer
+	NoticeVersion   uint64
+	NoticeAt        int64
+	Promotion       *budget.Handoff
+	PromotionDigest string
+	EffectsQuestion *EffectQuestion
+	// Start identity and the original receipt commit with the run. Only hashes
+	// of native call metadata/brief are retained, never unmasked arguments.
+	StartKey, StartDigest       string
+	StartState                  State
 	PendingOutcome              Outcome
 	Receipts                    map[string]ToolReceipt
 	PendingItems                []provider.Item

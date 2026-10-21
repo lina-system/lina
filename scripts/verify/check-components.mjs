@@ -106,7 +106,7 @@ export function checkComponents({ cwd = process.cwd(), components, execute: run 
         ['build', '-mod=readonly', ...outputArgs, ...packages],
         ['vet', '-mod=readonly', ...packages],
         ['tool', 'exhaustive', ...packages],
-        ['test', '-count=1', '-mod=readonly', ...packages],
+        ['test', '-count=1', '-timeout=4m', '-mod=readonly', ...packages],
       ]) {
         if (invoke('go', args, directory).status !== 0) return { status: 1, output };
       }
