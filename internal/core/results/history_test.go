@@ -29,11 +29,12 @@ func TestResultStorageEventsNeverExposeBodyToAssembledHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := ledger.New(db, nil)
+	card, _ := json.Marshal(current)
 	acknowledgement, _ := json.Marshal(struct {
-		Type   string      `json:"type"`
-		CallID string      `json:"call_id"`
-		Output result.Card `json:"output"`
-	}{"function_call_output", "present", current})
+		Type   string `json:"type"`
+		CallID string `json:"call_id"`
+		Output string `json:"output"`
+	}{"function_call_output", "present", string(card)})
 	now := time.Now()
 	if _, err := l.Admit(t.Context(), guard.EntryTool, ledger.Input{ID: "acknowledgement", ConversationID: scope.ConversationID, AgentID: scope.AgentID, Surface: ledger.Surface{Kind: "tui"}, ScaffoldKind: "provider_item", OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Locator: "present_result", Body: string(acknowledgement)}); err != nil {
 		t.Fatal(err)
