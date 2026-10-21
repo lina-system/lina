@@ -1,5 +1,8 @@
 # TUI spike harness and evidence
 
+For the owner-operated S1–S11 commands, see the [terminal runbook](runbook.md).
+The matrix is still pending owner confirmation and the human runs remain open.
+
 This increment implements S8 of [T-08](../../docs/design/tui.md#library-choice-risks-and-spike-gate-t-08).
 It pins Bubble Tea 2.1.0, Bubbles 2.2.1 (`textarea` only), Lip Gloss 2.0.6,
 Glamour 2.0.1 (sealed blocks only), and Ultraviolet at
