@@ -174,20 +174,25 @@ func waitScreen(t *testing.T, h *harness, terminal *terminal, text string) tuite
 	t.Helper()
 	snapshot, err := terminal.screen.Wait(h.ctx, func(snapshot tuiterm.Snapshot) bool { return strings.Contains(screenText(snapshot), text) })
 	if err != nil {
+		select {
+		case <-terminal.process.done:
+			t.Logf("TUI exited: %v; stderr=%s", terminal.process.err, &terminal.process.stderr)
+		default:
+		}
 		t.Fatalf("screen missing %q: %v; cells=%s", text, err, screenText(snapshot))
 	}
 	return snapshot
 }
 
-func installedConversationHarness(t *testing.T, providerURL string) (*harness, func(bool) *process) {
+func installedConversationHarness(t *testing.T, providerURL string, installArgs ...string) (*harness, func(bool) *process) {
 	t.Helper()
 	h := newHarness(t, buildLina(t))
 	base := h.root
 	bundle := makeInstallBundle(t, base, h.binary, buildCommand(t, "lina-node"))
-	return installConversationBundle(t, h, bundle, providerURL)
+	return installConversationBundle(t, h, bundle, providerURL, installArgs...)
 }
 
-func installConversationBundle(t *testing.T, h *harness, bundle, providerURL string) (*harness, func(bool) *process) {
+func installConversationBundle(t *testing.T, h *harness, bundle, providerURL string, installArgs ...string) (*harness, func(bool) *process) {
 	t.Helper()
 	base := h.root
 	bin := filepath.Join(base, "tools")
@@ -198,7 +203,8 @@ func installConversationBundle(t *testing.T, h *harness, bundle, providerURL str
 		t.Fatal(err)
 	}
 	root := filepath.Join(base, "state")
-	p := h.command("install", "--state-root", root, "--unit-dir", filepath.Join(base, "units"), "--bundle", bundle)
+	args := append([]string{"install", "--state-root", root, "--unit-dir", filepath.Join(base, "units"), "--bundle", bundle}, installArgs...)
+	p := h.command(args...)
 	p.command.Env = append(p.command.Env, "PATH="+bin)
 	p.start(t)
 	p.wait(t, 0)
