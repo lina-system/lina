@@ -8,6 +8,7 @@ import (
 	"flag"
 	"os"
 	"regexp"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,12 +30,32 @@ type s8Model struct {
 func (m s8Model) Init() tea.Cmd { return nil }
 func (m s8Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := msg.(tea.KeyPressMsg); ok && key.Code == 'q' {
+		// Release the application cursor in the final View so Bubble Tea shows
+		// the main-screen cursor on close even after an empty startup flush.
+		m.input.Blur()
 		return m, tea.Quit
 	}
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	return m, cmd
 }
+
+// s8StartupGate forces the renderer's ticker to flush before the first View.
+// It models a delayed initializer without relying on scheduling or elapsed time.
+type s8StartupGate struct {
+	s8Model
+	ctx     context.Context
+	release <-chan struct{}
+}
+
+func (m s8StartupGate) Init() tea.Cmd {
+	select {
+	case <-m.release:
+	case <-m.ctx.Done():
+	}
+	return m.s8Model.Init()
+}
+
 func (m s8Model) View() tea.View {
 	v := tea.NewView(lipgloss.JoinVertical(lipgloss.Left, m.input.View(), m.sealed))
 	v.AltScreen = true
@@ -63,6 +84,12 @@ func libraryPins(t *testing.T) map[string]string {
 // output, Bubble Tea rendering, and VT parsing. Its waits observe output cells;
 // the deadline only makes a broken run terminate. It does not measure IME or S9.
 func TestS8(t *testing.T) {
+	t.Run("normal", func(t *testing.T) { testS8(t, false) })
+	t.Run("startup-flush", func(t *testing.T) { testS8(t, true) })
+}
+
+func testS8(t *testing.T, delayInit bool) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	input := textarea.New()
@@ -81,11 +108,29 @@ func TestS8(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, err := term.Start(ctx, s8Model{input: input, sealed: sealed}, 20, 6)
+	model := s8Model{input: input, sealed: sealed}
+	var initial tea.Model = model
+	release := make(chan struct{})
+	open := sync.OnceFunc(func() { close(release) })
+	if delayInit {
+		initial = s8StartupGate{s8Model: model, ctx: ctx, release: release}
+	}
+	h, err := term.Start(ctx, initial, 20, 6)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer h.Close()
+	// Release Init before joining the program even if an assertion fails.
+	defer open()
+	if delayInit {
+		_, err := h.Output.Wait(ctx, func(s term.Snapshot) bool {
+			return s.Bytes > 0 && !s.AltScreen && s.CursorHidden
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		open()
+	}
 	first, err := h.Output.Wait(ctx, func(s term.Snapshot) bool {
 		return s.AltScreen && s.Cells[0][0].Content == "한" && s.Cells[0][2].Content == "A" && s.CursorX == 3 && s.CursorY == 0 && !s.CursorHidden
 	})
@@ -121,7 +166,7 @@ func TestS8(t *testing.T) {
 	}
 	restored := h.Output.Snapshot()
 	if restored.AltScreen || restored.CursorHidden || restored.Bytes == 0 || restored.Writes == 0 {
-		t.Fatal("quit did not restore the terminal")
+		t.Fatalf("quit did not restore the terminal: alt=%t hidden=%t bytes=%d writes=%d output=%q", restored.AltScreen, restored.CursorHidden, restored.Bytes, restored.Writes, h.Output.Bytes())
 	}
 	local := false
 	record := spike.Record{
@@ -142,7 +187,7 @@ func TestS8(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("S8: %s", data)
-	if *evidenceOutput != "" {
+	if *evidenceOutput != "" && !delayInit {
 		if err := os.WriteFile(*evidenceOutput, append(data, '\n'), 0644); err != nil {
 			t.Fatal(err)
 		}
