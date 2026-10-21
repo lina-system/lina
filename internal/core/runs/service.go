@@ -21,6 +21,7 @@ type execution struct {
 	cancel   context.CancelCauseFunc
 }
 type Service struct {
+	masker   masker
 	root     *os.Root
 	cfg      Config
 	mu       sync.Mutex
@@ -182,6 +183,7 @@ func (s *Service) Release(ctx context.Context, id string) error {
 	if r.State == NeedsInput {
 		return ErrState
 	}
+	delete(s.failures, id)
 	r.Released = true
 	r.Reason = ""
 	if err = s.save(ctx, r, false); err != nil {
@@ -318,11 +320,11 @@ func (s *Service) Stop(ctx context.Context, id string) error {
 	if r.State == Landed {
 		return nil
 	}
-	if err = s.land(ctx, &r, Cancelled); err != nil {
-		return err
-	}
 	if e, ok := s.live[id]; ok {
 		e.cancel(context.Canceled)
+	}
+	if err = s.land(ctx, &r, Cancelled); err != nil {
+		return err
 	}
 	return s.schedule(ctx)
 }
@@ -345,6 +347,14 @@ func (s *Service) Recover(ctx context.Context) error {
 			continue
 		}
 		r.Origin.Epoch = s.cfg.Epoch
+		if r.PendingOutcome != "" {
+			r.State = Waiting
+			r.Released = false
+			if err := s.save(ctx, r, false); err != nil {
+				return err
+			}
+			continue
+		}
 		if r.State != Working {
 			if err := s.save(ctx, r, false); err != nil {
 				return err

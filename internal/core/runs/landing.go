@@ -13,6 +13,15 @@ import (
 // land holds the service lock. The stable material id makes an interrupted
 // material/record handover retryable without creating duplicate artifacts.
 func (s *Service) land(ctx context.Context, r *Record, outcome Outcome) error {
+	// Commit the result/checkpoint before any material handover. A later Release
+	// retries this landing only, retaining cancellation and avoiding model replay.
+	if r.PendingOutcome == Cancelled {
+		outcome = Cancelled
+	}
+	r.PendingOutcome = outcome
+	if err := s.save(ctx, *r, false); err != nil {
+		return err
+	}
 	citations, err := materials.Check(ctx, s.cfg.Assets, r.Artifact.Citations)
 	if err != nil {
 		return err
@@ -63,6 +72,10 @@ func (s *Service) land(ctx context.Context, r *Record, outcome Outcome) error {
 		if err != nil {
 			return err
 		}
+		body, err = s.masker.json(body)
+		if err != nil {
+			return err
+		}
 		agent := r.Origin.Agent
 		if agent == "" {
 			agent = "core-job"
@@ -73,6 +86,7 @@ func (s *Service) land(ctx context.Context, r *Record, outcome Outcome) error {
 		}
 		r.Material = Ref{ID: a.ID, Revision: a.Revision}
 	}
+	r.PendingOutcome = ""
 	r.Noticed = false
 	r.State = Landed
 	r.Outcome = outcome

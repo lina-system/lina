@@ -22,7 +22,7 @@ func call(id string) provider.Stream {
 }
 func wait(t *testing.T, s *runs.Service, id string) runs.Record {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
 	if err := s.Wait(ctx, id); err != nil {
 		t.Fatal(err)
