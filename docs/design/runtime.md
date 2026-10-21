@@ -459,7 +459,7 @@ Supported platforms are defined in [product-families.md](product-families.md). A
 
 ### The `lina` command
 
-The initial skeleton recognizes `lina core`, `lina tui`, `lina version` and `lina-node version`; each reports not implemented on stderr and exits 70 until its implementation lands. Missing or unknown subcommands print usage on stderr and exit 64.
+The command recognizes `lina core`, `lina tui`, `lina install`, `lina version` and `lina-node version`. Missing or unknown subcommands print usage on stderr and exit 64.
 
 LINA Core and the TUI are one executable, `lina`. Its subcommands cover these uses:
 
@@ -473,6 +473,55 @@ LINA Core and the TUI are one executable, `lina`. Its subcommands cover these us
 | Replay | Re-runs a recorded turn sandboxed and without effects, optionally under candidate harness files, and writes the result as files. It is a development tool and runs only when it is called ([Replay command](#replay-command)). |
 | Episode export | Writes recorded turns of the chosen conversations out of the ledger into the export staging area for use outside LINA ([conversation-and-memory.md](conversation-and-memory.md#episode-export)) |
 | Version | Prints the version, the commit and the build date of the build ([versioning.md](versioning.md)) |
+
+`lina install` supports a Linux main with a working systemd user manager. Its
+default state root is `$XDG_STATE_HOME/lina`, falling back to
+`~/.local/state/lina`; its default user unit directory is
+`$XDG_CONFIG_HOME/systemd/user`, falling back to `~/.config/systemd/user`.
+`--state-root`, `--unit-dir` and `--bundle` accept absolute paths. The bundle
+defaults to the directory of the executing binary. Installation validates its
+manifest and verifies the size and SHA-256 of the exact artifact bytes copied.
+The executable and its manifest are placed in `system/bin/`. The default client
+socket is `system/run/client.sock` under the state root; `--socket` can choose a
+shorter absolute path where the Unix socket path limit requires it.
+
+Every state directory is private (0700); identity, inventory, configuration and
+adapter files are 0600 and installed executables are 0700. Install creates the
+filesystem contract's empty directories without opening canon or writing an
+account credential. It supplies the durable random main identity. The unit
+`lina-core.service` starts the installed executable as the current OS user with
+explicit root and socket arguments. A bundled `moirai-worker` receives its own
+`lina-moirai.service`, ordered after and dependent on Core, with `--state-root`
+and `--socket <state-root>/system/run/moirai.sock`. No provider adapter receives
+a service unit.
+
+Preflight refuses an existing state root, socket, named service, service
+override or enablement link, and refuses linked destination ancestors. An
+explicit install-layer TCP address check holds a probe listener through file
+publication and refuses occupied ports; the current Core service uses Unix IPC
+and does not expose a TCP listener. Refusal precedes state creation and service
+registration. New files are created exclusively. Failure before startup rolls
+back only entries created by this attempt. Once service startup has been
+attempted, an error retains the install for diagnosis because a service may
+already be running. Install exits 78 on failure and never treats an existing
+install as authorization to replace its identity, repair its files or restart
+its services.
+
+The inventory in `system/tools.json` records the resolved executable path,
+bounded `--version` output, observed status and the bundle's verified version
+list. `--tool name=/absolute/path` overrides PATH discovery for a named tool.
+Probes are bounded, missing or unstartable tools do not block installation, and
+unverified versions are listed together with the verified versions and remain
+usable. A missing verified list is empty, never an implicit verification.
+`system/install.json` records the identity, socket, tools and missing optional
+components. The bundle's optional `verifiedTools` and `installFiles` fields are
+described in [packaging](../../packaging/README.md). Adapter files and their
+lockfile are copied only after digest verification; no SDK or user tool is
+downloaded during install. Until the build includes Claude adapter artifacts,
+that provider is reported unavailable. Missing background-worker artifacts
+affect only background memory and planning. Installation never signs in to a
+provider; the first preparation still has to pass the account check and offer
+the ChatGPT sign-in when no account is usable.
 
 ### Provider adapters
 
