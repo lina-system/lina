@@ -17,7 +17,6 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"github.com/thisisjun786/lina/internal/core/manifest"
-	"github.com/thisisjun786/lina/internal/core/turn"
 )
 
 func runRestore(args []string) int {
@@ -55,9 +54,6 @@ func runRestore(args []string) int {
 		artifacts[binary.Name] = installed.Version + "@" + installed.Commit
 	}
 	migrations := canon.Migrations()
-	for _, schema := range []string{turn.Schema, turn.ControlSchema, turn.OutcomeSchema} {
-		migrations = append(migrations, canon.Migration{Version: len(migrations) + 1, SQL: schema})
-	}
 	restored, err := backup.Restore(ctx, backup.RestoreConfig{Root: *root, Generation: *generation, Migrations: migrations, Artifacts: artifacts})
 	if errors.Is(err, ctlfiles.ErrLocked) {
 		fmt.Fprintln(os.Stderr, "lina restore: Core is running. Stop Core before restoring.")

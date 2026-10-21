@@ -121,32 +121,47 @@ func checkRestoreHistory(ctx context.Context, list []byte, current, parent strin
 		return err
 	}
 	paths := []string{current}
+	live := map[string]bool{current: true}
 	if filepath.Base(parent) == "backups" {
-		paths = append(paths, filepath.Join(filepath.Dir(parent), "canon/canon.sqlite"))
+		sourceCurrent := filepath.Join(filepath.Dir(parent), "canon/canon.sqlite")
+		paths = append(paths, sourceCurrent)
+		live[sourceCurrent] = true
 	}
-	siblings, err := os.ReadDir(parent)
-	if err != nil {
-		return err
-	}
-	for _, entry := range siblings {
-		if !entry.IsDir() {
+	parents := []string{parent, filepath.Join(filepath.Dir(filepath.Dir(current)), "backups")}
+	scanned := map[string]bool{}
+	for _, directory := range parents {
+		if scanned[directory] {
 			continue
 		}
-		path := filepath.Join(parent, entry.Name())
-		if _, err := os.Lstat(filepath.Join(path, "manifest.json")); errors.Is(err, os.ErrNotExist) {
+		scanned[directory] = true
+		siblings, err := os.ReadDir(directory)
+		if errors.Is(err, os.ErrNotExist) && directory != parent {
 			continue
-		} else if err != nil {
-			return err
 		}
-		m, err := Verify(ctx, path)
 		if err != nil {
 			return err
 		}
-		if m.MainID != selected.MainID {
-			continue
+		for _, entry := range siblings {
+			if !entry.IsDir() {
+				continue
+			}
+			path := filepath.Join(directory, entry.Name())
+			if _, err := os.Lstat(filepath.Join(path, "manifest.json")); errors.Is(err, os.ErrNotExist) {
+				continue
+			} else if err != nil {
+				return err
+			}
+			m, err := Verify(ctx, path)
+			if err != nil {
+				return err
+			}
+			if m.MainID != selected.MainID {
+				continue
+			}
+			paths = append(paths, filepath.Join(path, m.SQLite.Path))
 		}
-		paths = append(paths, filepath.Join(path, m.SQLite.Path))
 	}
+
 	seen := map[string]bool{}
 	for _, path := range paths {
 		if seen[path] {
@@ -159,6 +174,9 @@ func checkRestoreHistory(ctx context.Context, list []byte, current, parent strin
 			return err
 		}
 		if err := checkRestoreAcknowledgments(ctx, path, entries); err != nil {
+			if live[path] && damagedRestoreCanon(err) {
+				continue
+			}
 			return err
 		}
 	}

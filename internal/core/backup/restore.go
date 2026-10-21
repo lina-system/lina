@@ -49,6 +49,9 @@ func Restore(ctx context.Context, cfg RestoreConfig) (result Manifest, err error
 	if err = controls.Acquire(); err != nil {
 		return result, err
 	}
+	if _, err := restoreHaltEpoch(controls); err != nil {
+		return result, err
+	}
 	root, err := os.OpenRoot(targetPath)
 	if err != nil {
 		return result, err
@@ -99,7 +102,7 @@ func Restore(ctx context.Context, cfg RestoreConfig) (result Manifest, err error
 			return result, e
 		}
 		var plan restorePlan
-		if json.Unmarshal(data, &plan) != nil || plan.Generation != generationPath || plan.Manifest.MainID != main.ID || !maps.Equal(plan.Manifest.Artifacts, cfg.Artifacts) {
+		if json.Unmarshal(data, &plan) != nil || plan.Generation != generationPath || plan.Manifest.MainID != main.ID || !restoreArtifactsCompatible(plan.Manifest.Artifacts, cfg.Artifacts) {
 			return result, ErrRestorePending
 		}
 		if err := resumeRestore(root, func(at string) error {
@@ -120,7 +123,7 @@ func Restore(ctx context.Context, cfg RestoreConfig) (result Manifest, err error
 	if err != nil {
 		return result, err
 	}
-	if m.MainID != main.ID || !maps.Equal(m.Artifacts, cfg.Artifacts) || m.SQLite.SchemaVersion > len(cfg.Migrations) {
+	if m.MainID != main.ID || !restoreArtifactsCompatible(m.Artifacts, cfg.Artifacts) || m.SQLite.SchemaVersion > len(cfg.Migrations) {
 		return result, errors.New("incompatible restore identity, artifacts or schema")
 	}
 	captured, err := strconv.ParseUint(m.Epoch, 10, 64)
@@ -266,4 +269,14 @@ func writeRestoreFile(root *os.Root, path string, data []byte) error {
 		err = f.Sync()
 	}
 	return errors.Join(err, f.Close())
+}
+
+// Command build provenance is diagnostic; the installed artifacts still have
+// to match. Rebuilding a compatible CLI must not strand its own backups.
+func restoreArtifactsCompatible(captured, installed map[string]string) bool {
+	captured = maps.Clone(captured)
+	installed = maps.Clone(installed)
+	delete(captured, "backup_command")
+	delete(installed, "backup_command")
+	return len(captured) > 0 && maps.Equal(captured, installed)
 }

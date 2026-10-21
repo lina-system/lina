@@ -63,7 +63,7 @@ func finalizeRestore(ctx context.Context, root *os.Root, controls *ctlfiles.Stor
 		return err
 	}
 	// These temporary controls belong only to recovery's writer. The installed
-	// epoch, main identity, halt marker and restart receipt remain untouched.
+	// epoch, main identity and restart receipt remain untouched.
 	staging := restorePending + "/reconcile-" + rand.Text()
 	if err := privateDir(root, staging); err != nil {
 		return err
@@ -82,5 +82,11 @@ func finalizeRestore(ctx context.Context, root *os.Root, controls *ctlfiles.Stor
 	if err := reconcileRestoredCanon(ctx, path, target, epoch, temporary, migrations); err != nil {
 		return err
 	}
-	return syncDir(root, "canon")
+	if err := syncDir(root, "canon"); err != nil {
+		return err
+	}
+	if _, err := restoreHaltEpoch(controls); err != nil {
+		return err
+	}
+	return controls.ClearHalt()
 }

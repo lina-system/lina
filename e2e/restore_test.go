@@ -124,9 +124,16 @@ func TestM1RestoreInstalledConversation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			marker, _ := json.Marshal(map[string]any{"schema": 1, "epoch": string(before), "cause": "sqlite_corrupt"})
+			if err := os.WriteFile(filepath.Join(h.root, "system/core/halt.json"), marker, 0600); err != nil {
+				t.Fatal(err)
+			}
 			restore := h.command("restore", "--state-root", h.root, "--generation", generation)
 			restore.start(t)
 			restore.wait(t, 0)
+			if _, err := os.Stat(filepath.Join(h.root, "system/core/halt.json")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("verified restore retained halt latch")
+			}
 			after, err := os.ReadFile(filepath.Join(h.root, "system/core/epoch"))
 			if err != nil || string(before) != string(after) {
 				t.Fatal("restore replaced control epoch")
