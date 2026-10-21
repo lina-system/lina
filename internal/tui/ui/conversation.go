@@ -347,7 +347,12 @@ func (m *shellModel) conversationContent() string {
 	rows := make([]string, m.size.Height)
 	clip := func(s string) string { return ansi.Truncate(s, m.size.Width, "") }
 	status := m.styles.presentation(m.status)
-	rows[plan.Status.Y] = clip(status.Mark + " " + status.Label + "  Enter  Ctrl+D")
+	statusLine := status.Mark + " " + status.Label
+	if len(m.content.Notices) > 0 {
+		notice := m.content.Notices[len(m.content.Notices)-1]
+		statusLine += "  " + design.Text(m.styles.options.Language, notice.Code)
+	}
+	rows[plan.Status.Y] = clip(statusLine + "  Enter  Ctrl+D")
 	if m.status.Cause != "" {
 		rows[plan.Status.Y] = clip(rows[plan.Status.Y] + " " + status.Detail)
 	}
