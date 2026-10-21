@@ -213,6 +213,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-32 Turn budget and hand-off to the background.** Meter, soft and hard budget, handles, promotion, quality counters.
 - Done when: at the soft budget every call except `start_run` and `dispatch_work` gets `budget_reached` and does not run; at the hard budget with no effect a run starts from the gathered state; with an effect, further effects wait on a question; a report turn makes no tool round trip.
 - Depends on: G1-09, G1-11, G1-33. Design refs: C-49; [runtime.md](runtime.md#turn-budget).
+- #101 implements the meter and durable turn outcomes at the turn/run package boundary. Scripted-provider tests cover soft refusals, hard promotion with gathered state, retained effect receipts, report isolation, and continuation budgets. Quality counters persist without automatic tuning.
 
 **G1-33 Background runs.** Run record, start tool, scope, limits, states, landing.
 - Done when: start returns an id before the run's first model call; tools outside the run scope are not declared; no time or call cap exists; a second interruption lands the run failed or partial; a cancelled run stays cancelled; an unresolved citation lands the run partial.

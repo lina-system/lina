@@ -254,11 +254,15 @@ The #61 increment adds `lane.Manager.SubmitLoop`, `Steer` and `Stop`. Each submi
 
 **C-49 Turn budget and hand-off (new).** Values and meaning are in [runtime.md](runtime.md#turn-budget): acknowledgement 3 s, soft 6 round trips and 30 s, hard 10 and 60 s, tool deadline 15 s, all starting values. The design:
 
-- `Meter.Start(turn, receivedAt)` returns a `Gauge` that counts round trips and tool wall time (model time excluded) and reports Under, Soft or Hard.
+- `budget.Meter.Start(turn, receivedAt)` returns a `Gauge` that counts completed tool batches and the union of time spent in their executors (model time excluded). Either threshold reaches Soft (6 batches or 30 s) or Hard (10 batches or 60 s). Parallel calls count once; rejected batches count so repeated refusals still reach hand-off.
 - At Soft, any call other than `start_run` and `dispatch_work` gets a typed `budget_reached` result and does not run. Tool declarations and the cached prefix stay unchanged.
 - At Hard, Core ends the loop. With no effect made it calls `runs.StartFromTurn` with the input and the turn's tool outputs. With an effect made, the remaining reads and analysis go to a run and further effects wait on a question card. An effect with unknown outcome is never run again.
 - A tool that can run long returns a handle. The budget decides only where work runs.
 - A `turn_outcome` row per turn holds waiting time and quality counters (corrections, repeats, rework, "not what I asked"), filled by the reactions job of Lachesis. There is no automatic tuning.
+
+`turn.Store.Run` owns the placement budget, while background runs use the uncapped kit loop. Core supplies the receipt time, and a continuation restores the prior segment's meter and effect receipts; steering never resets it. At the hard boundary the turn returns all gathered input, applied steering, completed output items and ordered tool results through a `StartFromTurn` callback, preserving the C-40 boundary between the turn and run flows. No new model request starts at Hard, and an already running effect finishes with its original receipt. A hand-off failure remains a failure with its gathered state retained.
+
+Report requests declare no tools. A provider that attempts a tool call during a report gets no execution and no second model request for its results; Core records the rejected calls and returns `report_tools_forbidden`. The fenced `turn_outcome` row is created with the claim and finalized with the turn state. It keeps waiting time, placement counters and the returned run handle. The reactions job writes absolute, nonnegative quality counters idempotently through `SetQuality`; it cannot tune the meter. Existing installations add `turn.OutcomeSchema` as a numbered migration after their turn schema.
 
 **C-50 Background runs (new).** The sub-agent layer of [work-and-delegation.md](work-and-delegation.md#background-runs), built on the loop core.
 
