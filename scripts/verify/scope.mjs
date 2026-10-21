@@ -36,6 +36,7 @@ function registryFor(cwd) {
     'internal/core/guard/',
     'internal/core/importer/',
     'internal/core/inbox/',
+    'internal/core/install/',
     'internal/core/jobs/',
     'internal/core/lane/',
     'internal/core/ledger/',
@@ -80,6 +81,7 @@ function componentOf(path) {
 const goObjects = text => JSON.parse(`[${text.trim().replace(/^}\s*\n{/gm, '},{')}]`);
 
 export function kind(path) {
+  if (path === 'packaging/README.md') return 'docs';
   if (path === 'packaging/sqlite-vec/build.sh') return 'automation';
   if (/^packaging\/sqlite-vec\/(?:README|NOTICE)\.md$/.test(path)) return 'docs';
   if (path === 'scripts/verify/dependency-exceptions.json' || path === 'THIRD-PARTY-NOTICES.md') return 'dependencies';
