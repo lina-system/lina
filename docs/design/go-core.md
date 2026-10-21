@@ -58,7 +58,7 @@ Callers pass state locations, persona, skills and knowledge scope.
 | L1 | `canon` (writer, fence, migrations), `eventstore`, `secrets`, `ctlfiles`, `guard` (masking), `ids` |
 | L2 | `authority` (gate, grants, approvals, effect ledger), `lifecycle`, `budget`, `manifest` |
 | L3 | One store per table group: `ledger`, `inbox`, `agents`, `memory`, `retract`, `skills`, `records`, `assets`, `work`, `timers`, `plugins`, `channels`, `accounts` |
-| L4 | Flows: `lane`, `assemble`, `compaction`, `turn`, `runs`, `reply`, `results`, `modelpath`, `exec`, `exchange`, `gateway`, `worker`, `reactor`, `review`, `ghclient`, `progress`, `waiting`, `importer`, `backup`, `update`, `recover`, `clientsrv`, `jobs`, `mcphost`, `install` |
+| L4 | Flows: `lane`, `assemble`, `compaction`, `turn`, `runs`, `replay`, `reply`, `results`, `modelpath`, `exec`, `exchange`, `gateway`, `worker`, `reactor`, `review`, `ghclient`, `progress`, `waiting`, `importer`, `backup`, `update`, `recover`, `clientsrv`, `jobs`, `mcphost`, `install` |
 | L5 | `boot`, `supervise` |
 
 The separate worker has its own downward import layers. Core may import only its `jobapi` contract, never its reader or runtime; the worker imports no Core, provider, secret, process-launch or arbitrary third-party package. The SQLite binding is allowed only in the exact read-only reader package. The ordinary architecture test enforces these boundaries.
@@ -876,6 +876,29 @@ type Definition struct {
 - Dependencies are swapped by interface. `Journal` and the effect ledger are discarding implementations, so a replay cannot write. Read tools run live; network reads and effect calls are answered by the recorded result; a turn with an unrecorded effect is excluded. Usage is a run kind of its own.
 - `lina export` writes JSON Lines episodes and a manifest (counts, left-out reasons, revocation epoch) to `staging/export/`. Nothing is selected by default, only turns that start from a `person` event qualify, and secrets stay masked.
 - The improvement loop that calls these commands is a development-time tool and is not in the product.
+
+The installed commands use the negotiated `replay/1.0` client capability. The
+client sends an explicit selection or one turn reference; Core supplies the
+existing canon reader, ledger material reader, pinned persona reader and model
+adapter. `replay` is an L4 flow with a read-only database interface, not a second
+store. The kit loop runs in a network-blocked subprocess with a fresh scratch
+directory. Core brokers provider streams through pipes without sending a
+credential into the child. The journal is empty; the read registry has a
+discarding gate that refuses writes, outward calls and network tools. `expand`
+and deterministic `recall_person` use existing local services, with the original
+clock and current scope/revocation checks. Other calls require an exact recorded
+name/argument match; a current effect receipt is selected by the original
+scope/tool/target/call key, never by matching reply text.
+
+Native preparation records the ordered ledger event ids and content revisions,
+model, effort, tool declarations and requested fields alongside its existing
+assembly references and digest. This does not retain a transient ContextPacket
+or credentials. A producer that lacks reconstructible assembly evidence is
+excluded with `missing_assembly`; replay never substitutes today's history or
+persona. All exported source bytes and every replay dispatch are checked against
+the current revocation epoch. Episode-file input is rehydrated from those exact
+local source identities, so an old export cannot resurrect forgotten content.
+
 
 ## Node
 

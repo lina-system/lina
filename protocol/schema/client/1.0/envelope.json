@@ -82,7 +82,11 @@
         "resync_required",
         "restart_request",
         "restart_get",
-        "restart_status"
+        "restart_status",
+        "export_request",
+        "export_result",
+        "replay_request",
+        "replay_result"
       ]
     },
     "message_id": {
@@ -1365,6 +1369,70 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/restart_status"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "export_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/export_request"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "export_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/export_result"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "replay_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/replay_request"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "replay_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/replay_result"
           }
         }
       }
@@ -3588,6 +3656,116 @@
         "label",
         "status"
       ],
+      "additionalProperties": false
+    },
+    "replay_candidate": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "enum": [
+            "core.md",
+            "default-voice.md",
+            "user-voice.md",
+            "growth-snapshot.md"
+          ]
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 524288
+        }
+      },
+      "required": [
+        "name",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "export_request": {
+      "type": "object",
+      "properties": {
+        "agent_id": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "conversations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "maxItems": 100
+        },
+        "since": {
+          "$ref": "#/$defs/utc"
+        },
+        "until": {
+          "$ref": "#/$defs/utc"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "export_result": {
+      "type": "object",
+      "properties": {
+        "directory": {
+          "type": "string"
+        },
+        "manifest": {
+          "type": "string",
+          "maxLength": 524288
+        }
+      },
+      "required": [
+        "directory",
+        "manifest"
+      ],
+      "additionalProperties": false
+    },
+    "replay_request": {
+      "type": "object",
+      "properties": {
+        "turn_id": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "episode": {
+          "type": "string",
+          "maxLength": 524288
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/replay_candidate"
+          },
+          "maxItems": 4
+        },
+        "model": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "effort": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "replay_result": {
+      "type": "object",
+      "properties": {
+        "output": {
+          "type": "string",
+          "maxLength": 524288
+        },
+        "excluded_reason": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "required": [],
       "additionalProperties": false
     }
   }

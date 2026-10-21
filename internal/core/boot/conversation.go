@@ -48,6 +48,7 @@ type acceptedSteering struct {
 }
 
 type conversationRuntime struct {
+	replaySocket                string
 	materials                   *conversationMaterials
 	assets                      *assets.Store
 	root                        string
@@ -136,6 +137,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	}
 	relay := clientsrv.NewSignInRelay(r.person, r.signin)
 	for kind, op := range clientsrv.AccountOperations(r.person, r.accounts, relay) {
+		r.identity.Operations[kind] = op
+	}
+	for kind, op := range clientsrv.ReplayOperations(r) {
 		r.identity.Operations[kind] = op
 	}
 	if err = r.seedHistory(ctx); err != nil {
@@ -367,7 +371,12 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			}
 			request := r.route.Request(items)
 			request.Instructions = strings.Join([]string{persona.Layers.Core, persona.Layers.DefaultVoice, persona.Layers.UserVoice, persona.Layers.GrowthSnapshot}, "\n")
-			return turn.PreparedRequest{Request: request, Assembly: turn.Assembly{AgentID: r.agent, PersonaRevision: persona.Commit}, Counter: func(request provider.Request) int {
+			assembly := turn.Assembly{AgentID: r.agent, PersonaRevision: persona.Commit}
+			for _, event := range events {
+				digest := sha256.Sum256([]byte(event.Body.Text()))
+				assembly.History = append(assembly.History, turn.Reference{ID: event.ID, Revision: hex.EncodeToString(digest[:])})
+			}
+			return turn.PreparedRequest{Request: request, Assembly: assembly, Counter: func(request provider.Request) int {
 				n := len(request.Instructions)
 				for _, item := range request.Items {
 					n += len(item)
@@ -376,15 +385,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			}, MaxTokens: 128000}, nil
 		},
 		Acknowledge: evidence.Acknowledge, RecordRequest: evidence.RecordRequest,
-		Digest: func(request provider.Request) string {
-			data, _ := json.Marshal(struct {
-				Model        provider.ModelRef
-				Instructions string
-				Items        []provider.Item
-			}{request.Model, request.Instructions, request.Items})
-			digest := sha256.Sum256(data)
-			return hex.EncodeToString(digest[:])
-		},
+		Digest: assemble.Digest,
 	}
 	round := 0
 	var completed []ledger.Admission
