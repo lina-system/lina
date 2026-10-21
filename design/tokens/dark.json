@@ -85,16 +85,16 @@
       "$value": {
         "colorSpace": "srgb",
         "components": [
-          0.56862745,
-          0.65490196,
+          0.3372549,
+          0.52156863,
           1.0
         ],
         "alpha": 1,
-        "hex": "#91A7FF"
+        "hex": "#5685FF"
       },
       "$extensions": {
         "lina.terminal": {
-          "ansi256": 111,
+          "ansi256": 69,
           "ansi16": 15
         }
       }
@@ -151,7 +151,7 @@
     },
     "titleWeight": {
       "$type": "fontWeight",
-      "$value": 600
+      "$value": 700
     }
   },
   "space": {
@@ -234,7 +234,7 @@
     "unicode": {
       "mark": {
         "$type": "string",
-        "$value": "·"
+        "$value": "."
       },
       "connecting": {
         "$type": "string",
