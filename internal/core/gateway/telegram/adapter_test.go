@@ -122,7 +122,7 @@ func TestAdapterUsesDurableGatewayAndOwnerButtons(t *testing.T) {
 			if polls == 1 {
 				return response(r, 200, `{"ok":true,"result":[
 			 {"update_id":10,"message":{"message_id":11,"date":1,"chat":{"id":100,"type":"private"},"from":{"id":100},"text":"hello `+testToken+`"}},
-			 {"update_id":11,"callback_query":{"id":"outsider","from":{"id":200},"data":"request_123:o","message":{"message_id":19,"date":1,"chat":{"id":100,"type":"private"}}}}
+			 {"update_id":11,"callback_query":{"id":"outsider","from":{"id":200},"data":"request_123:o","message":{"message_id":19,"date":1,"from":{"id":123456,"is_bot":true},"chat":{"id":100,"type":"private"}}}}
 			]}`), nil
 			}
 			if polls == 2 {
@@ -130,7 +130,7 @@ func TestAdapterUsesDurableGatewayAndOwnerButtons(t *testing.T) {
 				if err != nil || stored.State != authority.Pending || edits != 0 {
 					t.Fatal("outsider changed approval or buttons")
 				}
-				return response(r, 200, `{"ok":true,"result":[{"update_id":12,"callback_query":{"id":"owner","from":{"id":100},"data":"request_123:o","message":{"message_id":19,"date":1,"chat":{"id":100,"type":"private"}}}}]}`), nil
+				return response(r, 200, `{"ok":true,"result":[{"update_id":12,"callback_query":{"id":"owner","from":{"id":100},"data":"request_123:o","message":{"message_id":19,"date":1,"from":{"id":123456,"is_bot":true},"chat":{"id":100,"type":"private"}}}}]}`), nil
 			}
 			cancel()
 			return nil, ctx.Err()

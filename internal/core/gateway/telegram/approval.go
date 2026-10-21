@@ -26,11 +26,14 @@ type buttonDecision struct {
 	note             string
 }
 
-func decideButton(ctx context.Context, epoch uint64, q gotgbot.CallbackQuery, owner ownerLookup, approvals approvalService) buttonDecision {
+func decideButton(ctx context.Context, epoch uint64, botID string, q gotgbot.CallbackQuery, owner ownerLookup, approvals approvalService) buttonDecision {
 	refused := buttonDecision{note: "This button is unavailable."}
 	id, choice, ok := parseButton(q.Data)
 	message, accessible := q.Message.(gotgbot.Message)
 	if !ok || !accessible || q.From.Id <= 0 || q.From.IsBot || message.Chat.Id == 0 || message.MessageId <= 0 || owner == nil || approvals == nil || epoch == 0 {
+		return refused
+	}
+	if message.From == nil || !message.From.IsBot || strconv.FormatInt(message.From.Id, 10) != botID {
 		return refused
 	}
 	person, agent, err := owner(ctx, q.From.Id, message.Chat.Id, message.MessageThreadId)

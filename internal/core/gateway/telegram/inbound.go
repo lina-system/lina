@@ -203,7 +203,7 @@ func (a *Adapter) resumeButtons(ctx context.Context) error {
 		}
 		decision := buttonDecision{note: "This button is unavailable."}
 		if p.epoch == strconv.FormatUint(a.epoch, 10) && a.approvals != nil {
-			decision = decideButton(ctx, a.epoch, q, func(ctx context.Context, user, chat, thread int64) (string, string, error) {
+			decision = decideButton(ctx, a.epoch, a.bot.Account, q, func(ctx context.Context, user, chat, thread int64) (string, string, error) {
 				var b channels.Binding
 				err := a.db.Read(ctx, func(tx *canon.Tx) error {
 					var err error
