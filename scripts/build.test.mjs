@@ -65,6 +65,10 @@ test('cross-builds Linux and macOS binaries with target metadata and an explicit
       assert.match(info.stdout, new RegExp(`GOOS=${target.split('/')[0]}`));
       assert.match(info.stdout, new RegExp(`GOARCH=${target.split('/')[1]}`));
       assert.match(info.stdout, /CGO_ENABLED=0/);
+      if (binary.name === 'lina') {
+        assert.ok(info.stdout.includes(`${manifest.sqlite.module}\t${manifest.sqlite.version}\t${manifest.sqlite.moduleSum}`),
+          'Core must link the binding recorded in its manifest');
+      }
       assert.equal(bytes.subarray(0, 4).toString('hex'), target.startsWith('linux') ? '7f454c46' : 'cffaedfe');
     }
   }
