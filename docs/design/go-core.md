@@ -85,7 +85,7 @@ Core owns a job's kind (memory or planning), interval, deadline (at most two min
 type API interface {
 	Aux(ctx context.Context, r AuxRequest) (AuxResult, error) // model call on Core's path
 	Apply(ctx context.Context, p Proposal) (Applied, error)   // the only write path; epoch-fenced
-	Report(ctx context.Context, j JobID, s JobState) error    // schedule, budget, adoption record
+	Report(ctx context.Context, j JobID, s JobState) error    // status at the committed watermark
 }
 ```
 
