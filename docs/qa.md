@@ -31,6 +31,7 @@ replacement for the eventual installation flow:
 
 ```sh
 qa_root=$(mktemp -d "${TMPDIR:-/tmp}/lina-qa.XXXXXX")
+umask 077
 mkdir -p "$qa_root/home" "$qa_root/state/system/core" "$qa_root/out"
 go build -mod=readonly -o "$qa_root/lina" ./cmd/lina
 printf '{"main_id":"main-qa-synthetic"}\n' > "$qa_root/state/system/core/main.json"
@@ -44,13 +45,8 @@ qa_core_pid=$!
 ```
 
 Wait for the socket to exist and Core to remain alive before connecting. Do not
-interpret a fixed sleep as readiness. Keep socket paths short on macOS. Always
-stop and reap the Core process, including on failure:
-
-```sh
-kill -TERM "$qa_core_pid"
-wait "$qa_core_pid"
-```
+interpret a fixed sleep as readiness. Keep socket paths short on macOS. Keep
+Core running during the terminal exploration below.
 
 To inspect a real TUI without a window, use a private tmux server as the PTY
 (or extend the existing harness in scratch). In Bash, with `qa_root` still set:
@@ -74,6 +70,13 @@ after TUI quit. Stop only this private tmux server with
 `tmux -L "$qa_tmux" kill-server` if it still exists, then stop and reap Core.
 Retain scratch evidence until the report is delivered; never remove another
 worker's directory or a dirty checkout.
+
+Always stop and reap Core after exploration, including on failure:
+
+```sh
+kill -TERM "$qa_core_pid"
+wait "$qa_core_pid"
+```
 
 ## M1 journeys
 
