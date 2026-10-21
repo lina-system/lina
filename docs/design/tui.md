@@ -347,6 +347,27 @@ Fallbacks, in order. F1: Bubble Tea with its own probe, a quiet spinner, a lower
 
 **Tests.** The fake Core, `internal/fakecore`, is built from the conformance fixtures ([host-protocol.md](host-protocol.md#conformance-fixtures)) with an injected clock and fault switches: drop, slow reader, epoch change, duplicate delivery, disconnect mid-batch, recovering and refusal.
 
+Each script step optionally consumes a request and names fixture envelopes to
+emit. Faults are per step, except an epoch change persists through later steps
+and updates the welcome payload too. Drop suppresses that step's output; slow
+reader waits on the injected clock before consuming the request. Duplicate sends
+each envelope twice with one logical id and distinct attempt ids. Disconnect
+closes after the specified number of delivered frames in that step, including
+duplicates (zero closes before output). Refusal replaces the response with a
+typed `refused` error. Recovering supplies `unavailable` for mutations while
+handshakes and read-only queries, including history, retain their scripted
+responses. Clearing it on the next step permits that response again. Explicit
+refusal takes precedence over recovering; drop precedes duplicate delivery.
+
+`e2e/m1/fakecore.json` runs through the headless harness of #34: a protocol client
+observes every fault, including recovery followed by another response, and the
+built TUI connects, quits and rejects an unsupported combination through a real
+PTY. The fake owns each accepted stream, bounds request frames to 1 MiB, and
+closes on completion, cancellation or failure. The harness owns its listener and
+joins the peer. Clock gates and I/O observations, never sleep intervals, establish
+ordering. This scenario covers the current connection screen and wire behavior;
+reducer recovery, rendering and application effects still require their own tests.
+
 The schema and receive-boundary corpus runs independently through
 `kit/protocol/conformance`. It checks that an unknown kind yields no admitted
 message, increments the client's unknown-kind count once per frame, and does not

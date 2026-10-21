@@ -25,8 +25,10 @@ const scope = scopeFor({ head: 'HEAD', full: true });
 assert.equal(kind('e2e/scenario_test.go'), 'components');
 assert.equal(kind('e2e/fixtures/scenario.json'), 'components');
 assert.equal(kind('e2e/README.md'), 'components');
+assert.equal(kind('internal/fakecore/core.go'), 'components');
 const selected = componentRegistry.filter(c => scope.selectedComponents.includes(c.name));
 assert.ok(selected.some(c => c.packages.includes('./e2e/...')), 'foundation must execute e2e');
+assert.ok(selected.some(c => c.packages.includes('./internal/fakecore/...')), 'foundation must execute fakecore');
 
 // Core/TUI are subprocess dependencies, invisible to Go test imports. Exercise
 // real component-only diffs as well as full selection in a disposable repo.
@@ -52,6 +54,7 @@ try {
     'cmd/lina/main.go': 'package main\nimport _ "example.invalid/lina/kit"\nfunc main() {}\n',
     'internal/core/clientsrv/server.go': 'package clientsrv\n',
     'internal/tui/ui/ui.go': 'package ui\n',
+    'internal/fakecore/core.go': 'package fakecore\n',
     'e2e/scenario_test.go': 'package e2e_test\n',
     'README.md': '# Fixture\n',
   };
@@ -64,7 +67,7 @@ try {
   runGit('commit', '-m', 'fixture');
   const base = runGit('rev-parse', 'HEAD');
   for (const path of ['e2e/scenario_test.go', 'cmd/lina/main.go',
-      'internal/core/clientsrv/server.go', 'internal/tui/ui/ui.go', 'kit/doc.go']) {
+      'internal/core/clientsrv/server.go', 'internal/tui/ui/ui.go', 'internal/fakecore/core.go', 'kit/doc.go']) {
     writeFileSync(join(cwd, path), files[path] + '// changed\n');
     const changed = scopeFor({ cwd, base, head: 'HEAD' });
     assert.ok(changed.selectedComponents.includes('lina'), path + ' must run the e2e component');

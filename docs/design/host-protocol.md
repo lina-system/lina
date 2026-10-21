@@ -35,6 +35,16 @@ malformed. A subsequent valid envelope can still be received. These counters
 describe received frames, including repeat deliveries, rather than deduplicated
 application messages. They do not establish handshake or authorization results.
 
+The fixture-backed peer in `internal/fakecore` replays an explicit script over
+newline-delimited JSON-RPC. It validates fixture references before I/O, matches
+requests by kind and payload (allowing the caller's hello identity and product
+version), correlates both RPC ids and envelope `reply_to`, and emits remaining
+frames as notifications. Each run starts fresh deterministic message/attempt ids;
+all timestamps and slow-reader waits use the injected clock. A duplicate retains
+its logical message and changes only the attempt id. The fake executes no effects
+and grants no capabilities beyond the scripted welcome; replay is evidence for
+client behavior, not for a production Core's application state or authorization.
+
 ## Envelope
 
 Every message on every connection is one envelope. An envelope is a JSON object with exactly the fields below. Every field is present; a field that does not apply holds an explicit null where the rule allows it. A sender never adds a field that the negotiated protocol version does not define. The envelope carries no agent field: which agent a message concerns is part of its payload (see Client connection and Node connection).
