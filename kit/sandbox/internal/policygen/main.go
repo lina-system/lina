@@ -45,7 +45,7 @@ func main() {
 			// Deny socket families that bypass IP/Unix isolation (especially AF_VSOCK).
 			p = append(p, instruction{0x15, 0, 0, arch.socket})
 			socketJump := len(p) - 1
-			p = append(p, instruction{0x20, 0, 0, 16}, instruction{0x15, 0, 1, 1}, instruction{0x06, 0, 0, 0x7fff0000})
+			p = append(p, instruction{0x20, 0, 0, 16})
 			if network {
 				for _, family := range []uint32{2, 10} {
 					p = append(p, instruction{0x15, 0, 1, family}, instruction{0x06, 0, 0, 0x7fff0000})

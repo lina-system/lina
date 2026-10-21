@@ -74,6 +74,9 @@ func prepare(launcher string, c Config, command Command) (proc.Command, func(), 
 	for _, path := range c.WriteRoots {
 		args = append(args, "--bind", path, path)
 	}
+	for _, path := range gitAnchors(c.WriteRoots, git) {
+		args = append(args, "--bind", path, path)
+	}
 	for _, path := range git {
 		args = append(args, "--ro-bind", path, path)
 	}
