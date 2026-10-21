@@ -185,7 +185,7 @@ func Create(ctx context.Context, cfg Config) (result Manifest, err error) {
 			m.Directories = append(m.Directories, filepath.ToSlash(dir))
 		}
 	}
-	m.Repositories, err = repositories(source)
+	m.Repositories, err = repositories(ctx, source, filepath.Join(cfg.Root, relative, "canon/canon.sqlite"))
 	if err != nil {
 		return result, err
 	}

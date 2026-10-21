@@ -2,22 +2,36 @@
 package backup
 
 import (
+	"bytes"
+	"compress/zlib"
+	"context"
+	"crypto/sha1" // Git object identity, not an authorization primitive.
 	"encoding/hex"
 	"errors"
+	"github.com/thisisjun786/lina/internal/core/canon"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
-func repositories(root *os.Root) ([]Repository, error) {
+func repositories(ctx context.Context, root *os.Root, snapshot string) ([]Repository, error) {
+	published, err := publishedHeads(ctx, snapshot)
+	if err != nil {
+		return nil, err
+	}
 	result := []Repository{}
 	if _, err := root.Lstat("versions"); errors.Is(err, os.ErrNotExist) {
+		if len(published) != 0 {
+			return nil, ErrInvalid
+		}
 		return result, nil
 	} else if err != nil {
 		return nil, err
 	}
-	err := fs.WalkDir(root.FS(), "versions", func(path string, d fs.DirEntry, err error) error {
+	err = fs.WalkDir(root.FS(), "versions", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -42,13 +56,25 @@ func repositories(root *os.Root) ([]Repository, error) {
 		if _, e := root.Lstat(filepath.Join(gitdir, "HEAD")); e != nil {
 			return e
 		}
-		head, e := repositoryHead(root, gitdir)
-		if e != nil {
-			return e
+		head, canonical := published[path]
+		if canonical {
+			if err := verifyCommit(ctx, root, gitdir, head); err != nil {
+				return err
+			}
+			delete(published, path)
+		} else {
+			var e error
+			head, e = repositoryHead(root, gitdir)
+			if e != nil {
+				return e
+			}
 		}
 		result = append(result, Repository{Path: path, Head: head})
 		return fs.SkipDir
 	})
+	if err == nil && len(published) != 0 {
+		err = ErrInvalid
+	}
 	return result, err
 }
 func repositoryHead(root *os.Root, dir string) (string, error) {
@@ -125,4 +151,90 @@ func derivedRevisions(root *os.Root) ([]Derived, error) {
 		}
 	}
 	return result, nil
+}
+
+func publishedHeads(ctx context.Context, path string) (map[string]string, error) {
+	db, err := canon.OpenSQLiteReader(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	heads := map[string]string{}
+	rows, err := db.QueryContext(ctx, "SELECT a.id,r.commit_id FROM agents a JOIN agent_revisions r ON r.agent_id=a.id AND r.revision=a.revision")
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var id, commit string
+		if err = rows.Scan(&id, &commit); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		heads["versions/agents/"+id] = commit
+	}
+	if err = errors.Join(rows.Err(), rows.Close()); err != nil {
+		return nil, err
+	}
+	var exists int
+	if err = db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name='skill_repo'").Scan(&exists); err != nil {
+		return nil, err
+	}
+	if exists != 0 {
+		rows, err = db.QueryContext(ctx, "SELECT commit_id FROM skill_repo WHERE singleton=1")
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var commit string
+			if err = rows.Scan(&commit); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			heads["versions/skills"] = commit
+		}
+		if err = errors.Join(rows.Err(), rows.Close()); err != nil {
+			return nil, err
+		}
+	}
+	return heads, nil
+}
+
+// Core retains published persona/skill commits as immutable loose Git objects.
+func verifyCommit(ctx context.Context, root *os.Root, dir, head string) error {
+	if len(head) != 40 {
+		return ErrInvalid
+	}
+	if _, err := hex.DecodeString(head); err != nil || strings.ToLower(head) != head {
+		return ErrInvalid
+	}
+	path := filepath.Join(dir, "objects", head[:2], head[2:])
+	if err := regularPath(root, path); err != nil {
+		return err
+	}
+	f, err := root.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	reader, err := zlib.NewReader(f)
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
+	raw, err := io.ReadAll(io.LimitReader(contextReader{ctx, reader}, (1<<20)+1))
+	if err != nil {
+		return err
+	}
+	if len(raw) > 1<<20 {
+		return ErrInvalid
+	}
+	digest := sha1.Sum(raw)
+	if hex.EncodeToString(digest[:]) != head {
+		return ErrHashMismatch
+	}
+	header, body, ok := bytes.Cut(raw, []byte{0})
+	if !ok || string(header) != "commit "+strconv.Itoa(len(body)) {
+		return ErrInvalid
+	}
+	return nil
 }

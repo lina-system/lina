@@ -19,7 +19,6 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"github.com/thisisjun786/lina/internal/core/manifest"
-	"github.com/thisisjun786/lina/internal/core/turn"
 )
 
 func runBackup(args []string) int {
@@ -115,9 +114,6 @@ func captureBackup(ctx context.Context, root string) (backup.Manifest, error) {
 	}
 	// This command composes the same canon and conversation schemas as Core.
 	migrations := canon.Migrations()
-	for _, schema := range []string{turn.Schema, turn.ControlSchema, turn.OutcomeSchema} {
-		migrations = append(migrations, canon.Migration{Version: len(migrations) + 1, SQL: schema})
-	}
 	db, err := canon.Open(ctx, canon.Config{Path: path, Epoch: epoch, Controls: controls, Migrations: migrations})
 	if err != nil {
 		return backup.Manifest{}, err
