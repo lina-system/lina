@@ -95,6 +95,8 @@ Register a component in `scripts/verify/scope.mjs` in the change that adds it. I
 - its directory, so that every path under it, including Markdown, belongs to the component;
 - its packages, which `foundation` verifies with `go build`, `go vet`, the `exhaustive` analyzer and `go test`, the same commands a developer runs by hand.
 
+Core package families belong to `lina`. Add each new `internal/core/<package>/` family to `coreDirectories` in `scripts/verify/scope.mjs`, keeping entries sorted by path with one entry per line. This lets additions at separate positions merge without editing a shared line; registration still selects only the listed families and their descendants.
+
 The protocol JSON Schema in `protocol/schema/` and the conformance fixtures in `protocol/fixtures/` are registered with the component that generates types from them, so a schema or fixture change runs type regeneration and the fixtures ([host-protocol.md](../design/host-protocol.md)).
 
 The initial registry is:
