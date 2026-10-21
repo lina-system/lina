@@ -504,8 +504,15 @@ func (r *conversationRuntime) publishPartials(stopped turn.Stopped) error {
 	for _, p := range stopped.Partials {
 		// The provider observer numbers rounds from one, the loop from zero.
 		key := fmt.Sprintf("%s:%d:%d", stopped.TurnID, p.Round+1, p.Index)
-		speaker := protocol.ConversationSpeakerAgent
-		if err := r.publish(protocol.KindItemDone, key, protocol.ItemDone{Text: &p.Text, Speaker: &speaker}); err != nil {
+		filter, err := conversationFilter()
+		if err != nil {
+			return err
+		}
+		view, err := filter.Push(p.Text)
+		if err != nil {
+			return err
+		}
+		if err := r.publishReply(key, stopped.TurnID, view); err != nil {
 			return err
 		}
 	}
@@ -656,6 +663,11 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				}
 				if delta == "" {
 					return nil
+				}
+				// Persist exactly the safe visible prefix before publishing it.
+				// Deferred loop cleanup cannot run after SIGKILL.
+				if err := turn.New(r.db).CheckpointPartial(ctx, turnID, turn.Partial{Round: round - 1, Index: e.Index, Text: filter.sent}); err != nil {
+					return err
 				}
 				if view.Cut {
 					// A result replaces the same stream row, retracting the unfinished

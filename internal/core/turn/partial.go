@@ -31,8 +31,25 @@ func savePartial(ctx context.Context, tx *canon.Tx, id string, p Partial) error 
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, "INSERT INTO turn_partials(turn_id,round,ordinal,body) VALUES(?,?,?,?)", id, p.Round, p.Index, masked.Text())
+	_, err = tx.ExecContext(ctx, `INSERT INTO turn_partials(turn_id,round,ordinal,body) VALUES(?,?,?,?)
+   ON CONFLICT(turn_id,round,ordinal) DO UPDATE SET body=excluded.body`, id, p.Round, p.Index, masked.Text())
 	return err
+}
+
+// CheckpointPartial saves the cumulative visible projection before publication.
+// A crash can then recover every published prefix without completing the turn.
+// Updating a block retains its original position. The caller supplies text only,
+// after its streaming display filter; tool input is never a visible partial.
+func (s *Store) CheckpointPartial(ctx context.Context, id string, p Partial) error {
+	if p.Round < 0 || p.Index < 0 || p.Text == "" {
+		return ErrInvalid
+	}
+	return s.db.Write(ctx, func(tx *canon.Tx) error {
+		if err := active(ctx, tx, id); err != nil {
+			return err
+		}
+		return savePartial(ctx, tx, id, p)
+	})
 }
 
 // Stopped reads the existing turn store for a durable input event. It exposes
@@ -51,7 +68,7 @@ func (s *Store) Stopped(ctx context.Context, inputEvent string) (Stopped, error)
 		if err != nil {
 			return err
 		}
-		rows, err := tx.QueryContext(ctx, "SELECT round,ordinal,body FROM turn_partials WHERE turn_id=? ORDER BY round,ordinal", stopped.TurnID)
+		rows, err := tx.QueryContext(ctx, "SELECT round,ordinal,body FROM turn_partials WHERE turn_id=? ORDER BY rowid", stopped.TurnID)
 		if err != nil {
 			return err
 		}

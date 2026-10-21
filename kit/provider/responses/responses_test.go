@@ -213,6 +213,23 @@ func TestOnlyDoneItemsAndCompletedResponseEnableTools(t *testing.T) {
 	}
 }
 
+func TestFailedToolInputDeltasAreNotVisibleText(t *testing.T) {
+	a, _ := fixture(t, config(t), func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		sse(w, "response.output_text.delta", `"output_index":0,"delta":"visible"`)
+		sse(w, "response.function_call_arguments.delta", `"output_index":1,"delta":"function arguments"`)
+		sse(w, "response.custom_tool_call_input.delta", `"output_index":2,"delta":"custom input"`)
+		// EOF before any done item or completed response.
+	})
+	events, _, err := run(t, a, request())
+	if err == nil {
+		t.Fatal("truncated response succeeded")
+	}
+	if len(events) != 1 || events[0].Kind != provider.Delta || events[0].Index != 0 || events[0].Delta != "visible" {
+		t.Fatalf("only output_text may enter visible partial history: %+v", events)
+	}
+}
+
 func TestManifestFieldsAndOpaqueInput(t *testing.T) {
 	c := config(t)
 	c.RequestFields = slices.DeleteFunc(c.RequestFields, func(s string) bool { return s == "instructions" })
