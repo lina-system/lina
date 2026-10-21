@@ -422,6 +422,12 @@ Only a built-in sandbox network request offers always allow. It creates a standi
 - A local plugin server added by command gets its own sandbox instance, its data directory and only the allowance on its card.
 - A shell write is recorded with changed paths and hashes before and after, found by a size-and-time manifest diff of the working directory.
 
+File execution validates a bounded request before touching a file. `read_file` returns bytes and a content-and-mode revision; `write_file`, `delete_file` and `restore_file` require that revision (`absent` for creation). `apply_patch` accepts the same Codex patch text in custom-tool and function-tool form, validates all add/update/delete/move operations and exact context before writing, and checks each captured file revision again at the destination. Paths are relative to the Core-selected root; traversal, symlinks, special files and `.git` paths are refused. The sandbox remains the OS boundary, including read-only Git metadata.
+
+Before replacement or deletion, the file worker retains and fsyncs both versions in a separate private version directory. Its receipt names the path, before/after revisions and an opaque saved-version id. Restore verifies the retained bytes and the current destination revision, preserving file mode and refusing to overwrite a newer file. A multi-file patch is prevalidated but is not a filesystem transaction: an interrupted commit reports unknown with recovery receipts. Version retention and permanent purge remain the owning retention workflow's responsibility.
+
+Network command arguments carry argv and the network request only. Core supplies the allowed prefix, target, service-profile policy and scope key; model arguments cannot broaden them. The registry parks an unapproved network call in the existing durable authority service before its handler starts. Once permits that intent, deny prevents execution, and always allow applies to the same prefix and target until revoked. Resumption dispatches the stored arguments under a fresh deadline. These services still have no tool/approval operation on the connection-only client protocol; their protocol and TUI scenarios accompany that adapter.
+
 **C-15 Untrusted text, masking, secrets (kept).**
 
 - Masking follows [conversation-and-memory.md](conversation-and-memory.md#event-fields). Redaction runs at three seams: before ledger append, on final model-bound text, and on UI and channel egress.

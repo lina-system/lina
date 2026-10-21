@@ -411,6 +411,10 @@ On Windows the wrapper runs commands only inside a verified Windows sandbox. A v
 
 LINA Core checks on start, and before the first tool call, that the sandbox works on this host. Unprivileged user namespaces, AppArmor restrictions and hardened kernels can each disable bubblewrap. When the sandbox is missing or fails, conversation continues, only shell and file tools are unsupported, and the user sees why.
 
+File requests select no host root, environment or network policy. Core supplies the sandbox's file root and a separate private directory for retained versions. Reads return a revision of the bytes and mode. Writes, deletes and restores compare the expected revision immediately before the filesystem operation; creation requires absence. Every changed path gets a receipt and a synced, recoverable before/after copy, including files removed by `apply_patch`. Restore checks retained digests and the current destination, so recovering a deleted file preserves its bytes without replacing a newer file. Patch context is exact rather than whitespace-fuzzy, and every hunk is checked before the first destination changes. An interruption during a multi-file commit is reported as unknown with retained recovery information.
+
+The network executor normalizes the installed command prefix and target into the approval scope. Neither a model-supplied prefix nor an outward-policy override is accepted. A pending request returns to the conversation without starting a command; the authenticated once, always-allow or deny answer goes through Core's durable approval service. A new dispatch after the answer receives a fresh tool deadline. Standing permission does not survive revocation at the next admission.
+
 ### Plugin servers
 
 A local server that the person added by command runs in an instance of the OS sandbox that is separate from the sandbox of shell and file tools.
