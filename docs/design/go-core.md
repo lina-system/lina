@@ -217,9 +217,13 @@ A subscription without a cursor gets the latest snapshot window. A cursor from a
 Conversation display order is durable separately from ledger append order. Before
 first publishing a message key, boot records its position in canon and serializes
 that write with publication. Later deltas, completion and card replacement retain
-the position. Restart resolves those keys through completed ledger messages and
+the position. Publication uses the caller's context on live, stopped and startup
+paths; it does not require a running conversation lane. Restart resolves those
+keys through completed ledger messages and
 committed stopped/failed partials, then selects the latest display window in that
-order. A position alone supplies no content and cannot invent a turn. The native
+order. Restored partials use the live reply filter, including card identity and
+turn provenance. Legacy partials retain their checkpoint insertion order. A
+position alone supplies no content and cannot invent a turn. The native
 ledger and model-context order remain unchanged. Records from before position
 tracking retain their existing ledger-based restore order; unavailable historical
 stream timing is never guessed. The queue/steering restart scenario is
@@ -710,6 +714,65 @@ The memory store keeps the current item and immutable revision snapshots in cano
 **C-21 Person model (changed).** The views are those of [conversation-and-memory.md](conversation-and-memory.md#person-model). `recall_person` at depth 1 makes one auxiliary request over at most N items (P: 12), with citations checked against the retrieved set and capped at 10 s. Deeper work is a background run. The person brief and the maintenance pass are jobs for `moirai-worker` ([cognition-and-life.md](cognition-and-life.md#memory-jobs)). Duplicate clusters inside one subject use normalized equality, token overlap and, when available, embedding similarity; never across subjects.
 
 The `recall_person` tool requires a nonempty retrieval query alongside the question, so an omitted query cannot silently choose the most recent items. The initial executor uses a limit of 12 combined memory items and own-ledger hits, with depth 0 as the default. Depth 1 makes one cancellable auxiliary call with a 10-second deadline and no retries. Its structured sentences retain only citations to the retrieved id and revision; sentences left without citations are dropped. A depth above 1 returns the background-required outcome to the caller. The standing profile is an ephemeral view ordered by the latest committed revision, with line and tokenizer budgets supplied by assembly. These operations are callable Core/tool services; no memory operation is exposed by the current client protocol, so acceptance uses real canon and ledger package scenarios. The indexed memory matcher and the ledger search service are described in C-22.
+
+The memory-job increment exposes Core-owned preparation, pre-dispatch checks and
+`ExtractionApply`, `MaintenanceApply` and `BriefApply` callbacks in
+`internal/core/memory`. They register with the existing job API; the worker still
+reads immutable tasks and submits their results through `Apply`. The composing
+schema owner installs `memory.JobsSchema` alongside `jobs.Schema` and the shared
+budget schema in a numbered migration. Worker startup never migrates canon.
+These are package and job-socket capabilities; installation and conversation
+composition select their schedules and model bindings. No new client command or
+TUI memory screen is introduced.
+
+Extraction scans a bounded ledger prefix for one agent, retaining the source
+cursor and revocation epoch. Only canonical person events enter an utterance;
+replay and `view_of` copies do not trigger another extraction. The configurable
+burst window is measured from the first event, and a non-person turn or a
+conversation change breaks it. Empty eligible batches require no model task.
+Core checks the prepared source text, visibility and model scope before dispatch,
+and Apply rechecks the epoch, allowed evidence set and normal memory-write rules.
+All items and the task watermark commit together; a failed batch publishes none.
+If the queued source snapshot becomes obsolete through revocation or tightened
+scope, the model callback returns an empty result with zero usage and Apply
+consumes the task without writing items. The scheduler rebuilds its replacement
+from the old source cursor against current canon, retaining eligible events.
+Obsolescence is decided before the first write; malformed current proposals and
+write failures still roll back the batch.
+Common equal statements merge evidence and ordinary recall hides each predecessor
+in a supersession chain.
+
+Maintenance reads one exact holder, including `all` for the common pass. Its
+editable choice is revision-checked and defaults to no allowed actions. It can
+clear a standing flag, merge normalized-equal duplicates or classify exclusively
+automated evidence only when that action is pre-authorized at commit. A merge
+preserves evidence and prior revisions and retracts the duplicate; subject,
+holder, scope, kind and validity boundaries are never crossed. Token Jaccard
+overlap of 0.8 (P), without configured embeddings, produces a proposal only.
+Expired and superseded items retain history. Instruction-like standing text is
+flagged with a conservative prefix detector; this is a hygiene heuristic, not an
+authorization boundary. Unanswered proposals expire after seven days (P), are
+not renewed for an unchanged finding, and reads omit proposals for obsolete item
+revisions. The pass emits at most one short notice for new proposals or applied
+changes, and no notice for a no-op. A notice callback writes in the same Apply
+transaction and may announce success only after commit.
+
+A person-brief task is prepared after delivery from at most twelve readable
+person items, standing preferences and explicitly selected recent person events.
+It is derived state scoped to the agent and person. Every surviving sentence
+cites a source from that task. Pre-dispatch and publication checks reject a
+superseded generation, changed source revision, changed scope or revocation
+epoch. An obsolete brief task returns an empty result without a model call or
+charge; Apply consumes that task without publishing, allowing the consecutive
+watermark to reach its replacement. Other failures remain failures. Empty output
+from a current task increases the next eligible turn by
+`min(base cadence + empty streak, base cadence * 8)`; useful output resets the
+streak. A ready-only read requires the same topic, still-valid evidence and a
+turn age no greater than twice the base cadence. It never waits or calls a model.
+An Aux call whose outcome is unknown retains the job API's pending reservation
+and is not silently retried. Synthetic package tests and
+`e2e/m1/memory-jobs.json` exercise these operations with the real worker binary and
+Core job socket; model quality and installed scheduling remain composition concerns.
 
 **C-22 Korean search (changed).** FTS5 with the trigram tokenizer for ledger and memory, plus a Hangul bigram posting table for words of two syllables. The acceptance set of the contract, by id, is a particle-attached three-syllable word and a two-syllable word, on the ledger (imported conversations included) and on memory. Each index records its tokenizer and fallback. Vectors are derived data in sqlite-vec when an embedding endpoint is configured.
 

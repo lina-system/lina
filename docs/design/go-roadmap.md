@@ -55,6 +55,7 @@ Order follows the Depends-on lines. 1.A comes first and 1.H last.
 Failure injections: `kill -9` at each start step and turn phase; corrupt canon; a write fault on `canon/`; disk full; an unusable sandbox; a slow client and dropped frames; a replayed channel update; provider unavailable, expired token and usage cap; `kill -9` with a background run working; restore of an older generation.
 
 - #358 covers provider unavailable and truncated SSE through the installed Core and real TUI in a headless PTY. Failure notices and streamed partials remain visible after restart, accepted requests are not replayed, and a new request excludes failed partials from completed assistant context. Turn-store tests inject a notice write failure and verify atomic terminal state, recovery and notice deduplication.
+- #372 covers SIGKILL while text is still streaming and failed responses with function-call argument or custom-tool input deltas. The installed Core and real TUI scenario compares live and restored text, order and block identities, retains one interruption or failure outcome, excludes tool input from assistant rows and never replays the accepted request.
 
 ### 1.A Foundation and control plane
 
@@ -262,6 +263,7 @@ The #104 typed-result increment supplies all eight closed body schemas, determin
 
 **G1-37 Extraction, maintenance pass and person brief.** Extraction, one maintenance pass, person brief.
 - Done when: a person-subject item comes only from person events; a fan-out fixture yields one item with two evidences; a chain of three statements returns only the newest; the pass applies only pre-authorized actions and is silent when nothing changed.
+- Implementation evidence: memory preparation and Apply callbacks, durable maintenance choices and expiring proposals, and a generation-checked cited person brief in `internal/core/memory`; `e2e/m1/memory-jobs.json` runs the real worker against the Core job socket. Package fixtures cover non-person rejection, fan-out evidence, a three-statement chain and silent maintenance.
 - Depends on: G1-13, G1-14, G1-36. Design refs: C-21; [cognition-and-life.md](cognition-and-life.md#memory-jobs).
 
 **G1-38 Prepared summaries and higher tree levels.** Prepared summaries, higher tree levels.

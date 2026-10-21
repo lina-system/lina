@@ -3,12 +3,16 @@
 package boot
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/secrets"
+	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/kit/loop"
+	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
@@ -40,6 +44,63 @@ func TestSteeringHandoffPreservesOnlyUndrainedInputs(t *testing.T) {
 	}
 	if inputs.Push(first) {
 		t.Fatal("closed turn accepted steering")
+	}
+}
+
+func TestRestoredPartialKeepsLiveReplyProjection(t *testing.T) {
+	for _, tc := range []struct {
+		name, text string
+		card       bool
+	}{
+		{"short-with-held-prefix", "Public text. sk-", false},
+		{"long-card", "Public text. " + strings.Repeat("unfinished text ", 100), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			filter, err := conversationFilter()
+			if err != nil {
+				t.Fatal(err)
+			}
+			stream := &conversationReplyStream{filter: filter}
+			view, _, err := stream.Push(tc.text)
+			if err != nil || (view.Card != nil) != tc.card {
+				t.Fatalf("unexpected live projection: %+v %v", view, err)
+			}
+			project := func(restored bool) clientsrv.TopicEvent {
+				t.Helper()
+				topics, err := clientsrv.NewTopics("1", clientsrv.TopicOptions{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer topics.Close()
+				stored, _, _, _ := managementFixture(t)
+				// Keep runtime.ctx unset: publication must use its caller's context.
+				runtime := &conversationRuntime{db: stored.db, topics: topics, conversation: "conversation", agent: "agent"}
+				if restored {
+					err = runtime.publishPartials(t.Context(), turn.Stopped{TurnID: "turn", Partials: []turn.Partial{{Round: 1, Index: 3, Text: stream.sent}}})
+				} else {
+					err = runtime.publishReply(t.Context(), "turn:2:3", "turn", view)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				start, sub, err := topics.Subscribe("conversation:conversation", nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer sub.Close()
+				if start.Snapshot == nil || len(start.Snapshot.Items) != 1 {
+					t.Fatal("expected one projected row")
+				}
+				return start.Snapshot.Items[0]
+			}
+			live, restored := project(false), project(true)
+			if !reflect.DeepEqual(live, restored) {
+				t.Fatalf("restored partial changed its live projection: live=%+v restored=%+v", live, restored)
+			}
+			if tc.card && restored.Kind != protocol.KindResult {
+				t.Fatal("restored card became an assistant text row")
+			}
+		})
 	}
 }
 
