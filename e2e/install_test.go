@@ -148,7 +148,7 @@ esac
 	h.inputRefused(client)
 	term := h.startTUI("TERM=xterm-256color", "NO_COLOR=1", "LC_ALL=C")
 	expectCatalogState(t, h, term, design.English, scenario.ConnectionState)
-	h.keys(term, "q\n")
+	h.keys(term, "\x04")
 	term.process.wait(t, 0)
 	h.inputRefused(client)
 	h.stopCore(core)

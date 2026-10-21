@@ -494,12 +494,40 @@ One refresh goroutine runs per account. Rotation, timing, keep-alive and failure
 
 The actor refreshes ten minutes before either known expiry (halfway through a shorter lifetime), with a daily idle keep-alive when expiry is unknown or farther away. Existing turns finish before the exchange; new turns wait until the credential replacement finishes. Separate accounts may refresh concurrently. Before contacting the issuer, the actor durably records needs sign-in. It replaces the secret record before committing the new expiry and status or releasing access to the bearer. Interruption, a failed exchange, a missing secret or failed persistence therefore cannot reuse an uncertain refresh token. A failed exchange stops the timer and returns needs sign-in without retry or account fallback; recovery requires replacement credentials. A successful keep-alive preserves not eligible or usage capped. Caller cancellation does not cancel an exchange shared with other callers; closing the store cancels and joins its actors. The trusted exchange callback has a 30-second deadline and must honor cancellation. Sign-in replacement obtains turn exclusion before changing metadata and holds it through the metadata commit. Replacement may supply verified granted scopes; omitted scopes preserve the existing grant, and an explicit empty list removes it. A temporary keychain read failure before any exchange preserves the account state and returns credentials unavailable; due idle refresh reads back off for one minute and resume when storage recovers. Missing or malformed credentials still require sign-in. Returned credentials are per-call snapshots for trusted adapters; callers must keep their use inside the pinned turn and must not retain them for later requests.
 
-The store tests use real canon and private secret files, injected issuer/storage failures and a virtual clock. #81 connects the sign-in service and fixed-issuer refresh exchange to this store, installs client relay operations, and exercises owner binding through the real client socket in `e2e/m1/chatgpt-signin.json`. Live OAuth and request-surface acceptance remain pending the owner-run [V1 check](../../evidence/v1-chatgpt.md); revocation is separate account-management work.
+The store tests use real canon and private secret files, injected issuer/storage failures and a virtual clock. #81 connects the sign-in service and fixed-issuer refresh exchange to this store, installs client relay operations, and exercises owner binding through the real client socket in `e2e/m1/chatgpt-signin.json`. Live OAuth and request-surface acceptance remain pending the owner-run [V1 check](../../evidence/v1-chatgpt.md); provider-side revocation remains separate from local sign-out.
 
 
 The sign-in keeps state, nonce and PKCE verifier only in Core. Pending attempts are scoped to the initiating connection, consumed once before exchange and cancelled on replacement or disconnect. Core validates structured and pasted callbacks identically, including the issued dynamic client id and returning registration. The fixed OpenAI issuer's RS256 signature and issuer, audience, expiry, issued-at and nonce claims are checked before accepting an identity; a returning account must retain its verified subject. The token response must grant `chatgpt.tokens.use.direct` before the account can be used for inference.
 
-The service owner appends `accounts.SignInSchema` to numbered canon migrations and supplies its person, account store and leaser. `NewSignIn` persists one host id; `Begin` selects only a saved registration belonging to that person and host. `SignInRelay.Operations` installs the account request, listener report and redirect handlers; the supported-combination row must grant both `accounts` and `sign_in_relay`. The connection id is assigned by Core and differs across reconnects even when a client repeats its public id. Legacy empty payloads decode but cannot perform a sign-in.
+The service owner uses the fixed `canon.Migrations` catalog, which includes `accounts.SignInSchema`, and supplies its person, account store and leaser. `NewSignIn` persists one host id; `Begin` selects only a saved registration belonging to that person and host. `SignInRelay.Operations` installs the account request, listener report and redirect handlers; the supported-combination row must grant both `accounts` and `sign_in_relay`. The connection id is assigned by Core and differs across reconnects even when a client repeats its public id. Legacy empty payloads decode but cannot perform a sign-in.
+
+#112 wires this store and the existing sign-in relay into installed Core even
+without a configured conversation model. SignInSchema is fixed at version 16
+in canon, after the published turn and compaction migrations. The composition
+opens one secret store and one account store on the same fenced canon writer. The production issuer remains fixed;
+only the in-process test composition injects an HTTP transport. The client
+combination advertises accounts and relay independently of conversation.
+Core startup and the read-only doctor share `boot.ApplicationMigrations`, which
+returns the same fixed canon catalog used by backup, so diagnostics recognize
+the account schema installed by the same binary.
+
+Account list projects metadata for the connection's person. Sign-out runs on the
+existing account actor and obtains the secret store's existing mutation
+reservation. It waits for active turns, persists `needs_sign_in`, then deletes
+the existing secret record while keeping new turns excluded. Cancellation while
+waiting changes neither metadata nor credentials. Once reserved, retirement
+finishes or fails closed even if the caller disconnects. A crash or storage
+failure after intent leaves the account unusable and the request retryable.
+Repeated deletion of an absent credential succeeds. Registration metadata
+and the independent owner binding remain for reauthorization. No refresh rule
+or token storage format changes. The thin client handlers expose this existing
+store through list and sign-out operations, with no second store or relay.
+
+The TUI consumes the same relay operations through correlated client requests.
+Its loopback and pasted-URL routes are exercised in `e2e/m1/tui-accounts.json`
+with the production account store, signature validation and owner-binding path,
+a synthetic issuer, and the built TUI in a headless PTY. No real account or token
+is needed for this client acceptance check.
 
 Owner binding is a singleton canon record independent of provider credentials. The serialized canon writer binds the first successful sign-in and compares every later login's person, issuer and subject without updating the binding. A different provider account cannot replace or delete it. Competing first sign-ins cannot both establish different owners.
 
@@ -583,7 +611,7 @@ The masking/store increment (#48) supplies `internal/core/secrets.Mask` as the n
 
 **C-16 Canon file and writer (kept).** `canon/` holds the SQLite database. It has three classes of data: canonical rows; FTS tables written in the same transaction as their source; and model-written derived rows stamped with the revocation epoch. One writer goroutine owns one write connection. Readers open `query_only`. WAL and `synchronous=FULL`. No transaction spans a model, tool, Node or network call. Migrations are forward-only. The SQLite binding is chosen by [V2](runtime.md#runtime-acceptance) against four needs: FTS5, the online backup API, an optional sqlite-vec load verified against a manifest digest, and static builds. sqlite-vec is the optional embedding feature; with no embedding endpoint, recall uses FTS5.
 
-Canon owns one fixed, append-only application migration catalog, shared by Core startup and backup. The published development order is retraction at version 11, turn records/control/outcomes at versions 12/13/14, and compaction at version 15. Runtime composition never appends the turn schemas by the current list length. A database created by the current dev catalog upgrades without recreating existing turn tables, and later migrations append after these fixed numbers. No release has shipped: incompatible older development layouts are refused with a published-catalog error before writer initialization, without a compatibility shim, renumbering or normalization.
+Canon owns one fixed, append-only application migration catalog, shared by Core startup and backup. The published development order is retraction at version 11, turn records/control/outcomes at versions 12/13/14, compaction at version 15, and account sign-in at version 16. Runtime composition never appends the turn schemas by the current list length. A database created by the current dev catalog upgrades without recreating existing turn tables, and later migrations append after these fixed numbers. No release has shipped: incompatible older development layouts are refused with a published-catalog error before writer initialization, without a compatibility shim, renumbering or normalization.
 
 The ordered application migrations are returned by `canon.Migrations`; table groups keep their schema in separate files. The asset tables hold stable ids and observed paths, immutable revision metadata, export delivery records and trash transitions. `assets` uses the existing fenced writer for all metadata changes and a read-only transaction for each query. File preparation and external delivery happen outside canon transactions; revision bytes are synced before their metadata is committed. A stale writer cannot replace existing revision bytes.
 

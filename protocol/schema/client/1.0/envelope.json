@@ -2068,14 +2068,14 @@
       "additionalProperties": false
     },
     "running_get": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "running": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -2095,14 +2095,14 @@
       "additionalProperties": false
     },
     "stop": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "follow_up": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -2122,14 +2122,14 @@
       "additionalProperties": false
     },
     "progress_get": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "progress": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -2149,28 +2149,28 @@
       "additionalProperties": false
     },
     "progress_digest_get": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "progress_digest": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "waiting_get": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "waiting": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -2190,21 +2190,21 @@
       "additionalProperties": false
     },
     "waiting_answer": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "details_get": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "details": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -2223,28 +2223,28 @@
       "additionalProperties": false
     },
     "agent_request": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "agent_result": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "work_request": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "work_result": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -2255,7 +2255,11 @@
       "properties": {
         "operation": {
           "type": "string",
-          "const": "sign_in"
+          "enum": [
+            "sign_in",
+            "list",
+            "sign_out"
+          ]
         },
         "provider": {
           "type": "string",
@@ -2282,11 +2286,6 @@
             "anyOf": [
               {
                 "required": [
-                  "operation"
-                ]
-              },
-              {
-                "required": [
                   "provider"
                 ]
               },
@@ -2304,9 +2303,42 @@
           },
           "then": {
             "required": [
-              "operation",
+              "operation"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "operation"
+            ],
+            "properties": {
+              "operation": {
+                "const": "sign_in"
+              }
+            }
+          },
+          "then": {
+            "required": [
               "provider",
               "purpose"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "operation"
+            ],
+            "properties": {
+              "operation": {
+                "const": "sign_out"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "account_id"
             ]
           }
         }
@@ -2317,7 +2349,11 @@
       "properties": {
         "operation": {
           "type": "string",
-          "const": "sign_in"
+          "enum": [
+            "sign_in",
+            "list",
+            "sign_out"
+          ]
         },
         "account_id": {
           "type": "string",
@@ -2338,6 +2374,12 @@
         },
         "text": {
           "type": "string"
+        },
+        "accounts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/account_summary"
+          }
         }
       },
       "required": [],
@@ -2346,11 +2388,6 @@
         {
           "if": {
             "anyOf": [
-              {
-                "required": [
-                  "operation"
-                ]
-              },
               {
                 "required": [
                   "account_id"
@@ -2370,46 +2407,84 @@
               "status"
             ]
           }
+        },
+        {
+          "if": {
+            "required": [
+              "operation"
+            ],
+            "properties": {
+              "operation": {
+                "enum": [
+                  "sign_in",
+                  "sign_out"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "account_id",
+              "status"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "operation"
+            ],
+            "properties": {
+              "operation": {
+                "const": "list"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "accounts"
+            ]
+          }
         }
       ]
     },
     "memory_request": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "memory_result": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "memory_import_progress": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "memory_promotion_batch": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "channel_request": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "channel_result": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -2429,14 +2504,14 @@
       "additionalProperties": false
     },
     "agent_talk_get": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "agent_talk": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -2456,14 +2531,14 @@
       "additionalProperties": false
     },
     "agent_talk_expand": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "agent_talk_subscribe": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -2522,14 +2597,14 @@
       "additionalProperties": false
     },
     "task_cancel": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "multi_task_control": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -2934,21 +3009,21 @@
       "minimum": 1
     },
     "result_body": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "saved_reference": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "save_destination": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -3479,6 +3554,41 @@
         "agent",
         "system"
       ]
+    },
+    "account_summary": {
+      "type": "object",
+      "properties": {
+        "account_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "provider": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "needs_sign_in",
+            "not_eligible",
+            "usage_capped"
+          ]
+        },
+        "plan": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "account_id",
+        "provider",
+        "label",
+        "status"
+      ],
+      "additionalProperties": false
     }
   }
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/internal/tui/state"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
@@ -136,6 +137,56 @@ func TestReconnectSameEpochRestoresUnacknowledgedDraft(t *testing.T) {
 	m.Update(shellBegin{Generation: 2})
 	if m.content.Busy || m.content.Draft.Text != "UNACKNOWLEDGED\nNEW" {
 		t.Fatal("same-epoch disconnect left input pending or lost the draft")
+	}
+}
+
+func TestConversationEpochNotice(t *testing.T) {
+	for _, width := range []int{60, 80, 120} {
+		for _, language := range []design.Language{design.English, design.Korean} {
+			t.Run(fmt.Sprintf("%d/%s", width, language), func(t *testing.T) {
+				m := conversationShell()
+				options := m.styles.options
+				options.Language = language
+				m.styles = NewStyles(options)
+				m.Update(tea.WindowSizeMsg{Width: width, Height: 60})
+				snapshot := state.Snapshot{Epoch: "9", Revocation: "1", Topic: "conversation:fixture", Cursor: 1, Items: []state.Block{{ID: "history", Text: "HISTORY-359", Revision: 1, Done: true}}}
+				m.Update(shellData{Generation: 1, Message: snapshot})
+				m.Update(tea.PasteMsg{Content: "DRAFT-359"})
+				if len(m.content.Notices) != 0 {
+					t.Fatal("initial connection created a notice")
+				}
+				m.Update(shellBegin{Generation: 2})
+				m.Update(shellData{Generation: 2, Message: snapshot})
+				if len(m.content.Notices) != 0 {
+					t.Fatal("same-epoch reconnect created a notice")
+				}
+				for index, epoch := range []string{"10", "11"} {
+					// The connection owner and topic snapshots may both announce the
+					// epoch. They must still produce one local notice per change.
+					m.Update(shellData{Generation: 2, Message: state.Notice{ID: "epoch:" + epoch, Code: "epoch_changed"}})
+					snapshot.Epoch = epoch
+					m.Update(shellData{Generation: 2, Message: snapshot})
+					m.Update(shellData{Generation: 2, Message: snapshot})
+					m.Update(shellConnection{Generation: 2, Status: ConnectionStatus{State: Live}})
+					view := m.View().Content
+					if count := strings.Count(view, design.Text(language, "epoch_changed")); count != 1 {
+						t.Fatalf("visible local notices = %d, want 1", count)
+					}
+					if len(m.content.Notices) != index+1 || len(m.content.Blocks) != 1 || !strings.Contains(view, "HISTORY-359") || !strings.Contains(view, "DRAFT-359") {
+						t.Fatal("notice duplicated, entered history or hid history/draft")
+					}
+					if m.View().Content != view {
+						t.Fatal("redraw changed the local notice")
+					}
+				}
+				// An empty resync must retain the local notice outside the ledger.
+				snapshot.Items, snapshot.Cursor = nil, 2
+				m.Update(shellData{Generation: 2, Message: snapshot})
+				if len(m.content.Blocks) != 0 || strings.Count(m.View().Content, design.Text(language, "epoch_changed")) != 1 {
+					t.Fatal("empty history snapshot lost the local notice")
+				}
+			})
+		}
 	}
 }
 

@@ -186,6 +186,15 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 			return nil
 		}
 		text := strings.TrimSpace(m.content.Draft.Text)
+		if handled, command := m.accountCommand(text); handled {
+			m.reduceInput(state.EditDraft{})
+			m.conversation.undo = nil
+			return command
+		}
+		if !m.hasCapability("conversation") {
+			m.accounts = accountView{open: true, code: "needs_sign_in"}
+			return nil
+		}
 		if text == "/stop" {
 			m.reduceInput(state.EditDraft{})
 			if m.content.TurnActive {
@@ -376,6 +385,19 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 	}
 	rows[plan.Header.Y] = clip(m.styles.Title.Render(name))
 	var transcript []string
+	if !m.hasCapability("conversation") {
+		code := "account.empty"
+		if !m.accountsKnown {
+			code = "account.loading"
+		}
+		for _, row := range m.accountRows {
+			if row.Status == "ok" {
+				code = "account.ready"
+				break
+			}
+		}
+		transcript = append(transcript, design.Text(m.styles.options.Language, code)+"  /accounts")
+	}
 	for _, b := range m.content.Blocks {
 		if b.Topic == "core" || b.Topic == "running" || b.Topic == "waiting" || b.Topic == "progress" || b.Kind == protocol.KindTurnState {
 			continue

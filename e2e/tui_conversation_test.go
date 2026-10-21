@@ -184,6 +184,12 @@ func installedConversationHarness(t *testing.T, providerURL string) (*harness, f
 	h := newHarness(t, buildLina(t))
 	base := h.root
 	bundle := makeInstallBundle(t, base, h.binary, buildCommand(t, "lina-node"))
+	return installConversationBundle(t, h, bundle, providerURL)
+}
+
+func installConversationBundle(t *testing.T, h *harness, bundle, providerURL string) (*harness, func(bool) *process) {
+	t.Helper()
+	base := h.root
 	bin := filepath.Join(base, "tools")
 	if err := os.Mkdir(bin, 0700); err != nil {
 		t.Fatal(err)

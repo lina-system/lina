@@ -57,12 +57,12 @@ func TestM1BackupInstalledConversation(t *testing.T) {
 	}
 	h.stopCore(core)
 	// Reproduce the cumulative schema of the current dev installation (v14),
-	// retaining its completed conversation while removing the new empty summaries.
+	// retaining its completed conversation while removing later schema additions.
 	legacy, err := canon.OpenSQLite(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = legacy.ExecContext(h.ctx, `DROP TRIGGER sum_revoke; DROP VIEW sum_affected; DROP TABLE sum_cover; DROP TABLE sum_edge; DROP TABLE sum_node; PRAGMA user_version=14;`)
+	_, err = legacy.ExecContext(h.ctx, `DROP TRIGGER sum_revoke; DROP VIEW sum_affected; DROP TABLE sum_cover; DROP TABLE sum_edge; DROP TABLE sum_node; DROP TABLE sign_in_identities; DROP TABLE sign_in_host; DROP TABLE owner_binding; PRAGMA user_version=14;`)
 	legacy.Close()
 	if err != nil {
 		t.Fatal(err)

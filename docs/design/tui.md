@@ -112,6 +112,14 @@ the handshake-then-read behavior. No failure path starts Core or creates state.
 
 A changed epoch is announced once as a local notice. Remote use is `lina tui` connecting inside the tailnet ([runtime.md](runtime.md#remote-access)). A TUI run in an SSH session on the host is a local client.
 
+The conversation status row shows the latest local notice before its key hints,
+using the same localized notice as the connection shell. It stays outside
+conversation items: snapshot replay and redraw do not duplicate it, resync does
+not drop it, and a fresh client does not restore it from history. History and
+the unsent draft remain usable after reconnect. `e2e/m1/tui-epoch-notice.json`
+checks successive graceful and forced restarts of an installed Core through a
+120x60 PTY with a loopback Responses fixture.
+
 Connection presentation carries a typed cause separately from diagnostic text.
 Refused and Core-absent screens show that closed cause code, its localized label,
 and the next action. Unknown causes use the catalog's unknown entry. Retry
@@ -153,7 +161,7 @@ Messages are frames from Core, keys, paste, resize, ticks from an injected clock
 3. An async result carries the generation that launched it. An older generation is dropped.
 4. Durations come from server timestamps and the offset measured at the last snapshot, never from arrival time.
 5. Busy is set in the same call that issues a send. A failed send restores the draft merged with anything typed since.
-6. An interrupt shows "stopping" and converges on the stored partial.
+6. An interrupt shows "stopping" and converges on the stored partial. Core seals the partial under the streamed block id together with its durable stopped outcome; reopening the TUI or restarting Core restores both without resending the model request.
 7. Selection, folds and scroll key on block id and survive a resync.
 8. Local notices live outside the items, so a resync never drops them.
 9. The client acts on typed fields only. It never parses model, tool, plugin or web text for commands, ids, links, approvals or status.
@@ -334,6 +342,41 @@ continues to require its separate typed card controls.
 
 **Sign-in.** The TUI is the client side of one relay for plugin and model-provider sign-in. It opens a loopback listener and reports its port, opens the system browser when it runs locally, and relays `code`, `state` and `iss`, or the `error` fields, exactly as received. Over SSH it takes a pasted URL instead. A secret the person types, such as an API key, is a masked field with no undo and no history, and travels once to Core.
 
+The TUI negotiates `accounts` and `sign_in_relay` independently of conversation.
+Account listing and sign-out remain available when the relay is not granted;
+login and reauthorization then show the unsupported capability.
+`/signin` starts a ChatGPT login; `/accounts` opens its labeled account block,
+where Up/Down selects a metadata row, `s` reauthorizes it (or logs in when the
+list is empty), `a` adds a provider account without changing the owner binding,
+and `x` signs out the selected account. List and completion refresh the displayed
+account status; ids remain internal request targets. An account-only connection retains a composer and displays the missing
+account cause with `/signin`; entering conversation text makes no model request.
+The conversation draft survives opening and closing the account block.
+
+The client reports an ephemeral IPv4 loopback port for `/auth/callback`, or
+`cannot_listen` over SSH or when binding fails. It opens only an HTTPS
+authorization URL, with a single URL argument to the system browser launcher.
+The full URL remains available when opening fails. A pasted callback is a masked,
+bounded, transient field: it has no conversation echo, draft undo or history.
+Both callback paths forward the original URL so dynamic client-registration
+parameters reach Core unchanged. Core alone checks state, issuer and identity.
+The listener accepts one callback; submit cannot repeat an exchange. Completion,
+refusal, cancellation, timeout, disconnect and quit close the listener and join
+its tasks. Esc cancels a pending attempt by closing its client connection; normal
+connection recovery then obtains a fresh connection. Old connection and attempt
+results cannot advance a replacement sign-in.
+
+`e2e/m1/tui-accounts.json` drives the built TUI in a PTY through local loopback
+and SSH paste, using the real Core account/relay services and a synthetic signed
+issuer. It verifies durable account status and owner binding. This is synthetic
+sign-in evidence; the owner's real account and request-surface check remain #81.
+`e2e/m1/tui-accounts-installed.json` additionally installs the real binaries,
+checks the unconfigured Core's preparation message in a PTY, and runs the same
+installed Core composition with the synthetic issuer through sign-in, list and
+sign-out. Captured client traffic, terminal output and state outside the secret
+store contain no provider tokens. Model routing and live provider acceptance
+remain their own contracts.
+
 ## Agent surfaces and settings as text (T-14)
 
 Contract: [surfaces.md](surfaces.md#agent-surfaces), [surfaces.md](surfaces.md#settings). Each view is data that Core already computes. The TUI draws it as lines with keys. The roadmap builds the views with the Core feature behind each, and a view whose capability was not granted shows as unsupported (T-07).
@@ -345,7 +388,7 @@ Contract: [surfaces.md](surfaces.md#agent-surfaces), [surfaces.md](surfaces.md#s
 
 Settings are commands and labeled blocks, all requests to Core:
 
-- Accounts: the connected-accounts view with the one-line setup summary, add account, sign out.
+- Accounts: `/accounts` lists the connected accounts as metadata rows with the one-line summary, add account and sign out. Labels, optional plan names and states come from Core; only the request carries the selected account id. `/signin` opens ChatGPT login even before conversation is available.
 - Plugins: the catalog, the connect card as a labeled block, the plugin list and the tools of each plugin.
 - Command network: the standing grants, with revoke.
 - Channels: connections, pairing code, bindings and scopes. A token passes to Core once and is never shown.
