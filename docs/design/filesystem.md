@@ -266,6 +266,14 @@ The backup procedure must:
 3. Record the head of every version-space repository, copy the repositories and the asset bytes, and verify every hash against the manifest.
 4. Publish the manifest last. A generation without a published manifest doesn't exist.
 
+`lina backup --state-root <path>` requires Core to be stopped, holds the stable exclusive Core lock through publication, and refuses a running Core without writing state while explaining how to stop it (`systemctl --user stop lina-core.service`, or Ctrl+C for a foreground Core).
+
+The coordinator replays and validates `backups/removals` before taking the SQLite snapshot or copying any files. A missing acknowledged line, torn record or invalid chain aborts the backup. The captured revocation watermark is the replayed watermark. Capture holds the main's writer exclusion through publication; a SQLite snapshot alone does not quiesce material or workspace writers.
+
+The schema-1 `manifest.json` includes the capture epoch, artifact versions, SQLite schema version and content revision (its SHA-256), repository heads, material revisions, derived source revisions and a complete file/directory inventory. Source revisions for `derived/<asset-id>/<revision>/` follow that source-revision path. Copy hashes are checked against their captured inputs and material hashes against canon. The coordinator rereads the destination before publication. Empty directories and workspace symbolic links are retained; links are copied as links without reading their targets. Database/WAL file copying, linked protected paths and special files are refused. Secrets, installation/control state, work areas, staging and connected-source bytes are excluded.
+
+Each attempt uses a fresh private `backups/generation-<id>/` directory. Copied data and directories are synced before an atomic rename publishes the synced manifest, followed by directory sync. An error removes only that attempt's unpublished directory. A process killed during copying can leave an incomplete directory without a manifest; it is never a generation and cannot be verified. A later backup uses a new id and leaves published generations unchanged. Verification compares the complete inventory, SQLite and material digests, repository heads and derived source revisions with the manifest, including detecting missing or extra files and directories.
+
 The asset store supplies the materials portion of this procedure: it copies every recorded revision, including recoverable trash, and checks size and SHA-256 against canon both during copying and by reading the copy back. Verification of an existing copy uses the captured manifest's hashes. A mismatch fails the operation and yields no successful manifest; the backup coordinator discards the unpublished partial generation. Staging and unrecorded files are excluded. This package operation does not replace the whole-generation coordinator or the SQLite online snapshot.
 
 Restore rules:
