@@ -74,6 +74,13 @@ For plain output, a validated `welcome` prints `live` on standard output. On a u
 
 A changed epoch is announced once as a local notice. Remote use is `lina tui` connecting inside the tailnet ([runtime.md](runtime.md#remote-access)). A TUI run in an SSH session on the host is a local client.
 
+Connection presentation carries a typed cause separately from diagnostic text.
+Refused and Core-absent screens show that closed cause code, its localized label,
+and the next action. Unknown causes use the catalog's unknown entry. Retry
+presentation takes the attempt number and remaining delay from its connection
+owner. A change to either metadata or state refreshes the display; an identical
+status writes nothing. The key gate also covers the current legacy quit input.
+
 ## Streams on the client (T-03)
 
 The server side is [go-core.md](go-core.md) (C-42): topics, cursors, rings, batching and heartbeat. This section is the client side.
@@ -403,6 +410,11 @@ tests cover projected snapshots, replay, resync, revocation, local echoes,
 generation checks, draft recovery, clock offsets and split sanitizer input.
 These tests establish the pure reducer and existing receive boundary, without
 claiming conversation UI or an unimplemented wire payload.
+`e2e/m1/tui-shell.json` exercises the built TUI through the same PTY lifecycle
+in English and Korean: connecting, welcome, refusal, absent Core and quit.
+It resolves state labels by catalog id and checks that an absent socket leaves
+the isolated state directory empty. Live recovery still requires the client
+service's typed stream adapter; these initial scenario steps do not establish it.
 
 The schema and receive-boundary corpus runs independently through
 `kit/protocol/conformance`. It checks that an unknown kind yields no admitted
