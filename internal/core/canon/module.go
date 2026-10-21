@@ -14,6 +14,7 @@ import (
 var sqliteModule struct {
 	sync.Mutex
 	started bool
+	custom  bool
 }
 
 // UseSQLiteWASM selects an optional custom SQLite engine before any connection
@@ -36,18 +37,22 @@ func UseSQLiteWASM(path, expectedSHA256 string) error {
 	}
 	sqlite3.Binary = data
 	sqlite3.Path = ""
+	sqliteModule.custom = true
 	return nil
 }
 
 func initializeSQLite() error {
 	sqliteModule.Lock()
 	defer sqliteModule.Unlock()
+	if !sqliteModule.custom && (sqlite3.Path != "" || fmt.Sprintf("%x", sha256.Sum256(sqlite3.Binary)) != SQLiteWASMSHA256) {
+		return errors.New("packaged SQLite Wasm digest mismatch")
+	}
 	sqliteModule.started = true
 	return sqlite3.Initialize()
 }
 
 // SQLiteEngine reports the actual engine version and SHA-256 of its Wasm bytes.
-// The default engine is embedded in the pinned binding and needs no runtime file.
+// The default engine includes sqlite-vec and needs no runtime file.
 func SQLiteEngine() (version, digest string, err error) {
 	if err := initializeSQLite(); err != nil {
 		return "", "", err
@@ -68,4 +73,25 @@ func SQLiteEngine() (version, digest string, err error) {
 		return "", "", err
 	}
 	return version, fmt.Sprintf("%x", sha256.Sum256(sqlite3.Binary)), nil
+}
+
+// SQLiteVectorVersion probes the extension in the verified, active engine.
+func SQLiteVectorVersion() (string, error) {
+	if err := initializeSQLite(); err != nil {
+		return "", err
+	}
+	conn, err := sqlite3.Open(":memory:")
+	if err != nil {
+		return "", err
+	}
+	defer conn.Close()
+	stmt, _, err := conn.Prepare("SELECT vec_version()")
+	if err != nil {
+		return "", err
+	}
+	var version string
+	if stmt.Step() {
+		version = stmt.ColumnText(0)
+	}
+	return version, stmt.Close()
 }
