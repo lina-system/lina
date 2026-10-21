@@ -8,10 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/thisisjun786/lina/kit/lease"
+	"github.com/thisisjun786/lina/kit/secret"
 )
 
 type ProviderID string
@@ -119,19 +119,18 @@ func (f *Failure) Error() string {
 type Credential struct {
 	Account AccountID
 	Kind    AuthKind
-	bearer  string
+	bearer  secret.Secret
 }
 
 func NewCredential(account AccountID, kind AuthKind, bearer string) Credential {
-	return Credential{Account: account, Kind: kind, bearer: bearer}
+	return Credential{Account: account, Kind: kind, bearer: secret.New(bearer)}
 }
 func (Credential) String() string   { return "[credential]" }
 func (Credential) GoString() string { return "[credential]" }
 func (c Credential) Authorize(r *http.Request) error {
-	if c.bearer == "" || strings.ContainsAny(c.bearer, "\r\n") {
+	if err := secret.InjectHeader(r.Header, "Authorization", "Bearer ", c.bearer); err != nil {
 		return &Failure{Kind: NeedsSignIn}
 	}
-	r.Header.Set("Authorization", "Bearer "+c.bearer)
 	return nil
 }
 
