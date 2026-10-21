@@ -376,6 +376,13 @@ type SignIn interface {
 
 One refresh goroutine runs per account. Rotation, timing, keep-alive and failure follow [runtime.md](runtime.md#credentials), and the flows per provider are in [runtime.md](runtime.md#accounts-and-sign-in). The sign-in relay runs on the `client` connection ([integrations.md](integrations.md#consent-through-the-client)).
 
+#80 implements `internal/core/accounts` as a callable Core store. One store owns each fenced canon writer, and one actor per account serializes credential admission, replacement, status changes and scheduled refresh. Account metadata lives in canon; the person/provider/account key selects one opaque access-and-refresh record in the secret store. No token enters canon or the account projection. `Credential` returns only the requested account's opaque provider credential. ChatGPT OAuth admission also requires `chatgpt.tokens.use.direct`.
+
+The actor refreshes ten minutes before either known expiry (halfway through a shorter lifetime), with a daily idle keep-alive when expiry is unknown or farther away. Existing turns finish before the exchange; new turns wait until the credential replacement finishes. Separate accounts may refresh concurrently. Before contacting the issuer, the actor durably records needs sign-in. It replaces the secret record before committing the new expiry and status or releasing access to the bearer. Interruption, a failed exchange, a missing secret or failed persistence therefore cannot reuse an uncertain refresh token. A failed exchange stops the timer and returns needs sign-in without retry or account fallback; recovery requires replacement credentials. A successful keep-alive preserves not eligible or usage capped. Caller cancellation does not cancel an exchange shared with other callers; closing the store cancels and joins its actors. The trusted exchange callback has a 30-second deadline and must honor cancellation.
+
+Tests use real canon and private secret files, injected issuer/storage failures and a virtual clock. The store has no Core protocol or TUI operation yet, so no account behavior is observable through the `e2e/m1/` harness in this increment. The issuer exchange is a seam for the sign-in flow; this change does not implement live OAuth, owner binding, revocation, or V1 request-surface acceptance.
+
+
 **C-48 Connected accounts, setup and routing (new).**
 
 ```go
