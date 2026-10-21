@@ -80,7 +80,7 @@ The server side is [go-core.md](go-core.md) (C-42): topics, cursors, rings, batc
 
 - The TUI holds `core`, `waiting`, `progress` and `running` for the whole connection, the focused conversation with its results, and further conversations as background topics up to the limit Core grants. It opens `exchanges`, `accounts` and `channels` only while their view is open.
 - The socket reader feeds a bounded channel that the reducer drains. If it fills, the topic is marked out of sync and a resync is requested. The reader never drops a frame. A slow terminal delays pixels, not state.
-- Epochs compare numerically, the form of CP-02 ([host-protocol.md](host-protocol.md#envelope)). A gap, a repeat or an epoch mismatch counts as `resync`.
+- Epochs compare numerically, the form of CP-02 ([host-protocol.md](host-protocol.md#envelope)), without a machine-integer limit. A gap or a newer epoch requests one resync per out-of-sync topic. Duplicate cursors and revisions and older epochs are ignored; a repeated delivery never changes the display. A resync snapshot cannot roll back the accepted cursor within the same epoch and revocation epoch.
 - A different revocation epoch ([conversation-and-memory.md](conversation-and-memory.md#terms)) makes the TUI drop cached items before the snapshot applies, so a forgotten item cannot survive a reconnect.
 - Replaying a stream or a snapshot twice leaves state unchanged.
 
@@ -109,6 +109,22 @@ Messages are frames from Core, keys, paste, resize, ticks from an injected clock
 9. The client acts on typed fields only. It never parses model, tool, plugin or web text for commands, ids, links, approvals or status.
 10. Every string that did not originate in the client passes `sanitize.Display` before layout: control, bidirectional and OSC sequences are removed, and styling follows truncation.
 11. A frame that fails schema validation shows a placeholder with a code and is counted.
+
+The reducer accepts typed internal `Snapshot`, `Delta` and `ItemDone` projections.
+They do not define a wire format: client 1.0 still reserves the conversation
+payload fields, and the conversation implementation supplies their adapter.
+`Frame` uses the generated schema validator, admits welcome identity and
+capabilities, counts unknown and malformed envelopes separately, and keeps
+error codes outside conversation blocks. Reserved empty payloads create no
+content. An epoch change invalidates pending effects and restores a pending
+send's draft; an authoritative echo reconciles the local block in place.
+
+`sanitize.Display` preserves structural newlines, expands tabs to four spaces,
+replaces invalid UTF-8, and removes other controls, bidi controls and terminal
+escape strings, including unterminated strings. Unsealed snapshots and deltas
+retain a value-type sanitizer continuation, so instructions and UTF-8 split
+across frames have the same filtering as contiguous input. A completed item is
+sanitized independently and replaces that continuation.
 
 The client computes no state of work. It shows the words and marks Core sends ([work-and-delegation.md](work-and-delegation.md#progress-display)), and "unknown" is shown as "unknown", never as none, zero or done.
 
@@ -366,7 +382,13 @@ PTY. The fake owns each accepted stream, bounds request frames to 1 MiB, and
 closes on completion, cancellation or failure. The harness owns its listener and
 joins the peer. Clock gates and I/O observations, never sleep intervals, establish
 ordering. This scenario covers the current connection screen and wire behavior;
-reducer recovery, rendering and application effects still require their own tests.
+rendering and application effects still require their own tests.
+`e2e/m1/tui-state.json` sends duplicate welcomes, reserved conversation frames
+and an epoch change over that harness's socket into `state.Reduce`. Package
+tests cover projected snapshots, replay, resync, revocation, local echoes,
+generation checks, draft recovery, clock offsets and split sanitizer input.
+These tests establish the pure reducer and existing receive boundary, without
+claiming conversation UI or an unimplemented wire payload.
 
 The schema and receive-boundary corpus runs independently through
 `kit/protocol/conformance`. It checks that an unknown kind yields no admitted
