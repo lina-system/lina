@@ -58,7 +58,7 @@ func TestVersionsOutsideRepository(t *testing.T) {
 	// Build actual command sources from a source export, without VCS metadata.
 	// Disable stamping explicitly so an unrelated parent repository cannot affect it.
 	root := t.TempDir()
-	for _, dir := range []string{"cmd/lina", "cmd/lina-node", "internal/buildinfo", "internal/core", "internal/clientapi", "internal/design", "internal/tui", "persona", "skills", "kit"} {
+	for _, dir := range []string{"cmd/lina", "cmd/lina-node", "internal/buildinfo", "internal/core", "internal/clientapi", "internal/design", "internal/moirai", "internal/tui", "persona", "skills", "kit"} {
 		if err := os.CopyFS(filepath.Join(root, dir), os.DirFS(filepath.Join("../..", dir))); err != nil {
 			t.Fatal(err)
 		}
