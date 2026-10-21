@@ -26,6 +26,13 @@ streaming completion and steering sequence through the same PTY lifecycle.
 They require no personal credentials. The physical terminal spike and real-model
 acceptance remain separate.
 
+`TestM1TUIIdentityFromAgentStore` installs a synthetic named agent with four
+distinct persona layers, types "who are you" through the real TUI, and checks
+the provider stub's request for that stored identity, owner and persona, plus
+the exact enabled tool list. It checks request assembly, not model compliance
+with the persona. The current boot conversation has no connected executors,
+so its enabled list is explicitly empty.
+
 `m1/provider-failure-history.json` runs HTTP 503 and SSE EOF after a delta
 against installed Core, with input and history displayed through the real TUI
 in a 120x60 PTY. It checks the failure notice and partial before and after a

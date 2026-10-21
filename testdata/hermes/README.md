@@ -1,5 +1,10 @@
 # Hermes reader fixtures
 
+The optional adapter and its tests live in
+[`internal/addons/importer/hermes`](../../internal/addons/importer/hermes/).
+Run them with `go test ./internal/addons/importer/hermes/...`. Foundation
+selects the adapter's Go checks for changes to its source or these fixtures.
+
 All rows are synthetic. `lcm.sql` and `state.sql` independently reconstruct the
 column layouts confirmed from schema-only acceptance metadata. They are not
 copies of the source exports. The registered layouts both use `user_version = 0`:
