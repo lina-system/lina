@@ -38,7 +38,8 @@ type Skill struct{ ID, Description string }
 type ContextItem struct {
 	ID, Revision, AgentID string // Empty AgentID denotes common knowledge.
 	Kind                  Kind
-	Text, Origin          string
+	Text                  string
+	Origin                string // A nonempty source locator always denotes evidence, regardless of Kind.
 	Evidence              []Ref
 	Supersedes            []string
 	Rank                  int // Higher ranks survive longer within an optional group.
@@ -167,8 +168,20 @@ func contextMessage(item ContextItem) (provider.Item, bool) {
 	refs := append([]Ref{{ID: item.ID, Revision: item.Revision}}, item.Evidence...)
 	raw, _ := json.Marshal(refs)
 	text += "\nReferences: " + string(raw)
-	if item.Kind == External {
-		m, err := guard.Admit(guard.EntryTool, item.Origin, text)
+	origin := item.Origin
+	evidence := item.Kind == External || origin != ""
+	switch item.Kind {
+	case Profile, Memory, PersonBrief, Material:
+		// Retrieved data does not acquire instruction authority when a source
+		// locator is missing. Its stable reference still identifies the source.
+		evidence = true
+		if origin == "" {
+			origin = "context:" + item.ID
+		}
+	case Clock, Commitments, Waiting, SkillBody, External:
+	}
+	if evidence {
+		m, err := guard.Admit(guard.EntryTool, origin, text)
 		if err != nil {
 			return nil, false
 		}
