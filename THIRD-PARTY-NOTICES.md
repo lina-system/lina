@@ -57,7 +57,7 @@ License: **MIT** ([upstream license](https://github.com/electricsheephq/lcm-x/bl
 
 The staged Hermes importer in `internal/addons/importer/hermes` also derives profile-local UID/lineage and canonical-versus-version behavior from `host_uid.py` and its reference tests at this revision. It independently implements LINA transactions and reverse mapping in Go.
 
-Scope: lossless raw storage, depth-ranked summary DAGs, stub-first compaction, externalized outputs, exact-reference retrieval and session lineage. LINA maps these to its one ledger, derived summary tree, materials and evidence-bearing recall. No upstream source is vendored or modified.
+Scope: lossless raw storage, depth-ranked summary DAGs, stub-first compaction, externalized outputs, exact-reference retrieval and session lineage. The prepared-summary implementation also references `leaf_prep.py` and its background preparation tests for source/configuration fingerprints, deferred promotion and stale-work rejection, and `dag.py` with its source traversal tests for depth-ranked provenance. The Go implementation uses Core's job receipts and revocation fences; it does not copy upstream runtime code or scheduled condensation sweeps. LINA maps these to its one ledger, derived summary tree, materials and evidence-bearing recall. No upstream source is vendored or modified.
 
 ```text
 MIT License
