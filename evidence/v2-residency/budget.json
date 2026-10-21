@@ -5,7 +5,7 @@
   "declared_on": "2026-10-21",
   "status": "declared-unmeasured",
   "platforms": [
-    {"os": "linux", "distribution": "Omarchy", "arch": "amd64", "service_manager": "systemd-user"},
+    {"os": "linux", "arch": "amd64", "service_manager": "systemd-user"},
     {"os": "darwin", "arch": "arm64", "service_manager": "launchd-user"}
   ],
   "limits": {

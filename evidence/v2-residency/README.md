@@ -1,151 +1,120 @@
-# V2 residency measurement
+# V2 residency: owner runbook
 
-This directory holds the predeclared budget and the measured evidence for
-[#95](https://github.com/thisisjun786/lina/issues/95). A procedure, a cross-build,
-or a short smoke test does not establish the 24-hour acceptance. Both native
-platform results are required. No residency measurement has been recorded yet.
+Part of [#95](https://github.com/thisisjun786/lina/issues/95). The owner chooses
+the machines, starts each run and reads the results. No run has happened.
+[budget.json](budget.json) was committed before measurement: 64 MiB installed
+Core artifacts, 2 seconds to readiness, 256 MiB peak RSS, 1% mean CPU and 5% per
+60-second window; one logical CPU is 100%. Each run lasts 86,400 seconds.
 
-The contract is [runtime acceptance V2](../../docs/design/runtime.md#runtime-acceptance).
-Packaging, service startup, and the verified sqlite-vec engine come from
-[#94](https://github.com/thisisjun786/lina/issues/94). The storage checks already
-recorded in [sqlite-binding.json](../sqlite-binding.json) do not establish
-residency of the packaged Core executable.
+Use Linux x64 with systemd and macOS arm64 with launchd. Record the actual OS,
+distribution and version: an Ubuntu run is Ubuntu evidence, not Omarchy evidence.
+Keep the machines awake and the user sessions alive. Do not use existing
+personal state or provider credentials.
 
-## Before either run
+## Install a private candidate (both platforms)
 
-The [predeclared budget](budget.json) applies to both platforms: at most 64 MiB
-of installed Core artifacts, two seconds to protocol readiness, 256 MiB peak
-RSS, 1% mean CPU and 5% CPU in each consecutive 60-second window. One logical
-CPU is 100%. The workload is an idle service with fresh synthetic state and
-periodic health probes, without provider calls. These are targets; neither
-platform has a measured result yet.
+Use native packaged artifacts from [#94](https://github.com/thisisjun786/lina/issues/94),
+built from the same clean source commit on both machines. Set artifact_dir to
+that directory, containing lina, manifest.json and its required engine assets.
+Apply #94's verified sqlite-vec configuration before measuring; these service
+commands alone do not establish packaging or storage acceptance.
+Run the following in one shell, retaining its variables for the chosen platform.
 
-1. Preserve the numerical budget in the first #95 commit, before building or
-   starting either measured candidate. Record that commit
-   and the budget file's SHA-256 in each result. Do not increase limits after
-   observing a measurement; retain a failure and reopen the runtime choice as
-   required by the contract.
-2. Merge #94's packaging branch when available and run
-   `node scripts/foundation.mjs`. Build both development artifacts from
-   the same clean commit using the packaging procedure supplied by #94. Record
-   the source commit, Go toolchain, manifest digest, and every required
-   artifact's name, byte size, and SHA-256. Confirm the manifest records the
-   chosen SQLite binding and verified sqlite-vec engine. Do not publish a
-   release to perform this acceptance.
-3. Use a real Omarchy Linux x64 machine with a systemd user service and a real
-   macOS arm64 machine with a launchd user job. Record OS, OS version,
-   architecture, CPU model, logical CPU count, and installed memory, without
-   machine names, addresses, usernames, or device identifiers. Neither an
-   Ubuntu run nor a macOS cross-build establishes the specified platform run.
-4. A person starts each run and reads its outcome. Use dedicated test service
-   identities, fresh private state containing only synthetic data, private
-   sockets, and no provider credentials or existing installation. Follow #94's
-   service templates and installation interface. Do not replace or restart
-   another installation. Record the service template digest and any measurement
-   overrides, with private paths omitted from public evidence.
-5. Keep both machines awake for the entire run. Record the power mode and
-   cache conditions before startup. A reboot, suspension, service restart,
-   binary replacement, or instrumentation outage makes that attempt incomplete;
-   retain it and start a new attempt rather than joining segments.
+~~~sh
+set -eu
+umask 077
+run_dir=$(mktemp -d /tmp/lina-v2.XXXXXX)
+mkdir -p "$run_dir/artifacts" "$run_dir/state/system/core" "$run_dir/state/run" "$run_dir/results"
+cp -R "$artifact_dir/." "$run_dir/artifacts/"
+install -m 700 "$artifact_dir/lina" "$run_dir/artifacts/lina"
+printf '%s\n' '{"main_id":"main-v2-residency"}' > "$run_dir/state/system/core/main.json"
+cp "$artifact_dir/manifest.json" "$run_dir/results/manifest.json"
+cp evidence/v2-residency/budget.json "$run_dir/results/budget.json"
+shasum -a 256 "$run_dir/artifacts/lina" "$run_dir/results/manifest.json" "$run_dir/results/budget.json" > "$run_dir/results/digests.txt"
+uname -sm > "$run_dir/results/platform.txt"
+~~~
 
-## Startup and health
+Arm the OS collector and monotonic startup timer before requesting service start.
+Measure readiness through the [public protocol used by the harness](../../e2e/README.md):
+a correlated hello/welcome, then an empty input refusal with
+capability_not_negotiated confirms recovery finished in the current increment.
+A welcome or an active service alone is insufficient.
 
-Start the timer using a monotonic clock immediately before requesting the
-service start. Confirm that systemd or launchd owns the resulting Core process;
-a foreground `lina core` process is not the service acceptance. Record process
-identity as well as PID so that PID reuse cannot hide a restart.
+## Linux x64: transient systemd user service
 
-Connect through the public client protocol using synthetic client and main
-identities. Validate the correlated `hello`/`welcome` exchange, negotiated
-protocol, main identity, and nonzero epoch. A socket or `welcome` alone does not
-mean READY: Core serves handshakes during RECOVERING. With the current
-connection-only protocol, a correlated empty `input` request must return
-`capability_not_negotiated` with effect state `refused`; only an explicit
-`unavailable` permits another startup probe. Stop the startup timer at the
-first completed readiness response. If the packaged candidate changes this
-interface, agree and record its equivalent readiness observation before either
-run; never substitute a sleep or service-manager “active” state.
+~~~sh
+cat /etc/os-release >> "$run_dir/results/platform.txt"
+unit="lina-v2-$(basename "$run_dir").service"
+systemd-run --user --unit="$unit" --property=Type=exec --property=Restart=no \
+  --property=UMask=0077 --property="StandardOutput=append:$run_dir/results/core.log" \
+  --property="StandardError=append:$run_dir/results/core.log" \
+  "$run_dir/artifacts/lina" core --state-root "$run_dir/state" --socket "$run_dir/state/run/core.sock"
+systemctl --user show "$unit" -p MainPID -p ActiveState -p NRestarts
+~~~
 
-Begin the continuous 24-hour residency interval after readiness. Repeat the
-same protocol health probe with a two-second deadline every 60 seconds, including at the start
-and end, and require the same main identity and epoch. Close each probe's
-connection so the monitor does not create accumulating clients. Record any
-protocol error or missed deadline as a failure, not an omitted sample.
+## macOS arm64: launchd user job
 
-These observations follow the public boundary already exercised by
-[the #34 harness](../../e2e/README.md). Cover protocol-observable acceptance
-behavior in its own scenario under `e2e/m1/` using that harness, as #95 requires.
-Resource measurements themselves use OS instrumentation; a fast protocol
-scenario cannot replace their duration or native-platform evidence.
+The time wrapper records Core's peak RSS on exit. Sample its Core child, not
+the wrapper. The generated job uses a unique label and never restarts Core.
 
-## Resource measurements
+~~~sh
+sw_vers >> "$run_dir/results/platform.txt"
+label="org.lina.v2.$(basename "$run_dir")"
+cat > "$run_dir/core.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<plist version="1.0"><dict>
+<key>Label</key><string>$label</string>
+<key>ProgramArguments</key><array>
+<string>/usr/bin/time</string><string>-l</string>
+<string>$run_dir/artifacts/lina</string><string>core</string>
+<string>--state-root</string><string>$run_dir/state</string>
+<string>--socket</string><string>$run_dir/state/run/core.sock</string>
+</array>
+<key>RunAtLoad</key><true/>
+<key>KeepAlive</key><false/>
+<key>Umask</key><integer>63</integer>
+<key>StandardOutPath</key><string>$run_dir/results/core.log</string>
+<key>StandardErrorPath</key><string>$run_dir/results/core-time.log</string>
+</dict></plist>
+EOF
+plutil -lint "$run_dir/core.plist"
+launchctl bootstrap "gui/$(id -u)" "$run_dir/core.plist"
+launchctl print "gui/$(id -u)/$label"
+~~~
 
-Record the instrumentation command or collector source and its digest, version,
-units, sampling interval, and clock source with each attempt. Validate the
-collector on a disposable process before starting the measured service, so
-unit conversion and process-identity handling do not depend on the acceptance
-run. Keep monitor resource use separate from Core resource use.
+## Sample and retain results
 
-- **Size:** sum the uncompressed bytes of Core's executable and every packaged
-  asset needed by this service, including its verified SQLite engine, manifest,
-  and service configuration. An engine embedded in the executable is counted
-  once. List all terms; do not use a compressed archive or a metadata helper's
-  size in place of the installed artifact.
-- **Start time:** elapsed monotonic seconds from service-start request to the
-  successful readiness response above, including service-manager overhead.
-  Record the actual cache conditions; do not label an ordinary start cold.
-- **Memory:** sample resident bytes at one-second intervals and retain the OS
-  high-water mark from process start, including initialization. Linux exposes
-  `VmRSS` and `VmHWM` in `/proc/<pid>/status` in KiB (multiply by 1024). On macOS,
-  `proc_pid_rusage` exposes current resident size in bytes, but its lifetime
-  maximum physical footprint is a different metric. Obtain Core's lifetime
-  peak RSS from `wait4`'s `ru_maxrss` in bytes when a measurement launcher reaps
-  that exact Core child after the run. The launcher must belong to the launchd
-  test job, forward termination to Core, await its exit, preserve its exit
-  status, and write the final statistics before exiting. Validate this on the
-  selected macOS version before acceptance; record the launcher as separate
-  instrumentation and include its launch overhead in startup timing. Record
-  both the sampled maximum and the OS maximum. Do not substitute virtual size,
-  physical footprint, or the launcher's RSS. If the collector cannot obtain
-  Core's final peak, the result cannot pass a peak-RSS budget.
-- **CPU:** sample cumulative process user plus system CPU time, using Linux
-  `/proc/<pid>/stat` ticks divided by `getconf CLK_TCK`, or the nanosecond CPU
-  counters from macOS `proc_pid_rusage`. Calculate consecutive 60-second windows
-  beginning at readiness, including any final partial window, as
-  `100 * delta_cpu_seconds / delta_monotonic_seconds`. One logical CPU equals
-  100%, independent of the machine's CPU count. Calculate the full-run mean
-  from the full counter delta, not an unweighted average of sampled percentages.
-  Include health-probe handling in Core's CPU; record startup CPU separately.
-- **Continuity:** retain elapsed timestamps, process identity, service-manager
-  status, restart counts, and protocol outcomes. A resource sampling gap over
-  two seconds prevents acceptance. Explain any late sample and preserve the
-  actual interval denominator. Missing counters, backward counters,
-  missing health probes, or unaccounted gaps prevent a pass. Unexpected child
-  processes require accounting before a result can establish Core's budget.
+Write raw samples and startup timing to the private results directory under
+run_dir. Every second record elapsed monotonic time, Core PID/start identity,
+RSS, cumulative user+system CPU time and service status. On Linux use
+/proc/PID/status (VmRSS/VmHWM in KiB) and /proc/PID/stat (CPU ticks divided by
+getconf CLK_TCK). On macOS use proc_pid_rusage (resident bytes and CPU nanoseconds);
+physical footprint is not RSS. Validate the collector on that OS before the run.
 
-## Results and decision
+From readiness, probe the protocol every 60 seconds, including both endpoints,
+with a two-second deadline and unchanged main identity/epoch. Compute CPU as
+100 times CPU-seconds divided by actual elapsed seconds, for consecutive
+60-second windows and the complete run. A sample gap over two seconds, failed
+probe, restart, suspension or missing peak-RSS measurement prevents a pass.
+Record uncompressed sizes and hashes of every required Core artifact.
 
-After each attempt, stop and remove only its test service and resources. Keep
-raw operational records outside the repository. Prepare `linux-amd64.json`
-and `darwin-arm64.json` from the actual measurements, with:
+After 24 hours, stop Linux with systemctl --user stop "$unit". On macOS, send
+SIGTERM to the recorded Core child PID; let its time parent exit and write
+maximum resident set size (bytes) before launchctl bootout "gui/$(id -u)/$label".
+Confirm Core exited and record the exit status. Missing final statistics is
+incomplete evidence. Archive the private results before removing the test files:
 
-- budget commit and digest; source commit, toolchain, manifest and artifact
-  provenance; platform and instrumentation details;
-- UTC start and end, measured continuous seconds, sample and health-probe
-  counts, maximum sampling gap, and any suspension, restart, or interruption;
-- artifact bytes, startup seconds, peak resident bytes, full-run CPU percentage,
-  maximum 60-second CPU percentage, and a limit comparison for every metric;
-- sanitized metric samples sufficient to recompute the aggregates and confirm
-  the complete interval, plus the digest of each retained raw record;
-- whether a person started and read the run, without publishing their identity;
-- all failed or incomplete attempts and the reason for any rerun.
+~~~sh
+archive_dir="$HOME/lina-v2-results/$(basename "$run_dir")"
+mkdir -p "$HOME/lina-v2-results"
+test ! -e "$archive_dir"
+cp -R "$run_dir/results" "$archive_dir"
+~~~
 
-Both platform records must identify the same source commit and predeclared
-budget. Require at least 86,400 continuous measured seconds on each, complete
-health and resource records, no restart, and every budget comparison passing.
-Missing data means incomplete; exceeding a limit means failed. Do not record
-zero for an unmeasured value, or claim a pass from extrapolation.
-
-Update V2's design evidence with the observed results and limits of the run.
-Run `node scripts/foundation.mjs` again on the final evidence commit. Foundation
-checks document integrity; it does not execute or certify the 24-hour runs.
+Sanitize measured summaries into evidence/v2-residency/linux-amd64.json and
+evidence/v2-residency/darwin-arm64.json: actual platform, source and budget
+commits, artifact digests, UTC interval and continuous duration, sample counts
+and gaps, startup/RSS/CPU values, limit comparisons, interruptions and whether
+the owner started/read the run. Keep raw logs, private paths and machine names
+out of Git. Retain failed attempts; do not relax the budget after measuring.
