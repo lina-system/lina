@@ -12,6 +12,8 @@ import (
 func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "import-hermes":
+			os.Exit(runImportHermes(os.Args[2:]))
 		case "restore":
 			os.Exit(runRestore(os.Args[2:]))
 		case "backup":
@@ -31,6 +33,6 @@ func main() {
 			os.Exit(tools.Main(context.Background(), os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 		}
 	}
-	fmt.Fprintln(os.Stderr, "usage: lina <core|tui|install|backup|restore|doctor|version|file-tool>")
+	fmt.Fprintln(os.Stderr, "usage: lina <core|tui|install|backup|restore|import-hermes|doctor|version|file-tool>")
 	os.Exit(64)
 }

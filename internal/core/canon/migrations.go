@@ -31,6 +31,7 @@ func Migrations() []Migration {
 		{Version: 17, SQL: ChannelsSchema},
 		{Version: 18, SQL: TelegramSchema},
 		{Version: 19, SQL: ExchangeSchema},
+		{Version: 20, SQL: ImportSchema + importCompletionSchema},
 	}
 }
 

@@ -106,7 +106,7 @@ func violations(root string, standard map[string]bool) ([]string, error) {
 			if err != nil {
 				return err
 			}
-			if !within(owner, "internal/addons") && within(imported, rootModule+"/internal/addons/importer") {
+			if !within(owner, "internal/addons") && !(name == "cmd/lina/import_hermes.go" && imported == rootModule+"/internal/addons/importer/hermes") && within(imported, rootModule+"/internal/addons/importer") {
 				report(spec.Pos(), "importer", "memory importer add-ons must not be dependencies of Core or default packages: "+imported)
 			}
 			if within(imported, rootModule+"/internal/core") {

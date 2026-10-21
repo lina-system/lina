@@ -14,6 +14,14 @@ import (
 	"github.com/ncruces/go-sqlite3/vfs"
 )
 
+// OpenSQLiteInspection never creates or changes a source file, including WAL
+// indexes. The caller must exclude source changes, or verify the database and
+// WAL bytes stayed identical across its whole read and discard an unstable
+// result. Unlike a normal mode=ro connection, its WAL index is private.
+func OpenSQLiteInspection(ctx context.Context, path string) (*sql.DB, func(), error) {
+	return openInspection(ctx, path)
+}
+
 // openInspection must run while Core's lock excludes other writers. It opens
 // source files strictly read-only. A private temporary WAL index lets SQLite
 // read/recover committed WAL pages without changing the source -shm file.

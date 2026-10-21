@@ -74,7 +74,7 @@ func TestM1StagedImportWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	migrations := canon.Migrations()
-	migrations = append(migrations, canon.Migration{Version: len(migrations) + 1, SQL: canon.ImportSchema + jobs.Schema + budget.Schema})
+	migrations = append(migrations, canon.Migration{Version: len(migrations) + 1, SQL: jobs.Schema + budget.Schema})
 	path := filepath.Join(h.root, "canon.sqlite")
 	store, err := canon.Open(h.ctx, canon.Config{Path: path, Epoch: 1, Controls: controls, Migrations: migrations})
 	if err != nil {

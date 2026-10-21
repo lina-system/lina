@@ -54,7 +54,7 @@ func (s *Store) PrepareExtraction(ctx context.Context, scope RecallScope, after 
 		}
 		rows, err := tx.QueryContext(ctx, `SELECT e.rowid,e.id,e.conversation_id,e.speaker_kind,coalesce(e.person_id,''),
    (EXISTS(SELECT 1 FROM retract_visible_event v WHERE v.id=e.id)
-    AND e.replay_of IS NULL AND NOT EXISTS(SELECT 1 FROM ev_rel r WHERE r.event_id=e.id AND r.kind='view_of'))
+    AND json_extract(e.origin,'$.kind')='native' AND e.replay_of IS NULL AND NOT EXISTS(SELECT 1 FROM ev_rel r WHERE r.event_id=e.id AND r.kind='view_of'))
    FROM conv_event e WHERE e.agent_id=? AND e.rowid>? ORDER BY e.rowid LIMIT ?`, scope.Agent, after, limit)
 		if err != nil {
 			return err

@@ -512,6 +512,8 @@ Supported platforms are defined in [product-families.md](product-families.md). A
 
 ### The `lina` command
 
+`lina import-hermes` is an explicit optional-import entry point. It takes a source directory and confirmed profile/agent/person maps, prints rehearsal without a model call, and separately confirms import and promotion. Core must be stopped for canon writes. `--rehearse` writes nothing to canon; successful completion includes verified backup generations. Its arguments and boundaries are defined under [Importing a Hermes install](conversation-and-memory.md#importing-a-hermes-install).
+
 The command recognizes `lina core`, `lina tui`, `lina install`, `lina version` and `lina-node version`. Missing or unknown subcommands print usage on stderr and exit 64.
 
 LINA Core and the TUI are one executable, `lina`. Its subcommands cover these uses:
