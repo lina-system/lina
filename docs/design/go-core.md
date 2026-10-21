@@ -505,9 +505,13 @@ only the in-process test composition injects an HTTP transport. The client
 combination advertises accounts and relay independently of conversation.
 
 Account list projects metadata for the connection's person. Sign-out runs on the
-existing account actor: persist `needs_sign_in`, then delete the existing secret
-record. A crash or failed deletion leaves the account unusable and the request
-retryable; an active turn can delay successful deletion. Registration metadata
+existing account actor and obtains the secret store's existing mutation
+reservation. It waits for active turns, persists `needs_sign_in`, then deletes
+the existing secret record while keeping new turns excluded. Cancellation while
+waiting changes neither metadata nor credentials. Once reserved, retirement
+finishes or fails closed even if the caller disconnects. A crash or storage
+failure after intent leaves the account unusable and the request retryable.
+Repeated deletion of an absent credential succeeds. Registration metadata
 and the independent owner binding remain for reauthorization. No refresh rule
 or token storage format changes. The thin client handlers expose this existing
 store through list and sign-out operations, with no second store or relay.

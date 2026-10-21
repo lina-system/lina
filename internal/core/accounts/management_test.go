@@ -4,7 +4,9 @@ package accounts
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"testing/synctest"
 
 	"github.com/thisisjun786/lina/kit/provider"
 )
@@ -54,4 +56,55 @@ func TestSignOutDeletesCredentialsAndRetainsRegistration(t *testing.T) {
 	if err := f.s.SignOut(t.Context(), "person", "first"); err != nil {
 		t.Fatal("repeated sign-out failed", err)
 	}
+}
+
+func TestSignOutWaitsForActiveTurnBeforeRetiringCredentials(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		f := setup(t, nil)
+		add(t, f, "pinned")
+		end := f.vault.BeginTurn()
+		defer end()
+		done := make(chan error, 1)
+		go func() { done <- f.s.SignOut(t.Context(), "person", "pinned") }()
+		synctest.Wait()
+		select {
+		case err := <-done:
+			t.Fatalf("sign-out returned before the active turn ended: %v", err)
+		default:
+		}
+		end()
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.vault.GetTokens(key(account("pinned"))); err == nil {
+			t.Fatal("sign-out retained credentials")
+		}
+	})
+}
+
+func TestSignOutCancellationWhileWaitingPreservesAccount(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		f := setup(t, nil)
+		add(t, f, "pinned")
+		end := f.vault.BeginTurn()
+		defer end()
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { done <- f.s.SignOut(ctx, "person", "pinned") }()
+		synctest.Wait()
+		cancel()
+		if err := <-done; !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancelled sign-out returned %v", err)
+		}
+		end()
+		synctest.Wait()
+		saved, err := f.s.Get(t.Context(), "pinned")
+		if err != nil || saved.Status != OK {
+			t.Fatal("cancelled wait changed account metadata", err)
+		}
+		if _, err := f.vault.GetTokens(key(saved)); err != nil {
+			t.Fatal("cancelled wait changed credentials", err)
+		}
+	})
 }
