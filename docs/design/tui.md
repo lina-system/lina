@@ -435,6 +435,16 @@ reserves the layout planner's status row at small terminal sizes. Its recording
 harness test checks readable history through retry, resync and recovery, and
 terminal restoration on quit. Local epoch notices remain outside history.
 
+The connection-loop tests inject a validated peer, retry wait and bounded message
+publisher. Cancellation closes the peer to unblock a pending receive and joins
+that close; display errors terminate instead of reconnecting. Initial absence
+and refusal terminate immediately. After a live connection is lost, retry delays
+start at one second, double to a 32-second cap (P), and remain cancellable. The
+loop retries connections only, never application requests. A different main id
+or a lower epoch on reconnect fails closed. The production receive adapter and
+the PTY recovery scenario together establish that these rules cross the socket;
+the injected lifecycle tests alone do not.
+
 The schema and receive-boundary corpus runs independently through
 `kit/protocol/conformance`. It checks that an unknown kind yields no admitted
 message, increments the client's unknown-kind count once per frame, and does not
