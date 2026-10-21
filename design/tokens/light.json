@@ -151,7 +151,7 @@
     },
     "titleWeight": {
       "$type": "fontWeight",
-      "$value": 600
+      "$value": 700
     }
   },
   "space": {
@@ -234,7 +234,7 @@
     "unicode": {
       "mark": {
         "$type": "string",
-        "$value": "·"
+        "$value": "."
       },
       "connecting": {
         "$type": "string",

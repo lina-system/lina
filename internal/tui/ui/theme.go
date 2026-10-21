@@ -23,12 +23,11 @@ const (
 
 // Options are ephemeral display preferences. They never change Core state.
 type Options struct {
-	Theme         string
-	Profile       Profile
-	ASCII         bool
-	Width         int
-	Language      design.Language
-	ImmediateKeys bool
+	Theme    string
+	Profile  Profile
+	ASCII    bool
+	Width    int
+	Language design.Language
 }
 
 // Connection is a display state. Quit is a terminal transition, not a ninth
@@ -48,6 +47,16 @@ const (
 )
 
 type connectionPresentation struct{ Mark, Label, Detail, Action string }
+
+func (state Connection) active() bool {
+	switch state {
+	case Connecting, Live, Resyncing, Retrying, Recovering:
+		return true
+	case Refused, Stopped, Failed, Quit:
+		return false
+	}
+	return false
+}
 
 func (state Connection) Code() string {
 	switch state {
@@ -107,17 +116,20 @@ func localizedConnectionView(state Connection, t design.Tokens, ascii bool, lang
 	view := connectionPresentation{Mark: unicode, Label: design.Text(language, state.Code()), Detail: design.Text(language, "connection."+state.Code())}
 	switch state {
 	case Live, Resyncing, Retrying, Recovering:
-		view.Action = design.Text(language, "action.quit_line")
+		view.Action = design.Text(language, "action.quit")
 	case Connecting, Refused, Stopped, Failed, Quit:
+	}
+	if state == Live {
+		view.Detail = ""
 	}
 	return view
 }
 
 // Styles converts generated semantic data into Lip Gloss styles in one place.
 type Styles struct {
-	tokens                                   design.Tokens
-	options                                  Options
-	Text, Muted, Accent, Title, Canvas, Rule lipgloss.Style
+	tokens                             design.Tokens
+	options                            Options
+	Text, Muted, Accent, Title, Canvas lipgloss.Style
 }
 
 func NewStyles(options Options) Styles {
@@ -154,11 +166,10 @@ func NewStyles(options Options) Styles {
 	s.Accent = base.Foreground(paint(tokens.ColorAccent))
 	s.Title = s.Text.Bold(tokens.TypeTitleWeight > tokens.TypeWeight && options.Profile != Monochrome)
 	s.Canvas = base
-	s.Rule = base.Foreground(paint(tokens.ColorLine))
 	return s
 }
 
-// Screen keeps a single reading edge, a small mark and one active action.
+// Screen keeps a single reading edge and one blank row between groups.
 func (s Styles) Screen(state Connection) string {
 	return s.ScreenStatus(ConnectionStatus{State: state})
 }
@@ -166,20 +177,27 @@ func (s Styles) Screen(state Connection) string {
 func (s Styles) ScreenStatus(connection ConnectionStatus) string {
 	t := s.tokens
 	view := s.presentation(connection)
-	mark, rule, action := t.GlyphUnicodeMark, t.GlyphUnicodeRule, t.GlyphUnicodeAction
+	mark := t.GlyphUnicodeMark
 	if s.options.ASCII {
-		mark, rule, action = t.GlyphAsciiMark, t.GlyphAsciiRule, t.GlyphAsciiAction
+		mark = t.GlyphAsciiMark
 	}
 	gutter := min(t.SpaceGutter.Cells, max(0, (s.options.Width-1)/2))
 	width := max(1, s.options.Width-2*gutter)
 	gap := strings.Repeat(" ", t.SpaceInline.Cells)
 	section := strings.Repeat("\n", t.SpaceSection.Cells+1)
-	title := s.Title.Render("lina") + s.Accent.Render(mark)
-	status := s.Text.Render(view.Mark+gap) + s.Title.Render(view.Label)
-	detail := s.Muted.Width(width).PaddingLeft(min(width-1, ansi.StringWidth(view.Mark)+t.SpaceInline.Cells)).Render(view.Detail)
-	body := title + section + "\n" + status + "\n" + detail
+	title := s.Title.Render("lina") + s.Accent.Bold(s.Title.GetBold()).Render(mark)
+	stateStyle := s.Muted
+	if connection.State.active() {
+		stateStyle = s.Accent
+	}
+	status := stateStyle.Render(view.Mark+gap) + s.Text.Render(view.Label)
+	body := title + section + status
+	if view.Detail != "" {
+		detail := s.Muted.Width(width).PaddingLeft(min(width-1, ansi.StringWidth(view.Mark)+t.SpaceInline.Cells)).Render(view.Detail)
+		body += "\n" + detail
+	}
 	if view.Action != "" {
-		body += section + s.Rule.Render(strings.Repeat(rule, width)) + section + s.Accent.Render(action+gap+view.Action)
+		body += section + s.Muted.Render("[") + s.Accent.Render("q") + s.Muted.Render("]"+gap) + s.Muted.Render(view.Action)
 	}
 	// Clip after styling and wrap words through Lip Gloss before padding. No
 	// terminal-sized frame or fixed card width can spill at a narrow viewport.

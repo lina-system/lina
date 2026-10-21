@@ -166,7 +166,7 @@ var catalog = map[string]translation{
 	"connection.failed":         {"Check Core and your terminal, then connect again.", "Core와 터미널을 확인한 뒤 다시 연결하세요."},
 	"connection.quit":           {"LINA keeps running. See you soon.", "LINA는 계속 실행됩니다. 또 만나요."},
 	"connection.unknown":        {"The connection state is unknown.", "연결 상태를 알 수 없습니다."},
-	"action.quit":               {"q  Quit", "q  종료"},
+	"action.quit":               {"Quit", "종료"},
 	"action.quit_line":          {"q + Enter  Quit", "q + Enter  종료"},
 	"connection.attempt":        {"Attempt", "시도"},
 	"connection.next_try":       {"Next try in", "다음 시도까지"},

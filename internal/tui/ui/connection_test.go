@@ -68,7 +68,11 @@ func TestConnectionCatalogAndReadOnlyStates(t *testing.T) {
 				}
 			}
 			view := localizedConnectionView(state, design.Dark(), false, language)
-			if view.Label != design.Text(language, id) || view.Detail != design.Text(language, "connection."+id) {
+			detail := design.Text(language, "connection."+id)
+			if state == Live {
+				detail = ""
+			} // The connected screen needs no extra explanation.
+			if view.Label != design.Text(language, id) || view.Detail != detail {
 				t.Fatalf("catalog not used for %s", id)
 			}
 		}

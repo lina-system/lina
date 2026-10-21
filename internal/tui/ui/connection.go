@@ -21,9 +21,6 @@ type ConnectionStatus struct {
 
 func (s Styles) presentation(status ConnectionStatus) connectionPresentation {
 	v := localizedConnectionView(status.State, s.tokens, s.options.ASCII, s.options.Language)
-	if v.Action != "" && s.options.ImmediateKeys {
-		v.Action = design.Text(s.options.Language, "action.quit")
-	}
 	if status.Cause != "" {
 		// A known presentation id is not automatically a valid wire cause.
 		code := string(status.Cause)

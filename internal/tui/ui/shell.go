@@ -56,7 +56,6 @@ func newShell(options Options, now func() time.Time) *shellModel {
 	if now == nil {
 		now = time.Now
 	}
-	options.ImmediateKeys = true
 	styles := NewStyles(options)
 	return &shellModel{generation: 1, status: ConnectionStatus{State: Connecting}, styles: styles,
 		size: layout.Size{Width: styles.options.Width, Height: 24}, now: now, blocks: make(map[string]shellBlock)}

@@ -2,7 +2,6 @@
 package ui
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -15,9 +14,19 @@ type display struct {
 	output      io.Writer
 	styles      Styles
 	interactive bool
+	rawOutput   bool
 	rows        int
 	last        ConnectionStatus
 	shown       bool
+}
+
+func (d *display) write(text string) error {
+	// Raw input disables the terminal's newline processing as well.
+	if d.rawOutput {
+		text = strings.ReplaceAll(text, "\n", "\r\n")
+	}
+	_, err := io.WriteString(d.output, text)
+	return err
 }
 
 func newDisplay(output io.Writer) *display {
@@ -50,8 +59,7 @@ func (d *display) showStatus(status ConnectionStatus) (err error) {
 	}()
 	if !d.interactive {
 		if status.State == Live {
-			_, err := fmt.Fprintln(d.output, "live")
-			return err
+			return d.write("live\n")
 		}
 		return nil
 	}
@@ -63,16 +71,18 @@ func (d *display) showStatus(status ConnectionStatus) (err error) {
 		if d.styles.options.Profile == Monochrome {
 			v := d.styles.presentation(status)
 			gutter := strings.Repeat(" ", d.styles.tokens.SpaceGutter.Cells)
-			text := gutter + v.Mark + " " + v.Label + "\n" + gutter + v.Detail
-			if v.Action != "" {
-				text += "\n" + gutter + v.Action
+			text := gutter + v.Mark + " " + v.Label
+			if v.Detail != "" {
+				text += "\n" + gutter + v.Detail
 			}
-			_, err := fmt.Fprintln(d.output, text)
-			return err
+			if v.Action != "" {
+				text += "\n" + gutter + "[q] " + v.Action
+			}
+			return d.write(text + "\n")
 		}
 		frame = ansi.CursorUp(d.rows) + ansi.EraseScreenBelow + frame
 	}
-	_, err = io.WriteString(d.output, frame)
+	err = d.write(frame)
 	d.rows = rows
 	return err
 }
