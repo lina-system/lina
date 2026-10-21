@@ -84,10 +84,29 @@ func TestCoreProcess(t *testing.T) {
 						if !ok || envelope.Kind != protocol.KindWelcome || envelope.Error != nil || envelope.EffectState != protocol.EffectNone || !reflect.DeepEqual(welcome, want) {
 							t.Fatalf("unexpected welcome: %s", line)
 						}
+						// A welcomed connection remains usable, but grants no operations.
+						// Reads reach capability admission in both RECOVERING and READY.
+						request.Params.MessageID = "after-welcome"
+						request.Params.Epoch = epoch
+						request.Method = "history_get"
+						request.Params.Kind, request.Params.Payload = protocol.KindHistoryGet, protocol.HistoryGet{}
+						if err := json.NewEncoder(conn).Encode(request); err != nil {
+							t.Fatal(err)
+						}
+						line, err := reader.ReadBytes('\n')
+						if err != nil {
+							t.Fatal(err)
+						}
+						if err := json.Unmarshal(line, &response); err != nil {
+							t.Fatal(err)
+						}
+						if response.Result.Error == nil || response.Result.Error.Code != protocol.ErrorCapabilityNotNegotiated {
+							t.Fatalf("unexpected post-handshake answer: %s", line)
+						}
 						// A handshake is served during recovery. Probe until Core
 						// explicitly refuses the unavailable capability; retry only
 						// recovery refusals, never an accepted effect.
-						request.Params.MessageID = "after-welcome"
+						request.Params.MessageID = "after-recovery"
 						request.Params.Epoch = epoch
 						request.Method = "input"
 						request.Params.Kind, request.Params.Payload = protocol.KindInput, protocol.Input{}
