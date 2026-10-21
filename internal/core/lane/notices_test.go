@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -254,4 +255,64 @@ func TestNoticeMasksSummaryBeforeOutboxPersistence(t *testing.T) {
 	if bytes.Contains(record, []byte(token)) {
 		t.Fatal("raw secret persisted in notice outbox")
 	}
+}
+
+func TestIdleImmediateAndThreeSecondPendingBatch(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		db := noticeDB(t)
+		notices := lane.NewNotices(db, nil)
+		published := make(chan lane.Delivery, 3)
+		notices.OnDelivered = func(d lane.Delivery) { published <- d }
+		lanes := lane.NewWithNotices(notices)
+		defer lanes.Close(context.Background())
+		// Virtual time would advance if idle delivery waited to collect a batch.
+		idleAt := time.Now()
+		if err := lanes.Notice(t.Context(), notice("idle-now", "conversation", idleAt)); err != nil {
+			t.Fatal(err)
+		}
+		idle := <-published
+		if !time.Now().Equal(idleAt) || len(idle.Notices) != 1 {
+			t.Fatalf("idle delivery waited: %v %+v", time.Since(idleAt), idle)
+		}
+		started, release := make(chan struct{}), make(chan struct{})
+		turn := submit(t, lanes, t.Context(), "conversation", func(context.Context) error { close(started); <-release; return nil })
+		<-started
+		defer func() {
+			select {
+			case <-release:
+			default:
+				close(release)
+			}
+		}()
+		firstAt := time.Now()
+		if err := lanes.Notice(t.Context(), notice("pending-one", "conversation", firstAt)); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(3 * time.Second) // Advances only the synctest clock, never wall time.
+		if err := lanes.Notice(t.Context(), notice("pending-two", "conversation", time.Now())); err != nil {
+			t.Fatal(err)
+		}
+		synctest.Wait()
+		select {
+		case d := <-published:
+			t.Fatalf("delivered while turn active: %+v", d)
+		default:
+		}
+		before, err := notices.Delivered(t.Context(), "conversation")
+		if err != nil || len(before) != 1 || !reflect.DeepEqual(before[0], idle) {
+			t.Fatalf("idle event changed: %+v %v", before, err)
+		}
+		close(release)
+		if err := <-turn; err != nil {
+			t.Fatal(err)
+		}
+		batch := <-published
+		if len(batch.Notices) != 2 || batch.Notices[1].Landed.Sub(batch.Notices[0].Landed) != 3*time.Second {
+			t.Fatalf("three-second batch: %+v", batch)
+		}
+		after, err := notices.Delivered(t.Context(), "conversation")
+		if err != nil || len(after) != 2 || !reflect.DeepEqual(after[0], idle) {
+			t.Fatalf("delivered notice rewritten: %+v %v", after, err)
+		}
+	})
 }
