@@ -27,17 +27,13 @@ var commandBuilds struct {
 }
 
 func TestMain(m *testing.M) {
-	directory, err := os.MkdirTemp("", "lina-e2e-commands-")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	commandBuilds.directory = directory
 	commandBuilds.binaries = make(map[string]string)
 	code := m.Run()
-	if err := os.RemoveAll(directory); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		code = 1
+	if commandBuilds.directory != "" {
+		if err := os.RemoveAll(commandBuilds.directory); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			code = 1
+		}
 	}
 	os.Exit(code)
 }
@@ -55,6 +51,15 @@ func buildCommand(t *testing.T, name string) string {
 	defer commandBuilds.Unlock()
 	if binary, ok := commandBuilds.binaries[name]; ok {
 		return binary
+	}
+	// Sandbox helper subprocesses also enter TestMain, but never build a
+	// command and may have no writable temporary directory.
+	if commandBuilds.directory == "" {
+		directory, err := os.MkdirTemp("", "lina-e2e-commands-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		commandBuilds.directory = directory
 	}
 	home, err := os.MkdirTemp(commandBuilds.directory, name+"-")
 	if err != nil {
