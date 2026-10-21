@@ -7,5 +7,7 @@ func Migrations() []Migration {
 	return []Migration{
 		{Version: 1, SQL: schemaAssets},
 		{Version: 2, SQL: InboxSchema},
+		{Version: 3, SQL: authorityEffectsSchema},
+		{Version: 4, SQL: authorityApprovalsSchema},
 	}
 }
