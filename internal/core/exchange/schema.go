@@ -2,7 +2,7 @@
 package exchange
 
 // Schema is installed by the database owner as a numbered canon migration after
-// canon.InboxSchema. All mailbox, inbox, ledger and waiting writes share its fence.
+// canon.Migrations (including inbox and conversation ledger). All mailbox, inbox, ledger and waiting writes share its fence.
 const Schema = `
 CREATE TABLE exchanges (
  id TEXT PRIMARY KEY NOT NULL,
@@ -26,10 +26,8 @@ CREATE TABLE exch_event (
  id INTEGER PRIMARY KEY,
  exchange_id TEXT NOT NULL REFERENCES exchanges(id),
  delivery_id TEXT NOT NULL REFERENCES exch_msg(delivery_id),
- agent TEXT NOT NULL,
- kind TEXT NOT NULL,
- body TEXT NOT NULL,
- at TEXT NOT NULL
+ event_id TEXT NOT NULL UNIQUE REFERENCES conv_event(id),
+ kind TEXT NOT NULL
 );
 CREATE TRIGGER exch_event_immutable_update BEFORE UPDATE ON exch_event BEGIN SELECT RAISE(ABORT,'immutable exchange event'); END;
 CREATE TRIGGER exch_event_immutable_delete BEFORE DELETE ON exch_event BEGIN SELECT RAISE(ABORT,'immutable exchange event'); END;

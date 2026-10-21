@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Package exchange owns the durable mailbox and the isolated agent-exchange
-// ledger. It has no person-conversation admission or personal-knowledge port.
+// Package exchange owns the durable mailbox and agent-exchange admission
+// to the conversation ledger. It has no person-conversation admission or personal-knowledge port.
 package exchange
 
 import (
@@ -14,6 +14,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/guard"
+	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 )
 
@@ -133,9 +134,17 @@ type Canon interface {
 	Write(context.Context, func(*canon.Tx) error) error
 	Read(context.Context, func(*canon.Tx) error) error
 }
-type Store struct{ db Canon }
+type Store struct {
+	db        Canon
+	materials ledger.Materials
+}
 
-func New(db Canon) *Store { return &Store{db: db} }
+func New(db Canon) *Store { return NewWithMaterials(db, nil) }
+
+// NewWithMaterials supports ledger bodies above the inline threshold.
+func NewWithMaterials(db Canon, materials ledger.Materials) *Store {
+	return &Store{db: db, materials: materials}
+}
 
 func identifier(s string) bool {
 	return len(s) > 0 && len(s) <= 256 && utf8.ValidString(s) && strings.IndexFunc(s, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) < 0

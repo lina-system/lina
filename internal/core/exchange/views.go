@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
-	"github.com/thisisjun786/lina/internal/core/guard"
+	"github.com/thisisjun786/lina/internal/core/ledger"
 )
 
 // NeedPerson resolves ownership through Core's trusted decision registry. It
@@ -122,35 +122,42 @@ func (s *Store) Expire(ctx context.Context, at time.Time) error {
 // every event as agent evidence; no caller can relabel one as a person turn.
 func (s *Store) Events(ctx context.Context, id string) ([]Event, error) {
 	var result []Event
+	var eventIDs []string
 	err := s.db.Read(ctx, func(tx *canon.Tx) error {
 		if _, err := get(ctx, tx, id); err != nil {
 			return err
 		}
-		rows, err := tx.QueryContext(ctx, "SELECT id,delivery_id,agent,kind,body,at FROM exch_event WHERE exchange_id=? ORDER BY id", id)
+		rows, err := tx.QueryContext(ctx, "SELECT id,delivery_id,kind,event_id FROM exch_event WHERE exchange_id=? ORDER BY id", id)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
 			var e Event
-			var body, at string
-			if err = rows.Scan(&e.ID, &e.DeliveryID, &e.Agent, &e.Kind, &body, &at); err != nil {
-				return err
-			}
-			e.At, err = time.Parse(time.RFC3339Nano, at)
-			if err != nil {
-				return err
-			}
-			e.Message, err = guard.Admit(guard.EntryAgentExchange, id+"/"+e.DeliveryID, body)
-			if err != nil {
+			var eventID string
+			if err := rows.Scan(&e.ID, &e.DeliveryID, &e.Kind, &eventID); err != nil {
 				return err
 			}
 			result = append(result, e)
+			eventIDs = append(eventIDs, eventID)
 		}
 		return rows.Err()
 	})
 	if err != nil {
 		return nil, err
+	}
+	l := ledger.New(s.db, s.materials)
+	for i, eventID := range eventIDs {
+		e, err := l.Get(ctx, eventID)
+		if err != nil {
+			return nil, err
+		}
+		result[i].Agent = e.AgentID
+		result[i].At = e.RecordedAt
+		result[i].Message, err = e.Message()
+		if err != nil {
+			return nil, err
+		}
 	}
 	return result, nil
 }

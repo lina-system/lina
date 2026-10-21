@@ -13,6 +13,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/inbox"
+	"github.com/thisisjun786/lina/internal/core/ledger"
 )
 
 func exchangeID(delivery string) string {
@@ -20,20 +21,9 @@ func exchangeID(delivery string) string {
 	return "exchange-" + hex.EncodeToString(h[:])
 }
 func encode(v any) []byte { b, _ := json.Marshal(v); return b }
-func appendEvent(ctx context.Context, tx *canon.Tx, r Record, agent, kind, body string, at time.Time) error {
-	if !timestamp(at) {
-		return ErrInvalid
-	}
-	// The entry is fixed by this native flow. No event contains a person id.
-	if _, err := guard.Admit(guard.EntryAgentExchange, r.ID, body); err != nil {
-		return err
-	}
-	_, err := tx.ExecContext(ctx, "INSERT INTO exch_event(exchange_id,delivery_id,agent,kind,body,at) VALUES(?,?,?,?,?,?)", r.ID, r.DeliveryID, agent, kind, body, at.UTC().Format(time.RFC3339Nano))
-	return err
-}
 
 const selectRecord = `SELECT e.id,e.delivery_id,e.from_agent,e.to_agent,e.round,e.outcome,e.needs_person,m.handoff,m.state,
- (SELECT at FROM exch_event WHERE exchange_id=e.id ORDER BY id DESC LIMIT 1)
+ (SELECT l.recorded_at FROM exch_event x JOIN conv_event l ON l.id=x.event_id WHERE x.exchange_id=e.id ORDER BY x.id DESC LIMIT 1)
  FROM exchanges e JOIN exch_msg m ON m.delivery_id=e.delivery_id`
 
 func get(ctx context.Context, tx *canon.Tx, id string) (Record, error) {
@@ -73,9 +63,15 @@ func (s *Store) Start(ctx context.Context, input Request, at time.Time) (Receipt
 	if !identifier(input.DeliveryID) || !identifier(input.From) || !identifier(input.To) || !timestamp(at) {
 		return Receipt{}, ErrInvalid
 	}
-	r := input
+	r, material, existingReceipt, err := s.prepareInput(ctx, input, at, exchangeID(input.DeliveryID))
+	if err != nil {
+		return Receipt{}, err
+	}
+	if existingReceipt != nil {
+		return *existingReceipt, nil
+	}
 	var receipt Receipt
-	err := s.db.Write(ctx, func(tx *canon.Tx) error {
+	err = s.db.Write(ctx, func(tx *canon.Tx) error {
 		var existing, from, to string
 		err := tx.QueryRowContext(ctx, `SELECT e.id,e.from_agent,e.to_agent FROM exch_msg m JOIN exchanges e ON e.id=m.exchange_id WHERE m.delivery_id=?`, r.DeliveryID).Scan(&existing, &from, &to)
 		if err == nil {
@@ -97,7 +93,7 @@ func (s *Store) Start(ctx context.Context, input Request, at time.Time) (Receipt
 			return err
 		}
 		row := Record{ID: id, DeliveryID: r.DeliveryID, From: r.From, To: r.To, HandOff: r.HandOff, Round: 1, State: Queued, Outcome: Pending}
-		if err = insertMessage(ctx, tx, row, at); err != nil {
+		if err = insertMessage(ctx, tx, row, at, material); err != nil {
 			return err
 		}
 		receipt = Receipt{ID: id, DeliveryID: r.DeliveryID, Inserted: true}
@@ -108,11 +104,11 @@ func (s *Store) Start(ctx context.Context, input Request, at time.Time) (Receipt
 	}
 	return receipt, nil
 }
-func insertMessage(ctx context.Context, tx *canon.Tx, r Record, at time.Time) error {
+func insertMessage(ctx context.Context, tx *canon.Tx, r Record, at time.Time, material ledger.Material) error {
 	if _, err := tx.ExecContext(ctx, "INSERT INTO exch_msg(delivery_id,exchange_id,round,handoff,state) VALUES(?,?,?,?,?)", r.DeliveryID, r.ID, r.Round, encode(r.HandOff), Queued); err != nil {
 		return err
 	}
-	return appendEvent(ctx, tx, r, r.From, "request", string(encode(r.HandOff)), at)
+	return appendEvent(ctx, tx, r, r.From, "request", string(encode(r.HandOff)), at, material)
 }
 func deliver(ctx context.Context, tx *canon.Tx, r Record, at time.Time) (Record, error) {
 	if r.Outcome != Pending {
@@ -167,7 +163,7 @@ func (s *Store) Deliver(ctx context.Context, delivery string, at time.Time) (Rec
 	}
 	return receipt, nil
 }
-func finish(ctx context.Context, tx *canon.Tx, r Record, outcome Outcome, body string, at time.Time) error {
+func finish(ctx context.Context, tx *canon.Tx, r Record, outcome Outcome, body string, at time.Time, material ...ledger.Material) error {
 	if _, err := tx.ExecContext(ctx, "UPDATE exch_msg SET state=?,answer=? WHERE delivery_id=?", Answered, body, r.DeliveryID); err != nil {
 		return err
 	}
@@ -177,7 +173,7 @@ func finish(ctx context.Context, tx *canon.Tx, r Record, outcome Outcome, body s
 	if _, err := tx.ExecContext(ctx, "DELETE FROM exch_waiting WHERE exchange_id=?", r.ID); err != nil {
 		return err
 	}
-	return appendEvent(ctx, tx, r, r.To, string(outcome), body, at)
+	return appendEvent(ctx, tx, r, r.To, string(outcome), body, at, material...)
 }
 
 // Acknowledge is a terminal mailbox operation. It performs no preparation,
@@ -235,6 +231,11 @@ func (s *Store) Answer(ctx context.Context, delivery, actor string, a Answer, at
 	if !ok {
 		return ErrCheck
 	}
+	body := string(encode(a))
+	material, err := s.stageBody(ctx, body)
+	if err != nil {
+		return err
+	}
 	return s.db.Write(ctx, func(tx *canon.Tx) error {
 		current, err := forDelivery(ctx, tx, delivery)
 		if err != nil {
@@ -249,16 +250,23 @@ func (s *Store) Answer(ctx context.Context, delivery, actor string, a Answer, at
 		if _, err = deliver(ctx, tx, current, at); err != nil {
 			return err
 		}
-		return finish(ctx, tx, current, Checked, string(encode(a)), at)
+		return finish(ctx, tx, current, Checked, body, at, material)
 	})
 }
 func (s *Store) Continue(ctx context.Context, id string, input Request, at time.Time) (Receipt, error) {
 	if !identifier(input.DeliveryID) || !identifier(input.From) || !identifier(input.To) || !timestamp(at) {
 		return Receipt{}, ErrInvalid
 	}
+	input, material, existingReceipt, err := s.prepareInput(ctx, input, at, id)
+	if err != nil {
+		return Receipt{}, err
+	}
+	if existingReceipt != nil {
+		return *existingReceipt, nil
+	}
 	var receipt Receipt
 	limited := false
-	err := s.db.Write(ctx, func(tx *canon.Tx) error {
+	err = s.db.Write(ctx, func(tx *canon.Tx) error {
 		r, err := get(ctx, tx, id)
 		if err != nil {
 			return err
@@ -299,7 +307,7 @@ func (s *Store) Continue(ctx context.Context, id string, input Request, at time.
 		if _, err = tx.ExecContext(ctx, "UPDATE exchanges SET delivery_id=?,round=?,outcome=? WHERE id=?", r.DeliveryID, r.Round, Pending, id); err != nil {
 			return err
 		}
-		if err = insertMessage(ctx, tx, r, at); err != nil {
+		if err = insertMessage(ctx, tx, r, at, material); err != nil {
 			return err
 		}
 		receipt = Receipt{ID: id, DeliveryID: r.DeliveryID, Inserted: true}
