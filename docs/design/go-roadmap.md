@@ -146,6 +146,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-16 Skills written by agents, adopted at once, undone in one action.** Reversible-write check, notice, undo, index.
 - Done when: an instruction-only patch is adopted as a new version with a one-line notice after the commit; undo restores the previous text as a new version; a skill with executable code is not adopted this way; the index holds name and description and bodies load only when needed.
 - Depends on: G1-05, G1-10, G1-12, G1-29. Design refs: C-23; [conversation-and-memory.md](conversation-and-memory.md#skills).
+- #71 supplies the versioned skill store, reversible-write classification, durable undo suppression, lazy catalog/read handles, embedded meta-skill and guarded registry tools. Real canon/Git tests cover publication, failure, reopening, concurrency and undo; authority tests cover receipts and replay. The client service has no skill endpoint yet; presentation, context selection and explicit proposal acceptance remain with their consuming flows.
 
 **G1-27 Hermes install import.** Rehearsal, import, verification and promotion, as a worker job.
 - Done when: on synthetic fixtures counts reconcile row for row; every source key has one legacy reference in both directions; the reverse mapper hash equals the source hash; a second run adds nothing; no write reaches a source; an unknown schema is refused; recall returns no imported observation before promotion.
