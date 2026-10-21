@@ -349,7 +349,7 @@ func (s *Store) recall(ctx context.Context, scope RecallScope, q Query, standing
    SELECT m.id,m.sequence,m.record,m.normalized,
    (SELECT max(r.sequence) FROM memory_revision r WHERE r.item_id=m.id) AS priority,
    ((m.valid_until<>0 AND m.valid_until<=?) OR EXISTS(SELECT 1 FROM memory_item n WHERE n.supersedes=m.id AND n.valid_from<=?)) AS older
-   FROM memory_item m WHERE m.person=? AND m.holder IN (?,?) AND m.state='active' AND m.valid_from<=?
+   FROM retract_visible_memory m WHERE m.person=? AND m.holder IN (?,?) AND m.state='active' AND m.valid_from<=?
    AND (?=0 OR m.scope='local') AND (?=0 OR m.scope<>'never-leaves') AND (?=0 OR m.standing=1)
    AND (?=0 OR m.subject_kind='person')
    AND NOT EXISTS(SELECT 1 FROM json_each(m.record,'$.evidence') refs
@@ -434,9 +434,8 @@ func restrictedEvents(ctx context.Context, tx *canon.Tx, scope RecallScope) (map
 	if !scope.Projection && !scope.ExternalModel {
 		return ids, nil
 	}
-	// This internal deny set spans the person's holders: common memory must
-	// not launder an event protected by another agent's private memory. Only
-	// event ids leave this function; recall candidates keep their holder filter.
+	// A protected source stays protected when another holder has a common copy.
+	// Only event ids leave this query; candidate records still use RecallScope.
 	rows, err := tx.QueryContext(ctx, `SELECT record FROM memory_item WHERE person=?
   AND ((?=1 AND scope IN ('private','never-leaves')) OR (?=1 AND scope='never-leaves'))`, scope.Person, scope.Projection, scope.ExternalModel)
 	if err != nil {
