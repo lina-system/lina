@@ -82,3 +82,57 @@ func honchoSpeakerFixture(t *testing.T) []SpeakerSources {
 	}
 	return events
 }
+
+// LCM can retain a message whose host message row is absent. Its session still
+// carries provenance in the host database and must participate in attribution.
+func TestLCMOnlyHonchoOwnerUsesHostSessionKind(t *testing.T) {
+	for _, tc := range []struct {
+		name, update string
+		want         guard.SpeakerKind
+		unproven     int
+	}{
+		{"delegated", `UPDATE sessions SET model_config='{"_delegate_from":"synthetic-parent"}' WHERE id='owner-chat'`, guard.Agent, 0},
+		{"cron", `UPDATE sessions SET source='cron' WHERE id='owner-chat'`, guard.Automation, 0},
+		{"created by cron", `UPDATE sessions SET created_source='cron' WHERE id='owner-chat'`, guard.Automation, 0},
+		{"subagent", `UPDATE sessions SET source='subagent' WHERE id='owner-chat'`, guard.Agent, 0},
+		{"shared chat", `UPDATE sessions SET chat_type='group' WHERE id='owner-chat'`, guard.Forwarded, 1},
+		{"owner", `UPDATE sessions SET model_config='{}' WHERE id='owner-chat'`, guard.Person, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			state, host := hermesFixture(t, "state")
+			if _, err := host.Exec(string(fixture(t, "speakers-state.sql"))); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := host.Exec(`DELETE FROM messages WHERE session_id='owner-chat'`); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := host.Exec(tc.update); err != nil {
+				t.Fatal(err)
+			}
+			lcm, db := hermesFixture(t, "lcm")
+			if _, err := db.Exec(string(fixture(t, "speakers-lcm.sql"))); err != nil {
+				t.Fatal(err)
+			}
+			report, err := ClassifySpeakers(t.Context(), SpeakerProfile{Profile: "profile", PersonID: "person", StatePath: state, LCMPath: lcm,
+				OwnerChannels: []OwnerChannel{{"telegram", "owner-chat", "owner-user", "owner-chat"}},
+				Events:        []SpeakerSources{{ID: "lcm-only-owner-claim", LCMIDs: []int64{11}, HonchoOwner: true}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := report.Events[0].SpeakerKind(); got != tc.want {
+				t.Fatalf("Honcho owner claim matched only to LCM: speaker=%s, want %s", got, tc.want)
+			}
+			if _, ok := report.Events[0].PersonEvidence(); ok != (tc.want == guard.Person) {
+				t.Fatal("incorrect person evidence eligibility")
+			}
+			relabelled := 1
+			if tc.want == guard.Person {
+				relabelled = 0
+			}
+			if report.Relabelled != relabelled || report.Unproven != tc.unproven {
+				t.Fatalf("counts: relabelled=%d unproven=%d", report.Relabelled, report.Unproven)
+			}
+		})
+	}
+}

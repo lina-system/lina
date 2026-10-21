@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -124,7 +125,7 @@ func ClassifySpeakers(ctx context.Context, in SpeakerProfile) (SpeakerReport, er
 					return SpeakerReport{}, ErrSnapshot
 				}
 				seen[key] = true
-				d, err := readSpeaker(ctx, source.db, id, source.host, owners)
+				d, err := readSpeaker(ctx, source.db, state, id, source.host, owners)
 				if err != nil {
 					return SpeakerReport{}, err
 				}
@@ -168,8 +169,9 @@ type speakerDecision struct {
 
 func unknownSpeaker() speakerDecision { return speakerDecision{guard.Forwarded, true} }
 
-func readSpeaker(ctx context.Context, db *sql.DB, id int64, host bool, owners map[string]OwnerChannel) (speakerDecision, error) {
-	var session, role, source, created, user, chat, chatType, config, display, metadata string
+func readSpeaker(ctx context.Context, db, state *sql.DB, id int64, host bool, owners map[string]OwnerChannel) (speakerDecision, error) {
+	var session, role, source, sessionSource, created, user, chat, chatType, config, display, metadata string
+	hasSession := host
 	if host {
 		err := db.QueryRowContext(ctx, `SELECT m.session_id,m.role,s.source,
    COALESCE(s.created_source,''),COALESCE(s.user_id,''),COALESCE(s.chat_id,''),COALESCE(s.chat_type,''),
@@ -179,10 +181,23 @@ func readSpeaker(ctx context.Context, db *sql.DB, id int64, host bool, owners ma
 		if err != nil {
 			return speakerDecision{}, err
 		}
+		sessionSource = source
 	} else {
 		err := db.QueryRowContext(ctx, `SELECT session_id,role,COALESCE(source,'') FROM messages WHERE store_id=?`, id).Scan(&session, &role, &source)
 		if err != nil {
 			return speakerDecision{}, err
+		}
+		// A missing host message does not remove its session's provenance.
+		// LCM has no separate session-kind column; use the profile-local host
+		// session when present, including delegation and shared-chat metadata.
+		if state != nil {
+			err := state.QueryRowContext(ctx, `SELECT source,COALESCE(created_source,''),
+                COALESCE(user_id,''),COALESCE(chat_id,''),COALESCE(chat_type,''),COALESCE(model_config,'')
+                FROM sessions WHERE id=?`, session).Scan(&sessionSource, &created, &user, &chat, &chatType, &config)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return speakerDecision{}, err
+			}
+			hasSession = err == nil
 		}
 	}
 	// Explicit non-person roles always beat a transport or owner identity.
@@ -198,7 +213,7 @@ func readSpeaker(ctx context.Context, db *sql.DB, id int64, host bool, owners ma
 		return unknownSpeaker(), nil
 	}
 	var kinds []speakerDecision
-	for _, s := range []string{source, created} {
+	for _, s := range []string{source, sessionSource, created} {
 		if s == "" {
 			continue
 		}
@@ -219,7 +234,7 @@ func readSpeaker(ctx context.Context, db *sql.DB, id int64, host bool, owners ma
 			}
 		}
 	}
-	if host && config != "" {
+	if hasSession && config != "" {
 		var fields map[string]json.RawMessage
 		if err := json.Unmarshal([]byte(config), &fields); err != nil || fields == nil {
 			kinds = append(kinds, unknownSpeaker())
@@ -236,16 +251,16 @@ func readSpeaker(ctx context.Context, db *sql.DB, id int64, host bool, owners ma
 		return combineSpeakers(kinds), nil
 	}
 	owner, ok := owners[session]
-	if !ok || owner.Source != source {
-		if host && interactiveSource(source) && user != "" {
+	if !ok || owner.Source != source || hasSession && owner.Source != sessionSource {
+		if hasSession && interactiveSource(sessionSource) && user != "" {
 			return speakerDecision{guard.ExternalParticipant, false}, nil
 		}
 		return unknownSpeaker(), nil
 	}
-	if host && (owner.UserID != user || owner.ChatID != chat) {
+	if hasSession && (owner.UserID != user || owner.ChatID != chat) {
 		return speakerDecision{guard.ExternalParticipant, false}, nil
 	}
-	if host && source != "cli" && (user == "" || chat == "" || (chatType != "private" && chatType != "dm")) {
+	if hasSession && sessionSource != "cli" && (user == "" || chat == "" || (chatType != "private" && chatType != "dm")) {
 		return unknownSpeaker(), nil
 	}
 	return speakerDecision{guard.Person, false}, nil

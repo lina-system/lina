@@ -36,7 +36,9 @@ the registered layouts. `speakers-honcho.json` is a test-only set of owner-peer
 claims and pre-matched row references, not a registered Honcho API response.
 The rows cover automated prompts attributed to the owner, genuine owner turns
 (including misleading marker text), Honcho-only messages, delegation, agent,
-tool and system messages, conflicting sources and unknown provenance. Tests
+tool and system messages, conflicting sources and unknown provenance. LCM-only
+messages also inherit automated and shared-chat restrictions from an available
+host session even when its message rows are absent. Tests
 check per-profile report counts, immutable source bytes, candidate eligibility,
 and rejection by the person-memory writer. Source matching and promotion
 approval remain separate stages; these fixtures do not claim to implement them.
