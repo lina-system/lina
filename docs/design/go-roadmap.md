@@ -54,6 +54,8 @@ Order follows the Depends-on lines. 1.A comes first and 1.H last.
 
 Failure injections: `kill -9` at each start step and turn phase; corrupt canon; a write fault on `canon/`; disk full; an unusable sandbox; a slow client and dropped frames; a replayed channel update; provider unavailable, expired token and usage cap; `kill -9` with a background run working; restore of an older generation.
 
+- #358 covers provider unavailable and truncated SSE through the installed Core and real TUI in a headless PTY. Failure notices and streamed partials remain visible after restart, accepted requests are not replayed, and a new request excludes failed partials from completed assistant context. Turn-store tests inject a notice write failure and verify atomic terminal state, recovery and notice deduplication.
+
 ### 1.A Foundation and control plane
 
 **G1-01 Go skeleton, modules and import rules.** Import rules as one `go test`; V6 and V7 baselines.
