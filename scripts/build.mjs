@@ -7,7 +7,9 @@ import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { gitOut } from './git.mjs';
-import { componentsTimeoutMs, createGoContext, execute } from './verify/check-components.mjs';
+import { createGoContext, execute } from './verify/check-components.mjs';
+
+export const buildTimeoutMs = 595_000;
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const release = /^v0\.0\.1-alpha\.(\d{4})(\d{2})(\d{2})\.[1-9]\d*$/;
@@ -32,7 +34,7 @@ function outputPath(path) {
 }
 
 export function build({ cwd = root, out, target, version: requestedVersion, execute: run = execute,
-  timeoutMs = componentsTimeoutMs - 5000 }) {
+  timeoutMs = buildTimeoutMs }) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) throw new Error('Build budget must be a positive integer in milliseconds');
   const started = performance.now();
   const deadline = started + timeoutMs;
