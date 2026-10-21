@@ -150,7 +150,7 @@ func instructionOnly(files Bundle) error {
 		return ErrInvalid
 	}
 	for filePath, f := range files {
-		if !fs.ValidPath(filePath) || strings.Contains(filePath, "\\") || strings.HasPrefix(filePath, ".") {
+		if !fs.ValidPath(filePath) || strings.ContainsAny(filePath, "\\\x00") || strings.HasPrefix(filePath, ".") {
 			return ErrInvalid
 		}
 		for parent := path.Dir(filePath); parent != "."; parent = path.Dir(parent) {

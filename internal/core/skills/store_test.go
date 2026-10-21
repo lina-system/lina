@@ -392,3 +392,27 @@ func TestBuiltinHandleCannotReadAnotherGeneration(t *testing.T) {
 		t.Fatalf("old handle resolved to new text: %+v %v", body, err)
 	}
 }
+
+func TestNULPathCannotPublishAnUnreadableVersion(t *testing.T) {
+	s, _, _ := fixture(t, nil)
+	out, err := s.Patch(t.Context(), Patch{ID: "example", Files: Bundle{"SKILL.md": {Text: document("Instructions.")}, "notes\x00.md": {Text: "Notes."}}})
+	if !errors.Is(err, ErrInvalid) || out.Notice != "" {
+		t.Fatalf("invalid Git path adopted: %+v %v", out, err)
+	}
+}
+func TestBuiltinNoOpCannotPoisonUndo(t *testing.T) {
+	s, _, _ := fixture(t, fstest.MapFS{"example/SKILL.md": {Data: []byte(document("Original."))}})
+	out, err := s.Patch(t.Context(), Patch{ID: "example", Files: Bundle{"SKILL.md": {Text: document("Original.")}}})
+	if !errors.Is(err, ErrConflict) || out.Notice != "" {
+		t.Fatalf("no-op published: %+v %v", out, err)
+	}
+	changed := apply(t, s, 0, "Changed.")
+	restored, err := s.Undo(t.Context(), changed.Undo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := s.Read(t.Context(), restored.Version)
+	if err != nil || body.Files["SKILL.md"].Text != document("Original.") {
+		t.Fatalf("undo: %+v %v", body, err)
+	}
+}

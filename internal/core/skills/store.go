@@ -344,6 +344,13 @@ func (s *Store) change(ctx context.Context, id string, expected int64, build fun
 		if old.Revision != expected {
 			return ErrConflict
 		}
+		if !old.deleted && old.hash == "" {
+			baseline, err := s.files(old)
+			if err != nil {
+				return err
+			}
+			old.hash = digest(baseline)
+		}
 		files, err := build(tx, old)
 		if err != nil {
 			return err
