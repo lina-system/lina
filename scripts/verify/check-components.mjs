@@ -8,7 +8,9 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export function execute(command, args, { cwd, env }) {
-  const result = spawnSync(command, args, { cwd, env, encoding: 'utf8', timeout: 120_000, maxBuffer: 64 * 1024 * 1024 });
+  // Package tests include packaging builds and compete with automation on cold
+  // CI runners. Foundation still bounds the entire component check to ten minutes.
+  const result = spawnSync(command, args, { cwd, env, encoding: 'utf8', timeout: 300_000, maxBuffer: 64 * 1024 * 1024 });
   return { status: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.error ? `${result.stderr ?? ''}${result.error.message}\n` : result.stderr ?? '' };
 }
 
