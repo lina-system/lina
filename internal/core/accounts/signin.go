@@ -14,19 +14,9 @@ import (
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
-// SignInSchema is appended to the host's numbered canon migrations. Sign-in
+// SignInSchema is included at its fixed version in canon.Migrations. Sign-in
 // never creates tables on demand or opens another canonical writer.
-const SignInSchema = OwnerBindingSchema + `
-CREATE TABLE sign_in_host (
- singleton INTEGER PRIMARY KEY CHECK(singleton=1),
- host_id TEXT NOT NULL UNIQUE
-);
-CREATE TABLE sign_in_identities (
- account_id TEXT PRIMARY KEY REFERENCES accounts(id),
- issuer TEXT NOT NULL,
- subject TEXT NOT NULL
-);
-`
+const SignInSchema = canon.AccountSignInSchema
 
 type SignInConfig struct {
 	Store     *Store
