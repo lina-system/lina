@@ -63,7 +63,7 @@ esac
 	state := filepath.Join(base, "state")
 	units := filepath.Join(base, "units")
 	args := []string{"install", "--state-root", state, "--unit-dir", units, "--bundle", bundle}
-	invoke := func(code int) {
+	invoke := func(code int) string {
 		p := h.command(args...)
 		for i, entry := range p.command.Env {
 			if strings.HasPrefix(entry, "PATH=") {
@@ -72,8 +72,12 @@ esac
 		}
 		p.start(t)
 		p.wait(t, code)
+		return p.stdout.String()
 	}
-	invoke(0)
+	output := invoke(0)
+	if !strings.Contains(output, scenario.ToolVersion) || !strings.Contains(output, scenario.ToolStatus) {
+		t.Fatal("install did not list the unverified tool version")
+	}
 	var installed install.Result
 	data, err = os.ReadFile(filepath.Join(state, "system/install.json"))
 	if err != nil {
