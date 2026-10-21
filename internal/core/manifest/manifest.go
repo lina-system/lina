@@ -10,18 +10,21 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/thisisjun786/lina/kit/provider/responses"
 )
 
 // Manifest identifies a clean source commit and the binaries produced from it.
 // Additional JSON fields are allowed as later components add their metadata.
 type Manifest struct {
-	Version     string   `json:"version"`
-	Commit      string   `json:"commit"`
-	Date        string   `json:"date"`
-	GoToolchain string   `json:"goToolchain"`
-	KitVersion  int64    `json:"kitVersion"`
-	Binaries    []Binary `json:"binaries"`
-	SQLite      SQLite   `json:"sqlite"`
+	Version     string                      `json:"version"`
+	Commit      string                      `json:"commit"`
+	Date        string                      `json:"date"`
+	GoToolchain string                      `json:"goToolchain"`
+	KitVersion  int64                       `json:"kitVersion"`
+	Binaries    []Binary                    `json:"binaries"`
+	SQLite      SQLite                      `json:"sqlite"`
+	Providers   map[string]responses.Config `json:"providers"`
 }
 
 // Binary describes one artifact next to manifest.json. SHA256 is lowercase hex.
@@ -58,6 +61,13 @@ func Read(path string) (Manifest, error) {
 
 // Validate checks the required metadata and artifact records.
 func (m Manifest) Validate() error {
+	chatgpt, ok := m.Providers["chatgpt"]
+	if !ok {
+		return fmt.Errorf("providers must include chatgpt")
+	}
+	if err := chatgpt.Validate(); err != nil {
+		return fmt.Errorf("chatgpt: %w", err)
+	}
 	if err := m.SQLite.Validate(); err != nil {
 		return fmt.Errorf("SQLite: %w", err)
 	}

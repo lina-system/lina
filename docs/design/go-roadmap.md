@@ -98,6 +98,8 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-08 Provider interface and the Responses adapter.** `kit/provider`, typed failures, usage, budget.
 - Done when: scripted-wire tests cover each failure kind by code, then type, then status; no request is sent after the first output or after a failure; a cut-off response runs no tool; unreported usage is stored unknown; a field outside the manifest list is not sent.
 - Depends on: G1-02, G1-03, G1-04. Design refs: C-10, C-43, C-44.
+- #53 implements provider types, the closed failure vocabulary and fenced budget reservations/settlements. SQLite reopen tests retain unknown usage for all seven run kinds. These packages have no TUI or protocol entry point yet.
+- #54 adds the pinned Responses adapter and build-manifest settings. Scripted wires cover code/type/status failures, zero retries, truncated responses with no tool release, opaque state, unknown usage, and field filtering; build tests verify the SDK pin and retry value. Live V1 and conversation integration remain unverified.
 
 **G1-09 Loop core and run durability.** `kit/loop`, steering, cancellation, intent and result commits.
 - Done when: a scripted wire shows no tool from a cut-off response, one result per call in call order, an aborted result for each open call, and steering applied at the next round; no effect is applied twice across a restart.
