@@ -195,7 +195,7 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 				if request.ExchangeID == "" {
 					id, err = client.client.Talk(ctx, protocol.AgentTalkGet{})
 				} else {
-					id, err = client.client.ExpandTalk(ctx, protocol.AgentTalkExpand{ExchangeID: &request.ExchangeID})
+					id, err = client.client.ExpandTalk(ctx, protocol.AgentTalkExpand{ExchangeID: &request.ExchangeID, Cursor: request.Cursor})
 				}
 				if err != nil {
 					return err

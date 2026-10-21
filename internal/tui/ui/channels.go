@@ -99,6 +99,7 @@ func (m *shellModel) channelKey(msg tea.KeyMsg) tea.Cmd {
 			case "chat":
 				if input != "" {
 					v.binding.Chat = &input
+					v.binding.Scope.Memory = input == v.rows[v.selected].PrivateChat
 				}
 				v.stage = "topic"
 			case "topic":

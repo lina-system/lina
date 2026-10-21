@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/channels"
@@ -20,8 +21,9 @@ import (
 )
 
 type channelWorker struct {
-	cancel context.CancelFunc
-	done   chan struct{}
+	cancel  context.CancelFunc
+	done    chan struct{}
+	healthy *atomic.Bool
 }
 type channelRuntime struct {
 	r         *conversationRuntime
@@ -76,11 +78,18 @@ func (c *channelRuntime) start(b channels.Bot) error {
 		return err
 	}
 	ctx, cancel := context.WithCancel(c.r.ctx)
-	worker := channelWorker{cancel: cancel, done: make(chan struct{})}
+	worker := channelWorker{cancel: cancel, done: make(chan struct{}), healthy: &atomic.Bool{}}
 	c.workers[b.Key()] = worker
 	go func() {
 		defer close(worker.done)
-		_ = adapter.Run(ctx, gateway.New(c.r.db, func(context.Context, gateway.Delivery) error { return nil }))
+		defer adapter.Close()
+		superviseChannel(ctx, worker.healthy, func(ctx context.Context) error {
+			if err := adapter.Identify(ctx); err != nil {
+				return err
+			}
+			worker.healthy.Store(true)
+			return adapter.Run(ctx, gateway.New(c.r.db, func(context.Context, gateway.Delivery) error { return nil }))
+		}, channelPause)
 	}()
 	return nil
 }
@@ -219,6 +228,9 @@ func (c *channelRuntime) Channel(ctx context.Context, s clientsrv.Session, p pro
 		if row.Sender != "" {
 			status = "connected"
 		}
+		if w, ok := c.workers[row.Bot.Key()]; !ok || !w.healthy.Load() {
+			status = "unavailable"
+		}
 		if _, err := c.r.vault.Get(c.key(row.Bot)); err != nil {
 			status = "disconnected"
 		}
@@ -230,4 +242,28 @@ func (c *channelRuntime) Channel(ctx context.Context, s clientsrv.Session, p pro
 	}
 	result.Connections = &resultRows
 	return result, nil
+}
+
+func channelPause(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+func superviseChannel(ctx context.Context, healthy *atomic.Bool, run func(context.Context) error, pause func(context.Context, time.Duration) error) {
+	defer healthy.Store(false)
+	backoff := time.Second
+	for ctx.Err() == nil {
+		err := run(ctx)
+		healthy.Store(false)
+		delay, retry := telegram.RecoveryDelay(err)
+		if !retry || ctx.Err() != nil || pause(ctx, max(delay, backoff)) != nil {
+			return
+		}
+		backoff = min(30*time.Second, backoff*2)
+	}
 }

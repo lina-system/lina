@@ -16,12 +16,14 @@ type talkView struct {
 	selected, offset int
 	attempt          uint64
 	code, expanded   string
+	next             *string
 	rows             []protocol.AgentTalkLine
 	events           []protocol.AgentTalkEvent
 }
 type shellTalkRequest struct {
 	Generation, Attempt uint64
 	ExchangeID          string
+	Cursor              *string
 }
 
 func (m *shellModel) talkCommand(text string) (bool, tea.Cmd) {
@@ -36,11 +38,12 @@ func (m *shellModel) talkCommand(text string) (bool, tea.Cmd) {
 	}
 	return true, m.talkRequest("")
 }
-func (m *shellModel) talkRequest(id string) tea.Cmd {
+func (m *shellModel) talkRequest(id string) tea.Cmd { return m.talkPageRequest(id, nil) }
+func (m *shellModel) talkPageRequest(id string, cursor *string) tea.Cmd {
 	m.talk.busy = true
 	m.talk.code = ""
 	generation, attempt := m.generation, m.talk.attempt
-	return func() tea.Msg { return shellTalkRequest{generation, attempt, id} }
+	return func() tea.Msg { return shellTalkRequest{generation, attempt, id, cursor} }
 }
 func (m *shellModel) talkKey(msg tea.KeyMsg) tea.Cmd {
 	key := term.FromTea(msg, m.events)
@@ -54,6 +57,9 @@ func (m *shellModel) talkKey(msg tea.KeyMsg) tea.Cmd {
 		return tea.Quit
 	case "esc", "ctrl+c":
 		if v.expanded != "" {
+			v.attempt++
+			v.busy = false
+			v.next = nil
 			v.expanded = ""
 			v.events = nil
 			v.offset = 0
@@ -80,6 +86,12 @@ func (m *shellModel) talkKey(msg tea.KeyMsg) tea.Cmd {
 	case "r":
 		return m.talkRequest("")
 	case "enter":
+		if v.expanded != "" {
+			if v.next != nil {
+				return m.talkPageRequest(v.expanded, v.next)
+			}
+			return nil
+		}
 		if len(v.rows) > 0 {
 			return m.talkRequest(v.rows[v.selected].ExchangeID)
 		}
@@ -116,6 +128,7 @@ func (m *shellModel) talkResponse(p protocol.AgentTalk) {
 	if p.ExchangeID != nil && p.Events != nil {
 		v.expanded = *p.ExchangeID
 		v.events = *p.Events
+		v.next = p.NextCursor
 		v.offset = 0
 	}
 }
@@ -152,6 +165,9 @@ func (m *shellModel) talkContent() string {
 		if len(v.rows) == 0 {
 			lines = append(lines, text("talk.empty"))
 		}
+	}
+	if v.expanded != "" && v.next != nil {
+		lines = append(lines, text("talk.more"))
 	}
 	if v.code != "" {
 		lines = append(lines, text(v.code))

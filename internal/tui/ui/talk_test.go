@@ -54,3 +54,23 @@ func TestUnsupportedTalkNeverBecomesChat(t *testing.T) {
 		t.Fatal("unsupported talk command became model input")
 	}
 }
+
+func TestTalkExpansionRequestsNextPageWithoutLosingExchange(t *testing.T) {
+	m := accountShell()
+	m.talk = talkView{open: true}
+	events := []protocol.AgentTalkEvent{{Text: "first page"}}
+	m.talkResponse(protocol.AgentTalk{ExchangeID: stringPointer("exchange"), Events: &events, NextCursor: stringPointer("0:32768")})
+	cmd := m.talkKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("next page unavailable")
+	}
+	req := cmd().(shellTalkRequest)
+	if req.ExchangeID != "exchange" || req.Cursor == nil || *req.Cursor != "0:32768" {
+		t.Fatal("page lost its identity")
+	}
+	events = []protocol.AgentTalkEvent{{Text: "last page"}}
+	m.talkResponse(protocol.AgentTalk{ExchangeID: stringPointer("exchange"), Events: &events})
+	if m.talk.next != nil || len(m.talk.events) != 1 || m.talk.events[0].Text != "last page" {
+		t.Fatal("page was duplicated or continuation retained")
+	}
+}

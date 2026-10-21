@@ -56,3 +56,25 @@ func TestChannelUnbindSelectsExactChatAndTopic(t *testing.T) {
 		t.Fatal("unbind targeted a different binding")
 	}
 }
+
+func TestSharedChannelMemoryRequiresExplicitOptIn(t *testing.T) {
+	for _, chat := range []string{"", "42", "-42"} {
+		t.Run(chat, func(t *testing.T) {
+			m := accountShell()
+			m.channels = channelView{open: true, rows: []protocol.ChannelConnection{{Account: "bot", PrivateChat: "42"}}}
+			m.channelKey(tea.KeyPressMsg{Code: 'b', Text: "b"})
+			m.channelPaste(chat)
+			m.channelKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+			m.channelKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+			if m.channels.binding.Scope.Memory != (chat == "" || chat == "42") {
+				t.Fatal("memory default does not match private destination")
+			}
+			if chat == "-42" {
+				m.channelKey(tea.KeyPressMsg{Code: 'm', Text: "m"})
+				if !m.channels.binding.Scope.Memory {
+					t.Fatal("explicit opt-in ignored")
+				}
+			}
+		})
+	}
+}

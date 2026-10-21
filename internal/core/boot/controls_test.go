@@ -5,13 +5,20 @@ package boot
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/guard"
+	"github.com/thisisjun786/lina/kit/rpc"
+	"github.com/thisisjun786/lina/kit/secret"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/channels"
@@ -56,6 +63,9 @@ func TestInstalledChannelPairBindDisconnect(t *testing.T) {
 	updates := make(chan string, 1)
 	polls := make(chan struct{}, 8)
 	r.channels.transport = channelTransport(func(req *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(req.URL.Path, "/getMe") {
+			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"ok":true,"result":{"id":123456,"is_bot":true,"username":"fixture_bot"}}`))}, nil
+		}
 		if !strings.HasSuffix(req.URL.Path, "/getUpdates") {
 			t.Errorf("unexpected platform method")
 			return nil, context.Canceled
@@ -86,7 +96,7 @@ func TestInstalledChannelPairBindDisconnect(t *testing.T) {
 	}
 	token := "123456:synthetic_token_for_test"
 	connected := call(protocol.ChannelRequest{Operation: str("connect"), Token: &token})
-	if len(*connected.Connections) != 1 || (*connected.Connections)[0].Status != "needs_pairing" {
+	if len(*connected.Connections) != 1 {
 		t.Fatal("connection not projected")
 	}
 	paired := call(protocol.ChannelRequest{Operation: str("pair"), Account: str("123456")})
@@ -109,6 +119,20 @@ func TestInstalledChannelPairBindDisconnect(t *testing.T) {
 	row := (*bound.Connections)[0]
 	if row.Status != "connected" || row.PrivateChat != "42" || len(row.Bindings) != 1 || row.Bindings[0].AgentID != r.agent {
 		t.Fatal("paired binding not projected")
+	}
+
+	call(protocol.ChannelRequest{Operation: str("bind"), Account: str("123456"), Chat: str("-42"), AgentID: &r.agent, Scope: &protocol.ChannelScope{Reads: "addressed", Writes: "reply_only"}})
+	updates <- `{"ok":true,"result":[{"update_id":2,"message":{"message_id":2,"from":{"id":42,"is_bot":false,"first_name":"Owner"},"chat":{"id":-42,"type":"group"},"date":1,"text":"@fixture_bot hello","entities":[{"type":"mention","offset":0,"length":12}]}}]}`
+	select {
+	case <-polls:
+	case <-time.After(5 * time.Second):
+		t.Fatal("addressed input did not commit")
+	}
+	var admitted int
+	if err := r.db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM inbox WHERE native_id='2'").Scan(&admitted)
+	}); err != nil || admitted != 1 {
+		t.Fatalf("addressed mention missing from inbox: %d %v", admitted, err)
 	}
 	raw, _ := json.Marshal(bound)
 	if strings.Contains(string(raw), token) {
@@ -176,5 +200,87 @@ func TestInstalledTalkListsAndExpandsDurableExchange(t *testing.T) {
 	session.PersonID = "other"
 	if _, err := r.ExpandTalk(t.Context(), session, protocol.AgentTalkExpand{ExchangeID: &receipt.ID}); err == nil {
 		t.Fatal("foreign owner expanded exchange")
+	}
+}
+
+func TestTalkPagesPreserveOversizedUnicodeBodiesWithinRPCBudget(t *testing.T) {
+	text := strings.Repeat("한글<\n", 300000)
+	message, err := guard.Admit(guard.EntryAgentExchange, "test", text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := []exchange.Event{{Agent: "agent", Kind: "request", At: time.Now(), Message: message}}
+	var cursor *string
+	var assembled strings.Builder
+	pages := 0
+	for {
+		p, err := talkPage("exchange", events, cursor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := json.Marshal(p)
+		if err != nil || len(raw) >= rpc.MaxFrameBytes/2 || !utf8.ValidString((*p.Events)[0].Text) {
+			t.Fatal("page exceeds wire budget or splits a rune")
+		}
+		assembled.WriteString((*p.Events)[0].Text)
+		pages++
+		if p.NextCursor == nil {
+			break
+		}
+		if cursor != nil && *cursor == *p.NextCursor {
+			t.Fatal("page made no progress")
+		}
+		cursor = p.NextCursor
+	}
+	if pages < 2 || assembled.String() != text {
+		t.Fatal("paged expansion lost or duplicated content")
+	}
+	if _, err := talkPage("exchange", events, str("0:1")); err == nil {
+		t.Fatal("accepted cursor inside UTF-8 rune")
+	}
+}
+func TestChannelSupervisorRetriesReadsAndShowsTerminalFailure(t *testing.T) {
+	r := controlRuntime(t)
+	r.channels.transport = channelTransport(func(*http.Request) (*http.Response, error) { return nil, errors.New("synthetic read failure") })
+	adapter, err := r.channels.adapter(channels.Bot{Platform: "telegram", Account: "123456"}, secret.New("123456:synthetic"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	retryable := adapter.Identify(t.Context())
+	var healthy atomic.Bool
+	calls, pauses := 0, 0
+	superviseChannel(t.Context(), &healthy, func(context.Context) error {
+		calls++
+		healthy.Store(true)
+		if calls == 1 {
+			return retryable
+		}
+		return context.Canceled
+	}, func(context.Context, time.Duration) error {
+		pauses++
+		if healthy.Load() {
+			t.Fatal("failed worker still healthy")
+		}
+		return nil
+	})
+	if calls != 2 || pauses != 1 || healthy.Load() {
+		t.Fatal("read failure was not retried or terminal state was hidden")
+	}
+	r.channels.transport = channelTransport(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 401, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"ok":false,"error_code":401,"description":"unauthorized"}`))}, nil
+	})
+	session := clientsrv.Session{PersonID: r.person, CanDecide: true}
+	if _, err := r.channels.Channel(t.Context(), session, protocol.ChannelRequest{Operation: str("connect"), Token: str("123456:synthetic")}); err != nil {
+		t.Fatal(err)
+	}
+	worker := r.channels.workers[channels.Bot{Platform: "telegram", Account: "123456"}.Key()]
+	select {
+	case <-worker.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("terminal worker did not stop")
+	}
+	result, err := r.channels.Channel(t.Context(), session, protocol.ChannelRequest{Operation: str("list")})
+	if err != nil || (*result.Connections)[0].Status != "unavailable" {
+		t.Fatal("dead worker reported connected")
 	}
 }

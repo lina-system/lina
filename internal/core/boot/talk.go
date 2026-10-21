@@ -7,7 +7,10 @@ import (
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/exchange"
 	"github.com/thisisjun786/lina/kit/protocol"
+	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // The installed main belongs to one person. Both participating agents must
@@ -52,9 +55,61 @@ func (r *conversationRuntime) ExpandTalk(ctx context.Context, s clientsrv.Sessio
 	if err != nil {
 		return protocol.AgentTalk{}, err
 	}
-	result := []protocol.AgentTalkEvent{}
-	for _, e := range events {
-		result = append(result, protocol.AgentTalkEvent{AgentID: e.Agent, At: e.At.Format(time.RFC3339Nano), Kind: e.Kind, Text: e.Message.Body()})
+	return talkPage(row.ID, events, p.Cursor)
+}
+
+// A page contains one event or a UTF-8-safe piece of a large event. Even the
+// worst JSON escaping of 32 KiB leaves ample room below the 1 MiB RPC limit.
+func talkPage(id string, events []exchange.Event, cursor *string) (protocol.AgentTalk, error) {
+	index, offset := 0, 0
+	invalid := func() (protocol.AgentTalk, error) {
+		return protocol.AgentTalk{}, &clientsrv.OperationError{Code: protocol.ErrorMalformed}
 	}
-	return protocol.AgentTalk{ExchangeID: &row.ID, Events: &result}, nil
+	if cursor != nil {
+		a, b, ok := strings.Cut(*cursor, ":")
+		if !ok {
+			return invalid()
+		}
+		var err error
+		index, err = strconv.Atoi(a)
+		if err != nil {
+			return invalid()
+		}
+		offset, err = strconv.Atoi(b)
+		if err != nil {
+			return invalid()
+		}
+	}
+	if index < 0 || index > len(events) || offset < 0 {
+		return invalid()
+	}
+	result := []protocol.AgentTalkEvent{}
+	response := protocol.AgentTalk{ExchangeID: &id, Events: &result}
+	if index == len(events) {
+		if offset != 0 {
+			return invalid()
+		}
+		return response, nil
+	}
+	event := events[index]
+	body := event.Message.Body()
+	if offset > len(body) || offset < len(body) && !utf8.RuneStart(body[offset]) {
+		return invalid()
+	}
+	end := min(len(body), offset+32*1024)
+	for end < len(body) && !utf8.RuneStart(body[end]) {
+		end--
+	}
+	result = append(result, protocol.AgentTalkEvent{AgentID: event.Agent, At: event.At.Format(time.RFC3339Nano), Kind: event.Kind, Text: body[offset:end]})
+	if end == len(body) {
+		index++
+		offset = 0
+	} else {
+		offset = end
+	}
+	if index < len(events) {
+		next := strconv.Itoa(index) + ":" + strconv.Itoa(offset)
+		response.NextCursor = &next
+	}
+	return response, nil
 }

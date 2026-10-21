@@ -305,6 +305,9 @@ func TestChannelBootHelper(t *testing.T) {
 		t.Fatal(err)
 	}
 	transport := pairingTransport(func(req *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(req.URL.Path, "/getMe") {
+			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"ok":true,"result":{"id":123456,"is_bot":true,"username":"fixture_bot"}}`))}, nil
+		}
 		if !strings.HasSuffix(req.URL.Path, "/getUpdates") {
 			return nil, fmt.Errorf("unexpected method")
 		}

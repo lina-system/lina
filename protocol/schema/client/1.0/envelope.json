@@ -2602,6 +2602,10 @@
           "items": {
             "$ref": "#/$defs/agent_talk_event"
           }
+        },
+        "next_cursor": {
+          "type": "string",
+          "maxLength": 64
         }
       },
       "required": [],
@@ -2630,6 +2634,10 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 512
+        },
+        "cursor": {
+          "type": "string",
+          "maxLength": 64
         }
       },
       "required": [],

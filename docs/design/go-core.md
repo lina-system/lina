@@ -762,7 +762,11 @@ Boot installs the channel, Telegram and exchange schemas after the published
 application migrations and registers both control capabilities even without a
 model route. Channel tokens enter only the private secret store. Boot resumes
 one Telegram poller per connected bot; private-chat pairing uses the adapter's
-numeric sender identity and a single-use, five-minute code. Refresh reads the
+numeric sender identity and a single-use, five-minute code. Before polling,
+`getMe` verifies the bot id and supplies its username for addressed mentions and
+commands. Recoverable admission/read failures restart from the durable cursor
+with cancellable backoff and retry-after; terminal failures and backoff appear
+as unavailable rather than a healthy connection. Refresh reads the
 committed pairing and binding scope. Disconnect joins the poller, revokes bindings
 and pairing, blocks pending outbound work and removes the credential, retaining
 ownership and delivery receipts so reconnect cannot transfer ownership or replay
@@ -838,6 +842,10 @@ selected exchange id and its ordered events. The client keeps display selection
 only; it creates no exchange store, model turn or personal-memory input.
 Boot projects the durable exchange store and ledger materials for the installed
 owner, checking that both participant agents remain active before expansion.
+Expansion uses a cursor over event index and UTF-8 byte offset. Each page contains
+one event or at most 32 KiB of a large event, leaving room for JSON escaping and
+the RPC envelope below the frame limit. The response supplies the next cursor;
+the TUI requests it explicitly and keeps only the displayed page.
 
 
 ## Work engine
