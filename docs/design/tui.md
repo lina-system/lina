@@ -92,7 +92,9 @@ gaps enter Resyncing until the required snapshot arrives. An `unavailable`
 subscription response shows Recovering with that cause while history remains
 readable; this is unavailable-service presentation, not an inference from peer
 text or a claim that reads prove Core mutation readiness. Resync and its fresh
-snapshot can restore the subscribed view.
+snapshot restore the subscribed view in Core's history order. A durable stopped
+outcome stays with its interrupted turn before later inputs and replies, including
+after reconnect and terminal resize.
 
 Quit (Ctrl+C with an empty draft or Ctrl+D), input EOF and termination signals close only this
 client and exit 0, including during handshake or retry. The raw terminal reader
@@ -167,6 +169,16 @@ Messages are frames from Core, keys, paste, resize, ticks from an injected clock
 9. The client acts on typed fields only. It never parses model, tool, plugin or web text for commands, ids, links, approvals or status.
 10. Every string that did not originate in the client passes `sanitize.Display` before layout: control, bidirectional and OSC sequences are removed, and styling follows truncation.
 11. A frame that fails schema validation shows a placeholder with a code and is counted.
+
+An accepted snapshot is authoritative for its topic's block order as well as
+content. Missing predecessors are inserted before surviving blocks, including a
+stopped outcome restored under its ledger id. Existing blocks and local echoes
+anchor the merge without overriding that order; other topics, unmatched local
+echoes and local notices survive. Selection, folds and scroll retain their block
+identities, and an acknowledged echo remaps those identities to its ledger item.
+`e2e/m1/tui-stopped-order.json` checks an interrupted turn followed by a successful
+reply through an installed Core restart, PTY resize and fresh TUI, and compares
+the display order with Core's snapshot without replaying model requests.
 
 The reducer accepts typed internal `Snapshot`, `Delta` and `ItemDone` projections.
 They do not define a wire format: client 1.0 still reserves the conversation

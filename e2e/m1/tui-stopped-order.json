@@ -1,0 +1,10 @@
+{
+  "width": 120,
+  "height": 60,
+  "resized_width": 121,
+  "input": "SLOW-366",
+  "partial": "PARTIAL-366",
+  "next_input": "FOLLOW-366",
+  "reply": "FOLLOWUP-OK-366",
+  "draft": "DRAFT-366"
+}
