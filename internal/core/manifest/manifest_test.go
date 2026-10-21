@@ -24,6 +24,7 @@ func validManifest() map[string]any {
 			"sqliteVersion": "3.51.2", "wasmSHA256": strings.Repeat("d", 64),
 			"execution": "wazero", "sqliteVec": nil,
 		},
+		"supportedCombinations": []any{},
 		"binaries": []any{
 			map[string]any{"name": "lina", "size": 100, "sha256": strings.Repeat("b", 64)},
 			map[string]any{"name": "lina-node", "size": 200, "sha256": strings.Repeat("c", 64)},
@@ -69,7 +70,7 @@ func TestRead(t *testing.T) {
 }
 
 func TestReadRejectsInvalidFields(t *testing.T) {
-	for _, field := range []string{"version", "commit", "date", "target", "goToolchain", "kitVersion", "binaries", "sqlite", "providers"} {
+	for _, field := range []string{"version", "commit", "date", "target", "goToolchain", "kitVersion", "binaries", "sqlite", "providers", "supportedCombinations"} {
 		t.Run("missing "+field, func(t *testing.T) {
 			value := validManifest()
 			delete(value, field)
