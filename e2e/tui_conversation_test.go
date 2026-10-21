@@ -174,6 +174,11 @@ func waitScreen(t *testing.T, h *harness, terminal *terminal, text string) tuite
 	t.Helper()
 	snapshot, err := terminal.screen.Wait(h.ctx, func(snapshot tuiterm.Snapshot) bool { return strings.Contains(screenText(snapshot), text) })
 	if err != nil {
+		select {
+		case <-terminal.process.done:
+			t.Logf("TUI exited: %v; stderr=%s", terminal.process.err, &terminal.process.stderr)
+		default:
+		}
 		t.Fatalf("screen missing %q: %v; cells=%s", text, err, screenText(snapshot))
 	}
 	return snapshot
