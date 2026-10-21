@@ -278,7 +278,7 @@ type Options struct {
 	// Preparation is the complete four-step path; Prepare is the low-level hook.
 	Preparation *Preparation
 	// Complete commits successful completion with the caller's durable replies.
-	// Preparation uses the live turn context. The supplied canon adapter adds
+	// Preparation is detached from turn cancellation. The supplied canon adapter adds
 	// completion and a five-second deadline to its Write transaction, after any
 	// reply material preparation. The callback must use that adapter for exactly
 	// one write and return only after commit. Nil writes completion alone.
@@ -376,7 +376,7 @@ func (s *Store) Run(ctx context.Context, o Options) (out loop.Outcome, err error
 			return e
 		}}
 		if state == Completed && o.Complete != nil {
-			err = errors.Join(err, o.Complete(ctx, completion))
+			err = errors.Join(err, o.Complete(context.WithoutCancel(ctx), completion))
 		} else {
 			err = errors.Join(err, completion.Write(context.WithoutCancel(ctx), func(*canon.Tx) error { return nil }))
 		}

@@ -105,6 +105,8 @@ It builds on these documents and does not repeat them:
 - The ledger is held in canon and is part of every backup generation ([filesystem.md](filesystem.md)).
 - The ledger is not the self-diagnosis log. Diagnosis events reference a conversation by id and never hold message content ([self-diagnosis-log.md](self-diagnosis-log.md)).
 
+Turn completion and admission of its replies commit in one canon transaction. Late cancellation during completion does not abort the completed turn or remove its replies. After a crash or restart, the ledger retains those replies exactly once; recovery never reruns the completed turn.
+
 ### Event fields
 
 Every event carries, besides its parent id and the person id or agent id above:

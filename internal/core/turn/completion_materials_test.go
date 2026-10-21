@@ -20,10 +20,9 @@ import (
 )
 
 type completionMaterials struct {
-	t        *testing.T
-	store    *assets.Store
-	writer   *assets.MaterialWriter
-	deadline time.Time
+	t      *testing.T
+	store  *assets.Store
+	writer *assets.MaterialWriter
 }
 
 type completionMaterial struct{ *assets.PreparedMaterial }
@@ -34,7 +33,7 @@ func (p completionMaterial) Insert(ctx context.Context, tx *canon.Tx) (ledger.Ma
 }
 
 func (m completionMaterials) Prepare(ctx context.Context, body secrets.Masked) (ledger.MaterialWrite, error) {
-	if deadline, ok := ctx.Deadline(); !ok || !deadline.Equal(m.deadline) {
+	if _, ok := ctx.Deadline(); ok {
 		m.t.Error("material preparation inherited the completion transaction deadline")
 	}
 	p, err := m.writer.Prepare(ctx, strings.NewReader(body.Text()), "reply", assets.Actor{PersonID: "person", AgentID: "agent"})
@@ -97,7 +96,7 @@ func TestLargeReplyPreparationAndCompletion(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 			defer cancel()
 			deadline, _ := ctx.Deadline()
-			materials := completionMaterials{t: t, store: a, writer: writer, deadline: deadline}
+			materials := completionMaterials{t: t, store: a, writer: writer}
 			observed := &completionDeadline{Canon: db, t: t, deadline: deadline}
 			reply := completionReply()
 			reply.Input.Body = strings.Repeat("한", ledger.InlineBytes)

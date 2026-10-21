@@ -118,6 +118,73 @@ func TestCrashAfterTurnCompletionPreservesReply(t *testing.T) {
 	}
 }
 
+func TestLateCancellationPreservesCompletedReply(t *testing.T) {
+	db, cfg := database(t)
+	input := inputEvent(t, db)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	complete := func(save context.Context, db turn.Canon) error {
+		_, err := ledger.New(db, nil).AdmitBatch(save, []ledger.Admission{completionReply()})
+		return err
+	}
+	calls := 0
+	opts := turn.Options{ID: "turn", Conversation: "conversation", InboxID: admit(t, db), InputEvent: input,
+		Complete: func(save context.Context, db turn.Canon) error {
+			// This boundary runs only after the loop succeeds. Inject the late
+			// cancellation before invoking completion or admitting any reply.
+			cancel()
+			return complete(save, db)
+		},
+		Loop: loop.Config{Stream: func(context.Context, provider.Request) (provider.Stream, error) {
+			calls++
+			return &stream{events: []provider.Event{
+				{Kind: provider.ItemDone, Item: provider.Item(`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"durable reply"}]}`)},
+				{Kind: provider.Terminal},
+			}}, nil
+		}},
+	}
+	if _, err := turn.New(db).Run(ctx, opts); err != nil && !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	check := func() {
+		t.Helper()
+		row, err := turn.New(db).Read(t.Context(), "turn")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var replies, interruptions int
+		if err = db.Read(t.Context(), func(tx *canon.Tx) error {
+			return tx.QueryRowContext(t.Context(), `SELECT
+ (SELECT count(*) FROM conv_event WHERE parent_id='input-event' AND speaker_kind='agent'),
+ (SELECT count(*) FROM conv_event WHERE parent_id='input-event' AND scaffold_kind='interruption')`).Scan(&replies, &interruptions)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if row.State != turn.Completed || len(row.Items) != 1 || replies != 1 || interruptions != 0 {
+			t.Fatalf("late cancellation: state=%s items=%d replies=%d interruptions=%d; want completed, 1, 1, 0", row.State, len(row.Items), replies, interruptions)
+		}
+		event, err := ledger.New(db, nil).Get(t.Context(), "turn:1:0")
+		if err != nil || event.Body.Text() != "durable reply" {
+			t.Fatalf("reply: %+v %v", event, err)
+		}
+	}
+	check()
+	if err := db.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Epoch++
+	db = open(t, cfg)
+	for range 2 {
+		if err := turn.New(db).Recover(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := turn.New(db).Run(t.Context(), opts); !errors.Is(err, turn.ErrAccepted) || calls != 1 {
+		t.Fatalf("replayed completed turn: calls=%d err=%v", calls, err)
+	}
+	check()
+}
+
 func TestCompletionAndRepliesRollbackTogether(t *testing.T) {
 	for _, failure := range []string{"completion", "second_reply"} {
 		t.Run(failure, func(t *testing.T) {
@@ -211,19 +278,17 @@ func TestUnsuccessfulTurnsSkipCompletion(t *testing.T) {
 	}
 }
 
-func TestCompletionPreparationKeepsTurnContext(t *testing.T) {
+func TestCompletionPreparationHasNoDeadline(t *testing.T) {
 	db, _ := database(t)
 	input := inputEvent(t, db)
 	// Assert the deadline boundary directly, without waiting for a slow disk or
 	// relying on a scheduler to finish before a timeout.
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
-	wantDeadline, _ := ctx.Deadline()
 	_, err := turn.New(db).Run(ctx, turn.Options{ID: "turn", Conversation: "conversation", InboxID: admit(t, db), InputEvent: input,
 		Complete: func(preparation context.Context, db turn.Canon) error {
-			deadline, ok := preparation.Deadline()
-			if !ok || !deadline.Equal(wantDeadline) {
-				t.Errorf("reply preparation inherited the cleanup deadline: got %v, want live turn deadline %v", deadline, wantDeadline)
+			if _, ok := preparation.Deadline(); ok {
+				t.Error("reply preparation inherited a deadline")
 			}
 			_, err := ledger.New(db, nil).AdmitBatch(preparation, []ledger.Admission{completionReply()})
 			return err
