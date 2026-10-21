@@ -230,13 +230,15 @@ An export copies and verifies the requested revision into `staging/export/`, rec
 
 ### Importing another memory system
 
-A person may hand LINA the memory of another assistant, as [conversation-and-memory.md](conversation-and-memory.md#importing-a-hermes-install) defines for a Hermes install. The first bullets of this section apply. What differs:
+A person may install a memory importer add-on for a source they used before and hand it that source's memory. Every adapter follows the [common import contract](conversation-and-memory.md#memory-importer-add-ons); [Hermes](conversation-and-memory.md#importing-a-hermes-install) is the first adapter and the owner's M1 continuity test. The [add-on list and grants](integrations.md#memory-importers) define what each adapter may read. Core, onboarding and the default install have no dependency on an importer. Ordinary material import above remains a Core operation. For memory imports:
 
+- Installing an add-on grants no source access by itself. The person chooses the source and confirms its identity maps for a run. The adapter checks the registered schema or record format before reading records, refuses unknown layouts, and offers a rehearsal that writes nothing to canon. Import runs in the background with no model call; source bytes are stored before deterministic interpretation, and speaker identity comes from the source route and confirmed maps, never message text.
 - The source is read and never written. A SQLite source is copied with the online backup API through a read-only connection into `staging/import/`; a live database file is never copied as a file. A server source is read with read and query calls only, and its answers are stored as received. Sidecar files are copied and their hashes checked. LINA never modifies, moves or deletes anything in the person's install.
 - A snapshot in staging is the input of one import run. It is not a material and has no asset id. It is deleted when the run ends.
 - The large outputs that the source kept as sidecar files become LINA materials under `materials/lina/`, referenced by the event that produced them. LINA assigns their asset ids.
-- The records created, their legacy references and the import batch are written to canon in the same transaction, so they are in every backup generation. An import ends by taking a backup generation.
+- The adapter submits the records created, their legacy references and the import batch through Core's write paths, in the same transaction, so they are in every backup generation. It never becomes a canon writer of its own. An import ends by taking a backup generation.
 - A legacy reference is canon. It changes only when its record is deleted, and a tombstone keeps it (see Backup generations).
+- Removing or disabling the importer leaves the imported records, materials, legacy references and backups usable by Core. Reading, recalling, restoring or deleting that content does not require the source adapter or another source read. A later import is a new requested run under the same schema, conflict and legacy-reference rules.
 - Deleting imported content reaches every copy LINA manages. The install and any server it was read from are outside LINA's erasure scope, and LINA says so.
 
 ## Backup generations
