@@ -657,6 +657,13 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				return turn.PreparedRequest{}, err
 			}
 			minimum = append(minimum, personaPacket...)
+			if err := r.prepareSkillTools(turnID, bindings); err != nil {
+				return turn.PreparedRequest{}, err
+			}
+			declarations := append(coreexec.PersonaDeclarations(), coreexec.PersonaSettingDeclaration())
+			declarations = append(declarations, coreexec.EmotionDeclarations()...)
+			declarations = append(declarations, coreexec.RelationshipDeclaration())
+			declarations = append(declarations, coreexec.SkillDeclarations()...)
 			packet, _, err := atropos.Packet(ctx, minimum, 0, func(ctx context.Context) (assemble.ContextPacket, error) { return r.relationshipPacket(ctx, at) })
 			if err != nil {
 				return turn.PreparedRequest{}, err
@@ -668,7 +675,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				Core:    assemble.PersonaCoreV1,
 				AgentID: r.agent, PersonaRevision: persona.Commit, Persona: persona.Layers,
 				AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID,
-				Catalog: catalog, AlwaysTools: append(append(append(coreexec.PersonaDeclarations(), coreexec.PersonaSettingDeclaration()), coreexec.EmotionDeclarations()...), coreexec.RelationshipDeclaration()),
+				Catalog: catalog, AlwaysTools: declarations,
 				History: items, Current: current[0], Packet: packet,
 				Model: policy.Model, Effort: policy.Effort, MaxTokens: 128000,
 			}, conversationRequestSize)
@@ -753,7 +760,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 	out, err := turn.New(r.db).Run(ctx, turn.Options{ID: turnID, Conversation: r.conversation, InboxID: inboxID, InputEvent: input.ID, Preparation: prep, Complete: complete, Loop: loop.Config{
 		Tools: bindings,
 		After: func(ctx context.Context, call provider.ToolCall, result loop.Result) loop.Result {
-			return r.personaNotice(ctx, input, call, result)
+			return r.skillNotice(ctx, input, call, r.personaNotice(ctx, input, call, result))
 		},
 		Inputs: &conversationInputs{runtime: r, inputs: inputs},
 		Stream: func(ctx context.Context, request provider.Request) (provider.Stream, error) {

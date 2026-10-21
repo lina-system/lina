@@ -41,6 +41,10 @@ func (r *conversationRuntime) resolvePersonaGrant(ctx context.Context, id string
 	if !ok {
 		return grant.Grant{}, grant.Environment{}, grant.ErrGrant
 	}
+	if g.Identity.Profile == "skills" {
+		env, err := r.skillEnvironment(ctx, g)
+		return g, env, err
+	}
 	if g.Identity.Profile == "relationship" {
 		return g, grant.Environment{Epoch: r.epoch, Now: time.Now(), OSPermitted: true, Revision: g.Identity.Revision}, nil
 	}
