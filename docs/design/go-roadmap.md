@@ -133,6 +133,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-13 Memory items, recall, person model and Korean search.** Items with holder, recall with evidence, `recall_person`, Korean search.
 - Done when: fixtures find a particle-attached three-syllable word and a two-syllable word in ledger and memory; recall for agent A returns no id held by B; a person-subject item exists only from person events; "remembered" is said only after the commit.
 - Depends on: G1-03, G1-05, G1-10, G1-12. Design refs: C-20 to C-22; [conversation-and-memory.md](conversation-and-memory.md#memory).
+- #64 implements the memory table and revision snapshots, holder/person scope checks, native person-event provenance, committed memory tool receipts, ephemeral standing profiles and bounded `recall_person`. Acceptance uses real SQLite and ledger admission; there is no client memory endpoint yet. #65 supplies the Korean indexes and fixtures.
 
 **G1-14 Retraction, trash and the removal list.** Revocation epoch, trash, tombstones, removal list.
 - Done when: after a forget, search, summaries, the ContextPacket and answers give zero hits in the next request, also after restoring an older generation; a fault leaves no half state; a tombstone never exists without its removal-list line; a forgotten item is not extracted again.
@@ -193,6 +194,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-40 Packaging and residency check.** Static binaries, sqlite-vec, 24-hour residency on Linux and macOS.
 - Done when: sqlite-vec loads after its digest check; services start; size, start time and resident memory and CPU stay within the budget written before the run on both platforms; the binding is recorded in the manifest.
 - Depends on: G1-03, G1-23. Design refs: [runtime.md](runtime.md#runtime-acceptance) (V2).
+- #94 supplies digest-checked embedded sqlite-vec, platform build manifests and Linux amd64/macOS arm64 release archives, with service-start acceptance on the install path. It does not substitute cross-builds for the separate native-platform and 24-hour residency measurements.
 
 ### 1.G Channels and agent exchanges
 
