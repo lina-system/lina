@@ -2223,17 +2223,47 @@
       "additionalProperties": false
     },
     "agent_request": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
-      "required": [],
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "list",
+            "create",
+            "choose",
+            "rename",
+            "delete"
+          ]
+        },
+        "agent_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
       "additionalProperties": false
     },
     "agent_result": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
-      "required": [],
+      "properties": {
+        "operation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agent_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agents": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/agent"
+          }
+        }
+      },
       "additionalProperties": false
     },
     "work_request": {
@@ -2449,17 +2479,70 @@
       ]
     },
     "memory_request": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
-      "required": [],
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "list",
+            "remember",
+            "correct",
+            "forget"
+          ]
+        },
+        "agent_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "item_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "holder": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "local",
+            "private",
+            "never-leaves"
+          ]
+        },
+        "after": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
       "additionalProperties": false
     },
     "memory_result": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
-      "required": [],
+      "properties": {
+        "operation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "item_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/memory_summary"
+          }
+        },
+        "next": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
       "additionalProperties": false
     },
     "memory_import_progress": {
@@ -3695,6 +3778,47 @@
         "status"
       ],
       "additionalProperties": false
+    },
+    "memory_summary": {
+      "type": "object",
+      "properties": {
+        "item_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1
+        },
+        "holder": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scope": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "item_id",
+        "content",
+        "holder",
+        "scope",
+        "revision",
+        "evidence"
+      ]
     },
     "channel_scope": {
       "type": "object",
