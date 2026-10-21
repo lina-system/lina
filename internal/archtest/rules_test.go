@@ -27,6 +27,16 @@ func TestRules(t *testing.T) {
 	for _, tc := range []struct {
 		name, file, source, want string
 	}{
+		{"Moirai protocol cannot import runtime", "internal/moirai/jobapi/api.go", `package jobapi; import _ "` + module + `/internal/moirai"`, "Moirai"},
+		{"Moirai reader cannot import runtime", "internal/moirai/canon/reader.go", `package canon; import _ "` + module + `/internal/moirai"`, "Moirai"},
+		{"Moirai command cannot import SQLite", "cmd/moirai-worker/main.go", `package main; import _ "github.com/ncruces/go-sqlite3"`, "Moirai"},
+		{"Moirai reader imports SQLite", "internal/moirai/canon/reader.go", `package canon; import _ "github.com/ncruces/go-sqlite3"`, ""},
+		{"Moirai excludes Core writer", "internal/moirai/worker.go", `package moirai; import _ "` + module + `/internal/core/canon"`, "Moirai"},
+		{"Moirai excludes credentials", "cmd/moirai-worker/main.go", `package main; import _ "` + module + `/kit/provider"`, "Moirai"},
+		{"Moirai excludes secrets", "internal/moirai/worker.go", `package moirai; import _ "` + module + `/kit/secret"`, "Moirai"},
+		{"Moirai protocol", "internal/moirai/worker.go", `package moirai; import _ "` + module + `/internal/moirai/jobapi"`, ""},
+		{"Core jobs uses budget", "internal/core/jobs/service.go", `package jobs; import _ "` + module + `/internal/core/budget"`, ""},
+		{"Core jobs cannot import worker", "internal/core/jobs/service.go", `package jobs; import _ "` + module + `/internal/moirai"`, "Moirai"},
 		{"TUI excludes Core", "internal/tui/ui/file.go", `package ui; import _ "` + module + `/internal/core/boot"`, "TUI"},
 		{"TUI excludes providers", "internal/tui/ui/file.go", `package ui; import _ "` + module + `/kit/provider/responses"`, "TUI"},
 		{"TUI excludes third party", "internal/tui/state/file.go", `package state; import _ "example.com/client"`, "TUI"},
