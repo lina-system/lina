@@ -15,7 +15,6 @@ import (
 
 	"github.com/ncruces/go-sqlite3"
 	"github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
 )
 
 // OpenSQLite opens a file database with one write connection, WAL and FULL

@@ -1,0 +1,8 @@
+{
+  "cases": [
+    {"name": "missing launcher", "cause": "launcher_missing"},
+    {"name": "failed probe", "cause": "probe_failed", "launcher_exit": 73, "os": "linux"}
+  ],
+  "connection_state": "live",
+  "diagnostic_code": "shell_file_tools_unsupported"
+}

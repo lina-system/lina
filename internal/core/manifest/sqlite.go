@@ -54,7 +54,8 @@ func (s SQLite) Validate() error {
 
 // SQLiteBuild reads the linked binding's build information and probes the actual
 // embedded engine. The build writer runs it with the same readonly module inputs
-// and toolchain as the product binaries. It does not fetch or load sqlite-vec.
+// and toolchain as the product binaries, including the digest-checked sqlite-vec
+// engine. It fetches no runtime extension.
 func SQLiteBuild() (SQLite, error) {
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
@@ -75,5 +76,10 @@ func SQLiteBuild() (SQLite, error) {
 	if err != nil {
 		return SQLite{}, err
 	}
+	vectorVersion, err := canon.SQLiteVectorVersion()
+	if err != nil {
+		return SQLite{}, err
+	}
+	s.SQLiteVec = &SQLiteVec{Version: vectorVersion, SHA256: s.WasmSHA256}
 	return s, s.Validate()
 }
