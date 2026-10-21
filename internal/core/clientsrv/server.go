@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
+	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/internal/core/manifest"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/rpc"
@@ -32,9 +34,15 @@ type Identity struct {
 	MainID     string
 	Epoch      string
 	Recovering func() bool
+	Restart    *lifecycle.Restarter
 	// Supported is the build's complete table; a non-nil empty table denies all
 	// combinations. Peer and platform always come from hello.
 	Supported []Combination
+	// Topics is the current epoch's projection. TopicCapabilities lists the
+	// installed topic families and the capability each requires. Conversation
+	// and result families use "conversation:" and "results:" keys.
+	Topics            *Topics
+	TopicCapabilities map[string]protocol.Capability
 }
 
 // Listen creates a socket at mode 0600 in a private directory. An existing
@@ -170,6 +178,9 @@ type response struct {
 }
 
 func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerIdentity) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	connectionID := rand.Text()
 	if identity.Supported == nil {
 		identity.Supported = LocalCombinations()
 	}
@@ -187,14 +198,66 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 		return
 	}
 	reader := rpc.NewReader(conn)
-	writer := json.NewEncoder(conn)
 	welcomed := false
 	clientID := ""
 	capabilities := []protocol.Capability{}
+	// Observe EOF while an operation is blocked in an issuer exchange. A
+	// connection that goes away must cancel that exchange before admission.
+	frames := make(chan []byte)
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		defer close(frames)
+		for {
+			line, err := reader.Read()
+			if err != nil {
+				cancel()
+				return
+			}
+			select {
+			case frames <- slices.Clone(line):
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	defer func() { cancel(); conn.Close(); <-readDone }()
+	defer func() {
+		cancel()
+		session := Session{ConnectionID: connectionID, PersonID: identity.PersonID, Epoch: epoch, ClientID: clientID, Capabilities: capabilities}
+		for _, operation := range identity.Operations {
+			if operation.Disconnect != nil {
+				operation.Disconnect(session)
+			}
+		}
+	}()
+	writer := rpc.NewWriter(conn)
+	topics := newTopicSession(ctx, identity, identity.Topics,
+		func(id json.RawMessage, envelope protocol.Envelope) error {
+			if id != nil {
+				return writer.Write(ctx, response{JSONRPC: "2.0", ID: id, Result: envelope})
+			}
+			return writer.Write(ctx, struct {
+				JSONRPC string            `json:"jsonrpc"`
+				Method  protocol.Kind     `json:"method"`
+				Params  protocol.Envelope `json:"params"`
+			}{"2.0", envelope.Kind, envelope})
+		},
+		func(topic string) bool {
+			capability, installed := identity.topicCapability(topic)
+			return installed && slices.Contains(capabilities, capability)
+		}, func() { conn.Close() })
+	defer func() { conn.Close(); topics.Close() }()
 	for {
-		line, err := reader.Read()
-		if err != nil {
+		var line []byte
+		select {
+		case <-ctx.Done():
 			return
+		case next, ok := <-frames:
+			if !ok {
+				return
+			}
+			line = next
 		}
 		var req request
 		if err := json.Unmarshal(line, &req); err != nil || req.JSONRPC != "2.0" {
@@ -213,7 +276,7 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 			if messageID, unsupported := unsupportedHello(req.Method, req.Params); unsupported {
 				answer := reply(protocol.Envelope{MessageID: messageID}, identity)
 				refuse(&answer, protocol.ErrorUnsupportedCombination, "no supported client combination")
-				writer.Encode(response{JSONRPC: "2.0", ID: req.ID, Result: answer})
+				writer.Write(ctx, response{JSONRPC: "2.0", ID: req.ID, Result: answer})
 				return
 			}
 		}
@@ -223,6 +286,7 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 		}
 		answer := reply(envelope, identity)
 		closeAfter := false
+		finishReply := func() {}
 		hello, isHello := envelope.Payload.(protocol.Hello)
 		var selected string
 		var granted []protocol.Capability
@@ -231,6 +295,16 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 			selected, granted, supported = negotiate(identity.Supported, *hello.Peer, *hello.Platform, hello.ProtocolVersions, hello.Capabilities)
 		}
 		granted = slices.DeleteFunc(granted, func(capability protocol.Capability) bool {
+			if capability == lifecycleCapability && identity.Restart != nil {
+				return false
+			}
+			if identity.Topics != nil {
+				for _, installed := range identity.TopicCapabilities {
+					if installed == capability {
+						return false
+					}
+				}
+			}
 			for _, operation := range identity.Operations {
 				if operation.Handle != nil && operation.Capability == capability {
 					return false
@@ -246,21 +320,41 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 			refuse(&answer, protocol.ErrorNotAuthorized, "client identity changed")
 		case welcomed && envelope.Epoch != identity.Epoch:
 			refuse(&answer, protocol.ErrorStaleEpoch, "request epoch differs from Core")
-		case welcomed && (envelope.Kind == protocol.KindApprovalAnswer || envelope.Kind == protocol.KindQuestionAnswer || envelope.Kind == protocol.KindWaitingAnswer) && !peer.canDecide():
-			refuse(&answer, protocol.ErrorNotAuthorized, "client is not an eligible decider")
 		case welcomed && identity.Recovering != nil && identity.Recovering() && !readOnlyKinds[envelope.Kind]:
 			refuse(&answer, protocol.ErrorUnavailable, "Core is recovering")
+		case welcomed && (envelope.Kind == protocol.KindApprovalAnswer || envelope.Kind == protocol.KindQuestionAnswer || envelope.Kind == protocol.KindWaitingAnswer) && !peer.canDecide():
+			refuse(&answer, protocol.ErrorNotAuthorized, "client is not an eligible decider")
+		case welcomed && (envelope.Kind == protocol.KindRestartRequest || envelope.Kind == protocol.KindRestartGet):
+			if identity.Restart == nil || !slices.Contains(capabilities, lifecycleCapability) {
+				refuse(&answer, protocol.ErrorCapabilityNotNegotiated, "lifecycle capability was not negotiated")
+			} else {
+				finishReply = restartReply(ctx, identity, envelope, &answer)
+			}
 		case welcomed:
+			if handled, err := topics.handle(req.ID, envelope); handled {
+				if err != nil {
+					return
+				}
+				continue
+			}
 			operation, exists := identity.Operations[envelope.Kind]
 			if !exists || operation.Handle == nil || !slices.Contains(capabilities, operation.Capability) {
 				refuse(&answer, protocol.ErrorCapabilityNotNegotiated, "capability not negotiated")
 			} else {
-				session := Session{PersonID: identity.PersonID, Epoch: epoch, ClientID: clientID, CanDecide: peer.canDecide()}
+				session := Session{ConnectionID: connectionID, PersonID: identity.PersonID, Epoch: epoch, ClientID: clientID, CanDecide: peer.canDecide(), Capabilities: capabilities}
 				result, err := operation.Handle(ctx, session, envelope)
 				if err != nil {
-					refuse(&answer, protocol.ErrorUnavailable, "operation unavailable")
+					code := protocol.ErrorUnavailable
+					var failure *OperationError
+					if errors.As(err, &failure) {
+						code = failure.Code
+					}
+					refuse(&answer, code, string(code))
 				} else {
 					answer.Kind, answer.Payload = result.Kind, result.Payload
+					if result.Effect != "" {
+						answer.EffectState = result.Effect
+					}
 				}
 			}
 		case req.Method != "hello" || envelope.Kind != protocol.KindHello || !isHello || envelope.Sender.Party != protocol.PartyClient || envelope.Sender.ID != hello.ID:
@@ -279,7 +373,9 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 			clientID = hello.ID
 			capabilities = granted
 		}
-		if err := writer.Encode(response{JSONRPC: "2.0", ID: req.ID, Result: answer}); err != nil || closeAfter {
+		err = writer.Write(ctx, response{JSONRPC: "2.0", ID: req.ID, Result: answer})
+		finishReply()
+		if err != nil || closeAfter {
 			return
 		}
 	}

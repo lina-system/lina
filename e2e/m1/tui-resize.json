@@ -1,0 +1,8 @@
+{
+  "sizes": [{"width": 80, "height": 24}, {"width": 40, "height": 12}, {"width": 120, "height": 35}],
+  "input": "MESSAGE-340",
+  "reply": "ROW-01 abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ\nROW-02\nROW-03\nROW-04\nROW-05\nROW-06\nROW-07\nROW-08\nREPLY-340",
+  "draft": "DRAFT-340 한글",
+  "next_input": "AFTER-RESIZE-340",
+  "next_reply": "AFTER-REPLY-340"
+}

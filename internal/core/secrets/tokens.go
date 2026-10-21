@@ -4,6 +4,7 @@ package secrets
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -144,6 +145,35 @@ func (s *Store) ReplaceTokens(ctx context.Context, key Key, next Tokens, before,
 		return ErrUpdate
 	}
 	return nil
+}
+
+// DeleteTokens waits for existing turns and keeps new turns excluded until
+// before has recorded the account's unusable state and deletion has completed.
+// before runs outside the mutex and must not call Store. Cancellation before
+// reservation changes nothing; after reservation deletion finishes or fails
+// closed. Missing credentials make repeated sign-out idempotent.
+func (s *Store) DeleteTokens(ctx context.Context, key Key, before func() error) error {
+	if !key.valid() || before == nil {
+		return ErrInvalid
+	}
+	release, err := s.reserveTokens(ctx, key)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if before() != nil {
+		return ErrUpdate
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return ErrClosed
+	}
+	err = storageError(s.backend.Delete(key))
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	return err
 }
 
 func (s *Store) reserveTokens(ctx context.Context, key Key) (func(), error) {

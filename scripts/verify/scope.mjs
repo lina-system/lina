@@ -17,7 +17,41 @@ function registryFor(cwd) {
   const architecture = existsSync(join(cwd, 'internal/archtest')) ? ['./internal/archtest/...'] : [];
   const buildinfo = existsSync(join(cwd, 'internal/buildinfo')) ? ['./internal/buildinfo/...'] : [];
   const manifest = existsSync(join(cwd, 'internal/core/manifest')) ? ['./internal/core/manifest/...'] : [];
-  const coreDirectories = ['internal/core/results/', 'internal/core/modelpath/', 'internal/core/accounts/', 'internal/core/assemble/', 'internal/core/ledger/', 'internal/core/jobs/', 'internal/core/skills/', 'internal/core/exec/', 'internal/core/turn/', 'internal/core/budget/', 'internal/core/boot/', 'internal/core/clientsrv/', 'internal/core/ctlfiles/', 'internal/core/lifecycle/', 'internal/core/eventstore/', 'internal/core/canon/', 'internal/core/assets/', 'internal/core/inbox/', 'internal/core/lane/', 'internal/core/authority/', 'internal/core/guard/', 'internal/core/agents/', 'internal/core/secrets/', 'internal/core/memory/', 'internal/core/channels/', 'internal/core/gateway/', 'internal/core/reply/'];
+  // Keep registrations sorted, one per line, so independent additions can merge.
+  const coreDirectories = [
+    'internal/core/accounts/',
+    'internal/core/agents/',
+    'internal/core/assemble/',
+    'internal/core/assets/',
+    'internal/core/authority/',
+    'internal/core/boot/',
+    'internal/core/budget/',
+    'internal/core/canon/',
+    'internal/core/channels/',
+    'internal/core/clientsrv/',
+    'internal/core/compaction/',
+    'internal/core/ctlfiles/',
+    'internal/core/eventstore/',
+    'internal/core/exec/',
+    'internal/core/gateway/',
+    'internal/core/guard/',
+    'internal/core/inbox/',
+    'internal/core/install/',
+    'internal/core/jobs/',
+    'internal/core/lane/',
+    'internal/core/ledger/',
+    'internal/core/lifecycle/',
+    'internal/core/memory/',
+    'internal/core/modelpath/',
+    'internal/core/reply/',
+    'internal/core/results/',
+    'internal/core/retract/',
+    'internal/core/runs/',
+    'internal/core/secrets/',
+    'internal/core/skills/',
+    'internal/core/turn/',
+    'internal/core/waiting/',
+  ];
   const addonDirectories = ['internal/addons/importer/hermes/'];
   const addonPackages = addonDirectories.filter(directory => existsSync(join(cwd, directory)))
     .map(directory => `./${directory}...`);
@@ -51,6 +85,7 @@ function componentOf(path) {
 const goObjects = text => JSON.parse(`[${text.trim().replace(/^}\s*\n{/gm, '},{')}]`);
 
 export function kind(path) {
+  if (path === 'packaging/README.md') return 'docs';
   if (path === 'packaging/sqlite-vec/build.sh') return 'automation';
   if (/^packaging\/sqlite-vec\/(?:README|NOTICE)\.md$/.test(path)) return 'docs';
   if (path === 'scripts/verify/dependency-exceptions.json' || path === 'THIRD-PARTY-NOTICES.md') return 'dependencies';

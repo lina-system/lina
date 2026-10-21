@@ -70,7 +70,7 @@ The worker reads its committed watermark and Core-owned deterministic/model poli
 
 Provider adapters are never registered with the service manager: they start with LINA Core and end with it. The ChatGPT and Gemini adapters are Go inside LINA Core and open no process.
 
-The current runnable Core increment is `lina core --state-root <path> --socket <path>`. After parsing its arguments and before boot changes state, it verifies and initializes the embedded SQLite engine and probes the pinned sqlite-vec version; a digest or initialization failure exits 78 without opening a client socket. It requires an existing private local state root with the installed main id, holds its non-blocking lock, durably advances its epoch and serves the client 1.0 handshake with that identity and epoch. The socket is 0600 in a 0700 directory. Handshakes work during RECOVERING; READY follows reconciliation. SIGTERM or SIGINT closes clients, removes the socket and run sentinel and exits 0, preserving the epoch. Tests use connection and startup-boundary acknowledgements rather than fixed startup delays. Concrete event, canon and reconciliation services attach through the startup coordinator; an existing canon store is refused until its implementation is linked. Installation and service units remain G1-23 work. [go-core.md C-01, C-03, C-04 and C-42](go-core.md) define the control-file formats, start order and handshake behavior.
+The current runnable Core increment is `lina core --state-root <path> --socket <path>`. After parsing its arguments and before boot changes state, it verifies and initializes the embedded SQLite engine and probes the pinned sqlite-vec version; a digest or initialization failure exits 78 without opening a client socket. It requires an existing private local state root with the installed main id, holds its non-blocking lock, durably advances its epoch and serves the client 1.0 handshake with that identity and epoch. The socket is 0600 in a 0700 directory. Handshakes work during RECOVERING; READY follows reconciliation. SIGTERM or SIGINT closes clients, removes the socket and run sentinel and exits 0, preserving the epoch. Tests use connection and startup-boundary acknowledgements rather than fixed startup delays. Concrete event, canon and reconciliation services attach through the startup coordinator; an existing canon store is refused until its implementation is linked. The install command supplies the identity and user service as described under The lina command. [go-core.md C-01, C-03, C-04 and C-42](go-core.md) define the control-file formats, start order and handshake behavior.
 
 ## Vendored source
 
@@ -124,6 +124,8 @@ The lane's steering and stop controls target only its active turn. Steering is c
 
 For a turn bound to its input ledger event, the stop or restart interruption is one plain system line in that conversation. The ledger append and terminal turn state commit together, so a failed append leaves recovery retryable. Recovery after a process kill closes open calls, keeps completed receipts, records the restart line once and never reissues the accepted input. The surface and speaking agent come from the durable input event. This is exercised through the real lane, turn store, ledger and a killed child process; client conversation routing remains with the client-service increment.
 
+When a streaming reply is stopped, its visible partials in the existing turn store commit with the aborted state and interruption line through the same atomic completion transaction as successful replies. Core seals the streamed block identities from that stored outcome and restores them before the interruption line after a restart. These partials are masked before storage and remain display-only aborted history, outside subsequent model requests. A failed terminal transaction cannot acknowledge a durable stop. The installed Core and headless TUI scenario `e2e/m1/tui-interrupted-reply.json` checks Esc, client reopen, graceful and forced Core restart, and no model request replay.
+
 The #55 tests exercise the loop with the Responses adapter over a scripted HTTP wire and reopen SQLite at interruption boundaries. Live provider access is not part of those tests. This increment has no client-protocol or TUI entry point; admission routing, startup composition and notifications remain with their consuming flows.
 
 
@@ -159,18 +161,18 @@ A turn is small while it stays inside this budget. LINA Core measures it from th
 | Measure | Starting value |
 | --- | --- |
 | Acknowledgement | The first output delta of the turn within 3 seconds; the working state is shown at receipt |
-| Soft budget | 6 tool round trips and 30 seconds of tool wall time |
-| Hard budget | 10 tool round trips and 60 seconds of tool wall time |
+| Soft budget | 6 tool round trips or 30 seconds of tool wall time |
+| Hard budget | 10 tool round trips or 60 seconds of tool wall time |
 | Conversation tool deadline | 15 seconds |
 
-- A round trip is one model response with its tool calls and their results; the parallel tool calls of one response are one round trip. Tool wall time is the time spent inside tool calls. Model generation time is not counted.
+- A round trip is one model response with its tool calls and their results; the parallel tool calls of one response are one round trip. Tool wall time is the union of intervals spent inside tool executors, so overlapping calls are not added twice. Model generation time is not counted. Rejected tool batches still count as round trips.
 - At receipt LINA Core sends the working state to every connected client, so the person never sees silence. When the request is obviously heavy, the agent hands it off in its first round trip and answers with one acknowledging line and a card, instead of spending the budget first.
 - At the soft budget LINA Core runs no further tool call except one that starts a background run or dispatches work. It answers any other call with a typed result that says the budget is reached and nothing ran, so the declared tools and the cached prefix stay as they are. The agent then hands the rest off and the work continues in the background. It never presents what it has gathered as the answer.
 - A partial result may be shown in the turn only when it is labelled partial, says what is missing and says that the work continues in the background. The reply that hands off is short: one line that says what moved to the background and that it continues, and a card.
-- At the hard budget LINA Core ends the loop and hands the work off itself. If the turn has made no effect, LINA Core starts a background run from the person's input and the turn's tool outputs so far, with the standard read-only tool set. The run continues from the state gathered so far to the done condition of the whole request. If the turn has already made an effect, the reads and analysis that remain go to a background run in the same way, and any further effect is dispatched as work and shows as in progress; only an outward or irreversible effect waits for the person's go-ahead on a question card, and an effect with an unknown outcome is never run again (see Execution rules). The turn ends with one short line that says what is done, what continues and what waits. Gathered state is never discarded, and the person is never asked to type "continue".
-- The budget applies to reads and analysis. It never cuts a tool whose effect is running; the rule of Execution rules, "outcome unknown, do not retry", still governs that tool.
+- At the hard budget LINA Core ends the loop and hands the work off itself. If the turn has made no effect, LINA Core starts a background run from the person's input and the turn's tool outputs so far, with the standard read-only tool set. The run continues from the state gathered so far to the done condition of the whole request. If the turn has already made an effect, the reads and analysis that remain go to a background run in the same way, and further effects wait on a question card before the work engine dispatches them under its normal authorization checks. This promotion does not authorize an unspecified future effect, and an effect with an unknown outcome is never run again (see Execution rules). The turn ends with one short line that says what is done, what continues and what waits. Gathered state is never discarded, and the person is never asked to type "continue". Run admission and publication of its handle to the source turn commit together. Recovery starts an admitted but unreleased promotion once, without replaying the turn. Structured input and tool evidence are masked without corrupting their JSON.
+- The budget is checked again just before a queued tool starts. A rejected call returns `budget_reached`, meaning nothing ran, rather than `aborted` or `unknown`. The budget applies to reads and analysis. It never cuts a tool whose effect is running; the rule of Execution rules, "outcome unknown, do not retry", still governs that tool.
 - A conversation tool that can take longer than its deadline returns a handle and continues in the background, as a shell command does with its session. It never holds the turn.
-- Steering input during a turn does not reset the budget. A new turn starts a new budget, and a continuation turn continues the budget of the turn it continues. A report turn has no tool round trips ([conversation-and-memory.md](conversation-and-memory.md#background-results)). A turn from an external channel follows the same budget as one from the app.
+- Steering input during a turn does not reset the budget. A new turn starts a new budget, and a continuation turn continues the budget of the turn it continues. A report turn declares no tools and never sends tool results back for another model request; a provider attempt is recorded as rejected ([conversation-and-memory.md](conversation-and-memory.md#background-results)). A turn from an external channel follows the same budget as one from the app.
 - Core applies the reply budget of [Reply shape](conversation-and-memory.md#reply-shape) to every reply that goes to a person: while a chat reply streams it stops showing the reply at the hard ceiling, and it counts breaches. A tool's output and the model's reasoning are not replies. The reply budget shortens the presentation only; the work behind the reply is complete.
 - The budget does not apply to a background run. A run has no fixed time or call cap, and it stops only when its done condition is met, when it fails for real, or when the person stops it ([work-and-delegation.md](work-and-delegation.md#limits)).
 - The starting values are tuned by measurement during implementation acceptance of the conversation engine. The measurement tracks waiting time and completion quality together: how often the person corrects, repeats or reworks a result, or says that it is not what they asked for, after a hand-off and after a reply that stayed in the turn. A change that lowers waiting time and raises those counts is a regression. Waiting time alone never tunes the budget.
@@ -331,8 +333,11 @@ The person connects accounts one by one, and LINA sets up the rest. This is a de
 ChatGPT is the default provider and LINA's login. The sign-in is the documented Sign in with ChatGPT flow for open-source and locally hosted apps. It is not the sign-in of the Codex tool, and LINA never uses the Codex tool's client id, scopes, credential file or backend endpoint.
 
 - OAuth 2.0 with PKCE (S256) against the OpenAI auth issuer. On the first sign-in of a host, LINA registers itself dynamically (`dynamic_agent_client`, the app name hint "LINA", and one stable host id per host). It keeps the client id that the issuer returns with the account, and reuses the client id and the host id whenever the same account signs in again on that host.
+- Initial registration requires the callback's issued `client_id`; `dynamic_agent_client` is never used in the code exchange or stored as an issued registration. Returning authorization omits the app name hint and uses the saved client id. A returned client id must match it, and the verified subject must match the selected account before credentials can change. Callback `iss`, when present, must match the fixed issuer; the ID token's issuer is always required and verified. These rules follow the issuer's [registration and sign-in contract](https://developers.openai.com/siwc/token-sharing-open-source/sign-in/).
 - Scopes: `openid profile email offline_access resource.invoke chatgpt.tokens.use.direct`, with the resource `https://api.openai.com/v1`. Before any inference, LINA Core checks that the granted scopes include `chatgpt.tokens.use.direct`; an ID token alone does not authorize plan usage. LINA Core verifies the ID token against the issuer's JWKS: issuer, audience, expiry and nonce.
 - The redirect is a loopback address, `http://127.0.0.1:<port>/<fixed path>`; the path is fixed and only the port varies. The listener starts before the system browser opens. The listener belongs to the client the person is using, and the sign-in runs through the sign-in relay ([integrations.md](integrations.md#consent-through-the-client), [host-protocol.md](host-protocol.md#client-connection)): LINA Core builds the URL and keeps the PKCE verifier and the state, the client relays `code`, `state` and `iss`, and LINA Core makes the token exchange. Where a client cannot listen, the person pastes the redirected URL.
+- The fixed callback path is `/auth/callback`. A pasted URL must match the exact redirect URI of its attempt, including the port; duplicate fields, fragments, user information and mixed pasted/structured callbacks are refused. An attempt belongs to the initiating client connection, expires after ten minutes and is consumed before exchanging its code. Replacing the attempt or disconnecting cancels it. Token exchange and JWKS reads are bounded, do not follow redirects and do not retry; endpoint diagnostics never reach the client.
+- The issuer-bound refresh callback uses the saved client id, rotating refresh token and API resource, omitting scope to retain the grant. Returned scopes replace the prior scope list only after the token record is stored. The ID token is verified in Core and discarded after admission; it is never put into an authorization URL returned to a client. Reauthorization uses the saved client id and validates the newly returned subject.
 - Tokens: the access token lasts one hour. The refresh token lasts 30 days and rotates. Core's account actor stores the access and refresh tokens together before returning the new access credential. It refreshes about ten minutes before expiry, including while idle, and waits for active turns before exchanging. A durable needs-sign-in marker precedes each exchange so a restart cannot replay a possibly consumed refresh token. Failed refresh or persistence requires sign-in; there is no automatic account switch. Successful refresh preserves an existing eligibility or usage-cap state. Re-sign-in stores the verified granted scopes with the replacement. A temporary keychain read failure before exchange reports credentials unavailable without invalidating the account; idle refresh retries the storage read after one minute.
 - Inference is the Responses API of Requests, with models from the service's list. A usage-limit answer is a state of the account, not an error to route around: it is shown with a "Manage usage" action, and no request moves to another billing path.
 - The plan route reports no number for quota, only error codes (see Usage and cost).
@@ -503,7 +508,7 @@ Supported platforms are defined in [product-families.md](product-families.md). A
 
 ### The `lina` command
 
-The initial skeleton recognizes `lina core`, `lina tui`, `lina version` and `lina-node version`; each reports not implemented on stderr and exits 70 until its implementation lands. Missing or unknown subcommands print usage on stderr and exit 64.
+The command recognizes `lina core`, `lina tui`, `lina install`, `lina version` and `lina-node version`. Missing or unknown subcommands print usage on stderr and exit 64.
 
 LINA Core and the TUI are one executable, `lina`. Its subcommands cover these uses:
 
@@ -517,6 +522,73 @@ LINA Core and the TUI are one executable, `lina`. Its subcommands cover these us
 | Replay | Re-runs a recorded turn sandboxed and without effects, optionally under candidate harness files, and writes the result as files. It is a development tool and runs only when it is called ([Replay command](#replay-command)). |
 | Episode export | Writes recorded turns of the chosen conversations out of the ledger into the export staging area for use outside LINA ([conversation-and-memory.md](conversation-and-memory.md#episode-export)) |
 | Version | Prints the version, the commit and the build date of the build ([versioning.md](versioning.md)) |
+
+`lina install` supports a Linux main with a working systemd user manager. Its
+default state root is `$XDG_STATE_HOME/lina`, falling back to
+`~/.local/state/lina`; its default user unit directory is
+`$XDG_CONFIG_HOME/systemd/user`, falling back to `~/.config/systemd/user`.
+`--state-root`, `--unit-dir` and `--bundle` accept absolute paths. The bundle
+defaults to the directory of the executing binary. Installation validates its
+manifest, requires its target to match the host OS and architecture, and verifies
+the size and SHA-256 of the exact artifact bytes copied.
+The executable and its manifest are placed in `system/bin/`. The default client
+socket is `system/run/client.sock` under the state root; `--socket` can choose a
+shorter absolute path where the Unix socket path limit requires it.
+
+Every state directory is private (0700); identity, inventory, configuration and
+adapter files are 0600 and installed executables are 0700. Install creates the
+filesystem contract's empty directories without opening canon or writing an
+account credential. It supplies the durable random main identity. The unit
+`lina-core.service` starts the installed executable as the current OS user with
+explicit root and socket arguments. A bundled `moirai-worker` receives its own
+`lina-moirai.service`, ordered after and dependent on Core, with
+`--canon <state-root>/canon/canon.sqlite` and
+`--socket <state-root>/system/run/moirai.sock`. No provider adapter receives
+a service unit.
+
+The current Core command does not connect canon or the job API. A bundled
+worker and its unit are installed but left disabled, and background memory
+and planning are reported unavailable with that cause. Enabling the worker
+requires the increment that connects those Core services; a copied executable
+or a successful systemd start job is not evidence of worker readiness.
+
+Preflight refuses an existing state root, socket, named service, service
+override or enablement link, and refuses linked destination ancestors. An
+in-state client socket must be below `system/run/`, and socket paths overlapping
+install destinations or the worker socket are refused before any writes. An
+explicit install-layer TCP address check holds a probe listener through file
+publication and refuses occupied ports; the current Core service uses Unix IPC
+and does not expose a TCP listener. Refusal precedes state creation and service
+registration. New files are created exclusively. Failure before startup rolls
+back only entries created by this attempt. Once service startup has been
+attempted, an error retains the install for diagnosis because a service may
+already be running. Install exits 78 on failure and never treats an existing
+install as authorization to replace its identity, repair its files or restart
+its services.
+
+The inventory in `system/tools.json` records the resolved executable path,
+bounded `--version` output, observed status and the bundle's verified version
+list. `--tool name=/absolute/path` overrides PATH discovery for a named tool.
+Probes are bounded, missing or unstartable tools do not block installation, and
+unverified versions are listed together with the verified versions and remain
+usable. A missing verified list is empty, never an implicit verification.
+`system/install.json` records the identity, socket, tools and missing optional
+components. The bundle's optional `verifiedTools` and `installFiles` fields are
+described in [packaging](../../packaging/README.md). Adapter files and their
+lockfile are copied only after digest verification; no SDK or user tool is
+downloaded during install. Until the build includes Claude adapter artifacts,
+that provider is reported unavailable. Missing background-worker artifacts
+affect only background memory and planning. Installation never signs in to a
+provider; the first preparation still has to pass the account check and offer
+the ChatGPT sign-in when no account is usable.
+
+The installation acceptance scenario observes the installed Core identity and
+TUI connection through the existing client protocol. Account-free preparation
+is exercised through the actual turn preparation flow with an empty credential
+record: it fails at the account step, reports one line with the sign-in offer,
+and sends no provider request. The current conversation/account protocol
+operations remain reserved; installation does not introduce a second
+preparation or sign-in implementation.
 
 ### Provider adapters
 
@@ -608,7 +680,7 @@ The release manifest records:
 - the supported-combination table ([host-protocol.md](host-protocol.md))
 - the Claude adapter: its version, its digest and the digest of its lockfile; and the sign-in client settings of the ChatGPT adapter (issuer, scopes, resource and app name hint)
 
-The current `supportedCombinations` section has one client 1.0 row for peer `lina-tui` on the selected build target's `GOOS/GOARCH`, with the current empty capability list and evidence `go test ./kit/protocol/conformance`. The listener and build writer obtain this row from the same compiled manifest definition. Product version is absent from the compatibility key.
+The current `supportedCombinations` section has one client 1.0 row for peer `lina-tui` on the selected build target's `GOOS/GOARCH`, with `lifecycle` version `1.0` and evidence from protocol conformance and `TestPlannedRestart`. The listener and build writer obtain this row from the same compiled manifest definition. Product version is absent from the compatibility key.
 
 The manifest pins only LINA's own artifacts and dependencies: its components, the app shell (with the engine it bundles, where that is Electron), and the external components LINA ships. A change to a pinned value (an SDK, the Claude adapter's lockfile, a request field list, a sign-in scope, environment rules, retry values) lands in the same change as its manifest change.
 
@@ -623,6 +695,10 @@ Every external dependency, vendored source and bundled binary follows [dependenc
 ## Updates
 
 LINA OS composes pinned artifacts. Replacing the OS and migrating or rolling back state schemas are separate operations.
+
+Core's restart request is durable in `system/core/lifecycle.json`, outside every backup generation. `when_idle` continues admitting work while waiting; explicit `drain` closes admission and waits for existing effects, streams and read-only calls. Both use the admission fence in [C-05–C-07](go-core.md#start-recovery-idle-and-update), and Unknown activity blocks both. No timeout forces a restart. A successful fence durably records commitment before orderly shutdown and planned exit 75. The request remains owed across a crash until a later epoch reaches READY and records discharge; a crash before commitment leaves the request pending for another safe attempt. Restore leaves the control record alone. Changes to settings, persona and bindings do not request restart or advance the epoch.
+
+A client negotiates `lifecycle` version `1.0` and sends `restart_request` with optional `mode`; omission selects `when_idle`. `restart_get` reads the durable receipt, including during recovery. The reply is `restart_status` with `owed` and, when a request exists, its id, mode and requesting epoch; committed and discharged epochs appear only after their durable transitions. Requests require the connection's sender and the current epoch, and mutations are unavailable during recovery. A pending request with another mode is refused as duplicate. A response is written before the request can cause shutdown; failure to write does not undo the durable request. The existing service manager starts the replacement Core after exit 75; Core does not spawn a replacement itself.
 
 An update runs in this order:
 

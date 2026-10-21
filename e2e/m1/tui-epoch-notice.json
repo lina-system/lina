@@ -1,0 +1,8 @@
+{
+  "width": 120,
+  "height": 60,
+  "input": "HISTORY-359",
+  "reply": "REPLY-359",
+  "draft": "DRAFT-359",
+  "restarts": ["graceful", "graceful", "forced"]
+}

@@ -96,7 +96,8 @@ test('cold inner Go compilations share the build deadline and can exceed 120 sec
         const binary = args[args.indexOf('-o') + 1];
         f.write(dirname(binary), binary.split(/[\\/]/).at(-1), 'fixture executable');
       }
-      return { status: 0, stdout: args[0] === 'run' ? '{}' : '', stderr: '' };
+      return { status: 0, stdout: args[0] === 'run'
+        ? (args.includes('./internal/core/manifest/clientinfo') ? '[]' : '{}') : '', stderr: '' };
     } });
   assert.equal(manifest.target, 'darwin/arm64');
   assert.deepEqual(budgets, [595_000, 445_000]);
@@ -152,7 +153,7 @@ test('cross-builds Linux and macOS binaries with target metadata and an explicit
   for (const target of ['linux/amd64', 'darwin/arm64']) {
     const out = join(f.dir, target);
     const result = f.run(['--out', out, '--target', target, '--version', '0.0.1-alpha.20261021.1']);
-    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.status, 0, `${target}: ${result.stderr ?? ''}${result.error?.message ?? ''}`);
     const manifest = JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8'));
     assert.equal(manifest.target, target);
     assert.equal(manifest.supportedCombinations.length, 1);
@@ -176,9 +177,9 @@ test('cross-builds Linux and macOS binaries with target metadata and an explicit
   }
 });
 
-test('build commands and metadata readers do not import the provider SDK', t => {
+test('Node and metadata readers do not import the model adapter', t => {
   const f = fixture(t);
-  const result = spawnSync('go', ['list', '-deps', './cmd/lina', './cmd/lina-node', './internal/core/manifest/...'], {
+  const result = spawnSync('go', ['list', '-deps', './cmd/lina-node', './internal/core/manifest/...'], {
     cwd: f.cwd, env: f.env, encoding: 'utf8', timeout: 120_000,
   });
   assert.equal(result.status, 0, result.stderr || result.error?.message);
@@ -214,7 +215,7 @@ test('clean builds record hashes and the same commit and metadata as both versio
     assert.equal(manifest.kitVersion, Number(readFileSync(join(f.cwd, 'kit/VERSION'), 'utf8')));
     const platform = spawnSync('go', ['env', 'GOOS', 'GOARCH'], { cwd: f.cwd, env: f.env, encoding: 'utf8' }).stdout.trim().split(/\r?\n/).join('/');
     assert.deepEqual(manifest.supportedCombinations, [{ connection: 'client', peer: 'lina-tui', platform,
-      protocolVersion: '1.0', capabilities: [], evidence: ['go test ./kit/protocol/conformance'] }]);
+      protocolVersion: '1.0', capabilities: [{ name: 'accounts', version: '1.0' }, { name: 'sign_in_relay', version: '1.0' }, { name: 'lifecycle', version: '1.0' }, { name: 'conversation', version: '1.0' }], evidence: ['go test ./kit/protocol/conformance', 'go test ./e2e -run TestPlannedRestart', 'go test ./e2e -run TestM1TUIConversationInstalledCore', 'go test ./e2e -run TestM1TUIAccountsInstalledCore'] }]);
     const module = JSON.parse(spawnSync('go', ['list', '-m', '-json', 'github.com/ncruces/go-sqlite3'], {
       cwd: f.cwd, env: f.env, encoding: 'utf8',
     }).stdout);

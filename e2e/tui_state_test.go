@@ -70,7 +70,11 @@ func TestM1TUIState(t *testing.T) {
 			t.Fatal("duplicate or reserved payload changed state")
 		}
 	}
-	if len(s.Notices) != 1 || s.Notices[0].Code != "epoch_changed" {
-		t.Fatal("epoch notice not deduplicated")
+	notices := make(map[string]int)
+	for _, notice := range s.Notices {
+		notices[notice.Code]++
+	}
+	if !reflect.DeepEqual(notices, map[string]int{"epoch_changed": 1, "shell.lists_unavailable": 1}) {
+		t.Fatalf("epoch or capability notice not deduplicated: %v", notices)
 	}
 }

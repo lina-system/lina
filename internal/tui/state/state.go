@@ -20,6 +20,9 @@ type Cmd func(context.Context) Msg
 
 type Block struct {
 	ID, Topic, EchoKey, Text string
+	Speaker                  protocol.ConversationSpeaker
+	Body                     string
+	TurnKnown, TurnActive    bool
 	Revision                 uint64
 	Kind                     protocol.Kind
 	Done, Local              bool
@@ -47,6 +50,7 @@ type State struct {
 	Notices            []Notice
 	Draft              Draft
 	Busy, Stopping     bool
+	TurnActive         bool
 	Gen                uint64
 	pending            *SendRequest
 	Offset             time.Duration
@@ -84,11 +88,30 @@ type Scroll struct {
 }
 type Notice struct{ ID, Code, Text string }
 type EditDraft struct{ Draft Draft }
-type Send struct{ Key string }
+type InputMode string
+
+const (
+	InputNormal   InputMode = "input"
+	InputSteering InputMode = "steering"
+	InputQueue    InputMode = "queue"
+)
+
+type Send struct {
+	Key   string
+	Queue bool
+}
+type Turn struct{ Active bool }
+type ConnectionLost struct{}
+
+func (ConnectionLost) isMsg() {}
+
+func (Turn) isMsg() {}
+
 type SendRequest struct {
 	Gen   uint64
 	Key   string
 	Draft Draft
+	Mode  InputMode
 }
 type SendResult struct {
 	Gen    uint64
@@ -175,6 +198,7 @@ func (s *State) setEpoch(e string) []string {
 		s.restoreDraft()
 	}
 	s.Stopping = false
+	s.TurnActive = false
 	s.Gen++
 	topics := slices.Sorted(maps.Keys(s.Topics))
 	for _, name := range topics {
@@ -269,9 +293,11 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 			s.Gen++
 		}
 		s.Revocation = m.Revocation
-		// Replace only this topic, preserving other topics and echo positions.
+		// Replace only this topic in snapshot order. Existing blocks and local
+		// echoes anchor the merge, but cannot override the authoritative order.
 		incoming := make(map[string]Block, len(m.Items))
 		order := make([]string, 0, len(m.Items))
+		positions := make(map[string]int, len(m.Items))
 		for _, b := range m.Items {
 			if b.ID == "" {
 				continue
@@ -281,10 +307,12 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 					continue
 				}
 			} else {
+				positions[b.ID] = len(order)
 				order = append(order, b.ID)
 			}
 			b.Topic = m.Topic
 			b.Local = false
+			b.Body = sanitize.Display(b.Body)
 			b.filter = sanitize.Stream{}
 			if b.Done {
 				b.Text = sanitize.Display(b.Text)
@@ -294,6 +322,15 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 			incoming[b.ID] = b
 		}
 		kept := make([]Block, 0, len(s.Blocks)+len(incoming))
+		next := 0
+		appendThrough := func(end int) {
+			for next <= end {
+				b := incoming[order[next]]
+				kept = append(kept, b)
+				s.remapEcho(b)
+				next++
+			}
+		}
 		for _, old := range s.Blocks {
 			b, ok := incoming[old.ID]
 			if !ok && old.Local {
@@ -307,19 +344,14 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 				}
 			}
 			if ok {
-				kept = append(kept, b)
-				delete(incoming, b.ID)
-				s.remapEcho(b)
+				// Include any missing predecessors before this surviving block.
+				// An already emitted block is simply consumed at its old slot.
+				appendThrough(positions[b.ID])
 			} else if old.Topic != m.Topic || old.Local {
 				kept = append(kept, old)
 			}
 		}
-		for _, id := range order {
-			if b, ok := incoming[id]; ok {
-				kept = append(kept, b)
-				s.remapEcho(b)
-			}
-		}
+		appendThrough(len(order) - 1)
 		s.Blocks = kept
 		if s.Topics == nil {
 			s.Topics = map[string]Topic{}
@@ -396,6 +428,7 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 		b.Done = true
 		b.Local = false
 		b.Text = sanitize.Display(b.Text)
+		b.Body = sanitize.Display(b.Body)
 		b.filter = sanitize.Stream{}
 		s.put(b)
 		s.Stopping = false
@@ -425,6 +458,20 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 			}
 			invalidated = s.setEpoch(w.Epoch)
 			s.Capabilities = slices.Clone(w.Capabilities)
+			running := slices.ContainsFunc(w.Capabilities, func(c protocol.Capability) bool { return c.Name == "running" })
+			waiting := slices.ContainsFunc(w.Capabilities, func(c protocol.Capability) bool { return c.Name == "waiting" })
+			code := ""
+			switch {
+			case !running && !waiting:
+				code = "shell.lists_unavailable"
+			case !running:
+				code = "shell.running_unavailable"
+			case !waiting:
+				code = "shell.waiting_unavailable"
+			}
+			if code != "" {
+				s.notice(Notice{ID: code, Code: code})
+			}
 			s.Agents = slices.Clone(w.Agents)
 			for i := range s.Agents {
 				s.Agents[i].Name = sanitize.Display(s.Agents[i].Name)
@@ -454,6 +501,13 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 		s.Gen++
 		s.Busy = true
 		req := SendRequest{Gen: s.Gen, Key: m.Key, Draft: cloneDraft(s.Draft)}
+		req.Mode = InputNormal
+		if s.TurnActive {
+			req.Mode = InputSteering
+		}
+		if m.Queue {
+			req.Mode = InputQueue
+		}
 		s.pending = &req
 		s.Draft = Draft{}
 		s.put(Block{ID: m.Key, EchoKey: m.Key, Text: sanitize.Display(req.Draft.Text), Local: true})
@@ -467,6 +521,16 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 		}
 		s.pending = nil
 		s.Busy = false
+	case ConnectionLost:
+		if s.pending != nil {
+			s.restoreDraft()
+			s.Gen++
+		}
+	case Turn:
+		s.TurnActive = m.Active
+		if !m.Active {
+			s.Stopping = false
+		}
 	case Interrupt:
 		if s.Stopping {
 			return s, nil

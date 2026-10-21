@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package ui styles the connection screen from generated design tokens.
-// Conversation input arrives with later increments.
+// Conversation input uses the negotiated client connection.
 package ui
 
 import (
@@ -12,14 +12,14 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
-	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/term"
-	"github.com/thisisjun786/lina/internal/clientapi"
+	terminalkeys "github.com/thisisjun786/lina/internal/tui/term"
 )
 
-// Run reports live only after Core welcomes the connection. q, Ctrl+C, Ctrl+D
-// or EOF closes this client; no conversation request is sent.
+// Run opens the negotiated conversation after welcome. Ctrl+D, an empty
+// Ctrl+C or EOF closes only this client; connection-only screens also accept q.
 func Run(ctx context.Context, socket, productVersion string, input io.Reader, output io.Writer) (runErr error) {
 	display := newDisplay(output)
 	terminal := false
@@ -43,57 +43,9 @@ func Run(ctx context.Context, socket, productVersion string, input io.Reader, ou
 		if out, ok := output.(interface{ Fd() uintptr }); ok && term.IsTerminal(out.Fd()) {
 			display.rawOutput = true
 		}
-		var stopInput func() error
-		ctx, stopInput, err = watchTerminalInput(ctx, file)
-		if err != nil {
-			return err
-		}
-		defer func() {
-			if err := stopInput(); err != nil {
-				runErr = errors.Join(runErr, err)
-			}
-		}()
 		terminal = true
 	}
-	if err := display.show(Connecting); err != nil {
-		return err
-	}
-	client, err := clientapi.Dial(ctx, socket, productVersion)
-	if err != nil {
-		if terminal && ctx.Err() != nil {
-			return finishTerminalInput(ctx, display)
-		}
-		state := Failed
-		var refusal *clientapi.Refusal
-		switch {
-		case errors.Is(err, clientapi.ErrUnavailable):
-			state = Stopped
-		case errors.As(err, &refusal):
-			state = Refused
-		}
-		if writeErr := display.show(state); writeErr != nil {
-			return errors.Join(err, writeErr)
-		}
-		if display.interactive {
-			return &presentedError{err}
-		}
-		return err
-	}
-	defer client.Close()
-	if terminal && ctx.Err() != nil {
-		return finishTerminalInput(ctx, display)
-	}
-	if err := display.show(Live); err != nil {
-		return err
-	}
-	if terminal {
-		<-ctx.Done()
-		return finishTerminalInput(ctx, display)
-	}
-	if err := readQuit(input); err != nil {
-		return err
-	}
-	return display.show(Quit)
+	return runClientShell(ctx, socket, productVersion, input, display, terminal)
 }
 
 var errQuit = errors.New("TUI quit requested")
@@ -101,37 +53,34 @@ var errQuit = errors.New("TUI quit requested")
 // watchTerminalInput owns all terminal reads, including during negotiation.
 // Closing its cancellation resources never closes the caller's input file.
 func watchTerminalInput(ctx context.Context, input *os.File) (context.Context, func() error, error) {
-	reader, err := uv.NewCancelReader(input)
-	if err != nil {
-		return nil, nil, err
-	}
 	ctx, cancel := context.WithCancelCause(ctx)
 	done := make(chan struct{})
+	var inputErr error // Read only after done closes.
 	go func() {
 		defer close(done)
-		if err := readQuit(reader); err != nil {
-			cancel(err)
+		var gate terminalkeys.Gate
+		inputErr = terminalkeys.ReadKeys(ctx, input, func(key terminalkeys.Key) bool {
+			if !gate.Admit(key, terminalkeys.Toggle, time.Now()) {
+				return true
+			}
+			return key.Name != "q" && key.Name != "ctrl+c" && key.Name != "ctrl+d"
+		})
+		if inputErr != nil {
+			cancel(inputErr)
 		} else {
 			cancel(errQuit)
 		}
 	}()
 	return ctx, func() error {
-		reader.Cancel()
+		cancel(context.Canceled)
 		<-done // Join the sole reader before restoring the terminal mode.
-		return reader.Close()
+		return inputErr
 	}, nil
-}
-
-func finishTerminalInput(ctx context.Context, display *display) error {
-	cause := context.Cause(ctx)
-	if errors.Is(cause, errQuit) || errors.Is(cause, context.Canceled) {
-		return display.show(Quit)
-	}
-	return cause
 }
 
 func readQuit(input io.Reader) error {
 	reader := bufio.NewReader(input)
+	var gate terminalkeys.Gate
 	for {
 		key, err := reader.ReadByte()
 		if errors.Is(err, io.EOF) {
@@ -140,7 +89,7 @@ func readQuit(input io.Reader) error {
 		if err != nil {
 			return err
 		}
-		if key == 'q' || key == 3 || key == 4 { // q, Ctrl+C, Ctrl+D
+		if gate.Admit(terminalkeys.Key{Name: string(key)}, terminalkeys.Toggle, time.Now()) && (key == 'q' || key == 3 || key == 4) { // q, Ctrl+C, Ctrl+D
 			return nil
 		}
 	}

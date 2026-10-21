@@ -135,3 +135,59 @@ func TestReplacementKeepsTurnExclusionThroughMetadataCommit(t *testing.T) {
 		<-began
 	})
 }
+
+func TestDeletionKeepsReservationThroughIntentAndIgnoresLateCancellation(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := tokenStore(t)
+		key := secrets.Key{Person: "person", Service: "provider", Name: "account"}
+		if err := s.PutTokens(key, secrets.NewTokens("access-fixture", "refresh-fixture")); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		committing, release := make(chan struct{}), make(chan struct{})
+		done := make(chan error, 1)
+		go func() {
+			done <- s.DeleteTokens(ctx, key, func() error { close(committing); <-release; return nil })
+		}()
+		<-committing
+		began := make(chan struct{})
+		go func() { end := s.BeginTurn(); close(began); end() }()
+		synctest.Wait()
+		select {
+		case <-began:
+			t.Fatal("turn entered before retirement committed")
+		default:
+		}
+		cancel()
+		close(release)
+		if err := <-done; err != nil {
+			t.Fatal("cancellation after admission interrupted retirement", err)
+		}
+		<-began
+		if _, err := s.GetTokens(key); !errors.Is(err, secrets.ErrNotFound) {
+			t.Fatal("retirement left the credential readable", err)
+		}
+	})
+}
+
+func TestDeletionRequiresCommittedIntentAndIsIdempotent(t *testing.T) {
+	s := tokenStore(t)
+	key := secrets.Key{Person: "person", Service: "provider", Name: "account"}
+	if err := s.PutTokens(key, secrets.NewTokens("access-fixture", "refresh-fixture")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteTokens(t.Context(), key, func() error { return errors.New("unsafe access-fixture") }); !errors.Is(err, secrets.ErrUpdate) {
+		t.Fatal("retirement exposed callback error or ignored failed intent", err)
+	}
+	if _, err := s.GetTokens(key); err != nil {
+		t.Fatal("failed intent deleted the credential", err)
+	}
+	for range 2 {
+		if err := s.DeleteTokens(t.Context(), key, func() error { return nil }); err != nil {
+			t.Fatal("repeat deletion failed", err)
+		}
+	}
+	end := s.BeginTurn()
+	end()
+}

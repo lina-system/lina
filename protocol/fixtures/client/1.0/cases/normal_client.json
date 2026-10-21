@@ -58,7 +58,8 @@
     "results/plan_view.json",
     "results/file.json",
     "results/saved_card.json",
-    "values/references_and_max_epoch.json"
+    "values/references_and_max_epoch.json",
+    "normal/restart_status.json"
   ],
   "output": [
     "welcome.json",
@@ -118,9 +119,11 @@
     "results/plan_view.json",
     "results/file.json",
     "results/saved_card.json",
-    "values/references_and_max_epoch.json"
+    "values/references_and_max_epoch.json",
+    "normal/restart_status.json"
   ],
   "errors": [
+    "",
     "",
     "",
     "",
@@ -181,7 +184,7 @@
     ""
   ],
   "outcome": {
-    "accepted": 58,
+    "accepted": 59,
     "malformed": 0,
     "unknown_kinds": 0
   }

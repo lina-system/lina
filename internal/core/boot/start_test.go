@@ -389,7 +389,7 @@ func TestRecoveryReceivesPreviousControls(t *testing.T) {
 	root := stateRoot(t)
 	socket := filepath.Join(root, "run/core.sock")
 	previous := []byte(fmt.Sprintf(`{"epoch":"5","socket":%q}`, socket))
-	for name, data := range map[string][]byte{"run.sentinel": previous, "lifecycle.json": []byte(`{"mode":"when_idle"}`), "epoch": []byte("5")} {
+	for name, data := range map[string][]byte{"run.sentinel": previous, "lifecycle.json": []byte(`{"schema":1,"id":"0123456789abcdef0123456789abcdef","mode":"when_idle","epoch":"5"}`), "epoch": []byte("5")} {
 		if err := os.WriteFile(filepath.Join(root, "system/core", name), data, 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -397,7 +397,7 @@ func TestRecoveryReceivesPreviousControls(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	cfg := boot.Config{StateRoot: root, Socket: socket, Services: boot.Services{Reconcile: func(_ context.Context, recovery boot.Recovery) error {
-		if recovery.Previous == nil || recovery.Previous.Epoch != "5" || recovery.Previous.Socket != socket || string(recovery.Lifecycle) != `{"mode":"when_idle"}` || recovery.Epoch != 6 {
+		if recovery.Previous == nil || recovery.Previous.Epoch != "5" || recovery.Previous.Socket != socket || string(recovery.Lifecycle) != `{"schema":1,"id":"0123456789abcdef0123456789abcdef","mode":"when_idle","epoch":"5"}` || recovery.Epoch != 6 {
 			t.Fatalf("lost previous controls: %+v", recovery)
 		}
 		return nil

@@ -1,0 +1,31 @@
+{
+  "side": "server",
+  "input": [
+    "streams/subscribe.json",
+    "streams/unsubscribe.json",
+    "streams/max_cursor.json",
+    "invalid/stream_leading_zero_epoch.json",
+    "invalid/stream_negative_seq.json",
+    "invalid/stream_exhausted_seq.json",
+    "invalid/stream_string_seq.json"
+  ],
+  "output": [
+    "streams/subscribe.json",
+    "streams/unsubscribe.json",
+    "streams/max_cursor.json"
+  ],
+  "errors": [
+    "",
+    "",
+    "",
+    "malformed",
+    "malformed",
+    "malformed",
+    "malformed"
+  ],
+  "outcome": {
+    "accepted": 3,
+    "malformed": 4,
+    "unknown_kinds": 0
+  }
+}

@@ -92,6 +92,23 @@ func (r *Recorder) Snapshot() Snapshot {
 	return r.snapshot()
 }
 
+// Resize preserves the emulator's existing cells, as a terminal resize does;
+// the application must redraw anything invalidated by the new dimensions.
+func (r *Recorder) Resize(width, height int) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return io.ErrClosedPipe
+	}
+	if width <= 0 || height <= 0 {
+		return errors.New("recording dimensions must be positive")
+	}
+	r.emulator.Resize(width, height)
+	close(r.changed)
+	r.changed = make(chan struct{})
+	return nil
+}
+
 func (r *Recorder) Bytes() []byte {
 	r.mu.Lock()
 	defer r.mu.Unlock()

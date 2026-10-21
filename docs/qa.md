@@ -17,17 +17,62 @@ provider account or external service. Run its current baseline with:
 go test -count=1 -v ./e2e/...
 ```
 
-`TestHeadless` builds the real binary, creates a synthetic installed identity,
-starts Core in a temporary state root, and drives `lina tui` through a controlling
-80-by-24 PTY. It waits for connection state, sends typed protocol input, types
-`q` and Enter, checks that Core survives TUI quit, and covers EOF and absent Core.
+`TestHeadless` retains the historical connection-only baseline: it builds the
+real binary, creates a synthetic installed identity, starts Core without a model
+route in a temporary state root, and drives `lina tui` through a controlling
+80-by-24 PTY. It waits for connection state, checks an empty protocol input's
+refusal, types `q` and Enter, checks that Core survives TUI quit, and covers EOF
+and absent Core. That unconfigured refusal is not a limit on configured Core.
 `TestM1FakeCore` scripts replies, refusals and disconnects over an isolated Unix
 socket. `TestM1TUIState` exercises duplicate frames and epoch changes at the
-receive boundary. These are a baseline, not proof of the complete M1 journeys.
+receive boundary. These checks do not establish the complete M1 journeys.
 
-For exploratory use, build from the tested checkout and start Core with a new
-state directory. The identity below is a synthetic installation fixture, not a
-replacement for the eventual installation flow:
+### Synthetic Responses conversation
+
+The shipped conversation path uses an explicit Responses route in Core. Run the
+installed Core/TUI journey and the separate fake-Core streaming scenario with:
+
+```sh
+go test -count=1 -v ./e2e/... -run '^TestM1TUIConversation(InstalledCore|Stream)$'
+```
+
+[`TestM1TUIConversationInstalledCore`](../e2e/tui_conversation_test.go) installs
+the binaries in scratch with a fixture service manager, starts a loopback HTTP
+provider, and passes these settings to installed Core's otherwise isolated
+environment:
+
+| Variable | Synthetic fixture value |
+| --- | --- |
+| `LINA_RESPONSES_BASE_URL` | The fixture server's runtime URL plus `/v1`; the adapter appends `/responses`. |
+| `LINA_RESPONSES_MODEL` | `fixture-model` |
+| `LINA_RESPONSES_API_KEY` | `synthetic-key`, a dummy fixture value, never a real credential. |
+
+Core grants `conversation`; the real TUI sends typed input and displays the
+synthetic reply from the Responses SSE stream. The fixture emits
+`response.output_text.delta`, `response.output_item.done` and
+`response.completed`. The test checks parsed terminal cells, durable input
+deduplication, and history restoration after restarting Core and reopening the
+TUI, with exactly one provider call across the journey. It then restarts Core
+without the route and checks that conversation capability is absent.
+`TestM1TUIConversationStream` separately uses fake Core to check streaming
+completion and steering through the real TUI.
+
+For exploratory conversation QA, reuse the loopback fixture and
+`installedConversationHarness` in that test. Supply all three variables
+explicitly to Core after clearing the inherited environment; setting them only
+on the TUI does not configure Core. Use only a fixture server owned by the QA
+session, and close it during cleanup. No real account, sign-in or
+`LINA_QA_REAL_MODEL` opt-in is needed. See [the harness guide](../e2e/README.md)
+and [the installed scenario](../e2e/m1/tui-conversation.json) for the acceptance
+boundary.
+
+### Connection-only exploration
+
+For connection lifecycle exploration, build from the tested checkout and start
+Core with a new state directory and no model route. This example intentionally
+does not enable conversation; use the synthetic Responses path above for that
+journey. The identity below is a synthetic installation fixture, not a test of
+the real installation flow:
 
 ```sh
 qa_root=$(mktemp -d "${TMPDIR:-/tmp}/lina-qa.XXXXXX")
@@ -80,14 +125,20 @@ wait "$qa_core_pid"
 
 ## M1 journeys
 
-Try the following through the real Core and TUI as each entry point lands. Record
-an unavailable entry point as a gap with an existing issue reference, rather than
-claiming a package test established a user journey. The current connection-only
-Core does not grant conversation capability; an input refusal is expected at
-this increment. There is no configured end-to-end provider-stub switch yet.
-Use the existing fake Core and scripted provider wires for their supported
-boundaries, and report that limit. Do not invent flags or use a real account to
-make an unfinished journey appear complete.
+Start conversation QA with the synthetic Responses path above: configured Core
+supports streamed replies and durable history through the real TUI. Try the
+remaining journeys through their current entry points. Record an unavailable
+entry point as a gap with an existing issue reference, rather than claiming a
+package test established a user journey.
+
+Current coverage has limits: the installed conversation fixture does not prove
+real sign-in, real-model acceptance, or every journey below. Fake-Core scenarios
+and scripted provider wires establish only their exercised boundaries. The
+real-model probe and the still-skipped `TestRealModelHeadlessConversation` in
+the harness guide are separate from the installed synthetic conversation test;
+a probe or skip does not establish a client journey. Earlier connection-only
+increment notes describe those increments, not the capabilities of configured
+Core today. Do not invent flags or use a real account to fill a coverage gap.
 
 | Journey | Observe and retain |
 | --- | --- |

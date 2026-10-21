@@ -23,14 +23,15 @@ const (
 
 // Options are ephemeral display preferences. They never change Core state.
 type Options struct {
-	Theme   string
-	Profile Profile
-	ASCII   bool
-	Width   int
+	Theme    string
+	Profile  Profile
+	ASCII    bool
+	Width    int
+	Language design.Language
 }
 
-// Connection is a presentation state, not a claim about the protocol client.
-// Future connection handling can use the same vocabulary and styles.
+// Connection is a display state. Quit is a terminal transition, not a ninth
+// connected state. Only Live permits mutations.
 type Connection uint8
 
 const (
@@ -57,34 +58,71 @@ func (state Connection) active() bool {
 	return false
 }
 
-func connectionView(state Connection, t design.Tokens, ascii bool) connectionPresentation {
-	glyph := func(unicode, plain string) string {
-		if ascii {
-			return plain
-		}
-		return unicode
-	}
+func (state Connection) Code() string {
 	switch state {
 	case Connecting:
-		return connectionPresentation{glyph(t.GlyphUnicodeConnecting, t.GlyphAsciiConnecting), "Connecting", "Opening your connection to LINA.", ""}
+		return "connecting"
 	case Live:
-		return connectionPresentation{glyph(t.GlyphUnicodeLive, t.GlyphAsciiLive), "Connected", "", "Quit"}
+		return "live"
 	case Resyncing:
-		return connectionPresentation{glyph(t.GlyphUnicodeResyncing, t.GlyphAsciiResyncing), "Syncing", "Bringing your conversation up to date.", "Quit"}
+		return "resyncing"
 	case Retrying:
-		return connectionPresentation{glyph(t.GlyphUnicodeRetrying, t.GlyphAsciiRetrying), "Reconnecting", "Your conversation stays here while the connection returns.", "Quit"}
+		return "retrying"
 	case Refused:
-		return connectionPresentation{glyph(t.GlyphUnicodeRefused, t.GlyphAsciiRefused), "Connection refused", "Check that LINA and Core are compatible.", ""}
+		return "refused"
 	case Recovering:
-		return connectionPresentation{glyph(t.GlyphUnicodeRecovering, t.GlyphAsciiRecovering), "Recovering", "You can read while Core recovers.", "Quit"}
+		return "recovering"
 	case Stopped:
-		return connectionPresentation{glyph(t.GlyphUnicodeStopped, t.GlyphAsciiStopped), "Core is unavailable", "Start Core, then connect again.", ""}
+		return "stopped"
 	case Failed:
-		return connectionPresentation{glyph(t.GlyphUnicodeFailed, t.GlyphAsciiFailed), "Connection failed", "Check Core and your terminal, then connect again.", ""}
+		return "failed"
 	case Quit:
-		return connectionPresentation{glyph(t.GlyphUnicodeQuit, t.GlyphAsciiQuit), "Disconnected", "LINA keeps running. See you soon.", ""}
+		return "quit"
 	}
-	return connectionPresentation{glyph(t.GlyphUnicodeUnknown, t.GlyphAsciiUnknown), "Unknown", "The connection state is unknown.", ""}
+	return "unknown"
+}
+
+func (state Connection) CanMutate() bool { return state == Live }
+
+func connectionView(state Connection, t design.Tokens, ascii bool) connectionPresentation {
+	return localizedConnectionView(state, t, ascii, design.English)
+}
+
+func localizedConnectionView(state Connection, t design.Tokens, ascii bool, language design.Language) connectionPresentation {
+	unicode, plain := t.GlyphUnicodeUnknown, t.GlyphAsciiUnknown
+	switch state {
+	case Connecting:
+		unicode, plain = t.GlyphUnicodeConnecting, t.GlyphAsciiConnecting
+	case Live:
+		unicode, plain = t.GlyphUnicodeLive, t.GlyphAsciiLive
+	case Resyncing:
+		unicode, plain = t.GlyphUnicodeResyncing, t.GlyphAsciiResyncing
+	case Retrying:
+		unicode, plain = t.GlyphUnicodeRetrying, t.GlyphAsciiRetrying
+	case Refused:
+		unicode, plain = t.GlyphUnicodeRefused, t.GlyphAsciiRefused
+	case Recovering:
+		unicode, plain = t.GlyphUnicodeRecovering, t.GlyphAsciiRecovering
+	case Stopped:
+		unicode, plain = t.GlyphUnicodeStopped, t.GlyphAsciiStopped
+	case Failed:
+		unicode, plain = t.GlyphUnicodeFailed, t.GlyphAsciiFailed
+	case Quit:
+		unicode, plain = t.GlyphUnicodeQuit, t.GlyphAsciiQuit
+	}
+	if ascii {
+		unicode = plain
+	}
+	view := connectionPresentation{Mark: unicode, Label: design.Text(language, state.Code()), Detail: design.Text(language, "connection."+state.Code())}
+	switch state {
+	case Live, Resyncing, Retrying, Recovering:
+		view.Action = design.Text(language, "action.quit")
+	case Connecting, Refused, Stopped, Failed, Quit:
+	}
+	if state == Live {
+		view.Detail = ""
+	}
+	return view
 }
 
 // Styles converts generated semantic data into Lip Gloss styles in one place.
@@ -133,8 +171,12 @@ func NewStyles(options Options) Styles {
 
 // Screen keeps a single reading edge and one blank row between groups.
 func (s Styles) Screen(state Connection) string {
+	return s.ScreenStatus(ConnectionStatus{State: state})
+}
+
+func (s Styles) ScreenStatus(connection ConnectionStatus) string {
 	t := s.tokens
-	view := connectionView(state, t, s.options.ASCII)
+	view := s.presentation(connection)
 	mark := t.GlyphUnicodeMark
 	if s.options.ASCII {
 		mark = t.GlyphAsciiMark
@@ -145,7 +187,7 @@ func (s Styles) Screen(state Connection) string {
 	section := strings.Repeat("\n", t.SpaceSection.Cells+1)
 	title := s.Title.Render("lina") + s.Accent.Bold(s.Title.GetBold()).Render(mark)
 	stateStyle := s.Muted
-	if state.active() {
+	if connection.State.active() {
 		stateStyle = s.Accent
 	}
 	status := stateStyle.Render(view.Mark+gap) + s.Text.Render(view.Label)
@@ -169,6 +211,14 @@ func (s Styles) Screen(state Connection) string {
 
 func environmentOptions(getenv func(string) string) Options {
 	opts := Options{Theme: "dark", Profile: ANSI16, ASCII: getenv("LINA_GLYPHS") == "ascii", Width: 80}
+	locale := getenv("LC_ALL")
+	if locale == "" {
+		locale = getenv("LC_MESSAGES")
+	}
+	if locale == "" {
+		locale = getenv("LANG")
+	}
+	opts.Language = design.LanguageFor(locale)
 	background := strings.Split(getenv("COLORFGBG"), ";")
 	if last, err := strconv.Atoi(background[len(background)-1]); err == nil && (last == 7 || last == 15) {
 		opts.Theme = "light"
