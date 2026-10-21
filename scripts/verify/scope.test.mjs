@@ -8,6 +8,17 @@ import { git as runGit } from '../git.mjs';
 import { componentRegistry, kind, scopeFor } from './scope.mjs';
 import { evaluateGate } from './gate.mjs';
 
+test('accounts are registered with the lina Go checks', t => {
+  const r = repository(t);
+  const base = r.git('rev-parse', 'HEAD');
+  mkdirSync(join(r.cwd, 'internal/core/accounts'), { recursive: true });
+  writeFileSync(join(r.cwd, 'internal/core/accounts/signin.go'), 'package accounts\n');
+  const scope = r.classify(r.commit(), { base, full: true });
+  assert.deepEqual(scope.unmapped, []);
+  assert.ok(scope.selectedComponents.includes('lina'));
+  assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/accounts/...'));
+});
+
 test('independent Core package registrations merge without conflicts', t => {
   const r = repository(t);
   const source = readFileSync(new URL('./scope.mjs', import.meta.url), 'utf8');

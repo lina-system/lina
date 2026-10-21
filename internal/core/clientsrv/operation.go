@@ -13,22 +13,31 @@ import (
 type Operation struct {
 	Capability protocol.Capability
 	Handle     func(context.Context, Session, protocol.Envelope) (Result, error)
+	Disconnect func(Session)
 }
 
 // Session contains connection facts established by Core. No request payload
 // supplies its person, epoch or decider eligibility.
 type Session struct {
-	PersonID  string
-	Epoch     uint64
-	ClientID  string
-	CanDecide bool
+	ConnectionID string
+	Capabilities []protocol.Capability
+	PersonID     string
+	Epoch        uint64
+	ClientID     string
+	CanDecide    bool
 }
 
 // Result leaves envelope identity and correlation under the listener's control.
 type Result struct {
 	Kind    protocol.Kind
 	Payload protocol.Payload
+	Effect  protocol.EffectState
 }
+
+// OperationError carries only a closed protocol refusal, never handler detail.
+type OperationError struct{ Code protocol.ErrorCode }
+
+func (e *OperationError) Error() string { return string(e.Code) }
 
 // Unlisted kinds fail closed as mutations. Reserved management payloads may
 // contain writes; they cannot become reads merely by registering a handler.
