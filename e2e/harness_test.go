@@ -22,6 +22,10 @@ const operationTimeout = 10 * time.Second
 // tool locations cross into the build; child products get a fresh HOME and no
 // credentials, user configuration, display server or provider environment.
 func buildLina(t *testing.T) string {
+	return buildCommand(t, "lina")
+}
+
+func buildCommand(t *testing.T, name string) string {
 	t.Helper()
 	home := t.TempDir()
 	env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "GOENV=off", "GOTOOLCHAIN=auto"}
@@ -42,8 +46,8 @@ func buildLina(t *testing.T) string {
 	if len(paths) != 2 {
 		t.Fatalf("expected two Go cache paths, got %d", len(paths))
 	}
-	binary := filepath.Join(home, "lina")
-	build := exec.CommandContext(ctx, "go", "build", "-mod=readonly", "-o", binary, "./cmd/lina")
+	binary := filepath.Join(home, name)
+	build := exec.CommandContext(ctx, "go", "build", "-mod=readonly", "-o", binary, "./cmd/"+name)
 	build.Dir = ".."
 	build.Env = []string{
 		"PATH=" + os.Getenv("PATH"), "HOME=" + home, "XDG_CONFIG_HOME=" + home,
@@ -51,7 +55,7 @@ func buildLina(t *testing.T) string {
 		"CGO_ENABLED=0", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0",
 	}
 	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build lina: %v\n%s", err, output)
+		t.Fatalf("build %s: %v\n%s", name, err, output)
 	}
 	return binary
 }
