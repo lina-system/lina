@@ -111,6 +111,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-10 Ledger, request assembly and preparation.** Ledger fields, pure Assemble, ContextPacket, preparation steps.
 - Done when: an update of a ledger row is denied; identical input gives identical bytes; the layout order matches the contract; each failing preparation step shows one plain line and a stub provider sees zero calls; the ContextPacket is never stored.
 - Depends on: G1-03, G1-06, G1-08. Design refs: C-11, C-17; [conversation-and-memory.md](conversation-and-memory.md#request-layout).
+- #58 implements pure deterministic assembly, bounded optional ContextPacket collection and the four-step preparation runner with commit-before-dispatch evidence callbacks. Package tests cover ordered layout, budget and scope exclusions, one-line failures with zero provider calls, follow-up reuse and absence of packet bodies after SQLite reopen. It adds no client-protocol or TUI conversation endpoint.
 - #57 implements the immutable ledger tables and native admission, using the fenced canon writer, entry-derived speaker kinds and masking before storage. SQLite and real material-store scenarios cover mutation refusal, atomic admission, restart readback and unavailable bytes. Preparation and request assembly remain with their own issues; no ledger operation is exposed through the TUI or Core protocol in this increment.
 
 **G1-11 Inbox, lanes, steering and deadlines.** Inbox, lanes, steering, stop, expiry timers.

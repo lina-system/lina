@@ -271,7 +271,10 @@ type Options struct {
 	// and restart notices. The owner installs ControlSchema before use.
 	InputEvent string
 	Prepare    func(context.Context) error
-	Loop       loop.Config
+	// Preparation is the complete four-step conversation path. Prepare is the
+	// low-level durability hook; supplying both is invalid.
+	Preparation *Preparation
+	Loop        loop.Config
 }
 
 func (s *Store) Run(ctx context.Context, o Options) (out loop.Outcome, err error) {
@@ -318,15 +321,26 @@ func (s *Store) Run(ctx context.Context, o Options) (out loop.Outcome, err error
 			return e
 		}))
 	}()
-	if o.Prepare != nil {
+	cfg := o.Loop
+	if o.Preparation != nil {
+		if o.Prepare != nil {
+			return out, o.Preparation.failure(ContextStep, ErrInvalid)
+		}
+		cfg, err = o.Preparation.prepare(ctx, o.ID, cfg)
+		if err != nil {
+			return out, err
+		}
+	} else if o.Prepare != nil {
 		if err = o.Prepare(ctx); err != nil {
 			return out, err
 		}
 	}
 	if err = s.Prepared(ctx, o.ID); err != nil {
+		if o.Preparation != nil {
+			err = o.Preparation.failure(ContextStep, err)
+		}
 		return out, err
 	}
-	cfg := o.Loop
 	cfg.Journal = s.Journal(o.ID)
 	return loop.Run(ctx, cfg)
 }
