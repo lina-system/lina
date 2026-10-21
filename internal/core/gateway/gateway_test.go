@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,6 +15,8 @@ import (
 	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"github.com/thisisjun786/lina/internal/core/gateway"
+	"github.com/thisisjun786/lina/internal/core/guard"
+	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/kit/lease"
 )
@@ -216,6 +219,14 @@ func enqueue(t *testing.T, db *canon.Store, s *channels.Store, id string, parts 
 	if err := g.Admit(t.Context(), event("1", "", "next")); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := ledger.New(db, nil).Get(t.Context(), "reply-"+id); errors.Is(err, ledger.ErrNotFound) {
+		_, err = ledger.New(db, nil).Admit(t.Context(), guard.EntryAgent, ledger.Input{ID: "reply-" + id, ConversationID: "conversation", AgentID: bindingAgent(t, s), Surface: ledger.Surface{Kind: "channel", Platform: chat.Platform, ChatID: chat.Chat}, OccurredAt: now, RecordedAt: now, TimeQuality: "recorded", Body: strings.Join(parts, "\n")})
+		if err != nil {
+			t.Fatal(err)
+		}
+	} else if err != nil {
+		t.Fatal(err)
+	}
 	if err := s.Enqueue(t.Context(), channels.Message{ID: id, Address: chat, Agent: bindingAgent(t, s), LedgerRef: "reply-" + id, ReplyTo: "1", Parts: parts}); err != nil {
 		t.Fatal(err)
 	}
@@ -416,4 +427,60 @@ func dbPath(t *testing.T, db *canon.Store) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func TestOutboundRequiresCommittedReplyAndCurrentPairing(t *testing.T) {
+	db, s, id := setup(t)
+	g := gateway.New(db, func(context.Context, gateway.Delivery) error { return nil })
+	if err := g.Admit(t.Context(), event("1", "", "next")); err != nil {
+		t.Fatal(err)
+	}
+	m := channels.Message{ID: "forged", Address: chat, Agent: id, LedgerRef: "missing", ReplyTo: "1", Parts: []string{"uncommitted"}}
+	if err := s.Enqueue(t.Context(), m); !errors.Is(err, channels.ErrDenied) {
+		t.Error("missing ledger reply accepted", err)
+	}
+	enqueue(t, db, s, "valid", "reply")
+	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(t.Context(), "UPDATE channel_connections SET sender='' WHERE bot=?", bot.Key())
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	a := &sender{result: gateway.SendResult{Outcome: gateway.Delivered, MessageID: "remote"}}
+	l := lease.New(func() {})
+	defer l.Release()
+	if sent, err := gateway.NewQueue(db, a).SendNext(t.Context(), l, chat, now); err != nil || sent || a.calls != 0 {
+		t.Errorf("unpaired send: %v %v calls=%d", sent, err, a.calls)
+	}
+}
+
+func TestReplyLedgerIdentityMustMatchDispatch(t *testing.T) {
+	for _, test := range []struct {
+		name, agent, conversation string
+		entry                     guard.Entry
+	}{
+		{"different agent", "other", "conversation", guard.EntryAgent},
+		{"different conversation", "", "other", guard.EntryAgent},
+		{"system event", "", "conversation", guard.EntrySystem},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			db, s, id := setup(t)
+			g := gateway.New(db, func(context.Context, gateway.Delivery) error { return nil })
+			if err := g.Admit(t.Context(), event("1", "", "next")); err != nil {
+				t.Fatal(err)
+			}
+			agent := test.agent
+			if agent == "" {
+				agent = id
+			}
+			_, err := ledger.New(db, nil).Admit(t.Context(), test.entry, ledger.Input{ID: "wrong-reply", ConversationID: test.conversation, AgentID: agent, Surface: ledger.Surface{Kind: "channel", Platform: chat.Platform, ChatID: chat.Chat}, OccurredAt: now, RecordedAt: now, TimeQuality: "recorded", Body: "reply"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = s.Enqueue(t.Context(), channels.Message{ID: "one", Address: chat, Agent: id, LedgerRef: "wrong-reply", ReplyTo: "1", Parts: []string{"reply"}})
+			if !errors.Is(err, channels.ErrDenied) {
+				t.Fatal("mismatched ledger reply accepted", err)
+			}
+		})
+	}
 }
