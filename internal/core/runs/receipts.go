@@ -112,6 +112,14 @@ func appendRound(r *Record, recovering bool) {
 	}
 	r.Checkpoint = append(r.Checkpoint, r.PendingItems...)
 	r.Checkpoint = append(r.Checkpoint, results...)
+	// Once the round is committed, ordinary receipts duplicate the checkpoint
+	// and have no replay authority. Keep only started scratch replay records;
+	// preserve legacy unscoped receipts until their recovery is migrated.
+	if r.ReceiptRound != 0 {
+		for _, call := range r.PendingCalls {
+			delete(r.Receipts, receiptKey(r, call.ID))
+		}
+	}
 	r.PendingItems = nil
 	r.PendingCalls = nil
 }

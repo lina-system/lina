@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 
@@ -85,5 +86,37 @@ func TestAnsweredQuestionDoesNotReuseUnstartedReceipt(t *testing.T) {
 	r := wait(t, s, id)
 	if r.Outcome != runs.Complete || executions.Load() != 1 {
 		t.Fatalf("old unstarted receipt suppressed new call: outcome=%s executions=%d", r.Outcome, executions.Load())
+	}
+}
+
+func TestCompletedReadReceiptsAreRetainedOnlyInCheckpoint(t *testing.T) {
+	var rounds atomic.Int64
+	s, _, _ := setup(t, func(context.Context, provider.Request) (provider.Stream, error) {
+		n := rounds.Add(1)
+		if n <= 8 {
+			return call(fmt.Sprint(n)), nil
+		}
+		return answer(runs.Artifact{Body: "read all evidence", Done: true}), nil
+	})
+	id := start(t, s)
+	release(t, s, id)
+	r := wait(t, s, id)
+	if len(r.Receipts) != 0 || len(r.ScratchReceipts) != 0 {
+		t.Fatalf("completed reads retained duplicate receipt payloads: receipts=%d scratch=%d", len(r.Receipts), len(r.ScratchReceipts))
+	}
+	outputs := 0
+	for _, item := range r.Checkpoint {
+		var event struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(item, &event); err != nil {
+			t.Fatal(err)
+		}
+		if event.Type == "function_call_output" {
+			outputs++
+		}
+	}
+	if outputs != 8 || r.Outcome != runs.Complete {
+		t.Fatalf("checkpoint lost results: outputs=%d outcome=%s", outputs, r.Outcome)
 	}
 }
