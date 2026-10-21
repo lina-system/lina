@@ -161,7 +161,40 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## SQLite
 
-Source: https://sqlite.org/. Version: 3.51.2, embedded by `github.com/ncruces/go-sqlite3 v0.30.5`. SQLite is in the public domain; see https://sqlite.org/copyright.html. LINA uses the binding's upstream Wasm build unchanged.
+Source: https://sqlite.org/. Version: 3.51.2, embedded by `github.com/ncruces/go-sqlite3 v0.30.5`. SQLite is in the public domain; see https://sqlite.org/copyright.html. LINA rebuilds the binding's Wasm engine with its upstream patches and sqlite-vec v0.1.6 linked and auto-registered. The pinned sources, reproduction steps and engine digest are recorded in [packaging/sqlite-vec/README.md](packaging/sqlite-vec/README.md).
+
+## sqlite-vec
+
+Source: https://github.com/asg017/sqlite-vec/tree/v0.1.6. Version: `v0.1.6`.
+Source files come from the checksum-verified `github.com/asg017/sqlite-vec-go-bindings` v0.1.6 module.
+Distributed under the MIT license option. The extension source is unchanged;
+LINA links it into the binding-compatible SQLite Wasm engine and registers it
+at initialization. The complete license text is also shipped in each platform
+archive as `sqlite-vec-NOTICE.md`.
+
+```text
+MIT License
+
+Copyright (c) 2024 Alex Garcia
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
 
 ## charm.land/lipgloss/v2
 
