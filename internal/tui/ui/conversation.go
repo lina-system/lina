@@ -384,7 +384,8 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		name = m.content.Agents[0].Name
 	}
 	rows[plan.Header.Y] = clip(m.styles.Title.Render(name))
-	var transcript []string
+	var transcript []render.StyledRow
+	plainRow := func(text string) render.StyledRow { return render.StyledRow{Spans: []render.Span{{Text: text}}} }
 	if !m.hasCapability("conversation") {
 		code := "account.empty"
 		if !m.accountsKnown {
@@ -396,7 +397,7 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 				break
 			}
 		}
-		transcript = append(transcript, design.Text(m.styles.options.Language, code)+"  /accounts")
+		transcript = append(transcript, plainRow(design.Text(m.styles.options.Language, code)+"  /accounts"))
 	}
 	for _, b := range m.content.Blocks {
 		if b.Topic == "core" || b.Topic == "running" || b.Topic == "waiting" || b.Topic == "progress" || b.Kind == protocol.KindTurnState {
@@ -407,18 +408,14 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 			continue
 		}
 		if b.Local || b.Speaker == protocol.ConversationSpeakerPerson {
-			transcript = append(transcript, design.Text(m.styles.options.Language, "person"))
+			transcript = append(transcript, plainRow(design.Text(m.styles.options.Language, "person")))
 		} else if b.Speaker == protocol.ConversationSpeakerAgent || b.Kind == protocol.KindOutputDelta {
-			transcript = append(transcript, name)
+			transcript = append(transcript, plainRow(name))
 		}
 		if b.Kind == protocol.KindResult {
-			transcript = append(transcript, design.Text(m.styles.options.Language, "result")+"  Ctrl+O")
+			transcript = append(transcript, plainRow(design.Text(m.styles.options.Language, "result")+"  Ctrl+O"))
 		}
-		// Len indexes the original width. A byte bound includes every row
-		// after narrowing too, including the final empty row after a newline.
-		for _, line := range cached.stream.Window(0, len(b.Text)+1, render.Config{Width: plan.Conversation.Width}, nil) {
-			transcript = append(transcript, line.Text)
-		}
+		transcript = append(transcript, cached.stream.Markdown(render.Config{Width: plan.Conversation.Width, Theme: m.styles.options.Theme}, m.styles.listBullet(), parseMarkdown)...)
 	}
 	m.conversation.scroll = min(m.conversation.scroll, max(0, len(transcript)-plan.Conversation.Height))
 	start := max(0, len(transcript)-plan.Conversation.Height-m.conversation.scroll)
@@ -426,7 +423,7 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		if y >= plan.Conversation.Height {
 			break
 		}
-		rows[plan.Conversation.Y+y] = clip(line)
+		rows[plan.Conversation.Y+y] = clip(m.styles.markdownRow(line))
 	}
 	drawTopic := func(topic string, region layout.Rect) {
 		if region.Height == 0 {

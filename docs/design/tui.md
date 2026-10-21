@@ -68,7 +68,7 @@ harness; final library acceptance remains the T-08 spike gate.
 - It never opens canon, never runs `lina core` and never holds the lock. Every message it sends is a request that Core accepts or refuses, and when the two disagree Core wins and the TUI refreshes.
 - It uses only the client connection. Its types are the Go types generated from the schema ([host-protocol.md](host-protocol.md#schema-and-generated-types)).
 - Protocol errors and Core logs go to the status line and a log, never into the conversation ([host-protocol.md](host-protocol.md#client-connection)). `TEA_TRACE` and `TEA_DEBUG` stay unset, and panic output is masked.
-- Import rule: `internal/tui/...` imports only `internal/clientapi`, `internal/design`, `kit/protocol` and other `internal/tui` packages. Charm packages are imported only in `tui/term` and `tui/ui`. The one architecture `go test` of [go-core.md](go-core.md) (C-40) checks it.
+- Import rule: `internal/tui/...` imports only `internal/clientapi`, `internal/design`, `kit/protocol` and other `internal/tui` packages. Charm packages are imported only in `tui/term` and `tui/ui`. The Markdown UI adapter may additionally import the already pinned `github.com/yuin/goldmark`, `/ast`, `/text` and `/util` packages; this exception does not extend to `render`, `state`, `layout`, `term` or other Goldmark packages. The one architecture `go test` of [go-core.md](go-core.md) (C-40) checks it.
 - Trust: the socket's user check and the rule for who may decide an approval are Core's ([go-core.md](go-core.md), C-42). The TUI shows a refusal as a refusal and adds no rule of its own.
 - Parity with the LINA app comes from the shared conformance fixtures ([host-protocol.md](host-protocol.md#conformance-fixtures)). The app is not designed here.
 
@@ -429,16 +429,31 @@ type Painter interface{ Block(markdown string, cells int) []string } // sealed b
 type Key struct{ Block string; Rev uint64; Cells int; Theme uint16; WidthMode uint8 }
 type Stream interface {
 	Append(delta string)
-	Lines(cells int, win Window) []string // closed blocks cached, open tail plain, clipped to win
+	Lines(cells int, win Window) []string // closed blocks cached, open tail marker-free, clipped to win
 	Seal() []string                       // authoritative final render
 }
 ```
 
-- A closed top-level block (paragraph, closed fence, list, table, heading) is frozen into a stable prefix and cached on (block id, revision, width in cells, theme, width mode). The plain-text foundation closes paragraphs, lists and tables at blank lines, headings at newline and fenced blocks at a matching closing fence. These conservative boundaries keep incomplete markup plain.
-- The open tail is plain text and wraps incrementally: complete lines freeze and each delta re-wraps the last partial line and its boundary row, because a late combining mark or ZWJ can extend the last cluster. Breaks fall at whitespace, else at a grapheme boundary, never inside a cluster. An open code fence belongs to the tail until it closes.
+- A closed top-level block (paragraph, closed fence, list, table, heading) is frozen into a stable prefix and cached on (block id, revision, width in cells, theme, width mode). The plain-text foundation closes paragraphs, lists and tables at blank lines, headings at newline and fenced blocks at a matching closing fence. These conservative boundaries keep incomplete markup unstyled.
+- The open tail is an unstyled, marker-free preview and wraps incrementally: complete lines freeze and each delta re-wraps the last partial line and its boundary row, because a late combining mark or ZWJ can extend the last cluster. Breaks fall at whitespace, else at a grapheme boundary, never inside a cluster. An open code fence belongs to the tail until it closes. Pending emphasis, inline-code, link and list delimiters and fence headers are withheld across delta boundaries; their text remains readable. Literal markup inside code is preserved.
 - A block that closes is painted once, off the UI goroutine. A stale result is dropped. The visible change from plain to styled at close is accepted: rendering the whole tail on every flush grows quadratically.
 - `Seal()` at `item_done` replaces the stitched render once.
-- Markdown blocks may use Glamour one block at a time with wrap width 0, and every line it returns is re-wrapped with the `Measurer`. Tables use our own renderer.
+- The conversation Markdown subset is bold, italic, inline code, ordered and
+  unordered lists (including nesting), fenced and indented code blocks, and
+  links. The UI adapter uses the pinned Goldmark parser, also used by Glamour,
+  to produce semantic spans for closed blocks; `render` receives a parser
+  callback and remains free of external dependencies. The shared `Measurer` wraps the visible text before
+  the UI adds terminal styles. List continuations align under their content;
+  code retains literal text and whitespace. Escaped syntax remains literal.
+  Unsupported HTML blocks and inline HTML display their literal source text.
+  Tables use our own renderer.
+- Conversation spans use theme text, accent and surface tokens: bold and italic
+  retain their attributes, code uses the surface background, and links use
+  underlined accent text. Lists reuse the theme's action glyph (including the
+  ASCII fallback). `NO_COLOR` keeps readable content without terminal escapes.
+  `Stream.Markdown` caches closed semantic rows by width, theme and width mode,
+  incrementally projects the open tail, and replaces the projection at `Seal`.
+  Only visible conversation rows receive terminal styles.
 - One width function serves all layout: wcwidth by default, grapheme clusters once mode 2027 is confirmed, ambiguous East Asian width narrow, Hangul syllables two cells. The mode is part of the cache key. The Charm-free `Measurer` uses pinned Unicode 17 data and UAX #29 segmentation for wrapping and clipping in both modes. A cluster wider than the entire row is omitted with a typed clipped flag, never split. Cursor offsets inside a cluster clamp to its start.
 - The hardware cursor is placed on every frame at the display width of the text before it on the wrapped row, so IME composition appears in place. The TUI never requests all-keys-as-escape-codes. Committed IME text arrives as UTF-8, one grapheme cluster at a time ([surfaces.md](surfaces.md#korean-input)).
 - Only the viewport plus overscan (P) is laid out, so cost follows viewport rows and not history. `Stream` indexes new text as it arrives. `Window` takes a retained byte anchor within a block and stops reflow at the requested row count, including after a width change. `Renderer.Draw` reads and paints only those indexed rows, retains only the current viewport cache, and returns changed-row patches; an empty patch list causes no writes. A trusted UI painter styles only closed rows after sanitizing and clipping.
@@ -446,7 +461,7 @@ type Stream interface {
 - Conversation wrapping uses the current width; the indexed row count at the
   old width must not truncate newly wrapped rows or the final reply.
 - An unchanged state writes zero bytes. Motion is one status glyph with no timer while deltas stream; elapsed time updates at 1 Hz (P) otherwise.
-- OSC 8 links are emitted for allowed schemes only.
+- OSC 8 links are emitted only for absolute `http`, `https` and `mailto` destinations. Other destinations retain their label without an active hyperlink; decoded text is sanitized before layout.
 
 ## Input and commands (T-10)
 
@@ -537,6 +552,24 @@ The reducer, render, layout and `clientapi` packages are Charm-free, so a fallba
 | S11 | Side-pane threshold | The width between 100 and 140 columns at which the pane stays usable; default 120 |
 
 Each run writes an evidence record: terminal and version, `TERM`, SSH or not, library revisions, declared bounds, measured values, and the result per scenario. A record missing a field is not evidence.
+
+S5 records whether each synchronized-output and grapheme-mode probe timed out.
+A timeout fails the scenario even when the probe's deadline is below 200 ms;
+an explicit reply reporting an unsupported mode still resolves the probe.
+The evidence validator requires both timeout observations before assigning a result.
+
+S10 selects the physical width mode before the first table paint. Each mode has
+an explicit availability observation; a permanently enabled mode 2027 cannot
+establish wcwidth alignment. An unavailable mode requires a mitigation and fails
+the two-mode comparison. S11 requires every width observation from 100 through
+140; a passing threshold is the first usable width and remains usable at every
+greater width in that range. SIGINT and SIGTERM cancel the scenario runner through
+its terminal-restoration paths.
+
+LN-85 delivers the harness and scenario validation. The confirmed terminal matrix,
+owner-run S1–S7 and S9–S11 evidence, and final library decision remain in
+[follow-up #371](https://github.com/thisisjun786/lina/issues/371), including #87's
+outstanding acceptance. Harness completion does not establish the spike gate.
 
 Fallbacks, in order. F1: Bubble Tea with its own probe, a quiet spinner, a lower frame rate while streaming and a frame memo. F2: a row-string renderer on Ultraviolet with changed rows only, in synchronized output. F3: tcell v3. The reducer, render, layout and `clientapi` do not change in any fallback.
 
@@ -655,6 +688,15 @@ Invariants that need a test:
 - No line of the default view carries an id-shaped field, checked on the typed view model.
 - `sanitize.Display` is fuzzed with control, bidirectional and OSC input.
 - A width corpus (Hangul, mixed ASCII, emoji sequences, combining marks) guards cell widths and cursor columns without pinning rendered prose. The Unicode 17 grapheme conformance corpus guards segmentation; chunked-stream fuzzing compares arbitrary splits with complete input. Renderer tests count measurements and paint calls across large histories, verify stable prefix caches and changed-row application, and establish zero patches on unchanged state. Real terminal writes, IME behavior, resize scheduling and the T-08 spike remain the consuming UI's acceptance work.
+
+Conversation Markdown golden files in `internal/tui/ui/testdata/` record each
+supported element in dark, light and high contrast, including ANSI attributes
+and hyperlinks. Regression tests pass snapshots, byte-split deltas and
+completion through the conversation model, and run the real Bubble Tea renderer
+with the recording terminal. Renderer tests cover nested spans, literal code,
+reference links, link scheme filtering, cache reuse, authoritative replacement,
+and Korean/emoji wrapping and resize in both width modes. These are automated
+rendering checks; they do not replace the physical terminal and IME spike.
 
 **Tokens and theme.** `internal/design` is generated from the DTCG files in `design/tokens/` ([surfaces.md](surfaces.md#one-design-language)). `node scripts/tokens.mjs` writes Go values, CSS, the SVG mark and the token tables in `DESIGN.md`. Its `--check` mode regenerates in memory and fails on drift without changing the checkout. Foundation runs it for TUI/design component changes as well as token or automation changes ([foundation.md](../policy/foundation.md)).
 

@@ -4,6 +4,7 @@
 package persona
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -13,10 +14,11 @@ import (
 )
 
 // SetupWarning contains no source path or persona text.
-const SetupWarning = "Lina persona is unavailable; set persona_source in Core config to a checkout with two nonempty UTF-8 persona files totaling at most 64 KiB. Continuing with the agent's name."
+const SetupWarning = "Lina persona is unavailable; set persona_source in Core config to a checkout with two nonempty UTF-8 persona files fitting the 64 KiB instruction budget. Continuing with the agent's name."
 
 // Leave room for identity, input and history in the current conversation
-// composer's 128,000-byte request budget. This bounds both layers together.
+// composer's 128,000-byte request budget. This bounds both layers together,
+// including the JSON escaping used by the prepared identity block.
 const maxLinaBytes = 64 << 10
 
 var ErrUnavailable = errors.New("Lina persona source is unavailable")
@@ -57,7 +59,9 @@ func LoadLina(source string) (core, voice string, err error) {
 	if err != nil {
 		return "", "", err
 	}
-	if len(core)+len(voice) > maxLinaBytes {
+	encodedCore, _ := json.Marshal(core)
+	encodedVoice, _ := json.Marshal(voice)
+	if len(encodedCore)+len(encodedVoice)-4 > maxLinaBytes {
 		return "", "", ErrUnavailable
 	}
 	return core, voice, nil

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-package importer
+package hermes
 
 // SQLiteSource names an independently registered Hermes database layout.
 type SQLiteSource string

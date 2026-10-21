@@ -91,3 +91,21 @@ func TestLoadLinaReservesConversationBudget(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadLinaBoundsEncodedLayers(t *testing.T) {
+	source := t.TempDir()
+	dir := filepath.Join(source, "characters/lina/persona")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{"core-v1.md": strings.Repeat("<", 25000), "default-voice-v1.md": "fixture voice"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The prepared identity JSON escapes each '<' to six bytes. Its raw file
+	// size must not hide an instruction block larger than the request budget.
+	if core, voice, err := persona.LoadLina(source); !errors.Is(err, persona.ErrUnavailable) || core != "" || voice != "" {
+		t.Fatalf("escaped oversized preset accepted: loaded=%d+%d, err=%v", len(core), len(voice), err)
+	}
+}

@@ -17,7 +17,6 @@ import (
 	"github.com/thisisjun786/lina/internal/core/gateway"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
-	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/kit/lease"
 )
 
@@ -36,7 +35,7 @@ func openDB(t *testing.T, root string, epoch uint64) *canon.Store {
 	}
 	t.Cleanup(func() { ctl.Close() })
 	ms := canon.Migrations()
-	ms = append(ms, canon.Migration{Version: len(ms) + 1, SQL: channels.Schema}, canon.Migration{Version: len(ms) + 2, SQL: turn.Schema}, canon.Migration{Version: len(ms) + 3, SQL: turn.ControlSchema}, canon.Migration{Version: len(ms) + 4, SQL: turn.OutcomeSchema})
+	ms = append(ms, canon.Migration{Version: len(ms) + 1, SQL: channels.Schema})
 	db, err := canon.Open(t.Context(), canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: epoch, Controls: ctl, Migrations: ms})
 	if err != nil {
 		t.Fatal(err)

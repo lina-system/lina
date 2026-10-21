@@ -17,14 +17,7 @@ import (
 // ControlSchema is a separate numbered migration after Schema and the ledger
 // schema. The input event supplies durable conversation, agent and surface
 // identity even when the process dies before a turn can finish.
-const ControlSchema = `
-CREATE TABLE turn_control (
- turn_id TEXT PRIMARY KEY NOT NULL REFERENCES turn_runs(id),
- input_event TEXT NOT NULL REFERENCES conv_event(id),
- issuer TEXT,
- notice_event TEXT UNIQUE REFERENCES conv_event(id)
-);
-`
+const ControlSchema = canon.TurnControlSchema
 
 // The ledger owns its tables. This adapter lets it append a short system event
 // inside the same fenced transaction as the terminal turn state. It does not

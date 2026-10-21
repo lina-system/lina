@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/lina/internal/core/agents"
 )
 
 func personaFixture(t *testing.T, core, voice string) string {
@@ -36,7 +38,7 @@ func setPersonaSource(t *testing.T, root, source string) {
 }
 
 func TestM1PersonaSource(t *testing.T) {
-	for _, mode := range []string{"configured", "unconfigured", "missing voice", "missing core", "oversize core", "oversize combined"} {
+	for _, mode := range []string{"configured", "unconfigured", "missing voice", "missing core", "oversize core", "oversize combined", "oversize encoded"} {
 		t.Run(mode, func(t *testing.T) {
 			requests := make(chan string, 8)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -55,6 +57,8 @@ func TestM1PersonaSource(t *testing.T) {
 				coreText = strings.Repeat("x", 129000)
 			case "oversize combined":
 				coreText, voiceText = strings.Repeat("x", 40000), strings.Repeat("y", 40000)
+			case "oversize encoded":
+				coreText = strings.Repeat("<", 25000)
 			}
 			source := personaFixture(t, coreText, voiceText)
 			if strings.HasPrefix(mode, "missing ") {
@@ -94,11 +98,17 @@ func TestM1PersonaSource(t *testing.T) {
 				if !strings.Contains(instructions, c.Welcome.Agents[0].Name) || strings.Contains(strings.ToLower(instructions), "placeholder") {
 					t.Errorf("request lacks the agent name or includes a placeholder: %q", instructions)
 				}
-				if wantCore == "" {
-					if len(strings.Split(strings.TrimSpace(instructions), "\n")) != 1 || strings.Contains(instructions, "fixture-") {
-						t.Errorf("unavailable source must supply only the name line: %q", instructions)
-					}
-				} else if strings.Count(instructions, wantCore) != 1 || strings.Count(instructions, wantVoice) != 1 {
+				var identity struct {
+					Name   string        `json:"name"`
+					Layers agents.Layers `json:"layers"`
+				}
+				if err := json.Unmarshal(instructionBlock(instructions, "persona"), &identity); err != nil {
+					t.Fatalf("missing prepared identity: %v", err)
+				}
+				if identity.Name != c.Welcome.Agents[0].Name || identity.Layers != (agents.Layers{Core: wantCore, DefaultVoice: wantVoice}) {
+					t.Errorf("unexpected persona identity or layers: %+v", identity)
+				}
+				if wantCore != "" && (strings.Count(instructions, wantCore) != 1 || strings.Count(instructions, wantVoice) != 1) {
 					t.Errorf("fixture layers missing or duplicated: %q", instructions)
 				}
 			}

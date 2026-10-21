@@ -243,6 +243,23 @@ func (s *Store) RemoveSentinel() error {
 	return syncDirectory(s.dir, ".")
 }
 
+// ClearHalt is used only after whole-generation restore verifies and reconciles
+// the replacement. Ordinary startup and shutdown must retain the failure latch.
+func (s *Store) ClearHalt() error {
+	if s.lock == nil {
+		return errors.New("control write requires the lock")
+	}
+	if _, err := s.Read("halt.json"); errors.Is(err, os.ErrNotExist) {
+		return syncDirectory(s.dir, ".")
+	} else if err != nil {
+		return err
+	}
+	if err := s.dir.Remove("halt.json"); err != nil {
+		return err
+	}
+	return syncDirectory(s.dir, ".")
+}
+
 func syncDirectory(root *os.Root, name string) error {
 	directory, err := root.Open(name)
 	if err != nil {
