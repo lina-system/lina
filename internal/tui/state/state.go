@@ -268,6 +268,8 @@ func (s *State) put(b Block) {
 func Reduce(s State, m Msg) (State, []Cmd) {
 	s = s.clone()
 	switch m := m.(type) {
+	case FocusConversation:
+		return focusConversation(s), nil
 	case Snapshot:
 		if !epoch(m.Epoch) || !epoch(m.Revocation) || m.Topic == "" || compare(m.Epoch, s.Epoch) < 0 || compare(m.Revocation, s.Revocation) < 0 {
 			return s, nil

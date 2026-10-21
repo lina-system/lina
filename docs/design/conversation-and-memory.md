@@ -945,6 +945,15 @@ Order of import:
 9. Seal, verify and take a backup generation, so that the import is not lost on a restore.
 10. Promotion, afterwards and optional.
 
+
+The staged implementation validates every conversation's maps, source rows and summary links before it writes any ledger range. Stage order is retained inside a conversation's single transaction; each original row keeps its own reference even when several copies share an event. UID bindings are scoped by the source profile and compression lineage, with explicit fork/delegation/reset boundaries. Generated engine bindings with no source message remain binding history rather than invented events. A source payload version remains a separate event, with its relation and replay metadata; an identical replay keeps the canonical host association, while a unique distinct-payload version can take it. All matched copies participate in speaker attribution.
+
+For deterministic matching, the initial Honcho time window is 60 seconds in the same source session and role. The fallback requires unique exact text in that session. Multiple candidates remain unmatched. Every copy's session is considered, including host copies after compression. History source and supersession links resolve to imported records or logged-deletion tombstones; missing targets refuse preparation. The import's internal history representation preserves each conclusion row, groups repeated statements, retains card drafts and logged deletion text, and carries `legacy`/`unverified` flags. This internal representation is not a registration of an unknown Honcho wire schema.
+
+Unsealed events and relations are retained in the importer’s staging tables, not the live ledger or its evidence projections. Verified present sidecars are handed to the existing material writer before adoption; their native material identities and staged event links commit together. Normal material reads return the verified bytes. A failed conversation rolls back material metadata, and closing the prepared plan cleans unadopted bytes through the writer’s recovery markers. Final publication of event identities into the live ledger belongs to the seal.
+
+Staging persists per-conversation receipts and speaker counts, and returns aggregated speaker counts per profile, including zero counts. Its reverse mapper reconstructs each typed source row from the adopted body and the fields preserved for that source copy. A second identical preparation/import adds no record, reference, batch or event; changing existing source content or confirmed destinations is a conflict. Synthetic acceptance also exercises rollback, resumption, cross-conversation links, source immutability, binary/NULL fields and sidecar hash failures. The optional host registers its own schema and deterministic worker write rule; these stages alone do not expose a default import command or complete the seal, backup or promotion.
+
 Promotion. After the import, never as part of it, Lachesis proposes candidate items from imported events whose speaker kind is proven `person` by the attribution rules above and from card lines. Re-labelled and unproven events are excluded from person-turn candidates; an old Honcho owner label never supplies the person's words to promotion or the person model. The person reviews them in grouped batches, newest first, and can accept a whole cluster. Lachesis drops fan-out copies and rows that are not about the person, keeps person-subject rows, drops dated events older than a horizon that have not recurred and rows superseded by a newer statement, scans for secrets and identifiers, and drafts each candidate in the language of its source with the original sentence as a quote. A line that tells an agent how to behave becomes a persona change proposal and never an item. A promoted item has basis `imported`, cites the imported event, or the imported observation as external evidence together with the person's confirmation, and keeps evidence precision `session` where the source knew only the session. The precision is never raised silently; Lachesis may instead re-derive a concrete ledger event. Facts are never harvested from summary text.
 
 Verification. The import is complete only when it proves that it lost nothing, and the proof is data:
@@ -1022,3 +1031,16 @@ A restore never brings back a retracted or deleted item, or deleted conversation
 [honcho-dialectic]: https://github.com/plastic-labs/honcho/blob/607438d20c408575d1c9257f325c4885da871e82/hermes-plugin-honcho/dialectic.py
 [honcho-observations]: https://github.com/plastic-labs/honcho/blob/607438d20c408575d1c9257f325c4885da871e82/src/schemas/internal.py
 [honcho-deriver]: https://github.com/plastic-labs/honcho/blob/607438d20c408575d1c9257f325c4885da871e82/src/deriver/queue_manager.py
+
+### Explicit TUI memory statements
+
+The [T-14 management commands](tui.md#memory-and-agent-command-requests) submit
+person statements to the existing ledger and `exec.Memory` writer. Each
+statement has its own source identity and ledger conversation, outside model
+conversation history. This keeps the removal service's conversation exclusion
+from blocking a later independent statement. Correct uses the existing
+supersession relation with fresh person evidence. Forget uses `retract` and its
+durable removal list; Core recovers that list before serving memory reads.
+The bounded standing profile for each model request uses the selected agent's
+scope and excludes `never-leaves` items. Its item ids and revisions enter the
+existing request assembly record. Model history is separately filtered through the same scoped retraction snapshot; forgetting an item does not erase the person's original ledger view. Every dispatch checks the removal epoch and current item revisions, so a correction or forget invalidates an older prepared profile, including between model rounds. Memory mutations and dispatch admission are serialized by Core. The TUI caches display data only.

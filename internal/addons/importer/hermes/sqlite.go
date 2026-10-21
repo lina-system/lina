@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Package hermes is the optional Hermes memory importer add-on reader.
-// It reads external memory stores into private import staging.
-// It does not write canon or infer schema compatibility. Speaker classification
-// reads provenance from registered snapshots after identity matching.
+// Package hermes is the optional Hermes memory importer add-on.
+// Snapshot readers never write a source or infer schema compatibility. Prepared
+// import plans write staged canon through its fenced writer after matching.
 package hermes
 
 import (
