@@ -87,3 +87,62 @@ func TestRelationshipWriterConfirmsEvidenceAndKeepsEmotionSeparate(t *testing.T)
 		t.Fatal("retracted evidence reused")
 	}
 }
+
+func TestRelationshipDeletionNeverRevivesPredecessor(t *testing.T) {
+	for _, expire := range []bool{false, true} {
+		t.Run(map[bool]string{false: "permanent", true: "trash-expiry"}[expire], func(t *testing.T) {
+			db := memoryDB(t)
+			root := t.TempDir()
+			store, err := agents.Open(root, db)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			a, err := store.Create(t.Context(), agents.Create{Name: "Fixture", PersonID: "person"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			flow := NewPersona(db, store, nil)
+			var previous, current string
+			for i, quote := range []string{"We are study partners.", "We are colleagues."} {
+				id := []string{"before", "replacement"}[i]
+				_, err := ledger.New(db, nil).Admit(t.Context(), guard.EntryOwner, ledger.Input{ID: id, ConversationID: "chat", AgentID: a.ID, PersonID: "person", Surface: ledger.Surface{Kind: "tui"}, OccurredAt: time.Unix(int64(10+i), 0), RecordedAt: time.Unix(int64(10+i), 0), TimeQuality: "observed", Body: quote})
+				if err != nil {
+					t.Fatal(err)
+				}
+				result, err := flow.RecordRelationship(t.Context(), PersonaScope{Agent: a.ID, Person: "person", Conversation: "chat", Input: id, Revision: a.Revision}, RelationshipChange{Quote: quote})
+				if err != nil {
+					t.Fatal(err)
+				}
+				previous, current = current, result.ID
+			}
+			now := time.Unix(100, 0)
+			removal, err := retract.Open(t.Context(), retract.Config{Canon: db, Root: root, Now: func() time.Time { return now }})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer removal.Close()
+			request := retract.Request{Person: "person", Targets: []retract.Ref{{Kind: retract.Memory, ID: current}}}
+			if expire {
+				if err := removal.Forget(t.Context(), request); err != nil {
+					t.Fatal(err)
+				}
+				now = now.Add(retract.TrashRetention)
+				if err := removal.Expire(t.Context(), "person"); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := removal.Delete(t.Context(), request); err != nil {
+				t.Fatal(err)
+			}
+			scope := memory.RecallScope{Agent: a.ID, Person: "person", ExternalModel: true}
+			hits, err := memory.New(db).CurrentRelationship(t.Context(), scope, now.Unix())
+			if err != nil || len(hits) != 0 {
+				t.Fatalf("erased replacement resurrected predecessor: %+v %v", hits, err)
+			}
+			history, err := memory.New(db).Recall(t.Context(), scope, memory.Query{At: now.Unix(), History: true})
+			if err != nil || len(history) != 1 || history[0].ID != previous || !history[0].Older {
+				t.Fatalf("historical predecessor: %+v %v", history, err)
+			}
+		})
+	}
+}

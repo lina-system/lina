@@ -28,6 +28,9 @@ func (p *Persona) RecordRelationship(ctx context.Context, scope PersonaScope, in
 	if err != nil {
 		return RememberReceipt{}, err
 	}
+	if event.OccurredAt.Unix() <= 0 {
+		return RememberReceipt{}, memory.ErrEvidence
+	}
 	request := memory.Write{Agent: scope.Agent, Person: scope.Person, Item: memory.Item{Kind: memory.Relationship, Content: in.Quote, Subject: memory.Subject{Kind: memory.Person, ID: scope.Person}, Basis: memory.Stated, ValidFrom: event.OccurredAt.Unix(), Evidence: []memory.Evidence{{Kind: memory.Event, ID: event.ID, Precision: memory.Exact}}}}
 	resolve, err := p.memory.prepare(ctx, request)
 	if err != nil {
@@ -63,7 +66,10 @@ func (p *Persona) RecordRelationship(ctx context.Context, scope PersonaScope, in
 			request.Item.Supersedes = old.ID
 		}
 		item, err = memory.Insert(ctx, tx, request, resolve)
-		return err
+		if err != nil {
+			return err
+		}
+		return memory.EndRelationshipPredecessor(ctx, tx, item)
 	})
 	if err != nil {
 		return RememberReceipt{}, err
