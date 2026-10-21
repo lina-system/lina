@@ -1681,30 +1681,69 @@
       "additionalProperties": false
     },
     "input": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "conversation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "input_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "mode": {
+          "$ref": "#/$defs/input_mode"
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
     "interrupt": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "conversation_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
     "history_get": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "agent_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "conversation_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
     "history": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "conversation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "snapshot": {
+          "$ref": "#/$defs/snapshot"
+        },
+        "agent_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
@@ -1732,6 +1771,10 @@
         },
         "text": {
           "type": "string"
+        },
+        "agent_id": {
+          "type": "string",
+          "minLength": 1
         }
       },
       "required": [],
@@ -1745,6 +1788,21 @@
         },
         "text": {
           "type": "string"
+        },
+        "echo_key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "speaker": {
+          "$ref": "#/$defs/conversation_speaker"
+        },
+        "agent_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "person_id": {
+          "type": "string",
+          "minLength": 1
         }
       },
       "required": [],
@@ -1758,6 +1816,13 @@
         },
         "text": {
           "type": "string"
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "agent_id": {
+          "type": "string",
+          "minLength": 1
         }
       },
       "required": [],
@@ -3399,6 +3464,21 @@
         "owed"
       ],
       "additionalProperties": false
+    },
+    "input_mode": {
+      "type": "string",
+      "enum": [
+        "steer",
+        "queue"
+      ]
+    },
+    "conversation_speaker": {
+      "type": "string",
+      "enum": [
+        "person",
+        "agent",
+        "system"
+      ]
     }
   }
 }

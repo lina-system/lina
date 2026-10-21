@@ -40,9 +40,10 @@ type TopicOptions struct {
 // Data is a JSON string for output_delta, or the application's JSON row for
 // other kinds. The hub owns copies; callers never share mutable storage with it.
 type TopicEvent struct {
-	Kind protocol.Kind   `json:"kind"`
-	Key  string          `json:"key"`
-	Data json.RawMessage `json:"data"`
+	AgentID string          `json:"agent_id,omitempty"`
+	Kind    protocol.Kind   `json:"kind"`
+	Key     string          `json:"key"`
+	Data    json.RawMessage `json:"data"`
 	// Revision is assigned at publication, independently of caller input.
 	Revision uint64 `json:"revision"`
 }

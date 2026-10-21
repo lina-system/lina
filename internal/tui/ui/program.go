@@ -19,10 +19,9 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
-// The shell renders these connection-wide status streams. Conversation
-// discovery, focus and result subscriptions belong to the conversation view;
-// do not advertise that capability until those concrete topics are maintained.
-var shellCapabilities = []protocol.Capability{{Name: "running", Version: "1.0"}, {Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}}
+// Offer only rendered families; the conversation discovers and maintains its
+// concrete conversation/results subscriptions after welcome.
+var shellCapabilities = []protocol.Capability{{Name: "conversation", Version: "1.0"}, {Name: "running", Version: "1.0"}, {Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}}
 
 type clientPeer struct{ client *clientapi.Client }
 
@@ -48,7 +47,41 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 		model.styles = display.styles
 		model.size.Width = display.styles.options.Width
 	}
+	defer func() {
+		if display.renderer != nil {
+			if err := display.renderer.close(); err != nil {
+				result = errors.Join(result, err)
+			}
+			display.renderer = nil
+		}
+	}()
 	events := make(chan programEvent, 64)
+	if terminal {
+		file := input.(*os.File)
+		inputDone := make(chan error, 1)
+		go func() {
+			err := readConversationInput(ctx, file, func(message tea.Msg) bool {
+				select {
+				case events <- programEvent{message: message, acknowledged: make(chan error, 1)}:
+					return true
+				case <-ctx.Done():
+					return false
+				}
+			})
+			if err != nil {
+				cancel(err)
+			} else {
+				cancel(errQuit)
+			}
+			inputDone <- err
+		}()
+		defer func() {
+			cancel(context.Canceled)
+			if err := <-inputDone; err != nil {
+				result = errors.Join(result, err)
+			}
+		}()
+	}
 	done := make(chan error, 1)
 	go func() {
 		done <- connectionLoop(ctx, func(ctx context.Context) (connectionPeer, error) {
@@ -80,6 +113,7 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 		}
 	}()
 	var peer connectionPeer
+	pending := make(map[string]state.SendRequest)
 	var stopInput func() error
 	defer func() {
 		if stopInput != nil {
@@ -89,6 +123,10 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 	inputStarted := terminal
 	var handle func(tea.Msg) error
 	handle = func(message tea.Msg) error {
+		if begin, ok := message.(shellBegin); ok && begin.Generation > model.generation {
+			clear(pending)
+			model.conversation.id = ""
+		}
 		if attached, ok := message.(shellPeer); ok {
 			peer = attached.Peer
 			w := peer.Welcome()
@@ -114,6 +152,63 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 					}
 				}
 			}
+			if model.hasCapability("conversation") {
+				if terminal && display.interactive && display.styles.options.Profile != Monochrome && display.renderer == nil {
+					display.renderer = startTerminalRenderer(parent, rawTerminalWriter{display.output}, model.size.Width, model.size.Height)
+				}
+				if client, ok := peer.(clientPeer); ok {
+					_, err := client.client.History(ctx, protocol.HistoryGet{})
+					if err != nil {
+						return err
+					}
+				}
+			}
+			return nil
+		}
+		if effect, ok := message.(shellEffect); ok && effect.Generation == model.generation {
+			if client, ok := peer.(clientPeer); ok {
+				switch request := effect.Message.(type) {
+				case state.SendRequest:
+					mode := protocol.InputModeSteer
+					if request.Mode == state.InputQueue {
+						mode = protocol.InputModeQueue
+					}
+					id, err := client.client.Input(ctx, protocol.Input{ConversationID: &model.conversation.id, InputID: &request.Key, Text: &request.Draft.Text, Mode: &mode})
+					if err != nil {
+						model.reduceInput(state.SendResult{Gen: request.Gen, Key: request.Key, Failed: true})
+						return err
+					}
+					pending[id] = request
+				case state.InterruptRequest:
+					_, err := client.client.Interrupt(ctx, protocol.Interrupt{ConversationID: &model.conversation.id})
+					return err
+				}
+			}
+		}
+		if data, ok := message.(shellData); ok && data.Generation == model.generation {
+			if frame, ok := data.Message.(state.Frame); ok {
+				var decoder protocol.ClientDecoder
+				e, err := decoder.Decode(frame.Data)
+				if err == nil && e != nil {
+					if e.ReplyTo != nil {
+						if sent, ok := pending[*e.ReplyTo]; ok {
+							model.reduceInput(state.SendResult{Gen: sent.Gen, Key: sent.Key, Failed: e.Error != nil})
+							delete(pending, *e.ReplyTo)
+						}
+					}
+					if history, ok := e.Payload.(protocol.History); ok && history.ConversationID != nil {
+						model.conversation.id = *history.ConversationID
+						for _, topic := range []string{"conversation:" + model.conversation.id, "results:" + model.conversation.id} {
+							if err := handle(shellSubscription{Generation: model.generation, Request: protocol.Subscribe{Topic: &topic}}); err != nil {
+								return err
+							}
+						}
+					}
+				}
+			}
+		}
+		if _, ok := message.(tea.QuitMsg); ok {
+			cancel(errQuit)
 			return nil
 		}
 		if request, ok := message.(shellSubscription); ok {
@@ -202,6 +297,9 @@ func runShellCommand(command tea.Cmd, handle func(tea.Msg) error) error {
 }
 
 func (d *display) showShell(model *shellModel) error {
+	if d.renderer != nil {
+		return d.renderer.show(model.View())
+	}
 	if d.interactive && d.styles.options.Profile != Monochrome {
 		frame := model.View().Content + "\n"
 		if frame == d.frame {

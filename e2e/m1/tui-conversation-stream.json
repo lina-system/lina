@@ -1,0 +1,19 @@
+{
+  "conversation": "fixture",
+  "input": "FIRST-108",
+  "steering": "STEER-108",
+  "partial": "PARTIAL-108",
+  "reply": "FINAL-108",
+  "steps": [
+    {"request":"hello.json","emit":["welcome.json"]},
+    {"request":"core-request.json","emit":["core-snapshot.json"]},
+    {"request":"history-request.json","emit":["history.json"]},
+    {"request":"conversation-request.json","emit":["conversation-snapshot.json"]},
+    {"request":"results-request.json","emit":["results-snapshot.json"]},
+    {"request":"first-request.json","emit":["first-ack.json","first-item.json","active.json","delta.json"]},
+    {"request":"steering-request.json","emit":["steering-ack.json","steering-item.json"]},
+    {"emit":["done.json"],"faults":{"duplicate":true}},
+    {"emit":["idle.json"]},
+    {"request":"hello.json"}
+  ]
+}

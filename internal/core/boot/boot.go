@@ -17,10 +17,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/internal/core/manifest"
+	"github.com/thisisjun786/lina/internal/core/modelpath"
 	"github.com/thisisjun786/lina/kit/sandbox"
 )
 
@@ -97,7 +99,8 @@ type Services struct {
 type Config struct {
 	// Client supplies the installed person's agents, supported rows and handlers.
 	// Boot always supplies the durable main id, epoch and recovery state itself.
-	Client clientsrv.Identity
+	Client       clientsrv.Identity
+	Conversation *modelpath.ResponsesConfig
 	// ClientManifest selects the build manifest containing supportedCombinations.
 	// An explicit path must exist and contain a valid table, including an empty
 	// table when every client combination is intentionally unsupported.
@@ -204,7 +207,9 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		return err
 	}
 	var highest uint64
-	if cfg.Services.PeekEpoch != nil {
+	if cfg.Conversation != nil {
+		highest, err = canon.PeekEpoch(ctx, conversationPath(cfg.StateRoot))
+	} else if cfg.Services.PeekEpoch != nil {
 		highest, err = cfg.Services.PeekEpoch(ctx)
 	} else {
 		// Never silently ignore an existing database when its implementation has
@@ -265,7 +270,15 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		cfg.Services.Lifecycle(restarter)
 	}
 	var canon Canon
-	if cfg.Services.OpenCanon != nil {
+	if cfg.Conversation != nil {
+		runtime, openErr := startConversation(ctx, cfg.StateRoot, recovery.MainID, snapshot.Epoch, store, cfg.Conversation, activities)
+		if openErr != nil {
+			return openErr
+		}
+		cfg.Client = runtime.identity
+		canon = runtime.db
+		stack = append(stack, runtime.Close)
+	} else if cfg.Services.OpenCanon != nil {
 		canon, err = cfg.Services.OpenCanon(ctx, snapshot.Epoch)
 		if err != nil {
 			return err

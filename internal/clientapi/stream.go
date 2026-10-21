@@ -23,16 +23,33 @@ var ErrMalformed = errors.New("malformed client frame")
 // This method may run concurrently with the single Receive consumer. It never
 // retries, automatically resubscribes or discards another topic's notifications.
 func (c *Client) Subscribe(ctx context.Context, subscription protocol.Subscribe) (string, error) {
+	return c.request(ctx, protocol.KindSubscribe, subscription)
+}
+
+// Input submits one durable input. Receive owns its acknowledgement and streams.
+func (c *Client) Input(ctx context.Context, input protocol.Input) (string, error) {
+	return c.request(ctx, protocol.KindInput, input)
+}
+
+func (c *Client) Interrupt(ctx context.Context, interrupt protocol.Interrupt) (string, error) {
+	return c.request(ctx, protocol.KindInterrupt, interrupt)
+}
+
+func (c *Client) History(ctx context.Context, history protocol.HistoryGet) (string, error) {
+	return c.request(ctx, protocol.KindHistoryGet, history)
+}
+
+func (c *Client) request(ctx context.Context, kind protocol.Kind, payload protocol.Payload) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
 	id := rand.Text()
 	envelope := protocol.Envelope{
 		Protocol: protocol.Protocol{Name: "client", Version: c.Welcome.ProtocolVersion},
-		Kind:     protocol.KindSubscribe, MessageID: id, AttemptID: rand.Text(),
+		Kind:     kind, MessageID: id, AttemptID: rand.Text(),
 		Sender: protocol.Sender{Party: protocol.PartyClient, ID: c.clientID}, Epoch: c.Welcome.Epoch,
 		SentAt: time.Now().UTC().Format(time.RFC3339Nano), EffectState: protocol.EffectNone,
-		SourceRefs: []protocol.SourceRef{}, Payload: subscription,
+		SourceRefs: []protocol.SourceRef{}, Payload: payload,
 	}
 	if _, err := json.Marshal(envelope); err != nil {
 		return "", err
@@ -49,7 +66,7 @@ func (c *Client) Subscribe(ctx context.Context, subscription protocol.Subscribe)
 		ID      string            `json:"id"`
 		Method  protocol.Kind     `json:"method"`
 		Params  protocol.Envelope `json:"params"`
-	}{"2.0", id, protocol.KindSubscribe, envelope}
+	}{"2.0", id, kind, envelope}
 	if err := c.writer.Write(ctx, request); err != nil {
 		c.pendingMu.Lock()
 		delete(c.pending, id)

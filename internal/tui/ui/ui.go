@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package ui styles the connection screen from generated design tokens.
-// Conversation input arrives with later increments.
+// Conversation input uses the negotiated client connection.
 package ui
 
 import (
@@ -18,8 +18,8 @@ import (
 	terminalkeys "github.com/thisisjun786/lina/internal/tui/term"
 )
 
-// Run reports live only after Core welcomes the connection. q, Ctrl+C, Ctrl+D
-// or EOF closes this client; no conversation request is sent.
+// Run opens the negotiated conversation after welcome. Ctrl+D, an empty
+// Ctrl+C or EOF closes only this client; connection-only screens also accept q.
 func Run(ctx context.Context, socket, productVersion string, input io.Reader, output io.Writer) (runErr error) {
 	display := newDisplay(output)
 	terminal := false
@@ -43,16 +43,6 @@ func Run(ctx context.Context, socket, productVersion string, input io.Reader, ou
 		if out, ok := output.(interface{ Fd() uintptr }); ok && term.IsTerminal(out.Fd()) {
 			display.rawOutput = true
 		}
-		var stopInput func() error
-		ctx, stopInput, err = watchTerminalInput(ctx, file)
-		if err != nil {
-			return err
-		}
-		defer func() {
-			if err := stopInput(); err != nil {
-				runErr = errors.Join(runErr, err)
-			}
-		}()
 		terminal = true
 	}
 	return runClientShell(ctx, socket, productVersion, input, display, terminal)

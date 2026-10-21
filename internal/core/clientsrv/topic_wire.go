@@ -80,6 +80,9 @@ func topicBody(event TopicEvent) (json.RawMessage, error) {
 	} else if err := json.Unmarshal(event.Data, &body); err != nil || body == nil {
 		return nil, ErrInvalidEvent
 	}
+	if event.AgentID != "" {
+		body["agent_id"], _ = json.Marshal(event.AgentID)
+	}
 	delete(body, "stream")
 	encoded, err := json.Marshal(body)
 	return encoded, err

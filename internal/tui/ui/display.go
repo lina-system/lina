@@ -11,6 +11,7 @@ import (
 )
 
 type display struct {
+	renderer    *terminalRenderer
 	output      io.Writer
 	styles      Styles
 	interactive bool
@@ -47,6 +48,9 @@ func newDisplay(output io.Writer) *display {
 }
 
 func (d *display) show(state Connection) error {
+	if d.renderer != nil {
+		return nil
+	}
 	return d.showStatus(ConnectionStatus{State: state})
 }
 
