@@ -58,6 +58,30 @@ func TestConnectionMarksAreDistinct(t *testing.T) {
 	}
 }
 
+func TestConnectionEmphasis(t *testing.T) {
+	styles := NewStyles(Options{Profile: TrueColor, Width: 72})
+	for _, state := range []Connection{Connecting, Live, Resyncing, Retrying, Refused, Recovering, Stopped, Failed, Quit} {
+		view := connectionView(state, styles.tokens, false)
+		output := styles.Screen(state)
+		markStyle := styles.Muted
+		switch state {
+		case Connecting, Live, Resyncing, Retrying, Recovering:
+			markStyle = styles.Accent
+		case Refused, Stopped, Failed, Quit:
+			markStyle = styles.Muted
+		}
+		if !strings.Contains(output, markStyle.Render(view.Mark+" ")) {
+			t.Errorf("state %d: mark does not convey active versus inactive", state)
+		}
+		if !strings.Contains(output, styles.Text.Render(view.Label)) {
+			t.Errorf("state %d: label competes with the wordmark", state)
+		}
+		if view.Action != "" && !strings.Contains(output, styles.Muted.Render(view.Action)) {
+			t.Errorf("state %d: action label is not secondary text", state)
+		}
+	}
+}
+
 func TestDisplayEnvironment(t *testing.T) {
 	for _, tc := range []struct {
 		env     map[string]string
@@ -113,7 +137,7 @@ func TestCanvasCoversEveryCellAndFitsWidth(t *testing.T) {
 				}
 				if strings.Trim(output[:end], "\n") == "" {
 				} else if bg != "canvas" {
-					t.Fatalf("%s width %d leaves cells on terminal background", theme, width)
+					t.Fatalf("%s width %d leaves cells on terminal background: %q", theme, width, output[:end])
 				}
 				if loc == nil {
 					break

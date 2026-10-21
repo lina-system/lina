@@ -8,6 +8,17 @@ import { git as runGit } from '../git.mjs';
 import { componentRegistry, kind, scopeFor } from './scope.mjs';
 import { evaluateGate } from './gate.mjs';
 
+test('model path configuration is registered with the lina Go checks', t => {
+  const r = repository(t);
+  const base = r.git('rev-parse', 'HEAD');
+  mkdirSync(join(r.cwd, 'internal/core/modelpath'), { recursive: true });
+  writeFileSync(join(r.cwd, 'internal/core/modelpath/config.go'), 'package modelpath\n');
+  const scope = r.classify(r.commit(), { base, full: true });
+  assert.deepEqual(scope.unmapped, []);
+  assert.ok(scope.selectedComponents.includes('lina'));
+  assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/modelpath/...'));
+});
+
 test('Moirai source changes select its binary and Core acceptance checks', t => {
   const r = repository(t);
   for (const [name, content] of Object.entries({
@@ -614,4 +625,9 @@ test('vector rebuilds select automation and their notices remain documents', () 
   assert.equal(kind('packaging/sqlite-vec/NOTICE.md'), 'docs');
   assert.equal(kind('packaging/sqlite-vec/README.md'), 'docs');
   assert.equal(kind('packaging/sqlite-vec/unregistered.py'), 'unmapped');
+});
+
+test('QA guide and repository opt-in have registered verification', () => {
+  assert.equal(kind('docs/qa.md'), 'docs');
+  assert.equal(kind('.devflow'), 'automation');
 });
