@@ -7,10 +7,7 @@ import (
 	responseconfig "github.com/thisisjun786/lina/kit/provider/responses/config"
 )
 
-const SDKModule = responseconfig.SDKModule
-const SDKVersion = responseconfig.SDKVersion
-
-// Config is shared with build-metadata readers that do not need the SDK.
+// Config is shared with build-metadata readers independently of the HTTP/SSE transport.
 type Config = responseconfig.Config
 
 func ReadConfig(r io.Reader) (Config, error) { return responseconfig.ReadConfig(r) }
