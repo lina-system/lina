@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { sandbox } from '../test-fixture.mjs';
-import { checkComponents } from './check-components.mjs';
+import { checkComponents, execute } from './check-components.mjs';
 
 const source = fileURLToPath(new URL('../../', import.meta.url));
 function fixture(t) {
@@ -19,12 +19,92 @@ function fixture(t) {
 }
 const kit = { name: 'kit', module: 'kit', packages: ['./...'] };
 
+test('a progressing test command can outlive the old per-command limit', t => {
+  const sb = fixture(t);
+  let elapsed = 0;
+  t.mock.method(performance, 'now', () => elapsed);
+  const result = checkComponents({ cwd: sb.dir, components: [kit], execute(command, goArgs, options) {
+    if (goArgs[0] === 'test') {
+      // Model progress past the old deadline without racing wall-clock timers.
+      const deadline = elapsed + (options.timeoutMs ?? 120_000);
+      let stdout = '';
+      for (let i = 0; i < 3; i++) {
+        elapsed += 50_000;
+        if (elapsed >= deadline) return { status: 1, stdout, stderr: 'test command timed out\n' };
+        stdout += 'package ok\n';
+      }
+      return { status: 0, stdout: `${stdout}finished\n`, stderr: '' };
+    }
+    return { status: 0, stdout: goArgs[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
+  } });
+  assert.equal(result.status, 0, result.output);
+  assert.match(result.output, /package ok[\s\S]*finished/);
+});
+
+test('a hung command fails with its name and elapsed time', t => {
+  const sb = sandbox(t);
+  sb.write(sb.dir, 'hung.mjs', `// SPDX-License-Identifier: Apache-2.0
+setInterval(() => {}, 1000);
+`);
+  const result = execute(process.execPath, ['hung.mjs'], { cwd: sb.dir, env: sb.env, timeoutMs: 200 });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /command timed out after [\d.]+ s.*hung\.mjs/);
+});
+
+test('commands across modules share a deadline instead of resetting the budget', t => {
+  const sb = fixture(t);
+  let elapsed = 0;
+  t.mock.method(performance, 'now', () => elapsed);
+  const budgets = [];
+  const result = checkComponents({ cwd: sb.dir, components: [kit, { name: 'lina', module: '.', packages: ['.'] }],
+    timeoutMs: 20_000, execute(command, args, options) {
+      budgets.push(options.timeoutMs);
+      elapsed += 1000;
+      return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
+    } });
+  assert.equal(result.status, 0, result.output);
+  assert.equal(budgets.length, 11);
+  assert.deepEqual(budgets, Array.from({ length: 11 }, (_, i) => 20_000 - i * 1000));
+});
+
+test('an exhausted components budget stops before starting another command', t => {
+  const sb = fixture(t);
+  let elapsed = 0;
+  t.mock.method(performance, 'now', () => elapsed);
+  const calls = [];
+  const result = checkComponents({ cwd: sb.dir, components: [kit], timeoutMs: 1000,
+    execute(command, args) {
+      calls.push(args);
+      elapsed = 1000;
+      return { status: 0, stdout: 'go1.27.3\n', stderr: '' };
+    } });
+  assert.equal(result.status, 1);
+  assert.deepEqual(calls, [['env', 'GOVERSION']]);
+  assert.match(result.output, /components budget exhausted after 1\.000 s before: go mod verify/);
+});
+
+test('a hung test command is capped by the remaining components budget', t => {
+  const sb = fixture(t);
+  sb.write(sb.dir, 'hung.mjs', `// SPDX-License-Identifier: Apache-2.0
+process.on('SIGTERM', () => {});
+setInterval(() => {}, 1000);
+`);
+  const result = checkComponents({ cwd: sb.dir, components: [kit], timeoutMs: 500,
+    execute(command, args, options) {
+      if (args[0] === 'test') return execute(process.execPath, ['hung.mjs'], { ...options, cwd: sb.dir });
+      return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
+    } });
+  assert.equal(result.status, 1);
+  assert.match(result.output, /\$ go test -count=1 -mod=readonly \.\/\.\.\./);
+  assert.match(result.output, /command timed out after [\d.]+ s \(budget 0\.\d+ s\): .*hung\.mjs/);
+});
+
 test('components use the pinned toolchain, readonly commands, module verification and uncached tests', t => {
   const sb = fixture(t);
   const calls = [];
   const result = checkComponents({ cwd: sb.dir, components: [kit], execute(command, args, options) {
     calls.push({ command, args, ...options });
-    return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : args[0] === 'list' ? 'example.invalid/kit\n' : '', stderr: '' };
+    return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
   } });
   assert.equal(result.status, 0, result.output);
   const commands = calls.map(call => call.args);
@@ -32,8 +112,7 @@ test('components use the pinned toolchain, readonly commands, module verificatio
     ['env', 'GOVERSION'], ['mod', 'verify'], ['mod', 'verify'],
     ['build', '-mod=readonly', './...'],
     ['vet', '-mod=readonly', './...'], ['tool', 'exhaustive', './...'],
-    ['list', '-mod=readonly', '-f', '{{.ImportPath}}', './...'],
-    ['test', '-count=1', '-mod=readonly', 'example.invalid/kit'],
+    ['test', '-count=1', '-mod=readonly', './...'],
   ]);
   for (const call of calls) {
     assert.equal(call.env.GOTOOLCHAIN, 'go1.27.3');
@@ -92,32 +171,4 @@ test('token drift and raw TUI literals stop component verification before builds
   assert.equal(result.status, 1);
   assert.ok(calls.some(call => call.command === process.execPath && call.args.includes('--check')));
   assert.ok(!calls.some(call => call.args[0]==='build'));
-});
-
-test('large selections test every concrete package once in bounded commands', t => {
-  const sb = fixture(t);
-  const packages = Array.from({length: 19}, (_, i) => `example.invalid/lina/pkg${i}`);
-  const tests = [];
-  const result = checkComponents({cwd: sb.dir, components: [kit], execute(command, args) {
-    if (args[0] === 'test') tests.push(args);
-    return {status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : args[0] === 'list' ? `${[...packages, packages[0]].join('\n')}\n` : '', stderr: ''};
-  }});
-  assert.equal(result.status, 0, result.output);
-  assert.deepEqual(tests.flatMap(args => args.slice(3)), packages);
-  assert.ok(tests.length > 1);
-  assert.ok(tests.every(args => args.length - 3 <= 8));
-  assert.ok(tests.every(args => args[1] === '-count=1' && args[2] === '-mod=readonly'));
-});
-
-test('a failed package group prevents later groups and fails verification', t => {
-  const sb = fixture(t);
-  const packages = Array.from({length: 19}, (_, i) => `example.invalid/lina/pkg${i}`);
-  let testCalls = 0;
-  const result = checkComponents({cwd: sb.dir, components: [kit], execute(command, args) {
-    if (args[0] === 'test' && ++testCalls === 2) return {status: 1, stdout: '', stderr: 'package regression\n'};
-    return {status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : args[0] === 'list' ? `${packages.join('\n')}\n` : '', stderr: ''};
-  }});
-  assert.equal(result.status, 1);
-  assert.match(result.output, /package regression/);
-  assert.equal(testCalls, 2);
 });
