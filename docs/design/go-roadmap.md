@@ -55,6 +55,7 @@ Order follows the Depends-on lines. 1.A comes first and 1.H last.
 Failure injections: `kill -9` at each start step and turn phase; corrupt canon; a write fault on `canon/`; disk full; an unusable sandbox; a slow client and dropped frames; a replayed channel update; provider unavailable, expired token and usage cap; `kill -9` with a background run working; restore of an older generation.
 
 - #358 covers provider unavailable and truncated SSE through the installed Core and real TUI in a headless PTY. Failure notices and streamed partials remain visible after restart, accepted requests are not replayed, and a new request excludes failed partials from completed assistant context. Turn-store tests inject a notice write failure and verify atomic terminal state, recovery and notice deduplication.
+- #372 covers SIGKILL while text is still streaming and failed responses with function-call argument or custom-tool input deltas. The installed Core and real TUI scenario compares live and restored text, order and block identities, retains one interruption or failure outcome, excludes tool input from assistant rows and never replays the accepted request.
 
 ### 1.A Foundation and control plane
 

@@ -338,6 +338,13 @@ func (s *Store) Run(ctx context.Context, o Options) (out loop.Outcome, err error
 					return e
 				}
 			}
+			if state == Completed {
+				// Completed replies replace their provisional display checkpoints
+				// in this same transaction. A failed completion keeps them recoverable.
+				if _, e := tx.ExecContext(save, "DELETE FROM turn_partials WHERE turn_id=?", o.ID); e != nil {
+					return e
+				}
+			}
 			gathered.Effects = b.effects
 			if e := saveOutcome(save, tx, o.ID, TurnOutcome{Meter: gauge.Snapshot(), Handle: handle, Gathered: gathered}); e != nil {
 				return e
