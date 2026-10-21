@@ -13,7 +13,11 @@ import (
 )
 
 // SetupWarning contains no source path or persona text.
-const SetupWarning = "Lina persona is unavailable; set persona_source in Core config to a local checkout containing both persona files. Continuing with the agent's name."
+const SetupWarning = "Lina persona is unavailable; set persona_source in Core config to a checkout with two nonempty UTF-8 persona files totaling at most 64 KiB. Continuing with the agent's name."
+
+// Leave room for identity, input and history in the current conversation
+// composer's 128,000-byte request budget. This bounds both layers together.
+const maxLinaBytes = 64 << 10
 
 var ErrUnavailable = errors.New("Lina persona source is unavailable")
 
@@ -31,7 +35,7 @@ func LoadLina(source string) (core, voice string, err error) {
 	read := func(name string) (string, error) {
 		name = "characters/lina/persona/" + name
 		info, err := root.Stat(name)
-		if err != nil || !info.Mode().IsRegular() || info.Size() > 1<<20 {
+		if err != nil || !info.Mode().IsRegular() || info.Size() > maxLinaBytes {
 			return "", ErrUnavailable
 		}
 		file, err := root.Open(name)
@@ -39,8 +43,8 @@ func LoadLina(source string) (core, voice string, err error) {
 			return "", ErrUnavailable
 		}
 		defer file.Close()
-		data, err := io.ReadAll(io.LimitReader(file, (1<<20)+1))
-		if err != nil || len(data) > 1<<20 || !utf8.Valid(data) || strings.TrimSpace(string(data)) == "" {
+		data, err := io.ReadAll(io.LimitReader(file, maxLinaBytes+1))
+		if err != nil || len(data) > maxLinaBytes || !utf8.Valid(data) || strings.TrimSpace(string(data)) == "" {
 			return "", ErrUnavailable
 		}
 		return string(data), nil
@@ -52,6 +56,9 @@ func LoadLina(source string) (core, voice string, err error) {
 	voice, err = read("default-voice-v1.md")
 	if err != nil {
 		return "", "", err
+	}
+	if len(core)+len(voice) > maxLinaBytes {
+		return "", "", ErrUnavailable
 	}
 	return core, voice, nil
 }

@@ -68,3 +68,26 @@ func TestLoadLinaRequiresBothLocalTextLayers(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadLinaReservesConversationBudget(t *testing.T) {
+	for _, sizes := range [][2]int{{129000, 1}, {40000, 40000}, {65535, 1}} {
+		source := t.TempDir()
+		dir := filepath.Join(source, "characters/lina/persona")
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		for i, name := range []string{"core-v1.md", "default-voice-v1.md"} {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(strings.Repeat("x", sizes[i])), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		core, voice, err := persona.LoadLina(source)
+		if sizes[0]+sizes[1] > 65536 {
+			if !errors.Is(err, persona.ErrUnavailable) || core != "" || voice != "" {
+				t.Errorf("oversized preset accepted: sizes=%v, loaded=%d+%d, err=%v", sizes, len(core), len(voice), err)
+			}
+		} else if err != nil || len(core) != sizes[0] || len(voice) != sizes[1] {
+			t.Errorf("bounded preset rejected: sizes=%v, err=%v", sizes, err)
+		}
+	}
+}

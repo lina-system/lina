@@ -36,7 +36,7 @@ func setPersonaSource(t *testing.T, root, source string) {
 }
 
 func TestM1PersonaSource(t *testing.T) {
-	for _, mode := range []string{"configured", "unconfigured", "missing voice", "missing core"} {
+	for _, mode := range []string{"configured", "unconfigured", "missing voice", "missing core", "oversize core", "oversize combined"} {
 		t.Run(mode, func(t *testing.T) {
 			requests := make(chan string, 8)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -49,7 +49,14 @@ func TestM1PersonaSource(t *testing.T) {
 				emitResponse(w, "fixture reply", true)
 			}))
 			defer server.Close()
-			source := personaFixture(t, "fixture-core-A", "fixture-voice-A")
+			coreText, voiceText := "fixture-core-A", "fixture-voice-A"
+			switch mode {
+			case "oversize core":
+				coreText = strings.Repeat("x", 129000)
+			case "oversize combined":
+				coreText, voiceText = strings.Repeat("x", 40000), strings.Repeat("y", 40000)
+			}
+			source := personaFixture(t, coreText, voiceText)
 			if strings.HasPrefix(mode, "missing ") {
 				name := "default-voice-v1.md"
 				if mode == "missing core" {
