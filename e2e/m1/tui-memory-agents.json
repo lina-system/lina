@@ -1,0 +1,7 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "commands": ["/memory", "/agents"],
+  "memory": "Synthetic orchard preference",
+  "corrected": "Synthetic meadow preference",
+  "agent": "Fixture navigator"
+}

@@ -393,7 +393,7 @@ Settings are commands and labeled blocks, all requests to Core:
 - Command network: the standing grants, with revoke.
 - Channels: connections, pairing code, bindings and scopes. A token passes to Core once and is never shown.
 - Memory import: rehearsal report, run, promotion batches grouped, accept a whole group.
-- Agents: list, create, tune, delete. The agent talk log: one line per exchange, Enter expands.
+- Memory and agents: [memory and agent commands](#memory-and-agent-command-requests) provide explicit remember, correct, forget, list, create, choose, rename and delete. Tuning remains its own view. The agent talk log: one line per exchange, Enter expands.
 - Expression and reply length budgets, command network grants, the developer-view switch and power settings.
 - Report a problem: the agent drafts it, the TUI shows the draft, and nothing is posted until the person confirms ([surfaces.md](surfaces.md#settings)).
 
@@ -694,3 +694,37 @@ removed and requires connection-only startup.
 Withdrawn without an id: the hand-off pane, which the agent talk log replaces, and the work-panel worker mirror, which no contract defines.
 
 Open points, each decided by its owner or by measurement: the side-pane width (S11); Korean table rendering (S10); the terminal list of the spike gate; image paste over SSH; how the shared list of slash commands travels (a schema matter); whether a copy by OSC 52 on an explicit key fits the clipboard rule of [surfaces.md](surfaces.md#launcher) and [non-competition.md](non-competition.md), which S5 measures for support; mouse support; locales beyond Korean and English; and non-competition evidence for the TUI on a device-OS install ([non-competition.md](non-competition.md)).
+
+### Memory and agent command requests
+
+T-14 exposes `/memory` and `/agents` in the conversation footer. Each opens a
+scrollable text block with its command syntax; Esc returns to the composer.
+These commands are intercepted before conversation input, including when their
+capability is absent or their arguments are invalid. A refused or unsupported
+operation is shown locally and never becomes a model prompt.
+
+- `/memory list [query]` lists up to 1000 current scoped items with stable ids,
+  content, holder, privacy scope and source event identities. `/memory` is its
+  empty-query form.
+- `/memory remember [--holder=all|agent] [--scope=local|private|never-leaves] <text>`
+  records an explicit person statement through Core's existing memory writer.
+  Defaults are common knowledge (`all`) and `local`. `/memory correct <id> <text>`
+  supersedes that item with a newly sourced statement, retaining its scope and
+  holder. `/memory forget <id>` uses Core's recoverable removal flow; the next
+  recall and next model request exclude it. Results acknowledge committed ids.
+- `/agents` lists ids and names. `/agents create <name>` uses the LINA preset;
+  `/agents choose <id>` changes this client's conversation and memory focus;
+  `/agents rename <id> <name>` keeps the id; `/agents delete <id>` uses the
+  existing agent trash transition and ends its bindings. Selecting another
+  agent drops the old conversation display and subscriptions, while Core keeps
+  independent lanes. Deleting the selected agent selects the first remaining
+  list entry; an empty list stays available for creation. Initialization never
+  recreates a deleted default agent.
+
+These direct management requests express the person's own action. They do not
+answer an approval or question (T-04), bind a channel, or start an agent exchange.
+`agents` and `memory` are negotiated separately from conversation and accounts.
+Their transient blocks and command drafts are not persisted by the TUI.
+`e2e/m1/tui-memory-agents.json` exercises the installed Core, generated client
+protocol and real PTY TUI against a loopback Responses fixture, including scoped
+recall, correction, forget, agent identities, conversation selection and restart.

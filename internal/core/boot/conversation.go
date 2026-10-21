@@ -31,7 +31,9 @@ import (
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/internal/core/manifest"
+	"github.com/thisisjun786/lina/internal/core/memory"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
+	"github.com/thisisjun786/lina/internal/core/retract"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/kit/lease"
@@ -48,6 +50,7 @@ type acceptedSteering struct {
 }
 
 type conversationRuntime struct {
+	removals                    *retract.Store
 	materials                   *conversationMaterials
 	assets                      *assets.Store
 	root                        string
@@ -92,6 +95,17 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 		return nil, err
 	}
 	first, err := r.agents.FirstRun(ctx, r.person, true)
+	if errors.Is(err, agents.ErrNotFound) {
+		rows, e := r.agents.List(ctx)
+		err = e
+		if len(rows) > 0 {
+			first.Agent = rows[0]
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	r.removals, err = retract.Open(ctx, retract.Config{Canon: db, Root: root})
 	if err != nil {
 		return nil, err
 	}
@@ -114,9 +128,12 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err != nil {
 		return nil, err
 	}
-	r.identity = clientsrv.Identity{PersonID: r.person, Agents: []protocol.Agent{{AgentID: r.agent, Name: first.Agent.Name}}, Operations: clientsrv.ConversationOperations(r), Topics: r.topics, TopicCapabilities: map[string]protocol.Capability{
-		"core": clientsrv.ConversationCapability, "conversation:" + r.conversation: clientsrv.ConversationCapability, "results:" + r.conversation: clientsrv.ConversationCapability,
+	r.identity = clientsrv.Identity{PersonID: r.person, Agents: []protocol.Agent{{AgentID: r.agent, Name: first.Agent.Name}}, Operations: clientsrv.ConversationOperations(&conversationRouter{root: r, views: map[string]*conversationRuntime{r.agent: r}}), Topics: r.topics, TopicCapabilities: map[string]protocol.Capability{
+		"core": clientsrv.ConversationCapability, "conversation:": clientsrv.ConversationCapability, "results:": clientsrv.ConversationCapability,
 	}}
+	if r.agent == "" {
+		r.identity.Agents = []protocol.Agent{}
+	}
 	if route == nil {
 		r.identity.Topics = nil
 		r.identity.TopicCapabilities = nil
@@ -138,8 +155,13 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	for kind, op := range clientsrv.AccountOperations(r.person, r.accounts, relay) {
 		r.identity.Operations[kind] = op
 	}
-	if err = r.seedHistory(ctx); err != nil {
-		return nil, err
+	for kind, op := range clientsrv.ManagementOperations(r) {
+		r.identity.Operations[kind] = op
+	}
+	if r.agent != "" {
+		if err = r.seedHistory(ctx); err != nil {
+			return nil, err
+		}
 	}
 	success = true
 	return r, nil
@@ -163,6 +185,9 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 	}
 	if r.topics != nil {
 		r.topics.Close()
+	}
+	if r.removals != nil {
+		err = errors.Join(err, r.removals.Close())
 	}
 	if r.agents != nil {
 		err = errors.Join(err, r.agents.Close())
@@ -345,6 +370,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 	}
 	defer activity.Release()
 	var items []provider.Item
+	var memoryEpoch uint64
 	evidence := turn.EvidenceWriter{Ledger: r.journal(), ConversationID: r.conversation, ParentID: input.ID, Surface: ledger.Surface{Kind: "tui"}, Now: time.Now}
 	prep := &turn.Preparation{
 		VerifyBuild: r.verifyBuild,
@@ -365,9 +391,25 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			if err != nil {
 				return turn.PreparedRequest{}, err
 			}
+			memoryEpoch, err = r.removals.Epoch(ctx)
+			if err != nil {
+				return turn.PreparedRequest{}, err
+			}
+			profile, err := memory.New(r.db).Profile(ctx, memory.RecallScope{Person: r.person, Agent: r.agent, ExternalModel: true}, time.Now().Unix(), 32, 4096, func(text string) int { return len(text) })
+			if err != nil {
+				return turn.PreparedRequest{}, err
+			}
+			refs := make([]turn.Reference, 0, len(profile))
+			memoryItems := make([]provider.Item, 0, len(profile))
+			for _, hit := range profile {
+				refs = append(refs, turn.Reference{ID: hit.ID, Revision: strconv.FormatInt(hit.Revision, 10)})
+				raw, _ := json.Marshal(map[string]string{"role": "user", "content": "Remembered statement (" + hit.ID + "): " + hit.Content})
+				memoryItems = append(memoryItems, provider.Item(raw))
+			}
+			items = append(memoryItems, items...)
 			request := r.route.Request(items)
 			request.Instructions = strings.Join([]string{persona.Layers.Core, persona.Layers.DefaultVoice, persona.Layers.UserVoice, persona.Layers.GrowthSnapshot}, "\n")
-			return turn.PreparedRequest{Request: request, Assembly: turn.Assembly{AgentID: r.agent, PersonaRevision: persona.Commit}, Counter: func(request provider.Request) int {
+			return turn.PreparedRequest{Request: request, Assembly: turn.Assembly{AgentID: r.agent, PersonaRevision: persona.Commit, Items: refs}, Counter: func(request provider.Request) int {
 				n := len(request.Instructions)
 				for _, item := range request.Items {
 					n += len(item)
@@ -401,6 +443,14 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		Inputs: &conversationInputs{runtime: r, inputs: inputs},
 		Stream: func(ctx context.Context, request provider.Request) (provider.Stream, error) {
 			round++
+			// Never dispatch a cached preparation after a committed forget. This also
+			// fences follow-up rounds; the existing turn flow records the refusal.
+			if err := r.removals.Validate(ctx, memoryEpoch); err != nil {
+				return nil, err
+			}
+			if _, err := r.agents.Get(ctx, r.agent); err != nil {
+				return nil, err
+			}
 			return r.route.Adapter.Stream(ctx, activity, request)
 		},
 		Observe: func(ctx context.Context, e provider.Event) error {

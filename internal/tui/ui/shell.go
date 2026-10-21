@@ -126,6 +126,9 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				if projection.topic != "" {
+					if (strings.HasPrefix(projection.topic, "conversation:") && projection.topic != "conversation:"+m.conversation.id || strings.HasPrefix(projection.topic, "results:") && projection.topic != "results:"+m.conversation.id) && m.conversation.id != "" {
+						return m, nil
+					}
 					if projection.resync {
 						return m, m.markResync(projection)
 					}

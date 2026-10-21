@@ -35,7 +35,7 @@ func (m *shellModel) canSignIn() bool {
 	return m.hasCapability("accounts") && m.hasCapability("sign_in_relay")
 }
 func (m *shellModel) hasComposer() bool {
-	return m.hasCapability("conversation") || m.hasCapability("accounts")
+	return m.hasCapability("conversation") || m.hasCapability("accounts") || m.hasCapability("agents") || m.hasCapability("memory")
 }
 
 func (m *shellModel) startSignIn(purpose string) tea.Cmd {

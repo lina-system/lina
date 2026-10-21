@@ -186,6 +186,11 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 			return nil
 		}
 		text := strings.TrimSpace(m.content.Draft.Text)
+		if handled, command := m.managementCommand(text); handled {
+			m.reduceInput(state.EditDraft{})
+			m.conversation.undo = nil
+			return command
+		}
 		if handled, command := m.accountCommand(text); handled {
 			m.reduceInput(state.EditDraft{})
 			m.conversation.undo = nil
@@ -277,6 +282,9 @@ func (m *shellModel) openPager(text string) {
 
 func (m *shellModel) pagerKey(msg tea.KeyMsg, name string) tea.Cmd {
 	p := &m.conversation.pager
+	if name == "ctrl+d" {
+		return tea.Quit
+	}
 	if name == "esc" {
 		if p.searching {
 			p.searching = false
@@ -362,7 +370,7 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 	} else if notice := m.localNotice(); showNotice && notice != "" {
 		statusLine += "  " + notice
 	}
-	rows[plan.Status.Y] = clip(statusLine + "  Enter  Ctrl+D")
+	rows[plan.Status.Y] = clip(statusLine + "  Enter  Ctrl+D  /memory  /agents")
 	if plan.Tier == layout.TooSmall {
 		if plan.Notice.Height > 0 {
 			rows[0] = clip(design.Text(m.styles.options.Language, "shell.too_small"))
@@ -381,7 +389,12 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 	}
 	name := "LINA"
 	if len(m.content.Agents) > 0 {
-		name = m.content.Agents[0].Name
+		for _, a := range m.content.Agents {
+			if a.AgentID == m.activeAgent() {
+				name = a.Name
+				break
+			}
+		}
 	}
 	rows[plan.Header.Y] = clip(m.styles.Title.Render(name))
 	var transcript []string

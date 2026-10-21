@@ -360,3 +360,26 @@ Rules:
 - The JSON Schema to TypeScript type generator: chosen before the first LINA app work ([surfaces.md](surfaces.md#app-front-end)).
 - Request timeouts on the `client` and `node` connections: set by measurement during implementation acceptance of each connection.
 - The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds: set in the schema by the implementation issue that ships results.
+
+### Memory and agent management payloads
+
+Client 1.0 adds optional fields to the previously reserved `memory_request`,
+`memory_result`, `agent_request` and `agent_result` payloads. The independent
+`memory` and `agents` capabilities are version 1.0. Empty legacy shapes decode
+but an operation without its required arguments is refused as `malformed`.
+The generated schema is authoritative for field types.
+
+Memory operations are `list`, `remember`, `correct` and `forget`, scoped to an
+`agent_id` and the connection's person. `item_id` identifies a correction or
+forget target; `text` holds a query or explicit statement; optional `holder`
+and `scope` apply only to remember. Result items carry id, revision, content,
+holder, scope and canonical evidence identities. Correct returns the new id and
+retains the target's holder and scope. Forget returns only the removed id.
+Agent operations are `list`, `create`, `choose`, `rename` and `delete`; requests
+carry `agent_id` and/or `name` as appropriate, and results return the affected id
+and current list. Choose then discovers that agent's history with `history_get`.
+
+Mutating management replies use `applied` only after the existing Core service
+commits. Listing and choosing use `none`. Every reply is correlated to its
+request; neither client reconnect nor navigation repeats a mutation. Management
+requests retain conservative mutation admission during Core recovery.

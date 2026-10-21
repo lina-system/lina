@@ -118,3 +118,9 @@ point it must replace the refusal/skip with those assertions and pass the same
 explicit provider configuration to Core. A successful provider probe does not
 establish a client-level streamed or persisted turn. This PR adds no turn loop,
 conversation schema, or CLI conversation route.
+
+`m1/tui-memory-agents.json` covers management commands in the installed Core and
+real TUI. A loopback Responses fixture detects command leakage, verifies memory
+inclusion before and after correction/forget, and checks privacy scopes. The
+same scenario round-trips agent create/choose/rename/delete by id, sends a turn
+in the chosen lane and verifies persistent deletion after Core restart.
