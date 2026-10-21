@@ -316,3 +316,31 @@ func TestSequenceExhaustionAndOptions(t *testing.T) {
 		t.Fatal("sequence wrapped")
 	}
 }
+
+func TestSnapshotKeepsLatestItemRevision(t *testing.T) {
+	h := topicHub(t, TopicOptions{})
+	for _, part := range []string{`"a"`, `"b"`} {
+		publish(t, h, "conversation:test", TopicEvent{Kind: protocol.KindOutputDelta, Key: "item", Data: []byte(part)})
+		h.Flush("conversation:test")
+	}
+	start, _ := subscribe(t, h, "conversation:test", nil)
+	item := start.Snapshot.Items[0]
+	if item.Revision != 2 || string(item.Data) != `"ab"` {
+		t.Fatalf("snapshot lost latest revision: %#v", item)
+	}
+	if start.Snapshot.RevocationEpoch != "0" {
+		t.Fatal("missing initial revocation epoch")
+	}
+}
+
+func TestSnapshotCarriesProjectionRevocation(t *testing.T) {
+	h := topicHub(t, TopicOptions{RevocationEpoch: "9"})
+	start, _ := subscribe(t, h, "core", nil)
+	if start.Snapshot.RevocationEpoch != "9" {
+		t.Fatal("projection revocation lost")
+	}
+	if invalid, err := NewTopics("10", TopicOptions{RevocationEpoch: "01"}); err == nil {
+		invalid.Close()
+		t.Fatal("noncanonical revocation accepted")
+	}
+}

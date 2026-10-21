@@ -31,6 +31,9 @@ type TopicOptions struct {
 	QueueSize     int
 	BatchBytes    int
 	BatchInterval time.Duration
+	// RevocationEpoch identifies the projection used to seed this hub.
+	// Retraction and rebuilding that projection belong to its owning service.
+	RevocationEpoch string
 }
 
 // TopicEvent is an application-projected row. Key is stable within a topic.
@@ -40,6 +43,8 @@ type TopicEvent struct {
 	Kind protocol.Kind   `json:"kind"`
 	Key  string          `json:"key"`
 	Data json.RawMessage `json:"data"`
+	// Revision is assigned at publication, independently of caller input.
+	Revision uint64 `json:"revision"`
 }
 
 type TopicFrame struct {
@@ -49,9 +54,10 @@ type TopicFrame struct {
 }
 
 type TopicSnapshot struct {
-	Topic  string       `json:"topic"`
-	Cursor rpc.Cursor   `json:"cursor"`
-	Items  []TopicEvent `json:"items"`
+	Topic           string       `json:"topic"`
+	Cursor          rpc.Cursor   `json:"cursor"`
+	Items           []TopicEvent `json:"items"`
+	RevocationEpoch string       `json:"revocation_epoch"`
 }
 
 // TopicStart is delivered before reading Subscription.Next. A missing or stale
@@ -84,6 +90,12 @@ type Topics struct {
 
 func NewTopics(epoch string, options TopicOptions) (*Topics, error) {
 	if err := (rpc.Cursor{Epoch: epoch}).Validate(); err != nil {
+		return nil, err
+	}
+	if options.RevocationEpoch == "" {
+		options.RevocationEpoch = "0"
+	}
+	if err := (rpc.Cursor{Epoch: options.RevocationEpoch}).Validate(); err != nil {
 		return nil, err
 	}
 	if options.RingSize < 0 || options.SnapshotSize < 0 || options.QueueSize < 0 || options.BatchBytes < 0 || options.BatchInterval < 0 {
@@ -154,6 +166,7 @@ func mergeEvents(a, b TopicEvent) (TopicEvent, bool) {
 		_ = json.Unmarshal(a.Data, &first)
 		_ = json.Unmarshal(b.Data, &second)
 		a.Data, _ = json.Marshal(first + second)
+		a.Revision = b.Revision
 		return a, true
 	}
 	return cloneEvent(b), true
@@ -249,6 +262,7 @@ func (h *Topics) flush(name string, t *topicState) {
 
 func (h *Topics) emit(name string, t *topicState, event TopicEvent) {
 	t.seq++
+	event.Revision = t.seq
 	frame := TopicFrame{Topic: name, Cursor: rpc.Cursor{Epoch: h.epoch, Seq: t.seq}, Event: event}
 	if len(t.ring) < h.options.RingSize {
 		t.ring = append(t.ring, frame)
@@ -310,7 +324,7 @@ func (h *Topics) Subscribe(name string, after *rpc.Cursor) (TopicStart, *Subscri
 	}
 	gap := after != nil && (after.Epoch != h.epoch || after.Seq < oldest || after.Seq > t.seq)
 	if after == nil || gap {
-		snapshot := &TopicSnapshot{Topic: name, Cursor: rpc.Cursor{Epoch: h.epoch, Seq: t.seq}, Items: make([]TopicEvent, len(t.items))}
+		snapshot := &TopicSnapshot{Topic: name, Cursor: rpc.Cursor{Epoch: h.epoch, Seq: t.seq}, Items: make([]TopicEvent, len(t.items)), RevocationEpoch: h.options.RevocationEpoch}
 		for i, item := range t.items {
 			snapshot.Items[i] = cloneEvent(item)
 		}
