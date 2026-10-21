@@ -1,8 +1,8 @@
 {
   "check": "V1 ChatGPT sign-in and Responses round trip",
-  "status": "not_run",
-  "live_account_verified": false,
-  "reason": "Live acceptance requires a real ChatGPT account completing LINA's own sign-in. Synthetic signed token and HTTP fixtures establish implementation behavior only.",
+  "status": "pending_owner_signin",
+  "live_account_verified": null,
+  "reason": "The owner must be present to complete LINA sign-in with their own ChatGPT account. Recorded-wire tests are not live request-surface acceptance.",
   "documentation": [
     "https://developers.openai.com/siwc/token-sharing-open-source/sign-in/",
     "https://developers.openai.com/siwc/token-sharing-open-source/token-reference/",
@@ -11,27 +11,36 @@
     "https://developers.openai.com/siwc/website/"
   ],
   "sign_in": {
-    "local_client": "not_run",
-    "remote_client": "not_run",
-    "dynamic_registration": "not_run",
-    "loopback_redirect": "not_run",
-    "pasted_redirect": "not_run",
-    "granted_scope_check": "not_run",
-    "id_token_verification": "not_run",
-    "refresh_rotation": "not_run"
+    "local_client": null,
+    "remote_client": null,
+    "dynamic_registration": null,
+    "loopback_redirect": null,
+    "pasted_redirect": null,
+    "granted_scope_check": null,
+    "id_token_verification": null,
+    "refresh_rotation": null
   },
   "responses": {
-    "completed_turns": 0,
-    "store_false_stream_true": "not_run",
-    "encrypted_reasoning_round_trip": "not_run",
-    "function_tool": "not_run",
-    "apply_patch_function": "not_run",
-    "parallel_tool_calls": "not_run"
+    "completed_turns": null,
+    "store_false_stream_true": null,
+    "encrypted_reasoning_round_trip": null,
+    "function_tool": null,
+    "apply_patch_function": null,
+    "parallel_tool_calls": null
   },
   "undocumented_fields": {
-    "include": {"accepted": null, "observation": "not_run"},
-    "parallel_tool_calls": {"accepted": null, "observation": "not_run"},
-    "service_tier": {"accepted": null, "observation": "not_run"}
+    "include": {
+      "accepted": null,
+      "observation": null
+    },
+    "parallel_tool_calls": {
+      "accepted": null,
+      "observation": null
+    },
+    "service_tier": {
+      "accepted": null,
+      "observation": null
+    }
   },
   "accepted_request_fields": null,
   "accepted_tool_declarations": null
