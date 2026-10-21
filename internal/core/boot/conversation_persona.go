@@ -4,6 +4,7 @@ package boot
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strconv"
 	"time"
 
@@ -38,6 +39,13 @@ func (r *conversationRuntime) resolvePersonaGrant(ctx context.Context, id string
 	r.mu.Unlock()
 	if !ok {
 		return grant.Grant{}, grant.Environment{}, grant.ErrGrant
+	}
+	if g.Identity.Profile == "persona-state" {
+		state, err := r.agents.State(ctx, g.Identity.Agent)
+		if err != nil {
+			return grant.Grant{}, grant.Environment{}, err
+		}
+		return g, grant.Environment{Epoch: r.epoch, Now: time.Now(), OSPermitted: true, Revision: agents.StateRevision(state)}, nil
 	}
 	a, err := r.agents.Get(ctx, g.Identity.Agent)
 	if err != nil {
@@ -84,6 +92,39 @@ func (r *conversationRuntime) preparePersonaTools(ctx context.Context, turnID st
 	for _, spec := range specs {
 		bindings[spec.Name] = turn.Tool(registry, spec, tools.Call{Auth: auth}, turnID)
 	}
+	settings, err := r.agents.State(ctx, r.agent)
+	if err != nil {
+		return nil, nil, err
+	}
+	scope.StateRevision = agents.StateRevision(settings)
+	stateAuth := auth
+	stateAuth.GrantID = turnID + ":state"
+	stateAuth.Profile = "persona-state"
+	stateAuth.Revision = scope.StateRevision
+	stateTarget := "persona-state:" + r.agent
+	stateGrant := grant.Grant{Identity: stateAuth, Expires: g.Expires, Scope: []grant.Permission{{Tool: "fill_persona_setting", Target: stateTarget, Write: true}}, Revisions: map[string]string{stateTarget: scope.StateRevision}}
+	r.mu.Lock()
+	r.personaGrants[stateAuth.GrantID] = stateGrant
+	r.mu.Unlock()
+	settingSpec, err := coreexec.RegisterPersonaSettings(registry, r.persona, scope)
+	if err != nil {
+		return nil, nil, err
+	}
+	bindings[settingSpec.Name] = turn.Tool(registry, settingSpec, tools.Call{Auth: stateAuth}, turnID)
+	settingData, _ := json.Marshal(struct {
+		Kind   string            `json:"kind"`
+		Values map[string]string `json:"values"`
+	}{"persona_settings", settings.Settings})
+	var sourceIDs []string
+	for _, id := range settings.SettingSources {
+		sourceIDs = append(sourceIDs, id)
+	}
+	slices.Sort(sourceIDs)
+	var refs []assemble.Ref
+	for _, id := range slices.Compact(sourceIDs) {
+		refs = append(refs, assemble.Ref{ID: id})
+	}
+	packet = append(packet, assemble.ContextItem{ID: "persona-settings:" + r.agent, Revision: scope.StateRevision, AgentID: r.agent, Kind: assemble.Commitments, Origin: "persona-record:" + r.agent, Text: string(settingData), Evidence: refs})
 	return catalog, packet, nil
 }
 

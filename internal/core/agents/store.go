@@ -40,8 +40,9 @@ type Preset struct {
 	BlankSettings []string `json:"blank_settings,omitempty"`
 }
 type State struct {
-	Emotion  string            `json:"emotion"`
-	Settings map[string]string `json:"settings"`
+	Emotion        string            `json:"emotion"`
+	Settings       map[string]string `json:"settings"`
+	SettingSources map[string]string `json:"setting_sources,omitempty"`
 }
 type Agent struct {
 	ID, Name, Preset string

@@ -444,6 +444,8 @@ Initialization is recorded once in canon and is safe to repeat across concurrent
 - A methodology changes with the preset: a preset update gives the next revision of the core and default voice layers, and the record sets an agent has created stay as they are.
 - A preset's default voice layer includes one line for how its agent writes to other agents (see Agent exchanges).
 
+The conversation writer fills only keys copied from the preset when that agent was created, with a value and a reference to the confirmed native person event in that conversation. It refuses undeclared keys, missing evidence, conflicting replacements and stale state snapshots. Repeating the same fill preserves the first evidence reference. Values and their sources survive preset updates and restart, independently of other agents and of the four fixed persona layers. Atropos supplies the definitions and values as a per-turn data item, with evidence references, outside the cached persona prefix. Filling does not produce an unsolicited conversation notice.
+
 ### Preset methodologies
 
 A methodology is the judgment an agent applies to one kind of work. It comes from observed assistant practice, generalized. Four presets carry one: the LINA preset (to-do management), the dev preset (development management), the knowledge preset (knowledge and people management) and the life preset (life management). The life preset manages the person's own life and is unrelated to LIFE, the world engine of [cognition-and-life.md](cognition-and-life.md#life).

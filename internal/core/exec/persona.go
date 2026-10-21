@@ -26,6 +26,7 @@ var ErrPersonaEvidence = errors.New("persona_requires_person_request")
 type PersonaScope struct {
 	Agent, Person, Conversation, Input string
 	Revision                           int64
+	StateRevision                      string
 }
 type VoiceChange struct {
 	Quote     string `json:"quote"`
