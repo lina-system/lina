@@ -294,6 +294,99 @@ func TestReserveIsAllocatedReleasedAndReplenished(t *testing.T) {
 	}
 }
 
+func TestDiskFullRetryWithConsumedReserve(t *testing.T) {
+	full := errors.New("typed full error")
+	other := errors.New("private storage failure")
+	for _, result := range []diag.Result{diag.Failure, diag.Unknown, diag.Denied, diag.Cancelled} {
+		label, _ := json.Marshal(result)
+		for _, item := range []struct {
+			name     string
+			failures []error
+			wantErr  error
+			calls    int
+		}{
+			{"full then success", []error{full}, nil, 2},
+			{"still full", []error{full, full}, ErrStorage, 2},
+			{"other failure", []error{other}, ErrStorage, 1},
+		} {
+			t.Run(string(label)+"/"+item.name, func(t *testing.T) {
+				reserve, err := PrepareReserve(t.TempDir())
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer reserve.Close()
+				if err := reserve.Release(); err != nil {
+					t.Fatal(err)
+				}
+				s, b := memoryStore()
+				s.reserve = reserve
+				s.isFull = func(err error) bool { return errors.Is(err, full) }
+				r := root(t, s, diag.References{TaskID: newID(t)})
+				e := diag.Event{EventID: newID(t), Time: time.Now().UTC(), Fields: diag.Fields{
+					Component: diag.Task, Cause: diag.Cause{Code: diag.StorageFailed, ParentEventID: r.EventID},
+					Result: result, NextAction: diag.ReportFailure, ErrorClass: diag.Storage,
+				}}
+				b.calls = 0
+				b.writeErrors = item.failures
+				err = s.Append(t.Context(), e)
+				if !errors.Is(err, item.wantErr) || b.calls != item.calls {
+					t.Fatalf("append: err=%v calls=%d; want err=%v calls=%d", err, b.calls, item.wantErr, item.calls)
+				}
+				want := []diag.Event{r}
+				if item.wantErr == nil {
+					want = append(want, e)
+				}
+				if !reflect.DeepEqual(b.events, want) {
+					t.Fatal("append did not preserve the exact committed events")
+				}
+				if reserve.Present() {
+					t.Fatal("retry restored a consumed reserve")
+				}
+			})
+		}
+	}
+}
+
+func TestDiskFullDoesNotRetryAfterReserveReleaseFailure(t *testing.T) {
+	for _, kind := range []string{"remove error", "closed"} {
+		t.Run(kind, func(t *testing.T) {
+			dir := t.TempDir()
+			reserve, err := PrepareReserve(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer reserve.Close()
+			if kind == "closed" {
+				if err := reserve.Close(); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err := reserve.Release(); err != nil {
+					t.Fatal(err)
+				}
+				path := filepath.Join(dir, "system", "events", "reserve")
+				if err := os.Mkdir(path, 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(path, "occupied"), nil, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			s, b := memoryStore()
+			s.reserve = reserve
+			full := errors.New("typed full error")
+			s.isFull = func(err error) bool { return errors.Is(err, full) }
+			r := root(t, s, diag.References{TaskID: newID(t)})
+			b.calls = 0
+			b.writeErrors = []error{full}
+			_, err = diag.NewEmitter(s).Emit(t.Context(), diag.Fields{Component: diag.Task, Cause: diag.Cause{Code: diag.StorageFailed, ParentEventID: r.EventID}, Result: diag.Failure, NextAction: diag.ReportFailure, ErrorClass: diag.Storage})
+			if !errors.Is(err, ErrStorage) || b.calls != 1 || len(b.events) != 1 {
+				t.Fatalf("release failure: err=%v calls=%d events=%d", err, b.calls, len(b.events))
+			}
+		})
+	}
+}
+
 func TestDiskFullRetryAndOtherWriteErrors(t *testing.T) {
 	full := errors.New("typed full error")
 	other := errors.New("private storage failure")
