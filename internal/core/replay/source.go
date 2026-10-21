@@ -149,6 +149,7 @@ func eventValue(e ledger.Event) Event {
 func visible(ctx context.Context, tx *canon.Tx, scope Scope, id string) error {
 	var n int
 	err := tx.QueryRowContext(ctx, `SELECT count(*) FROM retract_visible_event e WHERE e.id=? AND e.agent_id=?
+ AND (e.material_id IS NULL OR EXISTS(SELECT 1 FROM assets a JOIN asset_revisions r ON r.asset_id=a.id WHERE a.id=e.material_id AND r.revision=e.material_revision AND a.trashed_at=0))
  AND NOT EXISTS(SELECT 1 FROM retract_block b WHERE b.person=? AND b.conversation_id=e.conversation_id)
  AND NOT EXISTS(SELECT 1 FROM conv_event other WHERE other.conversation_id=e.conversation_id AND other.speaker_kind='person' AND other.person_id<>?)
  AND EXISTS(SELECT 1 FROM conv_event owner WHERE owner.conversation_id=e.conversation_id AND owner.agent_id=e.agent_id AND owner.speaker_kind='person' AND owner.person_id=?)
@@ -162,7 +163,7 @@ func visible(ctx context.Context, tx *canon.Tx, scope Scope, id string) error {
 	return nil
 }
 
-func (s Source) Load(ctx context.Context, scope Scope, id string) (Episode, error) {
+func (s Source) loadSnapshot(ctx context.Context, scope Scope, id string) (Episode, error) {
 	ep := Episode{Version: 1, TurnID: id, Reply: []provider.Item{}, Calls: []Call{}, History: []Event{}}
 	var history []ledger.Event
 	err := s.DB.Read(ctx, func(tx *canon.Tx) error {
@@ -182,6 +183,10 @@ func (s Source) Load(ctx context.Context, scope Scope, id string) (Episode, erro
 				return ledger.Event{}, err
 			}
 			e, err := journal.Get(ctx, id)
+			var needed *materialNeeded
+			if errors.As(err, &needed) {
+				return e, err
+			}
 			if errors.Is(err, ledger.ErrBytesUnavailable) || errors.Is(err, sql.ErrNoRows) {
 				return e, Exclusion("missing_source")
 			}
@@ -199,7 +204,11 @@ func (s Source) Load(ctx context.Context, scope Scope, id string) (Episode, erro
 		ep.Zone = "UTC"
 		evidence, err := get("request:" + id + ":0")
 		if err != nil {
-			return Exclusion("missing_assembly")
+			var exclusion Exclusion
+			if errors.As(err, &exclusion) {
+				return Exclusion("missing_assembly")
+			}
+			return err
 		}
 		if err = json.Unmarshal([]byte(evidence.Body.Text()), &ep.Evidence); err != nil {
 			return Exclusion("missing_assembly")

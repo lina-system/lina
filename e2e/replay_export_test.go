@@ -3,10 +3,12 @@
 package e2e_test
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"github.com/thisisjun786/lina/internal/core/replay"
 	"github.com/thisisjun786/lina/kit/protocol"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -63,6 +65,32 @@ func TestM1ReplayExportInstalledCore(t *testing.T) {
 
 	client, conversation := conversationClient(t, h)
 	agent := client.Welcome.Agents[0].AgentID
+	// Cross the native ledger's material boundary, then replay this exact turn.
+	large := strings.Repeat("기록", 3000)
+	key := "large-replay-source"
+	if _, err = client.Input(h.ctx, protocol.Input{ConversationID: &conversation, InputID: &key, Text: &large}); err != nil {
+		t.Fatal(err)
+	}
+	echo, active := false, false
+	for {
+		frame, err := client.Receive(h.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if frame.Error != nil {
+			t.Fatalf("large input refused: %s", frame.Error.Code)
+		}
+		if item, ok := frame.Payload.(protocol.ItemDone); ok && item.EchoKey != nil && *item.EchoKey == key {
+			echo = true
+		}
+		if state, ok := frame.Payload.(protocol.TurnState); ok && state.Active != nil && echo {
+			if *state.Active {
+				active = true
+			} else if active {
+				break
+			}
+		}
+	}
 	client.Close()
 	digest := func() [32]byte {
 		var content []byte
@@ -92,7 +120,7 @@ func TestM1ReplayExportInstalledCore(t *testing.T) {
 		t.Fatalf("default selected turns: %+v %v", manifest, err)
 	}
 	chosen := export("--agent", agent, "--conversation", conversation, "--since", "2020-01-01T00:00:00Z", "--until", "2100-01-01T00:00:00Z")
-	if err := json.Unmarshal([]byte(chosen.Manifest), &manifest); err != nil || manifest.Exported != 1 {
+	if err := json.Unmarshal([]byte(chosen.Manifest), &manifest); err != nil || manifest.Exported != 2 {
 		t.Fatalf("export: %+v %v", manifest, err)
 	}
 	file := filepath.Join(chosen.Directory, "episodes.jsonl")
@@ -101,8 +129,20 @@ func TestM1ReplayExportInstalledCore(t *testing.T) {
 		t.Fatal(err)
 	}
 	var ep replay.Episode
-	if err = json.Unmarshal(data, &ep); err != nil {
-		t.Fatal(err)
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	for {
+		var next replay.Episode
+		err = decoder.Decode(&next)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		ep = next
+	}
+	if ep.Input.Text != large {
+		t.Fatal("large material-backed input lost")
 	}
 	if !strings.Contains(string(data), scenario.Input) || ep.Input.ID == "" || len(ep.Evidence.Assembly.History) == 0 {
 		t.Fatal("export lost original evidence")
@@ -118,7 +158,7 @@ func TestM1ReplayExportInstalledCore(t *testing.T) {
 		out := filepath.Join(h.root, []string{"replayed-turn", "replayed-episode"}[i])
 		args := []string{"replay", source, "--socket", h.socket, "--out", out}
 		if i == 1 {
-			args = append(args, "--candidates", candidateDir)
+			args = append(args, "--turn", ep.TurnID, "--candidates", candidateDir)
 		}
 		p := h.command(args...)
 		p.start(t)
@@ -133,11 +173,11 @@ func TestM1ReplayExportInstalledCore(t *testing.T) {
 			}
 		}
 	}
-	if calls.Load() != 3 {
+	if calls.Load() != 4 {
 		t.Fatalf("model calls=%d; export must not call model", calls.Load())
 	}
 	mu.Lock()
-	candidateApplied := strings.Contains(instructions[2], "synthetic candidate guidance")
+	candidateApplied := strings.Contains(instructions[3], "synthetic candidate guidance")
 	mu.Unlock()
 	if !candidateApplied {
 		t.Fatal("candidate did not replace recorded layer")

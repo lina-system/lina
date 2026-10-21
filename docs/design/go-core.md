@@ -881,7 +881,9 @@ The installed commands use the negotiated `replay/1.0` client capability. The
 client sends an explicit selection or one turn reference; Core supplies the
 existing canon reader, ledger material reader, pinned persona reader and model
 adapter. `replay` is an L4 flow with a read-only database interface, not a second
-store. The kit loop runs in a network-blocked subprocess with a fresh scratch
+store. Material bytes are verified outside canon read snapshots, then read from
+a per-operation revision cache inside a fresh visibility snapshot. A retraction
+or material trash during that read prevents publication. The kit loop runs in a network-blocked subprocess with a fresh scratch
 directory. Core brokers provider streams through pipes without sending a
 credential into the child. The journal is empty; the read registry has a
 discarding gate that refuses writes, outward calls and network tools. `expand`

@@ -58,7 +58,7 @@ func fixture(t *testing.T) (*canon.Store, replay.Source, string) {
 	}}
 	return db, source, root
 }
-func seed(t *testing.T, db *canon.Store, id string, entry guard.Entry) string {
+func seed(t *testing.T, db *canon.Store, id string, entry guard.Entry, material ...ledger.Materials) string {
 	t.Helper()
 	ctx := t.Context()
 	clock := time.Date(2026, 1, 2, 3, 4, 5, 0, time.FixedZone("original", 3600))
@@ -66,7 +66,13 @@ func seed(t *testing.T, db *canon.Store, id string, entry guard.Entry) string {
 	if entry != guard.EntryOwner {
 		in.PersonID = ""
 	}
-	event, err := ledger.New(db, nil).Admit(ctx, entry, in)
+	var materials ledger.Materials
+	if len(material) > 0 {
+		materials = material[0]
+		in.Body = strings.Repeat("large synthetic input ", 1000)
+		in.SecretSpans = nil
+	}
+	event, err := ledger.New(db, materials).Admit(ctx, entry, in)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +91,7 @@ func seed(t *testing.T, db *canon.Store, id string, entry guard.Entry) string {
 		t.Fatal(err)
 	}
 	evidence.Hash = assemble.Digest(provider.Request{Model: evidence.Model, Effort: evidence.Effort, Instructions: "original instructions\n\n\n", Items: items, Purpose: provider.Turn})
-	writer := turn.EvidenceWriter{Ledger: ledger.New(db, nil), ConversationID: "conversation", ParentID: id, Surface: ledger.Surface{Kind: "tui"}, Now: func() time.Time { return clock }}
+	writer := turn.EvidenceWriter{Ledger: ledger.New(db, materials), ConversationID: "conversation", ParentID: id, Surface: ledger.Surface{Kind: "tui"}, Now: func() time.Time { return clock }}
 	if err = writer.Acknowledge(ctx, turn.Acknowledgement{TurnID: tid, PolicyRevision: "policy", Assembly: evidence.Assembly}); err != nil {
 		t.Fatal(err)
 	}

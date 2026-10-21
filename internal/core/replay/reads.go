@@ -22,7 +22,7 @@ func (ReadGate) Begin(_ context.Context, c tools.Call, s tools.Spec, in tools.In
 }
 func (ReadGate) Finish(context.Context, tools.Ticket, tools.Result) error { return nil }
 
-func (s Source) ReadEvent(ctx context.Context, scope Scope, id string) (Event, error) {
+func (s Source) readEventSnapshot(ctx context.Context, scope Scope, id string) (Event, error) {
 	var event ledger.Event
 	err := s.DB.Read(ctx, func(tx *canon.Tx) error {
 		if err := visible(ctx, tx, scope, id); err != nil {
