@@ -293,9 +293,11 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 			s.Gen++
 		}
 		s.Revocation = m.Revocation
-		// Replace only this topic, preserving other topics and echo positions.
+		// Replace only this topic in snapshot order. Existing blocks and local
+		// echoes anchor the merge, but cannot override the authoritative order.
 		incoming := make(map[string]Block, len(m.Items))
 		order := make([]string, 0, len(m.Items))
+		positions := make(map[string]int, len(m.Items))
 		for _, b := range m.Items {
 			if b.ID == "" {
 				continue
@@ -305,6 +307,7 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 					continue
 				}
 			} else {
+				positions[b.ID] = len(order)
 				order = append(order, b.ID)
 			}
 			b.Topic = m.Topic
@@ -319,6 +322,15 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 			incoming[b.ID] = b
 		}
 		kept := make([]Block, 0, len(s.Blocks)+len(incoming))
+		next := 0
+		appendThrough := func(end int) {
+			for next <= end {
+				b := incoming[order[next]]
+				kept = append(kept, b)
+				s.remapEcho(b)
+				next++
+			}
+		}
 		for _, old := range s.Blocks {
 			b, ok := incoming[old.ID]
 			if !ok && old.Local {
@@ -332,19 +344,14 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 				}
 			}
 			if ok {
-				kept = append(kept, b)
-				delete(incoming, b.ID)
-				s.remapEcho(b)
+				// Include any missing predecessors before this surviving block.
+				// An already emitted block is simply consumed at its old slot.
+				appendThrough(positions[b.ID])
 			} else if old.Topic != m.Topic || old.Local {
 				kept = append(kept, old)
 			}
 		}
-		for _, id := range order {
-			if b, ok := incoming[id]; ok {
-				kept = append(kept, b)
-				s.remapEcho(b)
-			}
-		}
+		appendThrough(len(order) - 1)
 		s.Blocks = kept
 		if s.Topics == nil {
 			s.Topics = map[string]Topic{}
