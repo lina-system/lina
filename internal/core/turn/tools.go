@@ -3,8 +3,6 @@ package turn
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 
@@ -19,9 +17,7 @@ import (
 // comes from the trusted schema's normalization; intent is the stable call id.
 // The unambiguous tuple excludes epochs so a restart finds the same receipt.
 func EffectKey(scope, action, target, intent string) string {
-	b, _ := json.Marshal([4]string{scope, action, target, intent})
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:])
+	return authority.EffectKey(scope, action, target, intent)
 }
 
 // Tool binds a registered tool to trusted Core authorization and scope. The

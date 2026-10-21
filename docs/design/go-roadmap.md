@@ -275,6 +275,7 @@ The #104 typed-result increment supplies all eight closed body schemas, determin
 
 **G1-39 Replay command and episode export.** `lina replay` and `lina export` for the development loop.
 - Done when: a replay writes no ledger event and no effect row; an effect call is answered by the recorded result or the turn is excluded; retracted and forgotten items are left out; an export selects nothing by default and masks secrets; the manifest counts left-out turns.
+- The installed commands use the existing Core reader and kit loop, with a private export directory, a discarding replay journal, exact recorded effect receipts, live local read tools and explicit exclusion manifests. Installed Core/Responses-stub/PTY coverage lives in `e2e/m1/replay-export.json`.
 - Depends on: G1-10, G1-15. Design refs: C-59; [runtime.md](runtime.md#replay-command).
 
 ## LINA 2

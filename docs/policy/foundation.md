@@ -70,6 +70,12 @@ The scripts use Node 20 or newer and its built-in modules, Git, and actionlint o
 
 The bound is U(x) = 10 * ceil(max(1.5x, x + 15) / 10) seconds of wall time, measured from the start of `foundation.mjs` to the gate's result. A mode without a measurement has no bound. The development-loop check V7 records the first local measurement of each mode ([runtime.md](../design/runtime.md#runtime-acceptance)).
 
+PR #370 also exhausted the former components deadline at 595.4 seconds
+while tests were progressing. With the 900-second component watchdog, its
+subsequent full CI run completed successfully in 681.4 seconds. Build-only and
+automation limits remain independent; no checks are skipped or test results
+cached.
+
 A run above its bound is investigated before the bound is changed. A bound changes only together with the new measurement, in the same change.
 
 ## Passing and failing

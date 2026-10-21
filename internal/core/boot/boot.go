@@ -308,6 +308,7 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		if openErr != nil {
 			return openErr
 		}
+		runtime.replaySocket = cfg.Socket
 		supported := cfg.Client.Supported
 		cfg.Client = runtime.identity
 		cfg.Client.Supported = supported

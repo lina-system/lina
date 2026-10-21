@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/thisisjun786/lina/internal/core/replay"
 	"github.com/thisisjun786/lina/kit/tools"
 )
 
@@ -24,6 +25,15 @@ func main() {
 			os.Exit(runInstall(os.Args[2:]))
 		case "doctor":
 			os.Exit(runDoctor(os.Args[2:]))
+		case "replay":
+			os.Exit(runReplay(os.Args[2:]))
+		case "export":
+			os.Exit(runExport(os.Args[2:]))
+		case "replay-worker":
+			if err := replay.Worker(context.Background(), os.Stdin, os.Stdout); err != nil {
+				os.Exit(70)
+			}
+			return
 		case "version":
 			version()
 			return
@@ -33,6 +43,6 @@ func main() {
 			os.Exit(tools.Main(context.Background(), os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 		}
 	}
-	fmt.Fprintln(os.Stderr, "usage: lina <core|tui|install|backup|restore|import-hermes|doctor|version|file-tool>")
+	fmt.Fprintln(os.Stderr, "usage: lina <core|tui|install|backup|restore|import-hermes|doctor|replay|export|version|file-tool>")
 	os.Exit(64)
 }

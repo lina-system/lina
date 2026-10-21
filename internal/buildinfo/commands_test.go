@@ -58,17 +58,45 @@ func TestVersionsOutsideRepository(t *testing.T) {
 	// Build actual command sources from a source export, without VCS metadata.
 	// Disable stamping explicitly so an unrelated parent repository cannot affect it.
 	root := t.TempDir()
-	for _, dir := range []string{"cmd/lina", "cmd/lina-node", "internal/buildinfo", "internal/core", "internal/addons", "internal/clientapi", "internal/design", "internal/moirai", "internal/tui", "persona", "kit"} {
-		if err := os.CopyFS(filepath.Join(root, dir), os.DirFS(filepath.Join("../..", dir))); err != nil {
-			t.Fatal(err)
-		}
+	// Copy the source tree rather than maintaining a package allowlist. Git's
+	// exclusions keep metadata and ignored build/runtime files out while retaining
+	// new local dependencies and their embedded assets.
+	list := exec.Command("git", "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+	list.Dir = "../.."
+	files, err := list.Output()
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, name := range []string{"go.mod", "go.sum"} {
-		content, err := os.ReadFile(filepath.Join("../..", name))
+	for _, name := range strings.Split(string(files), "\x00") {
+		if name == "" {
+			continue
+		}
+		source, target := filepath.Join("../..", name), filepath.Join(root, name)
+		info, err := os.Lstat(source)
+		if os.IsNotExist(err) {
+			continue
+		}
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(root, name), content, 0o600); err != nil {
+		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			link, err := os.Readlink(source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(link, target); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		content, err := os.ReadFile(source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(target, content, info.Mode().Perm()); err != nil {
 			t.Fatal(err)
 		}
 	}

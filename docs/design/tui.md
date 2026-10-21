@@ -281,6 +281,12 @@ For the colour conversation screen, each new size reaches the cell renderer
 before its reflowed view, even if the view text is unchanged. The connection owner's latest dimensions remain authoritative: late renderer startup size messages are discarded before they can resize the cell buffer. Resizing keeps the
 draft and redraws header, status and composer within the current row budget;
 cells from the previous dimensions must not survive as stale transcript rows.
+Only dimensions forwarded by the owning input decoder may resize the renderer.
+The renderer filters the library's asynchronous initial size notification so a
+late startup value cannot undo a newer size and clip the composer or status.
+The startup-order regression delivers that stale notification explicitly; it
+does not rely on scheduler timing or sleeps.
+
 `e2e/m1/tui-resize.json` exercises 80x24 → 40x12 → 120x35 through a real PTY,
 compares every row and the cursor with a fresh client at the same size, then
 clears the retained draft and completes another exchange.

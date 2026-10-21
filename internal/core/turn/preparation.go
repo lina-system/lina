@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 
+	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/provider"
 )
@@ -37,11 +38,8 @@ type ModelPolicy struct {
 	Revision string
 	Class    provider.Class
 }
-type Reference struct{ ID, Revision string }
-type Assembly struct {
-	AgentID, PersonaRevision string
-	Skills, Items            []Reference
-}
+type Reference = ledger.Reference
+type Assembly = ledger.Assembly
 type PreparedRequest struct {
 	Request   provider.Request
 	Assembly  Assembly
@@ -55,12 +53,7 @@ type Acknowledgement struct {
 	TurnID, PolicyRevision string
 	Assembly               Assembly
 }
-type RequestEvidence struct {
-	TurnID, Hash string
-	Round        int
-	Class        provider.Class
-	Assembly     Assembly
-}
+type RequestEvidence = ledger.RequestEvidence
 
 // Preparation composes store boundaries without importing another L4 flow.
 // VerifyBuild checks the running executable against its build manifest. Account
@@ -109,6 +102,7 @@ func (p *Preparation) failure(step Step, err error) error {
 func cloneAssembly(a Assembly) Assembly {
 	a.Skills = append([]Reference(nil), a.Skills...)
 	a.Items = append([]Reference(nil), a.Items...)
+	a.History = append([]Reference(nil), a.History...)
 	return a
 }
 
@@ -197,7 +191,7 @@ func (p *Preparation) prepare(ctx context.Context, id string, cfg loop.Config) (
 		if err != nil || len(digest) != 32 {
 			return nil, p.failure(ContextStep, ErrInvalid)
 		}
-		e := RequestEvidence{id, hash, round, model.Class, cloneAssembly(prepared.Assembly)}
+		e := RequestEvidence{TurnID: id, Hash: hash, Round: round, Class: model.Class, Assembly: cloneAssembly(prepared.Assembly), Model: r.Model, Effort: r.Effort, Tools: r.Tools, Fields: r.Fields}
 		if err := p.RecordRequest(ctx, e); err != nil {
 			return nil, p.failure(ContextStep, err)
 		}

@@ -222,7 +222,26 @@ The ledger can be exported as episodes: recorded turns written out for use outsi
 - Only a turn that starts from an event whose speaker kind is `person` can start an episode. Scheduled deliveries, background notices, agent exchanges, compaction summaries and imported conversations are not episodes.
 - The export leaves out content that is retracted, trashed, deleted or forgotten, content whose scope does not allow it, and every span flagged `secret`, which stays masked. A turn that rests on left-out content is left out whole, and the manifest says how many turns and why.
 - The person chooses the agent, the conversations and the period. Nothing is selected by default.
+  The command is `lina export --socket <path> --agent <id> --conversation <id>
+  --since <RFC3339> --until <RFC3339>`; `--conversation` is repeatable. The period
+  includes its start and excludes its end. With no selection flags, the export
+  contains zero episodes. A partial selection is invalid.
+
 - The export reads the ledger and nothing else. It writes no ledger event and no memory item, makes no model call and changes no state of LINA. Its files go to `staging/export/` ([filesystem.md](filesystem.md#import-and-export)) with a manifest of the counts, the left-out reasons and the revocation epoch at export time. An exported file leaves LINA's management: a later deletion in LINA does not reach it, and LINA says so when it exports.
+
+The first export format is version 1: `episodes.jsonl` contains one JSON object
+per turn, and `manifest.json` records `selected`, `exported`, `left_out`,
+`left_out_reasons` and `revocation_epoch`. An episode carries `turn_id`,
+`conversation_id`, the original input and ordered history with exact ids and
+content revisions, the request evidence, pinned persona, model input items,
+recorded replies with `reply_refs` and calls/results, the next eligible person event with its
+relations, `clock`, `zone` and `revocation_epoch`. Files are private and appear
+as one completed directory under `staging/export/`. The CLI prints that directory
+and the manifest, and explains that later deletion in LINA cannot remove the
+exported copy. Native ledger masking and the existing JSON-aware secret scanner
+cover input, persona and recorded tool/provider output. Missing source evidence,
+incomplete/non-person turns, restricted content and unrecorded effect results
+are counted by reason; storage failures fail the operation.
 
 ## Turns
 
@@ -1012,7 +1031,7 @@ A restore never brings back a retracted or deleted item, or deleted conversation
 - The checks that implementation acceptance of memory runs on synthetic fixtures, as properties of the data and not of wording: no item whose subject is the person rests on an event whose speaker kind is not `person`; a fan-out fixture yields one item with two pieces of evidence; a chain of three successive statements returns only the newest valid one; Korean queries return hits; a forced summarizer failure publishes no node and leaves the events in the request; flagged spans are absent from every index.
 - The bound on the part of a result's text that the model sees, and the size limit of a preview's file bytes held in the ledger: set by measurement during implementation acceptance of the conversation engine.
 - The reply budgets, the size of a tuning step and the reaction classes: starting values set in Reply shape, tuned by measurement with real use and kept per person.
-- The file format and the manifest fields of an episode export: set with the first development run that uses the replay command ([runtime.md](runtime.md#replay-command)).
+- Episode format version 1 and its manifest are defined under [Episode export](#episode-export).
 
 [lcm-store]: https://github.com/electricsheephq/lcm-x/blob/709099b3a397a7893a7abae8802ebe7bf605f79e/store.py
 [lcm-compaction]: https://github.com/electricsheephq/lcm-x/blob/709099b3a397a7893a7abae8802ebe7bf605f79e/compaction.py
