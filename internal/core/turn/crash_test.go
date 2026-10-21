@@ -38,7 +38,7 @@ func crashStore(t *testing.T, root string, crash bool) (*canon.Store, loop.Tool)
 		epoch = 1
 	}
 	migrations := canon.Migrations()
-	migrations = append(migrations, canon.Migration{Version: len(migrations) + 1, SQL: turn.Schema})
+	migrations = append(migrations, canon.Migration{Version: len(migrations) + 1, SQL: turn.Schema}, canon.Migration{Version: len(migrations) + 2, SQL: turn.ControlSchema})
 	db := open(t, canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: epoch, Controls: controls, Migrations: migrations})
 	auth := grant.Request{GrantID: "grant", MainID: "main", Epoch: epoch, TaskID: "turn", Host: "host", OSUser: "user", Person: "person", Agent: "agent", Revision: "r1"}
 	svc, err := authority.Open(t.Context(), db, authority.Config{Epoch: epoch, Resolve: func(context.Context, string) (grant.Grant, grant.Environment, error) {
