@@ -58,6 +58,7 @@ type conversationRuntime struct {
 	vault                       *secrets.Store
 	signin                      *accounts.SignIn
 	agents                      *agents.Store
+	growth                      *growthRuntime
 	lanes                       *lane.Manager
 	topics                      *clientsrv.Topics
 	route                       *modelpath.ResponsesConfig
@@ -141,11 +142,24 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err = r.seedHistory(ctx); err != nil {
 		return nil, err
 	}
+	if err = r.startGrowth(ctx, main, epoch, controls); err != nil {
+		return nil, err
+	}
 	success = true
 	return r, nil
 }
 func (r *conversationRuntime) Close(ctx context.Context) error {
 	var err error
+	if r.growth != nil && r.growth.stop != nil {
+		r.growth.stop()
+		select {
+		case result := <-r.growth.done:
+			err = errors.Join(err, result)
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		r.growth.stop = nil
+	}
 	if r.lanes != nil {
 		err = r.lanes.Close(ctx)
 		if err != nil {

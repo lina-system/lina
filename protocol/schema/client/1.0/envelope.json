@@ -2223,16 +2223,49 @@
       "additionalProperties": false
     },
     "agent_request": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "growth_adopt",
+            "growth_notices",
+            "growth_undo"
+          ]
+        },
+        "agent_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "candidate": {
+          "$ref": "#/$defs/growth_candidate"
+        },
+        "revision": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,18}$"
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
     "agent_result": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "agent_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,18}$"
+        },
+        "notices": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/growth_notice"
+          }
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
@@ -3587,6 +3620,57 @@
         "provider",
         "label",
         "status"
+      ],
+      "additionalProperties": false
+    },
+    "growth_candidate": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expected": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,18}$"
+        },
+        "snapshot": {
+          "type": "string",
+          "maxLength": 262144
+        },
+        "notice": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "id",
+        "expected",
+        "snapshot",
+        "notice"
+      ],
+      "additionalProperties": false
+    },
+    "growth_notice": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,18}$"
+        },
+        "notice": {
+          "type": "string",
+          "minLength": 1
+        },
+        "undo_revision": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,18}$"
+        }
+      },
+      "required": [
+        "revision",
+        "notice",
+        "undo_revision"
       ],
       "additionalProperties": false
     }

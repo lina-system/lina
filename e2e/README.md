@@ -63,7 +63,11 @@ refusal, next-turn persona application, a committed learning notice and one-acti
 undo through the authorized Core tool registry, and suppression of an undone
 snapshot after reopening canon. The service harness uses the same private state,
 process deadlines and cleanup as the M1 worker scenario; it needs no model or
-personal persona text.
+personal persona text. Its installed-Core companion negotiates the growth capability,
+adopts during an active reply, checks actual provider instructions on subsequent
+turns, receives one conversation notice, dispatches undo, and reopens Core to
+check suppression, history and job socket cleanup. No test-only Core service
+composition is used in that companion.
 
 - State, environment and processes are isolated per scenario. Builds share only
   Go caches and tool locations; product processes receive no inherited account,

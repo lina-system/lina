@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package canon
 
-const growthSchema = `
+// GrowthSchema is appended by the application schema owner after its published
+// migrations. It must not renumber the installed turn and sign-in migrations.
+const GrowthSchema = `
 CREATE TABLE agent_growth_steps (
  agent_id TEXT NOT NULL, candidate_id TEXT NOT NULL, revision INTEGER NOT NULL,
  previous_revision INTEGER NOT NULL, content_hash TEXT NOT NULL, notice TEXT NOT NULL,

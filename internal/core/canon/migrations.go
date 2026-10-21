@@ -17,6 +17,5 @@ func Migrations() []Migration {
 		{Version: 10, SQL: memorySearchSchema},
 		{Version: 11, SQL: retractSchema + retractLineageSchema + retractViewsSchema + retractSearchSchema},
 		{Version: 12, SQL: compactionSchema},
-		{Version: 13, SQL: growthSchema},
 	}
 }

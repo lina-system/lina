@@ -58,6 +58,9 @@ type Config struct {
 	Limit       int64
 	Definitions map[string]Definition
 	Now         func() time.Time
+	// AfterApply delivers committed outbox records. A delivery error never
+	// rolls back the receipt; replay can retry delivery without another write.
+	AfterApply func(context.Context) error
 }
 type Service struct{ cfg Config }
 
@@ -122,6 +125,16 @@ func saveJob(ctx context.Context, tx *canon.Tx, j jobapi.Job) error {
 	return err
 }
 func (s *Service) Register(ctx context.Context, j jobapi.Job) error {
+	return s.register(ctx, j, false)
+}
+
+// Ensure registers installed policy once and retains durable progress and user
+// enablement on later boots.
+func (s *Service) Ensure(ctx context.Context, j jobapi.Job) error {
+	return s.register(ctx, j, true)
+}
+
+func (s *Service) register(ctx context.Context, j jobapi.Job, existing bool) error {
 	d, ok := s.cfg.Definitions[j.ID]
 	if !ok || !j.Kind.Valid() || j.Every <= 0 || j.Timeout <= 0 || j.Timeout > 2*time.Minute || j.Budget < 0 || j.MaxTokens < 0 || j.MaxTokens > j.Budget || j.Adoption == "" || j.Watermark != 0 {
 		return jobapi.ErrInvalid
@@ -134,7 +147,11 @@ func (s *Service) Register(ctx context.Context, j jobapi.Job) error {
 		return err
 	}
 	return s.apply(ctx, s.cfg.Epoch, func(tx *canon.Tx) error {
-		_, err := tx.ExecContext(ctx, "INSERT INTO moirai_jobs VALUES (?,?)", j.ID, data)
+		query := "INSERT INTO moirai_jobs VALUES (?,?)"
+		if existing {
+			query += " ON CONFLICT(id) DO NOTHING"
+		}
+		_, err := tx.ExecContext(ctx, query, j.ID, data)
 		return err
 	})
 }
@@ -277,39 +294,46 @@ func (s *Service) Apply(ctx context.Context, p jobapi.Proposal) (jobapi.Applied,
 	if !validOutput(p.Output) || p.From < 0 || p.From == math.MaxInt64 || p.Through != p.From+1 {
 		return jobapi.Applied{}, jobapi.ErrInvalid
 	}
-	// Compact only JSON whitespace, retaining the exact proposal's field order.
-	encoded, _ := json.Marshal(p)
-	err := s.apply(ctx, p.Epoch, func(tx *canon.Tx) error {
-		var previous []byte
-		err := tx.QueryRowContext(ctx, "SELECT proposal FROM moirai_applied WHERE job=? AND sequence=?", p.JobID, p.Through).Scan(&previous)
-		if err == nil {
-			if string(previous) != string(encoded) {
-				return jobapi.ErrConflict
-			}
-			return nil
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-		j, task, err := s.check(ctx, tx, p.JobID, p.From, p.Through)
-		if err != nil {
-			return err
-		}
-		if err = d.Apply(ctx, tx, task, p.Output); err != nil {
-			return err
-		}
-		j.Watermark = p.Through
-		j.NextRun = s.cfg.Now().Add(j.Every)
-		if err = saveJob(ctx, tx, j); err != nil {
-			return err
-		}
-		_, err = tx.ExecContext(ctx, "INSERT INTO moirai_applied VALUES (?,?,?)", p.JobID, p.Through, encoded)
-		return err
-	})
+	err := s.apply(ctx, p.Epoch, func(tx *canon.Tx) error { return s.applyProposal(ctx, tx, d, p) })
 	if err != nil {
 		return jobapi.Applied{}, err
 	}
+	if s.cfg.AfterApply != nil {
+		if err := s.cfg.AfterApply(ctx); err != nil {
+			return jobapi.Applied{}, err
+		}
+	}
 	return jobapi.Applied{Watermark: p.Through}, nil
+}
+
+func (s *Service) applyProposal(ctx context.Context, tx *canon.Tx, d Definition, p jobapi.Proposal) error {
+	// Compact JSON whitespace consistently for worker and in-process ingress.
+	encoded, _ := json.Marshal(p)
+	var previous []byte
+	err := tx.QueryRowContext(ctx, "SELECT proposal FROM moirai_applied WHERE job=? AND sequence=?", p.JobID, p.Through).Scan(&previous)
+	if err == nil {
+		if string(previous) != string(encoded) {
+			return jobapi.ErrConflict
+		}
+		return nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	j, task, err := s.check(ctx, tx, p.JobID, p.From, p.Through)
+	if err != nil {
+		return err
+	}
+	if err = d.Apply(ctx, tx, task, p.Output); err != nil {
+		return err
+	}
+	j.Watermark = p.Through
+	j.NextRun = s.cfg.Now().Add(j.Every)
+	if err = saveJob(ctx, tx, j); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, "INSERT INTO moirai_applied VALUES (?,?,?)", p.JobID, p.Through, encoded)
+	return err
 }
 func (s *Service) Report(ctx context.Context, id string, state jobapi.JobState) error {
 	if state.Status != "applied" && state.Status != "failed" {
