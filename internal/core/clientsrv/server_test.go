@@ -41,7 +41,7 @@ func TestUnsupportedEnvelopeVersion(t *testing.T) {
 			go func() {
 				defer close(done)
 				defer server.Close()
-				serveConn(t.Context(), server, Identity{MainID: "main-test", Epoch: "1"})
+				serveConn(server, Identity{MainID: "main-test", Epoch: "1"})
 			}()
 			t.Cleanup(func() { client.Close(); server.Close(); <-done })
 			client.SetDeadline(time.Now().Add(5 * time.Second))
@@ -81,7 +81,7 @@ func TestUnrecognizableFirstFrameCloses(t *testing.T) {
 			go func() {
 				defer close(done)
 				defer server.Close()
-				serveConn(t.Context(), server, Identity{MainID: "main-test", Epoch: "1"})
+				serveConn(server, Identity{MainID: "main-test", Epoch: "1"})
 			}()
 			t.Cleanup(func() { client.Close(); server.Close(); <-done })
 			client.SetDeadline(time.Now().Add(5 * time.Second))
@@ -172,4 +172,8 @@ func TestServeCancellation(t *testing.T) {
 	if _, err := os.Lstat(path); !os.IsNotExist(err) {
 		t.Fatalf("socket remains: %v", err)
 	}
+}
+
+func serveConn(conn net.Conn, identity Identity) {
+	servePeer(context.Background(), conn, identity, peerIdentity{})
 }

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"runtime"
 	"testing"
 	"time"
 
@@ -26,10 +27,7 @@ func (h *harness) client(core *process) *client {
 	h.t.Helper()
 	conn := h.connect(core)
 	c := &client{conn: conn, reader: bufio.NewReaderSize(conn, 1<<20)}
-	answer := c.call(h.t, protocol.KindHello, protocol.Hello{
-		Party: protocol.PartyClient, ID: "client-e2e", ProductVersion: "0.0.0-dev",
-		ProtocolVersions: []string{"1.0"}, Capabilities: []protocol.Capability{},
-	})
+	answer := c.call(h.t, protocol.KindHello, clientHello([]string{"1.0"}))
 	welcome, ok := answer.Payload.(protocol.Welcome)
 	if !ok || answer.Kind != protocol.KindWelcome || answer.EffectState != protocol.EffectNone || answer.Error != nil {
 		h.t.Fatalf("handshake: kind=%s effect=%s error=%v", answer.Kind, answer.EffectState, answer.Error)
@@ -127,4 +125,9 @@ func (h *harness) inputRefused(c *client) {
 		default:
 		}
 	}
+}
+
+func clientHello(versions []string) protocol.Hello {
+	peer, platform := "lina-tui", runtime.GOOS+"/"+runtime.GOARCH
+	return protocol.Hello{Party: protocol.PartyClient, ID: "client-e2e", ProductVersion: "unrelated-product-version", ProtocolVersions: versions, Capabilities: []protocol.Capability{}, Peer: &peer, Platform: &platform}
 }

@@ -148,6 +148,9 @@ func TestRecoveringServesHandshakeAndRefusesRequests(t *testing.T) {
 				if response.Result.Kind != protocol.KindWelcome || response.Result.Epoch != "1" {
 					t.Fatalf("welcome=%+v", response)
 				}
+				mutation := request["params"].(protocol.Envelope)
+				mutation.Kind, mutation.Payload, mutation.Epoch = protocol.KindInput, protocol.Input{}, response.Result.Epoch
+				request["method"], request["params"] = "input", mutation
 				if err := writer.Encode(request); err != nil {
 					t.Fatal(err)
 				}

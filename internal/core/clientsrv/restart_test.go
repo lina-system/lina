@@ -17,7 +17,7 @@ import (
 )
 
 func TestRestartProtocolAdmission(t *testing.T) {
-	for _, name := range []string{"no capability", "stale epoch", "wrong sender", "wrong method", "recovering request", "recovering read", "durable request"} {
+	for _, name := range []string{"no capability", "manifest excludes lifecycle", "controller absent", "stale epoch", "wrong sender", "wrong method", "recovering request", "recovering read", "durable request"} {
 		t.Run(name, func(t *testing.T) {
 			root := filepath.Join(t.TempDir(), "state")
 			if err := os.Mkdir(root, 0700); err != nil {
@@ -44,11 +44,19 @@ func TestRestartProtocolAdmission(t *testing.T) {
 				t.Fatal(err)
 			}
 			client, server := net.Pipe()
+			identity := Identity{MainID: "main-test", Epoch: "1", Restart: x, Recovering: func() bool { return name == "recovering request" || name == "recovering read" }}
+			if name == "manifest excludes lifecycle" {
+				identity.Supported = LocalCombinations()
+				identity.Supported[0].Capabilities = []protocol.Capability{}
+			}
+			if name == "controller absent" {
+				identity.Restart = nil
+			}
 			finished := make(chan struct{})
 			go func() {
 				defer close(finished)
 				defer server.Close()
-				serveConn(t.Context(), server, Identity{MainID: "main-test", Epoch: "1", Restart: x, Recovering: func() bool { return name == "recovering request" || name == "recovering read" }})
+				servePeer(t.Context(), server, identity, peerIdentity{})
 			}()
 			t.Cleanup(func() { client.Close(); server.Close(); <-finished })
 			client.SetDeadline(time.Now().Add(5 * time.Second))
@@ -72,7 +80,8 @@ func TestRestartProtocolAdmission(t *testing.T) {
 			if name != "no capability" {
 				caps = append(caps, lifecycleCapability)
 			}
-			e := protocol.Envelope{Protocol: protocol.Protocol{Name: "client", Version: "1.0"}, Kind: protocol.KindHello, MessageID: "hello", AttemptID: "hello", Sender: protocol.Sender{Party: protocol.PartyClient, ID: "client-test"}, Epoch: "0", SentAt: "2026-01-01T00:00:00Z", EffectState: protocol.EffectNone, SourceRefs: []protocol.SourceRef{}, Payload: protocol.Hello{Party: protocol.PartyClient, ID: "client-test", ProductVersion: "0.0.0-dev", ProtocolVersions: []string{"1.0"}, Capabilities: caps}}
+			peer, platform := LocalCombinations()[0].Peer, LocalCombinations()[0].Platform
+			e := protocol.Envelope{Protocol: protocol.Protocol{Name: "client", Version: "1.0"}, Kind: protocol.KindHello, MessageID: "hello", AttemptID: "hello", Sender: protocol.Sender{Party: protocol.PartyClient, ID: "client-test"}, Epoch: "0", SentAt: "2026-01-01T00:00:00Z", EffectState: protocol.EffectNone, SourceRefs: []protocol.SourceRef{}, Payload: protocol.Hello{Party: protocol.PartyClient, ID: "client-test", ProductVersion: "0.0.0-dev", ProtocolVersions: []string{"1.0"}, Capabilities: caps, Peer: &peer, Platform: &platform}}
 			if got := call("hello", e); got.Kind != protocol.KindWelcome {
 				t.Fatalf("hello: %+v", got)
 			}
@@ -80,14 +89,14 @@ func TestRestartProtocolAdmission(t *testing.T) {
 			method := string(e.Kind)
 			want := protocol.ErrorCode("")
 			switch name {
-			case "no capability":
+			case "no capability", "manifest excludes lifecycle", "controller absent":
 				want = protocol.ErrorCapabilityNotNegotiated
 			case "stale epoch":
 				e.Epoch = "0"
 				want = protocol.ErrorStaleEpoch
 			case "wrong sender":
 				e.Sender.ID = "other"
-				want = protocol.ErrorMalformed
+				want = protocol.ErrorNotAuthorized
 			case "wrong method":
 				method = "restart_get"
 				want = protocol.ErrorMalformed

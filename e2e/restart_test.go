@@ -18,10 +18,9 @@ func restartClient(h *harness, core *process) *client {
 	h.t.Helper()
 	conn := h.connect(core)
 	c := &client{conn: conn, reader: bufio.NewReaderSize(conn, 1<<20)}
-	answer := c.call(h.t, protocol.KindHello, protocol.Hello{
-		Party: protocol.PartyClient, ID: "client-e2e", ProductVersion: "0.0.0-dev",
-		ProtocolVersions: []string{"1.0"}, Capabilities: []protocol.Capability{{Name: "lifecycle", Version: "1.0"}},
-	})
+	hello := clientHello([]string{"1.0"})
+	hello.Capabilities = []protocol.Capability{{Name: "lifecycle", Version: "1.0"}}
+	answer := c.call(h.t, protocol.KindHello, hello)
 	welcome, ok := answer.Payload.(protocol.Welcome)
 	if !ok || len(welcome.Capabilities) != 1 || welcome.Capabilities[0].Name != "lifecycle" {
 		h.t.Fatalf("restart capability not negotiated: %+v", answer)

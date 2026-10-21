@@ -1,0 +1,63 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "cases": [
+    {
+      "name": "unlisted protocol",
+      "versions": [
+        "9.0"
+      ],
+      "halted": false,
+      "refusal": "unsupported_combination"
+    },
+    {
+      "name": "missing peer",
+      "versions": [
+        "1.0"
+      ],
+      "omit": [
+        "peer"
+      ],
+      "refusal": "unsupported_combination"
+    },
+    {
+      "name": "missing platform",
+      "versions": [
+        "1.0"
+      ],
+      "omit": [
+        "platform"
+      ],
+      "refusal": "unsupported_combination"
+    },
+    {
+      "name": "unlisted peer",
+      "versions": [
+        "1.0"
+      ],
+      "peer": "unlisted-app",
+      "refusal": "unsupported_combination"
+    },
+    {
+      "name": "unlisted platform",
+      "versions": [
+        "1.0"
+      ],
+      "platform": "unlisted/target",
+      "refusal": "unsupported_combination"
+    },
+    {
+      "name": "recovering mutation",
+      "versions": [
+        "1.0"
+      ],
+      "halted": true,
+      "refusal": "unavailable"
+    }
+  ],
+  "deciderKinds": [
+    "approval_answer",
+    "question_answer",
+    "waiting_answer"
+  ],
+  "sandboxConnect": "denied"
+}

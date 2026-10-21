@@ -20,6 +20,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
+	"github.com/thisisjun786/lina/internal/core/manifest"
 	"github.com/thisisjun786/lina/kit/sandbox"
 )
 
@@ -94,11 +95,18 @@ type Services struct {
 	Lifecycle func(*lifecycle.Restarter)
 }
 type Config struct {
-	StateRoot   string
-	Socket      string
-	PeerSeenMax uint64
-	Services    Services
-	Activities  *lifecycle.ActivityRegistry
+	// Client supplies the installed person's agents, supported rows and handlers.
+	// Boot always supplies the durable main id, epoch and recovery state itself.
+	Client clientsrv.Identity
+	// ClientManifest selects the build manifest containing supportedCombinations.
+	// An explicit path must exist and contain a valid table, including an empty
+	// table when every client combination is intentionally unsupported.
+	ClientManifest string
+	StateRoot      string
+	Socket         string
+	PeerSeenMax    uint64
+	Services       Services
+	Activities     *lifecycle.ActivityRegistry
 	// AfterStep observes a completed boundary. It is used by deterministic crash
 	// tests and is never configured through command arguments or the environment.
 	AfterStep func(Step, Snapshot) error
@@ -109,6 +117,23 @@ type Config struct {
 func Run(ctx context.Context, cfg Config) (result error) {
 	if cfg.StateRoot == "" || cfg.Socket == "" {
 		return errors.New("state root and socket are required")
+	}
+	if cfg.ClientManifest != "" {
+		file, err := os.Open(cfg.ClientManifest)
+		if err != nil {
+			return fmt.Errorf("open client build manifest: %w", err)
+		}
+		rows, readErr := manifest.ReadCombinations(file)
+		closeErr := file.Close()
+		if err := errors.Join(readErr, closeErr); err != nil {
+			return fmt.Errorf("read client build manifest: %w", err)
+		}
+		cfg.Client.Supported = rows
+	}
+	if cfg.Client.Supported != nil {
+		if err := manifest.ValidateCombinations(cfg.Client.Supported); err != nil {
+			return err
+		}
 	}
 	if (cfg.Services.PeekEpoch == nil) != (cfg.Services.OpenCanon == nil) {
 		return errors.New("canon requires both read-only peek and writer open")
@@ -323,7 +348,10 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	serving, cancelServe := context.WithCancel(ctx)
 	done := make(chan error, 1)
 	go func() {
-		done <- clientsrv.Serve(serving, listener, clientsrv.Identity{MainID: recovery.MainID, Epoch: strconv.FormatUint(snapshot.Epoch, 10), Recovering: recovering.Load, Restart: restarter})
+		identity := cfg.Client
+		identity.MainID, identity.Epoch, identity.Recovering = recovery.MainID, strconv.FormatUint(snapshot.Epoch, 10), recovering.Load
+		identity.Restart = restarter
+		done <- clientsrv.Serve(serving, listener, identity)
 	}()
 	stack = append(stack, func(phase context.Context) error {
 		cancelServe()
