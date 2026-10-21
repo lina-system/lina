@@ -17,15 +17,16 @@ import (
 // Manifest identifies a clean source commit and the binaries produced from it.
 // Additional JSON fields are allowed as later components add their metadata.
 type Manifest struct {
-	Version     string                           `json:"version"`
-	Commit      string                           `json:"commit"`
-	Date        string                           `json:"date"`
-	Target      string                           `json:"target"`
-	GoToolchain string                           `json:"goToolchain"`
-	KitVersion  int64                            `json:"kitVersion"`
-	Binaries    []Binary                         `json:"binaries"`
-	SQLite      SQLite                           `json:"sqlite"`
-	Providers   map[string]responseconfig.Config `json:"providers"`
+	SupportedCombinations []Combination                    `json:"supportedCombinations"`
+	Version               string                           `json:"version"`
+	Commit                string                           `json:"commit"`
+	Date                  string                           `json:"date"`
+	Target                string                           `json:"target"`
+	GoToolchain           string                           `json:"goToolchain"`
+	KitVersion            int64                            `json:"kitVersion"`
+	Binaries              []Binary                         `json:"binaries"`
+	SQLite                SQLite                           `json:"sqlite"`
+	Providers             map[string]responseconfig.Config `json:"providers"`
 }
 
 // Binary describes one artifact next to manifest.json. SHA256 is lowercase hex.
@@ -62,6 +63,13 @@ func Read(path string) (Manifest, error) {
 
 // Validate checks the required metadata and artifact records.
 func (m Manifest) Validate() error {
+	if m.SupportedCombinations == nil {
+		return fmt.Errorf("supportedCombinations is required")
+	}
+	if err := ValidateCombinations(m.SupportedCombinations); err != nil {
+		return err
+	}
+
 	switch m.Target {
 	case "linux/amd64", "linux/arm64", "darwin/amd64", "darwin/arm64", "windows/amd64", "windows/arm64":
 	default:
