@@ -243,6 +243,7 @@ Mandatory retraction checks and permission checks finish during preparation, bef
 
 - LINA Core assembles every instruction in a request. A request carries no base instructions of a coding worker; LINA Core puts the agent's persona and the context in directly.
 - The fixed persona layers of the conversation's agent go into the developer-role instructions of every request. No other agent's persona enters the request.
+- The instructions identify the active agent by its stored name and id, and the owner recorded when that agent was created; a later persona editor is not a new owner. They carry the four prepared persona layers once, in order, and an explicit enabled-tool list derived from that request's actual tool declarations, including an empty list when no tools are connected. Introductions use the agent's identity. The underlying model or provider is discussed only when the person asks about the model, without inventing details.
 - The ContextPacket goes in as input items. LINA's own memory and materials take the developer role. External evidence takes the user role and is marked untrusted. Messages from an external participant of a channel, and the other agent's messages in an agent exchange, are external evidence too: the history carries them as user-role items marked untrusted, with their origin.
 - Where each part sits is fixed by the request layout below.
 - Duplicate and superseded context across turns is resolved during assembly, not left to the model.
@@ -433,6 +434,8 @@ The current agent store records the trash transition and ends bindings atomicall
 - Apart from the sign-in, the first run asks nothing before the first conversation. The short intake of [Learning the person](#learning-the-person) happens inside the conversation, is offered and never required, and every question in it can be skipped.
 
 Initialization is recorded once in canon and is safe to repeat across concurrent calls and restarts. An explicitly deleted default is not recreated by initialization. The store returns a ChatGPT sign-in requirement when no account is usable; it adds no required persona questions. The conversation surface and Core account flow consume that requirement when wired; this store increment exposes no client operation.
+
+The shipped LINA core and default voice provide an interim companion identity and a warm, plain voice. At initialization, an existing preset layer that still exactly matches the original shipped placeholder receives this material through the normal versioned preset update. Owner-supplied layers, user voice and growth remain intact, and already prepared turns keep their pinned revision. This upgrade is idempotent and needs no new storage format.
 
 ### Presets
 
@@ -970,7 +973,7 @@ A restore never brings back a retracted or deleted item, or deleted conversation
 
 ## Deferred
 
-- The interim core and voice text used while `persona/lina/` holds no material yet: written by the implementation issue that ships the first conversation product. When the material arrives, the agents created from the LINA preset receive it as the next revision of their core and default voice layers.
+- Further owner-authored persona and world material for `persona/lina/`: when supplied, agents created from the LINA preset receive it through a versioned update of their core and default voice layers. The interim material is defined under First run.
 - The exact front matter keys of `SKILL.md`: set by the implementation issue that ships the first conversation product.
 - Emotion names, values and decay rates: set by measurement during development and recorded in the implementation issue.
 - The ContextPacket assembly time cap: set by latency measurement during implementation acceptance of the conversation engine.
