@@ -8,6 +8,32 @@ import { git as runGit } from '../git.mjs';
 import { componentRegistry, kind, scopeFor } from './scope.mjs';
 import { evaluateGate } from './gate.mjs';
 
+test('Korean search corpus changes select the consuming Core tests', t => {
+  const r = repository(t);
+  const files = {
+    'go.mod': 'module example.invalid/lina\ngo 1.27\ntoolchain go1.27.3\n',
+    'kit/go.mod': 'module example.invalid/lina/kit\ngo 1.27\ntoolchain go1.27.3\n',
+    'go.work': 'go 1.27\ntoolchain go1.27.3\nuse (\n.\n./kit\n)\n',
+    'doc.go': 'package lina\n',
+    'kit/doc.go': 'package kit\n',
+    'cmd/lina/main.go': 'package main\nfunc main() {}\n',
+    'internal/core/ledger/store.go': 'package ledger\n',
+    'internal/core/canon/store.go': 'package canon\n',
+    'testdata/korean/search.json': '{}\n',
+  };
+  for (const [name, content] of Object.entries(files)) {
+    mkdirSync(join(r.cwd, name, '..'), { recursive: true });
+    writeFileSync(join(r.cwd, name), content);
+  }
+  const base = r.commit();
+  writeFileSync(join(r.cwd, 'testdata/korean/search.json'), '{"changed":true}\n');
+  const scope = r.classify('HEAD', { base });
+  assert.deepEqual(scope.unmapped, []);
+  assert.deepEqual(scope.selectedComponents, ['lina']);
+  assert.equal(scope.automation, false);
+  assert.equal(scope.dependencies, false);
+});
+
 test('reply filtering is registered with the lina Go checks', t => {
   const r = repository(t);
   const base = r.git('rev-parse', 'HEAD');
@@ -19,6 +45,16 @@ test('reply filtering is registered with the lina Go checks', t => {
   assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/reply/...'));
 });
 
+test('tool executor is registered with the lina Go checks', t => {
+  const r = repository(t);
+  const base = r.git('rev-parse', 'HEAD');
+  mkdirSync(join(r.cwd, 'internal/core/exec'), { recursive: true });
+  writeFileSync(join(r.cwd, 'internal/core/exec/exec.go'), 'package exec\n');
+  const scope = r.classify(r.commit(), { base, full: true });
+  assert.deepEqual(scope.unmapped, []);
+  assert.ok(scope.selectedComponents.includes('lina'));
+  assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/exec/...'));
+});
 test('ledger is registered with the lina Go checks', t => {
   const r = repository(t);
   const base = r.git('rev-parse', 'HEAD');
@@ -39,17 +75,6 @@ test('model path configuration is registered with the lina Go checks', t => {
   assert.deepEqual(scope.unmapped, []);
   assert.ok(scope.selectedComponents.includes('lina'));
   assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/modelpath/...'));
-});
-
-test('tool executor is registered with the lina Go checks', t => {
-  const r = repository(t);
-  const base = r.git('rev-parse', 'HEAD');
-  mkdirSync(join(r.cwd, 'internal/core/exec'), { recursive: true });
-  writeFileSync(join(r.cwd, 'internal/core/exec/exec.go'), 'package exec\n');
-  const scope = r.classify(r.commit(), { base, full: true });
-  assert.deepEqual(scope.unmapped, []);
-  assert.ok(scope.selectedComponents.includes('lina'));
-  assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/exec/...'));
 });
 
 test('Moirai source changes select its binary and Core acceptance checks', t => {
