@@ -7,8 +7,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { sandbox } from './test-fixture.mjs';
-import { componentsTimeoutMs, createGoContext, execute } from './verify/check-components.mjs';
-import { build } from './build.mjs';
+import { createGoContext, execute } from './verify/check-components.mjs';
+import { build, buildTimeoutMs } from './build.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -34,7 +34,7 @@ function fixture(t, { timeoutScale = 1, executeCommand = execute } = {}) {
   const out = join(sb.dir, 'artifacts with spaces');
   // A full cross-build contains multiple Go commands. Share the same bounded
   // allowance across targets, inside foundation's 600 s automation watchdog.
-  const deadline = performance.now() + (componentsTimeoutMs - 5000) * timeoutScale;
+  const deadline = performance.now() + buildTimeoutMs * timeoutScale;
   const run = (args = ['--out', out]) => {
     const timeoutMs = Math.max(1, Math.floor(deadline - performance.now()));
     return executeCommand(process.execPath,
@@ -215,7 +215,7 @@ test('clean builds record hashes and the same commit and metadata as both versio
     assert.equal(manifest.kitVersion, Number(readFileSync(join(f.cwd, 'kit/VERSION'), 'utf8')));
     const platform = spawnSync('go', ['env', 'GOOS', 'GOARCH'], { cwd: f.cwd, env: f.env, encoding: 'utf8' }).stdout.trim().split(/\r?\n/).join('/');
     assert.deepEqual(manifest.supportedCombinations, [{ connection: 'client', peer: 'lina-tui', platform,
-      protocolVersion: '1.0', capabilities: [{ name: 'accounts', version: '1.0' }, { name: 'sign_in_relay', version: '1.0' }, { name: 'lifecycle', version: '1.0' }, { name: 'conversation', version: '1.0' }], evidence: ['go test ./kit/protocol/conformance', 'go test ./e2e -run TestPlannedRestart', 'go test ./e2e -run TestM1TUIConversationInstalledCore', 'go test ./e2e -run TestM1TUIAccountsInstalledCore'] }]);
+      protocolVersion: '1.0', capabilities: [{ name: 'exchanges', version: '1.0' }, { name: 'channels', version: '1.0' }, { name: 'accounts', version: '1.0' }, { name: 'sign_in_relay', version: '1.0' }, { name: 'lifecycle', version: '1.0' }, { name: 'conversation', version: '1.0' }], evidence: ['go test ./kit/protocol/conformance', 'go test ./e2e -run TestPlannedRestart', 'go test ./e2e -run TestM1TUIConversationInstalledCore', 'go test ./e2e -run TestM1TUIAccountsInstalledCore', 'go test ./e2e -run TestM1TUIChannel', 'go test ./e2e -run TestM1TUITalkLogInstalledCore'] }]);
     const module = JSON.parse(spawnSync('go', ['list', '-m', '-json', 'github.com/ncruces/go-sqlite3'], {
       cwd: f.cwd, env: f.env, encoding: 'utf8',
     }).stdout);

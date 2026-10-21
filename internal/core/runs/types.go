@@ -85,6 +85,10 @@ type Artifact struct {
 	Citations []materials.Anchor `json:"citations,omitempty"`
 }
 type Record struct {
+	// Start identity and the original receipt commit with the run. Only hashes
+	// of native call metadata/brief are retained, never unmasked arguments.
+	StartKey, StartDigest       string
+	StartState                  State
 	ReceiptRound                uint64
 	ScratchReceipts             map[string]ToolReceipt
 	InputAnswers                []InputAnswer

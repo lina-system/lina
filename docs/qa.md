@@ -27,6 +27,37 @@ and absent Core. That unconfigured refusal is not a limit on configured Core.
 socket. `TestM1TUIState` exercises duplicate frames and epoch changes at the
 receive boundary. These checks do not establish the complete M1 journeys.
 
+### TUI screens and input acceptance (#106)
+
+The parent issue combines the shell (#107), conversation and composer (#108),
+and approval and question cards (#109). Run the child issues' package checks
+and the existing fake-Core and installed-Core journeys together:
+
+```sh
+go test -count=1 ./internal/tui/term/... ./internal/tui/ui/... ./internal/design/... ./cmd/lina/... ./internal/tui/state/...
+go test -count=1 ./e2e/... -run '^TestM1TUI(Shell|Recovery|ConversationInstalledCore|ConversationStream)$'
+node scripts/foundation.mjs
+```
+
+| Parent acceptance | Evidence and remaining work |
+| --- | --- |
+| Start, connect, refuse, recover and quit through a PTY | `TestM1TUIShell` and `TestM1TUIRecovery`, driven by `e2e/m1/tui-shell.json` and `e2e/m1/tui-recovery.json`. |
+| Two fake clients race one approval; exactly one resolves | Depends on #109. Add its approval scenario to this acceptance command when available; conversation input tests do not establish approval resolution. |
+| Unchanged state writes zero bytes | `TestUnchangedConnectionWritesNothing` and `TestWorkListsFollowWelcomeCapabilities` check output lengths after rendering the same state twice. |
+| Absent Core shows its screen and starts no Core | `TestM1TUIShell` checks the absent state, exit status and absence of newly created state; `TestShellAbsentScreenKeepsHistoryOffScreen` checks the view. |
+| Every closed code has a catalog entry by id | `TestCatalogCoversClosedWireCodes` walks schema enums; `TestConnectionCatalogAndReadOnlyStates` checks connection ids in both languages. |
+| All child issues are closed | Check #107, #108 and #109 before closing #106. Passing these commands alone does not satisfy this condition. |
+
+The design contracts are [T-04](design/tui.md#approvals-questions-and-sign-in-t-04),
+[T-05](design/tui.md#connection-states-t-05),
+[T-07](design/tui.md#layout-tiers-and-row-budget-t-07),
+[T-10](design/tui.md#input-and-commands-t-10),
+[T-12](design/tui.md#home-waiting-for-me-and-progress-t-12),
+[T-13](design/tui.md#results-cards-and-the-pager-t-13), and
+[T-15](design/tui.md#notifications-t-15).
+This acceptance map changes no product behavior. Approval races, stale groups
+and replayed approval bells remain #109's acceptance work.
+
 ### Synthetic Responses conversation
 
 The shipped conversation path uses an explicit Responses route in Core. Run the

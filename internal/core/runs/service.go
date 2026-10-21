@@ -4,6 +4,7 @@ package runs
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -99,19 +100,22 @@ func (s *Service) Start(ctx context.Context, o Origin, b Brief) (string, State, 
 	return s.start(ctx, o, b, nil)
 }
 
-func (s *Service) start(ctx context.Context, o Origin, b Brief, promotion *budget.Handoff) (string, State, error) {
-	o.Epoch = s.cfg.Epoch
-	if !valid(o, b) {
-		return "", "", ErrInvalid
-	}
-	if err := s.cfg.Authorize(ctx, o, b); err != nil {
-		return "", "", err
-	}
-	// Round-trip the brief to detach caller-owned slices.
-	data, _ := json.Marshal(b)
-	var detached Brief
-	_ = json.Unmarshal(data, &detached)
-	b = detached
+// The native origin and call identity are bound outside the model arguments.
+// Epoch is excluded: a lost receipt is still the same call after Core restarts.
+func startIdentity(o Origin, call string) string {
+	o.Epoch = 0
+	raw, _ := json.Marshal(struct {
+		Origin Origin
+		Call   string
+	}{o, call})
+	digest := sha256.Sum256(raw)
+	return hex.EncodeToString(digest[:])
+}
+
+// replayStart reads an already committed receipt, without admitting new work.
+// The native origin/call binding is trusted; budget and account holds may have
+// changed since admission and cannot invalidate a lost receipt.
+func (s *Service) replayStart(ctx context.Context, key, digest string) (string, State, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -120,6 +124,65 @@ func (s *Service) start(ctx context.Context, o Origin, b Brief, promotion *budge
 	rows, err := s.records(ctx)
 	if err != nil {
 		return "", "", err
+	}
+	for _, r := range rows {
+		if r.StartKey != key {
+			continue
+		}
+		if r.StartDigest != digest {
+			return "", "", ErrInvalid
+		}
+		return r.ID, r.StartState, nil
+	}
+	return "", "", nil
+}
+
+func (s *Service) start(ctx context.Context, o Origin, b Brief, promotion *budget.Handoff) (string, State, error) {
+	return s.startWithCall(ctx, o, b, promotion, "")
+}
+
+func (s *Service) startWithCall(ctx context.Context, o Origin, b Brief, promotion *budget.Handoff, call string) (string, State, error) {
+	o.Epoch = s.cfg.Epoch
+	if !valid(o, b) {
+		return "", "", ErrInvalid
+	}
+	// Round-trip the brief to detach caller-owned slices.
+	data, _ := json.Marshal(b)
+	var detached Brief
+	_ = json.Unmarshal(data, &detached)
+	b = detached
+	var key, digest string
+	if call != "" {
+		key = startIdentity(o, call)
+		sum := sha256.Sum256(data)
+		digest = hex.EncodeToString(sum[:])
+		if id, state, err := s.replayStart(ctx, key, digest); err != nil || id != "" {
+			return id, state, err
+		}
+	}
+	if err := s.cfg.Authorize(ctx, o, b); err != nil {
+		return "", "", err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return "", "", ErrClosed
+	}
+	rows, err := s.records(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	// Another caller may have committed while authorization was in progress.
+	if call != "" {
+		for _, prior := range rows {
+			if prior.StartKey != key {
+				continue
+			}
+			if prior.StartDigest != digest {
+				return "", "", ErrInvalid
+			}
+			return prior.ID, prior.StartState, nil
+		}
 	}
 	if promotion != nil {
 		for _, r := range rows {
@@ -136,7 +199,7 @@ func (s *Service) start(ctx context.Context, o Origin, b Brief, promotion *budge
 		return "", "", err
 	}
 	now := s.cfg.Now().UnixNano()
-	r := Record{ID: hex.EncodeToString(id), Origin: o, Brief: b, State: Waiting, Created: now, LastEvent: now}
+	r := Record{ID: hex.EncodeToString(id), Origin: o, Brief: b, State: Waiting, Created: now, LastEvent: now, StartKey: key, StartDigest: digest}
 	r.Promotion = promotion
 	if promotion != nil {
 		r.PromotionDigest = promotionDigest(b, promotion)
@@ -162,6 +225,7 @@ func (s *Service) start(ctx context.Context, o Origin, b Brief, promotion *budge
 	if capacity(rows, o) {
 		r.State = Working
 	}
+	r.StartState = r.State
 	if err := s.save(ctx, r, true); err != nil {
 		return "", "", err
 	}
@@ -334,7 +398,8 @@ func (s *Service) Stop(ctx context.Context, id string) error {
 
 // Recover runs before admitting work in the new Core epoch. Waiting/account
 // holds and cancelled records are unchanged; only interrupted working runs
-// consume the one persisted retry. Execution resumes after Release.
+// consume the one persisted retry and require Release. Already released queued
+// runs are scheduled after the recovery writes finish.
 func (s *Service) Recover(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -345,10 +410,12 @@ func (s *Service) Recover(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	releasePromotions := false
 	for _, r := range rows {
 		if r.State == Landed {
 			continue
+		}
+		if err := s.prepareFiles(r.ID); err != nil {
+			return err
 		}
 		r.Origin.Epoch = s.cfg.Epoch
 		// Admission already published this handle atomically to its source turn.
@@ -359,7 +426,6 @@ func (s *Service) Recover(ctx context.Context) error {
 			if err := s.save(ctx, r, false); err != nil {
 				return err
 			}
-			releasePromotions = true
 			continue
 		}
 		if r.PendingOutcome != "" {
@@ -390,10 +456,7 @@ func (s *Service) Recover(ctx context.Context) error {
 			return err
 		}
 	}
-	if releasePromotions {
-		return s.schedule(ctx)
-	}
-	return nil
+	return s.schedule(ctx)
 }
 
 // CheckProgress is called by Core's liveness timer. Age is never a deadline:

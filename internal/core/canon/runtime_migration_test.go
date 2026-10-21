@@ -72,7 +72,7 @@ INSERT INTO turn_runs(id,conversation,inbox_id,prepared,state) VALUES('old-turn'
 					if state != "completed" {
 						t.Fatal("old turn changed")
 					}
-					for _, table := range []string{"turn_control", "turn_outcome", "retract_meta", "sum_node"} {
+					for _, table := range []string{"turn_control", "turn_outcome", "retract_meta", "sum_node", "owner_binding", "sign_in_host", "sign_in_identities", "channel_connections", "telegram_buttons", "exchanges"} {
 						var n int
 						if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM "+table).Scan(&n); err != nil {
 							return err
@@ -104,6 +104,15 @@ func TestFutureMigrationDoesNotRenumberRuntime(t *testing.T) {
 		if found != 12+i {
 			t.Errorf("runtime schema %s version=%d, want=%d", name, found, 12+i)
 		}
+	}
+	signInVersion := 0
+	for _, m := range all {
+		if m.SQL == AccountSignInSchema {
+			signInVersion = m.Version
+		}
+	}
+	if signInVersion != 16 {
+		t.Errorf("account sign-in version=%d, want=16", signInVersion)
 	}
 	if t.Failed() {
 		return

@@ -19,6 +19,7 @@ function registryFor(cwd) {
   const manifest = existsSync(join(cwd, 'internal/core/manifest')) ? ['./internal/core/manifest/...'] : [];
   // Keep registrations sorted, one per line, so independent additions can merge.
   const coreDirectories = [
+    'internal/core/exchange/',
     'internal/core/accounts/',
     'internal/core/agents/',
     'internal/core/assemble/',
@@ -33,6 +34,7 @@ function registryFor(cwd) {
     'internal/core/compaction/',
     'internal/core/ctlfiles/',
     'internal/core/eventstore/',
+    'internal/core/exchange/',
     'internal/core/exec/',
     'internal/core/gateway/',
     'internal/core/guard/',

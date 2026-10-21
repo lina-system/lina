@@ -6,8 +6,9 @@ native Linux and macOS pseudo-terminals; it needs no window, display server,
 provider account, external network service or human input. Conversation screens
 use the pinned terminal library and a VT emulator.
 
-The scenario builds `lina`, starts real Core with a synthetic installed identity
-and a private temporary state root, and connects a generated-type JSON-RPC client
+The suite builds each command once per test run and removes the shared binaries
+after all scenarios finish. Each scenario starts real Core with a synthetic
+installed identity and a private temporary state root, and connects a generated-type JSON-RPC client
 to its Unix socket. A second process runs real `lina tui` with a controlling PTY
 at 80 by 24 cells. The script waits for the `live` connection-state code, sends an
 `input` request through the protocol client, checks the correlated
@@ -59,14 +60,24 @@ checks header, status and composer, and compares all rows and the cursor with
 a fresh client at each size to detect stale cells. It clears the draft and
 completes another exchange after resizing, then checks terminal restoration.
 
+`m1/tui-channels.json` opens the installed channel controls and drives token
+entry, private-chat pairing, binding and disconnect through the real TUI and
+boot composition. A separate Core test process retains the production peer
+ancestry checks; only Telegram HTTP replies are scripted. Boot package tests
+also reopen the poller against durable connection and secret state.
+`m1/tui-talk-log.json` seeds a durable exchange, restarts installed Core, and
+checks one summary row and its explicit ledger expansion without a model call.
+
 Helpers are test-only Go files in this package, shared by scenario tests. Keeping
 process creation in test files follows the architecture rule for command
 acceptance harnesses. Future milestones can add scenario files here; new
 subpackages under `e2e/` are also covered by the registered package pattern.
 
-- State, environment and processes are isolated per scenario. Builds share only
-  Go caches and tool locations; product processes receive no inherited account,
-  provider, display or user configuration environment. All fixtures are synthetic.
+- State, environment and processes are isolated per scenario. Scenarios share
+  immutable command binaries built from the current source; installation tests
+  copy them into private bundles. Builds inherit only Go caches and tool locations;
+  product processes receive no inherited account, provider, display or user
+  configuration environment. All fixtures are synthetic.
 - Readiness comes from socket connections and protocol/terminal observations.
   Socket startup retries are bounded; there are no fixed sleeps. A recovering
   Core may explicitly refuse an input probe as `unavailable`; only that refusal

@@ -58,6 +58,8 @@ type shellModel struct {
 	resyncPending map[string]protocol.StreamCursor
 	resyncSeen    map[resyncSignal]protocol.StreamCursor
 	conversation  conversationView
+	talk          talkView
+	channels      channelView
 	accounts      accountView
 	accountRows   []protocol.AccountSummary
 	accountsKnown bool
@@ -86,6 +88,8 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case shellBegin:
 		if msg.Generation > m.generation {
 			m.generation = msg.Generation
+			m.talk = talkView{attempt: m.talk.attempt + 1}
+			m.channels = channelView{attempt: m.channels.attempt + 1}
 			m.accounts = accountView{}
 			m.accountRows = nil
 			m.accountsKnown = false
@@ -143,6 +147,7 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		var commands []state.Cmd
 		m.content, commands = state.Reduce(m.content, msg.Message)
+		m.refreshOpenCard()
 		m.refreshBlocks()
 		for _, block := range m.content.Blocks {
 			if block.Kind == protocol.KindTurnState && block.TurnKnown {
@@ -190,6 +195,13 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyboardEnhancementsMsg:
 		m.events = msg.SupportsEventTypes()
 	case tea.PasteMsg:
+		if m.talk.open {
+			return m, nil
+		}
+		if m.channels.open {
+			m.channelPaste(msg.Content)
+			return m, nil
+		}
 		if m.accounts.open {
 			m.accountPaste(msg.Content)
 			return m, nil
@@ -198,6 +210,12 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.editComposer(tea.PasteMsg{Content: sanitize.Display(msg.Content)})
 		}
 	case tea.KeyMsg:
+		if m.talk.open {
+			return m, m.talkKey(msg)
+		}
+		if m.channels.open {
+			return m, m.channelKey(msg)
+		}
 		if m.accounts.open {
 			return m, m.accountKey(msg)
 		}
@@ -254,7 +272,7 @@ func (m *shellModel) View() tea.View {
 	view.KeyboardEnhancements.ReportEventTypes = true
 	if m.hasComposer() && m.status.State.active() {
 		plan := m.conversationPlan()
-		if plan.Tier != layout.TooSmall && !m.conversation.pager.open && !m.accounts.open {
+		if plan.Tier != layout.TooSmall && !m.conversation.pager.open && !m.accounts.open && !m.channels.open && !m.talk.open {
 			view.Cursor = m.conversation.composer.Cursor()
 			if view.Cursor != nil {
 				view.Cursor.Position.Y += plan.Composer.Y
@@ -291,6 +309,12 @@ func (m *shellModel) localNotice() string {
 func (m *shellModel) viewContent(showNotice bool) string {
 	if m.size.Width <= 0 || m.size.Height <= 0 {
 		return ""
+	}
+	if m.talk.open {
+		return m.talkContent()
+	}
+	if m.channels.open {
+		return m.channelContent()
 	}
 	if m.accounts.open {
 		return m.accountContent()

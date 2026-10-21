@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/lina/internal/core/accounts"
 	"github.com/thisisjun786/lina/internal/core/agents"
@@ -32,8 +33,10 @@ import (
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/internal/core/manifest"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
+	"github.com/thisisjun786/lina/internal/core/reply"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/internal/core/turn"
+	"github.com/thisisjun786/lina/internal/tui/render"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/protocol"
@@ -48,6 +51,8 @@ type acceptedSteering struct {
 }
 
 type conversationRuntime struct {
+	channels *channelRuntime
+
 	materials                   *conversationMaterials
 	assets                      *assets.Store
 	root                        string
@@ -58,6 +63,8 @@ type conversationRuntime struct {
 	vault                       *secrets.Store
 	signin                      *accounts.SignIn
 	agents                      *agents.Store
+	controls                    *ctlfiles.Store
+	personaWarned               bool
 	lanes                       *lane.Manager
 	topics                      *clientsrv.Topics
 	route                       *modelpath.ResponsesConfig
@@ -69,7 +76,7 @@ type conversationRuntime struct {
 
 func conversationPath(root string) string { return filepath.Join(root, "canon", "canon.sqlite") }
 
-func startConversation(ctx context.Context, root, main string, epoch uint64, controls *ctlfiles.Store, route *modelpath.ResponsesConfig, activities *lifecycle.ActivityRegistry, person string, transport http.RoundTripper) (*conversationRuntime, error) {
+func startConversation(ctx context.Context, root, main string, epoch uint64, controls *ctlfiles.Store, route *modelpath.ResponsesConfig, activities *lifecycle.ActivityRegistry, person string, transport, channelTransport http.RoundTripper) (*conversationRuntime, error) {
 	if err := os.MkdirAll(filepath.Dir(conversationPath(root)), 0700); err != nil {
 		return nil, err
 	}
@@ -77,7 +84,7 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err != nil {
 		return nil, err
 	}
-	r := &conversationRuntime{root: root, steering: map[string][]acceptedSteering{}, ctx: ctx, db: db, route: route, activities: activities, lanes: lane.New(), person: "person:" + main}
+	r := &conversationRuntime{root: root, controls: controls, steering: map[string][]acceptedSteering{}, ctx: ctx, db: db, route: route, activities: activities, lanes: lane.New(), person: "person:" + main}
 	if person != "" {
 		r.person = person
 	}
@@ -89,6 +96,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	}()
 	r.agents, err = agents.Open(root, db)
 	if err != nil {
+		return nil, err
+	}
+	if err := r.refreshPersona(ctx); err != nil {
 		return nil, err
 	}
 	first, err := r.agents.FirstRun(ctx, r.person, true)
@@ -138,6 +148,16 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	for kind, op := range clientsrv.AccountOperations(r.person, r.accounts, relay) {
 		r.identity.Operations[kind] = op
 	}
+	r.channels, err = startChannels(r, epoch, channelTransport)
+	if err != nil {
+		return nil, err
+	}
+	for kind, op := range clientsrv.ChannelOperations(r.channels) {
+		r.identity.Operations[kind] = op
+	}
+	for kind, op := range clientsrv.TalkOperations(r) {
+		r.identity.Operations[kind] = op
+	}
 	if err = r.seedHistory(ctx); err != nil {
 		return nil, err
 	}
@@ -146,6 +166,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 }
 func (r *conversationRuntime) Close(ctx context.Context) error {
 	var err error
+	if r.channels != nil {
+		r.channels.Close()
+	}
 	if r.lanes != nil {
 		err = r.lanes.Close(ctx)
 		if err != nil {
@@ -247,7 +270,117 @@ func (r *conversationRuntime) publish(kind protocol.Kind, key string, payload an
 	if err != nil {
 		return err
 	}
-	return r.topics.Publish("conversation:"+r.conversation, clientsrv.TopicEvent{Kind: kind, Key: key, Data: data, AgentID: r.agent})
+	agent := r.agent
+	if kind == protocol.KindResult {
+		// Results carry attribution in provenance, not an agent_id wire field.
+		agent = ""
+	}
+	return r.topics.Publish("conversation:"+r.conversation, clientsrv.TopicEvent{Kind: kind, Key: key, Data: data, AgentID: agent})
+}
+
+// The installed conversation currently has no negotiated surface width or
+// language setting. Use the Korean ceiling and the acceptance surface's 80
+// columns, with the same wrapping as the TUI. Keep policy in the existing filter.
+func conversationFilter() (*reply.Filter, error) {
+	return reply.NewFilter(reply.Config{Budget: reply.ChatCeiling(), Language: "ko", RenderLines: func(text string) int {
+		if text == "" {
+			return 0
+		}
+		stream := render.NewStream("reply", render.Config{Width: 80}, nil)
+		stream.Seal(1, text)
+		return stream.Len()
+	}})
+}
+
+// Keep possible credential prefixes private until the admission masker can
+// recognize their complete shape. Mask the accumulated prefix so assignment
+// and authorization context survives provider delta boundaries. Quoted values,
+// structured JSON and PEM blocks wait for the authoritative final item rather
+// than exposing an incomplete value or private-key header.
+type conversationReplyStream struct {
+	filter *reply.Filter
+	raw    strings.Builder
+	sent   string
+}
+
+func (s *conversationReplyStream) Push(delta string) (reply.View, string, error) {
+	if !utf8.ValidString(delta) {
+		return reply.View{}, "", reply.ErrUTF8
+	}
+	s.raw.WriteString(delta)
+	text := s.raw.String()
+	trimmed := strings.TrimSpace(text)
+	if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
+		return reply.View{}, "", nil
+	}
+	if start := strings.Index(text, "-----"); start >= 0 {
+		text = text[:start]
+	}
+	// A quoted assignment can contain whitespace or escaped delimiters. Do not
+	// expose any of it before the complete item is available to the masker.
+	if start := strings.IndexAny(text, "\"'"); start >= 0 {
+		text = text[:start]
+	}
+	end := len(text)
+	// Shape detectors can match inside a word. Hold from any complete or
+	// unfinished introducer in the last token, including a split PEM marker.
+	// These introducers correspond to secrets.Mask's credential shapes; the
+	// masker itself remains the authority for replacing complete values.
+	tokenStart := strings.LastIndexAny(text, " \t\r\n") + 1
+	for i := tokenStart; i < end; i++ {
+		for _, prefix := range []string{"sk-", "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_", "AIza", "xoxb-", "xoxa-", "xoxp-", "xoxr-", "xoxs-", "AKIA", "ASIA", "eyJ", "-----"} {
+			if strings.HasPrefix(text[i:], prefix) || strings.HasPrefix(prefix, text[i:]) {
+				end = i
+				break
+			}
+		}
+	}
+	masked, err := secrets.Mask(text[:end])
+	if err != nil {
+		return reply.View{}, "", err
+	}
+	if !strings.HasPrefix(masked.Text(), s.sent) {
+		return reply.View{}, "", errors.New("reply masking changed a published prefix")
+	}
+	next := masked.Text()[len(s.sent):]
+	if next == "" {
+		return reply.View{}, "", nil
+	}
+	s.sent = masked.Text()
+	view, err := s.filter.Push(next)
+	return view, next, err
+}
+
+func (r *conversationRuntime) replyCard(key, turnID string, view reply.View) reply.Card {
+	return reply.Card{Preview: *view.Card, ResultID: "result:" + key, Revision: 1,
+		Title: "Full reply", Summary: view.Text, RevisedBy: r.agent,
+		Provenance: protocol.ResultProvenance{AgentID: r.agent, ConversationID: r.conversation, TurnID: turnID}}
+}
+
+const conversationPreviewBytes = 64 << 10
+
+func (r *conversationRuntime) publishReply(key, turnID string, view reply.View) error {
+	if view.Card != nil {
+		card := r.replyCard(key, turnID, view)
+		// Bound the wire preview independently of the complete ledger card.
+		// Even JSON's worst-case six-byte escapes leave ample envelope space
+		// below the RPC writer's 1 MiB limit.
+		text := card.Text
+		if len(text) > conversationPreviewBytes {
+			end := conversationPreviewBytes
+			for !utf8.RuneStart(text[end]) {
+				end--
+			}
+			text = text[:end] + "\n… Preview truncated; full reply retained in conversation history."
+		}
+		return r.publish(protocol.KindResult, key, protocol.Result{
+			ResultID: card.ResultID, Revision: "1", Type: card.Type, Status: card.Status,
+			Title: card.Title, Summary: card.Summary, Text: &text,
+			RevisedBy: card.RevisedBy, Provenance: card.Provenance,
+		})
+	}
+	speaker := protocol.ConversationSpeakerAgent
+	return r.publish(protocol.KindItemDone, key, protocol.ItemDone{Text: &view.Text, Speaker: &speaker})
 }
 func (r *conversationRuntime) setActive(active bool) error {
 	return r.publish(protocol.KindTurnState, "turn", protocol.TurnState{Active: &active})
@@ -297,6 +430,9 @@ func (r *conversationRuntime) seedHistory(ctx context.Context) error {
 		return err
 	}
 	for _, e := range events {
+		if e.ScaffoldKind == "result" {
+			continue // The source projects its card at the original reply position.
+		}
 		if e.ScaffoldKind == "interruption" || e.ScaffoldKind == "failure" {
 			stopped, err := turn.New(r.db).Stopped(ctx, e.ParentID)
 			if err != nil {
@@ -307,6 +443,20 @@ func (r *conversationRuntime) seedHistory(ctx context.Context) error {
 			}
 		}
 		text := e.Body.Text()
+		if e.SpeakerKind == guard.Agent {
+			filter, err := conversationFilter()
+			if err != nil {
+				return err
+			}
+			view, err := filter.Push(text)
+			if err != nil {
+				return err
+			}
+			if err = r.publishReply(e.ID, "turn:"+e.ParentID, view); err != nil {
+				return err
+			}
+			continue
+		}
 		speaker := protocol.ConversationSpeaker(e.SpeakerKind)
 		p := protocol.ItemDone{Text: &text, Speaker: &speaker}
 		if e.SpeakerKind == guard.Person {
@@ -353,6 +503,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			return turn.ModelPolicy{Model: r.route.Model, Revision: "configured", Class: provider.ModelAPI}, nil
 		},
 		Context: func(ctx context.Context, _ turn.ModelPolicy) (turn.PreparedRequest, error) {
+			if err := r.refreshPersona(ctx); err != nil {
+				return turn.PreparedRequest{}, err
+			}
 			persona, err := r.agents.Prepare(ctx, turnID, r.agent)
 			if err != nil {
 				return turn.PreparedRequest{}, err
@@ -385,14 +538,47 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		Digest: assemble.Digest,
 	}
 	round := 0
+	filters := map[string]*conversationReplyStream{}
 	var completed []ledger.Admission
 	var saved []ledger.Event
 	complete := func(ctx context.Context, db turn.Canon) error {
 		if len(completed) == 0 {
 			return db.Write(ctx, func(*canon.Tx) error { return nil })
 		}
+		// Adapt the existing filter's generated draft into the same batch as all
+		// completed items. Turn completion, sources and cards commit together.
+		var batch []ledger.Admission
+		for _, item := range completed {
+			batch = append(batch, item)
+			masked, err := secrets.Mask(item.Input.Body)
+			if err != nil {
+				return err
+			}
+			filter, err := conversationFilter()
+			if err != nil {
+				return err
+			}
+			view, err := filter.Push(masked.Text())
+			if err != nil {
+				return err
+			}
+			if view.Card != nil {
+				card := r.replyCard(item.Input.ID, turnID, view)
+				body, err := json.Marshal(card)
+				if err != nil {
+					return err
+				}
+				source := item.Input
+				batch = append(batch, ledger.Admission{Entry: guard.EntryAgent, Input: ledger.Input{
+					ID: card.ResultID, ParentID: source.ID, ConversationID: source.ConversationID, AgentID: source.AgentID,
+					Surface: source.Surface, OccurredAt: source.OccurredAt, RecordedAt: source.RecordedAt, TimeQuality: source.TimeQuality,
+					ScaffoldKind: "result", Body: string(body),
+					Relations: []ledger.Relation{{TargetID: source.ID, Kind: "view_of"}},
+				}})
+			}
+		}
 		var err error
-		saved, err = ledger.New(db, r.materials).AdmitBatch(ctx, completed)
+		saved, err = ledger.New(db, r.materials).AdmitBatch(ctx, batch)
 		return err
 	}
 	out, err := turn.New(r.db).Run(ctx, turn.Options{ID: turnID, Conversation: r.conversation, InboxID: inboxID, InputEvent: input.ID, Preparation: prep, Complete: complete, Loop: loop.Config{
@@ -405,7 +591,28 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			key := fmt.Sprintf("%s:%d:%d", turnID, round, e.Index)
 			switch e.Kind {
 			case provider.Delta:
-				return r.publish(protocol.KindOutputDelta, key, e.Delta)
+				filter := filters[key]
+				if filter == nil {
+					base, err := conversationFilter()
+					if err != nil {
+						return err
+					}
+					filter = &conversationReplyStream{filter: base}
+					filters[key] = filter
+				}
+				view, delta, err := filter.Push(e.Delta)
+				if err != nil {
+					return err
+				}
+				if delta == "" {
+					return nil
+				}
+				if view.Cut {
+					// A result replaces the same stream row, retracting the unfinished
+					// sentence while retaining all subsequent text in its preview.
+					return r.publishReply(key, turnID, view)
+				}
+				return r.publish(protocol.KindOutputDelta, key, delta)
 			case provider.ItemDone:
 				var item struct {
 					Type, Role string
@@ -436,9 +643,20 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 	// commit together. Publication can be recovered from history after a crash.
 	if err == nil {
 		for _, item := range saved {
-			value := item.Body.Text()
-			speaker := protocol.ConversationSpeakerAgent
-			if publishErr := r.publish(protocol.KindItemDone, item.ID, protocol.ItemDone{Text: &value, Speaker: &speaker}); publishErr != nil {
+			if item.ScaffoldKind == "result" {
+				continue
+			}
+			filter, filterErr := conversationFilter()
+			if filterErr != nil {
+				err = filterErr
+				break
+			}
+			view, filterErr := filter.Push(item.Body.Text())
+			if filterErr != nil {
+				err = filterErr
+				break
+			}
+			if publishErr := r.publishReply(item.ID, turnID, view); publishErr != nil {
 				err = publishErr
 				break
 			}

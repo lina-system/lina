@@ -21,7 +21,7 @@ import (
 
 // Config is supplied by main's composition root. Token comes from the owner's
 // secret store; Bot.Account is Telegram's numeric bot ID, not its token. The
-// caller installs channels.Schema and Schema before constructing this adapter.
+// caller installs canon.Migrations before constructing this adapter.
 // Transport is an HTTP transport seam; nil uses a private standard transport.
 type Config struct {
 	Bot       channels.Bot
