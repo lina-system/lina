@@ -274,10 +274,10 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 			refuse(&answer, protocol.ErrorNotAuthorized, "client identity changed")
 		case welcomed && envelope.Epoch != identity.Epoch:
 			refuse(&answer, protocol.ErrorStaleEpoch, "request epoch differs from Core")
-		case welcomed && (envelope.Kind == protocol.KindApprovalAnswer || envelope.Kind == protocol.KindQuestionAnswer || envelope.Kind == protocol.KindWaitingAnswer) && !peer.canDecide():
-			refuse(&answer, protocol.ErrorNotAuthorized, "client is not an eligible decider")
 		case welcomed && identity.Recovering != nil && identity.Recovering() && !readOnlyKinds[envelope.Kind]:
 			refuse(&answer, protocol.ErrorUnavailable, "Core is recovering")
+		case welcomed && (envelope.Kind == protocol.KindApprovalAnswer || envelope.Kind == protocol.KindQuestionAnswer || envelope.Kind == protocol.KindWaitingAnswer) && !peer.canDecide():
+			refuse(&answer, protocol.ErrorNotAuthorized, "client is not an eligible decider")
 		case welcomed:
 			if handled, err := topics.handle(req.ID, envelope); handled {
 				if err != nil {
