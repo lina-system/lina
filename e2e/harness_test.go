@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -20,26 +19,13 @@ import (
 
 const operationTimeout = 10 * time.Second
 
-// TestMain owns immutable binaries shared only within this test invocation.
-// Installed state, Core processes and terminal sessions remain per scenario.
-func TestMain(m *testing.M) {
-	code := m.Run()
-	if commandBuilds.root != "" {
-		if err := os.RemoveAll(commandBuilds.root); err != nil {
-			fmt.Fprintln(os.Stderr, "remove e2e build artifacts:", err)
-			code = 1
-		}
-	}
-	os.Exit(code)
-}
-
 var commandBuilds = struct {
 	sync.Mutex
-	root  string
-	paths map[string]string
-}{paths: make(map[string]string)}
+	binaries map[string][]byte
+}{binaries: make(map[string][]byte)}
 
-// Build each real command once per test invocation. Only verified Go caches and
+// Build each real command once per test process and copy it into each scenario.
+// Only verified Go caches and
 // tool locations cross into the build; child products get a fresh HOME and no
 // credentials, user configuration, display server or provider environment.
 func buildLina(t *testing.T) string {
@@ -48,21 +34,15 @@ func buildLina(t *testing.T) string {
 
 func buildCommand(t *testing.T, name string) string {
 	t.Helper()
+	home := t.TempDir()
+	binary := filepath.Join(home, name)
 	commandBuilds.Lock()
 	defer commandBuilds.Unlock()
-	if path := commandBuilds.paths[name]; path != "" {
-		return path
-	}
-	if commandBuilds.root == "" {
-		root, err := os.MkdirTemp("", "lina-e2e-build-")
-		if err != nil {
+	if data, ok := commandBuilds.binaries[name]; ok {
+		if err := os.WriteFile(binary, data, 0700); err != nil {
 			t.Fatal(err)
 		}
-		commandBuilds.root = root
-	}
-	home, err := os.MkdirTemp(commandBuilds.root, name+"-")
-	if err != nil {
-		t.Fatal(err)
+		return binary
 	}
 	env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "GOENV=off", "GOTOOLCHAIN=auto"}
 	for _, name := range []string{"GOCACHE", "GOMODCACHE", "TMPDIR"} {
@@ -82,7 +62,6 @@ func buildCommand(t *testing.T, name string) string {
 	if len(paths) != 2 {
 		t.Fatalf("expected two Go cache paths, got %d", len(paths))
 	}
-	binary := filepath.Join(home, name)
 	build := exec.CommandContext(ctx, "go", "build", "-mod=readonly", "-o", binary, "./cmd/"+name)
 	build.Dir = ".."
 	build.Env = []string{
@@ -93,7 +72,11 @@ func buildCommand(t *testing.T, name string) string {
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build %s: %v\n%s", name, err, output)
 	}
-	commandBuilds.paths[name] = binary
+	data, err := os.ReadFile(binary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commandBuilds.binaries[name] = data
 	return binary
 }
 

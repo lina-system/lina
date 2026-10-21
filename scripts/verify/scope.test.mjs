@@ -145,6 +145,48 @@ test('Moirai source changes select its binary and Core acceptance checks', t => 
   assert.equal(componentRegistry.find(c => c.name === 'moirai-worker')?.binary, 'moirai-worker');
 });
 
+for (const path of [
+  'internal/addons/importer/hermes/snapshot.go',
+  'internal/addons/importer/hermes/snapshot_test.go',
+  'testdata/hermes/schema.sql',
+  'testdata/hermes/speakers.json',
+  'testdata/hermes/README.md',
+]) {
+  test(`Hermes change ${path} selects its consumer checks`, t => {
+    const r = repository(t);
+    const files = {
+      'go.mod': 'module example.invalid/lina\ngo 1.27\ntoolchain go1.27.3\n',
+      'kit/go.mod': 'module example.invalid/lina/kit\ngo 1.27\ntoolchain go1.27.3\n',
+      'go.work': 'go 1.27\ntoolchain go1.27.3\nuse (\n.\n./kit\n)\n',
+      'doc.go': 'package lina\n', 'kit/doc.go': 'package kit\n',
+      'cmd/lina/main.go': 'package main\nfunc main() {}\n',
+      'cmd/lina-node/main.go': 'package main\nfunc main() {}\n',
+      'internal/addons/importer/hermes/snapshot.go': 'package hermes\n',
+      'internal/addons/importer/hermes/snapshot_test.go': 'package hermes\n',
+      'testdata/hermes/schema.sql': 'CREATE TABLE messages (id INTEGER);\n',
+      'testdata/hermes/speakers.json': '{}\n',
+      'testdata/hermes/README.md': '# Fixtures\n',
+    };
+    for (const [name, content] of Object.entries(files)) {
+      mkdirSync(join(r.cwd, name, '..'), { recursive: true });
+      writeFileSync(join(r.cwd, name), content);
+    }
+    const base = r.commit();
+    writeFileSync(join(r.cwd, path), `${files[path]}\n`);
+    const scope = r.classify(r.commit(), { base });
+    assert.deepEqual(scope.unmapped, []);
+    assert.deepEqual(scope.selectedComponents, ['lina']);
+    assert.equal(scope.components, true);
+    assert.equal(scope.automation, false);
+    assert.equal(scope.dependencies, false);
+    // The component runner uses these patterns for build, vet, exhaustive and test.
+    const packages = componentRegistry.find(c => c.name === 'lina').packages;
+    assert.ok(packages.includes('./internal/addons/importer/hermes/...'));
+    assert.ok(!packages.includes('./internal/core/importer/...'));
+    assert.equal(kind(path), 'components');
+  });
+}
+
 test('background runs are registered with the lina Go checks', t => {
   const r = repository(t);
   const base = r.git('rev-parse', 'HEAD');
@@ -159,14 +201,14 @@ test('background runs are registered with the lina Go checks', t => {
 test('Hermes readers and synthetic fixtures select their consumer checks', t => {
   const r = repository(t);
   const base = r.git('rev-parse', 'HEAD');
-  mkdirSync(join(r.cwd, 'internal/core/importer'), { recursive: true });
+  mkdirSync(join(r.cwd, 'internal/addons/importer/hermes'), { recursive: true });
   mkdirSync(join(r.cwd, 'testdata/hermes'), { recursive: true });
-  writeFileSync(join(r.cwd, 'internal/core/importer/snapshot.go'), 'package importer\n');
+  writeFileSync(join(r.cwd, 'internal/addons/importer/hermes/snapshot.go'), 'package hermes\n');
   writeFileSync(join(r.cwd, 'testdata/hermes/schema.sql'), 'CREATE TABLE messages (id INTEGER);\n');
   const scope = r.classify(r.commit(), { base, full: true });
   assert.deepEqual(scope.unmapped, []);
   assert.ok(scope.selectedComponents.includes('lina'));
-  assert.ok(componentRegistry.find(c => c.name === 'lina').packages.includes('./internal/core/importer/...'));
+  assert.ok(componentRegistry.find(c => c.name === 'lina').packages.includes('./internal/addons/importer/hermes/...'));
   assert.equal(kind('testdata/hermes/README.md'), 'components');
 });
 
