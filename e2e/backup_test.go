@@ -57,14 +57,12 @@ func TestM1BackupInstalledConversation(t *testing.T) {
 	}
 	h.stopCore(core)
 	// Reproduce the published v14 schema, retaining its completed conversation
-	// while removing later summary, sign-in, channel, exchange, display-order and skill tables.
-
+	// while removing later summary, sign-in, channel, exchange, display-order, growth, job and skill tables.
 	legacy, err := canon.OpenSQLite(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = legacy.ExecContext(h.ctx, `DROP TABLE conversation_order; DROP TABLE exch_waiting; DROP TABLE exch_event; DROP TABLE exch_msg; DROP TABLE exchanges; DROP TABLE telegram_presentations; DROP TABLE telegram_buttons; DROP TABLE channel_outbound; DROP TABLE channel_receipts; DROP TABLE channel_actions; DROP TABLE channel_bindings; DROP TABLE channel_connections; DROP TRIGGER sum_revoke; DROP VIEW sum_affected; DROP TABLE sum_cover; DROP TABLE sum_edge; DROP TABLE sum_node; DROP TABLE sign_in_identities; DROP TABLE sign_in_host; DROP TABLE owner_binding; DROP TABLE skill_heads; DROP TABLE skill_versions; DROP TABLE skill_undone; DROP TABLE skill_repo; PRAGMA user_version=14;`)
-
+	_, err = legacy.ExecContext(h.ctx, `DROP TABLE conversation_order; DROP TABLE exch_waiting; DROP TABLE exch_event; DROP TABLE exch_msg; DROP TABLE exchanges; DROP TABLE telegram_presentations; DROP TABLE telegram_buttons; DROP TABLE channel_outbound; DROP TABLE channel_receipts; DROP TABLE channel_actions; DROP TABLE channel_bindings; DROP TABLE channel_connections; DROP TRIGGER sum_revoke; DROP VIEW sum_affected; DROP TABLE sum_cover; DROP TABLE sum_edge; DROP TABLE sum_node; DROP TABLE sign_in_identities; DROP TABLE sign_in_host; DROP TABLE owner_binding; DROP TABLE agent_growth_steps; DROP TABLE moirai_jobs; DROP TABLE moirai_tasks; DROP TABLE moirai_aux; DROP TABLE moirai_applied; DROP TABLE moirai_reports; DROP TABLE budget_usage; DROP TABLE skill_heads; DROP TABLE skill_versions; DROP TABLE skill_undone; DROP TABLE skill_repo; PRAGMA user_version=14;`)
 	legacy.Close()
 	if err != nil {
 		t.Fatal(err)

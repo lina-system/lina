@@ -1,0 +1,5 @@
+{
+  "job_id": "fixture-growth",
+  "initial": {"core": "fixture-core", "default_voice": "fixture-default", "user_voice": "fixture-user", "growth_snapshot": "fixture-baseline"},
+  "candidate": {"id": "fixture-step", "expected": 1, "snapshot": "fixture-growth-1", "notice": "fixture-learning-1"}
+}

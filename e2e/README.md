@@ -73,6 +73,18 @@ process creation in test files follows the architecture rule for command
 acceptance harnesses. Future milestones can add scenario files here; new
 subpackages under `e2e/` are also covered by the registered package pattern.
 
+`m2/persona-growth.json` uses a real Moirai worker process against Core's job
+socket with a synthetic precomputed growth candidate. It checks forged proposal
+refusal, next-turn persona application, a committed learning notice and one-action
+undo through the authorized Core tool registry, and suppression of an undone
+snapshot after reopening canon. The service harness uses the same private state,
+process deadlines and cleanup as the M1 worker scenario; it needs no model or
+personal persona text. Its installed-Core companion negotiates the growth capability,
+adopts during an active reply, checks actual provider instructions on subsequent
+turns, receives one conversation notice, dispatches undo, and reopens Core to
+check suppression, history and job socket cleanup. No test-only Core service
+composition is used in that companion.
+
 - State, environment and processes are isolated per scenario. Scenarios share
   immutable command binaries built from the current source; installation tests
   copy them into private bundles. Builds inherit only Go caches and tool locations;

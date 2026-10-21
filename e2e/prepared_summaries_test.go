@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thisisjun786/lina/internal/core/budget"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/compaction"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
@@ -52,7 +51,6 @@ func TestM1PreparedSummaries(t *testing.T) {
 	}
 	path := filepath.Join(h.root, "canon.db")
 	migrations := canon.Migrations()
-	migrations = append(migrations, canon.Migration{Version: migrations[len(migrations)-1].Version + 1, SQL: jobs.Schema + budget.Schema})
 	db, err := canon.Open(h.ctx, canon.Config{Path: path, Epoch: 1, Controls: controls, Migrations: migrations})
 	if err != nil {
 		t.Fatal(err)

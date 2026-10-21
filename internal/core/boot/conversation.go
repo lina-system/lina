@@ -84,6 +84,7 @@ type conversationRuntime struct {
 	controls         *ctlfiles.Store
 	personaWarned    bool
 
+	growth                      *growthRuntime
 	lanes                       *lane.Manager
 	topics                      *clientsrv.Topics
 	route                       *modelpath.ResponsesConfig
@@ -214,11 +215,24 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 			return nil, err
 		}
 	}
+	if err = r.startGrowth(ctx, main, epoch, controls); err != nil {
+		return nil, err
+	}
 	success = true
 	return r, nil
 }
 func (r *conversationRuntime) Close(ctx context.Context) error {
 	var err error
+	if r.growth != nil && r.growth.stop != nil {
+		r.growth.stop()
+		select {
+		case result := <-r.growth.done:
+			err = errors.Join(err, result)
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		r.growth.stop = nil
+	}
 	if r.channels != nil {
 		r.channels.Close()
 	}

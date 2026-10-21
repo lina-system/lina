@@ -30,7 +30,8 @@ func setup(t *testing.T) (*agents.Store, *canon.Store, string) {
 	if err := ctl.Acquire(); err != nil {
 		t.Fatal(err)
 	}
-	db, err := canon.Open(t.Context(), canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: 1, Controls: ctl, Migrations: canon.Migrations()})
+	migrations := canon.Migrations()
+	db, err := canon.Open(t.Context(), canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: 1, Controls: ctl, Migrations: migrations})
 	if err != nil {
 		t.Fatal(err)
 	}

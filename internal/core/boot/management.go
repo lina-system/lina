@@ -50,7 +50,7 @@ func (r *conversationRuntime) Agent(ctx context.Context, s clientsrv.Session, p 
 		return
 	}
 	result.Operation = p.Operation
-	if p.Operation == nil {
+	if p.Operation == nil || p.Candidate != nil || p.Revision != nil {
 		return result, malformedManagement()
 	}
 	switch *p.Operation {

@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thisisjun786/lina/internal/core/budget"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/jobs"
 	"github.com/thisisjun786/lina/internal/moirai"
@@ -20,7 +19,6 @@ import (
 
 func preparationService(t *testing.T, b *Builder, db *canon.Store) (*jobs.Service, jobapi.Job) {
 	t.Helper()
-	write(t, db, jobs.Schema+budget.Schema)
 	b.PreparationJob = "prepare-conversation"
 	job := jobapi.Job{ID: b.PreparationJob, Kind: jobapi.Memory, Enabled: true, Every: time.Minute, Timeout: time.Second, Budget: 100, MaxTokens: 10, Adoption: "prepared-summary"}
 	service, err := jobs.New(jobs.Config{Store: db, Epoch: 1, Limit: 100, Definitions: map[string]jobs.Definition{job.ID: {
