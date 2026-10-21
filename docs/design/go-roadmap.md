@@ -255,6 +255,7 @@ The #104 typed-result increment supplies all eight closed body schemas, determin
 
 **G1-37 Extraction, maintenance pass and person brief.** Extraction, one maintenance pass, person brief.
 - Done when: a person-subject item comes only from person events; a fan-out fixture yields one item with two evidences; a chain of three statements returns only the newest; the pass applies only pre-authorized actions and is silent when nothing changed.
+- Implementation evidence: memory preparation and Apply callbacks, durable maintenance choices and expiring proposals, and a generation-checked cited person brief in `internal/core/memory`; `e2e/m1/memory-jobs.json` runs the real worker against the Core job socket. Package fixtures cover non-person rejection, fan-out evidence, a three-statement chain and silent maintenance.
 - Depends on: G1-13, G1-14, G1-36. Design refs: C-21; [cognition-and-life.md](cognition-and-life.md#memory-jobs).
 
 **G1-38 Prepared summaries and higher tree levels.** Prepared summaries, higher tree levels.

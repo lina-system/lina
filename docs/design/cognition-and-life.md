@@ -83,6 +83,31 @@ Lachesis' memory work runs as these jobs in `moirai-worker`, each with its own s
 - **Maintenance pass.** One pass over the items replaces separate ad hoc review jobs. It runs once for the main over common items and once for each agent over that agent's personal items. It finds items past their `valid until` or superseded, duplicate clusters inside one subject, items whose only evidence is automation, and instruction-like text in the standing profile. It applies only what the person has pre-authorized, as a recorded choice the person can see and edit, and turns everything else into proposals that expire unanswered. It reports in a line or two and stays silent when nothing changed.
 - **Import and promotion.** The import of a Hermes install is a job the person starts. It is the one job that writes the ledgers of agents; it reads no personal record of an agent except to check a legacy reference, and it makes no model call. Promotion proposals are the job of each mapped agent: they read that agent's imported conversations, and the person confirms them in grouped batches. Promoted items take their layer by the usual rule.
 
+The first Go memory-job implementation keeps preparation and transactional write
+rules in `internal/core/memory`, using the existing worker's Aux/Apply/Report
+path. Extraction is bounded to one agent's canonical person events, groups a
+short burst without counting replay copies, and commits its items with its task
+watermark. Empty eligible input makes no extraction model call. Prepared tasks
+are checked again before model dispatch and before publication.
+
+The maintenance choice is a durable, revision-checked record for the person and
+holder. Its default allows no action. The pass may clear standing flags, merge
+exact duplicates or mark exclusively automated evidence only when that action
+is allowed by the current choice. Other findings become expiring proposals;
+unchanged findings do not renew them or repeat a notice. Exact merges retain
+all evidence and prior revisions, and never combine different subjects or
+scopes. Similar wording is a proposal, since overlap alone cannot distinguish a
+reinforcement from a contradiction. Expired and superseded statements remain
+available as history.
+
+Briefs retain per-sentence citations and a generation plus revocation epoch.
+Only the latest task can publish, and changed evidence prevents both dispatch
+and publication. Reads take a ready result for the same agent, person and topic,
+with bounded turn age, and never wait on background work. Empty results back off
+on the configured cadence. The concrete callback and schema composition,
+initial thresholds and executable acceptance scenario are specified in
+[go-core.md C-21](go-core.md#records-and-memory).
+
 ### Persona in the modules
 
 Each agent's persona is a layer that all three modules use:

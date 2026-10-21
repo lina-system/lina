@@ -679,6 +679,56 @@ The memory store keeps the current item and immutable revision snapshots in cano
 
 The `recall_person` tool requires a nonempty retrieval query alongside the question, so an omitted query cannot silently choose the most recent items. The initial executor uses a limit of 12 combined memory items and own-ledger hits, with depth 0 as the default. Depth 1 makes one cancellable auxiliary call with a 10-second deadline and no retries. Its structured sentences retain only citations to the retrieved id and revision; sentences left without citations are dropped. A depth above 1 returns the background-required outcome to the caller. The standing profile is an ephemeral view ordered by the latest committed revision, with line and tokenizer budgets supplied by assembly. These operations are callable Core/tool services; no memory operation is exposed by the current client protocol, so acceptance uses real canon and ledger package scenarios. The indexed memory matcher and the ledger search service are described in C-22.
 
+The memory-job increment exposes Core-owned preparation, pre-dispatch checks and
+`ExtractionApply`, `MaintenanceApply` and `BriefApply` callbacks in
+`internal/core/memory`. They register with the existing job API; the worker still
+reads immutable tasks and submits their results through `Apply`. The composing
+schema owner installs `memory.JobsSchema` alongside `jobs.Schema` and the shared
+budget schema in a numbered migration. Worker startup never migrates canon.
+These are package and job-socket capabilities; installation and conversation
+composition select their schedules and model bindings. No new client command or
+TUI memory screen is introduced.
+
+Extraction scans a bounded ledger prefix for one agent, retaining the source
+cursor and revocation epoch. Only canonical person events enter an utterance;
+replay and `view_of` copies do not trigger another extraction. The configurable
+burst window is measured from the first event, and a non-person turn or a
+conversation change breaks it. Empty eligible batches require no model task.
+Core checks the prepared source text, visibility and model scope before dispatch,
+and Apply rechecks the epoch, allowed evidence set and normal memory-write rules.
+All items and the task watermark commit together; a failed batch publishes none.
+Common equal statements merge evidence and ordinary recall hides each predecessor
+in a supersession chain.
+
+Maintenance reads one exact holder, including `all` for the common pass. Its
+editable choice is revision-checked and defaults to no allowed actions. It can
+clear a standing flag, merge normalized-equal duplicates or classify exclusively
+automated evidence only when that action is pre-authorized at commit. A merge
+preserves evidence and prior revisions and retracts the duplicate; subject,
+holder, scope, kind and validity boundaries are never crossed. Token Jaccard
+overlap of 0.8 (P), without configured embeddings, produces a proposal only.
+Expired and superseded items retain history. Instruction-like standing text is
+flagged with a conservative prefix detector; this is a hygiene heuristic, not an
+authorization boundary. Unanswered proposals expire after seven days (P), are
+not renewed for an unchanged finding, and reads omit proposals for obsolete item
+revisions. The pass emits at most one short notice for new proposals or applied
+changes, and no notice for a no-op. A notice callback writes in the same Apply
+transaction and may announce success only after commit.
+
+A person-brief task is prepared after delivery from at most twelve readable
+person items, standing preferences and explicitly selected recent person events.
+It is derived state scoped to the agent and person. Every surviving sentence
+cites a source from that task. Pre-dispatch and publication checks reject a
+superseded generation, changed source revision, changed scope or revocation
+epoch. Empty output increases the next eligible turn by
+`min(base cadence + empty streak, base cadence * 8)`; useful output resets the
+streak. A ready-only read requires the same topic, still-valid evidence and a
+turn age no greater than twice the base cadence. It never waits or calls a model.
+An Aux call whose outcome is unknown retains the job API's pending reservation
+and is not silently retried. Synthetic package tests and
+`e2e/m1/memory-jobs.json` exercise these operations with the real worker binary and
+Core job socket; model quality and installed scheduling remain composition concerns.
+
 **C-22 Korean search (changed).** FTS5 with the trigram tokenizer for ledger and memory, plus a Hangul bigram posting table for words of two syllables. The acceptance set of the contract, by id, is a particle-attached three-syllable word and a two-syllable word, on the ledger (imported conversations included) and on memory. Each index records its tokenizer and fallback. Vectors are derived data in sqlite-vec when an embedding endpoint is configured.
 
 The two-syllable index stores distinct adjacent pairs of composed Hangul syllables. It does not bridge spaces, punctuation, another script or a removed secret span. Search text is a literal phrase: quotes and FTS operators in the text do not become query syntax. Index rows use the same secret-free projection as recall, commit with their source, and are rebuilt for existing eligible rows when the index is introduced. Holder and conversation access, current validity and retraction filters apply before ranking or limiting hits. The synthetic corpus in `testdata/korean/search.json` covers attached particles, imported text, duplicate occurrences, separated syllables and literal quotes.
