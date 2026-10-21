@@ -4,12 +4,13 @@ package e2e_test
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
 func TestHeadless(t *testing.T) {
 	binary := buildLina(t)
-	for _, quit := range []struct{ name, keys string }{{"quit", "q\n"}, {"terminal EOF", "\x04"}} {
+	for _, quit := range []struct{ name, keys string }{{"quit", "q"}, {"interrupt", "\x03"}, {"terminal EOF", "\x04"}} {
 		t.Run(quit.name, func(t *testing.T) {
 			h := newHarness(t, binary)
 			core := h.startCore()
@@ -20,6 +21,7 @@ func TestHeadless(t *testing.T) {
 			h.keys(term, quit.keys)
 			// Keep the PTY open: the key, rather than closing a pipe, must quit.
 			term.process.wait(t, 0)
+			h.expectTerminalRestored(term)
 			if term.process.stderr.Len() != 0 {
 				t.Fatalf("TUI diagnostic: %s", &term.process.stderr)
 			}
@@ -36,6 +38,7 @@ func TestHeadless(t *testing.T) {
 		h := newHarness(t, binary)
 		term := h.startTUI()
 		term.process.wait(t, 69)
+		h.expectTerminalRestored(term)
 		for line := range term.lines {
 			t.Errorf("absent Core produced terminal state %q", line)
 		}
@@ -44,4 +47,24 @@ func TestHeadless(t *testing.T) {
 			t.Fatalf("TUI created state with Core absent: entries=%d error=%v", len(entries), err)
 		}
 	})
+}
+
+func TestStyledFailureIsPresentedOnce(t *testing.T) {
+	binary := buildLina(t)
+	for _, combined := range []bool{true, false} {
+		h := newHarness(t, binary)
+		term := h.startTerminal([]string{"TERM=xterm-256color", "COLORTERM=truecolor"}, combined)
+		var output strings.Builder
+		for line := range term.lines {
+			output.WriteString(line)
+		}
+		term.process.wait(t, 69)
+		h.expectTerminalRestored(term)
+		if output.Len() == 0 || strings.Contains(output.String(), "lina tui:") {
+			t.Fatal("styled failure is absent or repeated as a CLI diagnostic")
+		}
+		if !combined && term.process.stderr.Len() == 0 {
+			t.Fatal("redirected stderr lost its diagnostic")
+		}
+	}
 }

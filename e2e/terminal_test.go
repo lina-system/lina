@@ -20,9 +20,14 @@ type terminal struct {
 	lines   chan string
 	done    chan struct{}
 	err     error // Read after done closes.
+	mode    unix.Termios
 }
 
 func (h *harness) startTUI() *terminal {
+	return h.startTerminal(nil, false)
+}
+
+func (h *harness) startTerminal(environment []string, combined bool) *terminal {
 	h.t.Helper()
 	master, err := os.OpenFile("/dev/ptmx", os.O_RDWR|unix.O_NOCTTY|unix.O_NONBLOCK, 0)
 	if err != nil {
@@ -42,10 +47,9 @@ func (h *harness) startTUI() *terminal {
 	if err != nil {
 		h.t.Fatal(err)
 	}
-	// Retain canonical input: q is delivered by Enter, Ctrl-D is terminal EOF.
-	// Disable echo so the script observes only what the application emitted.
-	mode.Lflag |= unix.ICANON
-	mode.Lflag &^= unix.ECHO | unix.ECHONL
+	// Start in canonical mode, as a shell would. The application must arrange
+	// immediate key delivery and restore this mode when it exits.
+	mode.Lflag |= unix.ICANON | unix.ECHO
 	mode.Cc[unix.VEOF] = 4
 	if err := unix.IoctlSetTermios(int(slave.Fd()), setTermios, mode); err != nil {
 		h.t.Fatal(err)
@@ -54,10 +58,14 @@ func (h *harness) startTUI() *terminal {
 		h.t.Fatal(err)
 	}
 	p := h.command("tui", "--socket", h.socket)
+	p.command.Env = append(p.command.Env, environment...)
 	p.command.Stdin, p.command.Stdout = slave, slave
+	if combined {
+		p.command.Stderr = slave
+	}
 	p.command.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
 	p.start(h.t)
-	term := &terminal{process: p, master: master, lines: make(chan string), done: make(chan struct{})}
+	term := &terminal{process: p, master: master, lines: make(chan string), done: make(chan struct{}), mode: *mode}
 	go func() {
 		defer close(term.done)
 		defer close(term.lines)
@@ -84,6 +92,17 @@ func (h *harness) startTUI() *terminal {
 		<-term.done
 	})
 	return term
+}
+
+func (h *harness) expectTerminalRestored(term *terminal) {
+	h.t.Helper()
+	mode, err := unix.IoctlGetTermios(int(term.master.Fd()), getTermios)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	if *mode != term.mode {
+		h.t.Fatal("TUI did not restore the terminal mode")
+	}
 }
 
 func (h *harness) expectState(term *terminal, state string) {

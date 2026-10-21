@@ -20,6 +20,8 @@ var (
 	ErrStorage  = errors.New("credential_storage_failed")
 	ErrInTurn   = errors.New("credential_change_during_turn")
 	ErrClosed   = errors.New("credential_store_closed")
+	ErrUpdate   = errors.New("credential_update_failed")
+	ErrBusy     = errors.New("credential_update_in_progress")
 )
 
 const maxCredentialBytes = 64 << 10
@@ -54,17 +56,19 @@ type Backend interface {
 }
 
 type Store struct {
-	mu      sync.Mutex
-	backend Backend
-	turns   int
-	closed  bool
+	mu       sync.Mutex
+	backend  Backend
+	turns    int
+	closed   bool
+	updating map[Key]bool
+	changed  chan struct{}
 }
 
 func NewStore(backend Backend) (*Store, error) {
 	if backend == nil {
 		return nil, ErrInvalid
 	}
-	return &Store{backend: backend}, nil
+	return &Store{backend: backend, updating: make(map[Key]bool), changed: make(chan struct{})}, nil
 }
 
 func (s *Store) Get(key Key) (secret.Secret, error) {
@@ -119,6 +123,9 @@ func (s *Store) canChange(key Key) error {
 	if !key.valid() {
 		return ErrInvalid
 	}
+	if s.updating[key] {
+		return ErrBusy
+	}
 	if s.turns != 0 {
 		return ErrInTurn
 	}
@@ -129,6 +136,12 @@ func (s *Store) canChange(key Key) error {
 // Overlapping turns all have to finish before rotation or deletion can proceed.
 func (s *Store) BeginTurn() func() {
 	s.mu.Lock()
+	for !s.closed && len(s.updating) != 0 {
+		changed := s.changed
+		s.mu.Unlock()
+		<-changed
+		s.mu.Lock()
+	}
 	s.turns++
 	s.mu.Unlock()
 	var once sync.Once
@@ -136,6 +149,7 @@ func (s *Store) BeginTurn() func() {
 		once.Do(func() {
 			s.mu.Lock()
 			s.turns--
+			s.signal()
 			s.mu.Unlock()
 		})
 	}
@@ -148,6 +162,7 @@ func (s *Store) Close() error {
 		return nil
 	}
 	s.closed = true
+	s.signal()
 	return storageError(s.backend.Close())
 }
 
