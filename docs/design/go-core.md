@@ -214,6 +214,21 @@ The topic hub assigns sequence numbers only after coalescing, independently for 
 A subscription without a cursor gets the latest snapshot window. A cursor from another epoch, ahead of the topic, or older than the retained ring gets `resync` followed by that window. Otherwise, replay starts strictly after the cursor and precedes the live queue. The ring retains 1,024 committed frames and the snapshot retains 200 materialized items by stable item key, including accumulated text rather than only its last delta. Each subscription has its own bounded live queue (P: 256 frames). Overflow closes that subscription with a retained `resync_required` cause; other topics and other subscribers of the same topic continue. The cause is separate from the full queue. Snapshot and replay values are independent copies. The hub is in memory for one durable Core epoch; it is not conversation persistence or a substitute for reading older history.
 
 
+Conversation display order is durable separately from ledger append order. Before
+first publishing a message key, boot records its position in canon and serializes
+that write with publication. Later deltas, completion and card replacement retain
+the position. Publication uses the caller's context on live, stopped and startup
+paths; it does not require a running conversation lane. Restart resolves those
+keys through completed ledger messages and
+committed stopped/failed partials, then selects the latest display window in that
+order. Restored partials use the live reply filter, including card identity and
+turn provenance. Legacy partials retain their checkpoint insertion order. A
+position alone supplies no content and cannot invent a turn. The native
+ledger and model-context order remain unchanged. Records from before position
+tracking retain their existing ledger-based restore order; unavailable historical
+stream timing is never guessed. The queue/steering restart scenario is
+`e2e/m1/conversation-history-order.json` (T-03, T-05, T-10).
+
 The additive client 1.0 stream payloads implement this boundary. `subscribe` optionally names `topic`, an `after` cursor, and `active` (omitted means true; false unsubscribes and cannot carry `after`). Omitting `topic` preserves the previous reserved request shape. A fresh subscription answers with `snapshot`; an unavailable cursor answers with `resync` and then sends a `snapshot` notification. A retained cursor answers with `subscribe` carrying `active: true` and the replay endpoint, followed by the replay and then live notifications. An unsubscribe answers with `active: false`. Re-subscribing replaces only that connection's subscription to the named topic.
 
 A cursor payload is `{epoch, seq}` with the CP-02 epoch string and an exact unsigned 64-bit JSON integer sequence. Stream events retain their existing kind and payload, adding optional `stream: {topic, cursor, key, revision}` metadata; previously reserved display events also accept optional `text`. Revisions identify the item's last publication. A snapshot carries `topic`, `cursor`, `revocation_epoch` and `items`; each item carries its kind, stable key, revision and that kind's validated payload. `resync` and `resync_required` carry only the affected topic and current cursor. Mechanics never add fields to the envelope. Replay keeps its logical message id, derived from main, topic and cursor, and uses a new attempt id. Snapshots replace a window, and their revocation epoch comes from the owner of the projection.

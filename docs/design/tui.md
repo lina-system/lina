@@ -141,6 +141,11 @@ The server side is [go-core.md](go-core.md) (C-42): topics, cursors, rings, batc
 - Epochs compare numerically, the form of CP-02 ([host-protocol.md](host-protocol.md#envelope)), without a machine-integer limit. A gap or a newer epoch requests one resync per out-of-sync topic. Duplicate cursors and revisions and older epochs are ignored; a repeated delivery never changes the display. A resync snapshot cannot roll back the accepted cursor within the same epoch and revocation epoch.
 - A different revocation epoch ([conversation-and-memory.md](conversation-and-memory.md#terms)) makes the TUI drop cached items before the snapshot applies, so a forgotten item cannot survive a reconnect.
 - Replaying a stream or a snapshot twice leaves state unchanged.
+- Completed conversation history preserves the live projection's message order
+  and content after Core restart. A reply keeps its first streamed position when
+  later queue or steering input arrives; a reply with no visible delta first
+  appears at completion. Restoration neither groups all replies ahead of later
+  input nor invents or drops turns.
 
 The client 1.0 wire carries these mechanics inside payloads as defined by [C-42](go-core.md#client-service): optional per-event `stream` metadata and the `snapshot`, `resync` and `resync_required` kinds. `e2e/m1/topic-streams.json` crosses the production client socket and generated codec, projects decoded frames into the reducer, and checks duplicate snapshots/replay plus independent topic overflow. It proves the protocol and reducer boundary. The connection shell now automatically subscribes to its granted status topics and projects notifications into the interactive view, covered by `e2e/m1/tui-stream.json`; concrete conversation and result subscriptions still require the conversation view's discovery and focus state. The T-04 rule that a replayed approval rings no second bell also relies on this cursor/revision deduplication.
 
@@ -518,6 +523,12 @@ admission, not turn completion; further typing can be sent while the turn runs.
 A refused send restores the draft. Connection states other than Live disable
 submission without discarding edits.
 Resizing preserves the draft and its cursor without submitting it.
+
+`e2e/m1/conversation-history-order.json` exercises queue and ordinary steering
+input during a held provider stream through an installed Core and a 100x30 TUI.
+It compares live and restored message identities, speakers, text and order,
+checks fresh TUI renders, and requires exactly two provider calls. A final-only
+response checks that restoration preserves its later first appearance too.
 
 - Paste arrives as one atomic message, is one undo step and has control sequences removed. The TUI never reads the host clipboard; paste is the terminal's.
 - Attachments are a strip above the composer and message parts that Core imports ([filesystem.md](filesystem.md#import-and-export)). The draft stays plain text.
