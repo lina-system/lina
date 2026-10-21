@@ -24,6 +24,9 @@ type Resolve func(context.Context, string) (grant.Grant, grant.Environment, erro
 type Config struct {
 	Epoch   uint64
 	Resolve Resolve
+	// CanPresent reports whether a connected surface can show the whole request.
+	// A nil callback means no surface. It must only inspect local connection state.
+	CanPresent func() bool
 }
 type Service struct {
 	store *canon.Store
@@ -81,7 +84,7 @@ func Open(ctx context.Context, store *canon.Store, cfg Config) (*Service, error)
 				return err
 			}
 		}
-		return nil
+		return s.recoverApprovals(ctx, tx)
 	})
 	if err != nil {
 		return nil, err
@@ -118,7 +121,11 @@ func describe(c tools.Call, spec tools.Spec, in tools.Input) (Effect, string, er
 	// restart must find the original receipt. Changed arguments or actors cannot.
 	identity := e
 	identity.Epoch = 0
-	data, err := json.Marshal(identity)
+	data, err := json.Marshal(struct {
+		Effect                Effect
+		What, Where, ScopeKey string
+		Undoable, Network     bool
+	}{identity, in.What, in.Where, in.ScopeKey, in.Undoable, in.Network})
 	return e, digest(data), err
 }
 func readEffect(ctx context.Context, tx *canon.Tx, key string) (Effect, string, bool, error) {
@@ -203,9 +210,6 @@ func (s *Service) Begin(ctx context.Context, c tools.Call, spec tools.Spec, in t
 			e.CurrentRevision = env.Revision
 			return insertEffect(ctx, tx, e, fingerprint, false)
 		}
-		if spec.Outward {
-			return tools.ErrApprovalRequired
-		}
 		if in.Write {
 			var active string
 			err := tx.QueryRowContext(ctx, "SELECT revision,agent,active_key FROM authority_targets WHERE target=?", in.Target).Scan(&e.CurrentRevision, &e.PreviousAgent, &active)
@@ -223,6 +227,25 @@ func (s *Service) Begin(ctx context.Context, c tools.Call, spec tools.Spec, in t
 			if active != "" {
 				return tools.ErrInProgress
 			}
+
+		}
+		basis, err := s.approvalBasis(ctx, tx, c, spec, in, fingerprint)
+		if errors.Is(err, tools.ErrApprovalRequired) {
+			denied = err
+			return nil
+		}
+		if errors.Is(err, ErrDenied) || errors.Is(err, ErrNoSurface) {
+			denied = err
+			e.State = tools.Refused
+			e.Result.State = tools.Refused
+			e.Basis = err.Error()
+			return insertEffect(ctx, tx, e, fingerprint, false)
+		}
+		if err != nil {
+			return err
+		}
+		e.Basis = basis
+		if in.Write {
 			if _, err := tx.ExecContext(ctx, "INSERT INTO authority_targets(target,revision,agent,active_key) VALUES(?,?,?,?) ON CONFLICT(target) DO UPDATE SET active_key=excluded.active_key", in.Target, e.CurrentRevision, e.PreviousAgent, c.Key); err != nil {
 				return err
 			}

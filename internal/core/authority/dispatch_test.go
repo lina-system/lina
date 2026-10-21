@@ -34,6 +34,7 @@ type fixture struct {
 	call             tools.Call
 	runs             atomic.Int32
 	observedRevision string
+	surfaceAvailable bool
 }
 
 func setup(t *testing.T) *fixture {
@@ -58,13 +59,14 @@ func setup(t *testing.T) *fixture {
 	t.Cleanup(func() { f.store.Close(context.Background()) })
 	f.call = tools.Call{Key: "intent", Name: "edit", Account: "account", Auth: grant.Request{GrantID: "grant", MainID: "main", Epoch: 7, TaskID: "task", Host: "host", OSUser: "user", Person: "person", Agent: "agent", Revision: "r1"}, Args: json.RawMessage(`{"target":"document","body":"hello"}`)}
 	f.observedRevision = "r1"
+	f.surfaceAvailable = true
 	f.open(t)
 	return f
 }
 func (f *fixture) open(t *testing.T) {
 	t.Helper()
 	var err error
-	f.service, err = authority.Open(t.Context(), f.store, authority.Config{Epoch: f.cfg.Epoch, Resolve: func(ctx context.Context, id string) (grant.Grant, grant.Environment, error) {
+	f.service, err = authority.Open(t.Context(), f.store, authority.Config{Epoch: f.cfg.Epoch, CanPresent: func() bool { return f.surfaceAvailable }, Resolve: func(ctx context.Context, id string) (grant.Grant, grant.Environment, error) {
 		r := f.call.Auth
 		r.GrantID = id
 		r.Epoch = f.cfg.Epoch
