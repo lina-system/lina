@@ -8,6 +8,7 @@ import (
 	"io"
 	"reflect"
 	"sync"
+	"sync/atomic"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -16,13 +17,14 @@ import (
 // state updates while Bubble Tea owns cell diffing, cursor and terminal modes.
 // Input has one separate cancellable decoder; the renderer never reads stdin.
 type terminalRenderer struct {
-	last    tea.View
-	size    tea.WindowSizeMsg
-	shown   bool
-	program *tea.Program
-	done    chan struct{}
-	err     error
-	once    sync.Once
+	expectedSize atomic.Pointer[tea.WindowSizeMsg]
+	last         tea.View
+	size         tea.WindowSizeMsg
+	shown        bool
+	program      *tea.Program
+	done         chan struct{}
+	err          error
+	once         sync.Once
 }
 type renderedView struct{ view tea.View }
 
@@ -37,7 +39,9 @@ func (m renderedView) View() tea.View { return m.view }
 
 func startTerminalRenderer(ctx context.Context, output io.Writer, width, height int) *terminalRenderer {
 	r := &terminalRenderer{done: make(chan struct{}), size: tea.WindowSizeMsg{Width: width, Height: height}}
-	r.program = tea.NewProgram(renderedView{}, tea.WithContext(ctx), tea.WithInput(nil), tea.WithOutput(output), tea.WithWindowSize(width, height), tea.WithoutSignalHandler(), tea.WithoutCatchPanics())
+	initial := r.size
+	r.expectedSize.Store(&initial)
+	r.program = tea.NewProgram(renderedView{}, tea.WithFilter(r.filterSize), tea.WithContext(ctx), tea.WithInput(nil), tea.WithOutput(output), tea.WithWindowSize(width, height), tea.WithoutSignalHandler(), tea.WithoutCatchPanics())
 	go func() {
 		defer close(r.done)
 		_, r.err = r.program.Run()
@@ -47,6 +51,19 @@ func startTerminalRenderer(ctx context.Context, output io.Writer, width, height 
 	}()
 	return r
 }
+
+// The connection owner is the sole source of dimensions. Bubble Tea can emit
+// its asynchronous startup size after a newer frame was sent; reject that
+// stale message before it resizes the cell buffer. Non-size messages pass.
+func (r *terminalRenderer) filterSize(_ tea.Model, message tea.Msg) tea.Msg {
+	if size, ok := message.(tea.WindowSizeMsg); ok {
+		if expected := r.expectedSize.Load(); expected != nil && size != *expected {
+			return nil
+		}
+	}
+	return message
+}
+
 func (r *terminalRenderer) show(view tea.View, size tea.WindowSizeMsg) error {
 	if r.shown && r.size == size && reflect.DeepEqual(r.last, view) {
 		return nil
@@ -61,6 +78,7 @@ func (r *terminalRenderer) show(view tea.View, size tea.WindowSizeMsg) error {
 		if r.size != size {
 			// Output is wrapped for raw mode, so Bubble Tea cannot query its
 			// terminal dimensions. Resize its cell buffer before the new view.
+			r.expectedSize.Store(&size)
 			r.program.Send(size)
 			r.size = size
 		}

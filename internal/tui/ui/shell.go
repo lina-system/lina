@@ -63,6 +63,7 @@ type shellModel struct {
 	accounts      accountView
 	accountRows   []protocol.AccountSummary
 	accountsKnown bool
+	memoryPage    *protocol.MemoryRequest
 }
 
 func newShell(options Options, now func() time.Time) *shellModel {
@@ -93,6 +94,7 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.accounts = accountView{}
 			m.accountRows = nil
 			m.accountsKnown = false
+			m.memoryPage = nil
 			m.content, _ = state.Reduce(m.content, state.ConnectionLost{})
 			m.refreshBlocks()
 			m.status = ConnectionStatus{State: Retrying}
@@ -130,6 +132,9 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				if projection.topic != "" {
+					if (strings.HasPrefix(projection.topic, "conversation:") && projection.topic != "conversation:"+m.conversation.id || strings.HasPrefix(projection.topic, "results:") && projection.topic != "results:"+m.conversation.id) && m.conversation.id != "" {
+						return m, nil
+					}
 					if projection.resync {
 						return m, m.markResync(projection)
 					}

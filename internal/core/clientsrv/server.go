@@ -43,6 +43,8 @@ type Identity struct {
 	// and result families use "conversation:" and "results:" keys.
 	Topics            *Topics
 	TopicCapabilities map[string]protocol.Capability
+	// AuthorizeTopic rechecks dynamic ownership/visibility within an installed family.
+	AuthorizeTopic func(context.Context, string) bool
 }
 
 // Listen creates a socket at mode 0600 in a private directory. An existing
@@ -245,7 +247,7 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 		},
 		func(topic string) bool {
 			capability, installed := identity.topicCapability(topic)
-			return installed && slices.Contains(capabilities, capability)
+			return installed && slices.Contains(capabilities, capability) && (identity.AuthorizeTopic == nil || identity.AuthorizeTopic(ctx, topic))
 		}, func() { conn.Close() })
 	defer func() { conn.Close(); topics.Close() }()
 	for {

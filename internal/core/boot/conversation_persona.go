@@ -35,9 +35,9 @@ func conversationRequestSize(request provider.Request) int {
 }
 
 func (r *conversationRuntime) resolvePersonaGrant(ctx context.Context, id string) (grant.Grant, grant.Environment, error) {
-	r.mu.Lock()
+	r.personaMu.Lock()
 	g, ok := r.personaGrants[id]
-	r.mu.Unlock()
+	r.personaMu.Unlock()
 	if !ok {
 		return grant.Grant{}, grant.Environment{}, grant.ErrGrant
 	}
@@ -85,9 +85,9 @@ func (r *conversationRuntime) preparePersonaTools(ctx context.Context, turnID st
 	auth := grant.Request{GrantID: turnID, MainID: r.main, Epoch: r.epoch, TaskID: turnID, Host: r.main, OSUser: "core", Person: r.person, Agent: r.agent, Revision: strconv.FormatInt(persona.Revision, 10)}
 	target := "persona:" + r.agent
 	g := grant.Grant{Identity: auth, Expires: time.Now().Add(time.Hour), Scope: []grant.Permission{{Tool: "change_persona", Target: target, Write: true}, {Tool: "undo_persona", Target: target, Write: true}}, Revisions: map[string]string{target: auth.Revision}}
-	r.mu.Lock()
+	r.personaMu.Lock()
 	r.personaGrants[turnID] = g
-	r.mu.Unlock()
+	r.personaMu.Unlock()
 	registry := tools.NewRegistry(r.personaAuthority, r.activities)
 	scope := coreexec.PersonaScope{Agent: r.agent, Person: r.person, Conversation: r.conversation, Input: input.ID, Revision: persona.Revision}
 	specs, err := coreexec.RegisterPersona(registry, r.persona, scope)
@@ -115,10 +115,11 @@ func (r *conversationRuntime) preparePersonaTools(ctx context.Context, turnID st
 	expressionAuth.Revision = scope.ExpressionRevision
 	expressionTarget := "persona-expression:" + r.agent
 	expressionGrant := grant.Grant{Identity: expressionAuth, Expires: g.Expires, Scope: []grant.Permission{{Tool: "set_emotion_expression", Target: expressionTarget, Write: true}}, Revisions: map[string]string{expressionTarget: scope.ExpressionRevision}}
-	r.mu.Lock()
+	r.personaMu.Lock()
 	r.personaGrants[stateAuth.GrantID] = stateGrant
 	r.personaGrants[expressionAuth.GrantID] = expressionGrant
-	r.mu.Unlock()
+	r.personaMu.Unlock()
+
 	settingSpec, err := coreexec.RegisterPersonaSettings(registry, r.persona, scope)
 	if err != nil {
 		return nil, nil, err
