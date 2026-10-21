@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/thisisjun786/lina/internal/clientapi"
+	"github.com/thisisjun786/lina/internal/design"
 	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"io"
 	"net/http"
@@ -140,7 +141,7 @@ func TestM1TUIMemoryAgentRoundTrip(t *testing.T) {
 				}
 				if _, err := terminal.screen.Wait(h.ctx, func(snapshot tuiterm.Snapshot) bool {
 					text := screenText(snapshot)
-					return strings.HasPrefix(text, operation+" ") && strings.Contains(text, marker)
+					return strings.HasPrefix(text, design.Text(design.English, operation)+" ") && strings.Contains(text, marker)
 				}); err != nil {
 					t.Fatal("management result not rendered", err)
 				}

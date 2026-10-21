@@ -44,6 +44,16 @@ type translation struct{ en, ko string }
 // Keys are wire codes or local presentation ids, never English source text.
 // Keep both languages together so a new entry cannot omit a translation.
 var catalog = map[string]translation{
+	"create":                     {"Created", "생성됨"},
+	"choose":                     {"Selected", "선택됨"},
+	"rename":                     {"Renamed", "이름 변경됨"},
+	"delete":                     {"Deleted", "삭제됨"},
+	"remember":                   {"Remembered", "기억됨"},
+	"correct":                    {"Corrected", "정정됨"},
+	"forget":                     {"Forgotten", "잊음"},
+	"local":                      {"Local", "로컬"},
+	"private":                    {"Private", "비공개"},
+	"never-leaves":               {"Never leaves", "외부 전송 금지"},
 	"steer":                      {"Steering", "진행 방향 수정"},
 	"queue":                      {"Follow-up", "후속 메시지"},
 	"person":                     {"You", "나"},

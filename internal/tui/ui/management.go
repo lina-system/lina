@@ -167,14 +167,14 @@ func (s *managementSession) response(ctx context.Context, c *clientapi.Client, e
 		if _, ok := request.(protocol.MemoryRequest); !ok || p.Operation == nil {
 			return true, errStream
 		}
-		lines := []string{*p.Operation, m.managementHelp("memory"), ""}
+		lines := []string{design.Text(m.styles.options.Language, *p.Operation), m.managementHelp("memory"), ""}
 		if p.ItemID != nil {
-			lines = append(lines, *p.Operation+" "+*p.ItemID)
+			lines = append(lines, design.Text(m.styles.options.Language, *p.Operation)+" "+*p.ItemID)
 		}
 		if p.Items != nil {
 			lines = append(lines, fmt.Sprintf("%d", len(*p.Items)))
 			for _, item := range *p.Items {
-				lines = append(lines, item.ItemID+"  "+item.Holder+"  "+item.Scope, item.Content, strings.Join(item.Evidence, "  "))
+				lines = append(lines, item.ItemID+"  "+item.Holder+"  "+design.Text(m.styles.options.Language, item.Scope), item.Content, strings.Join(item.Evidence, "  "))
 			}
 		}
 		m.openPager(strings.Join(lines, "\n"))
@@ -185,9 +185,9 @@ func (s *managementSession) response(ctx context.Context, c *clientapi.Client, e
 		}
 		active := m.activeAgent()
 		m.content.Agents = *p.Agents
-		lines := []string{*p.Operation, m.managementHelp("agents"), ""}
+		lines := []string{design.Text(m.styles.options.Language, *p.Operation), m.managementHelp("agents"), ""}
 		if p.AgentID != nil {
-			lines = append(lines, *p.Operation+" "+*p.AgentID)
+			lines = append(lines, design.Text(m.styles.options.Language, *p.Operation)+" "+*p.AgentID)
 		}
 		found := false
 		for _, a := range *p.Agents {
