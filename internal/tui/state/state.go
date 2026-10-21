@@ -159,9 +159,13 @@ func (s *State) notice(n Notice) {
 	n.Text = sanitize.Display(n.Text)
 	s.Notices = append(s.Notices, n)
 }
-func (s *State) setEpoch(e string) {
+
+// setEpoch returns topics whose old-generation subscriptions need resync.
+// Schedule requests after the caller finishes applying its state changes so
+// they carry the final generation and can omit an already applied snapshot.
+func (s *State) setEpoch(e string) []string {
 	if e == s.Epoch {
-		return
+		return nil
 	}
 	if s.Epoch != "" {
 		s.notice(Notice{ID: "epoch:" + e, Code: "epoch_changed"})
@@ -172,9 +176,20 @@ func (s *State) setEpoch(e string) {
 	}
 	s.Stopping = false
 	s.Gen++
-	for name := range s.Topics {
-		s.Topics[name] = Topic{OutOfSync: true}
+	topics := slices.Sorted(maps.Keys(s.Topics))
+	for _, name := range topics {
+		s.Topics[name] = Topic{}
 	}
+	return topics
+}
+func (s *State) resyncTopics(topics []string, applied string) []Cmd {
+	var cmds []Cmd
+	for _, topic := range topics {
+		if topic != applied {
+			cmds = append(cmds, s.resync(topic)...)
+		}
+	}
+	return cmds
 }
 func (s *State) resync(topic string) []Cmd {
 	t := s.Topics[topic]
@@ -238,8 +253,11 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 		if m.Epoch == s.Epoch && !changedRevocation && exists && (m.Cursor < t.Cursor || (m.Cursor == t.Cursor && !t.OutOfSync)) {
 			return s, nil
 		}
-		s.setEpoch(m.Epoch)
+		invalidated := s.setEpoch(m.Epoch)
 		if changedRevocation {
+			if s.pending != nil {
+				s.restoreDraft()
+			}
 			s.Blocks = nil
 			s.Folds = nil
 			s.Selected = ""
@@ -311,6 +329,7 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 			s.Offset = m.ServerTime.Sub(m.ClientTime)
 			s.ServerNow = m.ServerTime
 		}
+		return s, s.resyncTopics(invalidated, m.Topic)
 	case Delta:
 		if !epoch(m.Epoch) || compare(m.Epoch, s.Epoch) < 0 || m.ID == "" || m.Topic == "" {
 			return s, nil
@@ -367,8 +386,11 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 		}
 		s.Topics[m.Topic] = Topic{Cursor: m.Cursor}
 		b := m.Block
-		if at := s.find(b.ID); at >= 0 && s.Blocks[at].Revision >= b.Revision {
-			return s, nil
+		if at := s.find(b.ID); at >= 0 {
+			old := s.Blocks[at]
+			if old.Revision > b.Revision || (old.Revision == b.Revision && old.Done) {
+				return s, nil
+			}
 		}
 		b.Topic = m.Topic
 		b.Done = true
@@ -394,13 +416,14 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 		}
 		// Conversation bodies are reserved in client 1.0; do not infer content from
 		// envelope ids, diagnostic strings, or the empty typed payloads.
+		var invalidated []string
 		if w, ok := e.Payload.(protocol.Welcome); ok {
 			if w.Epoch != e.Epoch {
 				s.Malformed++
 				s.Placeholder = protocol.ErrorMalformed
 				return s, nil
 			}
-			s.setEpoch(w.Epoch)
+			invalidated = s.setEpoch(w.Epoch)
 			s.Capabilities = slices.Clone(w.Capabilities)
 			s.Agents = slices.Clone(w.Agents)
 			for i := range s.Agents {
@@ -410,6 +433,7 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 		if e.Error != nil {
 			s.Placeholder = e.Error.Code
 		}
+		return s, s.resyncTopics(invalidated, "")
 	case Select:
 		s.Selected = m.ID
 	case Fold:
