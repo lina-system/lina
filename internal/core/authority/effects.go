@@ -203,21 +203,35 @@ func (s *Service) Begin(ctx context.Context, c tools.Call, spec tools.Spec, in t
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		if authorization != nil {
-			denied = authorization
-			e.State = tools.Refused
-			e.Result.State = tools.Refused
-			e.CurrentRevision = env.Revision
-			return insertEffect(ctx, tx, e, fingerprint, false)
-		}
+		var active string
 		if in.Write {
-			var active string
 			err := tx.QueryRowContext(ctx, "SELECT revision,agent,active_key FROM authority_targets WHERE target=?", in.Target).Scan(&e.CurrentRevision, &e.PreviousAgent, &active)
 			if errors.Is(err, sql.ErrNoRows) {
 				e.CurrentRevision = env.Revision
 			} else if err != nil {
 				return err
+			} else if active == "" && e.CurrentRevision != env.Revision {
+				// A receipt describes Core's last write, not subsequent external
+				// edits. Refresh idle targets from the executor's observation and
+				// clear attribution: the previous agent did not produce this revision.
+				e.CurrentRevision = env.Revision
+				e.PreviousAgent = ""
+				if _, err := tx.ExecContext(ctx, "UPDATE authority_targets SET revision=?,agent='' WHERE target=? AND active_key=''", env.Revision, in.Target); err != nil {
+					return err
+				}
 			}
+		}
+		if authorization != nil {
+			denied = authorization
+			e.State = tools.Refused
+			e.Result.State = tools.Refused
+			if e.CurrentRevision != env.Revision {
+				e.PreviousAgent = ""
+			}
+			e.CurrentRevision = env.Revision
+			return insertEffect(ctx, tx, e, fingerprint, false)
+		}
+		if in.Write {
 			if e.CurrentRevision != c.Auth.Revision {
 				denied = grant.ErrStaleRevision
 				e.State = tools.Refused
