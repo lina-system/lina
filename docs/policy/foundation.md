@@ -18,7 +18,9 @@ The script clears `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and every other `
 
 The [CI workflow](../../.github/workflows/ci.yml) runs on pull requests targeting `dev` and pushes to `dev`, with one job named `foundation` on `ubuntu-24.04`. It checks out the event's `github.sha` with full history and without persisting Git credentials: the pull request merge commit from `refs/pull/<number>/merge`, or the pushed commit. It runs `node scripts/foundation.mjs --range <base>..<head> --no-note`, using the pull request's base SHA and that merge commit SHA, or the push's before and after SHAs. This verifies the proposed merge result even when the pull request branch is behind `dev`. A new branch push without a previous commit uses `--full --no-note`.
 
-Node comes from `.node-version` when present, otherwise Node 24. When `go.mod` exists, Go comes from its `toolchain` line; a missing toolchain fails setup. Actions are pinned to commit SHAs. The workflow installs actionlint 1.7.12 from a checksum-verified archive before verification. CI has read-only repository permissions, writes no evidence note, and never publishes or integrates a change.
+Node comes from `.node-version` when present, otherwise Node 24. When `go.mod` exists, Go comes from its `toolchain` line; a missing toolchain fails setup. Actions are pinned to commit SHAs. The workflow installs actionlint 1.7.12 from a checksum-verified archive before verification. CI installs bubblewrap so the real Linux sandbox scenarios execute, including client-socket isolation. It has read-only repository permissions, writes no evidence note, and never publishes or integrates a change.
+
+The Linux runner also installs Ubuntu's Bubblewrap package and an executable-specific AppArmor profile permitting `/usr/bin/bwrap` to create user namespaces. A direct namespace launch checks that setup before foundation runs the sandbox integration tests. These settings apply to the disposable CI runner; missing sandbox support is a verification failure.
 
 ## Execution
 
