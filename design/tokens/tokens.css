@@ -26,7 +26,7 @@
   --lina-glyph-unicode-connecting: "◌";
   --lina-glyph-unicode-failed: "×";
   --lina-glyph-unicode-live: "●";
-  --lina-glyph-unicode-mark: "·";
+  --lina-glyph-unicode-mark: ".";
   --lina-glyph-unicode-quit: "✓";
   --lina-glyph-unicode-recovering: "◐";
   --lina-glyph-unicode-refused: "⊘";
@@ -48,12 +48,12 @@
   --lina-type-code: "ui-monospace", "monospace";
   --lina-type-line-height: 1.5;
   --lina-type-size: 16px;
-  --lina-type-title-weight: 600;
+  --lina-type-title-weight: 700;
   --lina-type-weight: 400;
 }
 
 [data-lina-theme="dark"] {
-  --lina-color-accent: #91A7FF;
+  --lina-color-accent: #5685FF;
   --lina-color-canvas: #17191F;
   --lina-color-line: #383E4C;
   --lina-color-muted: #A6ADBD;
@@ -77,7 +77,7 @@
   --lina-glyph-unicode-connecting: "◌";
   --lina-glyph-unicode-failed: "×";
   --lina-glyph-unicode-live: "●";
-  --lina-glyph-unicode-mark: "·";
+  --lina-glyph-unicode-mark: ".";
   --lina-glyph-unicode-quit: "✓";
   --lina-glyph-unicode-recovering: "◐";
   --lina-glyph-unicode-refused: "⊘";
@@ -99,12 +99,12 @@
   --lina-type-code: "ui-monospace", "monospace";
   --lina-type-line-height: 1.5;
   --lina-type-size: 16px;
-  --lina-type-title-weight: 600;
+  --lina-type-title-weight: 700;
   --lina-type-weight: 400;
 }
 
 [data-lina-theme="high-contrast"] {
-  --lina-color-accent: #ADC0FF;
+  --lina-color-accent: #6795FF;
   --lina-color-canvas: #000000;
   --lina-color-line: #FFFFFF;
   --lina-color-muted: #DDDDDD;
@@ -128,7 +128,7 @@
   --lina-glyph-unicode-connecting: "◌";
   --lina-glyph-unicode-failed: "×";
   --lina-glyph-unicode-live: "●";
-  --lina-glyph-unicode-mark: "·";
+  --lina-glyph-unicode-mark: ".";
   --lina-glyph-unicode-quit: "✓";
   --lina-glyph-unicode-recovering: "◐";
   --lina-glyph-unicode-refused: "⊘";
@@ -150,6 +150,6 @@
   --lina-type-code: "ui-monospace", "monospace";
   --lina-type-line-height: 1.5;
   --lina-type-size: 16px;
-  --lina-type-title-weight: 600;
+  --lina-type-title-weight: 700;
   --lina-type-weight: 400;
 }
