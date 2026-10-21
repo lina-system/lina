@@ -151,8 +151,14 @@ func (c *channelRuntime) Channel(ctx context.Context, s clientsrv.Session, p pro
 			return result, &clientsrv.OperationError{Code: protocol.ErrorMalformed}
 		}
 		b.Account, _, _ = strings.Cut(*p.Token, ":")
-		if _, err = c.adapter(b, secret.New(*p.Token)); err != nil {
+		probe, probeErr := c.adapter(b, secret.New(*p.Token))
+		if probeErr != nil {
 			return result, &clientsrv.OperationError{Code: protocol.ErrorMalformed}
+		}
+		err = probe.Identify(ctx)
+		probe.Close()
+		if err != nil {
+			return result, channelError(err)
 		}
 		if err = c.store.Connect(ctx, b, c.r.person); err == nil {
 			c.stop(b)

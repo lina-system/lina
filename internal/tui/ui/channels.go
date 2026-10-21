@@ -179,8 +179,10 @@ func (m *shellModel) channelKey(msg tea.KeyMsg) tea.Cmd {
 	}
 	switch key.Name {
 	case "up":
+		v.pairing, v.expires = "", ""
 		v.selected = max(0, v.selected-1)
 	case "down":
+		v.pairing, v.expires = "", ""
 		v.selected = min(max(0, len(v.rows)-1), v.selected+1)
 	case "c":
 		v.stage, v.input = "token", ""
@@ -224,7 +226,7 @@ func (m *shellModel) channelResponse(p protocol.ChannelResult) {
 	if p.ExpiresAt != nil {
 		v.expires = *p.ExpiresAt
 	}
-	if p.Operation != nil && (*p.Operation == "bind" || *p.Operation == "disconnect") {
+	if p.Operation != nil && (*p.Operation == "connect" || *p.Operation == "bind" || *p.Operation == "disconnect") {
 		v.pairing, v.expires = "", ""
 	}
 }

@@ -133,6 +133,18 @@ func testTUIControlInstalledCore(t *testing.T, path string, kind protocol.Kind) 
 // The installed TUI talks to the actual boot composition. Only Telegram's HTTP
 // transport is scripted; connection, pairing, binding and secret writes are real.
 func TestM1TUIChannelPairing(t *testing.T) {
+	var scenario struct{ Command, Token string }
+	data, err := os.ReadFile("m1/tui-channels.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal(data, &scenario); err != nil {
+		t.Fatal(err)
+	}
+	if scenario.Command == "" || scenario.Token == "" {
+		t.Fatal("missing channel scenario input")
+	}
+
 	h, _ := installedConversationHarness(t, "http://127.0.0.1:1")
 	updates := make(chan string, 1)
 	polls := make(chan struct{}, 8)
@@ -175,12 +187,12 @@ func TestM1TUIChannelPairing(t *testing.T) {
 			}
 		}
 	}
-	h.keys(terminal, "/channels\r")
+	h.keys(terminal, scenario.Command+"\r")
 	next()
 	waitScreen(t, h, terminal, "c Connect")
 	h.keys(terminal, "c")
 	waitScreen(t, h, terminal, "bot token")
-	h.keys(terminal, "123456:synthetic_token_for_test\r")
+	h.keys(terminal, scenario.Token+"\r")
 	connected := next()
 	if connected.Connections == nil || len(*connected.Connections) != 1 {
 		t.Fatal("connection missing")

@@ -304,3 +304,28 @@ func TestAnswerRaceWithAcknowledgementCannotReopenExchange(t *testing.T) {
 		t.Fatalf("race: %v %+v", err, record(t, s, r.ID))
 	}
 }
+
+func TestExpiryRemovesPersonDecisionAtomically(t *testing.T) {
+	s := exchange.New(database(t))
+	r := start(t, s)
+	if err := s.NeedPerson(t.Context(), r.ID, now, func(context.Context, *canon.Tx, exchange.DecisionRef) (exchange.Owner, error) {
+		return exchange.Owner{Kind: exchange.PersonOwner, ID: "person"}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Expire(t.Context(), now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	waiting, err := s.Waiting(t.Context(), "person")
+	if err != nil || len(waiting) != 0 {
+		t.Fatal("expired decision still waiting")
+	}
+	got := record(t, s, r.ID)
+	if got.NeedsPerson || got.Outcome != exchange.Expired {
+		t.Fatal("expiry retained decision flag")
+	}
+	events, err := s.Events(t.Context(), r.ID)
+	if err != nil || len(events) != 3 || events[1].Kind != "needs_person" || events[2].Kind != "expired" {
+		t.Fatal("decision history lost")
+	}
+}

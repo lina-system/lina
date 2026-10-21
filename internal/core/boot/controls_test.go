@@ -62,7 +62,11 @@ func TestInstalledChannelPairBindDisconnect(t *testing.T) {
 	r := controlRuntime(t)
 	updates := make(chan string, 1)
 	polls := make(chan struct{}, 8)
+	var rejectToken atomic.Bool
 	r.channels.transport = channelTransport(func(req *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(req.URL.Path, "/getMe") && rejectToken.Load() {
+			return &http.Response{StatusCode: 401, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"ok":false,"error_code":401,"description":"unauthorized"}`))}, nil
+		}
 		if strings.HasSuffix(req.URL.Path, "/getMe") {
 			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"ok":true,"result":{"id":123456,"is_bot":true,"username":"fixture_bot"}}`))}, nil
 		}
@@ -138,6 +142,20 @@ func TestInstalledChannelPairBindDisconnect(t *testing.T) {
 	if strings.Contains(string(raw), token) {
 		t.Fatal("token leaked")
 	}
+
+	rejectToken.Store(true)
+	if _, err := r.channels.Channel(t.Context(), session, protocol.ChannelRequest{Operation: str("connect"), Token: str("123456:wrong_replacement")}); err == nil {
+		t.Fatal("unverified replacement accepted")
+	}
+	rejectToken.Store(false)
+	stored, err := r.vault.Get(r.channels.key(channels.Bot{Platform: "telegram", Account: "123456"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	header := make(http.Header)
+	if err := secret.InjectHeader(header, "Authorization", "", stored); err != nil || header.Get("Authorization") != token {
+		t.Fatal("failed replacement lost the existing credential")
+	}
 	outsider := session
 	outsider.PersonID = "other"
 	if _, err := r.channels.Channel(t.Context(), outsider, protocol.ChannelRequest{Operation: str("list")}); err == nil {
@@ -148,7 +166,6 @@ func TestInstalledChannelPairBindDisconnect(t *testing.T) {
 	}
 	// Reopen the poller composition against durable connection and secret state.
 	r.channels.Close()
-	var err error
 	r.channels, err = startChannels(r, 1, r.channels.transport)
 	if err != nil {
 		t.Fatal(err)
@@ -266,7 +283,11 @@ func TestChannelSupervisorRetriesReadsAndShowsTerminalFailure(t *testing.T) {
 	if calls != 2 || pauses != 1 || healthy.Load() {
 		t.Fatal("read failure was not retried or terminal state was hidden")
 	}
+	var identities atomic.Int32
 	r.channels.transport = channelTransport(func(*http.Request) (*http.Response, error) {
+		if identities.Add(1) == 1 {
+			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"ok":true,"result":{"id":123456,"is_bot":true,"username":"fixture_bot"}}`))}, nil
+		}
 		return &http.Response{StatusCode: 401, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"ok":false,"error_code":401,"description":"unauthorized"}`))}, nil
 	})
 	session := clientsrv.Session{PersonID: r.person, CanDecide: true}

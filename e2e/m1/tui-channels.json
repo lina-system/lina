@@ -1,12 +1,5 @@
 {
   "command": "/channels",
   "reply": "SYNTHETIC-CHANNEL-COMMAND-WAS-SENT-AS-CHAT",
-  "pairing_steps": [
-    "connect with private token",
-    "request code",
-    "receive code from numeric owner in private chat",
-    "refresh",
-    "bind paired chat to agent",
-    "disconnect"
-  ]
+  "token": "123456:synthetic_token_for_test"
 }

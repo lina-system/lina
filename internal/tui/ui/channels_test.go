@@ -78,3 +78,12 @@ func TestSharedChannelMemoryRequiresExplicitOptIn(t *testing.T) {
 		})
 	}
 }
+
+func TestChannelConnectionChangeClearsPairingCode(t *testing.T) {
+	m := accountShell()
+	m.channels = channelView{open: true, pairing: "old-code", expires: "old-expiry"}
+	m.channelResponse(protocol.ChannelResult{Operation: stringPointer("connect")})
+	if m.channels.pairing != "" || m.channels.expires != "" {
+		t.Fatal("new connection retained the other bot's code")
+	}
+}
