@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-package rpc
+package manifest
 
 import (
 	"bytes"
@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"runtime"
 
 	"github.com/thisisjun786/lina/kit/protocol"
 )
@@ -22,7 +23,7 @@ type Combination struct {
 	Evidence        []string              `json:"evidence"`
 }
 
-var versionPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
+var protocolVersionPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
 var platformPattern = regexp.MustCompile(`^[a-z0-9]+/[a-z0-9]+$`)
 
 // ReadCombinations reads the supportedCombinations section while leaving other
@@ -32,11 +33,11 @@ func ReadCombinations(reader io.Reader) ([]Combination, error) {
 	var manifest struct {
 		Rows []Combination `json:"supportedCombinations"`
 	}
-	data, err := io.ReadAll(io.LimitReader(reader, MaxFrameBytes+1))
+	data, err := io.ReadAll(io.LimitReader(reader, maxManifestBytes+1))
 	if err != nil {
 		return nil, err
 	}
-	if len(data) > MaxFrameBytes {
+	if len(data) > maxManifestBytes {
 		return nil, fmt.Errorf("manifest exceeds size limit")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -60,7 +61,7 @@ func ValidateCombinations(rows []Combination) error {
 	seen := make(map[[4]string]bool)
 	for _, row := range rows {
 		key := [4]string{row.Connection, row.Peer, row.Platform, row.ProtocolVersion}
-		if (row.Connection != "client" && row.Connection != "node") || row.Peer == "" || !platformPattern.MatchString(row.Platform) || !versionPattern.MatchString(row.ProtocolVersion) || row.Capabilities == nil || len(row.Evidence) == 0 || seen[key] {
+		if (row.Connection != "client" && row.Connection != "node") || row.Peer == "" || !platformPattern.MatchString(row.Platform) || !protocolVersionPattern.MatchString(row.ProtocolVersion) || row.Capabilities == nil || len(row.Evidence) == 0 || seen[key] {
 			return fmt.Errorf("invalid or duplicate supported combination")
 		}
 		seen[key] = true
@@ -71,11 +72,20 @@ func ValidateCombinations(rows []Combination) error {
 		}
 		caps := make(map[protocol.Capability]bool)
 		for _, capability := range row.Capabilities {
-			if capability.Name == "" || !versionPattern.MatchString(capability.Version) || caps[capability] {
+			if capability.Name == "" || !protocolVersionPattern.MatchString(capability.Version) || caps[capability] {
 				return fmt.Errorf("invalid or duplicate capability")
 			}
 			caps[capability] = true
 		}
 	}
 	return nil
+}
+
+const maxManifestBytes = 1 << 20
+const TUIPeer = "lina-tui"
+
+// ClientCombinations is shared by the compiled listener and the build-manifest
+// writer, so the published table and runtime admission cannot drift.
+func ClientCombinations() []Combination {
+	return []Combination{{Connection: "client", Peer: TUIPeer, Platform: runtime.GOOS + "/" + runtime.GOARCH, ProtocolVersion: "1.0", Capabilities: []protocol.Capability{}, Evidence: []string{"go test ./kit/protocol/conformance"}}}
 }

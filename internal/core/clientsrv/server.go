@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
+	"github.com/thisisjun786/lina/internal/core/manifest"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/rpc"
 )
@@ -120,7 +121,7 @@ func Serve(ctx context.Context, listener *net.UnixListener, identity Identity) e
 		handlers.Wait()
 	}()
 	if identity.Supported != nil {
-		if err := rpc.ValidateCombinations(identity.Supported); err != nil {
+		if err := manifest.ValidateCombinations(identity.Supported); err != nil {
 			return err
 		}
 	}

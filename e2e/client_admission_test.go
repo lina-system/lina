@@ -18,7 +18,8 @@ import (
 )
 
 type admissionScenario struct {
-	Cases []struct {
+	SandboxConnect string `json:"sandboxConnect"`
+	Cases          []struct {
 		Name     string             `json:"name"`
 		Versions []string           `json:"versions"`
 		Halted   bool               `json:"halted"`

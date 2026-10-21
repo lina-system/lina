@@ -19,7 +19,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
-	"github.com/thisisjun786/lina/kit/rpc"
+	"github.com/thisisjun786/lina/internal/core/manifest"
 	"github.com/thisisjun786/lina/kit/sandbox"
 )
 
@@ -118,7 +118,7 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		if err != nil {
 			return fmt.Errorf("open client build manifest: %w", err)
 		}
-		rows, readErr := rpc.ReadCombinations(file)
+		rows, readErr := manifest.ReadCombinations(file)
 		closeErr := file.Close()
 		if err := errors.Join(readErr, closeErr); err != nil {
 			return fmt.Errorf("read client build manifest: %w", err)
@@ -126,7 +126,7 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		cfg.Client.Supported = rows
 	}
 	if cfg.Client.Supported != nil {
-		if err := rpc.ValidateCombinations(cfg.Client.Supported); err != nil {
+		if err := manifest.ValidateCombinations(cfg.Client.Supported); err != nil {
 			return err
 		}
 	}

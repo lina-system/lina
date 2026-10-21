@@ -2,18 +2,17 @@
 package clientsrv
 
 import (
-	"runtime"
 	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/thisisjun786/lina/internal/core/manifest"
 	"github.com/thisisjun786/lina/kit/protocol"
-	"github.com/thisisjun786/lina/kit/rpc"
 )
 
 // Combination is a tested row from the build's supported-combination table.
 // Product versions deliberately do not participate in compatibility.
-type Combination = rpc.Combination
+type Combination = manifest.Combination
 
 func negotiate(rows []Combination, peer, platform string, versions []string, offered []protocol.Capability) (string, []protocol.Capability, bool) {
 	var selected *Combination
@@ -66,6 +65,4 @@ func EpochNumber(epoch string) (uint64, error) {
 
 // LocalCombinations lists the same-build development TUI profile. Packaged
 // builds supply their explicit table through Identity.Supported.
-func LocalCombinations() []Combination {
-	return []Combination{{Connection: "client", Peer: "tui", Platform: runtime.GOOS + "/" + runtime.GOARCH, ProtocolVersion: "1.0", Capabilities: []protocol.Capability{}, Evidence: []string{"client/1.0 conformance", "TestM1ClientAdmission"}}}
-}
+func LocalCombinations() []Combination { return manifest.ClientCombinations() }
