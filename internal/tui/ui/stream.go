@@ -269,6 +269,7 @@ func projectConversationBlock(block *state.Block, payload protocol.Payload) {
 			block.TurnActive = *p.Active
 		}
 	case protocol.Result:
+		block.Title = p.Title
 		if p.Text != nil {
 			block.Body = *p.Text
 		}
