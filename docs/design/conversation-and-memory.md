@@ -431,12 +431,12 @@ Core mechanisms it relies on: the to-do record and the candidate objects of [wor
 
 #### Development management (dev preset)
 
-Core mechanisms it relies on: the work engine's records, dispatch, completion events and claims, quota and capacity readers, write-area overlap, the spawn-time capability check, the source label on each stage summary and the running list. These are defined in [work-and-delegation.md](work-and-delegation.md); the splitting and parallel-flow rules there are not repeated here.
+Core mechanisms it relies on: the work engine's records, dispatch, delivery receipts, completion events and claims, protocol session state and recovery, quota and capacity readers, write-area overlap, the spawn-time capability check, the check against the work definition at merge, the source label on each stage summary and the running list. These are defined in [work-and-delegation.md](work-and-delegation.md); the splitting and parallel-flow rules there are not repeated here.
 
 1. The person sees a one-line status and, only when blocked, a decision card. The work definition, the pull request and the review text appear only on request.
 2. A work definition states what, why, scope, what not to touch (and who owns it), one done condition that a command or a CI job can check, the design reference (contract and section) and a declared write area. It contains no review procedure.
 3. Given a pile of old defects, first have an agent mark each as fixed, remaining or not reproducible, with evidence, then create the tasks.
-4. Treat agent reports as claims. A failing log from before the fix proves the test is real and is not a current failure. Every status line says where its facts come from: an agent report, GitHub (review and checks), LINA Core's own review, or unknown.
+4. Treat agent reports as claims. A failing log from before the fix proves the test is real and is not a current failure. Every status line says where its facts come from: an agent report, GitHub (review and checks), LINA Core's check against the work definition, or unknown.
 5. When the base moved, the authoring agent resolves its own conflicts on instruction; the operator does not edit.
 6. Never overwrite or delete a file the task did not create: move it aside, record it and report once.
 7. Merged is not live. Record "merged, not yet live" until the running instance has the change, and check its first run.
@@ -444,6 +444,9 @@ Core mechanisms it relies on: the work engine's records, dispatch, completion ev
 9. Gates apply only to irreversible effects; elsewhere record and warn.
 10. For a developer user: write state changes when they happen; cancel obsolete items with a comment and never delete them; give requirement changes as correction notes, not body edits; batch fixes that fit the current 목표 instead of creating backlog entries.
 11. Any agent can file a tool or feature request; it becomes a work definition and the tool has an owner.
+12. The worker owns its pull request to green: it waits for CI and the review bots and fixes every CI failure and the P0 and P1 review findings once inside its turn before reporting done. LINA Core checks the done condition, scope and design reference at merge, then merges or closes; it sends work back only for a missed work definition, never for review or CI triage.
+13. Every task is making progress, waiting on a named thing with a deadline, or being recovered. Detect a dead or stalled worker from its protocol session, resume or restart it once in the same work area before escalation, and handle events for one 일 together so no coordinating thread builds a backlog.
+14. How to implement, split, join or interpret belongs to the worker and the agent that owns the work. LINA Core keeps the flow moving with start, reliable delivery and receipts, true state, recovery, merge on green and report; it puts no harness around the work.
 
 #### Knowledge and people management (knowledge preset)
 
