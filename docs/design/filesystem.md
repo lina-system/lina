@@ -270,6 +270,8 @@ The asset store supplies the materials portion of this procedure: it copies ever
 
 Restore rules:
 
+`lina restore --generation <generation-path> --state-root <target-root>` restores with Core stopped; missing arguments and `--help` show restore-specific usage. The generation travels with its sibling removal list. The target root uses its own control files, which are neither copied from the generation nor replaced.
+
 - Restore operates on whole generations. Restoring the SQLite snapshot without its version space and assets, or those without the snapshot, is forbidden.
 - Restore uses a compatible release and schema pair. Rolling back binaries alone over state they can't read is forbidden ([runtime.md](runtime.md)).
 - Agents, people, receipts, artifacts and ledgers are restored first. Then the latest revocation watermark, and every retraction and tombstone recorded in canon, in any newer generation or in the removal list, are applied again before any read is served. A tombstone is the record a permanent deletion leaves: ids, the legacy references of an imported record, the holder (an agent id or `all`), the agent the item belonged to when it had one, and time, never content. Revoked and deleted items are exposed zero times in search or answers, and a memory tombstone keeps the restored conversation ledger from yielding the forgotten item again ([conversation-and-memory.md](conversation-and-memory.md)).
@@ -277,6 +279,8 @@ Restore rules:
 - Restore checks the freshness of the generation and an inventory of what it restored that is independent of the manifest.
 - The records index in the SQLite snapshot is checked against the head of the records repository in the same generation. A mismatch is rebuilt from the files, because the files are canon.
 - After a restore, LINA observes every connected source again before serving from it, except one the removal list shows as disconnected. Observations newer than the generation win.
+
+Restoration is prepared under private staging before any restored read is possible. The source and target removal lists must be prefixes of one append-only history; the longer list wins and a divergent or truncated history is refused. Replay validates acknowledged removals against the copied canon before it can be published. A durable pending publication blocks Core startup until all areas have been installed; repeating restore finishes it. Neither a validation failure nor an interrupted copy admits a partial generation.
 
 A published generation is never changed, and a permanent deletion never rewrites one. A generation captured before the deletion still holds the deleted content. A restore from it applies the tombstone again before serving any read, as above, so the content is never exposed, and the content is gone once every such generation has passed its retention and been removed.
 

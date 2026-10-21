@@ -1,0 +1,149 @@
+// SPDX-License-Identifier: Apache-2.0
+package backup
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/ctlfiles"
+	memoryexec "github.com/thisisjun786/lina/internal/core/exec"
+	"github.com/thisisjun786/lina/internal/core/guard"
+	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/internal/core/memory"
+	"github.com/thisisjun786/lina/internal/core/retract"
+)
+
+func TestRestoreReplaysRemovalsBeforeFirstReadInAnotherRoot(t *testing.T) {
+	for _, operation := range []string{"forget", "delete", "recover"} {
+		t.Run(operation, func(t *testing.T) {
+			db := restoreDB(t)
+			source := t.TempDir()
+			removals, err := retract.Open(t.Context(), retract.Config{Canon: db, Root: source})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer removals.Close()
+			const body = "synthetic violet preference"
+			_, err = ledger.New(db, nil).Admit(t.Context(), guard.EntryOwner, ledger.Input{ID: "source", ConversationID: "conversation", AgentID: "agent", PersonID: "person", Surface: ledger.Surface{Kind: "tui"}, OccurredAt: time.Unix(10, 0), RecordedAt: time.Unix(10, 0), TimeQuality: "observed", Body: body})
+			if err != nil {
+				t.Fatal(err)
+			}
+			flow := memoryexec.NewMemory(db, nil, nil)
+			write := memory.Write{Agent: "agent", Person: "person", Item: memory.Item{Kind: memory.Preference, Content: body, Subject: memory.Subject{Kind: memory.Person, ID: "person"}, Basis: memory.Stated, Standing: true, Evidence: []memory.Evidence{{Kind: memory.Event, ID: "source", Precision: memory.Exact}}}}
+			receipt, err := flow.Remember(t.Context(), write)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Snapshot the actual SQLite store, then mutate only the current removal list.
+			generation := t.TempDir()
+			if err := os.Chmod(generation, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Join(generation, "canon"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(generation, "canon/canon.sqlite")
+			// Read-only SQLite snapshot from the store's owned path is obtained through
+			// a test fixture pointer, never by copying live database or WAL bytes.
+			var dbPath string
+			if err := db.Read(t.Context(), func(tx *canon.Tx) error {
+				var sequence int
+				var name string
+				return tx.QueryRowContext(t.Context(), "PRAGMA database_list").Scan(&sequence, &name, &dbPath)
+			}); err != nil {
+				t.Fatal(err)
+			}
+			reader, err := canon.OpenSQLiteReader(t.Context(), dbPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := canon.BackupSQLite(t.Context(), reader, path); err != nil {
+				t.Fatal(err)
+			}
+			reader.Close()
+			request := retract.Request{Person: "person", Targets: []retract.Ref{{Kind: retract.Memory, ID: receipt.ID}}}
+			if err := removals.Forget(t.Context(), request); err != nil {
+				t.Fatal(err)
+			}
+			if operation == "delete" {
+				if err := removals.Delete(t.Context(), request); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if operation == "recover" {
+				if err := removals.Restore(t.Context(), request); err != nil {
+					t.Fatal(err)
+				}
+			}
+			journal, err := os.ReadFile(filepath.Join(source, "backups/removals"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Join(generation, "backups"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(generation, "backups/removals"), journal, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := prepareRestoredCanon(t.Context(), generation, 20, canon.Migrations()); err != nil {
+				t.Fatal(err)
+			}
+			controls, err := ctlfiles.Open(generation)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer controls.Close()
+			if err := controls.Acquire(); err != nil {
+				t.Fatal(err)
+			}
+			restored, err := canon.Open(t.Context(), canon.Config{Path: path, Epoch: 20, Controls: controls, Migrations: canon.Migrations()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer restored.Close(context.Background())
+			want := 0
+			if operation == "recover" {
+				want = 1
+			}
+			var n int
+			if err := restored.Read(t.Context(), func(tx *canon.Tx) error {
+				return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM retract_visible_memory WHERE id=?", receipt.ID).Scan(&n)
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if n != want {
+				t.Fatalf("first read exposed %d, want %d", n, want)
+			}
+			hits, err := memory.New(restored).Recall(t.Context(), memory.RecallScope{Agent: "agent", Person: "person"}, memory.Query{Text: "violet", At: 100})
+			if err != nil || len(hits) != want {
+				t.Fatalf("recall exposed %d: %v", len(hits), err)
+			}
+			events, err := ledger.New(restored, nil).Search(t.Context(), ledger.SearchQuery{AgentID: "agent", PersonID: "person", Text: "violet"})
+			if err != nil || len(events) != want {
+				t.Fatalf("ledger fallback exposed %d: %v", len(events), err)
+			}
+		})
+	}
+}
+
+func TestRestoreRemovalListsNeverDiscardNewerHistory(t *testing.T) {
+	for _, tc := range []struct {
+		source, target, want string
+		invalid              bool
+	}{
+		{"a\n", "a\nb\n", "a\nb\n", false}, {"a\nb\n", "a\n", "a\nb\n", false}, {"a\n", "", "a\n", false}, {"a\n", "b\n", "", true}, {"a", "a\n", "", true},
+	} {
+		got, err := mergeRestoreRemovals([]byte(tc.source), []byte(tc.target))
+		if tc.invalid {
+			if err == nil {
+				t.Fatal("divergent or truncated removal history accepted")
+			}
+		} else if err != nil || string(got) != tc.want {
+			t.Fatalf("merge: %q %v", got, err)
+		}
+	}
+}

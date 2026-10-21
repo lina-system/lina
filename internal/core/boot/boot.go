@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/backup"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
@@ -180,6 +181,9 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		return err
 	}
 	if err := store.Acquire(); err != nil {
+		return err
+	}
+	if err := backup.CheckRestore(cfg.StateRoot); err != nil {
 		return err
 	}
 	if err := boundary(Locked); err != nil {
