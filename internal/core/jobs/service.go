@@ -22,13 +22,7 @@ import (
 
 // Schema is installed by Core's schema owner in a numbered canon migration,
 // together with budget.Schema. Neither the API nor the worker migrates canon.
-const Schema = `
-CREATE TABLE moirai_jobs (id TEXT PRIMARY KEY, record BLOB NOT NULL);
-CREATE TABLE moirai_tasks (job TEXT NOT NULL, sequence INTEGER NOT NULL CHECK(sequence>0), input BLOB NOT NULL, PRIMARY KEY(job,sequence));
-CREATE TABLE moirai_aux (job TEXT NOT NULL, sequence INTEGER NOT NULL, reservation TEXT NOT NULL, output BLOB, PRIMARY KEY(job,sequence));
-CREATE TABLE moirai_applied (job TEXT NOT NULL, sequence INTEGER NOT NULL, proposal BLOB NOT NULL, PRIMARY KEY(job,sequence));
-CREATE TABLE moirai_reports (job TEXT PRIMARY KEY, record BLOB NOT NULL);
-`
+const Schema = canon.MoiraiJobsSchema
 
 type Call struct {
 	JobID     string

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -19,13 +20,25 @@ import (
 
 const operationTimeout = 10 * time.Second
 
-var commandBuilds = struct {
+var commandBuilds struct {
 	sync.Mutex
-	binaries map[string][]byte
-}{binaries: make(map[string][]byte)}
+	directory string
+	binaries  map[string]string
+}
 
-// Build each real command once per test process and copy it into each scenario.
-// Only verified Go caches and
+func TestMain(m *testing.M) {
+	commandBuilds.binaries = make(map[string]string)
+	code := m.Run()
+	if commandBuilds.directory != "" {
+		if err := os.RemoveAll(commandBuilds.directory); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			code = 1
+		}
+	}
+	os.Exit(code)
+}
+
+// Build each real command once per test run. Only verified Go caches and
 // tool locations cross into the build; child products get a fresh HOME and no
 // credentials, user configuration, display server or provider environment.
 func buildLina(t *testing.T) string {
@@ -34,15 +47,23 @@ func buildLina(t *testing.T) string {
 
 func buildCommand(t *testing.T, name string) string {
 	t.Helper()
-	home := t.TempDir()
-	binary := filepath.Join(home, name)
 	commandBuilds.Lock()
 	defer commandBuilds.Unlock()
-	if data, ok := commandBuilds.binaries[name]; ok {
-		if err := os.WriteFile(binary, data, 0700); err != nil {
+	if binary, ok := commandBuilds.binaries[name]; ok {
+		return binary
+	}
+	// Sandbox helper subprocesses also enter TestMain, but never build a
+	// command and may have no writable temporary directory.
+	if commandBuilds.directory == "" {
+		directory, err := os.MkdirTemp("", "lina-e2e-commands-")
+		if err != nil {
 			t.Fatal(err)
 		}
-		return binary
+		commandBuilds.directory = directory
+	}
+	home, err := os.MkdirTemp(commandBuilds.directory, name+"-")
+	if err != nil {
+		t.Fatal(err)
 	}
 	env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "GOENV=off", "GOTOOLCHAIN=auto"}
 	for _, name := range []string{"GOCACHE", "GOMODCACHE", "TMPDIR"} {
@@ -62,6 +83,7 @@ func buildCommand(t *testing.T, name string) string {
 	if len(paths) != 2 {
 		t.Fatalf("expected two Go cache paths, got %d", len(paths))
 	}
+	binary := filepath.Join(home, name)
 	build := exec.CommandContext(ctx, "go", "build", "-mod=readonly", "-o", binary, "./cmd/"+name)
 	build.Dir = ".."
 	build.Env = []string{
@@ -72,11 +94,7 @@ func buildCommand(t *testing.T, name string) string {
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build %s: %v\n%s", name, err, output)
 	}
-	data, err := os.ReadFile(binary)
-	if err != nil {
-		t.Fatal(err)
-	}
-	commandBuilds.binaries[name] = data
+	commandBuilds.binaries[name] = binary
 	return binary
 }
 

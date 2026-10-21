@@ -6,8 +6,16 @@ import "testing"
 func TestGrowthMigrationPreservesPersonaAndEnforcesRevisionReferences(t *testing.T) {
 	cfg := storeConfig(t)
 	all := Migrations()
-	index := len(all)
-	all = append(all, Migration{Version: index + 1, SQL: GrowthSchema})
+	index := -1
+	for i, migration := range all {
+		if migration.SQL == GrowthSchema {
+			index = i
+			break
+		}
+	}
+	if index < 1 {
+		t.Fatal("missing growth migration")
+	}
 	cfg.Migrations = all[:index]
 	db := openStore(t, cfg)
 	if err := db.Write(t.Context(), func(tx *Tx) error {

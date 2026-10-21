@@ -20,14 +20,7 @@ var (
 	ErrSettled = errors.New("budget_already_settled")
 )
 
-const Schema = `CREATE TABLE budget_usage (
- id TEXT PRIMARY KEY, agent TEXT NOT NULL, account TEXT NOT NULL,
- provider TEXT NOT NULL, kind TEXT NOT NULL, run TEXT NOT NULL,
- reserved INTEGER NOT NULL CHECK(reserved >= 0),
- charged INTEGER NOT NULL CHECK(charged >= 0),
- settled INTEGER NOT NULL DEFAULT 0 CHECK(settled IN (0,1)),
- usage TEXT NOT NULL
-)`
+const Schema = canon.BudgetSchema
 
 type Reservation struct {
 	ID, Agent string

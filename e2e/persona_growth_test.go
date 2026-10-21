@@ -14,7 +14,6 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/authority"
-	"github.com/thisisjun786/lina/internal/core/budget"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
@@ -51,8 +50,6 @@ func TestM2PersonaGrowth(t *testing.T) {
 		t.Fatal(err)
 	}
 	migrations := canon.Migrations()
-	migrations = append(migrations, canon.Migration{Version: len(migrations) + 1, SQL: canon.GrowthSchema})
-	migrations = append(migrations, canon.Migration{Version: len(migrations) + 1, SQL: jobs.Schema + budget.Schema})
 	path := filepath.Join(h.root, "canon.sqlite")
 	cfg := canon.Config{Path: path, Epoch: 1, Controls: ctl, Migrations: migrations}
 	db, err := canon.Open(h.ctx, cfg)
