@@ -47,6 +47,26 @@ test('requires an output directory and rejects unknown arguments', t => {
   }
 });
 
+test('build commands and metadata readers do not import the provider SDK', t => {
+  const f = fixture(t);
+  const result = spawnSync('go', ['list', '-deps', './cmd/lina', './cmd/lina-node', './internal/core/manifest/...'], {
+    cwd: f.cwd, env: f.env, encoding: 'utf8', timeout: 120_000,
+  });
+  assert.equal(result.status, 0, result.stderr || result.error?.message);
+  const dependencies = result.stdout.trim().split('\n');
+  assert.deepEqual(dependencies.filter(name => name.startsWith('github.com/openai/')
+    || name === 'github.com/thisisjun786/lina/kit/provider/responses'), []);
+});
+
+test('Responses adapter does not compile a provider SDK', t => {
+  const f = fixture(t);
+  const result = spawnSync('go', ['list', '-deps', './kit/provider/responses/...'], {
+    cwd: f.cwd, env: f.env, encoding: 'utf8', timeout: 120_000,
+  });
+  assert.equal(result.status, 0, result.stderr || result.error?.message);
+  assert.deepEqual(result.stdout.trim().split('\n').filter(name => name.startsWith('github.com/openai/')), []);
+});
+
 test('clean builds record hashes and the same commit and metadata as both version commands', t => {
   const f = fixture(t);
   for (const version of ['0.0.1-alpha.dev', '0.0.1-alpha.20261020.2']) {
@@ -73,6 +93,10 @@ test('clean builds record hashes and the same commit and metadata as both versio
     assert.match(manifest.sqlite.sqliteVersion, /^3\.\d+\.\d+$/);
     assert.equal(manifest.sqlite.execution, 'wazero');
     assert.equal(manifest.sqlite.sqliteVec, null);
+    const providerConfig = JSON.parse(readFileSync(join(f.cwd, 'kit/provider/responses/manifest.json'), 'utf8'));
+    assert.deepEqual(manifest.providers, providerConfig);
+    assert.equal(manifest.providers.chatgpt.adapter, 'responses');
+    assert.equal(manifest.providers.chatgpt.retryCount, 0);
     assert.deepEqual(manifest.binaries.map(binary => binary.name), ['lina', 'lina-node'].map(name => name + (process.platform === 'win32' ? '.exe' : '')));
     for (const binary of manifest.binaries) {
       const path = join(f.out, binary.name);

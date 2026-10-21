@@ -290,22 +290,23 @@ type Class uint8       // ModelAPI, AgentRuntime
 type Adapter interface {
 	Provider() ProviderID
 	Class() Class
-	Models(ctx context.Context, c Credential) (ModelList, error) // display data, not entitlement
+	Models(ctx context.Context, l lease.Lease, c Credential) (ModelList, error) // display data, not entitlement
 	Quota(ctx context.Context, c Credential) ([]QuotaRow, error)  // unknown is a value
 	Stream(ctx context.Context, l lease.Lease, r Request) (Stream, error)
 }
 type Credential struct { // handed in for one call
 	Account AccountID
 	Kind    AuthKind // LoopbackOAuth, LongLivedToken, APIKey, ObservedCLILogin
-	Secret  secret.Secret
+	// The private bearer prints as a placeholder and only Authorize can apply it.
 }
 type Request struct {
+	Credential Credential // supplied for this call, never read from a store
 	Model   ModelRef
 	Effort  Effort
 	Items   []Item     // LINA's own item types
 	Tools   []ToolDecl // declared order is kept
 	Fields  FieldList  // request fields allowed for this provider, from the build manifest
-	Purpose Purpose    // Turn, Background, Auxiliary, Replay
+	Purpose RunKind    // Turn, Background, BackgroundJob, Worker, WorkerSubthread, Auxiliary, Replay
 	Bridge  ToolBridge // set for AgentRuntime providers only
 }
 type ToolBridge interface { // the runtime calls back into Core for every tool
@@ -314,6 +315,7 @@ type ToolBridge interface { // the runtime calls back into Core for every tool
 type Stream interface {
 	Next(ctx context.Context) (Event, error) // Delta, ItemDone, ToolCall (from final items), Terminal
 	Meta() Meta                              // request id, fidelity class, usage, runtime session id
+	Close() error                            // cancel and join the request
 }
 type Usage struct{ Input, Cached, CacheWrite, Output, Reasoning *int64; CostEstimate *Money } // nil is unknown
 type QuotaRow struct { // the fields of runtime.md#usage-and-cost; a nil value is unknown, a reset time is never invented
@@ -324,7 +326,15 @@ type QuotaRow struct { // the fields of runtime.md#usage-and-cost; a nil value i
 
 For AgentRuntime providers, Core carries out the list of [runtime.md](runtime.md#providers), with LINA's tools offered through `Bridge` as MCP tools. The ledger names the class per request.
 
-**C-44 Responses and Gemini adapters (new).** Responses adapter: `openai-go` at a pinned version, `store` false, `stream` true, the request field list from the build manifest, `reasoning.encrypted_content` requested, and tools declared in the form the sign-in request surface requires (`apply_patch` as a custom tool or a one-string function). Done items come from `response.output_item.done` only, and tool calls dispatch from done items only. Current-turn items are never sent altered or dropped. [V1](runtime.md#runtime-acceptance) decides the open fields. Gemini adapter: the Go genai client, stateless requests, thought parts returned as received, and the same stream rules.
+#53 implements this boundary in `kit/provider`. Credentials are per-call, omit their bearer from JSON, and print only a placeholder; `Authorize` applies the bearer to the HTTP request without returning it. Model-list network calls also require a lease. The future secret-store adapter supplies these credentials. Items and tool declarations retain provider JSON so opaque state can round-trip without reconstruction.
+
+**C-44 Responses and Gemini adapters (new).** Responses adapter: Go standard-library HTTP and a bounded SSE reader, `store` false, `stream` true, the request field list from the build manifest, `reasoning.encrypted_content` requested, and tools declared in the form the sign-in request surface requires (`apply_patch` as a custom tool or a one-string function). Done items come from `response.output_item.done` only, and tool calls dispatch from done items only. Current-turn items are never sent altered or dropped. [V1](runtime.md#runtime-acceptance) decides the open fields. Gemini adapter: the Go genai client, stateless requests, thought parts returned as received, and the same stream rules.
+
+#54 implements `kit/provider/responses` with `net/http` and small JSON/SSE wire types. `responses.ReadConfig` reads `providers.chatgpt` from the build manifest through the transport-independent `responses/config` package, which Core's manifest reader also uses; the adapter rejects an absent required field, an unsupported field, a different adapter identity, or a nonzero retry count. `Request.Fields` may narrow that list but never widen it. It sends only the manifest-approved fields, keeps input items and tool declarations byte-for-byte and in order, and rejects system-role items. `apply_patch` is a custom tool or a function accepting one required string. Auxiliary requests reject tools and omit separate instructions. Every stateless request includes `reasoning.encrypted_content`, including when effort is empty and the model uses its default. A field list that excludes `include` refuses the request before sending; the adapter never silently loses reasoning state.
+
+The HTTP request uses the supplied per-call credential and the fixed API origin, with zero retries and no redirects. The SSE reader handles comments, named events, multiline data and CRLF, and bounds each event at 32 MiB. A truncated event or `[DONE]` without `response.completed` is not successful completion. A lease covers the whole streaming request; `Close` cancels it and joins its goroutine. Deltas are display-only, `ItemDone` contains only the exact `response.output_item.done` item, and `ToolCallReady` events are held until a successful `response.completed`. EOF, malformed data, incomplete/failed responses and cancellation release no pending tool. A completed response's output array never manufactures a done item. Failures use recognized code, then type, then HTTP status; neither classification nor returned error text uses a provider message. Missing usage fields remain nil, including reported zero versus missing counts. Model lists are display data, and plan quota has no invented number or reset time.
+
+Scripted wires establish these adapter invariants, and clean-build tests establish manifest production and validation. The adapter is not yet reachable through Core's conversation protocol or the TUI, so this increment has no observable scenario under `e2e/m1/`. It does not establish live OAuth, entitlement, or V1 acceptance of the provisional request-field list.
 
 **C-45 Claude adapter process (new).** An external TypeScript program on the person's Node.js. Core starts it on first use of a Claude account and stops it after idle (P: 10 minutes), with concurrent turns per account limited (P: 2). The protocol is one JSON message per line on stdio.
 
@@ -380,6 +390,9 @@ type Router interface {
 `Setup` is a pure function of the connected accounts, the plan catalog (data with a version and digest in the build manifest) and what the person stated. It runs on connect and on a plan change and returns the one-line summary. `Route` follows the quota-aware routing of [runtime.md](runtime.md#connected-accounts-and-automatic-setup) and moves new requests only.
 
 **C-10 Failures, usage and budget (changed).** Failures are typed from the provider's own answer, in the order code, type, status. Message text is never parsed. Kinds: NeedsSignIn, NotEligible, UsageCapped, Unavailable, NotAccepted. Core and the model-API adapters retry nothing: the retry count is 0 and sits in the manifest ([runtime.md](runtime.md#failures-and-retries)). An agent runtime retries on its own, and Core records the retries it reports. Usage rows name agent, account, provider, run kind and run; unreported is nil. `budget.Reserve` and `Settle` cover every run kind the contract lists. At the limit the conversation stops sending and runs wait with their checkpoint.
+
+
+#53 implements `budget.Reserve` and `Settle` inside a caller-owned fenced canon transaction. The caller installs `budget.Schema` in its migration. Reservations count every agent and all seven run kinds against one token allowance; settlement is idempotent for identical usage and rejects a rewrite. Each row retains agent, account, provider, run kind and run, with unreported usage encoded as null. Known input plus output replaces the reservation charge without double-counting cached or reasoning subsets; if either total is missing, the charge retains at least the reservation until usage is known. This charge is admission accounting, not reported usage. No Core protocol or TUI operation exposes the budget yet.
 
 ## Tools, approval and secrets
 
