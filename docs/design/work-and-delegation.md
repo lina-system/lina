@@ -140,6 +140,8 @@ A background run is the execution of one of LINA's own sub-agents. It keeps the 
 - A run uses the model the person chose for background runs. Until the person chooses one, it uses the conversation model.
 - A run's request carries LINA Core's instructions for background runs, its brief and its tool declarations. It carries no persona, emotional state, skill catalog or conversation history. Memory and materials reach it only as the projections its brief names, drawn from the requesting agent's personal knowledge and common knowledge.
 
+The start tool's implementation has a receipt barrier: Core commits the id and initial state, the conversation records/returns that receipt, and only then releases the queued execution. The start tool never waits for a model or a result. Admission checks and brief data are copied into the run; stopping the originating turn cannot cancel it.
+
 ### The run record
 
 The work ledger holds one record per run: the run id, the requesting agent, the conversation and turn that asked (or the promotion at the hard budget, or the job), the person the run is done for, the brief and its references, the allowlist and run scope, the usage so far, the state, a checkpoint after each completed tool round trip, the result artifact and the times. Usage records name the run and the requesting agent. The transcript of a run is kept in its run directory in the work area, and the developer view shows it.
@@ -175,11 +177,15 @@ These limits decide how many runs start. They never decide how much one run does
 - When a background run produces a typed result, LINA Core validates the body as it does for `present_result` ([host-protocol.md](host-protocol.md#typed-results)), writes the result to the conversation ledger, and the card of that result is the landing notice. A run that was asked for a document writes it from the latest revision of the confirmed outline ([conversation-and-memory.md](conversation-and-memory.md#results)).
 - A result is derived data under the revocation epoch rules: it records the epoch it was built at, and evidence retracted before the notice is delivered is marked in the notice instead of being delivered silently.
 
+The implementation retains checks as structured evidence: a successful named tool call and resolved citations are mechanically verified; `claimed` remains explicitly unverified even when the model reports completion. Result material publication is idempotent by run id and keeps earlier revisions. A failed publication retains a pending landing for an explicit retry, without restarting the model loop. Call intents and results survive interruption: a completed call is reused, an uncertain scratch write is not repeated, and its uncertainty prevents a complete outcome. Credential-shaped text and sensitive JSON fields are masked before retained run data is written. Pending notices expose both person-owned `needs_input` questions and terminal landings; acknowledging the question cannot suppress the later landing. They contain metadata and material references, never the run's body or transcript; evidence is checked again when the notice is read for delivery. A cancelled outcome cannot be overwritten by a late result or recovery.
+
 ### Durability
 
 - A run is a durable record. It survives a restart of LINA Core: a run that was working is resumed once from its last checkpoint under the new epoch, and a second interruption lands it as failed, or as partial when it holds something usable, with an honest account. A run makes no effect outside its scratch directory, so no effect is left unknown.
 - At its expected time without having landed (15 minutes by default), a run gets one check-in from LINA Core: a read of its progress, with no model call. The expected time is a point to look, not a limit, and a run that is making progress goes on. A run that records no model or tool event for the stale interval (see Liveness) is stalled; LINA Core resumes it once from its checkpoint, and if it stalls again it lands as failed, or as partial when it holds something usable, with an honest account of what was done and what was not. No wall time ends a run.
 - A run is resumable from its checkpoints. A partial result keeps its artifact, so a follow-up run can continue from it.
+
+Implementation boundary: the run package supplies admission, release, steering, stop, progress checks, restart recovery and durable pending notices. Core's composition root supplies the current epoch, shared-budget/authority checks, provider, read/scratch adapters and projection/condensation preparation. The conversation's turn-boundary notice dispatcher is the separate G1-35 scope; no background-run TUI or client-protocol capability is advertised by this package increment.
 
 ## Contract input from CRW
 

@@ -64,26 +64,26 @@ type PreparedMaterial struct {
 	inserted, closed bool
 }
 
-// Prepare syncs a recovery marker before writing bytes. It holds only this
-// writer's serialization lock until Close; it never holds Store.mu across a
-// canon write, so existing asset operations cannot invert the lock order.
+// Prepare syncs a recovery marker before writing bytes. Its serialization lock
+// covers preparation only, allowing several materials in one canon transaction.
+// Each prepared write owns distinct bytes and a recovery marker until Close.
+// Neither writer nor Store locks span the enclosing canon transaction.
 func (w *MaterialWriter) Prepare(ctx context.Context, body io.Reader, observedPath string, actor Actor) (*PreparedMaterial, error) {
 	if body == nil || !validObservedPath(observedPath) || !actor.valid() {
 		return nil, ErrInvalid
 	}
 	w.mu.Lock()
+	defer w.mu.Unlock()
 	a := Asset{ID: newID(), Area: Lina, ObservedPath: observedPath, Revision: 1, Actor: actor}
 	a.Path = revisionPath(a.Area, a.ID, a.Revision)
 	marker := filepath.Join(preparedDirectory, a.ID)
 	if _, _, err := writeFile(ctx, w.store.root, marker, strings.NewReader("")); err != nil {
-		w.mu.Unlock()
 		return nil, err
 	}
 	var err error
 	a.Hash, a.Size, err = writeFile(ctx, w.store.root, a.Path, body)
 	if err != nil {
 		cleanup := w.finish(a.ID)
-		w.mu.Unlock()
 		return nil, errors.Join(err, cleanup)
 	}
 	return &PreparedMaterial{writer: w, asset: a}, nil
@@ -115,6 +115,7 @@ func (p *PreparedMaterial) Close() error {
 		return nil
 	}
 	p.closed = true
+	p.writer.mu.Lock()
 	defer p.writer.mu.Unlock()
 	return p.writer.finish(p.asset.ID)
 }

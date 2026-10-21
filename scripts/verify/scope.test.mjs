@@ -8,6 +8,43 @@ import { git as runGit } from '../git.mjs';
 import { componentRegistry, kind, scopeFor } from './scope.mjs';
 import { evaluateGate } from './gate.mjs';
 
+test('Korean search corpus changes select the consuming Core tests', t => {
+  const r = repository(t);
+  const files = {
+    'go.mod': 'module example.invalid/lina\ngo 1.27\ntoolchain go1.27.3\n',
+    'kit/go.mod': 'module example.invalid/lina/kit\ngo 1.27\ntoolchain go1.27.3\n',
+    'go.work': 'go 1.27\ntoolchain go1.27.3\nuse (\n.\n./kit\n)\n',
+    'doc.go': 'package lina\n',
+    'kit/doc.go': 'package kit\n',
+    'cmd/lina/main.go': 'package main\nfunc main() {}\n',
+    'internal/core/ledger/store.go': 'package ledger\n',
+    'internal/core/canon/store.go': 'package canon\n',
+    'testdata/korean/search.json': '{}\n',
+  };
+  for (const [name, content] of Object.entries(files)) {
+    mkdirSync(join(r.cwd, name, '..'), { recursive: true });
+    writeFileSync(join(r.cwd, name), content);
+  }
+  const base = r.commit();
+  writeFileSync(join(r.cwd, 'testdata/korean/search.json'), '{"changed":true}\n');
+  const scope = r.classify('HEAD', { base });
+  assert.deepEqual(scope.unmapped, []);
+  assert.deepEqual(scope.selectedComponents, ['lina']);
+  assert.equal(scope.automation, false);
+  assert.equal(scope.dependencies, false);
+});
+
+test('reply filtering is registered with the lina Go checks', t => {
+  const r = repository(t);
+  const base = r.git('rev-parse', 'HEAD');
+  mkdirSync(join(r.cwd, 'internal/core/reply'), { recursive: true });
+  writeFileSync(join(r.cwd, 'internal/core/reply/filter.go'), 'package reply\n');
+  const scope = r.classify(r.commit(), { base, full: true });
+  assert.deepEqual(scope.unmapped, []);
+  assert.ok(scope.selectedComponents.includes('lina'));
+  assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/reply/...'));
+});
+
 test('tool executor is registered with the lina Go checks', t => {
   const r = repository(t);
   const base = r.git('rev-parse', 'HEAD');
@@ -18,7 +55,6 @@ test('tool executor is registered with the lina Go checks', t => {
   assert.ok(scope.selectedComponents.includes('lina'));
   assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/exec/...'));
 });
-
 test('ledger is registered with the lina Go checks', t => {
   const r = repository(t);
   const base = r.git('rev-parse', 'HEAD');
@@ -63,6 +99,31 @@ test('Moirai source changes select its binary and Core acceptance checks', t => 
   assert.deepEqual(scope.unmapped, []);
   assert.deepEqual(scope.selectedComponents, ['lina', 'moirai-worker']);
   assert.equal(componentRegistry.find(c => c.name === 'moirai-worker')?.binary, 'moirai-worker');
+});
+
+test('background runs are registered with the lina Go checks', t => {
+  const r = repository(t);
+  const base = r.git('rev-parse', 'HEAD');
+  mkdirSync(join(r.cwd, 'internal/core/runs'), { recursive: true });
+  writeFileSync(join(r.cwd, 'internal/core/runs/service.go'), 'package runs\n');
+  const scope = r.classify(r.commit(), { base, full: true });
+  assert.deepEqual(scope.unmapped, []);
+  assert.ok(scope.selectedComponents.includes('lina'));
+  assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/runs/...'));
+});
+
+test('Hermes readers and synthetic fixtures select their consumer checks', t => {
+  const r = repository(t);
+  const base = r.git('rev-parse', 'HEAD');
+  mkdirSync(join(r.cwd, 'internal/core/importer'), { recursive: true });
+  mkdirSync(join(r.cwd, 'testdata/hermes'), { recursive: true });
+  writeFileSync(join(r.cwd, 'internal/core/importer/snapshot.go'), 'package importer\n');
+  writeFileSync(join(r.cwd, 'testdata/hermes/schema.sql'), 'CREATE TABLE messages (id INTEGER);\n');
+  const scope = r.classify(r.commit(), { base, full: true });
+  assert.deepEqual(scope.unmapped, []);
+  assert.ok(scope.selectedComponents.includes('lina'));
+  assert.ok(componentRegistry.find(c => c.name === 'lina').packages.includes('./internal/core/importer/...'));
+  assert.equal(kind('testdata/hermes/README.md'), 'components');
 });
 
 test('budget is registered with the lina Go checks', t => {
