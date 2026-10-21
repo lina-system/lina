@@ -31,6 +31,7 @@ func Migrations() []Migration {
 		{Version: 17, SQL: ChannelsSchema},
 		{Version: 18, SQL: TelegramSchema},
 		{Version: 19, SQL: ExchangeSchema},
+		{Version: 20, SQL: conversationOrderSchema},
 	}
 }
 
@@ -61,6 +62,7 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 		{17, "channel_connections"}, {17, "channel_bindings"}, {17, "channel_actions"}, {17, "channel_receipts"}, {17, "channel_outbound"},
 		{18, "telegram_buttons"}, {18, "telegram_presentations"},
 		{19, "exchanges"}, {19, "exch_msg"}, {19, "exch_event"}, {19, "exch_waiting"},
+		{20, "conversation_order"},
 	} {
 		var count int
 		if err = db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name=?", entry.table).Scan(&count); err != nil {

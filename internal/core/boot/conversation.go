@@ -75,6 +75,8 @@ type conversationRuntime struct {
 	person, agent, conversation string
 	identity                    clientsrv.Identity
 	mu                          sync.Mutex
+	publicationMu               sync.Mutex
+	positioned                  map[string]bool
 }
 
 func conversationPath(root string) string { return filepath.Join(root, "canon", "canon.sqlite") }
@@ -295,6 +297,25 @@ func (r *conversationRuntime) publish(kind protocol.Kind, key string, payload an
 	if err != nil {
 		return err
 	}
+	// Keep durable first appearance and live publication in the same order,
+	// including when input admission races the provider observer.
+	r.publicationMu.Lock()
+	defer r.publicationMu.Unlock()
+	if kind == protocol.KindItemDone || kind == protocol.KindOutputDelta || kind == protocol.KindResult {
+		if !r.positioned[key] {
+			ctx := context.WithoutCancel(r.ctx)
+			if err := r.db.Write(ctx, func(tx *canon.Tx) error {
+				_, err := tx.ExecContext(ctx, `INSERT INTO conversation_order(conversation_id,item_key) VALUES(?,?) ON CONFLICT DO NOTHING`, r.conversation, key)
+				return err
+			}); err != nil {
+				return err
+			}
+			if r.positioned == nil {
+				r.positioned = make(map[string]bool)
+			}
+			r.positioned[key] = true
+		}
+	}
 	agent := r.agent
 	if kind == protocol.KindResult {
 		// Results carry attribution in provenance, not an agent_id wire field.
@@ -450,22 +471,26 @@ func (r *conversationRuntime) events(ctx context.Context, through string) ([]led
 	return events, nil
 }
 func (r *conversationRuntime) seedHistory(ctx context.Context) error {
-	events, err := r.events(ctx, "")
+	items, err := r.historyItems(ctx)
 	if err != nil {
 		return err
 	}
-	for _, e := range events {
-		if e.ScaffoldKind == "result" {
-			continue // The source projects its card at the original reply position.
-		}
-		if e.ScaffoldKind == "interruption" || e.ScaffoldKind == "failure" {
-			stopped, err := turn.New(r.db).Stopped(ctx, e.ParentID)
+	for _, item := range items {
+		if item.eventID == "" {
+			masked, err := secrets.Mask(item.partial)
 			if err != nil {
 				return err
 			}
-			if err = r.publishPartials(stopped); err != nil {
+			text := masked.Text()
+			speaker := protocol.ConversationSpeakerAgent
+			if err = r.publish(protocol.KindItemDone, item.key, protocol.ItemDone{Text: &text, Speaker: &speaker}); err != nil {
 				return err
 			}
+			continue
+		}
+		e, err := r.journal().Get(ctx, item.eventID)
+		if err != nil {
+			return err
 		}
 		text := e.Body.Text()
 		if e.SpeakerKind == guard.Agent {
