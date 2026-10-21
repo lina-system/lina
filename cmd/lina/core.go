@@ -14,6 +14,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
+	"github.com/thisisjun786/lina/internal/core/modelpath"
 )
 
 func runCore(args []string) int {
@@ -42,7 +43,12 @@ func runCore(args []string) int {
 		fmt.Fprintf(os.Stderr, "lina core: initialize SQLite: %v\n", err)
 		return 78
 	}
-	if err := boot.Run(ctx, boot.Config{StateRoot: *root, Socket: *socket}); err != nil {
+	route, err := modelpath.ResponsesFromEnv(os.Getenv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "lina core: invalid model configuration")
+		return 78
+	}
+	if err := boot.Run(ctx, boot.Config{StateRoot: *root, Socket: *socket, Conversation: route}); err != nil {
 		if errors.Is(err, lifecycle.ErrRestart) {
 			return 75
 		}

@@ -109,6 +109,7 @@ func projectStream(envelope protocol.Envelope) (streamProjection, error) {
 			if text != nil {
 				block.Text = *text
 			}
+			projectConversationBlock(&block, body)
 			items = append(items, block)
 		}
 		sent, _ := time.Parse(time.RFC3339Nano, envelope.SentAt)
@@ -138,7 +139,9 @@ func projectStream(envelope protocol.Envelope) (streamProjection, error) {
 		if envelope.Kind == protocol.KindOutputDelta {
 			p.message = state.Delta{Epoch: metadata.Cursor.Epoch, Topic: metadata.Topic, ID: streamKey(metadata.Topic, metadata.Key), Cursor: seq, Revision: revision, Text: value}
 		} else {
-			p.message = state.ItemDone{Epoch: metadata.Cursor.Epoch, Topic: metadata.Topic, Cursor: seq, Block: state.Block{ID: streamKey(metadata.Topic, metadata.Key), Kind: envelope.Kind, Revision: revision, Text: value}}
+			block := state.Block{ID: streamKey(metadata.Topic, metadata.Key), Kind: envelope.Kind, Revision: revision, Text: value}
+			projectConversationBlock(&block, envelope.Payload)
+			p.message = state.ItemDone{Epoch: metadata.Cursor.Epoch, Topic: metadata.Topic, Cursor: seq, Block: block}
 		}
 	}
 	if p.cursor.Epoch != envelope.Epoch {
@@ -249,4 +252,25 @@ func streamItemPayload(item protocol.StreamItem) (protocol.Payload, error) {
 		return decodeStreamItem[protocol.Disconnected](item.Payload)
 	}
 	return nil, errStream
+}
+
+func projectConversationBlock(block *state.Block, payload protocol.Payload) {
+	switch p := payload.(type) {
+	case protocol.ItemDone:
+		if p.EchoKey != nil {
+			block.EchoKey = *p.EchoKey
+		}
+		if p.Speaker != nil {
+			block.Speaker = *p.Speaker
+		}
+	case protocol.TurnState:
+		if p.Active != nil {
+			block.TurnKnown = true
+			block.TurnActive = *p.Active
+		}
+	case protocol.Result:
+		if p.Text != nil {
+			block.Body = *p.Text
+		}
+	}
 }

@@ -57,6 +57,7 @@ type shellModel struct {
 	blocks        map[string]shellBlock
 	resyncPending map[string]protocol.StreamCursor
 	resyncSeen    map[resyncSignal]protocol.StreamCursor
+	conversation  conversationView
 }
 
 func newShell(options Options, now func() time.Time) *shellModel {
@@ -64,9 +65,11 @@ func newShell(options Options, now func() time.Time) *shellModel {
 		now = time.Now
 	}
 	styles := NewStyles(options)
-	return &shellModel{generation: 1, status: ConnectionStatus{State: Connecting}, styles: styles,
+	m := &shellModel{generation: 1, status: ConnectionStatus{State: Connecting}, styles: styles,
 		size: layout.Size{Width: styles.options.Width, Height: 24}, now: now, blocks: make(map[string]shellBlock),
 		resyncPending: make(map[string]protocol.StreamCursor), resyncSeen: make(map[resyncSignal]protocol.StreamCursor)}
+	m.conversation = newConversationView(styles)
+	return m
 }
 
 func (m *shellModel) Init() tea.Cmd          { return nil }
@@ -80,6 +83,8 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case shellBegin:
 		if msg.Generation > m.generation {
 			m.generation = msg.Generation
+			m.content, _ = state.Reduce(m.content, state.ConnectionLost{})
+			m.refreshBlocks()
 			m.status = ConnectionStatus{State: Retrying}
 			m.resyncSeen = make(map[resyncSignal]protocol.StreamCursor)
 		}
@@ -133,6 +138,11 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		var commands []state.Cmd
 		m.content, commands = state.Reduce(m.content, msg.Message)
 		m.refreshBlocks()
+		for _, block := range m.content.Blocks {
+			if block.Kind == protocol.KindTurnState && block.TurnKnown {
+				m.content, _ = state.Reduce(m.content, state.Turn{Active: block.TurnActive})
+			}
+		}
 		if projected != nil && m.content.Topics[projected.topic].OutOfSync {
 			if floor, exists := m.resyncPending[projected.topic]; !exists || compareStreamCursor(projected.cursor, floor) > 0 {
 				m.resyncPending[projected.topic] = projected.cursor
@@ -173,7 +183,14 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.styles = NewStyles(options)
 	case tea.KeyboardEnhancementsMsg:
 		m.events = msg.SupportsEventTypes()
+	case tea.PasteMsg:
+		if m.hasCapability("conversation") {
+			return m, m.editComposer(tea.PasteMsg{Content: sanitize.Display(msg.Content)})
+		}
 	case tea.KeyMsg:
+		if m.hasCapability("conversation") {
+			return m, m.conversationKey(msg)
+		}
 		key := term.FromTea(msg, m.events)
 		if !m.gate.Admit(key, term.Toggle, m.now()) {
 			return m, nil
@@ -222,12 +239,24 @@ func (m *shellModel) View() tea.View {
 	view.AltScreen = true
 	view.ReportFocus = true
 	view.KeyboardEnhancements.ReportEventTypes = true
+	if m.hasCapability("conversation") && m.status.State.active() {
+		plan := m.conversationPlan()
+		if plan.Tier != layout.TooSmall && !m.conversation.pager.open {
+			view.Cursor = m.conversation.composer.Cursor()
+			if view.Cursor != nil {
+				view.Cursor.Position.Y += plan.Composer.Y
+			}
+		}
+	}
 	return view
 }
 
 func (m *shellModel) viewContent() string {
 	if m.size.Width <= 0 || m.size.Height <= 0 {
 		return ""
+	}
+	if m.hasCapability("conversation") && m.status.State.active() {
+		return m.conversationContent()
 	}
 	plan := layout.Plan(m.size, layout.Caps{}, layout.Shape{ComposerRows: 1})
 	status := m.styles.presentation(m.status)

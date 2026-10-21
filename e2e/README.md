@@ -3,7 +3,8 @@
 Run `go test ./e2e/...` (or `go test -count=1 -v ./e2e/...` for uncached scenario
 output). Node.js and the workspace's Go toolchain are required. The harness uses
 native Linux and macOS pseudo-terminals; it needs no window, display server,
-provider account, network service, terminal library or human input.
+provider account, external network service or human input. Conversation screens
+use the pinned terminal library and a VT emulator.
 
 The scenario builds `lina`, starts real Core with a synthetic installed identity
 and a private temporary state root, and connects a generated-type JSON-RPC client
@@ -15,14 +16,15 @@ Another handshake and request prove that TUI quit leaves Core running. Core
 then stops gracefully and removes its socket and run sentinel. Additional runs
 exercise terminal EOF and an absent Core without creating state.
 
-This is the connection-only increment of [T-01 and T-05](../docs/design/tui.md).
-Core grants no conversation capability and the schema reserves the input body,
-so the test sends `input` with an empty typed payload. The TUI displays connection
-state; the protocol client observes the refusal. This does not establish a TUI
-conversation, model reply, rendered cell layout, terminal-library spike results,
-or full phase acceptance. Those scenarios extend this harness when their
-capabilities ship, following the [phase rules](../docs/design/go-roadmap.md#phase-rules).
-No product behavior or design contract changes in this increment.
+The original connection-only scenarios still run with no configured model
+route and assert an empty input's refusal. Conversation acceptance lives in
+`m1/tui-conversation.json` and `m1/tui-conversation-stream.json`: the former
+installs the binaries, starts installed Core with a local fixture provider,
+types through the real TUI and checks parsed screen cells, input deduplication,
+Core restart and history restoration; the latter scripts the fake Core's
+streaming completion and steering sequence through the same PTY lifecycle.
+They require no personal credentials. The physical terminal spike and real-model
+acceptance remain separate.
 
 Helpers are test-only Go files in this package, shared by scenario tests. Keeping
 process creation in test files follows the architecture rule for command

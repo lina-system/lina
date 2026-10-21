@@ -177,9 +177,9 @@ test('cross-builds Linux and macOS binaries with target metadata and an explicit
   }
 });
 
-test('build commands and metadata readers do not import the provider SDK', t => {
+test('Node and metadata readers do not import the model adapter', t => {
   const f = fixture(t);
-  const result = spawnSync('go', ['list', '-deps', './cmd/lina', './cmd/lina-node', './internal/core/manifest/...'], {
+  const result = spawnSync('go', ['list', '-deps', './cmd/lina-node', './internal/core/manifest/...'], {
     cwd: f.cwd, env: f.env, encoding: 'utf8', timeout: 120_000,
   });
   assert.equal(result.status, 0, result.stderr || result.error?.message);
@@ -215,7 +215,7 @@ test('clean builds record hashes and the same commit and metadata as both versio
     assert.equal(manifest.kitVersion, Number(readFileSync(join(f.cwd, 'kit/VERSION'), 'utf8')));
     const platform = spawnSync('go', ['env', 'GOOS', 'GOARCH'], { cwd: f.cwd, env: f.env, encoding: 'utf8' }).stdout.trim().split(/\r?\n/).join('/');
     assert.deepEqual(manifest.supportedCombinations, [{ connection: 'client', peer: 'lina-tui', platform,
-      protocolVersion: '1.0', capabilities: [{ name: 'lifecycle', version: '1.0' }], evidence: ['go test ./kit/protocol/conformance', 'go test ./e2e -run TestPlannedRestart'] }]);
+      protocolVersion: '1.0', capabilities: [{ name: 'lifecycle', version: '1.0' }, { name: 'conversation', version: '1.0' }], evidence: ['go test ./kit/protocol/conformance', 'go test ./e2e -run TestPlannedRestart', 'go test ./e2e -run TestM1TUIConversationInstalledCore'] }]);
     const module = JSON.parse(spawnSync('go', ['list', '-m', '-json', 'github.com/ncruces/go-sqlite3'], {
       cwd: f.cwd, env: f.env, encoding: 'utf8',
     }).stdout);

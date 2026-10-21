@@ -52,7 +52,7 @@ func tuiFixtures(t *testing.T) fstest.MapFS {
 		t.Fatal(err)
 	}
 	hello := envelope.Payload.(protocol.Hello)
-	hello.Capabilities = []protocol.Capability{{Name: "running", Version: "1.0"}, {Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}}
+	hello.Capabilities = []protocol.Capability{{Name: "conversation", Version: "1.0"}, {Name: "running", Version: "1.0"}, {Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}}
 	envelope.Payload = hello
 	data, err := json.Marshal(envelope)
 	if err != nil {

@@ -220,6 +220,54 @@ Rules:
 - No `client` message ever carries a channel token back to a client. A client passes a token to LINA Core once, when the person adds a connection.
 - A background notice is sent to clients at the turn boundary at which LINA Core delivers it ([conversation-and-memory.md](conversation-and-memory.md#background-results)). A running-list update may arrive at any time and is display state only.
 
+### Conversation payloads
+
+The first conversation product defines these additive client 1.0 fields. They
+remain optional in the schema so previous reserved empty bodies still decode;
+installed handlers reject missing operation inputs as `malformed`. Codec
+acceptance alone does not grant a capability.
+
+| Kind | Fields and behavior |
+| --- | --- |
+| `history_get` | Optional `agent_id` or `conversation_id` selects an authorized main conversation. With neither, Core selects its default agent. |
+| `conversation_start` | Existing `agent_id`; returns the same main-conversation discovery response. |
+| `history` | `conversation_id`, `agent_id`, and optional `snapshot`. The installed implementation discovers the concrete conversation; its subscription delivers the authoritative window. |
+| `input` | Nonempty `conversation_id`, `input_id`, `text` (at most 16,384 Unicode characters), and optional `mode` (`steer` or `queue`). Missing mode means steering when a turn is active and a new turn otherwise. Queue starts a follow-up through the same conversation lane. |
+| `interrupt` | Nonempty `conversation_id`; cancels the active turn with the person's typed cause. It does not terminate Core, close the client or cancel unrelated work. |
+| `item_done` | Existing `text` and stream metadata, with optional `echo_key`, `speaker` (`person`, `agent`, `system`), `agent_id`, and `person_id`. `echo_key` is the admitted input id, allowing replacement of one local echo. |
+| `output_delta` | Existing text delta and stream metadata, with optional `agent_id`. The same topic/key becomes the completed item. |
+| `turn_state` | Existing stream metadata and optional `active` boolean plus `agent_id`. Clients do not parse activity from display text. |
+
+The socket's authenticated person and Core-selected agent supply attribution;
+input cannot choose a speaker or person. A foreign conversation or agent is
+refused as `out_of_scope`. Only concrete authorized conversation/result topics
+are installed. Each input id is deduplicated within the conversation before
+model work is admitted. Large masked text uses the existing durable material writer, with verified
+material reads on restart. Inbox and masked ledger input commit in one transaction;
+acknowledgement is durable admission. It is not a claim that the reply finished.
+A duplicate returns the original admission and never starts a second turn.
+
+Boot composes the socket handlers with the existing lane, turn, persona,
+assembly and ledger packages. The configured Responses route remains Core-only.
+Preparation verifies the installed executable against its manifest and records
+persona/request evidence. Provider items remain provisional until the complete turn succeeds; failed
+response evidence stays in the turn journal and never becomes ordinary completed
+agent history. Successful items replace one stable topic key; history
+is seeded from the durable ledger after restart. Interrupt and shutdown use the
+existing turn cancellation and recovery path; accepted model requests are never
+replayed on restart. The command currently installs this conversation service
+when the explicit Responses model route is configured. An unconfigured install
+retains its connection-only capabilities and unsupported composer. Removing
+the model route after a conversation run still opens and fences its existing
+canon database for recovery; it disables model handlers without blocking Core
+startup.
+
+The generated receivers exercise `conversation/` fixtures on both sides.
+`e2e/m1/tui-conversation-stream.json` covers the scripted socket/TUI sequence;
+`e2e/m1/tui-conversation.json` covers an installed Core and TUI with a fixture
+provider. Real model credentials and real model validation are outside these
+fixtures.
+
 ## Typed results
 
 Core presents anything that the person should open and keep apart from the chat text as one typed result: a table, a diagram, a chart, a comparison, a plan, an outline, a draft document or a file. A result of delegated work ([work-and-delegation.md](work-and-delegation.md)) is presented the same way when it is shown to the person. Results are data. How each type is drawn is defined in [surfaces.md](surfaces.md#result-surfaces), how a conversation stores and uses a result in [conversation-and-memory.md](conversation-and-memory.md#results), and how a result is saved in [materials-and-knowledge.md](materials-and-knowledge.md#saving-a-result).
@@ -301,5 +349,4 @@ Rules:
 
 - The JSON Schema to TypeScript type generator: chosen before the first LINA app work ([surfaces.md](surfaces.md#app-front-end)).
 - Request timeouts on the `client` and `node` connections: set by measurement during implementation acceptance of each connection.
-- The remaining payload fields of the `client` 1.0 kinds: set in the schema by the implementation issue that ships the first conversation product. The four sign-in relay kinds and the account sign-in request/result are defined above and in the schema by #81.
 - The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds: set in the schema by the implementation issue that ships results.

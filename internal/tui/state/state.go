@@ -20,6 +20,9 @@ type Cmd func(context.Context) Msg
 
 type Block struct {
 	ID, Topic, EchoKey, Text string
+	Speaker                  protocol.ConversationSpeaker
+	Body                     string
+	TurnKnown, TurnActive    bool
 	Revision                 uint64
 	Kind                     protocol.Kind
 	Done, Local              bool
@@ -47,6 +50,7 @@ type State struct {
 	Notices            []Notice
 	Draft              Draft
 	Busy, Stopping     bool
+	TurnActive         bool
 	Gen                uint64
 	pending            *SendRequest
 	Offset             time.Duration
@@ -84,11 +88,30 @@ type Scroll struct {
 }
 type Notice struct{ ID, Code, Text string }
 type EditDraft struct{ Draft Draft }
-type Send struct{ Key string }
+type InputMode string
+
+const (
+	InputNormal   InputMode = "input"
+	InputSteering InputMode = "steering"
+	InputQueue    InputMode = "queue"
+)
+
+type Send struct {
+	Key   string
+	Queue bool
+}
+type Turn struct{ Active bool }
+type ConnectionLost struct{}
+
+func (ConnectionLost) isMsg() {}
+
+func (Turn) isMsg() {}
+
 type SendRequest struct {
 	Gen   uint64
 	Key   string
 	Draft Draft
+	Mode  InputMode
 }
 type SendResult struct {
 	Gen    uint64
@@ -175,6 +198,7 @@ func (s *State) setEpoch(e string) []string {
 		s.restoreDraft()
 	}
 	s.Stopping = false
+	s.TurnActive = false
 	s.Gen++
 	topics := slices.Sorted(maps.Keys(s.Topics))
 	for _, name := range topics {
@@ -285,6 +309,7 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 			}
 			b.Topic = m.Topic
 			b.Local = false
+			b.Body = sanitize.Display(b.Body)
 			b.filter = sanitize.Stream{}
 			if b.Done {
 				b.Text = sanitize.Display(b.Text)
@@ -396,6 +421,7 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 		b.Done = true
 		b.Local = false
 		b.Text = sanitize.Display(b.Text)
+		b.Body = sanitize.Display(b.Body)
 		b.filter = sanitize.Stream{}
 		s.put(b)
 		s.Stopping = false
@@ -454,6 +480,13 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 		s.Gen++
 		s.Busy = true
 		req := SendRequest{Gen: s.Gen, Key: m.Key, Draft: cloneDraft(s.Draft)}
+		req.Mode = InputNormal
+		if s.TurnActive {
+			req.Mode = InputSteering
+		}
+		if m.Queue {
+			req.Mode = InputQueue
+		}
 		s.pending = &req
 		s.Draft = Draft{}
 		s.put(Block{ID: m.Key, EchoKey: m.Key, Text: sanitize.Display(req.Draft.Text), Local: true})
@@ -467,6 +500,16 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 		}
 		s.pending = nil
 		s.Busy = false
+	case ConnectionLost:
+		if s.pending != nil {
+			s.restoreDraft()
+			s.Gen++
+		}
+	case Turn:
+		s.TurnActive = m.Active
+		if !m.Active {
+			s.Stopping = false
+		}
 	case Interrupt:
 		if s.Stopping {
 			return s, nil

@@ -1,0 +1,35 @@
+{
+  "side": "server",
+  "input": [
+    "conversation/input.json",
+    "conversation/queue.json",
+    "conversation/interrupt.json",
+    "conversation/history_get.json",
+    "conversation/history.json",
+    "conversation/item_done.json",
+    "conversation/turn_state.json"
+  ],
+  "output": [
+    "conversation/input.json",
+    "conversation/queue.json",
+    "conversation/interrupt.json",
+    "conversation/history_get.json",
+    "conversation/history.json",
+    "conversation/item_done.json",
+    "conversation/turn_state.json"
+  ],
+  "errors": [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+  ],
+  "outcome": {
+    "accepted": 7,
+    "malformed": 0,
+    "unknown_kinds": 0
+  }
+}
