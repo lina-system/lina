@@ -17,9 +17,9 @@ function registryFor(cwd) {
   const architecture = existsSync(join(cwd, 'internal/archtest')) ? ['./internal/archtest/...'] : [];
   const buildinfo = existsSync(join(cwd, 'internal/buildinfo')) ? ['./internal/buildinfo/...'] : [];
   const manifest = existsSync(join(cwd, 'internal/core/manifest')) ? ['./internal/core/manifest/...'] : [];
-  const coreDirectories = ['internal/core/modelpath/', 'internal/core/accounts/', 'internal/core/assemble/', 'internal/core/ledger/', 'internal/core/jobs/', 'internal/core/install/', 'packaging/', 'internal/core/turn/', 'internal/core/budget/', 'internal/core/boot/', 'internal/core/clientsrv/', 'internal/core/ctlfiles/', 'internal/core/lifecycle/', 'internal/core/eventstore/', 'internal/core/canon/', 'internal/core/assets/', 'internal/core/inbox/', 'internal/core/lane/', 'internal/core/authority/', 'internal/core/guard/', 'internal/core/agents/', 'internal/core/secrets/'];
+  const coreDirectories = ['internal/core/modelpath/', 'internal/core/accounts/', 'internal/core/assemble/', 'internal/core/ledger/', 'internal/core/jobs/', 'internal/core/install/', 'internal/core/turn/', 'internal/core/budget/', 'internal/core/boot/', 'internal/core/clientsrv/', 'internal/core/ctlfiles/', 'internal/core/lifecycle/', 'internal/core/eventstore/', 'internal/core/canon/', 'internal/core/assets/', 'internal/core/inbox/', 'internal/core/lane/', 'internal/core/authority/', 'internal/core/guard/', 'internal/core/agents/', 'internal/core/secrets/'];
   const persona = existsSync(join(cwd, 'persona')) ? ['./persona/...'] : [];
-  const corePackages = coreDirectories.filter(directory => directory !== 'packaging/' && existsSync(join(cwd, directory)))
+  const corePackages = coreDirectories.filter(directory => existsSync(join(cwd, directory)))
     .map(directory => `./${directory}...`);
   const clientDirectories = ['internal/design/', 'internal/tui/', 'internal/clientapi/', 'internal/fakecore/'];
   const clientPackages = clientDirectories.filter(directory => existsSync(join(cwd, directory)))
@@ -47,6 +47,7 @@ function componentOf(path) {
 const goObjects = text => JSON.parse(`[${text.trim().replace(/^}\s*\n{/gm, '},{')}]`);
 
 export function kind(path) {
+  if (path === 'packaging/README.md') return 'docs';
   if (path === 'packaging/sqlite-vec/build.sh') return 'automation';
   if (/^packaging\/sqlite-vec\/(?:README|NOTICE)\.md$/.test(path)) return 'docs';
   if (path === 'scripts/verify/dependency-exceptions.json' || path === 'THIRD-PARTY-NOTICES.md') return 'dependencies';
