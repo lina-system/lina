@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Command clientinfo emits the native build's compiled client support table.
+// Command clientinfo emits the selected build target's client support table.
 package main
 
 import (
@@ -11,7 +11,14 @@ import (
 )
 
 func main() {
-	if err := json.NewEncoder(os.Stdout).Encode(manifest.ClientCombinations()); err != nil {
+	if len(os.Args) != 2 {
+		panic("usage: clientinfo GOOS/GOARCH")
+	}
+	rows := manifest.ClientCombinationsFor(os.Args[1])
+	if err := manifest.ValidateCombinations(rows); err != nil {
+		panic(err)
+	}
+	if err := json.NewEncoder(os.Stdout).Encode(rows); err != nil {
 		panic(err)
 	}
 }

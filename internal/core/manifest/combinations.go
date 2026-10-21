@@ -87,5 +87,10 @@ const TUIPeer = "lina-tui"
 // ClientCombinations is shared by the compiled listener and the build-manifest
 // writer, so the published table and runtime admission cannot drift.
 func ClientCombinations() []Combination {
-	return []Combination{{Connection: "client", Peer: TUIPeer, Platform: runtime.GOOS + "/" + runtime.GOARCH, ProtocolVersion: "1.0", Capabilities: []protocol.Capability{{Name: "lifecycle", Version: "1.0"}}, Evidence: []string{"go test ./kit/protocol/conformance", "go test ./e2e -run TestPlannedRestart"}}}
+	return ClientCombinationsFor(runtime.GOOS + "/" + runtime.GOARCH)
+}
+
+// ClientCombinationsFor describes the target selected by the build writer.
+func ClientCombinationsFor(target string) []Combination {
+	return []Combination{{Connection: "client", Peer: TUIPeer, Platform: target, ProtocolVersion: "1.0", Capabilities: []protocol.Capability{{Name: "lifecycle", Version: "1.0"}}, Evidence: []string{"go test ./kit/protocol/conformance", "go test ./e2e -run TestPlannedRestart"}}}
 }

@@ -3,9 +3,25 @@ package exec_test
 
 import (
 	"context"
+	"os/exec"
+	"runtime"
+	"testing"
 
 	"github.com/thisisjun786/lina/kit/tools"
 )
+
+func requireSandbox(t *testing.T) {
+	t.Helper()
+	launcher := "bwrap"
+	if runtime.GOOS == "darwin" {
+		launcher = "sandbox-exec"
+	} else if runtime.GOOS != "linux" {
+		t.Skip("verified OS sandbox not implemented")
+	}
+	if _, err := exec.LookPath(launcher); err != nil {
+		t.Skip("OS sandbox launcher absent; unavailable-path tests still run")
+	}
+}
 
 // Unit fixtures bypass authority only where the assertion is about confinement.
 // Network approval scenarios use the actual durable authority service.
