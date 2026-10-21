@@ -344,3 +344,32 @@ func TestSnapshotCarriesProjectionRevocation(t *testing.T) {
 		t.Fatal("noncanonical revocation accepted")
 	}
 }
+
+func TestAtomicPublicationGroupOverflowIsDeterministic(t *testing.T) {
+	h := topicHub(t, TopicOptions{QueueSize: 2})
+	_, hot := subscribe(t, h, "conversation:test", nil)
+	_, other := subscribe(t, h, "core", nil)
+	events := []TopicEvent{
+		{Kind: protocol.KindItemDone, Key: "a", Data: []byte(`{}`)},
+		{Kind: protocol.KindItemDone, Key: "b", Data: []byte(`{}`)},
+		{Kind: protocol.KindItemDone, Key: "c", Data: []byte(`{}`)},
+	}
+	if err := h.PublishBatch("conversation:test", events); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hot.Next(t.Context()); !errors.Is(err, rpc.ErrResyncRequired) {
+		t.Fatal(err)
+	}
+	publish(t, h, "core", TopicEvent{Kind: protocol.KindTurnState, Key: "state", Data: []byte(`{}`)})
+	if next(t, other).Cursor.Seq != 1 {
+		t.Fatal("other topic closed")
+	}
+	invalid := append(events, TopicEvent{Kind: protocol.KindItemDone, Key: "invalid", Data: []byte(`bad`)})
+	if err := h.PublishBatch("conversation:test", invalid); !errors.Is(err, ErrInvalidEvent) {
+		t.Fatal(err)
+	}
+	start, _ := subscribe(t, h, "conversation:test", nil)
+	if start.Snapshot.Cursor.Seq != 3 {
+		t.Fatal("invalid group partially published")
+	}
+}

@@ -176,6 +176,19 @@ func (h *Topics) Publish(name string, event TopicEvent) error {
 	if !validTopic(name) {
 		return ErrInvalidTopic
 	}
+	if err := validateEvent(event); err != nil {
+		return err
+	}
+	event = cloneEvent(event)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closed {
+		return ErrTopicClosed
+	}
+	return h.publish(name, h.topic(name), event)
+}
+
+func validateEvent(event TopicEvent) error {
 	if event.Key == "" || event.Kind == "" || !json.Valid(event.Data) {
 		return ErrInvalidEvent
 	}
@@ -185,13 +198,50 @@ func (h *Topics) Publish(name string, event TopicEvent) error {
 			return ErrInvalidEvent
 		}
 	}
-	event = cloneEvent(event)
+	return nil
+}
+
+// PublishBatch publishes a committed group without allowing snapshots or live
+// readers to observe a partial group. All inputs are validated first. The live
+// queue remains bounded: a group larger than its capacity overflows that
+// subscription, which recovers from the completed snapshot. No network write
+// happens under the publication lock.
+func (h *Topics) PublishBatch(name string, events []TopicEvent) error {
+	if !validTopic(name) {
+		return ErrInvalidTopic
+	}
+	group := make([]TopicEvent, len(events))
+	for i, event := range events {
+		if err := validateEvent(event); err != nil {
+			return err
+		}
+		group[i] = cloneEvent(event)
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.closed {
 		return ErrTopicClosed
 	}
 	t := h.topic(name)
+	// Reserve the worst-case number of sequences before changing state. Pending
+	// associative events may use fewer, but a group can never wrap mid-flight.
+	needed := uint64(len(group))
+	if t.pending != nil {
+		needed++
+	}
+	if needed > ^uint64(0)-t.seq {
+		return ErrSequenceExhausted
+	}
+	for _, event := range group {
+		if err := h.publish(name, t, event); err != nil {
+			return err
+		}
+	}
+	h.flush(name, t)
+	return nil
+}
+
+func (h *Topics) publish(name string, t *topicState, event TopicEvent) error {
 	if t.seq == ^uint64(0) {
 		return ErrSequenceExhausted
 	}
