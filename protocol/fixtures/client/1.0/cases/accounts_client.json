@@ -1,0 +1,20 @@
+{
+  "side": "client",
+  "input": [
+    "normal/account_list_result.json",
+    "normal/account_sign_out_result.json"
+  ],
+  "output": [
+    "normal/account_list_result.json",
+    "normal/account_sign_out_result.json"
+  ],
+  "errors": [
+    "",
+    ""
+  ],
+  "outcome": {
+    "accepted": 2,
+    "malformed": 0,
+    "unknown_kinds": 0
+  }
+}

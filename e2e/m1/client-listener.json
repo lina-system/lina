@@ -1,0 +1,8 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "supported_version": "1.0",
+  "unsupported_versions": ["0.9", "1.1", "2.0"],
+  "refusal_code": "unsupported_combination",
+  "incomplete_frame": "close_without_reply",
+  "independent_answer_without_capability": "capability_not_negotiated"
+}

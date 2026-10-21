@@ -1,0 +1,47 @@
+{
+  "check": "V1 ChatGPT sign-in and Responses round trip",
+  "status": "pending_owner_signin",
+  "live_account_verified": null,
+  "reason": "The owner must be present to complete LINA sign-in with their own ChatGPT account. Recorded-wire tests are not live request-surface acceptance.",
+  "documentation": [
+    "https://developers.openai.com/siwc/token-sharing-open-source/sign-in/",
+    "https://developers.openai.com/siwc/token-sharing-open-source/token-reference/",
+    "https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference/",
+    "https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations/",
+    "https://developers.openai.com/siwc/website/"
+  ],
+  "sign_in": {
+    "local_client": null,
+    "remote_client": null,
+    "dynamic_registration": null,
+    "loopback_redirect": null,
+    "pasted_redirect": null,
+    "granted_scope_check": null,
+    "id_token_verification": null,
+    "refresh_rotation": null
+  },
+  "responses": {
+    "completed_turns": null,
+    "store_false_stream_true": null,
+    "encrypted_reasoning_round_trip": null,
+    "function_tool": null,
+    "apply_patch_function": null,
+    "parallel_tool_calls": null
+  },
+  "undocumented_fields": {
+    "include": {
+      "accepted": null,
+      "observation": null
+    },
+    "parallel_tool_calls": {
+      "accepted": null,
+      "observation": null
+    },
+    "service_tier": {
+      "accepted": null,
+      "observation": null
+    }
+  },
+  "accepted_request_fields": null,
+  "accepted_tool_declarations": null
+}

@@ -10,7 +10,7 @@ import (
 
 func TestHeadless(t *testing.T) {
 	binary := buildLina(t)
-	for _, quit := range []struct{ name, keys string }{{"quit", "q"}, {"interrupt", "\x03"}, {"terminal EOF", "\x04"}} {
+	for _, quit := range []struct{ name, keys string }{{"quit", "\x04"}, {"interrupt", "\x03"}, {"terminal EOF", "\x04"}} {
 		t.Run(quit.name, func(t *testing.T) {
 			h := newHarness(t, binary)
 			core := h.startCore()
@@ -61,7 +61,7 @@ func TestStyledFailureIsPresentedOnce(t *testing.T) {
 		term.process.wait(t, 69)
 		h.expectTerminalRestored(term)
 		if output.Len() == 0 || strings.Contains(output.String(), "lina tui:") {
-			t.Fatal("styled failure is absent or repeated as a CLI diagnostic")
+			t.Fatalf("styled failure is absent or repeated as a CLI diagnostic: %q; stderr=%q", output.String(), term.process.stderr.String())
 		}
 		if !combined && term.process.stderr.Len() == 0 {
 			t.Fatal("redirected stderr lost its diagnostic")

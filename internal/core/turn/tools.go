@@ -9,6 +9,7 @@ import (
 	"errors"
 
 	"github.com/thisisjun786/lina/internal/core/authority"
+	"github.com/thisisjun786/lina/internal/core/budget"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/provider"
 	"github.com/thisisjun786/lina/kit/tools"
@@ -81,6 +82,9 @@ func Tool(registry *tools.Registry, spec tools.Spec, base tools.Call, scope stri
 			}
 			if errors.Is(err, tools.ErrApprovalRequired) {
 				code = loop.AwaitingPerson
+			}
+			if (in.Write || spec.Outward) && (code == loop.OK || code == loop.Unknown) {
+				recordEffect(ctx, budget.Effect{CallID: c.ID, Key: call.Key, Tool: c.Name, Code: code})
 			}
 			return loop.Result{ID: c.ID, Code: code, Output: result.Body}
 		},

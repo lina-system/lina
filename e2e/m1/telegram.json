@@ -1,0 +1,7 @@
+{
+  "platform": "telegram",
+  "account": "123456",
+  "transport_failure": "unreachable",
+  "core_state": "READY",
+  "request_result": "capability_not_negotiated"
+}

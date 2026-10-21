@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -17,8 +18,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
+	"github.com/thisisjun786/lina/internal/core/lifecycle"
+	"github.com/thisisjun786/lina/internal/core/manifest"
+	"github.com/thisisjun786/lina/internal/core/modelpath"
 	"github.com/thisisjun786/lina/kit/sandbox"
 )
 
@@ -88,12 +93,26 @@ type Services struct {
 	// SandboxReady receives the same probed wrapper used by shell/file handlers.
 	// A failed probe disables those handlers only; it does not stop recovery.
 	SandboxReady func(*sandbox.Sandbox)
+	// Lifecycle shares the locked restart controller with composed services.
+	// External calls must acquire their activity through Config.Activities.
+	Lifecycle func(*lifecycle.Restarter)
 }
 type Config struct {
-	StateRoot   string
-	Socket      string
-	PeerSeenMax uint64
-	Services    Services
+	// Client supplies the installed person's agents, supported rows and handlers.
+	// Boot always supplies the durable main id, epoch and recovery state itself.
+	Client       clientsrv.Identity
+	Conversation *modelpath.ResponsesConfig
+	// SignInTransport is an in-process test seam; production uses the fixed issuer.
+	SignInTransport http.RoundTripper
+	// ClientManifest selects the build manifest containing supportedCombinations.
+	// An explicit path must exist and contain a valid table, including an empty
+	// table when every client combination is intentionally unsupported.
+	ClientManifest string
+	StateRoot      string
+	Socket         string
+	PeerSeenMax    uint64
+	Services       Services
+	Activities     *lifecycle.ActivityRegistry
 	// AfterStep observes a completed boundary. It is used by deterministic crash
 	// tests and is never configured through command arguments or the environment.
 	AfterStep func(Step, Snapshot) error
@@ -104,6 +123,23 @@ type Config struct {
 func Run(ctx context.Context, cfg Config) (result error) {
 	if cfg.StateRoot == "" || cfg.Socket == "" {
 		return errors.New("state root and socket are required")
+	}
+	if cfg.ClientManifest != "" {
+		file, err := os.Open(cfg.ClientManifest)
+		if err != nil {
+			return fmt.Errorf("open client build manifest: %w", err)
+		}
+		rows, readErr := manifest.ReadCombinations(file)
+		closeErr := file.Close()
+		if err := errors.Join(readErr, closeErr); err != nil {
+			return fmt.Errorf("read client build manifest: %w", err)
+		}
+		cfg.Client.Supported = rows
+	}
+	if cfg.Client.Supported != nil {
+		if err := manifest.ValidateCombinations(cfg.Client.Supported); err != nil {
+			return err
+		}
 	}
 	if (cfg.Services.PeekEpoch == nil) != (cfg.Services.OpenCanon == nil) {
 		return errors.New("canon requires both read-only peek and writer open")
@@ -119,6 +155,7 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	}
 	var stack []func(context.Context) error
 	sentinelWritten := false
+	plannedRestart := false
 	defer func() {
 		for i := len(stack) - 1; i >= 0; i-- {
 			phase, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -129,6 +166,9 @@ func Run(ctx context.Context, cfg Config) (result error) {
 			result = store.RemoveSentinel()
 		}
 		result = errors.Join(result, store.Close())
+		if result == nil && plannedRestart {
+			result = lifecycle.ErrRestart
+		}
 	}()
 	snapshot := Snapshot{State: Starting}
 	boundary := func(step Step) error {
@@ -136,6 +176,12 @@ func Run(ctx context.Context, cfg Config) (result error) {
 			if err := cfg.AfterStep(step, snapshot); err != nil {
 				return err
 			}
+		}
+		// Once bind makes the socket connectable, finish retiring the previous
+		// socket and publishing ownership before honoring cancellation. Clearing
+		// the sentinel earlier could discard the previous socket's recovery path.
+		if step == SocketCreated || step == SocketBound {
+			return nil
 		}
 		return ctx.Err()
 	}
@@ -169,8 +215,28 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	if err := boundary(ControlsRead); err != nil {
 		return err
 	}
+	ownsConversation := cfg.Conversation != nil || cfg.Services.OpenCanon == nil
+	if !ownsConversation && cfg.Services.PeekEpoch == nil {
+		_, statErr := os.Lstat(conversationPath(cfg.StateRoot))
+		if statErr == nil {
+			ownsConversation = true
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			return statErr
+		}
+	}
 	var highest uint64
-	if cfg.Services.PeekEpoch != nil {
+	if ownsConversation {
+		if _, statErr := os.Lstat(conversationPath(cfg.StateRoot)); errors.Is(statErr, os.ErrNotExist) {
+			entries, readErr := os.ReadDir(filepath.Dir(conversationPath(cfg.StateRoot)))
+			if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+				return readErr
+			}
+			if len(entries) != 0 {
+				return errors.New("existing canon requires a canon service")
+			}
+		}
+		highest, err = canon.PeekEpoch(ctx, conversationPath(cfg.StateRoot))
+	} else if cfg.Services.PeekEpoch != nil {
 		highest, err = cfg.Services.PeekEpoch(ctx)
 	} else {
 		// Never silently ignore an existing database when its implementation has
@@ -219,8 +285,29 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	if err := boundary(EpochMinted); err != nil {
 		return err
 	}
+	activities := cfg.Activities
+	if activities == nil {
+		activities = lifecycle.NewRegistry(nil)
+	}
+	restarter, err := lifecycle.OpenRestarter(store, snapshot.Epoch, activities)
+	if err != nil {
+		return err
+	}
+	if cfg.Services.Lifecycle != nil {
+		cfg.Services.Lifecycle(restarter)
+	}
 	var canon Canon
-	if cfg.Services.OpenCanon != nil {
+	if ownsConversation && len(recovery.Halt) == 0 {
+		runtime, openErr := startConversation(ctx, cfg.StateRoot, recovery.MainID, snapshot.Epoch, store, cfg.Conversation, activities, cfg.Client.PersonID, cfg.SignInTransport)
+		if openErr != nil {
+			return openErr
+		}
+		supported := cfg.Client.Supported
+		cfg.Client = runtime.identity
+		cfg.Client.Supported = supported
+		canon = runtime.db
+		stack = append(stack, runtime.Close)
+	} else if cfg.Services.OpenCanon != nil {
 		canon, err = cfg.Services.OpenCanon(ctx, snapshot.Epoch)
 		if err != nil {
 			return err
@@ -303,7 +390,10 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	serving, cancelServe := context.WithCancel(ctx)
 	done := make(chan error, 1)
 	go func() {
-		done <- clientsrv.Serve(serving, listener, clientsrv.Identity{MainID: recovery.MainID, Epoch: strconv.FormatUint(snapshot.Epoch, 10), Recovering: recovering.Load})
+		identity := cfg.Client
+		identity.MainID, identity.Epoch, identity.Recovering = recovery.MainID, strconv.FormatUint(snapshot.Epoch, 10), recovering.Load
+		identity.Restart = restarter
+		done <- clientsrv.Serve(serving, listener, identity)
 	}()
 	stack = append(stack, func(phase context.Context) error {
 		cancelServe()
@@ -315,6 +405,11 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		}
 	})
 	if err := boundary(SocketsBound); err != nil {
+		// Ownership is now durable and the listener is on the shutdown stack.
+		// A signal here is an orderly stop, even before the first handshake.
+		if err == context.Canceled && ctx.Err() == context.Canceled {
+			return nil
+		}
 		return err
 	}
 	if cfg.Services.Reconcile != nil {
@@ -335,6 +430,9 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		cfg.Services.SandboxReady(box)
 	}
 	if len(recovery.Halt) == 0 && ctx.Err() == nil {
+		if err := restarter.Ready(); err != nil {
+			return err
+		}
 		snapshot.State = Running
 		recovering.Store(false)
 		// Cancellation at READY is an orderly stop, including in test observers.
@@ -342,9 +440,24 @@ func Run(ctx context.Context, cfg Config) (result error) {
 			return err
 		}
 	}
+	restartContext, stopRestart := context.WithCancel(ctx)
+	restartDone := make(chan error, 1)
+	go func() { restartDone <- restarter.Run(restartContext) }()
+	// Join the observer before closing any of the stores it uses.
+	defer func() { stopRestart(); <-restartDone }()
 	select {
 	case <-ctx.Done():
 		return nil
+	case err := <-restartDone:
+		restartDone <- err
+		if errors.Is(err, lifecycle.ErrRestart) {
+			plannedRestart = true
+			return nil
+		}
+		if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+			return nil
+		}
+		return err
 	case err := <-done:
 		// Leave one result for the reverse shutdown stack.
 		done <- err
@@ -403,6 +516,9 @@ func readControls(store *ctlfiles.Store) (Recovery, error) {
 		case "halt.json":
 			recovery.Halt = data
 		case "lifecycle.json":
+			if _, err := store.ReadRestart(); err != nil {
+				return recovery, err
+			}
 			recovery.Lifecycle = data
 		}
 	}

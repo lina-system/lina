@@ -8,11 +8,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/fakecore"
@@ -22,6 +24,43 @@ import (
 // Logical time advances only when the scripted peer asks to wait. No wall time
 // controls the scenario; socket deadlines below are failure bounds only.
 type scenarioClock struct{ now time.Time }
+
+// Keep the shared conformance corpus unchanged. The TUI scenario explicitly
+// offers its implemented text-stream capabilities, which Core may grant or not.
+func tuiFixtures(t *testing.T) fstest.MapFS {
+	t.Helper()
+	fixtures := fstest.MapFS{}
+	root := os.DirFS("../protocol/fixtures/client/1.0")
+	err := fs.WalkDir(root, ".", func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		data, err := fs.ReadFile(root, path)
+		if err == nil {
+			fixtures[path] = &fstest.MapFile{Data: data}
+		}
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope protocol.Envelope
+	if err := json.Unmarshal(fixtures["hello.json"].Data, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	hello := envelope.Payload.(protocol.Hello)
+	hello.Capabilities = []protocol.Capability{{Name: "accounts", Version: "1.0"}, {Name: "sign_in_relay", Version: "1.0"}, {Name: "conversation", Version: "1.0"}, {Name: "running", Version: "1.0"}, {Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}}
+	envelope.Payload = hello
+	data, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixtures["hello.json"] = &fstest.MapFile{Data: data}
+	return fixtures
+}
 
 func (c *scenarioClock) Now() time.Time { return c.now }
 func (c *scenarioClock) Wait(ctx context.Context, d time.Duration) error {
@@ -34,10 +73,14 @@ func (c *scenarioClock) Wait(ctx context.Context, d time.Duration) error {
 
 // Use #34's isolated state, socket, command and PTY lifecycle. The scenario is
 // data under m1 so the unexported test helpers remain shared in this package.
-func (h *harness) fakeCore(steps []fakecore.Step) <-chan error {
+func (h *harness) fakeCore(steps []fakecore.Step, tui ...bool) <-chan error {
 	h.t.Helper()
 	clk := &scenarioClock{now: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
-	core, err := fakecore.New(os.DirFS("../protocol/fixtures/client/1.0"), clk, steps)
+	fixtures := fs.FS(os.DirFS("../protocol/fixtures/client/1.0"))
+	if len(tui) > 0 && tui[0] {
+		fixtures = tuiFixtures(h.t)
+	}
+	core, err := fakecore.New(fixtures, clk, steps)
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -205,7 +248,7 @@ func TestM1FakeCore(t *testing.T) {
 	binary := buildLina(t)
 	t.Run("TUI connect and quit", func(t *testing.T) {
 		h := newHarness(t, binary)
-		done := h.fakeCore(scenario.TUI)
+		done := h.fakeCore(scenario.TUI, true)
 		term := h.startTUI()
 		h.expectState(term, "live")
 		h.keys(term, "q\n")
@@ -216,7 +259,7 @@ func TestM1FakeCore(t *testing.T) {
 	})
 	t.Run("TUI refused", func(t *testing.T) {
 		h := newHarness(t, binary)
-		done := h.fakeCore(scenario.Refused)
+		done := h.fakeCore(scenario.Refused, true)
 		term := h.startTUI()
 		term.process.wait(t, 78)
 		for range term.lines {

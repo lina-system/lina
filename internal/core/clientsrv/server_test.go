@@ -173,3 +173,7 @@ func TestServeCancellation(t *testing.T) {
 		t.Fatalf("socket remains: %v", err)
 	}
 }
+
+func serveConn(conn net.Conn, identity Identity) {
+	servePeer(context.Background(), conn, identity, peerIdentity{})
+}

@@ -1,0 +1,27 @@
+{
+  "protocol": {
+    "name": "client",
+    "version": "1.0"
+  },
+  "kind": "restart_status",
+  "message_id": "running-example",
+  "attempt_id": "running-attempt-1",
+  "reply_to": null,
+  "sender": {
+    "party": "core",
+    "id": "main-example"
+  },
+  "epoch": "42",
+  "sent_at": "2026-01-01T00:00:01Z",
+  "idempotency_key": null,
+  "effect_state": "none",
+  "receipt_ref": null,
+  "source_refs": [],
+  "error": null,
+  "payload": {
+    "owed": true,
+    "request_id": "0123456789abcdef0123456789abcdef",
+    "mode": "drain",
+    "requested_epoch": "42"
+  }
+}

@@ -39,7 +39,9 @@
     "values/approval_always_allow.json",
     "values/question_decline.json",
     "values/question_cancel.json",
-    "values/exact_number.json"
+    "values/exact_number.json",
+    "normal/restart_request.json",
+    "normal/restart_get.json"
   ],
   "output": [
     "hello.json",
@@ -80,9 +82,13 @@
     "values/approval_always_allow.json",
     "values/question_decline.json",
     "values/question_cancel.json",
-    "values/exact_number.json"
+    "values/exact_number.json",
+    "normal/restart_request.json",
+    "normal/restart_get.json"
   ],
   "errors": [
+    "",
+    "",
     "",
     "",
     "",
@@ -124,7 +130,7 @@
     ""
   ],
   "outcome": {
-    "accepted": 39,
+    "accepted": 41,
     "malformed": 0,
     "unknown_kinds": 0
   }
