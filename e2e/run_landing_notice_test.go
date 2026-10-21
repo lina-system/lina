@@ -16,15 +16,19 @@ import (
 	"github.com/thisisjun786/lina/internal/core/lane"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/runs"
+	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
-func TestM1RunLandingNotice(t *testing.T) {
-	data, err := os.ReadFile("m1/run-landing-notice.json")
+func TestM1RunLandingNotice(t *testing.T)  { runNoticeScenario(t, "m1/run-landing-notice.json") }
+func TestM1RunQuestionNotice(t *testing.T) { runNoticeScenario(t, "m1/run-question-notice.json") }
+func runNoticeScenario(t *testing.T, filename string) {
+	data, err := os.ReadFile(filename)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var script struct {
+		NeedsInput                                   bool `json:"needs_input"`
 		Goal, Scope, Done, Result, Summary, Artifact string
 		NotTouch                                     string `json:"not_touch"`
 	}
@@ -52,7 +56,13 @@ func TestM1RunLandingNotice(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { materials.Close() })
-	background, err := runs.New(runs.Config{Epoch: 1, DB: db, Assets: materials, WorkDir: filepath.Join(h.root, "work"), Authorize: func(context.Context, runs.Origin, runs.Brief) error { return nil }, Stream: func(context.Context, provider.Request) (provider.Stream, error) {
+	background, err := runs.New(runs.Config{Epoch: 1, DB: db, Assets: materials, WorkDir: filepath.Join(h.root, "work"), Authorize: func(context.Context, runs.Origin, runs.Brief) error { return nil }, Tools: map[string]runs.Tool{"read": {Declaration: json.RawMessage(`{"type":"function","name":"read"}`), Kind: runs.Read, Authorize: func(context.Context, runs.Record, provider.ToolCall) error { return runs.ErrNeedsInput }, Handler: loop.Tool{Validate: func(provider.ToolCall) (string, error) { return "", nil }, Execute: func(context.Context, provider.ToolCall) loop.Result {
+		t.Fatal("question ran tool")
+		return loop.Result{}
+	}}}}, Stream: func(context.Context, provider.Request) (provider.Stream, error) {
+		if script.NeedsInput {
+			return &scenarioRunStream{events: []provider.Event{{Kind: provider.ItemDone, Item: json.RawMessage(`{"type":"function_call","call_id":"ask","name":"read","arguments":"{}"}`)}, {Kind: provider.Terminal}}}, nil
+		}
 		artifact, _ := json.Marshal(runs.Artifact{Body: script.Artifact, Done: true})
 		message, _ := json.Marshal(map[string]any{"type": "message", "role": "assistant", "content": []map[string]string{{"type": "output_text", "text": string(artifact)}}})
 		return &scenarioRunStream{events: []provider.Event{{Kind: provider.ItemDone, Item: message}, {Kind: provider.Terminal}}}, nil
@@ -84,7 +94,7 @@ func TestM1RunLandingNotice(t *testing.T) {
 		t.Fatal(h.ctx.Err())
 	}
 	origin := runs.Origin{Person: "person", Agent: "agent", Conversation: "conversation", Turn: "turn"}
-	id, _, err := background.Start(h.ctx, origin, runs.Brief{Goal: script.Goal, Scope: script.Scope, NotTouch: script.NotTouch, Done: script.Done, Result: script.Result, Checks: []runs.Check{{Name: "comparison", Kind: runs.Claimed}}})
+	id, _, err := background.Start(h.ctx, origin, runs.Brief{Goal: script.Goal, Scope: script.Scope, NotTouch: script.NotTouch, Done: script.Done, Result: script.Result, Allow: []string{"read"}, Checks: []runs.Check{{Name: "comparison", Kind: runs.Claimed}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +106,11 @@ func TestM1RunLandingNotice(t *testing.T) {
 	}
 	list := runs.NewRunningList(db, map[string]runs.ListSource{"run": runs.RunListSource{}})
 	snapshot, err := list.Build(h.ctx, origin.Person)
-	if err != nil || len(snapshot.Entries) != 1 || snapshot.Entries[0].View.State != "ready_for_review" {
+	wantState := "ready_for_review"
+	if script.NeedsInput {
+		wantState = "needs_input"
+	}
+	if err != nil || len(snapshot.Entries) != 1 || snapshot.Entries[0].View.State != wantState {
 		t.Fatalf("native list: %+v %v", snapshot, err)
 	}
 	transfer := func(ctx context.Context, n runs.Notice) error {
@@ -117,11 +131,18 @@ func TestM1RunLandingNotice(t *testing.T) {
 	}
 	select {
 	case d := <-delivered:
-		if len(d.Notices) != 1 || d.Notices[0].Run != id || d.Notices[0].Result == "" || d.Notices[0].ResultRevision <= 0 {
+		wantOutcome := "complete"
+		if script.NeedsInput {
+			wantOutcome = "needs_input"
+		}
+		if len(d.Notices) != 1 || d.Notices[0].Outcome != wantOutcome {
+			t.Fatalf("notice outcome: %+v", d)
+		}
+		if len(d.Notices) != 1 || d.Notices[0].Run != id || (!script.NeedsInput && (d.Notices[0].Result == "" || d.Notices[0].ResultRevision <= 0)) {
 			t.Fatalf("landing: %+v", d)
 		}
 		encoded, _ := json.Marshal(d)
-		if strings.Contains(string(encoded), script.Artifact) {
+		if script.Artifact != "" && strings.Contains(string(encoded), script.Artifact) {
 			t.Fatal("artifact body entered notice")
 		}
 	case <-h.ctx.Done():
@@ -135,7 +156,11 @@ func TestM1RunLandingNotice(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshot, err = list.Build(h.ctx, origin.Person)
-	if err != nil || len(snapshot.Entries) != 0 {
+	wantCount := 0
+	if script.NeedsInput {
+		wantCount = 1
+	}
+	if err != nil || len(snapshot.Entries) != wantCount {
 		t.Fatalf("opened landing retained: %+v %v", snapshot, err)
 	}
 }

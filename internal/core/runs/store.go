@@ -56,6 +56,9 @@ func (s *Service) records(ctx context.Context) (out []Record, err error) {
 func (s *Service) save(ctx context.Context, r Record, insert bool) error {
 	r.Updated = s.cfg.Now().UnixNano()
 	b, err := json.Marshal(r)
+	if err == nil {
+		b, err = maskedJSON(b)
+	}
 	if err != nil {
 		return err
 	}
@@ -97,6 +100,9 @@ func (s *Service) Notices(ctx context.Context, conversation string) ([]Notice, e
 				return nil, err
 			}
 			outcome := r.Outcome
+			if r.State == NeedsInput {
+				outcome = InputNeeded
+			}
 			for _, c := range citations {
 				if !c.Resolved && outcome == Complete {
 					outcome = Partial

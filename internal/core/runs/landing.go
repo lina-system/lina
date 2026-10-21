@@ -56,6 +56,9 @@ func (s *Service) land(ctx context.Context, r *Record, outcome Outcome) error {
 			Checks     []CheckResult
 			Checkpoint json.RawMessage
 		}{Type: r.Brief.Result, Artifact: r.Artifact, Citations: r.Citations, Checks: r.Checks, Checkpoint: checkpointBytes(r.Checkpoint)})
+		if err == nil {
+			body, err = maskedJSON(body)
+		}
 		if err != nil {
 			return err
 		}

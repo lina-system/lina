@@ -41,6 +41,8 @@ const (
 	Partial   Outcome = "partial"
 	Failed    Outcome = "failed"
 	Cancelled Outcome = "cancelled"
+	// InputNeeded is a notice outcome; the run remains nonterminal in NeedsInput.
+	InputNeeded Outcome = "needs_input"
 )
 
 type CheckKind string

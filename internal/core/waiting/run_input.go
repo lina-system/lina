@@ -91,7 +91,7 @@ func (s *RunInputSource) AnswerRecorded(ctx context.Context, person string, ref 
 			return ErrPerson
 		}
 		for _, a := range r.InputAnswers {
-			if a.Revision == ref.Revision && a.Person == person && a.Answer == value {
+			if a.Revision == ref.Revision && a.Person == person && (answerErr == nil || a.Answer == value) {
 				decision = Decision{Ref: ref, Person: a.Person, Agent: a.Agent, Answer: a.Answer, At: a.At}
 				return nil
 			}

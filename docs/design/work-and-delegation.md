@@ -142,7 +142,7 @@ The start tool's implementation has a receipt barrier: Core commits the id and i
 
 ### The run record
 
-The work ledger holds one record per run: the run id, the requesting agent, the conversation and turn that asked (or the promotion at the hard budget, or the job), the person the run is done for, the brief and its references, the allowlist and run scope, the usage so far, the state, a checkpoint after each completed tool round trip, the result artifact and the times. Usage records name the run and the requesting agent. The transcript of a run is kept in its run directory in the work area, and the developer view shows it.
+The work ledger holds one record per run: the run id, the requesting agent, the conversation and turn that asked (or the promotion at the hard budget, or the job), the person the run is done for, the brief and its references, the allowlist and run scope, the usage so far, the state, a checkpoint after each completed tool round trip, the result artifact and the times. Usage records name the run and the requesting agent. The transcript of a run is kept in its run directory in the work area, and the developer view shows it. Secret-shaped text and sensitive JSON fields are masked before the record, transcript or result material is persisted and before model input is sent. JSON structure and exact numeric evidence are preserved.
 
 ### Limits
 

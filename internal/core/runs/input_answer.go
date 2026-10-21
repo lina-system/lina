@@ -21,6 +21,11 @@ func (s *Service) AnswerInput(ctx context.Context, person, id string, revision u
 	if person == "" || revision == 0 || strings.TrimSpace(value) == "" {
 		return ErrInvalid
 	}
+	var err error
+	value, err = maskedText(value)
+	if err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {

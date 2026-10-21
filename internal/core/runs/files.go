@@ -46,6 +46,9 @@ func (s *Service) transcript(id, kind string, value any) error {
 		Kind  string
 		Value any
 	}{kind, value})
+	if err == nil {
+		body, err = maskedJSON(body)
+	}
 	if err != nil {
 		return err
 	}
