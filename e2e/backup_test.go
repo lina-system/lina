@@ -36,6 +36,25 @@ func TestM1BackupInstalledConversation(t *testing.T) {
 	client, conversation := conversationClient(t, h)
 	admittedTurn(t, h, client, conversation, "backup-input", scenario.Input)
 	client.Close()
+	before, err := os.ReadDir(filepath.Join(h.root, "backups"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	running := h.command("backup", "--state-root", h.root)
+	running.start(t)
+	running.wait(t, 69)
+	after, err := os.ReadDir(filepath.Join(h.root, "backups"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before) != len(after) {
+		t.Fatal("running Core backup wrote state")
+	}
+	for i := range before {
+		if before[i].Name() != after[i].Name() {
+			t.Fatal("running Core backup changed backup entries")
+		}
+	}
 	h.stopCore(core)
 	help := h.command("backup")
 	help.start(t)

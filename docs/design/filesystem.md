@@ -266,6 +266,8 @@ The backup procedure must:
 3. Record the head of every version-space repository, copy the repositories and the asset bytes, and verify every hash against the manifest.
 4. Publish the manifest last. A generation without a published manifest doesn't exist.
 
+`lina backup --state-root <path>` requires Core to be stopped, holds the stable exclusive Core lock through publication, and refuses a running Core without writing state while explaining how to stop it (`systemctl --user stop lina-core.service`, or Ctrl+C for a foreground Core).
+
 The coordinator replays and validates `backups/removals` before taking the SQLite snapshot or copying any files. A missing acknowledged line, torn record or invalid chain aborts the backup. The captured revocation watermark is the replayed watermark. Capture holds the main's writer exclusion through publication; a SQLite snapshot alone does not quiesce material or workspace writers.
 
 The schema-1 `manifest.json` includes the capture epoch, artifact versions, SQLite schema version and content revision (its SHA-256), repository heads, material revisions, derived source revisions and a complete file/directory inventory. Source revisions for `derived/<asset-id>/<revision>/` follow that source-revision path. Copy hashes are checked against their captured inputs and material hashes against canon. The coordinator rereads the destination before publication. Empty directories and workspace symbolic links are retained; links are copied as links without reading their targets. Database/WAL file copying, linked protected paths and special files are refused. Secrets, installation/control state, work areas, staging and connected-source bytes are excluded.
