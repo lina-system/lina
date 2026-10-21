@@ -990,8 +990,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## github.com/yuin/goldmark
 
-Source: https://github.com/yuin/goldmark. Version: `v1.7.8`.
-Used without local modifications by the TUI libraries or their spike harness.
+Source: https://github.com/yuin/goldmark. Version: `v1.7.17`.
+Used without local modifications by the TUI libraries and the Telegram adapter's
+Markdown-to-native-entity renderer.
 
 ```text
 MIT License

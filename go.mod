@@ -21,7 +21,7 @@ require (
 	github.com/charmbracelet/x/vt v0.1.0
 	github.com/ncruces/go-sqlite3 v0.30.5
 	github.com/thisisjun786/lina/kit v0.0.0
-	github.com/yuin/goldmark v1.7.8
+	github.com/yuin/goldmark v1.7.17
 	golang.org/x/sys v0.49.0
 )
 
