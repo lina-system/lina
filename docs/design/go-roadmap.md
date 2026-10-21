@@ -78,6 +78,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-29 Asset store and staging.** Asset ids, revisions, hashes, staging, trash.
 - Done when: a rename keeps asset id and hash; an edit keeps the id, changes the hash and advances the revision; identical content gets two ids; an import writes only under staging until handed over; an export leaves a canon record and no staged copy; a backup detects a hash mismatch.
 - Depends on: G1-03. Design refs: C-16, C-39; [filesystem.md](filesystem.md#asset-identity).
+- #42 implements the materials store and its canon migration, staged handover and delivery, recoverable trash, and verified copying of every recorded revision for backup. Package tests use real files and SQLite; no asset operation is exposed through the TUI or Core protocol yet. Whole-generation coordination and permanent-deletion propagation remain with their owning implementations.
 
 ### 1.B Authority, tools and sandbox
 

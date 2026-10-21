@@ -33,9 +33,19 @@ type Identity struct {
 	Recovering func() bool
 }
 
-// Listen creates a socket in a private directory. An existing directory must
-// already be private; existing paths (including stale sockets) are preserved.
+// Listen creates a socket at mode 0600 in a private directory. An existing
+// directory must already be private; existing paths are preserved.
 func Listen(path string) (*net.UnixListener, error) {
+	return ListenConfig{}.Listen(path)
+}
+
+type ListenConfig struct {
+	// AfterBind observes the socket immediately after binding, before any
+	// subsequent setup. It supports deterministic crash tests, not CLI options.
+	AfterBind func() error
+}
+
+func (cfg ListenConfig) Listen(path string) (*net.UnixListener, error) {
 	if err := PrepareSocketDirectory(path); err != nil {
 		return nil, err
 	}
@@ -45,13 +55,15 @@ func Listen(path string) (*net.UnixListener, error) {
 		}
 		return nil, fmt.Errorf("socket path already exists")
 	}
-	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+	listener, err := listenPrivate(path)
 	if err != nil {
 		return nil, fmt.Errorf("listen: %w", err)
 	}
-	if err := os.Chmod(path, 0600); err != nil {
-		listener.Close()
-		return nil, fmt.Errorf("set socket permissions: %w", err)
+	if cfg.AfterBind != nil {
+		if err := cfg.AfterBind(); err != nil {
+			listener.Close()
+			return nil, err
+		}
 	}
 	return listener, nil
 }
