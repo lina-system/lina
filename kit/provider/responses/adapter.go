@@ -91,7 +91,7 @@ func (a *Adapter) body(r provider.Request) ([]byte, error) {
 	allowed := func(key string) bool {
 		return slices.Contains(a.config.RequestFields, key) && (len(r.Fields) == 0 || slices.Contains(r.Fields, key))
 	}
-	for _, key := range []string{"model", "input", "store", "stream"} {
+	for _, key := range []string{"model", "input", "store", "stream", "include"} {
 		if !allowed(key) {
 			return reject()
 		}
@@ -112,16 +112,18 @@ func (a *Adapter) body(r provider.Request) ([]byte, error) {
 			}
 		}
 	}
-	body := map[string]any{"model": r.Model, "store": false, "stream": true}
+	// Stateless reasoning must survive follow-up turns even when the model
+	// chooses its default effort. Effort controls only the reasoning override.
+	body := map[string]any{"model": r.Model, "store": false, "stream": true,
+		"include": []string{"reasoning.encrypted_content"}}
 	if r.Instructions != "" && r.Purpose != provider.Auxiliary && allowed("instructions") {
 		body["instructions"] = r.Instructions
 	}
 	if r.Effort != "" {
-		if !allowed("reasoning") || !allowed("include") {
+		if !allowed("reasoning") {
 			return reject()
 		}
 		body["reasoning"] = map[string]string{"effort": string(r.Effort)}
-		body["include"] = []string{"reasoning.encrypted_content"}
 	}
 	if len(r.Tools) > 0 {
 		if r.Purpose == provider.Auxiliary || !allowed("tools") {

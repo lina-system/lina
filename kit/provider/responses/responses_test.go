@@ -253,6 +253,55 @@ func TestManifestFieldsAndOpaqueInput(t *testing.T) {
 	}
 }
 
+func TestEmptyEffortStillRequestsEncryptedReasoning(t *testing.T) {
+	a, count := fixture(t, config(t), func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		if string(body["store"]) != "false" || string(body["include"]) != `["reasoning.encrypted_content"]` {
+			t.Errorf("stateless reasoning request lost encrypted state: store=%s include=%s", body["store"], body["include"])
+		}
+		if _, ok := body["reasoning"]; ok {
+			t.Error("empty effort must retain the model default")
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		completed(w)
+	})
+	r := request()
+	r.Model = "fixture-reasoning-model"
+	if _, _, err := run(t, a, r); err != nil {
+		t.Fatal(err)
+	}
+	if count.Load() != 1 {
+		t.Fatalf("requests: %d", count.Load())
+	}
+}
+
+func TestEncryptedReasoningMustBeAllowedWithoutEffort(t *testing.T) {
+	for _, source := range []string{"manifest", "request"} {
+		t.Run(source, func(t *testing.T) {
+			c := config(t)
+			fields := slices.DeleteFunc(slices.Clone(c.RequestFields), func(field string) bool { return field == "include" })
+			r := request()
+			if source == "manifest" {
+				c.RequestFields = fields
+			} else {
+				r.Fields = fields
+			}
+			a, count := fixture(t, c, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				completed(w)
+			})
+			_, _, err := run(t, a, r)
+			failure(t, err, provider.NotAccepted)
+			if count.Load() != 0 {
+				t.Fatal("sent stateless request without encrypted state")
+			}
+		})
+	}
+}
+
 func TestManifestRejectsUnsafeConfiguration(t *testing.T) {
 	for _, bad := range []string{
 		`{}`, `{"providers":{"chatgpt":{}}}`,

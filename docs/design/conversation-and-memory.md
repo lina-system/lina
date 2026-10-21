@@ -118,7 +118,9 @@ Every event carries, besides its parent id and the person id or agent id above:
 
 Rules:
 
+- Native admission fixes speaker kind from a trusted entry enum, independently of body text, model role labels and claimed identities. Unknown entries are refused. Tool results and content fetched from plugins, the web or files retain speaker kind `tool` and their source locator. External participants, forwarded content, agent exchanges and background notices retain their own speaker kinds and also enter model requests as external evidence: user role, explicitly untrusted, with a fixed preamble and escaped body and origin delimiters. Evidence without an origin is refused. No message text, even from the person or containing a valid pending request id, answers an approval; an answer requires the separate authenticated interaction path ([main-authority.md](main-authority.md#approval)).
 - A secret-shaped value or a private-key block is masked before a native event is written, and the event keeps the flag and not the value, so nothing downstream can restore it. A span flagged `secret` is excluded from every index, summary, ContextPacket and export, and from every call to a service outside LINA that does not already hold it. Spans flagged `personal_id` and `third_party` are tags: they decide default scope and what the maintenance pass reports, not whether an agent can read the event.
+- Native masking records use half-open UTF-8 byte offsets in the replaced text, not offsets or lengths that retain the original secret. Overlapping secret spans coalesce. Display and storage retain a placeholder and the `secret` flag; the shared derived-text projection removes flagged spans before indexing, summarization, ContextPacket construction or export, without joining the words on either side. Explicit secret spans are required for sensitive values a shape detector cannot recognize. This native representation does not replace the separate sealed-original rules for imports.
 - A body above an inline size is kept as a LINA material and the event refers to it ([filesystem.md](filesystem.md)). The full body can always be read back from the event. When the bytes behind an event are missing, the event is marked `bytes_unavailable` and is never shown as complete.
 - A summary is never a ledger message. Compaction writes a "compaction recorded" event that names its input range ([Compaction and resume](#compaction-and-resume)).
 
@@ -371,11 +373,15 @@ Compaction leaves a derived record of what each summary covers. The record is a 
 - The person creates, renames, tunes and deletes agents by asking an agent or through explicit actions in the LINA app and the TUI ([surfaces.md](surfaces.md)). Each of these is the person's act and is recorded with the person id.
 - Deleting an agent moves its persona revisions, its emotional state, its conversations and its personal knowledge to the trash for 30 days, where they can be recovered. After 30 days they are permanently deleted and leave tombstones, as under "Deleting a conversation" and "Correction, retraction and deletion". Before deleting, the person can move any of the agent's items to common knowledge. Common knowledge the agent wrote stays, with the deleted agent's id as its source. Where the questions and results of the agent's running tasks and background runs go is defined in [work-and-delegation.md](work-and-delegation.md). Its channel bindings end at once ([product-families.md](product-families.md#channels-and-exchanges)); an exchange it took part in stays as a record of the other agent.
 
+The current agent store records the trash transition and ends bindings atomically. Its normal reads and preparation reject trashed agents. Restoring before the deadline preserves the identity, persona revisions and state but leaves bindings ended. At the exact 30-day boundary restoration is refused; expiry removes these records, the agent’s action history and version bytes and retains only the agent id and expiry time in a tombstone. Action history is removed in the same transaction as the other canon records. Conversation and personal-knowledge deletion propagation belongs to the coordinator that composes those stores; those stores and channel transports are not introduced by the agent-store increment.
+
 ### First run
 
 - The first run creates the default agent, LINA, from the LINA preset and goes into conversation with it. LINA has no onboarding of its own and asks one thing before the first conversation: the ChatGPT sign-in, because a conversation needs a model account. Nothing else is asked; optional components that are off report their state without blocking ([runtime.md](runtime.md), [surfaces.md](surfaces.md)).
 - Signing in to a model provider belongs to LINA Core ([runtime.md](runtime.md#accounts-and-sign-in)). The first screen offers "Continue with ChatGPT"; other services are added as accounts from settings ([surfaces.md](surfaces.md#settings)). While no account is usable, preparation fails at its account step (see Preparation), and the surface shows that cause with the sign-in action.
 - Apart from the sign-in, the first run asks nothing before the first conversation. The short intake of [Learning the person](#learning-the-person) happens inside the conversation, is offered and never required, and every question in it can be skipped.
+
+Initialization is recorded once in canon and is safe to repeat across concurrent calls and restarts. An explicitly deleted default is not recreated by initialization. The store returns a ChatGPT sign-in requirement when no account is usable; it adds no required persona questions. The conversation surface and Core account flow consume that requirement when wired; this store increment exposes no client operation.
 
 ### Presets
 
@@ -484,6 +490,10 @@ Each agent's persona has four fixed layers, applied in this order: core, default
 - A new revision applies from the agent's next turn. It needs no fork and no restart.
 - A change to one agent's persona never changes another agent's persona.
 - Only a revision carried by a prepare acknowledgment counts as a growth effect. Growth itself, which is per agent, is defined in [cognition-and-life.md](cognition-and-life.md).
+
+The store publishes a preset update atomically across agents of that preset, including recoverable agents in the trash. Existing blank-setting values and definitions stay with each agent; new agents receive the current preset's blank definitions. Publishing identical core and default voice does not mint another persona revision. Direct edits to a preset agent may change only its user voice and growth snapshot.
+
+A persona preparation acknowledgement durably binds a turn id, agent id, revision number and Git commit. Repeating preparation for that turn retains its revision even after restart; reusing the turn id for another agent is refused. The saved bytes are verified before acknowledgement. Concurrent persona edits use an expected revision and reject stale writers. The complete preparation flow still owns the context, policy and account steps; the persona acknowledgement alone never permits a model call.
 
 ### Changing a persona
 

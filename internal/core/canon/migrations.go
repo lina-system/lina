@@ -9,5 +9,6 @@ func Migrations() []Migration {
 		{Version: 2, SQL: InboxSchema},
 		{Version: 3, SQL: authorityEffectsSchema},
 		{Version: 4, SQL: authorityApprovalsSchema},
+		{Version: 5, SQL: agentsSchema},
 	}
 }

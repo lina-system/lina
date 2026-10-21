@@ -8,7 +8,6 @@ import { git as runGit } from '../git.mjs';
 import { componentRegistry, kind, scopeFor } from './scope.mjs';
 import { evaluateGate } from './gate.mjs';
 
-
 test('Moirai source changes select its binary and Core acceptance checks', t => {
   const r = repository(t);
   for (const [name, content] of Object.entries({
@@ -42,6 +41,28 @@ test('budget is registered with the lina Go checks', t => {
   assert.deepEqual(scope.unmapped, []);
   assert.ok(scope.selectedComponents.includes('lina'));
   assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/budget/...'));
+});
+
+test('guard admission is registered with the lina Go checks', t => {
+  const r = repository(t);
+  const base = r.git('rev-parse', 'HEAD');
+  mkdirSync(join(r.cwd, 'internal/core/guard'), { recursive: true });
+  writeFileSync(join(r.cwd, 'internal/core/guard/admit.go'), 'package guard\n');
+  const scope = r.classify(r.commit(), { base, full: true });
+  assert.deepEqual(scope.unmapped, []);
+  assert.ok(scope.selectedComponents.includes('lina'));
+  assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/guard/...'));
+});
+
+test('secret store is registered with the lina Go checks', t => {
+  const r = repository(t);
+  const base = r.git('rev-parse', 'HEAD');
+  mkdirSync(join(r.cwd, 'internal/core/secrets'), { recursive: true });
+  writeFileSync(join(r.cwd, 'internal/core/secrets/store.go'), 'package secrets\n');
+  const scope = r.classify(r.commit(), { base, full: true });
+  assert.deepEqual(scope.unmapped, []);
+  assert.ok(scope.selectedComponents.includes('lina'));
+  assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/secrets/...'));
 });
 
 test('asset store is registered with the lina Go checks', t => {
