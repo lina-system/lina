@@ -78,6 +78,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-29 Asset store and staging.** Asset ids, revisions, hashes, staging, trash.
 - Done when: a rename keeps asset id and hash; an edit keeps the id, changes the hash and advances the revision; identical content gets two ids; an import writes only under staging until handed over; an export leaves a canon record and no staged copy; a backup detects a hash mismatch.
 - Depends on: G1-03. Design refs: C-16, C-39; [filesystem.md](filesystem.md#asset-identity).
+- #42 implements the materials store and its canon migration, staged handover and delivery, recoverable trash, and verified copying of every recorded revision for backup. Package tests use real files and SQLite; no asset operation is exposed through the TUI or Core protocol yet. Whole-generation coordination and permanent-deletion propagation remain with their owning implementations.
 
 ### 1.B Authority, tools and sandbox
 
@@ -88,6 +89,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-06 Speaker kinds, masking and the secret store.** Entry-path speaker kind, masking, external evidence, secret store.
 - Done when: a seeded token is masked and its span is in no index, summary or export; a formatter prints a placeholder for a secret; speaker kind never comes from text; planted instructions in a tool result arrive marked as external evidence and cannot answer an approval.
 - Depends on: G1-01, G1-05, G1-29. Design refs: C-15; [conversation-and-memory.md](conversation-and-memory.md#event-fields).
+- #48 supplies the masking/projection and opaque-secret APIs, credential-store backend seam and private-file fallback. Conversation/protocol admission, OS-keychain adapters and account forms still need their owning flows; this increment does not establish speaker-kind or external-evidence acceptance.
 
 **G1-07 Sandbox, tool executor and trash.** Sandbox wrapper, network ask, file tools, recoverable deletion.
 - Done when: the start probe passes or shell and file tools turn off with a cause while conversation continues; a canary cannot read canon, secrets or the client socket; network waits for once, always allow or deny; a patch with stale context fails; a trash delete restores identical bytes.
@@ -116,6 +118,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-12 Agents, presets, persona layers and first run.** Persona layers, presets, deletion, first run.
 - Done when: a new revision applies from the next turn and the preparation acknowledgement names it; a preset update changes only core and default voice; one agent's change never alters another's; a deleted agent sits in the trash 30 days and its channel bindings end at once.
 - Depends on: G1-03, G1-05, G1-29. Design refs: C-24; [conversation-and-memory.md](conversation-and-memory.md#agents-and-personas).
+- #62 implements the agent store, immutable Git persona revisions, durable per-turn persona preparation, preset fan-out, first-run initialization and recoverable 30-day trash with immediate binding termination. Package scenarios use real canon and files; account sign-in, conversation preparation and channel transport flows have no client endpoint in this increment.
 
 **G1-31 Accounts and Sign in with ChatGPT.** Single refresh actor, sign-in relay, owner binding, V1 record.
 - Done when: one refresh runs at a time per account and a rotated refresh token is stored before use; a failed refresh shows needs sign-in and uses no other account; a second ChatGPT account never changes the binding; no token appears in a log, request, sandbox or client; the V1 record states what the request surface accepted.

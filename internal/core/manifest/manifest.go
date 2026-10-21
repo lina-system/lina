@@ -11,20 +11,20 @@ import (
 	"strings"
 	"time"
 
-	"github.com/thisisjun786/lina/kit/provider/responses"
+	responseconfig "github.com/thisisjun786/lina/kit/provider/responses/config"
 )
 
 // Manifest identifies a clean source commit and the binaries produced from it.
 // Additional JSON fields are allowed as later components add their metadata.
 type Manifest struct {
-	Version     string                      `json:"version"`
-	Commit      string                      `json:"commit"`
-	Date        string                      `json:"date"`
-	GoToolchain string                      `json:"goToolchain"`
-	KitVersion  int64                       `json:"kitVersion"`
-	Binaries    []Binary                    `json:"binaries"`
-	SQLite      SQLite                      `json:"sqlite"`
-	Providers   map[string]responses.Config `json:"providers"`
+	Version     string                           `json:"version"`
+	Commit      string                           `json:"commit"`
+	Date        string                           `json:"date"`
+	GoToolchain string                           `json:"goToolchain"`
+	KitVersion  int64                            `json:"kitVersion"`
+	Binaries    []Binary                         `json:"binaries"`
+	SQLite      SQLite                           `json:"sqlite"`
+	Providers   map[string]responseconfig.Config `json:"providers"`
 }
 
 // Binary describes one artifact next to manifest.json. SHA256 is lowercase hex.
@@ -108,6 +108,9 @@ func (m Manifest) Validate() error {
 		if !digestPattern.MatchString(binary.SHA256) {
 			return fmt.Errorf("binary %q sha256 must be 64 lowercase hex characters", binary.Name)
 		}
+	}
+	if (seen["lina"] || seen["lina-node"]) && (seen["lina.exe"] || seen["lina-node.exe"]) {
+		return fmt.Errorf("LINA binaries must use matching platform suffixes")
 	}
 	if !(seen["lina"] && seen["lina-node"] || seen["lina.exe"] && seen["lina-node.exe"]) {
 		return fmt.Errorf("binaries must include lina and lina-node for the same platform")

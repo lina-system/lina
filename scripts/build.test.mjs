@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { cpSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
@@ -45,6 +45,17 @@ test('requires an output directory and rejects unknown arguments', t => {
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /usage:/i);
   }
+});
+
+test('build commands and metadata readers do not import the provider SDK', t => {
+  const f = fixture(t);
+  const result = spawnSync('go', ['list', '-deps', './cmd/lina', './cmd/lina-node', './internal/core/manifest/...'], {
+    cwd: f.cwd, env: f.env, encoding: 'utf8', timeout: 120_000,
+  });
+  assert.equal(result.status, 0, result.stderr || result.error?.message);
+  const dependencies = result.stdout.trim().split('\n');
+  assert.deepEqual(dependencies.filter(name => name.startsWith('github.com/openai/')
+    || name === 'github.com/thisisjun786/lina/kit/provider/responses'), []);
 });
 
 test('clean builds record hashes and the same commit and metadata as both version commands', t => {
@@ -119,6 +130,21 @@ test('an unignored in-tree output directory does not make generated artifacts di
   assert.equal(existsSync(join(out, 'manifest.json')), false);
 });
 
+test('builds through a symlinked ancestor exclude only generated artifacts from source checks', t => {
+  const f = fixture(t);
+  const alias = join(f.dir, 'source alias');
+  symlinkSync(f.cwd, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  const out = join(alias, 'new', 'artifacts');
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const result = f.run(['--out', out]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.ok(existsSync(join(out, 'manifest.json')));
+  }
+  f.write(out, 'local-source.txt', 'uncommitted input\n');
+  assert.equal(f.run(['--out', out]).status, 0);
+  assert.equal(existsSync(join(out, 'manifest.json')), false);
+});
+
 test('a failed build removes an old manifest', t => {
   const f = fixture(t);
   f.write(f.out, 'manifest.json', '{}\n');
@@ -174,6 +200,39 @@ test('tracked source files cannot be overwritten by build artifacts', t => {
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /tracked source/);
   assert.equal(readFileSync(join(out, 'manifest.json'), 'utf8'), 'source to preserve\n');
+});
+
+test('symlinked output paths cannot overwrite tracked source files', async t => {
+  for (const kind of ['output directory', 'ancestor', 'missing descendants', 'source directory']) {
+    await t.test(kind, t => {
+      const f = fixture(t);
+      const target = join(f.cwd, 'tracked', 'nested');
+      const names = ['manifest.json', ...['lina', 'lina-node'].map(name => name + (process.platform === 'win32' ? '.exe' : ''))];
+      for (const name of names) f.write(target, name, `tracked ${name}\n`);
+      f.commit(f.cwd, 'test: track files behind an output alias');
+      const alias = join(f.dir, 'directory alias');
+      symlinkSync(kind === 'output directory' ? target : f.cwd, alias, process.platform === 'win32' ? 'junction' : 'dir');
+      const cwd = kind === 'source directory' ? alias : f.cwd;
+      const out = kind === 'output directory' ? alias : kind === 'source directory' ? target : join(alias, 'tracked', 'nested');
+      if (kind === 'missing descendants') rmSync(join(f.cwd, 'tracked'), { recursive: true });
+
+      let failure;
+      try {
+        build({ cwd, out, execute: () => { throw new Error('Go must not run for tracked output artifacts'); } });
+      } catch (error) {
+        failure = error;
+      }
+      if (kind === 'missing descendants') {
+        assert.equal(existsSync(join(f.cwd, 'tracked')), false, 'guard must run before creating output directories');
+      } else {
+        for (const name of names) {
+          assert.ok(existsSync(join(target, name)), `tracked ${name} must not be removed`);
+          assert.equal(readFileSync(join(target, name), 'utf8'), `tracked ${name}\n`);
+        }
+      }
+      assert.match(failure?.message ?? '', /tracked source/);
+    });
+  }
 });
 
 test('dirty tracked, staged and untracked sources build without retaining a manifest', t => {
