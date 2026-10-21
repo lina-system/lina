@@ -7,7 +7,6 @@ import (
 	"errors"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
-	"github.com/thisisjun786/lina/persona"
 )
 
 func presetAgents(ctx context.Context, tx *canon.Tx, id string) ([]Agent, error) {
@@ -123,10 +122,10 @@ func (s *Store) upgradeLinaPlaceholders(ctx context.Context, person string) erro
 		}
 		next := before
 		if next.Core == core {
-			next.Core = persona.LinaCore
+			next.Core = ""
 		}
 		if next.DefaultVoice == voice {
-			next.DefaultVoice = persona.LinaDefaultVoice
+			next.DefaultVoice = ""
 		}
 		if samePreset(before, next) {
 			return nil

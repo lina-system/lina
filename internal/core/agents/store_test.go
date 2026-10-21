@@ -14,7 +14,6 @@ import (
 	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
-	"github.com/thisisjun786/lina/persona"
 )
 
 func setup(t *testing.T) (*agents.Store, *canon.Store, string) {
@@ -303,9 +302,9 @@ func TestFirstRunUpgradesOnlyShippedPlaceholderLayers(t *testing.T) {
 			}
 			want := layers
 			if !customCore {
-				want.Core = persona.LinaCore
+				want.Core = ""
 			}
-			want.DefaultVoice = persona.LinaDefaultVoice
+			want.DefaultVoice = ""
 			if after.Layers != want || after.Revision != a.Revision+2 {
 				t.Fatalf("placeholder upgrade lost personal layers or did not publish: %+v", after)
 			}

@@ -441,11 +441,13 @@ The current agent store records the trash transition and ends bindings atomicall
 
 Initialization is recorded once in canon and is safe to repeat across concurrent calls and restarts. An explicitly deleted default is not recreated by initialization. The store returns a ChatGPT sign-in requirement when no account is usable; it adds no required persona questions. The conversation surface and Core account flow consume that requirement when wired; this store increment exposes no client operation.
 
-The shipped LINA core and default voice provide an interim companion identity and a warm, plain voice. At initialization, an existing preset layer that still exactly matches the original shipped placeholder receives this material through the normal versioned preset update. Owner-supplied layers, user voice and growth remain intact, and already prepared turns keep their pinned revision. This upgrade is idempotent and needs no new storage format.
+Core publishes the configured private Lina source before initialization, as defined in [Presets](#presets). Store-only initialization removes exact legacy placeholder layers through a normal versioned update instead of supplying public persona text. It preserves owner-supplied layers, user voice, growth and already prepared turns. This cleanup is idempotent and needs no new storage format.
 
 ### Presets
 
-- The LINA project owner keeps the persona and world material of each preset in `persona/<preset>/` of the LINA repository. The LINA preset is in `persona/lina/`. The material's form follows the material itself.
+- The LINA project owner keeps the Lina preset's persona material in a private local source. The public repository's `persona/lina/` contains documentation placeholders only; they are never model instructions. Install accepts `--persona-source <dir>`, an absolute checkout root containing `characters/lina/persona/core-v1.md` and `characters/lina/persona/default-voice-v1.md`. Other world material remains outside these two layers.
+- Install checks that source and saves only its path as `persona_source` in private `system/core/config.json`. Core reads both UTF-8 text files at startup and again before each turn's persona preparation. Editing that path or the files applies at the next turn without restarting; already prepared turns retain their revision. Each layer is a nonempty regular file contained within the configured root. The two layers together are limited to 64 KiB after JSON string escaping for the identity block, leaving space for identity, input and history in the current conversation request budget. An oversized source uses the same unavailable-source fallback and setup warning, which names this limit.
+- If the source is unconfigured or either layer is unavailable, Core publishes empty core and default voice layers and starts normally. It logs one plain setup warning per Core process, without private paths or content. Every turn still carries the active agent's name from the agent store; a fresh agent with no source carries its name with empty persona layers. The request's owner identity and enabled-tool declarations remain present as required by [Request layout](#request-layout). Existing user voice and growth layers remain intact. Public placeholders and stale source layers are not used as fallback.
 - An agent created from a preset takes the preset's material as its core and default voice layers in its first persona revision. When a preset's material changes, every agent created from that preset receives the next revision of those two layers.
 - A preset can define blank settings that each agent fills over time. The filled values are that agent's persona record, and no preset update touches them.
 - World material in a preset that the core layer does not hold is LINA material. Atropos recalls it as material passages in the ContextPacket of a conversation with an agent created from that preset (see Request layout), so the persona itself is still projected only through its fixed layers.
@@ -979,7 +981,7 @@ A restore never brings back a retracted or deleted item, or deleted conversation
 
 ## Deferred
 
-- Further owner-authored persona and world material for `persona/lina/`: when supplied, agents created from the LINA preset receive it through a versioned update of their core and default voice layers. The interim material is defined under First run.
+- Additional preset source layouts beyond the Lina private source described in [Presets](#presets): defined when those presets are introduced.
 - The exact front matter keys of `SKILL.md`: set by the implementation issue that ships the first conversation product.
 - Emotion names, values and decay rates: set by measurement during development and recorded in the implementation issue.
 - The ContextPacket assembly time cap: set by latency measurement during implementation acceptance of the conversation engine.
