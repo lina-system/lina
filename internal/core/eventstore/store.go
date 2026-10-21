@@ -101,8 +101,9 @@ func (s *Store) Append(ctx context.Context, e diag.Event) error {
 	}
 	err = s.backend.append(ctx, e)
 	// A full-disk transaction has failed; release actual preallocated disk space
-	// and retry the same id once. The SQL backend recognizes a previously committed
-	// identical id, so an ambiguous commit cannot duplicate a diagnosis event.
+	// and retry the same id once, even if the reserve was already consumed. The
+	// SQL backend recognizes a previously committed identical id, so an ambiguous
+	// commit cannot duplicate a diagnosis event.
 	emergency := e.Result.Terminal()
 	if err != nil && emergency && s.isFull != nil && s.isFull(err) && s.reserve != nil {
 		if releaseErr := s.reserve.Release(); releaseErr != nil {
