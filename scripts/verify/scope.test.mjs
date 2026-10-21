@@ -1,12 +1,30 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { git as runGit } from '../git.mjs';
 import { componentRegistry, kind, scopeFor } from './scope.mjs';
 import { evaluateGate } from './gate.mjs';
+
+test('independent Core package registrations merge without conflicts', t => {
+  const r = repository(t);
+  const source = readFileSync(new URL('./scope.mjs', import.meta.url), 'utf8');
+  const addPackage = (text, name, before) => {
+    const entry = new RegExp(`(\\s*)'internal/core/${before}/',`);
+    assert.match(text, entry);
+    return text.replace(entry, `$1'internal/core/${name}/',$&`);
+  };
+  const ours = addPackage(source, 'attachments', 'authority');
+  const theirs = addPackage(source, 'scheduler', 'secrets');
+  for (const [name, text] of Object.entries({ base: source, ours, theirs })) {
+    writeFileSync(join(r.cwd, `${name}.mjs`), text);
+  }
+  const merged = runGit(r.cwd, ['merge-file', '-p', 'ours.mjs', 'base.mjs', 'theirs.mjs']);
+  assert.equal(merged.status, 0, merged.stdout || merged.stderr);
+  assert.equal(merged.stdout, addPackage(ours, 'scheduler', 'secrets'));
+});
 
 test('Korean search corpus changes select the consuming Core tests', t => {
   const r = repository(t);
