@@ -96,7 +96,8 @@ test('cold inner Go compilations share the build deadline and can exceed 120 sec
         const binary = args[args.indexOf('-o') + 1];
         f.write(dirname(binary), binary.split(/[\\/]/).at(-1), 'fixture executable');
       }
-      return { status: 0, stdout: args[0] === 'run' ? '{}' : '', stderr: '' };
+      return { status: 0, stdout: args[0] === 'run'
+        ? (args.includes('./internal/core/manifest/clientinfo') ? '[]' : '{}') : '', stderr: '' };
     } });
   assert.equal(manifest.target, 'darwin/arm64');
   assert.deepEqual(budgets, [595_000, 445_000]);
