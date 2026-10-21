@@ -7,7 +7,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-export const componentsTimeoutMs = 600_000;
+export const componentsTimeoutMs = 900_000;
 
 export function execute(command, args, { cwd, env, timeoutMs = 120_000 }) {
   const started = performance.now();
