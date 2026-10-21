@@ -23,7 +23,7 @@ func TestTUITerminalLifecycle(t *testing.T) {
 			{name: "SIGTERM", signal: syscall.SIGTERM},
 			{name: "SIGINT", signal: syscall.SIGINT},
 			{name: "SIGHUP", signal: syscall.SIGHUP},
-			{name: "q", keys: "q"},
+			{name: "Ctrl+D", keys: "\x04"},
 			{name: "Ctrl+C", keys: "\x03"},
 		} {
 			t.Run(stage+"/"+action.name, func(t *testing.T) {

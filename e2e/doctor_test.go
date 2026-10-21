@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
-	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -40,22 +39,11 @@ func TestM1Doctor(t *testing.T) {
 	core := healthy.startCore()
 	healthy.connect(core).Close()
 	healthy.stopCore(core)
-	controls, err := ctlfiles.Open(healthy.root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := controls.Acquire(); err != nil {
-		t.Fatal(err)
-	}
-	store, err := canon.Open(t.Context(), canon.Config{Path: filepath.Join(healthy.root, "canon/canon.sqlite"), Epoch: 1, Controls: controls, Migrations: canon.Migrations()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Close(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if err := controls.Close(); err != nil {
-		t.Fatal(err)
+	// Core now initializes its account-capable application schema itself. Do not
+	// reopen that database with an older subset of the migrations.
+	version, _, err := canon.Inspect(t.Context(), filepath.Join(healthy.root, "canon/canon.sqlite"))
+	if err != nil || version == 0 {
+		t.Fatal("Core did not initialize canon", err)
 	}
 	t.Run("default root", func(t *testing.T) {
 		before := doctorState(t, healthy.root)

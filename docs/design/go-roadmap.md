@@ -180,6 +180,7 @@ The Korean acceptance corpus is `testdata/korean/search.json`: both stores asser
 - Depends on: G1-12, G1-18, G1-19, G1-20, G1-35. Design refs: T-04, T-05, T-07, T-10, T-12, T-13, T-15.
 
 **G1-30 TUI memory, agent, account, channel and talk-log commands.** Memory, agent, account, import, channel and talk-log commands.
+- #112 connects installed Core's existing account service to the TUI. Synthetic PTY scenarios cover loopback and pasted redirects, account list and sign-out, and the no-account sign-in offer. Owner real-account validation remains #81.
 - Done when: a forget from the TUI gives zero hits in the next request; agent create, choose, rename and delete round-trip by id; a ChatGPT sign-in completes through the relay from the TUI, including a pasted URL; a channel connection is paired and bound from the TUI, and the agent talk log lists one line per exchange and expands it.
 - Depends on: G1-12, G1-13, G1-14, G1-16, G1-21, G1-25, G1-26, G1-31. Design refs: T-04, T-14, C-25, C-27, C-47.
 
