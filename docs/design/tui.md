@@ -322,6 +322,39 @@ continues to require its separate typed card controls.
 
 **Sign-in.** The TUI is the client side of one relay for plugin and model-provider sign-in. It opens a loopback listener and reports its port, opens the system browser when it runs locally, and relays `code`, `state` and `iss`, or the `error` fields, exactly as received. Over SSH it takes a pasted URL instead. A secret the person types, such as an API key, is a masked field with no undo and no history, and travels once to Core.
 
+The TUI negotiates `accounts` and `sign_in_relay` independently of conversation.
+`/signin` starts a ChatGPT login; `/accounts` opens its labeled account block,
+where Up/Down selects a metadata row, `s` reauthorizes it (or logs in when the
+list is empty), `a` adds a provider account without changing the owner binding,
+and `x` signs out the selected account. List and completion refresh the displayed
+account status; ids remain internal request targets. An account-only connection retains a composer and displays the missing
+account cause with `/signin`; entering conversation text makes no model request.
+The conversation draft survives opening and closing the account block.
+
+The client reports an ephemeral IPv4 loopback port for `/auth/callback`, or
+`cannot_listen` over SSH or when binding fails. It opens only an HTTPS
+authorization URL, with a single URL argument to the system browser launcher.
+The full URL remains available when opening fails. A pasted callback is a masked,
+bounded, transient field: it has no conversation echo, draft undo or history.
+Both callback paths forward the original URL so dynamic client-registration
+parameters reach Core unchanged. Core alone checks state, issuer and identity.
+The listener accepts one callback; submit cannot repeat an exchange. Completion,
+refusal, cancellation, timeout, disconnect and quit close the listener and join
+its tasks. Esc cancels a pending attempt by closing its client connection; normal
+connection recovery then obtains a fresh connection. Old connection and attempt
+results cannot advance a replacement sign-in.
+
+`e2e/m1/tui-accounts.json` drives the built TUI in a PTY through local loopback
+and SSH paste, using the real Core account/relay services and a synthetic signed
+issuer. It verifies durable account status and owner binding. This is synthetic
+sign-in evidence; the owner's real account and request-surface check remain #81.
+`e2e/m1/tui-accounts-installed.json` additionally installs the real binaries,
+checks the unconfigured Core's preparation message in a PTY, and runs the same
+installed Core composition with the synthetic issuer through sign-in, list and
+sign-out. Captured client traffic, terminal output and state outside the secret
+store contain no provider tokens. Model routing and live provider acceptance
+remain their own contracts.
+
 ## Agent surfaces and settings as text (T-14)
 
 Contract: [surfaces.md](surfaces.md#agent-surfaces), [surfaces.md](surfaces.md#settings). Each view is data that Core already computes. The TUI draws it as lines with keys. The roadmap builds the views with the Core feature behind each, and a view whose capability was not granted shows as unsupported (T-07).
@@ -333,7 +366,7 @@ Contract: [surfaces.md](surfaces.md#agent-surfaces), [surfaces.md](surfaces.md#s
 
 Settings are commands and labeled blocks, all requests to Core:
 
-- Accounts: the connected-accounts view with the one-line setup summary, add account, sign out.
+- Accounts: `/accounts` lists the connected accounts as metadata rows with the one-line summary, add account and sign out. Labels, optional plan names and states come from Core; only the request carries the selected account id. `/signin` opens ChatGPT login even before conversation is available.
 - Plugins: the catalog, the connect card as a labeled block, the plugin list and the tools of each plugin.
 - Command network: the standing grants, with revoke.
 - Channels: connections, pairing code, bindings and scopes. A token passes to Core once and is never shown.

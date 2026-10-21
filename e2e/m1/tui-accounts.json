@@ -1,0 +1,5 @@
+{
+  "person": "synthetic-owner",
+  "subject": "synthetic-subject",
+  "callbacks": ["loopback", "pasted"]
+}

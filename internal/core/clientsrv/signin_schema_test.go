@@ -15,6 +15,11 @@ func TestSignInPayloadContracts(t *testing.T) {
 		kind, payload string
 		valid         bool
 	}{
+		{"account_request", `{"operation":"list"}`, true},
+		{"account_request", `{"operation":"sign_out","account_id":"synthetic"}`, true},
+		{"account_request", `{"operation":"sign_out"}`, false},
+		{"account_result", `{"operation":"list","accounts":[]}`, true},
+		{"account_result", `{"operation":"list","accounts":[{"account_id":"synthetic","provider":"chatgpt","label":"ChatGPT","status":"ok","access_token":"forbidden"}]}`, false},
 		{"sign_in_listen", `{}`, true},
 		{"sign_in_listening", `{"port":32123}`, true},
 		{"sign_in_listening", `{"cannot_listen":"remote_terminal"}`, true},

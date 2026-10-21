@@ -1,0 +1,63 @@
+// SPDX-License-Identifier: Apache-2.0
+
+package accounts
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+
+	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/secrets"
+	"github.com/thisisjun786/lina/kit/provider"
+)
+
+// List returns metadata belonging to the authenticated person, never credentials.
+func (s *Store) List(ctx context.Context, person string) ([]Account, error) {
+	result := []Account{}
+	err := s.db.Read(ctx, func(tx *canon.Tx) error {
+		rows, err := tx.QueryContext(ctx, "SELECT record FROM accounts ORDER BY id")
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var raw []byte
+			var account Account
+			if err := rows.Scan(&raw); err != nil {
+				return err
+			}
+			if err := json.Unmarshal(raw, &account); err != nil {
+				return err
+			}
+			if account.Person == person {
+				result = append(result, account)
+			}
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, ErrStorage
+	}
+	return result, nil
+}
+
+// SignOut serializes with this account's existing actor. Marking unusable before
+// deleting the existing secret record makes interruption fail closed. Metadata,
+// registration and the independent owner binding survive for reauthorization.
+func (s *Store) SignOut(ctx context.Context, person string, id provider.AccountID) error {
+	_, err := s.call(ctx, id, func(a Account) (provider.Credential, error) {
+		if a.Person != person {
+			return provider.Credential{}, ErrNotFound
+		}
+		a.Status = NeedsSignIn
+		if err := s.save(ctx, a); err != nil {
+			return provider.Credential{}, err
+		}
+		if err := s.vault.Delete(key(a)); err != nil && !errors.Is(err, secrets.ErrNotFound) {
+			return provider.Credential{}, ErrUnavailable
+		}
+		return provider.Credential{}, nil
+	})
+	return err
+}

@@ -58,6 +58,9 @@ type shellModel struct {
 	resyncPending map[string]protocol.StreamCursor
 	resyncSeen    map[resyncSignal]protocol.StreamCursor
 	conversation  conversationView
+	accounts      accountView
+	accountRows   []protocol.AccountSummary
+	accountsKnown bool
 }
 
 func newShell(options Options, now func() time.Time) *shellModel {
@@ -83,6 +86,9 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case shellBegin:
 		if msg.Generation > m.generation {
 			m.generation = msg.Generation
+			m.accounts = accountView{}
+			m.accountRows = nil
+			m.accountsKnown = false
 			m.content, _ = state.Reduce(m.content, state.ConnectionLost{})
 			m.refreshBlocks()
 			m.status = ConnectionStatus{State: Retrying}
@@ -184,11 +190,18 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyboardEnhancementsMsg:
 		m.events = msg.SupportsEventTypes()
 	case tea.PasteMsg:
-		if m.hasCapability("conversation") {
+		if m.accounts.open {
+			m.accountPaste(msg.Content)
+			return m, nil
+		}
+		if m.hasComposer() {
 			return m, m.editComposer(tea.PasteMsg{Content: sanitize.Display(msg.Content)})
 		}
 	case tea.KeyMsg:
-		if m.hasCapability("conversation") {
+		if m.accounts.open {
+			return m, m.accountKey(msg)
+		}
+		if m.hasComposer() {
 			return m, m.conversationKey(msg)
 		}
 		key := term.FromTea(msg, m.events)
@@ -239,9 +252,9 @@ func (m *shellModel) View() tea.View {
 	view.AltScreen = true
 	view.ReportFocus = true
 	view.KeyboardEnhancements.ReportEventTypes = true
-	if m.hasCapability("conversation") && m.status.State.active() {
+	if m.hasComposer() && m.status.State.active() {
 		plan := m.conversationPlan()
-		if plan.Tier != layout.TooSmall && !m.conversation.pager.open {
+		if plan.Tier != layout.TooSmall && !m.conversation.pager.open && !m.accounts.open {
 			view.Cursor = m.conversation.composer.Cursor()
 			if view.Cursor != nil {
 				view.Cursor.Position.Y += plan.Composer.Y
@@ -255,7 +268,10 @@ func (m *shellModel) viewContent() string {
 	if m.size.Width <= 0 || m.size.Height <= 0 {
 		return ""
 	}
-	if m.hasCapability("conversation") && m.status.State.active() {
+	if m.accounts.open {
+		return m.accountContent()
+	}
+	if m.hasComposer() && m.status.State.active() {
 		return m.conversationContent()
 	}
 	plan := layout.Plan(m.size, layout.Caps{}, layout.Shape{ComposerRows: 1})
