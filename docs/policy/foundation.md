@@ -20,6 +20,8 @@ The [CI workflow](../../.github/workflows/ci.yml) runs on pull requests targetin
 
 Node comes from `.node-version` when present, otherwise Node 24. When `go.mod` exists, Go comes from its `toolchain` line; a missing toolchain fails setup. Actions are pinned to commit SHAs. The workflow installs actionlint 1.7.12 from a checksum-verified archive before verification. CI has read-only repository permissions, writes no evidence note, and never publishes or integrates a change.
 
+The Linux runner also installs Ubuntu's Bubblewrap package before verification so the sandbox integration tests execute with their required launcher. Missing sandbox support is a verification failure; these tests are not skipped to make CI pass.
+
 ## Execution
 
 ```text
