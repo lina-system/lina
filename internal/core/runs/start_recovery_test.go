@@ -4,7 +4,9 @@ package runs_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -153,5 +155,45 @@ func TestRecoverSchedulesReleasedQueueAndPreservesHolds(t *testing.T) {
 		if err != nil || r.State != runs.Waiting {
 			t.Fatalf("held/unreleased run executed: %+v %v", r, err)
 		}
+	}
+}
+
+func TestPreparationCallbackNeverReceivesRawToolSecrets(t *testing.T) {
+	credential := "ghp_" + strings.Repeat("Synthetic", 5)
+	var round atomic.Int64
+	var prepared atomic.Int64
+	s, _, _ := setupWith(t, func(_ context.Context, req provider.Request) (provider.Stream, error) {
+		raw, _ := json.Marshal(req.Items)
+		if strings.Contains(string(raw), credential) {
+			t.Error("credential reached model")
+		}
+		if round.Add(1) == 1 {
+			return call("credential-read"), nil
+		}
+		return answer(runs.Artifact{Body: "masked report", Done: true}), nil
+	}, func(c *runs.Config) {
+		tool := c.Tools["read"]
+		tool.Handler.Execute = func(_ context.Context, call provider.ToolCall) loop.Result {
+			raw, _ := json.Marshal(map[string]string{"evidence": credential, "password": "synthetic-password"})
+			return loop.Result{ID: call.ID, Code: loop.OK, Output: raw}
+		}
+		c.Tools["read"] = tool
+		c.Prepare = func(_ context.Context, r runs.Record, items []provider.Item) ([]provider.Item, error) {
+			prepared.Add(1)
+			raw, _ := json.Marshal(struct {
+				Record runs.Record
+				Items  []provider.Item
+			}{r, items})
+			if strings.Contains(string(raw), credential) || strings.Contains(string(raw), "synthetic-password") {
+				t.Error("raw tool secret reached preparation callback")
+			}
+			return items, nil
+		}
+	})
+	id := start(t, s)
+	release(t, s, id)
+	r := wait(t, s, id)
+	if r.Outcome != runs.Complete || prepared.Load() != 2 {
+		t.Fatalf("outcome=%s preparations=%d", r.Outcome, prepared.Load())
 	}
 }

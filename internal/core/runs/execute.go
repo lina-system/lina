@@ -150,6 +150,14 @@ func (s *Service) run(ctx context.Context, id string) error {
 	// Commit that checkpoint before authorizing/sending the next request. Steering
 	// is appended and removed from its durable queue in the same transaction.
 	cfg.Transform = func(ctx context.Context, req provider.Request) (provider.Request, error) {
+		// The live loop still holds tool output from this round. Project it before
+		// handing context to any configured preparation callback, not just storage
+		// and the eventual provider. Recheck callback output below as well.
+		items, err := masked(&s.masker, req.Items)
+		if err != nil {
+			return req, err
+		}
+		req.Items = items
 		if err := s.update(ctx, id, func(r *Record) error {
 			req.Items = append([]provider.Item(nil), req.Items...)
 			r.FollowUps = r.FollowUps[drained:]
