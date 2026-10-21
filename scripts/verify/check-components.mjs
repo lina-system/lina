@@ -8,7 +8,10 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export function execute(command, args, { cwd, env }) {
-  const result = spawnSync(command, args, { cwd, env, encoding: 'utf8', timeout: 120_000, maxBuffer: 64 * 1024 * 1024 });
+  // The selected root suite includes many real command/Core subprocesses.
+  // Give Go time to report its own test timeout before the process watchdog.
+  const timeout = command === 'go' && args[0] === 'test' ? 300_000 : 120_000;
+  const result = spawnSync(command, args, { cwd, env, encoding: 'utf8', timeout, maxBuffer: 64 * 1024 * 1024 });
   return { status: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.error ? `${result.stderr ?? ''}${result.error.message}\n` : result.stderr ?? '' };
 }
 
@@ -85,7 +88,7 @@ export function checkComponents({ cwd = process.cwd(), components, execute: run 
         ['build', '-mod=readonly', ...outputArgs, ...packages],
         ['vet', '-mod=readonly', ...packages],
         ['tool', 'exhaustive', ...packages],
-        ['test', '-count=1', '-mod=readonly', ...packages],
+        ['test', '-timeout=4m', '-count=1', '-mod=readonly', ...packages],
       ]) {
         if (invoke('go', args, directory).status !== 0) return { status: 1, output };
       }

@@ -24,6 +24,8 @@ On the disposable Ubuntu runner, setup enables unprivileged user namespaces by c
 
 The build-artifact integration fixture allows five minutes for its two command builds and metadata readers inside the existing ten-minute automation deadline. A cold CI run exceeded its former two-minute subprocess limit while components compiled concurrently; all component checks passed in that run. This is a bounded process watchdog, not a performance acceptance assertion or a change to the measured local timing budget.
 
+The combined Go test command has a five-minute process watchdog and an explicit four-minute Go test timeout, so a blocked package reports its goroutine stacks before the outer watchdog stops it. A hosted run of the expanded real-process suite exceeded the old two-minute command limit after its individual Core packages passed. Other Go commands retain their two-minute watchdog, and the overall component deadline remains ten minutes.
+
 ## Execution
 
 ```text
