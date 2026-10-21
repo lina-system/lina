@@ -136,3 +136,38 @@ func TestLCMOnlyHonchoOwnerUsesHostSessionKind(t *testing.T) {
 		})
 	}
 }
+
+func TestLCMOwnerClaimNeedsHostSessionProof(t *testing.T) {
+	for _, source := range []string{"telegram", "cli"} {
+		for _, withState := range []bool{false, true} {
+			t.Run(source+map[bool]string{false: "/absent-host", true: "/missing-session"}[withState], func(t *testing.T) {
+				lcm, db := hermesFixture(t, "lcm")
+				if _, err := db.Exec(string(fixture(t, "speakers-lcm.sql"))); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := db.Exec(`UPDATE messages SET source=? WHERE store_id=11`, source); err != nil {
+					t.Fatal(err)
+				}
+				var state string
+				if withState {
+					state, _ = hermesFixture(t, "state") // No owner-chat session exists.
+				}
+				report, err := ClassifySpeakers(t.Context(), SpeakerProfile{
+					Profile: "profile", PersonID: "person", StatePath: state, LCMPath: lcm,
+					OwnerChannels: []OwnerChannel{{source, "owner-chat", "owner-user", "owner-chat"}},
+					Events:        []SpeakerSources{{ID: "unverified-owner", LCMIDs: []int64{11}, HonchoOwner: true}},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				e := report.Events[0]
+				if e.SpeakerKind() != guard.Forwarded || report.Relabelled != 1 || report.Unproven != 1 {
+					t.Fatalf("unverified LCM owner: speaker=%s relabelled=%d unproven=%d", e.SpeakerKind(), report.Relabelled, report.Unproven)
+				}
+				if proof, ok := e.PersonEvidence(); ok {
+					t.Fatalf("unverified LCM owner became person evidence: %+v", proof)
+				}
+			})
+		}
+	}
+}

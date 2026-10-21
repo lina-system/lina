@@ -14,7 +14,8 @@ import (
 
 // OwnerChannel is part of the identity map confirmed before import, never
 // inferred from a Honcho peer or message body. Session ids are profile-local.
-// Host-backed channels must also match their recorded user and chat identities.
+// Person attribution also requires host-session provenance and matching recorded
+// user and chat identities; a mapped LCM session alone proves no sender.
 type OwnerChannel struct{ Source, SessionID, UserID, ChatID string }
 
 // SpeakerSources names the rows already matched to one canonical event by the
@@ -249,6 +250,12 @@ func readSpeaker(ctx context.Context, db, state *sql.DB, id int64, host bool, ow
 	}
 	if len(kinds) > 0 {
 		return combineSpeakers(kinds), nil
+	}
+	// LCM has no sender or session-kind fields beyond source and role. A
+	// confirmed session map cannot prove that this row was written by its owner
+	// or rule out delegation and shared-chat input without the host session.
+	if !hasSession {
+		return unknownSpeaker(), nil
 	}
 	owner, ok := owners[session]
 	if !ok || owner.Source != source || hasSession && owner.Source != sessionSource {

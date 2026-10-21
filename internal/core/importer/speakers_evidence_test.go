@@ -21,12 +21,23 @@ func TestImportedSpeakersAtPersonMemoryBoundary(t *testing.T) {
 	if _, err := host.Exec(string(fixture(t, "speakers-state.sql"))); err != nil {
 		t.Fatal(err)
 	}
-	input := SpeakerProfile{Profile: "profile", PersonID: "person", StatePath: state,
-		OwnerChannels: []OwnerChannel{{Source: "telegram", SessionID: "owner-chat", UserID: "owner-user", ChatID: "owner-chat"}},
+	lcm, lc := hermesFixture(t, "lcm")
+	if _, err := lc.Exec(string(fixture(t, "speakers-lcm.sql"))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lc.Exec(`UPDATE messages SET session_id='unverified-chat' WHERE store_id=11`); err != nil {
+		t.Fatal(err)
+	}
+	input := SpeakerProfile{Profile: "profile", PersonID: "person", StatePath: state, LCMPath: lcm,
+		OwnerChannels: []OwnerChannel{
+			{Source: "telegram", SessionID: "owner-chat", UserID: "owner-user", ChatID: "owner-chat"},
+			{Source: "telegram", SessionID: "unverified-chat", UserID: "owner-user", ChatID: "unverified-chat"},
+		},
 		Events: []SpeakerSources{
 			{ID: "automated", HostIDs: []int64{10}, HonchoOwner: true},
 			{ID: "owner", HostIDs: []int64{11}, HonchoOwner: true},
 			{ID: "unmatched", HonchoOwner: true},
+			{ID: "unverified-lcm-owner", LCMIDs: []int64{11}, HonchoOwner: true},
 		},
 	}
 	report, err := ClassifySpeakers(t.Context(), input)
@@ -127,12 +138,16 @@ func TestSpeakerMetadataAndOwnerProof(t *testing.T) {
 }
 
 func TestSpeakerReportsAreProfileLocalAndReadOnly(t *testing.T) {
+	state, host := hermesFixture(t, "state")
+	if _, err := host.Exec(string(fixture(t, "speakers-state.sql"))); err != nil {
+		t.Fatal(err)
+	}
 	path, db := hermesFixture(t, "lcm")
 	if _, err := db.Exec(string(fixture(t, "speakers-lcm.sql"))); err != nil {
 		t.Fatal(err)
 	}
 	before, wal := fileBytes(t, path), fileBytes(t, path+"-wal")
-	input := SpeakerProfile{Profile: "first", PersonID: "person", LCMPath: path, OwnerChannels: []OwnerChannel{{Source: "telegram", SessionID: "owner-chat"}}, Events: []SpeakerSources{{ID: "owner", LCMIDs: []int64{11}, HonchoOwner: true}, {ID: "unmatched", HonchoOwner: true}}}
+	input := SpeakerProfile{Profile: "first", PersonID: "person", StatePath: state, LCMPath: path, OwnerChannels: []OwnerChannel{{Source: "telegram", SessionID: "owner-chat", UserID: "owner-user", ChatID: "owner-chat"}}, Events: []SpeakerSources{{ID: "owner", LCMIDs: []int64{11}, HonchoOwner: true}, {ID: "unmatched", HonchoOwner: true}}}
 	first, err := ClassifySpeakers(t.Context(), input)
 	if err != nil {
 		t.Fatal(err)
@@ -143,7 +158,7 @@ func TestSpeakerReportsAreProfileLocalAndReadOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.Relabelled != 1 || first.Unproven != 1 || second.Relabelled != 2 || second.Unproven != 2 {
+	if first.Relabelled != 1 || first.Unproven != 1 || second.Relabelled != 2 || second.Unproven != 1 {
 		t.Fatalf("counts: first=%+v second=%+v", first, second)
 	}
 	data, err := json.Marshal([]SpeakerReport{first, second})
@@ -161,7 +176,7 @@ func TestSpeakerReportsAreProfileLocalAndReadOnly(t *testing.T) {
 	if err = json.Unmarshal(data, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if decoded[0].Profile != "first" || decoded[1].Profile != "second" || decoded[1].Unproven != 2 || decoded[0].Events[0].PersonID != "person" || decoded[1].Events[0].PersonID != "" {
+	if decoded[0].Profile != "first" || decoded[1].Profile != "second" || decoded[1].Unproven != 1 || decoded[0].Events[0].PersonID != "person" || decoded[1].Events[0].PersonID != "" {
 		t.Fatalf("report=%s", data)
 	}
 	if !reflect.DeepEqual(before, fileBytes(t, path)) || !reflect.DeepEqual(wal, fileBytes(t, path+"-wal")) {
