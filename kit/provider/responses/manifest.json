@@ -1,0 +1,7 @@
+{
+  "chatgpt": {
+    "adapter": "responses",
+    "retryCount": 0,
+    "requestFields": ["model", "input", "store", "stream", "instructions", "tools", "reasoning", "include"]
+  }
+}

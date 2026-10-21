@@ -8,6 +8,17 @@ import { git as runGit } from '../git.mjs';
 import { componentRegistry, kind, scopeFor } from './scope.mjs';
 import { evaluateGate } from './gate.mjs';
 
+test('budget is registered with the lina Go checks', t => {
+  const r = repository(t);
+  const base = r.git('rev-parse', 'HEAD');
+  mkdirSync(join(r.cwd, 'internal/core/budget'), { recursive: true });
+  writeFileSync(join(r.cwd, 'internal/core/budget/budget.go'), 'package budget\n');
+  const scope = r.classify(r.commit(), { base, full: true });
+  assert.deepEqual(scope.unmapped, []);
+  assert.ok(scope.selectedComponents.includes('lina'));
+  assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/budget/...'));
+});
+
 test('guard admission is registered with the lina Go checks', t => {
   const r = repository(t);
   const base = r.git('rev-parse', 'HEAD');
@@ -565,3 +576,10 @@ for (const path of ['scripts/verify/dependency-exceptions.json', 'THIRD-PARTY-NO
     }
   });
 }
+
+test('brand tokens and generated data select verification while PNGs remain evidence', () => {
+  for (const path of ['design/tokens/light.json', 'design/tokens/tokens.css', 'DESIGN.md']) assert.equal(kind(path), 'automation');
+  assert.equal(kind('internal/design/tokens_gen.go'), 'components');
+  assert.equal(kind('evidence/brand/dark-connected.png'), 'docs');
+  assert.equal(kind('evidence/brand/unregistered.py'), 'unmapped');
+});
