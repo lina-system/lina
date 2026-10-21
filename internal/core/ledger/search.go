@@ -16,13 +16,22 @@ import (
 )
 
 type SearchQuery struct {
-	AgentID, Text string
-	Limit         int
-	Origin        string
-	SpeakerKind   guard.SpeakerKind
-	Since, Until  time.Time
-	IncludeReplay bool
+	AgentID, PersonID, Text string
+	Limit                   int
+	Origin                  string
+	SpeakerKind             guard.SpeakerKind
+	Since, Until            time.Time
+	IncludeReplay           bool
 }
+
+// The current ledger has no conversation-owner table. Require a person event
+// proving ownership, and refuse ambiguous conversations. This also scopes
+// agent/tool replies, whose own rows deliberately have no person_id.
+const searchScope = `e.agent_id=?
+ AND EXISTS(SELECT 1 FROM conv_event owner WHERE owner.conversation_id=e.conversation_id
+  AND owner.agent_id=e.agent_id AND owner.speaker_kind='person' AND owner.person_id=?)
+ AND NOT EXISTS(SELECT 1 FROM conv_event other WHERE other.conversation_id=e.conversation_id
+  AND other.speaker_kind='person' AND other.person_id<>?)`
 
 // SearchHit carries source identity and provenance with the secret-free text.
 // It is evidence of a past event, never a model message or current authority.
@@ -56,7 +65,7 @@ func indexText(ctx context.Context, tx *canon.Tx, id, text string) error {
 // Hangul syllables. Shorter/non-Hangul two-character queries have no postings.
 // Scope and filters constrain the result before its limit (default 20, max 100).
 func (s *Store) Search(ctx context.Context, q SearchQuery) ([]SearchHit, error) {
-	if !safeID(q.AgentID) || !utf8.ValidString(q.Text) || strings.ContainsRune(q.Text, 0) || q.Limit < 0 || q.Limit > 100 {
+	if !safeID(q.AgentID) || !safeID(q.PersonID) || !utf8.ValidString(q.Text) || strings.ContainsRune(q.Text, 0) || q.Limit < 0 || q.Limit > 100 {
 		return nil, ErrInvalid
 	}
 	text := strings.TrimSpace(q.Text)
@@ -66,11 +75,11 @@ func (s *Store) Search(ctx context.Context, q SearchQuery) ([]SearchHit, error) 
 	if q.Limit == 0 {
 		q.Limit = 20
 	}
-	if err := s.backfillSearch(ctx, q.AgentID); err != nil {
+	if err := s.backfillSearch(ctx, q.AgentID, q.PersonID); err != nil {
 		return nil, err
 	}
-	where := "e.agent_id=?"
-	args := []any{q.AgentID}
+	where := searchScope
+	args := []any{q.AgentID, q.PersonID, q.PersonID}
 	if utf8.RuneCountInString(text) == 2 {
 		where += " AND EXISTS(SELECT 1 FROM ledger_search_bigram b WHERE b.event_id=e.id AND b.gram=?)"
 		args = append(args, text)
@@ -131,12 +140,12 @@ func (s *Store) Search(ctx context.Context, q SearchQuery) ([]SearchHit, error) 
 // Old and imported rows are queued durably by the migration/insert trigger.
 // Material I/O is outside transactions. A failed read leaves the pending row
 // intact and fails search, so a missing body cannot silently become no match.
-func (s *Store) backfillSearch(ctx context.Context, agent string) error {
+func (s *Store) backfillSearch(ctx context.Context, agent, person string) error {
 	for {
 		var ids []string
 		err := s.db.Read(ctx, func(tx *canon.Tx) error {
 			rows, err := tx.QueryContext(ctx, `SELECT p.event_id FROM ledger_search_pending p
-			 JOIN retract_visible_event e ON e.id=p.event_id WHERE e.agent_id=? ORDER BY p.event_id LIMIT 128`, agent)
+			 JOIN retract_visible_event e ON e.id=p.event_id WHERE `+searchScope+` ORDER BY p.event_id LIMIT 128`, agent, person, person)
 			if err != nil {
 				return err
 			}

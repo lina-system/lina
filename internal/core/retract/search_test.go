@@ -22,7 +22,7 @@ func TestForgetPurgesKoreanIndexesAndRestoreDoesNotResurrectThem(t *testing.T) {
 	search := func(want int) {
 		t.Helper()
 		for _, query := range []string{"도서관", "커피"} {
-			events, err := ledger.New(db, nil).Search(t.Context(), ledger.SearchQuery{AgentID: "agent-1", Text: query})
+			events, err := ledger.New(db, nil).Search(t.Context(), ledger.SearchQuery{AgentID: "agent-1", PersonID: "person-1", Text: query})
 			if err != nil || len(events) != want {
 				t.Fatalf("ledger %q: %+v %v", query, events, err)
 			}
@@ -130,7 +130,7 @@ func TestForgetExcludesExistingAndFutureLedgerCopies(t *testing.T) {
 	copyEvent("view-1", "source-1", false)
 	copyEvent("replay-1", "view-1", true)
 	copyEvent("nested-view", "replay-1", false)
-	if hits, err := events.Search(t.Context(), ledger.SearchQuery{AgentID: "agent-1", Text: "violet", IncludeReplay: true}); err != nil || len(hits) != 4 {
+	if hits, err := events.Search(t.Context(), ledger.SearchQuery{AgentID: "agent-1", PersonID: "person-1", Text: "violet", IncludeReplay: true}); err != nil || len(hits) != 4 {
 		t.Fatalf("copy precondition: %+v %v", hits, err)
 	}
 	generation := filepath.Join(t.TempDir(), "canon.sqlite")
@@ -141,7 +141,7 @@ func TestForgetExcludesExistingAndFutureLedgerCopies(t *testing.T) {
 	copyEvent("late-view", "nested-view", false)
 	copyEvent("late-replay", "late-view", true)
 	for _, includeReplay := range []bool{false, true} {
-		hits, err := events.Search(t.Context(), ledger.SearchQuery{AgentID: "agent-1", Text: "violet", IncludeReplay: includeReplay})
+		hits, err := events.Search(t.Context(), ledger.SearchQuery{AgentID: "agent-1", PersonID: "person-1", Text: "violet", IncludeReplay: includeReplay})
 		if err != nil || len(hits) != 0 {
 			t.Fatalf("copy search leaked: %+v %v", hits, err)
 		}
@@ -162,7 +162,7 @@ func TestForgetExcludesExistingAndFutureLedgerCopies(t *testing.T) {
 	if err := s.Restore(t.Context(), retract.Request{Person: "person-1", Targets: []retract.Ref{{Kind: retract.Memory, ID: receipt.ID}}}); err != nil {
 		t.Fatal(err)
 	}
-	if hits, err := events.Search(t.Context(), ledger.SearchQuery{AgentID: "agent-1", Text: "violet", IncludeReplay: true}); err != nil || len(hits) != 6 {
+	if hits, err := events.Search(t.Context(), ledger.SearchQuery{AgentID: "agent-1", PersonID: "person-1", Text: "violet", IncludeReplay: true}); err != nil || len(hits) != 6 {
 		t.Fatalf("recovered lineage: %+v %v", hits, err)
 	}
 	if err := s.Delete(t.Context(), retract.Request{Person: "person-1", Targets: []retract.Ref{{Kind: retract.Memory, ID: receipt.ID}}}); err != nil {
@@ -185,7 +185,7 @@ func TestForgetExcludesExistingAndFutureLedgerCopies(t *testing.T) {
 	snapshotCanon(t, generation, filepath.Join(root, "canon.sqlite"))
 	db, s, flow, _, _ = memoryAt(t, root)
 	events = ledger.New(db, nil)
-	if hits, err := events.Search(t.Context(), ledger.SearchQuery{AgentID: "agent-1", Text: "violet", IncludeReplay: true}); err != nil || len(hits) != 0 {
+	if hits, err := events.Search(t.Context(), ledger.SearchQuery{AgentID: "agent-1", PersonID: "person-1", Text: "violet", IncludeReplay: true}); err != nil || len(hits) != 0 {
 		t.Fatalf("restored copies exposed: %+v %v", hits, err)
 	}
 	assertNoSearchRows(t, db)
