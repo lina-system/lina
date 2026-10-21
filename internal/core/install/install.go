@@ -65,7 +65,7 @@ func Run(ctx context.Context, cfg Config, host Host) (result Result, resultErr e
 	if cfg.Socket == "" {
 		cfg.Socket = filepath.Join(cfg.StateRoot, "system/run/client.sock")
 	}
-	if !filepath.IsAbs(cfg.Socket) || len(cfg.Socket) > 107 {
+	if !filepath.IsAbs(cfg.Socket) || filepath.Clean(cfg.Socket) != cfg.Socket || len(cfg.Socket) > 107 {
 		return result, errors.New("client socket needs an absolute path of at most 107 bytes")
 	}
 	for name, path := range cfg.ToolPaths {
@@ -83,6 +83,13 @@ func Run(ctx context.Context, cfg Config, host Host) (result Result, resultErr e
 		if err := safeParents(path); err != nil {
 			return result, err
 		}
+	}
+	if info, err := os.Lstat(filepath.Dir(cfg.Socket)); err == nil {
+		if err := ctlfiles.ValidatePrivateDirectory(info); err != nil {
+			return result, fmt.Errorf("client socket directory: %w", err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return result, err
 	}
 	b, err := readBundle(cfg.BundleDir)
 	if err != nil {
@@ -172,6 +179,9 @@ func Run(ctx context.Context, cfg Config, host Host) (result Result, resultErr e
 		if err := changes.mkdir(filepath.Join(cfg.StateRoot, name)); err != nil {
 			return result, err
 		}
+	}
+	if err := changes.mkdir(filepath.Dir(cfg.Socket)); err != nil {
+		return result, err
 	}
 	control, err := ctlfiles.Open(cfg.StateRoot)
 	if err != nil {

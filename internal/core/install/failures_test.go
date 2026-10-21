@@ -113,6 +113,21 @@ func TestLinkedParentIsRefused(t *testing.T) {
 	}
 }
 
+func TestPublicSocketDirectoryIsRefusedBeforeInstall(t *testing.T) {
+	cfg, host := fixture(t)
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Socket = filepath.Join(dir, "client.sock")
+	if _, err := Run(t.Context(), cfg, host); err == nil {
+		t.Fatal("accepted a socket directory Core cannot use")
+	}
+	if _, err := os.Stat(cfg.StateRoot); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("created unusable installation")
+	}
+}
+
 func TestServiceUsesAbsoluteUnitPath(t *testing.T) {
 	cfg, host := fixture(t)
 	if _, err := Run(t.Context(), cfg, host); err != nil {
