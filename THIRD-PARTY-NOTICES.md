@@ -1157,7 +1157,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ## golang.org/x/text
 
 Source: https://golang.org/x/text. Version: `v0.43.0`.
-Used without local modifications by the TUI libraries or their spike harness.
+Used without local modifications by the TUI libraries, their spike harness, and NFC reply counting.
 
 ```text
 Copyright 2009 The Go Authors.
