@@ -20,7 +20,6 @@ import (
 	"github.com/thisisjun786/lina/internal/core/boot"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
-	"github.com/thisisjun786/lina/internal/core/turn"
 )
 
 func runDoctor(args []string) int {
@@ -307,8 +306,8 @@ func inspectDoctorCanon(ctx context.Context, root string) error {
 	if err != nil {
 		return fmt.Errorf("canon: %w", err)
 	}
-	// Match the application schema composed by boot.startConversation.
-	maxVersion := len(canon.Migrations()) + len([]string{turn.Schema, turn.ControlSchema, turn.OutcomeSchema})
+	// Recognize the same schema that the installed Core initializes.
+	maxVersion := len(boot.ApplicationMigrations())
 	if version > maxVersion {
 		return errors.New("canon: database schema is newer than this binary supports")
 	}

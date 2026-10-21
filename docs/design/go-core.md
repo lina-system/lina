@@ -507,6 +507,8 @@ after its existing turn migrations and opens one secret store and one account
 store on the same fenced canon writer. The production issuer remains fixed;
 only the in-process test composition injects an HTTP transport. The client
 combination advertises accounts and relay independently of conversation.
+Core startup and the read-only doctor share `boot.ApplicationMigrations`, so
+diagnostics recognize the account schema installed by the same binary.
 
 Account list projects metadata for the connection's person. Sign-out runs on the
 existing account actor and obtains the secret store's existing mutation

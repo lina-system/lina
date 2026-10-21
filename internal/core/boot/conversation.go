@@ -70,14 +70,10 @@ type conversationRuntime struct {
 func conversationPath(root string) string { return filepath.Join(root, "canon", "canon.sqlite") }
 
 func startConversation(ctx context.Context, root, main string, epoch uint64, controls *ctlfiles.Store, route *modelpath.ResponsesConfig, activities *lifecycle.ActivityRegistry, person string, transport http.RoundTripper) (*conversationRuntime, error) {
-	migrations := canon.Migrations()
-	for _, schema := range []string{turn.Schema, turn.ControlSchema, turn.OutcomeSchema, accounts.SignInSchema} {
-		migrations = append(migrations, canon.Migration{Version: len(migrations) + 1, SQL: schema})
-	}
 	if err := os.MkdirAll(filepath.Dir(conversationPath(root)), 0700); err != nil {
 		return nil, err
 	}
-	db, err := canon.Open(ctx, canon.Config{Path: conversationPath(root), Epoch: epoch, Controls: controls, Migrations: migrations})
+	db, err := canon.Open(ctx, canon.Config{Path: conversationPath(root), Epoch: epoch, Controls: controls, Migrations: ApplicationMigrations()})
 	if err != nil {
 		return nil, err
 	}
