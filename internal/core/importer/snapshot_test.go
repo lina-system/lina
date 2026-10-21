@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -364,5 +365,29 @@ func TestSQLiteColumnMetadataGate(t *testing.T) {
 		if err := SnapshotSQLite(t.Context(), path, filepath.Join(t.TempDir(), "snapshot"), known); !errors.Is(err, ErrSchema) {
 			t.Fatalf("changed column descriptor accepted: %v", err)
 		}
+	}
+}
+
+func TestHonchoRefusesRemotePlaintextBeforeSendingCredential(t *testing.T) {
+	original := http.DefaultTransport
+	transport := original.(*http.Transport).Clone()
+	calls := 0
+	transport.DialContext = func(context.Context, string, string) (net.Conn, error) {
+		calls++
+		return nil, errors.New("unexpected network access")
+	}
+	http.DefaultTransport = transport
+	t.Cleanup(func() { http.DefaultTransport = original; transport.CloseIdleConnections() })
+	for _, address := range []string{"http://example.invalid", "http://example.invalid:8080"} {
+		reader, err := OpenHoncho(t.Context(), address, "/openapi.json", fixture(t, "openapi-synthetic.json"), secret.New("synthetic-read-credential"))
+		if reader != nil {
+			reader.Close()
+		}
+		if !errors.Is(err, ErrReadOnly) {
+			t.Errorf("remote plaintext not refused: %v", err)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("plaintext credential request reached transport %d times", calls)
 	}
 }

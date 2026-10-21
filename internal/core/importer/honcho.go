@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"path"
 	"reflect"
@@ -61,6 +62,14 @@ func OpenHoncho(ctx context.Context, address, apiPath string, accepted []byte, c
 	base, err := url.Parse(address)
 	if err != nil || base.Host == "" || (base.Scheme != "https" && base.Scheme != "http") || base.User != nil || base.RawQuery != "" || base.Fragment != "" || base.Path != "" && base.Path != "/" {
 		return nil, ErrSnapshot
+	}
+	// A run credential may cross a network only under TLS. Literal loopback
+	// addresses retain support for a local Honcho service without relying on DNS.
+	if base.Scheme == "http" {
+		host, parseErr := netip.ParseAddr(base.Hostname())
+		if parseErr != nil || !host.IsLoopback() {
+			return nil, ErrReadOnly
+		}
 	}
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	// Do not consult environment proxies or a cookie jar during an import.
