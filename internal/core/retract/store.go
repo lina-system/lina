@@ -88,7 +88,7 @@ func (s *Store) Recover(ctx context.Context) error {
 	if s.closed {
 		return canon.ErrClosed
 	}
-	err := s.db.Reconcile(func() error {
+	err := s.db.Reconcile(func(write canon.RecoveryWrite) error {
 		if s.journal != nil {
 			if err := s.journal.Close(); err != nil {
 				return err
@@ -104,7 +104,7 @@ func (s *Store) Recover(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		return s.db.Write(ctx, func(tx *canon.Tx) error {
+		return write(ctx, func(tx *canon.Tx) error {
 			rows, err := tx.QueryContext(ctx, "SELECT sequence,id,digest FROM removal_applied ORDER BY sequence")
 			if err != nil {
 				return err
@@ -165,8 +165,7 @@ func (s *Store) Restore(ctx context.Context, r Request) error { return s.change(
 
 // Delete skips recoverable trash. Its caller must establish the person's
 // explicit permanent-deletion choice before invoking it.
-func (s *Store) Delete(ctx context.Context, r Request) error     { return s.change(ctx, r, erase) }
-func (s *Store) Disconnect(ctx context.Context, r Request) error { return s.change(ctx, r, disconnect) }
+func (s *Store) Delete(ctx context.Context, r Request) error { return s.change(ctx, r, erase) }
 
 func (s *Store) change(ctx context.Context, r Request, a action) error {
 	return s.changeMode(ctx, r, a, false)
@@ -192,9 +191,9 @@ func (s *Store) changeMode(ctx context.Context, r Request, a action, expiry bool
 		return ErrRecovery
 	}
 	var requestErr error
-	err := s.db.Reconcile(func() error {
+	err := s.db.Reconcile(func(write canon.RecoveryWrite) error {
 		durable := false
-		requestErr = s.db.Write(ctx, func(tx *canon.Tx) error {
+		requestErr = write(ctx, func(tx *canon.Tx) error {
 			// Resolve every target and validate all transitions before journaling any.
 			e := entry{Version: 1, Action: a, At: s.now().UnixNano(), Person: r.Person}
 			if expiry {
@@ -252,7 +251,10 @@ func (s *Store) changeMode(ctx context.Context, r Request, a action, expiry bool
 		}
 		return nil
 	})
-	return errors.Join(err, requestErr)
+	if err != nil {
+		return err
+	}
+	return requestErr
 }
 
 func transition(ctx context.Context, tx *canon.Tx, t Target, e entry) error {
@@ -287,9 +289,6 @@ func (s *Store) apply(ctx context.Context, tx *canon.Tx, e entry, sequence int, 
 		return err
 	}
 	for _, target := range e.Targets {
-		if err := s.projection.apply(ctx, tx, e, target); err != nil {
-			return err
-		}
 		state := ""
 		switch e.Action {
 		case forget:
@@ -326,6 +325,9 @@ ON CONFLICT(kind,id) DO UPDATE SET person=excluded.person,holder=excluded.holder
 					}
 				}
 			}
+		}
+		if err := s.projection.apply(ctx, tx, e, target); err != nil {
+			return err
 		}
 	}
 	result, err := tx.ExecContext(ctx, "UPDATE retract_meta SET epoch=epoch+1 WHERE singleton=1 AND epoch<?", int64(math.MaxInt64))

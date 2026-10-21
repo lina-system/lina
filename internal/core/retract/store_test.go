@@ -102,17 +102,18 @@ func TestDurableIntentReplaysBeforeReads(t *testing.T) {
 				t.Fatalf("accepted another operation before replay: %v", err)
 			}
 			// No tombstone or epoch update escaped the rolled-back transaction.
-			if err := db.Write(t.Context(), func(tx *canon.Tx) error {
-				var n int
-				if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM retract_target").Scan(&n); err != nil {
-					return err
-				}
-				if n != 0 {
-					t.Fatal("target escaped rollback")
-				}
-				return nil
-			}); err != nil {
+			inspection, err := canon.OpenSQLiteReader(t.Context(), filepath.Join(root, "canon.sqlite"))
+			if err != nil {
 				t.Fatal(err)
+			}
+			var n int
+			err = inspection.QueryRowContext(t.Context(), "SELECT count(*) FROM retract_target").Scan(&n)
+			inspection.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n != 0 {
+				t.Fatal("target escaped rollback")
 			}
 			s.fault = nil
 			if err := s.Recover(t.Context()); err != nil {

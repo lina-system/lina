@@ -9,7 +9,7 @@ import (
 func TestFailedReconciliationBlocksReadsUntilReplay(t *testing.T) {
 	s := openStore(t, storeConfig(t))
 	failure := errors.New("durable removal awaits SQLite replay")
-	if err := s.Reconcile(func() error { return failure }); !errors.Is(err, failure) {
+	if err := s.Reconcile(func(RecoveryWrite) error { return failure }); !errors.Is(err, failure) {
 		t.Fatal(err)
 	}
 	called := false
@@ -17,7 +17,10 @@ func TestFailedReconciliationBlocksReadsUntilReplay(t *testing.T) {
 	if !errors.Is(err, ErrRecoveryRequired) || called {
 		t.Fatalf("exposed unreconciled state: %v %v", called, err)
 	}
-	if err := s.Reconcile(func() error { return s.Write(t.Context(), insertItem) }); err != nil {
+	if err := s.Write(t.Context(), insertItem); !errors.Is(err, ErrRecoveryRequired) {
+		t.Fatalf("accepted new work before replay: %v", err)
+	}
+	if err := s.Reconcile(func(write RecoveryWrite) error { return write(t.Context(), insertItem) }); err != nil {
 		t.Fatal(err)
 	}
 	if itemCount(t, s) != 1 {
@@ -32,7 +35,7 @@ func TestReconciliationWaitsForPriorReaderAndPublishesAtomically(t *testing.T) {
 	<-entered
 	replayStarted, replayDone := make(chan struct{}), make(chan error, 1)
 	go func() {
-		replayDone <- s.Reconcile(func() error { close(replayStarted); return s.Write(t.Context(), insertItem) })
+		replayDone <- s.Reconcile(func(write RecoveryWrite) error { close(replayStarted); return write(t.Context(), insertItem) })
 	}()
 	// The prior reader owns the read lock; it must finish before reconciliation.
 	close(release)

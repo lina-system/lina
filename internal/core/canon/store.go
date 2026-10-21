@@ -422,6 +422,11 @@ func (s *Store) submit(ctx context.Context, fn func(*Tx) error, failure error) e
 }
 
 func (s *Store) Write(ctx context.Context, fn func(*Tx) error) error {
+	s.readGate.RLock()
+	defer s.readGate.RUnlock()
+	if s.readFailure != nil {
+		return errors.Join(ErrRecoveryRequired, s.readFailure)
+	}
 	if fn == nil {
 		return ErrInvalid
 	}
