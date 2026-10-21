@@ -53,3 +53,20 @@ func TestApprovalMigrationPreservesExistingEffectClaims(t *testing.T) {
 	cfg.Epoch++
 	openStore(t, cfg)
 }
+
+func TestMigrationsInstallInboxAndAuthorityTables(t *testing.T) {
+	cfg := storeConfig(t)
+	cfg.Migrations = Migrations()
+	s := openStore(t, cfg)
+	if err := s.Read(t.Context(), func(tx *Tx) error {
+		for _, table := range []string{"inbox", "authority_effects", "authority_targets", "authority_approvals", "authority_standing"} {
+			var count int
+			if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM "+table).Scan(&count); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
