@@ -278,6 +278,17 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	if err := boundary(SocketBound); err != nil {
 		return errors.Join(err, listener.Close())
 	}
+	// Retire the previous owned path only after the replacement has bound, and
+	// before publishing it. Until retirement succeeds, the durable sentinel
+	// still names both paths so an interrupted change can recover either one.
+	if ownedSocket != "" && ownedSocket != cfg.Socket {
+		if err := clientsrv.PrepareSocketDirectory(ownedSocket); err != nil {
+			return errors.Join(err, listener.Close())
+		}
+		if err := reclaimSocket(ownedSocket, recovery.Previous); err != nil {
+			return errors.Join(err, listener.Close())
+		}
+	}
 	if err := writeSentinel(cfg.Socket, ""); err != nil {
 		return errors.Join(err, listener.Close())
 	}
