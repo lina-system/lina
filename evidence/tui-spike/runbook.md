@@ -109,6 +109,9 @@ rm "$SPIKE_RUNNER"
   observed separately. If a later reply reaches the shell, retain that observation
   as a miss; the finite drain does not prove that no arbitrarily late reply can
   arrive. The synthetic clipboard marker replaces the current clipboard content.
+  Both probe timeout observations are required: either timeout fails S5 even
+  within the 200 ms bound. An explicit unsupported-mode reply remains a resolved
+  probe; its support observation stays false in the record.
 - S7's mitigation describes missing input-decoder recovery. Cancelling this spike
   restores the terminal; it does not implement that mitigation in the product.
 - S9 reports the process resident high-water mark, conservatively including

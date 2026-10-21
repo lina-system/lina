@@ -366,6 +366,11 @@ The reducer, render, layout and `clientapi` packages are Charm-free, so a fallba
 
 Each run writes an evidence record: terminal and version, `TERM`, SSH or not, library revisions, declared bounds, measured values, and the result per scenario. A record missing a field is not evidence.
 
+S5 records whether each synchronized-output and grapheme-mode probe timed out.
+A timeout fails the scenario even when the probe's deadline is below 200 ms;
+an explicit reply reporting an unsupported mode still resolves the probe.
+The evidence validator requires both timeout observations before assigning a result.
+
 Fallbacks, in order. F1: Bubble Tea with its own probe, a quiet spinner, a lower frame rate while streaming and a frame memo. F2: a row-string renderer on Ultraviolet with changed rows only, in synchronized output. F3: tcell v3. The reducer, render, layout and `clientapi` do not change in any fallback.
 
 ## Tests, tokens and theme (T-11)

@@ -43,6 +43,46 @@ func TestVerdictsRequireMeasurements(t *testing.T) {
 	}
 }
 
+func TestProbeVerdictRequiresReplies(t *testing.T) {
+	for _, tc := range []struct {
+		name, probe, want string
+		timedOut, missing bool
+	}{
+		{name: "explicit unsupported replies", want: "pass"},
+		{name: "sync timeout", probe: "sync", timedOut: true, want: "fail"},
+		{name: "grapheme timeout", probe: "grapheme", timedOut: true, want: "fail"},
+		{name: "missing sync observation", probe: "sync", missing: true},
+		{name: "missing grapheme observation", probe: "grapheme", missing: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			values := map[string]any{
+				"reply_leaked": false, "late_reply_quarantined": true,
+				"sync_timed_out": false, "grapheme_timed_out": false,
+			}
+			for _, probe := range []string{"sync", "grapheme", "osc52", "osc8"} {
+				values[probe+"_resolve_ms"] = float64(180)
+				values[probe+"_supported"] = false
+			}
+			if tc.probe != "" {
+				values[tc.probe+"_timed_out"] = tc.timedOut
+				if tc.missing {
+					delete(values, tc.probe+"_timed_out")
+				}
+			}
+			got, err := verdict("S5", values)
+			if tc.missing {
+				if err == nil {
+					t.Fatalf("missing probe observation accepted: result=%q", got)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Fatalf("verdict=%q, error=%v; want %q", got, err, tc.want)
+			}
+		})
+	}
+}
+
 func TestEvidenceCannotOverwriteOrInventMetadata(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "s8.json")
 	local := false

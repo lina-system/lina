@@ -131,6 +131,11 @@ func verdict(id string, values map[string]any) (string, error) {
 			a.atMost(p+"_resolve_ms", 200)
 			a.flag(p + "_supported")
 		}
+		for _, p := range []string{"sync", "grapheme"} {
+			if a.flag(p + "_timed_out") {
+				a.failed = true
+			}
+		}
 		if a.flag("reply_leaked") {
 			a.failed = true
 		}
