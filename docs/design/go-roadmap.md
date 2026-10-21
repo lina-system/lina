@@ -124,6 +124,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-31 Accounts and Sign in with ChatGPT.** Single refresh actor, sign-in relay, owner binding, V1 record.
 - Done when: one refresh runs at a time per account and a rotated refresh token is stored before use; a failed refresh shows needs sign-in and uses no other account; a second ChatGPT account never changes the binding; no token appears in a log, request, sandbox or client; the V1 record states what the request surface accepted.
 - Depends on: G1-06, G1-08, G1-18. Design refs: C-47; [runtime.md](runtime.md#chatgpt).
+- #80 implements the account store, serialized refresh and idle keep-alive, durable token rotation and account states. Package tests cover persistence, concurrent calls, interruption, failed refresh, turn exclusion and secret projections. The sign-in relay, issuer exchange, owner binding, protocol/TUI exposure and V1 record remain with their owning increments.
 
 ### 1.D Memory, context and skills
 
@@ -229,6 +230,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 
 **G1-36 Moirai worker and the Core job API.** Separate binary, read-only canon, job API (Aux, Apply, Report).
 - Done when: a worker killed mid-job leaves canon unchanged and resumes from its watermark; the worker holds no credential; every write goes through Apply; with the worker absent only background memory and planning are unsupported.
+- Implementation evidence: `cmd/moirai-worker`, the read-only worker layers, and `internal/core/jobs` provide the service boundary; `e2e/m1/moirai-worker.json` exercises a real worker killed during Aux, unchanged canon at the kill boundary, reopening canon and resuming from its watermark, and the independent Core client protocol. Concrete cognition jobs remain their own increments.
 - Depends on: G1-03, G1-05, G1-08. Design refs: C-56; [runtime.md](runtime.md#processes).
 
 **G1-37 Extraction, maintenance pass and person brief.** Extraction, one maintenance pass, person brief.
