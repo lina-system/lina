@@ -276,7 +276,12 @@ type Options struct {
 	InputEvent string
 	Prepare    func(context.Context) error
 	// Preparation is the complete four-step path; Prepare is the low-level hook.
-	Preparation   *Preparation
+	Preparation *Preparation
+	// Complete commits successful completion with the caller's durable replies.
+	// It must run the supplied write in the same fenced transaction as reply
+	// admission and return only after commit. Nil uses the turn store's writer.
+	// Failed or interrupted turns never invoke Complete.
+	Complete      func(context.Context, func(*canon.Tx) error) error
 	Loop          loop.Config
 	Budget        *budget.Gauge // carry into a continuation; nil starts a new budget
 	ReceivedAt    time.Time     // original receipt time, excluding preparation from tool time
@@ -347,7 +352,11 @@ func (s *Store) Run(ctx context.Context, o Options) (out loop.Outcome, err error
 		}
 		save, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
-		err = errors.Join(err, s.db.Write(save, func(tx *canon.Tx) error {
+		write := s.db.Write
+		if state == Completed && o.Complete != nil {
+			write = o.Complete
+		}
+		err = errors.Join(err, write(save, func(tx *canon.Tx) error {
 			if e := active(save, tx, o.ID); e != nil {
 				return e
 			}

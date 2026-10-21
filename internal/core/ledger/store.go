@@ -152,6 +152,15 @@ func (s *Store) Admit(ctx context.Context, entry guard.Entry, in Input) (Event, 
 // Material metadata, events, relations and spans commit together; Close
 // reconciles staged bytes after success or failure, including interrupted cleanup.
 func (s *Store) AdmitBatch(ctx context.Context, inputs []Admission) (_ []Event, err error) {
+	return s.AdmitBatchWith(ctx, inputs, nil)
+}
+
+// AdmitBatchWith includes commit in the batch's fenced transaction, before
+// inserting its events. Core uses it to commit a turn's completion and replies
+// together. The callback must use only the supplied transaction; preparation
+// and material cleanup still happen outside the writer. Any failure rolls back
+// both the callback's writes and the entire batch.
+func (s *Store) AdmitBatchWith(ctx context.Context, inputs []Admission, commit func(*canon.Tx) error) (_ []Event, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -195,6 +204,11 @@ func (s *Store) AdmitBatch(ctx context.Context, inputs []Admission) (_ []Event, 
 		}
 	}
 	err = s.db.Write(ctx, func(tx *canon.Tx) error {
+		if commit != nil {
+			if err := commit(tx); err != nil {
+				return err
+			}
+		}
 		for i := range events {
 			e := &events[i]
 			if writes[i] != nil {
