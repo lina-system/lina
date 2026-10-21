@@ -228,6 +228,24 @@ A channel is an external messaging platform through which the person talks with 
 
 Core talks to each platform through one adapter and knows no platform limit. An adapter offers: connect and disconnect with a durable cursor; an inbound event carrying the platform's ids; send, returning a result id or an error class (retry later, permanently blocked, too long, unauthorized); edit; answer an interaction; fetch an attachment; and a static capability descriptor (text length, edit, buttons, files, threads, streaming, and which result types the channel can show). The first adapters are Telegram and Discord. A further platform is a new adapter behind this boundary, added by a release and not by a change to this contract. The adapter code is LINA's own, and its client library is a Go dependency under [dependencies.md](../policy/dependencies.md).
 
+Telegram's initial adapter uses `github.com/PaulSonOfLars/gotgbot/v2` at
+`v2.0.0-rc.37`, with no transitive modules. It advertises plain text, edits,
+buttons, files and topics; streaming remains off. The adapter shapes queued text
+into at most three parts of 4096 UTF-16 units, preserving paragraph boundaries
+where possible. A longer reply needs Core's summary and result link. Approval
+presentation reads the canonical request and offers only once and deny; it never
+truncates arguments to make buttons fit. A too-long approval remains pending for
+full presentation in the app or TUI, with a button-free link card sent by Core.
+Downloads use Telegram file IDs and validated paths at the same fixed origin,
+with a 20 MiB limit. API JSON responses are bounded at 8 MiB.
+
+An unavailable platform does not hold startup: the adapter is constructed without
+contacting Telegram, and its cancellable poller runs independently of Core's
+READY transition. Polling reads may retry with bounded backoff; sends make one
+attempt and return an outcome for the durable outbound queue. Transport failures,
+malformed responses and server failures have unknown delivery outcome and are
+never automatically sent again.
+
 ### Gateway core persistence
 
 The gateway core (#97) implements the adapter boundary, pairing, bindings, admission and the outbound queue as packages. Its composition root supplies the existing fenced canon writer, installs the channel schema in a numbered migration, routes committed deliveries to the conversation coordinator, and starts adapters only after recovery. The packages contain no bot token and make no platform connection at startup.

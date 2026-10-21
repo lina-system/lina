@@ -578,6 +578,27 @@ type Admitter interface{ Admit(ctx context.Context, e Inbound) error } // inbox 
 - A non-owner message is an `external_participant` event ([conversation-and-memory.md](conversation-and-memory.md#channel-conversations)).
 - The progress digest is built by Core, and the adapter only sends it.
 
+The Telegram adapter uses the pinned `gotgbot/v2` client for individual API calls;
+LINA owns the polling loop. Construction is local and starts no platform request.
+Main runs `Adapter.Run` under its lifecycle context independently of READY. A
+25-second long poll has a 35-second request deadline; read failures use cancellable
+1–30-second backoff and respect retry-after. The next offset is acknowledged only
+after admission commits. A failed admission stops that poller so a restart reads
+the durable cursor. One main poller may run for a numeric bot account at a time.
+
+Core installs `telegram.Schema` after `channels.Schema`. Approval callbacks use a
+dedicated inbox source and a small pending-button table; their inbox row, pending
+marker and cursor commit together and never dispatch a conversation turn.
+Recovery rechecks the epoch, current paired numeric sender, binding and tools
+scope before asking authority to consume a pending approval. A non-owner cannot
+answer the approval or remove its buttons. The accepted decision records the
+paired person and the actual chat/message IDs. Typed text never takes this path.
+
+The library receives a placeholder credential. A private HTTPS transport inserts
+the secret token only for Telegram's fixed API origin, refuses redirects and
+returns sanitized errors. Decoded token echoes are masked before admission.
+Tokens are never process environment values, event fields or ledger input.
+
 The #97 package increment provides `gateway.Adapter`, `channels.Store` and `gateway.Queue`. The composition root installs `channels.Schema` in a numbered canon migration after the agent and inbox tables. The channel dispatch extends `agent_bindings` with a cascading foreign key, so agent trash removes dispatches in that same transaction and restore never revives them. Binding changes record the owner, agent and scope. The most specific topic binding wins; the delivery also retains the original topic when it uses its parent binding.
 
 Connections start denied. Pairing uses a random 128-bit code, stores only its SHA-256 hash, expires after five minutes, and consumes it once. Platform identities are canonical positive decimal user ids. Pairing cannot silently replace an already paired identity. This increment implements the default owner-only admission mode; the optional addressed external-participant mode remains for its consuming flow.

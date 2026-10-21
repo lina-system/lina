@@ -81,7 +81,11 @@ func (t credentialTransport) RoundTrip(req *http.Request) (*http.Response, error
 	}
 	res.Request = req
 	res.Header.Del("Location")
-	res.Body = &safeBody{ReadCloser: res.Body, remaining: maxResponseBytes}
+	limit := int64(maxResponseBytes)
+	if strings.HasPrefix(prefix, "/file/") {
+		limit = 20 << 20
+	}
+	res.Body = &safeBody{ReadCloser: res.Body, remaining: limit}
 	return res, nil
 }
 
@@ -94,6 +98,11 @@ type safeBody struct {
 
 func (r *safeBody) Read(p []byte) (int, error) {
 	if r.remaining <= 0 {
+		var probe [1]byte
+		n, err := r.ReadCloser.Read(probe[:])
+		if n == 0 && err == io.EOF {
+			return 0, io.EOF
+		}
 		return 0, errResponse
 	}
 	if int64(len(p)) > r.remaining {
