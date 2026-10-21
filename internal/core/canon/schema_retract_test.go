@@ -5,8 +5,13 @@ import "testing"
 
 func TestRetractionMigrationPreservesOperationsOnUpgrade(t *testing.T) {
 	cfg := storeConfig(t)
-	cfg.Migrations = Migrations()
+	cfg.Migrations = Migrations()[:len(Migrations())-1]
 	s := openStore(t, cfg)
+	if err := s.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Migrations = Migrations()
+	s = openStore(t, cfg)
 	err := s.Write(t.Context(), func(tx *Tx) error {
 		_, err := tx.ExecContext(t.Context(), `INSERT INTO removal_applied(sequence,id,digest) VALUES(1,'operation','digest');
 INSERT INTO retract_target(kind,id,person,holder,agent,state,at,provenance,operation_id) VALUES('memory','item','person','all','agent','erased',10,'{}','operation');

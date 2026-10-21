@@ -230,3 +230,60 @@ func TestTrashRecoveryAndExpiryBoundaries(t *testing.T) {
 		})
 	}
 }
+
+func TestJournalSyncPrecedesTombstoneAndFailureClosesAccess(t *testing.T) {
+	for _, failSync := range []bool{false, true} {
+		t.Run(map[bool]string{false: "synced", true: "sync_failed"}[failSync], func(t *testing.T) {
+			db, root := fixture(t)
+			seedProtocol(t, db)
+			s := protocolStore(t, db, root)
+			syncFile := s.journal.sync
+			failed := errors.New("fsync unavailable")
+			s.journal.sync = func() error {
+				inspection, err := canon.OpenSQLiteReader(t.Context(), filepath.Join(root, "canon.sqlite"))
+				if err != nil {
+					return err
+				}
+				defer inspection.Close()
+				var n int
+				if err := inspection.QueryRowContext(t.Context(), "SELECT count(*) FROM retract_target WHERE state='erased'").Scan(&n); err != nil {
+					return err
+				}
+				if n != 0 {
+					t.Fatal("tombstone committed before journal sync")
+				}
+				if failSync {
+					return failed
+				}
+				return syncFile()
+			}
+			err := s.Delete(t.Context(), Request{Person: "person-1", Targets: []Ref{{Kind: Memory, ID: "memory-1"}}})
+			if failSync {
+				if !errors.Is(err, failed) || !errors.Is(err, ErrRecovery) {
+					t.Fatalf("uncertain removal result: %v", err)
+				}
+				if err := db.Write(t.Context(), func(*canon.Tx) error { return nil }); !errors.Is(err, canon.ErrRecoveryRequired) {
+					t.Fatalf("pending removal permitted new write: %v", err)
+				}
+				if err := s.Recover(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			entries, err := s.journal.read()
+			if err != nil || len(entries) != 1 {
+				t.Fatalf("removal line: %+v %v", entries, err)
+			}
+			var operation string
+			if err := db.Read(t.Context(), func(tx *canon.Tx) error {
+				return tx.QueryRowContext(t.Context(), "SELECT operation_id FROM retract_target WHERE id='memory-1' AND state='erased'").Scan(&operation)
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if operation != entries[0].ID {
+				t.Fatal("tombstone has no matching durable removal line")
+			}
+		})
+	}
+}

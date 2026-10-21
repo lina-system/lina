@@ -90,10 +90,11 @@ func (s *Store) Recover(ctx context.Context) error {
 	}
 	err := s.db.Reconcile(func(write canon.RecoveryWrite) error {
 		if s.journal != nil {
-			if err := s.journal.Close(); err != nil {
+			old := s.journal
+			s.journal = nil
+			if err := old.Close(); err != nil {
 				return err
 			}
-			s.journal = nil
 		}
 		j, err := openJournal(s.root)
 		if err != nil {
@@ -252,7 +253,7 @@ func (s *Store) changeMode(ctx context.Context, r Request, a action, expiry bool
 		return nil
 	})
 	if err != nil {
-		return err
+		return errors.Join(ErrRecovery, err)
 	}
 	return requestErr
 }
