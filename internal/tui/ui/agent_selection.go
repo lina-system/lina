@@ -30,13 +30,13 @@ func (m *shellModel) discoveryHistory() *protocol.HistoryGet {
 // retry only discovery, leaving application input in the draft. Core uses
 // out_of_scope when the selected agent is no longer available to this client.
 func (m *shellModel) discoveryFailed(code protocol.ErrorCode) bool {
-	switch code {
-	case protocol.ErrorUnavailable:
+	if code == protocol.ErrorUnavailable {
 		m.status = ConnectionStatus{State: Recovering, Cause: code}
 		return true
-	case protocol.ErrorOutOfScope:
+	}
+	if code == protocol.ErrorOutOfScope {
 		m.reconnectHistory(nil)
-	default:
+	} else {
 		m.status = connectionFailure(&clientapi.Refusal{Cause: protocol.Error{Code: code}})
 	}
 	return false
