@@ -72,6 +72,9 @@ func openSQLite(ctx context.Context, path string, reader bool) (*sql.DB, error) 
 		}
 	}
 	db, err := driver.Open(uri, func(conn *sqlite3.Conn) error {
+		if err := registerSearchFunctions(conn); err != nil {
+			return err
+		}
 		if reader {
 			if err := installRetractionViews(conn); err != nil {
 				return err
