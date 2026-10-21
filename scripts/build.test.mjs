@@ -28,7 +28,10 @@ function fixture(t) {
   t.after(context.close);
   const out = join(sb.dir, 'artifacts with spaces');
   const run = (args = ['--out', out]) => spawnSync(process.execPath, [join(cwd, 'scripts/build.mjs'), ...args], {
-    cwd, env: context.env, encoding: 'utf8', timeout: 120_000,
+    // This builds two binaries plus metadata readers from a cold cache while
+    // foundation's other checks also compile. CI exceeded the old two-minute
+    // child limit; keep this below the outer ten-minute automation deadline.
+    cwd, env: context.env, encoding: 'utf8', timeout: 300_000,
   });
   const build = () => {
     const result = run();

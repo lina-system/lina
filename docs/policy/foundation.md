@@ -22,6 +22,8 @@ Node comes from `.node-version` when present, otherwise Node 24. When `go.mod` e
 
 On the disposable Ubuntu runner, setup enables unprivileged user namespaces by clearing `kernel.apparmor_restrict_unprivileged_userns` when that host setting exists, then runs a Bubblewrap namespace smoke check before foundation. This does not change product host configuration or disable the seccomp, filesystem and network policies tested by the sandbox suite.
 
+The build-artifact integration fixture allows five minutes for its two command builds and metadata readers inside the existing ten-minute automation deadline. A cold CI run exceeded its former two-minute subprocess limit while components compiled concurrently; all component checks passed in that run. This is a bounded process watchdog, not a performance acceptance assertion or a change to the measured local timing budget.
+
 ## Execution
 
 ```text
