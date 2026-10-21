@@ -85,6 +85,7 @@ func TestMaskShapesAndExplicitSpans(t *testing.T) {
 			if m.Text() != "prefix "+secret.Placeholder || m.DerivedText() != "prefix " {
 				t.Fatalf("shape not masked: %q", m.Text())
 			}
+			assertMaskedRoundTrip(t, m)
 		})
 	}
 	for _, text := range []string{"token=syntheticcredential", `{"api_key":"syntheticcredential"}`, "Authorization: Bearer syntheticcredential", "password='synthetic pass phrase'"} {
@@ -95,6 +96,7 @@ func TestMaskShapesAndExplicitSpans(t *testing.T) {
 		if strings.Contains(m.Text(), "synthetic") || len(m.Spans()) != 1 {
 			t.Fatalf("assignment not masked: %q", m.Text())
 		}
+		assertMaskedRoundTrip(t, m)
 	}
 	m, err := secrets.Mask("a private z", secrets.Span{Start: 2, End: 9}, secrets.Span{Start: 3, End: 8})
 	if err != nil || m.Text() != "a "+secret.Placeholder+" z" || len(m.Spans()) != 1 {
