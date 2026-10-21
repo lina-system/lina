@@ -34,6 +34,7 @@ type fixture struct {
 	call             tools.Call
 	runs             atomic.Int32
 	observedRevision string
+	grantedRevision  string
 	surfaceAvailable bool
 }
 
@@ -59,6 +60,7 @@ func setup(t *testing.T) *fixture {
 	t.Cleanup(func() { f.store.Close(context.Background()) })
 	f.call = tools.Call{Key: "intent", Name: "edit", Account: "account", Auth: grant.Request{GrantID: "grant", MainID: "main", Epoch: 7, TaskID: "task", Host: "host", OSUser: "user", Person: "person", Agent: "agent", Revision: "r1"}, Args: json.RawMessage(`{"target":"document","body":"hello"}`)}
 	f.observedRevision = "r1"
+	f.grantedRevision = "r1"
 	f.surfaceAvailable = true
 	f.open(t)
 	return f
@@ -70,7 +72,7 @@ func (f *fixture) open(t *testing.T) {
 		r := f.call.Auth
 		r.GrantID = id
 		r.Epoch = f.cfg.Epoch
-		return grant.Grant{Identity: r, Expires: time.Now().Add(time.Hour), Scope: []grant.Permission{{Tool: "edit", Target: "document", Write: true}}, Revisions: map[string]string{"document": "r1"}}, grant.Environment{Epoch: f.cfg.Epoch, Now: time.Now(), OSPermitted: true, Revision: f.observedRevision}, nil
+		return grant.Grant{Identity: r, Expires: time.Now().Add(time.Hour), Scope: []grant.Permission{{Tool: "edit", Target: "document", Write: true}}, Revisions: map[string]string{"document": f.grantedRevision}}, grant.Environment{Epoch: f.cfg.Epoch, Now: time.Now(), OSPermitted: true, Revision: f.observedRevision}, nil
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -166,6 +168,7 @@ func TestStaleRevisionRefusedBeforeHandler(t *testing.T) {
 	if _, err := f.registry.Dispatch(t.Context(), f.call); err != nil {
 		t.Fatal(err)
 	}
+	f.observedRevision = "r2"
 	call := f.call
 	call.Key = "second-intent"
 	if _, err := f.registry.Dispatch(t.Context(), call); !errors.Is(err, grant.ErrStaleRevision) {
@@ -222,5 +225,69 @@ func TestReplayReturnsReceiptAfterObservedRevisionChanges(t *testing.T) {
 	result, err := f.registry.Dispatch(t.Context(), f.call)
 	if err != nil || result.State != tools.Applied || f.runs.Load() != 1 {
 		t.Fatalf("receipt replay: %+v %v", result, err)
+	}
+}
+
+func TestDispatchReconcilesIdleTargetAfterExternalEdit(t *testing.T) {
+	f := setup(t)
+	f.register(t, false, func(context.Context, lease.Lease, tools.Input) (tools.Result, error) {
+		revision := "r2"
+		if f.runs.Add(1) == 2 {
+			revision = "r4"
+		}
+		return tools.Result{State: tools.Applied, Revision: revision}, nil
+	})
+	if _, err := f.registry.Dispatch(t.Context(), f.call); err != nil {
+		t.Fatal(err)
+	}
+	// A trusted observation sees an edit made outside Core; the renewed grant
+	// and next request both name that current revision, not Core's last receipt.
+	f.observedRevision = "r3"
+	f.grantedRevision = "r3"
+	call := f.call
+	call.Key = "after-external-edit"
+	call.Auth.Revision = "r3"
+	result, err := f.registry.Dispatch(t.Context(), call)
+	if err != nil || result.State != tools.Applied || f.runs.Load() != 2 {
+		t.Fatalf("current external revision refused: result=%+v err=%v runs=%d", result, err, f.runs.Load())
+	}
+	record, err := f.service.Effect(t.Context(), call.Key)
+	if err != nil || record.CurrentRevision != "r3" || record.PreviousAgent != "" {
+		t.Fatalf("external edit attributed to prior Core writer: %+v %v", record, err)
+	}
+}
+
+func TestStaleRequestAfterExternalEditIsRefused(t *testing.T) {
+	f := setup(t)
+	f.register(t, false, nil)
+	if _, err := f.registry.Dispatch(t.Context(), f.call); err != nil {
+		t.Fatal(err)
+	}
+	f.observedRevision = "r3"
+	f.grantedRevision = "r3"
+	call := f.call
+	call.Key = "stale-after-external-edit"
+	call.Auth.Revision = "r2"
+	if _, err := f.registry.Dispatch(t.Context(), call); !errors.Is(err, grant.ErrStaleRevision) {
+		t.Fatalf("stale external revision: %v", err)
+	}
+	if f.runs.Load() != 1 {
+		t.Fatal("stale request reached handler")
+	}
+	record, err := f.service.Effect(t.Context(), call.Key)
+	if err != nil || record.CurrentRevision != "r3" || record.PreviousAgent != "" || record.State != tools.Refused {
+		t.Fatalf("refusal: %+v %v", record, err)
+	}
+	if err := f.store.Read(t.Context(), func(tx *canon.Tx) error {
+		var revision, agent, active string
+		if err := tx.QueryRowContext(t.Context(), "SELECT revision,agent,active_key FROM authority_targets WHERE target='document'").Scan(&revision, &agent, &active); err != nil {
+			return err
+		}
+		if revision != "r3" || agent != "" || active != "" {
+			t.Fatalf("idle target: revision=%q agent=%q active=%q", revision, agent, active)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
