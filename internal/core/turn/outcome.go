@@ -23,10 +23,10 @@ const OutcomeSchema = `CREATE TABLE turn_outcome (
 type Quality struct{ Corrections, Repeats, Rework, NotAsked int }
 
 type TurnOutcome struct {
-	Meter   budget.Snapshot
-	Handle  budget.Handle
-	Effects []budget.Effect
-	Quality Quality
+	Meter    budget.Snapshot
+	Handle   budget.Handle
+	Gathered budget.Handoff
+	Quality  Quality
 }
 
 func saveOutcome(ctx context.Context, tx *canon.Tx, id string, o TurnOutcome) error {

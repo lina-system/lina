@@ -15,7 +15,7 @@ import (
 )
 
 func gathered() budget.Handoff {
-	return budget.Handoff{Turn: origin().Turn,
+	return budget.Handoff{Turn: origin().Turn, Input: "finish the whole request",
 		Items:   []provider.Item{json.RawMessage(`{"role":"user","content":"finish the whole request"}`), json.RawMessage(`{"type":"function_call_output","call_id":"read-1","output":"gathered evidence"}`)},
 		Results: []loop.Result{{ID: "read-1", Code: loop.OK, Output: json.RawMessage(`"gathered evidence"`)}},
 	}

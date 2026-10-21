@@ -90,7 +90,8 @@ func (s *Store) claim(ctx context.Context, id, conversation string, inboxID int6
 			return ErrAccepted
 		}
 		var owner string
-		if err := tx.QueryRowContext(ctx, "SELECT conversation FROM inbox WHERE id=?", inboxID).Scan(&owner); err != nil {
+		var body []byte
+		if err := tx.QueryRowContext(ctx, "SELECT conversation,body FROM inbox WHERE id=?", inboxID).Scan(&owner, &body); err != nil {
 			return err
 		}
 		if owner != conversation {
@@ -100,7 +101,7 @@ func (s *Store) claim(ctx context.Context, id, conversation string, inboxID int6
 		if err != nil {
 			return err
 		}
-		if err := saveOutcome(ctx, tx, id, TurnOutcome{Meter: (budget.Meter{}).Start(id, time.Now()).Snapshot()}); err != nil {
+		if err := saveOutcome(ctx, tx, id, TurnOutcome{Meter: (budget.Meter{}).Start(id, time.Now()).Snapshot(), Gathered: budget.Handoff{Turn: id, Input: string(body)}}); err != nil {
 			return err
 		}
 		return claimContext(ctx, tx, id, conversation, inputEvent)
@@ -296,7 +297,7 @@ func (s *Store) Run(ctx context.Context, o Options) (out loop.Outcome, err error
 		}
 	}()
 	gauge := o.Budget
-	var effects []budget.Effect
+	gathered := budget.Handoff{Turn: o.ID}
 	if o.Continuation != "" {
 		prior, e := s.Read(ctx, o.Continuation)
 		if e != nil {
@@ -312,7 +313,20 @@ func (s *Store) Run(ctx context.Context, o Options) (out loop.Outcome, err error
 		if gauge == nil {
 			gauge = (budget.Meter{}).Continue(previous.Meter)
 		}
-		effects = previous.Effects
+		gathered = previous.Gathered
+		gathered.Turn = o.ID
+	} else {
+		err = s.db.Read(ctx, func(tx *canon.Tx) error {
+			var body []byte
+			if err := tx.QueryRowContext(ctx, "SELECT body FROM inbox WHERE id=?", o.InboxID).Scan(&body); err != nil {
+				return err
+			}
+			gathered.Input = string(body)
+			return nil
+		})
+		if err != nil {
+			return out, err
+		}
 	}
 	if err = s.claim(ctx, o.ID, o.Conversation, o.InboxID, o.InputEvent); err != nil {
 		return out, err
@@ -320,7 +334,7 @@ func (s *Store) Run(ctx context.Context, o Options) (out loop.Outcome, err error
 	if gauge == nil {
 		gauge = (budget.Meter{}).Start(o.ID, o.ReceivedAt)
 	}
-	b := &turnBudget{gauge: gauge, effects: effects}
+	b := &turnBudget{gauge: gauge, effects: gathered.Effects}
 	ctx = context.WithValue(ctx, budgetContextKey{}, b)
 	var handle budget.Handle
 	defer func() {
@@ -337,7 +351,8 @@ func (s *Store) Run(ctx context.Context, o Options) (out loop.Outcome, err error
 			if e := active(save, tx, o.ID); e != nil {
 				return e
 			}
-			if e := saveOutcome(save, tx, o.ID, TurnOutcome{Meter: gauge.Snapshot(), Handle: handle, Effects: b.effects}); e != nil {
+			gathered.Effects = b.effects
+			if e := saveOutcome(save, tx, o.ID, TurnOutcome{Meter: gauge.Snapshot(), Handle: handle, Gathered: gathered}); e != nil {
 				return e
 			}
 			if state == Aborted {
@@ -378,11 +393,18 @@ func (s *Store) Run(ctx context.Context, o Options) (out loop.Outcome, err error
 	}
 	cfg.Journal = s.Journal(o.ID)
 	out, err = loop.Run(ctx, b.configure(cfg, o.Report))
+	// Only the active turn's additions belong in promotion. Prepared history,
+	// persona and memory packets remain scoped to the conversation request.
+	if len(out.Items) >= len(cfg.Request.Items) {
+		gathered.Items = append(gathered.Items, out.Items[len(cfg.Request.Items):]...)
+	}
+	gathered.Results = append(gathered.Results, out.Results...)
+	gathered.Effects = b.effects
 	if errors.Is(err, errPromote) {
 		if o.StartFromTurn == nil {
 			return out, err
 		}
-		handle, err = o.StartFromTurn(ctx, budget.Handoff{Turn: o.ID, Items: out.Items, Results: out.Results, Effects: b.effects})
+		handle, err = o.StartFromTurn(ctx, gathered)
 		if err == nil && (handle.ID == "" || handle.State != "working" && handle.State != "waiting") {
 			err = ErrInvalid
 		}

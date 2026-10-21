@@ -7,10 +7,12 @@ import (
 )
 
 // Handoff crosses the turn/run flow boundary without a same-layer import.
-// Items includes the original input, applied steering and verbatim tool outputs.
+// Input is the original durable inbox payload. Items includes applied steering
+// and this turn's output items, never unrelated history or preparation context.
 // Effects are receipts, never instructions to replay their calls.
 type Handoff struct {
 	Turn    string
+	Input   string
 	Items   []provider.Item
 	Results []loop.Result
 	Effects []Effect

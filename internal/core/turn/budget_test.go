@@ -2,6 +2,7 @@
 package turn_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -211,7 +212,7 @@ func TestHardBudgetPromotesAllGatheredStateWithoutAnotherModelRequest(t *testing
 	store := turn.New(db)
 	out, err := store.Run(t.Context(), turn.Options{ID: "turn", Conversation: "conversation", InboxID: admit(t, db), Loop: cfg, StartFromTurn: func(_ context.Context, h budget.Handoff) (budget.Handle, error) {
 		promotions++
-		if len(h.Results) != 10 || len(h.Items) != 21 || string(h.Items[0]) != string(cfg.Request.Items[0]) || len(h.Effects) != 0 {
+		if len(h.Results) != 10 || len(h.Items) != 20 || h.Input != "input" || len(h.Effects) != 0 {
 			t.Errorf("lost gathered state: %+v", h)
 		}
 		return budget.Handle{ID: "run", State: "working"}, nil
@@ -222,6 +223,28 @@ func TestHardBudgetPromotesAllGatheredStateWithoutAnotherModelRequest(t *testing
 	result, err := store.Outcome(t.Context(), "turn")
 	if err != nil || result.Handle.ID != "run" || result.Meter.Rounds != 10 {
 		t.Fatalf("outcome=%+v err=%v", result, err)
+	}
+}
+
+func TestPromotionExcludesUnrelatedPreparedContext(t *testing.T) {
+	db, _ := database(t)
+	gauge := (budget.Meter{}).Start("turn", time.Now())
+	for range 9 {
+		gauge.Round()
+	}
+	cfg, _ := budgetConfig(t, func(int) []provider.ToolCall {
+		return []provider.ToolCall{{ID: "a", Name: "read", Arguments: "{}"}}
+	})
+	cfg.Request.Items = append([]provider.Item{json.RawMessage(`{"role":"user","content":"unrelated history"}`)}, cfg.Request.Items...)
+	_, err := turn.New(db).Run(t.Context(), turn.Options{ID: "turn", Conversation: "conversation", InboxID: admit(t, db), Loop: cfg, Budget: gauge, StartFromTurn: func(_ context.Context, h budget.Handoff) (budget.Handle, error) {
+		data, _ := json.Marshal(h)
+		if bytes.Contains(data, []byte("unrelated history")) {
+			t.Error("promotion copied unrelated prepared context")
+		}
+		return budget.Handle{ID: "run", State: "working"}, nil
+	}})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

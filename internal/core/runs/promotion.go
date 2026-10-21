@@ -24,7 +24,7 @@ type EffectQuestion struct {
 // publishes that handle before Release. A repeated promotion returns the same
 // run, including after restart; changing its gathered state is refused.
 func (s *Service) StartFromTurn(ctx context.Context, o Origin, b Brief, h budget.Handoff) (budget.Handle, error) {
-	if o.Job != "" || h.Turn == "" || h.Turn != o.Turn || len(h.Items) == 0 {
+	if o.Job != "" || h.Turn == "" || h.Turn != o.Turn || h.Input == "" && len(h.Items) == 0 {
 		return budget.Handle{}, ErrInvalid
 	}
 	for _, item := range h.Items {
