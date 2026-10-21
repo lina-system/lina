@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/budget"
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
@@ -95,6 +96,10 @@ func capacity(rows []Record, o Origin) bool {
 // avoids a goroutine race between returning the receipt and the first call.
 // The caller's turn context is used only for admission, never for execution.
 func (s *Service) Start(ctx context.Context, o Origin, b Brief) (string, State, error) {
+	return s.start(ctx, o, b, nil)
+}
+
+func (s *Service) start(ctx context.Context, o Origin, b Brief, promotion *budget.Handoff) (string, State, error) {
 	o.Epoch = s.cfg.Epoch
 	if !valid(o, b) {
 		return "", "", ErrInvalid
@@ -116,12 +121,29 @@ func (s *Service) Start(ctx context.Context, o Origin, b Brief) (string, State, 
 	if err != nil {
 		return "", "", err
 	}
+	if promotion != nil {
+		for _, r := range rows {
+			if samePromotion(r, o) {
+				if !sameGathered(r, b, promotion) {
+					return "", "", ErrInvalid
+				}
+				return r.ID, r.State, nil
+			}
+		}
+	}
 	id := make([]byte, 16)
 	if _, err := rand.Read(id); err != nil {
 		return "", "", err
 	}
 	now := s.cfg.Now().UnixNano()
 	r := Record{ID: hex.EncodeToString(id), Origin: o, Brief: b, State: Waiting, Created: now, LastEvent: now}
+	r.Promotion = promotion
+	if promotion != nil {
+		r.PromotionDigest = promotionDigest(b, promotion)
+	}
+	if promotion != nil && len(promotion.Effects) > 0 {
+		r.EffectsQuestion = &EffectQuestion{RunID: r.ID, Turn: o.Turn, State: "awaiting_person", Effects: promotion.Effects}
+	}
 	r.Scratch = filepath.Join("runs", r.ID, "scratch")
 	if err := s.prepareFiles(r.ID); err != nil {
 		return "", "", err
@@ -323,11 +345,23 @@ func (s *Service) Recover(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	releasePromotions := false
 	for _, r := range rows {
 		if r.State == Landed {
 			continue
 		}
 		r.Origin.Epoch = s.cfg.Epoch
+		// Admission already published this handle atomically to its source turn.
+		// A crash before the caller consumes it must not strand unstarted work
+		// or consume the interruption retry reserved for actual execution.
+		if r.Promotion != nil && !r.Released && r.Retries == 0 && r.PendingOutcome == "" && r.State != NeedsInput {
+			r.Released = true
+			if err := s.save(ctx, r, false); err != nil {
+				return err
+			}
+			releasePromotions = true
+			continue
+		}
 		if r.PendingOutcome != "" {
 			r.State = Waiting
 			r.Released = false
@@ -355,6 +389,9 @@ func (s *Service) Recover(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+	}
+	if releasePromotions {
+		return s.schedule(ctx)
 	}
 	return nil
 }

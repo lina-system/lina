@@ -12,8 +12,8 @@ import (
 
 func TestMaskPunctuationRoundTrip(t *testing.T) {
 	cases := []struct{ name, input, want string }{
-		{"json", `{"api_key":"syntheticcredential"}`, `{"api_key":` + secret.Placeholder + `}`},
-		{"json_fields", `{"api_key":"syntheticcredential","token":"anothercredential"}`, `{"api_key":` + secret.Placeholder + `,"token":` + secret.Placeholder + `}`},
+		{"json", `{"api_key":"syntheticcredential"}`, `{"api_key":"` + secret.Placeholder + `"}`},
+		{"json_fields", `{"api_key":"syntheticcredential","token":"anothercredential"}`, `{"api_key":"` + secret.Placeholder + `","token":"` + secret.Placeholder + `"}`},
 		{"quoted_placeholder_prefix", `token="[REDACTED]syntheticcredential".`, "token=" + secret.Placeholder + "."},
 	}
 	for _, punctuation := range []string{".", ",", "}", ")", ";"} {

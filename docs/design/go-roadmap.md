@@ -124,6 +124,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 - #62 implements the agent store, immutable Git persona revisions, durable per-turn persona preparation, preset fan-out, first-run initialization and recoverable 30-day trash with immediate binding termination. Package scenarios use real canon and files; account sign-in, conversation preparation and channel transport flows have no client endpoint in this increment.
 
 **G1-31 Accounts and Sign in with ChatGPT.** Single refresh actor, sign-in relay, owner binding, V1 record.
+- #81 implements the client relay and immutable owner binding with recorded issuer wires. Live V1 remains `pending_owner_signin`; the [owner runbook](../../evidence/v1-chatgpt.md) states the command, observations and outstanding remote-client proof.
 - Done when: one refresh runs at a time per account and a rotated refresh token is stored before use; a failed refresh shows needs sign-in and uses no other account; a second ChatGPT account never changes the binding; no token appears in a log, request, sandbox or client; the V1 record states what the request surface accepted.
 - Depends on: G1-06, G1-08, G1-18. Design refs: C-47; [runtime.md](runtime.md#chatgpt).
 - #80 implements the account store, serialized refresh and idle keep-alive, durable token rotation and account states. Package tests cover persistence, concurrent calls, interruption, failed refresh, turn exclusion and secret projections. The sign-in relay, issuer exchange, owner binding, protocol/TUI exposure and V1 record remain with their owning increments.
@@ -224,6 +225,7 @@ The Korean acceptance corpus is `testdata/korean/search.json`: both stores asser
 **G1-32 Turn budget and hand-off to the background.** Meter, soft and hard budget, handles, promotion, quality counters.
 - Done when: at the soft budget every call except `start_run` and `dispatch_work` gets `budget_reached` and does not run; at the hard budget with no effect a run starts from the gathered state; with an effect, further effects wait on a question; a report turn makes no tool round trip.
 - Depends on: G1-09, G1-11, G1-33. Design refs: C-49; [runtime.md](runtime.md#turn-budget).
+- #101 implements the meter and durable turn outcomes at the turn/run package boundary. Scripted-provider tests cover soft refusals, hard promotion with gathered state, retained effect receipts, report isolation, and continuation budgets. Quality counters persist without automatic tuning.
 
 **G1-33 Background runs.** Run record, start tool, scope, limits, states, landing.
 - Done when: start returns an id before the run's first model call; tools outside the run scope are not declared; no time or call cap exists; a second interruption lands the run failed or partial; a cancelled run stays cancelled; an unresolved citation lands the run partial.

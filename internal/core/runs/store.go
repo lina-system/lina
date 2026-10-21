@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/thisisjun786/lina/internal/core/budget"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/kit/materials"
 )
@@ -63,6 +64,12 @@ func (s *Service) save(ctx context.Context, r Record, insert bool) error {
 	err = s.cfg.DB.Write(ctx, func(tx *canon.Tx) error {
 		if insert {
 			_, err := tx.ExecContext(ctx, "INSERT INTO background_runs(id,record) VALUES(?,?)", r.ID, b)
+			if err == nil && r.Promotion != nil {
+				if s.cfg.PublishPromotion == nil {
+					return ErrInvalid
+				}
+				err = s.cfg.PublishPromotion(ctx, tx, r.Origin.Conversation, budget.Handle{ID: r.ID, State: string(r.State)}, *r.Promotion)
+			}
 			return err
 		}
 		res, err := tx.ExecContext(ctx, "UPDATE background_runs SET record=? WHERE id=?", b, r.ID)
