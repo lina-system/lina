@@ -17,6 +17,8 @@ import (
 )
 
 func TestM1TUIWheelStickyConversation(t *testing.T) {
+	t.Parallel()
+
 	var lines []string
 	for i := 1; i <= 80; i++ {
 		lines = append(lines, fmt.Sprintf("SCROLL-%03d 합성 대화 행.", i))

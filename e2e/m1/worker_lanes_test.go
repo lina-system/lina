@@ -31,6 +31,8 @@ type workerLaneScenario struct {
 // including a content-checked artifact and an interrupted execution. The Core
 // process owns projection/recovery and the public socket; no fake Core is used.
 func TestM3WorkerLanesInstalledCore(t *testing.T) {
+	t.Parallel()
+
 	var scenario workerLaneScenario
 	raw, err := os.ReadFile("../m3/worker-lanes.json")
 	if err != nil {

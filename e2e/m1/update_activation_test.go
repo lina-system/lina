@@ -157,6 +157,8 @@ func TestM2UpdateActivation(t *testing.T) {
 }
 
 func TestM2UpdateDataOperations(t *testing.T) {
+	t.Parallel()
+
 	testUpdateActivation(t, "../m2/update-data-operations.json")
 }
 
