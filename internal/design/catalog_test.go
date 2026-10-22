@@ -21,8 +21,8 @@ func TestCatalogCoversClosedWireCodes(t *testing.T) {
 	if err := json.Unmarshal(data, &schema); err != nil {
 		t.Fatal(err)
 	}
-	var walk func(any)
-	walk = func(value any) {
+	var walk func(any, string)
+	walk = func(value any, prefix string) {
 		switch value := value.(type) {
 		case map[string]any:
 			if codes, ok := value["enum"].([]any); ok {
@@ -31,6 +31,7 @@ func TestCatalogCoversClosedWireCodes(t *testing.T) {
 					if !ok {
 						continue
 					}
+					id = prefix + id
 					for _, language := range []Language{English, Korean} {
 						text, found := Lookup(language, id)
 						if !found || strings.TrimSpace(text) == "" {
@@ -39,16 +40,25 @@ func TestCatalogCoversClosedWireCodes(t *testing.T) {
 					}
 				}
 			}
-			for _, child := range value {
-				walk(child)
+			for name, child := range value {
+				childPrefix := prefix
+				// Running words have different meanings from connection states
+				// and surface headings that share codes such as stopped/waiting.
+				switch name {
+				case "running_state":
+					childPrefix = "running.state."
+				case "running_reason":
+					childPrefix = "running.reason."
+				}
+				walk(child, childPrefix)
 			}
 		case []any:
 			for _, child := range value {
-				walk(child)
+				walk(child, prefix)
 			}
 		}
 	}
-	walk(schema)
+	walk(schema, "")
 }
 
 func TestCatalogSafetyAndFallback(t *testing.T) {

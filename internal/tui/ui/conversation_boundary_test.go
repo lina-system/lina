@@ -71,6 +71,9 @@ func TestConversationPreservesCodeBoundaryRows(t *testing.T) {
 		{"boundary", "```\n\ncode\n\n```", []string{"● ", "  code", "  "}},
 		{"empty-only", "```\n\n\n```", []string{"● ", "  "}},
 		{"empty-fence", "```\n```", []string{"● "}},
+		{"highlighted-boundary", "```go\n\nvar answer = 42\n\n```", []string{"● ", "  var answer = 42", "  "}},
+		{"highlighted-empty-only", "```go\n\n\n```", []string{"● ", "  "}},
+		{"highlighted-empty-fence", "```go\n```", []string{"● "}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := conversationShell()
