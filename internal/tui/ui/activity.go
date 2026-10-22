@@ -90,8 +90,24 @@ func (m *shellModel) activityText() string {
 	if !m.staticActivity() {
 		frame = m.activityFrame % uint64(len(glyphs))
 	}
-	line := fmt.Sprintf("%c %s (%s %s %s)", glyphs[frame], word, elapsed, separator, text("activity.stop"))
-	return render.Truncate(line, m.size.Width, render.Unicode{})
+	// Preserve the existing cell bound for unbounded peer-supplied tool names.
+	// Fixed catalog words fit; details retain their own complete row if needed.
+	label := render.Truncate(fmt.Sprintf("%c %s", glyphs[frame], word), m.size.Width, render.Unicode{})
+	return formatActivity(m.size.Width, label, elapsed, separator, text("activity.stop"))
+}
+
+// Measure complete segments before the planner reserves rows. The word and
+// elapsed value are never clipped to make room for optional hint prose.
+func formatActivity(width int, label, elapsed, separator, hint string) string {
+	if width < 50 {
+		hint = "Esc"
+	}
+	details := fmt.Sprintf("(%s %s %s)", elapsed, separator, hint)
+	line := label + " " + details
+	if width < 80 && (render.Unicode{}).Width(line) > width {
+		return label + "\n" + details
+	}
+	return render.Truncate(line, width, render.Unicode{})
 }
 
 // The connection owner owns this timer. There is no goroutine or timer while
