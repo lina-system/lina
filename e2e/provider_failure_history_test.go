@@ -66,18 +66,8 @@ func TestM1ProviderFailureHistory(t *testing.T) {
 			h, start := installedConversationHarness(t, server.URL)
 			core := start(true)
 			client, conversation := conversationClient(t, h)
-			socket := h.socket
-			tap := newAccountTap(t, h, socket)
-			h.socket = tap.socket
 			terminal := h.startTerminalSize([]string{"TERM=xterm-256color"}, false, true, 120, 60)
-			h.socket = socket
-			waitScreen(t, h, terminal, "Ctrl+D")
-			for {
-				frame := tap.next(t, h)
-				if snapshot, ok := frame.Payload.(protocol.Snapshot); ok && snapshot.Topic == "conversation:"+conversation {
-					break
-				}
-			}
+			waitComposerReady(t, h, terminal)
 			h.keys(terminal, input+"\r")
 			var notice, noticeKey, partialKey string
 			for {
