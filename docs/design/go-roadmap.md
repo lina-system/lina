@@ -153,7 +153,18 @@ Run the issue's package checks with `go test ./internal/core/ledger/... ./intern
 The Korean acceptance corpus is `testdata/korean/search.json`: both stores assert returned source ids for attached particles, two-syllable words, imported text and literal queries. Store tests also check index maintenance and recall scope.
 - Done when: fixtures find a particle-attached three-syllable word and a two-syllable word in ledger and memory; recall for agent A returns no id held by B; a person-subject item exists only from person events; "remembered" is said only after the commit.
 - Depends on: G1-03, G1-05, G1-10, G1-12. Design refs: C-20 to C-22; [conversation-and-memory.md](conversation-and-memory.md#memory).
-- #64 implements the memory table and revision snapshots, holder/person scope checks, native person-event provenance, committed memory tool receipts, ephemeral standing profiles and bounded `recall_person`. Acceptance uses real SQLite and ledger admission; there is no client memory endpoint yet. #65 supplies the Korean indexes and fixtures.
+- #64 implements the memory table and revision snapshots, holder/person scope checks, native person-event provenance, committed memory tool receipts, ephemeral standing profiles and bounded `recall_person`. #65 supplies the Korean indexes and fixtures. Both implementation issues are closed.
+
+The completion evidence for #63 is exercised against real SQLite and ledger admission:
+
+| Done condition | Executable evidence |
+| --- | --- |
+| Particle-attached three-syllable and two-syllable queries return the expected ledger and memory ids | `TestKoreanSearch` in [ledger/search_test.go](../../internal/core/ledger/search_test.go) and `TestKoreanIndexedRecall` in [memory/search_test.go](../../internal/core/memory/search_test.go) consume the same [Korean corpus](../../testdata/korean/search.json). Ledger coverage includes imported events and reopening canon; memory coverage also checks trigram and bigram postings. |
+| Agent A cannot recall B's personal item | `TestRecallFiltersBeforeLimitAndHidesForeignEvidence` in [memory/store_test.go](../../internal/core/memory/store_test.go) and `TestKoreanRecallKeepsScopeValidityAndHistory` in [memory/search_test.go](../../internal/core/memory/search_test.go) check holder filtering before the result limit. |
+| Native person-subject writes require person events | `TestLedgerMemoryChecksRealAdmissionProvenance` in [exec/memory_ledger_test.go](../../internal/core/exec/memory_ledger_test.go) admits every native speaker kind and rejects non-person evidence even when its text claims to be the person. |
+| A remembered receipt follows a successful commit | `TestRememberReceiptRequiresCommit` in [exec/memory_test.go](../../internal/core/exec/memory_test.go) checks uncommitted invisibility and rollback; `TestRememberToolRefusesCommitFailure` in [exec/memory_tools_test.go](../../internal/core/exec/memory_tools_test.go) forces a deferred SQLite constraint failure at COMMIT and checks that no success receipt or item survives. |
+
+The client memory endpoint is now exercised by `TestM1TUIMemoryAgentsInstalledCore` with [tui-memory-agents.json](../../e2e/m1/tui-memory-agents.json): explicit remember/list actions return a committed identity and evidence, the next turn receives the memory, and choosing another agent hides personal memory from both listing and model context. The package checks above cover the Korean queries and commit-failure boundary directly.
 
 **G1-14 Retraction, trash and the removal list.** Revocation epoch, trash, tombstones, removal list.
 - Done when: after a forget, search, summaries, the ContextPacket and answers give zero hits in the next request, also after restoring an older generation; a fault leaves no half state; a tombstone never exists without its removal-list line; a forgotten item is not extracted again.
