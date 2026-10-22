@@ -44,6 +44,10 @@ type translation struct{ en, ko string }
 // Keys are wire codes or local presentation ids, never English source text.
 // Keep both languages together so a new entry cannot omit a translation.
 var catalog = map[string]translation{
+	"github_read":            {"Read pull request", "풀 리퀘스트 읽기"},
+	"github_watch":           {"Watch CI", "CI 상태 보기"},
+	"success":                {"Succeeded", "성공"},
+	"failure":                {"Failed", "실패"},
 	"resolved":               {"Resolved", "처리됨"},
 	"already_resolved":       {"Already resolved elsewhere", "다른 곳에서 이미 처리됨"},
 	"withdrawn":              {"Withdrawn", "철회됨"},

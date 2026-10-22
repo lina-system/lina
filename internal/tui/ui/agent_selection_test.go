@@ -14,6 +14,7 @@ import (
 
 func TestInitialHistoryDiscoveryRetainsDraftUntilDestinationKnown(t *testing.T) {
 	m := conversationShell()
+	m.conversation.id = ""
 	m.content.Agents = []protocol.Agent{{AgentID: "default"}}
 	if request := m.discoveryHistory(); request == nil || request.AgentID != nil {
 		t.Fatal("initial connection did not request default history")
