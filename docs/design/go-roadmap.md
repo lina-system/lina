@@ -395,6 +395,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 
 **G2-14 Update flow with rollback.** Digest, preflight, gate cells, lifecycle record, swap, rollback.
 - Done when: each failure injection of runtime.md leaves the previous composition running or the install held with a closed cause; an old binary against a newer store leaves the store byte-identical.
+- Preparation (#149) verifies a frozen release archive, stages an exclusive version directory and runs the candidate Core's lock-free, non-mutating schema/peer preflight. Six explicit gate cells fail closed on missing evidence; idle and a verified generation are supplied by the activation owner. Headless M2 tests exercise the live Core, candidate process, digest/peer refusals and a newer schema in both database and WAL. Lifecycle swap, smoke and rollback remain #150.
 - Depends on: G1-22, G1-23, G1-24. Design refs: C-38; [runtime.md](runtime.md#updates).
 
 **G2-15 Phase 2 acceptance run.** Run script and evidence record for LINA 2.

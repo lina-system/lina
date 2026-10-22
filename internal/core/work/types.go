@@ -15,6 +15,8 @@ var (
 )
 
 type Task struct {
+	PersonID       string   `json:"person_id,omitempty"`
+	GoalID         string   `json:"goal_id,omitempty"`
 	ID             string   `json:"id"`
 	AgentID        string   `json:"agent_id"`
 	ConversationID string   `json:"conversation_id"`
@@ -75,29 +77,43 @@ type Stage struct {
 	Summary string `json:"summary"`
 	Source  string `json:"source"`
 }
+type Wait struct {
+	Round, Question string
+	Held            bool
+	Value           string
+}
+type GoalDecision struct {
+	Round    string
+	Decision QuestionDecision
+}
 type Card struct {
-	Task       Task     `json:"task"`
-	State      string   `json:"state"`
-	Run        *Run     `json:"run,omitempty"`
-	Active     bool     `json:"active"`
-	TurnStatus string   `json:"turn_status,omitempty"`
-	Receipt    *Receipt `json:"receipt,omitempty"`
-	Verdict    string   `json:"verdict,omitempty"`
-	Applied    bool     `json:"applied"`
-	Stages     []Stage  `json:"stages"`
+	Revision   uint64          `json:"revision"`
+	Waits      map[string]Wait `json:"waits,omitempty"`
+	Decisions  []GoalDecision  `json:"decisions,omitempty"`
+	Task       Task            `json:"task"`
+	State      string          `json:"state"`
+	Run        *Run            `json:"run,omitempty"`
+	Active     bool            `json:"active"`
+	TurnStatus string          `json:"turn_status,omitempty"`
+	Receipt    *Receipt        `json:"receipt,omitempty"`
+	Verdict    string          `json:"verdict,omitempty"`
+	Applied    bool            `json:"applied"`
+	Stages     []Stage         `json:"stages"`
 }
 
 // Event has one payload selected by Kind. Events are admitted by Service only;
 // clients and workers never append arbitrary events or acceptance judgments.
 type Event struct {
-	Key       string   `json:"key"`
-	TaskID    string   `json:"task_id"`
-	Kind      string   `json:"kind"`
-	Task      *Task    `json:"task,omitempty"`
-	Run       *Run     `json:"run,omitempty"`
-	Receipt   *Receipt `json:"receipt,omitempty"`
-	RunID     string   `json:"run_id,omitempty"`
-	Value     string   `json:"value,omitempty"`
-	ReceiptID string   `json:"receipt_id,omitempty"`
-	Evidence  string   `json:"evidence,omitempty"`
+	Wait      *Wait         `json:"wait,omitempty"`
+	Decision  *GoalDecision `json:"decision,omitempty"`
+	Key       string        `json:"key"`
+	TaskID    string        `json:"task_id"`
+	Kind      string        `json:"kind"`
+	Task      *Task         `json:"task,omitempty"`
+	Run       *Run          `json:"run,omitempty"`
+	Receipt   *Receipt      `json:"receipt,omitempty"`
+	RunID     string        `json:"run_id,omitempty"`
+	Value     string        `json:"value,omitempty"`
+	ReceiptID string        `json:"receipt_id,omitempty"`
+	Evidence  string        `json:"evidence,omitempty"`
 }

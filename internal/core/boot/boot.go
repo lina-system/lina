@@ -157,6 +157,13 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		return err
 	}
 	cfg.Socket = socket
+	// An older binary must refuse before creating a lock, epoch or sentinel.
+	// Custom canon services own their own compatibility check.
+	if cfg.Conversation != nil || cfg.Services.OpenCanon == nil {
+		if err := canon.CheckVersion(ctx, conversationPath(cfg.StateRoot), len(ApplicationMigrations())); err != nil {
+			return err
+		}
+	}
 	store, err := ctlfiles.Open(cfg.StateRoot)
 	if err != nil {
 		return err
@@ -245,6 +252,11 @@ func Run(ctx context.Context, cfg Config) (result error) {
 			if len(entries) != 0 {
 				return errors.New("existing canon requires a canon service")
 			}
+		}
+		// Repeat under the lock before minting, in case another Core migrated
+		// between the initial read-only check and acquiring the lock.
+		if err := canon.CheckVersion(ctx, conversationPath(cfg.StateRoot), len(ApplicationMigrations())); err != nil {
+			return err
 		}
 		highest, err = canon.PeekEpoch(ctx, conversationPath(cfg.StateRoot))
 	} else if cfg.Services.PeekEpoch != nil {

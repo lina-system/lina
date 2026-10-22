@@ -163,6 +163,92 @@ func TestConversationResultReplacesStreamWithCard(t *testing.T) {
 	}
 }
 
+func TestConversationGeneratedReplyInline(t *testing.T) {
+	for _, snapshot := range []bool{false, true} {
+		t.Run(fmt.Sprintf("snapshot=%t", snapshot), func(t *testing.T) {
+			m := conversationShell()
+			topic, key := "conversation:fixture", "reply"
+			m.Update(shellData{Generation: 1, Message: state.Snapshot{Epoch: "1", Revocation: "1", Topic: topic}})
+			full := "First sentence.\nMiddle sentence.\nLast sentence."
+			card := protocol.Result{ResultID: "result:" + key, Type: protocol.ResultTypeDocumentDraft, Status: protocol.ResultStatusPreview,
+				Title: "An arbitrary display title", Summary: "First sentence.", Text: &full,
+				Provenance: protocol.ResultProvenance{ConversationID: "fixture"}}
+			apply := func(seq string) {
+				t.Helper()
+				frame := protocol.Envelope{Epoch: "1", Kind: protocol.KindResult}
+				cursor := protocol.StreamCursor{Epoch: "1", Seq: json.Number(seq)}
+				if snapshot {
+					// Snapshot payloads need not repeat stream metadata.
+					data, err := json.Marshal(card)
+					if err != nil {
+						t.Fatal(err)
+					}
+					frame.Kind = protocol.KindSnapshot
+					frame.Payload = protocol.Snapshot{Topic: topic, Cursor: cursor, RevocationEpoch: "1", Items: []protocol.StreamItem{{Key: key, Kind: protocol.KindResult, Revision: json.Number(seq), Payload: data}}}
+				} else {
+					card.Stream = &protocol.StreamMetadata{Topic: topic, Key: key, Cursor: cursor, Revision: json.Number(seq)}
+					frame.Payload = card
+				}
+				projected, err := projectStream(frame)
+				if err != nil {
+					t.Fatal(err)
+				}
+				m.Update(shellData{Generation: 1, Message: projected.message})
+			}
+			apply("1")
+			view := m.View().Content
+			for _, line := range strings.Split(full, "\n") {
+				if strings.Count(view, line) != 1 {
+					t.Fatalf("reply must appear once inline: %s", view)
+				}
+			}
+			if len(m.content.Blocks) != 1 || strings.Index(view, "Ctrl+O") < strings.Index(view, "Last sentence.") {
+				t.Fatalf("pager affordance must follow the reply: %s", view)
+			}
+			full += "\nUpdated body with unchanged summary."
+			apply("2")
+			if !strings.Contains(m.View().Content, "Updated body with unchanged summary.") {
+				t.Fatal("reply body update did not invalidate the rendered block")
+			}
+			m.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+			if m.conversation.pager.text != full {
+				t.Fatal("pager lost the full reply")
+			}
+		})
+	}
+}
+
+func TestConversationStructuredResultsStayCards(t *testing.T) {
+	for _, kind := range []protocol.ResultType{protocol.ResultTypeDocumentDraft, protocol.ResultTypeTable, protocol.ResultTypeComparison, protocol.ResultTypePlanView} {
+		t.Run(string(kind), func(t *testing.T) {
+			m := conversationShell()
+			topic := "conversation:fixture"
+			m.Update(shellData{Generation: 1, Message: state.Snapshot{Epoch: "1", Revocation: "1", Topic: topic}})
+			body := "Structured detail stays in the pager."
+			card := protocol.Result{ResultID: "explicit-result", Type: kind, Status: protocol.ResultStatusPreview,
+				Title: "Full reply", Summary: "Structured summary.", Text: &body,
+				Provenance: protocol.ResultProvenance{ConversationID: "fixture"},
+				Stream:     &protocol.StreamMetadata{Topic: topic, Key: "reply", Cursor: protocol.StreamCursor{Epoch: "1", Seq: "1"}, Revision: "1"}}
+			if kind != protocol.ResultTypeDocumentDraft {
+				card.ResultID = "result:reply"
+			}
+			projected, err := projectStream(protocol.Envelope{Epoch: "1", Kind: protocol.KindResult, Payload: card})
+			if err != nil {
+				t.Fatal(err)
+			}
+			m.Update(shellData{Generation: 1, Message: projected.message})
+			view := m.View().Content
+			if !strings.Contains(view, card.Summary) || strings.Contains(view, body) {
+				t.Fatalf("structured result expanded inline: %s", view)
+			}
+			m.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+			if m.conversation.pager.text != body {
+				t.Fatal("structured detail unavailable")
+			}
+		})
+	}
+}
+
 func TestConversationOpenCardReceivesRemainingReply(t *testing.T) {
 	m := conversationShell()
 	topic := "conversation:fixture"
