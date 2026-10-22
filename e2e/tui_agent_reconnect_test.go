@@ -14,6 +14,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/design"
+	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -68,12 +69,15 @@ func TestM1TUIAgentReconnectInstalledCore(t *testing.T) {
 	terminal := h.startTerminalSize([]string{"TERM=xterm-256color", "LC_ALL=C"}, false, true, 120, 35)
 	waitScreen(t, h, terminal, "Ctrl+D")
 	h.keys(terminal, "/agents choose "+agent+"\r")
-	// The typed command already contains the id. Wait for the completed choice
-	// before closing its result, otherwise a late reply can reopen the pager.
-	waitScreen(t, h, terminal, design.Text(design.English, "choose"))
-	waitScreen(t, h, terminal, agent)
+	// The id also appears in the draft before the choose response. The agent
+	// name is displayed only after that response has updated the selection.
+	waitScreen(t, h, terminal, scenario.Agent)
 	h.keys(terminal, "\x1b")
-	waitScreen(t, h, terminal, "Ctrl+D")
+	if _, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
+		return !strings.Contains(screenText(s), "/agents choose <id>")
+	}); err != nil {
+		t.Fatal("agent selection pager did not close", err)
+	}
 	assertRequest := func(input string) {
 		t.Helper()
 		select {

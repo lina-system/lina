@@ -166,18 +166,13 @@ func screenText(snapshot tuiterm.Snapshot) string {
 func waitScreen(t *testing.T, h *harness, terminal *terminal, text string) tuiterm.Snapshot {
 	t.Helper()
 	snapshot, err := terminal.screen.Wait(h.ctx, func(snapshot tuiterm.Snapshot) bool {
-		view := screenText(snapshot)
-		if text == "Ctrl+D" {
-			// The composer shortcut is visible while connecting, but Enter is
-			// admitted only when live. Readiness must observe both in one row.
-			for _, row := range strings.Split(view, "\n") {
-				if strings.Contains(row, text) && strings.Contains(row, design.Text(design.English, "live")) {
-					return true
-				}
-			}
+		content := screenText(snapshot)
+		// Callers use the composer hints as an input-readiness barrier. Those
+		// hints also render while initial history is still being discovered.
+		if text == "Ctrl+D" && !strings.Contains(content, design.Text(design.English, "live")+"  ") {
 			return false
 		}
-		return strings.Contains(view, text)
+		return strings.Contains(content, text)
 	})
 	if err != nil {
 		select {
@@ -254,6 +249,33 @@ func installConversationBundle(t *testing.T, h *harness, bundle, providerURL str
 		}
 		core.start(t)
 		h.connect(core).Close()
+		// A bound socket accepts reads while Core is still reconciling/probing.
+		// Wait for mutation admission via an empty, always-refused input; no
+		// conversation event or model request can result from this probe.
+		ready, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "test", []protocol.Capability{{Name: "conversation", Version: "1.0"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ready.Close()
+		for {
+			if _, err := ready.Input(h.ctx, protocol.Input{}); err != nil {
+				t.Fatal(err)
+			}
+			frame, err := ready.Receive(h.ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if frame.Error == nil {
+				t.Fatal("empty input accepted")
+			}
+			if frame.Error.Code == protocol.ErrorUnavailable {
+				continue
+			}
+			if frame.Error.Code != protocol.ErrorMalformed && frame.Error.Code != protocol.ErrorCapabilityNotNegotiated {
+				t.Fatalf("unexpected readiness code: %s", frame.Error.Code)
+			}
+			break
+		}
 		return core
 	}
 

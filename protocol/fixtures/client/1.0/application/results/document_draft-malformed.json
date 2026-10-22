@@ -1,0 +1,76 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "service": "results",
+  "setup": {
+    "person_id": "person",
+    "agent_id": "agent",
+    "conversation_id": "conversation",
+    "turn_id": "turn",
+    "task_id": null
+  },
+  "input": {
+    "type": "document_draft",
+    "title": "Fixture result",
+    "summary": "Synthetic result body.",
+    "body": {
+      "blocks": [
+        {
+          "kind": "heading",
+          "text": "Heading",
+          "level": 1
+        },
+        {
+          "kind": "paragraph",
+          "text": "Paragraph"
+        },
+        {
+          "kind": "list",
+          "items": [
+            "One",
+            "Two"
+          ]
+        },
+        {
+          "kind": "code",
+          "text": "print(1)",
+          "language": "python"
+        },
+        {
+          "kind": "quote",
+          "text": "Quotation"
+        },
+        {
+          "kind": "image",
+          "asset": {
+            "asset_id": "image",
+            "revision": 1
+          },
+          "text": "Alt"
+        },
+        {
+          "kind": "citation",
+          "anchor": {
+            "event_id": "event",
+            "start": 0,
+            "end": 2
+          },
+          "text": "Evidence"
+        }
+      ],
+      "from_summary": {
+        "result_id": "outline",
+        "revision": 1
+      },
+      "html": "<script>untrusted data</script>"
+    }
+  },
+  "output": {
+    "error": "malformed",
+    "result": null
+  },
+  "outcome": {
+    "events": 0,
+    "heads": 0,
+    "saves": 0
+  }
+}

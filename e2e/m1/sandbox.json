@@ -3,7 +3,6 @@
     {"name": "missing launcher", "cause": "launcher_missing", "os": "linux"},
     {"name": "failed probe", "cause": "probe_failed", "launcher_exit": 73, "os": "linux"}
   ],
-  "diagnostic_code": "shell_file_tools_unsupported",
   "input": "SANDBOX-UNAVAILABLE-INPUT",
   "reply": "SANDBOX-UNAVAILABLE-REPLY"
 }
