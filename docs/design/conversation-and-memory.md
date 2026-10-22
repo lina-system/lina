@@ -227,7 +227,7 @@ The ledger can be exported as episodes: recorded turns written out for use outsi
   includes its start and excludes its end. With no selection flags, the export
   contains zero episodes. A partial selection is invalid.
 
-- The export reads the ledger and nothing else. It writes no ledger event and no memory item, makes no model call and changes no state of LINA. Its files go to `staging/export/` ([filesystem.md](filesystem.md#import-and-export)) with a manifest of the counts, the left-out reasons and the revocation epoch at export time. An exported file leaves LINA's management: a later deletion in LINA does not reach it, and LINA says so when it exports.
+- The export reads the ledger and the exact source revisions named by its assembly evidence. It writes no ledger event and no memory item, makes no model call and changes no state of LINA. Its files go to `staging/export/` ([filesystem.md](filesystem.md#import-and-export)) with a manifest of the counts, the left-out reasons and the revocation epoch at export time. An exported file leaves LINA's management: a later deletion in LINA does not reach it, and LINA says so when it exports.
 
 The first export format is version 1: `episodes.jsonl` contains one JSON object
 per turn, and `manifest.json` records `selected`, `exported`, `left_out`,
@@ -242,6 +242,25 @@ exported copy. Native ledger masking and the existing JSON-aware secret scanner
 cover input, persona and recorded tool/provider output. Missing source evidence,
 incomplete/non-person turns, restricted content and unrecorded effect results
 are counted by reason; storage failures fail the operation.
+
+New persona turns record `persona-v1` assembly evidence: the preparation clock,
+ordered history, profile references and typed packet source locators. Replay and
+export rebuild the exact selected items, catalog and fixed instruction format,
+then require the original request digest before accepting an episode. Skills
+are read by their recorded commit, never from the current catalog head.
+
+Only the persona-owned revision, expression, emotion and settings projections
+may retain their masked text as ledger material. Each projection's `Revision`
+is the SHA-256 of those exact bytes; its source locator names that immutable
+material revision. This preserves clock-dependent emotion and earlier mutable
+agent state without introducing a general ContextPacket store. Relationship
+memory and every personal Memory/Profile/PersonBrief projection must instead
+be re-read from its original ID and revision, under current scope and removal
+rules. Missing, forgotten or retracted memory excludes the whole dependent
+turn as `forgotten`; a changed revision or scope excludes it as `source_changed`.
+The manifest counts these reasons. Unknown source formats, old producers with
+insufficient assembly evidence, and digest mismatches remain `missing_assembly`;
+reconstruction never substitutes current content or drops a missing item.
 
 ## Turns
 
@@ -474,6 +493,8 @@ Core publishes the configured private Lina source before initialization, as defi
 - A methodology changes with the preset: a preset update gives the next revision of the core and default voice layers, and the record sets an agent has created stay as they are.
 - A preset's default voice layer includes one line for how its agent writes to other agents (see Agent exchanges).
 
+The conversation writer fills only keys copied from the preset when that agent was created, with a value and a reference to the confirmed native person event in that conversation. It refuses undeclared keys, missing evidence, conflicting replacements and stale state snapshots. Repeating the same fill preserves the first evidence reference. Values and their sources survive preset updates and restart, independently of other agents and of the four fixed persona layers. Atropos supplies the definitions and values as a per-turn data item, with evidence references, outside the cached persona prefix. Filling does not produce an unsolicited conversation notice.
+
 ### Preset methodologies
 
 A methodology is the judgment an agent applies to one kind of work. It comes from observed assistant practice, generalized. Four presets carry one: the LINA preset (to-do management), the dev preset (development management), the knowledge preset (knowledge and people management) and the life preset (life management). The life preset manages the person's own life and is unrelated to LIFE, the world engine of [cognition-and-life.md](cognition-and-life.md#life).
@@ -585,6 +606,10 @@ A persona preparation acknowledgement durably binds a turn id, agent id, revisio
 - How an agent talks, when the person sets it directly, goes into that agent's user voice layer through the persona-change skill. A preference that shows in conversation is a Preference memory item and reaches the request as a standing preference in item 6.2 (see Request layout). Each preference is held in only one of the two. Reply length is the one exception: it is held only in the reply budgets (see Reply shape).
 - An agent's disposition changes only through the growth adoption procedure in [cognition-and-life.md](cognition-and-life.md).
 
+The conversational persona-change path binds its agent, person, conversation and expected revision from the prepared turn. A change or undo must quote the current native input from that person; a tool result, forwarded message, replay, missing source or another participant's words cannot authorize it. The tool may change only user voice. The same prepared turn, including tool follow-ups, retains its original persona; the next preparation selects the committed revision. A repeated identical voice does not create another revision or notice.
+
+After the persona write and its effect receipt commit, Core admits one system-originated notice to the conversation, independently of the provider's follow-up wording. The change receipt includes a revision handle for one-action undo, including an undo requested in conversation. Undo requires that handle still to be current and that it represents a voice-only change, then appends a revision restoring the previous voice. It never rewrites history or undoes a preset or growth change. The built-in persona-change procedure and the current revision enter the ContextPacket; the four fixed persona layers still have one injection path.
+
 ### Emotion
 
 Each agent has its own emotion, in three layers:
@@ -601,6 +626,25 @@ Each agent has its own emotion, in three layers:
 - The person can turn emotional expression off. When it is off, or when the situation is sensitive, an expression suppressor also blocks any remaining emotion.
 - An agent's emotional state, its observations of the person's emotion and the state of its relationship with the person are separate records. The latter two are memory items in that agent's personal knowledge (see "Knowledge layers"). Emotion never raises intimacy.
 
+Implementation decisions for #369: the initial numeric record uses valence and arousal in [-1, 1], with a neutral disposition baseline. A confirmed event contributes 0.25 to mood; mood decays exponentially with a 72-hour half-life, and conversation-local short emotion expires after 30 minutes. Preparation projects all three layers at one clock instant into the mandatory ContextPacket, outside the cached prefix. Follow-ups keep that prepared snapshot. These initial parameters are exercised with deterministic clock fixtures; they are not a claim of measured real-model emotional quality.
+
+The four persona-owned packet projections are pinned at preparation as described
+under [Episode export](#episode-export). Their content revisions identify the
+exact projected text, separately from the mutable state revisions used for write
+authorization. Later decay, settings edits, expression changes or persona edits
+cannot replace a recorded turn's projection. Relationship memory remains a
+memory-store reference and is never copied into persona replay materials.
+
+The Core writer binds evidence to the current native owner input and journals each event once. Generic state replacement cannot modify emotion or its expression preference. Turning expression off retains the record and supplies only suppressed, zeroed expressive values. Admission sensitivity tags and a conservative English/Korean grief, health and crisis detector suppress immediately; a confirmed event can additionally mark its short-lived context as sensitive. The phrase detector is baseline coverage, not universal semantic classification. Expired short emotion cannot keep a later unrelated turn suppressed.
+
+Disposition adoption requires a Core-held measurement proof for the same agent, expected revision, baseline and named evaluation set, with an independent higher-is-better metric that improves. Adoption atomically appends the growth snapshot revision and disposition history. Undo appends a restoring revision and prevents the exact undone candidate from being adopted again. No automatic growth mechanism is enabled by this implementation; model JSON cannot construct an adoption proof.
+
+Expression shaping uses a bounded presentation record alongside the emotion snapshot. Initial weights are 0.65 short emotion, 0.25 mood and 0.10 disposition; valence selects plain, warm or reserved wording beyond +/-0.15. Low arousal reduces the soft length target to two thirds of the existing budget; positive valence and arousal allow at most one emoji. Suppression selects plain wording and zero emoji. These are generation hints, not edits to factual text, authority, the person's budget or the full-answer ledger. The existing streaming filter enforces the surface ceiling. A provider-stub regression sends the same question under two prepared states, checks identical factual payloads with different wording/length/emoji, and verifies that tools and fixed instructions are unchanged. Real-model adherence remains a separate evaluation.
+
+The first relationship writer stores an extractive observation of the person's current native statement about a shared event, relationship or boundary. It accepts only the exact quoted evidence, not a model-supplied intimacy score or invented summary. The `(agent, person)` pair is the observer and subject; the item is personal `Relationship` knowledge, separate from persona emotion. Updates append a superseding memory item and a revision closing the previous view's validity interval at the replacement event time, in the same transaction that selects the previous view; identical observations reuse the current item. Atropos optionally reads the current visible view through the normal memory validity, removal and external-model scope filters, before ranking or limiting, and supplies it as untrusted evidence. Missing or retracted views remain absent, and a superseded view does not become current again after removal of its replacement.
+
+This ports the observer/observed separation seen in Honcho peer cards and directional representations (source inspected at `b94a416c56f16ee4c840541c19e50bc668124e5e`). Independent observer cards and witnessed-session restrictions were seen in the implementation and tests; the local fit is the existing personal memory holder/evidence model. No Honcho dependency or implementation code is included. Live Honcho behavior and a validated intimacy scale are unknown and are not claimed by the deterministic integration tests.
+
 ## Skills
 
 - The skill catalog holds product documentation skills, usage skills for each engine (conversation, work, memory, materials and persona), and the persona-change skill.
@@ -609,6 +653,8 @@ Each agent has its own emotion, in three layers:
 - Built-in skills live in `skills/` of the LINA repository and ship inside the LINA Core executable. Skills that the person or an agent creates live in the version space ([filesystem.md](filesystem.md)).
 - LINA Core owns the catalog. Atropos loads the skill bodies a turn needs into that turn's ContextPacket (see Request layout).
 - When a turn needs a skill whose body is not in its ContextPacket, the model reads the body with LINA's skill reading tool ([runtime.md](runtime.md)), and the body enters the history as that tool's output.
+- Installed conversation turns offer `skill_index`, `read_skill`, `write_skill` and `undo_skill` through Core's registered executors. `skill_index` supplies the common metadata catalog and immutable handles; a subsequent turn can read a newly adopted procedure with `read_skill`. This wiring does not change the persona-change preload or add a new automatic body-selection policy.
+- These tools use the authenticated turn's person, agent, main and epoch. Core grants only the registered operation and its schema-normalized catalog or skill target; model arguments and skill instructions cannot supply identity or widen permissions. Writes and undo check the current skill revision through the normal authority gate and effect ledger, and the store still classifies the complete bundle before adoption. An executable-change proposal grants no authority to execute or install it.
 - The meta-skill is a built-in skill. It defines how a skill is written: format, description, scope, verification and versioning. Every new skill follows it.
 - Skills and instructions that an installed plugin brings join the catalog while the plugin is on. They come only from the manifest or plugin folder the person saw at install; a skill that a server serves at run time is not loaded ([integrations.md](integrations.md)).
 - Skills grow from use. After a non-trivial task, a correction or a procedure it has repeated, the agent records the procedure, its pitfalls and the person's preferences for that kind of work in a skill. It patches the skill it used and adds a new skill only when none fits, never a near-duplicate. LINA Core writes the skill on the agent's request, and a new or patched skill applies from the agent's next turn.
@@ -617,6 +663,7 @@ Each agent has its own emotion, in three layers:
 - The automatic write checks the complete existing and resulting skill, including unchanged helper files. Its initial format accepts non-executable UTF-8 Markdown and plain or quoted one-line `name` and `description` front-matter values; unsupported metadata follows the explicit-acceptance path. A stale version is refused, and a failed commit produces no learning notice.
 - Undo names the version being undone and requires it still to be current. It restores the previous text as a new version; undoing creation removes the skill from the active index while retaining its history. The undone bundle hash is remembered durably and cannot be automatically written again, including through another undo.
 - The index contains names, descriptions and immutable version handles, without bodies. A preparation retains its catalog snapshot; reading an adopted body by that handle returns the same text even if another turn has since changed the skill. Built-in handles identify their compiled catalog generation and are refused after that generation changes; a new preparation selects the current built-in instructions. A skill name matches its folder ID, so each name selects one procedure. The Core tools return the learning notice only with their committed receipt, for the consuming conversation flow to present.
+- Installed Core presents the committed write or undo notice as one system conversation item, independently of the model's follow-up reply, and restores it in conversation history after restart. The receipt's undo handle can be passed to `undo_skill` in one operation. Refused or failed writes produce no learning notice.
 - A procedure, including the person's preferences for how one kind of work is done, belongs in a skill, and a durable fact about the person belongs in memory, never the reverse. A correction is applied to every copy (see Learning the person). A background job of the main prunes and merges stale skills, each change a new version that can be undone.
 
 ## Memory

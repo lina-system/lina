@@ -21,7 +21,7 @@ import (
 )
 
 func (r *conversationRuntime) replaySource() replay.Source {
-	return replay.Source{Instructions: assemble.Instructions, Digest: assemble.Digest, DB: r.db, Materials: r.materials, Persona: r.agents.Prepared, Project: func(events []ledger.Event, conversation, agent string) ([]provider.Item, error) {
+	return replay.Source{Instructions: replayInstructions, Rebuild: rebuildPersonaItems, Skill: r.replaySkill, Digest: assemble.Digest, DB: r.db, Materials: r.materials, Persona: r.agents.Prepared, Project: func(events []ledger.Event, conversation, agent string) ([]provider.Item, error) {
 		return assemble.History(events, conversation, agent)
 	}}
 }
@@ -136,7 +136,7 @@ func (r *conversationRuntime) Replay(ctx context.Context, s clientsrv.Session, p
 	if p.Effort != nil {
 		effort = *p.Effort
 	}
-	request, err := replay.Request(ep, candidates, model, effort, assemble.Instructions)
+	request, err := replay.Request(ep, candidates, model, effort, replayInstructions)
 	if err != nil {
 		return protocol.ReplayResult{}, replayFailure(err)
 	}
@@ -161,7 +161,7 @@ func (r *conversationRuntime) Replay(ctx context.Context, s clientsrv.Session, p
 	}
 	usage := []provider.Meta{}
 	out, err := replay.Sandboxed(ctx, replay.SandboxConfig{Reads: reads, Executable: executable, Denied: denied, Environment: []string{"PATH=" + os.Getenv("PATH")}, Stream: func(ctx context.Context, request provider.Request) (provider.Stream, error) {
-		if err := source.Validate(ctx, ep.RevocationEpoch); err != nil {
+		if err := source.ValidateEpisode(ctx, ep); err != nil {
 			return nil, err
 		}
 		request.Credential = r.route.Request(nil).Credential
@@ -174,7 +174,7 @@ func (r *conversationRuntime) Replay(ctx context.Context, s clientsrv.Session, p
 	if err != nil {
 		return excluded(err)
 	}
-	if err = source.Validate(ctx, ep.RevocationEpoch); err != nil {
+	if err = source.ValidateEpisode(ctx, ep); err != nil {
 		return excluded(err)
 	}
 	// Usage has its own run kind and account; it never becomes a conversation or

@@ -33,6 +33,16 @@ func (r *conversationRuntime) modelContext(ctx context.Context, through string) 
 			visible = append(visible, event)
 		}
 	}
+	// A queued input may precede the prior turn's later reply in the ledger.
+	// Put that exact event in the assembler's current-input position, preserving
+	// every other visible event and the ordering recorded for replay evidence.
+	for i, event := range visible {
+		if event.ID == through {
+			copy(visible[i:], visible[i+1:])
+			visible[len(visible)-1] = event
+			break
+		}
+	}
 	history, err := assemble.History(visible, r.conversation, r.agent)
 	if err != nil {
 		return nil, nil, 0, nil, err

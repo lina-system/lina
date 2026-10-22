@@ -1,0 +1,10 @@
+{
+  "id": "qa-garden",
+  "description": "Use for the synthetic watering procedure.",
+  "body": "Always list watering steps in order.",
+  "tools": ["skill_index", "read_skill", "write_skill", "undo_skill"],
+  "adopt": "Remember a watering procedure as an instruction-only skill.",
+  "read": "Read the watering procedure and try adding an executable helper.",
+  "undo": "Undo the watering procedure.",
+  "check": "Check that the procedure is gone and cannot be adopted again unchanged."
+}

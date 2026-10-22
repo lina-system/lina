@@ -89,6 +89,11 @@ func (s Source) StageExport(ctx context.Context, root string, scope Scope, q Sel
 			return "", manifest, err
 		}
 	}
+	for _, ep := range episodes {
+		if err = s.ValidateEpisode(ctx, ep); err != nil {
+			return "", manifest, err
+		}
+	}
 	if err = s.Validate(ctx, manifest.RevocationEpoch); err != nil {
 		return "", manifest, err
 	}
