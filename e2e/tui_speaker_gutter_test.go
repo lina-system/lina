@@ -4,6 +4,8 @@ package e2e_test
 
 import (
 	"encoding/json"
+	"github.com/thisisjun786/lina/internal/design"
+	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"net/http"
 	"net/http/httptest"
@@ -72,7 +74,19 @@ func speakerGutterInstalledCore(t *testing.T, ascii, plain bool) {
 	h.socket = tap.socket
 	terminal := h.startTerminalSize(environment, false, true, scenario.Width, scenario.Height)
 	h.socket = socket
-	waitScreen(t, h, terminal, "Ctrl+D")
+	if plain {
+		// The shared color-composer barrier now requires alternate screen.
+		// Plain output must remain on the normal screen, with the same live
+		// status and composer hints; history discovery is checked below too.
+		if _, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
+			text := screenText(s)
+			return !s.AltScreen && strings.Contains(text, "Ctrl+D") && strings.Contains(text, design.Text(design.English, "live")+"  ")
+		}); err != nil {
+			t.Fatal("plain composer not ready", err)
+		}
+	} else {
+		waitScreen(t, h, terminal, "Ctrl+D")
+	}
 	// The composer is visible before its conversation destination is known.
 	// The subscription proves History was consumed; do not race initial discovery.
 	for {
