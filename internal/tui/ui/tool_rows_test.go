@@ -144,3 +144,34 @@ func TestToolRowsGapTurnIdentityAndPagerInvalidation(t *testing.T) {
 		t.Fatal("call id reused in next turn was suppressed")
 	}
 }
+
+func TestToolRowsOnWhitespaceOnlyBlock(t *testing.T) {
+	for _, ascii := range []bool{false, true} {
+		t.Run(fmt.Sprintf("ascii=%v", ascii), func(t *testing.T) {
+			m := toolShell(t)
+			m.styles = NewStyles(Options{Language: design.English, ASCII: ascii})
+			applyToolProjection(t, m, toolTurn(t, 1, "streaming", ""))
+			m.Update(shellData{Generation: 1, Message: state.Delta{Epoch: "1", Topic: toolTopic, Cursor: 2, Revision: 1, ID: "blank", Text: " \t\n  "}})
+			applyToolProjection(t, m, rowEvent(t, 3, "one", "Fixture tool", "started", "", "", ""))
+			if len(m.content.ToolCalls) != 1 || m.content.ToolCalls[0].Anchor != "blank" {
+				t.Fatal("missing accepted tool call at the whitespace anchor")
+			}
+			assertRow := func(status string) {
+				t.Helper()
+				want := design.Text(design.English, "tool."+status) + "  Fixture tool"
+				if view := m.View().Content; strings.Count(view, want) != 1 {
+					t.Errorf("expected one %s row on whitespace block: %q", status, view)
+				}
+			}
+			assertRow("running")
+			applyToolProjection(t, m, rowEvent(t, 4, "one", "Fixture tool", "finished", "failed", "", "fixture summary"))
+			assertRow("failed")
+			m.Update(shellData{Generation: 1, Message: state.ItemDone{Epoch: "1", Topic: toolTopic, Cursor: 5, Block: state.Block{ID: "later", Revision: 1, Kind: protocol.KindItemDone, Speaker: protocol.ConversationSpeakerAgent, Text: "Later answer"}}})
+			assertRow("failed")
+			view := m.View().Content
+			if !strings.Contains(view, "fixture summary") || strings.Index(view, "Fixture tool") > strings.Index(view, "Later answer") {
+				t.Errorf("tool summary missing or anchor moved past later reply: %q", view)
+			}
+		})
+	}
+}

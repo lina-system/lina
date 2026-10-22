@@ -442,6 +442,7 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 			}
 		}
 		appendThrough(len(order) - 1)
+		previous := s.Blocks
 		s.Blocks = kept
 		for id := range s.Worked {
 			if s.find(id) < 0 {
@@ -453,9 +454,7 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 			b := incoming[id]
 			if b.Kind == protocol.KindTurnState && b.TurnKnown {
 				turnKnown = true
-				// A snapshot can restore activity, but cannot create a completion notice.
-				b.TurnAt = time.Time{}
-				s.activityBlock(b)
+				s.snapshotActivity(b, previous)
 			}
 		}
 		if strings.HasPrefix(m.Topic, "conversation:") && !turnKnown {
