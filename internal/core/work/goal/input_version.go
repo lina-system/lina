@@ -122,7 +122,7 @@ func (e *Engine) reconcileRetired(v *View) error {
 		if a.State == "queued" && (changedInputs(g, a) || a.ObserveActionID == "" && !currentActionTarget(g, a)) {
 			a.State, a.Superseded = "finished", true
 		}
-		if !a.Superseded || a.RetirementReconciled {
+		if a.State != "finished" || !a.Superseded || a.RetirementReconciled {
 			continue
 		}
 		t := goalTask(&g, a.TaskID)
