@@ -172,6 +172,14 @@ func appendEvent(ctx context.Context, tx *canon.Tx, e Event) error {
 	if err = advance(&c, e); err != nil {
 		return err
 	}
+	if e.Kind == "created" && c.Task.ExternalControl {
+		// An existing untracked worker has no task gate to recheck. Refuse
+		// adoption in the same transaction as its directory reservation;
+		// otherwise that worker could keep steering externally owned work.
+		if err = workerInDirectory(ctx, tx, c.Task); err != nil {
+			return err
+		}
+	}
 	b, err := json.Marshal(e)
 	if err != nil {
 		return err

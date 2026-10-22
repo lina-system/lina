@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -78,13 +79,31 @@ func TestM3OperationalSwitch(t *testing.T) {
 		f(work.New(db))
 	}
 	dir := filepath.Join(h.root, "work", "tasks", scenario.TaskID)
-	if err = os.MkdirAll(dir, 0700); err != nil {
-		t.Fatal(err)
+	source := t.TempDir()
+	git := func(directory string, args ...string) string {
+		t.Helper()
+		cmd := exec.CommandContext(h.ctx, "git", args...)
+		cmd.Dir = directory
+		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + source, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_AUTHOR_NAME=Fixture", "GIT_AUTHOR_EMAIL=fixture@example.invalid", "GIT_COMMITTER_NAME=Fixture", "GIT_COMMITTER_EMAIL=fixture@example.invalid"}
+		output, e := cmd.CombinedOutput()
+		if e != nil {
+			t.Fatalf("git %v: %v\n%s", args, e, output)
+		}
+		return strings.TrimSpace(string(output))
 	}
-	original := filepath.Join(dir, "original.txt")
+	git(source, "init", "-b", "main")
+	original := filepath.Join(source, "original.txt")
 	if err = os.WriteFile(original, []byte("retained source"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	git(source, "add", "original.txt")
+	git(source, "commit", "-m", "Retain original work")
+	branch := "task/" + scenario.TaskID
+	git(source, "worktree", "add", "-b", branch, dir)
+	originalHead := git(source, "rev-parse", "HEAD")
+	originalWorktrees := git(source, "worktree", "list", "--porcelain")
+	failedTask := scenario.TaskID + "-failed"
+	failedDir := t.TempDir()
 	run := work.Run{ID: "execution", TaskID: scenario.TaskID, Generation: 1, Worker: "fixture", ThreadID: "thread", TurnID: "turn", NodeID: "local"}
 	withWork(func(s *work.Service) {
 		if e := s.Create(h.ctx, work.Task{ID: scenario.TaskID, PersonID: person, AgentID: "agent", ConversationID: "conversation", Title: scenario.Title, Done: scenario.Done, ArtifactRoots: []string{dir}, ExternalControl: true}); e != nil {
@@ -92,6 +111,9 @@ func TestM3OperationalSwitch(t *testing.T) {
 		}
 		if e := s.Start(h.ctx, run); !errors.Is(e, work.ErrControlHeld) {
 			t.Fatalf("unapproved source task ran: %v", e)
+		}
+		if e := s.Create(h.ctx, work.Task{ID: failedTask, PersonID: person, AgentID: "agent", ConversationID: "conversation", Title: scenario.Title, Done: scenario.Done, ArtifactRoots: []string{failedDir}, ExternalControl: true}); e != nil {
+			t.Fatal(e)
 		}
 	})
 	var providerCalls atomic.Int32
@@ -119,7 +141,7 @@ func TestM3OperationalSwitch(t *testing.T) {
 				return
 			}
 			expected := "ok"
-			if n == 2 {
+			if n == 2 || n == 5 {
 				expected = "failed"
 			}
 			if result.Code != expected {
@@ -127,10 +149,10 @@ func TestM3OperationalSwitch(t *testing.T) {
 				emitResponse(w, "failed", true)
 				return
 			}
-			if n >= 4 {
+			if n >= 4 && n != 5 {
 				control = map[string]any{"session": result.Output["session"], "turn": result.Output["turn"], "generation": result.Output["generation"], "binding": result.Output["binding"]}
 			}
-			if n == 8 && result.Output["output"] != "LINA_WORKER_RESULT" {
+			if n == 9 && result.Output["output"] != "LINA_WORKER_RESULT" {
 				t.Error("missing actual worker result", result.Output)
 			}
 		}
@@ -139,15 +161,19 @@ func TestM3OperationalSwitch(t *testing.T) {
 		}
 		switch n {
 		case 1, 3:
-			emit("worker_start", map[string]any{"workdir": dir, "task_packet": "hold for input"})
+			emit("worker_start", map[string]any{"workdir": dir, "task_packet": "switch refusal and terminal connection failure"})
 		case 2:
 			emitResponse(w, "external owner retained", true)
 		case 4:
+			control["text"] = "continue while waiting"
+			emit("worker_input", control)
+		case 5:
+			delete(control, "text")
 			control["quote"] = "Stop this worker"
 			emit("worker_interrupt", control)
-		case 5, 7:
+		case 6, 8:
 			emit("worker_snapshot", map[string]any{"session": control["session"]})
-		case 6:
+		case 7:
 			control["text"] = "produce result"
 			emit("worker_input", control)
 		default:
@@ -205,6 +231,7 @@ func TestM3OperationalSwitch(t *testing.T) {
 	}
 	manifest := takeover.Manifest{SwitchID: scenario.SwitchID, Tasks: []string{scenario.TaskID}, Snapshot: strings.Repeat("b", 64), Coverage: "fixture parent and flow inventory quiesced", Executable: "/fixture/relay", StateDirectory: "/fixture/state", Socket: "/fixture/socket"}
 	enabled, running := true, true
+	failDisable := false
 	var externalCalls []string
 	command := func(_ context.Context, action string) ([]byte, error) {
 		externalCalls = append(externalCalls, action)
@@ -212,6 +239,10 @@ func TestM3OperationalSwitch(t *testing.T) {
 		case "disable":
 			enabled = false
 			running = false
+			if failDisable {
+				failDisable = false
+				return nil, errors.New("disable response lost after stopping")
+			}
 		case "enable":
 			enabled = true
 		case "start":
@@ -227,6 +258,22 @@ func TestM3OperationalSwitch(t *testing.T) {
 	start()
 	if err = procedure.Apply(h.ctx); err == nil || len(externalCalls) != 0 {
 		t.Fatal("external effects without owner approval", err, externalCalls)
+	}
+	failedManifest := manifest
+	failedManifest.SwitchID += "-failed"
+	failedManifest.Tasks = []string{failedTask}
+	failedDigest := failedManifest.Digest()
+	if _, err = call(h.ctx, protocol.WorkSwitchRequest{Operation: "approve_switch", SwitchID: failedManifest.SwitchID, Tasks: &failedManifest.Tasks, Snapshot: &failedDigest}); err != nil {
+		t.Fatal(err)
+	}
+	failedProcedure := takeover.Procedure{Manifest: failedManifest, Journal: filepath.Join(h.root, "failed-switch-journal.json"), Core: call, Command: command}
+	failDisable = true
+	if err = failedProcedure.Apply(h.ctx); err == nil {
+		t.Fatal("failed transfer reported success")
+	}
+	failedStatus, err := call(h.ctx, protocol.WorkSwitchRequest{Operation: "switch_status", SwitchID: failedManifest.SwitchID})
+	if err != nil || failedStatus.State != "rolled_back" || len(failedStatus.Events) != 3 || !enabled || !running {
+		t.Fatalf("failed transfer did not explicitly restore ownership: %+v enabled=%v running=%v %v", failedStatus, enabled, running, err)
 	}
 	digest := manifest.Digest()
 	approval, err := call(h.ctx, protocol.WorkSwitchRequest{Operation: "approve_switch", SwitchID: scenario.SwitchID, Tasks: &manifest.Tasks, Snapshot: &digest})
@@ -252,7 +299,7 @@ func TestM3OperationalSwitch(t *testing.T) {
 		t.Fatal("two active coordinators")
 	}
 	admittedTurn(t, h, conversation, conversationID, "switch-execute", "Stop this worker after starting it, then resume to produce the result")
-	if providerCalls.Load() != 8 {
+	if providerCalls.Load() != 9 {
 		t.Fatal("worker path incomplete", providerCalls.Load())
 	}
 	conversation.Close()
@@ -318,6 +365,10 @@ func TestM3OperationalSwitch(t *testing.T) {
 		if e != nil || card.Receipt == nil || !reflect.DeepEqual(*card.Receipt, receipt) {
 			t.Fatal("receipt was not retained", e)
 		}
+		failedCard, e := s.Get(h.ctx, failedTask)
+		if e != nil || !failedCard.Task.ExternalControl || failedCard.Task.Title != scenario.Title {
+			t.Fatal("failed transfer lost the imported task", e)
+		}
 	})
 	bytes, err := os.ReadFile(original)
 	if err != nil || string(bytes) != "retained source" {
@@ -329,5 +380,24 @@ func TestM3OperationalSwitch(t *testing.T) {
 	}
 	if _, err = os.Stat(procedure.Journal); err != nil {
 		t.Fatal("rollback journal lost", err)
+	}
+	if _, err = os.Stat(failedProcedure.Journal); err != nil {
+		t.Fatal("failed transfer journal lost", err)
+	}
+	if got := git(source, "rev-parse", "HEAD"); got != originalHead {
+		t.Fatal("original branch changed", got)
+	}
+	if got := git(source, "rev-parse", "refs/heads/"+branch); got != originalHead {
+		t.Fatal("task branch changed", got)
+	}
+	if got := git(source, "worktree", "list", "--porcelain"); got != originalWorktrees {
+		t.Fatal("worktree registration changed", got)
+	}
+	if got := git(dir, "symbolic-ref", "HEAD"); got != "refs/heads/"+branch {
+		t.Fatal("worktree branch changed", got)
+	}
+	bytes, err = os.ReadFile(filepath.Join(dir, "original.txt"))
+	if err != nil || string(bytes) != "retained source" {
+		t.Fatal("worktree original lost", err)
 	}
 }

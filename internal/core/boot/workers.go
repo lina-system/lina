@@ -331,6 +331,24 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 		err = entry.adapter.Interrupt(ctx, snap.Thread, worker.UserCancel)
 	}
 	if name == "worker_input" {
+		if errors.Is(err, worker.ErrInputRefused) {
+			// No request left the adapter. Preserve an existing turn's binding
+			// so its queued completion can drain it. An idle turn's new
+			// reservation has no execution and can be released immediately.
+			if snap.State == worker.Idle {
+				activity.Release()
+				if r.work != nil && entry.reservation != "" {
+					if releaseErr := r.work.ReleaseWorker(context.WithoutCancel(ctx), entry.reservation); releaseErr != nil {
+						entry.mu.Unlock()
+						return tools.Result{State: tools.Unknown, Body: workerError(releaseErr)}, releaseErr
+					}
+					entry.reservation = ""
+					entry.reservationTurn = ""
+				}
+			}
+			entry.mu.Unlock()
+			return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
+		}
 		// Input may observe an idle worker after our active snapshot and start
 		// another turn. Bind every accepted input before queued completions can
 		// acquire mu; ambiguity keeps a reservation that no old event can free.
@@ -387,16 +405,18 @@ func (e *workerSession) observe() {
 		case worker.UsageEvent:
 		case worker.FinishEvent:
 			// A transport-loss event is synthesized by the adapter. It proves
-			// neither terminal execution nor completed process cleanup.
+			// neither terminal execution nor completed process cleanup. A real
+			// turn completion can also report a provider connection failure.
+			terminal := event.Finish.Failure != worker.ConnectionFailure || event.Finish.Code != "connection_lost"
 			e.stopRequests(event.Thread.TurnID)
 			e.mu.Lock()
-			if e.origin.work != nil && e.reservationTurn == event.Thread.TurnID && event.Finish.Failure != worker.ConnectionFailure {
+			if e.origin.work != nil && e.reservationTurn == event.Thread.TurnID && terminal {
 				if err := e.origin.work.ReleaseWorker(context.WithoutCancel(e.origin.ctx), e.reservation); err == nil {
 					e.reservation = ""
 					e.reservationTurn = ""
 				}
 			}
-			if event.Finish.Failure != worker.ConnectionFailure {
+			if terminal {
 				e.active[event.Thread.TurnID].Release()
 				delete(e.active, event.Thread.TurnID)
 			}

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/kit/lease"
@@ -17,15 +18,104 @@ import (
 
 type transferProbe struct {
 	workerProbe
-	events chan worker.Event
-	next   string
+	events   chan worker.Event
+	next     string
+	inputErr error
 }
 
 func (p *transferProbe) Events() <-chan worker.Event { return p.events }
 func (p *transferProbe) Input(context.Context, worker.Thread, worker.Input) error {
 	p.inputs++
+	if p.inputErr != nil {
+		return p.inputErr
+	}
 	p.snapshot.Thread.TurnID = p.next
 	return nil
+}
+
+func TestSwitchTerminalConnectionFailureReleasesExecution(t *testing.T) {
+	r, entry, probe := reviewWorkerFixture(t)
+	released := false
+	entry.active["old"] = lease.New(func() { released = true })
+	entry.close = func() error {
+		if !released {
+			t.Error("confirmed terminal event retained hard activity until process close")
+		}
+		return nil
+	}
+	probe.events <- worker.Event{Thread: entry.thread, Kind: worker.FinishEvent, Finish: &worker.Finish{Status: worker.Failed, Failure: worker.ConnectionFailure, Code: "connection"}}
+	close(probe.events)
+	entry.observe()
+	if err := r.work.RequestRollback(t.Context(), "switch", r.person, "terminal provider failure"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.work.CompleteRollback(t.Context(), "switch", r.person, "terminal event observed"); err != nil {
+		t.Fatal("confirmed terminal failure retained execution", err)
+	}
+}
+
+func TestSwitchRefusedInputKeepsCompletionBinding(t *testing.T) {
+	r, entry, probe := reviewWorkerFixture(t)
+	probe.snapshot.State = worker.Waiting
+	probe.inputErr = worker.ErrInputRefused
+	raw, _ := json.Marshal(workerArgs{Session: "thread", Turn: "old", Generation: 1, Binding: 1, Text: "continue"})
+	in, err := workerSchema("worker_input", raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := r.workerOperation(t.Context(), "worker_input", "conversation-turn", ledger.Event{}, in)
+	if err != nil || result.State != tools.Failed {
+		t.Errorf("definitive refusal reported as ambiguous: %+v %v", result, err)
+	}
+	if entry.reservationTurn != "old" {
+		t.Errorf("definitive refusal lost completion binding: %s", entry.reservationTurn)
+	}
+	probe.events <- worker.Event{Thread: entry.thread, Kind: worker.FinishEvent, Finish: &worker.Finish{Status: worker.Interrupted}}
+	close(probe.events)
+	entry.observe()
+	if err := r.work.RequestRollback(t.Context(), "switch", r.person, "interrupted after refusal"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.work.CompleteRollback(t.Context(), "switch", r.person, "terminal event observed"); err != nil {
+		t.Fatal("refused input retained execution after its completion", err)
+	}
+}
+
+func TestSwitchInputOutcomeControlsReservation(t *testing.T) {
+	for _, idle := range []bool{false, true} {
+		t.Run(map[bool]string{false: "ambiguous-active-input", true: "refused-idle-input"}[idle], func(t *testing.T) {
+			r, entry, probe := reviewWorkerFixture(t)
+			r.activities = lifecycle.NewRegistry(nil)
+			probe.inputErr = context.DeadlineExceeded
+			if idle {
+				probe.snapshot.State = worker.Idle
+				probe.inputErr = worker.ErrInputRefused
+			}
+			raw, _ := json.Marshal(workerArgs{Session: "thread", Turn: "old", Generation: 1, Binding: 1, Text: "continue"})
+			in, err := workerSchema("worker_input", raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := r.workerOperation(t.Context(), "worker_input", "conversation-turn", ledger.Event{}, in)
+			if idle {
+				if err != nil || result.State != tools.Failed || entry.reservation != "" {
+					t.Fatal("refused idle input retained a new execution", result, err, entry.reservation)
+				}
+			} else if !errors.Is(err, context.DeadlineExceeded) || result.State != tools.Unknown || !strings.HasPrefix(entry.reservationTurn, "unknown:") {
+				t.Fatal("ambiguous input lost its unknown execution", result, err, entry.reservationTurn)
+			}
+			probe.events <- worker.Event{Thread: entry.thread, Kind: worker.FinishEvent, Finish: &worker.Finish{Status: worker.Done}}
+			close(probe.events)
+			entry.observe()
+			if err := r.work.RequestRollback(t.Context(), "switch", r.person, "reconcile input"); err != nil {
+				t.Fatal(err)
+			}
+			err = r.work.CompleteRollback(t.Context(), "switch", r.person, "old turn completed")
+			if idle && err != nil || !idle && !errors.Is(err, work.ErrActiveRun) {
+				t.Fatal("rollback ignored input outcome", err)
+			}
+		})
+	}
 }
 func reviewWorkerFixture(t *testing.T) (*conversationRuntime, *workerSession, *transferProbe) {
 	r, _, agent, _ := managementFixture(t)

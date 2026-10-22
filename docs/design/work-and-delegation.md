@@ -1170,10 +1170,17 @@ Core serializes one switch procedure, refuses overlapping task ownership and
 checks admission and each new run in the same canon write transaction.
 The running worker tools reserve their canonical work directory before process
 launch. A directory overlapping an external task's artifact roots follows that
-task's switch gate, including symlink aliases. Existing workers prevent adoption
-of their directory. Reservations survive loss of observations and restart; a
-terminal worker turn releases its reservation. A synthesized connection-loss
-finish is not terminal evidence and retains the reservation. Every worker input
+task's switch gate, including symlink aliases. Importing an externally controlled
+task and approving its switch both refuse existing workers in an overlapping
+directory, including workers that started before the task was imported. Import
+admission and worker reservations serialize in the same canon transaction; an
+identical import retry remains idempotent. Reservations survive loss of
+observations and restart; a terminal worker turn releases its reservation, even
+when the worker reports a provider connection failure. A synthesized
+`connection_lost` finish is not terminal evidence and retains the reservation.
+Input refused locally before sending a request preserves the existing turn's
+binding, or releases a new idle-turn reservation that never ran. Ambiguous
+input outcomes remain reserved as unknown. Every accepted worker input
 rebinds its reservation to the resulting turn before an older completion can
 release it, including a turn that became idle during steering. An unreadable
 resulting turn remains reserved as unknown. Steering checks the same gate,
