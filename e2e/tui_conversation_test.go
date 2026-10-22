@@ -75,7 +75,7 @@ func TestM1TUIConversationInstalledCore(t *testing.T) {
 	if snapshot, err := client.Receive(h.ctx); err != nil || snapshot.Kind != protocol.KindSnapshot {
 		t.Fatal("no history snapshot")
 	}
-	terminal := h.startScreenTUI("TERM=xterm-256color", "COLORTERM=truecolor")
+	terminal, _ := h.startConversationTUI(80, 24, "TERM=xterm-256color", "COLORTERM=truecolor")
 	fresh := waitComposerReady(t, h, terminal)
 	if text := screenText(fresh); strings.Contains(strings.ToLower(text), "unsupported") {
 		t.Fatalf("fresh install shows an unsupported placeholder: %s", text)
@@ -197,29 +197,6 @@ func waitScreen(t *testing.T, h *harness, terminal *terminal, text string) tuite
 		t.Fatalf("screen missing %q: %v; cells=%s", text, err, screenText(snapshot))
 	}
 	return snapshot
-}
-
-// Initial text submission needs the TUI's own history discovery, not just a
-// live transport or an observer's History reply. Later connections stay direct
-// so restart scenarios keep the real socket's offline and refusal semantics.
-func (h *harness) startConversationTerminal(conversation string, environment []string, width, height int) *terminal {
-	h.t.Helper()
-	socket := h.socket
-	tap := newAccountTap(h.t, h, socket)
-	h.socket = tap.socket
-	terminal := h.startTerminalSize(environment, false, true, width, height)
-	h.socket = socket
-	waitComposerReady(h.t, h, terminal)
-	for {
-		frame := tap.next(h.t, h)
-		if snapshot, ok := frame.Payload.(protocol.Snapshot); ok && snapshot.Topic == "conversation:"+conversation {
-			break
-		}
-	}
-	if err := tap.directReconnect(); err != nil {
-		h.t.Fatal(err)
-	}
-	return terminal
 }
 
 func installedConversationHarness(t *testing.T, providerURL string, installArgs ...string) (*harness, func(bool) *process) {
