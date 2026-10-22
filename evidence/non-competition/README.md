@@ -97,8 +97,11 @@ The Go scenario uses the shared harness in `e2e/m1`; its M3 fixture remains in
 The CLI reads and hashes every attachment (regular files of at most 32 MiB).
 Exit 0 requires **both** tiers complete and passing. Exit 1 includes malformed
 input, missing attachments, missing cells, failed cells and a stopped ladder.
-For a tier-1-only set, inspect `tiers[0].status` for permission to proceed; exit
-1 still means the two-tier acceptance is unfinished. The JSON separates
+For a tier-1-only set, require `valid: true` and `tiers[0].status: "pass"`
+before proceeding; exit 1 still means the two-tier acceptance is unfinished.
+Invalid records keep their tier unverified unless an observed failure already
+marks it failed, even when all eight valid cells also exist. A record with no
+supported tier prevents either tier from passing. The JSON separates
 `valid` (well-formed, consistent evidence) from `passed` (both tiers passed).
 An honest failed tier is valid evidence. An attempted tier 2 after a failed or
 incomplete tier 1 is invalid and remains unverified.
