@@ -239,11 +239,12 @@ refused requests preserve agent revisions, actions, conversations and bindings.
 
 `m3/operational-switch.json` exercises the owner-only switch on the real Core
 socket: missing approval, a held external task, successful transfer, a real
-fixture worker output and receipt, restart with an outstanding execution,
+Core-launched fixture worker output and receipt, restart with an outstanding execution,
 rollback refusal until drain, and preservation after explicit rollback. The
 external coordinator is synthetic; its call log checks that approval precedes
-stop and durable LINA release precedes external restart. Work fixture admission
-uses the engine API while Core is stopped, as in the M2 ledger scenario.
+stop and durable LINA release precedes external restart. Imported tasks and receipt facts use the engine API while Core is stopped,
+as in the M2 ledger scenario; worker start, interrupt, resume and result
+observation use the running Core tool registry and a separate stdio process.
 
 `LINA_CODEX_LIVE=1 go test -count=1 -v ./e2e -run '^TestM2InstalledCodexLive$'`
 also drives installed Core's normal tool path into the actual installed Codex,

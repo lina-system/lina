@@ -1046,6 +1046,13 @@ manifest binds the import snapshot and the owner's inventory of quiesced parent
 sessions, flow engines and other hosts. Approval does not stop the old service.
 Core serializes one switch procedure, refuses overlapping task ownership and
 checks admission and each new run in the same canon write transaction.
+The running worker tools reserve their canonical work directory before process
+launch. A directory overlapping an external task's artifact roots follows that
+task's switch gate, including symlink aliases. Existing workers prevent adoption
+of their directory. Reservations survive loss of observations and restart; a
+terminal worker turn releases its reservation. Steering checks the same gate,
+and an idle worker needs a new reservation before its next turn. Read-only
+snapshots and an explicit user interrupt remain available during rollback.
 
 The operator records the old service state, disables its launch intent, stops it
 and independently verifies disabled intent, no running service, a free lock and

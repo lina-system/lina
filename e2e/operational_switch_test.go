@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -42,6 +44,9 @@ func TestM3OperationalSwitch(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := newHarness(t, buildLina(t))
+	scenarioContext, cancelScenario := context.WithTimeout(t.Context(), 3*time.Minute)
+	defer cancelScenario()
+	h.ctx = scenarioContext
 	core := h.startCore()
 	h.client(core)
 	waitCoreReady(t, h)
@@ -84,9 +89,79 @@ func TestM3OperationalSwitch(t *testing.T) {
 			t.Fatalf("unapproved source task ran: %v", e)
 		}
 	})
+	var providerCalls atomic.Int32
+	var control map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct{ Input []json.RawMessage }
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Error(err)
+			return
+		}
+		n := providerCalls.Add(1)
+		if n == 2 || n >= 4 {
+			var item struct{ Output string }
+			var result struct {
+				Code   string
+				Output map[string]any
+			}
+			if len(req.Input) == 0 {
+				t.Error("missing tool response")
+				return
+			}
+			_ = json.Unmarshal(req.Input[len(req.Input)-1], &item)
+			if err := json.Unmarshal([]byte(item.Output), &result); err != nil {
+				t.Error(err)
+				return
+			}
+			expected := "ok"
+			if n == 2 {
+				expected = "failed"
+			}
+			if result.Code != expected {
+				t.Errorf("worker step %d: %s", n, item.Output)
+				emitResponse(w, "failed", true)
+				return
+			}
+			if n >= 4 {
+				control = map[string]any{"session": result.Output["session"], "turn": result.Output["turn"], "generation": result.Output["generation"], "binding": result.Output["binding"]}
+			}
+			if n == 8 && result.Output["output"] != "LINA_WORKER_RESULT" {
+				t.Error("missing actual worker result", result.Output)
+			}
+		}
+		emit := func(name string, args map[string]any) {
+			emitPersonaCall(w, fmt.Sprintf("switch-worker-%d", n), name, args)
+		}
+		switch n {
+		case 1, 3:
+			emit("worker_start", map[string]any{"workdir": dir, "task_packet": "hold for input"})
+		case 2:
+			emitResponse(w, "external owner retained", true)
+		case 4:
+			control["quote"] = "Stop this worker"
+			emit("worker_interrupt", control)
+		case 5, 7:
+			emit("worker_snapshot", map[string]any{"session": control["session"]})
+		case 6:
+			control["text"] = "produce result"
+			emit("worker_input", control)
+		default:
+			emitResponse(w, "transferred work produced a result", true)
+		}
+	}))
+	defer server.Close()
+	bin := t.TempDir()
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Symlink(executable, filepath.Join(bin, "codex")); err != nil {
+		t.Fatal(err)
+	}
 	var c *clientapi.Client
 	start := func() {
 		core = h.command("core", "--state-root", h.root, "--socket", h.socket)
+		core.command.Env = append(core.command.Env, "PATH="+bin, "LINA_WORKER_FIXTURE=1", "CODEX_HOME=/fixture/codex-home", "LINA_RESPONSES_BASE_URL="+server.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
 		core.start(t)
 		h.connect(core).Close()
 		waitCoreReady(t, h)
@@ -159,27 +234,32 @@ func TestM3OperationalSwitch(t *testing.T) {
 		}
 	})
 	start()
+	conversation, conversationID := conversationClient(t, h)
+	admittedTurn(t, h, conversation, conversationID, "switch-blocked", "Start the transferred worker")
+	if providerCalls.Load() != 2 {
+		t.Fatal("missing live worker refusal")
+	}
 	if err = procedure.Apply(h.ctx); err != nil {
 		t.Fatal(err)
 	}
 	if enabled || running {
 		t.Fatal("two active coordinators")
 	}
+	admittedTurn(t, h, conversation, conversationID, "switch-execute", "Stop this worker after starting it, then resume to produce the result")
+	if providerCalls.Load() != 8 {
+		t.Fatal("worker path incomplete", providerCalls.Load())
+	}
+	conversation.Close()
 	stop()
 	var receipt work.Receipt
 	withWork(func(s *work.Service) {
 		if e := s.Start(h.ctx, run); e != nil {
 			t.Fatal(e)
 		}
-		output := filepath.Join(dir, "report.txt")
-		cmd := exec.CommandContext(h.ctx, "/bin/sh", "-c", "printf 'verified transfer result' > \"$1\"", "fixture-worker", output)
-		cmd.Env = []string{"PATH="}
-		if out, e := cmd.CombinedOutput(); e != nil {
-			t.Fatalf("worker: %v %s", e, out)
-		}
+		output := filepath.Join(dir, "result.txt")
 		bytes, e := os.ReadFile(output)
-		if e != nil || string(bytes) != "verified transfer result" {
-			t.Fatal("worker result", e)
+		if e != nil || string(bytes) != "LINA_WORKER_RESULT" {
+			t.Fatal("real Core worker artifact", e)
 		}
 		now := time.Now().UTC()
 		hash := fmt.Sprintf("%x", sha256.Sum256(bytes))

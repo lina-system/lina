@@ -130,6 +130,9 @@ func (s *Service) ApproveSwitch(ctx context.Context, v Switch) error {
 			if card.Task.PersonID != v.Owner || !card.Task.ExternalControl {
 				return ErrInvalid
 			}
+			if err = workerInDirectory(ctx, tx, card.Task); err != nil {
+				return err
+			}
 			if card.Active {
 				return ErrActiveRun
 			}
@@ -197,7 +200,11 @@ func (s *Service) transitionSwitch(ctx context.Context, id, owner, evidence, nex
 			if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM work_active_runs a JOIN work_switch_tasks t ON a.task_id=t.task_id WHERE t.switch_id=?", id).Scan(&active); err != nil {
 				return err
 			}
-			if active != 0 {
+			var workers int
+			if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM work_worker_reservations r JOIN work_switch_tasks t ON r.task_id=t.task_id WHERE t.switch_id=?", id).Scan(&workers); err != nil {
+				return err
+			}
+			if active != 0 || workers != 0 {
 				return ErrActiveRun
 			}
 		default:

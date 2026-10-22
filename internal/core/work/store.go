@@ -66,6 +66,13 @@ func (s *Service) Start(ctx context.Context, r Run) error {
 		return ErrInvalid
 	}
 	return s.db.Write(ctx, func(tx *canon.Tx) error {
+		var workers int
+		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM work_worker_reservations WHERE task_id=?", r.TaskID).Scan(&workers); err != nil {
+			return err
+		}
+		if workers != 0 {
+			return ErrActiveRun
+		}
 		if err := mayDirect(ctx, tx, r.TaskID); err != nil {
 			return err
 		}

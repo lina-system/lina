@@ -54,6 +54,8 @@
         "agent_result",
         "work_request",
         "work_result",
+        "work_switch_request",
+        "work_switch_result",
         "account_request",
         "account_result",
         "memory_request",
@@ -87,9 +89,7 @@
         "export_request",
         "export_result",
         "replay_request",
-        "replay_result",
-        "work_switch_request",
-        "work_switch_result"
+        "replay_result"
       ]
     },
     "message_id": {

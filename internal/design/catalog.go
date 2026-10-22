@@ -234,6 +234,8 @@ var catalog = map[string]translation{
 	"readiness_failure":          {"Not ready", "준비되지 않음"},
 	"agent_request":              {"Agent request", "에이전트 요청"},
 	"agent_result":               {"Agent result", "에이전트 결과"},
+	"work_switch_request":        {"Work control request", "작업 제어 요청"},
+	"work_switch_result":         {"Work control result", "작업 제어 결과"},
 	"work_request":               {"Work request", "작업 요청"},
 	"work_result":                {"Work result", "작업 결과"},
 	"account_request":            {"Account request", "계정 요청"},
