@@ -829,6 +829,13 @@ recovers an interrupted attempt using its recorded paths, composition and
 generation, or retains a hold with a closed cause. Changed installation/data
 paths and foreign services are refused before controlling another service.
 
+An explicitly configured Claude OAuth token also reaches the trusted smoke Core
+and its model adapter, so smoke does not require a cached vendor login. Core
+consumes that token from its environment after configuring the adapter and before
+starting workers. This Core-only launch exception does not widen tool or worker
+environments or forward other filtered provider variables. The token stays out
+of logs, receipts and diagnostics.
+
 Rollback restores the previous compatible composition from the kept binaries and the pre-update snapshot. Automatic rollback is allowed only while the candidate has never reached READY. A possibly started forward schema migration without an undo proof holds instead of rolling back. Binaries are never rolled back over an irreversible migration. When an update fails, the install restores the previous compatible composition, or holds: it stops, keeps the current state intact and reports. It never leaves a half-updated component running against data it can't read. LINA OS adds steps of its own around this order (see Deferred).
 
 - The main gets release artifacts from the private GitHub Releases of the LINA repository with the owner's `gh` authentication, and distributes Node binaries and their updates to devices over the tailnet ([releases.md](../policy/releases.md)).
