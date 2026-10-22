@@ -358,6 +358,9 @@ The first visible composer row starts with the accent `glyph.action` (`›`, or
 `>` in ASCII) and one space. Continuations align under the draft, including when
 the textarea scrolls. An empty draft shows the muted `composer.placeholder`
 catalog entry in Korean or English; it is display text and is never submitted.
+When the keyboard enhancement reply reports key disambiguation, the placeholder
+uses `composer.shift_enter` to advertise Shift+Enter. Until then it
+advertises Alt+Enter. This terminal-local change preserves the draft and cursor.
 The prompt reserves its display width in both wrapping and hardware cursor
 placement, so Korean IME composition remains at the draft insertion point.
 `e2e/m1/tui-composer.json` checks a 100x34 installed-Core PTY with a fixture
@@ -523,7 +526,11 @@ The conversation draft survives opening and closing the account block.
 An automatic account-list refusal at connection startup retains focus and the
 unsent draft. Its typed error stays in account display state; it does not open
 the account block over the conversation. A refusal in a block the person opened
-keeps that block visible.
+keeps that block visible. On an account-only connection, the conversation status
+shows that typed refusal instead of continuing to show account discovery in
+progress. A refusal does not establish a known empty account list. A successful
+list response establishes account status and clears the refusal.
+Reconnection resets discovery for the new connection.
 
 The client reports an ephemeral IPv4 loopback port for `/auth/callback`, or
 `cannot_listen` over SSH or when binding fails. It opens only an HTTPS
@@ -548,6 +555,11 @@ installed Core composition with the synthetic issuer through sign-in, list and
 sign-out. Captured client traffic, terminal output and state outside the secret
 store contain no provider tokens. Model routing and live provider acceptance
 remain their own contracts.
+`TestM1TUIAccountDiscoveryRefusalInstalledCore` holds the installed Core
+composition at recovery, observes its real startup account-list refusal, and
+checks the built TUI in a headless PTY. The refusal leaves the composer usable;
+an explicit account-list retry after recovery replaces it with the successful
+empty-list status.
 
 ## Agent surfaces and settings as text (T-14)
 
@@ -651,7 +663,7 @@ Keys are a proposal and data in `tui/ui`. No contract fixes them.
 | Key | Action |
 | --- | --- |
 | Enter | Send the draft |
-| Alt+Enter, Ctrl+J | Newline (Ctrl+J because Alt may not reach the application) |
+| Shift+Enter (when distinguished by the terminal), Alt+Enter, Ctrl+J | Newline (Ctrl+J because Alt may not reach the application) |
 | Esc | Close the top overlay; with none, interrupt the turn |
 | Ctrl+C | Clear the draft; with an empty draft, quit the TUI only, never Core |
 | Tab, Shift+Tab | Move focus |
@@ -674,7 +686,7 @@ cancellation resources before the caller restores terminal mode.
 **Mid-turn input** is steering by default and applies at the next round boundary ([runtime.md](runtime.md#conversation-loop)). `/queue` makes the input a follow-up. `/stop` cancels.
 
 **The composer** is the Bubbles `textarea`; `textinput` is not used. The
-conversation increment sends Enter as one input request, Ctrl+J or Alt+Enter
+conversation increment sends Enter as one input request, Shift+Enter, Ctrl+J or Alt+Enter
 as a newline, and Esc or `/stop` as an interrupt of the active turn. Ordinary
 input uses `mode: steer`; Core decides whether it belongs to a running turn.
 `/queue <text>` explicitly uses `mode: queue`. The request carries a fresh
@@ -688,6 +700,18 @@ or input request. Discovery does not send it automatically; a fresh Enter sends
 the retained draft to the discovered conversation. Management commands remain
 available during discovery.
 Resizing preserves the draft and its cursor without submitting it.
+
+Explicitly decoded Shift+Enter is an Edit key even before a capability reply;
+its releases are ignored and repeats insert newlines through the same key gate.
+Terminals that report Shift+Enter as plain Enter cannot distinguish these actions;
+their placeholder keeps the Alt+Enter hint. Key disambiguation support and event
+type support are tracked separately, so a disambiguation-only reply is enough to
+show the Shift+Enter hint. Alt+Enter and Ctrl+J remain available in either mode.
+`e2e/m1/tui-newline.json` sends kitty/CSI-u bytes through a real PTY to the installed
+TUI and Core, checks separate composer rows without submission, then uses plain
+Enter to admit one complete multiline input and obtain the fixture provider's
+reply. It checks durable input history, provider call count, localized enhanced
+hints, the legacy hint, and terminal restoration.
 
 `e2e/m1/conversation-history-order.json` exercises queue and ordinary steering
 input during a held provider stream through an installed Core and a 100x30 TUI.

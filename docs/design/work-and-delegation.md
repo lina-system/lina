@@ -769,7 +769,7 @@ After every event Core commits for a goal, Core derives the goal's next actions 
 | Deploy observed | Code goal | Probe the running service at the deployed revision against the done condition; an exit code is not a probe. | Core |
 | Background run landed complete | Research or document task | Check citations, store the result, re-evaluate the criteria it serves. | Core, then manager |
 | Background run landed partial | Research or document task | Start one follow-up run on what is missing, or mark it open in the result when the sources cannot answer it. | Manager |
-| Draft or file result ready | Document or file task | Check the fingerprinted done snapshot against the done condition and land a verified copy at its recorded destination. Changed output or report requires a new done; an interrupted copy is reported and retained. A destination never has existing files merged or overwritten. | Manager, then Core |
+| Draft or file result ready | Document or file task | Check the fingerprinted done snapshot against the done condition and land a verified copy at its recorded destination. Changed output or report requires a new done; an interrupted copy is reported and retained. New artifacts never merge into or overwrite existing files. When the goal updates an existing document, use the revision-checked [in-place edit](materials-and-knowledge.md#editing-a-persons-files-in-place), keeping the old version and rejecting a stale revision. | Manager, then Core |
 | Effect performed through a plugin (calendar event, sent message, file move) | Effect task | Read back the external record; only the read sets the criterion. | Core |
 | Reply arrived in a waited thread, a record changed, or a date was reached | Wait open | Close the wait and re-evaluate the criteria behind it. | Core |
 | A wait's deadline passed | Wait open | Read the source once more; if still open, apply the wait's expiry action (see Waits on the outside). | Core |
@@ -835,7 +835,7 @@ Every ready task starts at once, limited only by the person's quota and by what 
 
 ### Recovery
 
-- The goal record, its tasks, waits and evidence are canon in the work ledger. A restart loses no goal: Core reconciles effects whose outcome is unknown, then derives the next actions of every goal that is not final.
+- The goal definition is canon in the 일 or 목표 record in the records repository; the work ledger holds its execution state (criteria status and evidence, tasks, waits and state). A restart loses no goal: Core resolves the goal record by the id and revision referenced in the ledger and reads its execution state from the ledger, reconciles effects whose outcome is unknown, then derives the next actions of every goal that is not final.
 - Every derived action has an identity bound to the goal, the task, its attempt, its stage and the head or revision it acts on. Replaying an event or running two derivations at once never dispatches the same action twice.
 - Task-level recovery is the one recovery of Stall and failure. A goal does not add attempts on top: when a task's recovery is exhausted, the goal is `blocked` on that task while its independent tasks continue.
 - A wait survives restart with its deadline. A timer that should have fired while Core was down fires once at startup.

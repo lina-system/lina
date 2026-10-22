@@ -80,6 +80,11 @@ func (m *shellModel) hasCapability(name string) bool {
 
 func (m *shellModel) syncComposer() {
 	c := &m.conversation.composer
+	placeholder := "composer.placeholder"
+	if m.disambiguated {
+		placeholder = "composer.shift_enter"
+	}
+	c.Placeholder = design.Text(m.styles.options.Language, placeholder)
 	if c.Value() != m.content.Draft.Text {
 		c.SetValue(m.content.Draft.Text)
 	}
@@ -267,7 +272,7 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		}
 		m.conversation.undo = nil
 		return m.reduceInput(state.Send{Key: rand.Text(), Queue: queue})
-	case "alt+enter", "ctrl+j":
+	case "shift+enter", "alt+enter", "ctrl+j":
 		return m.editComposer(tea.PasteMsg{Content: "\n"})
 	}
 	return m.editComposer(msg)
@@ -555,6 +560,9 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		code := "account.empty"
 		if !m.accountsKnown {
 			code = "account.loading"
+			if m.accounts.code != "" {
+				code = m.accounts.code
+			}
 		}
 		for _, row := range m.accountRows {
 			if row.Status == "ok" {
