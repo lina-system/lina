@@ -70,6 +70,7 @@ type acceptedSteering struct {
 }
 
 type conversationRuntime struct {
+	workEngine      *workRuntime
 	workerDispatch  *dispatch.Service
 	workerGitHub    *ghclient.Client
 	work            *work.Service
@@ -296,6 +297,11 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 }
 func (r *conversationRuntime) Close(ctx context.Context) error {
 	var err error
+	if r.workEngine != nil {
+		if err = r.workEngine.close(ctx); err != nil {
+			return err
+		}
+	}
 	if r.workerDispatch != nil {
 		if err = r.workerDispatch.Close(ctx); err != nil {
 			return err
@@ -830,11 +836,16 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			if err := r.prepareRecordTools(turnID, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
+			workDeclarations, err := r.prepareGoalWorkTools(turnID, bindings)
+			if err != nil {
+				return turn.PreparedRequest{}, err
+			}
 			declarations := append(coreexec.PersonaDeclarations(), coreexec.PersonaSettingDeclaration())
 			declarations = append(declarations, coreexec.EmotionDeclarations()...)
 			declarations = append(declarations, coreexec.RelationshipDeclaration())
 			declarations = append(declarations, coreexec.SkillDeclarations()...)
 			declarations = append(declarations, coreexec.RecordDeclarations()...)
+			declarations = append(declarations, workDeclarations...)
 			declarations = append(declarations, startRunDeclaration())
 			webProvider, err := r.selectedWebProvider()
 			if err != nil {
