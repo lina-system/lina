@@ -200,6 +200,9 @@ The records repository `versions/records/` is one Git repository for the whole m
 - LINA Core commits each change as one saved version and records the person id and the agent that asked in the commit message. Recurring completions are commits, not files.
 - Another tool may read the repository. A change made to it by another tool is detected at the next read and handled as [work-and-delegation.md](work-and-delegation.md#storage-of-records) states.
 - The repository lives at `versions/records/`, the inbox holds one file per memo, and each change is one commit. The commit granularity is tuned by measurement during work engine implementation acceptance ([work-and-delegation.md](work-and-delegation.md)).
+- The installed repository interface checks the last commit that changed the record before modifying it. An unrelated record write does not stale its revision. An explicit path move keeps the front matter id and commits the old-path removal and new-path installation together; ordinary status or title changes keep the path. Identical bytes at the same path do not create another saved version.
+- Core journals the old and new object references in canon before changing files, syncs the publication, then advances the disposable locator index and closes the intent. Reopening completes the exact pending change once. Outside bytes, commits, foreign locks and impossible partial states are refused rather than overwritten. The initial installed conversation tools save memos in `inbox/` and knowledge documents in `resources/`, with Core-selected title slugs; they do not expose filesystem paths.
+
 - This folder layout is a machine concern of the state root and is never shown to the person by default. The person-facing library is location-free, and folders are only an optional view there ([materials-and-knowledge.md](materials-and-knowledge.md#library)).
 
 ## Originals and derived data

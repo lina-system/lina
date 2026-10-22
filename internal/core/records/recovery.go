@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-package results
+package records
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,16 +15,16 @@ import (
 
 // A publication is journaled before changing any tracked file, index or ref.
 // It names immutable Git objects, not a second copy of the document bytes.
-type publication struct{ Parent, Commit, Path, Blob string }
+type publication struct{ Parent, Commit, Path, Blob, OldPath, OldBlob string }
 type recordState struct {
 	head, token string
 	pending     *publication
 }
 
-func (r *Records) state(ctx context.Context) (state recordState, err error) {
+func (r *Store) state(ctx context.Context) (state recordState, err error) {
 	var raw []byte
 	err = r.db.Read(ctx, func(tx *canon.Tx) error {
-		return tx.QueryRowContext(ctx, "SELECT head,lock_token,pending FROM result_records_state WHERE singleton=1").Scan(&state.head, &state.token, &raw)
+		return tx.QueryRowContext(ctx, "SELECT head,lock_token,pending FROM records_state WHERE singleton=1").Scan(&state.head, &state.token, &raw)
 	})
 	if err == nil && len(raw) != 0 {
 		state.pending = new(publication)
@@ -33,10 +32,10 @@ func (r *Records) state(ctx context.Context) (state recordState, err error) {
 	}
 	return
 }
-func (r *Records) acquire(ctx context.Context) (string, error) {
+func (r *Store) acquire(ctx context.Context) (string, error) {
 	token := newID()
 	err := r.db.Write(ctx, func(tx *canon.Tx) error {
-		changed, err := tx.ExecContext(ctx, "UPDATE result_records_state SET lock_token=? WHERE singleton=1 AND lock_token='' AND pending IS NULL", token)
+		changed, err := tx.ExecContext(ctx, "UPDATE records_state SET lock_token=? WHERE singleton=1 AND lock_token='' AND pending IS NULL", token)
 		if err != nil {
 			return err
 		}
@@ -66,7 +65,7 @@ func (r *Records) acquire(ctx context.Context) (string, error) {
 	}
 	return token, nil
 }
-func (r *Records) release(ctx context.Context, token string) error {
+func (r *Store) release(ctx context.Context, token string) error {
 	if token == "" {
 		return nil
 	}
@@ -88,14 +87,14 @@ func (r *Records) release(ctx context.Context, token string) error {
 		return err
 	}
 	return r.db.Write(ctx, func(tx *canon.Tx) error {
-		_, err := tx.ExecContext(ctx, "UPDATE result_records_state SET lock_token='' WHERE singleton=1 AND lock_token=? AND pending IS NULL", token)
+		_, err := tx.ExecContext(ctx, "UPDATE records_state SET lock_token='' WHERE singleton=1 AND lock_token=? AND pending IS NULL", token)
 		return err
 	})
 }
-func (r *Records) remember(ctx context.Context, token string, p publication) error {
+func (r *Store) remember(ctx context.Context, token string, p publication) error {
 	raw, _ := json.Marshal(p)
 	return r.db.Write(ctx, func(tx *canon.Tx) error {
-		changed, err := tx.ExecContext(ctx, "UPDATE result_records_state SET pending=? WHERE singleton=1 AND head=? AND lock_token=? AND pending IS NULL", raw, p.Parent, token)
+		changed, err := tx.ExecContext(ctx, "UPDATE records_state SET pending=? WHERE singleton=1 AND head=? AND lock_token=? AND pending IS NULL", raw, p.Parent, token)
 		if err != nil {
 			return err
 		}
@@ -109,10 +108,18 @@ func (r *Records) remember(ctx context.Context, token string, p publication) err
 		return nil
 	})
 }
-func (r *Records) checkpoint(ctx context.Context, p publication) error {
+func (r *Store) checkpoint(ctx context.Context, p publication) error {
+	data, err := r.readObject(p.Blob, "blob")
+	if err != nil {
+		return err
+	}
+	id, err := recordID(data)
+	if err != nil {
+		return err
+	}
 	raw, _ := json.Marshal(p)
 	return r.db.Write(ctx, func(tx *canon.Tx) error {
-		changed, err := tx.ExecContext(ctx, "UPDATE result_records_state SET head=?,pending=NULL WHERE singleton=1 AND head=? AND pending=?", p.Commit, p.Parent, raw)
+		changed, err := tx.ExecContext(ctx, "UPDATE records_state SET head=?,pending=NULL WHERE singleton=1 AND head=? AND pending=?", p.Commit, p.Parent, raw)
 		if err != nil {
 			return err
 		}
@@ -123,7 +130,8 @@ func (r *Records) checkpoint(ctx context.Context, p publication) error {
 		if n != 1 {
 			return ErrRecordsChanged
 		}
-		return nil
+		_, err = tx.ExecContext(ctx, "INSERT INTO records_index(id,path,blob,revision) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET path=excluded.path,blob=excluded.blob,revision=excluded.revision", id, p.Path, p.Blob, p.Commit)
+		return err
 	})
 }
 
@@ -131,7 +139,7 @@ func (r *Records) checkpoint(ctx context.Context, p publication) error {
 // commit, changed target bytes or foreign lock is refused without overwriting it.
 // The result's effect remains unknown: recovery repairs repository consistency,
 // never re-enters Save or clones another asset.
-func (r *Records) recover(ctx context.Context) error {
+func (r *Store) recover(ctx context.Context) error {
 	state, err := r.state(ctx)
 	if err != nil {
 		return err
@@ -176,40 +184,51 @@ func (r *Records) recover(ctx context.Context) error {
 	if files[p.Path] != p.Blob {
 		return ErrRecordsChanged
 	}
-	data, err := r.readObject(p.Blob, "blob")
+	_, err = r.readObject(p.Blob, "blob")
 	if err != nil {
 		return err
 	}
-	// The working file may be absent (not installed yet) or exactly the intended
-	// bytes. Every other file must match the intended tree.
-	target, err := regular(r.root, p.Path)
-	if err == nil {
-		if !bytes.Equal(target, data) {
+	// A crash can leave either side of the intended edit/move. Every other
+	// file must still match, and neither affected path may contain third-party bytes.
+	before := make(map[string]string, len(files))
+	for name, hash := range files {
+		before[name] = hash
+	}
+	delete(before, p.Path)
+	if p.OldPath != "" {
+		before[p.OldPath] = p.OldBlob
+	}
+	observed := make(map[string]string, len(before)+1)
+	for name, hash := range before {
+		observed[name] = hash
+	}
+	for _, name := range []string{p.Path, p.OldPath} {
+		if name == "" {
+			continue
+		}
+		raw, err := regular(r.root, name)
+		if errors.Is(err, os.ErrNotExist) {
+			delete(observed, name)
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		hash, _ := objectID("blob", raw)
+		if hash != before[name] && hash != files[name] {
 			return ErrRecordsChanged
 		}
-		if err = r.unchanged(files); err != nil {
-			return err
-		}
-	} else if errors.Is(err, os.ErrNotExist) {
-		before := make(map[string]string, len(files))
-		for name, hash := range files {
-			if name != p.Path {
-				before[name] = hash
-			}
-		}
-		if err = r.unchanged(before); err != nil {
-			return err
-		}
-	} else {
+		observed[name] = hash
+	}
+	// An edit atomically replaces an existing path; it is never absent. A move
+	// installs its destination before removing its source, so both cannot be absent.
+	if p.OldPath != "" && observed[p.Path] == "" && observed[p.OldPath] == "" {
+		return ErrRecordsChanged
+	}
+	if err = r.unchanged(observed); err != nil {
 		return err
 	}
-	if err = r.atomic(p.Path, data); err != nil {
-		return err
-	}
-	if err = r.atomic(".git/index", gitIndex(files)); err != nil {
-		return err
-	}
-	if err = r.atomic(".git/refs/heads/records", []byte(p.Commit+"\n")); err != nil {
+	if err = r.install(p, files); err != nil {
 		return err
 	}
 	if err = r.checkpoint(ctx, p); err != nil {
@@ -220,7 +239,7 @@ func (r *Records) recover(ctx context.Context) error {
 
 // Atomic staging lives inside .git, so an interrupted stage never becomes an
 // untracked worktree edit. Core's single writer excludes other active stages.
-func (r *Records) cleanStages() error {
+func (r *Store) cleanStages() error {
 	entries, err := fs.ReadDir(r.root.FS(), ".git")
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
