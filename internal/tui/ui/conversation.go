@@ -51,6 +51,7 @@ type textPager struct {
 func newConversationView(styles Styles) conversationView {
 	c := textarea.New()
 	c.Prompt = ""
+	c.Placeholder = design.Text(styles.options.Language, "composer.placeholder")
 	c.ShowLineNumbers = false
 	c.CharLimit = 16384
 	c.MaxWidth, c.MaxHeight = 0, 6
@@ -59,7 +60,7 @@ func newConversationView(styles Styles) conversationView {
 	c.MaxContentHeight = 16384
 	c.SetStyles(textarea.Styles{Focused: textarea.StyleState{Text: styles.Text, Placeholder: styles.Muted}, Blurred: textarea.StyleState{Text: styles.Muted}})
 	c.SetVirtualCursor(false)
-	c.SetWidth(max(1, styles.options.Width))
+	c.SetWidth(max(1, styles.options.Width-styles.composerPromptWidth()))
 	c.SetHeight(1)
 	c.Focus()
 	// Clipboard reads are never an application action; terminal PasteMsg owns paste.
@@ -82,9 +83,12 @@ func (m *shellModel) syncComposer() {
 	if c.Value() != m.content.Draft.Text {
 		c.SetValue(m.content.Draft.Text)
 	}
-	c.SetWidth(max(1, m.size.Width))
-
+	c.SetWidth(max(1, m.size.Width-m.styles.composerPromptWidth()))
 }
+
+func (s Styles) composerPrompt() string { return s.listBullet() + " " }
+
+func (s Styles) composerPromptWidth() int { return (render.Unicode{}).Width(s.composerPrompt()) }
 
 func (m *shellModel) editComposer(msg tea.Msg) tea.Cmd {
 	if m.conversation.pager.open {
@@ -608,12 +612,24 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 	if plan.Attachments.Height > 0 {
 		rows[plan.Attachments.Y] = clip(strings.Join(m.content.Draft.Attachments, "  "))
 	}
+	if plan.ComposerRule.Height > 0 {
+		rule := m.styles.tokens.GlyphUnicodeRule
+		if m.styles.options.ASCII {
+			rule = m.styles.tokens.GlyphAsciiRule
+		}
+		rows[plan.ComposerRule.Y] = m.styles.Line.Render(strings.Repeat(rule, plan.ComposerRule.Width))
+	}
 	m.conversation.composer.SetHeight(plan.Composer.Height)
 	for i, line := range strings.Split(m.conversation.composer.View(), "\n") {
 		if i >= plan.Composer.Height {
 			break
 		}
-		rows[plan.Composer.Y+i] = clip(line)
+		// Keep the prompt on the first visible row even when the draft scrolls.
+		prefix := strings.Repeat(" ", m.styles.composerPromptWidth())
+		if i == 0 {
+			prefix = m.styles.Accent.Render(m.styles.composerPrompt())
+		}
+		rows[plan.Composer.Y+i] = clip(prefix + line)
 	}
 	if plan.SidePane.Height > 0 {
 		p := &m.conversation.pager

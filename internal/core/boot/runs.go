@@ -79,7 +79,7 @@ func (r *conversationRuntime) startRuns(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	b.list = runs.NewRunningList(r.db, map[string]runs.ListSource{"run": runs.RunListSource{}})
+	b.list = runs.NewRunningList(r.db, map[string]runs.ListSource{"run": runs.RunListSource{}, "work": runs.WorkListSource{Person: r.person}})
 	b.notices = lane.NewNotices(r.db, nil)
 	b.notices.OnDelivered = func(d lane.Delivery) {
 		// Delivery has committed and the lane is at its boundary. Publication is
@@ -105,6 +105,9 @@ func (r *conversationRuntime) startRuns(ctx context.Context) error {
 				return clientsrv.Result{}, runs.ErrInvalid
 			}
 			ref := runs.ListRef{Source: "run", ID: *request.RunID}
+			if id, ok := strings.CutPrefix(ref.ID, "task:"); ok {
+				ref.Source, ref.ID = "work", id
+			}
 			switch string(*request.Action) {
 			case "open":
 				var offset int64
@@ -115,7 +118,13 @@ func (r *conversationRuntime) startRuns(ctx context.Context) error {
 				if err != nil {
 					return clientsrv.Result{}, runs.ErrInvalid
 				}
-				text, next, err := b.service.ResultPage(ctx, s.PersonID, ref.ID, offset)
+				var text string
+				var next int64
+				if ref.Source == "work" {
+					text, next, err = r.work.SummaryPage(ctx, ref.ID, offset)
+				} else {
+					text, next, err = b.service.ResultPage(ctx, s.PersonID, ref.ID, offset)
+				}
 				if err != nil {
 					return clientsrv.Result{}, err
 				}
@@ -398,6 +407,9 @@ func (r *conversationRuntime) publishRunning(ctx context.Context) error {
 	}
 	current := map[string]bool{}
 	for _, entry := range snapshot.Entries {
+		if entry.Ref.Source == "work" {
+			entry.Ref.ID = "task:" + entry.Ref.ID
+		}
 		current[entry.Ref.ID] = true
 		text := entry.View.State + ": " + entry.View.Summary
 		if entry.View.Reason != "" {

@@ -7,11 +7,13 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
 	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
+	"github.com/thisisjun786/lina/kit/protocol"
 	"golang.org/x/sys/unix"
 )
 
@@ -23,6 +25,42 @@ type terminal struct {
 	done    chan struct{}
 	err     error // Read after done closes.
 	mode    unix.Termios
+}
+
+// startConversationTUI waits for the TUI's conversation subscription response.
+// It proves History was consumed; a visible Connected footer alone does not.
+func (h *harness) startConversationTUI(width, height int, environment ...string) (*terminal, *accountTap) {
+	h.t.Helper()
+	socket := h.socket
+	tap := newAccountTap(h.t, h, socket)
+	// The first connection is observed through the tap. Later connections must
+	// dial Core directly so a stopped Core still produces connection refused,
+	// rather than an accepted proxy connection followed by a handshake EOF.
+	link := filepath.Join(h.root, "tui-ready.sock")
+	if err := os.Symlink(tap.socket, link); err != nil {
+		h.t.Fatal(err)
+	}
+	h.socket = link
+	defer func() { h.socket = socket }()
+	terminal := h.startTerminalSize(environment, false, true, width, height)
+	tap.waitConversation(h)
+	if err := os.Symlink(socket, link+".next"); err != nil {
+		h.t.Fatal(err)
+	}
+	if err := os.Rename(link+".next", link); err != nil {
+		h.t.Fatal(err)
+	}
+	return terminal, tap
+}
+
+func (tap *accountTap) waitConversation(h *harness) {
+	h.t.Helper()
+	for {
+		frame := tap.next(h.t, h)
+		if snapshot, ok := frame.Payload.(protocol.Snapshot); ok && strings.HasPrefix(snapshot.Topic, "conversation:") {
+			return
+		}
+	}
 }
 
 func (h *harness) startTUI(environment ...string) *terminal {
