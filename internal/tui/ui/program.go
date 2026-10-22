@@ -269,6 +269,9 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 			if client, ok := peer.(clientPeer); ok {
 				switch request := effect.Message.(type) {
 				case state.SendRequest:
+					if request.Gen != model.content.Gen || !model.content.Busy {
+						return nil // A focus change can supersede discovery's pending input.
+					}
 					if model.conversation.agentMissing || model.conversation.agentPending {
 						model.reduceInput(state.SendResult{Gen: request.Gen, Key: request.Key, Failed: true})
 						return nil
