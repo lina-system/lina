@@ -530,7 +530,7 @@ This epic also folds in the owner's Node direction, which is not yet in the cont
 - Done when: no plan object exists before confirmation; a draft is replaced completely on each update; splitting into tasks is not a second confirmation.
 - Depends on: G1-34, G2-23. Design refs: C-52, C-57; [cognition-and-life.md](cognition-and-life.md#klotho-project-planning).
 
-**G3-18 CRW takeover.** One-time import tool outside every release, single-owner switch with rollback.
+**G3-18 CRW takeover.** One-time import tool outside every release, single-owner switch with rollback. The import/report slice uses a verified offline snapshot, durable operator id reservations and Core's versioned records; its M3 headless scenario exercises the installed Core's tools after import. This does not perform the operational switch.
 - Done when: every fetched record is reported imported, lost or unsupported; each is mapped to a LINA id once; a failed switch is rolled back explicitly; no product path resolves a source id.
 - Depends on: G2-01, G2-17, G2-22. Design refs: [work-and-delegation.md](work-and-delegation.md#operational-switch).
 
