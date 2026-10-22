@@ -252,6 +252,9 @@ func assertForgottenSummary(t *testing.T, db *canon.Store, id string) {
 // closing its view. The tap observes the same committed result the TUI receives.
 func correctionMemoryTUI(t *testing.T, h *harness) (func(string) protocol.MemoryResult, func()) {
 	t.Helper()
+	// A restored Core can accept connections before management admission opens.
+	ready, _ := conversationClient(t, h)
+	ready.Close()
 	socket := h.socket
 	tap := newAccountTap(t, h, socket, true)
 	h.socket = tap.socket
