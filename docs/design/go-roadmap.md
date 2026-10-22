@@ -117,9 +117,23 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 - #58 implements pure deterministic assembly, bounded optional ContextPacket collection and the four-step preparation runner with commit-before-dispatch evidence callbacks. Package tests cover ordered layout, budget and scope exclusions, one-line failures with zero provider calls, follow-up reuse and absence of packet bodies after SQLite reopen. It adds no client-protocol or TUI conversation endpoint.
 - #57 implements the immutable ledger tables and native admission, using the fenced canon writer, entry-derived speaker kinds and masking before storage. SQLite and real material-store scenarios cover mutation refusal, atomic admission, restart readback and unavailable bytes. Preparation and request assembly remain with their own issues; no ledger operation is exposed through the TUI or Core protocol in this increment.
 
+Acceptance evidence for #56:
+
+| Done condition | Existing verification |
+| --- | --- |
+| Ledger updates are denied. | `TestLedgerFieldsAndImmutableRows` in [canon](../../internal/core/canon/schema_ledger_test.go) attempts updates, deletes and replacement inserts on all three ledger tables, then checks the original records after reopening SQLite. |
+| Identical input gives identical bytes. | `TestLayoutAndDeterministicBytes` in [assemble](../../internal/core/assemble/assemble_test.go) compares repeated requests and reports, preserves opaque history and current-input bytes, and checks input immutability. |
+| Layout follows the contract. | The same assembly test checks persona layers, catalog, summary and history, ordered context groups, current input and stable tool order. [Prepared-identity coverage](../../internal/core/assemble/persona_identity_test.go) also checks that persona instructions occur once and count toward the request budget. |
+| Every failing preparation step shows one plain line and sends no request. | `TestPreparationStopsAtEachFailedStep` in [turn](../../internal/core/turn/preparation_test.go) checks all four steps, their order, one public line and zero provider calls. `TestPreparationCommitFailureAndSignIn` covers acknowledgement and request-evidence failures and the sign-in offer. |
+| The ContextPacket is never stored. | `TestAssemblyThroughDurableTurnNeverStoresPacket` in [turn](../../internal/core/turn/assembly_test.go) exercises real ledger commits, provider dispatch, a later turn and SQLite reopen; it checks stored references, output-only turn records and absence of the packet body from database/WAL bytes. |
+| All sub-issues are closed. | [#57](https://github.com/thisisjun786/lina/issues/57) and [#58](https://github.com/thisisjun786/lina/issues/58) are closed. |
+
+Run the issue's package checks with `go test ./internal/core/ledger/... ./internal/core/canon/... ./internal/core/guard/... ./internal/core/assemble/... ./internal/core/turn/...`. These establish the package contracts above; they do not measure live-provider quality.
+
 **G1-11 Inbox, lanes, steering and deadlines.** Inbox, lanes, steering, stop, expiry timers.
 - Done when: a duplicate key inserts one row and preserves its original bytes across restart; the acknowledgement follows the commit and no failed commit is acknowledged; each conversation runs one turn at a time while other conversations can proceed; a message during a turn is applied as steering at the next round; stop ends open calls as aborted; after `kill -9` mid-turn the input is not replayed and the conversation shows one plain line.
 - Depends on: G1-03, G1-09, G1-10. Design refs: C-09; [runtime.md](runtime.md#conversation-loop).
+- #60 and #61 supply the inbox, lane and turn boundaries. The [G1-11 acceptance record](../../evidence/inbox-lanes-acceptance.md) maps the parent #59 conditions to existing package tests and installed Core/TUI scenarios, including their uncached verification on `dev`.
 
 **G1-12 Agents, presets, persona layers and first run.** Persona layers, presets, deletion, first run.
 - Done when: a new revision applies from the next turn and the preparation acknowledgement names it; a preset update changes only core and default voice; one agent's change never alters another's; a deleted agent sits in the trash 30 days and its channel bindings end at once.
@@ -151,6 +165,7 @@ The Korean acceptance corpus is `testdata/korean/search.json`: both stores asser
 - Depends on: G1-08, G1-10, G1-13, G1-14. Design refs: C-18; [conversation-and-memory.md](conversation-and-memory.md#compaction-and-resume).
 - #70 supplies the request-fitting pass, auxiliary summary validation, continuation dispatch guard and scoped `expand` tool boundary. Package scenarios verify failure preservation, exact evidence recovery and no dispatch above the threshold; client-protocol and TUI wiring remain in their consuming flows.
 - #69 implements summary tables, exact coverage and single-parent checks, frontier/epoch-fenced publication, and atomic bottom-up rebuilding after retraction. Real SQLite scenarios cover concurrent changes, summarizer/storage failures, migration and reopen. This is a package API; request compaction, provider wiring, continuation and `expand` remain with their consuming flows, and no client/TUI scenario is introduced here.
+- #67's [acceptance record](../../evidence/g1-15-compaction.md) maps every parent done condition to the existing regressions on dev. Both sub-issues are closed, and the compaction, canon and exec suites pass; this acceptance adds no runtime behavior or client endpoint.
 
 **G1-16 Skills written by agents, adopted at once, undone in one action.** Reversible-write check, notice, undo, index.
 - Done when: an instruction-only patch is adopted as a new version with a one-line notice after the commit; undo restores the previous text as a new version; a skill with executable code is not adopted this way; the index holds name and description and bodies load only when needed.
@@ -195,10 +210,11 @@ The staged increment (#117) supplies registered SQLite mapping, per-conversation
 ### 1.F Backup, install and restart
 
 **G1-22 Backup generations and restore.** `lina backup` and `lina restore`; removal list applied first.
-- #89 implements whole-generation capture, removal-list replay before copying, online SQLite snapshots, verified file/material inventories and manifest-last publication. Package failure scenarios include SIGKILL during copying; `e2e/m1/backup.json` drives a synthetic conversation and backup through the installed executable. Restore and its zero-exposure acceptance remain with #90.
+- #89 implements whole-generation capture, removal-list replay before copying, online SQLite snapshots, verified file/material inventories and manifest-last publication. Package failure scenarios include SIGKILL during copying; `e2e/m1/backup.json` drives a synthetic conversation and backup through the installed executable.
 - Done when: a kill during copy leaves no generation; a hash mismatch fails the backup; the zero-exposure test passes also into another root; after restore non-terminal external-effect rows are unknown, leases are void and accounts show needs sign-in; the epoch never falls.
 - Depends on: G1-03, G1-11, G1-14, G1-15, G1-29. Design refs: C-32; [filesystem.md](filesystem.md#backup-generations).
 - #90 supplies the stopped-main restore CLI, independent generation checks, replay before first read, authority invalidation and recoverable publication. Package tests cover zero exposure after losing canon in the original or a second root, source removals during interruption, and process death. The M1 installed-binary scenario restores conversation history through the Core protocol and proves subsequent epoch advancement and new input.
+- #88 extends restore invalidation to queued and in-flight channel deliveries. Same-root, other-root and resumed-restore tests prove old sends cannot be claimed or settled while terminal outcomes and partial receipts survive; `e2e/m1/restore.json` checks delivery outcomes through the installed restore command.
 
 **G1-23 Install.** `lina install`: state root, services, adapter files, tool discovery.
 - Done when: install succeeds with no account and the first preparation fails with a plain cause and the sign-in offer; a foreign unit or an occupied port is refused and nothing is overwritten; versions of discovered tools are recorded and unverified ones listed.
