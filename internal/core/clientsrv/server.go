@@ -185,6 +185,10 @@ type response struct {
 }
 
 func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerIdentity) {
+	serveClientTransport(ctx, conn, identity, peer)
+}
+
+func serveMessages(ctx context.Context, conn rpc.Transport, identity Identity, peer peerIdentity) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	connectionID := rand.Text()
@@ -204,7 +208,6 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 	if err != nil || epoch == 0 {
 		return
 	}
-	reader := rpc.NewReader(conn)
 	welcomed := false
 	clientID := ""
 	capabilities := []protocol.Capability{}
@@ -216,7 +219,7 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 		defer close(readDone)
 		defer close(frames)
 		for {
-			line, err := reader.Read()
+			line, err := conn.Read(ctx)
 			if err != nil {
 				cancel()
 				return
@@ -241,13 +244,12 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 			}
 		}
 	}()
-	writer := rpc.NewWriter(conn)
 	topics := newTopicSession(ctx, identity, identity.Topics,
 		func(id json.RawMessage, envelope protocol.Envelope) error {
 			if id != nil {
-				return writer.Write(ctx, response{JSONRPC: "2.0", ID: id, Result: envelope})
+				return conn.Write(ctx, response{JSONRPC: "2.0", ID: id, Result: envelope})
 			}
-			return writer.Write(ctx, struct {
+			return conn.Write(ctx, struct {
 				JSONRPC string            `json:"jsonrpc"`
 				Method  protocol.Kind     `json:"method"`
 				Params  protocol.Envelope `json:"params"`
@@ -286,7 +288,7 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 			if messageID, unsupported := unsupportedHello(req.Method, req.Params); unsupported {
 				answer := reply(protocol.Envelope{MessageID: messageID}, identity)
 				refuse(&answer, protocol.ErrorUnsupportedCombination, "no supported client combination")
-				writer.Write(ctx, response{JSONRPC: "2.0", ID: req.ID, Result: answer})
+				conn.Write(ctx, response{JSONRPC: "2.0", ID: req.ID, Result: answer})
 				return
 			}
 		}
@@ -390,7 +392,7 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 				identity.DecisionPresence(Session{ConnectionID: connectionID, PersonID: identity.PersonID, Epoch: epoch, ClientID: clientID, CanDecide: peer.canDecide(), Capabilities: capabilities}, true)
 			}
 		}
-		err = writer.Write(ctx, response{JSONRPC: "2.0", ID: req.ID, Result: answer})
+		err = conn.Write(ctx, response{JSONRPC: "2.0", ID: req.ID, Result: answer})
 		finishReply()
 		if err != nil || closeAfter {
 			return
