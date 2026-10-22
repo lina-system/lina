@@ -152,7 +152,7 @@ func TestM1TurnBudgetHandoffInstalledCore(t *testing.T) {
 		t.Fatal("running snapshot lost run", err)
 	}
 	terminal := h.startTerminalSize([]string{"TERM=xterm-256color"}, false, true, 120, 60)
-	waitScreen(t, h, terminal, "Ctrl+D")
+	waitComposerReady(t, h, terminal)
 	h.keys(terminal, "\x12")
 	waitScreen(t, h, terminal, "in_progress: "+scenario.Input)
 	h.keys(terminal, "\x1b")

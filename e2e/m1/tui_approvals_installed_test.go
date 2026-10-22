@@ -144,7 +144,7 @@ func TestM1TUIApprovalsInstalledCore(t *testing.T) {
 		t.Fatalf("TUI authority decision=%+v", record)
 	}
 	h.keys(terminal, "\x1b[27u")
-	waitScreen(t, h, terminal, "Ctrl+D")
+	waitComposerReady(t, h, terminal)
 	h.keys(terminal, "\x04")
 	terminal.process.wait(t, 0)
 	h.expectTerminalRestored(terminal)
