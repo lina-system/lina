@@ -362,6 +362,30 @@ The run's request starts from its brief only. Trusted read/scratch adapters inte
 
 Landing uses a stable material identity, keeps verified checks separate from model claims, and publishes pending notice metadata without the artifact body. Citation resolution consumes the pinned revision through EOF and checks its full hash and half-open byte span; page/section and source URL/capture time remain display provenance. Pending notices recheck evidence before delivery. Question transfer metadata explicitly carries the `needs_input` outcome without making the run terminal. Boot uses the existing lane notice outbox for turn-boundary delivery/coalescing and restores delivered notices with conversation history. A run completing during an active turn publishes its landing only after that lane reaches its boundary. The shared canon catalog appends the run, running-list and lane-notice schemas at version 25, preserving all earlier migrations. The installed manifest adds `running` while preserving its previous capabilities and evidence; boot projects the authoritative running list to the existing topic and Ctrl+R view. Explicit starts release only after their tool receipt commits. Startup recovers the run service and committed starts without replaying the conversation. Installed-Core scenarios use a fixture provider and the real TUI; package scenarios additionally exercise canon/material stores and process death.
 
+The installed result read path uses `RunningList.Open`/`Dismiss`, the existing
+lane notice references and the conversation's result cards. A landing publishes
+a metadata-only agent-report card with its run reference; the material body is
+read only on an explicit open. The running row and the retained card both open
+the pinned material revision in the existing pager. Reads authenticate the
+person, verify the material through EOF and return UTF-8 pages bounded to 16 KiB.
+Opening or dismissing a landed row publishes a removal to live subscribers and
+removes it from fresh snapshots; its card remains readable from conversation
+history, including after restart. No separate result store is introduced.
+
+Startup reconciles a committed explicit `start_run` admission into its original
+successful turn receipt before turn recovery aborts unexecuted calls. Reconciliation
+reads the trusted origin and native call identity and dispatches no tool. An
+unreleased explicit admission consumes no execution retry. Recovery schedules a
+pending material landing without another model call or an execution retry. Effect
+questions transfer to the same durable lane outbox independently of terminal
+landings, so acknowledging a question cannot hide the later result or authorize
+further effects. Delivered effect questions use the existing authenticated question
+card handler. Accepted direction is durably recorded in the run and admitted to
+the originating conversation with a stable input key; recovery retries that
+delivery without admitting another input or clearing unknown effect receipts.
+Decline and cancel close only the question. Ordinary first-error checkpoint retries are scheduled by the
+run supervisor after the failed execution leaves the live set.
+
 **C-51 Reply shape (new).** [conversation-and-memory.md](conversation-and-memory.md#reply-shape) sets the budgets. This decision fixes the engine.
 
 - `reply.Budget{Lines, Chars}` exists per reply type and surface, stored per person in canon as a setting.
