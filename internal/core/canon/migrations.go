@@ -39,6 +39,7 @@ func Migrations() []Migration {
 		{Version: 25, SQL: RunsSchema + RunningListSchema + LaneNoticeSchema},
 		{Version: 26, SQL: WorkSchema},
 		{Version: 27, SQL: RecordsSchema},
+		{Version: 28, SQL: RecordsSearchSchema},
 	}
 }
 
