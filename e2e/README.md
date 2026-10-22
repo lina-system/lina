@@ -269,4 +269,12 @@ also drives installed Core's normal tool path into the actual installed Codex,
 then waits on the worker's conversation result before reading its snapshot. Only
 Core's conversation provider is synthetic; the worker uses its own model setup.
 
+`go test ./e2e -run '^TestM2CodexWorkTools$' -count=1` runs
+`m2/codex-work-tools.json` through the built Core, its Unix client protocol and a
+separate synthetic installed worker on stdio. It checks all four declared LINA
+work tools, authenticated owner approval and question answers, worker-written
+artifact contents, reported quota windows, and restored completion history.
+Worker settings remain omitted. This scenario uses no real account or provider
+credentials and does not measure live Codex quota.
+
 `TestM1WebUnconfigured` checks installed Core's explicit missing-provider status, absence of web declarations and one-round notice. `TestM1WebSearchExtractAndCitation` runs the production Core composition in a separate test helper with a synthetic manifest recording that executable, and injects only the Firecrawl HTTP transport. The real TUI saves a hidden key; the protocol client approves each network request; the real provider adapter searches and extracts against stub responses; TUI cells show both running activities; the scripted model cites the source URL. No real provider account is used, and model compliance beyond the scripted boundary is not claimed.
