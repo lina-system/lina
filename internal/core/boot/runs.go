@@ -14,6 +14,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/budget"
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/internal/core/lane"
@@ -81,6 +82,9 @@ func (r *conversationRuntime) startRuns(ctx context.Context) error {
 	b.list = runs.NewRunningList(r.db, map[string]runs.ListSource{"run": runs.RunListSource{}})
 	b.notices = lane.NewNotices(r.db, nil)
 	b.notices.OnDelivered = func(d lane.Delivery) {
+		if d.Conversation != "main:"+d.Agent {
+			return
+		} // Channel worker projects this durable landing to its own chat.
 		// Delivery has committed and the lane is at its boundary. Publication is
 		// recoverable from the ledger if a client disappears here.
 		view, err := r.router.view(ctx, clientsrv.Session{PersonID: r.person}, d.Agent)
@@ -202,8 +206,14 @@ type backgroundStream struct {
 func (s *backgroundStream) Close() error { defer s.activity.Release(); return s.Stream.Close() }
 
 func (r *conversationRuntime) authorizeRun(ctx context.Context, o runs.Origin, b runs.Brief) error {
-	if o.Person != r.person || o.Epoch != r.epoch || o.Job != "" || o.Conversation != "main:"+o.Agent || r.route == nil {
+	if o.Person != r.person || o.Epoch != r.epoch || o.Job != "" || r.route == nil {
 		return runs.ErrScope
+	}
+	if o.Conversation != "main:"+o.Agent {
+		binding, err := r.channelBindingFor(ctx, o.Conversation, o.Agent)
+		if err != nil || !binding.Scope.Tools || binding.Unreachable {
+			return runs.ErrScope
+		}
 	}
 	_, err := r.agents.Get(ctx, o.Agent)
 	if err != nil {
@@ -498,4 +508,22 @@ func startRunDeclaration() provider.ToolDecl {
 
 func recoverConversationTurns(ctx context.Context, db *canon.Store) error {
 	return turn.New(db).RecoverWithReceipts(ctx, runs.RecoverStartReceipt)
+}
+
+func (r *conversationRuntime) channelBindingFor(ctx context.Context, conversation, agent string) (channels.Binding, error) {
+	rows, err := channels.New(r.db).Connections(ctx, r.person)
+	if err != nil {
+		return channels.Binding{}, err
+	}
+	for _, row := range rows {
+		if row.Sender == "" {
+			continue
+		}
+		for _, binding := range row.Bindings {
+			if binding.Conversation == conversation && binding.Agent == agent {
+				return binding, nil
+			}
+		}
+	}
+	return channels.Binding{}, channels.ErrDenied
 }

@@ -916,9 +916,34 @@ committed pairing and binding scope. Disconnect joins the poller, revokes bindin
 and pairing, blocks pending outbound work and removes the credential, retaining
 ownership and delivery receipts so reconnect cannot transfer ownership or replay
 old input. Core shutdown joins pollers before closing their stores. Ordinary
-bound channel messages remain in the durable gateway inbox; channel turn execution
-and outbound reply scheduling attach through their owning flows.
+bound owner messages enter the durable gateway inbox; the channel worker drains
+them through the existing turn execution and outbound queue.
 
+
+#147 adds `gateway/discord` behind the same adapter boundary and boots one
+outbound Gateway session per saved Discord bot. Its `coder/websocket` transport
+is pinned at v1.8.15; REST calls use the fixed Discord v10 origin without redirects
+or automatic effect retries. The shared catalog appends Discord presentations
+and pending buttons at migration 26, leaving migrations 1–25 unchanged.
+The optional channel control `platform` field defaults to Telegram. Discord
+connection verifies the bot identity before replacing its credential or worker.
+
+The channel worker now drains committed owner inbox rows into the existing turn
+lanes. Channel ledger events retain platform/chat provenance and binding scope;
+the same model, tool and background-run services execute the work. A completed
+reply and a landed background artifact are projected once into the channel
+ledger and shaped for the existing durable outbound queue. Restart finds the
+same inbox/turn/queue identities. It cannot repeat a started model turn or an
+uncertain send. No channel stream publishes provisional deltas. Controls expose
+permanent delivery failure as the binding's unreachable flag.
+
+Discord approval presentations are Core-computed, with once/deny components.
+A live private tools binding supplies local surface availability, and an
+independent presentation worker does not hold the turn lane. Interaction
+receipt, token-free pending inbox and session cursor commit together. Recovery
+rechecks current owner pairing, binding, epoch and the original platform
+presentation before answering authority. Foreign presses and duplicate native
+interaction IDs cannot alter that decision or edit its message.
 
 The Telegram adapter uses the pinned `gotgbot/v2` client for individual API calls;
 LINA owns the polling loop. Construction is local and starts no platform request.

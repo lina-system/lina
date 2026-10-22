@@ -254,6 +254,57 @@ A channel is an external messaging platform through which the person talks with 
 
 Core talks to each platform through one adapter and knows no platform limit. An adapter offers: connect and disconnect with a durable cursor; an inbound event carrying the platform's ids; send, returning a result id or an error class (retry later, permanently blocked, too long, unauthorized); edit; answer an interaction; fetch an attachment; and a static capability descriptor (text length, edit, buttons, files, threads, streaming, and which result types the channel can show). The first adapters are Telegram and Discord. A further platform is a new adapter behind this boundary, added by a release and not by a change to this contract. The adapter code is LINA's own, and its client library is a Go dependency under [dependencies.md](../policy/dependencies.md).
 
+Discord uses API v10 and an outbound Gateway WebSocket, with no inbound
+listener. The client protocol's optional `platform` selects `telegram` or
+`discord`; omission retains Telegram for existing clients. `/channels` offers
+Discord connection alongside Telegram and preserves the selected platform for
+pairing, binding, scope changes and disconnect. Discord bot identity comes from
+`users/@me`, not from decoding the token. Only the credential store retains the
+bot token. Explicit Discord connect registers only the `/lina text` command,
+preserving other application commands. Its interaction is acknowledged once
+after durable admission while Core finishes the turn. Interaction tokens remain transient and never enter inbox or canon.
+
+The Discord adapter uses `github.com/coder/websocket` v1.8.15 for framing and
+standard-library HTTPS for individual REST calls. Core owns heartbeat,
+identify/resume, reconnect backoff and the durable session/sequence cursor.
+Native message and interaction IDs remain deduplicated across sessions and
+restarts. Bot-authored input cannot begin a conversation. Guild thread ancestry
+comes from channel metadata, so the most specific thread binding wins.
+
+Discord text is shaped into at most three parts of 2,000 UTF-16 units. A
+paragraph separator is retained at the split; an oversized individual paragraph
+splits at a Unicode rune boundary without losing text. Longer replies use Core's
+summary and result link. Automatic mentions are disabled. Streaming stays off;
+this increment advertises text, edits, buttons and threads, not attachments.
+A 429 keeps the full retry-after; ambiguous responses and transport failures
+remain unknown. A permanent refusal marks the chat unreachable through the
+shared queue and appears in channel controls.
+
+Discord approval buttons contain only a canonical request ID and once/deny.
+The durable presentation binds bot, chat, thread and message to that request.
+Before accepting a press, Core rechecks the numeric paired owner, current tools
+scope, agent, epoch and presentation. A non-owner cannot change the approval or
+edit the owner's message. A repeated interaction never repeats a decision or
+platform edit. The pending-button inbox contains no interaction token.
+
+Both adapters are attached to Core's existing turn lanes and outbound queue.
+Committed owner input starts the existing model/tool flow with its channel
+conversation and scope. Memory-disabled bindings omit personal memory and
+relationship context; tools-disabled bindings offer no tools. Binding changes
+are checked again before model dispatch and tool execution. A channel with tools
+may start the existing read-only background run; its verified landing returns
+as a new message in the originating chat after the turn boundary. Recovery uses
+the original inbox and turn claims and does not rerun an already started turn or
+resend an unknown delivery. Private, reachable bindings with tools can present
+canonical approvals while the Gateway is active.
+
+The headless `e2e/m2/discord.json` scenario runs production boot in its own
+process with synthetic Gateway, REST and model endpoints. It covers protocol
+connection/pairing/binding, duplicated interactions, owner-only admission,
+foreground and background execution, long reply shaping, blocked delivery and
+restart. Adapter tests independently cover owner-only approval decisions,
+presentation matching, token-free inboxes and REST error classification.
+
 Telegram's initial adapter uses `github.com/PaulSonOfLars/gotgbot/v2` at
 `v2.0.0-rc.37`, with no transitive modules. It advertises text, edits,
 buttons, files and topics; streaming remains off. The adapter shapes queued text

@@ -105,7 +105,7 @@ type Config struct {
 	Conversation *modelpath.ResponsesConfig
 	// SignInTransport is an in-process test seam; production uses the fixed issuer.
 	SignInTransport http.RoundTripper
-	// ChannelTransport is an in-process platform test seam; production uses Telegram.
+	// ChannelTransport is an in-process platform test seam; production uses the fixed Telegram and Discord origins.
 	ChannelTransport http.RoundTripper
 	// ClientManifest selects the build manifest containing supportedCombinations.
 	// An explicit path must exist and contain a valid table, including an empty

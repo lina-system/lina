@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -28,6 +29,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/authority"
 	"github.com/thisisjun786/lina/internal/core/budget"
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
@@ -61,13 +63,15 @@ type acceptedSteering struct {
 }
 
 type conversationRuntime struct {
-	background   *backgroundRuntime
-	router       *conversationRouter
-	decisions    *clientsrv.Decisions
-	replaySocket string
-	dispatchMu   *sync.RWMutex
-	removals     *retract.Store
-	channels     *channelRuntime
+	channelSurfaces atomic.Int64
+	background      *backgroundRuntime
+	router          *conversationRouter
+	decisions       *clientsrv.Decisions
+	replaySocket    string
+	dispatchMu      *sync.RWMutex
+	removals        *retract.Store
+	channels        *channelRuntime
+	channelBinding  *channels.Binding
 
 	materials        *conversationMaterials
 	assets           *assets.Store
@@ -162,7 +166,7 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	}
 	r.persona = coreexec.NewPersona(db, r.agents, r.materials)
 	r.personaAuthority, err = authority.Open(ctx, db, authority.Config{Epoch: epoch, Resolve: r.resolvePersonaGrant,
-		CanPresent: func() bool { return r.decisions != nil && r.decisions.CanPresent() },
+		CanPresent: func() bool { return r.decisions != nil && r.decisions.CanPresent() || r.channelSurfaces.Load() > 0 },
 		ApprovalsChanged: func(ctx context.Context) {
 			if r.decisions != nil {
 				r.decisions.ApprovalsChanged(ctx)
@@ -372,6 +376,9 @@ func (r *conversationRuntime) Interrupt(ctx context.Context, s clientsrv.Session
 	return nil
 }
 func (r *conversationRuntime) publish(ctx context.Context, kind protocol.Kind, key string, payload any) error {
+	if r.channelBinding != nil {
+		return nil
+	}
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return err
@@ -646,7 +653,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 	}
 	defer activity.Release()
 	bindings := map[string]loop.Tool{}
-	bindings[runs.StartToolName] = r.background.service.StartTool(r.runOrigin(turnID))
+	if r.channelBinding == nil || r.channelBinding.Scope.Tools {
+		bindings[runs.StartToolName] = r.background.service.StartTool(r.runOrigin(turnID))
+	}
 	var promoted budget.Handle
 	defer func() {
 		r.personaMu.Lock()
@@ -662,7 +671,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 	var memoryEpoch uint64
 	var memoryRefs []turn.Reference
 
-	evidence := turn.EvidenceWriter{Ledger: r.journal(), ConversationID: r.conversation, ParentID: input.ID, Surface: ledger.Surface{Kind: "tui"}, Now: time.Now}
+	evidence := turn.EvidenceWriter{Ledger: r.journal(), ConversationID: r.conversation, ParentID: input.ID, Surface: input.Surface, Now: time.Now}
 	prep := &turn.Preparation{
 		VerifyBuild: r.verifyBuild,
 		Account:     func(context.Context) (provider.Credential, error) { return r.route.Request(nil).Credential, nil },
@@ -710,6 +719,23 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			declarations = append(declarations, coreexec.RelationshipDeclaration())
 			declarations = append(declarations, coreexec.SkillDeclarations()...)
 			declarations = append(declarations, startRunDeclaration())
+			if r.channelBinding != nil && !r.channelBinding.Scope.Tools {
+				clear(bindings)
+				declarations = nil
+				catalog = nil
+			}
+			if r.channelBinding != nil {
+				for name, tool := range bindings {
+					execute := tool.Execute
+					tool.Execute = func(ctx context.Context, call provider.ToolCall) loop.Result {
+						if err := r.validateChannel(ctx); err != nil || !r.channelBinding.Scope.Tools {
+							return loop.Result{ID: call.ID, Code: loop.Denied}
+						}
+						return execute(ctx, call)
+					}
+					bindings[name] = tool
+				}
+			}
 			packet, _, err := atropos.Packet(ctx, minimum, 0, func(ctx context.Context) (assemble.ContextPacket, error) { return r.relationshipPacket(ctx, at) })
 			if err != nil {
 				return turn.PreparedRequest{}, err
@@ -829,6 +855,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				defer r.dispatchMu.RUnlock()
 				// Never dispatch a cached preparation after a committed forget. This also
 				// fences follow-up rounds; the existing turn flow records the refusal.
+				if err := r.validateChannel(ctx); err != nil {
+					return nil, err
+				}
 				if err := r.validateModelContext(ctx, memoryEpoch, memoryRefs); err != nil {
 					return nil, err
 				}
@@ -886,7 +915,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 						}
 					}
 					now := time.Now()
-					completed = append(completed, ledger.Admission{Entry: guard.EntryAgent, Input: ledger.Input{ID: key, ConversationID: r.conversation, ParentID: input.ID, AgentID: r.agent, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: text.String()}})
+					completed = append(completed, ledger.Admission{Entry: guard.EntryAgent, Input: ledger.Input{ID: key, ConversationID: r.conversation, ParentID: input.ID, AgentID: r.agent, Surface: input.Surface, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: text.String()}})
 					return nil
 				case provider.ToolCallReady, provider.Terminal:
 					return nil

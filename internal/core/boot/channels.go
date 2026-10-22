@@ -14,6 +14,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/gateway"
+	"github.com/thisisjun786/lina/internal/core/gateway/discord"
 	"github.com/thisisjun786/lina/internal/core/gateway/telegram"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/kit/protocol"
@@ -45,17 +46,27 @@ func startChannels(r *conversationRuntime, epoch uint64, transport http.RoundTri
 		return nil, err
 	}
 	for _, row := range rows {
-		if row.Platform == "telegram" {
+		if row.Platform == "telegram" || row.Platform == "discord" {
 			_ = c.start(row.Bot)
 		}
 	}
 	return c, nil
 }
 func (c *channelRuntime) key(b channels.Bot) secrets.Key {
-	return secrets.Key{Person: c.r.person, Service: "telegram", Name: b.Account}
+	return secrets.Key{Person: c.r.person, Service: b.Platform, Name: b.Account}
 }
-func (c *channelRuntime) adapter(b channels.Bot, token secret.Secret) (*telegram.Adapter, error) {
-	return telegram.New(telegram.Config{Bot: b, Token: token, DB: c.r.db, Epoch: c.epoch, Transport: c.transport})
+
+type channelAdapter interface {
+	gateway.Adapter
+	Identify(context.Context) error
+	Close()
+}
+
+func (c *channelRuntime) adapter(b channels.Bot, token secret.Secret) (channelAdapter, error) {
+	if b.Platform == "discord" {
+		return discord.New(discord.Config{Bot: b, Token: token, DB: c.r.db, Epoch: c.epoch, Approvals: c.r.personaAuthority, Transport: c.transport})
+	}
+	return telegram.New(telegram.Config{Bot: b, Token: token, DB: c.r.db, Epoch: c.epoch, Approvals: c.r.personaAuthority, Transport: c.transport})
 }
 
 // The adapter handles pairing before ordinary inbox admission. Bound messages
@@ -83,6 +94,12 @@ func (c *channelRuntime) start(b channels.Bot) error {
 	go func() {
 		defer close(worker.done)
 		defer adapter.Close()
+		signalDone := make(chan struct{})
+		go func() { defer close(signalDone); c.channelSignals(ctx, b, adapter, worker.healthy) }()
+		defer func() { cancel(); <-signalDone }()
+		workDone := make(chan struct{})
+		go func() { defer close(workDone); c.runChannelWork(ctx, b, adapter) }()
+		defer func() { cancel(); <-workDone }()
 		superviseChannel(ctx, worker.healthy, func(ctx context.Context) error {
 			if err := adapter.Identify(ctx); err != nil {
 				return err
@@ -140,6 +157,9 @@ func (c *channelRuntime) Channel(ctx context.Context, s clientsrv.Session, p pro
 		return result, &clientsrv.OperationError{Code: protocol.ErrorNotAuthorized}
 	}
 	b := channels.Bot{Platform: "telegram"}
+	if p.Platform != nil {
+		b.Platform = *p.Platform
+	}
 	if p.Account != nil {
 		b.Account = *p.Account
 	}
@@ -150,12 +170,24 @@ func (c *channelRuntime) Channel(ctx context.Context, s clientsrv.Session, p pro
 		if p.Token == nil {
 			return result, &clientsrv.OperationError{Code: protocol.ErrorMalformed}
 		}
-		b.Account, _, _ = strings.Cut(*p.Token, ":")
+		if b.Platform == "discord" {
+			b.Account, err = discord.IdentifyAccount(ctx, secret.New(*p.Token), c.transport)
+			if err != nil {
+				return result, channelError(err)
+			}
+		} else {
+			b.Account, _, _ = strings.Cut(*p.Token, ":")
+		}
 		probe, probeErr := c.adapter(b, secret.New(*p.Token))
 		if probeErr != nil {
 			return result, &clientsrv.OperationError{Code: protocol.ErrorMalformed}
 		}
 		err = probe.Identify(ctx)
+		if err == nil {
+			if setup, ok := probe.(interface{ Configure(context.Context) error }); ok {
+				err = setup.Configure(ctx)
+			}
+		}
 		probe.Close()
 		if err != nil {
 			return result, channelError(err)
@@ -267,6 +299,9 @@ func superviseChannel(ctx context.Context, healthy *atomic.Bool, run func(contex
 		err := run(ctx)
 		healthy.Store(false)
 		delay, retry := telegram.RecoveryDelay(err)
+		if !retry {
+			delay, retry = discord.RecoveryDelay(err)
+		}
 		if !retry || ctx.Err() != nil || pause(ctx, max(delay, backoff)) != nil {
 			return
 		}

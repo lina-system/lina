@@ -19,6 +19,7 @@ require (
 	github.com/charmbracelet/x/ansi v0.11.9
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/charmbracelet/x/vt v0.1.0
+	github.com/coder/websocket v1.8.15
 	github.com/ncruces/go-sqlite3 v0.30.5
 	github.com/thisisjun786/lina/kit v0.0.0
 	github.com/yuin/goldmark v1.7.17
