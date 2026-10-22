@@ -2301,10 +2301,48 @@
         },
         "removed": {
           "type": "boolean"
+        },
+        "state": {
+          "$ref": "#/$defs/running_state"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "reason": {
+          "$ref": "#/$defs/running_reason"
         }
       },
       "required": [],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "anyOf": [
+              {
+                "required": [
+                  "state"
+                ]
+              },
+              {
+                "required": [
+                  "summary"
+                ]
+              },
+              {
+                "required": [
+                  "reason"
+                ]
+              }
+            ]
+          },
+          "then": {
+            "required": [
+              "state",
+              "summary"
+            ]
+          }
+        }
+      ]
     },
     "stop": {
       "type": "object",
@@ -4662,7 +4700,7 @@
     },
     "tool_activity": {
       "type": "object",
-      "description": "Display-only tool lifecycle event. No arguments or output. Live/replay only; not retained in Topics snapshots or conversation/model history.",
+      "description": "Display-only tool lifecycle event. Arguments and raw output excluded. Optional Core-approved display target and summary. Live/replay only; not conversation/model history.",
       "properties": {
         "stream": {
           "$ref": "#/$defs/stream_metadata"
@@ -4687,6 +4725,16 @@
         "duration_ms": {
           "type": "number",
           "minimum": 0
+        },
+        "target": {
+          "type": "string",
+          "maxLength": 160,
+          "description": "Optional Core-approved display target. Never inferred from raw arguments by clients."
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 8192,
+          "description": "Optional sanitized display summary explicitly supplied by Core, never raw tool output."
         }
       },
       "required": [
@@ -4924,6 +4972,32 @@
         "details"
       ],
       "additionalProperties": false
+    },
+    "running_state": {
+      "type": "string",
+      "enum": [
+        "in_progress",
+        "waiting",
+        "needs_input",
+        "ready_for_review",
+        "failed",
+        "stopped",
+        "done",
+        "unknown"
+      ]
+    },
+    "running_reason": {
+      "type": "string",
+      "enum": [
+        "dependency",
+        "area",
+        "quota",
+        "host_capacity",
+        "ci_pending",
+        "run_limit",
+        "person",
+        "budget"
+      ]
     }
   }
 }

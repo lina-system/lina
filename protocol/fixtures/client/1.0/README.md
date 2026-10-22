@@ -48,8 +48,13 @@ tool stream-item shape and the older receiver's unknown-item handling; Core does
 not retain tool activities in Topics snapshots. They are live/replay display
 events, outside conversation messages and model history.
 
-`TestOlderSchemaClientReceivesActivityAdditions` in `kit/protocol` generates and
-compiles a separate client without the activity fields or kind. With the updated
+The running cases round-trip typed state, summary and waiting reason fields in
+live updates and retained snapshots alongside the unchanged legacy text.
+
+`TestOlderSchemaClientReceivesPresentationAdditions` in `kit/protocol` generates and
+compiles a separate client without the activity fields/kind or typed running
+presentation. It retains running text and identity in both live and snapshot
+frames while discarding the new fields. With the updated
 receive boundary it accepts extended turn states, skips tool activity and unknown
 snapshot items, and continues receiving known events. It also verifies that its
 strict codec rejects the extended turn state. This proves the updated receiver

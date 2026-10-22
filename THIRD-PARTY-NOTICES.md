@@ -128,6 +128,12 @@ Tool activity also follows Hermes Agent’s friendly catalog verbs and timed
 completion indication, observed at revision `944c3a434071f43e64b443d033f3eba30c64434c`
 in `agent/display.py`. LINA’s protocol and journal wiring are original.
 
+Tool rows additionally reference Hermes Agent's separation of catalog verbs and
+compact targets at revision `e06df9c2eae6901f4c88f464e0ae6e753c0428b8`,
+`agent/display.py:477-620`. No code is copied; the
+[tool row reference](internal/tui/TOOL-ROWS-REFERENCE.md) records seen, inferred
+and unknown behavior.
+
 ## Memory design references
 
 The memory and compaction behavior in [Conversation and memory](docs/design/conversation-and-memory.md) is derived from the designs of Honcho and LCM-X. This attribution covers behavioral reference and an independent Go implementation under LINA's contracts. No upstream implementation code, prompts, runtime dependency or user data is included by this design change.
@@ -1601,3 +1607,12 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## oh-my-hermes development methods
+
+Nine built-in development skills adapt oh-my-hermes, MIT, revision
+`59270ab48e82ab24cfe4f445dc5693b97d4141a3`:
+verification-gate, app-debugging, build-failure-triage, perf, qa, agent-debug,
+agent-evaluation, issue-requirements (ulw-interview), and failure-signal-audit.
+The [skill notice](skills/NOTICE.md) carries the source and full MIT license.
+No upstream runtime is bundled or installed into workers.

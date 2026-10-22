@@ -142,7 +142,18 @@ func projectStream(envelope protocol.Envelope) (streamProjection, error) {
 		}
 		p.topic, p.cursor = metadata.Topic, metadata.Cursor
 		if envelope.Kind == protocol.KindToolActivity {
-			p.message = state.StreamAdvance{Epoch: metadata.Cursor.Epoch, Topic: metadata.Topic, Cursor: seq}
+			activity := envelope.Payload.(protocol.ToolActivity)
+			call := state.ToolCall{ID: activity.CallID, Name: activity.ToolName, Status: activity.Status}
+			if activity.Outcome != nil {
+				call.Outcome = *activity.Outcome
+			}
+			if activity.Target != nil {
+				call.Target = *activity.Target
+			}
+			if activity.Summary != nil {
+				call.Summary = *activity.Summary
+			}
+			p.message = state.ToolEvent{Epoch: metadata.Cursor.Epoch, Topic: metadata.Topic, Cursor: seq, Call: call}
 		} else if envelope.Kind == protocol.KindOutputDelta {
 			p.message = state.Delta{Epoch: metadata.Cursor.Epoch, Topic: metadata.Topic, ID: streamKey(metadata.Topic, metadata.Key), Cursor: seq, Revision: revision, Text: value}
 		} else {
@@ -277,6 +288,13 @@ func projectConversationBlock(block *state.Block, payload protocol.Payload) {
 	case protocol.Connected:
 		block.ShellFileToolsAvailable = p.ShellFileToolsAvailable
 	case protocol.RunningUpdate:
+		if p.State != nil && p.Summary != nil {
+			block.RunState = *p.State
+			block.Text = *p.Summary
+			if p.Reason != nil {
+				block.RunReason = *p.Reason
+			}
+		}
 		if p.Removed != nil {
 			block.Removed = *p.Removed
 		}
