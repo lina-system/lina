@@ -6,6 +6,16 @@ This file collects the notices of every included component: the `NOTICE` file of
 
 Add an entry when third-party code or other material is included in LINA. Record its source, version or commit, license, original notices, and any modifications. Include the required license texts and notices with the distribution.
 
+## Terminal UI behaviour references
+
+Hermes Agent (Nous Research, MIT), revision
+`944c3a434071f43e64b443d033f3eba30c64434c`, is a reference for draft-clearing
+priority and a second Ctrl+C within two seconds. See the
+[observations and differences](internal/tui/ui/REFERENCE.md). LINA implements
+its own client-only confirmation and expiring hint; no upstream code is copied.
+The Hermes copyright and MIT permission notice appear in the Hermes Agent
+section below.
+
 ## Memory design references
 
 The memory and compaction behavior in [Conversation and memory](docs/design/conversation-and-memory.md) is derived from the designs of Honcho and LCM-X. This attribution covers behavioral reference and an independent Go implementation under LINA's contracts. No upstream implementation code, prompts, runtime dependency or user data is included by this design change.

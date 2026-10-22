@@ -153,10 +153,7 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		}
 		return nil
 	case "ctrl+c":
-		if m.content.Draft.Text != "" || len(m.content.Draft.Attachments) != 0 {
-			return m.reduceInput(state.EditDraft{})
-		}
-		fallthrough
+		return m.controlC()
 	case "ctrl+d":
 		m.status = ConnectionStatus{State: Quit}
 		return tea.Quit
@@ -467,6 +464,9 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 	clip := func(s string) string { return ansi.Truncate(s, m.size.Width, "") }
 	status := m.styles.presentation(m.status)
 	statusLine := status.Mark + " " + status.Label
+	if hint := m.quitHint(); hint != "" {
+		statusLine += "  " + hint
+	}
 	if m.status.Cause != "" {
 		statusLine += " " + status.Detail
 	} else if notice := m.localNotice(); showNotice && notice != "" {

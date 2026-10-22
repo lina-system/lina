@@ -100,8 +100,12 @@ snapshot restore the subscribed view in Core's history order. A durable stopped
 outcome stays with its interrupted turn before later inputs and replies, including
 after reconnect and terminal resize.
 
-Quit (Ctrl+C with an empty draft or Ctrl+D), input EOF and termination signals close only this
-client and exit 0, including during handshake or retry. The raw terminal reader
+Quit (a second Ctrl+C on an empty draft within two seconds, or Ctrl+D), input
+EOF and termination signals close only this client and exit 0, including during
+handshake or retry. The first empty-draft Ctrl+C shows the localized
+`Ctrl+C again to quit` hint in the status row; it disappears after two seconds
+even when no further input or Core event arrives. A later Ctrl+C starts a new
+confirmation window. The raw terminal reader
 ignores releases, toggle repeats and pasted quit text. Nonterminal input keeps
 the handshake-then-read behavior. No failure path starts Core or creates state.
 
@@ -598,10 +602,27 @@ Keys are a proposal and data in `tui/ui`. No contract fixes them.
 | Enter | Send the draft |
 | Alt+Enter, Ctrl+J | Newline (Ctrl+J because Alt may not reach the application) |
 | Esc | Close the top overlay; with none, interrupt the turn |
-| Ctrl+C | Clear the draft; with an empty draft, quit the TUI only, never Core |
+| Ctrl+C | Clear the draft; with an empty draft, show `Ctrl+C again to quit` for two seconds; a second press within that window quits only the TUI |
+| Ctrl+D | Quit the TUI immediately (question forms retain their decline action) |
 | Tab, Shift+Tab | Move focus |
 | Ctrl+K | Command palette |
 | Keys for Waiting for me, progress, running list and Open on a card | Open those views |
+
+Clearing a draft (including attachments) cancels any pending quit confirmation
+and does not start another. The two-second window is exclusive at its end:
+a press at or after expiry starts a fresh hint. This local display state never
+enters conversation history and never sends a Core interrupt. Esc retains its
+turn-interrupt action. Existing overlays retain their own input handling.
+The confirmation uses the injected model clock and the same press-only gate as
+other toggles; repeats, releases and pasted control text cannot arm or confirm it.
+A single cancellable timer in the client input loop expires and redraws the hint
+without blocking input, retries or shutdown.
+
+`e2e/tui_lifecycle_test.go` observes the real PTY hint and its disappearance
+before sending the next key, checks exit 0 and terminal restoration, and proves
+Core remains available. Exact timing boundaries use an injected clock in unit
+tests. The [behaviour reference](../../internal/tui/ui/REFERENCE.md) records what
+was observed in Hermes and what LINA specifies independently.
 
 Key classes are Toggle, Edit and Approve. Every key event passes one `Admit` gate: releases are ignored, repeats are dropped for Toggle and Approve, and Edit keys may repeat. Without key events from the terminal every key counts as a press, and approval cards add a dead time after any change of card (P).
 

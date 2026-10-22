@@ -451,8 +451,23 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 		}
 		return display.showShell(model)
 	}
+	// A one-shot timer redraws the hint even when Core and input are idle.
+	// Commands run synchronously here, so a tea.Tick command would block input.
+	quitTimer := time.NewTimer(0)
+	quitTimer.Stop()
+	defer quitTimer.Stop()
 	for {
+		var quitExpiry <-chan time.Time
+		quitTimer.Stop()
+		if !model.quitDeadline.IsZero() {
+			quitTimer.Reset(time.Until(model.quitDeadline))
+			quitExpiry = quitTimer.C
+		}
 		select {
+		case <-quitExpiry:
+			if err := handle(quitHintExpired{}); err != nil {
+				return err
+			}
 		case <-ctx.Done():
 			cause := context.Cause(ctx)
 			if errors.Is(cause, errQuit) {
@@ -532,7 +547,7 @@ func (d *display) showShell(model *shellModel) error {
 	if err := d.showStatus(model.status); err != nil {
 		return err
 	}
-	if !d.interactive || len(model.content.Blocks) == 0 && !model.hasComposer() && !model.accounts.open {
+	if !d.interactive || len(model.content.Blocks) == 0 && !model.hasComposer() && !model.accounts.open && model.quitHint() == "" && d.frame == "" {
 		return nil
 	}
 	// Plain terminals already received each notice once above. Transcript

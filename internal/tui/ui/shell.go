@@ -59,6 +59,7 @@ type shellModel struct {
 	gate          term.Gate
 	events        bool
 	now           func() time.Time
+	quitDeadline  time.Time
 	blocks        map[string]shellBlock
 	resyncPending map[string]protocol.StreamCursor
 	resyncSeen    map[resyncSignal]protocol.StreamCursor
@@ -91,6 +92,10 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch msg := message.(type) {
+	case quitHintExpired:
+		if !m.now().Before(m.quitDeadline) {
+			m.quitDeadline = time.Time{}
+		}
 	case shellBegin:
 		if msg.Generation > m.generation {
 			m.generation = msg.Generation
@@ -287,11 +292,7 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch key.Name {
 		case "ctrl+c":
-			if m.content.Draft.Text != "" || len(m.content.Draft.Attachments) != 0 {
-				m.content, _ = state.Reduce(m.content, state.EditDraft{})
-				return m, nil
-			}
-			fallthrough
+			return m, m.controlC()
 		case "q", "ctrl+d":
 			m.status = ConnectionStatus{State: Quit}
 			return m, tea.Quit
@@ -400,6 +401,9 @@ func (m *shellModel) viewContent(showNotice bool) string {
 	plan := layout.Plan(m.size, layout.Caps{}, layout.Shape{ComposerRows: 1})
 	status := m.styles.presentation(m.status)
 	statusLine := status.Mark + " " + status.Label
+	if hint := m.quitHint(); hint != "" {
+		statusLine += "  " + hint
+	}
 	if m.status.Cause != "" || m.status.State == Retrying {
 		statusLine += "  " + status.Detail
 	}
@@ -417,6 +421,9 @@ func (m *shellModel) viewContent(showNotice bool) string {
 	}
 	if len(m.content.Blocks) == 0 || !m.status.State.active() {
 		lines := strings.Split(strings.TrimSuffix(m.styles.ScreenStatus(m.status), "\n"), "\n")
+		if hint := m.quitHint(); hint != "" {
+			lines = append(lines, clip(hint))
+		}
 		if notice := m.localNotice(); showNotice && notice != "" {
 			lines = append(lines, clip(m.styles.Muted.Render(notice)))
 		}

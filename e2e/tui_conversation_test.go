@@ -15,6 +15,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/core/install"
+	"github.com/thisisjun786/lina/internal/design"
 	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
@@ -79,6 +80,10 @@ func TestM1TUIConversationInstalledCore(t *testing.T) {
 	if text := screenText(fresh); strings.Contains(strings.ToLower(text), "unsupported") {
 		t.Fatalf("fresh install shows an unsupported placeholder: %s", text)
 	}
+	// A stray Ctrl+C must leave the real conversation usable. The following
+	// exchange crosses the installed Core and provider while the hint is armed.
+	h.keys(terminal, "\x03")
+	waitScreen(t, h, terminal, design.Text(design.English, "shell.quit_hint"))
 	h.keys(terminal, scenario.Input+"\r")
 	snapshot := waitScreen(t, h, terminal, scenario.Reply)
 	if text := screenText(snapshot); strings.Contains(strings.ToLower(text), "unsupported") {
