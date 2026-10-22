@@ -35,8 +35,15 @@ unavailable and creates no worker service.
 
 The build manifest may also carry:
 
-- `verifiedTools`: an object mapping installed tool names to arrays of exact
-  verified `--version` output lines. Absence means no verified versions.
+- `verifiedWorkerVersions`: an object mapping worker names to arrays of verified
+  versions, such as `{ "codex": ["0.163.0"] }`. Install compares Codex versions
+  after removing the optional `codex-cli ` prefix from both the observed value
+  and each listed version; other tools retain exact output-line comparison.
+  The original probe output and manifest list remain in `system/tools.json`.
+  Older manifests with only `verifiedTools` remain installable: that legacy
+  field is read only when `verifiedWorkerVersions` is absent or null. An empty
+  canonical map takes precedence over the legacy field. If neither supplies a
+  list, no version is verified.
 - `installFiles`: an array of `{ "name", "size", "sha256" }` records for
   `adapters/claude/` files in the bundle. A provided adapter must include
   `package.json` and `package-lock.json`. Files are copied to `system/adapters/`;
