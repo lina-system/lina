@@ -21,7 +21,7 @@ func personaStateItem(item assemble.ContextItem, agent, conversation string) boo
 		return false
 	}
 	switch item.ID {
-	case "persona:" + agent + ":revision", "persona-expression:" + agent, "persona-settings:" + agent:
+	case "persona:" + agent + ":revision", "persona-expression:" + agent, "persona-settings:" + agent, "persona-methodology:" + agent:
 		return item.Kind == assemble.Commitments
 	case "persona-emotion:" + agent + ":" + conversation:
 		return item.Kind == assemble.Clock

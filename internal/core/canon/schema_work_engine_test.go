@@ -3,6 +3,57 @@ package canon
 
 import "testing"
 
+func TestWorkLedgerUpgradePreservesPublishedPresetEffects(t *testing.T) {
+	cfg := storeConfig(t)
+	all := Migrations()
+	// Version 35 is already published by dev. Exercise its actual tables and
+	// retained records before appending the work journal at version 36.
+	cfg.Migrations = all[:35]
+	db := openStore(t, cfg)
+	if err := db.Write(t.Context(), func(tx *Tx) error {
+		_, err := tx.ExecContext(t.Context(), `
+INSERT INTO authority_delegations(task_id,person,source,source_task,receiver,limits)
+ VALUES('task','person','source','parent','receiver',X'7B7D');
+INSERT INTO coding_managers(id,person,owner,unit,conversation)
+ VALUES('manager','person','owner','unit','conversation');
+INSERT INTO coding_assignments(id,manager,record)
+ VALUES('assignment','manager',X'7B7D');`)
+		return err
+	}); err != nil {
+		t.Fatalf("published migration 35 is not the preset effects schema: %v", err)
+	}
+	if err := db.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Migrations, cfg.Epoch = all, cfg.Epoch+1
+	db = openStore(t, cfg)
+	if err := db.Read(t.Context(), func(tx *Tx) error {
+		var version, events, records int
+		if err := tx.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version); err != nil {
+			return err
+		}
+		if version != 36 {
+			t.Fatalf("goal journal version = %d, want 36 after published preset effects", version)
+		}
+		var person, manager, conversation string
+		var limits, record []byte
+		if err := tx.QueryRowContext(t.Context(), `SELECT d.person,d.limits,a.manager,a.record,m.conversation
+FROM authority_delegations d, coding_assignments a JOIN coding_managers m ON m.id=a.manager
+WHERE d.task_id='task' AND a.id='assignment'`).Scan(&person, &limits, &manager, &record, &conversation); err != nil {
+			return err
+		}
+		if person != "person" || string(limits) != "{}" || manager != "manager" || string(record) != "{}" || conversation != "conversation" {
+			t.Fatal("goal journal upgrade changed preset effects records")
+		}
+		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM work_events").Scan(&events); err != nil {
+			return err
+		}
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM work_records").Scan(&records)
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestWorkLedgerUpgradePreservesExistingCanon(t *testing.T) {
 	cfg := storeConfig(t)
 	all := Migrations()

@@ -67,10 +67,13 @@ import (
 type acceptedSteering struct {
 	event   ledger.Event
 	inboxID int64
+	runner  *conversationRuntime
 }
 
 type conversationRuntime struct {
 	workEngine      *workRuntime
+	coding          *codingTurn
+	codingDelivery  *conversationRuntime
 	workerDispatch  *dispatch.Service
 	workerGitHub    *ghclient.Client
 	work            *work.Service
@@ -156,6 +159,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	}()
 	r.agents, err = agents.Open(root, db)
 	if err != nil {
+		return nil, err
+	}
+	if err = r.agents.RegisterMethodologies(ctx); err != nil {
 		return nil, err
 	}
 	if err := r.refreshPersona(ctx); err != nil {
@@ -478,7 +484,7 @@ func (r *conversationRuntime) submitInput(event ledger.Event, inboxID int64, ste
 	}
 	body := items[0]
 	if steer && r.lanes.Steer(r.conversation, body) {
-		r.steering[string(body)] = append(r.steering[string(body)], acceptedSteering{event, inboxID})
+		r.steering[string(body)] = append(r.steering[string(body)], acceptedSteering{event: event, inboxID: inboxID, runner: runner})
 		return nil
 	}
 	_, err = r.lanes.SubmitLoop(r.ctx, r.conversation, func(ctx context.Context, inputs *loop.Inputs) error { return runner.run(ctx, inputs, event, inboxID) })
@@ -641,7 +647,7 @@ func (r *conversationRuntime) publishReply(ctx context.Context, key, turnID stri
 func (r *conversationRuntime) events(ctx context.Context, through string) ([]ledger.Event, error) {
 	var ids []string
 	err := r.db.Read(ctx, func(tx *canon.Tx) error {
-		query := `SELECT id FROM conv_event WHERE conversation_id=? AND (speaker_kind IN ('person','agent','forwarded') OR scaffold_kind IN ('interruption','failure','persona_change','run_handoff','background_notice'))`
+		query := `SELECT id FROM conv_event WHERE conversation_id=? AND (speaker_kind IN ('person','agent','forwarded') OR scaffold_kind IN ('interruption','failure','persona_change','run_handoff','background_notice','coding_handoff'))`
 		args := []any{r.conversation}
 		if through != "" {
 			query += ` AND (speaker_kind NOT IN ('person','forwarded') OR rowid <= (SELECT rowid FROM conv_event WHERE id=?))`
@@ -791,6 +797,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		delete(r.personaGrants, turnID+":state")
 		delete(r.personaGrants, turnID+":expression")
 		delete(r.personaGrants, turnID+":relationship")
+		delete(r.personaGrants, turnID+":coding")
 		r.personaMu.Unlock()
 
 	}()
@@ -839,6 +846,11 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				return turn.PreparedRequest{}, err
 			}
 			minimum = append(minimum, personaPacket...)
+			methodology, err := r.methodologyContext(ctx)
+			if err != nil {
+				return turn.PreparedRequest{}, err
+			}
+			minimum = append(minimum, methodology...)
 			if err := r.prepareSkillTools(turnID, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
@@ -851,6 +863,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			if err := r.prepareRecordTools(turnID, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
+			if err := r.prepareMethodologyTools(turnID, bindings); err != nil {
+				return turn.PreparedRequest{}, err
+			}
 			workDeclarations, err := r.prepareGoalWorkTools(turnID, bindings)
 			if err != nil {
 				return turn.PreparedRequest{}, err
@@ -861,6 +876,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			declarations = append(declarations, coreexec.SkillDeclarations()...)
 			declarations = append(declarations, coreexec.RecordDeclarations()...)
 			declarations = append(declarations, workDeclarations...)
+			declarations = append(declarations, methodologyDeclarations()...)
 			declarations = append(declarations, startRunDeclaration())
 			webProvider, err := r.selectedWebProvider()
 			if err != nil {
@@ -876,6 +892,14 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			}
 			declarations = append(declarations, coreexec.WorkDeclarations()...)
 			declarations = append(declarations, workerDeclarations()...)
+			if r.coding != nil {
+				clear(bindings)
+				catalog = nil
+				declarations, err = r.prepareCodingDecision(turnID, bindings)
+				if err != nil {
+					return turn.PreparedRequest{}, err
+				}
+			}
 			if r.channelBinding != nil && !r.channelBinding.Scope.Tools {
 				clear(bindings)
 				declarations = nil
@@ -1130,11 +1154,12 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		}
 	}
 	// Late steering remains durable. A follow-up starts through the same lane and
-	// turn store, never by retrying a completed model request.
+	// turn store with the originating input's runner, retaining its channel scope
+	// and binding checks even when the preceding turn began in the app.
 	for _, body := range out.FollowUps {
 		if pending, ok := r.takeSteering(body); ok {
 			_, submitErr := r.lanes.SubmitLoop(r.ctx, r.conversation, func(ctx context.Context, inputs *loop.Inputs) error {
-				return r.run(ctx, inputs, pending.event, pending.inboxID)
+				return pending.runner.run(ctx, inputs, pending.event, pending.inboxID)
 			})
 			err = errors.Join(err, submitErr)
 		}

@@ -10,6 +10,7 @@ import (
 	"maps"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/kit/tools"
 )
 
 var ErrProtectedRef = errors.New("protected_ref_changed")
@@ -111,6 +112,14 @@ func (m *Merges) Accept(ctx context.Context, id, person, head string) error {
 // Begin reserves the shared base durably before the external call. A crash at
 // any later point leaves unknown; opening Core never clears or replays it.
 func (m *Merges) Begin(ctx context.Context, id, person, head string, current map[string]string) error {
+	b, err := m.Get(ctx, id, person)
+	if err != nil {
+		return err
+	}
+	args, _ := json.Marshal(map[string]string{"repository": b.Repository, "base": b.Base, "head": head})
+	if err = CheckPreset(ctx, m.store, m.epoch, PolicyRequest{Key: "preset:merge:" + id + ":" + head, Person: person, Agent: b.Agent, TaskID: id, Tool: "merge", Target: b.Repository + ":" + b.Base, Class: tools.BindingExecution, Arguments: args}); err != nil {
+		return err
+	}
 	return m.write(ctx, func(tx *canon.Tx) error {
 		b, err := readMerge(ctx, tx, id, person)
 		if err != nil {

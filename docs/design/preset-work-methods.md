@@ -36,7 +36,7 @@ A preset ships its record as `persona/<preset>/work-method-v1.json` beside `core
   },
   "ask": { "per_turn": 1, "form": "narrowed", "unanswered": "default" },
   "handoff": { "owns": ["code", "pull_request", "worker_task"], "check_back": true },
-  "fill": ["reply.status.lines", "ask.form"]
+  "fill": ["ask.form"]
 }
 ```
 
@@ -57,7 +57,7 @@ The empty record is `{"schema":1,"preset":"<key>"}`. Every field is optional and
 | `ask.unanswered` | What happens when the person moves on without answering: `default` proceeds with the stated recommendation and says so in one line | `default` |
 | `handoff.owns` | Artifact and work kinds this preset owns (see Hand-offs) | none |
 | `handoff.check_back` | Whether the sender checks the receiver's end condition and reports it | `true` |
-| `fill` | Keys of this record the agent may fill over time for its person | none |
+| `fill` | Keys of this record the agent may fill over time for its person. Each names a field defined above; a key that names no defined field refuses publication. Reply lengths are not fillable here: they are the person's budgets, tuned as [Reply shape](conversation-and-memory.md#reply-shape) describes. | none |
 
 A record holds no persona text, no procedure, no template, no approval checklist and no routing prose. Its values are data that Core reads.
 
@@ -160,7 +160,7 @@ Each subsection gives the record values that differ from the defaults, the perso
 
 ### lina
 
-- Record: `tools.declare_first` `["to_do", "mail", "calendar", "messaging_read", "documents"]`; `reply.third_party` `recipient-only`; `done.message` `["sent_copy"]`; `done.document` `["source_reopened"]`; `ask.form` `choices`; `fill` `["reply.status.lines"]`.
+- Record: `tools.declare_first` `["to_do", "mail", "calendar", "messaging_read", "documents"]`; `reply.third_party` `recipient-only`; `done.message` `["sent_copy"]`; `done.document` `["source_reopened"]`; `ask.form` `choices`; `fill` `["ask.form"]`.
 - Core layer:
   - Before listing open items or asking whether something is done, read the original sources.
   - Legal-type drafts go to legal for review at the end of the draft, not as the first step.
@@ -175,7 +175,7 @@ Each subsection gives the record values that differ from the defaults, the perso
 
 ### dev
 
-- Record: `workers.dispatch` `true`; `tools.declare_first` `["work", "github", "terminal"]`; `done.code` `["owner_path_run"]`; `done.peer_report` `["labelled_claim"]`; `reply.status` `verdict-first`; `fill` `["reply.status.lines"]`.
+- Record: `workers.dispatch` `true`; `tools.declare_first` `["work", "github", "terminal"]`; `done.code` `["owner_path_run"]`; `done.peer_report` `["labelled_claim"]`; `reply.status` `verdict-first`.
 - Core layer:
   - A worker's or another agent's statement is a claim until reproduced.
   - "Done" is said of what was run, not of what was merged.
