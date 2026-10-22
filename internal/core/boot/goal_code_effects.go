@@ -66,7 +66,7 @@ func (r *conversationRuntime) goalTaskReceipt(ctx context.Context, s goal.State,
 		return dispatch.Record{}, goal.ErrNeedsPerson
 	}
 	for _, a := range s.Actions {
-		if a.GoalID != g.ID || a.TaskID != t.ID || a.Attempt != t.Attempt || a.ObserveActionID != "" {
+		if a.GoalID != g.ID || a.TaskID != t.ID || a.Attempt != t.Attempt {
 			continue
 		}
 		switch a.Kind {

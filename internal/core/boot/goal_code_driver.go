@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/thisisjun786/lina/internal/core/authority"
@@ -47,14 +48,24 @@ func (d *codeGoalDriver) inputs(ctx context.Context, a goal.Action) (goal.State,
 			}
 		}
 		name := task.Repository
-		if name == "" && len(g.Scope.Repositories) == 1 {
+		if name == "" && a.Check != nil && a.Check.Method != "deploy.read" && a.Check.Method != "runtime.probe" {
+			name = a.Check.Target
+		}
+		if name == "" && g.ServiceRepository != "" {
+			name = g.ServiceRepository
+		}
+		if name == "" && len(g.Scope.Repositories) > 0 {
 			name = g.Scope.Repositories[0]
 		}
 		repo, ok := d.connections.Repositories[name]
-		if !ok || (task.ID != "" && (task.Base != repo.Base || task.Worker != "antigravity")) {
+		if !ok || !slices.Contains(g.Scope.Repositories, name) || (task.ID != "" && (task.Base != repo.Base || task.Worker != "antigravity")) {
 			break
 		}
-		if g.ServiceTarget != "" && (repo.Service == nil || repo.Service.Target != g.ServiceTarget) {
+		serviceRepository := g.ServiceRepository
+		if serviceRepository == "" && len(g.Scope.Repositories) == 1 {
+			serviceRepository = g.Scope.Repositories[0]
+		}
+		if g.ServiceTarget != "" && name == serviceRepository && (repo.Service == nil || repo.Service.Target != g.ServiceTarget) {
 			break
 		}
 		// A repository with a service cannot suppress deploy by claiming no service.
@@ -67,18 +78,20 @@ func (d *codeGoalDriver) inputs(ctx context.Context, a goal.Action) (goal.State,
 }
 
 func (d *codeGoalDriver) Authorize(ctx context.Context, a goal.Action) error {
-	_, g, t, repo, err := d.inputs(ctx, a)
+	state, g, t, repo, err := d.inputs(ctx, a)
 	if err != nil {
 		return err
 	}
-	if g.State == goal.GoalStopped || g.State == goal.GoalDone || a.Epoch != d.runtime.epoch || a.InputVersion == nil || a.InputVersion.GoalRevision != g.Revision || a.InputVersion.RecordRevision != g.RecordRevision {
+	if g.State == goal.GoalStopped || g.State == goal.GoalDone || a.Epoch != d.runtime.epoch || a.GoalRevision != g.Revision {
 		return goal.ErrNeedsPerson
 	}
-	if t.ID != "" && a.InputVersion.PRGenerations[t.ID] != t.PRGeneration {
+	if (a.Kind == goal.InspectPR || a.Kind == goal.Merge) && a.Revision != t.Head || a.Kind == goal.RunQA && a.Revision != t.Merge.Revision || (a.Kind == goal.Deploy || a.Kind == goal.Verify) && a.Revision != codeGoalRevision(g) {
 		return goal.ErrNeedsPerson
 	}
-	if (a.Kind == goal.InspectPR || a.Kind == goal.Merge) && a.Revision != t.Head || a.Kind == goal.RunQA && a.Revision != t.Merge.Revision || (a.Kind == goal.Deploy || a.Kind == goal.Verify) && a.Revision != g.TargetRevision {
-		return goal.ErrNeedsPerson
+	for _, current := range state.Actions {
+		if current.ID == a.ID && (current.Signal != a.Signal || current.Sequence != a.Sequence) {
+			return goal.ErrNeedsPerson
+		}
 	}
 	class := tools.LocalWrite
 	switch a.Kind {
@@ -232,7 +245,7 @@ func (d *codeGoalDriver) checkCriterion(ctx context.Context, s goal.State, g goa
 		}
 	default:
 		command, ok := repo.Checks[a.Check.Method]
-		if !ok || a.Check.Kind != goal.RunEvidence || a.Check.Target != g.Scope.Repositories[0] {
+		if !ok || a.Check.Kind != goal.RunEvidence || !slices.Contains(g.Scope.Repositories, a.Check.Target) {
 			return o, goal.ErrNeedsPerson
 		}
 		o, err = d.runCheck(ctx, g, a, repo, command, a.Check.Target, true)
@@ -246,4 +259,15 @@ func (d *codeGoalDriver) checkCriterion(ctx context.Context, s goal.State, g goa
 	o.Status = goal.OutcomeSucceeded
 	o.Criterion = &goal.CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: a.Revision, Kind: a.Check.Kind, Ref: o.Proof.Ref, Passed: o.Proof.Passed}
 	return o, nil
+}
+
+func codeGoalRevision(g goal.Goal) string {
+	repository := g.ServiceRepository
+	if repository == "" && g.ServiceTarget != "" && len(g.Scope.Repositories) == 1 {
+		repository = g.Scope.Repositories[0]
+	}
+	if revision := g.MergedRevisions[repository]; revision != "" {
+		return revision
+	}
+	return g.TargetRevision
 }

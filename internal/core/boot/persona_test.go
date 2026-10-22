@@ -34,6 +34,7 @@ func TestPresetRefreshIsIsolatedAtomicAndPreservesHistory(t *testing.T) {
 	r, _, a, b := managementFixture(t)
 	source := fstest.MapFS{}
 	for _, s := range persona.Starters() {
+		source[s.Key+"/work-method-v1.json"] = &fstest.MapFile{Data: []byte(persona.EmptyWorkMethod(s.Key))}
 		source[s.Key+"/core-v1.md"] = &fstest.MapFile{Data: []byte(s.Key + " fixture core")}
 		source[s.Key+"/default-voice-v1.md"] = &fstest.MapFile{Data: []byte(s.Key + " fixture voice")}
 	}
@@ -174,6 +175,7 @@ func TestStartupWarningsArePerPresetAcrossConversationViews(t *testing.T) {
 	r, _, a, b := managementFixture(t)
 	source := fstest.MapFS{}
 	for _, s := range persona.Starters() {
+		source[s.Key+"/work-method-v1.json"] = &fstest.MapFile{Data: []byte(persona.EmptyWorkMethod(s.Key))}
 		source[s.Key+"/core-v1.md"] = &fstest.MapFile{Data: []byte(s.Key + " core")}
 		source[s.Key+"/default-voice-v1.md"] = &fstest.MapFile{Data: []byte(s.Key + " voice")}
 	}

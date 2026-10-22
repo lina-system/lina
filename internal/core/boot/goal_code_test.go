@@ -3,6 +3,7 @@ package boot
 
 import (
 	"encoding/json"
+	"github.com/thisisjun786/lina/internal/core/records"
 	"os"
 	"path/filepath"
 	"testing"
@@ -157,5 +158,40 @@ func TestCodeGoalLibraryProofNamesCurrentMerge(t *testing.T) {
 	result, err := d.libraryProof(t.Context(), goal.State{}, g, goal.Action{Revision: "current"})
 	if err != nil || result.Proof.Ref != g.Tasks[0].QA.Ref {
 		t.Fatalf("current revision names another merge's evidence: %+v %v", result, err)
+	}
+}
+
+func TestCodeGoalRoutesTasksAndChecksWithinServiceScope(t *testing.T) {
+	r, _, agent, _ := managementFixture(t)
+	r.agent = agent
+	r.conversation = "main:" + agent
+	recordsRepo, err := records.Open(r.root, r.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer recordsRepo.Close()
+	r.records = recordsRepo
+	cfg := WorkConfig{Driver: func(*goal.Engine) (goal.Driver, error) { return parkedWorkDriver{}, nil }}
+	if err = r.startWork(t.Context(), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	defer r.workEngine.close(t.Context())
+	task := goal.Task{ID: "docs", Repository: "docs", Base: "dev", Worker: "antigravity", Done: "Document the service", Area: "docs/*", Stage: goal.TaskReady, Resources: goal.Resources{CPU: 1, MemoryMB: 1, DiskMB: 1}}
+	g := goal.Goal{ID: "scope", Person: r.person, Agent: agent, Conversation: r.conversation, Turn: "turn:scope", Summary: "Ship the service and docs", Done: "Service and docs work", Scope: goal.GoalScope{Repositories: []string{"code", "docs"}, Includes: "service and docs"}, ServiceTarget: "service", ServiceRepository: "code", Tasks: []goal.Task{task}, Criteria: []goal.Criterion{{ID: "docs", Statement: "Documentation checked", Check: goal.CriterionCheck{Kind: goal.RunEvidence, Method: "docs", Target: "docs"}}}}
+	if err = r.workEngine.engine.Admit(t.Context(), g); err != nil {
+		t.Fatal(err)
+	}
+	d := &codeGoalDriver{runtime: r, engine: r.workEngine.engine, connections: codeConnections{Repositories: map[string]codeRepository{"code": {Clone: "/code", Base: "dev", Service: &codeService{Target: "service"}}, "docs": {Clone: "/docs", Base: "dev"}, "outside": {Clone: "/outside"}}}}
+	for _, tc := range []struct {
+		action goal.Action
+		want   string
+	}{{goal.Action{GoalID: g.ID, TaskID: task.ID, Kind: goal.Assign}, "/docs"}, {goal.Action{GoalID: g.ID, Kind: goal.CheckCriterion, Check: &goal.CriterionCheck{Method: "docs", Target: "docs"}}, "/docs"}, {goal.Action{GoalID: g.ID, Kind: goal.Deploy}, "/code"}} {
+		_, _, _, selected, err := d.inputs(t.Context(), tc.action)
+		if err != nil || selected.Clone != tc.want {
+			t.Fatalf("incorrect registered connection: %+v %v", selected, err)
+		}
+	}
+	if _, _, _, _, err := d.inputs(t.Context(), goal.Action{GoalID: g.ID, Kind: goal.CheckCriterion, Check: &goal.CriterionCheck{Target: "outside"}}); err == nil {
+		t.Fatal("registered but out-of-scope target accepted")
 	}
 }
