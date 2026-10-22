@@ -76,7 +76,11 @@ harness; final library acceptance remains the T-08 spike gate.
 
 `lina tui` never starts a main. The connection is in one of eight states. Each is a screen state, never an empty conversation and never a conversation item.
 
-A validated welcome enters Live. Initial absence shows the Core-absent screen
+A validated welcome enters Live. When conversation is granted, the initial
+connection stays Connecting until history discovery supplies its conversation
+id. Early typing remains in the draft and Enter causes no input effect until
+that destination is known; discovery does not automatically send the draft.
+Initial absence shows the Core-absent screen
 and exits 69; initial `unsupported_combination` shows Refused and exits 78. Bad
 arguments exit 64; malformed handshakes, invalid session frames and other terminal
 failures exit 70. Connection and handshake share a five-second timeout. The
