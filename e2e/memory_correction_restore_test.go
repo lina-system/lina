@@ -17,6 +17,8 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	memoryexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/internal/core/memory"
+	"github.com/thisisjun786/lina/internal/design"
+	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -199,11 +201,25 @@ func correctionMemoryTUI(t *testing.T, h *harness) (func(string) protocol.Memory
 				t.Fatalf("%s refused: %s", text, e.Error.Code)
 			}
 			if result, ok := e.Payload.(protocol.MemoryResult); ok {
-				marker := "/memory forget"
+				if result.Operation == nil {
+					t.Fatal("memory reply has no operation")
+				}
+				// The shared help text can still belong to the previous reply.
+				// Observe this result's heading before closing its view, otherwise
+				// its delayed render can reopen over the next command's composer.
+				marker := design.Text(design.English, *result.Operation)
 				if result.ItemID != nil {
 					marker = *result.ItemID
 				}
-				waitScreen(t, h, terminal, marker)
+				// A returned item id can already appear in the command draft.
+				// Wait for the result pager as well as its text before sending Esc.
+				view, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
+					rows := screenRows(s)
+					return s.CursorHidden && len(rows) > 0 && strings.HasPrefix(rows[len(rows)-1], "Esc") && strings.Contains(screenText(s), marker)
+				})
+				if err != nil {
+					t.Fatalf("memory result pager missing: %v\n%s", err, screenText(view))
+				}
 				opened = true
 				return result
 			}

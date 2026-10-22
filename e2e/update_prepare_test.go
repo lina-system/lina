@@ -135,7 +135,12 @@ func packUpdate(t *testing.T, bundle string) (string, string) {
 		t.Fatal(err)
 	}
 	hash := sha256.New()
-	compressed := gzip.NewWriter(io.MultiWriter(file, hash))
+	// Compression ratio is not part of acceptance; keep fixture creation cheap
+	// while retaining the real gzip/tar and artifact verification boundaries.
+	compressed, err := gzip.NewWriterLevel(io.MultiWriter(file, hash), gzip.BestSpeed)
+	if err != nil {
+		t.Fatal(err)
+	}
 	writer := tar.NewWriter(compressed)
 	entries, err := os.ReadDir(bundle)
 	if err != nil {

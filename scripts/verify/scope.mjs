@@ -56,6 +56,7 @@ function registryFor(cwd) {
     'internal/core/update/',
     'internal/core/recover/',
     'internal/core/waiting/',
+    'internal/core/work/',
     'internal/core/worker/',
   ];
   const addonDirectories = ['internal/addons/importer/hermes/'];
@@ -75,7 +76,7 @@ function registryFor(cwd) {
   const e2e = existsSync(join(cwd, 'e2e')) ? ['./e2e/...'] : [];
   return [
     { name: 'kit', module: 'kit', directories: ['kit/', 'protocol/schema/', 'protocol/fixtures/'], files: [], packages: ['./...'] },
-    { name: 'lina', module: '.', directories: ['cmd/lina/', 'internal/archtest/', 'internal/buildinfo/', 'internal/core/manifest/', 'e2e/', 'persona/', 'skills/', 'testdata/korean/', 'testdata/hermes/', ...coreDirectories, ...addonDirectories, ...clientDirectories, 'third_party/codex-app-server/'], files: ['doc.go'], packages: ['.', './cmd/lina/...', ...architecture, ...buildinfo, ...manifest, ...persona, ...skills, ...corePackages, ...addonPackages, ...clientPackages, ...e2e, ...vendored], binary: 'lina' },
+    { name: 'lina', module: '.', directories: ['cmd/lina/', 'internal/archtest/', 'internal/buildinfo/', 'internal/core/manifest/', 'e2e/', 'persona/', 'skills/', 'testdata/korean/', 'testdata/hermes/', 'testdata/crw/', ...coreDirectories, ...addonDirectories, ...clientDirectories, 'third_party/codex-app-server/'], files: ['doc.go'], packages: ['.', './cmd/lina/...', ...architecture, ...buildinfo, ...manifest, ...persona, ...skills, ...corePackages, ...addonPackages, ...clientPackages, ...e2e, ...vendored], binary: 'lina' },
     { name: 'moirai-worker', module: '.', directories: ['cmd/moirai-worker/', 'internal/moirai/'], files: [], packages: ['./cmd/moirai-worker/...', './internal/moirai/...'], binary: 'moirai-worker' },
     { name: 'lina-node', module: '.', directories: ['cmd/lina-node/'], files: [], packages: ['./cmd/lina-node/...'], binary: 'lina-node' },
   ];
