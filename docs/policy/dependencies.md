@@ -163,11 +163,11 @@ The implemented Go checks cover configuration, exact pins, `go mod verify`, vuln
 
 The root `go.mod` declares `govulncheck` and `go-licenses` as module tools with exact requirements and committed checksums. After module verification, each LINA module runs the vulnerability scan, `go list -deps -json ./...`, and `go tool go-licenses report` with a temporary JSON report template. The license check covers the non-test import closure of LINA's commands and libraries, including kit and transitive imports; a requirement used only by a verification tool is not included code. The standard library and LINA's own modules do not require third-party notices. Each license reported for third-party code must be MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, BSD-4-Clause or ISC. Unknown licenses, missing module coverage, malformed output and scanner failures fail the check.
 
-Each included third-party Go module needs a nonempty section in `THIRD-PARTY-NOTICES.md` headed `## <module-path>`, containing the notices required by this policy. An incidental mention of a module does not count as an entry. For a versioned replacement the heading names the replacement module; for an in-repository vendored replacement it retains the original module path. This check establishes entry presence; it does not establish the legal completeness of the notice text or the integrity of vendored files.
+Each included third-party Go module needs a nonempty section in `THIRD-PARTY-NOTICES.md` headed `## <module-path>`, containing the notices required by this policy. An incidental mention of a module does not count as an entry. For a versioned replacement the heading names the replacement module; for an in-repository vendored replacement it retains the original module path. This check establishes entry presence; it does not establish the legal completeness of the notice text. Vendored file integrity is checked separately as described below.
 
 A change to either module's `go.mod` or `go.sum`, or to `go.work` or `go.work.sum`, selects `dependencies` and every active component. Adding, modifying or deleting `scripts/verify/dependency-exceptions.json` or `THIRD-PARTY-NOTICES.md` selects `docs` and `dependencies`, without selecting automation or components solely for that change. Full verification and automation or shared-configuration changes also select it when Go manifests or sums are present or removed. Other prose-only and component-source-only changes skip it. The gate requires success when selected and an explicit skipped result otherwise; missing or malformed results fail. Foundation records the result, duration, and observed toolchain in its evidence.
 
-`go mod verify` checks downloaded module content against the cache's recorded hashes; it does not itself establish that every required checksum is present in `go.sum`. The component check continues to verify modules before its readonly builds, which enforce the module and sum inputs needed by those builds. Dependency-change counts, npm checks (including application of install-script exceptions), non-Go component notices, vendored-tree integrity and upstream-fetch checks below remain future work; the current Go checks do not establish those rows.
+`go mod verify` checks downloaded module content against the cache's recorded hashes; it does not itself establish that every required checksum is present in `go.sum`. The component check continues to verify modules before its readonly builds, which enforce the module and sum inputs needed by those builds. Dependency-change counts, npm checks (including application of install-script exceptions), non-Go component notices and upstream-fetch checks below remain future work; the current Go checks do not establish those rows.
 
 | Check | Fails when |
 | --- | --- |
@@ -184,6 +184,21 @@ A change to either module's `go.mod` or `go.sum`, or to `go.work` or `go.work.su
 | Licenses | A Go module linked into a LINA binary, or an npm package that ships, has a license other than MIT, Apache-2.0, BSD or ISC, as reported by a license scanner such as `go-licenses`; or an included component has no entry in `THIRD-PARTY-NOTICES.md`. |
 
 The `foundation` output and its evidence note list the Go modules and npm packages that the change adds, removes, or updates, their versions, the total module count, and the total transitive package count.
+
+Vendored trees are checked offline before any Go command. Each tree needs a
+`vendor.json` with its name, HTTPS source, permitted license, exact file-path
+scope, and `files` entries containing `upstream` and `vendored` SHA-256 hashes.
+A regular upstream tree records `commit`; a generated tree instead records
+`generation.tools` (name, version, SHA-256 and a relative `path` for an included
+generator) and `generation.commands`. Both keep `patches`, empty when unpatched.
+A patch records its id, file, SHA-256, touched files, reason and `wrapperCannot`
+justification, plus an upstream reference when available. Unrecorded changes,
+missing or extra upstream files, symlinks, unsafe paths, incomplete patch or
+generator metadata, and mismatched notice revisions fail. Included generators'
+recorded hashes are also checked. This is local integrity evidence, not proof
+of upstream authenticity or patch replay; the upstream-fetch row remains deferred.
+Changes anywhere under `third_party/` select dependencies; changes to the Codex
+tree also select its consuming Core component and generated Go package.
 
 ## Deferred
 
