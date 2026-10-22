@@ -55,8 +55,13 @@ var catalog = map[string]translation{
 	"developer.keys":                   {"↑/↓ Select · Enter Fold/unfold · r Refresh · n Next page · Esc Back", "↑/↓ 선택 · Enter 접기/펼치기 · r 새로고침 · n 다음 쪽 · Esc 돌아가기"},
 	"developer.empty":                  {"No recorded worker sessions", "기록된 작업자 세션이 없어요"},
 	"developer.more":                   {"n Next worker page", "n 다음 작업자 쪽"},
-	"notice.run_effect_question":       {"How should the remaining actions proceed? Reads and analysis can continue; further actions need a separate authorized decision, and any unknown earlier outcome must be checked first.", "남은 작업을 어떻게 진행할까요? 읽기와 분석은 계속할 수 있어요. 추가 실행에는 별도의 승인된 결정이 필요하며, 이전 실행의 결과가 불확실하다면 먼저 확인해야 해요."},
-	"notice.run_input_needed":          {"Your input is needed before this background work can continue.", "이 백그라운드 작업을 계속하려면 응답이 필요해요."},
+	"github_read":                      {"Read pull request", "풀 리퀘스트 읽기"},
+	"github_watch":                     {"Watch CI", "CI 상태 보기"},
+	"success":                          {"Succeeded", "성공"},
+	"failure":                          {"Failed", "실패"},
+
+	"notice.run_effect_question": {"How should the remaining actions proceed? Reads and analysis can continue; further actions need a separate authorized decision, and any unknown earlier outcome must be checked first.", "남은 작업을 어떻게 진행할까요? 읽기와 분석은 계속할 수 있어요. 추가 실행에는 별도의 승인된 결정이 필요하며, 이전 실행의 결과가 불확실하다면 먼저 확인해야 해요."},
+	"notice.run_input_needed":    {"Your input is needed before this background work can continue.", "이 백그라운드 작업을 계속하려면 응답이 필요해요."},
 
 	"notice.none":            {"none", "없음"},
 	"notice.run_report":      {"Agent report: %s. Verified: %s. Unverified: %s. Open the result card (Ctrl+O) or Running (Ctrl+R).", "작업 보고: %s. 검증됨: %s. 미검증: %s. 결과 카드(Ctrl+O)나 진행 중인 작업(Ctrl+R)을 열어 보세요."},

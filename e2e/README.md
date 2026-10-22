@@ -225,6 +225,12 @@ binding/scope replacement. A paired synthetic channel and an existing binding
 exercise the actual target-agent checks. Read-only canon snapshots prove that
 refused requests preserve agent revisions, actions, conversations and bindings.
 
+`m2/github-ci.json` starts the real Core binary with a synthetic `gh` executable
+in its isolated PATH. It negotiates the GitHub capability, refuses an unnegotiated
+read, observes rate-limited CI pending and its retry deadline, then observes head,
+review threads and successful checks. It verifies conditional headers and one
+review read per head, with no network credentials or GitHub service dependency.
+
 `m3/worker-lanes.json` uses installed Core and a real headless TUI to show two
 sessions of the same worker as separate folded lanes. A fixture writes a real
 artifact and records its receipt, terminal observation and content verification
