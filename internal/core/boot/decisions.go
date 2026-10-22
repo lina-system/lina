@@ -14,12 +14,11 @@ func (r *conversationRuntime) startDecisions(ctx context.Context) error {
 		return nil
 	}
 	d := &clientsrv.Decisions{Authority: r.personaAuthority, Topics: r.topics, Person: r.person, AgentName: func(id string) string {
-		for _, agent := range r.identity.Agents {
-			if agent.AgentID == id {
-				return agent.Name
-			}
+		agent, err := r.agents.Get(r.ctx, id)
+		if err != nil {
+			return ""
 		}
-		return ""
+		return agent.Name
 	}}
 	d.Questions = workerQuestions{runtime: r}
 	r.decisions = d

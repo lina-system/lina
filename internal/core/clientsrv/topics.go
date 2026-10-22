@@ -401,6 +401,15 @@ func (h *Topics) emit(name string, t *topicState, event TopicEvent) {
 	}
 }
 
+// HasSubscribers allows a producer to avoid periodic source reads when no
+// client observes the topic. It never creates a topic or retains a subscription.
+func (h *Topics) HasSubscribers(name string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	topic := h.topics[name]
+	return !h.closed && topic != nil && len(topic.subs) > 0
+}
+
 func (h *Topics) Subscribe(name string, after *rpc.Cursor) (TopicStart, *Subscription, error) {
 	if !validTopic(name) {
 		return TopicStart{}, nil, ErrInvalidTopic
