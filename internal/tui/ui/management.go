@@ -153,6 +153,8 @@ func (s *managementSession) request(ctx context.Context, c *clientapi.Client, p 
 		if err == nil {
 			s.model.conversation.pager.developerID = id
 		}
+	case protocol.WaitingGet:
+		id, err = c.Waiting(ctx, p)
 	case protocol.RunningGet:
 		id, err = c.Running(ctx, p)
 	case protocol.AgentRequest:
@@ -187,6 +189,13 @@ func (s *managementSession) response(ctx context.Context, c *clientapi.Client, e
 		return true, nil
 	}
 	switch p := e.Payload.(type) {
+	case protocol.Waiting:
+		if _, ok := request.(protocol.WaitingGet); !ok || p.Rows == nil {
+			return true, errStream
+		}
+		if m.conversation.pager.open && m.conversation.pager.waiting {
+			m.conversation.pager.text = m.waitingText(*p.Rows)
+		}
 	case protocol.Progress:
 		if _, ok := request.(protocol.ProgressGet); !ok || p.Lanes == nil {
 			return true, errStream
