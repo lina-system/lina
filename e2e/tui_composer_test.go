@@ -79,6 +79,7 @@ func TestM1TUIComposer(t *testing.T) {
 				t.Errorf("composer rule = %q, want %d rule cells", got, scenario.Width)
 			}
 			placeholder, found := design.Lookup(variant.language, "composer.placeholder")
+			placeholder = fmt.Sprintf(placeholder, "LINA")
 			if !found || screenRows(empty)[composerY] != variant.prompt+placeholder {
 				t.Errorf("empty composer = %q, want prompt and catalog placeholder (found=%v)", screenRows(empty)[composerY], found)
 			}

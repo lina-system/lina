@@ -3,6 +3,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -34,6 +35,7 @@ func TestComposerChromeAndCursor(t *testing.T) {
 			if !ok || placeholder == "" {
 				t.Fatal("missing localized placeholder")
 			}
+			placeholder = fmt.Sprintf(placeholder, "LINA")
 			if strings.TrimRight(ansi.Strip(rows[32]), " ") != prompt+placeholder || view.Cursor.X != 2 {
 				t.Errorf("empty composer: %q, cursor=%+v", rows[32], view.Cursor)
 			}
