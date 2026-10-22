@@ -25,9 +25,12 @@ func TestM2ConversationWorkerRunningInstalledCore(t *testing.T) {
 	var calls atomic.Int32
 	var control map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req struct{ Input []json.RawMessage }
+		var req struct{ Input, Tools []json.RawMessage }
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Error(err)
+			return
+		}
+		if scriptedCodingManager(t, w, req) {
 			return
 		}
 		switch calls.Add(1) {
@@ -54,7 +57,8 @@ func TestM2ConversationWorkerRunningInstalledCore(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	h, _ := installedConversationHarness(t, server.URL)
+	h, bootstrap := installedConversationHarness(t, server.URL)
+	seedCodingFixture(t, h, bootstrap)
 	bin := t.TempDir()
 	exe, err := os.Executable()
 	if err != nil {
@@ -90,7 +94,7 @@ func TestM2ConversationWorkerRunningInstalledCore(t *testing.T) {
 			return false
 		}
 		for _, line := range strings.Split(s, "\n") {
-			owner, tool := strings.Index(line, "LINA"), strings.Index(line, "Codex")
+			owner, tool := strings.Index(line, "Sion"), strings.Index(line, "Codex")
 			if owner >= 0 && tool > owner {
 				return true
 			}
