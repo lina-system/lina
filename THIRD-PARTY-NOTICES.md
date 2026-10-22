@@ -1291,3 +1291,49 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## github.com/go-git/go-billy/v5
+
+Source: https://github.com/go-git/go-billy/v5. Version: `v5.9.2`. License: Apache-2.0. Unmodified upstream dependency used by the local records Git adapter.
+
+The Apache License, Version 2.0 is reproduced in [LICENSE](LICENSE).
+
+## github.com/go-git/go-git/v5
+
+Source: https://github.com/go-git/go-git/v5. Version: `v5.19.3`. License: Apache-2.0. Unmodified upstream dependency used by the local records Git adapter.
+
+The Apache License, Version 2.0 is reproduced in [LICENSE](LICENSE).
+
+## github.com/jbenet/go-context
+
+Source: https://github.com/jbenet/go-context. Version: `v0.0.0-20150711004518-d14ea06fba99`. License: MIT. Unmodified upstream dependency used by the local records Git adapter.
+
+```text
+The MIT License (MIT)
+
+Copyright (c) 2014 Juan Batiz-Benet
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
+
+## github.com/pjbgf/sha1cd
+
+Source: https://github.com/pjbgf/sha1cd. Version: `v0.7.0`. License: Apache-2.0. Unmodified upstream dependency used by the local records Git adapter.
+
+The Apache License, Version 2.0 is reproduced in [LICENSE](LICENSE).

@@ -689,6 +689,34 @@ type Repo interface {
 type Index interface{ Query(ctx context.Context, v View, p Params) ([]Row, error) } // today, upcoming, anytime, later, memos, board
 ```
 
+The installed write path uses `internal/core/records.Repo`, with go-git's pure-Go
+object/hash and index codecs behind a confined local filesystem adapter. Result
+saving uses the same repository implementation. Core opens the repository with
+the published canon migration catalog; `records_state` journals the pending
+publication and `records_index` holds disposable id/path/blob/revision locators.
+The adapter writes loose objects and a linear local history; it has no Git
+subprocess, remote, transport or credential dependency.
+
+`Read` returns the record and the commit of its last content or path change.
+Unrelated record commits leave that revision valid. `Commit` requires an empty
+base only for a new Core-allocated id; edits and moves compare the supplied base
+under the shared writer lock. An identical-content write at the same path is a
+no-op after that comparison. A move removes the old path and keeps the front
+matter id. Every applied change has one commit naming the person and asking
+agent. A durable intent names immutable before/after objects; startup finishes
+only that publication and never re-dispatches its tool effect. An outside edit,
+commit, foreign lock or incompatible recovery state returns `records_changed`
+without overwriting it. Outside-change acceptance/presentation and the richer
+FTS/edge index are subsequent records-index work.
+
+Installed conversations register `read_record` and `write_record` through the
+ordinary authority, lease and effect-receipt registry. These tools capture and
+edit memos and knowledge documents; Core supplies the owner, asking agent, id
+and PARA path. Model arguments cannot supply identities or paths. Existing
+records keep their folder and structured fields when their title/note changes.
+The tools return committed id/revision/Markdown receipts through the existing
+conversation protocol; no new client endpoint or to-do view is introduced.
+
 - A write is: an intent row in canon; files written and committed with person and agent in the message; index rows updated with the new head; the intent closed.
 - At start and before each write, Core compares the index head with the repository head. A mismatch rebuilds from the files, because files are canon.
 - Core refuses a write to a record whose file changed under it, and shows an outside change as the contract says.
