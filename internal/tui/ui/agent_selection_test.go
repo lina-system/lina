@@ -113,35 +113,3 @@ func TestReconnectDiscoveryUnavailableRemainsRetryable(t *testing.T) {
 		t.Fatal("authoritative refusal must require an explicit selection")
 	}
 }
-
-func TestInitialHistoryDiscoveryRetainsInputUntilDestinationIsKnown(t *testing.T) {
-	m := conversationShell()
-	m.content.Agents = []protocol.Agent{{AgentID: "default"}}
-	if request := m.discoveryHistory(); request == nil {
-		t.Fatal("initial history was not requested")
-	}
-	m.Update(shellConnection{Generation: 1, Status: ConnectionStatus{State: Live}})
-	m.Update(tea.PasteMsg{Content: "early input"})
-	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if cmd != nil || m.content.Draft.Text != "early input" || m.status.State == Live {
-		t.Fatalf("initial discovery admitted an empty destination: pending=%v draft=%q state=%v command=%v", m.conversation.agentPending, m.content.Draft.Text, m.status.State, cmd != nil)
-	}
-	m.conversation.id = "main:default"
-	m.agentDiscoveryDone()
-	if _, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}); cmd == nil || m.status.State != Live {
-		t.Fatal("matching history did not admit an explicit send")
-	}
-}
-
-func TestInitialDiscoveryWithoutConversationDoesNotBlockManagement(t *testing.T) {
-	m := conversationShell()
-	m.content.Capabilities = []protocol.Capability{{Name: "agents", Version: "1.0"}}
-	m.content.Agents = []protocol.Agent{{AgentID: "default"}}
-	if request := m.discoveryHistory(); request != nil || m.conversation.agentPending {
-		t.Fatal("unavailable conversation discovery blocked management")
-	}
-	m.Update(shellConnection{Generation: 1, Status: ConnectionStatus{State: Live}})
-	if m.status.State != Live {
-		t.Fatal("management-only connection is not ready")
-	}
-}

@@ -162,6 +162,13 @@ func (s *Store) Journal(id string) loop.Journal {
 // Accepted turns are terminalized, never reissued to a model or tool. Receipts
 // remain intact; unresolved effects are owned by authority's unknown state.
 func (s *Store) Recover(ctx context.Context) error {
+	return s.RecoverWithReceipts(ctx, nil)
+}
+
+// RecoverWithReceipts reconciles committed tool admissions before aborting
+// unexecuted calls. The callback reads within this recovery transaction and must
+// never dispatch a tool, admit work, or call another canon writer.
+func (s *Store) RecoverWithReceipts(ctx context.Context, receipt func(context.Context, *canon.Tx, string, string, provider.ToolCall) (*loop.Result, error)) error {
 	return s.db.Write(ctx, func(tx *canon.Tx) error {
 		if err := recoverNotices(ctx, tx); err != nil {
 			return err
@@ -169,18 +176,19 @@ func (s *Store) Recover(ctx context.Context) error {
 		if err := recoverItems(ctx, tx); err != nil {
 			return err
 		}
-		rows, err := tx.QueryContext(ctx, `SELECT c.turn_id,c.round,c.ordinal,c.call_id FROM turn_calls c JOIN turn_runs r ON r.id=c.turn_id WHERE c.result IS NULL`)
+		rows, err := tx.QueryContext(ctx, `SELECT c.turn_id,c.round,c.ordinal,c.call_id,r.conversation,c.call FROM turn_calls c JOIN turn_runs r ON r.id=c.turn_id WHERE c.result IS NULL`)
 		if err != nil {
 			return err
 		}
 		type pending struct {
-			id, call     string
-			round, index int
+			id, call, conversation string
+			raw                    []byte
+			round, index           int
 		}
 		var calls []pending
 		for rows.Next() {
 			var p pending
-			if err = rows.Scan(&p.id, &p.round, &p.index, &p.call); err != nil {
+			if err = rows.Scan(&p.id, &p.round, &p.index, &p.call, &p.conversation, &p.raw); err != nil {
 				rows.Close()
 				return err
 			}
@@ -192,7 +200,24 @@ func (s *Store) Recover(ctx context.Context) error {
 			return err
 		}
 		for _, p := range calls {
-			b, _ := json.Marshal(loop.Result{ID: p.call, Code: loop.Aborted})
+			result := loop.Result{ID: p.call, Code: loop.Aborted}
+			if receipt != nil {
+				var call provider.ToolCall
+				if err := json.Unmarshal(p.raw, &call); err != nil {
+					return err
+				}
+				confirmed, err := receipt(ctx, tx, p.id, p.conversation, call)
+				if err != nil {
+					return err
+				}
+				if confirmed != nil {
+					result = *confirmed
+				}
+			}
+			b, err := json.Marshal(result)
+			if err != nil {
+				return err
+			}
 			if _, err = tx.ExecContext(ctx, "UPDATE turn_calls SET result=? WHERE turn_id=? AND round=? AND ordinal=?", b, p.id, p.round, p.index); err != nil {
 				return err
 			}

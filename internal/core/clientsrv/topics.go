@@ -342,7 +342,18 @@ func (h *Topics) emit(name string, t *topicState, event TopicEvent) {
 			break
 		}
 	}
-	if index >= 0 {
+	removed := false
+	if event.Kind == protocol.KindRunningUpdate {
+		var update protocol.RunningUpdate
+		if json.Unmarshal(event.Data, &update) == nil && update.Removed != nil {
+			removed = *update.Removed
+		}
+	}
+	if removed {
+		if index >= 0 {
+			t.items = append(t.items[:index], t.items[index+1:]...)
+		}
+	} else if index >= 0 {
 		if combined, ok := mergeEvents(t.items[index], event); ok {
 			t.items[index] = combined
 		} else {
