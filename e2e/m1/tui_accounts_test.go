@@ -47,6 +47,8 @@ func (s *observedSignIn) Complete(ctx context.Context, id string, input accounts
 }
 
 func TestM1TUIAccounts(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile("tui-accounts.json")
 	if err != nil {
 		t.Fatal(err)

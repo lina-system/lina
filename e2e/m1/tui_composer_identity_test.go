@@ -16,6 +16,8 @@ import (
 )
 
 func TestM2TUIComposerIdentityInstalledCore(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile("../m2/tui-composer-identity.json")
 	if err != nil {
 		t.Fatal(err)

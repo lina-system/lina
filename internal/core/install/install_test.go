@@ -91,7 +91,7 @@ func fixture(t *testing.T) (Config, *fakeHost) {
 		t.Fatal(err)
 	}
 	write(t, filepath.Join(cfg.BundleDir, "manifest.json"), data, 0600)
-	return cfg, &fakeHost{versions: map[string]string{"codex": "codex-cli 2.0\n", "gh": "gh 3.0\n"}}
+	return cfg, &fakeHost{versions: map[string]string{"codex": "codex-cli 2.0\n", "cursor-agent": "cursor-agent 1.0\n", "gh": "gh 3.0\n"}}
 }
 
 func TestInstallWithoutAccount(t *testing.T) {
@@ -149,6 +149,31 @@ func TestInstallWithoutAccount(t *testing.T) {
 	i := slices.IndexFunc(tools, func(tool Tool) bool { return tool.Name == "codex" })
 	if i < 0 || tools[i].Version != "codex-cli 2.0" || tools[i].Status != "unverified" || !slices.Equal(tools[i].VerifiedVersions, []string{"codex-cli 1.0"}) {
 		t.Fatalf("tool evidence: %+v", tools)
+	}
+	names := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		names = append(names, tool.Name)
+	}
+	if want := []string{"codex", "claude", "antigravity", "cursor-agent", "gh", "grok", "node", "bwrap"}; !slices.Equal(names, want) {
+		t.Fatalf("installed tool names: got %v, want %v", names, want)
+	}
+	i = slices.IndexFunc(tools, func(tool Tool) bool { return tool.Name == "cursor-agent" })
+	if i < 0 || tools[i].Path != "/tools/cursor-agent" || tools[i].Version != "cursor-agent 1.0" || tools[i].Status != "unverified" {
+		t.Fatalf("Cursor tool evidence: %+v", tools)
+	}
+}
+
+func TestInstallCursorAgentOverride(t *testing.T) {
+	cfg, host := fixture(t)
+	cfg.ToolPaths = map[string]string{"cursor-agent": "/custom/cursor-cli"}
+	host.versions["cursor-cli"] = "cursor-agent 2.0\n"
+	result, err := Run(t.Context(), cfg, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := slices.IndexFunc(result.Tools, func(tool Tool) bool { return tool.Name == "cursor-agent" })
+	if i < 0 || result.Tools[i].Path != "/custom/cursor-cli" || result.Tools[i].Version != "cursor-agent 2.0" || result.Tools[i].Status != "unverified" {
+		t.Fatalf("Cursor override evidence: %+v", result.Tools)
 	}
 }
 

@@ -28,6 +28,8 @@ import (
 )
 
 func TestM1ReplyShapeLONGQA(t *testing.T) {
+	t.Parallel()
+
 	for _, language := range []design.Language{design.English, design.Korean} {
 		t.Run(string(language), func(t *testing.T) {
 			testReplyShapeLONGQA(t, language)
@@ -285,6 +287,8 @@ func testReplyShapeLONGQA(t *testing.T, language design.Language) {
 }
 
 func TestM1ReplyShapeFinalItemCeilings(t *testing.T) {
+	t.Parallel()
+
 	five := "하나.\n둘.\n셋.\n넷.\n다섯."
 	cases := []struct {
 		name, full, visible string
@@ -343,6 +347,8 @@ func TestM1ReplyShapeFinalItemCeilings(t *testing.T) {
 }
 
 func TestM1ReplyShapeCredentialMasking(t *testing.T) {
+	t.Parallel()
+
 	credential := "sk-" + strings.Repeat("a", 24)
 	cases := []struct {
 		name   string
@@ -413,6 +419,8 @@ func TestM1ReplyShapeCredentialMasking(t *testing.T) {
 }
 
 func TestM1ReplyShapeLargeFrames(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct{ name, full string }{
 		{"over-one-MiB", "Start. " + strings.Repeat("large text ", (1<<20)/10+1)},
 		{"escaped-json", "Start. " + strings.Repeat("<한>\n", 180000)},

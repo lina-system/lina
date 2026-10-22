@@ -18,6 +18,8 @@ import (
 )
 
 func TestM1TUITranscriptInstalledCore(t *testing.T) {
+	t.Parallel()
+
 	for _, language := range []design.Language{design.English, design.Korean} {
 		t.Run(string(language), func(t *testing.T) {
 			testTUITranscriptInstalledCore(t, language)

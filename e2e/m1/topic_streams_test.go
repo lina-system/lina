@@ -133,6 +133,8 @@ func (c *client) notification(t *testing.T) protocol.Envelope {
 }
 
 func TestM1TopicStreams(t *testing.T) {
+	t.Parallel()
+
 	data, err := os.ReadFile("topic-streams.json")
 	if err != nil {
 		t.Fatal(err)
