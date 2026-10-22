@@ -64,6 +64,7 @@ type Client struct {
 	runner  runner
 	mu      sync.Mutex
 	watches map[Ref]*Watch
+	slots   map[string]*mergeSlot
 	closed  bool
 	wg      sync.WaitGroup
 }

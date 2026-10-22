@@ -162,3 +162,39 @@ func TestRestoreAuthorityFailureIsAtomic(t *testing.T) {
 		t.Fatal("partly invalidated failed restore")
 	}
 }
+
+func TestRestoreInvalidatesMergePermissionButKeepsUncertainReservation(t *testing.T) {
+	db := restoreDB(t)
+	service := authority.NewMerges(db, 9)
+	for _, id := range []string{"ready", "unknown"} {
+		b := authority.MergeBinding{ID: id, Person: "person", Agent: "agent", Repository: "o/r", Base: id, Number: 1, Clone: "/clone", Protected: map[string]string{"refs/heads/" + id: "base"}}
+		if err := service.Bind(t.Context(), b); err != nil {
+			t.Fatal(err)
+		}
+		if err := service.Accept(t.Context(), id, "person", "head"); err != nil {
+			t.Fatal(err)
+		}
+		if id == "unknown" {
+			if err := service.Begin(t.Context(), id, "person", "head", b.Protected); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := invalidateAuthority(t.Context(), db); err != nil {
+		t.Fatal(err)
+	}
+	ready, err := service.Get(t.Context(), "ready", "person")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ready.State != "restored" {
+		t.Fatalf("restored permission: %+v", ready)
+	}
+	if err = service.Accept(t.Context(), "ready", "person", "head"); err == nil {
+		t.Fatal("restored permission accepted")
+	}
+	unknown, err := service.Get(t.Context(), "unknown", "person")
+	if err != nil || unknown.State != "unknown" {
+		t.Fatalf("reservation: %+v %v", unknown, err)
+	}
+}

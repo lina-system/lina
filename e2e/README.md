@@ -195,3 +195,9 @@ in its isolated PATH. It negotiates the GitHub capability, refuses an unnegotiat
 read, observes rate-limited CI pending and its retry deadline, then observes head,
 review threads and successful checks. It verifies conditional headers and one
 review read per head, with no network credentials or GitHub service dependency.
+
+`m2/github-merge.json` drives the installed Core's merge capability with a
+synthetic `gh` process and real temporary parent clone. It proves head and
+protected-ref changes prevent writes, the accepted head is pinned, confirmed
+results survive restart without a second merge, and external merges require
+commit/ref evidence and report failed checks. It uses no external credentials.

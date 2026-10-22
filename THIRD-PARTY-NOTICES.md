@@ -1298,7 +1298,8 @@ Source: https://github.com/thisisjun786/codex-relay-workflow, commit
 `7e65fcb82d426d228e18958d728fe63a0991ddd0`. License: MIT.
 
 The tracker and its tests informed rate-limit classification and bounded reads
-in LINA's independent GitHub observation implementation. The seen/inferred/unknown
+in LINA's independent GitHub observation implementation. The merge-order reading
+and merged-PR tests informed stale-evidence and observed-result boundaries. The seen/inferred/unknown
 record is `internal/core/ghclient/REFERENCE.md`. No CRW source is copied,
 translated, vendored or linked; no relay or operational state is consumed.
 
