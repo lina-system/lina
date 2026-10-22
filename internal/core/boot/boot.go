@@ -101,6 +101,8 @@ type Services struct {
 	Lifecycle func(*lifecycle.Restarter)
 }
 type Config struct {
+	// SandboxLauncher pins an optional trusted absolute OS launcher.
+	SandboxLauncher string
 	// Client supplies the installed person's agents, supported rows and handlers.
 	// Boot always supplies the durable main id, epoch and recovery state itself.
 	Client       clientsrv.Identity
@@ -443,9 +445,20 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	if ctx.Err() != nil {
 		return nil
 	}
-	box, closeProcesses := startSandbox(ctx, cfg.StateRoot, cfg.Socket)
+	box, closeProcesses := startSandbox(ctx, cfg.StateRoot, cfg.Socket, cfg.SandboxLauncher)
 	stack = append(stack, closeProcesses)
 	snapshot.Sandbox = box.Status()
+	if cfg.Client.Topics != nil {
+		available := snapshot.Sandbox.Available
+		data, marshalErr := json.Marshal(protocol.Connected{ShellFileToolsAvailable: &available})
+		if marshalErr != nil {
+			return marshalErr
+		}
+		if err := cfg.Client.Topics.Publish("core", clientsrv.TopicEvent{Kind: protocol.KindConnected, Key: "shell-file-tools", Data: data}); err != nil {
+			return err
+		}
+	}
+
 	if cfg.Services.SandboxReady != nil {
 		cfg.Services.SandboxReady(box)
 	}

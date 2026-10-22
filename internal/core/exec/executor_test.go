@@ -41,7 +41,10 @@ func TestExecutorCannotFallbackWhenSandboxUnavailable(t *testing.T) {
 	if err := e.RegisterFiles(registry); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", t.TempDir())
+	// Losing the allowed workspace makes the sandbox policy unavailable.
+	if err := os.Remove(root); err != nil {
+		t.Fatal(err)
+	}
 	result, err := registry.Dispatch(t.Context(), tools.Call{Key: "write", Name: "write_file", Args: json.RawMessage(`{"path":"file","revision":"absent","content":"eA=="}`)})
 	if !errors.Is(err, sandbox.ErrUnavailable) || result.State != tools.Failed {
 		t.Fatalf("unavailable: %+v %v", result, err)

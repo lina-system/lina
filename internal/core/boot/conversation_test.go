@@ -3,9 +3,12 @@
 package boot
 
 import (
+	"github.com/thisisjun786/lina/internal/core/runs"
+	"github.com/thisisjun786/lina/internal/design"
 	"reflect"
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/ledger"
@@ -78,7 +81,7 @@ func TestRestoredPartialKeepsLiveReplyProjection(t *testing.T) {
 				if restored {
 					err = runtime.publishPartials(t.Context(), turn.Stopped{TurnID: "turn", Partials: []turn.Partial{{Round: 1, Index: 3, Text: stream.sent}}})
 				} else {
-					err = runtime.publishReply(t.Context(), "turn:2:3", "turn", view)
+					err = runtime.publishReply(t.Context(), "turn:2:3", "turn", view, "en")
 				}
 				if err != nil {
 					t.Fatal(err)
@@ -152,6 +155,17 @@ func TestConversationStreamMasksEveryPrefix(t *testing.T) {
 		}
 		if strings.HasPrefix(text, "Public") && visible != masked.Text() {
 			t.Fatal("ordinary text did not stream")
+		}
+	}
+}
+
+func TestRunNoticeUsesConversationLanguage(t *testing.T) {
+	for _, outcome := range []runs.Outcome{runs.Complete, runs.Partial, runs.Failed, runs.Cancelled, runs.InputNeeded} {
+		notice := runs.Notice{Outcome: outcome}
+		ko := runSummary(notice, design.Korean)
+		en := runSummary(notice, design.English)
+		if !strings.ContainsFunc(ko, func(r rune) bool { return unicode.Is(unicode.Hangul, r) }) || ko == en {
+			t.Errorf("unlocalized outcome %s", outcome)
 		}
 	}
 }

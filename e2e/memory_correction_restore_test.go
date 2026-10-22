@@ -166,6 +166,10 @@ func TestM1MemoryCorrectionForgetRestore(t *testing.T) {
 			core.command.Env = append(core.command.Env, "LINA_RESPONSES_BASE_URL="+provider.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
 			core.start(t)
 			h.connect(core).Close()
+			// Socket reads are available during recovery; wait for admission
+			// before the restored Core receives TUI management commands.
+			ready, _ := conversationClient(t, h)
+			ready.Close()
 			command, closeTUI = correctionMemoryTUI(t, h)
 			assertList()
 			closeTUI()

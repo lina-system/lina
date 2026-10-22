@@ -1,0 +1,48 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "service": "results",
+  "setup": {
+    "person_id": "person",
+    "agent_id": "agent",
+    "conversation_id": "conversation",
+    "turn_id": "turn",
+    "task_id": null
+  },
+  "input": {
+    "type": "chart",
+    "title": "Fixture result",
+    "summary": "Synthetic result body.",
+    "body": {
+      "kind": "bar",
+      "series": [
+        {
+          "name": "Count",
+          "values": [
+            {
+              "x": "A",
+              "y": 2
+            }
+          ]
+        }
+      ],
+      "x_axis": {
+        "label": "Category",
+        "unit": ""
+      },
+      "y_axis": {
+        "label": "Count",
+        "unit": "items"
+      },
+      "html": "<script>untrusted data</script>"
+    }
+  },
+  "output": {
+    "error": "malformed",
+    "result": null
+  },
+  "outcome": {
+    "events": 0,
+    "heads": 0,
+    "saves": 0
+  }
+}

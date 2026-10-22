@@ -65,7 +65,7 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 	}()
 	events := make(chan programEvent, 64)
 	if terminal {
-		file := input.(*os.File)
+		file := input.(terminalInput)
 		inputDone := make(chan error, 1)
 		go func() {
 			err := readConversationInput(ctx, file, func(message tea.Msg) bool {
@@ -198,7 +198,9 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 				if terminal && display.interactive && display.styles.options.Profile != Monochrome && display.renderer == nil {
 					display.renderer = startTerminalRenderer(parent, rawTerminalWriter{display.output}, model.size.Width, model.size.Height)
 				}
-				if client, ok := peer.(clientPeer); ok {
+				// Nonterminal input only reads quit after the handshake; it has
+				// no draft destination to discover before reporting live.
+				if client, ok := peer.(clientPeer); ok && terminal {
 					if model.conversation.agentPending && model.hasCapability("agents") {
 						reconnectAgent = model.activeAgent()
 						agentListID, err = client.client.Agent(ctx, protocol.AgentRequest{Operation: stringPointer("list")})
@@ -455,14 +457,14 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 		select {
 		case <-ctx.Done():
 			cause := context.Cause(ctx)
-			if errors.Is(cause, errQuit) || errors.Is(cause, context.Canceled) {
+			if errors.Is(cause, errQuit) {
 				return display.show(Quit)
 			}
 			return cause
 		case err := <-done:
 			joined = true
 			if ctx.Err() != nil {
-				if cause := context.Cause(ctx); errors.Is(cause, errQuit) || errors.Is(cause, context.Canceled) {
+				if cause := context.Cause(ctx); errors.Is(cause, errQuit) {
 					return display.show(Quit)
 				}
 				return context.Cause(ctx)
