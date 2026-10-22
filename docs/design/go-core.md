@@ -875,7 +875,8 @@ edit memos and knowledge documents; Core supplies the owner, asking agent, id
 and PARA path. Model arguments cannot supply identities or paths. Existing
 records keep their folder and structured fields when their title/note changes.
 The tools return committed id/revision/Markdown receipts through the existing
-conversation protocol; no new client endpoint or to-do view is introduced.
+conversation protocol. C-54 extends these tools with to-do fields and views;
+there is no separate client endpoint.
 
 - A write is: an intent row in canon; files written and committed with person and agent in the message; index rows updated with the new head; the intent closed.
 - At start and before each write, Core compares the index head with the repository head. A mismatch rebuilds from the files, because files are canon.
@@ -884,7 +885,27 @@ conversation protocol; no new client endpoint or to-do view is introduced.
 
 **C-54 To-do engine (new).** Fields, views and rules are in [work-and-delegation.md](work-and-delegation.md#the-to-do-record). Design:
 
-- Views are SQL queries over the index, run by Core.
+- Views are SQL queries over the index, run by Core. `query_records` carries the
+  view, civil day, IANA zone and existing id cursor. `records_todo` is a disposable
+  projection of typed front matter, appended at migration 38. Migration marks
+  the index stale; startup rebuilds it from published files. Missing to-do rows
+  also trigger repair even when the saved index head matches. No canonical
+  record is moved or deleted by the migration. Legacy tracker imports with
+  verified-snapshot provenance project `active`/`done` to `open`/`completed`
+  and derive a missing deadline source from that provenance, without rewriting
+  the published files.
+- `write_record(kind: todo)` accepts sentence-only capture and complete optional
+  planning fields. It preserves them on text-only edits. Exact dates are checked
+  before publication; unresolved input returns `ambiguous_date`. Dependency
+  targets are owner-scoped and a recursive index query rejects cycles under the
+  repository writer lock. The existing revision CAS and durable tool receipts
+  apply unchanged. The tool cannot set work execution state or complete a
+  delegated task.
+- The today fixture includes overdue starts, deadlines, current recurring
+  occurrences, undated tasks, terminal states and zone boundaries. The installed
+  Core scenario `e2e/m2/todos.json` exercises saves, date and cycle refusals,
+  today/upcoming/anytime queries, rescheduling and restart after index loss.
+  Recurrence advancement, candidates and memo promotion remain #156.
 - Recurrence is Core's own parser for the subset (daily, weekly, monthly, yearly; interval; by-day; by-month-day; count; until) plus the from-completion flag. `Next(rule, from, zone)` advances only to a future occurrence. A table-driven corpus covers month ends and zone gaps.
 - Reminders and pre-warnings are timer rows (C-26).
 - Candidates are rows with a source, confidence and numbered handle. An automatic addition writes an undo handle to the undo log.
@@ -1342,6 +1363,9 @@ type Definition struct {
 - The installed Core exposes `progress_get` with `view: overview` and the `progress` topic, separately from developer worker lanes. Display lines contain no identity; their enclosing rows carry navigation references. An unplanned work definition or directly started worker is visible with unknown plan stage, percentage and next task; a task receipt cannot supply the just-finished plan task. The to-do waiting producer and plan-based stage/bar are left to the to-do record work (issue 154); a worker's terminal event is not a delivery verdict. The TUI renders stage codes and unknown values through its language catalog, and refreshes an open progress pane without replacing the conversation draft.
 - The full `waiting_get` query uses the common source ordering and Home limit/count. Current producers include canonical approvals, work-round questions, input-needed runs, explicit blocked work, person-owned exchanges, live worker questions and outside record-change problems. Live adapter requests are read under their session locks outside canon's writer to avoid reversing the worker callback lock order. They remain answerable through the existing authenticated question/approval forms. Canon migration 34 installs the already-defined waiting decision journal in the application catalog.
 - Canon closes its change notification only after a committed mutation; read callbacks and rollbacks remain quiet. Core coalesces those events and live worker changes for 250 ms, rereads the sources, and publishes the replaced overview when its contents or the full waiting list change. A change below Home's five-row limit still advances the overview cursor, causing an open full waiting view to reread its sources. Subscriptions reread before their snapshot. While the progress topic has observers, a five-second reconciliation tick also rereads filesystem-backed sources, using the same 250 ms coalescing. This detects outside record edits and restoration without unrelated canon writes. The timer stops with Core; idle installs without observers do not perform these periodic source reads, and unchanged snapshots still publish no frame. The headless `e2e/m2/progress-waiting.json` scenario covers installed Core, an actual stdio child, approval and question disappearance, a worker-created artifact and restart without provider replay.
+- #159 implements `progress_digest_get` through the same current-source overview. `progress.Digest` keeps waiting rows first and emits at most five single-line display rows without bars or navigation identities, plus total and omitted counts and a progress link. The requested waiting order is computed by Core before the limit.
+- Explicit TUI and paired-channel commands use the same Core operations: `/progress`, `/waiting priority|lightest`, `/stop <run>`, `/stop all` and `/note <run> <text>`. Bare `/stop` interrupts the current conversation. Targeted controls recheck the person and optional conversation; stop-all captures the person's live background runs and worker sessions in private surfaces, and only the bound conversation in a shared channel. Worker controls reread the current adapter handle and a task reference also checks its execution generation. Their acknowledgement is `requested`, never proof of termination or delivery. Follow-up queues a note without cancelling the target. Background request identities are retained with their notes; live-worker identities last for that process. A channel note also retains its admitted sender, address and binding snapshot after entering the checkpoint. Core revalidates these restrictions before every subsequent model or tool dispatch, including after restart; a revoked source cannot inherit an app-started run's authority. Scoped worker controls match the original delivery conversation as well as the internal coding manager. Duplicate channel inputs use the durable inbox and a control claim before execution, so a restart cannot repeat stop-all against new work. Recovery reuses an already admitted journal event before retrying the claim; an interruption between those commits cannot block later channel input. A crash after that claim may leave an interrupted control without a reply; it never reruns automatically.
+- Channel control rechecks the paired sender and binding, treats forwarded text as conversation evidence, and refuses owner-wide progress/waiting views in shared or memory-disabled bindings. Notes additionally require the binding's tool scope. Channel replies use the existing durable outbound queue. `e2e/m2/progress-controls.json` covers the installed TUI and paired gateway against running Core, and reads the digest while a real worker requests approval, asks a question and creates an artifact.
 - Both are computed on change events, coalesced (P: 250 ms), and pushed as row diffs on the `waiting` and `progress` topics. `Digest` makes the channel form.
 - The design at a glance is a deterministic `diagram` result generated from plan data and the ledger, ordered by when each stage becomes usable.
 - The roadmap builds the waiting list and the running list first. The progress lines, the digest and the design at a glance follow with the progress view.

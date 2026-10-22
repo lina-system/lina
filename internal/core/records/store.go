@@ -243,7 +243,8 @@ func (s *Store) Commit(ctx context.Context, c Change, a Actor) (rev Rev, err err
 	if err != nil || id != c.ID {
 		return "", ErrInvalid
 	}
-	if _, err := parseDocument(c.Data); err != nil {
+	candidate, err := parseDocument(c.Data)
+	if err != nil {
 		return "", err
 	}
 	parent, files, err := s.snapshot(ctx)
@@ -272,6 +273,9 @@ func (s *Store) Commit(ctx context.Context, c Change, a Actor) (rev Rev, err err
 	}
 	if files[c.Path] != "" && c.Path != old.Path {
 		return "", ErrPathExists
+	}
+	if err = s.validateTodoLinks(ctx, c.ID, candidate); err != nil {
+		return "", err
 	}
 	token, err := s.acquire(ctx)
 	if err != nil {

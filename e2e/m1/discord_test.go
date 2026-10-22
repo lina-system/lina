@@ -140,6 +140,7 @@ func runM2DiscordCore(t *testing.T, closeCodes []websocket.StatusCode) {
 	}))
 	defer provider.Close()
 	presented := make(chan string, 1)
+	releasePresentation := make(chan struct{})
 	edits := make(chan struct{}, 4)
 	var buttonAnswers atomic.Int32
 	frames := make(chan any, 16)
@@ -272,8 +273,12 @@ func runM2DiscordCore(t *testing.T, closeCodes []websocket.StatusCode) {
 				return
 			}
 			if len(body.Components) > 0 {
-				fmt.Fprint(w, `{"id":"400"}`)
 				presented <- body.Components[0].Components[0].ID
+				select {
+				case <-releasePresentation:
+					fmt.Fprint(w, `{"id":"400"}`)
+				case <-r.Context().Done():
+				}
 				return
 			}
 			count := sendCalls.Add(1)
@@ -397,6 +402,30 @@ func runM2DiscordCore(t *testing.T, closeCodes []websocket.StatusCode) {
 		t.Fatal(err)
 	}
 	defer reader.Close(context.Background())
+	presentationCount := func() int {
+		t.Helper()
+		var n int
+		if err := reader.Read(h.ctx, func(tx *canon.Tx) error {
+			return tx.QueryRowContext(h.ctx, "SELECT count(*) FROM discord_presentations WHERE approval_id='discord_approval' AND message_id='400'").Scan(&n)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	// Receiving an outbound HTTP request is not its committed presentation.
+	// Hold the response to make that gap deterministic, then wait for the
+	// canonical binding before testing owner-only and exactly-once decisions.
+	if n := presentationCount(); n != 0 {
+		t.Fatal("presentation committed before delivery", n)
+	}
+	close(releasePresentation)
+	for presentationCount() != 1 {
+		select {
+		case <-h.ctx.Done():
+			t.Fatal("canonical approval presentation did not commit")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
 	barrier := func(id string) {
 		t.Helper()
 		message(id, "999", "BARRIER")
@@ -445,7 +474,7 @@ func runM2DiscordCore(t *testing.T, closeCodes []websocket.StatusCode) {
 	button("51", scenario.Owner)
 	barrier("53")
 	if approvalState().State != authority.Approved || len(edits) != 1 || buttonAnswers.Load() != 1 {
-		t.Fatal("owner interaction was not handled exactly once")
+		t.Fatalf("owner interaction was not handled exactly once: state=%s edits=%d answers=%d", approvalState().State, len(edits), buttonAnswers.Load())
 	}
 	message("11", "999", "MUST-NOT-DISPATCH")
 	interaction := func() {

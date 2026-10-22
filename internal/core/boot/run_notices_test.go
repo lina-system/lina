@@ -24,7 +24,7 @@ import (
 func runRuntime(t *testing.T) *conversationRuntime {
 	t.Helper()
 	r := controlRuntime(t)
-	s, err := runs.New(runs.Config{Epoch: r.epoch, DB: r.db, Assets: r.assets, WorkDir: filepath.Join(r.root, "work"), Authorize: func(context.Context, runs.Origin, runs.Brief) error { return nil }, PublishPromotion: func(context.Context, *canon.Tx, string, budget.Handle, budget.Handoff) error { return nil }, Stream: func(context.Context, provider.Request) (provider.Stream, error) {
+	s, err := runs.New(runs.Config{Epoch: r.epoch, DB: r.db, Assets: r.assets, AuthorizeFollowUp: r.authorizeRunFollowSource, WorkDir: filepath.Join(r.root, "work"), Authorize: func(context.Context, runs.Origin, runs.Brief) error { return nil }, PublishPromotion: func(context.Context, *canon.Tx, string, budget.Handle, budget.Handoff) error { return nil }, Stream: func(context.Context, provider.Request) (provider.Stream, error) {
 		t.Error("unexpected model request")
 		return nil, nil
 	}})
