@@ -1121,6 +1121,26 @@ type Definition struct {
 - `Chooser` ranks workers from situation tags, quota rows and host capacity, using an editable rule table marked provisional. A quota or login stop hands the same packet to the next worker.
 - `Scheduler.Release` runs on events (landed, new task, quota change, a parked worker's reset), not on a poll. It starts every task whose dependencies landed, whose area lease is free and whose worker has quota. Area leases live from hand-off to landed, closed or abandoned. Concurrency is the free slots that the reported load and resources of the main host and each Node allow, with no fixed count per repository ([work-and-delegation.md](work-and-delegation.md#capacity)). A task that cannot start shows exactly one reason.
 - One task, one worker, one worktree, one branch, created by Core with the Git command from a parent clone in `work/clones/`.
+- The first local scheduler connection is enabled by the installation's private
+  `system/core/delegation.json`: absolute `codex`, `git` and `gh` executable paths,
+  optional `codex_args`, a reported local `slots` capacity, and a `repositories`
+  map from canonical `owner/repo` to its `clone` and `base`. Executables and clone
+  paths are installation inputs, never model arguments. Without that file the
+  delegation tools are not advertised. Remote Node admission remains separate.
+- `dispatch_work` admits a graph of definitions (key, what, why, done, areas,
+  dependencies and design sections) scoped to the authenticated conversation.
+  Core resolves design references at the registered base, mints stable task ids
+  from the turn/call/key, creates `lina/<task-id>` branches and separate worktrees,
+  and starts the installed Codex App Server through `worker.Adapter`. No model,
+  sandbox or approval setting is overridden. `refresh_work` reads the asking
+  conversation's task cards and their current forge observations; it cannot
+  assert merged state or request a merge.
+- Scheduler facts and their one waiting reason are events in `work_ledger` and
+  replay into cards. All reservations are fenced canon transactions. Reactor
+  serializes the worker-start response with even an immediate completion event;
+  only the matching thread/turn releases the slot. Unknown external outcomes
+  retain reservations. A conflict is returned to the same worker once, with the
+  claim durable before input; a second conflicting head requires input.
 - The CRW pin is the start gate for the work ledger records: a pin record and a LINA fixture runner whose expected values come from the fixture ([work-and-delegation.md](work-and-delegation.md#start-gate)).
 - `internal/core/work/pin` verifies SHA-256 over every adopted file before running
   any case. The runner passes only inputs to the record validator; a validator

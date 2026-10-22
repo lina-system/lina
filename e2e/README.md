@@ -224,3 +224,11 @@ and deleted agents in conversation and management requests, plus channel
 binding/scope replacement. A paired synthetic channel and an existing binding
 exercise the actual target-agent checks. Read-only canon snapshots prove that
 refused requests preserve agent revisions, actions, conversations and bindings.
+
+`m3/dependency-release.json` runs the installed Core with a synthetic App Server
+and forge. Conversation tools admit a graph, Core creates actual Git worktrees,
+and worker processes write and commit results. Independent work starts while a
+dependent waits; only an actual merge followed by Core's forge observation
+releases the dependent onto the landed base. Restart retains the merge without
+turning it into a delivery verdict. The fixture has no provider credential or
+external GitHub effect.

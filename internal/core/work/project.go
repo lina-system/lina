@@ -58,7 +58,31 @@ func advance(c *Card, e Event) error {
 			c.Revision++
 			c.State = "working"
 		}
+	case "schedule_wait", "schedule_reserved", "schedule_observed", "schedule_conflict", "schedule_return", "schedule_input":
+		if c.Task.Schedule == nil || e.Scheduling == nil {
+			return ErrState
+		}
+		c.Scheduling = *e.Scheduling
+		c.WaitReason = e.WaitReason
+		if e.Kind == "schedule_wait" {
+			c.State = "waiting"
+		}
+		if e.Kind == "schedule_return" {
+			c.State = "unknown"
+		}
+		if e.Kind == "schedule_reserved" {
+			c.State = "working"
+		}
+		if e.Kind == "schedule_conflict" || e.Kind == "schedule_input" {
+			c.State = "input_needed"
+		}
+		if c.Scheduling.Closed {
+			c.State = "stopped"
+		}
 	case "started":
+		if c.Task.Schedule != nil && (!c.Scheduling.Reserved || !c.Scheduling.CapacityHeld || c.Scheduling.Landed || c.Scheduling.Closed || e.Run == nil || e.Run.Worker != c.Task.Schedule.Worker || e.Run.NodeID != c.Task.Schedule.Host) {
+			return ErrState
+		}
 		if hasWait(*c) {
 			return ErrState
 		}
@@ -115,6 +139,7 @@ func advance(c *Card, e Event) error {
 			return ErrState
 		}
 		c.Active = false
+		c.Scheduling.CapacityHeld = false
 		c.TurnStatus = e.Value
 		setOutcome(c)
 	case "unknown":

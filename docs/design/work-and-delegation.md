@@ -459,6 +459,12 @@ The manager session splits work into tasks that one worker can finish as one pul
 ### Write areas
 
 - Every task declares a write area in its work definition. Two tasks whose write areas overlap are dependent: LINA Core orders them and never runs them together.
+- Graph admission is atomic. Missing dependencies, cycles, empty or invalid areas,
+  and unordered overlapping areas within one graph are refused before any task
+  is created. Area identity is the registered repository, shared across clones
+  and conversations. Relative globs support `*`, `?`, character classes and `**`
+  as a whole path component. Intersection checks include files not yet created;
+  unrelated graphs with overlapping areas wait on the existing lease.
 - LINA Core holds an area lease for each task from hand-off until the task has landed, is closed or is abandoned. The lease follows the liveness of the task's worker (see Liveness): a task judged abandoned frees its lease, and nothing else frees it earlier.
 - Hotspot files are shared resources: dependency manifests and lockfiles, generated code, registries and index files, changelogs, and any file that recent history shows many tasks changing. A task that needs a hotspot file takes the whole hotspot area, or the change moves into one dedicated task that the others depend on.
 - A worker cannot be trusted to stay inside its area. The design-conformance review reads the pull request's diff against the declared write area. A change outside it misses the work definition's scope and goes back to the worker as `needs_changes`. This is part of the check at merge, not a separate review.
@@ -473,6 +479,19 @@ The manager session splits work into tasks that one worker can finish as one pul
 - The manager session selects work and its order; the work engine reserves capacity, obtains Node bids and dispatches the recorded assignments. The one-coordinator rule of the Work engine holds: a worker is never used through its own team or coordinator feature.
 - When a task has landed, the work engine releases at once every task that was waiting only on it.
 - A task that cannot start has exactly one visible reason: a dependency, an area held by another task, a worker out of quota, or host capacity.
+- The deterministic reason order is dependency (by task id), area holder (by task
+  id), worker quota, then host capacity. The running list and task Details use
+  that same reason. A terminal worker turn frees execution capacity, while its
+  area remains held until a Core-owned forge read confirms merged or closed.
+  An open/queued pull request, a receipt, or a successful merge request cannot
+  satisfy the dependency. Merge observation does not create a verified verdict.
+- Dispatch reservations and the single conflict-return claim precede worker
+  input in the canon ledger. Repeated wakes cannot duplicate either effect.
+  Recovery rebuilds reservations; an uncertain start or correction is retained
+  for reconciliation, never automatically repeated. Completion, new graph,
+  quota notification/reset and a refreshed forge observation release eligible
+  tasks. A five-minute reconciliation observes inactive pull requests for lost
+  signals; it does not perform a model call or a merge.
 - When slots are free, the manager may start a dependent task as a stacked pull request on an open predecessor. It records the predecessor and its head as the task's base, and Core checks capacity and disjoint write-area leases before dispatch. The dependency remains: the dependent cannot land before the predecessor. The worker brings the stack onto the landed base and owns its resulting checks to green before the manager checks the delivery.
 
 ## Workers
