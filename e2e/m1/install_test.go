@@ -3,16 +3,20 @@ package e2e_test
 
 import (
 	"bufio"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/lina/internal/core/install"
 	"github.com/thisisjun786/lina/internal/core/manifest"
@@ -33,19 +37,51 @@ func TestM1Install(t *testing.T) {
 		t.Fatal(err)
 	}
 	var scenario struct {
-		ConnectionState string `json:"connection_state"`
-		RefusalExit     int    `json:"refusal_exit"`
-		ToolName        string `json:"tool_name"`
-		ToolVersion     string `json:"tool_version"`
-		ToolStatus      string `json:"tool_status"`
+		ConnectionState string                `json:"connection_state"`
+		RefusalExit     int                   `json:"refusal_exit"`
+		ToolName        string                `json:"tool_name"`
+		Tools           []installToolScenario `json:"tools"`
 	}
 	if err = json.Unmarshal(data, &scenario); err != nil {
 		t.Fatal(err)
 	}
-	binary := buildLina(t)
-	h := newHarness(t, binary)
+	bundle := t.TempDir()
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
+	defer cancel()
+	build := exec.CommandContext(ctx, "node", "build-install-bundle.mjs", bundle)
+	for _, key := range []string{"PATH", "HOME", "GOCACHE", "GOMODCACHE", "TMPDIR"} {
+		if value, ok := os.LookupEnv(key); ok {
+			build.Env = append(build.Env, key+"="+value)
+		}
+	}
+	if data, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build install bundle: %v\n%s", err, data)
+	}
+	m, err := manifest.Read(filepath.Join(bundle, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(m.VerifiedWorkerVersions[scenario.ToolName], "0.163.0") {
+		t.Fatal("built manifest must verify Codex 0.163.0")
+	}
+	for _, tool := range scenario.Tools {
+		t.Run(tool.Version, func(t *testing.T) {
+			runInstallScenario(t, bundle, scenario.ConnectionState, scenario.RefusalExit, scenario.ToolName, tool, m.VerifiedWorkerVersions[scenario.ToolName])
+		})
+	}
+}
+
+type installToolScenario struct {
+	Version string `json:"version"`
+	Status  string `json:"status"`
+}
+
+func runInstallScenario(t *testing.T, bundle, connectionState string, refusalExit int, toolName string, toolScenario installToolScenario, verified []string) {
+	t.Helper()
+	h := newHarness(t, filepath.Join(bundle, "lina"))
 	base := h.root
-	bundle := makeInstallBundle(t, base, binary, buildCommand(t, "lina-node"))
+	var data []byte
+	var err error
 	bin := filepath.Join(base, "tools")
 	if err = os.Mkdir(bin, 0700); err != nil {
 		t.Fatal(err)
@@ -61,7 +97,7 @@ esac
 	if err = os.WriteFile(filepath.Join(bin, "systemctl"), []byte(systemctl), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err = os.WriteFile(filepath.Join(bin, scenario.ToolName), []byte("#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\nprintf '%s\\n' "+strconv.Quote(scenario.ToolVersion)+"\n"), 0700); err != nil {
+	if err = os.WriteFile(filepath.Join(bin, toolName), []byte("#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\nprintf '%s\\n' "+strconv.Quote(toolScenario.Version)+"\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	state := filepath.Join(base, "state")
@@ -79,8 +115,8 @@ esac
 		return p.stdout.String()
 	}
 	output := invoke(0)
-	if !strings.Contains(output, scenario.ToolVersion) || !strings.Contains(output, scenario.ToolStatus) {
-		t.Fatal("install did not list the unverified tool version")
+	if !strings.Contains(output, toolName+": "+toolScenario.Version+" ("+toolScenario.Status) {
+		t.Fatalf("install did not report tool version/status: %s", output)
 	}
 	var installed install.Result
 	data, err = os.ReadFile(filepath.Join(state, "system/install.json"))
@@ -95,12 +131,25 @@ esac
 	}
 	found := false
 	for _, tool := range installed.Tools {
-		if tool.Name == scenario.ToolName {
-			found = tool.Version == scenario.ToolVersion && tool.Status == scenario.ToolStatus
+		if tool.Name == toolName {
+			found = tool.Version == toolScenario.Version && tool.Status == toolScenario.Status && slices.Equal(tool.VerifiedVersions, verified)
 		}
 	}
 	if !found {
 		t.Fatalf("tool inventory: %+v", installed.Tools)
+	}
+	data, err = os.ReadFile(filepath.Join(state, "system/tools.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var inventory []install.Tool
+	if err := json.Unmarshal(data, &inventory); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.EqualFunc(inventory, installed.Tools, func(a, b install.Tool) bool {
+		return a.Name == b.Name && a.Path == b.Path && a.Version == b.Version && a.Status == b.Status && slices.Equal(a.VerifiedVersions, b.VerifiedVersions)
+	}) {
+		t.Fatalf("persisted tools differ from install result: %+v", inventory)
 	}
 	credentials, err := os.ReadDir(filepath.Join(state, "secrets"))
 	if err != nil || len(credentials) != 0 {
@@ -110,7 +159,7 @@ esac
 	if err != nil {
 		t.Fatal(err)
 	}
-	invoke(scenario.RefusalExit)
+	invoke(refusalExit)
 	after, err := os.ReadFile(filepath.Join(state, "system/core/main.json"))
 	if err != nil || string(before) != string(after) {
 		t.Fatal("repeat installation changed identity")
@@ -149,7 +198,7 @@ esac
 	client.welcome = welcome
 	h.inputRefused(client)
 	term := h.startTUI("TERM=xterm-256color", "NO_COLOR=1", "LC_ALL=C")
-	expectCatalogState(t, h, term, design.English, scenario.ConnectionState)
+	expectCatalogState(t, h, term, design.English, connectionState)
 	h.keys(term, "\x04")
 	term.process.wait(t, 0)
 	h.inputRefused(client)
