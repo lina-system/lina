@@ -24,6 +24,7 @@ type Block struct {
 	ID, Topic, EchoKey, Text string
 	Speaker                  protocol.ConversationSpeaker
 	Body, Title              string
+	InlineReply              bool
 	RunID                    string
 	TurnKnown, TurnActive    bool
 	Revision                 uint64
