@@ -281,6 +281,15 @@ creation, and idempotent confirmation across Core restarts. A loopback provider
 supplies only model output; all tool, job, result, protocol and records paths are
 production paths. No external credentials or services are used.
 
+`go test ./e2e/m1 -run '^TestM2UpdateActivation$' -count=1` runs
+`m2/update-activation.json`, which drives `lina update --activate` against
+the installed Core. A test-owned service manager launches real service processes;
+Core drains through its client protocol, snapshots and swaps, runs a real
+conversation and bundled-worker readiness check, and resumes with a verified
+tool result. Start refusal rolls back, while provider failure and updater death
+after READY hold the new state. Package SIGKILL tests acknowledge each rename
+boundary without fixed startup delays.
+
 `m3/antigravity.json` dispatches through installed Core's conversation tool,
 starts its supervised headless worker in a new worktree, produces a real file
 and commit, and verifies a recorded PR at that head. Separate cases cover soft

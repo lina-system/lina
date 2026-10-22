@@ -128,8 +128,12 @@ func TestShellControlCClearsDraftBeforeQuit(t *testing.T) {
 		t.Fatal("control-c did not clear draft")
 	}
 	_, command = m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	if command != nil || m.status.State == Quit {
+		t.Fatal("empty control-c did not ask for confirmation")
+	}
+	_, command = m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	if command == nil || m.status.State != Quit {
-		t.Fatal("empty control-c did not quit")
+		t.Fatal("confirmed control-c did not quit")
 	}
 }
 

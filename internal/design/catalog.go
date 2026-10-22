@@ -125,6 +125,7 @@ var catalog = map[string]translation{
 	"card.open":              {"F6: waiting for me", "F6: 내 결정 대기"},
 	"shell.running":          {"Running work: unsupported", "진행 중인 작업: 지원되지 않음"},
 	"shell.cards":            {"Waiting for me: unsupported", "내 결정 대기: 지원되지 않음"},
+	"shell.quit_hint":        {"Ctrl+C again to quit", "Ctrl+C를 다시 누르면 종료"},
 	"agents.unavailable":     {"Selected agent unavailable", "선택한 에이전트 없음"},
 	"agents.choose_required": {"Selected agent is unavailable. Draft kept; use /agents choose <id> before sending.", "선택한 에이전트가 없습니다. 초안을 보관했습니다. /agents choose <id>로 선택 후 보내세요."},
 

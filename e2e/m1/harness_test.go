@@ -29,6 +29,9 @@ var commandBuilds struct {
 }
 
 func TestMain(m *testing.M) {
+	if updateManagerHelper() {
+		return
+	}
 	if os.Getenv("LINA_WORKER_FIXTURE") == "2" && len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "app-server") {
 		codexWorkToolsFixture()
 		return
