@@ -17,8 +17,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/design"
 	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"github.com/thisisjun786/lina/kit/protocol"
+	"github.com/thisisjun786/lina/kit/tools"
 )
 
 // The socket gate holds only the real Core's finish event, so even an instant
@@ -92,6 +94,16 @@ func toolRowsGate(t *testing.T, h *harness, release <-chan struct{}) (string, <-
 func TestM1TUIToolRows(t *testing.T) {
 	for _, ascii := range []bool{false, true} {
 		t.Run(map[bool]string{false: "unicode", true: "ascii"}[ascii], func(t *testing.T) {
+			text := func(key string) string { return design.Text(design.English, "tool."+key) }
+			listing, reading := tools.DisplayName("skill_index"), tools.DisplayName("read_skill")
+			marks := design.Dark()
+			runningMark, okMark, failedMark := marks.GlyphUnicodeToolRunning, marks.GlyphUnicodeToolOk, marks.GlyphUnicodeToolFailed
+			if ascii {
+				runningMark, okMark, failedMark = marks.GlyphAsciiToolRunning, marks.GlyphAsciiToolOk, marks.GlyphAsciiToolFailed
+			}
+			running := runningMark + " " + text("running") + "  " + listing
+			ok := okMark + " " + text("ok") + "  " + listing
+			failed := failedMark + " " + text("failed") + "  " + reading
 			var requests atomic.Int32
 			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var request struct{ Input []json.RawMessage }
@@ -100,7 +112,7 @@ func TestM1TUIToolRows(t *testing.T) {
 					return
 				}
 				for _, raw := range request.Input {
-					for _, forbidden := range []string{"tool_activity", "Listing skills", "Reading skill", "running  ", "failed  "} {
+					for _, forbidden := range []string{"tool_activity", listing, reading, running, ok, failed} {
 						if strings.Contains(string(raw), forbidden) {
 							t.Errorf("display row entered model history: %s", forbidden)
 						}
@@ -160,10 +172,6 @@ func TestM1TUIToolRows(t *testing.T) {
 			}
 			waitComposerReady(t, h, terminal)
 			h.keys(terminal, "List fixture skills\r")
-			running, ok, failed := "◐ running  Listing skills", "✓ ok  Listing skills", "× failed  Reading skill"
-			if ascii {
-				running, ok, failed = "~ running  Listing skills", "+ ok  Listing skills", "x failed  Reading skill"
-			}
 			ctx, cancel := context.WithTimeout(h.ctx, 5*time.Second)
 			screen, err := terminal.screen.Wait(ctx, func(s tuiterm.Snapshot) bool { return strings.Contains(screenText(s), running) })
 			cancel()
@@ -195,7 +203,7 @@ func TestM1TUIToolRows(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, forbidden := range []string{"tool_activity", "Listing skills", "Reading skill", running, ok, failed} {
+			for _, forbidden := range []string{"tool_activity", listing, reading, running, ok, failed} {
 				if strings.Contains(string(data), forbidden) {
 					t.Errorf("display row exported: %s", forbidden)
 				}

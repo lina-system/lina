@@ -41,7 +41,7 @@ func TestToolRowsLifecycleAndGrouping(t *testing.T) {
 	event := rowEvent(t, 2, "one", "Reading file", "started", "", "", "")
 	applyToolProjection(t, m, event)
 	view := m.View().Content
-	if !strings.Contains(view, "Reading file") || !strings.Contains(view, "running") {
+	if !strings.Contains(view, "Reading file") || !strings.Contains(view, design.Text(m.styles.options.Language, "tool.running")) {
 		t.Fatalf("missing running tool row: %q", view)
 	}
 	accepted := m.content
@@ -50,13 +50,13 @@ func TestToolRowsLifecycleAndGrouping(t *testing.T) {
 		t.Fatal("replay changed tool rows")
 	}
 	applyToolProjection(t, m, rowEvent(t, 3, "one", "Reading file", "finished", "ok", "", ""))
-	if view = m.View().Content; !strings.Contains(view, "ok") || strings.Contains(view, "running  Reading file") {
+	if view = m.View().Content; !strings.Contains(view, design.Text(m.styles.options.Language, "tool.ok")) || strings.Contains(view, design.Text(m.styles.options.Language, "tool.running")+"  Reading file") {
 		t.Fatalf("missing completed row: %q", view)
 	}
 	applyToolProjection(t, m, rowEvent(t, 4, "two", "Reading file", "started", "", "", ""))
 	applyToolProjection(t, m, rowEvent(t, 5, "two", "Reading file", "finished", "failed", "", ""))
 	view = m.View().Content
-	if strings.Count(view, "Reading file") != 1 || !strings.Contains(view, "×2") || !strings.Contains(view, "failed") {
+	if strings.Count(view, "Reading file") != 1 || !strings.Contains(view, "×2") || !strings.Contains(view, design.Text(m.styles.options.Language, "tool.failed")) {
 		t.Fatalf("group lost count/failure: %q", view)
 	}
 	applyToolProjection(t, m, rowEvent(t, 6, "three", "Listing skills", "finished", "ok", "", ""))
@@ -80,7 +80,7 @@ func TestToolRowsSummaryAndASCII(t *testing.T) {
 	summary := "first\nsecond\nthird\nfourth\nfifth"
 	applyToolProjection(t, m, rowEvent(t, 2, "one", "Reading\x1b]52;c;PRIVATE\a file", "finished", "failed", "target\nname", summary))
 	view := m.View().Content
-	for _, want := range []string{"x failed", "Reading file", "target name", "first", "third", "+2 lines", "Ctrl+O"} {
+	for _, want := range []string{m.styles.tokens.GlyphAsciiToolFailed + " " + design.Text(m.styles.options.Language, "tool.failed"), "Reading file", "target name", "first", "third", fmt.Sprintf(design.Text(m.styles.options.Language, "tool.more"), 2), "Ctrl+O"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("missing %q: %q", want, view)
 		}
@@ -140,7 +140,7 @@ func TestToolRowsGapTurnIdentityAndPagerInvalidation(t *testing.T) {
 	m.Update(shellData{Generation: 1, Message: state.Turn{Active: false}})
 	applyToolProjection(t, m, toolTurn(t, 8, "tool", "Reading"))
 	applyToolProjection(t, m, rowEvent(t, 9, "reused", "Reading file", "started", "", "", ""))
-	if len(m.content.ToolCalls) != 2 || !strings.Contains(m.View().Content, "running  Reading file") {
+	if len(m.content.ToolCalls) != 2 || !strings.Contains(m.View().Content, design.Text(m.styles.options.Language, "tool.running")+"  Reading file") {
 		t.Fatal("call id reused in next turn was suppressed")
 	}
 }
