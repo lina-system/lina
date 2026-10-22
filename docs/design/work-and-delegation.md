@@ -969,6 +969,19 @@ Done is the end of the whole lifecycle of the work, never a stage of it:
 | Files | The files are where they belong and nothing else changed | Each file is at its destination with the expected content hash (read); no file outside the scope changed (comparison of the scope before and after). |
 | Composite | Every part is done | The union of the criteria of its parts. Most real goals are composite. |
 
+A code goal with a service binds `service_target` to one `service_repository`
+within `scope.repositories`. The repository is required when the scope contains
+multiple repositories; a single-repository scope supplies the default, including
+for saved records that predate this additive field. Core retains the latest
+observed merged revision per repository. After every task has passed QA, it
+deploys and probes only the revision belonging to the service repository. A later
+merge in another repository cannot retarget the service. Task merge and QA checks
+remain bound to each task's repository. Changing the service repository invalidates
+its deployment and probe evidence, even when the repositories share a commit; a
+late deployment receipt remains history and cannot verify the corrected target.
+A goal without a service keeps its
+post-merge verification flow; this does not add support for multiple services.
+
 Two examples show the shape for non-code work.
 
 "다음 주 출장 준비해 줘" becomes one goal. LINA first reads the calendar and mail for the trip: dates, city, the meeting that is its reason, bookings already made. Its tasks are: a background run that gathers the facts and drafts the itinerary; calendar blocks on the person's own calendar for travel and meetings (no other attendees, so no approval); the bookings that are still missing, which need payment and become one decision row with a recommendation; a message to the host to confirm the meeting time, which goes out in the person's name and therefore needs approval; and the person's own 할 일 for what only they can do, such as packing or a document to sign, placed on `when` days before departure. The waits are the booking confirmation mail and the host's reply, each with a deadline set before departure. The goal is done when the itinerary is in the person's materials, the calendar blocks read back correctly, every booking is confirmed by a confirmation mail or has been declined by the person, the host's reply is in or the person decided what to do without it, and the person's own 할 일 exist.
@@ -1002,6 +1015,8 @@ Core checks the bound person and agent, refuses a stale revision, and commits
 the corrected definition to the same record. It reloads the revision fence for
 the manager to interpret; it does not admit another goal. Corrections cannot
 supply execution state, effect authority or person-decision receipts.
+An omitted service repository preserves the current binding; an explicit
+replacement must belong to the corrected scope.
 
 When a revision invalidates queued actions, Core retires them and releases their reservations in the same ledger transaction. A worker action that was never dispatched restores its task's runnable stage and does not spend an attempt, continuation or recovery. A cancelled manager action likewise does not consume the task's repair turn. Adding a repair task also revises the goal: obsolete queued sibling actions are retired and derived again, so independent work remains runnable. Actions already claimed keep their reservations until Core reads their outcome; revision never dispatches their effects again.
 

@@ -266,10 +266,11 @@ func (e *Engine) Admit(ctx context.Context, g Goal) error {
 	if g.CreatedAt == 0 {
 		g.CreatedAt = e.cfg.Now().Unix()
 	}
+	g.ServiceRepository = serviceRepository(g)
 	if err := validateGoal(g); err != nil {
 		return err
 	}
-	if g.DefinitionPending || g.AssessedFailure != "" || g.CheckRound != 0 || len(g.Checks) > 0 || g.State != "" || g.Revision != 0 || g.ManagerTurns != 0 || g.AttentionID != "" || g.BlockedReason != "" || len(g.Waits) > 0 || len(g.Evidence) > 0 || g.TargetRevision != "" || g.Deployment != (Proof{}) || g.Verification != (Proof{}) {
+	if g.DefinitionPending || g.AssessedFailure != "" || g.CheckRound != 0 || len(g.Checks) > 0 || g.State != "" || g.Revision != 0 || g.ManagerTurns != 0 || g.AttentionID != "" || g.BlockedReason != "" || len(g.Waits) > 0 || len(g.Evidence) > 0 || g.TargetRevision != "" || len(g.MergedRevisions) > 0 || g.Deployment != (Proof{}) || g.Verification != (Proof{}) {
 		return ErrInvalid
 	}
 	for _, t := range g.Tasks {
@@ -741,6 +742,12 @@ func applySuccess(g *Goal, t *Task, a Action, o Observation, now int64) error {
 		}
 		if g.DefinitionPending {
 			g.AssessedFailure = "definition:" + g.RecordRevision
+			if !validServiceRepository(*g) {
+				g.State = GoalBlocked
+				g.AttentionID = "goal:" + g.ID + ":definition"
+				g.BlockedReason = "The service needs a repository in the goal's scope."
+				return nil
+			}
 			if len(o.Tasks) == 0 {
 				g.State = GoalBlocked
 				g.AttentionID = "goal:" + g.ID + ":definition"
@@ -803,8 +810,19 @@ func applySuccess(g *Goal, t *Task, a Action, o Observation, now int64) error {
 		t.Merge = o.Proof
 		t.QA = Proof{}
 		t.Stage = TaskMerged
-		g.TargetRevision = o.Proof.Revision
-		g.Deployment = Proof{}
+		if g.MergedRevisions == nil {
+			g.MergedRevisions = map[string]string{}
+		}
+		g.MergedRevisions[t.Repository] = o.Proof.Revision
+		previous := g.TargetRevision
+		if g.ServiceTarget == "" {
+			g.TargetRevision = o.Proof.Revision
+		} else {
+			g.TargetRevision = targetRevision(*g)
+		}
+		if previous != g.TargetRevision {
+			g.Deployment = Proof{}
+		}
 		g.Verification = Proof{}
 		g.Evidence = append(g.Evidence, o.Proof)
 	case RunQA:
@@ -834,11 +852,15 @@ func applySuccess(g *Goal, t *Task, a Action, o Observation, now int64) error {
 		}
 		g.Evidence = append(g.Evidence, o.Proof)
 	case Deploy:
-		if t != nil || g.ServiceTarget == "" || !o.Proof.proves(a.Revision) || g.TargetRevision != a.Revision {
+		if t != nil || g.ServiceTarget == "" || !o.Proof.proves(a.Revision) {
 			return ErrInvalid
 		}
-		g.Deployment = o.Proof
 		g.Evidence = append(g.Evidence, o.Proof)
+		// A settled old deployment remains history, but a corrected service
+		// binding needs fresh evidence even when both repositories share a SHA.
+		if a.GoalRevision == g.Revision && g.TargetRevision == a.Revision {
+			g.Deployment = o.Proof
+		}
 	case Verify:
 		if t != nil || !o.Proof.proves(a.Revision) || g.TargetRevision != a.Revision {
 			return ErrInvalid

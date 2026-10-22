@@ -77,7 +77,7 @@ func criterionRevision(g Goal, c Criterion) string {
 		}
 		return ""
 	}
-	return g.TargetRevision
+	return targetRevision(g)
 }
 func validCriteria(g Goal) bool {
 	if len(g.Criteria) == 0 || len(g.Scope.Repositories) == 0 || strings.TrimSpace(g.Scope.Includes) == "" {

@@ -29,12 +29,13 @@ type Definitions interface {
 	Commit(context.Context, DefinitionChange, string, string) (string, error)
 }
 type Definition struct {
-	Outcome     string         `json:"outcome"`
-	Done        string         `json:"done"`
-	Scope       GoalScope      `json:"scope"`
-	Assumptions []string       `json:"assumptions,omitempty"`
-	Decisions   []GoalDecision `json:"decisions,omitempty"`
-	Criteria    []Criterion    `json:"criteria"`
+	ServiceRepository string         `json:"service_repository,omitempty"`
+	Outcome           string         `json:"outcome"`
+	Done              string         `json:"done"`
+	Scope             GoalScope      `json:"scope"`
+	Assumptions       []string       `json:"assumptions,omitempty"`
+	Decisions         []GoalDecision `json:"decisions,omitempty"`
+	Criteria          []Criterion    `json:"criteria"`
 }
 
 type DefinitionReceipt struct {
@@ -75,6 +76,12 @@ func (e *Engine) Revise(ctx context.Context, id, base, person, agent string, d D
 		}
 		g.Summary, g.Done, g.Scope = d.Outcome, d.Done, d.Scope
 		g.Assumptions, g.Criteria, g.Decisions = d.Assumptions, d.Criteria, current.Decisions
+		if d.ServiceRepository != "" {
+			g.ServiceRepository = d.ServiceRepository
+		}
+		if !validServiceRepository(g) {
+			return receipt, ErrInvalid
+		}
 		// Scope corrections retain old task projections until the manager
 		// interprets the new definition and their dispatched effects settle.
 		g.DefinitionPending = true
@@ -109,12 +116,14 @@ func definition(g Goal) Definition {
 			criteria = append(criteria, c)
 		}
 	}
-	return Definition{g.Summary, g.Done, g.Scope, g.Assumptions, g.Decisions, criteria}
+	return Definition{ServiceRepository: g.ServiceRepository, Outcome: g.Summary, Done: g.Done, Scope: g.Scope, Assumptions: g.Assumptions, Decisions: g.Decisions, Criteria: criteria}
 }
 func applyDefinition(g *Goal, d Definition) {
 	g.Summary = d.Outcome
 	g.Done = d.Done
 	g.Scope = d.Scope
+	g.ServiceRepository = d.ServiceRepository
+	g.ServiceRepository = serviceRepository(*g)
 	g.Assumptions = d.Assumptions
 	g.Decisions = d.Decisions
 	g.Criteria = d.Criteria
@@ -170,7 +179,14 @@ func (e *Engine) prepareDefinition(ctx context.Context, g *Goal) error {
 	if err != nil {
 		return err
 	}
-	if !bytes.Equal(encode(d), encode(definition(*g))) {
+	// An interrupted legacy admission may have published a single-repository
+	// definition without the additive field. Compare its effective binding;
+	// leave the saved bytes and revision intact.
+	comparable := d
+	comparable.ServiceRepository = serviceRepository(Goal{ServiceRepository: d.ServiceRepository, ServiceTarget: g.ServiceTarget, Scope: d.Scope})
+	expected := definition(*g)
+	expected.ServiceRepository = serviceRepository(*g)
+	if !bytes.Equal(encode(comparable), encode(expected)) {
 		return ErrConflict
 	}
 	g.RecordRevision = rev
@@ -186,7 +202,9 @@ func (e *Engine) hydrate(g *Goal) error {
 	if saved.revision != g.RecordRevision {
 		return ErrConflict
 	}
+	restoreMergedRevisions(g)
 	applyDefinition(g, saved.definition)
+	g.TargetRevision = targetRevision(*g)
 	g.DefinitionText = saved.text
 	return nil
 }
@@ -229,6 +247,13 @@ func (e *Engine) RefreshDefinitions(ctx context.Context) error {
 			if current.State == GoalStopped {
 				return errNoChange
 			}
+			restoreMergedRevisions(&current)
+			nextRepository := serviceRepository(Goal{ServiceRepository: d.ServiceRepository, ServiceTarget: current.ServiceTarget, Scope: d.Scope})
+			if current.ServiceRepository != nextRepository {
+				current.Deployment = Proof{}
+				current.Verification = Proof{}
+			}
+			current.ServiceRepository = nextRepository
 			current.RecordRevision = rev
 			current.Revision++
 			current.DefinitionPending = true

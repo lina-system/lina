@@ -528,7 +528,8 @@ func (r *conversationRuntime) publish(ctx context.Context, kind protocol.Kind, k
 	// including when input admission races the provider observer.
 	r.publicationMu.Lock()
 	defer r.publicationMu.Unlock()
-	if kind == protocol.KindItemDone || kind == protocol.KindOutputDelta || kind == protocol.KindResult || kind == protocol.KindBackgroundNotice {
+	positioned := kind == protocol.KindItemDone || kind == protocol.KindOutputDelta || kind == protocol.KindResult || kind == protocol.KindBackgroundNotice
+	if positioned {
 		if !r.positioned[key] {
 			// A committed outcome still publishes after its turn is cancelled.
 			saveCtx := context.WithoutCancel(ctx)
@@ -538,10 +539,6 @@ func (r *conversationRuntime) publish(ctx context.Context, kind protocol.Kind, k
 			}); err != nil {
 				return err
 			}
-			if r.positioned == nil {
-				r.positioned = make(map[string]bool)
-			}
-			r.positioned[key] = true
 		}
 	}
 	agent := r.agent
@@ -549,7 +546,18 @@ func (r *conversationRuntime) publish(ctx context.Context, kind protocol.Kind, k
 		// Results carry attribution in provenance, not an agent_id wire field.
 		agent = ""
 	}
-	return r.topics.Publish("conversation:"+r.conversation, clientsrv.TopicEvent{Kind: kind, Key: key, Data: data, AgentID: agent})
+	if err := r.topics.Publish("conversation:"+r.conversation, clientsrv.TopicEvent{Kind: kind, Key: key, Data: data, AgentID: agent}); err != nil {
+		return err
+	}
+	if positioned {
+		if r.positioned == nil {
+			r.positioned = make(map[string]bool)
+		}
+		// A remembered position also proves successful live publication. A
+		// failed publication must remain retryable even after its SQL commit.
+		r.positioned[key] = true
+	}
+	return nil
 }
 
 // The installed conversation currently has no negotiated surface width or
@@ -883,7 +891,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			if err := r.prepareMethodologyTools(turnID, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
-			declarations := append(coreexec.PersonaDeclarations(), coreexec.PersonaSettingDeclaration())
+			declarations := append(coreexec.PersonaDeclarations(), coreexec.PersonaSettingDeclaration(), coreexec.WorkMethodDeclaration())
 			declarations = append(declarations, coreexec.EmotionDeclarations()...)
 			declarations = append(declarations, coreexec.RelationshipDeclaration())
 			declarations = append(declarations, coreexec.SkillDeclarations()...)
@@ -952,7 +960,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				}
 				return turn.PreparedRequest{}, turn.ErrInvalid
 			}
-			assembly := turn.Assembly{AgentID: r.agent, PersonaRevision: persona.Commit, InstructionFormat: "persona-tui-v1", PreparedAt: at.Format(time.RFC3339Nano), Profile: append([]turn.Reference(nil), memoryRefs...), AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID, Items: append([]turn.Reference(nil), memoryRefs...)}
+			assembly := turn.Assembly{AgentID: r.agent, PersonaRevision: persona.Commit, WorkMethodRevision: persona.WorkMethodRevision, InstructionFormat: "persona-tui-v1", PreparedAt: at.Format(time.RFC3339Nano), Profile: append([]turn.Reference(nil), memoryRefs...), AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID, Items: append([]turn.Reference(nil), memoryRefs...)}
 			assembly.Context, err = r.recordContextSources(ctx, packet, report)
 			if err != nil {
 				return turn.PreparedRequest{}, err

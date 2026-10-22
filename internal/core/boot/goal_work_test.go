@@ -115,6 +115,33 @@ func TestDispatchWorkToolUsesBoundOwnerAndRejectsExecutionClaims(t *testing.T) {
 	if len(snapshot.Goals) != 1 || snapshot.Goals[0].Person != r.person || snapshot.Goals[0].Agent != r.agent {
 		t.Fatalf("unbound goal admission: %+v", snapshot)
 	}
+	serviceInput := strings.Replace(input, `"no_service_reason":"library"`, `"service_target":"private-service","service_repository":"repo"`, 1)
+	serviceInput = strings.Replace(serviceInput, `"repositories":["repo"]`, `"repositories":["repo","docs"]`, 1)
+	serviceCall := provider.ToolCall{ID: "service-dispatch", Name: "dispatch_code_goal", Arguments: serviceInput}
+	if _, err = tools["dispatch_code_goal"].Validate(serviceCall); err != nil {
+		t.Fatal(err)
+	}
+	if result = tools["dispatch_code_goal"].Execute(t.Context(), serviceCall); result.Code != loop.OK {
+		t.Fatalf("service dispatch failed: %+v", result)
+	}
+	snapshot, err = r.workEngine.engine.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, g := range snapshot.Goals {
+		if g.ID == "turn:service-dispatch" {
+			found = g.ServiceRepository == "repo" && g.ServiceTarget == "private-service"
+		}
+	}
+	if !found {
+		t.Fatal("tool lost the service repository")
+	}
+	serviceCall.ID = "forged-state"
+	serviceCall.Arguments = strings.TrimSuffix(serviceInput, "}") + `,"merged_revisions":{"repo":"forged"}}`
+	if _, err = tools["dispatch_code_goal"].Validate(serviceCall); err == nil {
+		t.Fatal("model supplied merge revisions")
+	}
 	call.Arguments = strings.TrimSuffix(input, "}") + `,"person":"other","state":"done"}`
 	if _, err = tools["dispatch_code_goal"].Validate(call); err == nil {
 		t.Fatal("execution state/owner injection accepted")
