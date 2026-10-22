@@ -195,3 +195,10 @@ and a test-only vendor runtime. The runtime calls Core's real `skill_index` tool
 checks its receipt, streams an assistant result, and the scenario reopens Core
 to verify durable history. It uses Node but no SDK installation, external service
 or personal credential; the SDK boundary has its own npm suite.
+
+`m1/conformance-agents.json` runs every shared `application/agents/` fixture
+against installed Core over its public socket. It checks refusals for missing
+and deleted agents in conversation and management requests, plus channel
+binding/scope replacement. A paired synthetic channel and an existing binding
+exercise the actual target-agent checks. Read-only canon snapshots prove that
+refused requests preserve agent revisions, actions, conversations and bindings.

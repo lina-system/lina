@@ -69,14 +69,12 @@ func validateCoverage(ctx context.Context, tx *canon.Tx, p Proposal) (Node, erro
 	if err != nil {
 		return Node{}, err
 	}
-	byID := map[string]event{}
-	for _, e := range all {
-		byID[e.id] = e
-	}
 	covered := map[string]bool{}
 	add := func(c Coverage) error {
-		e, ok := byID[c.EventID]
-		if !ok || covered[c.EventID] || !validReason(c, e) {
+		// Children, then direct coverage, then the verbatim tail must consume
+		// the ledger in append order. A complete set alone permits interleaving
+		// a newer summarized event ahead of an older retained event.
+		if len(covered) >= len(all) || all[len(covered)].id != c.EventID || !validReason(c, all[len(covered)]) {
 			return ErrCoverage
 		}
 		covered[c.EventID] = true
@@ -91,13 +89,13 @@ func validateCoverage(ctx context.Context, tx *canon.Tx, p Proposal) (Node, erro
 		if child.Conversation != n.Conversation || child.Status != "ready" || child.Epoch != n.Epoch {
 			return ErrUnavailable
 		}
-		for _, c := range child.Cover {
-			if err := add(c); err != nil {
+		for _, id := range child.Children {
+			if err := walk(id); err != nil {
 				return err
 			}
 		}
-		for _, id := range child.Children {
-			if err := walk(id); err != nil {
+		for _, c := range child.Cover {
+			if err := add(c); err != nil {
 				return err
 			}
 		}
@@ -131,12 +129,28 @@ func validateCoverage(ctx context.Context, tx *canon.Tx, p Proposal) (Node, erro
 			}
 		}
 	}
-	for _, id := range p.Verbatim {
-		if err := add(Coverage{EventID: id}); err != nil {
+	// The remaining ledger suffix may contain excluded control/replay events
+	// between retained messages. These are not owned by the summary, and cannot
+	// be used to smuggle ordinary input past the prefix boundary.
+	verbatim, skipped := 0, 0
+	for _, e := range all[len(covered):] {
+		c := Coverage{EventID: e.id}
+		if skipped < len(p.TailSkips) && p.TailSkips[skipped].EventID == e.id {
+			c = p.TailSkips[skipped]
+			if c.Reason == "" || skipReason(e) == "" {
+				return Node{}, ErrCoverage
+			}
+			skipped++
+		} else if verbatim < len(p.Verbatim) && p.Verbatim[verbatim] == e.id {
+			verbatim++
+		} else {
+			return Node{}, ErrCoverage
+		}
+		if err := add(c); err != nil {
 			return Node{}, err
 		}
 	}
-	if len(covered) != len(all) {
+	if verbatim != len(p.Verbatim) || skipped != len(p.TailSkips) {
 		return Node{}, ErrCoverage
 	}
 	return n, nil

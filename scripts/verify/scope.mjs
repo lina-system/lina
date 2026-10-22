@@ -54,6 +54,7 @@ function registryFor(cwd) {
     'internal/core/skills/',
     'internal/core/turn/',
     'internal/core/waiting/',
+    'internal/core/worker/',
   ];
   const addonDirectories = ['internal/addons/importer/hermes/'];
   const addonPackages = addonDirectories.filter(directory => existsSync(join(cwd, directory)))
@@ -62,6 +63,7 @@ function registryFor(cwd) {
   const persona = existsSync(join(cwd, 'persona')) ? ['./persona/...'] : [];
   const corePackages = coreDirectories.filter(directory => existsSync(join(cwd, directory)))
     .map(directory => `./${directory}...`);
+  const vendored = existsSync(join(cwd, 'third_party/codex-app-server/upstream')) ? ['./third_party/codex-app-server/upstream/...'] : [];
   const clientDirectories = ['internal/design/', 'internal/tui/', 'internal/clientapi/', 'internal/fakecore/'];
   const clientPackages = clientDirectories.filter(directory => existsSync(join(cwd, directory)))
     .map(directory => `./${directory}...`);
@@ -71,7 +73,7 @@ function registryFor(cwd) {
   const e2e = existsSync(join(cwd, 'e2e')) ? ['./e2e/...'] : [];
   return [
     { name: 'kit', module: 'kit', directories: ['kit/', 'protocol/schema/', 'protocol/fixtures/'], files: [], packages: ['./...'] },
-    { name: 'lina', module: '.', directories: ['cmd/lina/', 'internal/archtest/', 'internal/buildinfo/', 'internal/core/manifest/', 'e2e/', 'persona/', 'skills/', 'testdata/korean/', 'testdata/hermes/', ...coreDirectories, ...addonDirectories, ...clientDirectories], files: ['doc.go'], packages: ['.', './cmd/lina/...', ...architecture, ...buildinfo, ...manifest, ...persona, ...skills, ...corePackages, ...addonPackages, ...clientPackages, ...e2e], binary: 'lina' },
+    { name: 'lina', module: '.', directories: ['cmd/lina/', 'internal/archtest/', 'internal/buildinfo/', 'internal/core/manifest/', 'e2e/', 'persona/', 'skills/', 'testdata/korean/', 'testdata/hermes/', ...coreDirectories, ...addonDirectories, ...clientDirectories, 'third_party/codex-app-server/'], files: ['doc.go'], packages: ['.', './cmd/lina/...', ...architecture, ...buildinfo, ...manifest, ...persona, ...skills, ...corePackages, ...addonPackages, ...clientPackages, ...e2e, ...vendored], binary: 'lina' },
     { name: 'moirai-worker', module: '.', directories: ['cmd/moirai-worker/', 'internal/moirai/'], files: [], packages: ['./cmd/moirai-worker/...', './internal/moirai/...'], binary: 'moirai-worker' },
     { name: 'lina-node', module: '.', directories: ['cmd/lina-node/'], files: [], packages: ['./cmd/lina-node/...'], binary: 'lina-node' },
   ];
@@ -89,6 +91,7 @@ const goObjects = text => JSON.parse(`[${text.trim().replace(/^}\s*\n{/gm, '},{'
 
 export function kind(path) {
   if (path.startsWith('adapters/claude/')) return 'automation';
+  if (path.startsWith('third_party/')) return 'dependencies';
   if (path === 'packaging/README.md') return 'docs';
   if (path === 'packaging/sqlite-vec/build.sh') return 'automation';
   if (/^packaging\/sqlite-vec\/(?:README|NOTICE)\.md$/.test(path)) return 'docs';
@@ -218,7 +221,7 @@ export function scopeFor({ base = '', head, full = false, cwd = process.cwd() })
     base: resolvedBase, head: resolvedHead,
     docs: true, automation: all && !docsOnly,
     dependencies: changed.some(path => kind(path) === 'dependencies')
-      || (all && !docsOnly && [...inventory, ...changed].some(path => modules.has(path) || /(^|\/)package(-lock)?\.json$/.test(path))),
+      || (all && !docsOnly && [...inventory, ...changed].some(path => modules.has(path) || path.startsWith('third_party/') || /(^|\/)package(-lock)?\.json$/.test(path))),
     components: selectedComponents.length > 0,
     selectedComponents, changed, unmapped,
   };
