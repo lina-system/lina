@@ -115,7 +115,13 @@ esac
 		core := h.command("core", "--state-root", h.root, "--socket", h.socket)
 		core.command.Env = append(core.command.Env, "PATH="+h.root, "LINA_GH_FIXTURE="+h.root)
 		core.start(t)
-		conn := h.connect(core)
+		t.Cleanup(func() {
+			if t.Failed() {
+				core.killAndWait()
+				t.Logf("Core stderr: %s", &core.stderr)
+			}
+		})
+		conn := h.connectWithin(core, 60*time.Second)
 		c := &client{conn: conn, reader: bufio.NewReaderSize(conn, 1<<20)}
 		hello := clientHello([]string{"1.0"})
 		hello.Capabilities = []protocol.Capability{{Name: "github", Version: "1.0"}, {Name: "github_merge", Version: "1.0"}}
@@ -128,7 +134,7 @@ esac
 		if !slices.Contains(welcome.Capabilities, protocol.Capability{Name: "github_merge", Version: "1.0"}) {
 			t.Fatal("running Core has no merge capability")
 		}
-		h.inputRefused(c)
+		h.inputRefusedWithin(c, 60*time.Second)
 		return core, c
 	}
 	core, c := start()

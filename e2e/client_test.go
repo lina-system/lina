@@ -107,7 +107,12 @@ func decodeReply(line []byte, requestID string) (protocol.Envelope, error) {
 
 func (h *harness) inputRefused(c *client) {
 	h.t.Helper()
-	deadline := time.NewTimer(operationTimeout)
+	h.inputRefusedWithin(c, operationTimeout)
+}
+
+func (h *harness) inputRefusedWithin(c *client, timeout time.Duration) {
+	h.t.Helper()
+	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
 	for {
 		answer := c.call(h.t, protocol.KindInput, protocol.Input{})
