@@ -24,6 +24,8 @@ import (
 )
 
 func TestM1TUIActivity(t *testing.T) {
+	t.Parallel()
+
 	delta, finish := make(chan struct{}), make(chan struct{})
 	stop := make(chan struct{})
 	defer close(stop)

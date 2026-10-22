@@ -16,6 +16,8 @@ import (
 )
 
 func TestM2OldCorePreservesNewerStore(t *testing.T) {
+	t.Parallel()
+
 	h := newHarness(t, buildLina(t))
 	core := h.startCore()
 	h.connect(core).Close()
@@ -41,6 +43,8 @@ func TestM2OldCorePreservesNewerStore(t *testing.T) {
 }
 
 func TestM2UpdatePreflight(t *testing.T) {
+	t.Parallel()
+
 	var scenario struct {
 		RefusalExit int      `json:"refusal_exit"`
 		NewerSchema int      `json:"newer_schema"`

@@ -17,6 +17,8 @@ import (
 )
 
 func TestM2GitHubMergeInstalledCore(t *testing.T) {
+	t.Parallel()
+
 	var f struct {
 		Repository, Base, Head string
 		Number                 string `json:"pr_number"`

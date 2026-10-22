@@ -14,7 +14,7 @@ This contract covers:
 - supervisor, parent and child roles, delivery and verdicts
 - the development method: the work definition, the choice of worker and the operation of the pull request
 - splitting work into tasks, area leases, parallel hand-off, completion events, stall handling and the running list
-- workers: the coding tools the user installed or signed in to (Codex, Claude Code, Antigravity and Devin), the adapter boundary, the Codex adapter, compatibility, readiness, assignment, control and approvals
+- workers: the coding tools the user installed or signed in to (Codex, Claude Code, Antigravity and Cursor), the adapter boundary, the Codex adapter, compatibility, readiness, assignment, control and approvals
 - the task packet (the work definition handed to the worker), LINA's work tools and the completion receipt of a worker, the worker's review and CI fixes, and the manager session's check of a delivery against the work definition before Core merges or closes
 - run to done: the goal above its tasks, its done condition and lifecycle, the next-action table, waits on the outside world, capacity from host load, recovery, evidence before close, the cases that stop and ask, and what the person sees, for code and non-code work alike
 - effects and unknown outcomes inside work
@@ -63,7 +63,7 @@ This contract does not cover, and links instead to:
 
 **Binding epoch.** The generation of LINA Core's binding to a worker thread. A new binding epoch starts when control returns after a handover and when a remote thread is bound again.
 
-**Protected ref.** A ref in the parent clone that a worker must never create, move or delete: `dev`, `main`, `master`, remote-tracking and LINA base refs, and every branch other than its own assigned task branch. Branch ownership belongs to the allocated worktree and does not change when its worker checks out another branch or detaches HEAD.
+**Protected ref.** A ref in the parent clone that a worker must never create, move or delete: `dev`, `main`, `master`, remote-tracking and LINA base refs, and every branch other than its own assigned task branch. A worker may create and update its assigned branch, but must never delete or rename it; only Core's explicit administrative path may clean it up. Branch ownership belongs to the allocated worktree and does not change when its worker checks out another branch or detaches HEAD.
 
 **Task packet.** The first input a worker receives: the work definition (see Development method), the LINA assignment id, and how to return the completion receipt. It also carries references (id and revision) to the materials and memory projections the task may read.
 
@@ -96,7 +96,7 @@ Rules:
 - **Kind of work.** Conversation and work are split by the kind of work, not by tools. Work that needs a branch or worktree, outlasts a tool deadline, needs parallel execution, or is expected to exceed the turn budget ([runtime.md](runtime.md#turn-budget)) goes to the work engine, and the conversation hands it off at once and keeps going. The hand-off changes where the work runs and nothing else: its done condition and its checks are the same as they would have been in the turn. Checking a file, a short command or a document edit, within the turn budget, happens in the conversation with the conversation tools of [runtime.md](runtime.md).
 - **Routing.** Coding work goes to a worker thread, and so does other worker work that needs a worktree, such as an audit of a repository. Research, analysis, multi-file reading, drafting and read-only checks are not worker work: they go to a background run (see Background runs). Their result is a cited brief whose citations carry passage anchors ([materials-and-knowledge.md](materials-and-knowledge.md)); it is the sub-agent's claim, not a `verified` result. Device work goes to the Node on that device. Worker and Node routes use the same grants, ids, effects and receipts. When these rules and the choice rules of Development method leave the destination or the worker open, Atropos may ask Jev to choose among the candidates that code fixes; the choice is a routing judgment, never permission to act ([cognition-and-life.md](cognition-and-life.md)).
 - **Agents.** Every agent uses the same work queue, work area and workers. The work ledger records the requesting agent of every task, and the task's questions and results return to the conversation that asked, which belongs to that agent. When the requesting agent is deleted, its tasks and background runs keep running; their questions and results go to the person's home cards, and the person can hand them to another agent's conversation ([product-families.md](product-families.md)). A request that one agent makes of another is an agent exchange, not a task ([conversation-and-memory.md](conversation-and-memory.md#agent-exchanges)). When the answering agent needs work, it files a task as usual: that agent is the requesting agent, and the task's questions and results return to the exchange. A question there whose decision owner is the person raises the "needs the person" flag of the exchange.
-- **Workspaces.** Only file-producing work gets a worktree. LINA Core creates one worktree per task from the base commit and starts the worker with it as its working directory. The worker creates the task's one branch there, with the name the work definition gives (it carries the task id), commits, pushes with its own GitHub setup and opens the pull request, so a file-producing work thread has exactly one branch and one pull request. Work with no file output runs in a non-git work directory in the work area and completes by its artifacts and receipts. A hosted worker (Devin) works in its own environment: LINA Core creates no worktree for it, and the work definition names the repository and the base. Where a repository has no GitHub remote (a local document project), the worker's branch and head SHA stand in for the pull request and the rest is the same, without checks to read. Finished and abandoned workspaces are cleaned up automatically after retention.
+- **Workspaces.** Only file-producing work gets a worktree. LINA Core creates one worktree per task from the base commit and starts the worker with it as its working directory. The worker creates the task's one branch there, with the name the work definition gives (it carries the task id), commits, pushes with its own GitHub setup and opens the pull request, so a file-producing work thread has exactly one branch and one pull request. Work with no file output runs in a non-git work directory in the work area and completes by its artifacts and receipts. Where a repository has no GitHub remote (a local document project), the worker's branch and head SHA stand in for the pull request and the rest is the same, without checks to read. Finished and abandoned workspaces are cleaned up automatically after retention.
 - **Draft and apply.** Only delegated results go through a draft and an apply request. A document or 목표 edited through its own conversation thread is saved at once as a saved version. For code work the draft is the worker's pull request. In development mode LINA Core applies it by merging after the manager session's check (see Judgment and delivery); an apply request that waits for the person is the form for parts without a repository. The work panel shows a delegated result as a `comparison` result ([host-protocol.md](host-protocol.md#typed-results)). Only an apply request can accept its hunks, and a result that no apply request covers is shown for reading only.
 - **Profiles.** Each worker profile (direct, single, complementary) records its model, reasoning effort, tools, budget, session persistence, completion-signal capability (a protocol event, a process exit, or session polling), quota-signal capability and unsupported scope. A profile names a model or an effort only when it sets one, and then only for the threads it starts; it never changes the worker's provider settings (see Assignment). Choosing a profile is a proposal. The work engine decides whether the work runs.
 - **Liveness.** The heartbeat interval H is the interval of the events the adapter receives from the worker; for a worker that is read at an interval (see Completion signals), H is that interval. A work thread is stale after max(3H, 90 s) without an event. Stale is only the floor of the stall rule in Event-driven flow; it does not act by itself. A worker lease lasts at most 5 minutes. An area lease is a different hold and lasts as long as its task is in flight. A background run has no worker events: LINA Core reads its progress itself, and a model request or tool call in flight counts as activity until its own deadline (see Background runs).
@@ -140,21 +140,25 @@ allocation without blocking conversation or non-Git work.
 Ordinary Git reference transactions in the parent clone reject writes to
 `main`, `master`, `dev`, remote-tracking refs and `refs/lina/*`. Before returning
 a Git allocation, Core records its exact assigned branch beside the linked
-worktree's Git HEAD. The shared guard allows branch creation, updates and
-deletion only for that worktree's assigned branch, even while detached or
-before the branch exists. An unbound worktree or the parent clone has no ordinary
-branch-write permission. A transaction mixing permitted and protected updates
-fails as a whole. Two allocations cannot reserve the same branch, and a retry
+worktree's Git HEAD. The shared guard allows branch creation and updates only
+for that worktree's assigned branch, even while detached or before the branch
+exists. Workers cannot delete or rename their assigned branch. Git's files
+backend can rename a branch by deleting the source through the hook and writing
+the destination without a hook check; rejecting the source deletion preserves
+the assigned name and result head, including when the destination is another
+task's reserved but not yet created branch. An unbound worktree or the parent
+clone has no ordinary branch-write permission. A transaction mixing permitted
+and protected updates fails as a whole. Two allocations cannot reserve the same branch, and a retry
 cannot replace an existing binding. Retrying an older allocation without a
 binding installs it from the task definition without resetting worker work.
-Core alone uses its explicit administrative command path to maintain the base refs. This
-repository guard is not a worker plugin or OS confinement: workers use their
-own runtime setup, and a process running as the user can deliberately bypass a
-Git hook. Core never resets or cleans another task's checkout.
+Core alone uses its explicit administrative command path to maintain the base
+refs and clean up assigned branches. This repository guard is not a worker
+plugin or OS confinement: workers use their own runtime setup, and a process
+running as the user can deliberately bypass a Git hook. Core never resets or cleans another task's checkout.
 The installed-Core [headless work-area scenario](../../e2e/m2/work-area.json)
-allocates two real linked worktrees, rejects cross-task branch updates and
-deletion, commits on each assigned branch, and retains the original task's
-exact bundle through restart, work-area loss and backup.
+allocates two real linked worktrees, rejects cross-task branch updates, deletion
+and renaming into a reserved branch, commits on each assigned branch, and retains
+the original task's exact bundle through restart, work-area loss and backup.
 
 `retain_work_result` handles an already completed no-PR receipt belonging to the
 requesting agent and conversation. It copies only that receipt's manifest files,
@@ -352,6 +356,14 @@ How the work engine's terms map to the frame:
 
 Goals, 일, 할 일, 계속 챙기는 것, memos and knowledge documents are human-readable records. They are files in a Git repository under a PARA folder layout, and LINA Core is their only writer. The database indexes the files and can be rebuilt from them at any time. Machine state stays in the database: the conversation ledger, grants, receipts, the work queue and work ledger, cursors, leases, claims and idempotency keys. A cursor moves only after the write it covers has succeeded.
 
+Title and note search finds Korean nouns of two or more composed syllables with
+attached particles, including `연필` in `연필을` and `등대` in `등대는`. It uses the
+literal substring approach of conversation and memory search, including matches
+within compound words. Existing saved records gain this search on upgrade;
+edits, index rebuilds and Core restarts preserve it. Non-Korean word search,
+owner/kind filters and bounded id-ordered pages remain as described in
+[C-53](go-core.md#records-and-memory).
+
 - A record is one Markdown file with small typed front matter: id, kind, state category, dates, recurrence, blocked-by ids, tags and the ids it belongs to. Dates are ISO 8601, with a zone for timed values and plain dates otherwise. LINA Core allocates the id. It lives in the front matter and never in the path. Promotion and archiving change fields of the record (its kind or state), never its id or its file. The file name carries a slug for people to read.
 - The folder layout and the place of the repository in the state root are defined in [filesystem.md](filesystem.md#records-repository).
 - Git words stay hidden from people who do not use Git: every change is a saved version. The revision of a record is the commit that holds it, and a write against a stale revision is refused with `stale_revision`.
@@ -448,7 +460,7 @@ Rules:
 
 ## Development method
 
-LINA ships no coding harness. It runs no review loop of its own around a worker, installs no hook, skill or plugin into one, and keeps no stage workflow. Codex, Claude Code, Antigravity and Devin are used as the user installed them. LINA's development role is a method, which the dev preset carries ([conversation-and-memory.md](conversation-and-memory.md#preset-methodologies)). The dev preset agent owns coding work and its manager sessions, including requests handed over by LINA or another starter. How to implement, split, join or interpret work is the judgment of the worker and that owning persona. The worker writes the code, the branch and the pull request body, opens the pull request and owns it to green. The manager checks the work definition and decides merge or close. LINA Core keeps the flow moving: start, reliable delivery with receipts, true state, recovery, merge on green, QA after each merge and report.
+LINA ships no coding harness. It runs no review loop of its own around a worker, installs no hook, skill or plugin into one, and keeps no stage workflow. Codex, Claude Code, Antigravity and Cursor are used as the user installed them. LINA's development role is a method, which the dev preset carries ([conversation-and-memory.md](conversation-and-memory.md#preset-methodologies)). The dev preset agent owns coding work and its manager sessions, including requests handed over by Lina or another starter. How to implement, split, join or interpret work is the judgment of the worker and that owning persona. The worker writes the code, the branch and the pull request body, opens the pull request and owns it to green. The manager checks the work definition and decides merge or close. LINA Core keeps the flow moving: start, reliable delivery with receipts, true state, recovery, merge on green, QA after each merge and report.
 
 ### Work definition
 
@@ -525,7 +537,7 @@ work ledger has not recorded. Unassigned tasks have no worker lane yet.
 
 ## Workers
 
-Workers are coding tools the user installed or signed in to: Codex, Claude Code, Antigravity and Devin. LINA drives each worker through one worker adapter. Codex is the first, driven through its app-server protocol over stdio; Claude Code, Antigravity CLI and Devin are further adapters on the same boundary. Each worker thread is a per-task coding-agent session: it implements the task packet, opens the task's pull request, waits for CI and review bots, fixes every CI failure and the P0 and P1 findings once, and reports done with a completion receipt only when the resulting head is green and no P0 or P1 remains. Review and CI stay with that session and never return to the manager for triage.
+Workers are coding tools the user installed or signed in to: Codex, Claude Code, Antigravity and Cursor. LINA drives each worker through one worker adapter. Codex is the first, driven through its app-server protocol over stdio; Claude Code, Antigravity CLI and Cursor (`cursor-agent`) are further adapters on the same boundary. The Cursor adapter is deferred to [#210](https://github.com/thisisjun786/lina/issues/210). Each worker thread is a per-task coding-agent session: it implements the task packet, opens the task's pull request, waits for CI and review bots, fixes every CI failure and the P0 and P1 findings once, and reports done with a completion receipt only when the resulting head is green and no P0 or P1 remains. Review and CI stay with that session and never return to the manager for triage.
 
 A worker runs with the user's own installation and configuration: its version, login and model provider, MCP servers, plugins and integrations such as `gh`, trust settings, repository instructions such as `AGENTS.md` and skills, sandbox and approval mode. LINA Core and the worker run as the user's own OS user ([runtime.md](runtime.md)). LINA does not ship, pin or configure the worker, does not override its model provider, does not install a plugin, hook or skill into it, and does not isolate it from the user's setup. What LINA adds is given per thread: the task packet and LINA's own work tools. LINA plugins never reach a worker; a worker uses the integrations connected in the worker itself ([integrations.md](integrations.md)). Workers serve every agent. A worker's model calls go through the worker's own login; LINA's provider credentials never reach a worker. LINA gives a worker no review procedure, stage workflow or completion hook.
 
@@ -702,7 +714,7 @@ LINA Core, or the Node on a remote device, starts every worker as a child proces
 | Codex | The turn-completed and thread-status-changed notifications of the app-server session, and its account rate-limit notifications | No |
 | Claude Code | The final result message of its streaming output, then process exit. Exit without a result is a failure | No |
 | Antigravity CLI | The result event and status of its streaming output, then process exit. Success is confirmed from the pull request, never from the exit code | No |
-| Devin | The status of its session, read about every 10 seconds only while a task is in flight and until a terminal state | Yes: the one worker with no outbound session event found |
+| Cursor (`cursor-agent`) | Headless run with `stream-json` output; process exit plus the final stream event ends the run. Session resume uses the chat id. Exact events and resume behavior are to be confirmed against the installed version by [#210](https://github.com/thisisjun786/lina/issues/210); exit 0 without a final event is unknown, not done | No (to be confirmed by #210) |
 
 - A completion event ends a turn. It is not a delivery. For code-change work the worker reports done only after it has waited for CI and the review bots and handled CI failures and P0 and P1 findings inside its turn (see Operating the pull request). The completion receipt names the resulting green pull request head; the manager still checks the work definition and Core records the merge before the task has landed. A session that dies or stalls before delivery follows once-only recovery in the same work area, not a done signal.
 - LINA installs no hook, plugin or setting in a worker to obtain a signal.
@@ -1229,11 +1241,11 @@ new result, reject source-id lookup and retain the record after restart.
 - Retention periods for closed workspaces: set during work engine implementation acceptance.
 - Whether Codex subagents inside a worker see the `lina` tools, and that a declined approval leaves the action unexecuted: confirmed by QA in the worker adapter implementation issue.
 - Remote-device worker hosting through Node and the worker's own pull-request path from the device: verified during Node implementation acceptance; unsupported until then.
-- The adapters for Claude Code, Antigravity CLI and Devin: designed against the adapter boundary when each is added. Devin is reached through its session API with the person's own credential.
+- The adapters for Claude Code, Antigravity CLI and Cursor: designed against the adapter boundary when each is added. Cursor uses the person's installed `cursor-agent` and sign-in. Its headless flags, sign-in status, streaming events, interrupt and chat-id resume are to be confirmed against the installed version by [#210](https://github.com/thisisjun786/lina/issues/210).
 - The wire format of delivery layers, work events and progress data: added to [host-protocol.md](host-protocol.md) during work engine implementation acceptance.
 - The Korean words of the frame and of the date fields, and the exposure of the four-level priority: set by a card sort with non-developers and by use.
 - The thresholds of the to-do record (surviving briefings before a question, the rate at which rejected automatic additions fall back to candidates), Korean date parsing coverage (lunar dates, month ends, business days), the commit granularity and inbox form of the records repository, and its behavior at thousands of files: set by measurement during work engine implementation acceptance.
 - Retention periods for the directories and transcripts of finished background runs: set during work engine implementation acceptance, with those of closed workspaces.
 - The rule table for choosing a worker, and the quota signal each worker gives: provisional, set by measurement.
-- The completion signal of each worker other than Codex, including whether Devin offers an outbound session event: confirmed by the adapter of that worker when it is built.
+- The completion signal of each worker other than Codex: confirmed by the adapter of that worker when it is built. Cursor's final stream event and process-exit handling are to be confirmed by [#210](https://github.com/thisisjun786/lina/issues/210).
 - The stage rule and the bar of the progress line, how a 목표 summarizes its 일, and the order of the lines: starting values set in Progress line, tuned by use.

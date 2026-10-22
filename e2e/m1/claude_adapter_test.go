@@ -13,6 +13,8 @@ import (
 )
 
 func TestM2ClaudeAdapterThroughInstalledCore(t *testing.T) {
+	t.Parallel()
+
 	data, err := os.ReadFile("../m2/claude-adapter.json")
 	if err != nil {
 		t.Fatal(err)

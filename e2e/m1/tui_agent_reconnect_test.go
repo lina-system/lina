@@ -19,6 +19,8 @@ import (
 )
 
 func TestM1TUIAgentReconnectInstalledCore(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile("tui-agent-reconnect.json")
 	if err != nil {
 		t.Fatal(err)
