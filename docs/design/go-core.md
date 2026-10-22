@@ -1269,7 +1269,12 @@ current head, checks and review, with a head recheck after inline comments.
 `internal/core/worker/dispatch` wires the adapter into installed Core's `dispatch_work`
 tool and existing work ledger. Migration 31 adds the dispatch journal; a committed
 conversation tool receipt gates execution. The journal reserves each repository
-through queued/running/unknown states. Core creates the worktree, checks design
+through queued/running/unknown states. Core allocates through its shared
+`work.Area`, records the pinned workspace on the task and starts the worker in
+`work/tasks/<task-id>` from the detached base. The independent parent clone
+keeps the GitHub origin for worker publishing and the local allocation source
+separately. Adapter observations live outside the checkout in `work/runs/`;
+receipt provenance names those files. Core checks design
 references, protected refs and write areas, and persists an adapter-derived
 artifact/receipt. Terminal observations publish to the source conversation and
 survive restart. Recovery retains uncertain reservations without replay. The
