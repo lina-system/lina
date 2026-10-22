@@ -408,9 +408,13 @@ following. Scroll keys preserve the composer draft. When the transcript exceeds
 its region, the status row adds the localized `PgUp scroll` hint only if it fits;
 this optional hint is dropped before existing status and the new-output marker.
 The wheel does not act through an overlay or outside the conversation region.
+This includes `/web` while it shows status, awaits Core or edits a key: wheel
+input preserves the hidden conversation's position, retained anchor and
+follow-latest state when the settings screen closes.
 `TestM1TUIWheelStickyConversation` exercises the installed Core and real TUI in
 a 100×34 PTY, sends SGR wheel input, compares the retained rows after a second
-reply, and verifies End and mouse-mode cleanup.
+reply, verifies that `/web` blocks wheel input at the latest and retained
+positions, and verifies End and mouse-mode cleanup.
 For the colour conversation screen, each new size reaches the cell renderer
 before its reflowed view, even if the view text is unchanged. The connection owner's latest dimensions remain authoritative: late renderer startup size messages are discarded before they can resize the cell buffer. Resizing keeps the
 draft and redraws header, status and composer within the current row budget;
