@@ -82,6 +82,14 @@ Core owns a job's kind (memory or planning), interval, deadline (at most two min
 
 `Aux` binds the source task to an auxiliary model call, reserves both the job allowance and shared main budget, and durably caches the result. Missing usage retains the reservation charge. A disconnected worker does not cancel Core's admitted, bounded call, so a restarted worker can recover its result without another model request. If Core stops before recording a result, the durable reservation reports an unknown outcome and is not automatically retried. This accounting and the cached auxiliary result are Core-owned bookkeeping, not an adopted memory or plan.
 
+For planning, a terminal model response with unusable content is a completed
+call. Core returns the inert `{"rejected":"invalid_plan"}` auxiliary output and
+the call's usage, so the ordinary Aux cache and budget settlement survive a
+restart. The worker forwards that outcome to Apply. Core requires it to match
+the cached output before committing a planning rejection and advancing the
+watermark. Invalid content cannot pin the queue; transport failure before
+completion still keeps the conservative unknown reservation.
+
 `Apply` validates the epoch, job switch, schedule and expected watermark, then invokes the registered write rules. The accepted changes, next schedule, proposal receipt and watermark commit in one fenced canon transaction. Failure rolls all of them back. An identical proposal replay returns the receipt; a changed proposal at the same sequence conflicts. Core persists an explicit `Deterministic` job-policy flag in the read-only work snapshot. When true, the worker submits the Core-supplied task input as the proposal directly to Apply; no model callback, account binding or model allowance is required. Core refuses Aux for that job. When false (including older records without the flag), the worker obtains model output through Aux before applying; it never infers the route from a zero budget. Killing a worker cannot write canon or advance its watermark; a Core transaction already committed remains committed. Core's fenced apply helper is also the only mutation boundary for job administration, Aux accounting and Report. Reports carry only a closed status and the current watermark; they cannot advance progress or change policy. The worker has no credential-loading path, clears inherited environment variables at entry, and never contacts a provider.
 
 ```go
@@ -515,6 +523,8 @@ The current installed adapter uses Korean counting and the shared TUI renderer a
   done conditions, ordered stage labels and dependency ids in addition to card
   entries. Confirmation removes the confirm action without changing the content
   revision that the person approved.
+  A completed invalid draft produces only a durable rejection and conversation
+  outcome, never a result revision or plan records; replay cannot duplicate it.
 
 The #104 increment implements these boundaries in `kit/result`, `internal/core/results` and `internal/core/exec`. Core supplies the trusted person, agent, conversation and turn; none is accepted from tool arguments. `present_result` takes `type`, `title`, `summary` and a complete `body`, with `result_id` and `base_revision` only for replacement. `read_result` takes `result_id` and returns the complete current result and its revision. `save_result` takes `result_id`, `revision` and a resolved `destination`; its binding requires an exact matching request from the person in the current turn. A grant alone does not constitute that request. The three operations use the existing tool registry, authority gate and leases, run in Core, and require no network or approval interaction.
 
@@ -1267,6 +1277,8 @@ type Definition struct {
   in one transaction. Obsolete replacements commit a terminal rejection and
   advance the watermark without replacing the card, so they cannot strand later
   planning jobs. Their outcome lines are recovered from the same durable receipt.
+  Completed invalid model outputs use the same terminal rejection path after
+  settling their usage, without retrying the completed call.
   Only the client confirmation creates the corresponding
   Markdown records, as one recoverable Git publication. Splitting the confirmed
   work into hand-off tasks uses the existing work ledger, without another plan

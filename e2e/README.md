@@ -1,5 +1,11 @@
 # Headless acceptance harness
 
+`m3/plan-invalid-response.json` exercises completed invalid JSON and cyclic
+planning responses through installed Core and Moirai. It restarts Core between
+Aux completion and Apply, verifies cached results, rejects a forged proposal,
+checks durable rejection and usage counts under duplicate application, and
+observes the next valid preview without publishing unconfirmed plan records.
+
 Run `go test ./e2e/m1/...` (or `go test -count=1 -v ./e2e/...` for uncached scenario
 output). Node.js and the workspace's Go toolchain are required. The harness uses
 native Linux and macOS pseudo-terminals; it needs no window, display server,

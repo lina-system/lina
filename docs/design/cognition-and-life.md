@@ -199,6 +199,15 @@ leaves the preview and records unchanged and releases the next queued request.
 The originating conversation receives one retained outcome line, including when
 startup recovers a rejection committed before publication.
 
+A completed model response that is not a valid plan (including invalid JSON or
+cyclic dependencies) also ends with a retained rejection. Core caches that
+outcome and settles the completed call's usage; Moirai submits it through the
+same authenticated proposal path. The rejection and watermark commit together,
+and the conversation receives one retained outcome line. Restart and duplicate
+application do not repeat the model call or the notice. Later queued drafts can
+proceed. A provider call whose completion is unknown retains its pending
+reservation and is never automatically repeated.
+
 The client `planning` capability provides the person-only acceptance and
 confirmation actions. Acceptance saves the goal or directly handed-over project
 and its done condition. Confirmation names the current preview id and revision;

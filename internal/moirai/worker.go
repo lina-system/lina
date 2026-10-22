@@ -37,7 +37,7 @@ func (w Worker) Step(ctx context.Context, work jobapi.Work) error {
 		}
 		output = r.Output
 	}
-	if work.Job.Kind == jobapi.Planning && work.Job.Adoption == "plan-draft-v1" {
+	if work.Job.Kind == jobapi.Planning && work.Job.Adoption == "plan-draft-v1" && !jobapi.IsPlanRejection(output) {
 		var input jobapi.PlanInput
 		if json.Unmarshal(work.Task.Input, &input) != nil {
 			return jobapi.ErrInvalid

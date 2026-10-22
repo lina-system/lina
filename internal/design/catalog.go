@@ -61,6 +61,7 @@ var catalog = map[string]translation{
 	"get":                  {"Open", "열기"},
 	"confirm":              {"Confirm", "확인"},
 	"plan_draft_obsolete":  {"The plan changed before this update was ready. Your current plan is unchanged.", "수정안을 준비하는 동안 계획이 바뀌었습니다. 현재 계획은 그대로 유지됩니다."},
+	"plan_draft_invalid":   {"The planning response could not be used. Your current plan is unchanged; you can request another draft.", "계획 응답을 사용할 수 없었습니다. 현재 계획은 그대로 유지되며 새 초안을 요청할 수 있습니다."},
 	"github_bind":          {"Connect merge target", "병합 대상 연결"},
 	"github_accept":        {"Accept pull request head", "풀 리퀘스트 변경 확인"},
 	"github_merge":         {"Merge pull request", "풀 리퀘스트 병합"},
