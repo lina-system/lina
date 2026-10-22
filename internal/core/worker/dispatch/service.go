@@ -21,6 +21,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/secrets"
+	"github.com/thisisjun786/lina/internal/core/skills"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker/antigravity"
 	"github.com/thisisjun786/lina/kit/lease"
@@ -30,6 +31,8 @@ import (
 )
 
 type Definition struct {
+	Kind       string   `json:"kind,omitempty"`
+	Skill      string   `json:"skill,omitempty"`
 	Repository string   `json:"repository"`
 	Base       string   `json:"base"`
 	Branch     string   `json:"branch"`
@@ -43,6 +46,7 @@ type Definition struct {
 }
 type Origin struct{ Person, Agent, Conversation, Turn string }
 type Record struct {
+	Method     *skills.Body               `json:"method,omitempty"`
 	ID         string                     `json:"id"`
 	Origin     Origin                     `json:"origin"`
 	Definition Definition                 `json:"definition"`
@@ -54,6 +58,7 @@ type Record struct {
 	Announced  bool                       `json:"announced"`
 }
 type Config struct {
+	Skills      *skills.Store
 	DB          *canon.Store
 	Root, Main  string
 	Epoch       uint64
@@ -163,10 +168,24 @@ func (s *Service) Tool(origin Origin) loop.Tool {
 		if err != nil || masked.Text() != c.Arguments {
 			return d, work.ErrInvalid
 		}
-		return d, validate(d)
+		if err := validate(d); err != nil {
+			return d, err
+		}
+		d.Skill, err = skills.MethodID(d.Kind, d.Skill)
+		return d, err
 	}
-	return loop.Tool{Validate: func(c provider.ToolCall) (string, error) { d, err := decode(c); return d.Repository, err }, Execute: func(ctx context.Context, c provider.ToolCall) loop.Result {
+	return loop.Tool{Validate: func(c provider.ToolCall) (string, error) {
 		d, err := decode(c)
+		if err == nil {
+			_, err = s.cfg.Skills.ResolveMethod(s.ctx, d.Kind, d.Skill)
+		}
+		return d.Repository, err
+	}, Execute: func(ctx context.Context, c provider.ToolCall) loop.Result {
+		d, err := decode(c)
+		if err != nil {
+			return loop.Result{ID: c.ID, Code: loop.Invalid}
+		}
+		method, err := s.cfg.Skills.ResolveMethod(ctx, d.Kind, d.Skill)
 		if err != nil {
 			return loop.Result{ID: c.ID, Code: loop.Invalid}
 		}
@@ -179,7 +198,7 @@ func (s *Service) Tool(origin Origin) loop.Tool {
 		}
 		d.Repository = canonical
 		key := fmt.Sprintf("%x", sha256.Sum256([]byte(origin.Turn+"\x00"+c.ID)))
-		r := Record{ID: key, Origin: origin, Definition: d, State: "queued"}
+		r := Record{ID: key, Origin: origin, Definition: d, Method: method, State: "queued"}
 		err = s.cfg.DB.Write(ctx, func(tx *canon.Tx) error {
 			var prior []byte
 			readErr := tx.QueryRowContext(ctx, "SELECT record FROM worker_dispatch WHERE id=?", r.ID).Scan(&prior)
@@ -273,7 +292,7 @@ func (s *Service) sync() {
 	}
 }
 func Declaration() provider.ToolDecl {
-	return provider.ToolDecl(`{"type":"function","name":"dispatch_work","description":"Delegate a code change to the person's installed Antigravity worker. Core creates its own worktree from a local GitHub repository clone. Supply the complete authorized task, design sections, done condition and write area. Returns a task receipt immediately; completion returns to this conversation. The worker uses its own permissions and login.","parameters":{"type":"object","properties":{"repository":{"type":"string"},"base":{"type":"string"},"branch":{"type":"string"},"what":{"type":"string"},"why":{"type":"string"},"scope":{"type":"array","items":{"type":"string"}},"not_touch":{"type":"array","items":{"type":"string"}},"done":{"type":"string"},"design_refs":{"type":"array","items":{"type":"string"}},"write_area":{"type":"array","items":{"type":"string"}}},"required":["repository","base","branch","what","why","scope","not_touch","done","design_refs","write_area"],"additionalProperties":false}}`)
+	return provider.ToolDecl(`{"type":"function","name":"dispatch_work","description":"Delegate a code change to the person's installed Antigravity worker. Core creates its own worktree from a local GitHub repository clone. Supply the complete authorized task, design sections, done condition and write area. Returns a task receipt immediately; completion returns to this conversation. The worker uses its own permissions and login. Optional kind selects a development method from skill_index methodology=dev; skill overrides it with one catalog ID. Core includes that version in the task packet.","parameters":{"type":"object","properties":{"kind":{"type":"string"},"skill":{"type":"string"},"repository":{"type":"string"},"base":{"type":"string"},"branch":{"type":"string"},"what":{"type":"string"},"why":{"type":"string"},"scope":{"type":"array","items":{"type":"string"}},"not_touch":{"type":"array","items":{"type":"string"}},"done":{"type":"string"},"design_refs":{"type":"array","items":{"type":"string"}},"write_area":{"type":"array","items":{"type":"string"}}},"required":["repository","base","branch","what","why","scope","not_touch","done","design_refs","write_area"],"additionalProperties":false}}`)
 }
 
 type output struct{ bytes.Buffer }
