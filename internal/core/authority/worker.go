@@ -30,6 +30,7 @@ func workerRequest(in Approval) (Approval, string, error) {
 	}
 	// Copy only request facts. Lifecycle, scope and answer audit belong to Core.
 	a := Approval{
+		TaskID:    in.TaskID,
 		EffectKey: in.EffectKey, Person: in.Person, Agent: in.Agent, Conversation: in.Conversation,
 		Tool: in.Tool, Plugin: workerRelayPlugin, Arguments: args,
 		What: in.What, Where: in.Where, Target: in.Target,
@@ -49,6 +50,13 @@ func workerRequest(in Approval) (Approval, string, error) {
 func (s *Service) RequestWorkerApproval(ctx context.Context, in Approval) (Approval, error) {
 	a, fingerprint, err := workerRequest(in)
 	if err != nil {
+		return Approval{}, err
+	}
+	target := a.Target
+	if target == "" {
+		target = a.Conversation
+	}
+	if err := CheckPreset(ctx, s.store, s.cfg.Epoch, PolicyRequest{Key: "preset:" + a.EffectKey, Person: a.Person, Agent: a.Agent, TaskID: a.TaskID, Tool: a.Tool, Target: target, Class: tools.WorkerEffect, Arguments: a.Arguments}); err != nil {
 		return Approval{}, err
 	}
 	created := false

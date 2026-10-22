@@ -81,7 +81,7 @@ func TestPersonaReplayExactSources(t *testing.T) {
 	mu.Lock()
 	original := requests[2]
 	mu.Unlock()
-	for _, marker := range []string{"skill:persona-change", "persona_revision", "persona_emotion", "persona_expression", "persona_settings", "relationship_view"} {
+	for _, marker := range []string{"skill:persona-change", "persona_revision", "persona_emotion", "persona_expression", "persona_settings", "persona-methodology:", "relationship_view"} {
 		raw, _ := json.Marshal(original)
 		if !strings.Contains(string(raw), marker) {
 			t.Fatalf("fixture missing %s", marker)
