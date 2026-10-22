@@ -207,6 +207,8 @@ The person writes intent, LINA organizes, and the person zooms in and out. A per
 - The conversation is beside every screen. From any layer, "Talk about this" brings that context into the conversation with the chosen agent.
 - A surface opens to the conversation with the agent the person talked with last. The first run creates all eight starter agents and opens the conversation with Lina, asking for nothing before it talks except the ChatGPT sign-in ([conversation-and-memory.md](conversation-and-memory.md#first-run)).
 
+On initial connection and reconnection, the TUI refreshes agent metadata from Core before discovering conversation history when agent listing is available. Reopening the TUI against the same Core shows the resumed agent's current name in the header, composer and named replies, even when Welcome still contains only the agent selected at Core startup. This refresh does not require opening the agent list.
+
 ### Default view
 
 The person sees two things by default: the design at a glance, with how far every running piece of work has come (see Progress at a glance), and the list of what they must do or decide. Everything else is available on request.
