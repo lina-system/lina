@@ -38,6 +38,8 @@ func TestCommand(t *testing.T) {
 		{name: "unknown", args: []string{"unknown"}, code: 64},
 		{name: "file tool missing roots", args: []string{"file-tool"}, code: 64},
 		{name: "file tool unknown flag", args: []string{"file-tool", "--unknown"}, code: 64},
+		{name: "supervisor missing descriptors", args: []string{"proc-supervise"}, code: 64},
+		{name: "supervisor unknown flag", args: []string{"proc-supervise", "--unknown"}, code: 64},
 		{name: "core missing socket", args: []string{"core"}, code: 64},
 		{name: "core empty socket", args: []string{"core", "--socket="}, code: 64},
 		{name: "core unknown flag", args: []string{"core", "--unknown"}, code: 64},
