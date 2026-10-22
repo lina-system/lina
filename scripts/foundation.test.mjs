@@ -208,7 +208,7 @@ func TestTwo(t *testing.T) { t.Parallel() }
   assert.equal(green.evidence.checks.dependencies.result, 'success');
   assert.equal(green.evidence.tools.go, 'go1.27.3');
   const acceptance = green.stderr.split('\n').filter(line => /^ok\s+.*\/e2e\s+/.test(line));
-  assert.equal(acceptance.length, 2, 'successful logs retain both batch timings, without the enumeration timing');
+  assert.equal(acceptance.length, 1, 'tests in the same scenario file run in one shard, retaining its package timing');
   for (const line of acceptance) assert.match(line, /\d+\.\d+s$/);
   sb.commit(work, 'docs: change', { 'README.md': '# Updated fixture\n' });
   assert.equal(foundation(sb, work).evidence.checks.components.result, 'skipped');

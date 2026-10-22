@@ -16,6 +16,7 @@ export const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const foundationFiles = [
   'git.mjs', 'foundation.mjs',
   'verify/scope.mjs', 'verify/gate.mjs', 'verify/check-docs.mjs', 'verify/check-components.mjs',
+  'verify/pipeline.mjs', 'verify/shard-plan.mjs', 'verify/scenarios.mjs', 'verify/scenarios.go',
 ];
 
 /** A temporary directory with an isolated Git environment, removed when the test ends. */

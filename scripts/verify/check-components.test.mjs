@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { sandbox } from '../test-fixture.mjs';
-import { checkComponents, execute, componentsTimeoutMs } from './check-components.mjs';
+import { checkComponents, createGoContext, execute, componentsTimeoutMs } from './check-components.mjs';
 
 const source = fileURLToPath(new URL('../../', import.meta.url));
 function fixture(t) {
@@ -141,16 +141,23 @@ test('an exhausted components budget stops before starting another command', t =
 
 test('a hung test command is capped by the remaining components budget', t => {
   const sb = fixture(t);
+  // Cache discovery is fixture setup, not the hung command under test. It must
+  // not compete with the deliberately tiny execution budget on a busy host.
+  const context = createGoContext(sb.dir);
+  t.after(() => context.close());
+  let suppliedContext = false;
   sb.write(sb.dir, 'hung.mjs', `// SPDX-License-Identifier: Apache-2.0
 process.on('SIGTERM', () => {});
 setInterval(() => {}, 1000);
 `);
   const result = checkComponents({ cwd: sb.dir, components: [kit], timeoutMs: 500,
+    createContext() { suppliedContext = true; return context; },
     execute(command, args, options) {
       if (args[0] === 'test') return execute(process.execPath, ['hung.mjs'], { ...options, cwd: sb.dir });
       return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
     } });
   assert.equal(result.status, 1);
+  assert.equal(suppliedContext, true);
   assert.match(result.output, /\$ go test -count=1 -timeout=6m -mod=readonly \.\/\.\.\./);
   assert.match(result.output, /command timed out after [\d.]+ s \(budget 0\.\d+ s\): .*hung\.mjs/);
 });
