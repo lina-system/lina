@@ -16,6 +16,9 @@ func TestMarkdownEmptyCodeRowsRetainIdentity(t *testing.T) {
 		{"boundary", "```\n\ncode\n\n```", "\ncode\n", 3},
 		{"empty-only", "```\n\n\n```", "\n", 2},
 		{"empty-fence", "```\n```", "", 1},
+		{"highlighted-boundary", "```go\n\nvar answer = 42\n\n```", "\nvar answer = 42\n", 3},
+		{"highlighted-empty-only", "```go\n\n\n```", "\n", 2},
+		{"highlighted-empty-fence", "```go\n```", "", 1},
 		{"indented", "    code\n\n    next", "code\n\nnext", 3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

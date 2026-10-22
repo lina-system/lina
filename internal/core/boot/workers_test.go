@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/internal/core/skills"
 	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/loop"
@@ -26,6 +27,26 @@ func TestWorkerSchemaRejectsInjectedSettingsAndIncompleteControls(t *testing.T) 
 		if _, err := workerSchema(tc.name, json.RawMessage(tc.raw)); err == nil {
 			t.Fatalf("accepted %s %s", tc.name, tc.raw)
 		}
+	}
+}
+
+func TestWorkerUnknownMethodRefusedBeforeLaunch(t *testing.T) {
+	r, _, _, _ := managementFixture(t)
+	var err error
+	r.skills, err = skills.Open(t.TempDir(), r.db, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.skills.Close()
+	in, err := workerSchema("worker_start", json.RawMessage(`{"workdir":"/tmp/task","task_packet":"Inspect fixture","skill":"unknown"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// No runtime or process leaser exists: resolving an unknown skill must fail
+	// before any installed-worker access or launch can take place.
+	result, err := r.workerOperation(t.Context(), "worker_start", "turn", ledger.Event{}, in)
+	if err != skills.ErrNotFound || result.State != tools.Failed {
+		t.Fatalf("unknown method: %+v %v", result, err)
 	}
 }
 
@@ -93,5 +114,20 @@ func TestWorkerInterruptRequiresQuoteFromCurrentUserInput(t *testing.T) {
 	call := provider.ToolCall{ID: "cancel", Name: "worker_interrupt", Arguments: `{"session":"thread","turn":"turn","generation":1,"binding":1,"quote":"stop this worker"}`}
 	if result := bindings[call.Name].Execute(t.Context(), call); result.Code != loop.Denied {
 		t.Fatalf("unsourced cancel accepted: %+v", result)
+	}
+}
+
+func TestWorkerStartAcceptsSingleMethodSelection(t *testing.T) {
+	if _, err := workerSchema("worker_start", json.RawMessage(`{"workdir":"/tmp/task","task_packet":"Inspect fixture","kind":"post_merge_qa","skill":"qa"}`)); err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range []string{
+		`{"workdir":"/tmp/task","task_packet":"Inspect fixture","kind":"unrecognized"}`,
+		`{"workdir":"/tmp/task","task_packet":"Inspect fixture","skill":["qa","perf"]}`,
+		`{"workdir":"/tmp/task","task_packet":"Inspect fixture","skill":"../qa"}`,
+	} {
+		if _, err := workerSchema("worker_start", json.RawMessage(raw)); err == nil {
+			t.Fatalf("accepted %s", raw)
+		}
 	}
 }

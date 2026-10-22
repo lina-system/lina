@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"time"
 
 	"github.com/thisisjun786/lina/kit/protocol"
@@ -16,6 +18,11 @@ import (
 
 var ErrPendingLimit = errors.New("client pending subscription limit")
 var ErrMalformed = errors.New("malformed client frame")
+
+// ErrDisconnected marks a request whose transport failed and was closed. Its
+// outcome is unknown: reconnecting must never automatically replay the request.
+// Local validation, pending limits and caller cancellation do not carry it.
+var ErrDisconnected = errors.New("client request disconnected")
 
 // Subscribe sends one typed subscription/unsubscription and returns its message
 // id. The correlated response and all subsequent notifications come through
@@ -72,6 +79,11 @@ func (c *Client) request(ctx context.Context, kind protocol.Kind, payload protoc
 		delete(c.pending, id)
 		c.pendingMu.Unlock()
 		c.Close() // A failed physical write may be partial.
+		var network net.Error
+		if ctx.Err() == nil && (errors.Is(err, io.EOF) || errors.Is(err, io.ErrClosedPipe) ||
+			errors.Is(err, io.ErrShortWrite) || errors.Is(err, net.ErrClosed) || errors.As(err, &network)) {
+			return "", fmt.Errorf("%w: %w", ErrDisconnected, err)
+		}
 		return "", err
 	}
 	return id, nil

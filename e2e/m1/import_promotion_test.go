@@ -2,6 +2,7 @@
 package e2e_test
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -38,6 +39,13 @@ func TestM1ImportRehearsalPromotion(t *testing.T) {
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { t.Error("import called model") }))
 	defer provider.Close()
 	h, start := installedConversationHarness(t, provider.URL)
+	// This journey performs four imports, four recall/restart cycles, and
+	// backup/source verification. Give those phases their own scenario budget
+	// after installation; each process and connection still has its existing
+	// operationTimeout bound.
+	scenarioContext, cancel := context.WithTimeout(t.Context(), 12*operationTimeout)
+	t.Cleanup(cancel)
+	h.ctx = scenarioContext
 	core := start(true)
 	c, _ := conversationClient(t, h)
 	c.Close()

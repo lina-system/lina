@@ -22,6 +22,7 @@ type Activity struct {
 func (s *State) turn(m Turn) {
 	if m.Active {
 		if !s.TurnActive {
+			s.ToolTurn++
 			s.Activity = Activity{Started: m.Started}
 			s.Stopping = false
 		}

@@ -218,7 +218,19 @@ reads the run's pinned material revision through its integrity check, and return
 `next` only when another page remains. Dismiss only accepts landed rows. Neither
 operation deletes the run or material or changes its claimed outcome.
 
-A `running_update` optionally carries `run_id` and `removed`; a removal uses the
+A `running_update` optionally carries a typed presentation: `state`, `summary`
+and `reason`. When any presentation field is present, `state` and `summary` are
+required together. The closed states are `in_progress`, `waiting`, `needs_input`,
+`ready_for_review`, `failed`, `stopped`, `done` and `unknown`. The optional closed
+waiting reasons are `dependency`, `area`, `quota`, `host_capacity`, `ci_pending`,
+`run_limit`, `person` and `budget`. Core publishes these fields for background runs
+and delegated tasks; clients localize the codes and display the authored summary.
+The existing `text` retains its prior meaning for earlier clients. A client uses
+it only when the typed presentation is absent, without parsing it for status.
+These optional additions follow client 1.0's additive-field receive rule and do
+not change existing empty, text-only or removal payloads.
+
+A `running_update` also optionally carries `run_id` and `removed`; a removal uses the
 same stream key and next cursor, removes that row from retained snapshots, and
 is replayable to an existing subscriber. A background landing's `result` card
 optionally carries `run_id` as an opaque open reference. It is an agent-report
@@ -359,12 +371,13 @@ acceptance alone does not grant a capability.
 | `item_done` | Existing `text` and stream metadata, with optional `echo_key`, `speaker` (`person`, `agent`, `system`, `forwarded`), `agent_id`, and `person_id`. Forwarded channel content keeps its speaker kind and carries no person id, both live and in restored history. `echo_key` is the admitted input id, allowing replacement of one local echo. |
 | `output_delta` | Existing text delta and stream metadata, with optional `agent_id`. The same topic/key becomes the completed item. |
 | `turn_state` | Existing stream metadata and optional `active` boolean plus `agent_id`. Optional `phase` is `waiting_model`, `streaming`, `tool` or `stopping`; optional `tool_name` is a trusted display name from the tool registry's display catalog. Clients do not parse activity from display text. |
-| `tool_activity` | Core-to-client display event with optional `stream` and `agent_id`, required string `call_id`, required string `tool_name` (the registry's display catalog label), and required `status` (`started` or `finished`). `finished` requires `outcome` (`ok` or `failed`) and a nonnegative numeric `duration_ms`; `started` forbids both. No arguments or output are fields of this event. |
+| `tool_activity` | Core-to-client display event with optional `stream` and `agent_id`, required string `call_id`, required string `tool_name` (the registry's display catalog label), and required `status` (`started` or `finished`). `finished` requires `outcome` (`ok` or `failed`) and a nonnegative numeric `duration_ms`; `started` forbids both. Optional `target` (at most 160 characters) and `summary` (at most 8192 characters) contain only explicitly Core-approved display text. Arguments and raw output are never fields of this event. |
 
 Turn phase is display state. A missing phase preserves the older `active`
 behavior; a missing tool name supplies no display label. Core supplies trusted
 catalog labels, never model-provided arguments, output or a raw tool identifier
-as the label. Tools' private arguments and output remain behind Details.
+as the label. Tools' private arguments and output remain behind Details. The current publisher
+omits `target` and `summary`; clients never synthesize them from private data.
 `duration_ms` permits fractional milliseconds and retains its exact JSON number;
 zero is a valid duration. A tool outcome describes the call and does not establish
 the envelope's effect state or a verified work result.
