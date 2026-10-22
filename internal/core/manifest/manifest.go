@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/thisisjun786/lina/internal/core/work/pin"
+	"github.com/thisisjun786/lina/internal/core/manifest/crwpin"
 	responseconfig "github.com/thisisjun786/lina/kit/provider/responses/config"
 )
 
@@ -19,7 +19,7 @@ import (
 // Additional JSON fields are allowed as later components add their metadata.
 type Manifest struct {
 	// CRWPin is absent only in artifacts built before the work-ledger start gate.
-	CRWPin                *pin.Record                      `json:"crwPin,omitempty"`
+	CRWPin                *crwpin.Record                   `json:"crwPin,omitempty"`
 	SupportedCombinations []Combination                    `json:"supportedCombinations"`
 	Version               string                           `json:"version"`
 	Commit                string                           `json:"commit"`

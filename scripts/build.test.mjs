@@ -25,7 +25,7 @@ test('build records the verified CRW pin and refuses a failed corpus gate', t =>
       const binary = args[args.indexOf('-o') + 1];
       f.write(dirname(binary), binary.split(/[\\/]/).at(-1), 'fixture executable');
     }
-    if (args.includes('./internal/core/manifest/crwinfo')) {
+    if (args.includes('./internal/core/work/pin/crwinfo')) {
       return failPin ? { status: 1, stderr: 'CRW pin: changed fixture hash' }
         : { status: 0, stdout: JSON.stringify(pin), stderr: '' };
     }

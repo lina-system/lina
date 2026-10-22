@@ -37,29 +37,29 @@ func TestCRWBuildRunsThePinnedCorpus(t *testing.T) {
 	write("testdata/crw/schema/relationship.json", schema)
 	write("testdata/crw/fixtures/records.json", fixture)
 	write("internal/core/work/pin/pin.json", encoded(t, r))
-	got, err := CRWBuild(root)
+	got, err := pin.Build(root)
 	if err != nil || !reflect.DeepEqual(got, r) {
 		t.Fatalf("pin=%+v error=%v", got, err)
 	}
 	write("testdata/crw/schema/relationship.json", []byte(`true`))
-	if _, err := CRWBuild(root); err == nil || !strings.Contains(err.Error(), "SHA-256") {
+	if _, err := pin.Build(root); err == nil || !strings.Contains(err.Error(), "SHA-256") {
 		t.Fatalf("changed hash: %v", err)
 	}
 	// Updating a schema digest alone does not make an incompatible implementation
 	// agree with the fixture's independently recorded negative judgment.
 	r.Schemas[0].SHA256 = fmt.Sprintf("%x", sha256.Sum256([]byte(`true`)))
 	write("internal/core/work/pin/pin.json", encoded(t, r))
-	if _, err := CRWBuild(root); err == nil || !strings.Contains(err.Error(), "fixture expects false") {
+	if _, err := pin.Build(root); err == nil || !strings.Contains(err.Error(), "fixture expects false") {
 		t.Fatalf("changed behavior: %v", err)
 	}
 	write("internal/core/work/pin/pin.json", append(encoded(t, r), []byte(` {}`)...))
-	if _, err := CRWBuild(root); err == nil {
+	if _, err := pin.Build(root); err == nil {
 		t.Fatal("trailing pin data accepted")
 	}
 	if err := os.Remove(filepath.Join(root, "internal/core/work/pin/pin.json")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := CRWBuild(root); err == nil {
+	if _, err := pin.Build(root); err == nil {
 		t.Fatal("missing pin accepted")
 	}
 }
