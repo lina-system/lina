@@ -286,6 +286,21 @@ Regions:
 - Card row above the composer, on Home (T-12).
 - Status line below the composer: connection mark and word first, agent, the running count ("2 running, 1 waiting for you"), restart pending, Core messages, then key hints.
 
+Once the focused conversation's snapshot is known to have no items, its header
+shows the token-based `lina.` wordmark, the agent name and the connection word.
+Three muted Korean/English catalog suggestions invite the person to ask what
+the agent remembers, set its speaking style or hand over a task. They are
+ordinary text examples: the person types into the existing composer, with no
+new selection key. Unsent drafts and non-conversation status updates do not
+hide them. The first conversation item, including a local input echo, removes
+the wordmark and suggestions. These are display-only rows, never history or
+snapshot items. A restored nonempty conversation never shows them. Account
+setup may show the same hints alongside the existing sign-in action before
+conversation is negotiated; no extra onboarding step is introduced.
+The hints fit the existing row budget and use the current text clipping rules.
+`TestM1TUIFirstRunInstalledCore` verifies both languages in a 100x34 PTY against
+installed Core, a held first reply, snapshots and a Core restart.
+
 Overlays form a stack and the top one receives keys first: agent list, command palette, pager. The agent list is the agents screen of [surfaces.md](surfaces.md#agents) in text: mark, name, source and last conversation; Enter opens the agent's main conversation.
 
 The decision overlay occupies the conversation surface and keeps the connection
