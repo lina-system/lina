@@ -401,13 +401,15 @@ func runHarness(ctx context.Context) (map[string]any, error) {
 		return nil, err
 	}
 	defer h.Close()
-	first, err := h.Output.Wait(ctx, func(s term.Snapshot) bool { return s.AltScreen && s.Cells[0][0].Content == "한" && s.CursorX == 3 })
+	first, err := h.Output.Wait(ctx, func(s term.Snapshot) bool {
+		return s.AltScreen && !s.CursorHidden && s.Cells[0][0].Content == "한" && s.CursorX == 3
+	})
 	if err != nil {
 		return nil, fmt.Errorf("initial S8 frame: %w", err)
 	}
 	h.Send(tea.PasteMsg{Content: "B"})
 	// Cursor movement can be written before the lower Markdown rows. Observe
-	// both parts of the frame before using the capture as the parsing result.
+	// both parts and the final cursor-show before capturing or sending Quit.
 	containsSealed := func(s term.Snapshot) bool {
 		for _, row := range s.Cells[2:] {
 			for _, cell := range row {
@@ -419,7 +421,7 @@ func runHarness(ctx context.Context) (map[string]any, error) {
 		return false
 	}
 	pasted, err := h.Output.Wait(ctx, func(s term.Snapshot) bool {
-		return s.Cells[0][3].Content == "B" && s.CursorX == 4 && containsSealed(s)
+		return !s.CursorHidden && s.Cells[0][3].Content == "B" && s.CursorX == 4 && containsSealed(s)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("S8 paste frame: %w", err)
