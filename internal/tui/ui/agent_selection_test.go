@@ -58,6 +58,22 @@ func TestInitialHistoryDiscoveryKeepsDraftUntilDestinationKnown(t *testing.T) {
 	}
 }
 
+func TestInitialDiscoveryWithoutConversationKeepsAccountsUsable(t *testing.T) {
+	m := conversationShell()
+	m.content.Capabilities = []protocol.Capability{{Name: "accounts", Version: "1.0"}}
+	m.content.Agents = []protocol.Agent{{AgentID: "default"}}
+	request := m.discoveryHistory()
+	m.Update(shellConnection{Generation: 1, Status: ConnectionStatus{State: Live}})
+	m.Update(tea.PasteMsg{Content: "/accounts"})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.status.State != Live || !m.accounts.open || cmd == nil || m.content.Draft.Text != "" {
+		t.Fatal("history discovery blocked account commands without conversation capability")
+	}
+	if request != nil {
+		t.Fatal("history discovery requested an ungranted conversation")
+	}
+}
+
 func TestReconnectMissingAgentKeepsDraftUntilExplicitChoice(t *testing.T) {
 	for _, language := range []design.Language{design.English, design.Korean} {
 		t.Run(string(language), func(t *testing.T) {

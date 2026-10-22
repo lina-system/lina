@@ -100,8 +100,8 @@ Quit (Ctrl+C with an empty draft or Ctrl+D), input EOF and termination signals c
 client and exit 0, including during handshake or retry. The raw terminal reader
 ignores releases, toggle repeats and pasted quit text. Nonterminal input keeps
 the handshake-then-read behavior: it does not discover a conversation destination,
-and reports plain `live` after the validated welcome even when no destination is
-available. Destination discovery gates the terminal composer's input only.
+and reports Live (`live` on plain output) after the validated welcome even when no
+destination is available. Destination discovery gates the terminal composer's input only.
 No failure path starts Core or creates state.
 
 | State | Screen |
@@ -135,7 +135,9 @@ status writes nothing. The key gate also covers the legacy quit input. Connectio
 including one in the same epoch, restores an unacknowledged input into the draft
 with newer typing after it. The client never automatically resends that input.
 
-Initial history discovery uses the same pending-agent guard as reconnect.
+When conversation is granted, initial history discovery uses the same
+pending-agent guard as reconnect. Without that capability, discovery sets no
+pending guard, so account and management commands remain available.
 Until the history response identifies the destination conversation, the composer
 retains typed text and Enter sends nothing. Completing discovery makes the
 conversation ready; it does not submit the retained draft automatically. The
