@@ -57,8 +57,13 @@ func codexSessionFixture() {
 		case "initialized":
 			initialized = true
 		case "thread/start":
-			if !initialized || len(r.Params) != 1 {
+			if !initialized || r.Params["cwd"] == nil {
 				os.Exit(95)
+			}
+			for key := range r.Params {
+				if key != "cwd" && key != "dynamicTools" {
+					os.Exit(95)
+				}
 			}
 			json.Unmarshal(r.Params["cwd"], &cwd)
 			reply(map[string]any{"thread": map[string]any{"id": "fixture-thread"}, "cwd": cwd, "model": "worker-own-model"})

@@ -107,3 +107,7 @@ func validateReceipt(c Card, r Receipt) error {
 	}
 	return nil
 }
+
+// ValidateWorkerReceipt checks a worker claim against Core's assignment scope.
+// Validation does not append a receipt or establish a verification verdict.
+func ValidateWorkerReceipt(c Card, r Receipt) error { return validateReceipt(c, r) }

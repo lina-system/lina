@@ -88,6 +88,9 @@ func (d *Decisions) ApprovalCards(ctx context.Context) ([]protocol.ApprovalReque
 		c.Agent = strings.Join(names, ", ")
 		c.Summary = strings.Join(summaries, "; ")
 		request := protocol.ApprovalRequest{Card: &c, Choices: []protocol.ApprovalChoice{}}
+		if conversation := g.Members[0].Conversation; conversation != "" {
+			request.ConversationID = &conversation
+		}
 		for _, choice := range choices {
 			switch choice {
 			case authority.Once:
