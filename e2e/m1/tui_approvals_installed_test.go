@@ -123,7 +123,7 @@ func TestM1TUIApprovalsInstalledCore(t *testing.T) {
 	// using negotiated event types instead of a timing delay between keys.
 	approval.ID += "-tui"
 	approval.EffectKey = approval.ID
-	approval.What = "TUI: " + fixture.Summary
+	approval.What = "Approve the second fixture document in the TUI"
 	data, err = json.Marshal(approval)
 	if err != nil {
 		t.Fatal(err)
@@ -132,6 +132,7 @@ func TestM1TUIApprovalsInstalledCore(t *testing.T) {
 		t.Fatal(err)
 	}
 	terminal := h.startScreenTUI("TERM=xterm-256color")
+	waitComposerReady(t, h, terminal)
 	// The first approval is already resolved and can arrive before the waiting
 	// snapshot. Its matching summary must not trigger F6 before the new card.
 	pendingCard := "[" + design.Text(design.English, string(protocol.KindApprovalRequest)) + "] " + approval.What
