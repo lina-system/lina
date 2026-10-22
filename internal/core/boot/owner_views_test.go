@@ -2,11 +2,16 @@
 package boot
 
 import (
+	"encoding/json"
+	"github.com/thisisjun786/lina/internal/core/authority"
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
+	"github.com/thisisjun786/lina/internal/core/waiting"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"testing"
+	"time"
 )
 
 func TestProgressOverviewWiredToCore(t *testing.T) {
@@ -54,5 +59,59 @@ func TestProgressGroupsLiveSessionsAndKeepsTaskOutcomeUnknown(t *testing.T) {
 	}
 	if v := (*p.Rows)[0].Line; v.JustFinished != "unknown" || v.Stage != "unknown" || v.Percent != nil {
 		t.Fatalf("worker idle became plan outcome: %+v", v)
+	}
+}
+
+func TestFullWaitingChangesRefreshBeyondHomeLimit(t *testing.T) {
+	r := controlRuntime(t)
+	r.ownerViews.stop()
+	<-r.ownerViews.done
+	put := func(tx *canon.Tx, id string) error {
+		raw, _ := json.Marshal(authority.Approval{ID: id, Epoch: r.epoch, Person: r.person, Agent: r.agent, State: authority.Pending, What: "Decide " + id, Choices: []authority.Choice{authority.Once}})
+		_, err := tx.ExecContext(t.Context(), "INSERT INTO authority_approvals(approval_id,effect_key,fingerprint,record) VALUES(?,?,?,?)", id, id, "fixture", raw)
+		return err
+	}
+	if err := r.db.Write(t.Context(), func(tx *canon.Tx) error {
+		for _, id := range []string{"a1", "a2", "a3", "a4", "a5", "a6"} {
+			if err := put(tx, id); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := func() clientsrv.TopicStart {
+		t.Helper()
+		if err := r.publishOwnerViews(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		start, sub, err := r.topics.Subscribe("progress", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sub.Close()
+		return start
+	}
+	first := snapshot()
+	if err := r.db.Write(t.Context(), func(tx *canon.Tx) error {
+		if _, err := tx.ExecContext(t.Context(), `UPDATE authority_approvals SET record=json_set(record,'$.State','approved') WHERE approval_id='a6'`); err != nil {
+			return err
+		}
+		return put(tx, "a7")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	second := snapshot()
+	if first.Snapshot.Cursor == second.Snapshot.Cursor {
+		t.Fatal("resolved row beyond Home limit did not invalidate the full waiting view")
+	}
+	names, _ := r.ownerAgentNames(t.Context())
+	list, err := r.ownerWaiting(t.Context(), names, waiting.Options{Now: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if list.Total != 6 || list.Entries[5].Ref.ID != "a7" {
+		t.Fatalf("stale full list: %+v", list)
 	}
 }

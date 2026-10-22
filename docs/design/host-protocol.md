@@ -556,7 +556,9 @@ next, waiting count and hierarchy depth. An absent percent means unknown; it
 never means zero. Stage and unknown are codes localized by the client.
 
 A `progress_update` replaces the overview atomically, retaining the normal topic
-cursor and snapshot/replay behavior. `text` is a plain fallback; typed clients
+cursor and snapshot/replay behavior. A changed full waiting list advances this
+cursor even when the five Home rows and remaining count are unchanged; a client
+showing the full list rereads `waiting_get`. `text` is a plain fallback; typed clients
 render the rows. An empty rows list removes previous work. Reading progress is
 not a completion verdict or an acknowledgement that the person has seen it.
 

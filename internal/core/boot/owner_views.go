@@ -182,13 +182,17 @@ func waitingRows(list waiting.List) []protocol.WaitingRow {
 }
 func number(n int) json.Number { return json.Number(strconv.Itoa(n)) }
 func (r *conversationRuntime) ownerSnapshot(ctx context.Context) (protocol.Progress, error) {
+	p, _, err := r.ownerProjection(ctx)
+	return p, err
+}
+func (r *conversationRuntime) ownerProjection(ctx context.Context) (protocol.Progress, string, error) {
 	names, err := r.ownerAgentNames(ctx)
 	if err != nil {
-		return protocol.Progress{}, err
+		return protocol.Progress{}, "", err
 	}
 	list, err := r.ownerWaiting(ctx, names, waiting.Options{Now: time.Now()})
 	if err != nil {
-		return protocol.Progress{}, err
+		return protocol.Progress{}, "", err
 	}
 	var units []progress.Unit
 	err = r.db.Read(ctx, func(tx *canon.Tx) error {
@@ -197,7 +201,7 @@ func (r *conversationRuntime) ownerSnapshot(ctx context.Context) (protocol.Progr
 		return err
 	})
 	if err != nil {
-		return protocol.Progress{}, err
+		return protocol.Progress{}, "", err
 	}
 	present := map[string]bool{}
 	for _, u := range units {
@@ -219,18 +223,24 @@ func (r *conversationRuntime) ownerSnapshot(ctx context.Context) (protocol.Progr
 		}
 		rows = append(rows, protocol.ProgressRow{Ref: entry.Ref, Line: line})
 	}
+	// Track the complete list before the Home limit. A change below that limit
+	// must invalidate an open full waiting view even when Home looks identical.
+	full, err := json.Marshal(waitingRows(list))
+	if err != nil {
+		return protocol.Progress{}, "", err
+	}
 	count := min(5, len(list.Entries))
 	list.More = list.Total - count
 	list.Entries = list.Entries[:count]
 	waiting := waitingRows(list)
 	more := number(list.More)
-	return protocol.Progress{Rows: &rows, Waiting: &waiting, WaitingMore: &more}, nil
+	return protocol.Progress{Rows: &rows, Waiting: &waiting, WaitingMore: &more}, string(full), nil
 }
 func (r *conversationRuntime) publishOwnerViews(ctx context.Context) error {
 	v := r.ownerViews
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	p, err := r.ownerSnapshot(ctx)
+	p, fullWaiting, err := r.ownerProjection(ctx)
 	if err != nil {
 		return err
 	}
@@ -241,13 +251,14 @@ func (r *conversationRuntime) publishOwnerViews(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if string(raw) == v.last {
+	identity := string(raw) + "\n" + fullWaiting
+	if identity == v.last {
 		return nil
 	}
 	if err = r.topics.Publish("progress", clientsrv.TopicEvent{Kind: protocol.KindProgressUpdate, Key: "overview", Data: raw}); err != nil {
 		return err
 	}
-	v.last = string(raw)
+	v.last = identity
 	return nil
 }
 func ownerText(p protocol.Progress) string {
