@@ -565,6 +565,50 @@ LINA Core, or the Node on a remote device, starts every worker as a child proces
 - LINA installs no hook, plugin or setting in a worker to obtain a signal.
 - A worker that reports a typed failure (an error code, an authentication or billing category, a rate-limit category) produces a failure event with that type.
 
+### Antigravity headless adapter
+
+Core resolves the installed `agy` executable and runs it as a supervised child
+with `--output-format stream-json`, the task packet on stdin and the task
+worktree as cwd. Its own login, integrations and permission mode remain in use;
+Core provider credentials are filtered from the inherited environment. An
+explicit model may be passed, otherwise none is selected by LINA. Initialization
+must report the requested cwd (and model when requested). The version probe is
+recorded as unverified until a live account round trip establishes compatibility.
+
+The documented `init`, `step_update` and `result` envelopes are the wire boundary.
+A result immediately ends the turn, including while the child remains alive;
+Core then closes and reaps the process tree. EOF without a result, malformed
+output and mismatched conversation identities are failures. `SUCCESS` with
+`denied_actions` is a reported `denied_actions` failure, retaining the denied
+action names. No permission bypass is added. The adapter advertises progress,
+usage and completion; interactive approval replies, dynamic work tools and
+active-turn steering are unsupported in this headless mode.
+
+When `agy`, `git` and `gh` are installed, the running Core exposes `dispatch_work`
+for a complete code-change definition and an existing local GitHub clone. The
+receipt returns immediately. Only its committed conversation tool result releases
+the dispatch. Core validates design references at the chosen base commit and
+creates a distinct branch and worktree. This single-worker increment reserves
+the repository while queued, running or uncertain. It preserves the worktree and
+branch after completion. It does not provide the parallel chooser or merge flow.
+
+After a successful result, Core compares protected refs and changed files with
+the definition, then reads the branch's PR through fixed `gh` calls. Delivery
+requires an open, non-draft PR on the requested base and branch, the actual local
+head, nonempty successful checks, a completed review at that head and no P0/P1
+findings in reviews or inline comments. A second PR read fences a head change
+during the paginated comment read. Pending, missing or failed evidence produces
+`pr_unverified`, never success. Exit code and worker prose supply no PR authority.
+The derived artifact and work receipt are labeled `adapter-derived`; design
+acceptance and merge remain separate and no merge is attempted here.
+
+Task receipts and observations persist in canon and return to the originating
+conversation. A restart never replays completed work. An execution active at
+shutdown becomes unknown and keeps its reservation pending reconciliation.
+`e2e/m3/antigravity.json` drives installed Core, a real worktree/commit and
+recorded worker/GitHub boundaries, including denial, missing result, pending CI
+and restart. This is account-free acceptance, not a live Antigravity login test.
+
 ### Approvals
 
 - When the worker asks for an approval (for Codex: a command, a file change or permissions), the adapter routes the request to the originating conversation, and the person's answer goes back to the worker. On a remote device the Node relays both.

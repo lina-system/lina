@@ -47,6 +47,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/internal/core/waiting"
 	"github.com/thisisjun786/lina/internal/core/work"
+	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/internal/tui/render"
 	"github.com/thisisjun786/lina/kit/grant"
@@ -65,6 +66,7 @@ type acceptedSteering struct {
 }
 
 type conversationRuntime struct {
+	workers      *dispatch.Service
 	work         *work.Service
 	waitingStop  context.CancelFunc
 	waitingDone  chan struct{}
@@ -234,6 +236,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err = r.startWorkWaiting(ctx); err != nil {
 		return nil, err
 	}
+	if err = r.startWorkers(ctx); err != nil {
+		return nil, err
+	}
 	if err = r.startRuns(ctx); err != nil {
 		return nil, err
 	}
@@ -263,6 +268,11 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 }
 func (r *conversationRuntime) Close(ctx context.Context) error {
 	var err error
+	if r.workers != nil {
+		if err = r.workers.Close(ctx); err != nil {
+			return err
+		}
+	}
 	if r.waitingStop != nil {
 		r.waitingStop()
 		select {
@@ -686,6 +696,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 	}
 	defer activity.Release()
 	bindings := map[string]loop.Tool{}
+	if r.router.root.workers != nil {
+		bindings["dispatch_work"] = r.router.root.workers.Tool(dispatch.Origin{Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: turnID})
+	}
 	bindings[runs.StartToolName] = r.background.service.StartTool(r.runOrigin(turnID))
 	var promoted budget.Handle
 	defer func() {
@@ -754,6 +767,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			declarations = append(declarations, coreexec.SkillDeclarations()...)
 			declarations = append(declarations, coreexec.RecordDeclarations()...)
 			declarations = append(declarations, startRunDeclaration())
+			if r.router.root.workers != nil {
+				declarations = append(declarations, dispatch.Declaration())
+			}
 			packet, _, err := atropos.Packet(ctx, minimum, 0, func(ctx context.Context) (assemble.ContextPacket, error) { return r.relationshipPacket(ctx, at) })
 			if err != nil {
 				return turn.PreparedRequest{}, err

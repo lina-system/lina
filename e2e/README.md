@@ -224,3 +224,10 @@ and deleted agents in conversation and management requests, plus channel
 binding/scope replacement. A paired synthetic channel and an existing binding
 exercise the actual target-agent checks. Read-only canon snapshots prove that
 refused requests preserve agent revisions, actions, conversations and bindings.
+
+`m3/antigravity.json` dispatches through installed Core's conversation tool,
+starts its supervised headless worker in a new worktree, produces a real file
+and commit, and verifies a recorded PR at that head. Separate cases cover soft
+denial despite SUCCESS, exit zero without result, pending checks, and durable
+conversation results without execution replay on restart. No personal worker
+account or GitHub write is used.

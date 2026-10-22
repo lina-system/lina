@@ -40,6 +40,7 @@ func Migrations() []Migration {
 		{Version: 26, SQL: WorkSchema},
 		{Version: 27, SQL: RecordsSchema},
 		{Version: 28, SQL: WorkWaitingSchema},
+		{Version: 29, SQL: WorkerDispatchSchema},
 	}
 }
 
@@ -73,6 +74,7 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 		{20, "conversation_order"},
 		{21, "agent_growth_steps"}, {22, "moirai_jobs"}, {22, "budget_usage"},
 		{23, "skill_versions"}, {23, "skill_heads"}, {23, "skill_undone"}, {23, "skill_repo"},
+		{29, "worker_dispatch"},
 		{28, "work_waiting_rounds"}, {28, "work_waiting_decisions"},
 		{26, "work_ledger"}, {26, "work_cards"}, {26, "work_active_runs"},
 	} {
