@@ -815,3 +815,48 @@ test('QA guide and repository opt-in have registered verification', () => {
   assert.equal(kind('docs/qa.md'), 'docs');
   assert.equal(kind('.devflow'), 'automation');
 });
+
+test('worker and vendored protocol select Core checks and vendor integrity', t => {
+  const r = repository(t);
+  const base = r.git('rev-parse', 'HEAD');
+  for (const path of ['internal/core/worker/adapter.go', 'third_party/codex-app-server/upstream/types.go']) {
+    mkdirSync(join(r.cwd, path, '..'), { recursive: true });
+    writeFileSync(join(r.cwd, path), 'package worker\n');
+  }
+  const scope = r.classify(r.commit(), { base, full: true });
+  assert.deepEqual(scope.unmapped, []);
+  assert.ok(scope.dependencies);
+  const lina = componentRegistry.find(component => component.name === 'lina');
+  assert.ok(lina.packages.includes('./internal/core/worker/...'));
+  assert.ok(lina.packages.includes('./third_party/codex-app-server/upstream/...'));
+  assert.equal(kind('third_party/codex-app-server/vendor.json'), 'dependencies');
+  assert.equal(kind('third_party/codex-app-server/upstream/types.go'), 'dependencies');
+});
+
+test('vendored manifest edits and removals keep dependencies selected', t => {
+  const r = repository(t);
+  for (const [path, source] of Object.entries({
+    'go.mod': 'module example.invalid/lina\ngo 1.27\ntoolchain go1.27.3\n',
+    'kit/go.mod': 'module example.invalid/lina/kit\ngo 1.27\ntoolchain go1.27.3\n',
+    'go.work': 'go 1.27\ntoolchain go1.27.3\nuse (\n.\n./kit\n)\n',
+    'kit/doc.go': 'package kit\n',
+    'doc.go': 'package lina\n',
+    'cmd/lina/main.go': 'package main\nfunc main() {}\n',
+    'internal/core/worker/adapter.go': 'package worker\n',
+    'third_party/codex-app-server/upstream/types.go': 'package protocol\n',
+    'third_party/codex-app-server/vendor.json': '{}\n',
+  })) {
+    mkdirSync(join(r.cwd, path, '..'), { recursive: true });
+    writeFileSync(join(r.cwd, path), source);
+  }
+  const base = r.commit();
+  writeFileSync(join(r.cwd, 'third_party/codex-app-server/vendor.json'), '{"changed":true}\n');
+  for (const removed of [false, true]) {
+    if (removed) rmSync(join(r.cwd, 'third_party/codex-app-server'), { recursive: true });
+    const scope = r.classify('HEAD', { base });
+    assert.ok(scope.dependencies);
+    assert.ok(scope.selectedComponents.includes('lina'));
+    assert.deepEqual(scope.unmapped, []);
+    assert.notEqual(scope.mode, 'docs');
+  }
+});

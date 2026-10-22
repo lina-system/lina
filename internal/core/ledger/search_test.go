@@ -278,3 +278,30 @@ func TestKoreanSearchIsolatesPeopleAndTheirReplies(t *testing.T) {
 		t.Fatalf("foreign backfill affected owner: %v %v", hits, err)
 	}
 }
+
+func TestSearchReturnsLongReplyOnceIncludingLegacyCards(t *testing.T) {
+	db, _ := database(t)
+	store := ledger.New(db, nil)
+	owner := input("question")
+	owner.Body = "Please explain the subject."
+	admit(t, store, guard.EntryOwner, owner)
+	source := input("source")
+	source.PersonID = ""
+	source.Body = "Synthetic long reply with a unique recall needle."
+	admit(t, store, guard.EntryAgent, source)
+	card := input("legacy-card")
+	card.PersonID = ""
+	card.ScaffoldKind = "result"
+	card.ParentID = source.ID
+	card.Relations = []ledger.Relation{{Kind: "view_of", TargetID: source.ID}}
+	card.Body = `{"type":"document_draft","text":"` + source.Body + `"}`
+	admit(t, store, guard.EntryAgent, card)
+	hits, err := store.Search(t.Context(), ledger.SearchQuery{AgentID: "agent", PersonID: "owner", Text: "unique recall needle", Limit: 1})
+	if err != nil || len(hits) != 1 || hits[0].ID != source.ID {
+		t.Fatalf("recall: %+v %v", hits, err)
+	}
+	hits, err = store.Search(t.Context(), ledger.SearchQuery{AgentID: "agent", PersonID: "owner", Text: "unique recall needle"})
+	if err != nil || len(hits) != 1 || hits[0].ID != source.ID {
+		t.Fatalf("recall: %+v %v", hits, err)
+	}
+}

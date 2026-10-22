@@ -80,7 +80,9 @@ func TestM1ConversationHistoryOrder(t *testing.T) {
 			waitScreen(t, h, terminal, "Ctrl+D")
 			// Controls can appear before negotiation permits input. Wait for Live.
 			waitScreen(t, h, terminal, design.Text(design.English, "live"))
-			h.keys(terminal, scenario.FirstInput+"\r")
+			h.keys(terminal, scenario.FirstInput)
+			waitScreen(t, h, terminal, scenario.FirstInput)
+			h.keys(terminal, "\r")
 			select {
 			case <-started:
 			case <-h.ctx.Done():
