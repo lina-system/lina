@@ -59,7 +59,7 @@ func TestSwitchBlocksLiveWorkerBeforeLaunchAndSteering(t *testing.T) {
 	// No activity registry or installed executable: any attempted launch would
 	// fail this test before the expected, durable admission refusal.
 	result, err := r.workerOperation(t.Context(), "worker_start", "turn", ledger.Event{}, in)
-	if err != nil || result.State != tools.Failed {
+	if err != nil || result.State != tools.Failed || !strings.Contains(string(result.Body), work.ErrControlHeld.Error()) {
 		t.Fatal("dispatch bypassed switch gate", result, err)
 	}
 	sw := work.Switch{ID: "switch", Owner: r.person, Approval: "approval", Snapshot: strings.Repeat("a", 64), Tasks: []string{task.ID}}

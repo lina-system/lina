@@ -46,7 +46,8 @@ func Migrations() []Migration {
 		{Version: 32, SQL: DiscordSchema},
 		{Version: 33, SQL: recordsKoreanSearchSchema},
 		{Version: 34, SQL: WaitingDecisionsSchema},
-		{Version: 35, SQL: WorkSwitchSchema},
+		{Version: 35, SQL: presetEffectsSchema},
+		{Version: 36, SQL: WorkSwitchSchema},
 	}
 }
 
@@ -82,11 +83,12 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 		{23, "skill_versions"}, {23, "skill_heads"}, {23, "skill_undone"}, {23, "skill_repo"},
 		{31, "worker_dispatch"},
 		{34, "waiting_decisions"},
-		{35, "work_worker_reservations"}, {35, "work_switches"}, {35, "work_switch_tasks"}, {35, "work_switch_events"},
+		{36, "work_worker_reservations"}, {36, "work_switches"}, {36, "work_switch_tasks"}, {36, "work_switch_events"},
 		{28, "work_waiting_rounds"}, {28, "work_waiting_decisions"},
 		{26, "work_ledger"}, {26, "work_cards"}, {26, "work_active_runs"},
 		{30, "authority_merges"},
 		{32, "discord_presentations"}, {32, "discord_buttons"}, {32, "channel_steering"},
+		{35, "authority_delegations"}, {35, "coding_managers"}, {35, "coding_assignments"},
 	} {
 		var count int
 		if err = db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name=?", entry.table).Scan(&count); err != nil {

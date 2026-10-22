@@ -119,9 +119,12 @@ func TestM3OperationalSwitch(t *testing.T) {
 	var providerCalls atomic.Int32
 	var control map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req struct{ Input []json.RawMessage }
+		var req struct{ Input, Tools []json.RawMessage }
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Error(err)
+			return
+		}
+		if scriptedCodingManager(t, w, req) {
 			return
 		}
 		n := providerCalls.Add(1)
