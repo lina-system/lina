@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -41,12 +42,53 @@ func (s *Service) execute(r Record) {
 	}
 	defer l.Release()
 	owner := proc.NewOwner()
-	defer owner.Close(context.Background())
+	service := work.New(s.cfg.DB)
+	var reservations []string
+	defer func() {
+		// The adapter's later defer joins its process tree first. Join Git's
+		// process owner too before releasing any directory reservation.
+		if err := owner.Close(context.Background()); err != nil {
+			admitted, settled = true, false
+			r.Code = "cleanup_failed"
+			return
+		}
+		if len(reservations) > 0 && (!admitted || settled) {
+			if err := service.ReleaseWorker(context.Background(), reservations...); err != nil {
+				admitted, settled = true, false
+				r.Code = "reservation_unreleased"
+			}
+		}
+	}()
 	git := func(dir string, args ...string) (string, error) { return s.command(ctx, l, owner, dir, args...) }
 	d := r.Definition
 	repo, err := filepath.EvalSymlinks(d.Repository)
 	if err != nil {
 		return
+	}
+	common, err := git(repo, "rev-parse", "--git-common-dir")
+	if err != nil {
+		return
+	}
+	if !filepath.IsAbs(common) {
+		common = filepath.Join(repo, common)
+	}
+	taskRoot := filepath.Join(s.cfg.Root, "work", "tasks", r.ID)
+	workdir := filepath.Join(s.cfg.Root, "work", "worktrees", r.ID)
+	directories := []work.WorkerDirectory{
+		{ID: r.ID + ":repository", Path: repo},
+		{ID: r.ID + ":git", Path: common},
+		{ID: r.ID + ":worktree", Path: workdir},
+		{ID: r.ID + ":artifacts", Path: taskRoot},
+	}
+	if err = service.ReserveWorkerDirectories(ctx, directories); err != nil {
+		r.Code = "admission_refused"
+		if errors.Is(err, work.ErrControlHeld) {
+			r.Code = "control_held"
+		}
+		return
+	}
+	for _, directory := range directories {
+		reservations = append(reservations, directory.ID)
 	}
 	remote, err := git(repo, "remote", "get-url", "origin")
 	if err != nil {
@@ -84,15 +126,12 @@ func (s *Service) execute(r Record) {
 			return
 		}
 	}
-	taskRoot := filepath.Join(s.cfg.Root, "work", "tasks", r.ID)
-	workdir := filepath.Join(s.cfg.Root, "work", "worktrees", r.ID)
 	if err = os.MkdirAll(taskRoot, 0700); err != nil {
 		return
 	}
 	if err = os.MkdirAll(filepath.Dir(workdir), 0700); err != nil {
 		return
 	}
-	service := work.New(s.cfg.DB)
 	if err = service.Create(ctx, work.Task{ID: r.ID, PersonID: r.Origin.Person, AgentID: r.Origin.Agent, ConversationID: r.Origin.Conversation, Title: d.What, Done: d.Done, ArtifactRoots: []string{taskRoot}, RequiresApply: true}); err != nil {
 		return
 	}
@@ -100,7 +139,12 @@ func (s *Service) execute(r Record) {
 		return
 	}
 	adapter := antigravity.New(antigravity.Config{Binary: s.cfg.Binary, Environment: s.cfg.Environment, Epoch: s.cfg.Epoch, Leaser: s.cfg.Activities})
-	defer adapter.Close(context.Background())
+	defer func() {
+		if err := adapter.Close(context.Background()); err != nil {
+			admitted, settled = true, false
+			r.Code = "cleanup_failed"
+		}
+	}()
 	r.Version, err = adapter.Version(ctx)
 	if err != nil {
 		return
@@ -109,6 +153,15 @@ func (s *Service) execute(r Record) {
 	if err != nil {
 		return
 	}
+	for _, directory := range directories {
+		if err = service.CheckWorker(ctx, directory.ID); err != nil {
+			r.Code = "control_held"
+			return
+		}
+	}
+	// Start can have effects before returning an error. Keep its reservations
+	// until an authoritative result and the durable task finish settle it.
+	admitted = true
 	thread, err := adapter.Start(ctx, l, worker.StartSpec{TaskID: r.ID, AttemptID: r.ID + ":1", Workdir: workdir, TaskPacket: "Implement this task definition in this worktree using your own setup. Open the branch's pull request, wait for its checks and review, handle failures and report the result. Do not change protected base refs.\n" + string(packet)})
 	if err != nil {
 		return
@@ -117,7 +170,6 @@ func (s *Service) execute(r Record) {
 	if err = service.Start(ctx, run); err != nil {
 		return
 	}
-	admitted = true
 	var finish worker.Finish
 	waiting := true
 	for waiting {
@@ -137,6 +189,10 @@ func (s *Service) execute(r Record) {
 	}
 	// End the task process tree even if it kept stdout open after its result.
 	if err = adapter.Close(ctx); err != nil {
+		return
+	}
+	if finish.Failure == worker.ConnectionFailure && finish.Code == "missing_result" {
+		r.Code = finish.Code
 		return
 	}
 	r.State = "finished"
