@@ -19,6 +19,8 @@ import (
 )
 
 func TestM1ConversationHistoryOrder(t *testing.T) {
+	t.Parallel()
+
 	var scenario struct {
 		Width, Height int
 		FirstInput    string `json:"first_input"`

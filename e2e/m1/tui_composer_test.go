@@ -19,6 +19,8 @@ import (
 )
 
 func TestM1TUIComposer(t *testing.T) {
+	t.Parallel()
+
 	data, err := os.ReadFile("tui-composer.json")
 	if err != nil {
 		t.Fatal(err)

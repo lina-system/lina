@@ -7,14 +7,23 @@ edit against an old revision while Core stays running. It is supporting
 protocol evidence; the [Linux non-competition ladder](../evidence/non-competition/README.md)
 still requires human concurrent-session measurements.
 
-Run `go test ./e2e/m1/...` (or `go test -count=1 -v ./e2e/...` for uncached scenario
+Run `go test -parallel=4 ./e2e/m1/...` (or `go test -count=1 -parallel=4 -v ./e2e/...` for uncached scenario
 output). Node.js and the workspace's Go toolchain are required. The harness uses
 native Linux and macOS pseudo-terminals; it needs no window, display server,
 provider account, external network service or human input. Conversation screens
 use the pinned terminal library and a VT emulator.
 
 The suite builds each command once per test run and removes the shared binaries
-after all scenarios finish. Foundation enumerates the acceptance tests and runs two disjoint batches under its shared components budget. This keeps a growing corpus from exhausting one package watchdog while preserving every scenario, assertion and operation deadline. A direct `go test ./e2e/...` still runs the complete suite in one process. Each scenario starts real Core with a synthetic
+after all scenarios finish. Foundation enumerates the acceptance tests and runs
+three disjoint batches under its shared components budget. This keeps a growing
+corpus from exhausting one package watchdog while preserving every scenario,
+assertion and operation deadline. Independent scenarios call `t.Parallel()` and
+foundation limits each batch to four concurrent tests, including parallel
+subtests. Each scenario owns its state, sockets, provider fixtures and cleanup;
+the shared command-build cache is locked and removed after `m.Run`.
+Same-bot Telegram scenarios, the Claude credential update scenario, environment-mutating tests, live-provider checks and subprocess entry points stay
+serial. A direct `go test -parallel=4 ./e2e/...` still runs the complete suite in
+one process. Each scenario starts real Core with a synthetic
 installed identity and a private temporary state root, and connects a generated-type JSON-RPC client
 to its Unix socket. A second process runs real `lina tui` with a controlling PTY
 at 80 by 24 cells. The script waits for the `live` connection-state code, sends an
@@ -44,6 +53,11 @@ input reaches the provider exactly once; no sleeps establish display state.
 fixture provider in a 100x34 PTY. Parsed cells check speaker marks, foregrounds,
 header bold and exactly one empty row between messages. ASCII runs retain words;
 `NO_COLOR` runs retain ASCII speaker identity and emit no terminal escapes.
+
+`TestM1TUISpeakerBoundariesInstalledCore` creates and selects a long-named agent
+through the real TUI, then requests a fenced Korean reply from installed Core
+in a 40x34 ASCII PTY. It checks provider routing, usable reply width, literal
+empty code boundary rows, and stable completion metadata across draft redraws.
 
 `TestM1TUIIdentityFromAgentStore` installs a synthetic named agent with four
 distinct persona layers, types "who are you" through the real TUI, and checks
@@ -272,6 +286,12 @@ covered by the worker adapter scenarios. Run with
 and chooses another agent through the real TUI. It checks that the empty composer,
 header and reply speaker name that agent before and after Core reconnect, using
 a loopback Responses fixture and a real PTY.
+
+`m2/records-korean-search.json` runs the installed Core and a real PTY TUI
+against a loopback Responses fixture. It saves a Korean memo, checks the
+attached-word and list controls, searches by the noun before and after an edit,
+restarts Core and checks the same id, revision and note through search and read.
+Run `go test -count=1 ./e2e/m1 -run '^TestM2KoreanRecordSearchInstalledTUI$'`.
 
 `m2/github-ci.json` starts the real Core binary with a synthetic `gh` executable
 in its isolated PATH. It negotiates the GitHub capability, refuses an unnegotiated

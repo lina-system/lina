@@ -23,6 +23,8 @@ import (
 )
 
 func TestM2WorkArea(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile("../m2/work-area.json")
 	if err != nil {
 		t.Fatal(err)
@@ -161,6 +163,19 @@ func TestM2WorkArea(t *testing.T) {
 	}
 	if git(peer.Path, "rev-parse", "HEAD") != peerBase || git(allocated.Path, "rev-parse", "HEAD") != head {
 		t.Fatal("Core changed an existing task or did not pin the new base")
+	}
+	// The peer owns its name before creating its branch. A worker must not
+	// steal that reservation by renaming its own completed result into it.
+	for _, flag := range []string{"-m", "-M"} {
+		rejected := exec.Command("git", "branch", flag, branch, peer.Spec.Branch)
+		rejected.Dir = allocated.Path
+		rejected.Env = []string{"PATH=" + os.Getenv("PATH"), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null"}
+		if b, e := rejected.CombinedOutput(); e == nil || !strings.Contains(string(b), "LINA protected ref") {
+			t.Fatalf("worker renamed result into peer's reserved branch: %v %s", e, b)
+		}
+		if git(allocated.Path, "symbolic-ref", "HEAD") != "refs/heads/"+branch || git(allocated.Path, "rev-parse", "HEAD") != head {
+			t.Fatal("rejected rename stranded the original result")
+		}
 	}
 	git(peer.Path, "switch", "-c", peer.Spec.Branch)
 	git(peer.Path, "commit", "--allow-empty", "-m", "peer result")

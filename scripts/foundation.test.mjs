@@ -192,6 +192,13 @@ process.exitCode = 0;
   }
   sb.write(work, 'doc.go', 'package lina\n');
   sb.write(work, 'kit/doc.go', 'package kit\n');
+  sb.write(work, 'e2e/scenario_test.go', `// SPDX-License-Identifier: Apache-2.0
+package e2e
+import "testing"
+func TestOne(t *testing.T) { t.Parallel() }
+func TestTwo(t *testing.T) { t.Parallel() }
+func TestThree(t *testing.T) { t.Parallel() }
+`);
   for (const name of ['lina', 'lina-node']) sb.write(work, `cmd/${name}/main.go`,
     'package main\nimport ("fmt"; "os")\nfunc main() { fmt.Fprintln(os.Stderr, "usage: fixture"); os.Exit(64) }\n');
   sb.commit(work, 'feat: Go components');
@@ -201,6 +208,9 @@ process.exitCode = 0;
   assert.equal(green.evidence.checks.components.result, 'success');
   assert.equal(green.evidence.checks.dependencies.result, 'success');
   assert.equal(green.evidence.tools.go, 'go1.27.3');
+  const acceptance = green.stderr.split('\n').filter(line => /^ok\s+.*\/e2e\s+/.test(line));
+  assert.equal(acceptance.length, 3, 'successful logs retain all three batch timings, without the enumeration timing');
+  for (const line of acceptance) assert.match(line, /\d+\.\d+s$/);
   sb.commit(work, 'docs: change', { 'README.md': '# Updated fixture\n' });
   assert.equal(foundation(sb, work).evidence.checks.components.result, 'skipped');
   assert.equal(foundation(sb, work).evidence.checks.dependencies.result, 'skipped');
