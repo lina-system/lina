@@ -639,10 +639,16 @@ bounded `--version` output, observed status and the bundle's verified version
 list. `--tool name=/absolute/path` overrides PATH discovery for a named tool.
 Probes are bounded, missing or unstartable tools do not block installation, and
 unverified versions are listed together with the verified versions and remain
-usable. A missing verified list is empty, never an implicit verification.
+usable. The list comes from `verifiedWorkerVersions`; for Codex, install compares
+versions after removing the optional `codex-cli ` prefix on both sides, while
+preserving the original output and list in the inventory. An older or otherwise
+unlisted version stays unverified. A missing verified list is empty, never an
+implicit verification.
 `system/install.json` records the identity, socket, tools and missing optional
-components. The bundle's optional `verifiedTools` and `installFiles` fields are
-described in [packaging](../../packaging/README.md). Adapter files and their
+components. The bundle's optional `verifiedWorkerVersions` and `installFiles` fields are
+described in [packaging](../../packaging/README.md). The legacy `verifiedTools`
+field remains a fallback only when `verifiedWorkerVersions` is absent or null;
+an empty canonical map does not inherit legacy verification. Adapter files and their
 lockfile are copied only after digest verification; no SDK or user tool is
 downloaded during install. Until the build includes Claude adapter artifacts,
 that provider is reported unavailable. Missing background-worker artifacts
@@ -713,6 +719,7 @@ The initial JSON object contains these required fields; later implementation iss
 | `kitVersion` | Positive integer read from `kit/VERSION`, initially `1`. |
 | `sqlite` | Object with binding `module`, exact `version`, Go `moduleSum` (`h1:`), `sqliteVersion`, `wasmSHA256` (64 lowercase hex characters), `execution: "wazero"`, and `sqliteVec` (exact `version` and `sha256` of the complete custom Wasm engine; older manifests may have null). |
 | `providers.chatgpt` | `adapter: "responses"`, `retryCount: 0`, and `requestFields`, the explicit array of allowed top-level request fields. |
+| `verifiedWorkerVersions` | Optional object mapping worker names to verified version arrays; `codex` uses bare versions from the adapter's `versions.json`, such as `["0.163.0"]`. |
 | `binaries` | Array of objects with `name` (basename), `size` (positive byte count), and `sha256` (64 lowercase hexadecimal characters). Includes both `lina` and `lina-node`, with platform suffixes. |
 
 The writer copies `providers` from `kit/provider/responses/manifest.json` and checks its adapter identity and zero retry count. The Responses adapter reads that configuration from the generated manifest, validates required and forbidden fields, and permits per-request narrowing only. The initial list is exercised by scripted wires; live V1 acceptance remains required before conversation acceptance.

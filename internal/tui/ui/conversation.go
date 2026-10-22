@@ -430,6 +430,9 @@ func (m *shellModel) topicBlocks(topic string) []state.Block {
 	var blocks []state.Block
 	for _, b := range m.content.Blocks {
 		if b.Topic == topic {
+			if topic == "running" && b.RunState != "" {
+				b.Text = m.runningRowText(b)
+			}
 			if b.Card != nil {
 				card := *b.Card
 				for _, current := range m.content.Cards {
