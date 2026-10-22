@@ -265,6 +265,8 @@ One connection reaches every agent of the main. A conversation kind, and a quest
 | Web setup | Inspect, set or remove the web provider key through a private settings form; the key passes to Core once and is never returned |
 | Agent exchanges | Read the agent talk log, expand one exchange, and subscribe to log entries and to the flag that an exchange needs the person |
 
+Channel control requests accept an optional `platform` (`telegram` or `discord`); omission retains Telegram. List returns both platforms, while every mutation identifies the bot within its selected platform. The platform never comes from token syntax or a conversation message.
+
 The running-list projection also carries delegated task cards. Their opaque row ids
 use a `task:` prefix and bind the execution generation; `running_get` with `open` returns a paged, source-labeled
 summary, and `dismiss` hides only landed cards. These read/open/dismiss operations
@@ -523,3 +525,21 @@ person, requesting agent, exact displayed arguments and revision. An
 `approval_answer` uses the existing authenticated owner decision path; it cannot
 supply a worker thread or change its arguments. Older approval producers omit
 this optional field. Worker questions use the existing `question.conversation_id`.
+
+### Developer worker lanes
+
+The optional `worker_lanes` capability (1.0) grants the read-only `progress_get`
+request and its `progress` response. An absent `after` starts at the first task;
+otherwise it is an opaque source/id cursor. `lanes` is a page of at most 32 current
+worker executions, with `next_cursor` when another visible row exists. Durable
+work rows are followed by installed Codex runtime sessions, whose adapter
+snapshots preserve active, idle, waiting, dead and unknown states without
+claiming verified delivery. Runtime detail contains masked worker output and
+version; the entire runtime-page snapshot attempt has a five-second deadline,
+and unavailable snapshots remain visible as unknown. Generated
+`WorkerLane` fields carry persona, task and execution identities, display names,
+state and source-labeled stage details. Core authorizes the connected person and
+filters deleted personas and foreign-person records before pagination. Each page
+is one canon snapshot; a refresh starts a new snapshot. This request adds no
+subscription or execution authority and does not change the existing `progress`
+status-topic capability. The TUI retains fold/selection state locally by lane id.

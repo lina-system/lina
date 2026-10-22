@@ -1,0 +1,155 @@
+{
+  "id": null,
+  "tier": null,
+  "column": null,
+  "host": {
+    "installation_id": null,
+    "os": null,
+    "version": null,
+    "install_mode": null
+  },
+  "session": {
+    "os_user": null,
+    "human_gui_session": null,
+    "gui_session": null,
+    "profile": null,
+    "task_id": null,
+    "grant_id": null,
+    "seat_lease": null,
+    "human_profiles": []
+  },
+  "hardware": {
+    "cpu": null,
+    "memory_bytes": null,
+    "devices": []
+  },
+  "artifacts": {
+    "core": {
+      "version": null,
+      "manifest_sha256": null
+    },
+    "node": {
+      "version": null,
+      "manifest_sha256": null
+    },
+    "app": {
+      "version": null,
+      "manifest_sha256": null
+    },
+    "os": {
+      "version": null,
+      "manifest_sha256": null
+    },
+    "claude_adapter": {
+      "version": null,
+      "manifest_sha256": null
+    }
+  },
+  "workload": {
+    "human": null,
+    "lina": null,
+    "life": null,
+    "agents_total": null,
+    "agents_background": null,
+    "background_runs": null,
+    "claude_account": null,
+    "full_background_load": null,
+    "human_working": null,
+    "lina_working": null,
+    "processes": [
+      {
+        "id": null,
+        "role": null,
+        "activity": null
+      }
+    ],
+    "normal_load": []
+  },
+  "observation": {
+    "method": "manual_linux",
+    "observer": null,
+    "started_at": null,
+    "ended_at": null
+  },
+  "traces": {
+    "input": {
+      "path": null,
+      "sha256": null,
+      "task_id": null,
+      "grant_id": null,
+      "started_at": null,
+      "ended_at": null
+    },
+    "focus": {
+      "path": null,
+      "sha256": null,
+      "task_id": null,
+      "grant_id": null,
+      "started_at": null,
+      "ended_at": null
+    },
+    "clipboard": {
+      "path": null,
+      "sha256": null,
+      "task_id": null,
+      "grant_id": null,
+      "started_at": null,
+      "ended_at": null
+    },
+    "files": {
+      "path": null,
+      "sha256": null,
+      "task_id": null,
+      "grant_id": null,
+      "started_at": null,
+      "ended_at": null
+    }
+  },
+  "bounds": {
+    "declared_at": null,
+    "input_latency_ms": null,
+    "yield_ms": null,
+    "recovery_ms": null,
+    "processes": [
+      {
+        "id": null,
+        "cpu_percent": null,
+        "resident_bytes": null
+      }
+    ]
+  },
+  "measured": {
+    "focus_steals": null,
+    "injected_inputs": null,
+    "clipboard_reads": null,
+    "clipboard_writes": null,
+    "out_of_scope_accesses": null,
+    "lost_edits": null,
+    "human_processes_killed": null,
+    "input_latency_ms": null,
+    "yield_ms": null,
+    "recovery_ms": null,
+    "stale_write_exercised": null,
+    "stale_write_rejected": null,
+    "lock_exercised": null,
+    "locked_session_blocked": null,
+    "stale_unlock_blocked": null,
+    "sleep_exercised": null,
+    "expired_resume_blocked": null,
+    "stale_resume_blocked": null,
+    "observed_disconnect_exercised": null,
+    "new_work_blocked": null,
+    "cancellation_requested": null,
+    "silent_disconnect_exercised": null,
+    "expiry_blocked": null,
+    "human_session_untouched": null,
+    "processes": [
+      {
+        "id": null,
+        "cpu_percent": null,
+        "resident_bytes": null
+      }
+    ]
+  },
+  "result": null
+}

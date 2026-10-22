@@ -111,8 +111,12 @@ destination. The connected conversation state is a usable input boundary, not
 just a successful socket handshake. Input typed during discovery remains a
 draft; discovery never sends it automatically.
 
-Quit (Ctrl+C with an empty draft or Ctrl+D), input EOF and termination signals close only this
-client and exit 0, including during handshake or retry. The raw terminal reader
+Quit (a second Ctrl+C on an empty draft within two seconds, or Ctrl+D), input
+EOF and termination signals close only this client and exit 0, including during
+handshake or retry. The first empty-draft Ctrl+C shows the localized
+`Ctrl+C again to quit` hint in the status row; it disappears after two seconds
+even when no further input or Core event arrives. A later Ctrl+C starts a new
+confirmation window. The raw terminal reader
 ignores releases, toggle repeats and pasted quit text. Nonterminal input keeps
 the handshake-then-read behavior: it does not discover a conversation destination,
 and reports Live (`live` on plain output) after the validated welcome even when no
@@ -392,6 +396,21 @@ and Page Down move through the retained conversation. Tab switches composer and
 card focus; arrows select a result card. The composer keeps its draft when an
 overlay opens or connection status changes. An identical frame and cursor is
 not submitted to the renderer, and the plain display writes no duplicate frame.
+In the colour conversation, the mouse wheel over the transcript moves three
+rows per notch. Same-direction repeats within 120 ms add three rows to the
+step, capped at twelve; idle input or a direction change resets it to three.
+The latest position follows arriving output. Scrolling up retains the first
+visible block and row when output arrives, including streamed and completed
+replies and same-identity resyncs. While away from the latest position, changed
+output below the viewport adds the localized `↓ new messages · End` marker to
+the status row. End returns to the latest output, clears the marker and resumes
+following. Scroll keys preserve the composer draft. When the transcript exceeds
+its region, the status row adds the localized `PgUp scroll` hint only if it fits;
+this optional hint is dropped before existing status and the new-output marker.
+The wheel does not act through an overlay or outside the conversation region.
+`TestM1TUIWheelStickyConversation` exercises the installed Core and real TUI in
+a 100×34 PTY, sends SGR wheel input, compares the retained rows after a second
+reply, and verifies End and mouse-mode cleanup.
 For the colour conversation screen, each new size reaches the cell renderer
 before its reflowed view, even if the view text is unchanged. The connection owner's latest dimensions remain authoritative: late renderer startup size messages are discarded before they can resize the cell buffer. Resizing keeps the
 draft and redraws header, status and composer within the current row budget;
@@ -630,7 +649,7 @@ Contract: [surfaces.md](surfaces.md#agent-surfaces), [surfaces.md](surfaces.md#s
 
 - **Board:** three groups of one-line rows (Waiting for me, Running, Done). Enter unfolds a row, with keys for the actions that apply.
 - **Steering:** `/note` queues a note for the run's next step, which is the follow-up of the running list. Esc or `/stop` on a row stops it.
-- **Agent tree and lanes (developer view):** indented lines (the persona as initial and name, sub-agents as plain indented text, workers as `[name]`), one line per worker for lanes, hand-offs as arrows, folded to one line by default.
+- **Agent tree and lanes (developer view):** indented lines (the persona as initial and name, sub-agents as plain indented text, workers as `[name]`), one line per worker for lanes, hand-offs as arrows, folded to one line by default. `/developer` opts into the recorded worker view through the `worker_lanes` capability. Core supplies each persona's name and each current task execution's worker/session identity; two sessions using the same tool remain separate lanes. Persona headings show initial and name, and indented `[worker] › task` lines are clipped to one physical row. Enter toggles the selected lane's thread, turn, node, generation and source-labeled stage summaries. Up/Down selects; `r` refreshes the current first page and `n` replaces it with the next bounded page. Refresh preserves selected and expanded identities; new executions start folded. Esc returns to the composer. Closing/reopening or reconnecting discards this view's expansion state and pending responses. No sub-agent relationship is inferred from worker names or text; the work ledger and installed worker runtime supply persona-to-worker edges only. Runtime sessions retain their adapter state and show masked output/version on expansion.
 - **Usage meter:** one line per connected account: plan, state, a block-character meter or "unknown".
 
 Settings are commands and labeled blocks, all requests to Core:
@@ -742,10 +761,13 @@ pasted `?` remain ordinary input. Toggle repeats and releases never open it.
 The conversation footer keeps the connection mark and localized word first.
 It adds whole key-and-label hints in ascending priority, dropping the lowest
 priorities first when their display-cell width does not fit. The highest priority
-is `? Shortcuts`, followed by Esc, Enter, Ctrl+D, Alt+Enter, PgUp/PgDn, Ctrl+O and
-F6, with Ctrl+T for the retained transcript following those hints. Notices and cause details may be shortened to leave space for the connection
+is `? Shortcuts`, followed by Esc, Enter, Ctrl+D, Alt+Enter, Ctrl+O and
+F6, with Ctrl+T for the retained transcript following those hints. When the
+conversation overflows, `PgUp scroll` is the last optional hint and is dropped first. Notices and cause details may be shortened to leave space for the connection
 and the first hint. At every supported width (40 columns and above), neither the
-connection nor the first hint is dropped. Below the supported minimum, physical
+connection nor the first hint is dropped, except that the new-output marker
+reserves space ahead of shortcut hints while reading older output. End is also
+listed in the shortcut sheet as the return-to-latest action. Below the supported minimum, physical
 cell limits still apply. Pager overlays and side panes retain the connection with
 whole pager hints (Esc, search, next match), rather than replacing it with controls.
 Both English and Korean labels come from the catalog.
@@ -764,7 +786,8 @@ and limits are recorded in [the shortcut reference](tui-shortcuts-reference.md).
 | Up on the first composer line | Recall an older sent input; otherwise move the cursor up |
 | Down on the last composer line | Recall a newer input, then restore the unsent draft; otherwise move the cursor down |
 | Esc | Close the top overlay; with none, interrupt the turn |
-| Ctrl+C | Clear the draft; with an empty draft, quit the TUI only, never Core |
+| Ctrl+C | Clear the draft; with an empty draft, show `Ctrl+C again to quit` for two seconds; a second press within that window quits only the TUI |
+| Ctrl+D | Quit the TUI immediately (question forms retain their decline action) |
 | Tab, Shift+Tab | Move focus |
 | ?, /help | Open the shortcut sheet (`?` requires an empty draft) |
 | Ctrl+D | Quit this TUI |
@@ -773,7 +796,25 @@ and limits are recorded in [the shortcut reference](tui-shortcuts-reference.md).
 | Ctrl+W, Ctrl+P, Ctrl+R | Waiting for me, progress, running list |
 | Ctrl+O | Open the selected result |
 | F6 | Open the first unresolved decision |
+| End | Return to the latest conversation output and resume following |
+| Mouse wheel over the conversation | Scroll three rows, accelerated on fast repeats |
 | Ctrl+T | Open the retained conversation transcript in the pager |
+
+Clearing a draft (including attachments) cancels any pending quit confirmation
+and does not start another. The two-second window is exclusive at its end:
+a press at or after expiry starts a fresh hint. This local display state never
+enters conversation history and never sends a Core interrupt. Esc retains its
+turn-interrupt action. Existing overlays retain their own input handling.
+The confirmation uses the injected model clock and the same press-only gate as
+other toggles; repeats, releases and pasted control text cannot arm or confirm it.
+A single cancellable timer in the client input loop expires and redraws the hint
+without blocking input, retries or shutdown.
+
+`e2e/m1/tui_lifecycle_test.go` observes the real PTY hint and its disappearance
+before sending the next key, checks exit 0 and terminal restoration, and proves
+Core remains available. Exact timing boundaries use an injected clock in unit
+tests. The [behaviour reference](../../internal/tui/ui/REFERENCE.md) records what
+was observed in Hermes and what LINA specifies independently.
 
 Key classes are Toggle, Edit and Approve. Every key event passes one `Admit` gate: releases are ignored, repeats are dropped for Toggle and Approve, and Edit keys may repeat. Without key events from the terminal every key counts as a press, and approval cards add a dead time after any change of card (P).
 
@@ -786,6 +827,15 @@ The terminal input adapter decodes enhanced keys before dispatch and excludes
 paste and terminal replies from key actions. Cancellation drains pending decoder
 events without dispatching them, joins the input reader, and closes only its own
 cancellation resources before the caller restores terminal mode.
+
+Mouse support is wheel-only in the colour conversation renderer. It enables
+DEC normal mouse reporting (1000) with SGR coordinates (1006), dispatches only
+wheel events and ignores button presses/releases. It never requests cell-motion
+(1002) or all-motion (1003) reporting. Both enabled modes are disabled when the
+renderer exits, including cancellation. Native text selection stays the
+terminal's responsibility: hold Shift while dragging in xterm or GNOME Terminal,
+or Option while dragging in iTerm2. Other terminals may configure their own
+mouse-reporting override. LINA neither selects text nor reads the clipboard.
 
 **Mid-turn input** is steering by default and applies at the next round boundary ([runtime.md](runtime.md#conversation-loop)). `/queue` makes the input a follow-up. `/stop` cancels.
 
@@ -1123,7 +1173,7 @@ removed and requires connection-only startup.
 
 Withdrawn without an id: the hand-off pane, which the agent talk log replaces, and the work-panel worker mirror, which no contract defines.
 
-Open points, each decided by its owner or by measurement: the side-pane width (S11); Korean table rendering (S10); the terminal list of the spike gate; image paste over SSH; how the shared list of slash commands travels (a schema matter); whether a copy by OSC 52 on an explicit key fits the clipboard rule of [surfaces.md](surfaces.md#launcher) and [non-competition.md](non-competition.md), which S5 measures for support; mouse support; locales beyond Korean and English; and non-competition evidence for the TUI on a device-OS install ([non-competition.md](non-competition.md)).
+Open points, each decided by its owner or by measurement: the side-pane width (S11); Korean table rendering (S10); the terminal list of the spike gate; image paste over SSH; how the shared list of slash commands travels (a schema matter); whether a copy by OSC 52 on an explicit key fits the clipboard rule of [surfaces.md](surfaces.md#launcher) and [non-competition.md](non-competition.md), which S5 measures for support; locales beyond Korean and English; and non-competition evidence for the TUI on a device-OS install ([non-competition.md](non-competition.md)).
 
 ### Memory and agent command requests
 

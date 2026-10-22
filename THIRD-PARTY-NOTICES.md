@@ -9,7 +9,7 @@ Add an entry when third-party code or other material is included in LINA. Record
 ## github.com/coder/websocket
 
 Source: https://github.com/coder/websocket, version v1.8.15. License: ISC.
-Used without modifications for bounded WebSocket framing and HTTP upgrade.
+Used without modifications for bounded WebSocket framing, HTTP upgrade and the Discord Gateway transport.
 
 Copyright (c) 2025 Coder
 
@@ -26,6 +26,26 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ## Terminal UI behaviour references
+
+[Codex CLI](https://github.com/openai/codex) (Apache-2.0, OpenAI) informs the
+whole-conversation transcript overlay opened with Ctrl+T. No upstream code is
+copied. Source observations and limits are recorded in
+[the TUI reference specification](internal/tui/ui/REFERENCE.md).
+
+[Hermes Agent](https://github.com/NousResearch/hermes-agent) (MIT, copyright
+2025 Nous Research) informs the TUI's complete inline assistant replies and
+paged transcript reading. No upstream code is copied. The source-survey
+observations and limits are recorded in [the TUI reference specification](internal/tui/ui/REFERENCE.md).
+The Hermes Agent license text is included below.
+
+
+Hermes Agent (Nous Research, MIT), revision
+`944c3a434071f43e64b443d033f3eba30c64434c`, is a reference for draft-clearing
+priority and a second Ctrl+C within two seconds. See the
+[observations and differences](internal/tui/ui/REFERENCE.md). LINA implements
+its own client-only confirmation and expiring hint; no upstream code is copied.
+The Hermes copyright and MIT permission notice appear in the Hermes Agent
+section below.
 
 The composer separation and newline keys in LINA's terminal UI independently adapt behaviour
 from these permissive projects. No upstream implementation code is copied or
@@ -91,7 +111,8 @@ copied. Source observations and limits are recorded in
 
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) (MIT, copyright
 2025 Nous Research) informs the TUI's complete inline assistant replies and
-paged transcript reading. No upstream code is copied. The source-survey
+paged transcript reading, wheel acceleration and sticky-bottom scrolling. No
+upstream code is copied. The source-survey
 observations and limits are recorded in [the TUI reference specification](internal/tui/ui/REFERENCE.md).
 The Hermes Agent license text is included in its notice below.
 

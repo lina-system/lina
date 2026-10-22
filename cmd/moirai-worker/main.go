@@ -29,6 +29,7 @@ func run(ctx context.Context, args []string, stderr io.Writer) int {
 	flags.SetOutput(stderr)
 	path := flags.String("canon", "", "existing canon database")
 	socket := flags.String("socket", "", "Core job socket")
+	preflight := flags.Bool("preflight", false, "check canon and Core job readiness without running jobs")
 	once := flags.Bool("once", false, "run each currently due job once")
 	interval := flags.Duration("poll", time.Second, "job polling interval")
 	if err := flags.Parse(args); err != nil {
@@ -44,6 +45,16 @@ func run(ctx context.Context, args []string, stderr io.Writer) int {
 		return 69
 	}
 	defer reader.Close()
+	if *preflight {
+		if _, err = reader.Ready(ctx, time.Now()); err == nil {
+			err = jobapi.NewClient(*socket).Ready(ctx)
+		}
+		if err != nil {
+			fmt.Fprintln(stderr, "job_unavailable")
+			return 69
+		}
+		return 0
+	}
 	worker := moirai.Worker{Reader: reader, Core: jobapi.NewClient(*socket)}
 	if *once {
 		err = worker.Once(ctx)

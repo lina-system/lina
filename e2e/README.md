@@ -1,5 +1,12 @@
 # Headless acceptance harness
 
+`m3/non-competition.json` runs installed Core's record tools through a local
+fixture provider and its public client socket. It checks a real saved record,
+refusal of an out-of-scope path used as an id, and preservation of an external
+edit against an old revision while Core stays running. It is supporting
+protocol evidence; the [Linux non-competition ladder](../evidence/non-competition/README.md)
+still requires human concurrent-session measurements.
+
 Run `go test ./e2e/m1/...` (or `go test -count=1 -v ./e2e/...` for uncached scenario
 output). Node.js and the workspace's Go toolchain are required. The harness uses
 native Linux and macOS pseudo-terminals; it needs no window, display server,
@@ -232,6 +239,13 @@ replay count is consumed by the Bubble Tea recording-writer test.
 synthetic producer data, socket discovery/decisions, and a separate-key PTY approval.
 These scenarios create no second product decision store and use no timing sleeps.
 
+The M2 Discord scenario is `m2/discord.json`, executed by `TestM2DiscordCore`.
+It installs the test host with a matching build manifest, runs production Core
+boot in a separate process, and controls it through the generated socket
+protocol. Synthetic outbound Gateway/REST and Responses endpoints demonstrate
+channel input, read tools, background results, deduplication, shaping, blocked
+state and restart without live credentials.
+
 `m2/tui-composer-identity.json` installs Core/TUI into a temporary root and creates
 and chooses another agent through the real TUI. It checks that the empty composer,
 header and reply speaker name that agent before and after Core reconnect, using
@@ -274,6 +288,29 @@ binding/scope replacement. A paired synthetic channel and an existing binding
 exercise the actual target-agent checks. Read-only canon snapshots prove that
 refused requests preserve agent revisions, actions, conversations and bindings.
 
+`go test ./e2e/m1 -run '^TestM2UpdateActivation$' -count=1` runs
+`m2/update-activation.json`, which drives `lina update --activate` against
+the installed Core. A test-owned service manager launches real service processes;
+Core drains through its client protocol, snapshots and swaps, runs a real
+conversation and bundled-worker readiness check, and resumes with a verified
+tool result. Start refusal rolls back, while provider failure and updater death
+after READY hold the new state. Package SIGKILL tests acknowledge each rename
+boundary without fixed startup delays.
+
+`go test ./e2e/m1 -run '^TestM2UpdateDataOperations$' -count=1` runs
+`m2/update-data-operations.json`. It injects a 31-second delay into the installed
+backup or restore command before executing the real CLI, crossing the installer's
+30-second probe budget. The backup case completes activation, worker readiness
+and a resumed tool result; the restore case recovers from a candidate start
+failure and verifies a conversation on the restored Core.
+
+`go test ./e2e/m1 -run '^TestM2UpdateClaudeCredential$' -count=1` uses the same
+installed update harness with a synthetic Claude token and an empty login home.
+The production Claude adapter must complete smoke using that token; the missing
+token case must hold after READY. A bundled-worker probe checks its environment
+before running the real readiness check, and outputs and durable state are
+checked for credential disclosure.
+
 `m3/antigravity.json` dispatches through installed Core's conversation tool,
 starts its supervised headless worker in a new worktree, produces a real file
 and commit, and verifies a recorded PR at that head. Separate cases cover soft
@@ -295,3 +332,14 @@ Worker settings remain omitted. This scenario uses no real account or provider
 credentials and does not measure live Codex quota.
 
 `TestM1WebUnconfigured` checks installed Core's explicit missing-provider status, absence of web declarations and one-round notice. `TestM1WebSearchExtractAndCitation` runs the production Core composition in a separate test helper with a synthetic manifest recording that executable, and injects only the Firecrawl HTTP transport. The real TUI saves a hidden key; the protocol client approves each network request; the real provider adapter searches and extracts against stub responses; TUI cells show both running activities; the scripted model cites the source URL. No real provider account is used, and model compliance beyond the scripted boundary is not claimed.
+
+`m3/worker-lanes.json` uses installed Core and a real headless TUI to show two
+sessions of the same worker as separate folded lanes. A fixture writes a real
+artifact and records its receipt, terminal observation and content verification
+through the work service before startup. The second unfinished execution becomes
+unknown during Core recovery. The scenario checks protocol identities, explicit
+expansion with stage provenance, refresh, folding and reopening. It exercises
+Core's read path and TUI. `TestM3WorkerLanesLiveSession` additionally starts the
+installed stdio worker fixture through Core's conversation tools, makes it write
+a real artifact, and expands its runtime lane to show the worker output without
+calling the model. Vendor transport is synthetic; no personal account is used.
