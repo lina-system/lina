@@ -12,6 +12,7 @@ import (
 	"time"
 
 	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
+	"github.com/thisisjun786/lina/kit/protocol"
 	"golang.org/x/sys/unix"
 )
 
@@ -23,6 +24,29 @@ type terminal struct {
 	done    chan struct{}
 	err     error // Read after done closes.
 	mode    unix.Termios
+}
+
+// startConversationTUI waits for the TUI's conversation subscription response.
+// It proves History was consumed; a visible Connected footer alone does not.
+func (h *harness) startConversationTUI(width, height int, environment ...string) (*terminal, *accountTap) {
+	h.t.Helper()
+	socket := h.socket
+	tap := newAccountTap(h.t, h, socket)
+	h.socket = tap.socket
+	defer func() { h.socket = socket }()
+	terminal := h.startTerminalSize(environment, false, true, width, height)
+	tap.waitConversation(h)
+	return terminal, tap
+}
+
+func (tap *accountTap) waitConversation(h *harness) {
+	h.t.Helper()
+	for {
+		frame := tap.next(h.t, h)
+		if snapshot, ok := frame.Payload.(protocol.Snapshot); ok && strings.HasPrefix(snapshot.Topic, "conversation:") {
+			return
+		}
+	}
 }
 
 func (h *harness) startTUI(environment ...string) *terminal {
