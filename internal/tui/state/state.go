@@ -21,6 +21,7 @@ type Cmd func(context.Context) Msg
 type Block struct {
 	ShellFileToolsAvailable  *bool
 	Card                     *Card
+	Waiting                  *WaitingSummary
 	ID, Topic, EchoKey, Text string
 	Speaker                  protocol.ConversationSpeaker
 	Body, Title              string
@@ -38,6 +39,13 @@ type Block struct {
 	Removed                  bool
 	filter                   sanitize.Stream
 }
+
+// WaitingSummary is display-only. Answer identities remain on decision cards.
+type WaitingSummary struct {
+	Lines []string
+	More  int
+}
+
 type Topic struct {
 	Cursor    uint64
 	OutOfSync bool

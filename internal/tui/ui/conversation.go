@@ -51,6 +51,8 @@ type textPager struct {
 	laneNext                 *string
 	transcript               bool
 	running                  bool
+	progress                 bool
+	waiting                  bool
 	selected                 int
 	runID                    string
 	next                     *json.Number
@@ -241,13 +243,15 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	case "ctrl+w":
 		m.openPager(m.topicText("waiting"))
-		return nil
+		m.conversation.pager.waiting = true
+		return m.waitingRequest()
 	case "ctrl+r":
 		m.openRunning()
 		return nil
 	case "ctrl+p":
 		m.openPager(m.topicText("progress"))
-		return nil
+		m.conversation.pager.progress = true
+		return m.subscribeSnapshot("progress")
 	case "tab", "shift+tab":
 		m.conversation.cardsFocused = !m.conversation.cardsFocused
 		return nil
@@ -413,7 +417,13 @@ func (m *shellModel) conversationPlan() layout.Layout {
 	if m.activityRequested() {
 		activityRows = len(strings.Split(m.activityText(), "\n"))
 	}
-	return layout.Plan(m.size, layout.Caps{SidePane: true, Running: m.hasCapability("running"), Cards: m.hasCapability("waiting")}, layout.Shape{ActivityRows: activityRows, SidePane: m.conversation.pager.open, ComposerRows: m.conversation.composer.Height(), RunningCount: len(m.topicBlocks("running")), CardCount: len(m.topicBlocks("waiting")), CardRows: len(m.topicBlocks("waiting")), Attachments: len(m.content.Draft.Attachments) > 0})
+	cardRows := len(m.topicBlocks("waiting"))
+	cardCount := cardRows
+	if summary := m.homeWaiting(); summary != nil {
+		cardRows = len(summary.Lines)
+		cardCount = cardRows + summary.More
+	}
+	return layout.Plan(m.size, layout.Caps{SidePane: true, Running: m.hasCapability("running"), Cards: m.hasCapability("waiting")}, layout.Shape{ActivityRows: activityRows, SidePane: m.conversation.pager.open, ComposerRows: m.conversation.composer.Height(), RunningCount: len(m.topicBlocks("running")), CardCount: cardCount, CardRows: cardRows, Attachments: len(m.content.Draft.Attachments) > 0})
 }
 
 func (m *shellModel) topicBlocks(topic string) []state.Block {
@@ -855,6 +865,25 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 	drawTopic := func(topic string, region layout.Rect) {
 		if region.Height == 0 {
 			return
+		}
+		if topic == "waiting" {
+			if summary := m.homeWaiting(); summary != nil {
+				total := len(summary.Lines) + summary.More
+				label := design.Text(m.styles.options.Language, "waiting") + " " + strconv.Itoa(total)
+				shown := min(region.Height, len(summary.Lines))
+				for i := 0; i < max(1, shown); i++ {
+					line := label
+					if i < shown {
+						line += "  " + summary.Lines[i]
+					}
+					if i == max(1, shown)-1 && total > shown {
+						suffix := "  " + fmt.Sprintf(design.Text(m.styles.options.Language, "progress.more"), strconv.Itoa(total-shown))
+						line = render.Truncate(line, max(0, region.Width-(render.Unicode{}).Width(suffix)), render.Unicode{}) + suffix
+					}
+					rows[region.Y+i] = clip(line)
+				}
+				return
+			}
 		}
 		blocks := m.topicBlocks(topic)
 		label := design.Text(m.styles.options.Language, topic) + " " + strconv.Itoa(len(blocks))

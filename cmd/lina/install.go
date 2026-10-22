@@ -33,7 +33,7 @@ func runInstallWithHost(args []string, host install.Host) int {
 	units := flags.String("unit-dir", "", "systemd user unit directory (default: XDG_CONFIG_HOME/systemd/user)")
 	bundle := flags.String("bundle", "", "verified build bundle (default: the executable's directory)")
 	socket := flags.String("socket", "", "private client socket (default: <state-root>/system/run/client.sock)")
-	personaSource := flags.String("persona-source", "", "local persona checkout root (absolute path)")
+	personaSource := flags.String("persona-source", "", "legacy option; shipped starter personas are always used")
 	paths := map[string]string{}
 	flags.Func("tool", "installed tool override, name=/absolute/path (repeatable)", func(value string) error {
 		name, path, ok := strings.Cut(value, "=")
