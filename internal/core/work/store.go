@@ -1,0 +1,235 @@
+// SPDX-License-Identifier: Apache-2.0
+package work
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"reflect"
+	"strings"
+
+	"github.com/thisisjun786/lina/internal/core/canon"
+)
+
+type Service struct{ db *canon.Store }
+
+func New(db *canon.Store) *Service { return &Service{db: db} }
+
+// Recover rebuilds before Core exposes work. An unobserved execution remains
+// reserved and becomes unknown; restart is never permission to run it again.
+func (s *Service) Recover(ctx context.Context, epoch string) error {
+	if epoch == "" {
+		return ErrInvalid
+	}
+	if err := s.Rebuild(ctx); err != nil {
+		return err
+	}
+	var active []string
+	if err := s.db.Read(ctx, func(tx *canon.Tx) error {
+		rows, err := tx.QueryContext(ctx, "SELECT task_id FROM work_active_runs ORDER BY task_id")
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id string
+			if err = rows.Scan(&id); err != nil {
+				return err
+			}
+			active = append(active, id)
+		}
+		return rows.Err()
+	}); err != nil {
+		return err
+	}
+	for _, id := range active {
+		if err := s.append(ctx, Event{Key: "recovery:" + epoch + ":" + id, TaskID: id, Kind: "unknown"}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func (s *Service) Create(ctx context.Context, t Task) error {
+	if t.ID == "" || t.AgentID == "" || t.ConversationID == "" || strings.TrimSpace(t.Title) == "" || strings.TrimSpace(t.Done) == "" {
+		return ErrInvalid
+	}
+	for _, root := range t.ArtifactRoots {
+		if !absolute(root) {
+			return ErrInvalid
+		}
+	}
+	return s.append(ctx, Event{Key: "task:" + t.ID, TaskID: t.ID, Kind: "created", Task: &t})
+}
+func (s *Service) Start(ctx context.Context, r Run) error {
+	if r.ID == "" || r.TaskID == "" || r.Worker == "" || r.ThreadID == "" || r.TurnID == "" || r.NodeID == "" || r.Generation < 1 {
+		return ErrInvalid
+	}
+	return s.append(ctx, Event{Key: "run:" + r.ID, TaskID: r.TaskID, Kind: "started", Run: &r})
+}
+func (s *Service) Submit(ctx context.Context, runID string, r Receipt) error {
+	return s.append(ctx, Event{Key: "receipt:" + r.EventID, TaskID: r.RelationshipID, Kind: "receipt", RunID: runID, Receipt: &r})
+}
+func (s *Service) Finish(ctx context.Context, taskID, runID, status string) error {
+	return s.append(ctx, Event{Key: "finish:" + runID, TaskID: taskID, Kind: "finished", RunID: runID, Value: status})
+}
+
+// Judge and Apply are Core-only APIs. The worker-facing transport must never
+// install handlers for them or accept an arbitrary Event.
+func (s *Service) Judge(ctx context.Context, taskID, receiptID, verdict, evidence string) error {
+	return s.append(ctx, Event{Key: "judge:" + receiptID, TaskID: taskID, Kind: "judged", ReceiptID: receiptID, Value: verdict, Evidence: evidence})
+}
+func (s *Service) Apply(ctx context.Context, taskID, receiptID, evidence string) error {
+	return s.append(ctx, Event{Key: "apply:" + receiptID, TaskID: taskID, Kind: "applied", ReceiptID: receiptID, Evidence: evidence})
+}
+
+func ledger(ctx context.Context, tx *canon.Tx, id string) ([]Event, error) {
+	rows, err := tx.QueryContext(ctx, "SELECT record FROM work_ledger WHERE task_id=? ORDER BY seq", id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	events := []Event{}
+	for rows.Next() {
+		var b []byte
+		var e Event
+		if err = rows.Scan(&b); err != nil {
+			return nil, err
+		}
+		if err = json.Unmarshal(b, &e); err != nil {
+			return nil, err
+		}
+		events = append(events, e)
+	}
+	return events, rows.Err()
+}
+func (s *Service) Ledger(ctx context.Context, id string) (events []Event, err error) {
+	err = s.db.Read(ctx, func(tx *canon.Tx) error { events, err = ledger(ctx, tx, id); return err })
+	return
+}
+func (s *Service) append(ctx context.Context, e Event) error {
+	// Compare the durable representation, excluding Go-only clock/location
+	// metadata and caller-owned pointers, on both initial admission and retry.
+	raw, err := json.Marshal(e)
+	if err != nil {
+		return err
+	}
+	if err = json.Unmarshal(raw, &e); err != nil {
+		return err
+	}
+	return s.db.Write(ctx, func(tx *canon.Tx) error {
+		events, err := ledger(ctx, tx, e.TaskID)
+		if err != nil {
+			return err
+		}
+		var c Card
+		if len(events) > 0 {
+			c, err = Project(events)
+			if err != nil {
+				return err
+			}
+		}
+		// Do not let retries from an old generation overwrite or acknowledge the
+		// current worker's delivery. Identical current-generation retries are safe.
+		if e.Kind == "receipt" && (c.Run == nil || c.Run.ID != e.RunID) {
+			return ErrState
+		}
+		var prior []byte
+		err = tx.QueryRowContext(ctx, "SELECT record FROM work_ledger WHERE event_key=?", e.Key).Scan(&prior)
+		if err == nil {
+			var old Event
+			if err = json.Unmarshal(prior, &old); err != nil {
+				return err
+			}
+			if reflect.DeepEqual(old, e) {
+				return nil
+			}
+			return ErrState
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if err = advance(&c, e); err != nil {
+			return err
+		}
+		b, err := json.Marshal(e)
+		if err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, "INSERT INTO work_ledger(task_id,event_key,record) VALUES(?,?,?)", e.TaskID, e.Key, b); err != nil {
+			return err
+		}
+		return saveCard(ctx, tx, c)
+	})
+}
+func saveCard(ctx context.Context, tx *canon.Tx, c Card) error {
+	b, err := json.Marshal(c)
+	if err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, "INSERT INTO work_cards(task_id,record) VALUES(?,?) ON CONFLICT(task_id) DO UPDATE SET record=excluded.record", c.Task.ID, b); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, "DELETE FROM work_active_runs WHERE task_id=?", c.Task.ID); err != nil {
+		return err
+	}
+	if c.Active {
+		_, err = tx.ExecContext(ctx, "INSERT INTO work_active_runs(task_id,run_id) VALUES(?,?)", c.Task.ID, c.Run.ID)
+	}
+	return err
+}
+func (s *Service) Get(ctx context.Context, id string) (c Card, err error) {
+	err = s.db.Read(ctx, func(tx *canon.Tx) error {
+		var b []byte
+		err := tx.QueryRowContext(ctx, "SELECT record FROM work_cards WHERE task_id=?", id).Scan(&b)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		return json.Unmarshal(b, &c)
+	})
+	return
+}
+
+// Rebuild atomically replaces every derived card and active-run index. It can
+// run with writers active: canon serializes both through its fenced writer.
+func (s *Service) Rebuild(ctx context.Context) error {
+	return s.db.Write(ctx, func(tx *canon.Tx) error {
+		rows, err := tx.QueryContext(ctx, "SELECT task_id,record FROM work_ledger ORDER BY seq")
+		if err != nil {
+			return err
+		}
+		cards := map[string]Card{}
+		for rows.Next() {
+			var id string
+			var b []byte
+			var e Event
+			if err = rows.Scan(&id, &b); err != nil {
+				break
+			}
+			if err = json.Unmarshal(b, &e); err != nil {
+				break
+			}
+			c := cards[id]
+			if err = advance(&c, e); err != nil {
+				break
+			}
+			cards[id] = c
+		}
+		err = errors.Join(err, rows.Err(), rows.Close())
+		if err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, "DELETE FROM work_cards; DELETE FROM work_active_runs"); err != nil {
+			return err
+		}
+		for _, c := range cards {
+			if err = saveCard(ctx, tx, c); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
