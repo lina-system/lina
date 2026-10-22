@@ -134,9 +134,12 @@ func TestM1TUIApprovalsInstalledCore(t *testing.T) {
 	terminal := h.startScreenTUI("TERM=xterm-256color")
 	// The first approval is already resolved and can arrive before the waiting
 	// snapshot. Its matching summary must not trigger F6 before the new card.
+	pendingCard := "[" + design.Text(design.English, string(protocol.KindApprovalRequest)) + "] " + approval.What
 	readyScreen, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
 		cells := screenText(s)
-		return s.AltScreen && !s.CursorHidden && strings.Contains(cells, approval.What) &&
+		// The owner overview can carry the same summary before the actionable
+		// waiting card is loaded; require the card's own visible row.
+		return s.AltScreen && !s.CursorHidden && strings.Contains(cells, pendingCard) &&
 			strings.Contains(cells, design.Text(design.English, "live"))
 	})
 	if err != nil {
