@@ -460,7 +460,7 @@ Rules:
 
 ## Development method
 
-LINA ships no coding harness. It runs no review loop of its own around a worker, installs no hook, skill or plugin into one, and keeps no stage workflow. Codex, Claude Code, Antigravity and Cursor are used as the user installed them. LINA's development role is a method, which the development preset carries ([conversation-and-memory.md](conversation-and-memory.md#preset-methodologies)). How to implement, split, join or interpret work is the judgment of the worker and the owning persona in its manager session. The worker writes the code, the branch and the pull request body, opens the pull request and owns it to green. The manager checks the work definition and decides merge or close. LINA Core keeps the flow moving: start, reliable delivery with receipts, true state, recovery, merge on green, QA after each merge and report.
+LINA ships no coding harness. It runs no review loop of its own around a worker, installs no hook, skill or plugin into one, and keeps no stage workflow. Codex, Claude Code, Antigravity and Cursor are used as the user installed them. LINA's development role is a method, which the dev preset carries ([conversation-and-memory.md](conversation-and-memory.md#preset-methodologies)). Its work settings, such as worker dispatch, the evidence required before a delivery is reported done and the shape of status reports, are data in the dev preset's work-method record ([preset-work-methods.md](preset-work-methods.md)), not a harness around a worker. The dev preset agent owns coding work and its manager sessions, including requests handed over by Lina or another starter. How to implement, split, join or interpret work is the judgment of the worker and that owning persona. The worker writes the code, the branch and the pull request body, opens the pull request and owns it to green. The manager checks the work definition and decides merge or close. LINA Core keeps the flow moving: start, reliable delivery with receipts, true state, recovery, merge on green, QA after each merge and report.
 
 ### Work definition
 
@@ -874,7 +874,7 @@ A worker returning a completion receipt and the manager accepting the result are
 Delivery of every task:
 
 1. LINA Core registers the assignment before the worker's first output.
-2. For each execution generation the worker submits a completion receipt for the actual output path. It is held until the end of the turn is observed.
+2. For each execution generation the worker submits a completion receipt for the actual output path. It is held until the end of the turn is observed. Receipt fields, including `turnStatus`, are claims and cannot create that observation or release the active-run reservation.
 3. LINA Core records the receipt in the ledger and acknowledges it.
 4. **Read.** For code-change work LINA Core reads the pull request the receipt names, once: its state, its head SHA, its review records and the conclusions of the required checks at that head. It checks that the head matches the receipt and that the protected refs did not move. A pending check or review stays a named wait with a deadline in the worker's turn (see Event-driven flow); it never becomes a findings round trip through the manager. For work without a pull request the manager reads the artifacts against the done condition once and judges `verified` or `needs_changes`, and Core records the verdict.
 
@@ -960,6 +960,7 @@ After every event Core commits for a goal, Core derives the goal's next actions 
 | Goal handed over | `defining`, done condition written | Split into tasks with dependencies and write areas, say the start line, move to `running` and fill capacity. | Manager, then Core |
 | Slot released, a host's load changed, or a task became ready | Any goal with ready tasks | Fill every compatible slot across the main host and Nodes with ready tasks (see Capacity). | Core |
 | Worker turn ended with a completion receipt | Task in progress | Read the receipt and, for code, the pull request once; continue as Judgment and delivery says. | Core, then manager |
+| File result reported before worker termination is observed | Task in progress or unknown after recovery | Refuse `report_work_result` without changing the receipt, snapshot or active-run reservation; admit a fresh report only after the matching terminal observation. | Core |
 | Worker turn ended without a receipt | Task in progress | One continuation that asks the worker to finish or report the blocker; a second ending without a receipt is a failure under Stall and failure. | Core |
 | Code task's head is green with no open P0 or P1, and the manager judged it `verified` | Task ready to merge | Merge that head through the merge slot. | Core |
 | Merge observed | Code task landed | Release its dependents, start QA on the merged commit once, and fill capacity. | Core |
@@ -968,7 +969,7 @@ After every event Core commits for a goal, Core derives the goal's next actions 
 | Deploy observed | Code goal | Probe the running service at the deployed revision against the done condition; an exit code is not a probe. | Core |
 | Background run landed complete | Research or document task | Check citations, store the result, re-evaluate the criteria it serves. | Core, then manager |
 | Background run landed partial | Research or document task | Start one follow-up run on what is missing, or mark it open in the result when the sources cannot answer it. | Manager |
-| Draft or file result ready | Document or file task | Check it against the done condition. Land a new artifact at its destination without merging or overwriting existing files. When the goal updates an existing document, use the revision-checked [in-place edit](materials-and-knowledge.md#editing-a-persons-files-in-place), keeping the old version and rejecting a stale revision. | Manager, then Core |
+| Draft or file result ready | Document or file task | Check the fingerprinted done snapshot against the done condition and land a verified copy at its recorded destination. Changed output or report requires a new done; an interrupted copy is reported and retained. New artifacts never merge into or overwrite existing files. When the goal updates an existing document, use the revision-checked [in-place edit](materials-and-knowledge.md#editing-a-persons-files-in-place), keeping the old version and rejecting a stale revision. | Manager, then Core |
 | Effect performed through a plugin (calendar event, sent message, file move) | Effect task | Read back the external record; only the read sets the criterion. | Core |
 | Reply arrived in a waited thread, a record changed, or a date was reached | Wait open | Close the wait and re-evaluate the criteria behind it. | Core |
 | A wait's deadline passed | Wait open | Read the source once more; if still open, apply the wait's expiry action (see Waits on the outside). | Core |
@@ -1038,6 +1039,7 @@ Every ready task starts at once, limited only by the person's quota and by what 
 - Every derived action has an identity bound to the goal, the task, its attempt, its stage and the head or revision it acts on. Replaying an event or running two derivations at once never dispatches the same action twice.
 - Task-level recovery is the one recovery of Stall and failure. A goal does not add attempts on top: when a task's recovery is exhausted, the goal is `blocked` on that task while its independent tasks continue.
 - A wait survives restart with its deadline. A timer that should have fired while Core was down fires once at startup.
+- File delivery recovery runs before work tools admit new calls: first report interrupted copy intents in the work ledger, then reconcile their authority reservations as described under Evidence before close. An unrecovered copy keeps its reservation. A cancelled invocation is never replayed; a fresh authorized call preserves partial bundles or reuses a committed landing after readback.
 
 ### Evidence before close
 
@@ -1049,6 +1051,55 @@ A goal closes as `done` only when every criterion has evidence that Core collect
 - the manager's judgment against the criterion's written rubric, recorded with what it read.
 
 A worker's receipt, a model's sentence, a completed turn, a command's exit code alone, a pending check and an effect with an unknown outcome are never evidence. At `checking`, Core reads every piece of evidence again rather than trusting what it stored, so a document edited or an event moved after it was checked reopens its criterion. One check per criterion is enough; no panel of verifiers is used.
+
+For a non-code file task, its work definition records an absolute destination
+folder. The worker writes deliverables under `out/` and its report at
+`report.md`. At done, Core reads every file and directory name and the report,
+records a SHA-256 fingerprint, and keeps independent material revisions in the
+same canon transaction as the receipt. These materials survive backup and loss
+of the work area. A worker-supplied hash alone is not a snapshot. A new done
+replaces the current snapshot and clears its earlier judgment; earlier material
+revisions remain retained.
+
+The manager's judgment names that exact fingerprint. Before landing, Core reads
+the entire live output and report again. Missing or changed files, an added file
+or directory, or a changed report refuses landing and asks for a new done. Core
+copies only the retained snapshot into a newly claimed bundle named for the
+task; collisions, including symlinks, use `-v2`, `-v3`, and so on. It never merges
+into an existing bundle. Bundles preserve `out/` and `report.md`; symlinks and
+special files are refused. The destination must be outside Core's state and work
+area.
+
+Core records the copy intent and path before creating the bundle. It syncs the
+copy, rechecks the live result, and reads the destination back. Only matching
+readback hashes atomically record a landed result and satisfy the file criterion;
+the manager's content judgment alone cannot do so. A mismatch leaves the
+criterion open. An interrupted or failed copy has no landed evidence, retains
+its partial files, and appears with its path in the work result details. Startup
+reports interrupted intents without deleting or silently accepting their files.
+A retry uses a fresh bundle. Repeating a completed landing reads its evidence
+again and reuses the bundle only if it still matches.
+Before exposing work tools after restart, Core also reconciles the authority
+reservation of an interrupted local `land_work_result` invocation against that
+recovered work ledger. Only an invocation from an earlier Core epoch, bound to
+the same person and task agent, can be cancelled and have its reservation
+released. This cancels the invocation, not its files: it neither replays the old
+call nor asserts a successful or absent copy. The effect receipt and reservation
+update commit together with the recovered task revision. A fresh authorized call
+rechecks the current result, using a new bundle for a partial copy and the existing
+verified bundle for an already committed landing. Unrelated effects and calls
+from the current epoch keep their reservations.
+
+`prepare_work` binds the destination to the conversation-owned task.
+`report_work_result` requires a previously recorded terminal observation for the
+same run, with a status matching the receipt, before admitting the receipt and
+capturing the snapshot. It never records worker termination from model-supplied
+fields. A still-active or recovered unknown run retains its reservation and has
+no new receipt or snapshot after a refused report. A fresh report can retry once
+Core records the worker's actual terminal observation; a stale run or a completed
+claim for a failed or interrupted turn remains refused. `land_work_result` binds
+the manager's judgment to its receipt and fingerprint and performs the copy and readback in Core. Worker dispatch and
+whole-goal scheduling are separate from these file-delivery operations.
 
 ### Stop and ask
 

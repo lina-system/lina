@@ -30,6 +30,14 @@ import (
 func TestM1ReplyShapeLONGQA(t *testing.T) {
 	t.Parallel()
 
+	for _, language := range []design.Language{design.English, design.Korean} {
+		t.Run(string(language), func(t *testing.T) {
+			testReplyShapeLONGQA(t, language)
+		})
+	}
+}
+
+func testReplyShapeLONGQA(t *testing.T, language design.Language) {
 	var scenario struct {
 		Input, Line, First, End, Followup, Reply string
 		Lines                                    int
@@ -86,9 +94,9 @@ func TestM1ReplyShapeLONGQA(t *testing.T) {
 	h, start := installedConversationHarness(t, server.URL)
 	core := start(true)
 	c, conversation := conversationClient(t, h)
-	environment := []string{"TERM=xterm-256color"}
+	environment := []string{"TERM=xterm-256color", "LC_ALL=" + string(language)}
 	screenTUI, _ := h.startConversationTUI(100, 34, environment...)
-	waitScreen(t, h, screenTUI, design.Text(design.English, "live"))
+	waitScreen(t, h, screenTUI, design.Text(language, "live"))
 	h.keys(screenTUI, scenario.Input)
 	waitScreen(t, h, screenTUI, scenario.Input)
 	h.keys(screenTUI, "\r")
@@ -123,7 +131,9 @@ func TestM1ReplyShapeLONGQA(t *testing.T) {
 	}
 	checkScreen := func(terminal *terminal) {
 		// Inspect parsed cells from the installed TUI, never raw escape bytes.
-		region := layout.Plan(layout.Size{Width: 100, Height: 34}, layout.Caps{SidePane: true}, layout.Shape{ComposerRows: 1}).Conversation
+		plan := layout.Plan(layout.Size{Width: 100, Height: 34}, layout.Caps{SidePane: true}, layout.Shape{ComposerRows: 1})
+		region := plan.Conversation
+		affordance := design.Text(language, "reply.open_pager")
 		conversationRows := func(snapshot tuiterm.Snapshot) []string {
 			return screenRows(snapshot)[region.Y : region.Y+region.Height]
 		}
@@ -138,10 +148,11 @@ func TestM1ReplyShapeLONGQA(t *testing.T) {
 			return snapshot
 		}
 		latest := wait(func(s tuiterm.Snapshot) bool {
-			return strings.Contains(strings.Join(conversationRows(s), "\n"), scenario.End) && strings.Contains(screenText(s), "Ctrl+O")
+			return s.AltScreen && !s.CursorHidden && s.CursorY == plan.Composer.Y &&
+				strings.Contains(strings.Join(conversationRows(s), "\n"), scenario.End) && strings.Contains(screenText(s), affordance)
 		})
 		t.Logf("LONG-QA latest (100x34):\n%s", strings.Join(screenRows(latest), "\n"))
-		if !latest.AltScreen || !strings.Contains(screenRows(latest)[33], "Ctrl+D") {
+		if !latest.AltScreen || latest.CursorHidden || latest.CursorY != plan.Composer.Y {
 			t.Fatal("latest reply is outside the conversation")
 		}
 		// Stitch overlapping PgUp views into the complete transcript, so a
@@ -155,7 +166,8 @@ func TestM1ReplyShapeLONGQA(t *testing.T) {
 			previous := strings.Join(conversationRows(page), "\n")
 			h.keys(terminal, "\x1b[5~")
 			page = wait(func(s tuiterm.Snapshot) bool {
-				return strings.Join(conversationRows(s), "\n") != previous
+				return s.AltScreen && !s.CursorHidden && s.CursorY == plan.Composer.Y &&
+					strings.Join(conversationRows(s), "\n") != previous
 			})
 			rows := conversationRows(page)
 			overlap := min(len(rows), len(transcript))
@@ -168,7 +180,7 @@ func TestM1ReplyShapeLONGQA(t *testing.T) {
 			transcript = append(append([]string{}, rows[:len(rows)-overlap]...), transcript...)
 		}
 		t.Logf("LONG-QA first page (100x34):\n%s", strings.Join(screenRows(page), "\n"))
-		if !strings.Contains(strings.Join(conversationRows(page), "\n"), scenario.First) || !strings.Contains(screenRows(page)[33], "Ctrl+D") {
+		if !strings.Contains(strings.Join(conversationRows(page), "\n"), scenario.First) || page.CursorHidden || page.CursorY != plan.Composer.Y {
 			t.Fatal("PgUp did not reach the first marker inside the conversation")
 		}
 		complete := strings.Join(transcript, "\n")
@@ -177,18 +189,24 @@ func TestM1ReplyShapeLONGQA(t *testing.T) {
 				t.Fatalf("reply line %q appears %d times, want exactly once", line, copies)
 			}
 		}
-		if strings.Count(complete, "Ctrl+O") != 1 || strings.Index(complete, scenario.End) > strings.Index(complete, "Ctrl+O") {
+		if strings.Count(complete, affordance) != 1 || strings.Index(complete, scenario.End) > strings.Index(complete, affordance) {
 			t.Fatal("expected one pager affordance after the complete reply")
 		}
 		h.keys(terminal, "\x0f")
 		wait(func(s tuiterm.Snapshot) bool {
-			return s.CursorHidden && strings.Contains(screenText(s), scenario.First) &&
-				strings.Contains(screenRows(s)[33], "Connected  Esc Close  / Search  n Next match")
+			return s.AltScreen && s.CursorHidden && len(s.Cells) == 34 &&
+				strings.Contains(screenRows(s)[0], scenario.First)
 		})
 		h.keys(terminal, "\x1b[F")
-		waitScreen(t, h, terminal, scenario.End)
+		wait(func(s tuiterm.Snapshot) bool {
+			text := strings.Join(screenRows(s)[:33], "\n")
+			return s.AltScreen && s.CursorHidden && strings.Contains(text, scenario.End) && !strings.Contains(text, scenario.First)
+		})
 		h.keys(terminal, "\x1b")
-		waitScreen(t, h, terminal, "Ctrl+D")
+		wait(func(s tuiterm.Snapshot) bool {
+			return s.AltScreen && !s.CursorHidden && s.CursorY == plan.Composer.Y &&
+				strings.Contains(strings.Join(conversationRows(s), "\n"), scenario.First)
+		})
 		h.keys(terminal, "\x04")
 		terminal.process.wait(t, 0)
 		h.expectTerminalRestored(terminal)
