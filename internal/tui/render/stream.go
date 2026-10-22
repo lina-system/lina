@@ -66,6 +66,8 @@ type Stream struct {
 	frozen, scanned, lineStart int
 	fence                      byte
 	fenceLen                   int
+	fenceStart, fenceBody      int
+	fenceLines                 int
 }
 
 func NewStream(id string, config Config, m Measurer) *Stream {
@@ -180,10 +182,13 @@ func (s *Stream) freeze() {
 			if marker == s.fence && count >= s.fenceLen && strings.TrimSpace(trimmed[count:]) == "" {
 				s.fence = 0
 				s.frozen = i + 1
+			} else {
+				s.fenceLines++
 			}
 		} else if marker != 0 {
 			s.fence = marker
 			s.fenceLen = count
+			s.fenceStart, s.fenceBody, s.fenceLines = s.lineStart, i+1, 0
 		} else {
 			heading := 0
 			for heading < len(trimmed) && trimmed[heading] == '#' {

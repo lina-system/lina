@@ -3,13 +3,15 @@
 package render
 
 import (
+	"sort"
+	"strconv"
 	"strings"
 )
 
 // InlineStyle is semantic data. Only the UI adapter produces terminal escapes.
 type InlineStyle struct {
-	Bold, Italic, Code, Link bool
-	URL                      string
+	Bold, Italic, Code, Link, Muted bool
+	URL                             string
 }
 type Span struct {
 	Text  string
@@ -116,10 +118,83 @@ func (s *Stream) Markdown(config Config, bullet string, parse MarkdownParser) []
 			row := c.tail.At(i)
 			c.tailRows = append(c.tailRows, StyledRow{Spans: []Span{{Text: row.Text}}, Clipped: row.Clipped})
 		}
-		c.rows = append(c.rows, c.tailRows...)
+		c.rows = append(c.rows, c.codePreview(config)...)
 	}
 	c.read, c.sealed, c.config, c.bullet = len(source), s.sealed, config, bullet
 	return c.rows
+}
+
+// codePreview bounds only the open fence. Keep the complete incremental row
+// index so closing the fence or sealing the item can reveal the full source.
+func (c *markdownCache) codePreview(config Config) []StyledRow {
+	p := &c.preview
+	if p.fence == 0 || p.fenceHeader {
+		return c.tailRows
+	}
+	start := sort.Search(len(c.tail.lines), func(i int) bool {
+		return c.tail.lines[i].start >= p.fenceStart
+	})
+	end := len(c.tailRows)
+	// A newline creates an empty cursor row; it is not another code line.
+	if end > start && c.tail.lines[end-1].start == c.tail.text.Len() {
+		end--
+	}
+	if end-start <= 8 {
+		return c.tailRows
+	}
+	lines := p.fenceLines
+	if !p.atStart || p.leading != "" {
+		lines++
+	}
+	rows := make([]StyledRow, 0, start+7)
+	rows = append(rows, c.tailRows[:start]...)
+	rows = append(rows, codeNotice(lines, config))
+	return append(rows, c.tailRows[end-6:end]...)
+}
+
+func codeNotice(lines int, config Config) StyledRow {
+	label := "writing code… (" + strconv.Itoa(lines) + " lines)"
+	label = Truncate(label, config.Width, Unicode{WidthMode: config.Mode})
+	return StyledRow{Spans: []Span{{Text: label, Style: InlineStyle{Muted: true}}}}
+}
+
+// CodePreview applies the same open-fence bound to plain result Details.
+// Outside a collapsed fence it preserves the existing literal-text view.
+func (s *Stream) CodePreview(config Config) []StyledRow {
+	if config.Width <= 0 {
+		return nil
+	}
+	lines := s.lines
+	if config.Width != s.config.Width || config.Mode != s.config.Mode {
+		lines = wrap(s.text.String(), config.Width, Unicode{WidthMode: config.Mode}, 0, s.revision)
+	}
+	start, end, count := len(lines), len(lines), 0
+	if !s.sealed && s.fence != 0 {
+		body := sort.Search(len(lines), func(i int) bool { return lines[i].start >= s.fenceBody })
+		if end > body && lines[end-1].start == s.text.Len() {
+			end--
+		}
+		if end-body > 8 {
+			start = sort.Search(len(lines), func(i int) bool { return lines[i].start >= s.fenceStart })
+			count = s.fenceLines
+			if s.lineStart < s.text.Len() {
+				count++
+			}
+		}
+	}
+	var rows []StyledRow
+	for i := 0; i < len(lines); i++ {
+		if i == start {
+			rows = append(rows, codeNotice(count, config))
+			i = end - 6
+		}
+		if start < len(lines) && i >= end {
+			break
+		}
+		line := lines[i]
+		rows = append(rows, StyledRow{Spans: []Span{{Text: s.text.String()[line.start:line.end]}}, Clipped: line.clipped})
+	}
+	return rows
 }
 
 func wrapMarkdown(block MarkdownBlock, config Config) []StyledRow {

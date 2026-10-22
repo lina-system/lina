@@ -567,6 +567,21 @@ type Stream interface {
 
 - A closed top-level block (paragraph, closed fence, list, table, heading) is frozen into a stable prefix and cached on (block id, revision, width in cells, theme, width mode). The plain-text foundation closes paragraphs, lists and tables at blank lines, headings at newline and fenced blocks at a matching closing fence. These conservative boundaries keep incomplete markup unstyled.
 - The open tail is an unstyled, marker-free preview and wraps incrementally: complete lines freeze and each delta re-wraps the last partial line and its boundary row, because a late combining mark or ZWJ can extend the last cluster. Breaks fall at whitespace, else at a grapheme boundary, never inside a cluster. An open code fence belongs to the tail until it closes. Pending emphasis, inline-code, link and list delimiters and fence headers are withheld across delta boundaries; their text remains readable. Literal markup inside code is preserved.
+- An open code fence exceeding eight wrapped content rows shows one muted
+  `writing code… (N lines)` row followed by its last six content rows. N counts
+  source code lines, including a nonempty partial line but excluding the empty
+  cursor row after a final newline. The notice clips to one row at narrow widths;
+  resizing recomputes the eight-row threshold. Prose outside the fence and the
+  cached settled prefix remain unchanged. A matching newline-terminated closing
+  fence restores the entire block immediately; `item_done` also restores the
+  authoritative text, including a closing fence without a final newline.
+  Core's reply ceiling still routes long code into a result card. Its Ctrl+O
+  Details view applies the same bound to live replacement previews, both full
+  screen and in the side pane, preserving literal text outside the collapsed
+  fence. Turn completion seals any unclosed code and reveals the entire Details
+  preview; subsequent turns do not collapse an earlier result. Restored history
+  starts sealed until a live update arrives. Core's existing wire-preview size
+  bound and durable full source remain unchanged.
 - A block that closes is painted once, off the UI goroutine. A stale result is dropped. The visible change from plain to styled at close is accepted: rendering the whole tail on every flush grows quadratically.
 - `Seal()` at `item_done` replaces the stitched render once.
 - The conversation Markdown subset is bold, italic, inline code, ordered and

@@ -60,6 +60,7 @@ type shellModel struct {
 	events        bool
 	now           func() time.Time
 	blocks        map[string]shellBlock
+	resultStreams map[string]shellBlock
 	resyncPending map[string]protocol.StreamCursor
 	resyncSeen    map[resyncSignal]protocol.StreamCursor
 	conversation  conversationView
@@ -180,7 +181,6 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		beforeCard, _ := m.content.CurrentCard()
 		var commands []state.Cmd
 		m.content, commands = state.Reduce(m.content, msg.Message)
-		m.refreshOpenCard()
 		m.refreshRunning()
 		m.refreshBlocks()
 		for _, block := range m.content.Blocks {
@@ -188,6 +188,8 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.content, _ = state.Reduce(m.content, state.Turn{Active: block.TurnActive})
 			}
 		}
+		m.refreshResultStreams(msg.Message)
+		m.refreshOpenCard()
 		afterCard, _ := m.content.CurrentCard()
 		if beforeCard.ID != afterCard.ID || beforeCard.Revision != afterCard.Revision {
 			m.cardGate.CardChanged(m.now())
