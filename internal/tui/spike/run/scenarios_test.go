@@ -406,7 +406,21 @@ func runHarness(ctx context.Context) (map[string]any, error) {
 		return nil, fmt.Errorf("initial S8 frame: %w", err)
 	}
 	h.Send(tea.PasteMsg{Content: "B"})
-	pasted, err := h.Output.Wait(ctx, func(s term.Snapshot) bool { return s.Cells[0][3].Content == "B" && s.CursorX == 4 })
+	// Cursor movement can be written before the lower Markdown rows. Observe
+	// both parts of the frame before using the capture as the parsing result.
+	containsSealed := func(s term.Snapshot) bool {
+		for _, row := range s.Cells[2:] {
+			for _, cell := range row {
+				if cell.Content == "7" {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	pasted, err := h.Output.Wait(ctx, func(s term.Snapshot) bool {
+		return s.Cells[0][3].Content == "B" && s.CursorX == 4 && containsSealed(s)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("S8 paste frame: %w", err)
 	}

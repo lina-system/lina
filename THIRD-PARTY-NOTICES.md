@@ -38,6 +38,38 @@ copied. LINA derives in-memory history from Core's current conversation instead
 of using the reference's file history. Observations and limits are recorded in
 [`INPUT-HISTORY-REFERENCE.md`](internal/tui/ui/INPUT-HISTORY-REFERENCE.md).
 
+The shortcut sheet and adaptive footer also follow the behaviour requested from
+Codex CLI (`?` discovery and priority hints) and Gemini CLI (a shared key table).
+The progressive disclosure reference was read directly in Hermes Agent revision
+`944c3a434071f43e64b443d033f3eba30c64434c`,
+`hermes_cli/cli_status_bar_mixin.py`: shared ordered segments and width tiers.
+LINA independently implements whole-hint fitting and a persistent connection
+label in Go. No upstream code is copied. See the
+[observations and limits](docs/design/tui-shortcuts-reference.md).
+
+The activity row draws on behavioural observations of Codex CLI
+([openai/codex](https://github.com/openai/codex), Apache-2.0) and Hermes Agent
+([NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent), MIT):
+status above the composer, compact elapsed time, a completion duration, frame
+sets and pausing animation while hidden or idle. No source code is copied.
+The seen/inferred/unknown specification is in
+[the activity reference](internal/tui/ACTIVITY-REFERENCE.md).
+
+Tool activity also follows Hermes Agent’s friendly catalog verbs and timed
+completion indication, observed at revision `944c3a434071f43e64b443d033f3eba30c64434c`
+in `agent/display.py`. LINA’s protocol and journal wiring are original.
+
+[Codex CLI](https://github.com/openai/codex) (Apache-2.0, OpenAI) informs the
+whole-conversation transcript overlay opened with Ctrl+T. No upstream code is
+copied. Source observations and limits are recorded in
+[the TUI reference specification](internal/tui/ui/REFERENCE.md).
+
+[Hermes Agent](https://github.com/NousResearch/hermes-agent) (MIT, copyright
+2025 Nous Research) informs the TUI's complete inline assistant replies and
+paged transcript reading. No upstream code is copied. The source-survey
+observations and limits are recorded in [the TUI reference specification](internal/tui/ui/REFERENCE.md).
+The Hermes Agent license text is included in its notice below.
+
 ## Memory design references
 
 The memory and compaction behavior in [Conversation and memory](docs/design/conversation-and-memory.md) is derived from the designs of Honcho and LCM-X. This attribution covers behavioral reference and an independent Go implementation under LINA's contracts. No upstream implementation code, prompts, runtime dependency or user data is included by this design change.
@@ -1324,19 +1356,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## Terminal UI behaviour references
-
-[Codex CLI](https://github.com/openai/codex) (Apache-2.0, OpenAI) informs the
-whole-conversation transcript overlay opened with Ctrl+T. No upstream code is
-copied. Source observations and limits are recorded in
-[the TUI reference specification](internal/tui/ui/REFERENCE.md).
-
-[Hermes Agent](https://github.com/NousResearch/hermes-agent) (MIT, copyright
-2025 Nous Research) informs the TUI's complete inline assistant replies and
-paged transcript reading. No upstream code is copied. The source-survey
-observations and limits are recorded in [the TUI reference specification](internal/tui/ui/REFERENCE.md).
-The Hermes Agent license text is included above.
-
 ## codex-app-server
 
 Source: https://github.com/openai/codex. Generated protocol baseline: **0.163.0**
@@ -1480,3 +1499,37 @@ THE SOFTWARE.
 Source: https://github.com/pjbgf/sha1cd. Version: `v0.7.0`. License: Apache-2.0. Unmodified upstream dependency used by the local records Git adapter.
 
 The Apache License, Version 2.0 is reproduced in [LICENSE](LICENSE).
+
+## Codex Relay Workflow GitHub observation reference
+
+Source: https://github.com/thisisjun786/codex-relay-workflow, commit
+`7e65fcb82d426d228e18958d728fe63a0991ddd0`. License: MIT.
+
+The tracker and its tests informed rate-limit classification and bounded reads
+in LINA's independent GitHub observation implementation. The seen/inferred/unknown
+record is `internal/core/ghclient/REFERENCE.md`. No CRW source is copied,
+translated, vendored or linked; no relay or operational state is consumed.
+
+```text
+MIT License
+
+Copyright (c) 2026 thisisjun786 and contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
