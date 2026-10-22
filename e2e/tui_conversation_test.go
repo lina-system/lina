@@ -76,7 +76,7 @@ func TestM1TUIConversationInstalledCore(t *testing.T) {
 		t.Fatal("no history snapshot")
 	}
 	terminal := h.startScreenTUI("TERM=xterm-256color", "COLORTERM=truecolor")
-	fresh := waitScreen(t, h, terminal, "Ctrl+D")
+	fresh := waitComposerReady(t, h, terminal)
 	if text := screenText(fresh); strings.Contains(strings.ToLower(text), "unsupported") {
 		t.Fatalf("fresh install shows an unsupported placeholder: %s", text)
 	}
@@ -171,6 +171,12 @@ func screenText(snapshot tuiterm.Snapshot) string {
 	}
 	return text.String()
 }
+func waitComposerReady(t *testing.T, h *harness, terminal *terminal) tuiterm.Snapshot {
+	t.Helper()
+	// waitScreen's composer barrier also requires the Connected status.
+	return waitScreen(t, h, terminal, "Ctrl+D")
+}
+
 func waitScreen(t *testing.T, h *harness, terminal *terminal, text string) tuiterm.Snapshot {
 	t.Helper()
 	snapshot, err := terminal.screen.Wait(h.ctx, func(snapshot tuiterm.Snapshot) bool {
@@ -233,15 +239,15 @@ func installConversationBundle(t *testing.T, h *harness, bundle, providerURL str
 		}
 		core.start(t)
 		h.connect(core).Close()
-		waitConversationAdmission(t, h)
+		waitCoreReady(t, h)
 		return core
 	}
 
 	return h, start
 }
 
-// Wait until startup recovery admits commands before exercising the conversation.
-func waitConversationAdmission(t *testing.T, h *harness) {
+// Share the installed harness readiness barrier with custom Core launch paths.
+func waitCoreReady(t *testing.T, h *harness) {
 	t.Helper()
 	// A bound socket accepts reads while Core is still reconciling/probing.
 	// Wait for mutation admission via an empty, always-refused input; no
