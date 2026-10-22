@@ -57,7 +57,8 @@ func defaultHolder(in Write) Holder {
 	}
 	return ""
 }
-func validate(in Write) (Item, error) {
+func validate(in Write) (Item, error) { return validateWrite(in, false) }
+func validateWrite(in Write, promotion bool) (Item, error) {
 	item := in.Item
 	for _, text := range []string{item.Content, item.Gloss} {
 		masked, err := secrets.Mask(text)
@@ -72,7 +73,7 @@ func validate(in Write) (Item, error) {
 		return Item{}, ErrInvalid
 	}
 	// Correction, promotion and holder moves need their own authenticated flows.
-	if item.Kind == Correction || item.Basis == Imported {
+	if item.Kind == Correction || item.Basis == Imported && !promotion {
 		return Item{}, ErrInvalid
 	}
 	switch item.Subject.Kind {
@@ -131,7 +132,11 @@ func validate(in Write) (Item, error) {
 // Insert is a transaction operation, not a success receipt. Only the caller of
 // Store.Write may acknowledge remembering, after that enclosing commit returns.
 func Insert(ctx context.Context, tx *canon.Tx, in Write, resolve ResolveEvidence) (Item, error) {
-	item, err := validate(in)
+	return insert(ctx, tx, in, resolve, false)
+}
+
+func insert(ctx context.Context, tx *canon.Tx, in Write, resolve ResolveEvidence, promotion bool) (Item, error) {
+	item, err := validateWrite(in, promotion)
 	if err != nil {
 		return Item{}, err
 	}
@@ -141,6 +146,15 @@ func Insert(ctx context.Context, tx *canon.Tx, in Write, resolve ResolveEvidence
 	evidence := make([]Evidence, 0, len(item.Evidence))
 	allAutomation := true
 	for _, e := range item.Evidence {
+		if !promotion && e.Kind == Event {
+			var imported int
+			if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM conv_event WHERE id=? AND json_extract(origin,'$.kind')='import'", e.ID).Scan(&imported); err != nil {
+				return Item{}, err
+			}
+			if imported != 0 {
+				return Item{}, ErrEvidence
+			}
+		}
 		if !present(e.ID) || e.Revision < 0 || (e.Precision != Exact && e.Precision != Session && e.Precision != NoPrecision) {
 			return Item{}, ErrEvidence
 		}
@@ -149,14 +163,18 @@ func Insert(ctx context.Context, tx *canon.Tx, in Write, resolve ResolveEvidence
 		default:
 			return Item{}, ErrEvidence
 		}
-		if item.Subject.Kind == Person && (e.Kind != Event || e.Precision != Exact) {
+		confirmedExternal := promotion && e.Kind == External
+		if item.Subject.Kind == Person && !confirmedExternal && (e.Kind != Event || e.Precision != Exact) {
 			return Item{}, ErrPersonEvidence
 		}
 		origin, err := resolve(ctx, tx, e)
 		if err != nil {
 			return Item{}, err
 		}
-		if item.Subject.Kind == Person && origin.Speaker != guard.Person {
+		if confirmedExternal && !origin.Verified {
+			return Item{}, ErrEvidence
+		}
+		if item.Subject.Kind == Person && !confirmedExternal && origin.Speaker != guard.Person {
 			return Item{}, ErrPersonEvidence
 		}
 		if origin.Speaker == guard.ExternalParticipant || origin.Person != in.Person || origin.Agent != "" && origin.Agent != in.Agent || origin.PlanEnded {
@@ -168,7 +186,7 @@ func Insert(ctx context.Context, tx *canon.Tx, in Write, resolve ResolveEvidence
 		if !validScope(origin.Scope) || scopeRank(item.Scope) < scopeRank(origin.Scope) {
 			return Item{}, ErrScope
 		}
-		if e.Kind == WorkResult && !origin.Verified || e.Kind == External && item.Kind == Fact {
+		if e.Kind == WorkResult && !origin.Verified || e.Kind == External && item.Kind == Fact && !confirmedExternal {
 			return Item{}, ErrEvidence
 		}
 		if item.Basis == Stated && (e.Kind != Event || origin.Speaker != guard.Person) {

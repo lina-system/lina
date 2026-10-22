@@ -32,6 +32,8 @@ func TestRules(t *testing.T) {
 		{"default command excludes importer add-ons", "cmd/lina/main.go", `package main; import _ "` + module + `/internal/addons/importer/hermes"`, "importer"},
 		{"onboarding excludes importer add-ons", "internal/clientapi/onboarding.go", `package clientapi; import _ "` + module + `/internal/addons/importer/hermes"`, "importer"},
 		{"indirect importer dependency", "internal/bridge/bridge.go", `package bridge; import _ "` + module + `/internal/addons/importer/hermes/reader"`, "importer"},
+		{"explicit Hermes command", "cmd/lina/import_hermes.go", `package main; import _ "` + module + `/internal/addons/importer/hermes"`, ""},
+		{"explicit command cannot import another adapter", "cmd/lina/import_hermes.go", `package main; import _ "` + module + `/internal/addons/importer/other"`, "importer"},
 		{"importer uses Core primitives", "internal/addons/importer/hermes/reader.go", `package hermes; import _ "` + module + `/internal/core/canon"`, ""},
 		{"importer subpackage", "internal/addons/importer/hermes/reader.go", `package hermes; import _ "` + module + `/internal/addons/importer/hermes/schema"`, ""},
 		{"importer near prefix", "internal/core/boot/boot.go", `package boot; import _ "` + module + `/internal/addons/importers"`, ""},

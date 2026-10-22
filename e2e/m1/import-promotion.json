@@ -1,0 +1,6 @@
+{
+  "profile": "synthetic-profile",
+  "statement": "Synthetic request",
+  "owner_session": "synthetic-session",
+  "expected_items": 1
+}

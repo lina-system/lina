@@ -440,6 +440,14 @@ func (s *Store) Get(ctx context.Context, id string) (Event, error) {
 			return e, errors.Join(ErrBytesUnavailable, err)
 		}
 	}
+	if e.Origin.Kind == "import" {
+		masked, missing, err := s.importedOutput(ctx, e.ID, text)
+		if err != nil || missing {
+			e.BytesUnavailable = true
+			return e, errors.Join(ErrBytesUnavailable, err)
+		}
+		text = masked.Text()
+	}
 	var secretSpans []secrets.Span
 	for _, span := range e.Spans {
 		if !validSpan(text, span) {
@@ -456,7 +464,18 @@ func (s *Store) Get(ctx context.Context, id string) (Event, error) {
 	if err != nil || e.Body.Text() != text {
 		return Event{}, ErrInvalid
 	}
-	if _, err := e.Message(); err != nil {
+	if e.Origin.Kind == "import" {
+		var sealed int
+		err := s.db.Read(ctx, func(tx *canon.Tx) error {
+			return tx.QueryRowContext(ctx, "SELECT count(*) FROM import_seal WHERE conversation_id=?", e.ConversationID).Scan(&sealed)
+		})
+		if err != nil {
+			return Event{}, err
+		}
+		if sealed != 1 || e.Surface.Kind != "import" {
+			return Event{}, ErrInvalid
+		}
+	} else if _, err := e.Message(); err != nil {
 		return Event{}, err
 	}
 	return e, nil
