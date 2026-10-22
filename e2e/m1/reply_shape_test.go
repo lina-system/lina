@@ -147,6 +147,13 @@ func TestM1ReplyShapeLONGQA(t *testing.T) {
 		// Stitch overlapping PgUp views into the complete transcript, so a
 		// repeated summary or body cannot hide outside the current viewport.
 		transcript := conversationRows(latest)
+		overlapWithTranscript := func(rows []string) int {
+			overlap := min(len(rows), len(transcript))
+			for overlap > 0 && strings.Join(rows[len(rows)-overlap:], "\n") != strings.Join(transcript[:overlap], "\n") {
+				overlap--
+			}
+			return overlap
+		}
 		page := latest
 		for pages := 0; !strings.Contains(strings.Join(conversationRows(page), "\n"), scenario.Input); pages++ {
 			if pages >= scenario.Lines {
@@ -155,16 +162,14 @@ func TestM1ReplyShapeLONGQA(t *testing.T) {
 			previous := strings.Join(conversationRows(page), "\n")
 			h.keys(terminal, "\x1b[5~")
 			page = wait(func(s tuiterm.Snapshot) bool {
-				return strings.Join(conversationRows(s), "\n") != previous
+				rows := conversationRows(s)
+				// A PTY read may end mid-paint with old rows below new ones.
+				// Wait for the actual overlapping page, not merely a changed
+				// cell. A skipped page still fails the bounded wait.
+				return strings.Join(rows, "\n") != previous && overlapWithTranscript(rows) > 0
 			})
 			rows := conversationRows(page)
-			overlap := min(len(rows), len(transcript))
-			for overlap > 0 && strings.Join(rows[len(rows)-overlap:], "\n") != strings.Join(transcript[:overlap], "\n") {
-				overlap--
-			}
-			if overlap == 0 {
-				t.Fatal("PgUp skipped conversation rows")
-			}
+			overlap := overlapWithTranscript(rows)
 			transcript = append(append([]string{}, rows[:len(rows)-overlap]...), transcript...)
 		}
 		t.Logf("LONG-QA first page (100x34):\n%s", strings.Join(screenRows(page), "\n"))
