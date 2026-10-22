@@ -297,6 +297,11 @@ type Options struct {
 	StartFromTurn func(context.Context, budget.Handoff) (budget.Handle, error)
 	// ResultCommitted wakes consumers only after a durable tool receipt.
 	ResultCommitted func()
+	// ToolActivity observes dispatch before Execute and finish after result commit.
+	// A failed start prevents execution and is paired with an aborted finish.
+	// Errors stop the loop without changing receipts. Callbacks for independent
+	// calls may overlap; the observer must be safe for concurrent use.
+	ToolActivity func(context.Context, ToolActivity) error
 }
 
 func (s *Store) Run(ctx context.Context, o Options) (out loop.Outcome, err error) {
@@ -444,7 +449,9 @@ func (s *Store) Run(ctx context.Context, o Options) (out loop.Outcome, err error
 		partials = append(partials, Partial{Round: round, Index: index, Text: text})
 		return nil
 	}
-	out, err = loop.Run(ctx, b.configure(cfg, o.Report))
+	cfg = b.configure(cfg, o.Report)
+	cfg.Journal = observeTools(cfg.Journal, o.ToolActivity)
+	out, err = loop.Run(ctx, cfg)
 	// Only the active turn's additions belong in promotion. Prepared history,
 	// persona and memory packets remain scoped to the conversation request.
 	if len(out.Items) >= len(cfg.Request.Items) {

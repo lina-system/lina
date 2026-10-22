@@ -50,6 +50,15 @@ bundled by this change:
 LINA uses its own semantic tokens, localized catalog, row-budget planner and
 hardware cursor placement. It uses a hairline instead of a surrounding box.
 
+The shortcut sheet and adaptive footer also follow the behaviour requested from
+Codex CLI (`?` discovery and priority hints) and Gemini CLI (a shared key table).
+The progressive disclosure reference was read directly in Hermes Agent revision
+`944c3a434071f43e64b443d033f3eba30c64434c`,
+`hermes_cli/cli_status_bar_mixin.py`: shared ordered segments and width tiers.
+LINA independently implements whole-hint fitting and a persistent connection
+label in Go. No upstream code is copied. See the
+[observations and limits](docs/design/tui-shortcuts-reference.md).
+
 ## Memory design references
 
 The memory and compaction behavior in [Conversation and memory](docs/design/conversation-and-memory.md) is derived from the designs of Honcho and LCM-X. This attribution covers behavioral reference and an independent Go implementation under LINA's contracts. No upstream implementation code, prompts, runtime dependency or user data is included by this design change.
@@ -1337,6 +1346,18 @@ SOFTWARE.
 ```
 
 ## Terminal UI behaviour references
+
+The activity row draws on behavioural observations of Codex CLI
+([openai/codex](https://github.com/openai/codex), Apache-2.0) and Hermes Agent
+([NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent), MIT):
+status above the composer, compact elapsed time, a completion duration, frame
+sets and pausing animation while hidden or idle. No source code is copied.
+The seen/inferred/unknown specification is in
+[the activity reference](internal/tui/ACTIVITY-REFERENCE.md).
+
+Tool activity also follows Hermes Agent’s friendly catalog verbs and timed
+completion indication, observed at revision `944c3a434071f43e64b443d033f3eba30c64434c`
+in `agent/display.py`. LINA’s protocol and journal wiring are original.
 
 [Codex CLI](https://github.com/openai/codex) (Apache-2.0, OpenAI) informs the
 whole-conversation transcript overlay opened with Ctrl+T. No upstream code is

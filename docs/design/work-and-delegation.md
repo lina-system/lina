@@ -840,13 +840,19 @@ with one deadline and a default for every question. A second open round for
 the same goal is refused; a retry of the identical round is idempotent.
 Answering the round supplies all its question values together. Each question
 holds only its named dependents, so one unanswered effect cannot stop the
-rest of the goal.
+rest of the goal. Core skips publishing an unchanged retained question card,
+including on a waiting refresh or another round's event, so an answer being
+edited stays intact. A changed projection, such as expiry or resolution, is
+still published; a new connection receives the current snapshot.
 
 A timely answer and its originating message are recorded with the person and
 agent from the durable round. A late answer remains available after expiry
 and appends a new decision with its message identity and body; it increments
 the goal revision and returns the goal to work. Retrying the same message
 cannot create another revision. The expired default stays in the ledger.
+Once a timely or late answer is accepted, the round's card is resolved and
+stays resolved after reconnect or Core restart. Expiry alone leaves the card
+answerable for that late decision; a resolved card accepts no further answer.
 The manager derives revised work from the new decision: Core never rewrites
 the inputs or results of old executions, releases an old effect merely due
 to a late answer, or undoes an effect already applied. Work projections can

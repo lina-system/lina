@@ -1,0 +1,181 @@
+// SPDX-License-Identifier: Apache-2.0
+package records
+
+import (
+	"context"
+	"encoding/json"
+	"strings"
+
+	"github.com/thisisjun786/lina/internal/core/canon"
+)
+
+// Params is scoped by Core, never by an untrusted caller's person argument.
+// After is an exclusive id cursor; changing the repository starts a fresh view.
+type Params struct {
+	Person, Kind, Search, After string
+	Limit                       int
+}
+type Row struct {
+	ID       string `json:"id"`
+	Revision string `json:"revision"`
+	Kind     string `json:"kind"`
+	State    string `json:"state"`
+	Title    string `json:"title"`
+	Note     string `json:"note"`
+}
+type Index interface {
+	Query(context.Context, Params) ([]Row, error)
+}
+type document struct {
+	person, kind, state, title, note string
+	belongs, blocked                 []string
+}
+
+func parseDocument(data []byte) (document, error) {
+	var d document
+	if _, err := recordID(data); err != nil {
+		return d, err
+	}
+	front, body, _ := strings.Cut(string(data[4:]), "\n---\n")
+	fields := map[string]string{}
+	for _, line := range strings.Split(front, "\n") {
+		key, value, ok := strings.Cut(line, ": ")
+		if !ok {
+			return d, ErrInvalid
+		}
+		if _, duplicate := fields[key]; duplicate {
+			return d, ErrInvalid
+		}
+		fields[key] = value
+	}
+	scalar := func(key string) (string, error) {
+		value := fields[key]
+		if strings.HasPrefix(value, `"`) {
+			var s string
+			if err := json.Unmarshal([]byte(value), &s); err != nil {
+				return "", ErrInvalid
+			}
+			return s, nil
+		}
+		return value, nil
+	}
+	var err error
+	for key, dest := range map[string]*string{"person_id": &d.person, "kind": &d.kind, "state": &d.state} {
+		*dest, err = scalar(key)
+		if err != nil {
+			return d, err
+		}
+	}
+	for key, dest := range map[string]*[]string{"belongs_to": &d.belongs, "blocked_by": &d.blocked} {
+		if raw, ok := fields[key]; ok {
+			if json.Unmarshal([]byte(raw), dest) != nil {
+				return d, ErrInvalid
+			}
+			for _, id := range *dest {
+				if id == "" {
+					return d, ErrInvalid
+				}
+			}
+		}
+	}
+	body = strings.TrimSpace(body)
+	if strings.HasPrefix(body, "# ") {
+		d.title, d.note, _ = strings.Cut(body[2:], "\n")
+		d.note = strings.TrimSpace(d.note)
+	} else {
+		d.note = body
+	}
+	return d, nil
+}
+
+func putProjection(ctx context.Context, tx *canon.Tx, r indexRow) error {
+	if _, err := tx.ExecContext(ctx, "DELETE FROM records_text WHERE id=?", r.id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM records_edges WHERE source=?", r.id); err != nil {
+		return err
+	}
+	d := r.doc
+	if _, err := tx.ExecContext(ctx, "INSERT INTO records_text(id,person,kind,state,title,note) VALUES(?,?,?,?,?,?)", r.id, d.person, d.kind, d.state, d.title, d.note); err != nil {
+		return err
+	}
+	for relation, ids := range map[string][]string{"belongs_to": d.belongs, "blocked_by": d.blocked} {
+		for _, target := range ids {
+			if _, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO records_edges(source,relation,target) VALUES(?,?,?)", r.id, relation, target); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (s *Store) ensureIndex(ctx context.Context, head string, files map[string]string) error {
+	var indexed string
+	var count, texts int
+	err := s.db.Read(ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT head,(SELECT count(*) FROM records_index),(SELECT count(*) FROM records_text) FROM records_index_state WHERE singleton=1").Scan(&indexed, &count, &texts)
+	})
+	if err != nil {
+		return err
+	}
+	if indexed == head && count == len(files) && texts == count {
+		return nil
+	}
+	return s.rebuild(ctx, head)
+}
+func (s *Store) rebuild(ctx context.Context, head string) error {
+	rows, err := s.indexRows(ctx, head)
+	if err != nil {
+		return err
+	}
+	return s.db.Write(ctx, func(tx *canon.Tx) error {
+		if err := replaceIndex(ctx, tx, rows); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, "UPDATE records_index_state SET head=? WHERE singleton=1", head)
+		return err
+	})
+}
+func (s *Store) Query(ctx context.Context, p Params) ([]Row, error) {
+	recordsMu.Lock()
+	defer recordsMu.Unlock()
+	if p.Person == "" || p.Limit < 0 || p.Limit > 100 || len(p.Search) > 512 {
+		return nil, ErrInvalid
+	}
+	if p.Limit == 0 {
+		p.Limit = 50
+	}
+	if _, _, err := s.snapshot(ctx); err != nil {
+		return nil, err
+	}
+	rows := []Row{}
+	err := s.db.Read(ctx, func(tx *canon.Tx) error {
+		query := "SELECT i.id,i.revision,t.kind,t.state,t.title,t.note FROM records_index i JOIN records_text t ON t.id=i.id WHERE t.person=? AND i.id>?"
+		args := []any{p.Person, p.After}
+		if p.Kind != "" {
+			query += " AND t.kind=?"
+			args = append(args, p.Kind)
+		}
+		if strings.TrimSpace(p.Search) != "" {
+			// Quote the whole phrase; model text cannot inject FTS query operators.
+			query += " AND i.id IN (SELECT id FROM records_fts WHERE records_fts MATCH ?)"
+			args = append(args, `"`+strings.ReplaceAll(strings.TrimSpace(p.Search), `"`, `""`)+`"`)
+		}
+		query += " ORDER BY i.id LIMIT ?"
+		args = append(args, p.Limit)
+		rs, err := tx.QueryContext(ctx, query, args...)
+		if err != nil {
+			return err
+		}
+		defer rs.Close()
+		for rs.Next() {
+			var r Row
+			if err := rs.Scan(&r.ID, &r.Revision, &r.Kind, &r.State, &r.Title, &r.Note); err != nil {
+				return err
+			}
+			rows = append(rows, r)
+		}
+		return rs.Err()
+	})
+	return rows, err
+}

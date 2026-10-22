@@ -12,7 +12,7 @@ import (
 // Every kind must have a distinct generated payload, even while reserved.
 var clientKinds = []string{
 	"hello", "welcome", "error", "conversation_start", "input", "interrupt",
-	"history_get", "history", "subscribe", "output_delta", "item_done", "turn_state",
+	"history_get", "history", "subscribe", "output_delta", "item_done", "turn_state", "tool_activity",
 	"approval_request", "approval_answer", "question", "question_answer",
 	"result", "result_get", "result_edit", "result_save",
 	"running_get", "running", "running_update", "stop", "stop_result", "follow_up", "background_notice",
@@ -59,6 +59,7 @@ func roundTrip(t *testing.T, value map[string]any) Envelope {
 func concretePayloads() map[string]any {
 	return map[string]any{
 		"stop_result":        map[string]any{"run_id": "run-1", "outcome": "cancelled"},
+		"tool_activity":      map[string]any{"call_id": "call-example", "tool_name": "Reading file", "status": "started"},
 		"restart_status":     map[string]any{"owed": false},
 		"export_result":      map[string]any{"directory": "staging/export/synthetic", "manifest": "{}"},
 		"conversation_start": map[string]any{"agent_id": "agent-example"},

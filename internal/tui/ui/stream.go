@@ -85,7 +85,7 @@ type streamProjection struct {
 	snapshot, resync, request bool
 }
 
-// projectStream consumes only LN-78's generated payloads. It converts the wire
+// projectStream consumes only generated payloads. It converts the wire
 // view into the existing pure reducer's messages; it defines no wire fields.
 func projectStream(envelope protocol.Envelope) (streamProjection, error) {
 	p := streamProjection{}
@@ -104,6 +104,9 @@ func projectStream(envelope protocol.Envelope) (streamProjection, error) {
 			body, err := streamItemPayload(item)
 			if err != nil {
 				return p, err
+			}
+			if body == nil || item.Kind == protocol.KindToolActivity {
+				continue // Optional activity consumes the snapshot cursor, never history.
 			}
 			_, text := streamFields(body)
 			block := state.Block{ID: streamKey(payload.Topic, item.Key), Kind: item.Kind, Revision: revision, Done: item.Kind != protocol.KindOutputDelta}
@@ -138,11 +141,19 @@ func projectStream(envelope protocol.Envelope) (streamProjection, error) {
 			value = *text
 		}
 		p.topic, p.cursor = metadata.Topic, metadata.Cursor
-		if envelope.Kind == protocol.KindOutputDelta {
+		if envelope.Kind == protocol.KindToolActivity {
+			p.message = state.StreamAdvance{Epoch: metadata.Cursor.Epoch, Topic: metadata.Topic, Cursor: seq}
+		} else if envelope.Kind == protocol.KindOutputDelta {
 			p.message = state.Delta{Epoch: metadata.Cursor.Epoch, Topic: metadata.Topic, ID: streamKey(metadata.Topic, metadata.Key), Cursor: seq, Revision: revision, Text: value}
 		} else {
 			block := state.Block{ID: streamKey(metadata.Topic, metadata.Key), Kind: envelope.Kind, Revision: revision, Text: value}
 			projectConversationBlock(&block, envelope.Payload)
+			if block.TurnKnown {
+				block.TurnAt, _ = time.Parse(time.RFC3339Nano, envelope.SentAt)
+				if block.TurnActive {
+					block.TurnStarted = block.TurnAt
+				}
+			}
 			block.Card = projectCard(envelope.Payload, envelope.Epoch, revision)
 			p.message = state.ItemDone{Epoch: metadata.Cursor.Epoch, Topic: metadata.Topic, Cursor: seq, Block: block}
 		}
@@ -179,6 +190,8 @@ func streamFields(payload protocol.Payload) (*protocol.StreamMetadata, *string) 
 		return p.Stream, p.Text
 	case protocol.TurnState:
 		return p.Stream, p.Text
+	case protocol.ToolActivity:
+		return p.Stream, nil
 	case protocol.ApprovalRequest:
 		return p.Stream, nil
 	case protocol.Question:
@@ -225,6 +238,8 @@ func streamItemPayload(item protocol.StreamItem) (protocol.Payload, error) {
 		return decodeStreamItem[protocol.ItemDone](item.Payload)
 	case "turn_state":
 		return decodeStreamItem[protocol.TurnState](item.Payload)
+	case "tool_activity":
+		return decodeStreamItem[protocol.ToolActivity](item.Payload)
 	case "approval_request":
 		return decodeStreamItem[protocol.ApprovalRequest](item.Payload)
 	case "question":
@@ -254,7 +269,7 @@ func streamItemPayload(item protocol.StreamItem) (protocol.Payload, error) {
 	case "disconnected":
 		return decodeStreamItem[protocol.Disconnected](item.Payload)
 	}
-	return nil, errStream
+	return nil, nil // Unknown optional snapshot items have no display projection.
 }
 
 func projectConversationBlock(block *state.Block, payload protocol.Payload) {
@@ -276,6 +291,12 @@ func projectConversationBlock(block *state.Block, payload protocol.Payload) {
 			block.Speaker = *p.Speaker
 		}
 	case protocol.TurnState:
+		if p.Phase != nil {
+			block.TurnPhase = *p.Phase
+		}
+		if p.ToolName != nil {
+			block.ToolName = *p.ToolName
+		}
 		if p.Active != nil {
 			block.TurnKnown = true
 			block.TurnActive = *p.Active

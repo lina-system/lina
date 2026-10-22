@@ -254,8 +254,12 @@ func serveMessages(ctx context.Context, conn rpc.Transport, identity Identity, p
 			}
 		}
 	}()
+	legacy := legacyActivity{}
 	topics := newTopicSession(ctx, identity, identity.Topics,
 		func(id json.RawMessage, envelope protocol.Envelope) error {
+			if !slices.Contains(capabilities, TurnActivityCapability) {
+				envelope = legacy.project(envelope)
+			}
 			if id != nil {
 				return conn.Write(ctx, response{JSONRPC: "2.0", ID: id, Result: envelope})
 			}
