@@ -4,10 +4,14 @@ package boot
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/kit/loop"
@@ -111,5 +115,42 @@ func TestConversationWebMissingProviderOffersNoTools(t *testing.T) {
 	decl, err := r.prepareWebTools("turn", nil, bindings)
 	if err != nil || len(decl) != 0 || len(bindings) != 0 {
 		t.Fatal("unconfigured web tools offered", err)
+	}
+}
+
+func TestConversationWebProviderForNewAgent(t *testing.T) {
+	r := controlRuntime(t)
+	var calls int
+	r.webTransport = channelTransport(func(req *http.Request) (*http.Response, error) {
+		calls++
+		if req.URL.String() != "https://api.firecrawl.dev/v2/search" {
+			t.Fatalf("unexpected web endpoint: %s", req.URL)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"success":true,"data":{"web":[{"title":"Latest X","url":"https://example.com/x","description":"Current details"}]}}`))}, nil
+	})
+	owner := clientsrv.Session{PersonID: r.person, Epoch: r.epoch, CanDecide: true}
+	key := "fc-synthetic-routed-key"
+	if _, err := r.Web(t.Context(), owner, protocol.WebRequest{Operation: "set", Key: &key}); err != nil {
+		t.Fatal(err)
+	}
+	agent, err := r.agents.Create(t.Context(), agents.Create{Name: "Web reader", PersonID: r.person, Preset: "lina"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := r.router.view(t.Context(), owner, agent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Refuse to leave the fixture boundary if routing lost its transport.
+	if view.webTransport == nil {
+		t.Fatal("new agent lost the configured web transport")
+	}
+	p, err := view.selectedWebProvider()
+	if err != nil || p == nil {
+		t.Fatalf("new agent has no configured web provider: %v", err)
+	}
+	hits, err := p.Search(t.Context(), "latest X", 1)
+	if err != nil || len(hits) != 1 || hits[0].URL != "https://example.com/x" || calls != 1 {
+		t.Fatalf("routed search: hits=%+v calls=%d err=%v", hits, calls, err)
 	}
 }
