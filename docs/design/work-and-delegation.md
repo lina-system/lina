@@ -525,6 +525,9 @@ The manager session splits work into tasks that one worker can finish as one pul
   neither lands the failed task nor replays setup after recovery; any prepared
   worktree remains preserved. Errors after sending a start retain reservations
   until the outcome is reconciled.
+  This also applies during startup recovery: readiness is established before
+  dispatch, and a recovered task's setup failure cannot disable delegation or
+  terminate another task that was started in the same release event.
 - When slots are free, the manager may start a dependent task as a stacked pull request on an open predecessor. It records the predecessor and its head as the task's base, and Core checks capacity and disjoint write-area leases before dispatch. The dependency remains: the dependent cannot land before the predecessor. The worker brings the stack onto the landed base and owns its resulting checks to green before the manager checks the delivery.
 
 ## Workers

@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -103,12 +104,24 @@ func (r *conversationRuntime) startDelegation(ctx context.Context) error {
 		d.connection.Release()
 		return err
 	}
+	// Establish optional installation readiness before releasing persisted work.
+	// Once dispatch begins, errors belong to individual attempts; closing the
+	// runtime could kill other workers that the same wake successfully started.
+	if _, err = d.availability(ctx); err != nil {
+		cancel()
+		_ = d.adapter.Close()
+		d.connection.Release()
+		return err
+	}
 	d.reactor = reactor.New(r.work, reactor.Hooks{Availability: d.availability, Start: d.start, ReadPR: d.readPR, Return: d.returnConflict, Changed: func(ctx context.Context) { _ = r.publishRunning(ctx) }})
 	r.delegation = d
 	go d.events(runctx)
 	// Recovery never repeats an armed dispatch. Queued tasks can run immediately;
 	// old active turns and uncertain sends retain their leases for reconciliation.
-	return d.reactor.Wake(ctx)
+	if err = d.reactor.Wake(ctx); err != nil {
+		fmt.Fprintln(os.Stderr, "Some recovered work could not start; delegation remains available.")
+	}
+	return nil
 }
 func (d *delegationRuntime) close(ctx context.Context) error {
 	d.cancel()

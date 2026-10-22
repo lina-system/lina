@@ -13,7 +13,9 @@ if (mode === '--version') { process.stdout.write('codex-cli 99.0.0\n'); } else i
   const task = branch.slice('lina/'.length);
   const head = git(cfg.clone, 'rev-parse', branch);
   const merged = existsSync(join(root, `${task}.merged`));
-  process.stdout.write(JSON.stringify({number: 1, headRefOid:head, headRefName:branch, baseRefName:'dev', state:merged?'MERGED':'OPEN', mergeable:'MERGEABLE', mergeCommit:merged?{oid:git(cfg.forge,'rev-parse','dev')}:null}));
+  const definition = JSON.parse(readFileSync(join(root, `${task}.definition.json`)));
+  const mergeable = cfg.conflict && definition.key === 'a' ? cfg.conflict.mergeable : 'MERGEABLE';
+  process.stdout.write(JSON.stringify({number: 1, headRefOid:head, headRefName:branch, baseRefName:'dev', state:merged?'MERGED':'OPEN', mergeable, mergeCommit:merged?{oid:git(cfg.forge,'rev-parse','dev')}:null}));
 } else {
   writeFileSync(join(root,'worker.pid'),String(process.pid));
   const threads = new Map();
@@ -24,7 +26,7 @@ if (mode === '--version') { process.stdout.write('codex-cli 99.0.0\n'); } else i
         const definition=thread.definition;
         const folder=definition.key==='c'?'independent':'shared';
         if (definition.key==='b'&&!existsSync(join(thread.cwd,'shared','a.txt'))) throw new Error('dependent started before landed base');
-        mkdirSync(join(thread.cwd,folder),{recursive:true});writeFileSync(join(thread.cwd,folder,`${definition.key}.txt`),'verified fixture result\n');
+        mkdirSync(join(thread.cwd,folder),{recursive:true});writeFileSync(join(thread.cwd,folder,`${definition.key}.txt`),'verified fixture result\n'+(thread.count>1?'conflict corrected\n':''));
         git(thread.cwd,'add','.');git(thread.cwd,'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m',`fixture ${definition.key}`);
         git(thread.cwd,'push','origin',`HEAD:refs/heads/lina/${thread.id}`);
         writeFileSync(join(root,`${thread.id}.started`),String(thread.count));
@@ -58,7 +60,7 @@ if (mode === '--version') { process.stdout.write('codex-cli 99.0.0\n'); } else i
         } else {
           if(!result.accepted||result.verified!==false||!result.event_id.endsWith(thread.receipt.eventId))throw new Error('receipt not retained as unverified evidence');
           writeFileSync(join(root,`${thread.id}.receipt.json`),JSON.stringify(thread.receipt));
-          thread.turns.push(thread.turn);
+          thread.turn.status='completed';thread.status={type:'idle'};
           send({method:'turn/completed',params:{threadId:thread.id,turn:thread.turn}});
         }
       } else if(kind==='question') {
@@ -84,8 +86,12 @@ if (mode === '--version') { process.stdout.write('codex-cli 99.0.0\n'); } else i
       case 'thread/read': result={thread:threads.get(p.threadId)};break;
       case 'turn/start': {
         const thread=threads.get(p.threadId);thread.count++;
-        const definition=JSON.parse(p.input[0].text.split('Work definition:\n')[1]);
-        thread.definition=definition;thread.turn={id:`turn-${thread.count}`,status:'completed',items:[]};
+        if(thread.count===1) {
+          thread.definition=JSON.parse(p.input[0].text.split('Work definition:\n')[1]);
+          writeFileSync(join(root,`${thread.id}.definition.json`),JSON.stringify(thread.definition));
+        } else if(!cfg.conflict||thread.count!==cfg.conflict.returns+1||!p.input[0].text.includes('unmergeable'))throw new Error('unexpected conflict return');
+        thread.turn={id:`turn-${thread.count}`,status:'inProgress',items:[]};
+        thread.turns.push(thread.turn);thread.status={type:'active'};
         send({method:'turn/started',params:{threadId:thread.id,turn:{...thread.turn,status:'inProgress'}}});
         send({id,result:{turn:{...thread.turn,status:'inProgress'}}});
         callTool(thread,'read_projection',{});

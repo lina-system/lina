@@ -22,16 +22,43 @@ import (
 )
 
 func TestM3DependencyReleaseInstalledCore(t *testing.T) {
-	testM3DependencyRelease(t, nil)
+	testM3DependencyRelease(t, nil, nil)
+}
+
+type delegationConflict struct {
+	Mergeable string `json:"mergeable"`
+	Returns   int    `json:"returns"`
+}
+
+func TestM3DependencyConflictReturnsOnce(t *testing.T) {
+	raw, err := os.ReadFile("../m3/dependency-conflict.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var conflict delegationConflict
+	if err = json.Unmarshal(raw, &conflict); err != nil {
+		t.Fatal(err)
+	}
+	testM3DependencyRelease(t, nil, &conflict)
 }
 
 type delegationStartFailure struct {
 	Command string `json:"command"`
 	Slots   int    `json:"slots"`
+	Restart bool   `json:"restart"`
 }
 
 func TestM3DelegationStartFailureReleasesCapacity(t *testing.T) {
-	raw, err := os.ReadFile("../m3/dependency-start-failure.json")
+	testM3DelegationStartFailure(t, "dependency-start-failure.json")
+}
+
+func TestM3DelegationRecoveredFailureKeepsRuntime(t *testing.T) {
+	testM3DelegationStartFailure(t, "dependency-recovery-failure.json")
+}
+
+func testM3DelegationStartFailure(t *testing.T, scenario string) {
+	t.Helper()
+	raw, err := os.ReadFile("../m3/" + scenario)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,10 +66,10 @@ func TestM3DelegationStartFailureReleasesCapacity(t *testing.T) {
 	if err := json.Unmarshal(raw, &fault); err != nil {
 		t.Fatal(err)
 	}
-	testM3DependencyRelease(t, &fault)
+	testM3DependencyRelease(t, &fault, nil)
 }
 
-func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure) {
+func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, conflict *delegationConflict) {
 	raw, err := os.ReadFile("../m3/dependency-release.json")
 	if err != nil {
 		t.Fatal(err)
@@ -91,7 +118,7 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure) {
 				Output struct{ Result []string }
 			}
 			want := "ok"
-			if fault != nil {
+			if fault != nil && !fault.Restart {
 				want = "failed"
 			}
 			if err := json.Unmarshal([]byte(item.Output), &result); err != nil || result.Code != want {
@@ -99,7 +126,16 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure) {
 			}
 			taskIDs = result.Output.Result
 			emitResponse(w, "Work started.", true)
-		case 4:
+		case 4, 6:
+			if fault != nil && fault.Restart {
+				available := false
+				for _, tool := range request.Tools {
+					available = available || tool.Name == "schedule_work"
+				}
+				if !available {
+					t.Error("recovered task failure disabled delegation tools")
+				}
+			}
 			emitPersonaCall(w, "refresh", "refresh_work", map[string]any{"tasks": taskIDs})
 		default:
 			emitResponse(w, "Work refreshed.", true)
@@ -162,7 +198,7 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure) {
 			t.Fatal(err)
 		}
 	}
-	writeJSON(filepath.Join(h.root, "fixture.json"), map[string]any{"git": git, "clone": clone, "forge": forge, "requests": fault == nil})
+	writeJSON(filepath.Join(h.root, "fixture.json"), map[string]any{"git": git, "clone": clone, "forge": forge, "requests": fault == nil && conflict == nil, "conflict": conflict})
 	gh := filepath.Join(h.root, "fixture-gh")
 	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
 	if err = os.WriteFile(gh, []byte(fmt.Sprintf("#!/bin/sh\nexec %s %s %s forge \"$@\"\n", quote(node), quote(program), quote(h.root))), 0700); err != nil {
@@ -181,6 +217,9 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure) {
 			t.Fatal(err)
 		}
 		config["git"], config["slots"] = failingGit, fault.Slots
+		if fault.Restart {
+			config["slots"] = 0
+		}
 	}
 	writeJSON(filepath.Join(h.root, "system", "core", "delegation.json"), config)
 	start := func() *process {
@@ -212,10 +251,27 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure) {
 		t.Fatal(err)
 	}
 	admittedTurn(t, h, client, conversation, "dispatch-input", "Complete the three related tasks.")
+	if fault != nil && fault.Restart {
+		// Persist queued work first; the injected failure must occur inside
+		// startup recovery, alongside an independent successful dispatch.
+		client.Close()
+		waiting.Close()
+		h.stopCore(core)
+		config["slots"] = fault.Slots
+		writeJSON(filepath.Join(h.root, "system", "core", "delegation.json"), config)
+		core = start()
+		client, conversation = conversationClient(t, h)
+		admittedTurn(t, h, client, conversation, "recovery-input", "Check the recovered work.")
+		if t.Failed() {
+			client.Close()
+			h.stopCore(core)
+			t.FailNow()
+		}
+	}
 	answeredQuestions := map[string]bool{}
 	approvalAnswered := false
 	wantQuestions := 2
-	if fault != nil {
+	if fault != nil || conflict != nil {
 		wantQuestions, approvalAnswered = 0, true
 	}
 	answerCtx, stopAnswers := context.WithTimeout(h.ctx, operationTimeout)
@@ -310,7 +366,19 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure) {
 		h.stopCore(core)
 		return
 	}
-	a := await(taskIDs[0], func(c work.Card) bool { return c.Run != nil && !c.Active && c.TurnStatus == "completed" })
+	attempts := 1
+	if conflict != nil {
+		attempts += conflict.Returns
+	}
+	a := await(taskIDs[0], func(c work.Card) bool {
+		return c.Run != nil && c.Run.Generation == attempts && !c.Active && c.TurnStatus == "completed"
+	})
+	if conflict != nil {
+		if !a.Scheduling.ReturnSent || a.State != "input_needed" {
+			t.Fatalf("repeated conflict did not stop after correction: %+v", a)
+		}
+		admittedTurn(t, h, client, conversation, "conflict-input", "Observe the remaining conflict again.")
+	}
 	await(taskIDs[2], func(c work.Card) bool { return c.Run != nil && !c.Active })
 	b, err := store.Get(h.ctx, taskIDs[1])
 	if err != nil || b.Run != nil || b.WaitReason == nil || b.WaitReason.Kind != "dependency" {
@@ -340,7 +408,11 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure) {
 			t.Fatalf("worker receipt was not acknowledged: %v", err)
 		}
 		count, err := os.ReadFile(filepath.Join(h.root, id+".started"))
-		if err != nil || string(count) != "1" {
+		want := "1"
+		if id == taskIDs[0] {
+			want = fmt.Sprint(attempts)
+		}
+		if err != nil || string(count) != want {
 			t.Fatalf("duplicate/missing worker %s: %s %v", id, count, err)
 		}
 	}

@@ -296,6 +296,10 @@ native question answers, and submits a receipt for its committed artifact.
 `m3/dependency-start-failure.json` injects a failed initial Git fetch with one
 host slot: another task must finish and submit its receipt, while restart must
 retain the failed attempt without its reservations or a duplicate dispatch.
+`m3/dependency-conflict.json` keeps the predecessor pull request unmergeable
+through a correction turn. Core returns it to the same worker exactly once,
+requires input for the remaining conflict, and retains the dependent's gate
+until the forge merge. Repeated observation and restart cannot resend work.
 
 `go test ./e2e/m1 -run '^TestM2UpdateActivation$' -count=1` runs
 `m2/update-activation.json`, which drives `lina update --activate` against
@@ -332,6 +336,11 @@ work tools, authenticated owner approval and question answers, worker-written
 artifact contents, reported quota windows, and restored completion history.
 Worker settings remain omitted. This scenario uses no real account or provider
 credentials and does not measure live Codex quota.
+
+`m3/dependency-recovery-failure.json` persists a graph with no capacity, then
+restarts Core with one slot and a single failing Git fetch. It requires graph
+tools to remain available, the independent worker to commit and submit its
+receipt, and the settled failure to survive another restart without replay.
 
 `m3/delegation-readiness.json` exercises absent executables, failed worker
 handshakes and unavailable quota observations. Installed Core keeps conversation
