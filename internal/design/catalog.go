@@ -44,6 +44,7 @@ type translation struct{ en, ko string }
 // Keys are wire codes or local presentation ids, never English source text.
 // Keep both languages together so a new entry cannot omit a translation.
 var catalog = map[string]translation{
+	"progress.digest_count":          {"%s items · %s more", "%s개 · %s개 더"},
 	"control.stopped":                {"Stop requested.", "중단을 요청했습니다."},
 	"control.note":                   {"Note queued.", "추가 요청을 전달했습니다."},
 	"control.stopped_all":            {"Stopped %s runs.", "실행 %s개를 중단했습니다."},

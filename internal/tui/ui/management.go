@@ -193,7 +193,7 @@ func (s *managementSession) response(ctx context.Context, c *clientapi.Client, e
 	switch p := e.Payload.(type) {
 	case protocol.ProgressDigest:
 		lines := append([]string{}, p.Lines...)
-		lines = append(lines, fmt.Sprintf("%s items · %s more", p.Total, p.More))
+		lines = append(lines, fmt.Sprintf(design.Text(m.styles.options.Language, "progress.digest_count"), p.Total, p.More))
 		m.openPager(strings.Join(lines, "\n"))
 	case protocol.StopResult:
 		m.openPager(design.Text(m.styles.options.Language, "control.stopped"))
