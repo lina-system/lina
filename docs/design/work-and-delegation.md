@@ -988,6 +988,11 @@ After every event Core commits for a goal, Core derives the goal's next actions 
 
 A task's pull-request change signal invalidates its cached head, check, review and manager proofs, including while it waits for another task's merge slot. Core reads the pull request again before deriving a merge from those proofs.
 
+An inspection that confirms a base conflict for the current head uses the same
+one-rebase allowance as a conflict found at merge. Unknown mergeability keeps
+the task waiting for another inspection; it does not request a rebase. The
+repaired head needs fresh CI, review and manager proofs before merging.
+
 | Event | Goal or task state | Next action | By |
 | --- | --- | --- | --- |
 | Goal handed over | `defining`, done condition written | Split into tasks with dependencies and write areas, say the start line, move to `running` and fill capacity. | Manager, then Core |

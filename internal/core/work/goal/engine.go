@@ -600,8 +600,17 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 		case OutcomeNeedsPerson:
 			a.State = "needs_person"
 		case OutcomeConflict:
-			if t == nil || a.Kind != Merge {
+			if t == nil || a.Kind != Merge && a.Kind != InspectPR {
 				return ErrInvalid
+			}
+			if a.Kind == InspectPR {
+				// Only an explicit conflict for the inspected current head spends
+				// the existing rebase allowance. Mergeable=false alone is unknown.
+				if o.PR.Head == "" || o.PR.Head != a.Revision || o.PR.Head != t.Head || o.PR.Mergeable {
+					return ErrInvalid
+				}
+				t.PR = o.PR
+				t.PR.ObservedAt = a.ObservedAt
 			}
 			a.State = "finished"
 			t.Stage = TaskConflicted
