@@ -31,6 +31,7 @@ type workerRuntime struct {
 	mu       sync.Mutex
 	closed   bool
 	sessions map[string]*workerSession
+	starting sync.WaitGroup
 }
 type workerSession struct {
 	adapter       worker.Adapter
@@ -189,11 +190,13 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 	b := r.workers
 	if name == "worker_start" {
 		b.mu.Lock()
-		closed := b.closed
-		b.mu.Unlock()
-		if closed {
+		if b.closed {
+			b.mu.Unlock()
 			return tools.Result{State: tools.Failed}, errors.New("worker runtime closed")
 		}
+		b.starting.Add(1)
+		b.mu.Unlock()
+		defer b.starting.Done()
 		process, err := r.activities.Acquire(r.ctx, lease.Activity{Class: lease.Reported, Reason: "Codex session"})
 		if err != nil {
 			return tools.Result{State: tools.Failed}, err
@@ -397,6 +400,9 @@ func (b *workerRuntime) close() {
 		entries = append(entries, e)
 	}
 	b.mu.Unlock()
+	// Starts registered before shutdown finish or clean up their unregistered
+	// processes before Close returns. Waiting never holds the registry mutex.
+	b.starting.Wait()
 	for _, e := range entries {
 		e.close()
 		<-e.done
