@@ -845,6 +845,11 @@ opening canon or minting an epoch. `lina update --resume --state-root <path>`
 recovers an interrupted attempt using its recorded paths, composition and
 generation, or retains a hold with a closed cause. Changed installation/data
 paths and foreign services are refused before controlling another service.
+If the resumed service fails to start or pass readiness, recovery records
+`held` with `update_resume_failed`, including when the interrupted attempt had
+already recorded `complete` or `rolled_back`. A failed readiness check stops the
+service with a bounded cleanup context even if the updater was cancelled.
+The READY receipt stays sticky, and normal Core startup remains blocked.
 
 An explicitly configured Claude OAuth token also reaches the trusted smoke Core
 and its model adapter, so smoke does not require a cached vendor login. Core
@@ -888,6 +893,9 @@ and SIGKILL acknowledged at each binary/adapter rename. Failure evidence uses
 closed causes and durable receipts; it does not infer success from a running
 service or from elapsed time. Existing runtime-specific injections below remain
 with their owning components and are included in full foundation verification.
+`e2e/m2/update-resume-failure.json` kills the updater after smoke completes but
+before the ordinary service starts, then refuses the recovery start. It checks
+the durable hold, blocked Core startup and unchanged data and composition.
 
 These runtime failures must end as their rules require:
 

@@ -248,6 +248,11 @@ The installed binary's backup and rollback restore (including resumed rollback)
 use the updater context without an added installer command deadline; data size
 must not impose a fixed 30-second failure boundary. Both retain `kit/proc`
 ownership and cancellation, filtered environments and bounded command output.
+Activation and interrupted-update recovery share the service start/readiness
+check. A recovery start or readiness failure persists `held` with
+`update_resume_failed` without clearing READY, even from a terminal record.
+Readiness failure stops the owned service using a bounded context independent
+of caller cancellation before returning the failure.
 
 `update.json` is a schema-1 private atomic control record outside backups. It
 binds the root, normal socket, candidate, previous composition, binary digests,

@@ -407,6 +407,11 @@ Update backup and rollback restore, including resumed rollback, follow the
 caller's context without the installer command timeout. The M2 data-operation
 scenario verifies backup and restore exceeding that timeout through the installed
 Core's activation and recovery paths.
+The parent #148 adds recovery failure coverage: an updater killed before service
+resume followed by a refused start leaves a durable hold, preserves data and
+composition, and blocks normal Core startup. Its headless scenario is
+`e2e/m2/update-resume-failure.json`; command tests also cover cancelled readiness
+from completed, rolled-back and pre-swap attempts.
 
 **G2-15 Phase 2 acceptance run.** Run script and evidence record for LINA 2.
 - Done when: one record holds every field of the phase rules and a result per check; the interruption injection now stops a running task and its citations pass; Codex and Claude Code versions are recorded.
