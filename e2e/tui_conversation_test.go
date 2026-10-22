@@ -193,6 +193,21 @@ func waitScreen(t *testing.T, h *harness, terminal *terminal, text string) tuite
 	return snapshot
 }
 
+// waitComposer observes the input surface, not an optional low-priority hint.
+// It does not claim that Core mutation admission or history discovery is ready.
+func waitComposer(t *testing.T, h *harness, terminal *terminal) tuiterm.Snapshot {
+	t.Helper()
+	snapshot, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
+		rows := screenRows(s)
+		return s.AltScreen && !s.CursorHidden && len(rows) > 0 &&
+			strings.Contains(rows[len(rows)-1], "? "+design.Text(design.English, "shortcuts.title"))
+	})
+	if err != nil {
+		t.Fatalf("composer missing: %v; cells=%s", err, screenText(snapshot))
+	}
+	return snapshot
+}
+
 func installedConversationHarness(t *testing.T, providerURL string, installArgs ...string) (*harness, func(bool) *process) {
 	t.Helper()
 	h := newHarness(t, buildLina(t))

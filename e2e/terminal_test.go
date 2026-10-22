@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/clientapi"
 	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"golang.org/x/sys/unix"
@@ -25,6 +26,39 @@ type terminal struct {
 	done    chan struct{}
 	err     error // Read after done closes.
 	mode    unix.Termios
+}
+
+// waitCoreAdmission probes the recovery gate without granting any capability.
+// Empty input cannot mutate state: recovery refuses it as unavailable; once
+// ready, the server refuses it as capability_not_negotiated. This also works
+// without a model account or a default agent.
+func (h *harness) waitCoreAdmission() {
+	h.t.Helper()
+	client, err := clientapi.Dial(h.ctx, h.socket, "fixture-ready")
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	defer client.Close()
+	for {
+		if _, err := client.Input(h.ctx, protocol.Input{}); err != nil {
+			h.t.Fatal(err)
+		}
+		response, err := client.Receive(h.ctx)
+		if err != nil {
+			h.t.Fatal(err)
+		}
+		if response.Error == nil {
+			h.t.Fatal("readiness probe unexpectedly succeeded")
+		}
+		switch response.Error.Code {
+		case protocol.ErrorCapabilityNotNegotiated:
+			return
+		case protocol.ErrorUnavailable:
+			// Retry only this explicit, side-effect-free refusal.
+		default:
+			h.t.Fatalf("unexpected readiness refusal: %s", response.Error.Code)
+		}
+	}
 }
 
 // startConversationTUI waits for the TUI's conversation subscription response.

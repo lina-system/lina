@@ -181,16 +181,17 @@ func TestM1MemoryCorrectionForgetRestore(t *testing.T) {
 func correctionMemoryTUI(t *testing.T, h *harness) (func(string) protocol.MemoryResult, func()) {
 	t.Helper()
 	socket := h.socket
+	h.waitCoreAdmission()
 	tap := newAccountTap(t, h, socket, true)
 	h.socket = tap.socket
 	terminal := h.startScreenTUI("TERM=xterm-256color")
-	waitScreen(t, h, terminal, "Ctrl+D")
+	waitComposer(t, h, terminal)
 	opened := false
 	command := func(text string) protocol.MemoryResult {
 		t.Helper()
 		if opened {
 			h.keys(terminal, "\x1b")
-			waitScreen(t, h, terminal, "Ctrl+D")
+			waitComposer(t, h, terminal)
 		}
 		h.keys(terminal, text+"\r")
 		for {
