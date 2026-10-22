@@ -600,6 +600,10 @@ work ledger has not recorded. Unassigned tasks have no worker lane yet.
 - The manager session selects work and its order; the work engine reserves capacity, obtains Node bids and dispatches the recorded assignments. The one-coordinator rule of the Work engine holds: a worker is never used through its own team or coordinator feature.
 - When a task has landed, the work engine releases at once every task that was waiting only on it.
 - A task that cannot start has exactly one visible reason: a dependency, an area held by another task, a worker out of quota, or host capacity.
+- Graph admission checks the authenticated originating preset's worker-effect
+  ceiling before creating tasks. Each task retains its originating turn's
+  policy binding; startup recovery and conflict return recheck it before worker
+  effects. A restricted preset cannot gain worker authority through a relay.
 - The deterministic reason order is dependency (by task id), area holder (by task
   id), worker quota, then host capacity. The running list and task Details use
   that same reason. A terminal worker turn frees execution capacity, while its

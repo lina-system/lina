@@ -370,6 +370,9 @@ Ordinary Git commands in the scheduled worktree must refuse base and tracking-re
 writes, another task's branch update, and deletion of its own assigned branch.
 The same checks run after restart, while real worker commits, pushes, and Core's
 dependent allocation continue through the protected parent clone.
+`m3/delegation-preset-limits.json` calls the configured graph tool through the
+installed Core as investing and legal presets. Both must receive a policy
+refusal before task admission, with no queued work appearing after restart.
 
 The worker also calls all four LINA work tools, receives both work-tool and
 native question answers, and submits a receipt for its committed artifact.

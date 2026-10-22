@@ -1303,6 +1303,10 @@ type Definition struct {
   its unresponsive optional endpoint cannot indefinitely hold Core startup.
 - `schedule_work` admits a graph of definitions (key, what, why, done, areas,
   dependencies and design sections) scoped to the authenticated conversation.
+  Before admission it checks the origin's immutable preset and inherited turn
+  ceiling for `WorkerEffect`, and binds that ceiling to every scheduled task.
+  Recovery and conflict correction recheck the origin and task bindings before
+  any repository setup or worker input; delegation cannot widen a preset limit.
   Core resolves design references at the registered base, mints stable task ids
   from the turn/call/key, creates `lina/<task-id>` branches and separate worktrees,
   fetches and pins the remote base without moving the clone's local base branch,

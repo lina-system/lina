@@ -22,7 +22,21 @@ import (
 )
 
 func TestM3DependencyReleaseInstalledCore(t *testing.T) {
-	testM3DependencyRelease(t, nil, nil)
+	testM3DependencyRelease(t, nil, nil, "")
+}
+
+func TestM3DelegationPresetLimits(t *testing.T) {
+	data, err := os.ReadFile("../m3/delegation-preset-limits.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var scenario struct{ Presets []string }
+	if err := json.Unmarshal(data, &scenario); err != nil {
+		t.Fatal(err)
+	}
+	for _, preset := range scenario.Presets {
+		t.Run(preset, func(t *testing.T) { testM3DependencyRelease(t, nil, nil, preset) })
+	}
 }
 
 type delegationConflict struct {
@@ -39,7 +53,7 @@ func TestM3DependencyConflictReturnsOnce(t *testing.T) {
 	if err = json.Unmarshal(raw, &conflict); err != nil {
 		t.Fatal(err)
 	}
-	testM3DependencyRelease(t, nil, &conflict)
+	testM3DependencyRelease(t, nil, &conflict, "")
 }
 
 type delegationStartFailure struct {
@@ -66,10 +80,10 @@ func testM3DelegationStartFailure(t *testing.T, scenario string) {
 	if err := json.Unmarshal(raw, &fault); err != nil {
 		t.Fatal(err)
 	}
-	testM3DependencyRelease(t, &fault, nil)
+	testM3DependencyRelease(t, &fault, nil, "")
 }
 
-func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, conflict *delegationConflict) {
+func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, conflict *delegationConflict, preset string) {
 	raw, err := os.ReadFile("../m3/dependency-release.json")
 	if err != nil {
 		t.Fatal(err)
@@ -87,6 +101,27 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Error(err)
+			return
+		}
+		if preset != "" {
+			if calls.Add(1) == 1 {
+				declared := false
+				for _, tool := range request.Tools {
+					declared = declared || tool.Name == "schedule_work"
+				}
+				if !declared {
+					t.Error("scenario did not reach the configured graph tool")
+				}
+				emitPersonaCall(w, "restricted-graph", "schedule_work", scenario)
+			} else {
+				var item struct{ Output string }
+				_ = json.Unmarshal(request.Input[len(request.Input)-1], &item)
+				var result struct{ Code string }
+				if err := json.Unmarshal([]byte(item.Output), &result); err != nil || result.Code != "denied" {
+					t.Errorf("restricted preset dispatched graph: %s %v", item.Output, err)
+				}
+				emitResponse(w, "Worker execution refused by the originating preset.", true)
+			}
 			return
 		}
 		switch n := calls.Add(1); n {
@@ -241,7 +276,19 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 		return p
 	}
 	core := start()
+	selected := ""
+	if preset != "" {
+		probe, _ := conversationClient(t, h)
+		person := probe.Welcome.PersonID
+		probe.Close()
+		h.stopCore(core)
+		selected = seedMethodologyAgents(t, h, person, preset)[preset]
+		core = start()
+	}
 	client, conversation := conversationClient(t, h)
+	if selected != "" && conversation != "main:"+selected {
+		t.Fatal("preset scenario used a different conversation")
+	}
 	waiting, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "test", []protocol.Capability{{Name: "waiting", Version: "1.0"}, {Name: "conversation", Version: "1.0"}})
 	if err != nil {
 		t.Fatal(err)
@@ -255,6 +302,29 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 		t.Fatal(err)
 	}
 	admittedTurn(t, h, client, conversation, "dispatch-input", "Complete the three related tasks.")
+	if preset != "" {
+		db, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon", "canon.sqlite"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close(context.Background())
+		store := work.New(db)
+		assertEmpty := func() {
+			t.Helper()
+			cards, err := store.Cards(h.ctx)
+			if err != nil || len(cards) != 0 {
+				t.Fatalf("refused graph admitted work: cards=%d err=%v", len(cards), err)
+			}
+		}
+		assertEmpty()
+		client.Close()
+		waiting.Close()
+		h.stopCore(core)
+		core = start()
+		assertEmpty()
+		h.stopCore(core)
+		return
+	}
 	if fault != nil && fault.Restart {
 		// Persist queued work first; the injected failure must occur inside
 		// startup recovery, alongside an independent successful dispatch.

@@ -10,9 +10,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/thisisjun786/lina/internal/core/authority"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/provider"
+	"github.com/thisisjun786/lina/kit/tools"
 )
 
 type dispatchDefinition struct {
@@ -55,9 +57,20 @@ func (r *conversationRuntime) prepareDelegationTools(turnID string, bindings map
 		if err := decodeDelegation(c.Arguments, &in); err != nil {
 			return loop.Result{ID: c.ID, Code: loop.Invalid}
 		}
+		if err := authority.CheckPreset(ctx, r.db, r.epoch, authority.PolicyRequest{
+			Key: "preset:schedule:" + delegatedID(turnID, c.ID, "policy"), Person: r.person, Agent: r.agent, TaskID: turnID,
+			Tool: "schedule_work", Target: in.Repository, Class: tools.WorkerEffect, Arguments: json.RawMessage(c.Arguments),
+		}); err != nil {
+			return delegationResult(c.ID, nil, err)
+		}
 		tasks, err := r.delegation.tasks(ctx, r, turnID, c.ID, in)
 		if err != nil {
 			return delegationResult(c.ID, nil, err)
+		}
+		for _, task := range tasks {
+			if err := r.personaAuthority.BindDelegation(ctx, r.person, r.agent, turnID, task.AgentID, task.ID); err != nil {
+				return delegationResult(c.ID, nil, err)
+			}
 		}
 		err = r.delegation.reactor.Schedule(ctx, tasks)
 		var ids []string
@@ -112,6 +125,10 @@ func delegationResult(id string, value any, err error) loop.Result {
 		if errors.Is(err, work.ErrInvalid) || errors.Is(err, work.ErrState) {
 			code = loop.Invalid
 			body["code"] = "invalid_work_graph"
+		}
+		if errors.Is(err, authority.ErrPresetLimit) {
+			code = loop.Denied
+			body["code"] = authority.ErrPresetLimit.Error()
 		}
 	}
 	raw, _ := json.Marshal(body)

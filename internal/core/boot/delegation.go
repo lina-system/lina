@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/authority"
 	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/ledger"
@@ -28,6 +29,7 @@ import (
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/proc"
 	"github.com/thisisjun786/lina/kit/provider"
+	"github.com/thisisjun786/lina/kit/tools"
 )
 
 // Delegation is opt-in installation configuration, never a model-selected
@@ -272,6 +274,29 @@ func (d *delegationRuntime) origin(ctx context.Context, task work.Task) (*conver
 	return origin, input, nil
 }
 
+// Recovery and conflict returns obey the same origin ceiling as admission.
+// Bind legacy queued tasks too, before any repository or worker setup occurs.
+func (d *delegationRuntime) checkScheduledPolicy(ctx context.Context, task work.Task) error {
+	if task.Schedule == nil || task.Schedule.InputID == "" {
+		return work.ErrInvalid
+	}
+	originTurn := "turn:" + task.Schedule.InputID
+	args, err := json.Marshal(task.Schedule)
+	if err != nil {
+		return err
+	}
+	request := authority.PolicyRequest{Key: "preset:scheduled-origin:" + task.ID, Person: task.PersonID, Agent: task.AgentID,
+		TaskID: originTurn, Tool: "schedule_work", Target: task.Schedule.Repository, Class: tools.WorkerEffect, Arguments: args}
+	if err = authority.CheckPreset(ctx, d.root.db, d.root.epoch, request); err != nil {
+		return err
+	}
+	if err = d.root.personaAuthority.BindDelegation(ctx, task.PersonID, task.AgentID, originTurn, task.AgentID, task.ID); err != nil {
+		return err
+	}
+	request.Key, request.TaskID = "preset:scheduled-worker:"+task.ID, task.ID
+	return authority.CheckPreset(ctx, d.root.db, d.root.epoch, request)
+}
+
 func (d *delegationRuntime) start(ctx context.Context, c work.Card) (run work.Run, err error) {
 	sent := false
 	defer func() {
@@ -288,6 +313,9 @@ func (d *delegationRuntime) start(ctx context.Context, c work.Card) (run work.Ru
 	repo, ok := d.config.Repositories[p.Repository]
 	if !ok || p.Worker != "codex" || p.Host != "local" {
 		return work.Run{}, work.ErrInvalid
+	}
+	if err = d.checkScheduledPolicy(ctx, c.Task); err != nil {
+		return work.Run{}, err
 	}
 	origin, input, err := d.origin(ctx, c.Task)
 	if err != nil {
@@ -407,6 +435,9 @@ func (d *delegationRuntime) start(ctx context.Context, c work.Card) (run work.Ru
 	return work.Run{ID: c.Task.ID + ":1", TaskID: c.Task.ID, Generation: 1, Worker: "codex", ThreadID: thread.ID, TurnID: thread.TurnID, NodeID: "local"}, nil
 }
 func (d *delegationRuntime) returnConflict(ctx context.Context, c work.Card) (work.Run, error) {
+	if err := d.checkScheduledPolicy(ctx, c.Task); err != nil {
+		return work.Run{}, err
+	}
 	d.mu.Lock()
 	thread, ok := d.threads[c.Task.ID]
 	adapter := d.adapters[c.Task.ID]
