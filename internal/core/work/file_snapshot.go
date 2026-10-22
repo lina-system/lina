@@ -156,10 +156,14 @@ func (s *Service) snapshotFiles(ctx context.Context, c Card, runID string, recei
 		return ErrFilesChanged
 	}
 	if c.Receipt != nil && c.Receipt.EventID == receipt.EventID {
-		if c.FileSnapshot == nil || c.FileSnapshot.Fingerprint != tree.Fingerprint() {
+		if c.FileSnapshot == nil {
 			return ErrFilesChanged
 		}
-		return nil
+		if c.FileSnapshot.Fingerprint == tree.Fingerprint() {
+			return nil
+		}
+		// Receipt IDs cover files only. A directory-only change still needs
+		// a new snapshot revision and a fresh judgment of the complete tree.
 	}
 	var prepared []MaterialWrite
 	defer func() {
