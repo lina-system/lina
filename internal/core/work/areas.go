@@ -11,7 +11,8 @@ import (
 
 // areaProgram compiles repository-relative globs, including ** as a complete
 // path component. Intersection is tested on languages, not existing files:
-// leases must cover files a worker has yet to create.
+// leases must cover files a worker has yet to create. A matched directory also
+// covers its descendants, including when the directory is matched by a glob.
 func areaProgram(glob string) (*syntax.Prog, error) {
 	if glob == "" || len(glob) > 512 || strings.ContainsAny(glob, "\\\x00\r\n") {
 		return nil, ErrInvalid
@@ -67,6 +68,7 @@ func areaProgram(glob string) (*syntax.Prog, error) {
 			b.WriteByte('/')
 		}
 	}
+	b.WriteString("(?:/.*)?")
 	re, err := syntax.Parse(b.String(), syntax.Perl|syntax.DotNL)
 	if err != nil {
 		return nil, fmt.Errorf("%w: glob", ErrInvalid)

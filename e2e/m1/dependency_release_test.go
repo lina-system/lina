@@ -92,6 +92,10 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 	if err = json.Unmarshal(raw, &scenario); err != nil {
 		t.Fatal(err)
 	}
+	overlap, err := os.ReadFile("../m3/dependency-area-overlap.json")
+	if err != nil {
+		t.Fatal(err)
+	}
 	var calls atomic.Int32
 	var taskIDs []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -139,8 +143,17 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 			if result.Code != "invalid_arguments" {
 				t.Errorf("Core accepted dependency cycle: %s", item.Output)
 			}
-			emitPersonaCall(w, "dispatch", "schedule_work", scenario)
+			emitPersonaCall(w, "area-overlap", "schedule_work", json.RawMessage(overlap))
 		case 3:
+			var item struct{ Output string }
+			_ = json.Unmarshal(request.Input[len(request.Input)-1], &item)
+			var result struct{ Code string }
+			_ = json.Unmarshal([]byte(item.Output), &result)
+			if result.Code != "invalid_arguments" {
+				t.Errorf("Core admitted unordered directory/descendant areas: %s", item.Output)
+			}
+			emitPersonaCall(w, "dispatch", "schedule_work", scenario)
+		case 4:
 			var item struct{ Output string }
 			if len(request.Input) == 0 {
 				t.Error("no tool result")
@@ -161,7 +174,7 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 			}
 			taskIDs = result.Output.Result
 			emitResponse(w, "Work started.", true)
-		case 4, 6:
+		case 5, 7:
 			if fault != nil && fault.Restart {
 				available := false
 				for _, tool := range request.Tools {

@@ -617,7 +617,8 @@ The manager session splits work into tasks that one worker can finish as one pul
   and unordered overlapping areas within one graph are refused before any task
   is created. Area identity is the registered repository, shared across clones
   and conversations. Relative globs support `*`, `?`, character classes and `**`
-  as a whole path component. Intersection checks include files not yet created;
+  as a whole path component. A matched directory, including one matched by a
+  wildcard, includes its descendants. Intersection checks include files not yet created;
   unrelated graphs with overlapping areas wait on the existing lease.
 - Goal dispatch compares repository-relative paths and glob intersections across all goals in the same repository. A matched directory includes its descendants, and `**` can cross directory boundaries. Different spellings of an overlapping area do not create separate leases; disjoint areas remain eligible in parallel.
 - LINA Core holds an area lease for each task from hand-off until the task has landed, is closed or is abandoned. The lease follows the liveness of the task's worker (see Liveness): a task judged abandoned frees its lease, and nothing else frees it earlier.

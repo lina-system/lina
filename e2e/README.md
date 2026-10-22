@@ -374,6 +374,9 @@ observation releases the dependent onto the fetched remote base. The parent
 clone's checked-out base branch stays unchanged. Restart retains the merge without
 turning it into a delivery verdict. The fixture has no provider credential or
 external GitHub effect.
+`m3/dependency-area-overlap.json` first submits unordered areas for a
+wildcard-matched directory and a nested file. Core must reject the graph before
+the ordered directory/child graph in the release scenario can execute.
 Ordinary Git commands in the scheduled worktree must refuse base and tracking-ref
 writes, another task's branch update, and deletion of its own assigned branch.
 The same checks run after restart, while real worker commits, pushes, and Core's
