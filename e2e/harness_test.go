@@ -29,6 +29,10 @@ var commandBuilds struct {
 }
 
 func TestMain(m *testing.M) {
+	if os.Getenv("LINA_WORKER_FIXTURE") == "1" && len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "app-server") {
+		codexSessionFixture()
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "proc-supervise" {
 		os.Exit(proc.SuperviseMain(os.Args[2:], os.Stderr))
 	}
