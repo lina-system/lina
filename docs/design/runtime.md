@@ -591,7 +591,7 @@ the size and SHA-256 of the exact artifact bytes copied.
 The install includes the eight working personas from public
 `persona/<preset>/core-v1.md` and `default-voice-v1.md`, using the keys and names in
 [Presets](conversation-and-memory.md#presets). Release validation checks all eight
-pairs. Core loads them without a private checkout or persona-source setup;
+pairs before building release artifacts, independently enforcing the 64 KiB JSON-escaped pair budget. The files are embedded in the Core binary and covered by its artifact hash; installation needs no separate persona copy. Core loads them without a private checkout or persona-source setup;
 the legacy `--persona-source` / `persona_source` path does not override shipped
 starter layers. Migration publishes normal preset revisions while preserving
 prepared turns and agent-owned layers. Only backstory and world material stay

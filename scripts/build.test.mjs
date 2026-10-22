@@ -434,3 +434,29 @@ test('dirty tracked, staged and untracked sources build without retaining a mani
     f.commit(f.cwd, 'test: accept local change');
   }
 });
+
+test('build validates shipped persona pairs before producing release artifacts', t => {
+  const f = fixture(t);
+  let validated = false;
+  let reject = false;
+  const run = (command, args, options) => {
+    if (args[0] === 'env') return { status: 0, stdout: options.env.GOTOOLCHAIN, stderr: '' };
+    if (args.includes('./persona/validate')) {
+      validated = true;
+      if (reject) return { status: 1, stdout: '', stderr: 'persona validation failed' };
+    }
+    if (args[0] === 'build') {
+      assert.equal(validated, true);
+      const binary = args[args.indexOf('-o') + 1];
+      f.write(dirname(binary), binary.split(/[\\/]/).at(-1), 'fixture executable');
+    }
+    return { status: 0, stdout: args[0] === 'run' ? '{}' : '', stderr: '' };
+  };
+  assert.ok(build({ cwd: f.cwd, out: f.out, execute: run }));
+  assert.equal(validated, true);
+  reject = true;
+  validated = false;
+  assert.throws(() => build({ cwd: f.cwd, out: f.out, execute: run }), /persona validation failed/);
+  assert.equal(validated, true);
+  assert.equal(existsSync(join(f.out, 'manifest.json')), false);
+});
