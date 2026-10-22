@@ -19,6 +19,7 @@ import (
 func conversationShell() *shellModel {
 	m := newShell(Options{Width: 80, Profile: Monochrome}, time.Now)
 	m.content.Capabilities = []protocol.Capability{{Name: "conversation", Version: "1.0"}}
+	m.conversation.id = "main:fixture"
 	m.Update(shellConnection{Generation: 1, Status: ConnectionStatus{State: Live}})
 	return m
 }
@@ -45,6 +46,45 @@ func TestConversationSendClearsDraftAndCreatesOneEcho(t *testing.T) {
 	m.Update(tea.KeyPressMsg{Code: tea.KeyEnter, IsRepeat: true})
 	if len(m.content.Blocks) != 1 {
 		t.Fatal("repeated Enter sent twice")
+	}
+}
+
+func TestConversationSendWaitsForInitialHistory(t *testing.T) {
+	for _, text := range []string{"첫 메시지", "/queue 다음 메시지"} {
+		t.Run(text, func(t *testing.T) {
+			m := newShell(Options{Width: 80, Profile: Monochrome}, time.Now)
+			m.Update(shellData{Generation: 1, Message: workListWelcome(t, "conversation")})
+			m.Update(shellConnection{Generation: 1, Status: ConnectionStatus{State: Live}})
+			m.Update(tea.PasteMsg{Content: text})
+			if m.conversation.id != "" || m.status.State != Live {
+				t.Fatal("expected Welcome before initial History")
+			}
+			for range 2 {
+				_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+				if cmd != nil || m.content.Draft.Text != text || len(m.content.Blocks) != 0 || m.content.Busy {
+					t.Fatalf("send before History: command=%v draft=%q blocks=%d busy=%v", cmd != nil, m.content.Draft.Text, len(m.content.Blocks), m.content.Busy)
+				}
+			}
+			// The matching History response supplies the destination. Discovery
+			// alone must not send; the person explicitly presses Enter again.
+			m.conversation.id = "main:fixture"
+			m.agentDiscoveryDone()
+			if m.content.Draft.Text != text || len(m.content.Blocks) != 0 {
+				t.Fatal("discovery changed the retained draft")
+			}
+			_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+			if cmd == nil || m.content.Draft.Text != "" || len(m.content.Blocks) != 1 {
+				t.Fatal("explicit send after History did not create one echo")
+			}
+			request := cmd().(shellEffect).Message.(state.SendRequest)
+			wantMode := state.InputNormal
+			if strings.HasPrefix(text, "/queue ") {
+				wantMode = state.InputQueue
+			}
+			if request.Draft.Text != strings.TrimPrefix(text, "/queue ") || request.Mode != wantMode {
+				t.Fatalf("retained send changed: %+v", request)
+			}
+		})
 	}
 }
 

@@ -352,7 +352,7 @@ order and keeps their counts when folded. Ctrl+W and Ctrl+R open their complete
 retained text in the pager; Ctrl+P opens the granted progress topic. Missing
 capabilities use the single local explanation of T-07 and leave no placeholder
 rows. Granted empty lists are hidden without an unavailable notice. Rows appear
-when Core sends items and disappear when its snapshot clears the list.
+when Core sends items and disappear on a removal update or when its snapshot clears the list.
 List updates do not focus the pager or
 change the draft. Decision answering remains the typed approval/question flow
 of T-04; the composer never turns a list row into an approval.
@@ -389,6 +389,14 @@ the full screen. The pager supports arrows, Page Up/Down, Home/End, `/` search,
 `n` for the next match, and Esc or `q` to return. Its text can be selected with
 the terminal's own copy. No host clipboard read or write is installed by the
 composer or pager.
+
+For a completed background run, Ctrl+R selects a running row with the arrows;
+Enter reads its result, and `d` dismisses a landed row. The landing's agent-report
+card also opens with Ctrl+O and remains available after its row leaves Running.
+Core reads the material on demand, with Ctrl+N fetching the next page when shown;
+`n` retains its pager search meaning. The card restores from the durable lane
+notice after reconnect or restart. Result arrival never opens the pager or takes
+focus from the composer.
 
 ## Approvals, questions and sign-in (T-04)
 
@@ -618,7 +626,12 @@ input uses `mode: steer`; Core decides whether it belongs to a running turn.
 input id for local-echo reconciliation. The acknowledgement means durable
 admission, not turn completion; further typing can be sent while the turn runs.
 A refused send restores the draft. Connection states other than Live disable
-submission without discarding edits.
+submission without discarding edits. Even in Live, conversation submission waits
+until the initial History response supplies the conversation id. Enter during
+discovery retains the whole draft, including `/queue`, and creates no local echo
+or input request. Discovery does not send it automatically; a fresh Enter sends
+the retained draft to the discovered conversation. Management commands remain
+available during discovery.
 Resizing preserves the draft and its cursor without submitting it.
 
 `e2e/m1/conversation-history-order.json` exercises queue and ordinary steering

@@ -172,7 +172,7 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 		return nil, err
 	}
 
-	if err = turn.New(db).Recover(ctx); err != nil {
+	if err = recoverConversationTurns(ctx, db); err != nil {
 		return nil, err
 	}
 	r.topics, err = clientsrv.NewTopics(strconv.FormatUint(epoch, 10), clientsrv.TopicOptions{})
