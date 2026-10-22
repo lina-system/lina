@@ -90,9 +90,12 @@ func (r *conversationRuntime) planModel(ctx context.Context, c jobs.Call) (jobs.
 	}
 	defer activity.Release()
 	item, _ := json.Marshal(map[string]string{"role": "user", "content": string(c.Input)})
-	req := r.route.Request([]provider.Item{item})
+	instructions, _ := json.Marshal(map[string]string{"role": "developer", "content": planInstructions})
+	req := r.route.Request([]provider.Item{instructions, item})
 	req.Purpose = provider.Auxiliary
-	req.Instructions = planInstructions
+	// Auxiliary adapters omit conversational Instructions. The job methodology
+	// belongs to its own trusted input, with no persona or conversation history.
+	req.Instructions = ""
 	req.Tools = nil
 	stream, err := r.route.Adapter.Stream(ctx, activity, req)
 	if err != nil {

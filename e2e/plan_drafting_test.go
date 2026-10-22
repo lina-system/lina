@@ -109,8 +109,18 @@ func TestM3PlanDrafting(t *testing.T) {
 			}
 			emitResponse(w, "Preparing your plan.", true)
 		case 4, 8:
-			if len(req.Tools) != 0 || !strings.Contains(req.Instructions, "Klotho") {
+			if len(req.Tools) != 0 || req.Instructions != "" || len(req.Input) != 2 {
 				t.Error("planning did not use auxiliary tool-free route")
+			}
+			if len(req.Input) == 2 {
+				var instruction, source struct{ Role, Content string }
+				json.Unmarshal(req.Input[0], &instruction)
+				json.Unmarshal(req.Input[1], &source)
+				var input jobapi.PlanInput
+				json.Unmarshal([]byte(source.Content), &input)
+				if instruction.Role != "developer" || instruction.Content == "" || source.Role != "user" || input.RootID != root || input.Kind != "goal" {
+					t.Error("planning request lost methodology or accepted root")
+				}
 			}
 			draft := scenario.Initial
 			if n == 8 {
