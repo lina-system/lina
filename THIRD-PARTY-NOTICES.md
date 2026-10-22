@@ -128,6 +128,12 @@ Tool activity also follows Hermes Agent’s friendly catalog verbs and timed
 completion indication, observed at revision `944c3a434071f43e64b443d033f3eba30c64434c`
 in `agent/display.py`. LINA’s protocol and journal wiring are original.
 
+Tool rows additionally reference Hermes Agent's separation of catalog verbs and
+compact targets at revision `e06df9c2eae6901f4c88f464e0ae6e753c0428b8`,
+`agent/display.py:477-620`. No code is copied; the
+[tool row reference](internal/tui/TOOL-ROWS-REFERENCE.md) records seen, inferred
+and unknown behavior.
+
 ## Memory design references
 
 The memory and compaction behavior in [Conversation and memory](docs/design/conversation-and-memory.md) is derived from the designs of Honcho and LCM-X. This attribution covers behavioral reference and an independent Go implementation under LINA's contracts. No upstream implementation code, prompts, runtime dependency or user data is included by this design change.

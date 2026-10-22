@@ -28,6 +28,7 @@ func focusConversation(s State) State {
 	s.pending = nil
 	s.Activity = Activity{}
 	s.Worked = nil
+	s.ToolCalls = nil
 	s.Gen++
 	return s
 }
