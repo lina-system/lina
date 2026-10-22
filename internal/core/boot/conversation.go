@@ -311,8 +311,14 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 func (r *conversationRuntime) Close(ctx context.Context) error {
 	var err error
 	if r.workEngine != nil {
-		if err = r.workEngine.close(ctx); err != nil {
-			return err
+		waitErr := r.workEngine.close(ctx)
+		select {
+		case <-r.workEngine.done:
+			// A joined engine's failure must not skip the remaining cleanup.
+			// Check completion itself: a wait timeout leaves its stores in use.
+			err = r.workEngine.err
+		default:
+			return waitErr
 		}
 	}
 	if r.ownerViews != nil && r.ownerViews.stop != nil {
@@ -320,17 +326,17 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 		select {
 		case <-r.ownerViews.done:
 		case <-ctx.Done():
-			return ctx.Err()
+			return errors.Join(err, ctx.Err())
 		}
 	}
 	if r.workerDispatch != nil {
-		if err = r.workerDispatch.Close(ctx); err != nil {
-			return err
+		if closeErr := r.workerDispatch.Close(ctx); closeErr != nil {
+			return errors.Join(err, closeErr)
 		}
 	}
 	if r.workerGitHub != nil {
-		if err = r.workerGitHub.Close(ctx); err != nil {
-			return err
+		if closeErr := r.workerGitHub.Close(ctx); closeErr != nil {
+			return errors.Join(err, closeErr)
 		}
 	}
 	if r.waitingStop != nil {
@@ -338,7 +344,7 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 		select {
 		case <-r.waitingDone:
 		case <-ctx.Done():
-			return ctx.Err()
+			return errors.Join(err, ctx.Err())
 		}
 		r.waitingStop = nil
 	}
@@ -348,7 +354,7 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 		case result := <-r.growth.done:
 			err = errors.Join(err, result)
 		case <-ctx.Done():
-			return ctx.Err()
+			return errors.Join(err, ctx.Err())
 		}
 		r.growth.stop = nil
 	}
@@ -356,9 +362,8 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 		r.channels.Close()
 	}
 	if r.lanes != nil {
-		err = r.lanes.Close(ctx)
-		if err != nil {
-			return err
+		if closeErr := r.lanes.Close(ctx); closeErr != nil {
+			return errors.Join(err, closeErr)
 		}
 	}
 	if r.workers != nil {
@@ -370,7 +375,7 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 			select {
 			case <-b.done:
 			case <-ctx.Done():
-				return ctx.Err()
+				return errors.Join(err, ctx.Err())
 			}
 		}
 		if b.service != nil {
