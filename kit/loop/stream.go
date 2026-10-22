@@ -12,12 +12,18 @@ import (
 )
 
 type batch struct {
-	items []provider.Item
-	calls []provider.ToolCall
-	meta  provider.Meta
+	items   []provider.Item
+	calls   []provider.ToolCall
+	meta    provider.Meta
+	results []Result
 }
 
-func collect(ctx context.Context, cfg Config, round int, req provider.Request) (out batch, err error) {
+func collect(ctx context.Context, cfg Config, round int, req provider.Request, seen map[string]bool) (out batch, err error) {
+	bridge := &runtimeBridge{cfg: cfg, round: round, offered: offered(req), seen: seen}
+	if cfg.RuntimeTools {
+		req.Bridge = bridge
+	}
+	defer func() { out.results = bridge.results }()
 	stream, err := cfg.Stream(ctx, req)
 	if err != nil {
 		return out, err
