@@ -106,7 +106,7 @@ func TestM1SandboxUnavailable(t *testing.T) {
 			h.socket = tap.socket
 			term := h.startScreenTUI("TERM=xterm-256color")
 			h.socket = socket
-			waitScreen(t, h, term, "Ctrl+D")
+			waitScreen(t, h, term, design.Text(design.English, "live"))
 			// Live transport alone does not mean History has supplied the TUI's
 			// destination. Observe its conversation subscription before typing.
 			for {
