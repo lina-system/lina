@@ -10,7 +10,10 @@ import (
 	"github.com/thisisjun786/lina/internal/core/secrets"
 )
 
-type materialNeeded struct{ ref ledger.Material }
+type materialNeeded struct {
+	ref       ledger.Material
+	exclusion Exclusion
+}
 
 func (*materialNeeded) Error() string { return "material_read_required" }
 
@@ -44,10 +47,18 @@ func (s Source) withMaterials(ctx context.Context, read func(Source) error) erro
 			return err
 		}
 		if s.Materials == nil {
+			if needed.exclusion != "" {
+				return needed.exclusion
+			}
 			return Exclusion("missing_source")
 		}
 		body, err := s.Materials.Read(ctx, needed.ref)
 		if err != nil {
+			// Preserve the caller's classification across the out-of-snapshot
+			// read, but never turn cancellation into a successful partial export.
+			if needed.exclusion != "" && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+				return needed.exclusion
+			}
 			return err
 		}
 		cache[needed.ref] = body
