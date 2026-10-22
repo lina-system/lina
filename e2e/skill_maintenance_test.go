@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"github.com/thisisjun786/lina/internal/core/jobs"
@@ -271,6 +272,14 @@ func TestM2InstalledSkillMaintenance(t *testing.T) {
 		t.Fatal(err)
 	}
 	h, start := installConversationBundle(t, h, bundle, server.URL)
+	// Each fully stopped Core lifecycle gets the harness's same bounded phase
+	// budget. Builds are outside it, and a prior lifecycle cannot spend the
+	// restart/suppression phase's deadline. No operation deadline is relaxed.
+	nextPhase := func() {
+		ctx, cancel := context.WithTimeout(t.Context(), 3*operationTimeout)
+		t.Cleanup(cancel)
+		h.ctx = ctx
+	}
 	core := start(true)
 	client, conversation := conversationClient(t, h)
 	runTurn := func(next string) []protocol.Envelope {
@@ -311,6 +320,7 @@ func TestM2InstalledSkillMaintenance(t *testing.T) {
 	runTurn("restored")
 	client.Close()
 	h.stopCore(core)
+	nextPhase()
 	// Advance only the persisted due time in the stopped fixture. Real worker
 	// dispatch, provider calls, versions, undo and suppression remain production.
 	ctl, err := ctlfiles.Open(h.root)
@@ -351,13 +361,20 @@ func TestM2InstalledSkillMaintenance(t *testing.T) {
 	client, conversation = conversationClient(t, h)
 	runWorker()
 	checkNotices(runTurn("restart"), 0)
-	if _, err = client.History(h.ctx, protocol.HistoryGet{ConversationID: &conversation}); err != nil {
-		t.Fatal(err)
-	}
-	history, err := client.Receive(h.ctx)
+	historyClient, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "test", []protocol.Capability{{Name: "conversation", Version: "1.0"}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { historyClient.Close() })
+	topic := "conversation:" + conversation
+	if _, err = historyClient.Subscribe(h.ctx, protocol.Subscribe{Topic: &topic}); err != nil {
+		t.Fatal(err)
+	}
+	history, err := historyClient.Receive(h.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	historyClient.Close()
 	historyJSON, _ := json.Marshal(history.Payload)
 	for _, reason := range []string{fixture.MergeReason, fixture.PruneReason} {
 		if strings.Count(string(historyJSON), reason) != 1 {
@@ -368,6 +385,7 @@ func TestM2InstalledSkillMaintenance(t *testing.T) {
 	runTurn("disable")
 	client.Close()
 	h.stopCore(core)
+	nextPhase()
 	core = start(true)
 	client, conversation = conversationClient(t, h)
 	runWorker()
