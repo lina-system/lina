@@ -63,6 +63,12 @@ fixture provider in a 100x34 PTY. Parsed cells check speaker marks, foregrounds,
 header bold and exactly one empty row between messages. ASCII runs retain words;
 `NO_COLOR` runs retain ASCII speaker identity and emit no terminal escapes.
 
+`TestM1TUIStreamingCodeInstalledCore` holds a fixture provider at an open
+200-line code fence, its closing delta, and final completion through installed
+Core and a real PTY. Result Details shows one muted notice plus six trailing
+rows while open and all 200 rows on close, before completion. The test checks
+the retained result text and restores the terminal without timed sleeps.
+
 `TestM1TUISpeakerBoundariesInstalledCore` creates and selects a long-named agent
 through the real TUI, then requests a fenced Korean reply from installed Core
 in a 40x34 ASCII PTY. It checks provider routing, usable reply width, literal
@@ -303,6 +309,14 @@ and receipt observations are seeded while Core is stopped; vendor dispatch is
 covered by the worker adapter scenarios. Run with
 `go test -count=1 ./e2e/m1 -run '^TestM2WorkArea$'`.
 
+`m2/work-dispatch.json`, executed by `TestM2DispatchedWorkArea`, drives installed
+Core's `dispatch_work` through a synthetic worker and GitHub boundary. The worker
+creates its assigned branch at the detached base, produces a real commit and
+attempts ordinary writes to protected refs. Assertions check the shared
+`work/tasks` allocation, independent parent clone, unchanged source checkout,
+clean result, artifact provenance and live-card equivalence to ledger replay.
+Run it with `go test -count=1 ./e2e/m1 -run '^TestM2DispatchedWorkArea$'`.
+
 `m2/tui-composer-identity.json` installs Core/TUI into a temporary root and creates
 and chooses another agent through the real TUI. It checks that the empty composer,
 header and reply speaker name that agent before and after Core reconnect, using
@@ -424,7 +438,7 @@ calling the model. Vendor transport is synthetic; no personal account is used.
 journey to read the owner progress capability and full waiting list during an
 approval and a question. It checks unknown plan values, display lines without
 internal identities, removal after the original authenticated answers, a real
-worker-written artifact, and empty resolved sources after Core restart. The
+worker-written artifact, empty resolved sources after Core restart, and external record edits/restoration arriving on an already-open progress subscription without a new query. The
 worker and provider are fixtures; Core, tools, protocol and persistence are real.
 
 `m2/progress-seen-review.json` checks the installed Core's progress and running

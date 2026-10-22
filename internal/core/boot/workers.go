@@ -14,12 +14,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/authority"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/skills"
 	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/codex"
+	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 	"github.com/thisisjun786/lina/kit/grant"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/loop"
@@ -67,6 +69,8 @@ type workerArgs struct {
 	TaskPacket string `json:"task_packet,omitempty"`
 }
 type workerResult struct {
+	Owner            string             `json:"owner"`
+	Manager          string             `json:"manager"`
 	Session          string             `json:"session"`
 	Turn             string             `json:"turn"`
 	Generation       uint64             `json:"generation"`
@@ -157,7 +161,12 @@ func (r *conversationRuntime) prepareWorkerTools(turnID string, input ledger.Eve
 	}
 	registry := tools.NewRegistry(r.personaAuthority, r.activities)
 	for _, name := range []string{"worker_start", "worker_input", "worker_interrupt", "worker_snapshot", "worker_quota"} {
-		spec := tools.Spec{Name: name, Schema: func(raw json.RawMessage) (tools.Input, error) { return workerSchema(name, raw) }, Conc: 1, Deadline: 30 * time.Second, Placement: tools.Core}
+		spec := tools.Spec{Classify: func(in tools.Input) tools.EffectClass {
+			if in.Write {
+				return tools.WorkerEffect
+			}
+			return tools.Research
+		}, Name: name, Schema: func(raw json.RawMessage) (tools.Input, error) { return workerSchema(name, raw) }, Conc: 1, Deadline: 30 * time.Second, Placement: tools.Core}
 		err := registry.Register(spec, func(ctx context.Context, _ lease.Lease, in tools.Input) (tools.Result, error) {
 			return r.workerOperation(ctx, name, turnID, input, in)
 		})
@@ -166,6 +175,9 @@ func (r *conversationRuntime) prepareWorkerTools(turnID string, input ledger.Eve
 		}
 		validated := turn.Tool(registry, spec, tools.Call{}, turnID)
 		bindings[name] = loop.Tool{Validate: validated.Validate, Execute: func(ctx context.Context, call provider.ToolCall) loop.Result {
+			if _, err := validated.Validate(call); err != nil {
+				return loop.Result{ID: call.ID, Code: loop.Invalid}
+			}
 			in, err := spec.Schema(json.RawMessage(call.Arguments))
 			if err != nil {
 				return loop.Result{ID: call.ID, Code: loop.Invalid}
@@ -175,6 +187,30 @@ func (r *conversationRuntime) prepareWorkerTools(turnID string, input ledger.Eve
 				_ = json.Unmarshal(in.Arguments, &a)
 				if !strings.Contains(input.Body.Text(), a.Quote) {
 					return loop.Result{ID: call.ID, Code: loop.Denied}
+				}
+			}
+			if name == "worker_start" {
+				// Admission has the caller's lifecycle, not the worker execution
+				// deadline. No start effect or short-lived grant exists while the
+				// manager lane/model is busy.
+				_, assignment, err := r.workerStartAssignment(ctx, turnID, in)
+				if err == nil {
+					err = r.runCodingManager(ctx, assignment, "assignment", nil)
+				}
+				if err == nil {
+					err = ctx.Err()
+				}
+				if err != nil {
+					result := loop.Result{ID: call.ID, Code: loop.Failed, Output: workerError(err)}
+					if errors.Is(err, authority.ErrPresetLimit) {
+						result.Code = loop.Denied
+						if effect, readErr := r.personaAuthority.Effect(ctx, "preset:coding:"+assignment.ID); readErr == nil {
+							result.Output = effect.Result.Body
+						}
+					} else if ctx.Err() != nil {
+						result.Code = loop.Aborted
+					}
+					return result
 				}
 			}
 			auth := grant.Request{GrantID: turn.EffectKey(turnID, name, in.Target, call.ID) + ":worker", MainID: r.main, Epoch: r.epoch, TaskID: turnID, Host: r.main, OSUser: "core", Person: r.person, Agent: r.agent, Profile: "worker-session", Revision: strconv.FormatUint(r.epoch, 10)}
@@ -189,22 +225,45 @@ func (r *conversationRuntime) prepareWorkerTools(turnID string, input ledger.Eve
 	return nil
 }
 
+func (r *conversationRuntime) workerStartAssignment(ctx context.Context, turnID string, in tools.Input) (workerArgs, codingAssignment, error) {
+	var a workerArgs
+	_ = json.Unmarshal(in.Arguments, &a)
+	method, err := r.skills.ResolveMethod(ctx, a.Kind, a.Skill)
+	if err != nil {
+		return a, codingAssignment{}, err
+	}
+	a.TaskPacket, err = skills.MethodPacket(a.TaskPacket, method)
+	if err != nil {
+		return a, codingAssignment{}, err
+	}
+	origin := dispatch.Origin{Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: turnID}
+	assignment, err := r.assignCoding(ctx, origin, codingID(turnID, "worker_start", string(in.Arguments)), "worker_start", a.Workdir, in.Arguments)
+	return a, assignment, err
+}
+
 func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID string, input ledger.Event, in tools.Input) (tools.Result, error) {
 	if name == "worker_start" || name == "worker_input" || name == "worker_interrupt" {
 		defer r.notifyWorkerRunning()
 	}
 	var a workerArgs
 	_ = json.Unmarshal(in.Arguments, &a)
+	if name == "worker_start" {
+		var assignment codingAssignment
+		var err error
+		a, assignment, err = r.workerStartAssignment(ctx, turnID, in)
+		if err != nil {
+			return tools.Result{State: tools.Failed, Body: workerError(err)}, err
+		}
+		if !assignment.Delegated {
+			return tools.Result{State: tools.Failed, Body: workerError(errors.New("coding_definition_not_delegated"))}, nil
+		}
+		owner := newConversationView(r.router.root, assignment.Owner, assignment.Conversation)
+		owner.codingDelivery = r
+		r = owner
+		turnID = "coding:" + assignment.ID
+	}
 	b := r.workers
 	if name == "worker_start" {
-		method, err := r.skills.ResolveMethod(ctx, a.Kind, a.Skill)
-		if err != nil {
-			return tools.Result{State: tools.Failed}, err
-		}
-		a.TaskPacket, err = skills.MethodPacket(a.TaskPacket, method)
-		if err != nil {
-			return tools.Result{State: tools.Failed}, err
-		}
 		b.mu.Lock()
 		if b.closed {
 			b.mu.Unlock()
@@ -271,7 +330,7 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 	entry := b.sessions[a.Session]
 	closed := b.closed
 	b.mu.Unlock()
-	if closed || entry == nil || entry.origin.person != r.person || entry.origin.agent != r.agent || entry.origin.conversation != r.conversation {
+	if closed || entry == nil || !entry.origin.workerConversation(r) {
 		return tools.Result{State: tools.Failed, Body: workerError(errors.New("worker session unavailable in this conversation"))}, nil
 	}
 	if name == "worker_quota" {
@@ -344,7 +403,7 @@ func (e *workerSession) result(ctx context.Context, t worker.Thread) (tools.Resu
 	return e.encode(snap), nil
 }
 func (e *workerSession) encode(s worker.ThreadSnapshot) tools.Result {
-	raw, _ := json.Marshal(workerResult{Session: s.Thread.ID, Turn: s.Thread.TurnID, Generation: s.Thread.ProcessGeneration, Binding: s.Thread.BindingEpoch, State: s.State, Worker: s.Worker, Version: s.Version, Verified: e.compatibility.Verified, VerifiedVersions: e.compatibility.VerifiedVersions, Output: s.Output})
+	raw, _ := json.Marshal(workerResult{Owner: e.origin.agent, Manager: e.origin.conversation, Session: s.Thread.ID, Turn: s.Thread.TurnID, Generation: s.Thread.ProcessGeneration, Binding: s.Thread.BindingEpoch, State: s.State, Worker: s.Worker, Version: s.Version, Verified: e.compatibility.Verified, VerifiedVersions: e.compatibility.VerifiedVersions, Output: s.Output})
 	return tools.Result{State: tools.Applied, Body: raw, Revision: s.Thread.ID + ":" + s.Thread.TurnID}
 }
 func (e *workerSession) observe() {
@@ -401,6 +460,7 @@ func (e *workerSession) observe() {
 	e.mu.Unlock()
 }
 func (r *conversationRuntime) workerNotice(ctx context.Context, parent ledger.Event, id, text string) error {
+	r = r.workerDelivery()
 	now := time.Now()
 	event, err := r.journal().Admit(ctx, guard.EntrySystem, ledger.Input{ID: id, ConversationID: r.conversation, ParentID: parent.ID, AgentID: r.agent, Surface: parent.Surface, ScaffoldKind: "worker_session", OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: text})
 	if err != nil {
@@ -409,6 +469,16 @@ func (r *conversationRuntime) workerNotice(ctx context.Context, parent ledger.Ev
 	speaker := protocol.ConversationSpeakerSystem
 	body := event.Body.Text()
 	return r.publish(ctx, protocol.KindItemDone, event.ID, protocol.ItemDone{Text: &body, Speaker: &speaker})
+}
+func (r *conversationRuntime) workerDelivery() *conversationRuntime {
+	if r.codingDelivery != nil {
+		return r.codingDelivery
+	}
+	return r
+}
+func (r *conversationRuntime) workerConversation(other *conversationRuntime) bool {
+	delivery := r.workerDelivery()
+	return r.person == other.person && (r.agent == other.agent && r.conversation == other.conversation || delivery.agent == other.agent && delivery.conversation == other.conversation)
 }
 func (b *workerRuntime) close() {
 	b.mu.Lock()

@@ -189,7 +189,7 @@ LINA Core can re-run a recorded turn, sandboxed and without effects, so that a c
 - Input. An episode written by the episode export ([conversation-and-memory.md](conversation-and-memory.md#episode-export)) or the id of a recorded turn of the install the command runs on, and optionally a directory of candidate harness files that stand in for the persona layers, skill bodies and instruction text that the turn recorded.
 - Output. The replayed reply, its tool calls and its usage, written as files in a directory that the caller names. A replay scores nothing and judges nothing; the caller compares.
 - A replay rebuilds each selected packet item from its recorded ID and revision and verifies the original request digest before applying candidates. Skills come from the recorded skill commit; the four persona-owned state projections come from their content-addressed ledger materials. Personal-memory text is never retained for reconstruction: it is re-read under current scope and removal rules. If memory is missing, forgotten or retracted, the whole turn is excluded as `forgotten`; if its revision or scope changed, the reason is `source_changed`. The manifest counts the exclusion. The packet clock is the recorded preparation clock, and memory source validity is checked at that instant. Unknown or insufficient assembly evidence remains `missing_assembly`.
-- Request assembly evidence that exceeds the ledger's inline limit is read from its exact material revision outside the canon read snapshot. Replay then rechecks current scope, retraction and material visibility before accepting it, as it does for other material-backed sources.
+- Request assembly evidence that exceeds the ledger's inline limit is read from its exact material revision outside the canon read snapshot. Replay then rechecks current scope, retraction and material visibility before accepting it, as it does for other material-backed sources. If that material cannot be read, the turn is excluded as `missing_assembly` and export continues with valid turns. Cancellation and deadline failures still stop the operation.
 - A replay uses the kit's loop core with the candidate files, on the model and effort that the turn used unless the caller names others. It runs in the sandbox with network blocked and with a scratch directory of its own, and it never touches the working directory of a conversation.
 - A turn that only answered replays in full. A turn that read replays with LINA's local read tools live and the results of its network reads taken from the ledger. A turn whose tool call had an effect replays with that call answered by the recorded result, and is left out of the replay when no result was recorded. A replay never runs an effect and never writes the effect ledger or the conversation ledger.
 - A replay's usage is recorded in its output as a run kind of its own, with the model account it used and each provider round. The installed development command writes no canon state, including budget reservations or settlements; its usage artifacts are separate from the install's budget totals ([Usage and cost](#usage-and-cost)).
@@ -612,14 +612,16 @@ account credential. It supplies the durable random main identity. The unit
 explicit root and socket arguments. A bundled `moirai-worker` receives its own
 `lina-moirai.service`, ordered after and dependent on Core, with
 `--canon <state-root>/canon/canon.sqlite` and
-`--socket <state-root>/system/run/moirai.sock`. No provider adapter receives
+`--socket <state-root>/run/jobs.sock`. No provider adapter receives
 a service unit.
 
-The current Core command does not connect canon or the job API. A bundled
-worker and its unit are installed but left disabled, and background memory
-and planning are reported unavailable with that cause. Enabling the worker
-requires the increment that connects those Core services; a copied executable
-or a successful systemd start job is not evidence of worker readiness.
+Core opens canon and serves the job API at that socket. Install enables the
+included worker after Core. The worker's service retries initial unavailability
+because Core may still be opening canon when systemd starts the worker. A
+missing model route makes model-based jobs unavailable without stopping Core
+or deterministic growth jobs. A copied executable or a successful systemd start
+job is not evidence of readiness; the installed skill maintenance scenario
+exercises the socket with the actual worker and verifies committed results.
 
 Preflight refuses an existing state root, socket, named service, service
 override or enablement link, and refuses linked destination ancestors. An
@@ -845,6 +847,11 @@ opening canon or minting an epoch. `lina update --resume --state-root <path>`
 recovers an interrupted attempt using its recorded paths, composition and
 generation, or retains a hold with a closed cause. Changed installation/data
 paths and foreign services are refused before controlling another service.
+If the resumed service fails to start or pass readiness, recovery records
+`held` with `update_resume_failed`, including when the interrupted attempt had
+already recorded `complete` or `rolled_back`. A failed readiness check stops the
+service with a bounded cleanup context even if the updater was cancelled.
+The READY receipt stays sticky, and normal Core startup remains blocked.
 
 An explicitly configured Claude OAuth token also reaches the trusted smoke Core
 and its model adapter, so smoke does not require a cached vendor login. Core
@@ -888,6 +895,9 @@ and SIGKILL acknowledged at each binary/adapter rename. Failure evidence uses
 closed causes and durable receipts; it does not infer success from a running
 service or from elapsed time. Existing runtime-specific injections below remain
 with their owning components and are included in full foundation verification.
+`e2e/m2/update-resume-failure.json` kills the updater after smoke completes but
+before the ordinary service starts, then refuses the recovery start. It checks
+the durable hold, blocked Core startup and unchanged data and composition.
 
 These runtime failures must end as their rules require:
 

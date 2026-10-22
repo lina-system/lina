@@ -26,6 +26,7 @@ import (
 )
 
 type codexWorkScenario struct {
+	QuestionCount                  int    `json:"question_count,omitempty"`
 	Kind                           string `json:"kind,omitempty"`
 	Input, Result, Artifact        string
 	Question, Answer, Coordination string
@@ -72,13 +73,16 @@ func codexWorkToolsFixture() {
 	notify := func(method string, params any) { send(map[string]any{"method": method, "params": params}) }
 	const thread, turn = "work-tools-thread", "work-tools-turn"
 	const approvalID, projectionID = "71", `"projection-rpc"`
-	const askID, coordinateID, receiptID = `"ask-rpc"`, `"coordinate-rpc"`, `"receipt-rpc"`
+	const coordinateID, receiptID = `"coordinate-rpc"`, `"receipt-rpc"`
 	initialized, approved, completed := false, false, false
-	cwd, assignment, pendingTool, receivedPacket := "", "", "", ""
+	cwd, assignment, receivedPacket := "", "", ""
+	pendingTools := map[string]bool{}
+	questionRequests := map[string]bool{}
+	questionsAnswered := 0
 	callTool := func(id, name string, args any) {
-		pendingTool = id
+		pendingTools[id] = true
 		send(map[string]any{"id": json.RawMessage(id), "method": "item/tool/call", "params": map[string]any{
-			"threadId": thread, "turnId": turn, "callId": name + "-call", "namespace": "lina", "tool": name, "arguments": args,
+			"threadId": thread, "turnId": turn, "callId": name + "-call-" + strings.Trim(id, `"`), "namespace": "lina", "tool": name, "arguments": args,
 		}})
 	}
 	var receipt work.Receipt
@@ -168,8 +172,20 @@ func codexWorkToolsFixture() {
 			if len(r.Error) != 0 {
 				fail("Core rejected worker request: " + string(r.Error))
 			}
-			if string(r.ID) != approvalID && (pendingTool == "" || string(r.ID) != pendingTool) {
+			if string(r.ID) != approvalID && !pendingTools[string(r.ID)] {
 				fail("Core changed server request id or reordered tool responses: " + string(r.ID))
+			}
+			delete(pendingTools, string(r.ID))
+			if questionRequests[string(r.ID)] {
+				var answer struct{ Answer string }
+				if codexWorkToolResult(r.Result, &answer) != nil || answer.Answer != fixture.Answer {
+					fail("ask did not return the originating person's answer")
+				}
+				questionsAnswered++
+				if questionsAnswered == max(1, fixture.QuestionCount) {
+					callTool(coordinateID, "coordinate", map[string]any{"request": fixture.Coordination})
+				}
+				continue
 			}
 			switch string(r.ID) {
 			case approvalID:
@@ -188,13 +204,11 @@ func codexWorkToolsFixture() {
 					fail("projection lacks assigned task_packet and assignment_id after approval")
 				}
 				assignment = projection.AssignmentID
-				callTool(askID, "ask", map[string]any{"question": fixture.Question})
-			case askID:
-				var answer struct{ Answer string }
-				if codexWorkToolResult(r.Result, &answer) != nil || answer.Answer != fixture.Answer {
-					fail("ask did not return the originating person's answer")
+				for i := 0; i < max(1, fixture.QuestionCount); i++ {
+					id := fmt.Sprintf(`"ask-%d-rpc"`, i)
+					questionRequests[id] = true
+					callTool(id, "ask", map[string]any{"question": fixture.Question})
 				}
-				callTool(coordinateID, "coordinate", map[string]any{"request": fixture.Coordination})
 			case coordinateID:
 				var coordinated struct {
 					Accepted bool
@@ -218,7 +232,6 @@ func codexWorkToolsFixture() {
 				if codexWorkToolResult(r.Result, &claim) != nil || !claim.Accepted || claim.Verified == nil || *claim.Verified || !strings.HasSuffix(claim.EventID, receipt.EventID) {
 					fail("submit_receipt did not retain an unverified completion claim")
 				}
-				pendingTool = ""
 				if os.WriteFile(filepath.Join(cwd, fixture.Artifact), []byte(fixture.Result), 0600) != nil {
 					fail("cannot write assigned artifact")
 				}
@@ -272,7 +285,7 @@ func TestM2CodexDevelopmentMethod(t *testing.T) {
 	runCodexWorkTools(t, "../m2/codex-work-tools.json", "bug_unknown_cause", nil)
 }
 
-func runCodexWorkTools(t *testing.T, scenario, kind string, observe func(*harness, string)) {
+func runCodexWorkTools(t *testing.T, scenario, kind string, observe func(*harness, string, []protocol.Question)) {
 	t.Helper()
 	data, err := os.ReadFile(scenario)
 	if err != nil {
@@ -300,6 +313,9 @@ func runCodexWorkTools(t *testing.T, scenario, kind string, observe func(*harnes
 		var req struct{ Input, Tools []json.RawMessage }
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Error(err)
+			return
+		}
+		if scriptedCodingManager(t, w, req) {
 			return
 		}
 		for _, raw := range req.Tools {
@@ -364,7 +380,8 @@ func runCodexWorkTools(t *testing.T, scenario, kind string, observe func(*harnes
 		emitResponse(w, "worker quota checked", true)
 	}))
 	defer func() { server.CloseClientConnections(); server.Close() }()
-	h, _ := installedConversationHarness(t, server.URL)
+	h, bootstrap := installedConversationHarness(t, server.URL)
+	seedCodingFixture(t, h, bootstrap)
 	bin := t.TempDir()
 	exe, err := os.Executable()
 	if err != nil {
@@ -412,12 +429,17 @@ func runCodexWorkTools(t *testing.T, scenario, kind string, observe func(*harnes
 	if err != nil {
 		t.Fatal(err)
 	}
-	ack, done, notice, resolved, questionResolved := false, false, false, false, false
-	answerID, questionAnswerID := "", ""
-	for !ack || !done || !notice || !resolved || !questionResolved {
+	ack, done, notice, resolved := false, false, false, false
+	answerID := ""
+	questions := []protocol.Question{}
+	questionAnswerIDs := map[string]bool{}
+	answerNotices := map[string]string{}
+	answerNoticeCount := 0
+	questionResolved, questionCount := 0, max(1, fixture.QuestionCount)
+	for !ack || !done || !notice || !resolved || questionResolved < questionCount || answerNoticeCount < questionCount {
 		frame, err := c.Receive(h.ctx)
 		if err != nil {
-			t.Fatalf("worker journey ack=%t done=%t notice=%t resolved=%t questionResolved=%t: %v", ack, done, notice, resolved, questionResolved, err)
+			t.Fatalf("worker journey ack=%t done=%t notice=%t resolved=%t questionResolved=%d: %v", ack, done, notice, resolved, questionResolved, err)
 		}
 		if frame.Error != nil {
 			t.Fatalf("worker journey protocol error: %+v", frame.Error)
@@ -434,7 +456,7 @@ func runCodexWorkTools(t *testing.T, scenario, kind string, observe func(*harnes
 				continue // A waiting snapshot may repeat the same pending card.
 			}
 			if observe != nil {
-				observe(h, "approval")
+				observe(h, "approval", questions)
 			}
 			answerID, err = c.AnswerApproval(h.ctx, protocol.ApprovalAnswer{CardID: &payload.Card.ID, Revision: &payload.Card.Revision, Choice: protocol.ApprovalChoiceOnce})
 			if err != nil {
@@ -451,25 +473,43 @@ func runCodexWorkTools(t *testing.T, scenario, kind string, observe func(*harnes
 			if payload.Card == nil || payload.ConversationID != conversation || payload.Card.Summary != fixture.Question || payload.Form == nil || len(payload.Form.Fields) != 1 || payload.Form.Fields[0].Name != "answer" || payload.Form.Fields[0].Type != protocol.FormFieldTypeText {
 				t.Fatalf("worker question lost origin or answer field: %+v", payload)
 			}
-			if questionAnswerID != "" {
+			if slices.ContainsFunc(questions, func(q protocol.Question) bool { return q.Card.ID == payload.Card.ID }) {
+				continue
+			}
+			questions = append(questions, payload)
+			if len(questions) < questionCount {
 				continue
 			}
 			if observe != nil {
-				observe(h, "question")
+				observe(h, "question", questions)
 			}
 			values := protocol.FormValues{"answer": protocol.FormValue{String: &fixture.Answer}}
-			questionAnswerID, err = c.AnswerQuestion(h.ctx, protocol.QuestionAnswer{CardID: &payload.Card.ID, Revision: &payload.Card.Revision, Answer: protocol.QuestionAnswerActionAccept, Values: &values})
-			if err != nil {
-				t.Fatal(err)
+			for _, question := range questions {
+				answerNotices[question.Card.ID+":answer"] = ""
+				questionAnswerID, err := c.AnswerQuestion(h.ctx, protocol.QuestionAnswer{CardID: &question.Card.ID, Revision: &question.Card.Revision, Answer: protocol.QuestionAnswerActionAccept, Values: &values})
+				if err != nil {
+					t.Fatal(err)
+				}
+				questionAnswerIDs[questionAnswerID] = true
 			}
 		case protocol.QuestionAnswer:
-			if frame.ReplyTo != nil && *frame.ReplyTo == questionAnswerID {
+			if frame.ReplyTo != nil && questionAnswerIDs[*frame.ReplyTo] {
 				if payload.Outcome == nil || *payload.Outcome != protocol.DecisionOutcomeResolved {
 					t.Fatalf("person's question answer not resolved: %+v", payload)
 				}
-				questionResolved = true
+				questionResolved++
+				delete(questionAnswerIDs, *frame.ReplyTo)
 			}
 		case protocol.ItemDone:
+			if payload.Stream != nil {
+				if previous, expected := answerNotices[payload.Stream.Key]; expected {
+					assertWorkerAnswerNotice(t, payload)
+					if previous == "" {
+						answerNoticeCount++
+					}
+					answerNotices[payload.Stream.Key] = *payload.Text
+				}
+			}
 			notice = notice || payload.Text != nil && strings.Contains(*payload.Text, fixture.Result)
 		case protocol.TurnState:
 			if payload.Active != nil && !*payload.Active {
@@ -488,13 +528,13 @@ func runCodexWorkTools(t *testing.T, scenario, kind string, observe func(*harnes
 		t.Fatalf("real worker artifact=%q: %v", artifact, err)
 	}
 	if observe != nil {
-		observe(h, "completed")
+		observe(h, "completed", questions)
 	}
 	c.Close()
 	h.stopCore(core)
 	core = start()
 	if observe != nil {
-		observe(h, "restarted")
+		observe(h, "restarted", questions)
 	}
 	c, restored := conversationClient(t, h)
 	if restored != conversation {
@@ -512,6 +552,42 @@ func runCodexWorkTools(t *testing.T, scenario, kind string, observe func(*harnes
 	if err != nil || !strings.Contains(string(raw), fixture.Result) {
 		t.Fatalf("worker finish notice not durable: %s: %v", raw, err)
 	}
+	snapshot, ok := frame.Payload.(protocol.Snapshot)
+	if !ok {
+		t.Fatalf("expected restored conversation snapshot, got %T", frame.Payload)
+	}
+	restoredAnswers := map[string]bool{}
+	for _, item := range snapshot.Items {
+		answerNotice, expected := answerNotices[item.Key]
+		if !expected {
+			continue
+		}
+		var payload protocol.ItemDone
+		if err := json.Unmarshal(item.Payload, &payload); err != nil {
+			t.Fatal(err)
+		}
+		assertWorkerAnswerNotice(t, payload)
+		if *payload.Text != answerNotice {
+			t.Fatalf("answer notice changed after restart: %q -> %q", answerNotice, *payload.Text)
+		}
+		restoredAnswers[item.Key] = true
+	}
+	if len(restoredAnswers) != questionCount {
+		t.Fatalf("worker answer acknowledgements after Core restart=%d, want %d", len(restoredAnswers), questionCount)
+	}
 	c.Close()
 	h.stopCore(core)
+}
+
+func assertWorkerAnswerNotice(t *testing.T, notice protocol.ItemDone) {
+	t.Helper()
+	if notice.Speaker == nil || *notice.Speaker != protocol.ConversationSpeakerSystem || notice.Text == nil || strings.TrimSpace(*notice.Text) == "" {
+		t.Fatalf("missing worker answer acknowledgement: %+v", notice)
+	}
+	// Check the display boundary, not the wording of the acknowledgement.
+	for _, internal := range []string{"contentItems", "inputText", `"success":`, `"action":`, `"answer":`} {
+		if strings.Contains(*notice.Text, internal) {
+			t.Errorf("worker answer notice exposes transport field %q: %s", internal, *notice.Text)
+		}
+	}
 }

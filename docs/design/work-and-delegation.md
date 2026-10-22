@@ -120,7 +120,7 @@ The work area is `work/` under the state root ([filesystem.md](filesystem.md)). 
 | --- | --- | --- |
 | `clones/<repository-id>/` | The parent clone of each repository that delegated work uses | LINA Core |
 | `tasks/<task-id>/` | The task's worktree, or its non-git work directory | LINA Core creates it; the task's worker writes inside it under its grant |
-| `runs/<run-id>/` | The scratch directory and transcript of a background run | LINA Core creates it; the run writes inside it under its run scope |
+| `runs/<run-id>/` | Run scratch and transcripts, including Core's worker observations outside the checkout | LINA Core creates it; a background run writes inside it under its run scope |
 
 - The work area is not part of the backup generation. Everything needed to recover work is canon and LINA materials: the work ledger, receipts and artifacts.
 - When a task without a pull request has a result ready, LINA Core keeps the output files as LINA materials of the task, so an unapplied result survives a lost disk. A code-change result with a GitHub remote needs no copy: its branch and pull request are on GitHub, which is canonical for code ([integrations.md](integrations.md)). For a repository without a remote, LINA Core keeps a Git bundle of the branch, made by LINA Core itself as a backup copy; it is never pushed or merged from. The result artifact of a background run is kept as LINA materials of the run when it lands, so a lost work area loses only a run's transcript and scratch files.
@@ -460,6 +460,18 @@ Rules:
 
 ## Development method
 
+Coding belongs to the dev preset, Sion, regardless of which persona received the request. Core selects a live dev identity from canon and durably binds one manager conversation per person and work unit. The binding preserves renamed agents and does not silently replace a deleted owner. If dev is unavailable, Core reports that fact before starting a worker; starter creation is a separate operation.
+
+The manager is a prepared dev turn in the existing conversation engine. It receives the scoped definition and source identity, with its own persona and methodology, and records its assignment judgment before dispatch. The original persona's private conversation is not copied. Core carries the original effect ceiling into the manager and worker scope. A role grants no extra access. System and creative retain their health question or creative brief while handing off coding ownership.
+
+For `worker_start`, manager admission runs before the worker execution registry, under the calling turn's cancellation lifecycle. Waiting for the shared manager lane and completing the manager turn do not consume the worker's 30-second start deadline. Core issues the start grant and records the worker effect only after admission succeeds, then rechecks the durable delegation before launch. Admission failure or cancellation creates no worker-start effect, so it cannot leave an unlaunched worker with an unknown outcome that blocks an identical retry. Once worker execution begins, the existing receipt and unknown-outcome rules still apply.
+
+`dispatch_work` retains the asking conversation as the delivery destination and records dev as the work owner with the manager conversation. The installed worker owns code and its PR; Core observes the current PR head, checks, review and produced artifact receipts. The same manager conversation judges delivery against its retained definition. A manager's verified verdict is separate from merge or deployment. Missing evidence stays unverified. `worker_start` sessions also run under dev ownership and return questions, approvals and results through the originating conversation; their completion alone remains an unverified claim.
+
+Git work allocated with `prepare_work` has the same dev owner and manager binding; non-coding work keeps its original owner. The requesting conversation can retain its own delegated result through that recorded binding. For PR delivery, Core retains the exact observed base/head, sanitized change evidence and review metadata. A bounded or unavailable change observation cannot become a verified manager verdict. The return notice distinguishes the worker/PR observation from the manager's verdict and from a merge.
+
+Manager inputs have the native `manager` ledger surface and retain system-generated provenance. They are never person turns. Results use the existing system/work-notice path to the asking conversation, with the worker as a source, and never make a worker or an absent persona a new speaker there.
+
 LINA ships no coding harness. It runs no review loop of its own around a worker, installs no hook, skill or plugin into one, and keeps no stage workflow. Codex, Claude Code, Antigravity and Cursor are used as the user installed them. LINA's development role is a method, which the dev preset carries ([conversation-and-memory.md](conversation-and-memory.md#preset-methodologies)). Its work settings, such as worker dispatch, the evidence required before a delivery is reported done and the shape of status reports, are data in the dev preset's work-method record ([preset-work-methods.md](preset-work-methods.md)), not a harness around a worker. The dev preset agent owns coding work and its manager sessions, including requests handed over by Lina or another starter. How to implement, split, join or interpret work is the judgment of the worker and that owning persona. The worker writes the code, the branch and the pull request body, opens the pull request and owns it to green. The manager checks the work definition and decides merge or close. LINA Core keeps the flow moving: start, reliable delivery with receipts, true state, recovery, merge on green, QA after each merge and report.
 
 The development methods are ordinary built-in catalog skills, adapted from
@@ -686,6 +698,9 @@ requests are retained in the originating conversation as requests to Core.
 Questions use the authenticated waiting-card answer path and return the person's
 answer to the same worker call. Secret input is unsupported. The pinned MCP
 elicitation request has no form; that case offers only decline or cancel.
+The conversation records a short acknowledgement of the person's response;
+serialized worker response envelopes remain on the adapter transport. The same
+acknowledgement restores from conversation history after Core restarts.
 
 `submit_receipt` accepts the existing version-1 work receipt shape, checked
 against the session assignment, generation, thread, turn and artifact root. It
@@ -714,7 +729,8 @@ times stay unknown; Core never invents a reset.
 [`e2e/m2/codex-work-tools.json`](../../e2e/m2/codex-work-tools.json) drives the
 built Core over its Unix protocol and a separate synthetic stdio worker. It
 proves an owner approval returning to the worker, dynamic tool result delivery,
-quota rows and an actual worker-written artifact. This is protocol integration
+quota rows and an actual worker-written artifact. It also checks that the live
+and restored question-answer notices contain no transport fields. This is protocol integration
 evidence; it does not measure live account quota or certify new Codex versions.
 
 ### Readiness
@@ -786,7 +802,18 @@ When `agy`, `git` and `gh` are installed, the running Core exposes `dispatch_wor
 for a complete code-change definition and an existing local GitHub clone. The
 receipt returns immediately. Only its committed conversation tool result releases
 the dispatch. Core validates design references at the chosen base commit and
-creates a distinct branch and worktree. This single-worker increment reserves
+uses the shared work-area allocator to create a detached worktree under
+`work/tasks/<task-id>`, with its allocation recorded on the task. The worker
+creates its assigned branch; the allocator's ref guard applies throughout.
+The `dispatch_work` input is unchanged. Core appends `.<task-id>` to the
+requested branch unless that ID is already present, and returns the actual
+branch in the tool result and task packet. The requesting definition is retained
+for idempotency; the manager receives the assigned branch before delegation.
+The independent parent clone keeps the source repository's GitHub origin for
+publishing, while `lina.source` records its local allocation source. Neither
+allocation nor worker execution changes the person's source checkout.
+Adapter observations are written under `work/runs/` and included in the task's
+artifact roots, keeping the worker's committed checkout clean. This single-worker increment reserves
 the repository while queued, running or uncertain. It preserves the worktree and
 branch after completion. It does not provide the parallel chooser or merge flow.
 

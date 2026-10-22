@@ -51,6 +51,7 @@ type Schema func(json.RawMessage) (Input, error)
 type Spec struct {
 	Name, Plugin string
 	Schema       Schema
+	Classify     Classifier
 	// Outward for plugins is derived only from the service profile. Server
 	// descriptions and annotations must never populate this field.
 	Outward   bool
@@ -158,7 +159,7 @@ func (r *Registry) Dispatch(ctx context.Context, c Call) (Result, error) {
 		if errors.Is(err, ErrUnknown) || errors.Is(err, ErrInProgress) {
 			return Result{State: Unknown}, err
 		}
-		return Result{State: Refused}, err
+		return Result{State: Refused, Body: ticket.Result.Body}, err
 	}
 	if ticket.Replay {
 		return ticket.Result, nil

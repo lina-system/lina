@@ -3,6 +3,7 @@ package e2e_test
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -12,7 +13,9 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -118,6 +121,15 @@ func codexSessionFixture() {
 
 func TestM2InstalledCodexSession(t *testing.T) {
 	t.Parallel()
+	testInstalledCodexSession(t, false)
+}
+
+func TestM2InstalledCodexSlowManager(t *testing.T) {
+	t.Parallel()
+	testInstalledCodexSession(t, true)
+}
+
+func testInstalledCodexSession(t *testing.T, slowManager bool) {
 
 	var fixture struct {
 		Input                     string
@@ -133,11 +145,39 @@ func TestM2InstalledCodexSession(t *testing.T) {
 	}
 	workdir := t.TempDir()
 	var calls atomic.Int32
+	var delayed atomic.Bool
 	var control map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct{ Input, Tools []json.RawMessage }
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Error(err)
+			return
+		}
+		// Hold the final manager response beyond the worker's 30-second start
+		// deadline. A committed decision alone must not start that timer while
+		// the manager's conversation turn is still in flight.
+		if slowManager {
+			manager := false
+			for _, raw := range req.Tools {
+				var tool struct{ Name string }
+				_ = json.Unmarshal(raw, &tool)
+				manager = manager || tool.Name == "coding_decision"
+			}
+			var last struct{ Type string }
+			if len(req.Input) > 0 {
+				_ = json.Unmarshal(req.Input[len(req.Input)-1], &last)
+			}
+			if manager && last.Type == "function_call_output" && delayed.CompareAndSwap(false, true) {
+				timer := time.NewTimer(31 * time.Second)
+				defer timer.Stop()
+				select {
+				case <-timer.C:
+				case <-r.Context().Done():
+					return
+				}
+			}
+		}
+		if scriptedCodingManager(t, w, req) {
 			return
 		}
 		names := map[string]bool{}
@@ -154,7 +194,11 @@ func TestM2InstalledCodexSession(t *testing.T) {
 			}
 		}
 		n := calls.Add(1)
-		if n > 1 {
+		resuming := slowManager && n == 3
+		if slowManager && n > 2 {
+			n--
+		}
+		if n > 1 && !resuming {
 			var item struct{ Output string }
 			json.Unmarshal(req.Input[len(req.Input)-1], &item)
 			var output struct {
@@ -184,6 +228,12 @@ func TestM2InstalledCodexSession(t *testing.T) {
 				t.Errorf("worker result missing: %+v", result)
 			}
 		}
+		if slowManager && n == 2 && !resuming {
+			// Admission used this conversation turn's time budget. Continue
+			// control in the next person turn without widening that budget.
+			emitResponse(w, "Worker session started.", true)
+			return
+		}
 		emit := func(name string, args map[string]any) {
 			emitPersonaCall(w, fmt.Sprintf("worker-call-%d", n), name, args)
 		}
@@ -208,7 +258,13 @@ func TestM2InstalledCodexSession(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	h, _ := installedConversationHarness(t, server.URL)
+	h, bootstrap := installedConversationHarness(t, server.URL)
+	if slowManager {
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+		t.Cleanup(cancel)
+		h.ctx = ctx
+	}
+	seedCodingFixture(t, h, bootstrap)
 	bin := t.TempDir()
 	exe, err := os.Executable()
 	if err != nil {
@@ -227,7 +283,15 @@ func TestM2InstalledCodexSession(t *testing.T) {
 	core := start()
 	c, conversation := conversationClient(t, h)
 	frames := admittedTurn(t, h, c, conversation, "worker-journey", fixture.Input)
-	if calls.Load() != 7 {
+	wantCalls := int32(7)
+	if slowManager {
+		frames = append(frames, admittedTurn(t, h, c, conversation, "worker-followup", fixture.Input)...)
+		wantCalls++
+	}
+	if slowManager && !delayed.Load() {
+		t.Fatal("manager response was not held")
+	}
+	if calls.Load() != wantCalls {
 		t.Fatalf("provider steps=%d", calls.Load())
 	}
 	foundVersion, foundResult := false, false
@@ -246,6 +310,16 @@ func TestM2InstalledCodexSession(t *testing.T) {
 	}
 	c.Close()
 	h.stopCore(core)
+	db, closeDB, err := canon.OpenSQLiteInspection(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var starts, applied int
+	err = db.QueryRowContext(h.ctx, "SELECT count(*), count(CASE WHEN json_extract(record,'$.State')='applied' THEN 1 END) FROM authority_effects WHERE json_extract(record,'$.Tool')='worker_start'").Scan(&starts, &applied)
+	closeDB()
+	if err != nil || starts != 1 || applied != 1 {
+		t.Fatalf("start effects=%d applied=%d err=%v", starts, applied, err)
+	}
 	core = start()
 	c, conversation = conversationClient(t, h)
 	topic := "conversation:" + conversation
@@ -273,9 +347,12 @@ func TestM2InstalledCodexLive(t *testing.T) {
 	var calls atomic.Int32
 	var session string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req struct{ Input []json.RawMessage }
+		var req struct{ Input, Tools []json.RawMessage }
 		if json.NewDecoder(r.Body).Decode(&req) != nil {
 			t.Error("invalid model request")
+			return
+		}
+		if scriptedCodingManager(t, w, req) {
 			return
 		}
 		n := calls.Add(1)
@@ -317,7 +394,8 @@ func TestM2InstalledCodexLive(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	h, _ := installedConversationHarness(t, server.URL)
+	h, bootstrap := installedConversationHarness(t, server.URL)
+	seedCodingFixture(t, h, bootstrap)
 	core := h.command("core", "--state-root", h.root, "--socket", h.socket)
 	// This opt-in preserves the actual installed worker's home, PATH and setup.
 	// Core still uses its private state and a synthetic local conversation route.

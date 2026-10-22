@@ -275,6 +275,10 @@ The client computes no state of work. It shows the words and marks Core sends ([
 
 **Presentation kinds** are the kinds of version 1.0 of the client connection ([host-protocol.md](host-protocol.md#client-connection)): output delta, item done, turn state, approval request, question, result card, running-list update, background notice, progress view, waiting list, Details, readiness failure, and the results of agent, work-record, account, memory, channel and exchange requests, and error. An unknown kind is ignored and counted. The wire carries codes and parameters, and the TUI owns the Korean and English catalogs. Display strings travel only for text the person or an agent wrote. A secret placeholder from Core renders as a placeholder, and the TUI has no way to reveal one.
 
+Worker question-answer notices in conversation history carry a short, readable
+acknowledgement. Core keeps dynamic-tool response envelopes out of these display
+bodies, both during delivery and when restoring history.
+
 ## Layout, tiers and row budget (T-07)
 
 The screen is a pure function of State and terminal size. Core's validated welcome determines which regions are available ([host-protocol.md](host-protocol.md#versions-and-capabilities)). Running and waiting lists take no rows when empty or not granted. Missing list capabilities produce one localized, plain-language local notice outside conversation history, combining both missing lists into one explanation. Replayed welcomes and reconnects with the same capabilities do not add another notice; a later grant removes the obsolete explanation from the status line. No fallback string or peer diagnostic decides capability availability.
@@ -710,6 +714,15 @@ changed group cannot partially approve.
 
 **Questions.** A form question renders its flat schema as prompts, and a URL question follows the contract, opening the URL only on an explicit key. Core refuses a form that asks for a secret, and the TUI shows the refusal. An unknown outcome of an effect is a question card with the dispositions of [main-authority.md](main-authority.md#command-outcomes). The TUI adds no option Core did not list.
 
+Worker questions identify the originating agent by its display name in both the
+form header and the conversation card row, consistently with Home and approvals.
+Core resolves decision names from the agent store, including agents created or
+renamed since startup. Agent IDs remain routing data. The installed-Core test
+`TestM2TUIWorkerQuestionNameInstalledCore` types a worker request in the real TUI,
+accepts its approval, answers its question and checks the resulting artifact.
+It distinguishes the worker's owning coding agent from the conversation agent
+and covers renaming that owner after Core starts.
+
 **Sign-in.** The TUI is the client side of one relay for plugin and model-provider sign-in. It opens a loopback listener and reports its port, opens the system browser when it runs locally, and relays `code`, `state` and `iss`, or the `error` fields, exactly as received. Over SSH it takes a pasted URL instead. A secret the person types, such as an API key, is a masked field with no undo and no history, and travels once to Core.
 
 The TUI negotiates `accounts` and `sign_in_relay` independently of conversation.
@@ -832,6 +845,22 @@ type Stream interface {
 
 - A closed top-level block (paragraph, closed fence, list, table, heading) is frozen into a stable prefix and cached on (block id, revision, width in cells, theme, width mode). The plain-text foundation closes paragraphs, lists and tables at blank lines, headings at newline and fenced blocks at a matching closing fence. These conservative boundaries keep incomplete markup unstyled.
 - The open tail is an unstyled, marker-free preview and wraps incrementally: complete lines freeze and each delta re-wraps the last partial line and its boundary row, because a late combining mark or ZWJ can extend the last cluster. Breaks fall at whitespace, else at a grapheme boundary, never inside a cluster. An open code fence belongs to the tail until it closes. Pending emphasis, inline-code, link and list delimiters and fence headers are withheld across delta boundaries; their text remains readable. Literal markup inside code is preserved.
+- An open code fence exceeding eight wrapped content rows shows one muted
+  `writing code… (N lines)` row followed by its last six content rows. N counts
+  source code lines, including a nonempty partial line but excluding the empty
+  cursor row after a final newline. The notice clips to one row at narrow widths;
+  resizing recomputes the eight-row threshold. Prose outside the fence and the
+  cached settled prefix remain unchanged. A matching newline-terminated closing
+  fence restores the entire block immediately; `item_done` also restores the
+  authoritative text, including a closing fence without a final newline.
+  Core's reply ceiling still sends long code as a generated reply preview. The
+  TUI displays its complete text inline with the same open-fence bound. Its
+  Ctrl+O Details view also applies the bound to live replacement previews, both
+  full screen and in the side pane, preserving literal text outside the
+  collapsed fence. Turn completion seals any unclosed code and reveals the
+  entire reply; subsequent turns do not collapse an earlier result. Restored history
+  starts sealed until a live update arrives. Core's existing wire-preview size
+  bound and durable full source remain unchanged.
 - A block that closes is painted once, off the UI goroutine. A stale result is dropped. The visible change from plain to styled at close is accepted: rendering the whole tail on every flush grows quadratically.
 - `Seal()` at `item_done` replaces the stitched render once.
 - The conversation Markdown subset is bold, italic, inline code, ordered and
