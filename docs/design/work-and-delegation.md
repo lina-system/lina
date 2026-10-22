@@ -641,7 +641,7 @@ the repository while queued, running or uncertain. It preserves the worktree and
 branch after completion. It does not provide the parallel chooser or merge flow.
 
 After a successful result, Core compares protected refs and changed files with
-the definition, then reads the branch's PR through fixed `gh` calls. Delivery
+the definition, then reads the branch's PR through fixed `ghclient` calls. Delivery
 requires an open, non-draft PR on the requested base and branch, the actual local
 head, nonempty successful checks, a completed review at that head and no P0/P1
 findings in reviews or inline comments. A second PR read fences a head change

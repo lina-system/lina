@@ -4,7 +4,7 @@ package antigravity
 import (
 	"context"
 	"encoding/json"
-	"github.com/thisisjun786/lina/kit/proc"
+	"github.com/thisisjun786/lina/internal/core/ghclient"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,6 +20,7 @@ func TestPullRequestIsOnlyDeliveryEvidence(t *testing.T) {
 	if err = json.Unmarshal(raw, &good); err != nil {
 		t.Fatal(err)
 	}
+	good.Reviews[0].Body = "No P0/P1 findings."
 	if err = good.Verify("owner/repo", "task-branch", "dev", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"); err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +60,7 @@ func TestPullRequestIsOnlyDeliveryEvidence(t *testing.T) {
 }
 
 func TestPRHeadMovementDuringCommentReadRefusesDelivery(t *testing.T) {
-	a, ctx, l, dir := fixture(t, `case "$1" in
+	a, ctx, _, dir := fixture(t, `case "$1" in
  pr)
    if [ -f "$fixture/read" ]; then cat "$fixture/moved.json"; else touch "$fixture/read"; cat "$fixture/first.json"; fi ;;
  api) echo '[[]]' ;;
@@ -82,9 +83,12 @@ esac
 	if err = os.WriteFile(filepath.Join(dir, "moved.json"), data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	owner := proc.NewOwner()
-	defer owner.Close(context.Background())
-	_, err = ReadPullRequest(ctx, l, owner, a.cfg.Binary, append(a.cfg.Environment, "fixture="+dir), "owner/repo", "task-branch", "dev", strings.Repeat("a", 40))
+	reader, err := ghclient.New(ctx, ghclient.Config{Path: a.cfg.Binary, Env: append(a.cfg.Environment, "fixture="+dir), Leaser: leaser{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close(context.Background())
+	_, err = ReadPullRequest(ctx, reader, "owner/repo", "task-branch", "dev", strings.Repeat("a", 40))
 	if err == nil {
 		t.Fatal("moving PR head inherited earlier checks and reviews")
 	}

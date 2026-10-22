@@ -54,13 +54,14 @@ type Record struct {
 	Announced  bool                       `json:"announced"`
 }
 type Config struct {
-	DB              *canon.Store
-	Root, Main      string
-	Epoch           uint64
-	Binary, Git, GH string
-	Environment     []string
-	Activities      lease.Leaser
-	Publish         func(context.Context, Record) error
+	DB          *canon.Store
+	Root, Main  string
+	Epoch       uint64
+	Binary, Git string
+	PR          antigravity.PullRequestReader
+	Environment []string
+	Activities  lease.Leaser
+	Publish     func(context.Context, Record) error
 }
 type Service struct {
 	cfg     Config
@@ -149,7 +150,7 @@ func (s *Service) Tool(origin Origin) loop.Tool {
 		var d Definition
 		decoder := json.NewDecoder(strings.NewReader(c.Arguments))
 		decoder.DisallowUnknownFields()
-		if c.ID == "" || c.Custom || c.Name != "dispatch_work" {
+		if c.ID == "" || c.Custom || c.Name != "dispatch_work" || len(c.Arguments) > 1<<20 {
 			return d, work.ErrInvalid
 		}
 		if err := decoder.Decode(&d); err != nil {

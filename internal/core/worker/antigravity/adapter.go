@@ -123,6 +123,7 @@ func (a *Adapter) Start(ctx context.Context, l lease.Lease, s worker.StartSpec) 
 	}()
 	go func() {
 		defer close(a.done)
+		defer close(a.events)
 		defer stdout.Close()
 		a.read(run, stdout, ready)
 		// Close the pipe before joining on any protocol error. Otherwise the child's
@@ -190,7 +191,7 @@ func (a *Adapter) Snapshot(ctx context.Context, t worker.Thread) (worker.ThreadS
 	if !a.matches(t) {
 		return worker.ThreadSnapshot{}, ErrThread
 	}
-	return worker.ThreadSnapshot{Thread: a.thread, State: a.state, Worker: a.Name(), Version: a.version, Workdir: a.spec.Workdir, Model: a.spec.Model, Capabilities: a.Capabilities()}, nil
+	return worker.ThreadSnapshot{Thread: a.thread, State: a.state, Worker: a.Name(), Version: a.version, Workdir: a.spec.Workdir, Model: a.spec.Model, Capabilities: a.Capabilities(), Output: a.result.Response}, nil
 }
 func (a *Adapter) Result() Result {
 	a.mu.Lock()

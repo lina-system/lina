@@ -6,14 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
-
-	"github.com/thisisjun786/lina/kit/lease"
-	"github.com/thisisjun786/lina/kit/proc"
 )
 
 type Check struct {
@@ -47,7 +42,7 @@ type PullRequest struct {
 	Comments []ReviewComment `json:"inline_comments,omitempty"`
 }
 
-var blocking = regexp.MustCompile(`(?i)\bP[01]\b`)
+var blocking = regexp.MustCompile(`(?im)(\[\s*P[01](\s+Badge)?\s*\]|^[#* \t-]*P[01]\s*[:—-])`)
 var repositoryName = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 
 // Verify establishes only delivery readiness for this exact branch/head. Merge
@@ -95,19 +90,19 @@ func (p PullRequest) Verify(repository, branch, base, head string) error {
 
 // ReadPullRequest reads only fixed gh operations. The selector is the task
 // branch, never a URL or shell command parsed from worker output.
-func ReadPullRequest(ctx context.Context, l lease.Lease, owner *proc.Owner, binary string, env []string, repository, branch, base, head string) (PullRequest, error) {
+type PullRequestReader interface {
+	ReadBranch(context.Context, string, string) ([]byte, error)
+	ReadComments(context.Context, string, int) ([]byte, error)
+}
+
+func ReadPullRequest(ctx context.Context, reader PullRequestReader, repository, branch, base, head string) (PullRequest, error) {
 	if !repositoryName.MatchString(repository) || branch == "" || strings.HasPrefix(branch, "-") {
 		return PullRequest{}, errors.New("invalid PR lookup")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	run := func(args ...string) ([]byte, error) {
-		var out limitedOutput
-		err := owner.Run(ctx, l, proc.Command{Path: binary, Args: args, Env: env, Stdout: &out, Stderr: io.Discard})
-		return out.Bytes(), err
-	}
 	read := func() (PullRequest, error) {
-		raw, err := run("pr", "view", branch, "--repo", repository, "--json", "number,url,state,isDraft,headRefName,baseRefName,headRefOid,statusCheckRollup,reviews")
+		raw, err := reader.ReadBranch(ctx, repository, branch)
 		var p PullRequest
 		if err == nil {
 			err = json.Unmarshal(raw, &p)
@@ -118,13 +113,16 @@ func ReadPullRequest(ctx context.Context, l lease.Lease, owner *proc.Owner, bina
 	if err != nil {
 		return p, err
 	}
-	raw, err := run("api", "--paginate", "--slurp", "repos/"+repository+"/pulls/"+strconv.Itoa(p.Number)+"/comments")
+	raw, err := reader.ReadComments(ctx, repository, p.Number)
 	if err != nil {
 		return p, err
 	}
 	var pages [][]ReviewComment
 	if err = json.Unmarshal(raw, &pages); err != nil {
 		return p, err
+	}
+	if len(pages) == 0 {
+		return p, errors.New("missing PR comment observation")
 	}
 	for _, page := range pages {
 		p.Comments = append(p.Comments, page...)

@@ -31,6 +31,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
+	"github.com/thisisjun786/lina/internal/core/ghclient"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/inbox"
 	"github.com/thisisjun786/lina/internal/core/lane"
@@ -67,6 +68,7 @@ type acceptedSteering struct {
 
 type conversationRuntime struct {
 	workerDispatch *dispatch.Service
+	workerGitHub   *ghclient.Client
 	work           *work.Service
 	waitingStop    context.CancelFunc
 	waitingDone    chan struct{}
@@ -277,6 +279,11 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 	var err error
 	if r.workerDispatch != nil {
 		if err = r.workerDispatch.Close(ctx); err != nil {
+			return err
+		}
+	}
+	if r.workerGitHub != nil {
+		if err = r.workerGitHub.Close(ctx); err != nil {
 			return err
 		}
 	}

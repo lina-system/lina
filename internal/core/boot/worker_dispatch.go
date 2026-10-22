@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
+	"github.com/thisisjun786/lina/internal/core/ghclient"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
@@ -32,7 +33,11 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 	if err != nil {
 		return nil
 	}
-	r.workerDispatch, err = dispatch.Open(ctx, dispatch.Config{DB: r.db, Root: r.root, Main: r.main, Epoch: r.epoch, Binary: binary, Git: git, GH: gh, Environment: proc.WorkerEnvironment(), Activities: r.activities, Publish: func(ctx context.Context, record dispatch.Record) error {
+	r.workerGitHub, err = ghclient.New(ctx, ghclient.Config{Path: gh, Leaser: r.activities})
+	if err != nil {
+		return err
+	}
+	r.workerDispatch, err = dispatch.Open(ctx, dispatch.Config{DB: r.db, Root: r.root, Main: r.main, Epoch: r.epoch, Binary: binary, Git: git, PR: r.workerGitHub, Environment: proc.WorkerEnvironment(), Activities: r.activities, Publish: func(ctx context.Context, record dispatch.Record) error {
 		view, err := r.router.view(ctx, clientsrv.Session{PersonID: record.Origin.Person}, record.Origin.Agent)
 		if err != nil {
 			return err

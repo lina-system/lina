@@ -154,7 +154,7 @@ func (s *Service) execute(r Record) {
 		dirty, dirtyErr := git(workdir, "status", "--porcelain")
 		files, filesErr := git(workdir, "diff", "--name-only", base+".."+head)
 		if e == nil && after == protected && headErr == nil && head != base && branchErr == nil && branch == d.Branch && dirtyErr == nil && dirty == "" && filesErr == nil && allowedFiles(files, d.WriteArea) {
-			pr, prErr := antigravity.ReadPullRequest(ctx, l, owner, s.cfg.GH, s.cfg.Environment, repository, d.Branch, d.Base, head)
+			pr, prErr := antigravity.ReadPullRequest(ctx, s.cfg.PR, repository, d.Branch, d.Base, head)
 			if prErr == nil {
 				r.PR = &pr
 				r.Code = "ready_for_review"

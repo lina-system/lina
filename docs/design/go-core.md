@@ -1128,7 +1128,7 @@ type Adapter interface {
 headless stream. A `result` emits exactly one typed finish before process exit;
 `denied_actions` overrides a `SUCCESS` status. The supervised process owner
 retains its hard activity until all descendants have been reaped. No result or
-exit code constitutes delivery. Fixed `gh` reads verify the task PR's identity,
+exit code constitutes delivery. Fixed `ghclient` reads verify the task PR's identity,
 current head, checks and review, with a head recheck after inline comments.
 
 `internal/core/worker/dispatch` wires the adapter into installed Core's `dispatch_work`
