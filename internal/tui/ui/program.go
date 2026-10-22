@@ -198,7 +198,9 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 				if terminal && display.interactive && display.styles.options.Profile != Monochrome && display.renderer == nil {
 					display.renderer = startTerminalRenderer(parent, rawTerminalWriter{display.output}, model.size.Width, model.size.Height)
 				}
-				if client, ok := peer.(clientPeer); ok {
+				// Nonterminal input only reads quit after the handshake; it has
+				// no draft destination to discover before reporting live.
+				if client, ok := peer.(clientPeer); ok && terminal {
 					if model.conversation.agentPending && model.hasCapability("agents") {
 						reconnectAgent = model.activeAgent()
 						agentListID, err = client.client.Agent(ctx, protocol.AgentRequest{Operation: stringPointer("list")})

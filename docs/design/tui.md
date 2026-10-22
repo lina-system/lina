@@ -99,7 +99,10 @@ after reconnect and terminal resize.
 Quit (Ctrl+C with an empty draft or Ctrl+D), input EOF and termination signals close only this
 client and exit 0, including during handshake or retry. The raw terminal reader
 ignores releases, toggle repeats and pasted quit text. Nonterminal input keeps
-the handshake-then-read behavior. No failure path starts Core or creates state.
+the handshake-then-read behavior: it does not discover a conversation destination,
+and reports plain `live` after the validated welcome even when no destination is
+available. Destination discovery gates the terminal composer's input only.
+No failure path starts Core or creates state.
 
 | State | Screen |
 | --- | --- |
