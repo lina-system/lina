@@ -376,6 +376,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 
 **G2-12 Skill pruning and merging job.** Prune and merge stale or duplicate skills.
 - Done when: each prune or merge is a versioned skill write with a one-line notice and one-action undo; built-in skills are untouched; a merge the person undid is not made again.
+- Implementation: the main's installed Moirai job queues user skill snapshots, validates Core-generated maintenance decisions, and commits grouped reversible writes with its watermark and notice outbox. `e2e/m2/skill-maintenance.json` drives installed Core and the real worker to prove prune, merge, built-in exclusion, one-action group undo, restart suppression and the durable switch.
 - Depends on: G1-16, G1-36. Design refs: C-23; [cognition-and-life.md](cognition-and-life.md#skill-suggestions).
 
 **G2-20 Persona growth step with undo.** Adopted at once into the growth snapshot layer; undo.
@@ -407,6 +408,11 @@ Update backup and rollback restore, including resumed rollback, follow the
 caller's context without the installer command timeout. The M2 data-operation
 scenario verifies backup and restore exceeding that timeout through the installed
 Core's activation and recovery paths.
+The parent #148 adds recovery failure coverage: an updater killed before service
+resume followed by a refused start leaves a durable hold, preserves data and
+composition, and blocks normal Core startup. Its headless scenario is
+`e2e/m2/update-resume-failure.json`; command tests also cover cancelled readiness
+from completed, rolled-back and pre-swap attempts.
 
 **G2-15 Phase 2 acceptance run.** Run script and evidence record for LINA 2.
 - Done when: one record holds every field of the phase rules and a result per check; the interruption injection now stops a running task and its citations pass; Codex and Claude Code versions are recorded.
