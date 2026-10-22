@@ -53,7 +53,7 @@ func TestM1TUIConversationResize(t *testing.T) {
 	defer provider.Close()
 	h, start := installedConversationHarness(t, provider.URL)
 	core := start(true)
-	observer, _ := conversationClient(t, h)
+	observer, conversation := conversationClient(t, h)
 	defer observer.Close()
 	waitTurn := func() {
 		for {
@@ -68,7 +68,7 @@ func TestM1TUIConversationResize(t *testing.T) {
 	}
 	environment := []string{"TERM=xterm-256color", "COLORTERM=truecolor"}
 	size := scenario.Sizes[0]
-	session := h.startTerminalSize(environment, false, true, size.Width, size.Height)
+	session := h.startConversationTUI(environment, size.Width, size.Height, conversation)
 	waitScreen(t, h, session, design.Text(design.English, "live"))
 	h.keys(session, scenario.Input+"\r")
 	waitTurn()

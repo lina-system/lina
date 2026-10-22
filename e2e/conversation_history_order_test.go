@@ -72,21 +72,7 @@ func TestM1ConversationHistoryOrder(t *testing.T) {
 			h, start := installedConversationHarness(t, server.URL)
 			core := start(true)
 			observer, conversation := conversationClient(t, h)
-			socket := h.socket
-			tap := newAccountTap(t, h, socket)
-			h.socket = tap.socket
-			terminal := h.startTerminalSize([]string{"TERM=xterm-256color"}, false, true, scenario.Width, scenario.Height)
-			// The composer and live status precede history discovery. A reply to
-			// the TUI's subscription proves it has adopted the conversation id.
-			for {
-				frame := tap.next(t, h)
-				if frame.Error != nil {
-					t.Fatalf("TUI discovery refused: %s", frame.Error.Code)
-				}
-				if snapshot, ok := frame.Payload.(protocol.Snapshot); ok && snapshot.Topic == "conversation:"+conversation {
-					break
-				}
-			}
+			terminal := h.startConversationTUI([]string{"TERM=xterm-256color"}, scenario.Width, scenario.Height, conversation)
 			waitScreen(t, h, terminal, "Ctrl+D")
 			h.keys(terminal, scenario.FirstInput+"\r")
 			select {
@@ -186,8 +172,6 @@ func TestM1ConversationHistoryOrder(t *testing.T) {
 			terminal.process.wait(t, 0)
 			h.expectTerminalRestored(terminal)
 			observer.Close()
-			tap.close()
-			h.socket = socket
 			h.stopCore(core)
 			core = start(true)
 			observer, conversation = conversationClient(t, h)
