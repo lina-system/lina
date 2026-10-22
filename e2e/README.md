@@ -45,6 +45,11 @@ fixture provider in a 100x34 PTY. Parsed cells check speaker marks, foregrounds,
 header bold and exactly one empty row between messages. ASCII runs retain words;
 `NO_COLOR` runs retain ASCII speaker identity and emit no terminal escapes.
 
+`TestM1TUISpeakerBoundariesInstalledCore` creates and selects a long-named agent
+through the real TUI, then requests a fenced Korean reply from installed Core
+in a 40x34 ASCII PTY. It checks provider routing, usable reply width, literal
+empty code boundary rows, and stable completion metadata across draft redraws.
+
 `TestM1TUIIdentityFromAgentStore` installs a synthetic named agent with four
 distinct persona layers, types "who are you" through the real TUI, and checks
 the provider stub's request for that stored identity, owner and persona, plus
