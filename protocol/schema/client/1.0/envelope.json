@@ -2385,16 +2385,76 @@
       "required": []
     },
     "work_request": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "github_read",
+            "github_watch"
+          ]
+        },
+        "repository": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "pr_number": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$",
+          "maxLength": 10
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
     "work_result": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "repository": {
+          "type": "string"
+        },
+        "pr_number": {
+          "type": "string"
+        },
+        "head": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "ci": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "success",
+            "failure"
+          ]
+        },
+        "cause": {
+          "type": "string"
+        },
+        "retry_at": {
+          "type": "string"
+        },
+        "done": {
+          "type": "boolean"
+        },
+        "revision": {
+          "type": "string"
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/github_check"
+          }
+        },
+        "reviews": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/github_review"
+          }
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
@@ -4366,6 +4426,77 @@
         "refused",
         "stopped"
       ]
+    },
+    "github_check": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "conclusion": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "state",
+        "conclusion"
+      ],
+      "additionalProperties": false
+    },
+    "github_comment": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "body",
+        "path",
+        "url"
+      ],
+      "additionalProperties": false
+    },
+    "github_review": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "resolved": {
+          "type": "boolean"
+        },
+        "outdated": {
+          "type": "boolean"
+        },
+        "comments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/github_comment"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "resolved",
+        "outdated",
+        "comments"
+      ],
+      "additionalProperties": false
     }
   }
 }

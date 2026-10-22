@@ -1,0 +1,9 @@
+{
+  "scenario": "Core-owned GitHub reads and one CI watcher",
+  "repository": "fixture/repository",
+  "pr_number": "140",
+  "head": "0123456789012345678901234567890123456789",
+  "initial_ci": "pending",
+  "initial_cause": "rate_limited",
+  "final_ci": "success"
+}
