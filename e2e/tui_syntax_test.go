@@ -69,7 +69,11 @@ func TestM1TUISyntaxInstalledCore(t *testing.T) {
 				h.expectTerminalRestored(terminal)
 				h.stopCore(core)
 			}()
-			waitScreen(t, h, terminal, "Ctrl+D")
+			if mode == "no-color" {
+				waitPlainComposerReady(t, h, terminal)
+			} else {
+				waitComposerReady(t, h, terminal)
+			}
 			for {
 				frame := tap.next(t, h)
 				if s, ok := frame.Payload.(protocol.Snapshot); ok && strings.HasPrefix(s.Topic, "conversation:") {

@@ -72,7 +72,11 @@ func speakerGutterInstalledCore(t *testing.T, ascii, plain bool) {
 	h.socket = tap.socket
 	terminal := h.startTerminalSize(environment, false, true, scenario.Width, scenario.Height)
 	h.socket = socket
-	waitScreen(t, h, terminal, "Ctrl+D")
+	if plain {
+		waitPlainComposerReady(t, h, terminal)
+	} else {
+		waitComposerReady(t, h, terminal)
+	}
 	// The composer is visible before its conversation destination is known.
 	// The subscription proves History was consumed; do not race initial discovery.
 	for {

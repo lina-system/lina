@@ -177,13 +177,30 @@ func waitComposerReady(t *testing.T, h *harness, terminal *terminal) tuiterm.Sna
 	return waitScreen(t, h, terminal, "Ctrl+D")
 }
 
+// NO_COLOR uses the ordinary screen. Keep the colour path's alternate-screen
+// requirement and verify the opposite contract explicitly for plain fixtures.
+func waitPlainComposerReady(t *testing.T, h *harness, terminal *terminal) {
+	t.Helper()
+	snapshot, err := terminal.screen.Wait(h.ctx, func(snapshot tuiterm.Snapshot) bool {
+		content := screenText(snapshot)
+		return strings.Contains(content, "Ctrl+D") && strings.Contains(content, design.Text(design.English, "live")+"  ")
+	})
+	if err != nil {
+		t.Fatalf("plain composer not ready: %v; cells=%s", err, screenText(snapshot))
+	}
+	if snapshot.AltScreen || strings.Contains(string(terminal.screen.Bytes()), "\x1b") {
+		t.Fatal("plain composer entered alternate screen or emitted escapes")
+	}
+}
+
 func waitScreen(t *testing.T, h *harness, terminal *terminal, text string) tuiterm.Snapshot {
 	t.Helper()
 	snapshot, err := terminal.screen.Wait(h.ctx, func(snapshot tuiterm.Snapshot) bool {
 		content := screenText(snapshot)
 		// Callers use the composer hints as an input-readiness barrier. Those
 		// hints also render while initial history is still being discovered.
-		if text == "Ctrl+D" && !strings.Contains(content, design.Text(design.English, "live")+"  ") {
+		if (text == "Ctrl+D" || text == design.Text(design.English, "live")) &&
+			(!snapshot.AltScreen || !strings.Contains(content, design.Text(design.English, "live")+"  ")) {
 			return false
 		}
 		return strings.Contains(content, text)
