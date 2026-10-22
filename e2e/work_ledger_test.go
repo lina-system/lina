@@ -161,7 +161,7 @@ func TestM2WorkLedger(t *testing.T) {
 	if !slices.Contains(client.Welcome.Capabilities, protocol.Capability{Name: "running", Version: "1.0"}) {
 		t.Fatal("Core has no running capability")
 	}
-	id := "task:" + scenario.TaskID
+	id := "task:" + scenario.TaskID + ":1"
 	action := "open"
 	if _, err = client.Running(h.ctx, protocol.RunningGet{RunID: &id, Action: &action}); err != nil {
 		t.Fatal(err)
