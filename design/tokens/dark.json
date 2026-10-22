@@ -310,6 +310,14 @@
         "$type": "string",
         "$value": "·"
       },
+      "person": {
+        "$type": "string",
+        "$value": "›"
+      },
+      "agent": {
+        "$type": "string",
+        "$value": "●"
+      },
       "toolRunning": {
         "$type": "string",
         "$value": "◐"
@@ -387,6 +395,14 @@
       "activitySeparator": {
         "$type": "string",
         "$value": "-"
+      },
+      "person": {
+        "$type": "string",
+        "$value": ">"
+      },
+      "agent": {
+        "$type": "string",
+        "$value": "*"
       },
       "toolRunning": {
         "$type": "string",

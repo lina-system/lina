@@ -22,10 +22,12 @@ type Tokens struct {
 	GlyphAsciiAction              string
 	GlyphAsciiActivityFrames      string
 	GlyphAsciiActivitySeparator   string
+	GlyphAsciiAgent               string
 	GlyphAsciiConnecting          string
 	GlyphAsciiFailed              string
 	GlyphAsciiLive                string
 	GlyphAsciiMark                string
+	GlyphAsciiPerson              string
 	GlyphAsciiQuit                string
 	GlyphAsciiRecovering          string
 	GlyphAsciiRefused             string
@@ -41,10 +43,12 @@ type Tokens struct {
 	GlyphUnicodeAction            string
 	GlyphUnicodeActivityFrames    string
 	GlyphUnicodeActivitySeparator string
+	GlyphUnicodeAgent             string
 	GlyphUnicodeConnecting        string
 	GlyphUnicodeFailed            string
 	GlyphUnicodeLive              string
 	GlyphUnicodeMark              string
+	GlyphUnicodePerson            string
 	GlyphUnicodeQuit              string
 	GlyphUnicodeRecovering        string
 	GlyphUnicodeRefused           string
@@ -86,10 +90,12 @@ func Light() Tokens {
 		GlyphAsciiAction:              ">",
 		GlyphAsciiActivityFrames:      "|/-\\",
 		GlyphAsciiActivitySeparator:   "-",
+		GlyphAsciiAgent:               "*",
 		GlyphAsciiConnecting:          "~",
 		GlyphAsciiFailed:              "x",
 		GlyphAsciiLive:                "*",
 		GlyphAsciiMark:                ".",
+		GlyphAsciiPerson:              ">",
 		GlyphAsciiQuit:                "+",
 		GlyphAsciiRecovering:          ":",
 		GlyphAsciiRefused:             "!",
@@ -105,10 +111,12 @@ func Light() Tokens {
 		GlyphUnicodeAction:            "›",
 		GlyphUnicodeActivityFrames:    "◐◓◑◒",
 		GlyphUnicodeActivitySeparator: "·",
+		GlyphUnicodeAgent:             "●",
 		GlyphUnicodeConnecting:        "◌",
 		GlyphUnicodeFailed:            "×",
 		GlyphUnicodeLive:              "●",
 		GlyphUnicodeMark:              ".",
+		GlyphUnicodePerson:            "›",
 		GlyphUnicodeQuit:              "✓",
 		GlyphUnicodeRecovering:        "◐",
 		GlyphUnicodeRefused:           "⊘",
@@ -151,10 +159,12 @@ func Dark() Tokens {
 		GlyphAsciiAction:              ">",
 		GlyphAsciiActivityFrames:      "|/-\\",
 		GlyphAsciiActivitySeparator:   "-",
+		GlyphAsciiAgent:               "*",
 		GlyphAsciiConnecting:          "~",
 		GlyphAsciiFailed:              "x",
 		GlyphAsciiLive:                "*",
 		GlyphAsciiMark:                ".",
+		GlyphAsciiPerson:              ">",
 		GlyphAsciiQuit:                "+",
 		GlyphAsciiRecovering:          ":",
 		GlyphAsciiRefused:             "!",
@@ -170,10 +180,12 @@ func Dark() Tokens {
 		GlyphUnicodeAction:            "›",
 		GlyphUnicodeActivityFrames:    "◐◓◑◒",
 		GlyphUnicodeActivitySeparator: "·",
+		GlyphUnicodeAgent:             "●",
 		GlyphUnicodeConnecting:        "◌",
 		GlyphUnicodeFailed:            "×",
 		GlyphUnicodeLive:              "●",
 		GlyphUnicodeMark:              ".",
+		GlyphUnicodePerson:            "›",
 		GlyphUnicodeQuit:              "✓",
 		GlyphUnicodeRecovering:        "◐",
 		GlyphUnicodeRefused:           "⊘",
@@ -216,10 +228,12 @@ func HighContrast() Tokens {
 		GlyphAsciiAction:              ">",
 		GlyphAsciiActivityFrames:      "|/-\\",
 		GlyphAsciiActivitySeparator:   "-",
+		GlyphAsciiAgent:               "*",
 		GlyphAsciiConnecting:          "~",
 		GlyphAsciiFailed:              "x",
 		GlyphAsciiLive:                "*",
 		GlyphAsciiMark:                ".",
+		GlyphAsciiPerson:              ">",
 		GlyphAsciiQuit:                "+",
 		GlyphAsciiRecovering:          ":",
 		GlyphAsciiRefused:             "!",
@@ -235,10 +249,12 @@ func HighContrast() Tokens {
 		GlyphUnicodeAction:            "›",
 		GlyphUnicodeActivityFrames:    "◐◓◑◒",
 		GlyphUnicodeActivitySeparator: "·",
+		GlyphUnicodeAgent:             "●",
 		GlyphUnicodeConnecting:        "◌",
 		GlyphUnicodeFailed:            "×",
 		GlyphUnicodeLive:              "●",
 		GlyphUnicodeMark:              ".",
+		GlyphUnicodePerson:            "›",
 		GlyphUnicodeQuit:              "✓",
 		GlyphUnicodeRecovering:        "◐",
 		GlyphUnicodeRefused:           "⊘",

@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "counts": {"tracker": 3, "crw": 1},
+  "records": [
+    {"source":"tracker","kind":"initiative","id":"synthetic-initiative","title":"Understand workshop results","done_condition":"Results are explained"},
+    {"source":"tracker","kind":"project","id":"synthetic-project","title":"Workshop report","done_condition":"Report checked","parent":{"source":"tracker","kind":"initiative","id":"synthetic-initiative"}},
+    {"source":"tracker","kind":"issue","id":"synthetic-issue","title":"Write the workshop report","done_condition":"Evidence preserved","project":{"source":"tracker","kind":"project","id":"synthetic-project"},"payload":{"decision":"Use measured evidence"}},
+    {"source":"crw","kind":"receipt","id":"synthetic-receipt","title":"Prior report receipt","payload":{"outcome":"ready_for_review","manifest":[]}}
+  ]
+}

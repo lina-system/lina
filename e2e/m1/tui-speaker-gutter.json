@@ -1,0 +1,8 @@
+{
+  "width": 100,
+  "height": 34,
+  "exchanges": [
+    {"input": "Please check the orchard.", "reply": "The orchard is ready."},
+    {"input": "What comes next?", "reply": "Water the young trees."}
+  ]
+}
