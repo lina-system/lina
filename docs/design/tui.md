@@ -142,6 +142,11 @@ read-only requests; it does not infer deletion or replay conversation input.
 If the selected agent is absent, the TUI drops its unavailable conversation
 subscriptions, shows a local notice, and keeps the draft unsent. It does not
 select a fallback; sending waits for an explicit `/agents choose <id>`.
+On the first connection, the TUI keeps the connecting screen until history
+discovery supplies the conversation id. A live transport alone cannot enable
+the composer or send an empty destination. Early typing remains in the draft;
+it is sent only by an explicit Enter after discovery completes. A Core without
+the conversation capability still exposes its negotiated management controls.
 `e2e/m1/tui-agent-reconnect.json` checks graceful and forced installed-Core
 restarts, the provider request's persona identity and history, and a removed
 selection with a retained draft.

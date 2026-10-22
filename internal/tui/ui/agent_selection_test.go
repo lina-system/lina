@@ -12,6 +12,48 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+func TestInitialHistoryDiscoveryPrecedesLiveInput(t *testing.T) {
+	m := conversationShell()
+	m.content.Agents = []protocol.Agent{{AgentID: "initial"}}
+	request := m.discoveryHistory()
+	if request == nil {
+		t.Fatal("initial conversation discovery missing")
+	}
+	// The connection loop publishes Live before receiving history. That must
+	// not expose a usable conversation with an empty destination.
+	m.Update(shellConnection{Generation: 1, Status: ConnectionStatus{State: Live}})
+	if m.status.State != Connecting {
+		t.Fatalf("initial history is pending but state is %s", m.status.State.Code())
+	}
+	if m.View().Cursor != nil {
+		t.Fatal("composer presented before its destination was discovered")
+	}
+	m.Update(tea.PasteMsg{Content: "early draft"})
+	if _, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}); cmd != nil || m.content.Draft.Text != "early draft" || m.content.Busy {
+		t.Fatal("input escaped before the conversation identity arrived")
+	}
+	m.conversation.id = "main:initial"
+	m.agentDiscoveryDone()
+	if m.status.State != Live {
+		t.Fatal("history discovery did not finish connection setup")
+	}
+	if _, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}); cmd == nil {
+		t.Fatal("discovered conversation cannot send the preserved draft")
+	}
+}
+
+func TestControlsWithoutConversationDoNotWaitForHistory(t *testing.T) {
+	m := accountShell()
+	m.content.Agents = []protocol.Agent{{AgentID: "initial"}}
+	if request := m.discoveryHistory(); request != nil || m.conversation.agentPending {
+		t.Fatal("control-only connection waited for unnegotiated history")
+	}
+	m.Update(shellConnection{Generation: 1, Status: ConnectionStatus{State: Live}})
+	if m.status.State != Live {
+		t.Fatal("control-only connection did not become live")
+	}
+}
+
 func TestReconnectHistoryRetainsChosenAgentAndUnacknowledgedDraft(t *testing.T) {
 	m := conversationShell()
 	m.conversation.id = "main:chosen"
