@@ -8,13 +8,15 @@ Add an entry when third-party code or other material is included in LINA. Record
 
 ## Terminal UI behaviour references
 
-The composer separation in LINA's terminal UI independently adapts behaviour
+The composer separation and newline keys in LINA's terminal UI independently adapt behaviour
 from these permissive projects. No upstream implementation code is copied or
 bundled by this change:
 
 - [Codex CLI](https://github.com/openai/codex), OpenAI and contributors,
   Apache-2.0, reference revision `86e17e98`: prompt glyph, dim placeholder,
-  growing composer and footer hints below it.
+  growing composer and footer hints below it; Shift+Enter, Ctrl+J and Alt+Enter
+  newline bindings and the capability-dependent Shift+Enter hint
+  (`codex-rs/tui/src/keymap.rs` and `bottom_pane/chat_composer.rs`).
 - [opencode](https://github.com/sst/opencode), opencode contributors, MIT,
   reference revision `c93aaae3`: input edge, placeholder and separate hint row.
 - [Gemini CLI](https://github.com/google-gemini/gemini-cli), Google and
@@ -1316,6 +1318,11 @@ SOFTWARE.
 ```
 
 ## Terminal UI behaviour references
+
+[Codex CLI](https://github.com/openai/codex) (Apache-2.0, OpenAI) informs the
+whole-conversation transcript overlay opened with Ctrl+T. No upstream code is
+copied. Source observations and limits are recorded in
+[the TUI reference specification](internal/tui/ui/REFERENCE.md).
 
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) (MIT, copyright
 2025 Nous Research) informs the TUI's complete inline assistant replies and

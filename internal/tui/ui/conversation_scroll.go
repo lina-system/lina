@@ -8,8 +8,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/thisisjun786/lina/internal/design"
-	"github.com/thisisjun786/lina/internal/tui/state"
-	"github.com/thisisjun786/lina/kit/protocol"
 )
 
 type conversationAnchor struct {
@@ -24,10 +22,6 @@ type conversationViewport struct {
 	wheelAt        time.Time
 	wheelDirection tea.MouseButton
 	wheelRows      int
-}
-
-func transcriptBlock(b state.Block) bool {
-	return b.Topic != "core" && b.Topic != "running" && (b.Topic != "waiting" || b.Card != nil) && b.Topic != "progress" && b.Kind != protocol.KindTurnState
 }
 
 func (m *shellModel) scrollConversation(rows int) {

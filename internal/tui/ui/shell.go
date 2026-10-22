@@ -58,6 +58,7 @@ type shellModel struct {
 	size          layout.Size
 	gate          term.Gate
 	events        bool
+	disambiguated bool
 	now           func() time.Time
 	blocks        map[string]shellBlock
 	resyncPending map[string]protocol.StreamCursor
@@ -247,6 +248,7 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.styles = NewStyles(options)
 	case tea.KeyboardEnhancementsMsg:
 		m.events = msg.SupportsEventTypes()
+		m.disambiguated = msg.SupportsKeyDisambiguation()
 	case tea.MouseWheelMsg:
 		m.conversationWheel(msg)
 	case tea.PasteMsg:
@@ -326,7 +328,7 @@ func (m *shellModel) refreshBlocks() {
 			block.Text = m.cardSummary(card)
 		}
 		cached, ok := m.blocks[block.ID]
-		if m.conversation.scroll > 0 && transcriptBlock(block) && (!ok || cached.text != block.Text) {
+		if m.conversation.scroll > 0 && conversationBlock(block) && (!ok || cached.text != block.Text) {
 			if m.conversation.viewport.changed == nil {
 				m.conversation.viewport.changed = make(map[string]bool)
 			}

@@ -373,6 +373,9 @@ The first visible composer row starts with the accent `glyph.action` (`›`, or
 `>` in ASCII) and one space. Continuations align under the draft, including when
 the textarea scrolls. An empty draft shows the muted `composer.placeholder`
 catalog entry in Korean or English; it is display text and is never submitted.
+When the keyboard enhancement reply reports key disambiguation, the placeholder
+uses `composer.shift_enter` to advertise Shift+Enter. Until then it
+advertises Alt+Enter. This terminal-local change preserves the draft and cursor.
 The prompt reserves its display width in both wrapping and hardware cursor
 placement, so Korean IME composition remains at the draft insertion point.
 `e2e/m1/tui-composer.json` checks a 100x34 installed-Core PTY with a fixture
@@ -445,6 +448,19 @@ the full screen. The pager supports arrows, Page Up/Down, Home/End, `/` search,
 `n` for the next match, and Esc or `q` to return. Its text can be selected with
 the terminal's own copy. No host clipboard read or write is installed by the
 composer or pager.
+
+Ctrl+T opens the entire retained visible conversation in the same pager, in
+message order, with the person's word and the agent's name as speaker labels.
+The sanitized plain text includes complete inline replies once; structured
+results retain their visible summary and title. It excludes the unsent draft,
+separate waiting/running/progress lists and internal turn-state records.
+The open transcript reads the current display state, including replacements
+and revocations. It uses the pager's existing scrolling, `/` search, `n` and
+Esc controls; closing it preserves the draft and does not interrupt the turn.
+It neither requests older history outside the retained window nor writes the
+clipboard. `e2e/m1/tui-transcript.json` proves three exchanges through installed
+Core and a real PTY, six ordered messages with speaker words, search back to
+the first message from a later page, and draft preservation after Esc.
 
 For a completed background run, Ctrl+R selects a running row with the arrows;
 Enter reads its result, and `d` dismisses a landed row. The landing's agent-report
@@ -653,7 +669,7 @@ Keys are a proposal and data in `tui/ui`. No contract fixes them.
 | Key | Action |
 | --- | --- |
 | Enter | Send the draft |
-| Alt+Enter, Ctrl+J | Newline (Ctrl+J because Alt may not reach the application) |
+| Shift+Enter (when distinguished by the terminal), Alt+Enter, Ctrl+J | Newline (Ctrl+J because Alt may not reach the application) |
 | Esc | Close the top overlay; with none, interrupt the turn |
 | Ctrl+C | Clear the draft; with an empty draft, quit the TUI only, never Core |
 | Tab, Shift+Tab | Move focus |
@@ -661,6 +677,7 @@ Keys are a proposal and data in `tui/ui`. No contract fixes them.
 | Page Up, Page Down | Scroll the conversation |
 | End | Return to the latest conversation output and resume following |
 | Mouse wheel over the conversation | Scroll three rows, accelerated on fast repeats |
+| Ctrl+T | Open the retained conversation transcript in the pager |
 | Keys for Waiting for me, progress, running list and Open on a card | Open those views |
 
 Key classes are Toggle, Edit and Approve. Every key event passes one `Admit` gate: releases are ignored, repeats are dropped for Toggle and Approve, and Edit keys may repeat. Without key events from the terminal every key counts as a press, and approval cards add a dead time after any change of card (P).
@@ -687,7 +704,7 @@ mouse-reporting override. LINA neither selects text nor reads the clipboard.
 **Mid-turn input** is steering by default and applies at the next round boundary ([runtime.md](runtime.md#conversation-loop)). `/queue` makes the input a follow-up. `/stop` cancels.
 
 **The composer** is the Bubbles `textarea`; `textinput` is not used. The
-conversation increment sends Enter as one input request, Ctrl+J or Alt+Enter
+conversation increment sends Enter as one input request, Shift+Enter, Ctrl+J or Alt+Enter
 as a newline, and Esc or `/stop` as an interrupt of the active turn. Ordinary
 input uses `mode: steer`; Core decides whether it belongs to a running turn.
 `/queue <text>` explicitly uses `mode: queue`. The request carries a fresh
@@ -701,6 +718,18 @@ or input request. Discovery does not send it automatically; a fresh Enter sends
 the retained draft to the discovered conversation. Management commands remain
 available during discovery.
 Resizing preserves the draft and its cursor without submitting it.
+
+Explicitly decoded Shift+Enter is an Edit key even before a capability reply;
+its releases are ignored and repeats insert newlines through the same key gate.
+Terminals that report Shift+Enter as plain Enter cannot distinguish these actions;
+their placeholder keeps the Alt+Enter hint. Key disambiguation support and event
+type support are tracked separately, so a disambiguation-only reply is enough to
+show the Shift+Enter hint. Alt+Enter and Ctrl+J remain available in either mode.
+`e2e/m1/tui-newline.json` sends kitty/CSI-u bytes through a real PTY to the installed
+TUI and Core, checks separate composer rows without submission, then uses plain
+Enter to admit one complete multiline input and obtain the fixture provider's
+reply. It checks durable input history, provider call count, localized enhanced
+hints, the legacy hint, and terminal restoration.
 
 `e2e/m1/conversation-history-order.json` exercises queue and ordinary steering
 input during a held provider stream through an installed Core and a 100x30 TUI.
