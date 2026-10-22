@@ -225,6 +225,7 @@ func TestInputVersionRetiresSettledEffectsForObsoleteTargets(t *testing.T) {
 			return err
 		}
 		g.TargetRevision = "new-merge"
+		g.MergedRevisions[g.ServiceRepository] = "new-merge"
 		return put(v, "goal", g.ID, g)
 	}); err != nil {
 		t.Fatal(err)
@@ -259,6 +260,7 @@ func TestInputVersionWaitsForUnknownObsoleteEffectsWithoutPolling(t *testing.T) 
 			return err
 		}
 		g.TargetRevision = "new-merge"
+		g.MergedRevisions[g.ServiceRepository] = "new-merge"
 		return put(v, "goal", g.ID, g)
 	}); err != nil {
 		t.Fatal(err)

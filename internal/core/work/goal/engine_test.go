@@ -14,11 +14,17 @@ type fixtureDriver struct {
 	mu           sync.Mutex
 	calls        []Action
 	observations []Action
+	authorize    func(Action) error
 	run          func(Action) (Observation, error)
 	observe      func(Action) (Observation, error)
 }
 
-func (d *fixtureDriver) Authorize(context.Context, Action) error { return nil }
+func (d *fixtureDriver) Authorize(_ context.Context, a Action) error {
+	if d.authorize != nil {
+		return d.authorize(a)
+	}
+	return nil
+}
 func (d *fixtureDriver) Execute(_ context.Context, a Action) (Observation, error) {
 	d.mu.Lock()
 	d.calls = append(d.calls, a)

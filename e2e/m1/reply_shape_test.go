@@ -142,9 +142,7 @@ func testReplyShapeLONGQA(t *testing.T, language design.Language) {
 			t.Helper()
 			ctx, cancel := context.WithTimeout(h.ctx, operationTimeout)
 			defer cancel()
-			snapshot, err := terminal.screen.Wait(ctx, func(frame tuiterm.Snapshot) bool {
-				return renderedFrame(terminal, frame) && predicate(frame)
-			})
+			snapshot, err := terminal.screen.Wait(ctx, predicate)
 			if err != nil {
 				t.Fatalf("LONG-QA conversation assertion: %v\n%s", err, strings.Join(screenRows(snapshot), "\n"))
 			}

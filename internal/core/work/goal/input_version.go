@@ -39,6 +39,8 @@ func inputVersion(g Goal, a Action) *InputVersion {
 	case RunQA, PlanGoal:
 		if t := goalTask(&g, a.TaskID); t != nil {
 			v.TargetRevision = t.Merge.Revision
+		} else if a.Kind == PlanGoal && a.FailureKey != "" && a.Revision != "" {
+			v.TargetRevision = g.TargetRevision
 		}
 	case Assign, Resume, RepairConflict, RepairQA, ContinueWorker, Observe, Decide:
 	}
@@ -59,7 +61,7 @@ func currentActionTarget(g Goal, a Action) bool {
 	case CheckCriterion, Deploy, Verify, InspectPR, Merge, RunQA:
 		return a.Revision == inputVersion(g, a).TargetRevision
 	case PlanGoal:
-		if a.TaskID != "" {
+		if a.TaskID != "" || a.FailureKey != "" && a.Revision != "" {
 			return a.Revision == inputVersion(g, a).TargetRevision
 		}
 		return !g.DefinitionPending || a.Revision == g.RecordRevision

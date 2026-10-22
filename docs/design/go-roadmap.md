@@ -332,6 +332,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 - Depends on: G1-01. Design refs: C-57; [work-and-delegation.md](work-and-delegation.md#start-gate).
 
 **G2-01 Task records and work area.** Work ledger, card projection, `work/` directories, protected refs. #127 adds installed-Core allocation and result-retention tools, pinned task worktrees and no-PR material/bundle recovery, exercised by `e2e/m2/work-area.json`.
+- #125 connects installed worker dispatch to the same allocator and ledger. `e2e/m2/work-dispatch.json` exercises the conversation tool, detached base, protected refs, worker commit, PR observation and replayable receipt through running Core.
 - The ledger increment (#126) keeps task/run/receipt facts in canon, reserves at most one active run per task, rebuilds card and reservation indexes from events, and rejects missing or mismatched artifact provenance. Core startup rebuilds these indexes and retains unfinished reservations as unknown. Workspace creation and protected-ref enforcement remain the separate work-area increment.
 - Done when: a second active run on a task is refused; a task worktree is created from the base commit under `work/tasks`; the projection rebuilt from the ledger equals the live one; a result without a pull request is copied into the generation; a receipt for a changed artifact without provenance is rejected.
 - Depends on: G1-05, G1-11, G1-12, G2-17. Design refs: C-29, C-30, C-39; [work-and-delegation.md](work-and-delegation.md#work-area).
@@ -367,9 +368,10 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 - Depends on: G2-01, G2-04. Design refs: C-57; [work-and-delegation.md](work-and-delegation.md#work-definition).
 
 **G2-19 GitHub reads, CI watch and merge.** `gh` as Core's child, check watcher, head-pinned merge, observed merges.
-- Read/watch increment (#140): Core owns the fixed-argument gh client and one conditional CI watcher per PR; the negotiated GitHub observation capability reports head, reviews, checks and pending causes. `e2e/m2/github-ci.json` covers the running Core path. Merge and observed-merge safety remain separate work.
+- Read/watch increment (#140): Core owns the fixed-argument gh client and one conditional CI watcher per PR; the negotiated GitHub observation capability reports head, reviews, checks and pending causes. `e2e/m2/github-ci.json` covers the running Core path.
 - Done when: no webhook or events feed is used; one watcher per pull request ends at the conclusion; a rate limit shows CI pending with its cause; a moved head is read again and not merged; a protected-ref mismatch blocks the merge; a person's merge is observed only after the merge commit and target ref are checked.
 - Implementation (#141): head-pinned merge, protected local refs and confirmed external merges run through Core's `github_merge` capability. `e2e/m2/github-merge.json` covers head/ref refusal, one pinned write, durable restart replay and observed merges with failed checks. Authority and ghclient tests cover uncertain reservations, admission and serialization.
+- Parent acceptance (#139): the merge scenario also moves the head between PR identity and review reads, requires one refreshed observation and blocks admission until explicit head acceptance. Unit cases cover repeated head movement, a return to the original head and a failed refresh.
 - Depends on: G1-05, G1-07. Design refs: C-58; [integrations.md](integrations.md#github).
 
 ### 2.C Memory and growth upkeep

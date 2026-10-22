@@ -13,6 +13,10 @@ func blockCorrection(g *Goal, reason string) {
 }
 
 func applyCorrectionPlan(g *Goal, o Observation) error {
+	if !validServiceRepository(*g) {
+		blockCorrection(g, "The service needs a repository in the goal scope.")
+		return nil
+	}
 	if len(o.Tasks) == 0 {
 		blockCorrection(g, "The corrected goal needs a revised work definition.")
 		return nil
@@ -20,7 +24,7 @@ func applyCorrectionPlan(g *Goal, o Observation) error {
 	// Keep the persisted correction fenced if this proposal cannot reconcile the
 	// retained tasks. Invalid planning data must not stop unrelated goals.
 	proposed := *g
-	proposed.Tasks = append(append([]Task(nil), g.Tasks...), o.Tasks...)
+	proposed.Tasks = append(retainScopedTasks(g.Scope.Repositories, g.Tasks), o.Tasks...)
 	proposed.DefinitionPending = false
 	proposed.Revision++
 	proposed.ManagerTurns++
