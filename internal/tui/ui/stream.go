@@ -258,6 +258,8 @@ func streamItemPayload(item protocol.StreamItem) (protocol.Payload, error) {
 
 func projectConversationBlock(block *state.Block, payload protocol.Payload) {
 	switch p := payload.(type) {
+	case protocol.Connected:
+		block.ShellFileToolsAvailable = p.ShellFileToolsAvailable
 	case protocol.RunningUpdate:
 		if p.Removed != nil {
 			block.Removed = *p.Removed

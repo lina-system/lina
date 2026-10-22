@@ -40,3 +40,21 @@ This specification was written before the Go implementation.
 
 No upstream implementation or prompt is copied. See
 [third-party notices](../../../THIRD-PARTY-NOTICES.md#lcm-x).
+
+## Coverage order and restored exclusions
+
+Reference: the same pinned LCM-X revision above, inspected before this fix.
+
+- **Seen** — `dag.py:267-325` publishes a node and its provenance atomically;
+  `dag.py:884-925` resolves nested provenance to raw messages in store-id order.
+- **Inferred / LINA mapping** — publication must preserve ledger append order:
+  a summary covers a prefix before the retained verbatim tail. Set membership
+  alone cannot prove that ordering. Event timestamps do not define ledger order.
+  Excluded events in the tail are checked separately and stay outside the node
+  until a later prefix reaches them; they must not extend its coverage past a
+  retained message.
+- **Unknown upstream / specified by LINA** — these reference paths do not
+  establish LINA's revocation/restore semantics or skipped-event reasons. On
+  restore, reconstruct exclusions from canonical replay/scaffold metadata so
+  restoring visibility cannot turn a replay, scaffold or summary echo into
+  summary input. Native provider items remain eligible as conversation content.
