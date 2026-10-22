@@ -138,6 +138,8 @@ The first-party plugins carry profiles. LINA also ships profiles for major messa
 
 LINA Core marks a plugin tool or command as an outward or irreversible effect from one source: the plugin's service profile. A permitted call to a marked tool asks every time, with the choices once and deny ([main-authority.md](main-authority.md#plugin-tools)). Core first applies the [preset effect limits](main-authority.md#preset-effect-limits): profiles distinguish research and private drafts from investment orders and external or binding execution, and an unclassified operation cannot bypass advise-only or draft-only limits. Every other permitted tool of a plugin that is on is available to every agent, in the same way, and runs without asking. There are no tiers, plugin scopes or per-tool settings.
 
+Before that approval policy, Core applies [preset effect limits](main-authority.md#preset-effect-limits). A trusted service profile supplies an operation classifier over already validated arguments: a multipurpose service tool can classify its quote operation as research and its order operation as an investment order. Core-owned tools supply the same classification in their registered definitions. Schema validation runs first. Caller-supplied effect labels, server descriptions and annotations are never classification authority. Newly added or unprofiled operations remain unclassified and fail closed for advice-only and draft-only origins. Their availability to ordinary agents keeps the existing policy.
+
 - Annotations that a server sends are untrusted and never mark a tool. `destructiveHint` is a display hint only.
 - The shipped messaging profiles mark every send tool.
 - A plugin without a profile has no marked tool. The card says so; restricted presets cannot dispatch an operation whose permitted effect Core cannot establish. For other agents, the agent rules still make an agent ask before it sends, pays, publishes or permanently deletes ([work-and-delegation.md](work-and-delegation.md#default-posture)).
@@ -227,6 +229,7 @@ A channel is an external messaging platform through which the person talks with 
 
 - The platform rights LINA asks for are the smallest that the scope needs. It never asks for an administrator right on either platform, and it never asks for a group administrator right on Telegram. The connect step explains once what `all_messages` costs on the platform, because it needs the platform's wider message-reading right.
 - Slash commands and buttons are a convenience. The gate is always LINA Core's check of the paired owner's id and of the binding, never the platform's role system.
+- Accepted steering retains its originating channel scope. If it becomes a deferred follow-up, Core uses that scope and rechecks the current binding before each model dispatch and tool execution, including after an app-started turn.
 
 ### Identity and pairing
 

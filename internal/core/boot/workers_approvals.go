@@ -36,7 +36,8 @@ func (e *workerSession) requestApproval(event worker.Event) {
 		summary = "Codex wants to change files"
 	}
 	approval, err := r.personaAuthority.RequestWorkerApproval(r.ctx, authority.Approval{
-		EffectKey: e.requestKey(req.ID), Person: r.person, Agent: r.agent, Conversation: r.conversation,
+		TaskID:    e.thread.TaskID,
+		EffectKey: e.requestKey(req.ID), Person: r.person, Agent: r.agent, Conversation: r.workerDelivery().conversation,
 		Tool: req.Method, What: summary, Where: e.workdir, Target: e.thread.ID,
 		Arguments: json.RawMessage(masked.Text()),
 	})

@@ -36,6 +36,7 @@ type Service struct {
 	cfg   Config
 }
 type Effect struct {
+	Class                                            tools.EffectClass `json:",omitempty"`
 	Key, Plugin, Account, Tool, ArgumentHash, Target string
 	Person, Agent, TaskID, GrantID, Basis            string
 	Epoch                                            uint64
@@ -167,6 +168,10 @@ func (s *Service) Begin(ctx context.Context, c tools.Call, spec tools.Spec, in t
 	if c.Key == "" || c.Name != spec.Name || c.Auth.Epoch != s.cfg.Epoch {
 		return tools.Ticket{}, tools.ErrInvalid
 	}
+	class := spec.EffectClass(in)
+	if class == tools.ExternalEffect || class == tools.InvestmentOrder || class == tools.BindingExecution {
+		spec.Outward = true
+	}
 	c.Auth.Tool = spec.Name
 	c.Auth.Target = in.Target
 	c.Auth.Write = in.Write
@@ -188,6 +193,11 @@ func (s *Service) Begin(ctx context.Context, c tools.Call, spec tools.Spec, in t
 		if err := s.checkEpoch(ctx, tx); err != nil {
 			return err
 		}
+		e.Class = spec.EffectClass(in)
+		limits, err := taskLimits(ctx, tx, c.Auth.Person, c.Auth.Agent, c.Auth.TaskID)
+		if err != nil {
+			return err
+		}
 		existing, oldHash, running, err := readEffect(ctx, tx, c.Key)
 		if err == nil {
 			if oldHash != fingerprint {
@@ -205,6 +215,13 @@ func (s *Service) Begin(ctx context.Context, c tools.Call, spec tools.Spec, in t
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
+		}
+		if !limits.Allows(e.Class) {
+			denied = ErrPresetLimit
+			e.State, e.Basis = tools.Refused, ErrPresetLimit.Error()
+			e.Result = refusal(limits, e.Class)
+			ticket.Result = e.Result
+			return insertEffect(ctx, tx, e, fingerprint, false)
 		}
 		var active string
 		if in.Write {

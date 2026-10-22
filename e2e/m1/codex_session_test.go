@@ -136,6 +136,9 @@ func TestM2InstalledCodexSession(t *testing.T) {
 			t.Error(err)
 			return
 		}
+		if scriptedCodingManager(t, w, req) {
+			return
+		}
 		names := map[string]bool{}
 		for _, raw := range req.Tools {
 			var d struct{ Name string }
@@ -204,7 +207,8 @@ func TestM2InstalledCodexSession(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	h, _ := installedConversationHarness(t, server.URL)
+	h, bootstrap := installedConversationHarness(t, server.URL)
+	seedCodingFixture(t, h, bootstrap)
 	bin := t.TempDir()
 	exe, err := os.Executable()
 	if err != nil {
@@ -269,9 +273,12 @@ func TestM2InstalledCodexLive(t *testing.T) {
 	var calls atomic.Int32
 	var session string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req struct{ Input []json.RawMessage }
+		var req struct{ Input, Tools []json.RawMessage }
 		if json.NewDecoder(r.Body).Decode(&req) != nil {
 			t.Error("invalid model request")
+			return
+		}
+		if scriptedCodingManager(t, w, req) {
 			return
 		}
 		n := calls.Add(1)
@@ -313,7 +320,8 @@ func TestM2InstalledCodexLive(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	h, _ := installedConversationHarness(t, server.URL)
+	h, bootstrap := installedConversationHarness(t, server.URL)
+	seedCodingFixture(t, h, bootstrap)
 	core := h.command("core", "--state-root", h.root, "--socket", h.socket)
 	// This opt-in preserves the actual installed worker's home, PATH and setup.
 	// Core still uses its private state and a synthetic local conversation route.
