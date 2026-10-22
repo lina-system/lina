@@ -34,17 +34,18 @@ type conversationView struct {
 }
 
 type textPager struct {
-	running   bool
-	selected  int
-	runID     string
-	next      *json.Number
-	open      bool
-	text      string
-	cardID    string
-	followEnd bool
-	offset    int
-	query     string
-	searching bool
+	transcript bool
+	running    bool
+	selected   int
+	runID      string
+	next       *json.Number
+	open       bool
+	text       string
+	cardID     string
+	followEnd  bool
+	offset     int
+	query      string
+	searching  bool
 }
 
 func newConversationView(styles Styles) conversationView {
@@ -121,7 +122,7 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 	key := term.FromTea(msg, m.events)
 	class := term.Edit
 	switch key.Name {
-	case "enter", "esc", "ctrl+c", "ctrl+d", "tab", "shift+tab", "ctrl+o", "ctrl+w", "ctrl+r", "ctrl+p":
+	case "enter", "esc", "ctrl+c", "ctrl+d", "tab", "shift+tab", "ctrl+o", "ctrl+t", "ctrl+w", "ctrl+r", "ctrl+p":
 		class = term.Toggle
 	}
 	if !m.gate.Admit(key, class, m.now()) {
@@ -170,6 +171,10 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	case "pgdown":
 		m.conversation.scroll = max(0, m.conversation.scroll-max(1, m.size.Height/2))
+		return nil
+	case "ctrl+t":
+		m.openPager("")
+		m.conversation.pager.transcript = true
 		return nil
 	case "ctrl+o":
 		if card, ok := m.selectedCard(); ok && card.RunID != "" {
@@ -341,6 +346,55 @@ func (m *shellModel) openPager(text string) {
 	m.conversation.pager = textPager{open: true, text: sanitize.Display(text)}
 }
 
+func conversationBlock(b state.Block) bool {
+	return b.Topic != "core" && b.Topic != "running" && (b.Topic != "waiting" || b.Card != nil) && b.Topic != "progress" && b.Kind != protocol.KindTurnState
+}
+
+func (m *shellModel) conversationName() string {
+	if m.conversation.agentMissing {
+		return design.Text(m.styles.options.Language, "agents.unavailable")
+	}
+	for _, a := range m.content.Agents {
+		if a.AgentID == m.activeAgent() {
+			return sanitize.Display(a.Name)
+		}
+	}
+	return "LINA"
+}
+
+func (m *shellModel) speakerName(b state.Block) string {
+	if b.Local || b.Speaker == protocol.ConversationSpeakerPerson {
+		return design.Text(m.styles.options.Language, "person")
+	}
+	if b.Speaker == protocol.ConversationSpeakerAgent || b.Kind == protocol.KindOutputDelta {
+		return m.conversationName()
+	}
+	return ""
+}
+
+func (m *shellModel) pagerText() string {
+	if !m.conversation.pager.transcript {
+		return m.conversation.pager.text
+	}
+	// Read the current projection, without retaining another history copy that
+	// could outlive authoritative replacements, revocation or a focus change.
+	var messages []string
+	for _, b := range m.content.Blocks {
+		if !conversationBlock(b) {
+			continue
+		}
+		text := b.Text
+		if b.Kind == protocol.KindResult && !b.InlineReply {
+			text = design.Text(m.styles.options.Language, "result") + "  " + b.Title + "\n" + text
+		}
+		if speaker := m.speakerName(b); speaker != "" {
+			text = speaker + "\n" + text
+		}
+		messages = append(messages, text)
+	}
+	return sanitize.Display(strings.Join(messages, "\n\n"))
+}
+
 func (m *shellModel) refreshOpenCard() {
 	p := &m.conversation.pager
 	if !p.open || p.cardID == "" {
@@ -439,7 +493,7 @@ func (m *shellModel) pagerLines() []string {
 		width = plan.SidePane.Width
 	}
 	stream := render.NewStream("pager", render.Config{Width: max(1, width)}, nil)
-	stream.Seal(1, m.conversation.pager.text)
+	stream.Seal(1, m.pagerText())
 	var lines []string
 	for _, row := range stream.Window(0, stream.Len(), render.Config{Width: max(1, width)}, nil) {
 		lines = append(lines, row.Text)
@@ -472,7 +526,7 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 	} else if notice := m.localNotice(); showNotice && notice != "" {
 		statusLine += "  " + notice
 	}
-	rows[plan.Status.Y] = clip(statusLine + "  /help  Enter  Ctrl+D  /memory  /agents")
+	rows[plan.Status.Y] = clip(statusLine + "  /help  Enter  Ctrl+D  /memory  /agents  Ctrl+T")
 	if plan.Tier == layout.TooSmall {
 		if plan.Notice.Height > 0 {
 			rows[0] = clip(design.Text(m.styles.options.Language, "shell.too_small"))
@@ -489,18 +543,7 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		rows[plan.Status.Y] = clip("Esc  /  n  " + p.query)
 		return strings.Join(rows, "\n")
 	}
-	name := "LINA"
-	if m.conversation.agentMissing {
-		name = design.Text(m.styles.options.Language, "agents.unavailable")
-	}
-	if !m.conversation.agentMissing {
-		for _, a := range m.content.Agents {
-			if a.AgentID == m.activeAgent() {
-				name = a.Name
-				break
-			}
-		}
-	}
+	name := m.conversationName()
 	rows[plan.Header.Y] = clip(m.styles.Title.Render(name))
 	var transcript []render.StyledRow
 	plainRow := func(text string) render.StyledRow { return render.StyledRow{Spans: []render.Span{{Text: text}}} }
@@ -518,17 +561,15 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		transcript = append(transcript, plainRow(design.Text(m.styles.options.Language, code)+"  /accounts"))
 	}
 	for _, b := range m.content.Blocks {
-		if b.Topic == "core" || b.Topic == "running" || (b.Topic == "waiting" && b.Card == nil) || b.Topic == "progress" || b.Kind == protocol.KindTurnState {
+		if !conversationBlock(b) {
 			continue
 		}
 		cached := m.blocks[b.ID]
 		if cached.stream == nil {
 			continue
 		}
-		if b.Local || b.Speaker == protocol.ConversationSpeakerPerson {
-			transcript = append(transcript, plainRow(design.Text(m.styles.options.Language, "person")))
-		} else if b.Speaker == protocol.ConversationSpeakerAgent || b.Kind == protocol.KindOutputDelta {
-			transcript = append(transcript, plainRow(name))
+		if speaker := m.speakerName(b); speaker != "" {
+			transcript = append(transcript, plainRow(speaker))
 		}
 		if b.Kind == protocol.KindResult && !b.InlineReply {
 			transcript = append(transcript, plainRow(design.Text(m.styles.options.Language, "result")+"  "+sanitize.Display(b.Title)+"  Ctrl+O"))
@@ -577,7 +618,7 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 	if plan.SidePane.Height > 0 {
 		p := &m.conversation.pager
 		stream := render.NewStream("pager", render.Config{Width: plan.SidePane.Width}, nil)
-		stream.Seal(1, p.text)
+		stream.Seal(1, m.pagerText())
 		p.offset = min(p.offset, max(0, stream.Len()-plan.SidePane.Height))
 		anchor := 0
 		if stream.Len() > 0 {

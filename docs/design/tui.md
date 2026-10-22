@@ -398,6 +398,19 @@ the full screen. The pager supports arrows, Page Up/Down, Home/End, `/` search,
 the terminal's own copy. No host clipboard read or write is installed by the
 composer or pager.
 
+Ctrl+T opens the entire retained visible conversation in the same pager, in
+message order, with the person's word and the agent's name as speaker labels.
+The sanitized plain text includes complete inline replies once; structured
+results retain their visible summary and title. It excludes the unsent draft,
+separate waiting/running/progress lists and internal turn-state records.
+The open transcript reads the current display state, including replacements
+and revocations. It uses the pager's existing scrolling, `/` search, `n` and
+Esc controls; closing it preserves the draft and does not interrupt the turn.
+It neither requests older history outside the retained window nor writes the
+clipboard. `e2e/m1/tui-transcript.json` proves three exchanges through installed
+Core and a real PTY, six ordered messages with speaker words, search back to
+the first message from a later page, and draft preservation after Esc.
+
 For a completed background run, Ctrl+R selects a running row with the arrows;
 Enter reads its result, and `d` dismisses a landed row. The landing's agent-report
 card also opens with Ctrl+O and remains available after its row leaves Running.
@@ -610,6 +623,7 @@ Keys are a proposal and data in `tui/ui`. No contract fixes them.
 | Ctrl+C | Clear the draft; with an empty draft, quit the TUI only, never Core |
 | Tab, Shift+Tab | Move focus |
 | Ctrl+K | Command palette |
+| Ctrl+T | Open the retained conversation transcript in the pager |
 | Keys for Waiting for me, progress, running list and Open on a card | Open those views |
 
 Key classes are Toggle, Edit and Approve. Every key event passes one `Admit` gate: releases are ignored, repeats are dropped for Toggle and Approve, and Edit keys may repeat. Without key events from the terminal every key counts as a press, and approval cards add a dead time after any change of card (P).
