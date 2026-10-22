@@ -120,21 +120,10 @@ func TestM1InterruptedPartialHistory(t *testing.T) {
 			h, start := installedConversationHarness(t, server.URL)
 			core := start(true)
 			client, conversation := conversationClient(t, h)
-			socket := h.socket
-			tap := newAccountTap(t, h, socket)
-			h.socket = tap.socket
 			terminal := h.startTerminalSize([]string{"TERM=xterm-256color"}, false, true, 120, 60)
-			h.socket = socket
 			// Controls can appear before negotiation permits input. Wait for Live.
 			waitScreen(t, h, terminal, design.Text(design.English, "live"))
-			// Connected precedes history discovery. The subscription snapshot
-			// proves the TUI has consumed its conversation destination.
-			for {
-				frame := tap.next(t, h)
-				if snapshot, ok := frame.Payload.(protocol.Snapshot); ok && snapshot.Topic == "conversation:"+conversation {
-					break
-				}
-			}
+			waitComposerReady(t, h, terminal)
 			h.keys(terminal, scenario.Input+"\r")
 			for _, partial := range scenario.Partials {
 				waitScreen(t, h, terminal, partial)

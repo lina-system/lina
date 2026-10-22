@@ -77,19 +77,8 @@ func TestM1TUIStoppedNoticeOrder(t *testing.T) {
 		}
 	}
 	environment := []string{"TERM=xterm-256color", "COLORTERM=truecolor"}
-	socket := h.socket
-	tap := newAccountTap(t, h, socket)
-	h.socket = tap.socket
 	terminal := h.startTerminalSize(environment, false, true, scenario.Width, scenario.Height)
-	h.socket = socket
 	waitScreen(t, h, terminal, design.Text(design.English, "live"))
-	// Wait for the TUI's subscription, not merely its connection status.
-	for {
-		frame := tap.next(t, h)
-		if snapshot, ok := frame.Payload.(protocol.Snapshot); ok && snapshot.Topic == "conversation:"+conversation {
-			break
-		}
-	}
 	h.keys(terminal, scenario.Input+"\r")
 	waitScreen(t, h, terminal, scenario.Partial)
 	h.keys(terminal, "/stop\r")

@@ -53,25 +53,8 @@ func TestM1ReplayExportInstalledCore(t *testing.T) {
 	core.command.Env = append(core.command.Env, "PATH="+os.Getenv("PATH"), "LINA_RESPONSES_BASE_URL="+provider.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
 	core.start(t)
 	h.connect(core).Close()
-	ready, initialConversation := conversationClient(t, h)
-	ready.Close()
-	socket := h.socket
-	tap := newAccountTap(t, h, socket)
-	h.socket = tap.socket
 	terminal := h.startScreenTUI("TERM=xterm-256color")
-	h.socket = socket
 	waitScreen(t, h, terminal, design.Text(design.English, "live"))
-	// The TUI issues its conversation subscription only after accepting history
-	// and installing the destination; connection status alone is too early.
-	for {
-		frame := tap.next(t, h)
-		if frame.Error != nil {
-			t.Fatalf("TUI discovery refused: %s", frame.Error.Code)
-		}
-		if snapshot, ok := frame.Payload.(protocol.Snapshot); ok && snapshot.Topic == "conversation:"+initialConversation {
-			break
-		}
-	}
 	h.keys(terminal, scenario.Input+"\r")
 	waitScreen(t, h, terminal, scenario.Reply)
 	h.keys(terminal, "\x04")

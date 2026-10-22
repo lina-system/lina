@@ -121,7 +121,10 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case shellConnection:
 		if msg.Generation == m.generation {
 			m.status = msg.Status
-			if m.status.State == Live && (m.conversation.agentPending || m.hasGap() || len(m.resyncPending) > 0) {
+			if m.status.State == Live && m.conversation.agentPending && m.conversation.id == "" {
+				// Welcome alone does not supply a valid input destination.
+				m.status.State = Connecting
+			} else if m.status.State == Live && (m.conversation.agentPending || m.hasGap() || len(m.resyncPending) > 0) {
 				m.status.State = Resyncing
 			}
 		}
