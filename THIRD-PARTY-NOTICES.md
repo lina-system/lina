@@ -29,6 +29,13 @@ bundled by this change:
 LINA uses its own semantic tokens, localized catalog, row-budget planner and
 hardware cursor placement. It uses a hairline instead of a surrounding box.
 
+Input recall also independently adapts Hermes Agent's first/last-line Up/Down
+behaviour and separation of secret forms (`hermes_cli/cli_tui_mixin.py`, revision
+`e06df9c2`, MIT, Nous Research and contributors). No implementation code is
+copied. LINA derives in-memory history from Core's current conversation instead
+of using the reference's file history. Observations and limits are recorded in
+[`INPUT-HISTORY-REFERENCE.md`](internal/tui/ui/INPUT-HISTORY-REFERENCE.md).
+
 ## Memory design references
 
 The memory and compaction behavior in [Conversation and memory](docs/design/conversation-and-memory.md) is derived from the designs of Honcho and LCM-X. This attribution covers behavioral reference and an independent Go implementation under LINA's contracts. No upstream implementation code, prompts, runtime dependency or user data is included by this design change.
