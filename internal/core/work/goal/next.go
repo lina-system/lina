@@ -257,8 +257,12 @@ func Slots(n Node, actions []Action, request Resources, now time.Time) int {
 	return int(min(math.Floor(cpu/request.CPU), float64(mem/request.MemoryMB), float64(disk/request.DiskMB)))
 }
 
-func validateGoal(g Goal) error {
-	if !validCriteria(g) || g.ID == "" || g.Person == "" || g.Agent == "" || strings.TrimSpace(g.Done) == "" || (g.ServiceTarget == "") == (g.NoServiceReason == "") {
+func validateGoal(g Goal) error { return validateGoalState(g, false) }
+
+// Only derivation of an already-persisted correction may temporarily retain
+// tasks outside the new scope. Admission and manager proposals remain strict.
+func validateGoalState(g Goal, pendingCorrection bool) error {
+	if !validCriteria(g, pendingCorrection) || g.ID == "" || g.Person == "" || g.Agent == "" || strings.TrimSpace(g.Done) == "" || (g.ServiceTarget == "") == (g.NoServiceReason == "") {
 		return ErrInvalid
 	}
 	tasks := map[string]Task{}
@@ -313,7 +317,6 @@ func actionID(a Action) string {
 	hash := sha256.Sum256(raw)
 	return hex.EncodeToString(hash[:])
 }
-func areaKey(t Task) string { return t.Repository + "\x00" + t.Area }
 
 // Derive is a deterministic projection of authoritative observations. It never
 // calls a model or an adapter. The caller must persist its actions/reservations
@@ -332,10 +335,10 @@ func Derive(state State, now time.Time) (Plan, error) {
 		depth int
 	}
 	var ready []candidate
-	occupied := map[string]string{}
+	occupied := []areaReservation{}
 	mergeSlots := map[string]bool{}
 	for _, g := range goals {
-		if err := validateGoal(g); err != nil {
+		if err := validateGoalState(g, g.DefinitionPending); err != nil {
 			return plan, err
 		}
 		for _, t := range g.Tasks {
@@ -345,7 +348,7 @@ func Derive(state State, now time.Time) (Plan, error) {
 				}
 			}
 			if t.Stage != TaskReady && t.Stage != TaskDone && t.Stage != TaskMerged && t.Stage != TaskQAFailed {
-				occupied[areaKey(t)] = g.ID + "\x00" + t.ID
+				occupied = append(occupied, areaReservation{g.ID + "\x00" + t.ID, t})
 			}
 		}
 	}
@@ -567,7 +570,14 @@ func Derive(state State, now time.Time) (Plan, error) {
 	})
 	for _, c := range ready {
 		g, t, kind := c.goal, c.task, c.kind
-		if owner := occupied[areaKey(t)]; owner != "" && owner != g.ID+"\x00"+t.ID {
+		areaBusy := false
+		for _, held := range occupied {
+			if held.owner != g.ID+"\x00"+t.ID && areasOverlap(held.task, t) {
+				areaBusy = true
+				break
+			}
+		}
+		if areaBusy {
 			wait(g, t, "area", "merge.landed")
 			continue
 		}
@@ -592,7 +602,7 @@ func Derive(state State, now time.Time) (Plan, error) {
 			continue
 		}
 		add(g, t, kind, t.Head, best)
-		occupied[areaKey(t)] = g.ID + "\x00" + t.ID
+		occupied = append(occupied, areaReservation{g.ID + "\x00" + t.ID, t})
 	}
 	return plan, nil
 }
