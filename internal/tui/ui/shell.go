@@ -46,6 +46,7 @@ type shellBlock struct {
 }
 
 type shellModel struct {
+	activityFrame uint64
 	cardScroll    int
 	cardRequests  map[string]state.CardAnswerRequest
 	focused       bool
@@ -66,6 +67,7 @@ type shellModel struct {
 	conversation  conversationView
 	talk          talkView
 	channels      channelView
+	web           webView
 	accounts      accountView
 	accountRows   []protocol.AccountSummary
 	accountsKnown bool
@@ -92,11 +94,20 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch msg := message.(type) {
+	case activityTick:
+		if m.activityVisible() {
+			m.content, _ = state.Reduce(m.content, state.Tick{Now: time.Time(msg)})
+			if !m.staticActivity() {
+				m.activityFrame++
+			}
+		}
+
 	case shellBegin:
 		if msg.Generation > m.generation {
 			m.generation = msg.Generation
 			m.talk = talkView{attempt: m.talk.attempt + 1}
 			m.channels = channelView{attempt: m.channels.attempt + 1}
+			m.web = webView{attempt: m.web.attempt + 1}
 			m.accounts = accountView{}
 			m.accountRows = nil
 			m.accountsKnown = false
@@ -192,11 +203,6 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshOpenCard()
 		m.refreshRunning()
 		m.refreshBlocks()
-		for _, block := range m.content.Blocks {
-			if block.Kind == protocol.KindTurnState && block.TurnKnown {
-				m.content, _ = state.Reduce(m.content, state.Turn{Active: block.TurnActive})
-			}
-		}
 		afterCard, _ := m.content.CurrentCard()
 		if beforeCard.ID != afterCard.ID || beforeCard.Revision != afterCard.Revision {
 			m.cardGate.CardChanged(m.now())
@@ -250,6 +256,10 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.events = msg.SupportsEventTypes()
 		m.disambiguated = msg.SupportsKeyDisambiguation()
 	case tea.PasteMsg:
+		if m.web.open {
+			m.webPaste(msg.Content)
+			return m, nil
+		}
 		if m.content.CardView.ID != "" {
 			return m, m.cardPaste(msg.Content)
 		}
@@ -268,6 +278,9 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.editComposer(tea.PasteMsg{Content: sanitize.Display(msg.Content)})
 		}
 	case tea.KeyMsg:
+		if m.web.open {
+			return m, m.webKey(msg)
+		}
 		if m.talk.open {
 			return m, m.talkKey(msg)
 		}
@@ -351,7 +364,7 @@ func (m *shellModel) View() tea.View {
 	view.KeyboardEnhancements.ReportEventTypes = true
 	if m.hasComposer() && m.status.State.active() {
 		plan := m.conversationPlan()
-		if plan.Tier != layout.TooSmall && !m.conversation.pager.open && !m.accounts.open && !m.channels.open && !m.talk.open && m.content.CardView.ID == "" {
+		if plan.Tier != layout.TooSmall && !m.conversation.pager.open && !m.accounts.open && !m.web.open && !m.channels.open && !m.talk.open && m.content.CardView.ID == "" {
 			view.Cursor = m.conversation.composer.Cursor()
 			if view.Cursor != nil {
 				view.Cursor.Position.X += m.styles.composerPromptWidth()
@@ -405,6 +418,9 @@ func (m *shellModel) viewContent(showNotice bool) string {
 	}
 	if m.size.Width <= 0 || m.size.Height <= 0 {
 		return ""
+	}
+	if m.web.open {
+		return m.webContent()
 	}
 	if m.talk.open {
 		return m.talkContent()

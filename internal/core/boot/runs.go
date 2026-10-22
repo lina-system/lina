@@ -99,6 +99,7 @@ func (r *conversationRuntime) startRuns(ctx context.Context) error {
 	}
 	r.lanes = lane.NewWithNotices(b.notices)
 	r.identity.TopicCapabilities["running"] = runningCapability
+	r.identity.Operations[protocol.KindStop] = clientsrv.Operation{Capability: runningCapability, Handle: r.stopRun}
 	r.identity.Operations[protocol.KindRunningGet] = clientsrv.Operation{Capability: runningCapability, Handle: func(ctx context.Context, s clientsrv.Session, e protocol.Envelope) (clientsrv.Result, error) {
 		if err := r.authorize(s, nil); err != nil {
 			return clientsrv.Result{}, err
