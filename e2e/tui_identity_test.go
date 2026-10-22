@@ -16,6 +16,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
+	"github.com/thisisjun786/lina/kit/protocol"
 )
 
 func TestM1TUIIdentityFromAgentStore(t *testing.T) {
@@ -68,8 +69,20 @@ func TestM1TUIIdentityFromAgentStore(t *testing.T) {
 			h, start := installedConversationHarness(t, provider.URL)
 			want, owner = seedConversationPersona(t, h, defaultAgent)
 			core := start(true)
+			observer, conversation := conversationClient(t, h)
+			observer.Close()
+			socket := h.socket
+			tap := newAccountTap(t, h, socket)
+			h.socket = tap.socket
 			terminal := h.startScreenTUI("TERM=xterm-256color")
+			h.socket = socket
 			waitScreen(t, h, terminal, "Ctrl+D")
+			for {
+				frame := tap.next(t, h)
+				if snapshot, ok := frame.Payload.(protocol.Snapshot); ok && snapshot.Topic == "conversation:"+conversation {
+					break
+				}
+			}
 			h.keys(terminal, "who are you\r")
 			waitScreen(t, h, terminal, "Identity fixture received.")
 			select {

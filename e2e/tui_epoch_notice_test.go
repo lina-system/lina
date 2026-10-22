@@ -119,6 +119,9 @@ func TestM1TUIEpochNoticeInstalledCore(t *testing.T) {
 			break
 		}
 	}
+	if err := tap.directReconnect(); err != nil {
+		t.Fatal(err)
+	}
 	h.keys(terminal, scenario.Input+"\r")
 	waitScreen(t, h, terminal, scenario.Reply+"-1")
 	h.keys(terminal, scenario.Draft)
