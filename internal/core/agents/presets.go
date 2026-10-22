@@ -69,6 +69,9 @@ func (s *Store) updatePreset(ctx context.Context, p Preset, person string, expec
 	return s.db.Write(ctx, func(tx *canon.Tx) error {
 		if expected != nil {
 			current, err := preset(ctx, tx, p.ID)
+			if errors.Is(err, ErrNotFound) {
+				current, err = Preset{ID: p.ID}, nil
+			}
 			if err != nil {
 				return err
 			}
@@ -100,6 +103,26 @@ func (s *Store) updatePreset(ctx context.Context, p Preset, person string, expec
 		}
 		return nil
 	})
+}
+
+// UpdatePresetLayers preserves preset metadata owned by other features while
+// publishing the shipped pair. Existing agents keep all agent-owned state.
+func (s *Store) UpdatePresetLayers(ctx context.Context, id, core, voice, person string) error {
+	var before Preset
+	err := s.db.Read(ctx, func(tx *canon.Tx) error {
+		var err error
+		before, err = preset(ctx, tx, id)
+		return err
+	})
+	if errors.Is(err, ErrNotFound) {
+		return s.updatePreset(ctx, Preset{ID: id, Core: core, DefaultVoice: voice}, person, &Preset{ID: id})
+	}
+	if err != nil {
+		return err
+	}
+	next := before
+	next.Core, next.DefaultVoice = core, voice
+	return s.updatePreset(ctx, next, person, &before)
 }
 
 // Only the exact shipped placeholders are eligible. Owner-supplied material and
