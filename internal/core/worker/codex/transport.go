@@ -47,13 +47,12 @@ type frame struct {
 }
 
 type Session struct {
+	quotaWake               chan struct{}
 	owner                   *proc.Owner
 	cancel                  context.CancelFunc
 	stdin                   *os.File
 	processDone, readerDone chan struct{}
 	events                  chan worker.Event
-	quotaUpdates            chan struct{}
-	lastQuota               json.RawMessage
 	control                 sync.Mutex
 	writeMu                 sync.Mutex
 	mu                      sync.Mutex
@@ -68,6 +67,17 @@ type Session struct {
 	snapshot                worker.ThreadSnapshot
 	started                 bool
 	finished                map[string]bool
+	tools                   map[string]bool
+	requests                map[string]*serverRequest
+	nextRequest             uint64
+	startingTurn            bool
+	quotaMu                 sync.Mutex
+	quotaLoaded             bool
+	quotaReading            bool
+	quotaAccount            string
+	quotaDefault            string
+	quotaLimits             map[string]*quotaLimit
+	quotaUpdates            []quotaUpdate
 }
 
 var _ worker.Adapter = (*Session)(nil)
@@ -125,7 +135,7 @@ func Open(ctx context.Context, l lease.Lease, cfg Config) (*Session, error) {
 		return nil, err
 	}
 	life, cancel := context.WithCancel(ctx)
-	s := &Session{owner: owner, cancel: cancel, stdin: inW, processDone: make(chan struct{}), readerDone: make(chan struct{}), events: make(chan worker.Event, 257), quotaUpdates: make(chan struct{}, 1), pending: map[string]chan frame{}, finished: map[string]bool{}, version: v, generation: generations.Add(1)}
+	s := &Session{quotaWake: make(chan struct{}, 1), owner: owner, cancel: cancel, stdin: inW, processDone: make(chan struct{}), readerDone: make(chan struct{}), events: make(chan worker.Event, 257), pending: map[string]chan frame{}, finished: map[string]bool{}, version: v, generation: generations.Add(1)}
 	go func() {
 		defer close(s.processDone)
 		err := owner.Run(life, l, proc.Command{Path: path, Args: []string{"app-server", "--listen", "stdio://"}, Env: env, Stdin: inR, Stdout: outW, Stderr: io.Discard})
@@ -164,7 +174,7 @@ func (s *Session) Compatibility() Compatibility {
 	return c
 }
 func (s *Session) Capabilities() worker.CapabilitySet {
-	return worker.CapabilitySet{worker.StreamProgress, worker.ReportUsage, worker.SignalCompletion, worker.SteerTurn, worker.ReportQuota}
+	return worker.CapabilitySet{worker.StreamProgress, worker.ReportUsage, worker.SignalCompletion, worker.SteerTurn, worker.WorkTools, worker.RequestApprovals, worker.AskQuestions, worker.ReportQuota}
 }
 func (s *Session) Events() <-chan worker.Event { return s.events }
 
@@ -192,6 +202,10 @@ func (s *Session) write(ctx context.Context, v any) error {
 	return err
 }
 func (s *Session) call(ctx context.Context, method string, params, out any) error {
+	return s.callGuarded(ctx, method, params, out, nil)
+}
+
+func (s *Session) callGuarded(ctx context.Context, method string, params, out any, guard func() error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -208,13 +222,21 @@ func (s *Session) call(ctx context.Context, method string, params, out any) erro
 		s.mu.Unlock()
 		return err
 	}
+	if guard != nil {
+		if err := guard(); err != nil {
+			s.mu.Unlock()
+			return err
+		}
+	}
 	s.next++
 	id := strconv.FormatUint(s.next, 10)
 	ch := make(chan frame, 1)
 	s.pending[id] = ch
+	// Serialize guarded control writes with incoming questions and turn changes.
+	err = s.write(ctx, wire.JSONRPCRequest{ID: json.RawMessage(id), Method: method, Params: (*json.RawMessage)(&p)})
 	s.mu.Unlock()
 	defer func() { s.mu.Lock(); delete(s.pending, id); s.mu.Unlock() }()
-	if err = s.write(ctx, wire.JSONRPCRequest{ID: json.RawMessage(id), Method: method, Params: (*json.RawMessage)(&p)}); err != nil {
+	if err != nil {
 		return err
 	}
 	select {
@@ -275,10 +297,10 @@ func (s *Session) read(r *os.File) {
 				}
 			}
 		} else if len(f.ID) > 0 {
-			// #133 will bind questions and approvals to the originating conversation.
-			// Never approve or silently stall an unsupported request.
-			s.fail(fmt.Errorf("unsupported Codex server request: %s", f.Method))
-			return
+			if err := s.serverRequest(raw, f); err != nil {
+				s.fail(err)
+				return
+			}
 		} else if err := s.notification(raw); err != nil {
 			s.fail(err)
 			return
@@ -297,6 +319,7 @@ func (s *Session) fail(err error) {
 	s.mu.Lock()
 	if s.failure == nil {
 		s.failure = err
+		s.clearRequests("")
 	}
 	s.mu.Unlock()
 	s.cancel()
@@ -307,6 +330,7 @@ func (s *Session) Close() error {
 	s.closeOnce.Do(func() {
 		s.mu.Lock()
 		s.closing = true
+		s.clearRequests("")
 		s.mu.Unlock()
 		s.stdin.Close()
 		timer := time.NewTimer(time.Second)

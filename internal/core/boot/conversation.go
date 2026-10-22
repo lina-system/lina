@@ -31,6 +31,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
+	"github.com/thisisjun786/lina/internal/core/ghclient"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/inbox"
 	"github.com/thisisjun786/lina/internal/core/lane"
@@ -47,11 +48,13 @@ import (
 	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/internal/core/waiting"
 	"github.com/thisisjun786/lina/internal/core/work"
+	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/internal/tui/render"
 	"github.com/thisisjun786/lina/kit/grant"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/loop"
+	"github.com/thisisjun786/lina/kit/proc"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/provider"
 	builtin "github.com/thisisjun786/lina/skills"
@@ -65,19 +68,22 @@ type acceptedSteering struct {
 }
 
 type conversationRuntime struct {
-	delegation   *delegationRuntime
-	work         *work.Service
-	waitingStop  context.CancelFunc
-	waitingDone  chan struct{}
-	workWaiting  *waiting.Rounds
-	background   *backgroundRuntime
-	workers      *workerRuntime
-	router       *conversationRouter
-	decisions    *clientsrv.Decisions
-	replaySocket string
-	dispatchMu   *sync.RWMutex
-	removals     *retract.Store
-	channels     *channelRuntime
+	delegation     *delegationRuntime
+	workerDispatch *dispatch.Service
+	workerGitHub   *ghclient.Client
+	work           *work.Service
+	waitingStop    context.CancelFunc
+	waitingDone    chan struct{}
+	workWaiting    *waiting.Rounds
+	background     *backgroundRuntime
+	workers        *workerRuntime
+	router         *conversationRouter
+	decisions      *clientsrv.Decisions
+	replaySocket   string
+	dispatchMu     *sync.RWMutex
+	removals       *retract.Store
+	channels       *channelRuntime
+	workArea       *work.Area
 
 	materials        *conversationMaterials
 	assets           *assets.Store
@@ -187,6 +193,7 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 		ApprovalsChanged: func(ctx context.Context) {
 			if r.decisions != nil {
 				r.decisions.ApprovalsChanged(ctx)
+				r.workers.deliverAnswers(ctx)
 			}
 		},
 	})
@@ -235,11 +242,19 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err = r.startDecisions(ctx); err != nil {
 		return nil, err
 	}
-	r.work = work.New(r.db)
+	git, _ := proc.LookPath("git")
+	r.workArea, err = work.OpenArea(root, git)
+	if err != nil {
+		return nil, err
+	}
+	r.work = work.NewWithArea(r.db, r.workArea, workMaterials{writer: writer, person: r.person})
 	if err = r.work.Recover(ctx, strconv.FormatUint(r.epoch, 10)); err != nil {
 		return nil, err
 	}
 	if err = r.startWorkWaiting(ctx); err != nil {
+		return nil, err
+	}
+	if err = r.startWorkerDispatch(ctx); err != nil {
 		return nil, err
 	}
 	if err = r.startRuns(ctx); err != nil {
@@ -277,6 +292,16 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 	if r.delegation != nil {
 		err = errors.Join(err, r.delegation.close(ctx))
 		r.delegation = nil
+	}
+	if r.workerDispatch != nil {
+		if err = r.workerDispatch.Close(ctx); err != nil {
+			return err
+		}
+	}
+	if r.workerGitHub != nil {
+		if err = r.workerGitHub.Close(ctx); err != nil {
+			return err
+		}
 	}
 	if r.waitingStop != nil {
 		r.waitingStop()
@@ -345,6 +370,9 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 	}
 	if r.skills != nil {
 		err = errors.Join(err, r.skills.Close())
+	}
+	if r.workArea != nil {
+		err = errors.Join(err, r.workArea.Close(ctx))
 	}
 	if r.assets != nil {
 		err = errors.Join(err, r.assets.Close())
@@ -706,6 +734,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 	}
 	defer activity.Release()
 	bindings := map[string]loop.Tool{}
+	if r.router.root.workerDispatch != nil {
+		bindings["dispatch_work"] = r.router.root.workerDispatch.Tool(dispatch.Origin{Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: turnID})
+	}
 	bindings[runs.StartToolName] = r.background.service.StartTool(r.runOrigin(turnID))
 	var promoted budget.Handle
 	defer func() {
@@ -765,6 +796,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			if err := r.prepareSkillTools(turnID, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
+			if err := r.prepareWorkTools(turnID, bindings); err != nil {
+				return turn.PreparedRequest{}, err
+			}
 			if err := r.prepareWorkerTools(turnID, input, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
@@ -777,8 +811,12 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			declarations = append(declarations, coreexec.SkillDeclarations()...)
 			declarations = append(declarations, coreexec.RecordDeclarations()...)
 			declarations = append(declarations, startRunDeclaration())
-			declarations = append(declarations, r.prepareDelegationTools(turnID, bindings)...)
+			if r.router.root.workerDispatch != nil {
+				declarations = append(declarations, dispatch.Declaration())
+			}
+			declarations = append(declarations, coreexec.WorkDeclarations()...)
 			declarations = append(declarations, workerDeclarations()...)
+			declarations = append(declarations, r.prepareDelegationTools(turnID, bindings)...)
 			packet, _, err := atropos.Packet(ctx, minimum, 0, func(ctx context.Context) (assemble.ContextPacket, error) { return r.relationshipPacket(ctx, at) })
 			if err != nil {
 				return turn.PreparedRequest{}, err

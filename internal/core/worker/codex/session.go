@@ -22,8 +22,9 @@ func (s *Session) Start(ctx context.Context, l lease.Lease, spec worker.StartSpe
 	if err := s.Capabilities().Require(spec.Required...); err != nil {
 		return worker.Thread{}, err
 	}
-	if len(spec.Tools) > 0 {
-		return worker.Thread{}, ErrUnsupported
+	tools, declared, err := dynamicTools(spec.Tools)
+	if err != nil {
+		return worker.Thread{}, err
 	}
 	if !filepath.IsAbs(spec.Workdir) || strings.TrimSpace(spec.TaskPacket) == "" || spec.TaskID == "" || spec.AttemptID == "" {
 		return worker.Thread{}, errors.New("worker task needs identity, absolute workdir and task packet")
@@ -37,9 +38,13 @@ func (s *Session) Start(ctx context.Context, l lease.Lease, spec worker.StartSpe
 		return worker.Thread{}, errors.New("Codex session already assigned")
 	}
 	s.started = true
+	s.tools = declared
 	s.snapshot = worker.ThreadSnapshot{Thread: worker.Thread{TaskID: spec.TaskID, AttemptID: spec.AttemptID, ProcessGeneration: s.generation, BindingEpoch: 1}, State: worker.Unknown, Worker: s.Name(), Version: s.version, Capabilities: s.Capabilities()}
 	s.mu.Unlock()
 	p := wire.V2ThreadStartParams{Cwd: &spec.Workdir}
+	if len(tools) > 0 {
+		p.DynamicTools = &tools
+	}
 	if spec.Model != "" {
 		v := string(spec.Model)
 		p.Model = &v
@@ -64,8 +69,9 @@ func (s *Session) Start(ctx context.Context, l lease.Lease, spec worker.StartSpe
 			s.snapshot.InstructionSources = append(s.snapshot.InstructionSources, string(v))
 		}
 	}
+	thread := s.snapshot.Thread
 	s.mu.Unlock()
-	if err := s.startTurn(ctx, spec.TaskPacket); err != nil {
+	if err := s.startTurn(ctx, spec.TaskPacket, thread); err != nil {
 		return worker.Thread{}, err
 	}
 	s.mu.Lock()
@@ -76,15 +82,27 @@ func (s *Session) Start(ctx context.Context, l lease.Lease, spec worker.StartSpe
 func input(text string) []wire.V2UserInput {
 	return []wire.V2UserInput{{Text: &wire.V2UserInputText{Text: text}}}
 }
-func (s *Session) startTurn(ctx context.Context, text string) error {
-	s.mu.Lock()
-	id := s.snapshot.Thread.ID
-	s.snapshot.Output = ""
-	s.mu.Unlock()
+func (s *Session) startTurn(ctx context.Context, text string, thread worker.Thread) error {
+	started := false
 	var response wire.V2TurnStartResponse
-	err := s.call(ctx, string(wire.ClientRequestTurnStartMethodTurnStart), wire.V2TurnStartParams{ThreadId: id, Input: input(text)}, &response)
+	err := s.callGuarded(ctx, string(wire.ClientRequestTurnStartMethodTurnStart), wire.V2TurnStartParams{ThreadId: thread.ID, Input: input(text)}, &response, func() error {
+		if err := s.bound(thread, true); err != nil {
+			return err
+		}
+		if s.snapshot.State != worker.Idle || len(s.pendingRequests()) > 0 {
+			return errors.New("Codex thread cannot start another turn")
+		}
+		s.snapshot.Output = ""
+		s.startingTurn = true
+		started = true
+		return nil
+	})
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if !started {
+		return err
+	}
+	s.startingTurn = false
 	if err != nil {
 		s.snapshot.State = worker.Unknown
 		return err
@@ -93,8 +111,11 @@ func (s *Session) startTurn(ctx context.Context, text string) error {
 		s.snapshot.State = worker.Unknown
 		return errors.New("Codex omitted turn id")
 	}
-	// Notifications can arrive before the reply, including turn/completed.
+	// Notifications can arrive before the reply, including questions/completion.
 	if !s.finished[response.Turn.ID] {
+		if s.snapshot.Thread.TurnID != response.Turn.ID {
+			s.clearRequests("")
+		}
 		s.snapshot.Thread.TurnID = response.Turn.ID
 		s.snapshot.State = worker.Active
 	}
@@ -104,6 +125,9 @@ func (s *Session) startTurn(ctx context.Context, text string) error {
 func (s *Session) bound(t worker.Thread, turn bool) error {
 	if s.failure != nil {
 		return s.failure
+	}
+	if s.closing {
+		return errors.New("Codex session closed")
 	}
 	current := s.snapshot.Thread
 	if t.ID == "" || t.ID != current.ID || t.ProcessGeneration != current.ProcessGeneration || t.BindingEpoch != current.BindingEpoch || t.TaskID != current.TaskID || t.AttemptID != current.AttemptID || turn && t.TurnID != current.TurnID {
@@ -120,16 +144,27 @@ func (s *Session) Input(ctx context.Context, t worker.Thread, in worker.Input) e
 	s.mu.Lock()
 	err := s.bound(t, true)
 	state := s.snapshot.State
+	if len(s.pendingRequests()) > 0 {
+		state = worker.Waiting
+	}
 	s.mu.Unlock()
 	if err != nil {
 		return err
 	}
 	switch state {
 	case worker.Idle:
-		return s.startTurn(ctx, in.Text)
+		return s.startTurn(ctx, in.Text, t)
 	case worker.Active:
 		var response wire.V2TurnSteerResponse
-		err = s.call(ctx, string(wire.ClientRequestTurnSteerMethodTurnSteer), wire.V2TurnSteerParams{ThreadId: t.ID, ExpectedTurnId: t.TurnID, Input: input(in.Text)}, &response)
+		err = s.callGuarded(ctx, string(wire.ClientRequestTurnSteerMethodTurnSteer), wire.V2TurnSteerParams{ThreadId: t.ID, ExpectedTurnId: t.TurnID, Input: input(in.Text)}, &response, func() error {
+			if err := s.bound(t, true); err != nil {
+				return err
+			}
+			if s.snapshot.State != worker.Active || len(s.pendingRequests()) > 0 {
+				return errors.New("Codex thread cannot accept ordinary input")
+			}
+			return nil
+		})
 		if err == nil && response.TurnId != t.TurnID {
 			err = errors.New("Codex steering turn mismatch")
 		}
@@ -150,6 +185,9 @@ func (s *Session) Interrupt(ctx context.Context, t worker.Thread, why worker.Rea
 	s.mu.Lock()
 	err := s.bound(t, true)
 	state := s.snapshot.State
+	if len(s.pendingRequests()) > 0 {
+		state = worker.Waiting
+	}
 	s.mu.Unlock()
 	if err != nil {
 		return err
@@ -191,6 +229,10 @@ func (s *Session) Snapshot(ctx context.Context, t worker.Thread) (worker.ThreadS
 		}
 	}
 	result := s.snapshot
+	result.Pending = s.pendingRequests()
+	if len(result.Pending) > 0 {
+		result.State = worker.Waiting
+	}
 	result.Capabilities = append(worker.CapabilitySet(nil), result.Capabilities...)
 	result.InstructionSources = append([]string(nil), result.InstructionSources...)
 	return result, nil
@@ -211,4 +253,3 @@ func threadState(s wire.V2ThreadStatus) worker.ThreadState {
 	}
 	return worker.Unknown
 }
-func (s *Session) Answer(context.Context, worker.Thread, worker.Answer) error { return ErrUnsupported }

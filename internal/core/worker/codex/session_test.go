@@ -79,7 +79,7 @@ func fixture() {
 		case "initialized":
 			initialized = true
 		case "account/rateLimits/read":
-			rate := map[string]any{"primary": map[string]any{"usedPercent": 100, "resetsAt": time.Now().Add(time.Hour).Unix()}}
+			rate := map[string]any{"primary": map[string]any{"usedPercent": 100, "resetsAt": time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC).Unix()}}
 			reply(map[string]any{"rateLimits": rate})
 			notify("account/rateLimits/updated", map[string]any{"rateLimits": rate})
 		case "thread/start":
@@ -414,7 +414,7 @@ func TestEventOverflowAndOversizedFrameAreObservable(t *testing.T) {
 func TestUnknownRequiredCapabilityAndWorkerSettingsAreRefusedBeforeAssignment(t *testing.T) {
 	s, ctx, l := openFixture(t, "normal")
 	base := worker.StartSpec{TaskID: "task", AttemptID: "attempt", Workdir: t.TempDir(), TaskPacket: "hold"}
-	for _, capability := range []worker.Capability{worker.RequestApprovals, worker.AskQuestions, worker.WorkTools} {
+	for _, capability := range []worker.Capability{worker.Capability("future-capability")} {
 		spec := base
 		spec.Required = worker.CapabilitySet{capability}
 		if _, err := s.Start(ctx, l, spec); err == nil {

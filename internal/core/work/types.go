@@ -15,16 +15,17 @@ var (
 )
 
 type Task struct {
-	Schedule       *Schedule `json:"schedule,omitempty"`
-	PersonID       string    `json:"person_id,omitempty"`
-	GoalID         string    `json:"goal_id,omitempty"`
-	ID             string    `json:"id"`
-	AgentID        string    `json:"agent_id"`
-	ConversationID string    `json:"conversation_id"`
-	Title          string    `json:"title"`
-	Done           string    `json:"done"`
-	ArtifactRoots  []string  `json:"artifact_roots"`
-	RequiresApply  bool      `json:"requires_apply"`
+	Schedule       *Schedule  `json:"schedule,omitempty"`
+	Workspace      *Workspace `json:"workspace,omitempty"`
+	PersonID       string     `json:"person_id,omitempty"`
+	GoalID         string     `json:"goal_id,omitempty"`
+	ID             string     `json:"id"`
+	AgentID        string     `json:"agent_id"`
+	ConversationID string     `json:"conversation_id"`
+	Title          string     `json:"title"`
+	Done           string     `json:"done"`
+	ArtifactRoots  []string   `json:"artifact_roots"`
+	RequiresApply  bool       `json:"requires_apply"`
 }
 
 type Run struct {
@@ -90,6 +91,8 @@ type GoalDecision struct {
 type Card struct {
 	Scheduling Scheduling      `json:"scheduling,omitempty"`
 	WaitReason *ScheduleWait   `json:"wait_reason,omitempty"`
+	Materials  []Material      `json:"materials,omitempty"`
+	ResultHead string          `json:"result_head,omitempty"`
 	Revision   uint64          `json:"revision"`
 	Waits      map[string]Wait `json:"waits,omitempty"`
 	Decisions  []GoalDecision  `json:"decisions,omitempty"`
@@ -109,6 +112,7 @@ type Card struct {
 type Event struct {
 	Scheduling *Scheduling   `json:"scheduling,omitempty"`
 	WaitReason *ScheduleWait `json:"wait_reason,omitempty"`
+	Materials  []Material    `json:"materials,omitempty"`
 	Wait       *Wait         `json:"wait,omitempty"`
 	Decision   *GoalDecision `json:"decision,omitempty"`
 	Key        string        `json:"key"`

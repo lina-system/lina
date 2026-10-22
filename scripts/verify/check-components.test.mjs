@@ -77,6 +77,36 @@ test('a progressing acceptance package can finish beyond four minutes', t => {
   assert.ok(elapsed < componentsTimeoutMs, 'the suite stays inside the shared components guard');
 });
 
+test('the growing e2e suite can finish beyond six minutes within the component deadline', t => {
+  const sb = fixture(t);
+  let elapsed = 0;
+  const names = ['TestFirst', 'TestSecond'];
+  const ran = [];
+  t.mock.method(performance, 'now', () => elapsed);
+  const result = checkComponents({ cwd: sb.dir, components: [{ name: 'lina', module: '.', packages: ['./e2e/...'] }], execute(command, args, options) {
+    if (args[0] === 'build') elapsed += 200_000;
+    if (args[0] === 'list') return { status: 0, stdout: 'example.invalid/e2e\n', stderr: '' };
+    if (args[0] === 'test' && args.includes('-list')) return { status: 0, stdout: names.join('\n')+'\n', stderr: '' };
+    if (args[0] === 'test') {
+      const minutes = Number(args.find(arg => arg.startsWith('-timeout='))?.match(/^\-timeout=(\d+)m$/)?.[1]);
+      const index = args.indexOf('-run');
+      const selected = index < 0 ? names : names.filter(name => new RegExp(args[index+1]).test(name));
+      const duration = 195_000 * selected.length;
+      if (!Number.isFinite(minutes) || minutes * 60_000 <= duration || options.timeoutMs <= duration) {
+        return { status: 1, stdout: 'e2e scenarios progressing\n', stderr: 'e2e package deadline expired\n' };
+      }
+      ran.push(...selected);
+      elapsed += duration;
+      return { status: 0, stdout: 'complete e2e batch finished\n', stderr: '' };
+    }
+    return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
+  } });
+  assert.equal(result.status, 0, result.output);
+  assert.deepEqual(ran.sort(), names, 'every scenario executes exactly once');
+  assert.equal(elapsed, 590_000, 'setup plus the full 390-second corpus must execute');
+  assert.ok(elapsed < componentsTimeoutMs, 'e2e remains within the shared component guard');
+});
+
 test('commands across modules share a deadline instead of resetting the budget', t => {
   const sb = fixture(t);
   let elapsed = 0;
@@ -212,4 +242,95 @@ test('module tests retain a diagnostic deadline inside their process budget', t 
   assert.ok(suite.timeoutMs > 360_000, 'the shared budget leaves time for Go timeout diagnostics');
   assert.ok(suite.timeoutMs <= 895_000, 'the test command retains the shared components deadline');
   assert.ok(calls.every(call => call.timeoutMs > 0 && call.timeoutMs <= componentsTimeoutMs));
+});
+
+test('acceptance batches run every enumerated test once within the shared budget', t => {
+  const sb = fixture(t);
+  sb.write(sb.dir, 'e2e/fixture_test.go', '// SPDX-License-Identifier: Apache-2.0\npackage e2e\n');
+  const names = ['TestOne', 'TestTwo', 'TestThree', 'ExampleFlow', 'FuzzInput'];
+  const runs = [];
+  let elapsed = 0;
+  t.mock.method(performance, 'now', () => elapsed);
+  const result = checkComponents({ cwd: sb.dir, components: [{ name: 'lina', module: '.', packages: ['.', './e2e/...'] }],
+    execute(command, args, options) {
+      if (args[0] === 'list') return { status: 0, stdout: 'example.invalid/e2e\n', stderr: '' };
+      if (args[0] === 'test' && args.includes('-list')) return { status: 0, stdout: `${names.join('\n')}\nok example.invalid/e2e 0.01s\n`, stderr: '' };
+      if (args[0] === 'test') {
+        assert.ok(args.includes('-count=1'));
+        assert.ok(args.includes('-timeout=6m'));
+        const index = args.indexOf('-run');
+        const selected = index < 0 ? (args.includes('./e2e/...') ? names : []) : names.filter(name => new RegExp(args[index + 1]).test(name));
+        runs.push({ selected, budget: options.timeoutMs });
+        // The growing package exceeds six minutes; either half finishes well
+        // inside that bound and both still share the outer components deadline.
+        const duration = selected.length * 80_000;
+        elapsed += duration;
+        return { status: duration >= 360_000 || duration >= options.timeoutMs ? 1 : 0, stdout: '', stderr: '' };
+      }
+      return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
+    } });
+  assert.equal(result.status, 0, result.output);
+  assert.deepEqual(runs.flatMap(run => run.selected).sort(), [...names].sort());
+  const batches = runs.filter(run => run.selected.length > 0);
+  assert.equal(batches.length, 2);
+  assert.ok(batches[1].budget < batches[0].budget);
+  assert.ok(elapsed < componentsTimeoutMs);
+});
+
+test('an acceptance batch failure stops the gate without running later batches', t => {
+  const sb = fixture(t);
+  sb.write(sb.dir, 'e2e/fixture_test.go', '// SPDX-License-Identifier: Apache-2.0\npackage e2e\n');
+  let batches = 0;
+  const result = checkComponents({ cwd: sb.dir, components: [{ name: 'lina', module: '.', packages: ['./e2e/...'] }],
+    execute(command, args) {
+      if (args[0] === 'list') return { status: 0, stdout: 'example.invalid/e2e\n', stderr: '' };
+      if (args[0] === 'test' && args.includes('-list')) return { status: 0, stdout: 'TestOne\nTestTwo\n', stderr: '' };
+      if (args[0] === 'test' && args.includes('-run')) {
+        batches++;
+        return { status: 1, stdout: '', stderr: 'fixture assertion failed\n' };
+      }
+      return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
+    } });
+  assert.equal(result.status, 1, result.output);
+  assert.equal(batches, 1);
+  assert.match(result.output, /fixture assertion failed/);
+});
+
+test('real acceptance batches preserve examples, fuzz seeds and ordinary tests', t => {
+  const sb = fixture(t);
+  sb.write(sb.dir, 'ordinary_test.go', `// SPDX-License-Identifier: Apache-2.0
+package lina
+import ("os"; "testing")
+func TestOrdinary(t *testing.T) { if err:=os.WriteFile("ordinary-ran",[]byte("yes"),0600);err!=nil{t.Fatal(err)} }
+`);
+  sb.write(sb.dir, 'e2e/batches_test.go', `// SPDX-License-Identifier: Apache-2.0
+package e2e
+import ("fmt"; "os"; "testing")
+func mark(name string) { f,err:=os.OpenFile("ran",os.O_APPEND|os.O_CREATE|os.O_WRONLY,0600);if err!=nil{panic(err)};defer f.Close();if _,err=f.WriteString(name+"\\n");err!=nil{panic(err)} }
+func TestOne(t *testing.T) { mark("one");t.Run("child",func(t *testing.T){mark("child")}) }
+func TestTwo(t *testing.T) { mark("two") }
+func Example() { mark("example");fmt.Println("ok")
+// Output: ok
+}
+func FuzzInput(f *testing.F) { f.Add("seed");f.Fuzz(func(t *testing.T,s string){mark("fuzz:"+s)}) }
+`);
+  const result = checkComponents({ cwd: sb.dir, components: [{ name: 'lina', module: '.', packages: ['.', './e2e/...'] }] });
+  assert.equal(result.status, 0, result.output);
+  assert.equal(readFileSync(join(sb.dir, 'ordinary-ran'), 'utf8'), 'yes');
+  assert.deepEqual(readFileSync(join(sb.dir, 'e2e/ran'), 'utf8').trim().split('\n').sort(), ['child', 'example', 'fuzz:seed', 'one', 'two']);
+});
+
+test('failed acceptance enumeration never becomes an empty successful suite', t => {
+  const sb = fixture(t);
+  for (const failing of ['list', 'tests']) {
+    const result = checkComponents({ cwd: sb.dir, components: [{ name: 'lina', module: '.', packages: ['./e2e/...'] }],
+      execute(command, args) {
+        if (args[0] === 'list') return { status: failing === 'list' ? 1 : 0, stdout: 'example.invalid/e2e\n', stderr: failing === 'list' ? 'listing failed\n' : '' };
+        if (args.includes('-list')) return { status: 1, stdout: 'TestOne\n', stderr: 'enumeration failed\n' };
+        assert.ok(!args.includes('-run'));
+        return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
+      } });
+    assert.equal(result.status, 1);
+    assert.match(result.output, /listing failed|enumeration failed/);
+  }
 });

@@ -17,13 +17,26 @@ schema; design authority is C-29 and the Codex adapter contract.
 - **Unknown:** the supplied Hermes/plugin paths were unavailable. No Hermes or
   Honcho/LCM behavior is ported. CRW observations do not verify this Codex version;
   actual round-trip evidence must be recorded separately. Approvals, dynamic work
-  tools remain #133, and this adapter must not claim those
+  tools and quota integration remain #133, and this adapter must not claim those
   capabilities before they are implemented.
 
 No reference implementation code is copied or executed.
 
-For #208, the same official documentation and vendored schema establish
-`account/rateLimits/read` and `account/rateLimits/updated`. Quota reads now
-return observed windows, including reset times; absent windows remain unknown.
-Updates coalesce into scheduler wake hints. Synthetic protocol tests establish
-blocked quota and its wake, without a provider credential or a live quota claim.
+## Work tools, approvals and quota (#133)
+
+- **Seen:** CRW commit `821d6453aacfc9053b17c3b24a134c0ce4077f80`,
+  `internal/bridge/appserver/responder.go`, retains thread ownership and the
+  method-specific response shape. Its flow responder only refuses requests;
+  it cannot approve on a person's behalf. The vendored Codex 0.163.0 schema
+  defines dynamic tool declarations, request ids, approval responses and account
+  quota snapshots/updates.
+- **Inferred:** LINA must keep pending requests bound to the original thread,
+  turn and process, expose approvals through its existing person decision path,
+  and return the chosen response without changing worker arguments. Dynamic
+  tools need declared names and scoped Core handlers. Quota windows remain
+  distinct; absent measurements are unknown rather than zero.
+- **Unknown:** reference behavior does not prove live account quota or every
+  installed Codex version. Synthetic stdio and headless Core scenarios establish
+  integration; no Hermes, Honcho or LCM-X behavior is ported here.
+
+Reference files are read only; no CRW commands or services are executed.

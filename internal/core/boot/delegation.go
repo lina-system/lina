@@ -23,6 +23,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/worker/codex"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/proc"
+	"github.com/thisisjun786/lina/kit/provider"
 )
 
 // Delegation is opt-in installation configuration, never a model-selected
@@ -146,6 +147,33 @@ func (d *delegationRuntime) availability(ctx context.Context) (work.Availability
 		return work.Availability{}, errors.New("invalid host capacity report")
 	}
 	rows, err := d.adapter.Quota(ctx)
+	d.mu.Lock()
+	sessions := make([]*codex.Session, 0, len(d.adapters))
+	for _, s := range d.adapters {
+		sessions = append(sessions, s)
+	}
+	d.mu.Unlock()
+	freshest := func(rows []provider.QuotaRow) time.Time {
+		var latest time.Time
+		for _, row := range rows {
+			if row.Observed.After(latest) {
+				latest = row.Observed
+			}
+		}
+		return latest
+	}
+	latest := freshest(rows)
+	for _, session := range sessions {
+		observed, e := session.Quota(ctx)
+		if e != nil {
+			continue
+		}
+		if at := freshest(observed); at.After(latest) {
+			rows = observed
+			latest = at
+			err = nil
+		}
+	}
 	if err != nil {
 		return work.Availability{}, err
 	}
