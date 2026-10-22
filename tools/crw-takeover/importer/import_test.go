@@ -269,3 +269,38 @@ func TestInventoryAndCycles(t *testing.T) {
 		}
 	}
 }
+
+func TestBindingsEnterNativeCoreIndex(t *testing.T) {
+	repo, journal := setup(t)
+	data, hash := input(t,
+		`{"source":"tracker","kind":"issue","id":"task-old","title":"Measured result","project":{"source":"tracker","kind":"project","id":"project-old"}}`,
+		`{"source":"tracker","kind":"project","id":"project-old","title":"Experiment","done_condition":"Result recorded"}`)
+	report, err := Import(t.Context(), repo, actor, data, hash, journal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := canon.OpenReader(t.Context(), filepath.Join(filepath.Dir(journal), "canon.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close(context.Background())
+	check := func() {
+		t.Helper()
+		var edges int
+		err := reader.Read(t.Context(), func(tx *canon.Tx) error {
+			return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM records_edges WHERE source=? AND relation='belongs_to' AND target=?", report.Rows[0].LINAID, report.Rows[1].LINAID).Scan(&edges)
+		})
+		if err != nil || edges != 1 {
+			t.Fatalf("native project binding: edges=%d error=%v", edges, err)
+		}
+	}
+	check()
+	if err = repo.Rebuild(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	check()
+	hits, err := repo.Query(t.Context(), records.Params{Person: actor.Person, Kind: "todo", Search: "Measured result"})
+	if err != nil || len(hits) != 1 || hits[0].ID != report.Rows[0].LINAID {
+		t.Fatal(hits, err)
+	}
+}

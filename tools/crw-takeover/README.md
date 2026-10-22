@@ -48,7 +48,8 @@ export cannot be discovered by an offline importer.
 Every row needs `source`, `kind`, `id` and a single-line `title`. Optional fields
 are `body`, `done` (boolean), `done_condition`, `deadline` (YYYY-MM-DD), `intent`,
 `parent`, `project` and `payload`. Bindings are objects with `source`, `kind` and
-`id`; forward references work and become LINA ids. Missing, duplicate or cyclic
+`id`; forward references work and become LINA ids, including native `belongs_to` edges
+for Core's relationship index. Missing, duplicate or cyclic
 bindings are reported lost. All original fields, including unmapped fields,
 remain in an indented source-observation block. The normalized fields are LINA
 front matter; the source key and snapshot digest are provenance, never a product
@@ -106,5 +107,5 @@ node --test --test-name-pattern='source archives exclude' scripts/release.test.m
 
 The acceptance scenario is synthetic and credential-free. It imports with the
 real operator binary, removes the export, and runs the installed Core's ordinary
-model/tool path to read the imported record, reject lookup by source id and save
+model/tool path to find and read the imported record, reject lookup by source id and save
 a new durable result. Restart retains the imported LINA identity.

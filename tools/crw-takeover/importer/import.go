@@ -166,10 +166,18 @@ func convert(r sourceRecord, kind, id string, index int, links map[string]string
 		state = "observed"
 	}
 	front := fmt.Sprintf("---\nid: %s\nkind: %s\nstate: %s\nperson_id: %s\nagent_id: %s\n", quote(id), kind, state, quote(actor.Person), quote(actor.Agent))
+	var belongs []string
 	for _, key := range []string{"parent_id", "project_id"} {
 		if links[key] != "" {
 			front += key + ": " + quote(links[key]) + "\n"
+			if len(belongs) == 0 || belongs[0] != links[key] {
+				belongs = append(belongs, links[key])
+			}
 		}
+	}
+	if len(belongs) > 0 {
+		raw, _ := json.Marshal(belongs)
+		front += "belongs_to: " + string(raw) + "\n"
 	}
 	for _, f := range []struct{ key, value string }{{"done_condition", r.DoneCondition}, {"deadline", r.Deadline}, {"intent", r.Intent}} {
 		if f.value != "" {

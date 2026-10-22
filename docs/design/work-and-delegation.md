@@ -992,7 +992,7 @@ fixtures are kept in the source repository.
 The installed Core must be stopped during publication. The tool holds Core's
 exclusive state-root lock, checks the existing agent and person, and writes
 through the same versioned records repository that Core uses. Planning records
-carry LINA kinds and bindings: initiatives remain goal drafts, projects retain
+carry LINA kinds and bindings, including native `belongs_to` index edges: initiatives remain goal drafts, projects retain
 their done condition, issues become to-dos, and milestones become to-dos with a
 deadline and done condition. Intent cards retain their intent text. CRW records
 are historical observations in reference documents; importing an assignment,

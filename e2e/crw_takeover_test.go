@@ -18,6 +18,7 @@ import (
 	"time"
 
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
+	"github.com/thisisjun786/lina/internal/core/records"
 	"github.com/thisisjun786/lina/tools/crw-takeover/importer"
 )
 
@@ -68,29 +69,38 @@ func TestM3CRWTakeoverInstalledCore(t *testing.T) {
 		}
 		switch calls.Add(1) {
 		case 1:
-			emitPersonaCall(w, "read-import", "read_record", coreexec.RecordRead{ID: imported.Rows[2].LINAID})
+			emitPersonaCall(w, "find-import", "query_records", coreexec.RecordQuery{Search: "workshop report", Kind: "todo", Limit: 10})
 		case 2:
+			var found struct{ Rows []records.Row }
+			output("ok", &found)
+			if len(found.Rows) != 1 || found.Rows[0].ID != imported.Rows[2].LINAID {
+				t.Errorf("import missing from Core search: %+v", found)
+				emitResponse(w, "Missing imported record.", true)
+				return
+			}
+			emitPersonaCall(w, "read-import", "read_record", coreexec.RecordRead{ID: found.Rows[0].ID})
+		case 3:
 			var got coreexec.RecordReceipt
 			output("ok", &got)
 			if got.ID != imported.Rows[2].LINAID || !strings.Contains(got.Markdown, "Use measured evidence") || !strings.Contains(got.Markdown, imported.Rows[1].LINAID) {
 				t.Errorf("import unreadable in live Core: %+v", got)
 			}
 			emitPersonaCall(w, "reject-source-id", "read_record", coreexec.RecordRead{ID: "synthetic-issue"})
-		case 3:
+		case 4:
 			var failure struct{ Code string }
 			output("failed", &failure)
 			if failure.Code != "record_not_found" {
 				t.Errorf("source id resolved: %+v", failure)
 			}
 			emitPersonaCall(w, "save-result", "write_record", coreexec.RecordWrite{Kind: "memo", Title: "Workshop conclusion", Note: "Measured evidence from the imported workshop is preserved."})
-		case 4:
+		case 5:
 			var got coreexec.RecordReceipt
 			output("ok", &got)
 			result <- got
 			emitResponse(w, "The workshop conclusion is saved.", true)
-		case 5:
-			emitPersonaCall(w, "read-after-restart", "read_record", coreexec.RecordRead{ID: imported.Rows[2].LINAID})
 		case 6:
+			emitPersonaCall(w, "read-after-restart", "read_record", coreexec.RecordRead{ID: imported.Rows[2].LINAID})
+		case 7:
 			var got coreexec.RecordReceipt
 			output("ok", &got)
 			if got.ID != imported.Rows[2].LINAID {
@@ -173,7 +183,7 @@ func TestM3CRWTakeoverInstalledCore(t *testing.T) {
 	admittedTurn(t, h, client, conversation, "takeover-restart", "Read the imported workshop again.")
 	client.Close()
 	h.stopCore(core)
-	if calls.Load() != 6 {
+	if calls.Load() != 7 {
 		t.Fatal("missing real tool execution", calls.Load())
 	}
 	data, err := os.ReadFile(filepath.Join(h.root, "versions/records/inbox/workshop-conclusion.md"))
