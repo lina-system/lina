@@ -1066,9 +1066,23 @@ A goal is in one of these states. The person sees them only through the progress
 
 **Revision.** A correction by the person, a decision, or a late answer to a question whose deadline passed, is a new revision of the goal. Tasks whose inputs did not change keep their results. Tasks whose inputs changed, and the tasks that depend on them, are derived again. A criterion that was met stays met only while its evidence still refers to the current target.
 
+The conversation can correct an admitted goal through `revise_code_goal`, using
+its goal id and the latest canonical record revision. Admission returns the
+record id and revision so the agent can read it before a later correction.
+Core checks the bound person and agent, refuses a stale revision, and commits
+the corrected definition to the same record. It reloads the revision fence for
+the manager to interpret; it does not admit another goal. Corrections cannot
+supply execution state, effect authority or person-decision receipts.
+An omitted service repository preserves the current binding; an explicit
+replacement must belong to the corrected scope.
+
 When a revision invalidates queued actions, Core retires them and releases their reservations in the same ledger transaction. A worker action that was never dispatched restores its task's runnable stage and does not spend an attempt, continuation or recovery. A cancelled manager action likewise does not consume the task's repair turn. Adding a repair task also revises the goal: obsolete queued sibling actions are retired and derived again, so independent work remains runnable. Actions already claimed keep their reservations until Core reads their outcome; revision never dispatches their effects again.
 
 A completed criterion check for an obsolete goal revision, checking round or target is retained as a receipt without applying its evidence or stopping Core. A manager response assesses only the canonical record revision it was given; an older response cannot clear the corrected definition's fence, add its old tasks, or mark the correction blocked. Independent sibling repair plans remain valid across execution revisions while the canonical definition is unchanged.
+
+Retiring an obsolete task repair assessment clears its assessment marker in
+the same transaction. Once the current definition is assessed, an unchanged
+failed task receives a fresh repair assessment, including after restart.
 
 An action awaiting authorization before dispatch is recorded separately from an executed action whose outcome needs the person. A committed approval-change signal for that action requeues its authority check; the signal itself grants nothing. Core rechecks the exact action's current authority before executing it once, including after restart. A signal arriving during the authority check or while its dispatch is unwinding is retained as a wake, without waiting for a sweep. A revision retires an obsolete authorization wait like other undispatched work. An executed or uncertain effect is never requeued by an approval hint.
 
