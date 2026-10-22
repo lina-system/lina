@@ -64,6 +64,8 @@ header bold and exactly one empty row between messages. ASCII runs retain words;
 through the real TUI, then requests a fenced Korean reply from installed Core
 in a 40x34 ASCII PTY. It checks provider routing, usable reply width, literal
 empty code boundary rows, and stable completion metadata across draft redraws.
+Both untagged and Go-tagged fences run through the same path, so syntax
+highlighting must retain the code's leading and trailing empty rows.
 
 `TestM1TUIIdentityFromAgentStore` installs a synthetic named agent with four
 distinct persona layers, types "who are you" through the real TUI, and checks

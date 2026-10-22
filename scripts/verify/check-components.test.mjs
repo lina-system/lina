@@ -323,6 +323,7 @@ test('acceptance batches run every enumerated test once within the shared budget
         const index = args.indexOf('-run');
         const selected = index < 0 ? (args.includes('./e2e/...') ? names : []) : names.filter(name => new RegExp(args[index + 1]).test(name));
         runs.push({ selected, budget: options.timeoutMs });
+        if (selected.length) assert.ok(args.includes('-parallel=4'), 'each acceptance batch retains bounded Core concurrency');
         // Two groups of this growing corpus exceed the package deadline even
         // though every individual scenario is progressing within its deadline.
         const duration = selected.length * 130_000;
