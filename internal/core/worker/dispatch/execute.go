@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/secrets"
+	"github.com/thisisjun786/lina/internal/core/skills"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/antigravity"
@@ -149,7 +150,7 @@ func (s *Service) execute(r Record) {
 	if err != nil {
 		return
 	}
-	packet, err := json.MarshalIndent(d, "", "  ")
+	packet, err := taskPacket(r)
 	if err != nil {
 		return
 	}
@@ -162,7 +163,7 @@ func (s *Service) execute(r Record) {
 	// Start can have effects before returning an error. Keep its reservations
 	// until an authoritative result and the durable task finish settle it.
 	admitted = true
-	thread, err := adapter.Start(ctx, l, worker.StartSpec{TaskID: r.ID, AttemptID: r.ID + ":1", Workdir: workdir, TaskPacket: "Implement this task definition in this worktree using your own setup. Open the branch's pull request, wait for its checks and review, handle failures and report the result. Do not change protected base refs.\n" + string(packet)})
+	thread, err := adapter.Start(ctx, l, worker.StartSpec{TaskID: r.ID, AttemptID: r.ID + ":1", Workdir: workdir, TaskPacket: packet})
 	if err != nil {
 		return
 	}
@@ -251,6 +252,13 @@ func (s *Service) execute(r Record) {
 	} else {
 		settled = true
 	}
+}
+func taskPacket(r Record) (string, error) {
+	definition, err := json.MarshalIndent(r.Definition, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return skills.MethodPacket("Implement this task definition in this worktree using your own setup. Open the branch's pull request, wait for its checks and review, handle failures and report the result. Do not change protected base refs.\n"+string(definition), r.Method)
 }
 func hasHeading(body, anchor string) bool {
 	for _, line := range strings.Split(body, "\n") {

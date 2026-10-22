@@ -569,6 +569,31 @@ Core mechanisms it relies on: the to-do record and the candidate objects of [wor
 
 The dev preset agent owns coding work, from its work definition through issues, workers, pull requests and merge decisions. Another starter may bring the request or receive its result; it does not become the coding manager by opening that conversation.
 
+Development methods are selected from Core data, not a persona routing prompt.
+`skill_index` with `methodology: "dev"` returns `{preset, routes, skills}`: the
+following kind-to-skill routes and the ordinary catalog's immutable handles.
+Conversation and background readers use the same response contract. Without
+that argument, `skill_index` keeps its catalog-array response. The
+manager classifies the work, reads the chosen skill through `read_skill`, and
+may include the kind or one skill ID in the work definition. The executable
+mapping is [DevelopmentMethods](../../internal/core/skills/methods.go).
+
+| Work kind | Default skill | Judgment it supplies |
+| --- | --- | --- |
+| `bug_unknown_cause` | `app-debugging` | Separate rival causes with a focused reproduction. |
+| `slow_heavy` | `perf` | Choose a representative workload and measured hot path. |
+| `post_merge_qa` | `qa` | Exercise hostile scenarios around the changed behavior. |
+| `delivery_check` | `verification-gate` | Match acceptance requirements to evidence coverage. |
+| `stuck_worker` | `agent-debug` | Distinguish execution failure from reasoning or context drift. |
+| `ci_failure_group` | `build-failure-triage` | Group related failures and identify the smallest remediation. |
+| `thin_requirement` | `issue-requirements` | Clarify only gaps that change the outcome or acceptance. |
+| `agent_comparison` | `agent-evaluation` | Compare candidates fairly and explain uncertainty. |
+| `masked_failure` | `failure-signal-audit` | Trace lost failure signals and harmful fallbacks. |
+
+These defaults do not select the worker or authorize a new action. The shared
+catalog serves every agent; the dev preset uses this methodology data. The
+work-definition contract owns resolution and packet snapshots.
+
 Core mechanisms it relies on: the work engine's records, manager session lifecycle, dispatch and Node bids, delivery receipts, completion events and claims, protocol session state and recovery, quota and capacity readers, write-area overlap, the spawn-time capability check, merge execution, QA after each merge, the source label on each stage summary and the running list. The check against the work definition is the owning persona's judgment in its manager session. These are defined in [work-and-delegation.md](work-and-delegation.md); the splitting and parallel-flow rules there are not repeated here.
 
 1. The person sees a one-line status and, only when blocked, a decision card. The work definition, the pull request and the review text appear only on request.
@@ -710,10 +735,10 @@ This ports the observer/observed separation seen in Honcho peer cards and direct
 
 ## Skills
 
-- The skill catalog holds product documentation skills, usage skills for each engine (conversation, work, memory, materials and persona), and the persona-change skill.
+- The skill catalog holds product documentation skills, usage skills for each engine (conversation, work, memory, materials and persona), the persona-change skill, and the nine development methods in the dev preset methodology table.
 - The catalog is common to every agent.
 - A skill is one folder: a `SKILL.md`, with the skill's `name` and `description` in its front matter and the body below them, and the files the skill uses.
-- Built-in skills live in `skills/` of the LINA repository and ship inside the LINA Core executable. Skills that the person or an agent creates live in the version space ([filesystem.md](filesystem.md)).
+- Built-in skills live in `skills/` of the LINA repository and ship inside the LINA Core executable. Development methods follow the meta-skill format and retain [upstream MIT credits](../../skills/NOTICE.md). Their short bodies carry judgment; Core owns routing and deterministic checks. A work definition can carry at most one skill reference, whose pinned body reaches a worker inline in its task packet without installation. Skills that the person or an agent creates live in the version space ([filesystem.md](filesystem.md)).
 - LINA Core owns the catalog. Atropos loads the skill bodies a turn needs into that turn's ContextPacket (see Request layout).
 - When a turn needs a skill whose body is not in its ContextPacket, the model reads the body with LINA's skill reading tool ([runtime.md](runtime.md)), and the body enters the history as that tool's output.
 - Installed conversation turns offer `skill_index`, `read_skill`, `write_skill` and `undo_skill` through Core's registered executors. `skill_index` supplies the common metadata catalog and immutable handles; a subsequent turn can read a newly adopted procedure with `read_skill`. This wiring does not change the persona-change preload or add a new automatic body-selection policy.

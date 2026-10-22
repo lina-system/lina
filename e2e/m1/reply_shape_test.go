@@ -143,13 +143,6 @@ func testReplyShapeLONGQA(t *testing.T, language design.Language) {
 		conversationRows := func(snapshot tuiterm.Snapshot) []string {
 			return screenRows(snapshot)[region.Y : region.Y+region.Height]
 		}
-		pageOverlap := func(rows, transcript []string) int {
-			overlap := min(len(rows), len(transcript))
-			for overlap > 0 && strings.Join(rows[len(rows)-overlap:], "\n") != strings.Join(transcript[:overlap], "\n") {
-				overlap--
-			}
-			return overlap
-		}
 		wait := func(predicate func(tuiterm.Snapshot) bool) tuiterm.Snapshot {
 			t.Helper()
 			ctx, cancel := context.WithTimeout(h.ctx, operationTimeout)
@@ -171,6 +164,13 @@ func testReplyShapeLONGQA(t *testing.T, language design.Language) {
 		// Stitch overlapping PgUp views into the complete transcript, so a
 		// repeated summary or body cannot hide outside the current viewport.
 		transcript := conversationRows(latest)
+		overlapWithTranscript := func(rows []string) int {
+			overlap := min(len(rows), len(transcript))
+			for overlap > 0 && strings.Join(rows[len(rows)-overlap:], "\n") != strings.Join(transcript[:overlap], "\n") {
+				overlap--
+			}
+			return overlap
+		}
 		page := latest
 		for pages := 0; !strings.Contains(strings.Join(conversationRows(page), "\n"), scenario.Input); pages++ {
 			if pages >= scenario.Lines {
@@ -179,17 +179,15 @@ func testReplyShapeLONGQA(t *testing.T, language design.Language) {
 			previous := strings.Join(conversationRows(page), "\n")
 			h.keys(terminal, "\x1b[5~")
 			page = wait(func(s tuiterm.Snapshot) bool {
-				// A PTY read may contain only part of a redraw. A changed row
-				// alone is not a completed page; require the shared boundary.
 				rows := conversationRows(s)
+				// A PTY read may end mid-paint with old rows below new ones.
+				// Require the composer's restored cursor and the overlapping
+				// page before inspecting it; skipped pages still time out.
 				return idle(s) && s.AltScreen && !s.CursorHidden && s.CursorY == plan.Composer.Y &&
-					strings.Join(rows, "\n") != previous && pageOverlap(rows, transcript) > 0
+					strings.Join(rows, "\n") != previous && overlapWithTranscript(rows) > 0
 			})
 			rows := conversationRows(page)
-			overlap := pageOverlap(rows, transcript)
-			if overlap == 0 {
-				t.Fatal("PgUp skipped conversation rows")
-			}
+			overlap := overlapWithTranscript(rows)
 			transcript = append(append([]string{}, rows[:len(rows)-overlap]...), transcript...)
 		}
 		t.Logf("LONG-QA first page (100x34):\n%s", strings.Join(screenRows(page), "\n"))

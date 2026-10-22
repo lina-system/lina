@@ -1607,3 +1607,12 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## oh-my-hermes development methods
+
+Nine built-in development skills adapt oh-my-hermes, MIT, revision
+`59270ab48e82ab24cfe4f445dc5693b97d4141a3`:
+verification-gate, app-debugging, build-failure-triage, perf, qa, agent-debug,
+agent-evaluation, issue-requirements (ulw-interview), and failure-signal-audit.
+The [skill notice](skills/NOTICE.md) carries the source and full MIT license.
+No upstream runtime is bundled or installed into workers.
