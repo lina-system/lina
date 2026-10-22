@@ -117,6 +117,14 @@ func TestM3DependencyReleaseInstalledCore(t *testing.T) {
 	}
 	runGit("add", ".")
 	runGit("commit", "-m", "fixture base")
+	initialBase := runGit("rev-parse", "dev")
+	remote := filepath.Join(h.root, "forge.git")
+	runGit("init", "--bare", remote)
+	runGit("remote", "add", "origin", remote)
+	runGit("push", "origin", "dev")
+	forge := filepath.Join(h.root, "forge")
+	runGit("clone", "--branch", "dev", remote, forge)
+
 	writeJSON := func(name string, value any) {
 		t.Helper()
 		b, err := json.Marshal(value)
@@ -127,7 +135,7 @@ func TestM3DependencyReleaseInstalledCore(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	writeJSON(filepath.Join(h.root, "fixture.json"), map[string]string{"git": git, "clone": clone})
+	writeJSON(filepath.Join(h.root, "fixture.json"), map[string]string{"git": git, "clone": clone, "forge": forge})
 	gh := filepath.Join(h.root, "fixture-gh")
 	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
 	if err = os.WriteFile(gh, []byte(fmt.Sprintf("#!/bin/sh\nexec %s %s %s forge \"$@\"\n", quote(node), quote(program), quote(h.root))), 0700); err != nil {
@@ -193,7 +201,12 @@ func TestM3DependencyReleaseInstalledCore(t *testing.T) {
 		t.Fatal("finish released write lease")
 	}
 	// The forge fixture reports merged only after the real repository has merged.
-	runGit("merge", "--no-ff", "lina/"+a.Task.ID, "-m", "land fixture foundation")
+	runGit("-C", forge, "fetch", "origin")
+	runGit("-C", forge, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "merge", "--no-ff", "origin/lina/"+a.Task.ID, "-m", "land fixture foundation")
+	runGit("-C", forge, "push", "origin", "dev")
+	if runGit("rev-parse", "dev") != initialBase {
+		t.Fatal("forge merge changed parent clone local base")
+	}
 	if err = os.WriteFile(filepath.Join(h.root, a.Task.ID+".merged"), []byte("observed"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -220,6 +233,9 @@ func TestM3DependencyReleaseInstalledCore(t *testing.T) {
 	after, err := store.Get(h.ctx, taskIDs[0])
 	if err != nil || !after.Scheduling.Landed || after.State == "done" {
 		t.Fatalf("restart lost merge or forged verdict: %+v %v", after, err)
+	}
+	if runGit("rev-parse", "dev") != initialBase {
+		t.Fatal("scheduler rewrote parent clone local base")
 	}
 	client.Close()
 	h.stopCore(core)

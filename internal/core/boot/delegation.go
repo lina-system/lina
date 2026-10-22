@@ -60,6 +60,7 @@ type delegationRuntime struct {
 	ctx           context.Context
 }
 
+var gitObject = regexp.MustCompile(`^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$`)
 var repositoryName = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 
 func (r *conversationRuntime) startDelegation(ctx context.Context) error {
@@ -203,8 +204,35 @@ func (d *delegationRuntime) start(ctx context.Context, c work.Card) (work.Run, e
 	if err := os.MkdirAll(filepath.Dir(p.Workdir), 0700); err != nil {
 		return work.Run{}, err
 	}
+	// A forge merge advances the remote, not the clone's checked-out branch.
+	// Fetch a tracking ref, resolve one immutable commit, and keep local refs intact.
+	remoteRef := "refs/remotes/origin/" + repo.Base
+	if _, err := d.command(ctx, d.config.Git, repo.Clone, "fetch", "--no-tags", "--no-write-fetch-head", "origin", "+refs/heads/"+repo.Base+":"+remoteRef); err != nil {
+		return work.Run{}, err
+	}
+	rawBase, err := d.command(ctx, d.config.Git, repo.Clone, "rev-parse", "--verify", remoteRef+"^{commit}")
+	if err != nil {
+		return work.Run{}, err
+	}
+	base := strings.TrimSpace(string(rawBase))
+	if !gitObject.MatchString(base) {
+		return work.Run{}, work.ErrState
+	}
+	for _, id := range p.DependsOn {
+		predecessor, err := d.root.work.Get(ctx, id)
+		if err != nil {
+			return work.Run{}, err
+		}
+		observed := predecessor.Scheduling.PR
+		if !predecessor.Scheduling.Landed || observed == nil || !gitObject.MatchString(observed.MergeCommit) {
+			return work.Run{}, work.ErrState
+		}
+		if _, err = d.command(ctx, d.config.Git, repo.Clone, "merge-base", "--is-ancestor", observed.MergeCommit, base); err != nil {
+			return work.Run{}, err
+		}
+	}
 	// The task id is Core-minted; git refuses any pre-existing branch/worktree.
-	if _, err := d.command(ctx, d.config.Git, repo.Clone, "worktree", "add", "-b", "lina/"+c.Task.ID, p.Workdir, repo.Base); err != nil {
+	if _, err := d.command(ctx, d.config.Git, repo.Clone, "worktree", "add", "-b", "lina/"+c.Task.ID, p.Workdir, base); err != nil {
 		return work.Run{}, err
 	}
 	l, err := d.root.activities.Acquire(ctx, lease.Activity{Class: lease.Hard, Reason: "delegated worker turn"})
@@ -359,7 +387,7 @@ func (d *delegationRuntime) events(ctx context.Context) {
 			}
 			switch event.Kind {
 			case worker.FinishEvent:
-				if event.Finish.Failure == worker.ConnectionFailure {
+				if event.Finish.Failure == worker.ConnectionFailure && event.Finish.Code == "connection_lost" {
 					_ = d.reactor.Unknown(ctx, event.Thread.TaskID, event.Thread.ID, event.Thread.TurnID)
 					continue
 				}

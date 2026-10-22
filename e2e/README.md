@@ -240,8 +240,8 @@ refused requests preserve agent revisions, actions, conversations and bindings.
 `m3/dependency-release.json` runs the installed Core with a synthetic App Server
 and forge. Conversation tools admit a graph, Core creates actual Git worktrees,
 and worker processes write and commit results. Independent work starts while a
-dependent waits; only an actual merge followed by Core's forge observation
-releases the dependent onto the landed base. Restart retains the merge without
+dependent waits; only a merge in a separate forge clone followed by Core's observation releases the dependent onto the fetched remote base. The parent
+clone's checked-out base branch stays unchanged. Restart retains the merge without
 turning it into a delivery verdict. The fixture has no provider credential or
 external GitHub effect.
 `LINA_CODEX_LIVE=1 go test -count=1 -v ./e2e -run '^TestM2InstalledCodexLive$'`

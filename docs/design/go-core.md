@@ -1154,6 +1154,8 @@ type Definition struct {
   dependencies and design sections) scoped to the authenticated conversation.
   Core resolves design references at the registered base, mints stable task ids
   from the turn/call/key, creates `lina/<task-id>` branches and separate worktrees,
+  fetches and pins the remote base without moving the clone's local base branch,
+  verifies that it contains each dependency's observed merge commit,
   and starts the installed Codex App Server through the existing
   `worker.Adapter` session implementation. No model,
   sandbox or approval setting is overridden. `refresh_work` reads the asking
@@ -1163,7 +1165,8 @@ type Definition struct {
   replay into cards. All reservations are fenced canon transactions. Reactor
   serializes the worker-start response with even an immediate completion event;
   only the matching thread/turn releases the slot. Unknown external outcomes
-  retain reservations. A conflict is returned to the same worker once, with the
+  retain reservations. A terminal provider connection failure frees execution
+  capacity; only a lost App Server observation leaves the execution unknown. A conflict is returned to the same worker once, with the
   claim durable before input; a second conflicting head requires input.
 - The CRW pin is the start gate for the work ledger records: a pin record and a LINA fixture runner whose expected values come from the fixture ([work-and-delegation.md](work-and-delegation.md#start-gate)).
 - `internal/core/work/pin` verifies SHA-256 over every adopted file before running

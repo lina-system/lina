@@ -12,7 +12,7 @@ if (mode === '--version') { process.stdout.write('codex-cli 99.0.0\n'); } else i
   const task = branch.slice('lina/'.length);
   const head = git(cfg.clone, 'rev-parse', branch);
   const merged = existsSync(join(root, `${task}.merged`));
-  process.stdout.write(JSON.stringify({number: 1, headRefOid:head, headRefName:branch, baseRefName:'dev', state:merged?'MERGED':'OPEN', mergeable:'MERGEABLE', mergeCommit:merged?{oid:git(cfg.clone,'rev-parse','dev')}:null}));
+  process.stdout.write(JSON.stringify({number: 1, headRefOid:head, headRefName:branch, baseRefName:'dev', state:merged?'MERGED':'OPEN', mergeable:'MERGEABLE', mergeCommit:merged?{oid:git(cfg.forge,'rev-parse','dev')}:null}));
 } else {
   const threads = new Map();
   const send = value => process.stdout.write(`${JSON.stringify(value)}\n`);
@@ -35,6 +35,7 @@ if (mode === '--version') { process.stdout.write('codex-cli 99.0.0\n'); } else i
         if (definition.key==='b'&&!existsSync(join(thread.cwd,'shared','a.txt'))) throw new Error('dependent started before landed base');
         mkdirSync(join(thread.cwd,folder),{recursive:true});writeFileSync(join(thread.cwd,folder,`${definition.key}.txt`),'verified fixture result\n');
         git(thread.cwd,'add','.');git(thread.cwd,'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m',`fixture ${definition.key}`);
+        git(thread.cwd,'push','origin',`HEAD:refs/heads/lina/${thread.id}`);
         writeFileSync(join(root,`${thread.id}.started`),String(thread.count));
         const turn={id:`turn-${thread.count}`,status:'completed',items:[]};thread.turns.push(turn);
         send({method:'turn/started',params:{threadId:thread.id,turn:{...turn,status:'inProgress'}}});
