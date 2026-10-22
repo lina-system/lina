@@ -23,7 +23,7 @@ func RegisterGrowth(registry *tools.Registry, store *agents.Store, agent, person
 	var specs []tools.Spec
 	for _, name := range []string{"growth_notices", "undo_growth"} {
 		write := name == "undo_growth"
-		spec := tools.Spec{Name: name, Placement: tools.Core, Conc: 1, Deadline: 10 * time.Second, Schema: func(raw json.RawMessage) (tools.Input, error) {
+		spec := tools.Spec{Classify: tools.Class(tools.PrivateDraft), Name: name, Placement: tools.Core, Conc: 1, Deadline: 10 * time.Second, Schema: func(raw json.RawMessage) (tools.Input, error) {
 			var args any = &struct{}{}
 			if write {
 				args = &agents.GrowthUndo{}

@@ -124,7 +124,15 @@ func ResultTools(registry *tools.Registry, service ResultService, scope result.S
 			}
 			return tools.Input{Arguments: output(normalized), Target: target, What: name, Where: "conversation", ScopeKey: scope.ConversationID, Write: name != "read_result", Undoable: true}, nil
 		}
-		spec := tools.Spec{Name: name, Schema: schema, Conc: 1, Deadline: 30 * time.Second, Placement: tools.Core}
+		spec := tools.Spec{Classify: func(in tools.Input) tools.EffectClass {
+			if name == "save_result" {
+				return tools.LocalWrite
+			}
+			if in.Write {
+				return tools.PrivateDraft
+			}
+			return tools.Research
+		}, Name: name, Schema: schema, Conc: 1, Deadline: 30 * time.Second, Placement: tools.Core}
 		handler := func(ctx context.Context, _ lease.Lease, in tools.Input) (tools.Result, error) {
 			switch name {
 			case "present_result":

@@ -35,7 +35,7 @@ func memoryTarget(person, agent string) string {
 // identity and scope decisions. Model input supplies an item, never authority.
 func (m *Memory) RememberTool(binding memory.Write) (tools.Spec, tools.Handler) {
 	target := memoryTarget(binding.Person, binding.Agent)
-	spec := tools.Spec{Name: "memory_write", Placement: tools.Core, Conc: 1, Deadline: 30 * time.Second,
+	spec := tools.Spec{Classify: tools.Class(tools.PrivateDraft), Name: "memory_write", Placement: tools.Core, Conc: 1, Deadline: 30 * time.Second,
 		Schema: func(raw json.RawMessage) (tools.Input, error) {
 			var item memory.Item
 			if err := decodeMemoryArgs(raw, &item); err != nil {
@@ -84,7 +84,7 @@ func (m *Memory) RecallPersonTool(scope memory.RecallScope, now func() int64) (t
 		History  bool   `json:"history,omitempty"`
 	}
 	target := memoryTarget(scope.Person, scope.Agent)
-	spec := tools.Spec{Name: "recall_person", Placement: tools.Core, Conc: 1, Deadline: 30 * time.Second,
+	spec := tools.Spec{Classify: tools.Class(tools.Research), Name: "recall_person", Placement: tools.Core, Conc: 1, Deadline: 30 * time.Second,
 		Schema: func(raw json.RawMessage) (tools.Input, error) {
 			var request args
 			if err := decodeMemoryArgs(raw, &request); err != nil {

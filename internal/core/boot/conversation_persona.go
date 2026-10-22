@@ -42,6 +42,18 @@ func (r *conversationRuntime) resolvePersonaGrant(ctx context.Context, id string
 	if !ok {
 		return grant.Grant{}, grant.Environment{}, grant.ErrGrant
 	}
+	if g.Identity.Profile == "coding-manager" {
+		return g, grant.Environment{Epoch: r.epoch, Now: time.Now(), OSPermitted: true, Revision: g.Identity.Revision}, nil
+	}
+	if g.Identity.Profile == "methodology" {
+		env := grant.Environment{Epoch: r.epoch, Now: time.Now(), OSPermitted: true}
+		if g.Scope[0].Write {
+			h, err := r.observeRecordsHealth(ctx)
+			env.Revision = h.Revision
+			return g, env, err
+		}
+		return g, env, nil
+	}
 	if g.Identity.Profile == "worker-session" {
 		return g, grant.Environment{Epoch: r.epoch, Now: time.Now(), OSPermitted: true, Revision: strconv.FormatUint(r.epoch, 10)}, nil
 	}
