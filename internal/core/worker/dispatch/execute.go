@@ -40,6 +40,17 @@ func (s *Service) execute(r Record) {
 		}
 	}()
 	r.Code = "start_failed"
+	if s.cfg.Work == nil || s.cfg.Area == nil {
+		return
+	}
+	// Queued records from before shared allocation have no assigned branch.
+	// Persist the assignment before creating any workspace or worker process.
+	if r.Branch == "" {
+		r.Branch = taskBranch(r.Definition.Branch, r.ID)
+		if err := s.save(ctx, r); err != nil {
+			return
+		}
+	}
 	if r.Owner != "" {
 		var live int
 		err := s.cfg.DB.Read(ctx, func(tx *canon.Tx) error {
@@ -60,7 +71,7 @@ func (s *Service) execute(r Record) {
 	}
 	defer l.Release()
 	owner := proc.NewOwner()
-	service := work.New(s.cfg.DB)
+	service := s.cfg.Work
 	var reservations []string
 	defer func() {
 		// The adapter's later defer joins its process tree first. Join Git's
@@ -78,7 +89,7 @@ func (s *Service) execute(r Record) {
 		}
 	}()
 	git := func(dir string, args ...string) (string, error) { return s.command(ctx, l, owner, dir, args...) }
-	d := r.Definition
+	d := r.TaskDefinition()
 	repo, err := filepath.EvalSymlinks(d.Repository)
 	if err != nil {
 		return
@@ -90,11 +101,15 @@ func (s *Service) execute(r Record) {
 	if !filepath.IsAbs(common) {
 		common = filepath.Join(repo, common)
 	}
-	taskRoot := filepath.Join(s.cfg.Root, "work", "tasks", r.ID)
-	workdir := filepath.Join(s.cfg.Root, "work", "worktrees", r.ID)
+	workdir := filepath.Join(s.cfg.Root, "work", "tasks", r.ID)
+	// Keep adapter evidence outside the worker checkout. Both destinations are
+	// reserved before shared allocation creates any workspace or artifacts.
+	taskRoot := filepath.Join(s.cfg.Root, "work", "runs", r.ID)
+	repositoryID := fmt.Sprintf("%x", sha256.Sum256([]byte(repo)))
 	directories := []work.WorkerDirectory{
 		{ID: r.ID + ":repository", Path: repo},
 		{ID: r.ID + ":git", Path: common},
+		{ID: r.ID + ":clone", Path: filepath.Join(s.cfg.Root, "work", "clones", repositoryID)},
 		{ID: r.ID + ":worktree", Path: workdir},
 		{ID: r.ID + ":artifacts", Path: taskRoot},
 	}
@@ -132,7 +147,7 @@ func (s *Service) execute(r Record) {
 		return
 	}
 	r.BaseCommit = base
-	protectedArgs := []string{"for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/main", "refs/heads/dev", "refs/remotes/origin/main", "refs/remotes/origin/dev"}
+	protectedArgs := []string{"for-each-ref", "--format=%(refname) %(objectname)", "refs/heads", "refs/remotes", "refs/lina"}
 	protected, err := git(repo, protectedArgs...)
 	if err != nil {
 		return
@@ -145,21 +160,38 @@ func (s *Service) execute(r Record) {
 			return
 		}
 	}
-	if err = os.MkdirAll(taskRoot, 0700); err != nil {
-		return
-	}
-	if err = os.MkdirAll(filepath.Dir(workdir), 0700); err != nil {
-		return
-	}
+	workspace := work.Workspace{TaskID: r.ID, Path: workdir, Spec: work.WorkspaceSpec{
+		RepositoryID: repositoryID, Source: repo, Base: base, Branch: d.Branch,
+	}}
 	ownerAgent, manager := r.Owner, r.Manager
 	if ownerAgent == "" {
 		ownerAgent = r.Origin.Agent
 		manager = r.Origin.Conversation
 	}
-	if err = service.Create(ctx, work.Task{ID: r.ID, PersonID: r.Origin.Person, AgentID: ownerAgent, ConversationID: manager, Title: d.What, Done: d.Done, ArtifactRoots: []string{taskRoot}, RequiresApply: true}); err != nil {
+	if err = service.Create(ctx, work.Task{ID: r.ID, PersonID: r.Origin.Person, AgentID: ownerAgent, ConversationID: manager, Title: d.What, Done: d.Done, ArtifactRoots: []string{workdir, taskRoot}, Workspace: &workspace, RequiresApply: true}); err != nil {
 		return
 	}
-	if _, err = git(repo, "worktree", "add", "-b", d.Branch, workdir, base); err != nil {
+	if _, err = s.cfg.Area.Prepare(ctx, l, r.ID, workspace.Spec); err != nil {
+		return
+	}
+	if _, err = git(workdir, "remote", "set-url", "origin", remote); err != nil {
+		return
+	}
+	if err = os.MkdirAll(taskRoot, 0700); err != nil {
+		return
+	}
+	protectedWorkRefs := func() (string, error) {
+		refs, err := git(workdir, protectedArgs...)
+		var protected []string
+		for _, ref := range strings.Split(refs, "\n") {
+			if !strings.HasPrefix(ref, "refs/heads/"+d.Branch+" ") {
+				protected = append(protected, ref)
+			}
+		}
+		return strings.Join(protected, "\n"), err
+	}
+	workProtected, err := protectedWorkRefs()
+	if err != nil {
 		return
 	}
 	adapter := antigravity.New(antigravity.Config{Binary: s.cfg.Binary, Environment: s.cfg.Environment, Epoch: s.cfg.Epoch, Leaser: s.cfg.Activities})
@@ -229,11 +261,12 @@ func (s *Service) execute(r Record) {
 	} else {
 		r.Code = "pr_unverified"
 		after, e := git(repo, protectedArgs...)
+		workAfter, workErr := protectedWorkRefs()
 		head, headErr := git(workdir, "rev-parse", "HEAD")
 		branch, branchErr := git(workdir, "branch", "--show-current")
 		dirty, dirtyErr := git(workdir, "status", "--porcelain")
 		files, filesErr := git(workdir, "diff", "--name-only", base+".."+head)
-		if e == nil && after == protected && headErr == nil && head != base && branchErr == nil && branch == d.Branch && dirtyErr == nil && dirty == "" && filesErr == nil && allowedFiles(files, d.WriteArea) {
+		if e == nil && after == protected && workErr == nil && workAfter == workProtected && headErr == nil && head != base && branchErr == nil && branch == d.Branch && dirtyErr == nil && dirty == "" && filesErr == nil && allowedFiles(files, d.WriteArea) {
 			pr, prErr := antigravity.ReadPullRequest(ctx, s.cfg.PR, repository, d.Branch, d.Base, head)
 			if prErr == nil {
 				r.PR = &pr
@@ -288,11 +321,11 @@ func (s *Service) execute(r Record) {
 	}
 }
 func taskPacket(r Record) (string, error) {
-	definition, err := json.MarshalIndent(r.Definition, "", "  ")
+	definition, err := json.MarshalIndent(r.TaskDefinition(), "", "  ")
 	if err != nil {
 		return "", err
 	}
-	return skills.MethodPacket("Implement this task definition in this worktree using your own setup. Open the branch's pull request, wait for its checks and review, handle failures and report the result. Do not change protected base refs.\n"+string(definition), r.Method)
+	return skills.MethodPacket("Implement this task definition in this worktree using your own setup. Create the named task branch from the detached base. Open the branch's pull request, wait for its checks and review, handle failures and report the result. Do not change protected base refs.\n"+string(definition), r.Method)
 }
 func hasHeading(body, anchor string) bool {
 	for _, line := range strings.Split(body, "\n") {

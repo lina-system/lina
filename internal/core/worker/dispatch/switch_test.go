@@ -4,7 +4,9 @@ package dispatch
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -105,6 +107,15 @@ printf '{"event":"result","result":{"conversation_id":"fixture","status":"ERROR"
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	t.Cleanup(cancel)
 	s := &Service{ctx: ctx, cfg: Config{DB: store(t), Root: filepath.Join(root, "state"), Main: "main", Epoch: 1, Git: git, Binary: binary, Environment: env, Activities: switchLeaser{}}}
+	if err := os.MkdirAll(s.cfg.Root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	s.cfg.Work = work.New(s.cfg.DB)
+	s.cfg.Area, err = work.OpenArea(s.cfg.Root, git)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.cfg.Area.Close(context.Background()) })
 	d := definition(t)
 	d.Repository = repo
 	result := s.Tool(Origin{Person: "owner", Agent: "agent", Conversation: "conversation", Turn: "source-turn"}).Execute(ctx, provider.ToolCall{ID: "call", Name: "dispatch_work", Arguments: string(mustJSON(d))})
@@ -141,14 +152,16 @@ func externalDispatchTask(t *testing.T, s *Service, roots []string, activate boo
 }
 
 func TestDispatchSwitchRefusesWithoutControl(t *testing.T) {
-	for _, area := range []string{"repository", "worktree", "artifacts", "git_metadata", "rollback"} {
+	for _, area := range []string{"repository", "worktree", "artifacts", "clone", "git_metadata", "rollback"} {
 		t.Run(area, func(t *testing.T) {
 			s, r, marker, _, _ := switchDispatchFixture(t, false)
 			root := r.Definition.Repository
 			if area == "worktree" {
-				root = filepath.Join(s.cfg.Root, "work", "worktrees", r.ID)
-			} else if area == "artifacts" {
 				root = filepath.Join(s.cfg.Root, "work", "tasks", r.ID)
+			} else if area == "artifacts" {
+				root = filepath.Join(s.cfg.Root, "work", "runs", r.ID)
+			} else if area == "clone" {
+				root = filepath.Join(s.cfg.Root, "work", "clones", fmt.Sprintf("%x", sha256.Sum256([]byte(root))))
 			} else if area == "git_metadata" {
 				// A linked worktree writes the original repository's Git metadata
 				// even though the two working directories are disjoint.
@@ -197,7 +210,7 @@ func TestDispatchSwitchTracksExecutionThroughRollback(t *testing.T) {
 	for _, outcome := range []string{"finished", "unknown", "shutdown"} {
 		t.Run(outcome, func(t *testing.T) {
 			s, r, _, ready, release := switchDispatchFixture(t, true)
-			// All three paths overlap one task: duplicate directory matches must
+			// All reserved paths overlap one task: duplicate directory matches must
 			// retain one task binding without rejecting the admitted execution.
 			w := externalDispatchTask(t, s, []string{filepath.Dir(r.Definition.Repository)}, true)
 			ctx, cancel := context.WithCancel(s.ctx)

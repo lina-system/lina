@@ -316,6 +316,14 @@ and receipt observations are seeded while Core is stopped; vendor dispatch is
 covered by the worker adapter scenarios. Run with
 `go test -count=1 ./e2e/m1 -run '^TestM2WorkArea$'`.
 
+`m2/work-dispatch.json`, executed by `TestM2DispatchedWorkArea`, drives installed
+Core's `dispatch_work` through a synthetic worker and GitHub boundary. The worker
+creates its assigned branch at the detached base, produces a real commit and
+attempts ordinary writes to protected refs. Assertions check the shared
+`work/tasks` allocation, independent parent clone, unchanged source checkout,
+clean result, artifact provenance and live-card equivalence to ledger replay.
+Run it with `go test -count=1 ./e2e/m1 -run '^TestM2DispatchedWorkArea$'`.
+
 `m2/tui-composer-identity.json` installs Core/TUI into a temporary root and creates
 and chooses another agent through the real TUI. It checks that the empty composer,
 header and reply speaker name that agent before and after Core reconnect, using

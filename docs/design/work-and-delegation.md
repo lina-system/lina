@@ -120,7 +120,7 @@ The work area is `work/` under the state root ([filesystem.md](filesystem.md)). 
 | --- | --- | --- |
 | `clones/<repository-id>/` | The parent clone of each repository that delegated work uses | LINA Core |
 | `tasks/<task-id>/` | The task's worktree, or its non-git work directory | LINA Core creates it; the task's worker writes inside it under its grant |
-| `runs/<run-id>/` | The scratch directory and transcript of a background run | LINA Core creates it; the run writes inside it under its run scope |
+| `runs/<run-id>/` | Run scratch and transcripts, including Core's worker observations outside the checkout | LINA Core creates it; a background run writes inside it under its run scope |
 
 - The work area is not part of the backup generation. Everything needed to recover work is canon and LINA materials: the work ledger, receipts and artifacts.
 - When a task without a pull request has a result ready, LINA Core keeps the output files as LINA materials of the task, so an unapplied result survives a lost disk. A code-change result with a GitHub remote needs no copy: its branch and pull request are on GitHub, which is canonical for code ([integrations.md](integrations.md)). For a repository without a remote, LINA Core keeps a Git bundle of the branch, made by LINA Core itself as a backup copy; it is never pushed or merged from. The result artifact of a background run is kept as LINA materials of the run when it lands, so a lost work area loses only a run's transcript and scratch files.
@@ -802,7 +802,18 @@ When `agy`, `git` and `gh` are installed, the running Core exposes `dispatch_wor
 for a complete code-change definition and an existing local GitHub clone. The
 receipt returns immediately. Only its committed conversation tool result releases
 the dispatch. Core validates design references at the chosen base commit and
-creates a distinct branch and worktree. This single-worker increment reserves
+uses the shared work-area allocator to create a detached worktree under
+`work/tasks/<task-id>`, with its allocation recorded on the task. The worker
+creates its assigned branch; the allocator's ref guard applies throughout.
+The `dispatch_work` input is unchanged. Core appends `.<task-id>` to the
+requested branch unless that ID is already present, and returns the actual
+branch in the tool result and task packet. The requesting definition is retained
+for idempotency; the manager receives the assigned branch before delegation.
+The independent parent clone keeps the source repository's GitHub origin for
+publishing, while `lina.source` records its local allocation source. Neither
+allocation nor worker execution changes the person's source checkout.
+Adapter observations are written under `work/runs/` and included in the task's
+artifact roots, keeping the worker's committed checkout clean. This single-worker increment reserves
 the repository while queued, running or uncertain. It preserves the worktree and
 branch after completion. It does not provide the parallel chooser or merge flow.
 
@@ -1394,8 +1405,9 @@ release it, including a turn that became idle during steering. An unreadable
 resulting turn remains reserved as unknown. Steering checks the same gate,
 and an idle worker needs a new reservation before its next turn. Read-only
 snapshots and an explicit user interrupt remain available during rollback.
-The same gate covers `dispatch_work`'s repository, shared Git metadata, prospective worktree and result
-directory even when that dispatch creates a new task identity.
+The same gate covers `dispatch_work`'s source repository and Git metadata, shared
+allocator clone, prospective task worktree and run evidence directory before
+allocation, even when that dispatch creates a new task identity.
 
 The operator records the old service state, disables its launch intent, stops it
 and independently verifies disabled intent, no running service, a free lock and
