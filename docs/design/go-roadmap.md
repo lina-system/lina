@@ -391,6 +391,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 ### 2.F Records and to-dos
 
 **G2-22 Records repository and index.** Git repository, index, rebuild, outside-change detection.
+- #152 implements the shared Git repository and revision-checked write/move path, including the installed conversation tools and result-save adapter. [The headless records scenario](../../e2e/m2/records.json) runs the installed Core through creation, restart, editing and stale-write refusal; repository tests cover stable ids on moves and interrupted publication recovery. Outside-change presentation, the full query index and thousands-of-files acceptance remain the records-index increment.
 - Done when: an index rebuilt from the files equals the live index; an outside change is detected and shown and not merged; a write on a stale revision is refused; moving a record keeps its id; behavior with thousands of files is recorded.
 - Depends on: G1-03, G1-05, G1-29. Design refs: C-53; [filesystem.md](filesystem.md#records-repository).
 
@@ -411,6 +412,11 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 **G2-26 Claude adapter.** External Node.js adapter, isolation checks, idle stop.
 - Done when: a turn runs with built-in tools off and LINA tools over MCP; a runtime that loaded anything unlisted is refused; competing credential variables are absent; quota from rate-limit events is recorded; the SDK is in no LINA artifact.
 - Depends on: G1-05, G1-08, G1-31. Design refs: C-45; [runtime.md](runtime.md#claude).
+
+#167 supplies the external program, pinned lockfile, npm dependency gate and
+an explicit Core route with a headless tool/result and restart scenario. Its
+stub evidence does not close the parent: #168 still owns account setup,
+first-use installation, quota projection and idle process management.
 
 **G2-27 Gemini adapter.** `genai` client, key header, stateless requests.
 - Done when: a turn returns provider state items as received; a missing key is needs sign-in with no fallback; quota comes from error codes and LINA's own count.

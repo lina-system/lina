@@ -133,7 +133,7 @@ Diagnostics name the source file, line and violated rule. Behavioral fixtures ex
 
 ### Acceptance evidence
 
-[V6](../../evidence/v6-supply-chain.json) records the root `go.sum` digest, the workspace module count (including and excluding the two local modules), the selected module versions and the current Go dependency-gate result. There is no Claude adapter or npm lockfile yet; its supply-chain baseline remains unmeasured. Cached `go mod verify` does not independently revalidate every sum against the checksum database.
+[V6](../../evidence/v6-supply-chain.json) records the root `go.sum` digest, the workspace module count (including and excluding the two local modules), the selected module versions and the current Go dependency-gate result. The Claude adapter now has its own lockfile and npm verification; the historical V6 record predates that addition. Cached `go mod verify` does not independently revalidate every sum against the checksum database.
 
 [V7](../../evidence/v7-dev-loop.json) records budgets declared before measurement, an edit followed by `go build`, `go vet` and uncached `go test` for the affected Go package, and `node scripts/foundation.mjs --full`. The initial budgets are 20 seconds for the affected-package loop and 60 seconds for full verification including vulnerability and license scans. Records identify the source, tool versions, cache conditions, commands, durations and outcomes. An over-budget measurement remains a failure; it is not hidden by raising the budget after the run.
 
@@ -193,3 +193,15 @@ Verification runs in a clean worktree without credentials: no Git or GitHub cred
 [Integration](integration.md) decides how a passing candidate joins `dev`. A passing `foundation` does not authorize a [release](releases.md) or a deployment.
 
 On PR #501, [CI run 39769986813](https://github.com/thisisjun786/lina/actions/runs/39769986813) exhausted the six-minute e2e package budget while `TestM2UpdatePrepare` had run for only five seconds. Earlier scenarios had continued making progress, including the new installed update activation and rollback cases. The package diagnostic deadline is eight minutes to accommodate the accumulated acceptance suite. Individual operation deadlines, the 895-second shared components command budget and its fifteen-minute outer guard remain unchanged. The controlled-clock regression now exercises a seven-minute progressing package after compilation; hung-command and shared-deadline tests still require failure at their existing bounds.
+
+### External Claude program
+
+Changes under `adapters/claude/`, root npm manifests, `.npmrc` and `.node-version`
+select automation, dependencies and Core acceptance. The dependencies check
+validates exact npm versions, public registry sources, SHA-512 integrity and
+install-script exceptions, then copies each npm project to a disposable directory
+with an isolated home and no inherited credentials or npm configuration. It runs
+`npm ci --ignore-scripts`, `npm audit signatures` and `npm test`. Adapter tests
+use scripted runtime events and the real SDK's MCP registration without model
+calls. Every command must succeed; missing signatures and invalid attestations
+fail the check. The root and adapter npm projects have independent lockfiles.

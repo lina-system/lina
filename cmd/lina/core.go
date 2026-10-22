@@ -61,7 +61,7 @@ func runCore(args []string) int {
 		fmt.Fprintf(os.Stderr, "lina core: initialize SQLite: %v\n", err)
 		return 78
 	}
-	route, err := modelpath.ResponsesFromEnv(os.Getenv)
+	route, err := modelpath.FromEnv(os.Getenv)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "lina core: invalid model configuration")
 		return 78

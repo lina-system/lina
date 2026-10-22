@@ -390,6 +390,17 @@ Claude is the person's Claude subscription, used through the Claude Agent SDK. T
 - Quota comes from the rate-limit events the runtime emits (window, utilization, reset) and from the SDK's usage report where it returns one for the token the adapter holds. The cost the runtime reports is an estimate.
 - A Claude API-key account can stand in for the token without any change to this contract.
 
+The #167 adapter is in [adapters/claude](../../adapters/claude/README.md), pinned
+to SDK 0.3.308 with a separate npm lockfile. Node 24.20.0 runs its TypeScript
+without a bundled compiler or runtime. Explicit Core route configuration uses
+absolute Node/program paths and an exact model; ambiguous provider configuration
+is refused. Each request owns its child and its lease until the child is joined.
+The stub acceptance covers tool/result correlation, init rejection, cancellation,
+missing versus reported usage, and a persisted reply through installed Core.
+This is not live V4 entitlement evidence; account installation and idle pooling
+remain #168. Source releases carry only the LINA program and lockfile, and binary
+release assembly retains its explicit file allowlist without the SDK.
+
 ### Grok
 
 LINA runs no OAuth client against the Grok service, because the service documents no registration for other applications. The Grok adapter drives the official `grok` command that the person installed ([Installed tools](#installed-tools)) over the Agent Client Protocol (`grok agent` on standard input and output), because only that interface carries tool approvals. The command's headless print mode is read-only streaming with fixed allow and deny rules, and is used only for one-shot calls.
