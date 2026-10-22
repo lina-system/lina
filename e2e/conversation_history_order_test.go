@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -73,7 +74,9 @@ func TestM1ConversationHistoryOrder(t *testing.T) {
 			core := start(true)
 			observer, conversation := conversationClient(t, h)
 			terminal := h.startTerminalSize([]string{"TERM=xterm-256color"}, false, true, scenario.Width, scenario.Height)
-			waitScreen(t, h, terminal, "Ctrl+D")
+			// The composer shortcut is visible while connecting, when Enter is
+			// still disabled. Submit only after the live connection is rendered.
+			waitScreen(t, h, terminal, design.Text(design.English, "live"))
 			h.keys(terminal, scenario.FirstInput+"\r")
 			select {
 			case <-started:
