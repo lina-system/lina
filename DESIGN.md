@@ -94,6 +94,9 @@ of app pixels. Duration values are milliseconds.
 | glyph.ascii.retrying | `">"` | `">"` | `">"` |
 | glyph.ascii.rule | `"-"` | `"-"` | `"-"` |
 | glyph.ascii.stopped | `"o"` | `"o"` | `"o"` |
+| glyph.ascii.toolFailed | `"x"` | `"x"` | `"x"` |
+| glyph.ascii.toolOk | `"+"` | `"+"` | `"+"` |
+| glyph.ascii.toolRunning | `"~"` | `"~"` | `"~"` |
 | glyph.ascii.unknown | `"?"` | `"?"` | `"?"` |
 | glyph.ascii.waiting | `"?"` | `"?"` | `"?"` |
 | glyph.unicode.action | `"›"` | `"›"` | `"›"` |
@@ -112,6 +115,9 @@ of app pixels. Duration values are milliseconds.
 | glyph.unicode.retrying | `"↗"` | `"↗"` | `"↗"` |
 | glyph.unicode.rule | `"─"` | `"─"` | `"─"` |
 | glyph.unicode.stopped | `"○"` | `"○"` | `"○"` |
+| glyph.unicode.toolFailed | `"×"` | `"×"` | `"×"` |
+| glyph.unicode.toolOk | `"✓"` | `"✓"` | `"✓"` |
+| glyph.unicode.toolRunning | `"◐"` | `"◐"` | `"◐"` |
 | glyph.unicode.unknown | `"?"` | `"?"` | `"?"` |
 | glyph.unicode.waiting | `"?"` | `"?"` | `"?"` |
 | icon.size | `20px` | `20px` | `20px` |
