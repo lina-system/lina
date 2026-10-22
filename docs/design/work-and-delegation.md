@@ -603,7 +603,7 @@ Every worker adapter offers the work engine the same operations:
 ### Compatibility
 
 - The adapter records the installed worker's version with every attempt.
-- LINA lists the worker versions each adapter has verified in the release manifest ([runtime.md](runtime.md)). When the installed version is not on the list, LINA tells the user that the version is unverified, with the version it found and the verified ones, and still delegates.
+- LINA lists the worker versions each adapter has verified in the release manifest's `verifiedWorkerVersions` field ([runtime.md](runtime.md)). Installation compares Codex's bare version with that list, accepting the `codex-cli ` prefix in probe output and legacy lists. When the installed version is not on the list, LINA tells the user that the version is unverified, with the version it found and the verified ones, and still delegates.
 - LINA refuses delegation to the worker only when the adapter can't connect to it or the protocol handshake fails (for Codex, `initialize`), and names the cause.
 - LINA never installs, updates or pins the worker.
 
@@ -1084,7 +1084,10 @@ records a SHA-256 fingerprint, and keeps independent material revisions in the
 same canon transaction as the receipt. These materials survive backup and loss
 of the work area. A worker-supplied hash alone is not a snapshot. A new done
 replaces the current snapshot and clears its earlier judgment; earlier material
-revisions remain retained.
+revisions remain retained. Adding, removing or renaming an empty directory also
+creates a new snapshot revision, even when the file-based receipt ID is unchanged.
+Repeating a done with the same receipt ID and the same full tree fingerprint
+reuses the current snapshot.
 
 The manager's judgment names that exact fingerprint. Before landing, Core reads
 the entire live output and report again. Missing or changed files, an added file

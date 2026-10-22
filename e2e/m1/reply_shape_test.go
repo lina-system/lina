@@ -132,14 +132,9 @@ func testReplyShapeLONGQA(t *testing.T, language design.Language) {
 	checkScreen := func(terminal *terminal) {
 		// Inspect parsed cells from the installed TUI, never raw escape bytes.
 		plan := layout.Plan(layout.Size{Width: 100, Height: 34}, layout.Caps{SidePane: true}, layout.Shape{ComposerRows: 1})
+		activePlan := layout.Plan(layout.Size{Width: 100, Height: 34}, layout.Caps{SidePane: true}, layout.Shape{ComposerRows: 1, ActivityRows: 1})
 		region := plan.Conversation
 		affordance := design.Text(language, "reply.open_pager")
-		activity := layout.Plan(layout.Size{Width: 100, Height: 34}, layout.Caps{SidePane: true}, layout.Shape{ComposerRows: 1, ActivityRows: 1}).Activity
-		idle := func(snapshot tuiterm.Snapshot) bool {
-			// This client can observe completion before the TUI does. Activity
-			// borrows a transcript row, so paging needs the settled viewport.
-			return !strings.Contains(screenRows(snapshot)[activity.Y], design.Text(language, "activity.stop"))
-		}
 		conversationRows := func(snapshot tuiterm.Snapshot) []string {
 			return screenRows(snapshot)[region.Y : region.Y+region.Height]
 		}
@@ -154,7 +149,11 @@ func testReplyShapeLONGQA(t *testing.T, language design.Language) {
 			return snapshot
 		}
 		latest := wait(func(s tuiterm.Snapshot) bool {
-			return idle(s) && s.AltScreen && !s.CursorHidden && s.CursorY == plan.Composer.Y &&
+			// Core's observer has finished, but the TUI may still show the
+			// streamed card. Its idle redraw changes transcript rows and must
+			// not be mistaken for the first PgUp response below.
+			return s.AltScreen && !s.CursorHidden && s.CursorY == plan.Composer.Y &&
+				!strings.Contains(screenRows(s)[activePlan.Activity.Y], design.Text(language, "activity.stop")) &&
 				strings.Contains(strings.Join(conversationRows(s), "\n"), scenario.End) && strings.Contains(screenText(s), affordance)
 		})
 		t.Logf("LONG-QA latest (100x34):\n%s", strings.Join(screenRows(latest), "\n"))
@@ -183,7 +182,7 @@ func testReplyShapeLONGQA(t *testing.T, language design.Language) {
 				// A PTY read may end mid-paint with old rows below new ones.
 				// Require the composer's restored cursor and the overlapping
 				// page before inspecting it; skipped pages still time out.
-				return idle(s) && s.AltScreen && !s.CursorHidden && s.CursorY == plan.Composer.Y &&
+				return s.AltScreen && !s.CursorHidden && s.CursorY == plan.Composer.Y &&
 					strings.Join(rows, "\n") != previous && overlapWithTranscript(rows) > 0
 			})
 			rows := conversationRows(page)
