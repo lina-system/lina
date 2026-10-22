@@ -758,10 +758,25 @@ matter id. Every applied change has one commit naming the person and asking
 agent. A durable intent names immutable before/after objects; startup finishes
 only that publication and never re-dispatches its tool effect. An outside edit,
 commit, foreign lock or incompatible recovery state returns `records_changed`
-without overwriting it. Outside-change acceptance/presentation and the richer
-FTS/edge index are subsequent records-index work.
+without overwriting it. The derived index includes title/note FTS and belongs-to
+and blocked-by edges. Its own head is separate from the last Core-published
+head. Startup and every read/write repair a missing or stale index only after
+checking the published files. Rebuild reads those files, validates unique ids,
+and derives record revisions from their history; it never adopts an outside
+commit as a new Core publication.
 
-Installed conversations register `read_record` and `write_record` through the
+`query_records` searches or lists the authenticated person's records, optionally
+filtering kind, with deterministic id ordering and a bounded page. Person and
+filesystem paths are not model arguments. A changed, added, deleted, invalid or
+non-regular file, or a changed repository head, refuses reads, queries, writes
+and rebuild with `records_changed`. Tool results show a bounded list of change
+kinds and validation outcomes without outside bytes or filesystem paths. Startup
+keeps ordinary conversations available when an outside change is present; the
+next record operation shows the refusal. Only Core-journaled recovery may finish
+an interrupted publication. Outside-change acceptance is not automatic and no
+accept/merge operation is supplied by this increment.
+
+Installed conversations register `read_record`, `write_record` and `query_records` through the
 ordinary authority, lease and effect-receipt registry. These tools capture and
 edit memos and knowledge documents; Core supplies the owner, asking agent, id
 and PARA path. Model arguments cannot supply identities or paths. Existing
@@ -1135,7 +1150,7 @@ type Definition struct {
 - The review is Core's own call on the `background` role. The diff, the design reference text at the base commit and the work definition go in as an enveloped data block. Findings come back as schema-validated records `{id, severity P0..P3, file, claim}`. A failing required check and a change outside the write area are P1 findings computed by Core. A prose-only reply stores none. A large diff is reviewed by file group and merged into one finding set.
 - The return, the close on a residual finding and the merge steps are those of the contract. Core takes the merge slot, merges pinned to the head last read, and only one read after the merge lands the task.
 - #141 adds the running Core's `github_merge` capability and the shared `ghclient.Merge` service. A person connects a PR to its parent clone and named protected local branches; Core verifies the clone's origin and captures those refs before work. Head acceptance reads GitHub and compares those refs again. The merge takes a repository/base slot, reads checks and unresolved priority findings, rechecks PR identity, compares protected refs and commits an unknown intent before the fixed head-pinned child runs. A moved head is returned as fresh evidence and requires explicit acceptance; there is no automatic merge or review retry. A command's success alone is not landing: Core checks the merge commit, exact target ref and checks on that commit. Queue/unknown states retain a durable base reservation and permit only observation. Restart never repeats a write.
-- `authority.Merges` stores the connection, captured refs, accepted head, requesting person/agent and final evidence in canon migration 29. It is merge authority bookkeeping, not a replacement for the pinned work-ledger receipt/verdict schemas. The work reactor can consume the same service and evidence. A confirmed external merge is `observed`, a confirmed successful Core call is a `receipt`; neither issues a delivery verdict. Restore invalidates unused merge permission while retaining uncertain reservations and terminal evidence. `e2e/m2/github-merge.json` drives the installed Core, a synthetic gh child and a real temporary Git clone, including restart and failed checks on a person's merge.
+- `authority.Merges` stores the connection, captured refs, accepted head, requesting person/agent and final evidence in canon migration 30. It is merge authority bookkeeping, not a replacement for the pinned work-ledger receipt/verdict schemas. The work reactor can consume the same service and evidence. A confirmed external merge is `observed`, a confirmed successful Core call is a `receipt`; neither issues a delivery verdict. Restore invalidates unused merge permission while retaining uncertain reservations and terminal evidence. `e2e/m2/github-merge.json` drives the installed Core, a synthetic gh child and a real temporary Git clone, including restart and failed checks on a person's merge.
 - Stall handling and the reconcile sweep (every 5 minutes (P), no model call) follow the contract.
 
 **C-30 Task states and stage sources (changed).** Card states, `done` and verdicts are those of [work-and-delegation.md](work-and-delegation.md#progress-display) and [work-and-delegation.md](work-and-delegation.md#judgment-and-delivery). `Project(ledger) Card` rebuilds from the ledger at any time. Each stage summary carries a source label: worker report, GitHub, Core's own review, or unknown. Only Core writes verdicts (`verified`, `needs_changes`). The append-only `work_ledger` is authoritative; `work_cards` and `work_active_runs` are disposable indexes rebuilt together from its ordered events. A receipt stays a worker claim, and is held until the matching terminal observation. A verified result without required application remains ready for review; only a matching apply record makes it done. New generations clear the prior receipt, verdict and application. Startup rebuilds the indexes and records unfinished executions as unknown while retaining their reservations until reconciliation observes an end.

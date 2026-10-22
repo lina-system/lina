@@ -214,6 +214,7 @@ The staged increment (#117) supplies registered SQLite mapping, per-conversation
 - Depends on: G1-12, G1-18, G1-19, G1-20, G1-35. Design refs: T-04, T-05, T-07, T-10, T-12, T-13, T-15.
 
 **G1-30 TUI memory, agent, account, channel and talk-log commands.** Memory, agent, account, import, channel and talk-log commands. The memory/agent increment provides explicit sourced remember, correct and forget plus agent list/create/choose/rename/delete by id; installed PTY acceptance is `e2e/m1/tui-memory-agents.json`.
+- [Acceptance evidence](../../evidence/tui-management.md) maps every #110 done condition to the existing implementation and passing focused tests; sub-issues #111, #112 and #113 are closed.
 - #113 owns `/channels` and `/talk`, their thin client-service adapters, and installed-Core PTY acceptance. The completion gate requires platform pairing, durable binding and a real exchange-ledger expansion; command interception alone is insufficient.
 - #112 connects installed Core's existing account service to the TUI. Synthetic PTY scenarios cover loopback and pasted redirects, account list and sign-out, and the no-account sign-in offer. Owner real-account validation remains #81.
 - Done when: a forget from the TUI gives zero hits in the next request; agent create, choose, rename and delete round-trip by id; a ChatGPT sign-in completes through the relay from the TUI, including a pasted URL; a channel connection is paired and bound from the TUI, and the agent talk log lists one line per exchange and expands it.
@@ -409,6 +410,11 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 - Done when: an index rebuilt from the files equals the live index; an outside change is detected and shown and not merged; a write on a stale revision is refused; moving a record keeps its id; behavior with thousands of files is recorded.
 - Depends on: G1-03, G1-05, G1-29. Design refs: C-53; [filesystem.md](filesystem.md#records-repository).
 
+#153 adds the derived search/edge index and startup repair, bounded outside-change
+reports through installed record tools, and the `records-index` M2 scenario.
+The scale fixture measures thousands of records without a timing pass threshold;
+the [measurements and limits](../../internal/core/records/MEASUREMENTS.md) are recorded with the records implementation.
+
 **G2-23 To-do record, views, recurrence and candidates.** Fields, today rule, views, recurrence, candidates, memo promotion.
 - Done when: the today rule passes its fixture; a recurring item advances only to a future occurrence; a dependency cycle is rejected; an ambiguous date is never saved silently; a candidate is added on its own only when the deterministic test passes.
 - Depends on: G2-22, G2-03. Design refs: C-54; [work-and-delegation.md](work-and-delegation.md#the-to-do-record).
@@ -567,7 +573,7 @@ A number marked (P) is a starting value of this design. The others come from the
 | Stall cap; reconcile sweep | 3 hours; 5 minutes, from [work-and-delegation.md](work-and-delegation.md#stall-and-failure) | G2-02 |
 | TUI bounds | S1 to S11 (P) | G1-20 |
 | Claude adapter idle stop; concurrent turns per account | 10 minutes; 2 (P) | G2-26 |
-| Records repository with thousands of files | none yet | G2-22 |
+| Records repository with thousands of files | [3,000-file index and outside-change measurement](../../internal/core/records/MEASUREMENTS.md) | G2-22 |
 | Non-competition bounds | none yet; declared per test | G3-12 |
 
 ## Not scheduled here
