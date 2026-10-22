@@ -391,7 +391,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 
 **G2-21 Discord adapter.** Gateway adapter with interactions and buttons.
 - Implemented by #147 through the shared gateway and running Core. `e2e/m2/discord.json` exercises pairing, duplicate interactions, real tool/background execution with synthetic endpoints, paragraph splits, unreachable bindings and restart; adapter tests cover owner-only buttons. Live Discord account validation remains separate.
-- #548 adds fresh-session recovery for Gateway close 4007/4009; `e2e/m2/discord-recovery.json` verifies Identify, duplicate suppression and continued tool/background results in running Core.
+- #548 adds fresh-session recovery for Gateway close 4007/4009; `e2e/m2/discord-recovery.json` verifies Identify, duplicate suppression and continued tool/background results in running Core. #547 extends that evidence to approval-button receipts and exact replacement-session Resume after Core restart.
 - Done when: a repeated interaction is handled once; a press by anyone but the paired owner changes nothing; text over 2,000 characters splits on paragraph boundaries; a blocked chat marks the binding unreachable.
 - Depends on: G1-25. Design refs: C-27; [integrations.md](integrations.md#channels).
 
