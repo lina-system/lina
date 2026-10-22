@@ -208,3 +208,9 @@ and deleted agents in conversation and management requests, plus channel
 binding/scope replacement. A paired synthetic channel and an existing binding
 exercise the actual target-agent checks. Read-only canon snapshots prove that
 refused requests preserve agent revisions, actions, conversations and bindings.
+
+Installed-Core fixtures wait for command admission after connecting the socket.
+An empty input must be refused as malformed (or capability-not-negotiated for an
+unconfigured Core), rather than unavailable during recovery, before the scenario
+continues. This probe cannot create a conversation event or model request.
+Restored-memory and replay startup paths use the same readiness check as installs.
