@@ -368,9 +368,10 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 - Depends on: G2-01, G2-04. Design refs: C-57; [work-and-delegation.md](work-and-delegation.md#work-definition).
 
 **G2-19 GitHub reads, CI watch and merge.** `gh` as Core's child, check watcher, head-pinned merge, observed merges.
-- Read/watch increment (#140): Core owns the fixed-argument gh client and one conditional CI watcher per PR; the negotiated GitHub observation capability reports head, reviews, checks and pending causes. `e2e/m2/github-ci.json` covers the running Core path. Merge and observed-merge safety remain separate work.
+- Read/watch increment (#140): Core owns the fixed-argument gh client and one conditional CI watcher per PR; the negotiated GitHub observation capability reports head, reviews, checks and pending causes. `e2e/m2/github-ci.json` covers the running Core path.
 - Done when: no webhook or events feed is used; one watcher per pull request ends at the conclusion; a rate limit shows CI pending with its cause; a moved head is read again and not merged; a protected-ref mismatch blocks the merge; a person's merge is observed only after the merge commit and target ref are checked.
 - Implementation (#141): head-pinned merge, protected local refs and confirmed external merges run through Core's `github_merge` capability. `e2e/m2/github-merge.json` covers head/ref refusal, one pinned write, durable restart replay and observed merges with failed checks. Authority and ghclient tests cover uncertain reservations, admission and serialization.
+- Parent acceptance (#139): the merge scenario also moves the head between PR identity and review reads, requires one refreshed observation and blocks admission until explicit head acceptance. Unit cases cover repeated head movement, a return to the original head and a failed refresh.
 - Depends on: G1-05, G1-07. Design refs: C-58; [integrations.md](integrations.md#github).
 
 ### 2.C Memory and growth upkeep
@@ -388,7 +389,8 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 ### 2.D Owner views
 
 **G2-13 Progress view, full waiting list and digest.** Progress lines, digest, full waiting list.
-- #158 connects the Core overview and full waiting query to current work, approval, question, run, exchange and outside-change sources. `e2e/m2/progress-waiting.json` drives installed Core through worker approval, a question, a real artifact and source removal. The to-do waiting producer and plan-based stage/bar are left to the to-do record work (issue 154); the channel digest and shared controls belong to #159.
+- #158 connects the Core overview and full waiting query to current work, approval, question, run, exchange and outside-change sources. `e2e/m2/progress-waiting.json` drives installed Core through worker approval, a question, a real artifact and source removal. The to-do waiting producer and plan-based stage/bar are left to the to-do record work (issue 154); the channel digest and shared controls are supplied by #159.
+- #159 adds the Core digest and shared TUI/channel commands for waiting order, stop, stop all and follow-up. `e2e/m2/progress-controls.json` covers the live Core, built TUI, paired gateway and an actual worker artifact.
 - Done when: a progress line holds no id or pull request and reads unknown for an unobserved value; the digest has at most five lines and a count; a waiting row whose source shows it done is dropped; the order switch is asked of Core; stop, stop all and a follow-up have the same effect from the TUI and from a channel.
 - Depends on: G1-18, G1-21, G1-35, G2-02, G2-23. Design refs: C-55; [surfaces.md](surfaces.md#progress-at-a-glance).
 
@@ -434,6 +436,11 @@ The [parent acceptance record](../../evidence/records-acceptance.md) maps all fi
 completion conditions to repository tests and installed Core scenarios.
 
 **G2-23 To-do record, views, recurrence and candidates.** Fields, today rule, views, recurrence, candidates, memo promotion.
+- #155 adds typed to-do fields to installed record tools, SQL personal and flow
+  views, the timezone-aware today fixture, atomic cycle refusal and explicit
+  ambiguous-date refusal. [The to-do scenario](../../e2e/m2/todos.json) runs Core
+  through capture, refused writes, views, rescheduling and index repair on
+  restart. Recurrence advancement, candidates and memo promotion belong to #156.
 - Done when: the today rule passes its fixture; a recurring item advances only to a future occurrence; a dependency cycle is rejected; an ambiguous date is never saved silently; a candidate is added on its own only when the deterministic test passes.
 - Depends on: G2-22, G2-03. Design refs: C-54; [work-and-delegation.md](work-and-delegation.md#the-to-do-record).
 

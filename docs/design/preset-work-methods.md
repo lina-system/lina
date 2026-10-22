@@ -40,7 +40,7 @@ A preset ships its record as `persona/<preset>/work-method-v1.json` beside `core
 }
 ```
 
-The empty record is `{"schema":1,"preset":"<key>"}`. Every field is optional and an absent field takes the default below.
+The empty record is `{"schema":1,"preset":"<key>"}`. `schema` and the matching starter `preset` are required; every other field is optional and an absent field takes the default below. Core rejects duplicate JSON keys, null values, duplicate list members, invalid field types and values, and trailing JSON. Counts are positive integers. A `done` list must retain its work kind’s default evidence, and `workers.dispatch` may be true only for `dev`.
 
 | Field | Meaning | Default |
 | --- | --- | --- |
@@ -67,7 +67,11 @@ A record holds no persona text, no procedure, no template, no approval checklist
 - An agent's persona revision records the record revision it was prepared with. The prepare acknowledgement pins it to the turn with the layers, so a turn never mixes revisions.
 - An agent created from a preset takes the preset's record at creation. A preset update gives it the next record revision with the next core and default voice.
 - Filled values are the agent's. A key in `fill` is filled the way a blank setting is: a value plus a reference to the confirmed person event that justifies it, written by the conversation writer. A filled value overrides the preset value of that key for that agent and survives preset updates, restart and the other agents' changes. A preset update that removes a key from `fill` keeps the stored value but stops applying it, and the agent's settings show it as retired.
-- A record for an agent created from a description is owned by that agent and starts empty.
+- A record for an agent created from a description is owned by that agent and starts empty (`{"schema":1}`, without a preset key).
+
+Core canonicalizes records before publication, so JSON whitespace and object-key order alone mint no revision. The preset stores a digest of its triple. Each immutable agent Git revision stores the record beside the four persona layers; the canon transaction publishes the preset and all affected agent pointers together. Voice and growth changes retain that record. Preparation returns its content digest, and `prepare_ack` and request evidence carry that digest alongside the persona commit.
+
+The conversation writer's `fill_work_method` takes a declared key, a typed JSON value and a quote from the current confirmed native person event. It checks the prepared persona revision and mutable state revision before committing the value and evidence reference. Repeating a fill keeps its first reference; a conflicting replacement, undeclared or retired key, invalid value or stale snapshot is refused. The settings projection exposes the effective values and retained fills with a `retired` flag. Filled values and evidence enter the existing persona-settings ContextPacket item, outside the cached persona layers. This publication increment does not implement the field-specific tool, worker, reply or completion policies in Applying the record.
 
 ## Applying the record
 

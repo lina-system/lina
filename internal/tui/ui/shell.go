@@ -46,6 +46,7 @@ type shellBlock struct {
 }
 
 type shellModel struct {
+	waitingOrder  string
 	activityFrame uint64
 	cardScroll    int
 	cardRequests  map[string]state.CardAnswerRequest

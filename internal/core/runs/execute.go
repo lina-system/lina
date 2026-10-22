@@ -117,6 +117,9 @@ func (s *Service) run(ctx context.Context, id string) error {
 					err = ErrScope
 				}
 				if err == nil {
+					err = s.authorizeFollowSources(ctx, current)
+				}
+				if err == nil {
 					err = tool.Authorize(ctx, current, c)
 				}
 				if err != nil {
@@ -177,6 +180,9 @@ func (s *Service) run(ctx context.Context, id string) error {
 		if err != nil {
 			return req, err
 		}
+		if err := s.authorizeFollowSources(ctx, current); err != nil {
+			return req, err
+		}
 		if err := s.cfg.Authorize(ctx, current.Origin, current.Brief); err != nil {
 			return req, err
 		}
@@ -191,6 +197,13 @@ func (s *Service) run(ctx context.Context, id string) error {
 		return req, err
 	}
 	cfg.Stream = func(ctx context.Context, req provider.Request) (provider.Stream, error) {
+		current, err := s.read(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if err = s.authorizeFollowSources(ctx, current); err != nil {
+			return nil, err
+		}
 		s.activity(id, 1)
 		st, err := s.cfg.Stream(ctx, req)
 		if err != nil {
@@ -298,4 +311,16 @@ func artifact(items []provider.Item) (Artifact, bool) {
 		}
 	}
 	return Artifact{}, false
+}
+
+func (s *Service) authorizeFollowSources(ctx context.Context, r Record) error {
+	for _, source := range r.FollowSources {
+		if s.cfg.AuthorizeFollowUp == nil {
+			return ErrScope
+		}
+		if err := s.cfg.AuthorizeFollowUp(ctx, r, source); err != nil {
+			return err
+		}
+	}
+	return nil
 }

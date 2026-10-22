@@ -103,6 +103,7 @@ type Services struct {
 	Lifecycle func(*lifecycle.Restarter)
 }
 type Config struct {
+	Work *WorkConfig
 	// SandboxLauncher pins an optional trusted absolute OS launcher.
 	SandboxLauncher string
 	// Client supplies the installed person's agents, supported rows and handlers.
@@ -329,11 +330,13 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	var mergeAuthority *authority.Merges
 	var mergeAgentExists func(context.Context, string) bool
 	var canon Canon
+	var conversation *conversationRuntime
 	if ownsConversation && len(recovery.Halt) == 0 {
 		runtime, openErr := startConversation(ctx, cfg.StateRoot, recovery.MainID, snapshot.Epoch, store, cfg.Conversation, activities, cfg.Client.PersonID, cfg.SignInTransport, cfg.ChannelTransport)
 		if openErr != nil {
 			return openErr
 		}
+		conversation = runtime
 		runtime.replaySocket = cfg.Socket
 		runtime.webTransport = cfg.WebTransport
 		supported := cfg.Client.Supported
@@ -480,6 +483,13 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		}
 		return err
 	}
+	var workDone <-chan struct{}
+	if conversation != nil && cfg.Work != nil {
+		if err := conversation.startWork(ctx, cfg.Work); err != nil {
+			return err
+		}
+		workDone = conversation.workEngine.done
+	}
 	if cfg.Services.Reconcile != nil {
 		if err := cfg.Services.Reconcile(ctx, recovery); err != nil {
 			return err
@@ -528,6 +538,14 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	// Join the observer before closing any of the stores it uses.
 	defer func() { stopRestart(); <-restartDone }()
 	select {
+	case <-workDone:
+		if ctx.Err() != nil {
+			return nil
+		}
+		if conversation.workEngine.err != nil {
+			return conversation.workEngine.err
+		}
+		return errors.New("work service stopped before shutdown")
 	case <-ctx.Done():
 		return nil
 	case err := <-restartDone:

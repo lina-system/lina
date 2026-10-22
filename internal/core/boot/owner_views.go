@@ -44,6 +44,7 @@ func (r *conversationRuntime) notifyOwnerViews() {
 	}
 }
 func (r *conversationRuntime) startOwnerViews(ctx context.Context) error {
+	r.startOwnerControls()
 	r.ownerViews = &ownerViews{wake: make(chan struct{}, 1), done: make(chan struct{})}
 	if r.identity.TopicCapabilities == nil {
 		r.identity.TopicCapabilities = map[string]protocol.Capability{}
@@ -176,6 +177,7 @@ func (r *conversationRuntime) ownerWaiting(ctx context.Context, names map[string
 	}
 	if r.background != nil {
 		sources["run"] = &waiting.RunInputSource{DB: r.db, Owner: r.background.service, AgentName: name}
+		sources["run_effect"] = waiting.RunEffectSource{AgentName: name}
 	}
 	if _, err := r.records.Head(ctx); err != nil {
 		if !errors.Is(err, records.ErrRecordsChanged) {
@@ -204,11 +206,14 @@ func (r *conversationRuntime) ownerSnapshot(ctx context.Context) (protocol.Progr
 	return p, err
 }
 func (r *conversationRuntime) ownerProjection(ctx context.Context) (protocol.Progress, string, error) {
+	return r.ownerProjectionOrder(ctx, waiting.Priority)
+}
+func (r *conversationRuntime) ownerProjectionOrder(ctx context.Context, order waiting.Order) (protocol.Progress, string, error) {
 	names, err := r.ownerAgentNames(ctx)
 	if err != nil {
 		return protocol.Progress{}, "", err
 	}
-	list, err := r.ownerWaiting(ctx, names, waiting.Options{Now: time.Now()})
+	list, err := r.ownerWaiting(ctx, names, waiting.Options{Now: time.Now(), Order: order})
 	if err != nil {
 		return protocol.Progress{}, "", err
 	}

@@ -128,6 +128,14 @@ func (c *Client) Merge(ctx context.Context, ref Ref, base, head string, admit fu
 	s, err := c.Read(ctx, ref)
 	r := MergeResult{State: "blocked", Head: s.Head, Base: base, CI: s.CI, Checks: s.Checks, Cause: s.Cause}
 	if err != nil {
+		var readErr *readError
+		if errors.As(err, &readErr) && readErr.cause == "head_changed" {
+			// Review pagination can discover a push after the initial PR read.
+			// Refresh evidence once, but never resume admission from this read.
+			fresh, e := c.Read(ctx, ref)
+			r.Head, r.CI, r.Checks = fresh.Head, fresh.CI, fresh.Checks
+			return r, e
+		}
 		return r, err
 	}
 	// A merged PR is an observation, including when another actor won the race.

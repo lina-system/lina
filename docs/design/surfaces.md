@@ -241,6 +241,14 @@ Core records when each live worker question arrives and preserves that request t
 
 Size. Home shows at most five rows and the count of the rest ("+7 more"); the whole list opens in the work panel. When the list is empty, this view says so in one line ("nothing to decide now"). No reply and no other view carries that line.
 
+Unanswered background effect questions enter this list after their conversation
+lane delivers them, independently of the run's state or landing. They use the
+existing authenticated question card for answers. An answer or a withdrawn
+request removes the row from Home and the full list, including after restart.
+While a progress-topic subscriber is connected, Core rechecks outside record
+changes on five-second ticks. Open progress and waiting views receive additions
+and resolutions without another action. Unchanged projections produce no update.
+
 Answering. A row is answered in one tap or one word. Core re-reads the source and its answer mapping, refuses an outdated row or a different person, and records the source change and the answer with the person and requesting agent in one transaction. Repeated answers cannot create a second decision. When several decisions wait, the person can ask LINA to go through them one at a time: LINA asks one decision, records the answer and asks the next. A change to the list after an agent's action shows as a quiet badge; it never interrupts a reply that is being written or read.
 
 ### Design at a glance
@@ -265,6 +273,8 @@ Progress at a glance is one screen that shows how far every running 목표 and �
 - In the TUI the same lines are drawn as text: the stage word and a bar of block characters, one line each, with a key that opens the Details of a line in a pager or a side pane. The TUI Home shows the same compact card.
 - `Ctrl+P` in the TUI reads the Core progress topic and keeps an open pane current without moving focus or changing a draft. Work handed directly to a worker remains visible while its plan inventory is unknown; the stage, bar, next task and just-finished plan task display unknown until the to-do record work supplies those observations. Worker messages never estimate them. `Ctrl+W` requests the full Core waiting list, including sources beyond conversation approval cards. Display text never includes the navigation references carried alongside the rows. Open progress and waiting views reconcile outside record changes on five-second ticks, so an external edit appears and its restoration clears the request even while the conversation is idle.
 - In an external channel the same view is a digest of the lines: what needs the person first, then one line for each running item, at most five and a count of the rest, with no bar and a link that opens this screen when the app is installed ([integrations.md](integrations.md#channels)).
+- `/progress` requests this digest in the TUI and a paired private channel. Counts and the optional screen link are metadata after the at-most-five display rows. `/waiting priority` and `/waiting lightest` request Core's order; the TUI waiting pane also uses `o` to switch it and retains that choice on refresh.
+- The same explicit controls work in both surfaces: `/stop <run>` requests a stop, `/stop all` stops the person's background runs and live workers (restricted to the bound conversation in a shared channel), and `/note <run> <text>` sends a follow-up only to that target. Bare `/stop` interrupts the current conversation. The TUI running pane offers `s` for the selected row. A worker stop acknowledgement means the request was delivered; its current state still comes from the worker adapter. A shared channel cannot display the owner's full digest or waiting list.
 - A question in the conversation about how things are going is answered with the digest ([conversation-and-memory.md](conversation-and-memory.md#reply-shape)).
 
 ### Layers
