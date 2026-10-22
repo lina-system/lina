@@ -232,7 +232,12 @@ The screen is a pure function of State and terminal size. Core's validated welco
 Regions:
 
 - Header: the focused agent's name and mark, and the connection word.
-- Conversation.
+- Conversation: first-line speaker gutter, with the person marked by `›` and the
+  agent by `●`; no separate name row per message. The agent name stays in the
+  header. Person prose uses muted text, both marks use accent, and agent prose
+  uses text color. Continuation rows align under the message text. Exactly one
+  empty row separates messages. ASCII and monochrome use `> You:` and
+  `* <agent name>:` (the person word follows the UI language).
 - Composer, with its attachment strip.
 - Card row above the composer, on Home (T-12).
 - Status line: connection, agent, the running count ("2 running, 1 waiting for you"), restart pending, and Core messages.
@@ -580,6 +585,14 @@ type Stream interface {
 - The hardware cursor is placed on every frame at the display width of the text before it on the wrapped row, so IME composition appears in place. The TUI never requests all-keys-as-escape-codes. Committed IME text arrives as UTF-8, one grapheme cluster at a time ([surfaces.md](surfaces.md#korean-input)).
 - Only the viewport plus overscan (P) is laid out, so cost follows viewport rows and not history. `Stream` indexes new text as it arrives. `Window` takes a retained byte anchor within a block and stops reflow at the requested row count, including after a width change. `Renderer.Draw` reads and paints only those indexed rows, retains only the current viewport cache, and returns changed-row patches; an empty patch list causes no writes. A trusted UI painter styles only closed rows after sanitizing and clipping.
 - Resize events coalesce to one reflow per 32 ms (P).
+- The conversation renderer explicitly receives the display's detected 16-color,
+  256-color or truecolor profile; wrapping its output must not discard color or
+  bold. `NO_COLOR` retains the escape-free plain path.
+- Speaker marks come from the person/agent glyph tokens. Reserve the prefix's
+  display width with the shared `Measurer` before Markdown wrapping, including
+  ASCII words and wide agent names, and indent every continuation by that width.
+  Trim empty paragraph boundary rows before adding the section gap; preserve
+  paragraph spacing and literal code whitespace within a message.
 - Conversation wrapping uses the current width; the indexed row count at the
   old width must not truncate newly wrapped rows or the final reply.
 - An unchanged state writes zero bytes. Motion is one status glyph with no timer while deltas stream; elapsed time updates at 1 Hz (P) otherwise.

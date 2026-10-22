@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -53,13 +54,13 @@ func (m renderedView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 func (m renderedView) View() tea.View { return m.view }
 
-func startTerminalRenderer(ctx context.Context, output io.Writer, width, height int) *terminalRenderer {
+func startTerminalRenderer(ctx context.Context, output io.Writer, width, height int, profile Profile) *terminalRenderer {
 	r := &terminalRenderer{done: make(chan struct{}), size: tea.WindowSizeMsg{Width: width, Height: height}}
 	initial := r.size
 	r.expectedSize.Store(&initial)
 	r.program = tea.NewProgram(renderedView{}, tea.WithFilter(func(model tea.Model, message tea.Msg) tea.Msg {
 		return r.filterSize(model, rendererMessages(model, message))
-	}), tea.WithContext(ctx), tea.WithInput(nil), tea.WithOutput(output), tea.WithWindowSize(width, height), tea.WithoutSignalHandler(), tea.WithoutCatchPanics())
+	}), tea.WithContext(ctx), tea.WithInput(nil), tea.WithOutput(output), tea.WithColorProfile(profile.terminalProfile()), tea.WithWindowSize(width, height), tea.WithoutSignalHandler(), tea.WithoutCatchPanics())
 	go func() {
 		defer close(r.done)
 		_, r.err = r.program.Run()
@@ -68,6 +69,22 @@ func startTerminalRenderer(ctx context.Context, output io.Writer, width, height 
 		}
 	}()
 	return r
+}
+
+// Output is wrapped for raw mode, so automatic detection sees a non-TTY.
+// Preserve the capability already detected from the actual display terminal.
+func (p Profile) terminalProfile() colorprofile.Profile {
+	switch p {
+	case TrueColor:
+		return colorprofile.TrueColor
+	case ANSI256:
+		return colorprofile.ANSI256
+	case ANSI16:
+		return colorprofile.ANSI
+	case Monochrome:
+		return colorprofile.NoTTY
+	}
+	return colorprofile.NoTTY
 }
 
 // The connection owner is the sole source of dimensions. Bubble Tea can emit
