@@ -18,6 +18,8 @@ import (
 )
 
 func TestM1TUINewline(t *testing.T) {
+	t.Parallel()
+
 	data, err := os.ReadFile("tui-newline.json")
 	if err != nil {
 		t.Fatal(err)

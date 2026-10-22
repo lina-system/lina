@@ -16,6 +16,8 @@ import (
 )
 
 func TestM1TUIAccountDiscoveryRefusalInstalledCore(t *testing.T) {
+	t.Parallel()
+
 	h, _ := installedConversationHarness(t, "")
 	ctx, cancel := context.WithCancel(h.ctx)
 	defer cancel()

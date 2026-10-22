@@ -31,6 +31,8 @@ import (
 )
 
 func TestM2DiscordCore(t *testing.T) {
+	t.Parallel()
+
 	runM2DiscordCore(t, nil)
 }
 

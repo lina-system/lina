@@ -18,6 +18,8 @@ import (
 // The current wire schema carries handshakes, but reserves conversation bodies.
 // Exercise the reducer's actual receive boundary across #34's isolated socket.
 func TestM1TUIState(t *testing.T) {
+	t.Parallel()
+
 	data, err := os.ReadFile("tui-state.json")
 	if err != nil {
 		t.Fatal(err)

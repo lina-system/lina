@@ -10,6 +10,8 @@ import (
 )
 
 func TestM2DiscordGatewayRecovery(t *testing.T) {
+	t.Parallel()
+
 	var scenario struct {
 		CloseCodes []websocket.StatusCode `json:"close_codes"`
 	}

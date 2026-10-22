@@ -703,10 +703,12 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		}
 		transcript = append(transcript, transcriptRow{body: plainRow(design.Text(m.styles.options.Language, code) + "  /accounts")})
 	}
+	hasItems := false
 	for _, b := range m.content.Blocks {
 		if !conversationBlock(b) {
 			continue
 		}
+		hasItems = true
 		cached := m.blocks[b.ID]
 		if cached.stream == nil {
 			continue
@@ -734,6 +736,9 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		for len(body) > 0 && blank(body[len(body)-1]) {
 			body = body[:len(body)-1]
 		}
+		// Markdown owns these rows. Appending presentation metadata to a
+		// shortened slice must not overwrite the cache's trimmed boundary rows.
+		body = slices.Clone(body)
 		if b.Kind == protocol.KindResult && !b.InlineReply {
 			body = append([]render.StyledRow{plainRow(design.Text(m.styles.options.Language, "result") + "  " + sanitize.Display(b.Title) + "  Ctrl+O")}, body...)
 		}
@@ -774,6 +779,19 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		for row := 0; row < len(transcript)-blockStart; row++ {
 			anchors = append(anchors, conversationAnchor{block: b.ID, row: row})
 		}
+	}
+	// Starter hints are local presentation, never reducer blocks or Core items.
+	// Wait for history so reconnecting to an existing conversation cannot flash
+	// a first-run screen. Account setup can show hints before chat is negotiated.
+	_, historyKnown := m.content.Topics["conversation:"+m.conversation.id]
+	if !hasItems && !m.conversation.agentMissing && !m.conversation.agentPending && (historyKnown || !m.hasCapability("conversation")) {
+		status := m.styles.presentation(m.status)
+		rows[plan.Header.Y] = clip(m.styles.wordmark() + "  " + m.styles.Title.Render(name) + "  " + m.styles.Text.Render(status.Label))
+		var hints []transcriptRow
+		for _, id := range []string{"conversation.start.memory", "conversation.start.voice", "conversation.start.task"} {
+			hints = append(hints, transcriptRow{body: plainRow(design.Text(m.styles.options.Language, id)), muted: true})
+		}
+		transcript = append(hints, transcript...)
 	}
 	start := m.conversationStart(anchors, len(transcript), plan.Conversation.Height)
 	m.conversation.viewport.overflow = len(transcript) > plan.Conversation.Height

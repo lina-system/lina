@@ -19,6 +19,8 @@ import (
 // Exercise the installed Core and real TUI, including both failures from #358.
 // Capture the notice from the protocol instead of pinning its wording.
 func TestM1ProviderFailureHistory(t *testing.T) {
+	t.Parallel()
+
 	var scenario struct {
 		UnavailableInput string `json:"unavailable_input"`
 		TruncatedInput   string `json:"truncated_input"`

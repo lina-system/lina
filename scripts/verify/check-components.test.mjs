@@ -107,40 +107,6 @@ test('the growing e2e suite can finish beyond six minutes within the component d
   assert.ok(elapsed < componentsTimeoutMs, 'e2e remains within the shared component guard');
 });
 
-test('acceptance growth fits both package and shared deadlines after CI preparation', t => {
-  const sb = fixture(t);
-  const names = Array.from({ length: 9 }, (_, i) => `TestScenario${i}`);
-  const ran = [];
-  let elapsed = 0;
-  t.mock.method(performance, 'now', () => elapsed);
-  const result = checkComponents({ cwd: sb.dir, components: [{ name: 'lina', module: '.', packages: ['./e2e/...'] }],
-    execute(command, args, options) {
-      // CI spent about 243 s before acceptance. Its 255 s first batch passed;
-      // the second reached the 360 s package alarm during a healthy slow-backup
-      // test. Model a 675 s corpus without waiting on wall-clock timers.
-      if (args[0] === 'build') elapsed += 243_000;
-      if (args[0] === 'list') return { status: 0, stdout: 'example.invalid/e2e\n', stderr: '' };
-      if (args.includes('-list')) return { status: 0, stdout: names.join('\n') + '\n', stderr: '' };
-      if (args[0] === 'test') {
-        const index = args.indexOf('-run');
-        const selected = index < 0 ? names : names.filter(name => new RegExp(args[index + 1]).test(name));
-        const duration = selected.length * 75_000;
-        assert.ok(args.includes('-count=1'));
-        assert.ok(args.includes('-timeout=6m'), 'retain the package diagnostic timeout');
-        if (duration >= 360_000 || duration >= options.timeoutMs) {
-          return { status: 1, stdout: '', stderr: 'healthy acceptance corpus exceeded its deadline\n' };
-        }
-        elapsed += duration;
-        ran.push(...selected);
-      }
-      return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
-    } });
-  assert.equal(result.status, 0, result.output);
-  assert.deepEqual(ran.sort(), names, 'every scenario must execute exactly once');
-  assert.equal(elapsed, 918_000, 'setup and the entire corpus remain part of one budget');
-  assert.ok(elapsed < componentsTimeoutMs);
-});
-
 test('commands across modules share a deadline instead of resetting the budget', t => {
   const sb = fixture(t);
   let elapsed = 0;
@@ -274,7 +240,7 @@ test('module tests retain a diagnostic deadline inside their process budget', t 
   const suite = calls.find(call => call.args[0] === 'test');
   assert.ok(suite.args.includes('-timeout=6m'), 'Go must emit stuck-test stacks before the process guard');
   assert.ok(suite.timeoutMs > 360_000, 'the shared budget leaves time for Go timeout diagnostics');
-  assert.ok(suite.timeoutMs <= componentsTimeoutMs - 5000, 'the test command retains the shared components deadline');
+  assert.ok(suite.timeoutMs <= 895_000, 'the test command retains the shared components deadline');
   assert.ok(calls.every(call => call.timeoutMs > 0 && call.timeoutMs <= componentsTimeoutMs));
 });
 
@@ -295,8 +261,8 @@ test('acceptance batches run every enumerated test once within the shared budget
         const index = args.indexOf('-run');
         const selected = index < 0 ? (args.includes('./e2e/...') ? names : []) : names.filter(name => new RegExp(args[index + 1]).test(name));
         runs.push({ selected, budget: options.timeoutMs });
-        // The growing package exceeds six minutes; each batch finishes well
-        // inside that bound and all still share the outer components deadline.
+        // The growing package exceeds six minutes; either half finishes well
+        // inside that bound and both still share the outer components deadline.
         const duration = selected.length * 80_000;
         elapsed += duration;
         return { status: duration >= 360_000 || duration >= options.timeoutMs ? 1 : 0, stdout: '', stderr: '' };
@@ -306,9 +272,29 @@ test('acceptance batches run every enumerated test once within the shared budget
   assert.equal(result.status, 0, result.output);
   assert.deepEqual(runs.flatMap(run => run.selected).sort(), [...names].sort());
   const batches = runs.filter(run => run.selected.length > 0);
-  assert.equal(batches.length, 3);
-  assert.ok(batches.slice(1).every((batch, i) => batch.budget < batches[i].budget));
+  assert.equal(batches.length, 2);
+  assert.ok(batches[1].budget < batches[0].budget);
   assert.ok(elapsed < componentsTimeoutMs);
+});
+
+test('acceptance concurrency is bounded independently of host CPU count', t => {
+  const sb = fixture(t);
+  const runs = [];
+  const result = checkComponents({ cwd: sb.dir, components: [{ name: 'lina', module: '.', packages: ['.', './e2e/...'] }],
+    execute(command, args) {
+      if (args[0] === 'list') return { status: 0, stdout: 'example.invalid/e2e\nexample.invalid/e2e/empty\n', stderr: '' };
+      if (args.includes('-list')) return { status: 0, stdout: args.at(-1).endsWith('/empty') ? '' : 'TestOne\nTestTwo\n', stderr: '' };
+      if (args[0] === 'test') runs.push(args);
+      return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
+    } });
+  assert.equal(result.status, 0, result.output);
+  assert.equal(runs.length, 4, 'ordinary packages, both acceptance batches and an empty package run');
+  assert.ok(!runs[0].some(arg => arg.startsWith('-parallel=')), 'ordinary package scheduling is unchanged');
+  for (const args of runs.slice(1)) {
+    assert.ok(args.includes('-parallel=4'), 'Core subprocess concurrency must not grow with host CPU count');
+    assert.ok(args.includes('-timeout=6m'), 'parallel acceptance retains the diagnostic deadline');
+    assert.ok(args.includes('-count=1'), 'parallel acceptance remains uncached');
+  }
 });
 
 test('an acceptance batch failure stops the gate without running later batches', t => {

@@ -7,8 +7,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-export const componentsTimeoutMs = 1_200_000;
-const acceptanceBatchCount = 3;
+export const componentsTimeoutMs = 900_000;
 
 export function execute(command, args, { cwd, env, timeoutMs = 120_000 }) {
   const started = performance.now();
@@ -115,25 +114,27 @@ export function checkComponents({ cwd = process.cwd(), components, execute: run 
       const ordinary = acceptance ? packages.filter(name => name !== './e2e/...') : packages;
       if (ordinary.length && invoke('go', [...testArgs, ...ordinary], directory).status !== 0) return { status: 1, output };
       if (acceptance) {
+        // Bound real Core/PTY subprocess fan-out even on large developer hosts.
+        const acceptanceArgs = [...testArgs, '-parallel=4'];
         // The acceptance corpus grows across milestones. Enumerate each
         // package's actual tests, examples and fuzz seeds, then run disjoint
-        // thirds. No test is omitted or repeated; each batch retains Go's
+        // halves. No test is omitted or repeated; each half retains Go's
         // diagnostic timeout and consumes the same outer components budget.
         const listed = invoke('go', ['list', '-mod=readonly', './e2e/...'], directory);
         if (listed.status !== 0) return { status: 1, output };
         const acceptancePackages = listed.stdout.trim().split(/\r?\n/).filter(Boolean);
         if (!acceptancePackages.length) return { status: 1, output: `${output}No acceptance packages enumerated\n` };
         for (const pkg of acceptancePackages) {
-          const listedTests = invoke('go', [...testArgs, '-list', '.', pkg], directory);
+          const listedTests = invoke('go', [...acceptanceArgs, '-list', '.', pkg], directory);
           if (listedTests.status !== 0) return { status: 1, output };
           const names = listedTests.stdout.split(/\r?\n/).filter(name => /^(Test|Example|Fuzz)[\p{L}\p{N}_]*$/u.test(name)).sort();
           if (!names.length) {
-            if (invoke('go', [...testArgs, pkg], directory).status !== 0) return { status: 1, output };
+            if (invoke('go', [...acceptanceArgs, pkg], directory).status !== 0) return { status: 1, output };
             continue;
           }
-          for (let batch = 0; batch < acceptanceBatchCount; batch++) {
-            const tests = names.filter((_, index) => index % acceptanceBatchCount === batch);
-            if (tests.length && invoke('go', [...testArgs, '-run', `^(${tests.join('|')})$`, pkg], directory).status !== 0) return { status: 1, output };
+          for (let batch = 0; batch < 2; batch++) {
+            const tests = names.filter((_, index) => index % 2 === batch);
+            if (tests.length && invoke('go', [...acceptanceArgs, '-run', `^(${tests.join('|')})$`, pkg], directory).status !== 0) return { status: 1, output };
           }
         }
       }
