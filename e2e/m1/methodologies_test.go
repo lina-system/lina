@@ -357,6 +357,8 @@ func TestSystemObservesRepairsAndVerifiesThroughInstalledCore(t *testing.T) {
 	var before, after struct {
 		Revision, Source string
 		Healthy          bool
+		Records, Texts   int
+		SearchRows       int    `json:"search_rows"`
 		ObservedAt       string `json:"observed_at"`
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -367,8 +369,8 @@ func TestSystemObservesRepairsAndVerifiesThroughInstalledCore(t *testing.T) {
 			emitPersonaCall(w, "before", "observe_health", map[string]any{})
 		case 2:
 			methodologyOutput(t, request, "ok", &before)
-			if before.Healthy || before.Source == "" || before.ObservedAt == "" {
-				t.Error("unobserved or undetected fault")
+			if before.Healthy || before.Source == "" || before.ObservedAt == "" || before.Records != before.Texts || before.SearchRows != before.Texts+1 {
+				t.Errorf("unobserved or undetected fault: %+v", before)
 			}
 			emitPersonaCall(w, "repair", "repair_records_index", map[string]string{"revision": before.Revision})
 		case 3:
@@ -400,23 +402,29 @@ func TestSystemObservesRepairsAndVerifiesThroughInstalledCore(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	// An orphaned search row survives routine head/locator reconciliation and
-	// requires the explicit rebuild. No canonical record or user data is changed.
-	if _, err = db.Exec("INSERT INTO records_fts(id,title,note) VALUES('synthetic-orphan','Synthetic stale projection','')"); err != nil {
+	// An orphan search row affects only a disposable projection. Unlike a stale
+	// index head, ordinary overview reads do not repair it before observation.
+	if _, err = db.Exec("INSERT INTO records_fts(id,title,note) VALUES('synthetic-orphan','Fixture','No canonical record')"); err != nil {
 		t.Fatal(err)
 	}
-	// Normal overview reads must not consume the fault before the tool observes
-	// it; order this read explicitly instead of depending on background timing.
+	// Reconcile the overview before the health tool runs. The background
+	// publisher can do the same read between fault injection and observation.
 	mode := "overview"
-	if _, err = c.Progress(h.ctx, protocol.ProgressGet{View: &mode}); err != nil {
+	id, err := c.Progress(h.ctx, protocol.ProgressGet{View: &mode})
+	if err != nil {
 		t.Fatal(err)
 	}
-	frame, err := c.Receive(h.ctx)
-	if err != nil || frame.Error != nil {
-		t.Fatalf("overview read failed: %v %+v", err, frame.Error)
-	}
-	if _, ok := frame.Payload.(protocol.Progress); !ok {
-		t.Fatal("missing overview snapshot")
+	for {
+		frame, err := c.Receive(h.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if frame.ReplyTo != nil && *frame.ReplyTo == id {
+			if _, ok := frame.Payload.(protocol.Progress); frame.Error != nil || !ok {
+				t.Fatalf("overview reconciliation failed: %+v", frame)
+			}
+			break
+		}
 	}
 	admittedTurn(t, h, c, conversation, "repair", "Observe the records index, repair that component if needed, and verify the result.")
 	c.Close()

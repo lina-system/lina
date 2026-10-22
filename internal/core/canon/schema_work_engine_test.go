@@ -36,7 +36,7 @@ INSERT INTO skill_maintenance_notices(sequence,receipt) VALUES(7,X'7B7D');`)
 	if err := db.Close(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	cfg.Migrations, cfg.Epoch = all, cfg.Epoch+1
+	cfg.Migrations, cfg.Epoch = all[:37], cfg.Epoch+1
 	db = openStore(t, cfg)
 	// Reopen the upgraded database to validate its published table catalog too.
 	if err := db.Close(t.Context()); err != nil {
