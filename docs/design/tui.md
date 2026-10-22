@@ -68,6 +68,11 @@ error, including during negotiation. There is no animation timer. The shell mode
 also runs through the Bubble Tea recording harness; final library acceptance
 remains the T-08 spike gate.
 
+If the person submits the first input before initial history discovery supplies
+the conversation id, the client retains that one pending input and sends it once
+discovery succeeds. Discovery refusal or connection loss restores it to the draft;
+it never sends an empty destination or replays it on a new connection.
+
 - It keeps its preferences (theme, glyph set, width settings, notification mode) in one client file, mode 0600, at the location the install fixes. A missing or bad file never blocks start.
 - It never opens canon, never runs `lina core` and never holds the lock. Every message it sends is a request that Core accepts or refuses, and when the two disagree Core wins and the TUI refreshes.
 - It uses only the client connection. Its types are the Go types generated from the schema ([host-protocol.md](host-protocol.md#schema-and-generated-types)).
