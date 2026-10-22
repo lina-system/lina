@@ -153,6 +153,37 @@ test('uneven acceptance durations fit the package deadline without dropping scen
   assert.equal(elapsed, 680_000, 'setup and every scenario consume the shared budget');
 });
 
+test('cold setup and three passing acceptance batches share enough command budget', t => {
+  const sb = fixture(t);
+  const durations = new Map([['TestBatchA', 252_000], ['TestBatchB', 234_000], ['TestBatchC', 300_000]]);
+  let elapsed = 0;
+  const ran = [];
+  t.mock.method(performance, 'now', () => elapsed);
+  const result = checkComponents({ cwd: sb.dir, components: [{ name: 'lina', module: '.', packages: ['./e2e/...'] }], execute(command, args, options) {
+    // The failed CI run consumed about 300 s before acceptance, then passed
+    // batches taking 251.7 s and 234.3 s. The last batch received only 103.9 s.
+    if (args[0] === 'build') elapsed += 300_000;
+    if (args[0] === 'list') return { status: 0, stdout: 'example.invalid/e2e\n', stderr: '' };
+    if (args.includes('-list')) return { status: 0, stdout: [...durations.keys()].join('\n') + '\n', stderr: '' };
+    if (args[0] === 'test') {
+      const pattern = new RegExp(args[args.indexOf('-run') + 1]);
+      const selected = [...durations].filter(([name]) => pattern.test(name));
+      const duration = selected.reduce((sum, [, milliseconds]) => sum + milliseconds, 0);
+      assert.ok(args.includes('-timeout=6m'));
+      if (duration >= 360_000 || duration >= options.timeoutMs) {
+        return { status: 1, stdout: 'scenarios progressing\n', stderr: `remaining command budget ${options.timeoutMs} ms expired\n` };
+      }
+      elapsed += duration;
+      ran.push(...selected.map(([name]) => name));
+    }
+    return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
+  } });
+  assert.equal(result.status, 0, result.output);
+  assert.deepEqual(ran, [...durations.keys()]);
+  assert.equal(elapsed, 1_086_000);
+  assert.ok(elapsed < componentsTimeoutMs - 5000);
+});
+
 test('an exhausted components budget stops before starting another command', t => {
   const sb = fixture(t);
   let elapsed = 0;
@@ -270,7 +301,7 @@ test('module tests retain a diagnostic deadline inside their process budget', t 
   const suite = calls.find(call => call.args[0] === 'test');
   assert.ok(suite.args.includes('-timeout=6m'), 'Go must emit stuck-test stacks before the process guard');
   assert.ok(suite.timeoutMs > 360_000, 'the shared budget leaves time for Go timeout diagnostics');
-  assert.ok(suite.timeoutMs <= 895_000, 'the test command retains the shared components deadline');
+  assert.ok(suite.timeoutMs <= componentsTimeoutMs - 5000, 'the test command retains the shared components deadline');
   assert.ok(calls.every(call => call.timeoutMs > 0 && call.timeoutMs <= componentsTimeoutMs));
 });
 
