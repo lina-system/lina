@@ -226,6 +226,11 @@ replay count is consumed by the Bubble Tea recording-writer test.
 synthetic producer data, socket discovery/decisions, and a separate-key PTY approval.
 These scenarios create no second product decision store and use no timing sleeps.
 
+`m2/tui-composer-identity.json` installs Core/TUI into a temporary root and creates
+and chooses another agent through the real TUI. It checks that the empty composer,
+header and reply speaker name that agent before and after Core reconnect, using
+a loopback Responses fixture and a real PTY.
+
 `m2/github-ci.json` starts the real Core binary with a synthetic `gh` executable
 in its isolated PATH. It negotiates the GitHub capability, refuses an unnegotiated
 read, observes rate-limited CI pending and its retry deadline, then observes head,
