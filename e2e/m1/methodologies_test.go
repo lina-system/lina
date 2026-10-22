@@ -399,8 +399,10 @@ func TestSystemObservesRepairsAndVerifiesThroughInstalledCore(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	// Fault injection affects only a disposable projection in synthetic canon.
-	if _, err = db.Exec("UPDATE records_index_state SET head='synthetic-stale-index'"); err != nil {
+	// A head mismatch is automatically repaired by progress source reads. An
+	// orphaned FTS row survives those reads until the explicit rebuild, so this
+	// fault cannot disappear depending on which observer wins a timing race.
+	if _, err = db.Exec("INSERT INTO records_fts(id,title,note) VALUES('synthetic-orphan','Synthetic fault','')"); err != nil {
 		t.Fatal(err)
 	}
 	admittedTurn(t, h, c, conversation, "repair", "Observe the records index, repair that component if needed, and verify the result.")
