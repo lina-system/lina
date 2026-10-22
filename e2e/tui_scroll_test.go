@@ -80,6 +80,16 @@ func TestM1TUIWheelStickyConversation(t *testing.T) {
 	h.keys(terminal, "\x04")
 	terminal.process.wait(t, 0)
 	h.expectTerminalRestored(terminal)
+	// Process exit closes the slave, but the recorder may still be draining
+	// its final output. Join that reader before inspecting mode restoration.
+	select {
+	case <-terminal.done:
+		if terminal.err != nil {
+			t.Fatal(terminal.err)
+		}
+	case <-h.ctx.Done():
+		t.Fatal("terminal output did not finish", h.ctx.Err())
+	}
 	raw := string(terminal.screen.Bytes())
 	for _, mode := range []string{"1000", "1006"} {
 		if !strings.Contains(raw, "\x1b[?"+mode+"h") || !strings.Contains(raw, "\x1b[?"+mode+"l") {
