@@ -44,7 +44,7 @@ func TestConversationRapidResizeStreamMatchesFresh(t *testing.T) {
 		}
 	}
 	show()
-	if _, err := output.Wait(ctx, func(s tuiterm.Snapshot) bool { return s.AltScreen && s.CursorY == 30 && s.CursorX == 4 }); err != nil {
+	if _, err := output.Wait(ctx, func(s tuiterm.Snapshot) bool { return s.AltScreen && s.CursorY == 30 && s.CursorX == 6 }); err != nil {
 		t.Fatal(err)
 	}
 
@@ -59,7 +59,7 @@ func TestConversationRapidResizeStreamMatchesFresh(t *testing.T) {
 	}
 	m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
 	show()
-	if _, err := output.Wait(ctx, func(s tuiterm.Snapshot) bool { return s.CursorY == 10 && s.CursorX == 4 }); err != nil {
+	if _, err := output.Wait(ctx, func(s tuiterm.Snapshot) bool { return s.CursorY == 10 && s.CursorX == 6 }); err != nil {
 		t.Fatal(err)
 	}
 
@@ -75,7 +75,7 @@ func TestConversationRapidResizeStreamMatchesFresh(t *testing.T) {
 	apply(state.Delta{Epoch: "1", Topic: topic, ID: "stream", Cursor: 3, Revision: 1, Text: "stream-411"})
 	apply(state.Turn{Active: true})
 	show()
-	if _, err := output.Wait(ctx, func(s tuiterm.Snapshot) bool { return s.CursorY == 10 && s.CursorX == 0 }); err != nil {
+	if _, err := output.Wait(ctx, func(s tuiterm.Snapshot) bool { return s.CursorY == 10 && s.CursorX == 2 }); err != nil {
 		t.Fatal(err)
 	}
 
