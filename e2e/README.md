@@ -322,6 +322,13 @@ token case must hold after READY. A bundled-worker probe checks its environment
 before running the real readiness check, and outputs and durable state are
 checked for credential disclosure.
 
+`m3/crw-takeover.json` runs the operator import binary against an installed Core's
+stopped state root, checks exclusive ownership and idempotent retry, removes the
+source snapshot, then exercises the running Core's record tools. Imported evidence
+is found through search and read by LINA id, source-id lookup fails, a new result
+is saved, and restart keeps the imported identity. This operator-only test and
+fixture are excluded from release archives together with the takeover tool.
+
 `m3/antigravity.json` dispatches through installed Core's conversation tool,
 starts its supervised headless worker in a new worktree, produces a real file
 and commit, and verifies a recorded PR at that head. Separate cases cover soft
