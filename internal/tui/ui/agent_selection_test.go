@@ -12,6 +12,32 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+func TestInitialHistoryDiscoveryKeepsConversationResyncing(t *testing.T) {
+	m := conversationShell()
+	m.conversation.id = ""
+	m.content.Agents = []protocol.Agent{{AgentID: "fixture"}}
+	if m.discoveryHistory() == nil {
+		t.Fatal("initial conversation discovery was not requested")
+	}
+	m.Update(shellConnection{Generation: 1, Status: ConnectionStatus{State: Live}})
+	m.Update(shellData{Generation: 1, Message: state.Snapshot{Epoch: "1", Revocation: "1", Topic: "core"}})
+	if m.status.State != Resyncing {
+		t.Fatal("conversation advertised readiness before its destination was known")
+	}
+	m.Update(tea.PasteMsg{Content: "retained draft"})
+	if _, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}); cmd != nil || m.content.Draft.Text != "retained draft" {
+		t.Fatal("discovery sent or lost the draft")
+	}
+	m.conversation.id = "main:fixture"
+	m.agentDiscoveryDone()
+	if m.status.State != Live || m.content.Draft.Text != "retained draft" {
+		t.Fatal("history did not restore readiness with the draft retained")
+	}
+	if _, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}); cmd == nil {
+		t.Fatal("explicit send after discovery was not admitted")
+	}
+}
+
 func TestReconnectHistoryRetainsChosenAgentAndUnacknowledgedDraft(t *testing.T) {
 	m := conversationShell()
 	m.conversation.id = "main:chosen"

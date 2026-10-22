@@ -12,6 +12,9 @@ import (
 )
 
 func (m *shellModel) discoveryHistory() *protocol.HistoryGet {
+	if !m.hasCapability("conversation") {
+		return nil
+	}
 	if m.conversation.agentMissing {
 		m.agentDiscoveryDone()
 		return nil
@@ -22,6 +25,12 @@ func (m *shellModel) discoveryHistory() *protocol.HistoryGet {
 	}
 	if len(m.content.Agents) == 0 {
 		return nil
+	}
+	// The socket is live before History supplies a conversation destination.
+	// Keep the same readiness gate used by reconnect until discovery finishes.
+	m.conversation.agentPending = true
+	if m.status.State == Live {
+		m.status.State = Resyncing
 	}
 	return &protocol.HistoryGet{}
 }
