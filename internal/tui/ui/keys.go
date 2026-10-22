@@ -46,6 +46,7 @@ var keyBindings = []keyBinding{
 	{"memory.heading", []string{"/memory"}, 3, "", "commands"},
 	{"agents.heading", []string{"/agents"}, 4, "", "commands"},
 	{"channel.heading", []string{"/channels"}, 5, "", "commands"},
+	{"developer.heading", []string{"/developer"}, 6, "", "commands"},
 	{"talk.heading", []string{"/talk"}, 6, "", "commands"},
 	{"interrupt", []string{"/stop"}, 7, "", "commands"},
 	{"shortcuts.queue", []string{"/queue <text>"}, 8, "", "commands"},

@@ -318,3 +318,14 @@ Worker settings remain omitted. This scenario uses no real account or provider
 credentials and does not measure live Codex quota.
 
 `TestM1WebUnconfigured` checks installed Core's explicit missing-provider status, absence of web declarations and one-round notice. `TestM1WebSearchExtractAndCitation` runs the production Core composition in a separate test helper with a synthetic manifest recording that executable, and injects only the Firecrawl HTTP transport. The real TUI saves a hidden key; the protocol client approves each network request; the real provider adapter searches and extracts against stub responses; TUI cells show both running activities; the scripted model cites the source URL. No real provider account is used, and model compliance beyond the scripted boundary is not claimed.
+
+`m3/worker-lanes.json` uses installed Core and a real headless TUI to show two
+sessions of the same worker as separate folded lanes. A fixture writes a real
+artifact and records its receipt, terminal observation and content verification
+through the work service before startup. The second unfinished execution becomes
+unknown during Core recovery. The scenario checks protocol identities, explicit
+expansion with stage provenance, refresh, folding and reopening. It exercises
+Core's read path and TUI. `TestM3WorkerLanesLiveSession` additionally starts the
+installed stdio worker fixture through Core's conversation tools, makes it write
+a real artifact, and expands its runtime lane to show the worker output without
+calling the model. Vendor transport is synthetic; no personal account is used.
