@@ -22,10 +22,11 @@ type Entry struct {
 
 // Unit contains observed work and source ownership, never a guessed plan.
 // Done is used only to retire a seen completion; it cannot supply a plan stage.
+// Landed allows acknowledgement-based retirement without a success verdict.
 type Unit struct {
 	ID, Parent, Kind, Name string
 	Done                   *bool
-	Active, Seen, Terminal bool
+	Active, Seen, Landed   bool
 	JustFinished           string
 	Waiting                int
 	Updated                int64
@@ -43,8 +44,8 @@ func Compute(units []Unit) []Entry {
 		if u.JustFinished != "" {
 			line.JustFinished = u.JustFinished
 		}
-		complete := u.Terminal || u.Done != nil && *u.Done
-		rows[u.ID] = &row{u, line, (u.Active || u.Waiting > 0 || complete && !u.Seen) && !(complete && u.Seen)}
+		landed := u.Landed || u.Done != nil && *u.Done
+		rows[u.ID] = &row{u, line, (u.Active || u.Waiting > 0 || landed && !u.Seen) && !(landed && u.Seen)}
 	}
 	// A goal is visible only through live children or a pending decision. Plan
 	// stage and denominators remain unknown until the to-do record work lands.

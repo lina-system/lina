@@ -12,11 +12,11 @@ import (
 	"github.com/thisisjun786/lina/persona"
 )
 
-func TestLoadLinaRequiresBothLocalTextLayers(t *testing.T) {
+func TestLoadPairRequiresBothLocalTextLayers(t *testing.T) {
 	for _, mode := range []string{"valid", "missing", "empty", "directory", "oversize", "invalid UTF-8", "escape"} {
 		t.Run(mode, func(t *testing.T) {
 			source := t.TempDir()
-			dir := filepath.Join(source, "characters/lina/persona")
+			dir := filepath.Join(source, "lina")
 			if err := os.MkdirAll(dir, 0700); err != nil {
 				t.Fatal(err)
 			}
@@ -52,7 +52,7 @@ func TestLoadLinaRequiresBothLocalTextLayers(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			core, gotVoice, err := persona.LoadLina(source)
+			core, gotVoice, err := loadLocal(t, source)
 			if mode == "valid" {
 				if err != nil || core != "fixture core\n" || gotVoice != voice {
 					t.Fatalf("fixture not preserved: %q %q %v", core, gotVoice, err)
@@ -63,16 +63,16 @@ func TestLoadLinaRequiresBothLocalTextLayers(t *testing.T) {
 		})
 	}
 	for _, source := range []string{"", "relative", filepath.Join(t.TempDir(), "missing")} {
-		if core, voice, err := persona.LoadLina(source); !errors.Is(err, persona.ErrUnavailable) || core != "" || voice != "" {
+		if core, voice, err := loadLocal(t, source); !errors.Is(err, persona.ErrUnavailable) || core != "" || voice != "" {
 			t.Fatal("invalid source accepted")
 		}
 	}
 }
 
-func TestLoadLinaReservesConversationBudget(t *testing.T) {
+func TestLoadPairReservesConversationBudget(t *testing.T) {
 	for _, sizes := range [][2]int{{129000, 1}, {40000, 40000}, {65535, 1}} {
 		source := t.TempDir()
-		dir := filepath.Join(source, "characters/lina/persona")
+		dir := filepath.Join(source, "lina")
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -81,7 +81,7 @@ func TestLoadLinaReservesConversationBudget(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		core, voice, err := persona.LoadLina(source)
+		core, voice, err := loadLocal(t, source)
 		if sizes[0]+sizes[1] > 65536 {
 			if !errors.Is(err, persona.ErrUnavailable) || core != "" || voice != "" {
 				t.Errorf("oversized preset accepted: sizes=%v, loaded=%d+%d, err=%v", sizes, len(core), len(voice), err)
@@ -92,9 +92,9 @@ func TestLoadLinaReservesConversationBudget(t *testing.T) {
 	}
 }
 
-func TestLoadLinaBoundsEncodedLayers(t *testing.T) {
+func TestLoadPairBoundsEncodedLayers(t *testing.T) {
 	source := t.TempDir()
-	dir := filepath.Join(source, "characters/lina/persona")
+	dir := filepath.Join(source, "lina")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,17 @@ func TestLoadLinaBoundsEncodedLayers(t *testing.T) {
 	}
 	// The prepared identity JSON escapes each '<' to six bytes. Its raw file
 	// size must not hide an instruction block larger than the request budget.
-	if core, voice, err := persona.LoadLina(source); !errors.Is(err, persona.ErrUnavailable) || core != "" || voice != "" {
+	if core, voice, err := loadLocal(t, source); !errors.Is(err, persona.ErrUnavailable) || core != "" || voice != "" {
 		t.Fatalf("escaped oversized preset accepted: loaded=%d+%d, err=%v", len(core), len(voice), err)
 	}
+}
+
+func loadLocal(t *testing.T, source string) (string, string, error) {
+	t.Helper()
+	root, err := os.OpenRoot(source)
+	if err != nil {
+		return "", "", persona.ErrUnavailable
+	}
+	defer root.Close()
+	return persona.Load(root.FS(), "lina")
 }
