@@ -130,7 +130,14 @@ func (m *shellModel) reduceInput(msg state.Msg) tea.Cmd {
 
 func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 	key := term.FromTea(msg, m.events)
+	// Enhanced keyboards can report Shift+/ with the produced text "?".
+	if msg.Key().Text == "?" && msg.Key().Mod & ^tea.ModShift == 0 {
+		key.Name = "?"
+	}
 	class := term.Edit
+	if key.Name == "?" && m.content.Draft.Text == "" && len(m.content.Draft.Attachments) == 0 {
+		class = term.Toggle
+	}
 	switch key.Name {
 	case "enter", "esc", "ctrl+c", "ctrl+d", "tab", "shift+tab", "ctrl+o", "ctrl+t", "ctrl+w", "ctrl+r", "ctrl+p":
 		class = term.Toggle
@@ -156,6 +163,12 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	}
 	switch key.Name {
+	case "?":
+		if m.content.Draft.Text == "" && len(m.content.Draft.Attachments) == 0 {
+			m.openPager(m.shortcutSheet())
+			return nil
+		}
+		return m.editComposer(msg)
 	case "ctrl+z":
 		if n := len(m.conversation.undo); n > 0 {
 			draft := m.conversation.undo[n-1]
@@ -215,17 +228,13 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 			m.openPager(m.cardText())
 			return nil
 		}
-		if !m.mutationsAllowed() {
-			return nil
-		}
 		text := strings.TrimSpace(m.content.Draft.Text)
 		if text == "/help" {
 			m.reduceInput(state.EditDraft{})
-			text := func(id string) string { return design.Text(m.styles.options.Language, id) }
-			m.openPager(strings.Join([]string{text("controls.help"),
-				"/accounts  " + text("account.heading"), "/signin  " + text("sign_in_open"),
-				"/memory  " + text("memory.heading"), "/agents  " + text("agents.heading"), "/channels  " + text("channel.heading"), "/talk  " + text("talk.heading"), "/stop  " + text("interrupt"),
-			}, "\n"))
+			m.openPager(m.shortcutSheet())
+			return nil
+		}
+		if !m.mutationsAllowed() {
 			return nil
 		}
 		if handled, command := m.talkCommand(text); handled {
@@ -533,14 +542,7 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 	plan := m.conversationPlan()
 	rows := make([]string, m.size.Height)
 	clip := func(s string) string { return ansi.Truncate(s, m.size.Width, "") }
-	status := m.styles.presentation(m.status)
-	statusLine := status.Mark + " " + status.Label
-	if m.status.Cause != "" {
-		statusLine += " " + status.Detail
-	} else if notice := m.localNotice(); showNotice && notice != "" {
-		statusLine += "  " + notice
-	}
-	rows[plan.Status.Y] = conversationFooter(statusLine, m.size.Width)
+	rows[plan.Status.Y] = m.conversationFooter(showNotice)
 	if plan.Tier == layout.TooSmall {
 		if plan.Notice.Height > 0 {
 			rows[0] = clip(design.Text(m.styles.options.Language, "shell.too_small"))
@@ -554,7 +556,6 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		for y := 0; y < m.size.Height-1 && p.offset+y < len(lines); y++ {
 			rows[y] = clip(lines[p.offset+y])
 		}
-		rows[plan.Status.Y] = clip("Esc  /  n  " + p.query)
 		return strings.Join(rows, "\n")
 	}
 	name := m.conversationName()
@@ -680,21 +681,6 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 			}
 			rows[plan.SidePane.Y+y] = left + right
 		}
-		rows[plan.Status.Y] = clip("Esc  /  n  " + p.query)
 	}
 	return strings.Join(rows, "\n")
-}
-
-// Retain the status/notice first, then admit complete hint segments in the
-// existing priority order. A narrow footer never shows half of a command.
-func conversationFooter(status string, width int) string {
-	line := render.Truncate(status, width, render.Unicode{})
-	for _, hint := range []string{"/help", "Enter", "Ctrl+D", "/memory", "/agents", "Ctrl+T"} {
-		candidate := line + "  " + hint
-		if (render.Unicode{}).Width(candidate) > width {
-			break
-		}
-		line = candidate
-	}
-	return line
 }

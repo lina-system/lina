@@ -758,10 +758,25 @@ matter id. Every applied change has one commit naming the person and asking
 agent. A durable intent names immutable before/after objects; startup finishes
 only that publication and never re-dispatches its tool effect. An outside edit,
 commit, foreign lock or incompatible recovery state returns `records_changed`
-without overwriting it. Outside-change acceptance/presentation and the richer
-FTS/edge index are subsequent records-index work.
+without overwriting it. The derived index includes title/note FTS and belongs-to
+and blocked-by edges. Its own head is separate from the last Core-published
+head. Startup and every read/write repair a missing or stale index only after
+checking the published files. Rebuild reads those files, validates unique ids,
+and derives record revisions from their history; it never adopts an outside
+commit as a new Core publication.
 
-Installed conversations register `read_record` and `write_record` through the
+`query_records` searches or lists the authenticated person's records, optionally
+filtering kind, with deterministic id ordering and a bounded page. Person and
+filesystem paths are not model arguments. A changed, added, deleted, invalid or
+non-regular file, or a changed repository head, refuses reads, queries, writes
+and rebuild with `records_changed`. Tool results show a bounded list of change
+kinds and validation outcomes without outside bytes or filesystem paths. Startup
+keeps ordinary conversations available when an outside change is present; the
+next record operation shows the refusal. Only Core-journaled recovery may finish
+an interrupted publication. Outside-change acceptance is not automatic and no
+accept/merge operation is supplied by this increment.
+
+Installed conversations register `read_record`, `write_record` and `query_records` through the
 ordinary authority, lease and effect-receipt registry. These tools capture and
 edit memos and knowledge documents; Core supplies the owner, asking agent, id
 and PARA path. Model arguments cannot supply identities or paths. Existing

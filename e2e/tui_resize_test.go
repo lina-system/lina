@@ -258,12 +258,8 @@ func TestM1TUINarrowActivityResize(t *testing.T) {
 					}
 					// The emulator can resize before SIGWINCH reaches the TUI.
 					// Wait for complete chrome, not the clipped previous frame.
-					for _, segment := range strings.Split(rows[size.height-1], "  ")[1:] {
-						switch segment {
-						case "/help", "Enter", "Ctrl+D", "/memory", "/agents", "Ctrl+T":
-						default:
-							return false
-						}
+					if !wholeNarrowFooter(rows[size.height-1], locale.language) {
+						return false
 					}
 					return strings.Contains(rows[size.height-1], design.Text(locale.language, "live")) &&
 						strings.Contains(rows[size.height-2], "draft-6") &&
@@ -285,12 +281,8 @@ func TestM1TUINarrowActivityResize(t *testing.T) {
 				if !activity.MatchString(screenText(snapshot)) {
 					t.Errorf("complete elapsed and interrupt hint missing (want %s)", activity)
 				}
-				for _, segment := range strings.Split(rows[size.height-1], "  ")[1:] {
-					switch segment {
-					case "/help", "Enter", "Ctrl+D", "/memory", "/agents", "Ctrl+T":
-					default:
-						t.Errorf("footer cut hint %q", segment)
-					}
+				if !wholeNarrowFooter(rows[size.height-1], locale.language) {
+					t.Errorf("footer cut or reordered a hint: %q", rows[size.height-1])
 				}
 			}
 			close(release)
@@ -306,4 +298,18 @@ func TestM1TUINarrowActivityResize(t *testing.T) {
 			h.stopCore(core)
 		})
 	}
+}
+
+func wholeNarrowFooter(footer string, language design.Language) bool {
+	parts := strings.Split(footer, "  ")
+	hints := [][2]string{{"?", "shortcuts.title"}, {"Esc", "shortcuts.stop"}, {"Enter", "shortcuts.send"}, {"Ctrl+D", "action.quit"}, {"Alt+Enter", "shortcuts.newline"}, {"PgUp/PgDn", "shortcuts.scroll"}, {"Ctrl+O", "shortcuts.open_hint"}, {"F6", "shortcuts.decisions"}, {"Ctrl+T", "shortcuts.transcript"}}
+	if len(parts) < 2 || len(parts)-1 > len(hints) {
+		return false
+	}
+	for i, part := range parts[1:] {
+		if part != hints[i][0]+" "+design.Text(language, hints[i][1]) {
+			return false
+		}
+	}
+	return true
 }

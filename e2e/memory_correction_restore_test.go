@@ -189,6 +189,7 @@ func TestM1MemoryCorrectionForgetRestore(t *testing.T) {
 func correctionMemoryTUI(t *testing.T, h *harness) (func(string) protocol.MemoryResult, func()) {
 	t.Helper()
 	socket := h.socket
+	waitCoreReady(t, h)
 	tap := newAccountTap(t, h, socket, true)
 	h.socket = tap.socket
 	terminal := h.startScreenTUI("TERM=xterm-256color")
@@ -220,7 +221,7 @@ func correctionMemoryTUI(t *testing.T, h *harness) (func(string) protocol.Memory
 				heading := design.Text(design.English, *result.Operation)
 				if view, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
 					rows := screenRows(s)
-					return s.CursorHidden && len(rows) > 0 && strings.HasPrefix(rows[len(rows)-1], "Esc") && strings.TrimSpace(rows[0]) == heading && strings.Contains(screenText(s), marker)
+					return s.CursorHidden && len(rows) > 0 && strings.Contains(rows[len(rows)-1], "  Esc "+design.Text(design.English, "shortcuts.close")) && strings.TrimSpace(rows[0]) == heading && strings.Contains(screenText(s), marker)
 				}); err != nil {
 					t.Fatalf("memory result was not rendered: %v\n%s", err, screenText(view))
 				}

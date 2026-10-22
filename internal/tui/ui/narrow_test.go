@@ -57,11 +57,10 @@ func TestNarrowFooterOmitsWholeHints(t *testing.T) {
 			rows := strings.Split(ansi.Strip(m.View().Content), "\n")
 			footer := strings.TrimRight(rows[9], " ")
 			parts := strings.Split(footer, "  ")
-			for _, part := range parts[1:] {
-				switch part {
-				case "/help", "Enter", "Ctrl+D", "/memory", "/agents", "Ctrl+T":
-				default:
-					t.Errorf("%s/%d: footer cuts hint %q: %q", lang, width, part, footer)
+			hints := bindingsFor("")
+			for i, part := range parts[1:] {
+				if i >= len(hints) || part != hints[i].Keys[0]+" "+design.Text(lang, hints[i].Hint) {
+					t.Errorf("%s/%d: footer cuts or reorders hint %q: %q", lang, width, part, footer)
 				}
 			}
 		}

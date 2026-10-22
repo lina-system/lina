@@ -224,8 +224,12 @@ func (s *Store) revision(ctx context.Context, head, name, blob string) (Rev, err
 	return rev, nil
 }
 
-type indexRow struct{ id, path, blob, revision string }
+type indexRow struct {
+	id, path, blob, revision string
+	doc                      document
+}
 
+// Walk history once for all pending revisions, rather than once per record.
 func (s *Store) indexRows(ctx context.Context, head string) ([]indexRow, error) {
 	if head == "" {
 		return nil, nil
@@ -235,25 +239,62 @@ func (s *Store) indexRows(ctx context.Context, head string) ([]indexRow, error) 
 		return nil, err
 	}
 	rows := []indexRow{}
-	seen := map[string]bool{}
-	for name, hash := range files {
+	ids := map[string]bool{}
+	pending := map[string]int{}
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if !validPath(name) {
 			return nil, ErrRecordsChanged
 		}
-		data, err := s.readObject(hash, "blob")
+		data, err := recordFile(s.root, name)
 		if err != nil {
 			return nil, err
 		}
-		id, err := recordID(data)
-		if err != nil || seen[id] {
+		hash, _ := objectID("blob", data)
+		if hash != files[name] {
 			return nil, ErrRecordsChanged
 		}
-		seen[id] = true
-		rev, err := s.revision(ctx, head, name, hash)
+		id, err := recordID(data)
+		if err != nil || ids[id] {
+			return nil, ErrRecordsChanged
+		}
+		d, err := parseDocument(data)
+		if err != nil {
+			return nil, ErrRecordsChanged
+		}
+		ids[id] = true
+		pending[name] = len(rows)
+		rows = append(rows, indexRow{id: id, path: name, blob: hash, doc: d})
+	}
+	for current := head; len(pending) > 0; {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		c, _, err := s.commitFiles(current)
 		if err != nil {
 			return nil, err
 		}
-		rows = append(rows, indexRow{id, name, hash, rev})
+		before := map[string]string{}
+		if c.parent != "" {
+			_, before, err = s.commitFiles(c.parent)
+			if err != nil {
+				return nil, err
+			}
+		}
+		for name, i := range pending {
+			if before[name] != rows[i].blob {
+				rows[i].revision = current
+				delete(pending, name)
+			}
+		}
+		current = c.parent
 	}
 	return rows, nil
 }
@@ -261,8 +302,15 @@ func replaceIndex(ctx context.Context, tx *canon.Tx, rows []indexRow) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM records_index"); err != nil {
 		return err
 	}
+	// FTS is disposable too: clear orphaned rows after an interrupted restore.
+	if _, err := tx.ExecContext(ctx, "DELETE FROM records_fts"); err != nil {
+		return err
+	}
 	for _, r := range rows {
 		if _, err := tx.ExecContext(ctx, "INSERT INTO records_index(id,path,blob,revision) VALUES(?,?,?,?)", r.id, r.path, r.blob, r.revision); err != nil {
+			return err
+		}
+		if err := putProjection(ctx, tx, r); err != nil {
 			return err
 		}
 	}
@@ -275,11 +323,7 @@ func (s *Store) Rebuild(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	rows, err := s.indexRows(ctx, head)
-	if err != nil {
-		return err
-	}
-	return s.db.Write(ctx, func(tx *canon.Tx) error { return replaceIndex(ctx, tx, rows) })
+	return s.rebuild(ctx, head)
 }
 
 // Cached locators are derived; a missing or mismatching row falls back to Git.
