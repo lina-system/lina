@@ -176,16 +176,25 @@ func newAccountTap(t *testing.T, h *harness, target string, notifications ...boo
 		t.Fatal(err)
 	}
 	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		local, err := listener.Accept()
-		if err != nil {
-			return
-		}
+	// A restarted Core closes the current peer; accept the TUI's reconnect
+	// through the same tap so protocol barriers can cover restart scenarios too.
+	serve := func(local net.Conn) {
 		defer local.Close()
-		remote, err := net.Dial("unix", target)
-		if err != nil {
-			return
+		// Do not turn a temporarily absent Core into a successful connection
+		// followed by a fatal handshake EOF. Hold the accepted peer until the real
+		// socket is available; only a successful dial establishes readiness.
+		var remote net.Conn
+		for {
+			var err error
+			remote, err = (&net.Dialer{}).DialContext(h.ctx, "unix", target)
+			if err == nil {
+				break
+			}
+			select {
+			case <-h.ctx.Done():
+				return
+			case <-time.After(10 * time.Millisecond):
+			}
 		}
 		defer remote.Close()
 		stop := context.AfterFunc(h.ctx, func() { local.Close(); remote.Close() })
@@ -233,6 +242,16 @@ func newAccountTap(t *testing.T, h *harness, target string, notifications ...boo
 		go pump(remote, local, false)
 		go pump(local, remote, true)
 		wg.Wait()
+	}
+	go func() {
+		defer close(done)
+		for {
+			local, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			serve(local)
+		}
 	}()
 	var once sync.Once
 	tap.close = func() { once.Do(func() { listener.Close(); <-done }) }

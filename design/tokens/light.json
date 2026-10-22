@@ -309,6 +309,14 @@
       "activitySeparator": {
         "$type": "string",
         "$value": "·"
+      },
+      "person": {
+        "$type": "string",
+        "$value": "›"
+      },
+      "agent": {
+        "$type": "string",
+        "$value": "●"
       }
     },
     "ascii": {
@@ -375,6 +383,14 @@
       "activitySeparator": {
         "$type": "string",
         "$value": "-"
+      },
+      "person": {
+        "$type": "string",
+        "$value": ">"
+      },
+      "agent": {
+        "$type": "string",
+        "$value": "*"
       }
     }
   }
