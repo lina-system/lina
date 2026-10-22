@@ -90,7 +90,9 @@ func TestM1ConversationHistoryOrder(t *testing.T) {
 					break
 				}
 			}
-			h.keys(terminal, scenario.FirstInput+"\r")
+			h.keys(terminal, scenario.FirstInput)
+			waitScreen(t, h, terminal, scenario.FirstInput)
+			h.keys(terminal, "\r")
 			select {
 			case <-started:
 			case <-h.ctx.Done():

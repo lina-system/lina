@@ -1,0 +1,45 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "service": "client",
+  "setup": {
+    "agent": "deleted",
+    "bound": false
+  },
+  "input": {
+    "protocol": {
+      "name": "client",
+      "version": "1.0"
+    },
+    "kind": "agent_request",
+    "message_id": "conversation_start-example",
+    "attempt_id": "conversation_start-attempt-1",
+    "reply_to": null,
+    "sender": {
+      "party": "client",
+      "id": "client-example"
+    },
+    "epoch": "0",
+    "sent_at": "2026-01-01T00:00:00Z",
+    "idempotency_key": null,
+    "effect_state": "none",
+    "receipt_ref": null,
+    "source_refs": [],
+    "error": null,
+    "payload": {
+      "operation": "choose",
+      "agent_id": "agent-example"
+    }
+  },
+  "output": {
+    "kind": "error",
+    "effect_state": "refused",
+    "code": "out_of_scope"
+  },
+  "outcome": {
+    "state_unchanged": true,
+    "target_records": 1,
+    "target_active": 0,
+    "target_bindings": 0,
+    "bindings": 0
+  }
+}
