@@ -17,6 +17,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	memoryexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/internal/core/memory"
+	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -202,7 +203,13 @@ func correctionMemoryTUI(t *testing.T, h *harness) (func(string) protocol.Memory
 				t.Fatalf("%s refused: %s", text, e.Error.Code)
 			}
 			if result, ok := e.Payload.(protocol.MemoryResult); ok {
-				marker := "/memory forget"
+				if result.Operation == nil {
+					t.Fatal("memory reply has no operation")
+				}
+				// The shared help text can still belong to the previous reply.
+				// Observe this result's heading before closing its view, otherwise
+				// its delayed render can reopen over the next command's composer.
+				marker := design.Text(design.English, *result.Operation)
 				if result.ItemID != nil {
 					marker = *result.ItemID
 				}

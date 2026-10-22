@@ -169,6 +169,10 @@ func TestM1TUIChannelPairing(t *testing.T) {
 	core.command.Env = append(core.command.Env, "LINA_TEST_CHANNEL_ROOT="+h.root, "LINA_TEST_CHANNEL_SOCKET="+socket, "LINA_TEST_CHANNEL_HTTP="+platform.URL)
 	core.start(t)
 	h.connect(core).Close()
+	// Binding admits reads while boot is RECOVERING. Probe mutation admission
+	// before a TUI channel action can reach the service.
+	ready, _ := conversationClient(t, h)
+	ready.Close()
 	tap := newAccountTap(t, h, socket)
 	h.socket = tap.socket
 	terminal := h.startScreenTUI("TERM=xterm-256color")
