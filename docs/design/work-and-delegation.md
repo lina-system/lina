@@ -493,6 +493,14 @@ The manager session splits work into tasks that one worker can finish as one pul
 
 ### Parallel hand-off
 
+The opt-in developer view shows recorded worker sessions under their requesting
+persona, one collapsed lane per current task execution, including sessions that
+use the same worker product. An explicit expansion shows execution identity and
+source-labeled worker/review/application summaries. Refresh reads current Core
+records; a terminal worker event alone never displays verified task completion.
+This projection does not invent sub-agent ancestry or claim a hand-off that the
+work ledger has not recorded. Unassigned tasks have no worker lane yet.
+
 - Every task whose dependencies are satisfied and whose area lease is free is handed off at once. It is limited only by the person's subscription quota for each worker and by the host's capacity. LINA Core never holds back a task to wait for another task that it does not depend on.
 - Quota is read per worker from the worker's adapter as quota rows in which unknown is a value ([runtime.md](runtime.md#usage-and-cost)). Where a worker reports none, LINA Core infers it from the worker's quota errors and its own usage records. A worker that stops on a quota or rate-limit error is parked until its window resets, and the task is not retried on it; the task goes to the next suitable worker (see Choosing the worker).
 - Host capacity is what the host can run beside the person's own work, within the install's declared resource caps ([non-competition.md](non-competition.md)). A device whose Node is disconnected or yielding receives no new hand-off.

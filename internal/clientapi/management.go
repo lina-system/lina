@@ -23,3 +23,7 @@ func (c *Client) Running(ctx context.Context, request protocol.RunningGet) (stri
 func (c *Client) Work(ctx context.Context, request protocol.WorkSwitchRequest) (string, error) {
 	return c.request(ctx, protocol.KindWorkSwitchRequest, request)
 }
+
+func (c *Client) Progress(ctx context.Context, request protocol.ProgressGet) (string, error) {
+	return c.request(ctx, protocol.KindProgressGet, request)
+}
