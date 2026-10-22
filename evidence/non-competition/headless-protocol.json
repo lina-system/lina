@@ -1,7 +1,7 @@
 {
   "evidence_type": "headless_protocol",
-  "recorded_at": "2026-10-22T17:27:39Z",
-  "product_source_commit": "f3537e4a7d51522800f2c9d22b8985d8ada22db7",
+  "recorded_at": "2026-10-22T17:36:39Z",
+  "product_source_commit": "ccefbddef33169cc2718c03b34399ecde07d7401",
   "scenario_sources": {
     "e2e/m3/non-competition.json": "1410adab84b5bcf365f55c3fd932f272c7389407a6d5d358d47b9c09dfddef2e",
     "e2e/m1/non_competition_test.go": "03a468b373328b3219c17fde990426575b56af7f4a8b467a100b4be52bcc695d"
