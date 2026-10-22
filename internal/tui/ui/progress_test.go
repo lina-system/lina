@@ -43,3 +43,34 @@ func TestProgressPagerUsesCurrentRowsWithoutIdentity(t *testing.T) {
 		t.Fatal("progress not live or lost draft")
 	}
 }
+
+func TestOwnerCommandsAskCoreAndRetainWaitingOrder(t *testing.T) {
+	m := conversationShell()
+	m.Update(shellData{Generation: 1, Message: workListWelcome(t, "conversation", "running", "progress", "waiting")})
+	for _, text := range []string{"/progress", "/waiting lightest", "/stop a-run", "/stop all", "/note a-run Read appendix"} {
+		handled, cmd := m.ownerCommand(text)
+		if !handled || cmd == nil {
+			t.Fatalf("command lost: %s", text)
+		}
+		msg, ok := cmd().(shellManagement)
+		if !ok {
+			t.Fatal("not a Core request")
+		}
+		_, want, _ := protocol.OwnerCommand(text, "")
+		gotRaw, _ := json.Marshal(msg.Request)
+		wantRaw, _ := json.Marshal(want)
+		if string(gotRaw) != string(wantRaw) {
+			t.Fatalf("request changed: %s != %s", gotRaw, wantRaw)
+		}
+	}
+	msg := m.waitingRequest()().(shellManagement)
+	if p := msg.Request.(protocol.WaitingGet); p.Order == nil || *p.Order != "lightest" {
+		t.Fatal("refresh discarded chosen order")
+	}
+	m.conversation.pager.waiting = true
+	m.conversation.pager.open = true
+	cmd := m.pagerKey(tea.KeyPressMsg{Code: 'o'}, "o")
+	if p := cmd().(shellManagement).Request.(protocol.WaitingGet); p.Order == nil || *p.Order != "priority" {
+		t.Fatal("order switch did not ask Core")
+	}
+}
