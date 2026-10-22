@@ -758,8 +758,9 @@ type Stream interface {
   the UI adds terminal styles. List continuations align under their content;
   code retains literal text and whitespace, including empty first and last
   lines and blocks containing only empty lines. Empty code rows retain their
-  semantic identity through wrapping; message-boundary trimming removes only
-  paragraph spacing. Escaped syntax remains literal.
+  block's code identity through wrapping, including language-tagged fences
+  with multiple syntax spans or no tokens; message-boundary trimming removes
+  only paragraph spacing. Escaped syntax remains literal.
   Unsupported HTML blocks and inline HTML display their literal source text.
   Tables use our own renderer.
 - Conversation spans use theme text, accent and surface tokens: bold and italic
