@@ -184,6 +184,14 @@ func correctionMemoryTUI(t *testing.T, h *harness) (func(string) protocol.Memory
 	h.socket = tap.socket
 	terminal := h.startScreenTUI("TERM=xterm-256color")
 	waitScreen(t, h, terminal, "Ctrl+D")
+	// The initial footer can precede history discovery. The tapped conversation
+	// snapshot proves that discovery has admitted this client's subscription.
+	for {
+		frame := tap.next(t, h)
+		if snapshot, ok := frame.Payload.(protocol.Snapshot); ok && strings.HasPrefix(snapshot.Topic, "conversation:") {
+			break
+		}
+	}
 	opened := false
 	command := func(text string) protocol.MemoryResult {
 		t.Helper()

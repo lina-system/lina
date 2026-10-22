@@ -23,10 +23,17 @@ func formatElapsed(elapsed time.Duration) string {
 	return fmt.Sprintf("%ds", seconds)
 }
 
-func (m *shellModel) activityVisible() bool {
+func (m *shellModel) activityRequested() bool {
 	return (m.content.Busy || m.content.TurnActive) && m.status.State == Live && m.hasComposer() &&
 		m.size.Width >= 40 && m.size.Height >= 10 && !m.accounts.open && !m.channels.open && !m.talk.open &&
-		m.content.CardView.ID == "" && (!m.conversation.pager.open || m.size.Width >= 120)
+		m.content.CardView.ID == ""
+}
+
+func (m *shellModel) activityVisible() bool {
+	if !m.activityRequested() {
+		return false
+	}
+	return !m.conversation.pager.open || m.conversationPlan().SidePane.Height > 0
 }
 
 func (m *shellModel) staticActivity() bool {

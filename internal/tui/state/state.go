@@ -398,12 +398,17 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 				delete(s.Worked, id)
 			}
 		}
+		turnKnown := false
 		for _, b := range m.Items {
 			if b.Kind == protocol.KindTurnState && b.TurnKnown {
+				turnKnown = true
 				// A snapshot can restore activity, but cannot create a completion notice.
 				b.TurnAt = time.Time{}
 				s.activityBlock(b)
 			}
+		}
+		if strings.HasPrefix(m.Topic, "conversation:") && !turnKnown {
+			s.turn(Turn{})
 		}
 		if s.TurnActive {
 			for _, b := range m.Items {

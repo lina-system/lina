@@ -87,3 +87,15 @@ func TestActivitySnapshotAndSendFailure(t *testing.T) {
 		t.Fatal("failed send retained activity or duration")
 	}
 }
+
+func TestAuthoritativeEmptyConversationStopsActivity(t *testing.T) {
+	s, _ := Reduce(State{}, Snapshot{Epoch: "1", Revocation: "1", Topic: "conversation:fixture", Cursor: 1, Items: []Block{{ID: "turn", Kind: protocol.KindTurnState, TurnKnown: true, TurnActive: true}}})
+	s, _ = Reduce(s, Snapshot{Epoch: "1", Revocation: "1", Topic: "results:fixture", Cursor: 1})
+	if !s.TurnActive {
+		t.Fatal("unrelated snapshot cleared activity")
+	}
+	s, _ = Reduce(s, Snapshot{Epoch: "1", Revocation: "1", Topic: "conversation:fixture", Cursor: 2})
+	if s.TurnActive || len(s.Worked) > 0 {
+		t.Fatal("empty authoritative conversation retained activity")
+	}
+}

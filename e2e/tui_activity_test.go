@@ -140,10 +140,20 @@ func startReadyScreenTUI(t *testing.T, h *harness, environment []string, width, 
 			if err != nil {
 				return
 			}
-			remote, err := net.Dial("unix", socket)
-			if err != nil {
-				local.Close()
-				return
+			// A reconnect may reach the proxy while Core is between sockets.
+			// Keep that handshake pending until the real socket is available.
+			var remote net.Conn
+			for {
+				remote, err = (&net.Dialer{}).DialContext(ctx, "unix", socket)
+				if err == nil {
+					break
+				}
+				select {
+				case <-ctx.Done():
+					local.Close()
+					return
+				case <-time.After(10 * time.Millisecond):
+				}
 			}
 			workers.Add(1)
 			go func() {

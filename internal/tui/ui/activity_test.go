@@ -158,3 +158,21 @@ func TestActivityCatalogWidthAndMutedCompletion(t *testing.T) {
 		}
 	}
 }
+
+func TestActivityStopsWhenWidePagerFillsShortTerminal(t *testing.T) {
+	m := conversationShell()
+	m.content.TurnActive = true
+	m.content.Draft.Text = "one\ntwo\nthree\nfour\nfive\nsix"
+	m.openPager("details")
+	m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
+	if !m.activityVisible() {
+		t.Fatal("side pane hid the activity row")
+	}
+	m.Update(tea.WindowSizeMsg{Width: 140, Height: 10})
+	if m.conversationPlan().SidePane.Height != 0 {
+		t.Fatal("expected full-screen pager after shedding side pane")
+	}
+	if m.activityInterval() != 0 {
+		t.Fatal("full-screen pager retained the activity timer")
+	}
+}
