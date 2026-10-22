@@ -49,7 +49,7 @@ var catalog = map[string]translation{
 	"progress.digest_count":          {"%s items · %s more", "%s개 · %s개 더"},
 	"control.stopped":                {"Stop requested.", "중단을 요청했습니다."},
 	"control.note":                   {"Note queued.", "추가 요청을 전달했습니다."},
-	"control.stopped_all":            {"Stopped %s runs.", "실행 %s개를 중단했습니다."},
+	"control.stopped_all":            {"Stop requested for %s runs.", "실행 %s개의 중단을 요청했습니다."},
 	"agents.advice_only":             {"Advice only", "조언만"},
 	"agents.draft_only":              {"Drafts only", "초안만"},
 	"agents.development":             {"Development owner", "개발 담당"},

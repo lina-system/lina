@@ -5,6 +5,7 @@ package runs
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -115,6 +116,7 @@ type Record struct {
 	Checkpoint                  []provider.Item
 	FollowUps                   []string
 	FollowKeys                  []string
+	FollowSources               []json.RawMessage
 	Calls                       []string
 	Usage                       []provider.Usage // unknown remains unknown; rows are attributed by this run's Origin
 	Artifact                    Artifact
@@ -163,7 +165,9 @@ type Config struct {
 	// Authorize validates origin and scope and checks the person's shared budget.
 	// It runs at start and before every model request; ErrBudget parks a run.
 	Authorize func(context.Context, Origin, Brief) error
-	Model     provider.ModelRef
+	// AuthorizeFollowUp rechecks trusted input provenance before each model/tool dispatch.
+	AuthorizeFollowUp func(context.Context, Record, json.RawMessage) error
+	Model             provider.ModelRef
 	// Prepare supplies only the named projections and may condense old tool
 	// outputs. It cannot change tools, purpose or background instructions.
 	Prepare func(context.Context, Record, []provider.Item) ([]provider.Item, error)

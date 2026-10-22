@@ -357,6 +357,12 @@ func (s *Service) Follow(ctx context.Context, id, note string) error {
 // FollowOnce retains the request identity with the queued note, so reconnects
 // cannot apply the same steering twice. Empty keys preserve internal callers.
 func (s *Service) FollowOnce(ctx context.Context, id, key, note string) error {
+	return s.FollowScoped(ctx, id, key, note, nil)
+}
+
+// FollowScoped retains source restrictions with the run, including after the
+// note is consumed into a checkpoint. Only trusted Core callers supply source.
+func (s *Service) FollowScoped(ctx context.Context, id, key, note string, source json.RawMessage) error {
 	if note == "" {
 		return ErrInvalid
 	}
@@ -381,6 +387,27 @@ func (s *Service) FollowOnce(ctx context.Context, id, key, note string) error {
 	}
 	if key != "" {
 		r.FollowKeys = append(r.FollowKeys, key)
+	}
+	if len(source) > 0 {
+		if !json.Valid(source) || len(source) > 16384 {
+			return ErrInvalid
+		}
+		if s.cfg.AuthorizeFollowUp == nil {
+			return ErrScope
+		}
+		if err := s.cfg.AuthorizeFollowUp(ctx, r, source); err != nil {
+			return err
+		}
+		found := false
+		for _, prior := range r.FollowSources {
+			if string(prior) == string(source) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			r.FollowSources = append(r.FollowSources, append(json.RawMessage(nil), source...))
+		}
 	}
 	r.FollowUps = append(r.FollowUps, note)
 	if r.State == NeedsInput {

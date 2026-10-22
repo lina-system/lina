@@ -16,6 +16,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/gateway"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/internal/core/runs"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -69,6 +70,9 @@ func (c *channelRuntime) channelControl(ctx context.Context, shared *conversatio
 		err = outsideManagement()
 	} else if kind == protocol.KindFollowUp && !b.Scope.Tools {
 		err = outsideManagement()
+	} else if kind == protocol.KindFollowUp {
+		source, _ := json.Marshal(channelFollowSource{Address: event.Address, Binding: b, Sender: event.Sender, Direct: event.Direct, Addressed: event.Addressed})
+		result, err = c.r.followRunWithSource(ctx, session, protocol.Envelope{MessageID: id, Kind: kind, Payload: p}, source)
 	} else if kind == protocol.KindInterrupt {
 		err = shared.Interrupt(ctx, session, protocol.Interrupt{ConversationID: &b.Conversation})
 	} else if op, exists := c.r.identity.Operations[kind]; exists {
@@ -97,7 +101,7 @@ func (c *channelRuntime) channelControl(ctx context.Context, shared *conversatio
 			}
 			text = strings.Join(lines, "\n")
 		case protocol.MultiTaskControl:
-			text = fmt.Sprintf("Stopped %s runs.", *v.Count)
+			text = fmt.Sprintf("Stop requested for %s runs.", *v.Count)
 		case protocol.FollowUp:
 			text = "Note queued."
 		case protocol.StopResult:
@@ -106,4 +110,28 @@ func (c *channelRuntime) channelControl(ctx context.Context, shared *conversatio
 	}
 	_, err = shared.journal().Admit(ctx, guard.EntryAgent, ledger.Input{ID: "channel-control:" + strconv.FormatInt(in.id, 10), ParentID: input.ID, ConversationID: b.Conversation, AgentID: b.Agent, Surface: input.Surface, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: text})
 	return true, err
+}
+
+type channelFollowSource struct {
+	Address           channels.Address
+	Binding           channels.Binding
+	Sender            string
+	Direct, Addressed bool
+}
+
+func (r *conversationRuntime) authorizeRunFollowSource(ctx context.Context, record runs.Record, source json.RawMessage) error {
+	var scope channelFollowSource
+	if decodeWorkerArgs(source, &scope) != nil || !scope.Address.Valid() || scope.Binding.Person != record.Origin.Person || !scope.Binding.Scope.Tools {
+		return runs.ErrScope
+	}
+	var current channels.Binding
+	err := r.db.Read(ctx, func(tx *canon.Tx) error {
+		var err error
+		current, err = channels.AdmitScope(ctx, tx, scope.Address, scope.Sender, scope.Direct, scope.Addressed)
+		return err
+	})
+	if err != nil || current != scope.Binding || current.Unreachable {
+		return runs.ErrScope
+	}
+	return nil
 }

@@ -234,7 +234,7 @@ func testProgressControlsSurfaces(t *testing.T, allSurface string) {
 			case protocol.StopResult:
 				expected = "Stop requested."
 			case protocol.MultiTaskControl:
-				expected = fmt.Sprintf("Stopped %s runs.", *p.Count)
+				expected = fmt.Sprintf("Stop requested for %s runs.", *p.Count)
 			}
 			if expected != "" {
 				waitScreen(t, h, terminal, expected)
@@ -293,15 +293,18 @@ func testProgressControlsSurfaces(t *testing.T, allSurface string) {
 		}
 		return v
 	}
-	for _, id := range ids[:2] {
+	for i, id := range ids[:2] {
 		v := read(id)
+		if len(v.FollowSources) != i {
+			t.Fatalf("channel source provenance missing: %d", len(v.FollowSources))
+		}
 		if v.Outcome != runs.Cancelled || len(v.FollowUps) != 1 || v.FollowUps[0] != fixture.Note {
 			t.Fatalf("surface effect differs: %+v", v)
 		}
 	}
 	if allSurface == "channel" {
 		send(14, "/stop all")
-		reply("Stopped 2 runs.")
+		reply("Stop requested for 2 runs.")
 	} else {
 		tui("/stop all", protocol.KindMultiTaskControl)
 		h.keys(terminal, "q")

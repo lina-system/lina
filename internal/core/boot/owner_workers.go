@@ -46,7 +46,7 @@ func (r *conversationRuntime) ownerWorkerControl(ctx context.Context, s clientsr
 			break
 		}
 	}
-	if entry == nil || entry.origin.person != s.PersonID || conversation != nil && entry.origin.conversation != *conversation {
+	if entry == nil || entry.origin.person != s.PersonID || !workerControlConversation(entry.origin, conversation) {
 		return outsideManagement()
 	}
 	if card != nil && (card.Task.AgentID != entry.origin.agent || card.Task.ConversationID != entry.origin.conversation) {
@@ -96,4 +96,8 @@ func (r *conversationRuntime) ownerWorkerControl(ctx context.Context, s clientsr
 	}
 	r.notifyOwnerViews()
 	return nil
+}
+
+func workerControlConversation(origin *conversationRuntime, conversation *string) bool {
+	return conversation == nil || origin.conversation == *conversation || origin.workerDelivery().conversation == *conversation
 }

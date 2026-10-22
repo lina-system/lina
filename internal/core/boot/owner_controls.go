@@ -3,6 +3,7 @@ package boot
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"unicode/utf8"
 
@@ -70,6 +71,9 @@ func (r *conversationRuntime) controlledRun(ctx context.Context, s clientsrv.Ses
 	return record, nil
 }
 func (r *conversationRuntime) followRun(ctx context.Context, s clientsrv.Session, e protocol.Envelope) (clientsrv.Result, error) {
+	return r.followRunWithSource(ctx, s, e, nil)
+}
+func (r *conversationRuntime) followRunWithSource(ctx context.Context, s clientsrv.Session, e protocol.Envelope, source json.RawMessage) (clientsrv.Result, error) {
 	p := e.Payload.(protocol.FollowUp)
 	if strings.TrimSpace(p.Text) == "" || utf8.RuneCountInString(p.Text) > 16384 {
 		return clientsrv.Result{}, malformedManagement()
@@ -82,7 +86,7 @@ func (r *conversationRuntime) followRun(ctx context.Context, s clientsrv.Session
 	if err != nil {
 		return clientsrv.Result{}, err
 	}
-	if err = r.background.service.FollowOnce(ctx, record.ID, e.MessageID, p.Text); err != nil {
+	if err = r.background.service.FollowScoped(ctx, record.ID, e.MessageID, p.Text, source); err != nil {
 		return clientsrv.Result{}, err
 	}
 	r.background.notify()
@@ -114,7 +118,7 @@ func (r *conversationRuntime) stopAllRuns(ctx context.Context, s clientsrv.Sessi
 		count++
 	}
 	for _, entry := range r.workers.entries() {
-		if entry.origin.person != s.PersonID || p.ConversationID != nil && entry.origin.conversation != *p.ConversationID {
+		if entry.origin.person != s.PersonID || !workerControlConversation(entry.origin, p.ConversationID) {
 			continue
 		}
 		snapshot, err := entry.adapter.Snapshot(ctx, entry.thread)
