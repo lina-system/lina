@@ -252,3 +252,39 @@ func TestPlanningUpgradePreservesPublishedPresetEffects(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPlanningUpgradePreservesPublishedSkillMaintenance(t *testing.T) {
+	cfg := storeConfig(t)
+	cfg.Migrations = append(append([]Migration{}, Migrations()[:35]...), Migration{Version: 36, SQL: skillMaintenanceSchema})
+	db := openStore(t, cfg)
+	if err := db.Write(t.Context(), func(tx *Tx) error {
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO skill_maintenance(id,revision,operation_hash,kind) VALUES('existing',1,'hash','prune')`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Migrations = Migrations()
+	db = openStore(t, cfg)
+	if err := db.Read(t.Context(), func(tx *Tx) error {
+		var hash string
+		if err := tx.QueryRowContext(t.Context(), "SELECT operation_hash FROM skill_maintenance WHERE id='existing' AND revision=1").Scan(&hash); err != nil {
+			return err
+		}
+		if hash != "hash" {
+			t.Fatalf("upgrade changed published maintenance receipt: %q", hash)
+		}
+		var plans int
+		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM plan_drafts").Scan(&plans); err != nil {
+			return err
+		}
+		if plans != 0 {
+			t.Fatalf("migration created plan drafts: %d", plans)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
