@@ -201,3 +201,10 @@ into a 100×34 PTY. Parsed cells prove that open code remains unstyled and close
 code gains theme colours in dark/light; high-contrast and `NO_COLOR` remain
 plain. The provider is released by a channel after the open screen is observed,
 without timing-based assertions.
+
+`m1/conformance-agents.json` runs every shared `application/agents/` fixture
+against installed Core over its public socket. It checks refusals for missing
+and deleted agents in conversation and management requests, plus channel
+binding/scope replacement. A paired synthetic channel and an existing binding
+exercise the actual target-agent checks. Read-only canon snapshots prove that
+refused requests preserve agent revisions, actions, conversations and bindings.
