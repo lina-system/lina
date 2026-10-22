@@ -29,6 +29,9 @@ var commandBuilds struct {
 }
 
 func TestMain(m *testing.M) {
+	if updateManagerHelper() {
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "proc-supervise" {
 		os.Exit(proc.SuperviseMain(os.Args[2:], os.Stderr))
 	}

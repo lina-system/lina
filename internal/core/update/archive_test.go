@@ -92,3 +92,24 @@ func TestDigestIsCheckedBeforeUnpack(t *testing.T) {
 		t.Fatal("verified bytes were not used", err)
 	}
 }
+
+func TestTruncatedDownloadNeverUnpacksAsComplete(t *testing.T) {
+	source := archiveFixture(t, []*tar.Header{{Name: "lina", Mode: 0700, Size: 64}})
+	data, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := fmt.Sprintf("%x", sha256.Sum256(data))
+	for _, cut := range []int{len(data) / 2, len(data) - 4} {
+		truncated := filepath.Join(t.TempDir(), "truncated.tar.gz")
+		if err = os.WriteFile(truncated, data[:cut], 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = verifiedArchive(t.Context(), truncated, expected, t.TempDir()); err == nil {
+			t.Fatal("truncated download passed digest")
+		}
+		if err = unpack(t.Context(), truncated, t.TempDir()); err == nil {
+			t.Fatal("truncated gzip passed extraction")
+		}
+	}
+}

@@ -54,6 +54,7 @@ function registryFor(cwd) {
     'internal/core/skills/',
     'internal/core/turn/',
     'internal/core/update/',
+    'internal/core/recover/',
     'internal/core/waiting/',
     'internal/core/worker/',
   ];

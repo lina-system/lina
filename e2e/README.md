@@ -218,3 +218,11 @@ and deleted agents in conversation and management requests, plus channel
 binding/scope replacement. A paired synthetic channel and an existing binding
 exercise the actual target-agent checks. Read-only canon snapshots prove that
 refused requests preserve agent revisions, actions, conversations and bindings.
+
+The M2 `update-activation.json` scenario drives `lina update --activate` against
+the installed Core. A test-owned service manager launches real service processes;
+Core drains through its client protocol, snapshots and swaps, runs a real
+conversation and bundled-worker readiness check, and resumes with a verified
+tool result. Start refusal rolls back, while provider failure and updater death
+after READY hold the new state. Package SIGKILL tests acknowledge each rename
+boundary without fixed startup delays.
