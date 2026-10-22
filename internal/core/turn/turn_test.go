@@ -42,12 +42,14 @@ func database(t *testing.T, schemas ...string) (*canon.Store, canon.Config) {
 	}
 	t.Cleanup(func() { c.Close() })
 	// Explicit schemas exercise historical runtime-only migrations.
-	ms := canon.Migrations()[:11]
-	if len(schemas) == 0 {
-		schemas = []string{turn.Schema, turn.ControlSchema, turn.OutcomeSchema}
-	}
-	for _, schema := range schemas {
-		ms = append(ms, canon.Migration{Version: len(ms) + 1, SQL: schema})
+	// Current composition tests include authority's delegation schema too;
+	// missing policy storage must never be a permissive runtime fallback.
+	ms := canon.Migrations()
+	if len(schemas) != 0 {
+		ms = ms[:11]
+		for _, schema := range schemas {
+			ms = append(ms, canon.Migration{Version: len(ms) + 1, SQL: schema})
+		}
 	}
 	cfg := canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: 1, Controls: c, Migrations: ms}
 	return open(t, cfg), cfg

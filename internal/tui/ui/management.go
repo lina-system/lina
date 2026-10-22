@@ -259,7 +259,22 @@ func (s *managementSession) response(ctx context.Context, c *clientapi.Client, e
 		}
 		found := false
 		for _, a := range *p.Agents {
-			lines = append(lines, a.AgentID+"  "+a.Name)
+			label := a.AgentID + "  " + a.Name
+			if a.Preset != nil {
+				boundary := ""
+				switch *a.Preset {
+				case "investing":
+					boundary = "agents.advice_only"
+				case "legal":
+					boundary = "agents.draft_only"
+				case "dev":
+					boundary = "agents.development"
+				}
+				if boundary != "" {
+					label += " (" + design.Text(m.styles.options.Language, boundary) + ")"
+				}
+			}
+			lines = append(lines, label)
 			found = found || a.AgentID == active
 		}
 		m.openPager(strings.Join(lines, "\n"))

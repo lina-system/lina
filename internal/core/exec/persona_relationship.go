@@ -75,7 +75,7 @@ func (p *Persona) RecordRelationship(ctx context.Context, scope PersonaScope, in
 }
 
 func RegisterRelationship(registry *tools.Registry, p *Persona, scope PersonaScope) (tools.Spec, error) {
-	spec := tools.Spec{Name: "record_relationship", Placement: tools.Core, Conc: 1, Deadline: 30 * time.Second, Schema: func(raw json.RawMessage) (tools.Input, error) {
+	spec := tools.Spec{Classify: tools.Class(tools.PrivateDraft), Name: "record_relationship", Placement: tools.Core, Conc: 1, Deadline: 30 * time.Second, Schema: func(raw json.RawMessage) (tools.Input, error) {
 		var in RelationshipChange
 		if err := decodeSkill(raw, &in); err != nil || strings.TrimSpace(in.Quote) == "" || len(in.Quote) > 8192 {
 			return tools.Input{}, tools.ErrInvalid
