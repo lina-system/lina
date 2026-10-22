@@ -23,6 +23,8 @@ import (
 // Core APIs and canon writer in #34's isolated state root, without claiming TUI
 // or protocol rendering coverage. Its script lives under e2e/m1/.
 func TestM1WaitingRunningNotices(t *testing.T) {
+	t.Parallel()
+
 	data, err := os.ReadFile("waiting-running-notices.json")
 	if err != nil {
 		t.Fatal(err)

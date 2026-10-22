@@ -22,6 +22,8 @@ import (
 )
 
 func TestM1TUIConversationResize(t *testing.T) {
+	t.Parallel()
+
 	data, err := os.ReadFile("tui-resize.json")
 	if err != nil {
 		t.Fatal(err)
@@ -228,6 +230,8 @@ func resizeComparableRows(s tuiterm.Snapshot, reserve int) []string {
 // Exercise both a clipped transcript and a padded transcript. A local duration
 // may change the visible tail, but must never move or mask composer chrome.
 func TestResizeComparisonPreservesEverySharedRow(t *testing.T) {
+	t.Parallel()
+
 	for _, height := range []int{12, 35} {
 		t.Run(fmt.Sprint(height), func(t *testing.T) {
 			const width = 40
@@ -282,6 +286,8 @@ func TestResizeComparisonPreservesEverySharedRow(t *testing.T) {
 // Exercise the production Core and TUI while a provider response is held by an
 // explicit gate. Resize and rendered cells, not sleeps, establish each frame.
 func TestM1TUINarrowActivityResize(t *testing.T) {
+	t.Parallel()
+
 	for _, locale := range []struct {
 		name     string
 		language design.Language

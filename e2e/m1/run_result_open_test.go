@@ -16,6 +16,8 @@ import (
 )
 
 func TestM1RunResultOpenInstalledCore(t *testing.T) {
+	t.Parallel()
+
 	var scenario struct{ Input, Artifact, Prior string }
 	data, err := os.ReadFile("run-result-open.json")
 	if err != nil {

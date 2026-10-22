@@ -45,6 +45,8 @@ func (l scenarioListener) Accept() (net.Conn, error) {
 }
 
 func TestM3TailnetListener(t *testing.T) {
+	t.Parallel()
+
 	var scenario struct {
 		Address, Remote, Input, Outcome string
 		Capabilities                    []protocol.Capability

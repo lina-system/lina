@@ -26,6 +26,8 @@ import (
 // The production Core job service is hosted with synthetic job/model handlers;
 // the existing Core command proves its client protocol has no worker dependency.
 func TestM1MoiraiCrashResume(t *testing.T) {
+	t.Parallel()
+
 	data, err := os.ReadFile("moirai-worker.json")
 	if err != nil {
 		t.Fatal(err)

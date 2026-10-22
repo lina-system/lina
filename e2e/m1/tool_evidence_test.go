@@ -23,6 +23,8 @@ func (evidenceLeaser) Acquire(context.Context, lease.Activity) (lease.Lease, err
 }
 
 func TestM1ToolEvidenceCannotApprove(t *testing.T) {
+	t.Parallel()
+
 	h := newHarness(t, "")
 	store, _ := acceptanceStore(t, h.root, 1)
 	auth := grant.Request{GrantID: "grant", MainID: "main", Epoch: 1, TaskID: "task", Host: "host", OSUser: "user", Person: "owner", Agent: "agent"}

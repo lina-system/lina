@@ -277,6 +277,26 @@ test('acceptance batches run every enumerated test once within the shared budget
   assert.ok(elapsed < componentsTimeoutMs);
 });
 
+test('acceptance concurrency is bounded independently of host CPU count', t => {
+  const sb = fixture(t);
+  const runs = [];
+  const result = checkComponents({ cwd: sb.dir, components: [{ name: 'lina', module: '.', packages: ['.', './e2e/...'] }],
+    execute(command, args) {
+      if (args[0] === 'list') return { status: 0, stdout: 'example.invalid/e2e\nexample.invalid/e2e/empty\n', stderr: '' };
+      if (args.includes('-list')) return { status: 0, stdout: args.at(-1).endsWith('/empty') ? '' : 'TestOne\nTestTwo\n', stderr: '' };
+      if (args[0] === 'test') runs.push(args);
+      return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
+    } });
+  assert.equal(result.status, 0, result.output);
+  assert.equal(runs.length, 4, 'ordinary packages, both acceptance batches and an empty package run');
+  assert.ok(!runs[0].some(arg => arg.startsWith('-parallel=')), 'ordinary package scheduling is unchanged');
+  for (const args of runs.slice(1)) {
+    assert.ok(args.includes('-parallel=4'), 'Core subprocess concurrency must not grow with host CPU count');
+    assert.ok(args.includes('-timeout=6m'), 'parallel acceptance retains the diagnostic deadline');
+    assert.ok(args.includes('-count=1'), 'parallel acceptance remains uncached');
+  }
+});
+
 test('an acceptance batch failure stops the gate without running later batches', t => {
   const sb = fixture(t);
   sb.write(sb.dir, 'e2e/fixture_test.go', '// SPDX-License-Identifier: Apache-2.0\npackage e2e\n');

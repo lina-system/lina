@@ -17,6 +17,8 @@ import (
 )
 
 func TestM2RecordsIndexInstalledCore(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile("../m2/records-index.json")
 	if err != nil {
 		t.Fatal(err)

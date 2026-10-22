@@ -31,6 +31,8 @@ func restartClient(h *harness, core *process) *client {
 }
 
 func TestPlannedRestart(t *testing.T) {
+	t.Parallel()
+
 	data, err := os.ReadFile("restart.json")
 	if err != nil {
 		t.Fatal(err)

@@ -140,6 +140,8 @@ func TestDecisionCoreHelper(t *testing.T) {
 }
 
 func TestM1TUICards(t *testing.T) {
+	t.Parallel()
+
 	scenario := readCardScenario(t)
 	h := newHarness(t, "")
 	child := exec.CommandContext(h.ctx, os.Args[0], "-test.run=^TestDecisionCoreHelper$")

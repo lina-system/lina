@@ -75,6 +75,8 @@ func indexDump(t *testing.T, db Canon) string {
 			"SELECT id,path,blob,revision FROM records_index ORDER BY id",
 			"SELECT id,person,kind,state,title,note FROM records_text ORDER BY id",
 			"SELECT id,title,note FROM records_fts ORDER BY id",
+			"SELECT id,title,note FROM records_korean_fts ORDER BY id",
+			"SELECT gram,id FROM records_korean_bigram ORDER BY gram,id",
 			"SELECT source,relation,target FROM records_edges ORDER BY source,relation,target",
 			"SELECT head FROM records_index_state",
 		} {
