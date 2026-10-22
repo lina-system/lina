@@ -61,6 +61,10 @@ var catalog = map[string]translation{
 	"running.reason.person":          {"Waiting for you", "내 응답 대기"},
 	"running.reason.budget":          {"Waiting for work allowance", "작업 한도 대기"},
 
+	"conversation.start.memory": {"What do you remember about me?", "나에 대해 무엇을 기억해?"},
+	"conversation.start.voice":  {"Please keep your replies brief.", "앞으로 짧게 답해 줘."},
+	"conversation.start.task":   {"Help me finish a task.", "이 일을 끝까지 맡아서 해 줘."},
+
 	"developer.state.active":           {"Working", "진행 중"},
 	"developer.state.idle":             {"Idle", "대기 중"},
 	"developer.state.waiting":          {"Waiting for input", "응답 대기"},
