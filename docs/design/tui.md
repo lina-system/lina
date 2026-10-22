@@ -261,9 +261,9 @@ Regions:
   uses text color. Continuation rows align under the message text. Exactly one
   empty row separates messages. ASCII and monochrome use `> You:` and
   `* <agent name>:` (the person word follows the UI language).
-- Composer, with its attachment strip.
+- Composer, with its attachment strip and a full-width hairline immediately above the input.
 - Card row above the composer, on Home (T-12).
-- Status line: connection, agent, the running count ("2 running, 1 waiting for you"), restart pending, and Core messages.
+- Status line below the composer: connection mark and word first, agent, the running count ("2 running, 1 waiting for you"), restart pending, Core messages, then key hints.
 
 Once the focused conversation's snapshot is known to have no items, its header
 shows the token-based `lina.` wordmark, the agent name and the connection word.
@@ -308,10 +308,10 @@ Width tiers (P):
 +--------------------------------------------+---------------------------------------+
 | WAITING FOR ME  1   Send the signed form to the supplier?  Recommended: send      |
 | AT A GLANCE         Move  [###--]  building  just done: ...  next: ...  !         |
-+-----------------------------------------------------------------------------------+
-| > composer                                                                        |
-+-----------------------------------------------------------------------------------+
- live  Lina  2 running, 1 waiting for you
+─────────────────────────────────────────────────────────────────────────────────────
+ › composer
+   continuation aligned under the draft
+ live  Lina  2 running, 1 waiting for you  /help  Enter  Ctrl+D
 ```
 
 The diagram is schematic: it fixes the regions and their order, not glyphs or widths.
@@ -324,7 +324,8 @@ func Plan(size Size, caps Caps, st Shape) Layout // regions disjoint, sum fits, 
 
 - The header, the status line, one composer row and a transcript floor of four rows (P) always survive.
 - The composer grows with the draft to six rows (P), then scrolls inside itself.
-- What remains is shared in a stated order of shedding: the side pane closes first, then the running strip folds to a count, then the card row folds to one summary line. A folded part keeps its count, so a count on screen always equals the list.
+- The composer rule consumes one row, using `glyph.rule` and `color.line` across the full terminal width. It is a hairline, not a box.
+- What remains is shared in a stated order of shedding: the side pane closes first, then the running strip folds to a count, then the card row folds to one summary line, then the composer rule disappears. A folded part keeps its count, so a count on screen always equals the list.
 - `Plan` treats negative dimensions as zero. At too-small sizes it reserves one
   status row when a cell exists and uses the remaining rows for the size notice.
   At usable sizes a granted, populated running strip starts at one to three rows
@@ -367,6 +368,16 @@ does not rely on scheduler timing or sleeps.
 `e2e/m1/tui-resize.json` exercises 80x24 → 40x12 → 120x35 through a real PTY,
 compares every row and the cursor with a fresh client at the same size, then
 clears the retained draft and completes another exchange.
+
+The first visible composer row starts with the accent `glyph.action` (`›`, or
+`>` in ASCII) and one space. Continuations align under the draft, including when
+the textarea scrolls. An empty draft shows the muted `composer.placeholder`
+catalog entry in Korean or English; it is display text and is never submitted.
+The prompt reserves its display width in both wrapping and hardware cursor
+placement, so Korean IME composition remains at the draft insertion point.
+`e2e/m1/tui-composer.json` checks a 100x34 installed-Core PTY with a fixture
+provider: rule cells, localized placeholder, prompt, Korean draft cursor and
+the status/hints below the input in Unicode and ASCII modes.
 
 ## Home, waiting for me and progress (T-12)
 
