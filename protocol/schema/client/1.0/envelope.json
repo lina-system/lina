@@ -2337,16 +2337,28 @@
       "additionalProperties": false
     },
     "progress_get": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "after": {
+          "type": "string"
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
     "progress": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "lanes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/worker_lane"
+          }
+        },
+        "next_cursor": {
+          "type": "string"
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
@@ -4860,6 +4872,65 @@
       "required": [
         "provider",
         "configured"
+      ],
+      "additionalProperties": false
+    },
+    "worker_lane": {
+      "type": "object",
+      "properties": {
+        "lane_id": {
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "agent_name": {
+          "type": "string"
+        },
+        "worker": {
+          "type": "string"
+        },
+        "thread_id": {
+          "type": "string"
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "node_id": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "generation": {
+          "type": "string"
+        },
+        "details": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "lane_id",
+        "task_id",
+        "agent_id",
+        "agent_name",
+        "worker",
+        "thread_id",
+        "turn_id",
+        "node_id",
+        "state",
+        "title",
+        "generation",
+        "details"
       ],
       "additionalProperties": false
     }

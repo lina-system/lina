@@ -526,3 +526,21 @@ person, requesting agent, exact displayed arguments and revision. An
 `approval_answer` uses the existing authenticated owner decision path; it cannot
 supply a worker thread or change its arguments. Older approval producers omit
 this optional field. Worker questions use the existing `question.conversation_id`.
+
+### Developer worker lanes
+
+The optional `worker_lanes` capability (1.0) grants the read-only `progress_get`
+request and its `progress` response. An absent `after` starts at the first task;
+otherwise it is an opaque source/id cursor. `lanes` is a page of at most 32 current
+worker executions, with `next_cursor` when another visible row exists. Durable
+work rows are followed by installed Codex runtime sessions, whose adapter
+snapshots preserve active, idle, waiting, dead and unknown states without
+claiming verified delivery. Runtime detail contains masked worker output and
+version; the entire runtime-page snapshot attempt has a five-second deadline,
+and unavailable snapshots remain visible as unknown. Generated
+`WorkerLane` fields carry persona, task and execution identities, display names,
+state and source-labeled stage details. Core authorizes the connected person and
+filters deleted personas and foreign-person records before pagination. Each page
+is one canon snapshot; a refresh starts a new snapshot. This request adds no
+subscription or execution authority and does not change the existing `progress`
+status-topic capability. The TUI retains fold/selection state locally by lane id.
