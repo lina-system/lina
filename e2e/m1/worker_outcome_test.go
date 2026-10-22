@@ -218,7 +218,7 @@ func waitWorkerCanon(t *testing.T, h *harness, query string, want int) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer db.Close(context.Background())
 	ctx, cancel := context.WithTimeout(h.ctx, operationTimeout)
 	defer cancel()
 	tick := time.NewTicker(10 * time.Millisecond)

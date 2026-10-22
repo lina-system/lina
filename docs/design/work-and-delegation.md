@@ -619,6 +619,8 @@ worker notices. `worker_snapshot` can return the recorded terminal outcome when
 no live session remains, explicitly marked non-live; that record cannot authorize
 worker control. Unstarted completion follow-ups resume from canon after restart;
 a claimed turn is never replayed and a committed reply is not duplicated.
+Channel replies follow the completion back to its original input, retaining that
+input's address and the existing outbound delivery identity across restart.
 
 Snapshot reads thread summary state and includes the latest
 completed assistant message observed on the owned session, not a delivery verdict.

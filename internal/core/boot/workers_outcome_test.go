@@ -2,13 +2,17 @@
 package boot
 
 import (
+	"context"
 	"encoding/json"
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/channels"
+	"github.com/thisisjun786/lina/internal/core/gateway"
 	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/provider"
 	"github.com/thisisjun786/lina/kit/tools"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -138,5 +142,80 @@ func TestWorkerCompletionCannotSupplyUserCancellation(t *testing.T) {
 	got := bindings["worker_interrupt"].Execute(t.Context(), provider.ToolCall{ID: "injected", Name: "worker_interrupt", Arguments: `{"session":"session","turn":"turn","generation":1,"binding":1,"quote":"stop this worker"}`})
 	if got.Code != loop.Denied {
 		t.Fatalf("worker claim authorized cancellation: %+v", got)
+	}
+}
+
+// Only Send is used by channelDeliveries; any other adapter operation is a test
+// failure through the nil embedded adapter rather than a real platform call.
+type workerOutcomeChannel struct {
+	channelAdapter
+	sent []gateway.Outbound
+}
+
+func (a *workerOutcomeChannel) Send(_ context.Context, _ lease.Lease, message gateway.Outbound) (gateway.SendResult, error) {
+	a.sent = append(a.sent, message)
+	return gateway.SendResult{Outcome: gateway.Delivered, MessageID: "delivered"}, nil
+}
+
+func TestWorkerCompletionReachesOriginatingChannelOnce(t *testing.T) {
+	for _, platform := range []string{"telegram", "discord"} {
+		t.Run(platform, func(t *testing.T) {
+			r := runRuntime(t)
+			ctx, now := t.Context(), time.Now()
+			store := r.channels.store
+			bot := channels.Bot{Platform: platform, Account: "fixture"}
+			if err := store.Connect(ctx, bot, r.person); err != nil {
+				t.Fatal(err)
+			}
+			code, err := store.PairingCode(ctx, bot, r.person, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.Pair(ctx, bot, code, "42", "100", now); err != nil {
+				t.Fatal(err)
+			}
+			address := channels.Address{Bot: bot, Chat: "100"}
+			binding := channels.Binding{Address: address, Agent: r.agent, Person: r.person, Conversation: r.conversation, Scope: channels.Scope{Reads: channels.DMOnly, Writes: channels.ReplyOnly, Tools: true, Memory: true}}
+			if err := store.Bind(ctx, binding); err != nil {
+				t.Fatal(err)
+			}
+			inbound := gateway.Inbound{Address: address, NativeID: "native", Sender: "42", Cursor: "1", Direct: true, Body: []byte(`{"Text":"make the file"}`)}
+			var delivery gateway.Delivery
+			if err := gateway.New(r.db, func(_ context.Context, d gateway.Delivery) error { delivery = d; return nil }).Admit(ctx, inbound); err != nil {
+				t.Fatal(err)
+			}
+			surface := ledger.Surface{Kind: "channel", Platform: platform, ChatID: address.Chat}
+			input, err := r.journal().Admit(ctx, guard.EntryOwner, ledger.Input{ID: "channel-input:" + strconv.FormatInt(delivery.InboxID, 10), ConversationID: r.conversation, AgentID: r.agent, PersonID: r.person, Surface: surface, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "make the file"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			entry := workerSession{origin: r, input: input, thread: worker.Thread{ID: "worker", AttemptID: "attempt"}, workdir: t.TempDir(), packet: "make the file", output: "file made"}
+			if err := entry.finish(ctx, worker.Event{Thread: worker.Thread{ID: "worker", TurnID: "done"}, Finish: &worker.Finish{Status: worker.Done}}); err != nil {
+				t.Fatal(err)
+			}
+			var completion string
+			if err := r.db.Read(ctx, func(tx *canon.Tx) error {
+				return tx.QueryRowContext(ctx, "SELECT id FROM conv_event WHERE scaffold_kind='worker_completion'").Scan(&completion)
+			}); err != nil {
+				t.Fatal(err)
+			}
+			_, err = r.journal().Admit(ctx, guard.EntryAgent, ledger.Input{ID: "checked-reply", ParentID: completion, ConversationID: r.conversation, AgentID: r.agent, Surface: surface, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Checked file outcome"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			adapter := &workerOutcomeChannel{}
+			for range 2 {
+				if err := r.channels.channelDeliveries(ctx, bot, adapter); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if len(adapter.sent) != 1 {
+				t.Fatalf("worker completion deliveries=%d, want one", len(adapter.sent))
+			}
+			got := adapter.sent[0]
+			if got.Address != address || got.ReplyTo != "native" || got.LedgerRef != "checked-reply" || got.Text != "Checked file outcome" {
+				t.Fatalf("lost source address or result: %+v", got)
+			}
+		})
 	}
 }
