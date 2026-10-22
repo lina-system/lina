@@ -66,10 +66,7 @@ func (p *Persona) RecordRelationship(ctx context.Context, scope PersonaScope, in
 			request.Item.Supersedes = old.ID
 		}
 		item, err = memory.Insert(ctx, tx, request, resolve)
-		if err != nil {
-			return err
-		}
-		return memory.EndRelationshipPredecessor(ctx, tx, item)
+		return err
 	})
 	if err != nil {
 		return RememberReceipt{}, err

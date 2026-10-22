@@ -303,6 +303,8 @@ Admission uses the bot account and native event id as its durable deduplication 
 
 The outbound queue receives a ledger reference and already shaped parts, requires that reference to name a committed agent event in the bound conversation, checks current pairing, binding and reply provenance, and records each send attempt before calling the adapter. One bot/chat has at most one in-flight send, including across its topics. A refusal before delivery retains the same part and its retry-after deadline; an uncertain outcome terminates the message without resending any part. Restart converts in-flight attempts to unknown before adapters run. A permanent block marks the chat unreachable and stops queued delivery. Binding removal and agent deletion prevent queued sends from starting. Queue records retain the reply and its delivery outcome for the consuming app view; this increment adds no client endpoint, platform transport or approval-button handler.
 
+A [backup restore](filesystem.md#backup-generations) converts both queued and in-flight deliveries to unknown before publication: either may have been delivered since capture. The restored queue retains parts and existing delivery receipts, rejects old attempt completions and never retries these messages. Ordinary restart still retains queued deliveries and their retry-after deadlines.
+
 ### Credentials
 
 A bot token is an API key in the sense of "Credentials and sign-in". The person enters it once; LINA Core keeps it in the secret store under the person's id and never returns it to any client. It goes only to the platform's API through the adapter. It never enters a model request, a log, the sandbox or an event of the self-diagnosis log.

@@ -12,9 +12,6 @@ import (
 )
 
 func (m *shellModel) discoveryHistory() *protocol.HistoryGet {
-	if !m.hasCapability("conversation") {
-		return nil
-	}
 	if m.conversation.agentMissing {
 		m.agentDiscoveryDone()
 		return nil
@@ -26,7 +23,6 @@ func (m *shellModel) discoveryHistory() *protocol.HistoryGet {
 	if len(m.content.Agents) == 0 {
 		return nil
 	}
-	m.conversation.agentPending = true
 	return &protocol.HistoryGet{}
 }
 
@@ -77,7 +73,7 @@ func (m *shellModel) reconnectHistory(agents []protocol.Agent) *protocol.History
 
 func (m *shellModel) agentDiscoveryDone() {
 	m.conversation.agentPending = false
-	if (m.status.State == Resyncing || m.status.State == Connecting) && !m.hasGap() && len(m.resyncPending) == 0 {
+	if m.status.State == Resyncing && !m.hasGap() && len(m.resyncPending) == 0 {
 		m.status = ConnectionStatus{State: Live}
 	}
 }

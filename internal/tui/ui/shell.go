@@ -119,9 +119,7 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case shellConnection:
 		if msg.Generation == m.generation {
 			m.status = msg.Status
-			if m.status.State == Live && m.conversation.agentPending && m.conversation.id == "" {
-				m.status.State = Connecting
-			} else if m.status.State == Live && (m.conversation.agentPending || m.hasGap() || len(m.resyncPending) > 0) {
+			if m.status.State == Live && (m.conversation.agentPending || m.hasGap() || len(m.resyncPending) > 0) {
 				m.status.State = Resyncing
 			}
 		}
@@ -183,6 +181,7 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		var commands []state.Cmd
 		m.content, commands = state.Reduce(m.content, msg.Message)
 		m.refreshOpenCard()
+		m.refreshRunning()
 		m.refreshBlocks()
 		for _, block := range m.content.Blocks {
 			if block.Kind == protocol.KindTurnState && block.TurnKnown {
@@ -340,7 +339,7 @@ func (m *shellModel) View() tea.View {
 	view.AltScreen = true
 	view.ReportFocus = true
 	view.KeyboardEnhancements.ReportEventTypes = true
-	if m.hasComposer() && m.status.State.active() && !(m.conversation.agentPending && m.conversation.id == "") {
+	if m.hasComposer() && m.status.State.active() {
 		plan := m.conversationPlan()
 		if plan.Tier != layout.TooSmall && !m.conversation.pager.open && !m.accounts.open && !m.channels.open && !m.talk.open && m.content.CardView.ID == "" {
 			view.Cursor = m.conversation.composer.Cursor()
@@ -395,7 +394,7 @@ func (m *shellModel) viewContent(showNotice bool) string {
 	if m.accounts.open {
 		return m.accountContent()
 	}
-	if m.hasComposer() && m.status.State.active() && !(m.conversation.agentPending && m.conversation.id == "") {
+	if m.hasComposer() && m.status.State.active() {
 		return m.conversationContent(showNotice)
 	}
 	plan := layout.Plan(m.size, layout.Caps{}, layout.Shape{ComposerRows: 1})

@@ -176,19 +176,29 @@ func newAccountTap(t *testing.T, h *harness, target string, notifications ...boo
 		t.Fatal(err)
 	}
 	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		local, err := listener.Accept()
-		if err != nil {
-			return
-		}
+	ctx, cancel := context.WithCancel(h.ctx)
+	serve := func(local net.Conn) {
 		defer local.Close()
-		remote, err := net.Dial("unix", target)
-		if err != nil {
-			return
+		var remote net.Conn
+		// The proxy socket stays open while Core restarts. Hold the client's
+		// new handshake until the upstream socket accepts; closing it here
+		// would turn Core's temporary absence into a malformed handshake.
+		retry := time.NewTicker(5 * time.Millisecond)
+		defer retry.Stop()
+		for {
+			var err error
+			remote, err = (&net.Dialer{}).DialContext(ctx, "unix", target)
+			if err == nil {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-retry.C:
+			}
 		}
 		defer remote.Close()
-		stop := context.AfterFunc(h.ctx, func() { local.Close(); remote.Close() })
+		stop := context.AfterFunc(ctx, func() { local.Close(); remote.Close() })
 		defer stop()
 		var wg sync.WaitGroup
 		pump := func(dst, src net.Conn, reply bool) {
@@ -218,7 +228,7 @@ func newAccountTap(t *testing.T, h *harness, target string, notifications ...boo
 						if err == nil && e != nil {
 							select {
 							case tap.replies <- *e:
-							case <-h.ctx.Done():
+							case <-ctx.Done():
 								return
 							}
 						}
@@ -233,9 +243,22 @@ func newAccountTap(t *testing.T, h *harness, target string, notifications ...boo
 		go pump(remote, local, false)
 		go pump(local, remote, true)
 		wg.Wait()
+	}
+	go func() {
+		defer close(done)
+		var connections sync.WaitGroup
+		defer connections.Wait()
+		for {
+			local, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			connections.Add(1)
+			go func() { defer connections.Done(); serve(local) }()
+		}
 	}()
 	var once sync.Once
-	tap.close = func() { once.Do(func() { listener.Close(); <-done }) }
+	tap.close = func() { once.Do(func() { cancel(); listener.Close(); <-done }) }
 	t.Cleanup(tap.close)
 	return tap
 }

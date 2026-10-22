@@ -184,6 +184,39 @@ func waitScreen(t *testing.T, h *harness, terminal *terminal, text string) tuite
 	return snapshot
 }
 
+// A visible composer does not imply that initial History has supplied its
+// destination. Observe this TUI's subscription, as the history-order scenario
+// does, before sending the first input. The tap also serves later reconnects.
+func startDiscoveredConversationTUI(t *testing.T, h *harness, environment []string, width, height int) *terminal {
+	t.Helper()
+	socket := h.socket
+	tap := newAccountTap(t, h, socket)
+	h.socket = tap.socket
+	defer func() { h.socket = socket }()
+	terminal := h.startTerminalSize(environment, false, true, width, height)
+	for {
+		frame := tap.next(t, h)
+		if snapshot, ok := frame.Payload.(protocol.Snapshot); ok && strings.HasPrefix(snapshot.Topic, "conversation:") {
+			break
+		}
+	}
+	// The remaining responses still reach the TUI. Drain the observation copy
+	// so repeated turns and reconnects cannot fill the tap's bounded queue.
+	stop, done := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-tap.replies:
+			case <-stop:
+				return
+			}
+		}
+	}()
+	t.Cleanup(func() { close(stop); <-done })
+	return terminal
+}
+
 func installedConversationHarness(t *testing.T, providerURL string, installArgs ...string) (*harness, func(bool) *process) {
 	t.Helper()
 	h := newHarness(t, buildLina(t))
