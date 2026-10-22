@@ -1,6 +1,6 @@
 # Headless acceptance harness
 
-Run `go test ./e2e/...` (or `go test -count=1 -v ./e2e/...` for uncached scenario
+Run `go test ./e2e/m1/...` (or `go test -count=1 -v ./e2e/...` for uncached scenario
 output). Node.js and the workspace's Go toolchain are required. The harness uses
 native Linux and macOS pseudo-terminals; it needs no window, display server,
 provider account, external network service or human input. Conversation screens
@@ -68,9 +68,9 @@ also reopen the poller against durable connection and secret state.
 `m1/tui-talk-log.json` seeds a durable exchange, restarts installed Core, and
 checks one summary row and its explicit ledger expansion without a model call.
 
-Helpers are test-only Go files in this package, shared by scenario tests. Keeping
+The M1 acceptance map is [m1/README.md](m1/README.md). Helpers are test-only Go files in `m1/`, shared by scenario tests. Keeping
 process creation in test files follows the architecture rule for command
-acceptance harnesses. Future milestones can add scenario files here; new
+acceptance harnesses. Existing persona-growth extensions retain the same harness and their `m2/` fixture; future milestones can add scenario files here; new
 subpackages under `e2e/` are also covered by the registered package pattern.
 
 `m1/import-reconciliation.json` runs the installed `lina import-hermes` command
@@ -136,7 +136,7 @@ After setting the endpoint, model and key privately, run:
 ```sh
 export LINA_QA_REAL_MODEL=1
 export LINA_RESPONSES_BASE_URL LINA_RESPONSES_MODEL LINA_RESPONSES_API_KEY
-go test -count=1 -v ./e2e -run 'TestResponsesRoundTrip|TestRealModelHeadlessConversation'
+go test -count=1 -v ./e2e/m1 -run 'TestResponsesRoundTrip|TestRealModelHeadlessConversation'
 ```
 
 Keep endpoint values and credentials out of shell tracing, logs, reports and
