@@ -47,6 +47,12 @@ func TestM1ImportReconciliation(t *testing.T) {
 		t.Fatal(err)
 	}
 	h, start := installedConversationHarness(t, "")
+	// This scenario runs Core plus five importer commands and checks both
+	// SQLite sources and canon between them. Give that sequence its own budget;
+	// every child still has the unchanged operationTimeout in process.wait.
+	ctx, cancel := context.WithTimeout(t.Context(), 9*operationTimeout)
+	defer cancel()
+	h.ctx = ctx
 	core := start(false)
 	h.stopCore(core)
 	path := filepath.Join(h.root, "canon/canon.sqlite")
