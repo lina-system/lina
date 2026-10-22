@@ -334,38 +334,42 @@ func (h *Topics) emit(name string, t *topicState, event TopicEvent) {
 		t.ring[t.ringNext] = frame
 		t.ringNext = (t.ringNext + 1) % h.options.RingSize
 	}
-	// The snapshot is a bounded materialized window, not the delta ring.
-	index := -1
-	for i, old := range t.items {
-		if old.Key == event.Key {
-			index = i
-			break
+	// Activity transitions remain replayable, but never evict conversation rows.
+	if event.Kind != protocol.KindToolActivity {
+		// The snapshot is a bounded materialized window, not the delta ring.
+		index := -1
+		for i, old := range t.items {
+			if old.Key == event.Key {
+				index = i
+				break
+			}
 		}
-	}
-	removed := false
-	if event.Kind == protocol.KindRunningUpdate {
-		var update protocol.RunningUpdate
-		if json.Unmarshal(event.Data, &update) == nil && update.Removed != nil {
-			removed = *update.Removed
+		removed := false
+		if event.Kind == protocol.KindRunningUpdate {
+			var update protocol.RunningUpdate
+			if json.Unmarshal(event.Data, &update) == nil && update.Removed != nil {
+				removed = *update.Removed
+			}
 		}
-	}
-	if removed {
-		if index >= 0 {
-			t.items = append(t.items[:index], t.items[index+1:]...)
-		}
-	} else if index >= 0 {
-		if combined, ok := mergeEvents(t.items[index], event); ok {
-			t.items[index] = combined
+		if removed {
+			if index >= 0 {
+				t.items = append(t.items[:index], t.items[index+1:]...)
+			}
+		} else if index >= 0 {
+			if combined, ok := mergeEvents(t.items[index], event); ok {
+				t.items[index] = combined
+			} else {
+				t.items[index] = event
+			}
 		} else {
-			t.items[index] = event
+			if len(t.items) == h.options.SnapshotSize {
+				copy(t.items, t.items[1:])
+				t.items = t.items[:len(t.items)-1]
+			}
+			t.items = append(t.items, event)
 		}
-	} else {
-		if len(t.items) == h.options.SnapshotSize {
-			copy(t.items, t.items[1:])
-			t.items = t.items[:len(t.items)-1]
-		}
-		t.items = append(t.items, event)
 	}
+
 	for sub := range t.subs {
 		if len(sub.queue) == h.options.QueueSize {
 			sub.closeLocked(rpc.ErrResyncRequired)
