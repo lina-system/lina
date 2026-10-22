@@ -8,11 +8,11 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/thisisjun786/lina/internal/core/manifest"
+	"github.com/thisisjun786/lina/internal/core/work/pin"
 )
 
 func main() {
-	record, err := manifest.CRWBuild(".")
+	record, err := pin.Build(".")
 	if err == nil {
 		err = json.NewEncoder(os.Stdout).Encode(record)
 	}

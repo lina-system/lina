@@ -48,7 +48,7 @@ are failures to execute, not successful negative judgments. Error prose is not
 compared across validators.
 
 Run `go test ./internal/core/work/pin/... ./internal/core/manifest/...` or
-`go run ./internal/core/manifest/crwinfo` from the repository root. The latter
+`go run ./internal/core/work/pin/crwinfo` from the repository root. The latter
 verifies the corpus and emits the full pin for the build manifest. Moving the
 pin requires updating the adopted bytes, their hashes, replay inputs and the
 affected record contracts together. Never generate expected judgments from LINA.

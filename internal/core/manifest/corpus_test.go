@@ -4,10 +4,12 @@ package manifest
 
 import (
 	"testing"
+
+	"github.com/thisisjun786/lina/internal/core/work/pin"
 )
 
 func TestAdoptedCRWCorpus(t *testing.T) {
-	r, err := CRWBuild("../../..")
+	r, err := pin.Build("../../..")
 	if err != nil {
 		t.Fatal(err)
 	}
