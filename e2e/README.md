@@ -13,6 +13,15 @@ native Linux and macOS pseudo-terminals; it needs no window, display server,
 provider account, external network service or human input. Conversation screens
 use the pinned terminal library and a VT emulator.
 
+For the colour TUI, the PTY recorder reassembles renderer writes using the
+existing cursor-preserving scroll-margin reset at the end of each write.
+A PTY read can split or combine writes; it is not a completed screen. Plain
+and connection-only output retain their streaming path. Deterministic recorder
+tests split ANSI, UTF-8 and the write trailer, combine writes in one read, and
+reject a truncated redraw. Screen predicates still wait for the relevant UI
+state: a completed turn on an observer socket does not prove the TUI has
+rendered it. LONG-QA waits for the idle viewport before stitching PgUp pages.
+
 The suite builds each command once per test run and removes the shared binaries
 after all scenarios finish. Foundation enumerates the acceptance tests and runs
 two disjoint batches under its shared components budget. This keeps a growing
