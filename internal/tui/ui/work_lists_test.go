@@ -142,3 +142,26 @@ func TestWorkListNoticeRemovedWhenCapabilitiesGranted(t *testing.T) {
 		t.Fatal("old missing-capability notice survived a grant")
 	}
 }
+
+func TestRunningRemovalUpdatesOpenPagerAndKeepsDraft(t *testing.T) {
+	m := conversationShell()
+	m.Update(shellData{Generation: 1, Message: workListWelcome(t, "conversation", "running")})
+	m.Update(shellData{Generation: 1, Message: state.Snapshot{Epoch: "42", Revocation: "1", Topic: "running", Cursor: 1,
+		Items: []state.Block{{ID: streamKey("running", "one"), RunID: "one", Text: "FIRST", Kind: protocol.KindRunningUpdate, Revision: 1}, {ID: streamKey("running", "two"), RunID: "two", Text: "SECOND", Kind: protocol.KindRunningUpdate, Revision: 1}}}})
+	m.content.Draft.Text = "KEEP-DRAFT"
+	m.openRunning()
+	id, removed := "one", true
+	p, err := projectStream(protocol.Envelope{Epoch: "42", Kind: protocol.KindRunningUpdate, Payload: protocol.RunningUpdate{RunID: &id, Removed: &removed,
+		Stream: &protocol.StreamMetadata{Topic: "running", Key: "one", Cursor: protocol.StreamCursor{Epoch: "42", Seq: "2"}, Revision: "2"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Update(shellData{Generation: 1, Message: p.message})
+	if len(m.topicBlocks("running")) != 1 || strings.Contains(m.conversation.pager.text, "FIRST") || !strings.Contains(m.conversation.pager.text, "SECOND") || m.content.Draft.Text != "KEEP-DRAFT" || !m.conversation.pager.open {
+		t.Fatal("removal retained row or changed focus/draft")
+	}
+	m.Update(shellData{Generation: 1, Message: p.message}) // A replay cannot remove another row.
+	if len(m.topicBlocks("running")) != 1 {
+		t.Fatal("duplicate removal changed list")
+	}
+}

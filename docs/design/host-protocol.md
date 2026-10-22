@@ -163,6 +163,25 @@ shape. Application scenarios involving deferred payloads, negotiation, agent or
 result state, and the headless harness remain required before their corresponding
 supported rows can be claimed; a codec run does not stand in for those scenarios.
 
+## Background result reads
+
+The `running` capability supplies `running_get` with optional `run_id`, `action`
+(`open` or `dismiss`) and a nonnegative byte `offset`. An empty request refreshes
+the list; an action requires a run id. Open authenticates the connection's person,
+reads the run's pinned material revision through its integrity check, and returns
+`running` with `run_id`, artifact `text` (at most 16 KiB at UTF-8 boundaries), and
+`next` only when another page remains. Dismiss only accepts landed rows. Neither
+operation deletes the run or material or changes its claimed outcome.
+
+A `running_update` optionally carries `run_id` and `removed`; a removal uses the
+same stream key and next cursor, removes that row from retained snapshots, and
+is replayable to an existing subscriber. A background landing's `result` card
+optionally carries `run_id` as an opaque open reference. It is an agent-report
+preview whose body is read on demand through `running_get`; its material id and
+revision remain in the card metadata. The durable lane notice restores that card
+in conversation history after the running row is opened or dismissed. No run id,
+material id or revision is printed in the normal notice or card summary.
+
 ## Client connection
 
 The TUI and the LINA app on every platform talk to LINA Core over the `client` connection. A local client uses the LINA Core local socket, and a remote client reaches LINA Core directly inside the tailnet ([runtime.md](runtime.md)). Clients use only the public event and control API.
