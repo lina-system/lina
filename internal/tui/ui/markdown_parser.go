@@ -152,7 +152,7 @@ func parseMarkdown(source, bullet string) []render.MarkdownBlock {
 					spans = highlightCode(value, string(fence.Language(data)))
 				}
 			}
-			blocks = append(blocks, render.MarkdownBlock{Spans: spans, Prefix: prefix, Indent: indent})
+			blocks = append(blocks, render.MarkdownBlock{Spans: spans, Prefix: prefix, Indent: indent, Code: true})
 		case *ast.Paragraph, *ast.TextBlock, *ast.Heading:
 			if n.FirstChild() == nil {
 				return
