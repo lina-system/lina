@@ -30,21 +30,13 @@
         "kind": "tool_activity",
         "key": "call-example",
         "revision": 1,
-        "payload": {
-          "call_id": "call-example",
-          "tool_name": "Reading file",
-          "status": "finished",
-          "outcome": "ok",
-          "duration_ms": 0
-        }
+        "payload": {"call_id":"call-example","tool_name":"Reading file","status":"finished","outcome":"ok","duration_ms":0}
       },
       {
         "kind": "item_done",
         "key": "item",
         "revision": 2,
-        "payload": {
-          "text": "complete"
-        }
+        "payload": {"text":"complete"}
       }
     ]
   }

@@ -181,6 +181,10 @@ func TestM1MemoryCorrectionForgetRestore(t *testing.T) {
 // closing its view. The tap observes the same committed result the TUI receives.
 func correctionMemoryTUI(t *testing.T, h *harness) (func(string) protocol.MemoryResult, func()) {
 	t.Helper()
+	// History snapshots are readable during recovery. Probe admission before
+	// sending management operations, including after a generation restore.
+	ready, _ := conversationClient(t, h)
+	ready.Close()
 	socket := h.socket
 	tap := newAccountTap(t, h, socket, true)
 	h.socket = tap.socket
@@ -205,7 +209,7 @@ func correctionMemoryTUI(t *testing.T, h *harness) (func(string) protocol.Memory
 		for {
 			e := tap.next(t, h)
 			if e.Error != nil {
-				t.Fatalf("%s refused: %s", text, e.Error.Code)
+				t.Fatalf("%s refused: %s (%s)", text, e.Error.Code, e.Error.Detail)
 			}
 			if result, ok := e.Payload.(protocol.MemoryResult); ok {
 				// The in-flight help already contains the command examples.

@@ -30,20 +30,13 @@
         "kind": "item_done",
         "key": "item",
         "revision": 2,
-        "payload": {
-          "text": "complete"
-        }
+        "payload": {"text":"complete"}
       },
       {
         "kind": "turn_state",
         "key": "turn-state",
         "revision": 1,
-        "payload": {
-          "active": true,
-          "agent_id": "agent-example",
-          "phase": "tool",
-          "tool_name": "Reading file"
-        }
+        "payload": {"active":true,"agent_id":"agent-example","phase":"tool","tool_name":"Reading file"}
       }
     ]
   }
