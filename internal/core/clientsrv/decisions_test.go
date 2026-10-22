@@ -10,12 +10,14 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/lina/internal/core/authority"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"github.com/thisisjun786/lina/kit/grant"
 	"github.com/thisisjun786/lina/kit/protocol"
+	"github.com/thisisjun786/lina/kit/rpc"
 )
 
 func decisionFixture(t *testing.T) (*Decisions, *canon.Store) {
@@ -271,5 +273,74 @@ func TestDecisionPresentationTracksOnlyEligibleOwnerConnections(t *testing.T) {
 	d.Presence(Session{ConnectionID: second.ConnectionID}, false)
 	if d.CanPresent() {
 		t.Fatal("disconnected surface remained")
+	}
+}
+
+func TestCommittedApprovalPublicationSurvivesRequestCancellation(t *testing.T) {
+	d, db := decisionFixture(t)
+	_, subscriber, err := d.Topics.Subscribe("waiting", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer subscriber.Close()
+	seedDecision(t, db, "approval")
+	request, cancel := context.WithCancel(t.Context())
+	cancel()
+	d.ApprovalsChanged(request)
+	ctx, stop := context.WithTimeout(t.Context(), time.Second)
+	defer stop()
+	frame, err := subscriber.Next(ctx)
+	if err != nil {
+		t.Fatalf("committed pending card missing: %v", err)
+	}
+	var card protocol.ApprovalRequest
+	if err = json.Unmarshal(frame.Event.Data, &card); err != nil {
+		t.Fatal(err)
+	}
+	if card.Card == nil || card.Card.Outcome != nil {
+		t.Fatal("pending card projection missing")
+	}
+	if err = d.Authority.Answer(t.Context(), card.Card.ID, authority.Decider{Person: "person", Epoch: 1, Surface: authority.App, Authenticated: true}, authority.Decision{Choice: authority.Once, GroupRevision: card.Card.Revision}); err != nil {
+		t.Fatal(err)
+	}
+	d.ApprovalsChanged(request)
+	frame, err = subscriber.Next(ctx)
+	if err != nil {
+		t.Fatalf("committed resolution missing: %v", err)
+	}
+	if err = json.Unmarshal(frame.Event.Data, &card); err != nil {
+		t.Fatal(err)
+	}
+	if card.Card.Outcome == nil || *card.Card.Outcome != protocol.DecisionOutcomeResolved {
+		t.Fatal("pending card survived committed answer")
+	}
+}
+func TestFailedApprovalPublicationRequiresReconciliation(t *testing.T) {
+	d, db := decisionFixture(t)
+	_, subscriber, err := d.Topics.Subscribe("waiting", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer subscriber.Close()
+	seedDecision(t, db, "approval")
+	authorityService := d.Authority
+	d.Authority = nil
+	d.ApprovalsChanged(t.Context())
+	ctx, stop := context.WithTimeout(t.Context(), time.Second)
+	defer stop()
+	if _, err = subscriber.Next(ctx); !errors.Is(err, rpc.ErrResyncRequired) {
+		t.Fatalf("failed publication left live subscription: %v", err)
+	}
+	d.Authority = authorityService
+	if err = d.PublishApprovals(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	start, reconnected, err := d.Topics.Subscribe("waiting", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reconnected.Close()
+	if start.Snapshot == nil || len(start.Snapshot.Items) != 1 || start.Snapshot.Items[0].Key != "approval" {
+		t.Fatalf("reconciliation lost card: %+v", start)
 	}
 }

@@ -483,3 +483,19 @@ func (h *Topics) Close() {
 		}
 	}
 }
+
+// RequireResync invalidates live delivery after the authoritative source could
+// not be projected. Existing readers receive the same reconciliation signal as
+// overflow, rather than silently keeping a stale view. Other topics are intact.
+func (h *Topics) RequireResync(name string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closed {
+		return
+	}
+	if topic := h.topics[name]; topic != nil {
+		for sub := range topic.subs {
+			sub.closeLocked(rpc.ErrResyncRequired)
+		}
+	}
+}

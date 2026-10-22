@@ -160,7 +160,7 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 		CanPresent: func() bool { return r.decisions != nil && r.decisions.CanPresent() },
 		ApprovalsChanged: func(ctx context.Context) {
 			if r.decisions != nil {
-				_ = r.decisions.PublishApprovals(ctx)
+				r.decisions.ApprovalsChanged(ctx)
 			}
 		},
 	})

@@ -419,8 +419,11 @@ admission refreshes that projection from canon; identical records do not advance
 the stream. The listener tracks eligible owner connections that negotiated waiting. The
 same authority consults that presence before creating a new approval; after a
 pending approval or decision commits, its callback publishes to existing
-subscriptions outside the canon transaction. A successful decision publishes
-the terminal card. No second authority
+subscriptions outside the canon transaction. Committed publication has its own
+five-second context, detached from the requesting client's cancellation. A failed
+projection invalidates that topic with `resync_required`, so existing subscribers
+refresh through the normal admission path instead of silently keeping a stale
+live view. A successful decision publishes the terminal card. No second authority
 instance or decision store is created. Question operations are installed only when
 the owning question source is supplied.
 

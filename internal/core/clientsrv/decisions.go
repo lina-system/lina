@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/thisisjun786/lina/internal/core/authority"
 	"github.com/thisisjun786/lina/kit/protocol"
@@ -370,4 +371,16 @@ func (d *Decisions) CanPresent() bool {
 	d.presenceMu.Lock()
 	defer d.presenceMu.Unlock()
 	return len(d.present) > 0
+}
+
+// ApprovalsChanged observes a durable commit, not an in-flight client request.
+// Preserve its values but detach cancellation/deadline: a disconnect cannot
+// undo publication. A bounded failure invalidates the stream so subscribers
+// reconcile through the existing refresh-on-subscribe path.
+func (d *Decisions) ApprovalsChanged(ctx context.Context) {
+	publishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := d.PublishApprovals(publishCtx); err != nil && d.Topics != nil {
+		d.Topics.RequireResync("waiting")
+	}
 }
