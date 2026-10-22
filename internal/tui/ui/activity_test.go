@@ -115,7 +115,7 @@ func TestActivityIdleRecordingWritesZeroBytes(t *testing.T) {
 	}
 	m.Update(tea.PasteMsg{Content: "idle"})
 	show()
-	settled, err := output.Wait(ctx, func(s term.Snapshot) bool { return s.AltScreen && !s.CursorHidden && s.CursorX == 4 && s.CursorY == 32 })
+	settled, err := output.Wait(ctx, func(s term.Snapshot) bool { return s.AltScreen && !s.CursorHidden && s.CursorX == 6 && s.CursorY == 32 })
 	if err != nil {
 		t.Fatal(err)
 	}
