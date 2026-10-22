@@ -60,14 +60,8 @@ func TestM1TUIActivity(t *testing.T) {
 	h, start := installedConversationHarness(t, provider.URL)
 	core := start(true)
 	interrupt := make(chan struct{})
-	ready := activityTransport(t, h, interrupt)
-	terminal := h.startTerminalSize([]string{"TERM=xterm-256color", "COLORTERM=truecolor", "LC_ALL=en_US.UTF-8"}, false, true, 100, 34)
+	terminal := startReadyScreenTUI(t, h, []string{"TERM=xterm-256color", "COLORTERM=truecolor", "LC_ALL=en_US.UTF-8"}, 100, 34, interrupt)
 	waitScreen(t, h, terminal, "Ctrl+D")
-	select {
-	case <-ready:
-	case <-h.ctx.Done():
-		t.Fatal(h.ctx.Err())
-	}
 	h.keys(terminal, "Show activity\r")
 	ctx, cancel := context.WithTimeout(h.ctx, time.Second)
 	defer cancel()
@@ -99,7 +93,7 @@ func TestM1TUIActivity(t *testing.T) {
 	t.Logf("completed (100x34):\n%s", strings.Join(screenRows(completed), "\n"))
 
 	h.keys(terminal, "Hold for stop\r")
-	waitScreen(t, h, terminal, thinking)
+	waitScreen(t, h, terminal, thinking+" (1s")
 	h.keys(terminal, "\x1b")
 	stopping := waitScreen(t, h, terminal, design.Text(design.English, "activity.stopping"))
 	t.Logf("stopping (100x34):\n%s", strings.Join(screenRows(stopping), "\n"))
@@ -121,18 +115,17 @@ func TestM1TUIActivity(t *testing.T) {
 	h.keys(terminal, "\x04")
 	terminal.process.wait(t, 0)
 	h.expectTerminalRestored(terminal)
-	h.socket = strings.TrimSuffix(h.socket, ".activity")
 	h.stopCore(core)
 }
 
 // Gate only transport delivery: every request still reaches the installed Core.
 // Waiting on subscription admission avoids racing Enter against initial history;
 // holding interrupt delivery makes the stopping frame observable without sleeps.
-func activityTransport(t *testing.T, h *harness, releaseInterrupt <-chan struct{}) <-chan struct{} {
+func startReadyScreenTUI(t *testing.T, h *harness, environment []string, width, height int, releaseInterrupt <-chan struct{}) *terminal {
 	t.Helper()
 	socket := h.socket
-	h.socket += ".activity"
-	listener, err := net.Listen("unix", h.socket)
+	proxy := socket + ".activity"
+	listener, err := net.Listen("unix", proxy)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +167,7 @@ func activityTransport(t *testing.T, h *harness, releaseInterrupt <-chan struct{
 					if err := json.Unmarshal(line, &rpc); err != nil {
 						return
 					}
-					if rpc.Params.Kind == protocol.KindInterrupt {
+					if rpc.Params.Kind == protocol.KindInterrupt && releaseInterrupt != nil {
 						select {
 						case <-releaseInterrupt:
 						case <-ctx.Done():
@@ -196,5 +189,13 @@ func activityTransport(t *testing.T, h *harness, releaseInterrupt <-chan struct{
 		}
 	}()
 	t.Cleanup(func() { cancel(); listener.Close(); workers.Wait() })
-	return ready
+	h.socket = proxy
+	terminal := h.startTerminalSize(environment, false, true, width, height)
+	h.socket = socket
+	select {
+	case <-ready:
+	case <-h.ctx.Done():
+		t.Fatal(h.ctx.Err())
+	}
+	return terminal
 }

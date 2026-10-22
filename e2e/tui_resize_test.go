@@ -68,7 +68,7 @@ func TestM1TUIConversationResize(t *testing.T) {
 	}
 	environment := []string{"TERM=xterm-256color", "COLORTERM=truecolor"}
 	size := scenario.Sizes[0]
-	session := h.startTerminalSize(environment, false, true, size.Width, size.Height)
+	session := startReadyScreenTUI(t, h, environment, size.Width, size.Height, nil)
 	waitScreen(t, h, session, design.Text(design.English, "live"))
 	h.keys(session, scenario.Input+"\r")
 	waitTurn()
