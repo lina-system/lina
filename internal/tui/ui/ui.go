@@ -25,11 +25,11 @@ func Run(ctx context.Context, socket, productVersion string, input io.Reader, ou
 	terminal := false
 	// A real terminal must deliver keys immediately. Restore its original mode
 	// on every return, including handshake failures and output errors.
-	if file, ok := input.(*os.File); ok && term.IsTerminal(file.Fd()) {
+	if file, ok := input.(terminalInput); ok && term.IsTerminal(file.Fd()) {
 		// Install signal handling before changing the mode, and keep it active
 		// until after restoration. Signals cancel negotiation and blocked input.
 		var stopSignals context.CancelFunc
-		ctx, stopSignals = signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+		ctx, stopSignals = terminalSignalContext(ctx)
 		defer stopSignals()
 		previous, err := term.MakeRaw(file.Fd())
 		if err != nil {
@@ -49,6 +49,27 @@ func Run(ctx context.Context, socket, productVersion string, input io.Reader, ou
 }
 
 var errQuit = errors.New("TUI quit requested")
+
+// Signals are a clean client exit; cancellation by the caller keeps its cause.
+func terminalSignalContext(parent context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancelCause(parent)
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		select {
+		case <-signals:
+			cancel(errQuit)
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, func() {
+		signal.Stop(signals)
+		cancel(context.Canceled)
+		<-done
+	}
+}
 
 // watchTerminalInput owns all terminal reads, including during negotiation.
 // Closing its cancellation resources never closes the caller's input file.
