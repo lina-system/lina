@@ -34,7 +34,7 @@ go test -count=1 ./internal/core/inbox/... ./internal/core/lane/... ./internal/c
 Passed: inbox (0.316 s), lane (0.405 s), turn (2.319 s).
 
 ```sh
-go test -count=1 -v ./e2e -run '^(TestM1TUIConversationInstalledCore|TestM1ConversationHistoryOrder|TestM1TUIInterruptedReplySurvivesCoreRestart|TestM1InterruptedPartialHistory)$'
+go test -count=1 -v ./e2e/m1 -run '^(TestM1TUIConversationInstalledCore|TestM1ConversationHistoryOrder|TestM1TUIInterruptedReplySurvivesCoreRestart|TestM1InterruptedPartialHistory)$'
 ```
 
 Passed: all four tests and their subtests (9.955 s total). Their independent

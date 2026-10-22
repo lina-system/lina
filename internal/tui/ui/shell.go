@@ -46,6 +46,7 @@ type shellBlock struct {
 }
 
 type shellModel struct {
+	activityFrame uint64
 	cardScroll    int
 	cardRequests  map[string]state.CardAnswerRequest
 	focused       bool
@@ -58,6 +59,7 @@ type shellModel struct {
 	size          layout.Size
 	gate          term.Gate
 	events        bool
+	disambiguated bool
 	now           func() time.Time
 	blocks        map[string]shellBlock
 	resyncPending map[string]protocol.StreamCursor
@@ -91,6 +93,14 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch msg := message.(type) {
+	case activityTick:
+		if m.activityVisible() {
+			m.content, _ = state.Reduce(m.content, state.Tick{Now: time.Time(msg)})
+			if !m.staticActivity() {
+				m.activityFrame++
+			}
+		}
+
 	case shellBegin:
 		if msg.Generation > m.generation {
 			m.generation = msg.Generation
@@ -191,11 +201,6 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshOpenCard()
 		m.refreshRunning()
 		m.refreshBlocks()
-		for _, block := range m.content.Blocks {
-			if block.Kind == protocol.KindTurnState && block.TurnKnown {
-				m.content, _ = state.Reduce(m.content, state.Turn{Active: block.TurnActive})
-			}
-		}
 		afterCard, _ := m.content.CurrentCard()
 		if beforeCard.ID != afterCard.ID || beforeCard.Revision != afterCard.Revision {
 			m.cardGate.CardChanged(m.now())
@@ -247,6 +252,7 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.styles = NewStyles(options)
 	case tea.KeyboardEnhancementsMsg:
 		m.events = msg.SupportsEventTypes()
+		m.disambiguated = msg.SupportsKeyDisambiguation()
 	case tea.PasteMsg:
 		if m.content.CardView.ID != "" {
 			return m, m.cardPaste(msg.Content)

@@ -199,6 +199,49 @@ func TestQuestionHandlerUsesSourceAndRefusesSecretForms(t *testing.T) {
 	}
 }
 
+func TestQuestionProjectionRestoresEvictedCardAndRetriesFailure(t *testing.T) {
+	d, _ := decisionFixture(t)
+	d.Topics = topicHub(t, TopicOptions{SnapshotSize: 1})
+	source := &formSource{question: protocol.Question{ConversationID: "conversation", Card: &protocol.DecisionCard{ID: "question", Revision: "1", Agent: "Agent", Summary: "Choose route", Targets: []protocol.DecisionTarget{}}, Form: &protocol.QuestionForm{PluginName: "Work", Fields: []protocol.FormField{}}}}
+	d.Questions = source
+	for range 2 {
+		if err := d.PublishQuestion(t.Context(), "question"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first, _ := subscribe(t, d.Topics, "waiting", nil)
+	if first.Snapshot.Cursor.Seq != 1 {
+		t.Fatal("unchanged projection consumed a sequence")
+	}
+	publish(t, d.Topics, "waiting", TopicEvent{Kind: protocol.KindQuestion, Key: "other", Data: []byte(`{"conversation_id":"conversation"}`)})
+	if err := d.PublishQuestion(t.Context(), "question"); err != nil {
+		t.Fatal(err)
+	}
+	restored, _ := subscribe(t, d.Topics, "waiting", nil)
+	if restored.Snapshot.Cursor.Seq != 3 || len(restored.Snapshot.Items) != 1 || restored.Snapshot.Items[0].Key != "question" {
+		t.Fatalf("evicted question was not restored: %+v", restored)
+	}
+	// An unsendable projection consumes neither a sequence nor a cache entry.
+	source.question.Card.Revision = ""
+	if err := d.PublishQuestion(t.Context(), "question"); err == nil {
+		t.Fatal("malformed projection accepted")
+	}
+	source.question.Card.Revision = "2"
+	outcome := protocol.DecisionOutcomeResolved
+	source.question.Card.Outcome = &outcome
+	if err := d.PublishQuestion(t.Context(), "question"); err != nil {
+		t.Fatal(err)
+	}
+	resolved, _ := subscribe(t, d.Topics, "waiting", nil)
+	if resolved.Snapshot.Cursor.Seq != 4 {
+		t.Fatal("changed projection not published after failure")
+	}
+	d.Topics.Close()
+	if err := d.PublishQuestion(t.Context(), "question"); !errors.Is(err, ErrTopicClosed) {
+		t.Fatalf("closed publication reported success: %v", err)
+	}
+}
+
 func TestDecisionGroupRollsBackEarlierMemberWhenLaterChoiceRefused(t *testing.T) {
 	d, db := decisionFixture(t)
 	seedDecision(t, db, "first")

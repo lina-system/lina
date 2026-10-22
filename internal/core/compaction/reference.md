@@ -53,6 +53,11 @@ Reference: the same pinned LCM-X revision above, inspected before this fix.
   Excluded events in the tail are checked separately and stay outside the node
   until a later prefix reaches them; they must not extend its coverage past a
   retained message.
+- **Inferred / LINA compatibility** — previously stored trees can own exclusions
+  past a retained message. Validate those inherited reasons and account for the
+  exclusions at their ledger positions, preserving stored provenance. They do
+  not establish a summary input boundary; actual inputs and new coverage retain
+  the strict ordering checks.
 - **Unknown upstream / specified by LINA** — these reference paths do not
   establish LINA's revocation/restore semantics or skipped-event reasons. On
   restore, reconstruct exclusions from canonical replay/scaffold metadata so

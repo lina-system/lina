@@ -31,6 +31,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
+	"github.com/thisisjun786/lina/internal/core/ghclient"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/inbox"
 	"github.com/thisisjun786/lina/internal/core/lane"
@@ -38,18 +39,22 @@ import (
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/internal/core/manifest"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
+	"github.com/thisisjun786/lina/internal/core/records"
 	"github.com/thisisjun786/lina/internal/core/reply"
 	"github.com/thisisjun786/lina/internal/core/retract"
 	"github.com/thisisjun786/lina/internal/core/runs"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/internal/core/skills"
 	"github.com/thisisjun786/lina/internal/core/turn"
+	"github.com/thisisjun786/lina/internal/core/waiting"
 	"github.com/thisisjun786/lina/internal/core/work"
+	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/internal/tui/render"
 	"github.com/thisisjun786/lina/kit/grant"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/loop"
+	"github.com/thisisjun786/lina/kit/proc"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/provider"
 	builtin "github.com/thisisjun786/lina/skills"
@@ -63,14 +68,21 @@ type acceptedSteering struct {
 }
 
 type conversationRuntime struct {
-	work         *work.Service
-	background   *backgroundRuntime
-	router       *conversationRouter
-	decisions    *clientsrv.Decisions
-	replaySocket string
-	dispatchMu   *sync.RWMutex
-	removals     *retract.Store
-	channels     *channelRuntime
+	workerDispatch *dispatch.Service
+	workerGitHub   *ghclient.Client
+	work           *work.Service
+	waitingStop    context.CancelFunc
+	waitingDone    chan struct{}
+	workWaiting    *waiting.Rounds
+	background     *backgroundRuntime
+	workers        *workerRuntime
+	router         *conversationRouter
+	decisions      *clientsrv.Decisions
+	replaySocket   string
+	dispatchMu     *sync.RWMutex
+	removals       *retract.Store
+	channels       *channelRuntime
+	workArea       *work.Area
 
 	materials        *conversationMaterials
 	assets           *assets.Store
@@ -83,6 +95,7 @@ type conversationRuntime struct {
 	signin           *accounts.SignIn
 	agents           *agents.Store
 	skills           *skills.Store
+	records          *records.Store
 	persona          *coreexec.Persona
 	personaAuthority *authority.Service
 	personaGrants    map[string]grant.Grant
@@ -102,6 +115,12 @@ type conversationRuntime struct {
 	identity                    clientsrv.Identity
 	mu                          sync.Mutex
 	publicationMu               sync.Mutex
+	activityMu                  sync.Mutex
+	turnActive                  bool
+	turnPhase                   protocol.TurnPhase
+	currentTool                 string
+	toolNames                   map[string]string
+	toolOrder                   []string
 	positioned                  map[string]bool
 }
 
@@ -115,7 +134,7 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err != nil {
 		return nil, err
 	}
-	r := &conversationRuntime{dispatchMu: &sync.RWMutex{}, root: root, controls: controls, steering: map[string][]acceptedSteering{}, ctx: ctx, db: db, route: route, activities: activities, lanes: lane.New(), person: "person:" + main, main: main, epoch: epoch, personaGrants: map[string]grant.Grant{}, personaMu: &sync.Mutex{}}
+	r := &conversationRuntime{workers: &workerRuntime{sessions: map[string]*workerSession{}}, dispatchMu: &sync.RWMutex{}, root: root, controls: controls, steering: map[string][]acceptedSteering{}, ctx: ctx, db: db, route: route, activities: activities, lanes: lane.New(), person: "person:" + main, main: main, epoch: epoch, personaGrants: map[string]grant.Grant{}, personaMu: &sync.Mutex{}}
 
 	if person != "" {
 		r.person = person
@@ -163,12 +182,17 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err != nil {
 		return nil, err
 	}
+	r.records, err = records.Open(root, db)
+	if err != nil {
+		return nil, err
+	}
 	r.persona = coreexec.NewPersona(db, r.agents, r.materials)
 	r.personaAuthority, err = authority.Open(ctx, db, authority.Config{Epoch: epoch, Resolve: r.resolvePersonaGrant,
 		CanPresent: func() bool { return r.decisions != nil && r.decisions.CanPresent() },
 		ApprovalsChanged: func(ctx context.Context) {
 			if r.decisions != nil {
 				r.decisions.ApprovalsChanged(ctx)
+				r.workers.deliverAnswers(ctx)
 			}
 		},
 	})
@@ -217,8 +241,19 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err = r.startDecisions(ctx); err != nil {
 		return nil, err
 	}
-	r.work = work.New(r.db)
+	git, _ := proc.LookPath("git")
+	r.workArea, err = work.OpenArea(root, git)
+	if err != nil {
+		return nil, err
+	}
+	r.work = work.NewWithArea(r.db, r.workArea, workMaterials{writer: writer, person: r.person})
 	if err = r.work.Recover(ctx, strconv.FormatUint(r.epoch, 10)); err != nil {
+		return nil, err
+	}
+	if err = r.startWorkWaiting(ctx); err != nil {
+		return nil, err
+	}
+	if err = r.startWorkerDispatch(ctx); err != nil {
 		return nil, err
 	}
 	if err = r.startRuns(ctx); err != nil {
@@ -250,6 +285,25 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 }
 func (r *conversationRuntime) Close(ctx context.Context) error {
 	var err error
+	if r.workerDispatch != nil {
+		if err = r.workerDispatch.Close(ctx); err != nil {
+			return err
+		}
+	}
+	if r.workerGitHub != nil {
+		if err = r.workerGitHub.Close(ctx); err != nil {
+			return err
+		}
+	}
+	if r.waitingStop != nil {
+		r.waitingStop()
+		select {
+		case <-r.waitingDone:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		r.waitingStop = nil
+	}
 	if r.growth != nil && r.growth.stop != nil {
 		r.growth.stop()
 		select {
@@ -268,6 +322,9 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+	}
+	if r.workers != nil {
+		r.workers.close()
 	}
 	if b := r.background; b != nil {
 		if b.stop != nil {
@@ -300,8 +357,14 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 	if r.agents != nil {
 		err = errors.Join(err, r.agents.Close())
 	}
+	if r.records != nil {
+		err = errors.Join(err, r.records.Close())
+	}
 	if r.skills != nil {
 		err = errors.Join(err, r.skills.Close())
+	}
+	if r.workArea != nil {
+		err = errors.Join(err, r.workArea.Close(ctx))
 	}
 	if r.assets != nil {
 		err = errors.Join(err, r.assets.Close())
@@ -377,6 +440,11 @@ func (r *conversationRuntime) Input(ctx context.Context, s clientsrv.Session, p 
 }
 func (r *conversationRuntime) Interrupt(ctx context.Context, s clientsrv.Session, p protocol.Interrupt) error {
 	if err := r.authorize(s, p.ConversationID); err != nil {
+		return err
+	}
+	r.activityMu.Lock()
+	defer r.activityMu.Unlock()
+	if err := r.phaseLocked(ctx, protocol.TurnPhaseStopping, ""); err != nil {
 		return err
 	}
 	r.lanes.Stop(r.conversation, turn.Interrupt{Issuer: turn.Person})
@@ -519,9 +587,6 @@ func (r *conversationRuntime) publishReply(ctx context.Context, key, turnID stri
 	speaker := protocol.ConversationSpeakerAgent
 	return r.publish(ctx, protocol.KindItemDone, key, protocol.ItemDone{Text: &view.Text, Speaker: &speaker})
 }
-func (r *conversationRuntime) setActive(ctx context.Context, active bool) error {
-	return r.publish(ctx, protocol.KindTurnState, "turn", protocol.TurnState{Active: &active})
-}
 
 func (r *conversationRuntime) events(ctx context.Context, through string) ([]ledger.Event, error) {
 	var ids []string
@@ -661,6 +726,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 	}
 	defer activity.Release()
 	bindings := map[string]loop.Tool{}
+	if r.router.root.workerDispatch != nil {
+		bindings["dispatch_work"] = r.router.root.workerDispatch.Tool(dispatch.Origin{Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: turnID})
+	}
 	bindings[runs.StartToolName] = r.background.service.StartTool(r.runOrigin(turnID))
 	var promoted budget.Handle
 	defer func() {
@@ -682,7 +750,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		VerifyBuild: r.verifyBuild,
 		Account:     func(context.Context) (provider.Credential, error) { return r.route.Request(nil).Credential, nil },
 		Resolve: func(context.Context) (turn.ModelPolicy, error) {
-			return turn.ModelPolicy{Model: r.route.Model, Revision: "configured", Class: provider.ModelAPI}, nil
+			return turn.ModelPolicy{Model: r.route.Model, Revision: "configured", Class: r.route.Adapter.Class()}, nil
 		},
 		Context: func(ctx context.Context, policy turn.ModelPolicy) (turn.PreparedRequest, error) {
 			if err := r.refreshPersona(ctx); err != nil {
@@ -720,11 +788,26 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			if err := r.prepareSkillTools(turnID, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
+			if err := r.prepareWorkTools(turnID, bindings); err != nil {
+				return turn.PreparedRequest{}, err
+			}
+			if err := r.prepareWorkerTools(turnID, input, bindings); err != nil {
+				return turn.PreparedRequest{}, err
+			}
+			if err := r.prepareRecordTools(turnID, bindings); err != nil {
+				return turn.PreparedRequest{}, err
+			}
 			declarations := append(coreexec.PersonaDeclarations(), coreexec.PersonaSettingDeclaration())
 			declarations = append(declarations, coreexec.EmotionDeclarations()...)
 			declarations = append(declarations, coreexec.RelationshipDeclaration())
 			declarations = append(declarations, coreexec.SkillDeclarations()...)
+			declarations = append(declarations, coreexec.RecordDeclarations()...)
 			declarations = append(declarations, startRunDeclaration())
+			if r.router.root.workerDispatch != nil {
+				declarations = append(declarations, dispatch.Declaration())
+			}
+			declarations = append(declarations, coreexec.WorkDeclarations()...)
+			declarations = append(declarations, workerDeclarations()...)
 			packet, _, err := atropos.Packet(ctx, minimum, 0, func(ctx context.Context) (assemble.ContextPacket, error) { return r.relationshipPacket(ctx, at) })
 			if err != nil {
 				return turn.PreparedRequest{}, err
@@ -832,14 +915,18 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			promoted, err = r.promoteRun(ctx, input, h)
 			return promoted, err
 		},
-		ResultCommitted: r.background.notify, Loop: loop.Config{
-			Tools: bindings,
+		ResultCommitted: r.background.notify, ToolActivity: r.toolActivity, Loop: loop.Config{
+			RuntimeTools: r.route.Adapter.Class() == provider.AgentRuntime,
+			Tools:        bindings,
 			After: func(ctx context.Context, call provider.ToolCall, result loop.Result) loop.Result {
 				return r.skillNotice(ctx, input, call, r.personaNotice(ctx, input, call, result))
 			},
 			Inputs: &conversationInputs{runtime: r, inputs: inputs},
 			Stream: func(ctx context.Context, request provider.Request) (provider.Stream, error) {
 				round++
+				if err := r.setPhase(ctx, protocol.TurnPhaseWaitingModel); err != nil {
+					return nil, err
+				}
 				r.dispatchMu.RLock()
 				defer r.dispatchMu.RUnlock()
 				// Never dispatch a cached preparation after a committed forget. This also
@@ -856,6 +943,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				key := fmt.Sprintf("%s:%d:%d", turnID, round, e.Index)
 				switch e.Kind {
 				case provider.Delta:
+					if err := r.setPhase(ctx, protocol.TurnPhaseStreaming); err != nil {
+						return err
+					}
 					filter := filters[key]
 					if filter == nil {
 						base, err := conversationFilter()
@@ -893,6 +983,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 					}
 					if item.Type != "message" || item.Role != "assistant" {
 						return nil
+					}
+					if err := r.setPhase(ctx, protocol.TurnPhaseStreaming); err != nil {
+						return err
 					}
 					var text strings.Builder
 					for _, part := range item.Content {

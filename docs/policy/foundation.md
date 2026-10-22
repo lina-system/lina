@@ -30,7 +30,7 @@ selection ----+---- docs --------+---- gate
               +---- components --+
 ```
 
-Everything runs in one process. `selection` records the exact base and candidate commits, the changed paths, the selected checks and the selection reason. It also checks Git whitespace errors: `git diff --check` over the range, or `git show --check` on the `HEAD` commit with `--full`. The selected checks run in parallel after selection. The gate only evaluates their results; it never reruns their commands. Each check has a bounded timeout. Go build, vet, analyzer and whole-module test commands share the remaining components budget described below; `go test -timeout=6m` also bounds package execution and emits stuck-test stack traces when that deadline is reached. This accommodates subprocess acceptance builds under concurrent cold-cache CI verification without changing individual test operation deadlines. The enclosing components check remains bounded at fifteen minutes.
+Everything runs in one process. `selection` records the exact base and candidate commits, the changed paths, the selected checks and the selection reason. It also checks Git whitespace errors: `git diff --check` over the range, or `git show --check` on the `HEAD` commit with `--full`. The selected checks run in parallel after selection. The gate only evaluates their results; it never reruns their commands. Each check has a bounded timeout. Go build, vet, analyzer and whole-module test commands share the remaining components budget described below; `go test -timeout=6m` also bounds package execution and emits stuck-test stack traces when that deadline is reached. This accommodates subprocess acceptance builds under concurrent cold-cache CI verification without changing individual test operation deadlines. The enclosing components check remains bounded at fifteen minutes. The growing headless acceptance corpus is enumerated per package and executed in two disjoint batches of top-level tests, examples and fuzz seed tests. Both batches run uncached with the same six-minute diagnostic timeout and share the original fifteen-minute components budget; individual operation and scenario deadlines are unchanged. Each enumerated test runs exactly once, with its subtests. An enumeration or batch failure fails the gate immediately.
 
 ## Evidence
 
@@ -133,7 +133,7 @@ Diagnostics name the source file, line and violated rule. Behavioral fixtures ex
 
 ### Acceptance evidence
 
-[V6](../../evidence/v6-supply-chain.json) records the root `go.sum` digest, the workspace module count (including and excluding the two local modules), the selected module versions and the current Go dependency-gate result. There is no Claude adapter or npm lockfile yet; its supply-chain baseline remains unmeasured. Cached `go mod verify` does not independently revalidate every sum against the checksum database.
+[V6](../../evidence/v6-supply-chain.json) records the root `go.sum` digest, the workspace module count (including and excluding the two local modules), the selected module versions and the current Go dependency-gate result. The Claude adapter now has its own lockfile and npm verification; the historical V6 record predates that addition. Cached `go mod verify` does not independently revalidate every sum against the checksum database.
 
 [V7](../../evidence/v7-dev-loop.json) records budgets declared before measurement, an edit followed by `go build`, `go vet` and uncached `go test` for the affected Go package, and `node scripts/foundation.mjs --full`. The initial budgets are 20 seconds for the affected-package loop and 60 seconds for full verification including vulnerability and license scans. Records identify the source, tool versions, cache conditions, commands, durations and outcomes. An over-budget measurement remains a failure; it is not hidden by raising the budget after the run.
 
@@ -166,6 +166,18 @@ The component check shares an 895-second command budget, leaving five seconds fo
 
 On PR #298, [CI run 39659531710](https://github.com/thisisjun786/lina/actions/runs/39659531710) exhausted the former 595-second components budget after about 200 seconds of setup, builds and analysis and 395 seconds of module compilation and tests. Completed packages passed, including exchanges; end-to-end verification was still unfinished. The 895-second budget accommodates that cold-run workload while retaining the four-minute Go package timeout and individual operation deadlines. Build-only and automation budgets remain unchanged.
 
+On PR #485, [CI run 39783991019](https://github.com/thisisjun786/lina/actions/runs/39783991019)
+reached the six-minute e2e package limit while the 108-test suite was still
+progressing through shortcut fixtures (the current subtest had just started).
+No assertion failed before the package watchdog fired. The component check used
+548.3 seconds of its 895-second budget. The common acceptance batching now
+runs this growing corpus in disjoint groups without raising the six-minute
+package limit or changing individual operation deadlines and the shared
+895-second command budget. The regression simulates a progressing 390-second
+e2e suite after 200 seconds of setup and requires every scenario to run once
+while the enclosing component guard holds.
+
+
 On PR #398, [CI run 39682857682](https://github.com/thisisjun786/lina/actions/runs/39682857682) reached the four-minute end-to-end package limit while an installed-Core scenario had run for nine seconds and its current subtest for one second. The package-wide diagnostic deadline is now six minutes for the accumulated acceptance workload; individual operation deadlines and the fifteen-minute components guard are unchanged. A controlled-clock test verifies that a progressing five-minute package fits after compilation, while the existing hung-command tests retain the shared guard.
 
 Build regression fixtures also share a 595-second allowance across their build CLI calls, including both cross-build targets, under automation's 600-second watchdog. They pass the remaining budget to `scripts/build.mjs --timeout-ms <milliseconds>`, reserving one second for the CLI to report failures before its wrapper expires. The build script defaults to 595 seconds when invoked directly. Its inner Go builds share the remaining deadline, with environment queries capped at 30 seconds and module verification and metadata generation at 120 seconds. Inner commands and the fixture wrapper use the same timeout diagnostics.
@@ -191,3 +203,23 @@ go test -count=1 ./<dir>/...
 Verification runs in a clean worktree without credentials: no Git or GitHub credentials, tokens, account secrets, personal data, or production services, and no write access to any remote. Actual model and provider calls and subjective quality evaluations run separately in explicitly authorized environments.
 
 [Integration](integration.md) decides how a passing candidate joins `dev`. A passing `foundation` does not authorize a [release](releases.md) or a deployment.
+
+### External Claude program
+
+Changes under `adapters/claude/`, root npm manifests, `.npmrc` and `.node-version`
+select automation, dependencies and Core acceptance. The dependencies check
+validates exact npm versions, public registry sources, SHA-512 integrity and
+install-script exceptions, then copies each npm project to a disposable directory
+with an isolated home and no inherited credentials or npm configuration. It runs
+`npm ci --ignore-scripts`, `npm audit signatures` and `npm test`. Adapter tests
+use scripted runtime events and the real SDK's MCP registration without model
+calls. Every command must succeed; missing signatures and invalid attestations
+fail the check. The root and adapter npm projects have independent lockfiles.
+
+PR #523's [CI run 39785658738](https://github.com/thisisjun786/lina/actions/runs/39785658738)
+reached the six-minute package limit while the current TUI lifecycle scenario
+had run for two seconds. That branch initially used a ten-minute package diagnostic deadline. The
+acceptance batching from #127 now covers that growing corpus with two disjoint
+six-minute batches inside the unchanged fifteen-minute shared components budget.
+Individual operation deadlines and acceptance assertions remain in force;
+timeout or missing observations still fail verification.

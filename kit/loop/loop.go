@@ -54,14 +54,19 @@ type StreamFunc func(context.Context, provider.Request) (provider.Stream, error)
 // on completion, although model context is assembled in original call order.
 // Partial records aborted visible text outside model context.
 type Journal struct {
-	Item    func(context.Context, int, int64, provider.Item) error
-	Calls   func(context.Context, int, []provider.ToolCall) error
+	Item  func(context.Context, int, int64, provider.Item) error
+	Calls func(context.Context, int, []provider.ToolCall) error
+	// Start observes dispatch after Calls commits, queueing and final admission,
+	// immediately before Execute. An error prevents execution, records an aborted
+	// result and stops the run. Start and Result may run concurrently across calls.
+	Start   func(context.Context, int, int, provider.ToolCall) error
 	Result  func(context.Context, int, int, Result) error
 	Partial func(context.Context, int, int64, string) error
 }
 type Config struct {
-	Request provider.Request
-	Stream  StreamFunc
+	RuntimeTools bool // agent-runtime calls execute through the journaled Core bridge
+	Request      provider.Request
+	Stream       StreamFunc
 	// Observe forwards streaming events; it must not execute tools.
 	Observe   func(context.Context, provider.Event) error
 	Tools     map[string]Tool
@@ -132,9 +137,10 @@ func Run(ctx context.Context, cfg Config) (out Outcome, err error) {
 				return out, err
 			}
 		}
-		batch, err := collect(ctx, cfg, round, req)
+		batch, err := collect(ctx, cfg, round, req, seen)
 		out.Rounds++
 		out.Meta = batch.meta
+		out.Results = append(out.Results, batch.results...)
 		for _, c := range batch.calls {
 			if seen[c.ID] {
 				return out, errors.Join(ErrResponse, err)

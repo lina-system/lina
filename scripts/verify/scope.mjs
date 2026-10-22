@@ -9,7 +9,7 @@ import { createGoContext, execute } from './check-components.mjs';
 const documents = new Set([
   'README.md', 'MANIFESTO.md', 'LICENSE', 'THIRD-PARTY-NOTICES.md', 'SECURITY.md', 'AGENTS.md', 'CONTRIBUTING.md', 'NOTICE', 'docs/qa.md',
 ]);
-const configuration = new Set(['.editorconfig', '.gitattributes', '.gitignore', '.node-version', '.devflow']);
+const configuration = new Set(['.editorconfig', '.gitattributes', '.gitignore', '.node-version', '.npmrc', 'package.json', 'package-lock.json', '.devflow']);
 const modules = new Set(['go.mod', 'go.sum', 'go.work', 'go.work.sum', 'kit/go.mod', 'kit/go.sum']);
 
 function registryFor(cwd) {
@@ -36,6 +36,7 @@ function registryFor(cwd) {
     'internal/core/exchange/',
     'internal/core/exec/',
     'internal/core/gateway/',
+    'internal/core/ghclient/',
     'internal/core/guard/',
     'internal/core/inbox/',
     'internal/core/install/',
@@ -46,6 +47,7 @@ function registryFor(cwd) {
     'internal/core/memory/',
     'internal/core/modelpath/',
     'internal/core/replay/',
+    'internal/core/records/',
     'internal/core/reply/',
     'internal/core/results/',
     'internal/core/retract/',
@@ -53,6 +55,7 @@ function registryFor(cwd) {
     'internal/core/secrets/',
     'internal/core/skills/',
     'internal/core/turn/',
+    'internal/core/update/',
     'internal/core/waiting/',
     'internal/core/work/',
     'internal/core/worker/',
@@ -91,6 +94,7 @@ function componentOf(path) {
 const goObjects = text => JSON.parse(`[${text.trim().replace(/^}\s*\n{/gm, '},{')}]`);
 
 export function kind(path) {
+  if (path.startsWith('adapters/claude/')) return 'automation';
   if (path.startsWith('third_party/')) return 'dependencies';
   if (path === 'packaging/README.md') return 'docs';
   if (path === 'packaging/sqlite-vec/build.sh') return 'automation';
@@ -221,7 +225,7 @@ export function scopeFor({ base = '', head, full = false, cwd = process.cwd() })
     base: resolvedBase, head: resolvedHead,
     docs: true, automation: all && !docsOnly,
     dependencies: changed.some(path => kind(path) === 'dependencies')
-      || (all && !docsOnly && [...inventory, ...changed].some(path => modules.has(path) || path.startsWith('third_party/'))),
+      || (all && !docsOnly && [...inventory, ...changed].some(path => modules.has(path) || path.startsWith('third_party/') || /(^|\/)package(-lock)?\.json$/.test(path))),
     components: selectedComponents.length > 0,
     selectedComponents, changed, unmapped,
   };
