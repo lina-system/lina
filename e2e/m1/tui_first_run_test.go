@@ -48,6 +48,12 @@ func TestM1TUIFirstRunInstalledCore(t *testing.T) {
 			defer provider.Close()
 			defer finish()
 			h, start := installedConversationHarness(t, provider.URL)
+			// Two Core boots, two TUI connections, the first turn and history
+			// restoration form one journey. The default three-operation budget
+			// can expire during the second boot even when each step progresses.
+			scenarioContext, stopScenario := context.WithTimeout(t.Context(), 6*operationTimeout)
+			defer stopScenario()
+			h.ctx = scenarioContext
 			core := start(true)
 			observer, conversation := conversationClient(t, h)
 			topic := "conversation:" + conversation

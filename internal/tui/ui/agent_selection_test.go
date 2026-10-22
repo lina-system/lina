@@ -52,6 +52,23 @@ func TestConnectionOnlyWelcomeDoesNotWaitForConversationDiscovery(t *testing.T) 
 	}
 }
 
+func TestInitialDiscoveryEmptyAgentListCompletes(t *testing.T) {
+	m := conversationShell()
+	m.conversation.id = ""
+	m.conversation.agentPending = true
+	m.status = ConnectionStatus{State: Connecting}
+	m.Update(tea.PasteMsg{Content: "preserved draft"})
+	if request := m.reconnectHistory(nil); request != nil {
+		t.Fatal("empty agent list requested a conversation")
+	}
+	if m.conversation.agentPending || m.status.State != Live || m.content.Draft.Text != "preserved draft" {
+		t.Fatal("empty initial agent list left discovery pending or lost the draft")
+	}
+	if _, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}); cmd != nil || m.content.Draft.Text != "preserved draft" {
+		t.Fatal("draft sent without a conversation destination")
+	}
+}
+
 func TestReconnectHistoryRetainsChosenAgentAndUnacknowledgedDraft(t *testing.T) {
 	m := conversationShell()
 	m.conversation.id = "main:chosen"

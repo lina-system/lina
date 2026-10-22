@@ -203,7 +203,10 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 				// Nonterminal input only reads quit after the handshake; it has
 				// no draft destination to discover before reporting live.
 				if client, ok := peer.(clientPeer); ok && terminal {
-					if model.conversation.agentPending && model.hasCapability("agents") {
+					// Initial history can restore an agent absent from Welcome,
+					// just as reconnect history can. Refresh names before either.
+					if model.hasCapability("agents") && (model.conversation.agentPending || model.hasCapability("conversation")) {
+						model.conversation.agentPending = true
 						reconnectAgent = model.activeAgent()
 						agentListID, err = client.client.Agent(ctx, protocol.AgentRequest{Operation: stringPointer("list")})
 					} else if history := model.discoveryHistory(); history != nil && model.hasCapability("conversation") {
@@ -337,6 +340,7 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 							}
 							if history := model.reconnectHistory(model.content.Agents); history != nil {
 								if client, ok := peer.(clientPeer); ok && model.hasCapability("conversation") {
+									reconnectAgent = model.activeAgent()
 									historyID, err = client.client.History(ctx, *history)
 									if err != nil {
 										return err
