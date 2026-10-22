@@ -58,6 +58,10 @@ func TestM1ReplayExportInstalledCore(t *testing.T) {
 	waitScreen(t, h, terminal, design.Text(design.English, "live"))
 	waitComposerReady(t, h, terminal)
 	h.keys(terminal, scenario.Input+"\r")
+	// The long reply ends at the latest transcript position. Open its pager
+	// to read the first sentence before exercising export and replay below.
+	waitScreen(t, h, terminal, "Ctrl+O")
+	h.keys(terminal, "\x0f")
 	waitScreen(t, h, terminal, scenario.Reply)
 	h.keys(terminal, "\x04")
 	terminal.process.wait(t, 0)

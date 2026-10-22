@@ -183,7 +183,8 @@ func waitScreen(t *testing.T, h *harness, terminal *terminal, text string) tuite
 		content := screenText(snapshot)
 		// Callers use the composer hints as an input-readiness barrier. Those
 		// hints also render while initial history is still being discovered.
-		if text == "Ctrl+D" && !strings.Contains(content, design.Text(design.English, "live")+"  ") {
+		if (text == "Ctrl+D" || text == design.Text(design.English, "live")) &&
+			(!snapshot.AltScreen || !strings.Contains(content, design.Text(design.English, "live")+"  ")) {
 			return false
 		}
 		return strings.Contains(content, text)
