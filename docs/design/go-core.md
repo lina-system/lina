@@ -265,6 +265,13 @@ reply without applying a job. User-installed coding tools are untouched. The
 smoke Core drains and exits before `complete` is recorded and the normal service
 is started and checked for readiness. Smoke input and its result remain ordinary
 durable conversation evidence. A missing account or failed provider fails smoke.
+The trusted candidate Core launch preserves the explicitly configured
+`CLAUDE_CODE_OAUTH_TOKEN` in addition to the filtered environment; this exception
+does not admit other filtered provider variables. Core captures that credential
+in its Claude model adapter and removes it from the process environment before
+boot captures worker environments. Tool filtering and the smoke worker's empty
+environment remain unchanged. Credential values never enter logs, update
+receipts or diagnostics.
 
 Automatic rollback is allowed only before READY and when no forward schema
 migration may have begun. It restores the kept composition and its independently
@@ -1070,9 +1077,43 @@ committed pairing and binding scope. Disconnect joins the poller, revokes bindin
 and pairing, blocks pending outbound work and removes the credential, retaining
 ownership and delivery receipts so reconnect cannot transfer ownership or replay
 old input. Core shutdown joins pollers before closing their stores. Ordinary
-bound channel messages remain in the durable gateway inbox; channel turn execution
-and outbound reply scheduling attach through their owning flows.
+bound owner messages enter the durable gateway inbox; the channel worker drains
+them through the existing turn execution and outbound queue.
 
+
+#147 adds `gateway/discord` behind the same adapter boundary and boots one
+outbound Gateway session per saved Discord bot. Its `coder/websocket` transport
+is pinned at v1.8.15; REST calls use the fixed Discord v10 origin without redirects
+or automatic effect retries. The shared catalog appends Discord presentations
+and pending buttons plus consumed channel steering at migration 32, leaving migrations 1–31 unchanged.
+The optional channel control `platform` field defaults to Telegram. Discord
+connection verifies the bot identity before replacing its credential or worker.
+
+The channel worker now drains committed owner inbox rows into the existing turn
+lanes. Private owner inputs use the shared main conversation and admission/steering
+coordinator; shared chats retain their separate conversation. Admission never
+waits for a running turn or outbound HTTP call. Consumed channel steering is
+marked durably before the next model request so restart cannot turn it into
+another turn. Channel ledger events retain platform/chat provenance and binding scope;
+the same model, tool and background-run services execute the work. A completed
+reply and a landed background artifact are projected once into the channel
+ledger and shaped for the existing durable outbound queue. Restart finds the
+same inbox/turn/queue identities. It cannot repeat a started model turn or an
+uncertain send. Scoped runners retain the original inbound address and resolve
+its current effective binding before model dispatch and tool execution, including
+new thread overrides of a parent fallback. Background delivery projections keep
+`EntryBackgroundNotice` and `background_notice` provenance; queue validation
+recognizes those committed events without promoting them to agent history.
+No channel stream publishes provisional deltas. Controls expose
+permanent delivery failure as the binding's unreachable flag.
+
+Discord approval presentations are Core-computed, with once/deny components.
+A live private tools binding supplies local surface availability, and an
+independent presentation worker does not hold the turn lane. Interaction
+receipt, token-free pending inbox and session cursor commit together. Recovery
+rechecks current owner pairing, binding, epoch and the original platform
+presentation before answering authority. Foreign presses and duplicate native
+interaction IDs cannot alter that decision or edit its message.
 
 The Telegram adapter uses the pinned `gotgbot/v2` client for individual API calls;
 LINA owns the polling loop. Construction is local and starts no platform request.

@@ -3093,6 +3093,13 @@
         },
         "scope": {
           "$ref": "#/$defs/channel_scope"
+        },
+        "platform": {
+          "type": "string",
+          "enum": [
+            "telegram",
+            "discord"
+          ]
         }
       },
       "required": [],

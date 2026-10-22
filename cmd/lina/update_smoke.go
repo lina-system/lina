@@ -27,9 +27,10 @@ func smokeUpdate(ctx context.Context, observer *ctlfiles.Store, r ctlfiles.Updat
 	}
 	defer activity.Release()
 	socket := filepath.Join(r.Root, "run/update.sock")
+	env := updateCoreEnvironment()
 	done := make(chan error, 1)
 	go func() {
-		done <- owner.Run(ctx, activity, proc.Command{Path: filepath.Join(r.Root, "system/bin/lina"), Args: []string{"core", "--state-root", r.Root, "--socket", socket}, Env: proc.InheritedEnvironment()})
+		done <- owner.Run(ctx, activity, proc.Command{Path: filepath.Join(r.Root, "system/bin/lina"), Args: []string{"core", "--state-root", r.Root, "--socket", socket}, Env: env})
 	}()
 	joined := false
 	defer func() {
@@ -83,6 +84,16 @@ func smokeUpdate(ctx context.Context, observer *ctlfiles.Store, r ctlfiles.Updat
 		return fmt.Errorf("update_smoke_shutdown_failed: %v", err)
 	}
 	return nil
+}
+
+// The verified candidate is a trusted Core, which needs its configured model
+// credential. This exception must never be used for tool or worker launches.
+func updateCoreEnvironment() []string {
+	env := proc.InheritedEnvironment()
+	if token := os.Getenv("CLAUDE_CODE_OAUTH_TOKEN"); token != "" {
+		env = append(env, "CLAUDE_CODE_OAUTH_TOKEN="+token)
+	}
+	return env
 }
 
 func smokeConversation(ctx context.Context, socket, id string) error {
