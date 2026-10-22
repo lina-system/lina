@@ -42,7 +42,7 @@
       },
       "text": "Workshop plan",
       "body": {
-        "confirm": "plan-example",
+        "confirm": null,
         "entries": [
           {
             "id": "goal-example",

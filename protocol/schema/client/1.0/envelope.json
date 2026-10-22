@@ -3475,14 +3475,56 @@
     },
     "result_body": {
       "x-go-type": "json.RawMessage",
-      "anyOf": [
+      "allOf": [
         {
           "type": "object",
-          "properties": {},
-          "additionalProperties": false
-        },
-        {
-          "$ref": "#/$defs/plan_body"
+          "properties": {
+            "entries": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/plan_entry"
+              },
+              "minItems": 1,
+              "maxItems": 1000
+            },
+            "confirm": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [],
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "entries"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "confirm"
+                    ]
+                  }
+                ]
+              },
+              "then": {
+                "required": [
+                  "entries",
+                  "confirm"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
