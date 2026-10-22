@@ -132,6 +132,7 @@ func testReplyShapeLONGQA(t *testing.T, language design.Language) {
 	checkScreen := func(terminal *terminal) {
 		// Inspect parsed cells from the installed TUI, never raw escape bytes.
 		plan := layout.Plan(layout.Size{Width: 100, Height: 34}, layout.Caps{SidePane: true}, layout.Shape{ComposerRows: 1})
+		activePlan := layout.Plan(layout.Size{Width: 100, Height: 34}, layout.Caps{SidePane: true}, layout.Shape{ComposerRows: 1, ActivityRows: 1})
 		region := plan.Conversation
 		affordance := design.Text(language, "reply.open_pager")
 		conversationRows := func(snapshot tuiterm.Snapshot) []string {
@@ -150,9 +151,11 @@ func testReplyShapeLONGQA(t *testing.T, language design.Language) {
 			return snapshot
 		}
 		latest := wait(func(s tuiterm.Snapshot) bool {
-			// PgUp stitching assumes the full idle transcript height.
+			// Core's observer has finished, but the TUI may still show the
+			// streamed card. Its idle redraw changes transcript rows and must
+			// not be mistaken for the first PgUp response below.
 			return s.AltScreen && !s.CursorHidden && s.CursorY == plan.Composer.Y &&
-				!strings.Contains(screenText(s), design.Text(language, "activity.stop")) &&
+				!strings.Contains(screenRows(s)[activePlan.Activity.Y], design.Text(language, "activity.stop")) &&
 				strings.Contains(strings.Join(conversationRows(s), "\n"), scenario.End) && strings.Contains(screenText(s), affordance)
 		})
 		t.Logf("LONG-QA latest (100x34):\n%s", strings.Join(screenRows(latest), "\n"))
