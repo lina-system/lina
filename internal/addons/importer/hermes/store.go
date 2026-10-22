@@ -48,7 +48,7 @@ func manifest(c *conversation) string {
 // inside the caller's fenced transaction. It can be registered as a Core job
 // Apply callback; the deterministic worker needs no model or writable database.
 func (p *Plan) Apply(ctx context.Context, tx *canon.Tx, index int) (Report, error) {
-	if index < 0 || index >= len(p.conversations) {
+	if p.rehearsal || index < 0 || index >= len(p.conversations) {
 		return Report{}, ErrSnapshot
 	}
 	c := p.conversations[index]
@@ -65,7 +65,15 @@ func (p *Plan) Apply(ctx context.Context, tx *canon.Tx, index int) (Report, erro
 		return Report{}, err
 	}
 	at := time.Now().UTC().Format(time.RFC3339Nano)
+	rehearsal, err := p.Rehearse()
+	if err != nil {
+		return Report{}, err
+	}
+	encodedReport, _ := json.Marshal(rehearsal)
 	if _, err := tx.ExecContext(ctx, "INSERT INTO import_batch(id,created_at) VALUES(?,?) ON CONFLICT(id) DO NOTHING", p.batch, at); err != nil {
+		return Report{}, err
+	}
+	if _, err := tx.ExecContext(ctx, "INSERT INTO import_rehearsal(batch_id,report) VALUES(?,?) ON CONFLICT(batch_id) DO NOTHING", p.batch, string(encodedReport)); err != nil {
 		return Report{}, err
 	}
 	report := Report{}
@@ -220,9 +228,20 @@ func Reverse(ctx context.Context, db Canon, key LegacyKey) (Row, error) {
 	return row, err
 }
 func (p *Plan) Verify(ctx context.Context, db Canon) (Verification, error) {
+	var result Verification
+	err := db.Read(ctx, func(tx *canon.Tx) error { var err error; result, err = p.verifyTx(ctx, tx); return err })
+	return result, err
+}
+func (p *Plan) verifyTx(ctx context.Context, tx *canon.Tx) (Verification, error) {
 	result := Verification{}
-	err := db.Read(ctx, func(tx *canon.Tx) error {
+	err := func() error {
+		if err := p.verifyEdges(ctx, tx); err != nil {
+			return err
+		}
 		for _, c := range p.conversations {
+			if err := verifyInterpretation(ctx, tx, c); err != nil {
+				return err
+			}
 			expected := 0
 			for _, r := range c.records {
 				for _, s := range r.sources {
@@ -277,7 +296,7 @@ func (p *Plan) Verify(ctx context.Context, db Canon) (Verification, error) {
 			result.Tables = append(result.Tables, counts)
 		}
 		return nil
-	})
+	}()
 	return result, err
 }
 

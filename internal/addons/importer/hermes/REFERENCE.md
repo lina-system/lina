@@ -36,3 +36,16 @@ Identical payload versions retain a separate replay event while host copies keep
 the canonical binding. Unsealed events use private staging tables until the
 separate seal, and sidecar bytes use the native material writer’s recovery and
 transactional adoption path. These storage boundaries are LINA requirements.
+
+- **seen** — LCM-X `externalize.py:25-28,684-750,1253-1285,1412-1434`
+  at the same pinned revision defines `lcm-large-outputs`, basename `ref=`
+  markers and JSON payloads with content/character/UTF-8 byte counts. The CLI
+  recognizes that representation, confines files to the chosen source, checks
+  the payload shape/counts and snapshots whole original JSON bytes. The source
+  does not record a full file SHA-256; capture computes it and verifies the
+  second read. An absent file keeps an unavailable reference with no invented
+  digest. A sidecar reference is scoped by its LCM message id and basename.
+- **inferred** — Rehearsal plans may retain sidecar snapshots without preparing
+  destination materials and cannot be adopted. After confirmation, the host
+  prepares native assets. Sealed events retain their material identities;
+  ledger reads and search apply the original source spans before exposing text.

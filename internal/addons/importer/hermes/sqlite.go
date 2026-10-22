@@ -7,9 +7,11 @@ package hermes
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -62,11 +64,15 @@ func snapshotSQLite(ctx context.Context, source, destination string, known SQLit
 	if len(known.Tables) == 0 {
 		return fmt.Errorf("%w: no accepted tables", ErrSchema)
 	}
-	reader, err := canon.OpenSQLiteReader(ctx, source)
+	before, err := sourceFingerprint(ctx, source)
 	if err != nil {
 		return err
 	}
-	defer reader.Close()
+	reader, closeSource, err := canon.OpenSQLiteInspection(ctx, source)
+	if err != nil {
+		return err
+	}
+	defer closeSource()
 	if err = checkSQLite(ctx, reader, known); err != nil {
 		return err
 	}
@@ -90,7 +96,17 @@ func snapshotSQLite(ctx context.Context, source, destination string, known SQLit
 		return err
 	}
 	defer snapshot.Close()
-	return checkSQLite(ctx, snapshot, known)
+	if err = checkSQLite(ctx, snapshot, known); err != nil {
+		return err
+	}
+	after, err := sourceFingerprint(ctx, source)
+	if err != nil {
+		return err
+	}
+	if before != after {
+		return fmt.Errorf("%w: source changed during snapshot; retry when quiet", ErrConflict)
+	}
+	return nil
 }
 
 func checkSQLite(ctx context.Context, db *sql.DB, known SQLiteSchema) error {
@@ -179,4 +195,41 @@ func checkSQLite(ctx context.Context, db *sql.DB, known SQLiteSchema) error {
 		return fmt.Errorf("%w: missing objects %s", ErrSchema, strings.Join(missing, ", "))
 	}
 	return tx.Commit()
+}
+
+// A private WAL index cannot coordinate with an external writer's index. Prove
+// that both source files remained stable across the read; never publish a
+// snapshot raced by a checkpoint or commit. SQLite still performs the copy via
+// its online backup API, including committed WAL pages.
+func sourceFingerprint(ctx context.Context, path string) (string, error) {
+	h := sha256.New()
+	for _, suffix := range []string{"", "-wal"} {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		f, err := os.Open(path + suffix)
+		if suffix != "" && errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintln(h, "absent")
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		info, err := f.Stat()
+		if err != nil {
+			f.Close()
+			return "", err
+		}
+		if !info.Mode().IsRegular() {
+			f.Close()
+			return "", ErrSnapshot
+		}
+		fmt.Fprintf(h, "%s:%d:%d:", suffix, info.Size(), info.ModTime().UnixNano())
+		_, err = io.Copy(h, f)
+		err = errors.Join(err, f.Close())
+		if err != nil {
+			return "", err
+		}
+	}
+	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }

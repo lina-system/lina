@@ -35,6 +35,7 @@ func Migrations() []Migration {
 		{Version: 21, SQL: GrowthSchema},
 		{Version: 22, SQL: MoiraiJobsSchema + BudgetSchema},
 		{Version: 23, SQL: SkillsSchema},
+		{Version: 24, SQL: ImportSchema + importCompletionSchema},
 	}
 }
 

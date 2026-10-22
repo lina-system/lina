@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package canon
 
-// ImportSchema is registered by the optional importer host after its existing
-// application migrations. Importing never migrates an open canon implicitly.
+// ImportSchema is installed by the shared append-only application catalog.
+// Its empty tables do not load an adapter or start an import.
 const ImportSchema = `
 CREATE TABLE import_batch (
  id TEXT PRIMARY KEY NOT NULL,
