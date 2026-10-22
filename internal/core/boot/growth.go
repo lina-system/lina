@@ -176,6 +176,9 @@ func (r *conversationRuntime) ensureGrowth(ctx context.Context) error {
 type growthJobAPI struct{ root *conversationRuntime }
 
 func (api growthJobAPI) service(ctx context.Context, id string) (*jobs.Service, error) {
+	if id == jobs.SkillMaintenanceJob && api.root.skillMaintenance != nil {
+		return api.root.skillMaintenance.jobs, nil
+	}
 	if !strings.HasPrefix(id, "growth:") {
 		return nil, jobapi.ErrUnavailable
 	}
