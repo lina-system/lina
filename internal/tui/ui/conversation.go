@@ -502,7 +502,12 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		}
 	}
 	rows[plan.Header.Y] = clip(m.styles.Title.Render(name))
-	var transcript []render.StyledRow
+	type transcriptRow struct {
+		body   render.StyledRow
+		prefix string
+		person bool
+	}
+	var transcript []transcriptRow
 	plainRow := func(text string) render.StyledRow { return render.StyledRow{Spans: []render.Span{{Text: text}}} }
 	if !m.hasCapability("conversation") {
 		code := "account.empty"
@@ -515,7 +520,7 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 				break
 			}
 		}
-		transcript = append(transcript, plainRow(design.Text(m.styles.options.Language, code)+"  /accounts"))
+		transcript = append(transcript, transcriptRow{body: plainRow(design.Text(m.styles.options.Language, code) + "  /accounts")})
 	}
 	for _, b := range m.content.Blocks {
 		if b.Topic == "core" || b.Topic == "running" || (b.Topic == "waiting" && b.Card == nil) || b.Topic == "progress" || b.Kind == protocol.KindTurnState {
@@ -525,15 +530,45 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		if cached.stream == nil {
 			continue
 		}
-		if b.Local || b.Speaker == protocol.ConversationSpeakerPerson {
-			transcript = append(transcript, plainRow(design.Text(m.styles.options.Language, "person")))
-		} else if b.Speaker == protocol.ConversationSpeakerAgent || b.Kind == protocol.KindOutputDelta {
-			transcript = append(transcript, plainRow(name))
+		person := b.Local || b.Speaker == protocol.ConversationSpeakerPerson
+		prefix := ""
+		if person || b.Speaker == protocol.ConversationSpeakerAgent || b.Kind == protocol.KindOutputDelta {
+			prefix = m.styles.speakerPrefix(person, name, plan.Conversation.Width)
+		}
+		indent := strings.Repeat(" ", (render.Unicode{}).Width(prefix))
+		body := cached.stream.Markdown(render.Config{Width: plan.Conversation.Width - len(indent), Theme: m.styles.options.Theme}, m.styles.listBullet(), parseMarkdown)
+		// Paragraph spacing belongs inside a message; boundaries get exactly one
+		// section gap even if the provider ended a message with empty lines.
+		blank := func(row render.StyledRow) bool {
+			for _, span := range row.Spans {
+				if span.Style.Code || strings.TrimSpace(span.Text) != "" {
+					return false
+				}
+			}
+			return true
+		}
+		for len(body) > 0 && blank(body[0]) {
+			body = body[1:]
+		}
+		for len(body) > 0 && blank(body[len(body)-1]) {
+			body = body[:len(body)-1]
 		}
 		if b.Kind == protocol.KindResult {
-			transcript = append(transcript, plainRow(design.Text(m.styles.options.Language, "result")+"  "+sanitize.Display(b.Title)+"  Ctrl+O"))
+			body = append([]render.StyledRow{plainRow(design.Text(m.styles.options.Language, "result") + "  " + sanitize.Display(b.Title) + "  Ctrl+O")}, body...)
 		}
-		transcript = append(transcript, cached.stream.Markdown(render.Config{Width: plan.Conversation.Width, Theme: m.styles.options.Theme}, m.styles.listBullet(), parseMarkdown)...)
+		if len(body) == 0 {
+			continue
+		}
+		if len(transcript) > 0 {
+			transcript = append(transcript, make([]transcriptRow, m.styles.tokens.SpaceSection.Cells)...)
+		}
+		for i, row := range body {
+			lead := indent
+			if i == 0 {
+				lead = prefix
+			}
+			transcript = append(transcript, transcriptRow{body: row, prefix: lead, person: person})
+		}
 	}
 	m.conversation.scroll = min(m.conversation.scroll, max(0, len(transcript)-plan.Conversation.Height))
 	start := max(0, len(transcript)-plan.Conversation.Height-m.conversation.scroll)
@@ -541,7 +576,15 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		if y >= plan.Conversation.Height {
 			break
 		}
-		rows[plan.Conversation.Y+y] = clip(m.styles.markdownRow(line))
+		styles := m.styles
+		if line.person {
+			styles.Text = styles.Muted
+		}
+		prefix := ""
+		if line.prefix != "" {
+			prefix = m.styles.Accent.Render(line.prefix)
+		}
+		rows[plan.Conversation.Y+y] = clip(prefix + styles.markdownRow(line.body))
 	}
 	drawTopic := func(topic string, region layout.Rect) {
 		if region.Height == 0 {

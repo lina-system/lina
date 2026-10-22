@@ -1291,3 +1291,16 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## Terminal UI behaviour references
+
+The conversation speaker gutter adapts behaviour described in these permissive
+projects: distinct first-line speaker marks, indented continuation text and
+spacing between turns. No implementation code is copied.
+
+- [Codex CLI](https://github.com/openai/codex), Apache-2.0, revision
+  `86e17e98`: person/assistant marks, two-cell continuation indent and empty rows.
+- [Gemini CLI](https://github.com/google-gemini/gemini-cli), Apache-2.0, revision
+  `09d81bf1`: distinct speaker marks and accented assistant identity.
+- [Hermes Agent](https://github.com/NousResearch/hermes-agent), MIT, revision
+  `e06df9c2`: person prompt and assistant gutter. Its MIT notice appears above.

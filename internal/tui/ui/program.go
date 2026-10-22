@@ -196,7 +196,7 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 			}
 			if model.hasComposer() {
 				if terminal && display.interactive && display.styles.options.Profile != Monochrome && display.renderer == nil {
-					display.renderer = startTerminalRenderer(parent, rawTerminalWriter{display.output}, model.size.Width, model.size.Height)
+					display.renderer = startTerminalRenderer(parent, rawTerminalWriter{display.output}, model.size.Width, model.size.Height, display.styles.options.Profile)
 				}
 				if client, ok := peer.(clientPeer); ok {
 					if model.conversation.agentPending && model.hasCapability("agents") {

@@ -27,6 +27,11 @@ streaming completion and steering sequence through the same PTY lifecycle.
 They require no personal credentials. The physical terminal spike and real-model
 acceptance remain separate.
 
+`m1/tui-speaker-gutter.json` runs two exchanges against installed Core and a
+fixture provider in a 100x34 PTY. Parsed cells check speaker marks, foregrounds,
+header bold and exactly one empty row between messages. ASCII runs retain words;
+`NO_COLOR` runs retain ASCII speaker identity and emit no terminal escapes.
+
 `TestM1TUIIdentityFromAgentStore` installs a synthetic named agent with four
 distinct persona layers, types "who are you" through the real TUI, and checks
 the provider stub's request for that stored identity, owner and persona, plus
