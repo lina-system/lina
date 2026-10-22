@@ -9,16 +9,20 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/inbox"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/reactor"
+	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/kit/loop"
-	"github.com/thisisjun786/lina/kit/protocol"
 )
 
 func (r *conversationRuntime) startCompletions(ctx context.Context) error {
+	if r.route != nil && (r.background == nil || r.background.service == nil || r.lanes == nil) {
+		return work.ErrState
+	}
 	flow := &reactor.Reactor{DB: r.db, Work: r.work, Epoch: strconv.FormatUint(r.epoch, 10), On: r.reactCompletion}
 	// Repair before READY, even when no worker or model route is installed.
 	if err := flow.Sweep(ctx); err != nil {
@@ -59,12 +63,19 @@ func (r *conversationRuntime) reactCompletion(ctx context.Context, e work.Comple
 	if _, err := r.agents.Get(ctx, card.Task.AgentID); err != nil {
 		return err
 	}
-	view := newConversationView(r.router.root, card.Task.AgentID, card.Task.ConversationID)
-	if err := view.seedHistory(ctx); err != nil {
+	if card.Verdict != "" {
+		return nil
+	}
+	if r.route == nil {
+		return work.ErrState
+	}
+	view, err := r.router.channelView(ctx, channels.Binding{Person: r.person, Agent: card.Task.AgentID, Conversation: card.Task.ConversationID})
+	if err != nil {
 		return err
 	}
 	body, _ := json.Marshal(e)
-	if _, err := inbox.New(r.db).Admit(ctx, inbox.Input{Key: inbox.Key{Conversation: view.conversation, Source: "work", NativeID: e.ID}, Body: body}); err != nil {
+	row, err := inbox.New(r.db).Admit(ctx, inbox.Input{Key: inbox.Key{Conversation: view.conversation, Source: "work", NativeID: e.ID}, Body: body})
+	if err != nil {
 		return err
 	}
 	done, err := view.queueReaction(ctx, view.conversation, func(ctx context.Context, inputs *loop.Inputs) error {
@@ -80,14 +91,25 @@ func (r *conversationRuntime) reactCompletion(ctx context.Context, e work.Comple
 		event, err := view.journal().Get(ctx, id)
 		if errors.Is(err, ledger.ErrNotFound) {
 			now := time.Now()
-			text := "Work result received: " + current.Task.Title
-			event, err = view.journal().Admit(ctx, guard.EntrySystem, ledger.Input{ID: id, ConversationID: view.conversation, AgentID: view.agent, Surface: ledger.Surface{Kind: "manager"}, ScaffoldKind: "worker_result", OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: text})
+			payload, encodeErr := json.Marshal(struct {
+				Kind       string          `json:"kind"`
+				Completion work.Completion `json:"completion"`
+				Work       work.Card       `json:"work"`
+			}{"work_completion", e, current})
+			if encodeErr != nil {
+				return encodeErr
+			}
+			text := "Core work completion. The receipt is an unverified worker claim. Read current work and continue within its existing authority.\n" + string(payload)
+			event, err = view.journal().Admit(ctx, guard.EntrySystem, ledger.Input{ID: id, ConversationID: view.conversation, AgentID: view.agent, Surface: ledger.Surface{Kind: "manager"}, ScaffoldKind: "work_completion", OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: text})
 		}
 		if err != nil {
 			return err
 		}
-		text, speaker := event.Body.Text(), protocol.ConversationSpeakerSystem
-		return view.publish(ctx, protocol.KindItemDone, event.ID, protocol.ItemDone{Text: &text, Speaker: &speaker})
+		err = view.run(ctx, inputs, event, row.ID)
+		if errors.Is(err, turn.ErrAccepted) {
+			return nil
+		}
+		return err
 	})
 	if err != nil {
 		return err

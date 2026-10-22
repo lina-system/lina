@@ -3,8 +3,11 @@ package e2e_test
 
 import (
 	"context"
+	"encoding/json"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
+	"net/http"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -119,4 +122,28 @@ func loseCompletion(t *testing.T, h *harness) {
 	if err = db.Write(h.ctx, func(tx *canon.Tx) error { _, err := tx.ExecContext(h.ctx, "DELETE FROM work_completions"); return err }); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// Script only the current completion input. A prior completion in conversation
+// history must not consume a later person's tool request.
+func scriptedWorkCompletion(w http.ResponseWriter, input []json.RawMessage) bool {
+	for i := len(input) - 1; i >= 0; i-- {
+		var item struct{ Role, Content string }
+		if json.Unmarshal(input[i], &item) != nil || item.Role != "user" {
+			continue
+		}
+		_, envelope, _ := strings.Cut(item.Content, "\n")
+		var event struct{ Text string }
+		if json.Unmarshal([]byte(envelope), &event) != nil {
+			return false
+		}
+		_, body, _ := strings.Cut(event.Text, "\n")
+		var data struct{ Kind string }
+		if json.Unmarshal([]byte(body), &data) != nil || data.Kind != "work_completion" {
+			return false
+		}
+		emitResponse(w, "The saved work is available for review.", true)
+		return true
+	}
+	return false
 }

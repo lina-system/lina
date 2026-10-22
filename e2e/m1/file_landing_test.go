@@ -75,6 +75,9 @@ func testM2FileLanding(t *testing.T, committed bool) {
 			emitResponse(w, "Recorded.", true)
 			return
 		}
+		if scriptedWorkCompletion(w, request.Input) {
+			return
+		}
 		names := map[string]bool{}
 		for _, raw := range request.Tools {
 			var d struct{ Name string }
@@ -235,6 +238,11 @@ func testM2FileLanding(t *testing.T, committed bool) {
 		return c
 	}
 	c := done()
+	waitCompletionHandled(t, h)
+	// The completion turn has its own idle frame. Reconnect after its durable
+	// acknowledgement so it cannot finish the next manual tool request.
+	client.Close()
+	client, conversation = conversationClient(t, h)
 	land := func(ok bool) json.RawMessage {
 		return invoke("land_work_result", coreexec.LandWork{TaskID: c.Task.ID, ReceiptID: c.Receipt.EventID, Fingerprint: c.FileSnapshot.Fingerprint, Judgment: "Read the document and report against the fixture question."}, ok)
 	}

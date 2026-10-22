@@ -1,7 +1,17 @@
 {
-  "cases": [{"name": "success", "expected": "ready_for_review"}],
+  "cases": [
+    {
+      "name": "success",
+      "expected": "ready_for_review"
+    }
+  ],
   "what": "Produce a file and deliver its observed completion",
   "done": "One durable completion reaches the manager and survives restart without another worker or model call",
   "work_area": true,
-  "completion_events": true
+  "completion_events": true,
+  "startup": {
+    "title": "Inspect saved work",
+    "done": "Explain the saved work outcome",
+    "reply": "The saved result needs input."
+  }
 }
