@@ -58,11 +58,15 @@ persists no drafts, and never starts Core.
 
 The connection surface uses Lip Gloss and the generated tokens. Usable terminals
 show localized states and retained stream content; unset/dumb TERM and pipes keep
-the plain `live` status. Terminal input uses raw mode and one cancellable decoded
-key reader from negotiation through shutdown. Cleanup joins the reader and restores
-terminal settings on every return, including SIGTERM, SIGINT and SIGHUP. There is
-no animation timer. The shell model also runs through the Bubble Tea recording
-harness; final library acceptance remains the T-08 spike gate.
+the plain `live` status. Terminal input is detected through `Fd()`, including
+readers wrapping a terminal file, and uses raw mode and one cancellable decoded
+key reader from negotiation through shutdown. Reads pass through the supplied
+reader. Cleanup joins the reader without closing the caller's input and restores
+terminal settings on every return, including SIGTERM, SIGINT and SIGHUP. Signals
+and quit keys exit cleanly; cancellation of the caller's context returns its
+error, including during negotiation. There is no animation timer. The shell model
+also runs through the Bubble Tea recording harness; final library acceptance
+remains the T-08 spike gate.
 
 - It keeps its preferences (theme, glyph set, width settings, notification mode) in one client file, mode 0600, at the location the install fixes. A missing or bad file never blocks start.
 - It never opens canon, never runs `lina core` and never holds the lock. Every message it sends is a request that Core accepts or refuses, and when the two disagree Core wins and the TUI refreshes.
@@ -624,7 +628,12 @@ input uses `mode: steer`; Core decides whether it belongs to a running turn.
 input id for local-echo reconciliation. The acknowledgement means durable
 admission, not turn completion; further typing can be sent while the turn runs.
 A refused send restores the draft. Connection states other than Live disable
-submission without discarding edits.
+submission without discarding edits. Even in Live, conversation submission waits
+until the initial History response supplies the conversation id. Enter during
+discovery retains the whole draft, including `/queue`, and creates no local echo
+or input request. Discovery does not send it automatically; a fresh Enter sends
+the retained draft to the discovered conversation. Management commands remain
+available during discovery.
 Resizing preserves the draft and its cursor without submitting it.
 
 `e2e/m1/conversation-history-order.json` exercises queue and ordinary steering

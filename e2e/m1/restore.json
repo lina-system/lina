@@ -1,4 +1,12 @@
 {
   "targets": ["same", "other"],
-  "invalid_arguments": [[], ["--generation", "missing"], ["--state-root", "missing"]]
+  "invalid_arguments": [[], ["--generation", "missing"], ["--state-root", "missing"]],
+  "deliveries": [
+    {"before": "queued", "after": "unknown"},
+    {"before": "sending", "after": "unknown"},
+    {"before": "sent", "after": "sent"},
+    {"before": "unknown", "after": "unknown"},
+    {"before": "blocked", "after": "blocked"},
+    {"before": "refused", "after": "refused"}
+  ]
 }
