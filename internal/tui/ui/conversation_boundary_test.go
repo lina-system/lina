@@ -20,8 +20,8 @@ import (
 func TestConversationLongSpeakerKeepsReplyWidth(t *testing.T) {
 	for _, width := range []int{40, 80, 120} {
 		for _, options := range []Options{{Profile: TrueColor, ASCII: true}, {Profile: Monochrome}, {Profile: Monochrome, ASCII: true}} {
-			for _, name := range []string{strings.Repeat("A", 100), strings.Repeat("한글👩‍💻é", 20)} {
-				t.Run(fmt.Sprintf("%d/%d/%t/%s", width, options.Profile, options.ASCII, name[:1]), func(t *testing.T) {
+			for index, name := range []string{strings.Repeat("A", 100), strings.Repeat("한글👩‍💻é", 20)} {
+				t.Run(fmt.Sprintf("%d/%d/%t/%d", width, options.Profile, options.ASCII, index), func(t *testing.T) {
 					m := conversationShell()
 					options.Width = width
 					m.styles = NewStyles(options)
@@ -91,7 +91,7 @@ func TestConversationPreservesCodeBoundaryRows(t *testing.T) {
 }
 
 func TestConversationMetadataDoesNotMutateMarkdownCache(t *testing.T) {
-	for _, source := range []string{"```\ncode\n\n```", "<div>\ncode\n\n"} {
+	for _, source := range []string{"```\ncode\n\n```", "<pre>\ncode\n\n"} {
 		for _, metadata := range []string{"worked", "pager", "both"} {
 			t.Run(metadata+"/"+source, func(t *testing.T) {
 				m := conversationShell()

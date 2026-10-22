@@ -734,6 +734,9 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		for len(body) > 0 && blank(body[len(body)-1]) {
 			body = body[:len(body)-1]
 		}
+		// Markdown owns these rows. Appending presentation metadata to a
+		// shortened slice must not overwrite the cache's trimmed boundary rows.
+		body = slices.Clone(body)
 		if b.Kind == protocol.KindResult && !b.InlineReply {
 			body = append([]render.StyledRow{plainRow(design.Text(m.styles.options.Language, "result") + "  " + sanitize.Display(b.Title) + "  Ctrl+O")}, body...)
 		}
@@ -752,10 +755,15 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		for len(anchors) < len(transcript) {
 			anchors = append(anchors, conversationAnchor{})
 		}
-		blockStart := len(transcript)
 		if len(transcript) > 0 {
-			transcript = append(transcript, make([]transcriptRow, m.styles.tokens.SpaceSection.Cells)...)
+			for i := range m.styles.tokens.SpaceSection.Cells {
+				transcript = append(transcript, transcriptRow{})
+				anchors = append(anchors, conversationAnchor{block: b.ID, row: i - m.styles.tokens.SpaceSection.Cells})
+			}
 		}
+		// Separators have their own anchors, so inserting an earlier message
+		// cannot shift the retained row number within this message's content.
+		blockStart := len(transcript)
 		for i, row := range body {
 			lead := indent
 			if i == 0 {
