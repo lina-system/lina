@@ -189,3 +189,15 @@ replay count is consumed by the Bubble Tea recording-writer test.
 `m1/tui-approvals-installed.json` uses the installed Core and TUI binaries, seeded
 synthetic producer data, socket discovery/decisions, and a separate-key PTY approval.
 These scenarios create no second product decision store and use no timing sleeps.
+
+`m2/codex-session.json` runs installed Core, its real conversation model loop,
+tool authority and stdio child ownership with a synthetic installed Codex. It
+asserts version reporting for an unverified version, active steering, confirmed
+interrupt, idle continuation, a file produced by the worker and terminal output
+in the originating conversation before and after Core restart. The worker checks
+that no sandbox, approval, model-provider or config override is sent and that
+Core's dedicated provider credential is absent. Run it with
+`go test -count=1 ./e2e -run '^TestM2InstalledCodexSession$'`.
+The opt-in `LINA_CODEX_LIVE=1 go test -count=1 -v ./internal/core/worker/codex -run '^TestInstalledCodex$'`
+uses the user's installed Codex and own configuration. It verifies control and a
+model-generated result without changing approval or sandbox settings.

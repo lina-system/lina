@@ -480,6 +480,51 @@ Every worker adapter offers the work engine the same operations:
 - The same JSON-RPC shape never implies the same capability. `turn/completed` is never evidence of a product effect.
 - LINA Core starts the installed Codex as `codex app-server --listen stdio://`, a stdio child with LINA Core's environment and the user's own Codex home. On a remote device the registered Node starts it. When its standard input closes, the child exits normally. The only client is LINA Core, or on a remote device that device's registered Node.
 
+#### Session implementation (#132)
+
+Core exposes `worker_start`, `worker_input`, `worker_interrupt` and
+`worker_snapshot` through the normal conversation tool registry and authority
+receipts. These operate installed Codex sessions in an explicitly supplied work
+directory. They do not implement the scheduler or the `dispatch_work` definition
+flow. Each session belongs to its originating person, agent and conversation;
+control requires the current turn, process generation and binding epoch.
+User cancellation additionally quotes the current user input. Starting a session
+is recorded as a launch receipt, never as verified delivery.
+
+The stdio child is owned through `kit/proc`. Its environment retains the user's
+Codex home, provider setup and integrations; Core neither adds vault credentials
+nor forwards its dedicated `LINA_RESPONSES_API_KEY`. Requests omit sandbox,
+approval policy, provider, config, instructions and plugin overrides. An explicit
+adapter model selection is checked against the returned model. Per-task effort
+selection is refused until assignment verification supports it.
+
+Version notices and terminal worker output enter the originating conversation's
+canon history and restore after Core restart. Snapshot includes the latest
+completed assistant message, not a delivery verdict. A reported activity owns
+the idle process, while hard activities follow individual active turns. Closing
+Core closes stdin, then joins or terminates the owned process and descendants.
+A canceled RPC wait does not interrupt a turn. Event overflow, malformed frames,
+EOF and unsupported server requests end the connection visibly and require
+reconciliation; they cannot become successful completion.
+
+`versions.json` in the Codex adapter is shared with the build manifest's
+`verifiedWorkerVersions.codex` list. Version 0.163.0 has an installed-worker
+session round trip (initialize, start, interrupt, idle input, model output and
+snapshot). This does not verify approval or dynamic-tool support. Unlisted
+versions still run and report both their version and the verified list. The
+adapter currently declares progress, usage, completion and steering; questions,
+approvals, work tools and quota remain #133 and are not declared capabilities.
+Thread recovery and automatic retry remain G2-08; a session handle from a prior
+Core process is unavailable, and its existing launch/result records remain.
+
+The credential-free installed-Core scenario is
+[`e2e/m2/codex-session.json`](../../e2e/m2/codex-session.json). It drives all four
+tools through the model loop and Unix client protocol, including an unverified
+worker, an actual fixture-worker file result, and conversation history after
+restart. The separately opted-in installed-Codex test preserves the user's setup;
+its file-tool probe encountered a worker approval, so live approval/file execution
+is not counted as session acceptance evidence.
+
 ### Readiness
 
 Delegation to a worker is ready when:
