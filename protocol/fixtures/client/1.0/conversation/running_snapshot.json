@@ -30,13 +30,7 @@
         "kind": "running_update",
         "key": "run-example",
         "revision": 2,
-        "payload": {
-          "run_id": "run-example",
-          "state": "waiting",
-          "summary": "Synthetic task",
-          "reason": "quota",
-          "text": "waiting: Synthetic task (quota)"
-        }
+        "payload": {"run_id":"run-example","state":"waiting","summary":"Synthetic task","reason":"quota","text":"waiting: Synthetic task (quota)"}
       }
     ]
   }
