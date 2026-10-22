@@ -193,7 +193,8 @@ func TestM1TUIConversationStream(t *testing.T) {
 			t.Errorf("scripted conversation: %v", err)
 		}
 	})
-	terminal := startReadyScreenTUI(t, h, []string{"TERM=xterm-256color"}, 80, 24, nil)
+	// Scripted Core has one connection and no startup recovery to probe.
+	terminal, _ := h.startConversationTUI(80, 24, "TERM=xterm-256color")
 	waitComposerReady(t, h, terminal)
 	h.keys(terminal, script.Input+"\r")
 	waitScreen(t, h, terminal, script.Partial)
