@@ -355,6 +355,9 @@ credentials and does not measure live Codex quota.
 restarts Core with one slot and a single failing Git fetch. It requires graph
 tools to remain available, the independent worker to commit and submit its
 receipt, and the settled failure to survive another restart without replay.
+The conversation client correlates each readiness probe's reply by request id;
+worker notices and late replies cannot satisfy or reject that probe. A scripted
+regression interleaves those frames without depending on scheduler timing.
 
 `m3/delegation-readiness.json` exercises absent executables, failed worker
 handshakes and unavailable quota observations. Installed Core keeps conversation
