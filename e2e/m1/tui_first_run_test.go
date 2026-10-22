@@ -118,7 +118,7 @@ func TestM1TUIFirstRunInstalledCore(t *testing.T) {
 			if !fresh.AltScreen || !strings.Contains(text, "lina.") {
 				t.Fatalf("fresh conversation has no wordmark: %s", text)
 			}
-			if !strings.Contains(text, "LINA") || !strings.Contains(text, design.Text(language, "live")) {
+			if !strings.Contains(text, "Lina") || !strings.Contains(text, design.Text(language, "live")) {
 				t.Fatal("empty screen lost agent or connection identity")
 			}
 			for _, id := range firstRunSuggestionIDs {

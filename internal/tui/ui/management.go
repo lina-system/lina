@@ -250,7 +250,14 @@ func (s *managementSession) response(ctx context.Context, c *clientapi.Client, e
 		}
 		found := false
 		for _, a := range *p.Agents {
-			lines = append(lines, a.AgentID+"  "+a.Name)
+			source := design.Text(m.styles.options.Language, "agents.from_description")
+			if a.Preset != nil && *a.Preset != "" {
+				source = *a.Preset
+				if role, ok := design.Lookup(m.styles.options.Language, "agents.role."+*a.Preset); ok {
+					source = role + " (" + source + ")"
+				}
+			}
+			lines = append(lines, a.Name+" · "+source, "  main:"+a.AgentID)
 			found = found || a.AgentID == active
 		}
 		m.openPager(strings.Join(lines, "\n"))

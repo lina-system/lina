@@ -483,6 +483,10 @@ The current agent store records the trash transition and ends bindings atomicall
 
 Initialization records the eight starter identities and its completion in canon and is safe to repeat across concurrent calls, interrupted initialization and restarts: each starter is created once. An explicitly deleted starter is not recreated by initialization, and a renamed starter is not replaced. The store returns a ChatGPT sign-in requirement when no account is usable; it adds no required persona questions. The conversation surface and Core account flow consume that requirement.
 
+The eight-starter bootstrap applies to a fresh installation. An existing completed first-run marker preserves its current agent configuration, including a renamed or deleted default; it does not add another starter set. User-created agents and their revisions remain unchanged.
+
+Each preset's starter receipt commits with its agent and first persona revision. Completion is recorded after all eight receipts exist, so an interrupted startup resumes the missing presets without replacing completed identities. Receipts survive trash expiry. Explicit agent choice and newly admitted client input save the person's last main conversation in canon; startup and conversation discovery resume it. Replayed input and channel traffic do not change that choice. If that agent is unavailable, a new surface opens Lina when available, then another remaining agent; an already connected surface retains its existing missing-agent handling and draft until the person chooses.
+
 Core publishes all eight embedded core and default voice pairs before initialization, as defined in [Presets](#presets). Existing documentation placeholders are not persona instructions. Replacing them with the shipped working persona is a normal versioned preset update; user voice, growth, blank-setting values and already prepared turns remain intact. The private world repository is not required for initialization or basic conversation.
 
 ### Presets
