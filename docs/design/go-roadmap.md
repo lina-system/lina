@@ -420,7 +420,7 @@ from completed, rolled-back and pre-swap attempts.
 ### 2.F Records and to-dos
 
 **G2-22 Records repository and index.** Git repository, index, rebuild, outside-change detection.
-- #152 implements the shared Git repository and revision-checked write/move path, including the installed conversation tools and result-save adapter. [The headless records scenario](../../e2e/m2/records.json) runs the installed Core through creation, restart, editing and stale-write refusal; repository tests cover stable ids on moves and interrupted publication recovery. Outside-change presentation, the full query index and thousands-of-files acceptance remain the records-index increment.
+- #152 implements the shared Git repository and revision-checked write/move path, including the installed conversation tools and result-save adapter. [The headless records scenario](../../e2e/m2/records.json) runs the installed Core through creation, restart, editing and stale-write refusal; repository tests cover stable ids on moves and interrupted publication recovery.
 - Done when: an index rebuilt from the files equals the live index; an outside change is detected and shown and not merged; a write on a stale revision is refused; moving a record keeps its id; behavior with thousands of files is recorded.
 - Depends on: G1-03, G1-05, G1-29. Design refs: C-53; [filesystem.md](filesystem.md#records-repository).
 
@@ -428,6 +428,8 @@ from completed, rolled-back and pre-swap attempts.
 reports through installed record tools, and the `records-index` M2 scenario.
 The scale fixture measures thousands of records without a timing pass threshold;
 the [measurements and limits](../../internal/core/records/MEASUREMENTS.md) are recorded with the records implementation.
+The [parent acceptance record](../../evidence/records-acceptance.md) maps all five
+completion conditions to repository tests and installed Core scenarios.
 
 **G2-23 To-do record, views, recurrence and candidates.** Fields, today rule, views, recurrence, candidates, memo promotion.
 - Done when: the today rule passes its fixture; a recurring item advances only to a future occurrence; a dependency cycle is rejected; an ambiguous date is never saved silently; a candidate is added on its own only when the deterministic test passes.
