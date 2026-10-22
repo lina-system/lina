@@ -200,6 +200,18 @@ func TestRetiredMergeKeepsOldRepositorySlotUntilRead(t *testing.T) {
 			t.Fatal("released merge slot before retired effect settled")
 		}
 	}
+	// A failed request does not prove whether the external merge happened.
+	if err = e.Report(t.Context(), old.ID, old.Epoch, Observation{Status: OutcomeFailed}); err != nil {
+		t.Fatal(err)
+	}
+	if err = e.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range revisionSnapshot(t, e).Actions {
+		if a.Kind == Merge && a.State == "queued" {
+			t.Fatal("uncertain retired merge released its slot")
+		}
+	}
 	if err = e.Report(t.Context(), old.ID, old.Epoch, Observation{Status: OutcomeSucceeded, Head: "head-old", Proof: Proof{Revision: "merge-old", Ref: "old-merge", Passed: true}}); err != nil {
 		t.Fatal(err)
 	}

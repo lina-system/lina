@@ -126,12 +126,26 @@ func reportRetired(a *Action, o Observation) error {
 		a.State = "unknown"
 	case OutcomeNeedsPerson:
 		a.State = "needs_person"
-	case OutcomeSucceeded, OutcomeFailed, OutcomeConflict, OutcomeQuota, OutcomeNoReceipt:
-		if reserves(*a) && !o.EffectsSettled {
+	case OutcomeSucceeded:
+		settled := !reserves(*a) || o.EffectsSettled
+		if a.Kind == Merge {
+			settled = o.Head == a.Revision && o.Proof.proves(o.Proof.Revision)
+		}
+		a.State = "unknown"
+		if settled {
+			a.State = "finished"
+		}
+	case OutcomeFailed, OutcomeQuota, OutcomeNoReceipt:
+		if (reserves(*a) || a.Kind == Merge) && !o.EffectsSettled {
 			a.State = "unknown"
 		} else {
 			a.State = "finished"
 		}
+	case OutcomeConflict:
+		if a.Kind != Merge {
+			return ErrInvalid
+		}
+		a.State = "finished"
 	default:
 		return ErrInvalid
 	}
