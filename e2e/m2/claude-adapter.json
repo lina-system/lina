@@ -1,0 +1,5 @@
+{
+  "input": "List the available procedures.",
+  "reply": "The procedure catalog is available.",
+  "tool": "skill_index"
+}
