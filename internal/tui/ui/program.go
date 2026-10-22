@@ -282,7 +282,7 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 			if client, ok := peer.(clientPeer); ok {
 				switch request := effect.Message.(type) {
 				case state.SendRequest:
-					if model.conversation.agentMissing || model.conversation.agentPending {
+					if model.conversation.id == "" || model.conversation.agentMissing || model.conversation.agentPending {
 						model.reduceInput(state.SendResult{Gen: request.Gen, Key: request.Key, Failed: true})
 						return nil
 					}
