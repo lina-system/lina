@@ -269,6 +269,7 @@ var catalog = map[string]translation{
 	"progress_digest":            {"Progress summary", "진척 요약"},
 	"waiting_get":                {"Show waiting decisions", "기다리는 결정 보기"},
 	"waiting":                    {"Waiting for me", "내 결정 대기"},
+	"waiting.empty":              {"nothing to decide now", "지금 결정할 일이 없어요"},
 	"waiting_update":             {"Waiting decisions updated", "대기 중인 결정 업데이트"},
 	"waiting_answer":             {"Decision", "결정"},
 	"details_get":                {"Open details", "자세히 보기"},

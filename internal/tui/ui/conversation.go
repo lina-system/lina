@@ -440,6 +440,9 @@ func (m *shellModel) topicText(topic string) string {
 	for _, b := range m.topicBlocks(topic) {
 		lines = append(lines, b.Text)
 	}
+	if topic == "waiting" && len(lines) == 0 {
+		return design.Text(m.styles.options.Language, "waiting.empty")
+	}
 	return strings.Join(lines, "\n")
 }
 func (m *shellModel) resultCards() []state.Block {
