@@ -18,12 +18,21 @@ import (
 func TestSkillMaintenanceNoticeDeliveryRecoversAfterCommit(t *testing.T) {
 	for _, table := range []string{"conv_event", "conversation_order"} {
 		t.Run(table, func(t *testing.T) {
-			r, _, agent, other := managementFixture(t)
-			if err := r.agents.Delete(t.Context(), other, r.person, time.Now()); err != nil {
+			r, _, agent, _ := managementFixture(t)
+			rows, err := r.agents.List(t.Context())
+			if err != nil {
 				t.Fatal(err)
 			}
+			// Isolate delivery recovery to one destination, including when
+			// first-run initialization creates several starter agents.
+			for _, a := range rows {
+				if a.ID != agent {
+					if err := r.agents.Delete(t.Context(), a.ID, r.person, time.Now()); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
 			r.agent, r.conversation = agent, "main:"+agent
-			var err error
 			r.topics, err = clientsrv.NewTopics("1", clientsrv.TopicOptions{})
 			if err != nil {
 				t.Fatal(err)
@@ -79,6 +88,11 @@ func TestSkillMaintenanceNoticeDeliveryRecoversAfterCommit(t *testing.T) {
 			}
 			defer sub.Close()
 			if snapshot.Snapshot == nil || len(snapshot.Snapshot.Items) != 1 {
+				notices, _ := r.skills.MaintenanceNotices(t.Context())
+				if len(notices) > 0 {
+					event, err := r.journal().Get(t.Context(), fmt.Sprintf("skill-maintenance:%d", notices[0].Sequence))
+					t.Logf("expected conversation=%s, recorded conversation=%s, read error=%v", r.conversation, event.ConversationID, err)
+				}
 				t.Fatalf("lost or duplicate recovered notice: %+v", snapshot)
 			}
 			var item protocol.ItemDone
