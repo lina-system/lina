@@ -49,31 +49,12 @@ func TestM1TUIConversationInstalledCore(t *testing.T) {
 	defer provider.Close()
 	h, start := installedConversationHarness(t, provider.URL)
 	core := start(true)
-	client, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "test", []protocol.Capability{{Name: "conversation", Version: "1.0"}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Read-only history is available during recovery. Wait for input admission
+	// as well before exercising the configured conversation through the TUI.
+	client, conversation := conversationClient(t, h)
 	defer client.Close()
 	if len(client.Welcome.Capabilities) == 0 {
 		t.Fatal("installed Core has no conversation service")
-	}
-	if _, err = client.History(h.ctx, protocol.HistoryGet{}); err != nil {
-		t.Fatal(err)
-	}
-	discovery, err := client.Receive(h.ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	history, ok := discovery.Payload.(protocol.History)
-	if !ok || history.ConversationID == nil {
-		t.Fatal("no conversation discovery")
-	}
-	topic := "conversation:" + *history.ConversationID
-	if _, err = client.Subscribe(h.ctx, protocol.Subscribe{Topic: &topic}); err != nil {
-		t.Fatal(err)
-	}
-	if snapshot, err := client.Receive(h.ctx); err != nil || snapshot.Kind != protocol.KindSnapshot {
-		t.Fatal("no history snapshot")
 	}
 	terminal, _ := h.startConversationTUI(80, 24, "TERM=xterm-256color", "COLORTERM=truecolor")
 	fresh := waitComposerReady(t, h, terminal)
@@ -105,7 +86,7 @@ func TestM1TUIConversationInstalledCore(t *testing.T) {
 		t.Fatal("missing durable input echo")
 	}
 	changed := "MUST-NOT-REPLACE"
-	if _, err = client.Input(h.ctx, protocol.Input{ConversationID: history.ConversationID, InputID: &echo, Text: &changed}); err != nil {
+	if _, err = client.Input(h.ctx, protocol.Input{ConversationID: &conversation, InputID: &echo, Text: &changed}); err != nil {
 		t.Fatal(err)
 	}
 	duplicate, err := client.Receive(h.ctx)
@@ -171,11 +152,6 @@ func screenText(snapshot tuiterm.Snapshot) string {
 	}
 	return text.String()
 }
-func waitComposerReady(t *testing.T, h *harness, terminal *terminal) tuiterm.Snapshot {
-	t.Helper()
-	// waitScreen's composer barrier also requires the Connected status.
-	return waitScreen(t, h, terminal, "Ctrl+D")
-}
 
 func waitScreen(t *testing.T, h *harness, terminal *terminal, text string) tuiterm.Snapshot {
 	t.Helper()
@@ -192,10 +168,27 @@ func waitScreen(t *testing.T, h *harness, terminal *terminal, text string) tuite
 	if err != nil {
 		select {
 		case <-terminal.process.done:
-			t.Logf("TUI exited: %v; stderr=%s", terminal.process.err, &terminal.process.stderr)
-		default:
+		case <-h.ctx.Done():
+			terminal.process.killAndWait()
 		}
+		t.Logf("TUI exited: %v; stderr=%s", terminal.process.err, &terminal.process.stderr)
 		t.Fatalf("screen missing %q: %v; cells=%s", text, err, screenText(snapshot))
+	}
+	return snapshot
+}
+
+// waitComposerReady observes the connected input surface without relying on
+// an optional low-priority footer hint.
+func waitComposerReady(t *testing.T, h *harness, terminal *terminal) tuiterm.Snapshot {
+	t.Helper()
+	snapshot, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
+		rows := screenRows(s)
+		return s.AltScreen && !s.CursorHidden && len(rows) > 0 &&
+			strings.Contains(screenText(s), design.Text(design.English, "live")) &&
+			strings.Contains(rows[len(rows)-1], "? "+design.Text(design.English, "shortcuts.title"))
+	})
+	if err != nil {
+		t.Fatalf("composer missing: %v; cells=%s", err, screenText(snapshot))
 	}
 	return snapshot
 }

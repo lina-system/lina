@@ -15,10 +15,10 @@ var (
 )
 
 type Task struct {
-	PersonID       string     `json:"person_id,omitempty"`
-	GoalID         string     `json:"goal_id,omitempty"`
 	Destination    string     `json:"destination,omitempty"`
 	Workspace      *Workspace `json:"workspace,omitempty"`
+	PersonID       string     `json:"person_id,omitempty"`
+	GoalID         string     `json:"goal_id,omitempty"`
 	ID             string     `json:"id"`
 	AgentID        string     `json:"agent_id"`
 	ConversationID string     `json:"conversation_id"`
@@ -89,14 +89,14 @@ type GoalDecision struct {
 	Decision QuestionDecision
 }
 type Card struct {
-	Revision     uint64          `json:"revision"`
-	Waits        map[string]Wait `json:"waits,omitempty"`
-	Decisions    []GoalDecision  `json:"decisions,omitempty"`
 	FileSnapshot *FileSnapshot   `json:"file_snapshot,omitempty"`
 	FileEvidence *FileEvidence   `json:"file_evidence,omitempty"`
 	FileCopies   []FileCopy      `json:"file_copies,omitempty"`
 	Materials    []Material      `json:"materials,omitempty"`
 	ResultHead   string          `json:"result_head,omitempty"`
+	Revision     uint64          `json:"revision"`
+	Waits        map[string]Wait `json:"waits,omitempty"`
+	Decisions    []GoalDecision  `json:"decisions,omitempty"`
 	Task         Task            `json:"task"`
 	State        string          `json:"state"`
 	Run          *Run            `json:"run,omitempty"`
@@ -111,12 +111,12 @@ type Card struct {
 // Event has one payload selected by Kind. Events are admitted by Service only;
 // clients and workers never append arbitrary events or acceptance judgments.
 type Event struct {
-	Wait         *Wait         `json:"wait,omitempty"`
-	Decision     *GoalDecision `json:"decision,omitempty"`
 	FileSnapshot *FileSnapshot `json:"file_snapshot,omitempty"`
 	FileEvidence *FileEvidence `json:"file_evidence,omitempty"`
 	FileCopy     *FileCopy     `json:"file_copy,omitempty"`
 	Materials    []Material    `json:"materials,omitempty"`
+	Wait         *Wait         `json:"wait,omitempty"`
+	Decision     *GoalDecision `json:"decision,omitempty"`
 	Key          string        `json:"key"`
 	TaskID       string        `json:"task_id"`
 	Kind         string        `json:"kind"`

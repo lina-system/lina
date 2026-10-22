@@ -30,7 +30,7 @@ selection ----+---- docs --------+---- gate
               +---- components --+
 ```
 
-Everything runs in one process. `selection` records the exact base and candidate commits, the changed paths, the selected checks and the selection reason. It also checks Git whitespace errors: `git diff --check` over the range, or `git show --check` on the `HEAD` commit with `--full`. The selected checks run in parallel after selection. The gate only evaluates their results; it never reruns their commands. Each check has a bounded timeout. Go build, vet, analyzer and whole-module test commands share the remaining components budget described below; `go test -timeout=8m` also bounds package execution and emits stuck-test stack traces when that deadline is reached. This accommodates subprocess acceptance builds under concurrent cold-cache CI verification without changing individual test operation deadlines. The enclosing components check remains bounded at fifteen minutes.
+Everything runs in one process. `selection` records the exact base and candidate commits, the changed paths, the selected checks and the selection reason. It also checks Git whitespace errors: `git diff --check` over the range, or `git show --check` on the `HEAD` commit with `--full`. The selected checks run in parallel after selection. The gate only evaluates their results; it never reruns their commands. Each check has a bounded timeout. Go build, vet, analyzer and whole-module test commands share the remaining components budget described below; `go test -timeout=6m` also bounds package execution and emits stuck-test stack traces when that deadline is reached. This accommodates subprocess acceptance builds under concurrent cold-cache CI verification without changing individual test operation deadlines. The enclosing components check remains bounded at fifteen minutes. The growing headless acceptance corpus is enumerated per package and executed in two disjoint batches of top-level tests, examples and fuzz seed tests. Both batches run uncached with the same six-minute diagnostic timeout and share the original fifteen-minute components budget; individual operation and scenario deadlines are unchanged. Each enumerated test runs exactly once, with its subtests. An enumeration or batch failure fails the gate immediately.
 
 ## Evidence
 
@@ -166,17 +166,19 @@ The component check shares an 895-second command budget, leaving five seconds fo
 
 On PR #298, [CI run 39659531710](https://github.com/thisisjun786/lina/actions/runs/39659531710) exhausted the former 595-second components budget after about 200 seconds of setup, builds and analysis and 395 seconds of module compilation and tests. Completed packages passed, including exchanges; end-to-end verification was still unfinished. The 895-second budget accommodates that cold-run workload while retaining the four-minute Go package timeout and individual operation deadlines. Build-only and automation budgets remain unchanged.
 
-On PR #398, [CI run 39682857682](https://github.com/thisisjun786/lina/actions/runs/39682857682) reached the four-minute end-to-end package limit while an installed-Core scenario had run for nine seconds and its current subtest for one second. That change set the package-wide diagnostic deadline to six minutes for the accumulated acceptance workload; individual operation deadlines and the fifteen-minute components guard are unchanged. A controlled-clock test verified that a progressing five-minute package fit after compilation, while the existing hung-command tests retain the shared guard.
+On PR #485, [CI run 39783991019](https://github.com/thisisjun786/lina/actions/runs/39783991019)
+reached the six-minute e2e package limit while the 108-test suite was still
+progressing through shortcut fixtures (the current subtest had just started).
+No assertion failed before the package watchdog fired. The component check used
+548.3 seconds of its 895-second budget. The common acceptance batching now
+runs this growing corpus in disjoint groups without raising the six-minute
+package limit or changing individual operation deadlines and the shared
+895-second command budget. The regression simulates a progressing 390-second
+e2e suite after 200 seconds of setup and requires every scenario to run once
+while the enclosing component guard holds.
 
-On PR #509, [CI run 39780351031](https://github.com/thisisjun786/lina/actions/runs/39780351031)
-reached the six-minute package limit while `TestM2WorkArea` had been running for
-five seconds, after earlier acceptance scenarios completed. Components had used
-528.5 seconds of its 895-second command budget. The package diagnostic deadline
-is now eight minutes for the accumulated suite. Individual operation deadlines,
-the shared command budget, and the fifteen-minute components watchdog remain
-unchanged. The controlled-clock regression exercises seven minutes of acceptance
-progress after 250 seconds of preparation, while the hung-command regression
-continues to prove that a command cannot outlive the remaining shared budget.
+
+On PR #398, [CI run 39682857682](https://github.com/thisisjun786/lina/actions/runs/39682857682) reached the four-minute end-to-end package limit while an installed-Core scenario had run for nine seconds and its current subtest for one second. The package-wide diagnostic deadline is now six minutes for the accumulated acceptance workload; individual operation deadlines and the fifteen-minute components guard are unchanged. A controlled-clock test verifies that a progressing five-minute package fits after compilation, while the existing hung-command tests retain the shared guard.
 
 Build regression fixtures also share a 595-second allowance across their build CLI calls, including both cross-build targets, under automation's 600-second watchdog. They pass the remaining budget to `scripts/build.mjs --timeout-ms <milliseconds>`, reserving one second for the CLI to report failures before its wrapper expires. The build script defaults to 595 seconds when invoked directly. Its inner Go builds share the remaining deadline, with environment queries capped at 30 seconds and module verification and metadata generation at 120 seconds. Inner commands and the fixture wrapper use the same timeout diagnostics.
 
@@ -213,3 +215,11 @@ with an isolated home and no inherited credentials or npm configuration. It runs
 use scripted runtime events and the real SDK's MCP registration without model
 calls. Every command must succeed; missing signatures and invalid attestations
 fail the check. The root and adapter npm projects have independent lockfiles.
+
+PR #523's [CI run 39785658738](https://github.com/thisisjun786/lina/actions/runs/39785658738)
+reached the six-minute package limit while the current TUI lifecycle scenario
+had run for two seconds. That branch initially used a ten-minute package diagnostic deadline. The
+acceptance batching from #127 now covers that growing corpus with two disjoint
+six-minute batches inside the unchanged fifteen-minute shared components budget.
+Individual operation deadlines and acceptance assertions remain in force;
+timeout or missing observations still fail verification.

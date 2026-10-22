@@ -146,9 +146,6 @@ func appendEvent(ctx context.Context, tx *canon.Tx, e Event) error {
 	if err = json.Unmarshal(raw, &e); err != nil {
 		return err
 	}
-	return appendWork(ctx, tx, e)
-}
-func appendWork(ctx context.Context, tx *canon.Tx, e Event) error {
 	events, err := ledger(ctx, tx, e.TaskID)
 	if err != nil {
 		return err
@@ -192,7 +189,6 @@ func appendWork(ctx context.Context, tx *canon.Tx, e Event) error {
 	}
 	return saveCard(ctx, tx, c)
 }
-
 func saveCard(ctx context.Context, tx *canon.Tx, c Card) error {
 	b, err := json.Marshal(c)
 	if err != nil {

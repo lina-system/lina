@@ -156,7 +156,7 @@ func (s *Service) Retain(ctx context.Context, l lease.Lease, taskID, receiptID, 
 			}
 			saved = append(saved, m)
 		}
-		return appendWork(ctx, tx, Event{Key: "retained:" + receiptID, Kind: "retained", TaskID: taskID, ReceiptID: receiptID, Materials: saved, Value: head})
+		return appendEvent(ctx, tx, Event{Key: "retained:" + receiptID, Kind: "retained", TaskID: taskID, ReceiptID: receiptID, Materials: saved, Value: head})
 	})
 	if err != nil {
 		return nil, err

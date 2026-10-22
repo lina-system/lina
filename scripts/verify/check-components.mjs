@@ -106,9 +106,35 @@ export function checkComponents({ cwd = process.cwd(), components, execute: run 
         ['build', '-mod=readonly', ...outputArgs, ...packages],
         ['vet', '-mod=readonly', ...packages],
         ['tool', 'exhaustive', ...packages],
-        ['test', '-count=1', '-timeout=8m', '-mod=readonly', ...packages],
       ]) {
         if (invoke('go', args, directory).status !== 0) return { status: 1, output };
+      }
+      const testArgs = ['test', '-count=1', '-timeout=6m', '-mod=readonly'];
+      const acceptance = module === '.' && packages.includes('./e2e/...');
+      const ordinary = acceptance ? packages.filter(name => name !== './e2e/...') : packages;
+      if (ordinary.length && invoke('go', [...testArgs, ...ordinary], directory).status !== 0) return { status: 1, output };
+      if (acceptance) {
+        // The acceptance corpus grows across milestones. Enumerate each
+        // package's actual tests, examples and fuzz seeds, then run disjoint
+        // halves. No test is omitted or repeated; each half retains Go's
+        // diagnostic timeout and consumes the same outer components budget.
+        const listed = invoke('go', ['list', '-mod=readonly', './e2e/...'], directory);
+        if (listed.status !== 0) return { status: 1, output };
+        const acceptancePackages = listed.stdout.trim().split(/\r?\n/).filter(Boolean);
+        if (!acceptancePackages.length) return { status: 1, output: `${output}No acceptance packages enumerated\n` };
+        for (const pkg of acceptancePackages) {
+          const listedTests = invoke('go', [...testArgs, '-list', '.', pkg], directory);
+          if (listedTests.status !== 0) return { status: 1, output };
+          const names = listedTests.stdout.split(/\r?\n/).filter(name => /^(Test|Example|Fuzz)[\p{L}\p{N}_]*$/u.test(name)).sort();
+          if (!names.length) {
+            if (invoke('go', [...testArgs, pkg], directory).status !== 0) return { status: 1, output };
+            continue;
+          }
+          for (let batch = 0; batch < 2; batch++) {
+            const tests = names.filter((_, index) => index % 2 === batch);
+            if (tests.length && invoke('go', [...testArgs, '-run', `^(${tests.join('|')})$`, pkg], directory).status !== 0) return { status: 1, output };
+          }
+        }
       }
       for (const component of selected.filter(component => component.binary)) {
         const result = invoke(join(binaries, component.binary), [], directory);

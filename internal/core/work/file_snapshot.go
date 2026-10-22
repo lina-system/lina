@@ -198,6 +198,6 @@ func (s *Service) snapshotFiles(ctx context.Context, c Card, runID string, recei
 			}
 			snapshot.Materials = append(snapshot.Materials, m)
 		}
-		return appendWork(ctx, tx, Event{Key: fmt.Sprintf("file-receipt:%s:%s:%d", c.Task.ID, runID, revision), TaskID: c.Task.ID, Kind: "file_receipt", RunID: runID, Receipt: &receipt, FileSnapshot: snapshot})
+		return appendEvent(ctx, tx, Event{Key: fmt.Sprintf("file-receipt:%s:%s:%d", c.Task.ID, runID, revision), TaskID: c.Task.ID, Kind: "file_receipt", RunID: runID, Receipt: &receipt, FileSnapshot: snapshot})
 	})
 }

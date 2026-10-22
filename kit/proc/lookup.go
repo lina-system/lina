@@ -2,6 +2,7 @@
 package proc
 
 import (
+	"errors"
 	"os/exec"
 	"path/filepath"
 )
@@ -12,6 +13,9 @@ func LookPath(name string) (string, error) {
 	path, err := exec.LookPath(name)
 	if err != nil {
 		return "", err
+	}
+	if !filepath.IsAbs(path) {
+		return "", errors.New("executable must resolve to an absolute path")
 	}
 	return filepath.Abs(path)
 }

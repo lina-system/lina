@@ -16,9 +16,9 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
-func conversationClient(t *testing.T, h *harness) (*clientapi.Client, string) {
+func conversationClient(t *testing.T, h *harness, extra ...protocol.Capability) (*clientapi.Client, string) {
 	t.Helper()
-	c, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "test", []protocol.Capability{{Name: "conversation", Version: "1.0"}})
+	c, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "test", append([]protocol.Capability{{Name: "conversation", Version: "1.0"}}, extra...))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,8 +38,8 @@ func conversationClient(t *testing.T, h *harness) (*clientapi.Client, string) {
 	if _, err = c.Subscribe(h.ctx, protocol.Subscribe{Topic: &topic}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = c.Receive(h.ctx); err != nil {
-		t.Fatal(err)
+	if snapshot, err := c.Receive(h.ctx); err != nil || snapshot.Kind != protocol.KindSnapshot {
+		t.Fatal("no history snapshot")
 	}
 	// Empty input probes admission without creating a message. Only recovery's
 	// explicit refusal permits another probe.

@@ -2,6 +2,7 @@
 package e2e_test
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"io/fs"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/lina/internal/clientapi"
+	"github.com/thisisjun786/lina/internal/core/boot"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
@@ -31,13 +34,14 @@ func TestM1Doctor(t *testing.T) {
 	healthy := newHarness(t, binary)
 	defaultRoot := healthy.root
 	healthy.root = filepath.Join(defaultRoot, "lina")
-	// Installation supplies canon/. A stop immediately after bind can precede
-	// Core's sandbox setup, so the fixture must not rely on that later phase.
+	// Installation supplies canon/. Complete startup before copying the fixture
+	// so a recovering Core does not create sandbox directories during doctor.
 	if err := os.MkdirAll(filepath.Join(healthy.root, "canon"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	core := healthy.startCore()
 	healthy.connect(core).Close()
+	waitCoreReady(t, healthy)
 	healthy.stopCore(core)
 	// Core now initializes its account-capable application schema itself. Do not
 	// reopen that database with an older subset of the migrations.
@@ -126,13 +130,44 @@ func TestM1Doctor(t *testing.T) {
 					if err := os.Remove(filepath.Join(h.root, "canon/canon.sqlite")); err != nil {
 						t.Fatal(err)
 					}
-					core := h.startCore()
-					client := h.client(core)
-					answer := client.call(t, protocol.KindInput, protocol.Input{})
-					if answer.Error == nil || answer.Error.Code != protocol.ErrorUnavailable {
-						t.Fatalf("expected RECOVERING refusal: %+v", answer)
+					// Hold recovery at an explicit boot boundary: otherwise the later
+					// sandbox probe can change files while doctor is being checked for writes.
+					ctx, cancel := context.WithCancel(h.ctx)
+					listening, done := make(chan struct{}), make(chan error, 1)
+					go func() {
+						done <- boot.Run(ctx, boot.Config{StateRoot: h.root, Socket: h.socket,
+							Services: boot.Services{Reconcile: func(ctx context.Context, _ boot.Recovery) error { <-ctx.Done(); return nil }},
+							AfterStep: func(step boot.Step, _ boot.Snapshot) error {
+								if step == boot.SocketsBound {
+									close(listening)
+								}
+								return nil
+							},
+						})
+					}()
+					defer func() {
+						cancel()
+						if err := <-done; err != nil {
+							t.Error(err)
+						}
+					}()
+					select {
+					case <-listening:
+					case <-h.ctx.Done():
+						t.Fatal(h.ctx.Err())
 					}
-					defer h.stopCore(core)
+					client, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "test", nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer client.Close()
+					if _, err = client.Input(h.ctx, protocol.Input{}); err != nil {
+						t.Fatal(err)
+					}
+					answer, err := client.Receive(h.ctx)
+					if err != nil || answer.Error == nil || answer.Error.Code != protocol.ErrorUnavailable {
+						t.Fatalf("expected RECOVERING refusal: %+v %v", answer, err)
+					}
 				}
 			case "missing canon", "fresh install", "unknown canon file":
 				if err := os.Remove(filepath.Join(h.root, "canon/canon.sqlite")); err != nil {
