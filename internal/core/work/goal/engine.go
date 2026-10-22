@@ -484,6 +484,14 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 			// or a plan for this revision. A late result is not a Core failure.
 			a.State = "finished"
 			a.Superseded = true
+			if hasExternalEffect(a) && !currentActionTarget(g, a) && !effectSettled(a, o) {
+				// A different target cannot inherit this effect. Retain its
+				// lease and bounded observation wait until its outcome is known.
+				a.State = "unknown"
+				if o.Handle != "" {
+					a.Handle = o.Handle
+				}
+			}
 			return put(v, "action", id, a)
 		}
 		if a.State == "finished" {

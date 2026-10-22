@@ -243,3 +243,57 @@ func TestInputVersionRetiresSettledEffectsForObsoleteTargets(t *testing.T) {
 		t.Fatalf("settled obsolete effect prevents current deployment: %+v", next)
 	}
 }
+
+func TestInputVersionWaitsForUnknownObsoleteEffectsWithoutPolling(t *testing.T) {
+	g := finishedGoal()
+	g.ServiceTarget, g.NoServiceReason = "private-service", ""
+	e := reviewEngine(t, g)
+	reviewReconcile(t, e)
+	a := claimReviewAction(t, e, "g", Deploy)
+	if err := e.journal.Update(t.Context(), Transition{ID: "new-target", Kind: "merge.observed", At: 100}, func(v *View) error {
+		g, err := loadGoal(v, "g")
+		if err != nil {
+			return err
+		}
+		if err = e.hydrate(&g); err != nil {
+			return err
+		}
+		g.TargetRevision = "new-merge"
+		return put(v, "goal", g.ID, g)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Report(t.Context(), a.ID, e.cfg.Epoch, Observation{Status: OutcomeUnknown, Handle: "old-deploy"}); err != nil {
+		t.Fatal(err)
+	}
+	reads := 0
+	e.cfg.Driver = &fixtureDriver{observe: func(got Action) (Observation, error) {
+		reads++
+		if got.ID != a.ID {
+			t.Error("lost unresolved deployment identity")
+		}
+		return Observation{Status: OutcomeRunning, Handle: "old-deploy"}, nil
+	}, run: func(Action) (Observation, error) {
+		t.Error("started another deployment before observing the old one")
+		return Observation{Status: OutcomeUnknown}, nil
+	}}
+	if err := e.Signal(t.Context(), Signal{ID: "deploy-progress", ActionID: a.ID}); err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		if err := e.step(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		e.wg.Wait()
+	}
+	if reads != 1 {
+		t.Fatalf("unchanged unresolved effect was polled %d times", reads)
+	}
+	if err := e.Report(t.Context(), a.ID, e.cfg.Epoch, Observation{Status: OutcomeSucceeded, Proof: Proof{Revision: a.Revision, Ref: "old-deploy-complete", Passed: true}}); err != nil {
+		t.Fatal(err)
+	}
+	reviewReconcile(t, e)
+	if next := reviewAction(t, e, "g", Deploy); next.Revision != "new-merge" {
+		t.Fatal("settled old deployment still blocks the current target")
+	}
+}
