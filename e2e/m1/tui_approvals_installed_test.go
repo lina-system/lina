@@ -19,6 +19,8 @@ import (
 )
 
 func TestM1TUIApprovalsInstalledCore(t *testing.T) {
+	t.Parallel()
+
 	var fixture struct {
 		ID, Scope, Summary, Target string
 		Choice                     protocol.ApprovalChoice

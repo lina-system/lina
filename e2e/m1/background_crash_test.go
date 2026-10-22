@@ -20,6 +20,8 @@ import (
 )
 
 func TestM1BackgroundRunSIGKILL(t *testing.T) {
+	t.Parallel()
+
 	const goal, artifact = "CRASH-RUN-122", "RECOVERED-RUN-122"
 	var foreground, background atomic.Int32
 	started := make(chan struct{}, 1)
