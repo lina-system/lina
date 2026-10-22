@@ -54,20 +54,8 @@ func TestM1ReplayExportInstalledCore(t *testing.T) {
 	core.start(t)
 	h.connect(core).Close()
 	waitCoreReady(t, h)
-	socket := h.socket
-	tap := newAccountTap(t, h, socket)
-	h.socket = tap.socket
-	terminal := h.startScreenTUI("TERM=xterm-256color")
-	h.socket = socket
+	terminal, _ := h.startConversationTUI(80, 24, "TERM=xterm-256color")
 	waitScreen(t, h, terminal, design.Text(design.English, "live"))
-	// Connection status precedes conversation discovery. Wait until History
-	// supplied the input destination instead of racing the first Enter.
-	for {
-		frame := tap.next(t, h)
-		if snapshot, ok := frame.Payload.(protocol.Snapshot); ok && strings.HasPrefix(snapshot.Topic, "conversation:") {
-			break
-		}
-	}
 	h.keys(terminal, scenario.Input+"\r")
 	waitScreen(t, h, terminal, scenario.Reply)
 	h.keys(terminal, "\x04")
