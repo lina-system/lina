@@ -122,13 +122,33 @@ func testM2FileLanding(t *testing.T, committed bool) {
 	if err = json.Unmarshal(raw, &workspace); err != nil {
 		t.Fatal(err)
 	}
-	// The deterministic worker is a subprocess; its exit is observed before the
-	// completion tool reports done. No vendor worker or external plugin is used.
-	worker := exec.Command("sh", "-c", `mkdir -p out && printf '%s' "$RESULT" > out/document.txt && printf '%s' "$REPORT" > report.md`)
+	// Keep a real worker alive after it writes the result, so the report tool
+	// cannot mistake valid output and a completion claim for observed termination.
+	worker := exec.CommandContext(h.ctx, "sh", "-c", `mkdir -p out && printf '%s' "$RESULT" > out/document.txt && printf '%s' "$REPORT" > report.md && printf 'ready\n' && read -r finish`)
 	worker.Dir = workspace.Path
 	worker.Env = []string{"PATH=" + os.Getenv("PATH"), "RESULT=" + scenario.Output, "REPORT=" + scenario.Report}
-	if b, e := worker.CombinedOutput(); e != nil {
-		t.Fatalf("worker: %v %s", e, b)
+	input, err := worker.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := worker.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = worker.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waited := false
+	defer func() {
+		input.Close()
+		if !waited {
+			worker.Process.Kill()
+			worker.Wait()
+		}
+	}()
+	ready := make([]byte, len("ready\n"))
+	if _, err = io.ReadFull(output, ready); err != nil || string(ready) != "ready\n" {
+		t.Fatalf("worker readiness: %q %v", ready, err)
 	}
 	run := work.Run{ID: "file-worker", TaskID: scenario.TaskID, Generation: 1, Worker: "stub", ThreadID: "file-thread", TurnID: "file-turn", NodeID: "fixture"}
 	client.Close()
@@ -158,40 +178,45 @@ func testM2FileLanding(t *testing.T, committed bool) {
 		r.EventID = work.ReceiptID(r)
 		return r
 	}
-	readCard := func() work.Card {
-		t.Helper()
-		db, e := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
-		if e != nil {
-			t.Fatal(e)
-		}
-		defer db.Close(context.Background())
-		c, e := work.New(db).Get(h.ctx, scenario.TaskID)
-		if e != nil {
-			t.Fatal(e)
-		}
-		return c
-	}
-	// Restart retained the run as unknown: the stub's successful process exit
-	// has not yet been admitted by the observation path. A model receipt cannot
-	// supply that missing fact or make the result landable.
-	pending := invoke("report_work_result", coreexec.ReportWork{TaskID: run.TaskID, RunID: run.ID, Receipt: receipt()}, false)
+	pending := invoke("report_work_result", coreexec.ReportWork{TaskID: scenario.TaskID, RunID: run.ID, Receipt: receipt()}, false)
 	var refusal struct {
 		Code      string `json:"code"`
 		Retryable bool   `json:"retryable"`
+		Next      string `json:"next_action"`
 	}
-	if err = json.Unmarshal(pending, &refusal); err != nil || refusal.Code != "worker_termination_unobserved" || !refusal.Retryable {
+	if err = json.Unmarshal(pending, &refusal); err != nil || refusal.Code != "worker_termination_unobserved" || !refusal.Retryable || refusal.Next != "wait_for_worker_termination_then_report_again" {
 		t.Fatalf("unobserved report: %s", pending)
 	}
-	if c := readCard(); !c.Active || c.State != "unknown" || c.TurnStatus != "" || c.Receipt != nil || c.FileSnapshot != nil {
-		t.Fatalf("report released unknown execution: %+v", c)
+	invoke("land_work_result", coreexec.LandWork{TaskID: scenario.TaskID, ReceiptID: receipt().EventID, Fingerprint: "unobserved", Judgment: "Completion claim is not an exit."}, false)
+	entries, err := os.ReadDir(destination)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("unobserved worker caused delivery: %v %v", entries, err)
 	}
-	invoke("land_work_result", coreexec.LandWork{TaskID: run.TaskID, ReceiptID: receipt().EventID, Fingerprint: strings.Repeat("0", 64), Judgment: "fixture judgment"}, false)
+	// The fixture owns the process observation boundary; only successful Wait
+	// supplies Finish. The model report path must never supply this observation.
+	if _, err = io.WriteString(input, "finish\n"); err != nil {
+		t.Fatal(err)
+	}
+	input.Close()
+	err = worker.Wait()
+	waited = true
+	if err != nil {
+		t.Fatal(err)
+	}
 	client.Close()
 	h.stopCore(core)
 	withFileCanon(t, h, func(db *canon.Store) {
-		// The adapter fixture observed CombinedOutput return successfully above.
-		// Persist that observation independently of the model-supplied receipt.
-		if e := work.New(db).Finish(h.ctx, run.TaskID, run.ID, "completed"); e != nil {
+		service := work.New(db)
+		card, e := service.Get(h.ctx, run.TaskID)
+		if e != nil || !card.Active || card.State != "unknown" || card.TurnStatus != "" || card.Receipt != nil || card.FileSnapshot != nil {
+			t.Fatalf("report manufactured termination or snapshot: %+v %v", card, e)
+		}
+		next := run
+		next.ID, next.TurnID, next.Generation = "another-worker", "another-turn", 2
+		if e = service.Start(h.ctx, next); !errors.Is(e, work.ErrActiveRun) {
+			t.Fatalf("report released active worker reservation: %v", e)
+		}
+		if e = service.Finish(h.ctx, run.TaskID, run.ID, "completed"); e != nil {
 			t.Fatal(e)
 		}
 	})
@@ -227,7 +252,7 @@ func testM2FileLanding(t *testing.T, committed bool) {
 	if err = json.Unmarshal(changed, &instruction); err != nil || instruction.Next != "inspect_result_and_report_done_again" {
 		t.Fatalf("no fresh-done instruction: %s", changed)
 	}
-	entries, _ := os.ReadDir(destination)
+	entries, _ = os.ReadDir(destination)
 	if len(entries) != 0 {
 		t.Fatal("changed output copied")
 	}
@@ -247,6 +272,19 @@ func testM2FileLanding(t *testing.T, committed bool) {
 	})
 	core = start(true)
 	client, conversation = conversationClient(t, h)
+	readCard := func() work.Card {
+		t.Helper()
+		db, e := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
+		if e != nil {
+			t.Fatal(e)
+		}
+		defer db.Close(context.Background())
+		c, e := work.New(db).Get(h.ctx, scenario.TaskID)
+		if e != nil {
+			t.Fatal(e)
+		}
+		return c
+	}
 	c = readCard()
 	if committed {
 		if !c.Applied || c.FileEvidence == nil || len(c.FileCopies) != 1 || c.FileCopies[0].Status != "landed" {

@@ -107,7 +107,7 @@ export function kind(path) {
   if (path === 'DESIGN.md' || /^design\/tokens\/[^/]+\.(?:json|css|svg)$/.test(path)) return 'automation';
   if (/^evidence\/brand\/[^/]+\.png$/.test(path)) return 'docs';
   if (componentOf(path)) return 'components';
-  if (documents.has(path) || /^docs\/(?:policy|design)\/[^/]+\.md$/.test(path)
+  if (documents.has(path) || /^docs\/(?:policy|design|research)\/[^/]+\.md$/.test(path)
       || /^evidence\/.+\.(?:json|md)$/.test(path)) return 'docs';
   if (/^\.github\/workflows\/[^/]+\.ya?ml$/.test(path)) return 'automation';
   if (configuration.has(path) || /^scripts\/(?:verify\/)?[^/]+\.(?:mjs|sh)$/.test(path)) return 'automation';
