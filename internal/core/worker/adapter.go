@@ -117,6 +117,8 @@ const (
 )
 
 type ThreadSnapshot struct {
+	// Output is the latest completed assistant message in the current turn.
+	Output                     string
 	Thread                     Thread
 	State                      ThreadState
 	Worker, Version, Workdir   string
@@ -141,6 +143,8 @@ type Answer struct {
 }
 
 type ToolCall struct {
+	// CallID preserves the worker wire call id; ID is the opaque Answer request id.
+	CallID              string
 	ID, Namespace, Name string
 	Arguments           json.RawMessage
 }

@@ -125,6 +125,13 @@ func handle(s jobapi.API, ctx context.Context, w http.ResponseWriter, r *http.Re
 	}
 	if r.Method == http.MethodPost {
 		switch r.URL.Path {
+		case "/Ready":
+			var v struct{}
+			if err = decode(&v); err == nil {
+				out = struct {
+					Protocol string `json:"protocol"`
+				}{"moirai/1"}
+			}
 		case "/Aux":
 			var v jobapi.AuxRequest
 			if err = decode(&v); err == nil {

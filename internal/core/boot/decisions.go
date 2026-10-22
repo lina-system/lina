@@ -21,7 +21,7 @@ func (r *conversationRuntime) startDecisions(ctx context.Context) error {
 		}
 		return ""
 	}}
-	d.Questions = runQuestions{runtime: r}
+	d.Questions = workerQuestions{runtime: r}
 	r.decisions = d
 	r.identity.DecisionPresence = d.Presence
 	for kind, operation := range d.Operations() {
@@ -35,6 +35,9 @@ func (r *conversationRuntime) startDecisions(ctx context.Context) error {
 	r.identity.RefreshTopic = func(ctx context.Context, topic string) error {
 		if topic == "waiting" {
 			if err := d.PublishApprovals(ctx); err != nil {
+				return err
+			}
+			if err := r.restoreWorkerQuestions(ctx); err != nil {
 				return err
 			}
 			return r.restoreRunQuestions(ctx)

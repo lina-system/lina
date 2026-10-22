@@ -87,3 +87,29 @@ func TestChannelConnectionChangeClearsPairingCode(t *testing.T) {
 		t.Fatal("new connection retained the other bot's code")
 	}
 }
+
+func TestDiscordControlsKeepPlatform(t *testing.T) {
+	m := accountShell()
+	m.channels = channelView{open: true}
+	m.Update(tea.KeyPressMsg{Code: 'd', Text: "d"})
+	m.Update(tea.PasteMsg{Content: "synthetic.discord.token"})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("Discord connect unavailable")
+	}
+	p := cmd().(shellChannelRequest).Request
+	if p.Platform == nil || *p.Platform != "discord" || p.Token == nil {
+		t.Fatal("Discord connect lost platform")
+	}
+	for _, key := range []rune{'p', 'x'} {
+		m.channels = channelView{open: true, rows: []protocol.ChannelConnection{{Platform: "discord", Account: "123"}}}
+		_, cmd = m.Update(tea.KeyPressMsg{Code: key, Text: string(key)})
+		if cmd == nil {
+			t.Fatal("no control")
+		}
+		p = cmd().(shellChannelRequest).Request
+		if p.Platform == nil || *p.Platform != "discord" {
+			t.Fatal("control addressed Telegram")
+		}
+	}
+}

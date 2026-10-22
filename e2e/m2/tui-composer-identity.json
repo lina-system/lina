@@ -1,0 +1,8 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "agent": "QA-Beta",
+  "input": "COMPOSER-IDENTITY-FIXTURE",
+  "reply": "Selected agent reply.",
+  "width": 120,
+  "height": 35
+}
