@@ -15,6 +15,7 @@ import (
 	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/internal/tui/render"
 	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
+	"github.com/thisisjun786/lina/kit/protocol"
 )
 
 func TestM1TUIComposer(t *testing.T) {
@@ -53,9 +54,24 @@ func TestM1TUIComposer(t *testing.T) {
 			defer provider.Close()
 			h, start := installedConversationHarness(t, provider.URL)
 			core := start(true)
+			// Seed one exchange through the installed Core. Its restored reply is
+			// the TUI readiness barrier; Connected alone precedes history discovery.
+			client, conversation := conversationClient(t, h)
+			defer client.Close()
+			inputID := "composer-fixture"
+			if _, err := client.Input(h.ctx, protocol.Input{ConversationID: &conversation, InputID: &inputID, Text: &scenario.Input}); err != nil {
+				t.Fatal(err)
+			}
+			for {
+				frame, err := client.Receive(h.ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if turn, ok := frame.Payload.(protocol.TurnState); ok && turn.Active != nil && !*turn.Active {
+					break
+				}
+			}
 			terminal := h.startTerminalSize([]string{"TERM=xterm-256color", "COLORTERM=truecolor", "LC_ALL=" + variant.locale, "LINA_GLYPHS=" + variant.glyphs}, false, true, scenario.Width, scenario.Height)
-			waitScreen(t, h, terminal, "Ctrl+D")
-			h.keys(terminal, scenario.Input+"\r")
 			empty := waitScreen(t, h, terminal, scenario.Reply)
 			t.Logf("empty screen (%dx%d):\n%s", scenario.Width, scenario.Height, strings.Join(screenRows(empty), "\n"))
 			composerY := scenario.Height - 2
