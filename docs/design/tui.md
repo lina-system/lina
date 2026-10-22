@@ -106,6 +106,15 @@ snapshot restore the subscribed view in Core's history order. A durable stopped
 outcome stays with its interrupted turn before later inputs and replies, including
 after reconnect and terminal resize.
 
+Connection loss includes a request write failing before the receive loop observes
+EOF. The client closes that transport and the same connection owner enters
+Retrying; a failed or unacknowledged submission returns to the draft and is never
+automatically resent. Only transport failures take this path. Invalid requests,
+malformed protocol frames, terminal input/output failures and caller cancellation
+retain their failure or cancellation behavior. The installed-Core headless test
+`TestM1TUISubmissionDisconnectInstalledCore` forces the write-first ordering,
+restarts Core and verifies retained history, an editable draft and explicit send.
+
 Initial conversation discovery stays Connecting until History supplies the
 destination. The connected conversation state is a usable input boundary, not
 just a successful socket handshake. Input typed during discovery remains a
