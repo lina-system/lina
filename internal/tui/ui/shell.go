@@ -96,6 +96,15 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.accountsKnown = false
 			m.memoryPage = nil
 			m.content, _ = state.Reduce(m.content, state.ConnectionLost{})
+			m.conversation.agentPending = m.conversation.id != ""
+			// Retain the visible window, but rediscover its subscriptions only
+			// after the selected agent is validated on the new connection.
+			for topic := range m.content.Topics {
+				if m.conversation.agentPending && (strings.HasPrefix(topic, "conversation:") || strings.HasPrefix(topic, "results:")) {
+					delete(m.content.Topics, topic)
+					delete(m.resyncPending, topic)
+				}
+			}
 			m.refreshBlocks()
 			m.status = ConnectionStatus{State: Retrying}
 			m.resyncSeen = make(map[resyncSignal]protocol.StreamCursor)
@@ -103,7 +112,7 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case shellConnection:
 		if msg.Generation == m.generation {
 			m.status = msg.Status
-			if m.status.State == Live && (m.hasGap() || len(m.resyncPending) > 0) {
+			if m.status.State == Live && (m.conversation.agentPending || m.hasGap() || len(m.resyncPending) > 0) {
 				m.status.State = Resyncing
 			}
 		}
@@ -170,7 +179,7 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if m.content.Epoch == projected.cursor.Epoch && topic.Cursor >= seq && !topic.OutOfSync {
 				delete(m.resyncPending, projected.topic)
 			}
-			if len(m.resyncPending) == 0 && !m.hasGap() && m.status.State == Resyncing {
+			if !m.conversation.agentPending && len(m.resyncPending) == 0 && !m.hasGap() && m.status.State == Resyncing {
 				m.status = ConnectionStatus{State: Live}
 			}
 		}
@@ -290,6 +299,9 @@ func (m *shellModel) View() tea.View {
 // Notices stay outside history. A capability notice is no longer current when
 // a later welcome grants a different set of lists.
 func (m *shellModel) localNotice() string {
+	if m.conversation.agentMissing {
+		return design.Text(m.styles.options.Language, "agents.choose_required")
+	}
 	for i := len(m.content.Notices) - 1; i >= 0; i-- {
 		code := m.content.Notices[i].Code
 		switch code {

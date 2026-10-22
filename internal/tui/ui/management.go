@@ -222,7 +222,7 @@ func (s *managementSession) response(ctx context.Context, c *clientapi.Client, e
 			active = *p.AgentID
 		} else if active == "" && *p.Operation == "create" && p.AgentID != nil {
 			active = *p.AgentID
-		} else if !found && *p.Operation == "delete" {
+		} else if !found && *p.Operation == "delete" && !m.conversation.agentMissing {
 			active = ""
 			if len(*p.Agents) > 0 {
 				active = (*p.Agents)[0].AgentID
@@ -232,6 +232,8 @@ func (s *managementSession) response(ctx context.Context, c *clientapi.Client, e
 		}
 		if !m.hasCapability("conversation") {
 			m.conversation.id = "main:" + active
+			m.conversation.agentMissing = false
+			m.agentDiscoveryDone()
 			return true, nil
 		}
 		if err := switchConversation(ctx, c, m, active); err != nil {
