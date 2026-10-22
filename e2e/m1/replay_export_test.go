@@ -52,8 +52,17 @@ func TestM1ReplayExportInstalledCore(t *testing.T) {
 	}))
 	defer provider.Close()
 	h, _ := installedConversationHarness(t, provider.URL)
+	// Keep dispatch_work in the recorded catalog on hosts without a worker
+	// install, so request evidence reliably exceeds the inline boundary.
+	// These discovery fixtures must never execute in an export/replay test.
+	bin := t.TempDir()
+	for _, name := range []string{"agy", "gh"} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\nexit 97\n"), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
 	core := h.command("core", "--state-root", h.root, "--socket", h.socket)
-	core.command.Env = append(core.command.Env, "PATH="+os.Getenv("PATH"), "LINA_RESPONSES_BASE_URL="+provider.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
+	core.command.Env = append(core.command.Env, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "LINA_RESPONSES_BASE_URL="+provider.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
 	core.start(t)
 	h.connect(core).Close()
 	waitCoreReady(t, h)
