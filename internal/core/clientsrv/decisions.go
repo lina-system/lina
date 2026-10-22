@@ -169,6 +169,10 @@ func (d *Decisions) approvalAnswer(ctx context.Context, session Session, envelop
 }
 
 func (d *Decisions) PublishQuestion(ctx context.Context, id string) error {
+	// Serialize source reads with publication so a concurrent refresh cannot
+	// overwrite a newly resolved card with an older, still-open projection.
+	d.publishMu.Lock()
+	defer d.publishMu.Unlock()
 	if d.Questions == nil || d.Topics == nil {
 		return &OperationError{Code: protocol.ErrorUnavailable}
 	}
@@ -190,7 +194,7 @@ func (d *Decisions) PublishQuestion(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	return d.Topics.Publish("waiting", TopicEvent{Kind: protocol.KindQuestion, Key: id, Data: data})
+	return d.Topics.publishQuestion(TopicEvent{Kind: protocol.KindQuestion, Key: id, Data: data})
 }
 func (d *Decisions) questionAnswer(ctx context.Context, session Session, envelope protocol.Envelope) (Result, error) {
 	if !d.eligible(session) {

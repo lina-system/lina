@@ -67,7 +67,8 @@ func (q runQuestions) workQuestion(ctx context.Context, person, id string) (prot
 	recommendation := strings.Join(recommendations, "; ")
 	card.Recommendation = &recommendation
 	if len(record.Decisions) > 0 {
-		if record.Decisions[0].Kind == "answer" {
+		last := record.Decisions[len(record.Decisions)-1]
+		if last.Kind == "answer" || last.Kind == "late_answer" {
 			outcome := protocol.DecisionOutcomeResolved
 			card.Outcome = &outcome
 		} else {

@@ -10,9 +10,9 @@ const fields = {
   color: ['canvas', 'surface', 'text', 'muted', 'accent', 'line'],
   type: ['body', 'code', 'size', 'lineHeight', 'weight', 'titleWeight'],
   space: ['inline', 'gutter', 'section', 'page'], radius: ['card'],
-  motion: ['settle', 'reduced'], icon: ['size'],
+  motion: ['settle', 'reduced', 'activityFrame', 'activityElapsed'], icon: ['size'],
 };
-const glyphs = ['mark', 'connecting', 'live', 'resyncing', 'retrying', 'refused', 'recovering', 'stopped', 'failed', 'quit', 'rule', 'action', 'waiting', 'unknown'];
+const glyphs = ['mark', 'connecting', 'live', 'resyncing', 'retrying', 'refused', 'recovering', 'stopped', 'failed', 'quit', 'rule', 'action', 'waiting', 'unknown', 'activityFrames', 'activitySeparator'];
 const expected = [...Object.entries(fields).flatMap(([group, roles]) => roles.map(role => `${group}.${role}`)),
   ...['unicode', 'ascii'].flatMap(set => glyphs.map(role => `glyph.${set}.${role}`))].sort();
 const identifier = path => path.split(/[.-]/).map(word => word[0].toUpperCase() + word.slice(1)).join('');

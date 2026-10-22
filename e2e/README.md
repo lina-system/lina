@@ -249,3 +249,9 @@ work tools, authenticated owner approval and question answers, worker-written
 artifact contents, reported quota windows, and restored completion history.
 Worker settings remain omitted. This scenario uses no real account or provider
 credentials and does not measure live Codex quota.
+
+`m2/github-ci.json` starts the real Core binary with a synthetic `gh` executable
+in its isolated PATH. It negotiates the GitHub capability, refuses an unnegotiated
+read, observes rate-limited CI pending and its retry deadline, then observes head,
+review threads and successful checks. It verifies conditional headers and one
+review read per head, with no network credentials or GitHub service dependency.

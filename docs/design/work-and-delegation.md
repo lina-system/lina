@@ -836,7 +836,7 @@ After every event Core commits for a goal, Core derives the goal's next actions 
 | Deploy observed | Code goal | Probe the running service at the deployed revision against the done condition; an exit code is not a probe. | Core |
 | Background run landed complete | Research or document task | Check citations, store the result, re-evaluate the criteria it serves. | Core, then manager |
 | Background run landed partial | Research or document task | Start one follow-up run on what is missing, or mark it open in the result when the sources cannot answer it. | Manager |
-| Draft or file result ready | Document or file task | Check it against the done condition and land it at its destination; a destination never has existing files merged or overwritten. | Manager, then Core |
+| Draft or file result ready | Document or file task | Check it against the done condition. Land a new artifact at its destination without merging or overwriting existing files. When the goal updates an existing document, use the revision-checked [in-place edit](materials-and-knowledge.md#editing-a-persons-files-in-place), keeping the old version and rejecting a stale revision. | Manager, then Core |
 | Effect performed through a plugin (calendar event, sent message, file move) | Effect task | Read back the external record; only the read sets the criterion. | Core |
 | Reply arrived in a waited thread, a record changed, or a date was reached | Wait open | Close the wait and re-evaluate the criteria behind it. | Core |
 | A wait's deadline passed | Wait open | Read the source once more; if still open, apply the wait's expiry action (see Waits on the outside). | Core |
@@ -902,7 +902,7 @@ Every ready task starts at once, limited only by the person's quota and by what 
 
 ### Recovery
 
-- The goal record, its tasks, waits and evidence are canon in the work ledger. A restart loses no goal: Core reconciles effects whose outcome is unknown, then derives the next actions of every goal that is not final.
+- The goal definition is canon in the 일 or 목표 record in the records repository; the work ledger holds its execution state (criteria status and evidence, tasks, waits and state). A restart loses no goal: Core resolves the goal record by the id and revision referenced in the ledger and reads its execution state from the ledger, reconciles effects whose outcome is unknown, then derives the next actions of every goal that is not final.
 - Every derived action has an identity bound to the goal, the task, its attempt, its stage and the head or revision it acts on. Replaying an event or running two derivations at once never dispatches the same action twice.
 - Task-level recovery is the one recovery of Stall and failure. A goal does not add attempts on top: when a task's recovery is exhausted, the goal is `blocked` on that task while its independent tasks continue.
 - A wait survives restart with its deadline. A timer that should have fired while Core was down fires once at startup.
@@ -935,13 +935,19 @@ with one deadline and a default for every question. A second open round for
 the same goal is refused; a retry of the identical round is idempotent.
 Answering the round supplies all its question values together. Each question
 holds only its named dependents, so one unanswered effect cannot stop the
-rest of the goal.
+rest of the goal. Core skips publishing an unchanged retained question card,
+including on a waiting refresh or another round's event, so an answer being
+edited stays intact. A changed projection, such as expiry or resolution, is
+still published; a new connection receives the current snapshot.
 
 A timely answer and its originating message are recorded with the person and
 agent from the durable round. A late answer remains available after expiry
 and appends a new decision with its message identity and body; it increments
 the goal revision and returns the goal to work. Retrying the same message
 cannot create another revision. The expired default stays in the ledger.
+Once a timely or late answer is accepted, the round's card is resolved and
+stays resolved after reconnect or Core restart. Expiry alone leaves the card
+answerable for that late decision; a resolved card accepts no further answer.
 The manager derives revised work from the new decision: Core never rewrites
 the inputs or results of old executions, releases an old effect merely due
 to a late answer, or undoes an effect already applied. Work projections can
