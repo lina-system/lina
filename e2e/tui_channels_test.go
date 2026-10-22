@@ -62,7 +62,7 @@ func testTUIControlInstalledCore(t *testing.T, path string, kind protocol.Kind) 
 	tap := newAccountTap(t, h, coreSocket)
 	h.socket = tap.socket
 	terminal := h.startScreenTUI("TERM=xterm-256color")
-	waitScreen(t, h, terminal, "Ctrl+D")
+	waitComposerReady(t, h, terminal)
 	// A control view is usable only when the installed composition actually
 	// registers its service; do not wait for a reply from an unsupported view.
 	capability := "channels"
@@ -169,11 +169,11 @@ func TestM1TUIChannelPairing(t *testing.T) {
 	core.command.Env = append(core.command.Env, "LINA_TEST_CHANNEL_ROOT="+h.root, "LINA_TEST_CHANNEL_SOCKET="+socket, "LINA_TEST_CHANNEL_HTTP="+platform.URL)
 	core.start(t)
 	h.connect(core).Close()
-	waitConversationReady(t, h)
+	waitCoreReady(t, h)
 	tap := newAccountTap(t, h, socket)
 	h.socket = tap.socket
 	terminal := h.startScreenTUI("TERM=xterm-256color")
-	waitScreen(t, h, terminal, "Ctrl+D")
+	waitComposerReady(t, h, terminal)
 	next := func() protocol.ChannelResult {
 		t.Helper()
 		for {

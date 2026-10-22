@@ -1,0 +1,78 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "service": "results",
+  "setup": {
+    "person_id": "person",
+    "agent_id": "agent",
+    "conversation_id": "conversation",
+    "turn_id": "turn",
+    "task_id": null
+  },
+  "input": {
+    "type": "plan_view",
+    "title": "Fixture result",
+    "summary": "Synthetic result body.",
+    "body": {
+      "entries": [
+        {
+          "id": "one",
+          "kind": "project",
+          "title": "First",
+          "state": "active",
+          "parent": null
+        },
+        {
+          "id": "two",
+          "kind": "todo",
+          "title": "Second",
+          "state": "planned",
+          "parent": "one"
+        }
+      ],
+      "confirm": null
+    }
+  },
+  "output": {
+    "error": "",
+    "result": {
+      "type": "plan_view",
+      "body": {
+        "entries": [
+          {
+            "id": "one",
+            "kind": "project",
+            "title": "First",
+            "state": "active",
+            "parent": null
+          },
+          {
+            "id": "two",
+            "kind": "todo",
+            "title": "Second",
+            "state": "planned",
+            "parent": "one"
+          }
+        ],
+        "confirm": null
+      }
+    }
+  },
+  "outcome": {
+    "events": 1,
+    "heads": 1,
+    "saves": 0,
+    "revision": 1,
+    "status": "preview",
+    "title": "Fixture result",
+    "summary": "Synthetic result body.",
+    "saved_as": null,
+    "revised_by": "agent",
+    "provenance": {
+      "agent_id": "agent",
+      "conversation_id": "conversation",
+      "turn_id": "turn",
+      "task_id": null
+    },
+    "text_complete": true
+  }
+}
