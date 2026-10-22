@@ -1,0 +1,11 @@
+{
+  "task_id": "task-ledger-e2e",
+  "agent_id": "agent-ledger-e2e",
+  "conversation_id": "conversation-ledger-e2e",
+  "title": "Write the fixture report",
+  "done": "The report contains the expected bytes",
+  "output": "A durable work result.\n",
+  "claim_state": "working",
+  "accepted_state": "done",
+  "restart_state": "unknown"
+}
