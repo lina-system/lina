@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/thisisjun786/lina/internal/design"
+	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -95,9 +96,13 @@ func speakerGutterInstalledCore(t *testing.T, ascii, plain bool) {
 	}
 	for _, exchange := range scenario.Exchanges {
 		h.keys(terminal, exchange.Input+"\r")
+		seenReply := false
 		for {
 			frame := tap.next(t, h)
-			if state, ok := frame.Payload.(protocol.TurnState); ok && state.Active != nil && !*state.Active {
+			if item, ok := frame.Payload.(protocol.ItemDone); ok && item.Text != nil && *item.Text == exchange.Reply {
+				seenReply = true
+			}
+			if state, ok := frame.Payload.(protocol.TurnState); ok && seenReply && state.Active != nil && !*state.Active {
 				break
 			}
 		}
@@ -106,6 +111,17 @@ func speakerGutterInstalledCore(t *testing.T, ascii, plain bool) {
 	// Editing the composer is a visible redraw barrier after both replies.
 	h.keys(terminal, "capture-ready")
 	snapshot := waitScreen(t, h, terminal, "capture-ready")
+	if !plain {
+		// The tap sees Core's event before the TUI necessarily renders it.
+		// Capture only after every reply's completion metadata is on screen.
+		worked := strings.TrimSuffix(design.Text(design.English, "activity.worked_for"), "%s")
+		snapshot, err = terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
+			return strings.Contains(screenText(s), "capture-ready") && strings.Count(screenText(s), worked) == len(scenario.Exchanges)
+		})
+		if err != nil {
+			t.Fatalf("completion metadata did not render: %v; cells=%s", err, screenText(snapshot))
+		}
+	}
 	var rows []string
 	for _, row := range snapshot.Cells {
 		var line strings.Builder

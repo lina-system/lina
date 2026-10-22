@@ -46,7 +46,7 @@ func TestAssemblyThroughDurableTurnNeverStoresPacket(t *testing.T) {
 			if report.Failure != "" {
 				t.Fatal(report)
 			}
-			a := turn.Assembly{AgentID: report.AgentID, PersonaRevision: report.PersonaRevision}
+			a := turn.Assembly{AgentID: report.AgentID, PersonaRevision: report.PersonaRevision, WorkMethodRevision: "method-" + id}
 			for _, ref := range report.Items {
 				a.Items = append(a.Items, turn.Reference{ID: ref.ID, Revision: ref.Revision})
 			}
@@ -65,7 +65,7 @@ func TestAssemblyThroughDurableTurnNeverStoresPacket(t *testing.T) {
 			if err := json.Unmarshal([]byte(record.Body.Text()), &evidence); err != nil {
 				t.Fatal(err)
 			}
-			if evidence.Hash != assemble.Digest(r) || evidence.Class != provider.ModelAPI || evidence.Assembly.Items[0].ID != "clock" {
+			if evidence.Hash != assemble.Digest(r) || evidence.Class != provider.ModelAPI || evidence.Assembly.Items[0].ID != "clock" || evidence.Assembly.WorkMethodRevision != "method-"+id {
 				t.Fatal(evidence)
 			}
 			if id == "first" {
@@ -106,7 +106,7 @@ func TestAssemblyThroughDurableTurnNeverStoresPacket(t *testing.T) {
 		if err := json.Unmarshal([]byte(ack.Body.Text()), &a); err != nil {
 			t.Fatal(err)
 		}
-		if a.PolicyRevision != "policy-1" || a.Assembly.AgentID != "agent" || a.Assembly.PersonaRevision != "r1" {
+		if a.PolicyRevision != "policy-1" || a.Assembly.AgentID != "agent" || a.Assembly.PersonaRevision != "r1" || a.Assembly.WorkMethodRevision != "method-"+id {
 			t.Fatal(a)
 		}
 		row, err := s.Read(t.Context(), id)

@@ -179,7 +179,13 @@ func (s *Store) object(id, kind string, data []byte) (string, error) {
 	err := s.immutable(filepath.Join(repoPath(id), "objects", hash[:2], hash[2:]), compressed.Bytes())
 	return hash, err
 }
-func (s *Store) save(ctx context.Context, id, parent string, layers Layers, person string) (string, error) {
+
+type personaVersion struct {
+	Layers
+	WorkMethod json.RawMessage `json:"work_method,omitempty"`
+}
+
+func (s *Store) save(ctx context.Context, id, parent string, layers Layers, person string, method ...string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -190,7 +196,20 @@ func (s *Store) save(ctx context.Context, id, parent string, layers Layers, pers
 	if err := s.immutable(filepath.Join(dir, "config"), []byte("[core]\nrepositoryformatversion = 0\nbare = true\n")); err != nil {
 		return "", err
 	}
-	data, _ := json.Marshal(layers)
+	version := personaVersion{Layers: layers}
+	if len(method) > 0 {
+		version.WorkMethod = json.RawMessage(method[0])
+	} else if parent != "" {
+		old, err := s.loadVersion(id, parent)
+		if err != nil {
+			return "", err
+		}
+		version.WorkMethod = old.WorkMethod
+	}
+	data, err := json.Marshal(version)
+	if err != nil {
+		return "", err
+	}
 	blob, err := s.object(id, "blob", data)
 	if err != nil {
 		return "", err
@@ -258,7 +277,11 @@ func (s *Store) readObject(id, hash, kind string) ([]byte, error) {
 	return data, nil
 }
 func (s *Store) load(id, commit string) (Layers, error) {
-	var layers Layers
+	version, err := s.loadVersion(id, commit)
+	return version.Layers, err
+}
+func (s *Store) loadVersion(id, commit string) (personaVersion, error) {
+	var layers personaVersion
 	body, err := s.readObject(id, commit, "commit")
 	if err != nil {
 		return layers, err
