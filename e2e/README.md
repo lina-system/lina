@@ -24,7 +24,7 @@ rendered it. LONG-QA waits for the idle viewport before stitching PgUp pages.
 
 The suite builds each command once per test run and removes the shared binaries
 after all scenarios finish. Foundation enumerates the acceptance tests and runs
-two disjoint batches under its shared components budget. This keeps a growing
+three disjoint batches under its shared components budget. This keeps a growing
 corpus from exhausting one package watchdog while preserving every scenario,
 assertion and operation deadline. Independent scenarios call `t.Parallel()` and
 foundation limits each batch to four concurrent tests, including parallel
