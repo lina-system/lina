@@ -19,17 +19,18 @@ import (
 // Additional JSON fields are allowed as later components add their metadata.
 type Manifest struct {
 	// CRWPin is absent only in artifacts built before the work-ledger start gate.
-	CRWPin                *crwpin.Record                   `json:"crwPin,omitempty"`
-	SupportedCombinations []Combination                    `json:"supportedCombinations"`
-	Version               string                           `json:"version"`
-	Commit                string                           `json:"commit"`
-	Date                  string                           `json:"date"`
-	Target                string                           `json:"target"`
-	GoToolchain           string                           `json:"goToolchain"`
-	KitVersion            int64                            `json:"kitVersion"`
-	Binaries              []Binary                         `json:"binaries"`
-	SQLite                SQLite                           `json:"sqlite"`
-	Providers             map[string]responseconfig.Config `json:"providers"`
+	CRWPin                 *crwpin.Record                   `json:"crwPin,omitempty"`
+	SupportedCombinations  []Combination                    `json:"supportedCombinations"`
+	Version                string                           `json:"version"`
+	Commit                 string                           `json:"commit"`
+	Date                   string                           `json:"date"`
+	Target                 string                           `json:"target"`
+	GoToolchain            string                           `json:"goToolchain"`
+	KitVersion             int64                            `json:"kitVersion"`
+	Binaries               []Binary                         `json:"binaries"`
+	SQLite                 SQLite                           `json:"sqlite"`
+	Providers              map[string]responseconfig.Config `json:"providers"`
+	VerifiedWorkerVersions map[string][]string              `json:"verifiedWorkerVersions,omitempty"`
 }
 
 // Binary describes one artifact next to manifest.json. SHA256 is lowercase hex.

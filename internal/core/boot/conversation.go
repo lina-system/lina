@@ -65,6 +65,7 @@ type acceptedSteering struct {
 type conversationRuntime struct {
 	work         *work.Service
 	background   *backgroundRuntime
+	workers      *workerRuntime
 	router       *conversationRouter
 	decisions    *clientsrv.Decisions
 	replaySocket string
@@ -115,7 +116,7 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err != nil {
 		return nil, err
 	}
-	r := &conversationRuntime{dispatchMu: &sync.RWMutex{}, root: root, controls: controls, steering: map[string][]acceptedSteering{}, ctx: ctx, db: db, route: route, activities: activities, lanes: lane.New(), person: "person:" + main, main: main, epoch: epoch, personaGrants: map[string]grant.Grant{}, personaMu: &sync.Mutex{}}
+	r := &conversationRuntime{workers: &workerRuntime{sessions: map[string]*workerSession{}}, dispatchMu: &sync.RWMutex{}, root: root, controls: controls, steering: map[string][]acceptedSteering{}, ctx: ctx, db: db, route: route, activities: activities, lanes: lane.New(), person: "person:" + main, main: main, epoch: epoch, personaGrants: map[string]grant.Grant{}, personaMu: &sync.Mutex{}}
 
 	if person != "" {
 		r.person = person
@@ -268,6 +269,9 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+	}
+	if r.workers != nil {
+		r.workers.close()
 	}
 	if b := r.background; b != nil {
 		if b.stop != nil {
@@ -720,11 +724,15 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			if err := r.prepareSkillTools(turnID, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
+			if err := r.prepareWorkerTools(turnID, input, bindings); err != nil {
+				return turn.PreparedRequest{}, err
+			}
 			declarations := append(coreexec.PersonaDeclarations(), coreexec.PersonaSettingDeclaration())
 			declarations = append(declarations, coreexec.EmotionDeclarations()...)
 			declarations = append(declarations, coreexec.RelationshipDeclaration())
 			declarations = append(declarations, coreexec.SkillDeclarations()...)
 			declarations = append(declarations, startRunDeclaration())
+			declarations = append(declarations, workerDeclarations()...)
 			packet, _, err := atropos.Packet(ctx, minimum, 0, func(ctx context.Context) (assemble.ContextPacket, error) { return r.relationshipPacket(ctx, at) })
 			if err != nil {
 				return turn.PreparedRequest{}, err

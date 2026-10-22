@@ -1,0 +1,7 @@
+{
+  "input": "Start the worker, steer it, stop the worker, then continue it to produce the result.",
+  "cancel_quote": "stop the worker",
+  "version": "99.0.0",
+  "result": "LINA_WORKER_RESULT",
+  "artifact": "result.txt"
+}
