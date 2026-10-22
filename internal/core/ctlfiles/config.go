@@ -12,6 +12,7 @@ import (
 
 // Config is local installation configuration, separate from the main identity.
 type Config struct {
+	// PersonaSource is retained for legacy configuration compatibility only.
 	PersonaSource string `json:"persona_source,omitempty"`
 }
 
