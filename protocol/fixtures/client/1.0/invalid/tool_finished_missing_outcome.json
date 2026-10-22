@@ -1,0 +1,27 @@
+{
+  "protocol": {
+    "name": "client",
+    "version": "1.0"
+  },
+  "kind": "tool_activity",
+  "message_id": "tool_finished_ok",
+  "attempt_id": "tool_finished_ok-attempt",
+  "reply_to": null,
+  "sender": {
+    "party": "core",
+    "id": "main-example"
+  },
+  "epoch": "42",
+  "sent_at": "2026-01-01T00:00:01Z",
+  "idempotency_key": null,
+  "effect_state": "none",
+  "receipt_ref": null,
+  "source_refs": [],
+  "error": null,
+  "payload": {
+    "call_id": "call-example",
+    "tool_name": "Reading file",
+    "status": "finished",
+    "duration_ms": 0
+  }
+}

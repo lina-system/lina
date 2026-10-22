@@ -189,6 +189,7 @@ func TestM1MemoryCorrectionForgetRestore(t *testing.T) {
 func correctionMemoryTUI(t *testing.T, h *harness) (func(string) protocol.MemoryResult, func()) {
 	t.Helper()
 	socket := h.socket
+	waitCoreReady(t, h)
 	tap := newAccountTap(t, h, socket, true)
 	h.socket = tap.socket
 	terminal := h.startScreenTUI("TERM=xterm-256color")
@@ -204,7 +205,7 @@ func correctionMemoryTUI(t *testing.T, h *harness) (func(string) protocol.Memory
 		for {
 			e := tap.next(t, h)
 			if e.Error != nil {
-				t.Fatalf("%s refused: %s", text, e.Error.Code)
+				t.Fatalf("%s refused: %s (%s)", text, e.Error.Code, e.Error.Detail)
 			}
 			if result, ok := e.Payload.(protocol.MemoryResult); ok {
 				if result.Operation == nil {
@@ -221,7 +222,7 @@ func correctionMemoryTUI(t *testing.T, h *harness) (func(string) protocol.Memory
 				// Wait for the result pager as well as its text before sending Esc.
 				view, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
 					rows := screenRows(s)
-					return s.CursorHidden && len(rows) > 0 && strings.HasPrefix(rows[len(rows)-1], "Esc") && strings.Contains(screenText(s), marker)
+					return s.CursorHidden && len(rows) > 0 && strings.Contains(rows[len(rows)-1], "Esc") && strings.Contains(screenText(s), marker)
 				})
 				if err != nil {
 					t.Fatalf("memory result pager missing: %v\n%s", err, screenText(view))

@@ -71,6 +71,7 @@ type conversationRuntime struct {
 	waitingDone  chan struct{}
 	workWaiting  *waiting.Rounds
 	background   *backgroundRuntime
+	workers      *workerRuntime
 	router       *conversationRouter
 	decisions    *clientsrv.Decisions
 	replaySocket string
@@ -109,6 +110,12 @@ type conversationRuntime struct {
 	identity                    clientsrv.Identity
 	mu                          sync.Mutex
 	publicationMu               sync.Mutex
+	activityMu                  sync.Mutex
+	turnActive                  bool
+	turnPhase                   protocol.TurnPhase
+	currentTool                 string
+	toolNames                   map[string]string
+	toolOrder                   []string
 	positioned                  map[string]bool
 }
 
@@ -122,7 +129,7 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err != nil {
 		return nil, err
 	}
-	r := &conversationRuntime{dispatchMu: &sync.RWMutex{}, root: root, controls: controls, steering: map[string][]acceptedSteering{}, ctx: ctx, db: db, route: route, activities: activities, lanes: lane.New(), person: "person:" + main, main: main, epoch: epoch, personaGrants: map[string]grant.Grant{}, personaMu: &sync.Mutex{}}
+	r := &conversationRuntime{workers: &workerRuntime{sessions: map[string]*workerSession{}}, dispatchMu: &sync.RWMutex{}, root: root, controls: controls, steering: map[string][]acceptedSteering{}, ctx: ctx, db: db, route: route, activities: activities, lanes: lane.New(), person: "person:" + main, main: main, epoch: epoch, personaGrants: map[string]grant.Grant{}, personaMu: &sync.Mutex{}}
 
 	if person != "" {
 		r.person = person
@@ -299,6 +306,9 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 			return err
 		}
 	}
+	if r.workers != nil {
+		r.workers.close()
+	}
 	if b := r.background; b != nil {
 		if b.stop != nil {
 			b.stop()
@@ -410,6 +420,11 @@ func (r *conversationRuntime) Input(ctx context.Context, s clientsrv.Session, p 
 }
 func (r *conversationRuntime) Interrupt(ctx context.Context, s clientsrv.Session, p protocol.Interrupt) error {
 	if err := r.authorize(s, p.ConversationID); err != nil {
+		return err
+	}
+	r.activityMu.Lock()
+	defer r.activityMu.Unlock()
+	if err := r.phaseLocked(ctx, protocol.TurnPhaseStopping, ""); err != nil {
 		return err
 	}
 	r.lanes.Stop(r.conversation, turn.Interrupt{Issuer: turn.Person})
@@ -551,9 +566,6 @@ func (r *conversationRuntime) publishReply(ctx context.Context, key, turnID stri
 	}
 	speaker := protocol.ConversationSpeakerAgent
 	return r.publish(ctx, protocol.KindItemDone, key, protocol.ItemDone{Text: &view.Text, Speaker: &speaker})
-}
-func (r *conversationRuntime) setActive(ctx context.Context, active bool) error {
-	return r.publish(ctx, protocol.KindTurnState, "turn", protocol.TurnState{Active: &active})
 }
 
 func (r *conversationRuntime) events(ctx context.Context, through string) ([]ledger.Event, error) {
@@ -753,6 +765,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			if err := r.prepareSkillTools(turnID, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
+			if err := r.prepareWorkerTools(turnID, input, bindings); err != nil {
+				return turn.PreparedRequest{}, err
+			}
 			if err := r.prepareRecordTools(turnID, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
@@ -763,6 +778,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			declarations = append(declarations, coreexec.RecordDeclarations()...)
 			declarations = append(declarations, startRunDeclaration())
 			declarations = append(declarations, r.prepareDelegationTools(turnID, bindings)...)
+			declarations = append(declarations, workerDeclarations()...)
 			packet, _, err := atropos.Packet(ctx, minimum, 0, func(ctx context.Context) (assemble.ContextPacket, error) { return r.relationshipPacket(ctx, at) })
 			if err != nil {
 				return turn.PreparedRequest{}, err
@@ -870,7 +886,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			promoted, err = r.promoteRun(ctx, input, h)
 			return promoted, err
 		},
-		ResultCommitted: r.background.notify, Loop: loop.Config{
+		ResultCommitted: r.background.notify, ToolActivity: r.toolActivity, Loop: loop.Config{
 			RuntimeTools: r.route.Adapter.Class() == provider.AgentRuntime,
 			Tools:        bindings,
 			After: func(ctx context.Context, call provider.ToolCall, result loop.Result) loop.Result {
@@ -879,6 +895,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			Inputs: &conversationInputs{runtime: r, inputs: inputs},
 			Stream: func(ctx context.Context, request provider.Request) (provider.Stream, error) {
 				round++
+				if err := r.setPhase(ctx, protocol.TurnPhaseWaitingModel); err != nil {
+					return nil, err
+				}
 				r.dispatchMu.RLock()
 				defer r.dispatchMu.RUnlock()
 				// Never dispatch a cached preparation after a committed forget. This also
@@ -895,6 +914,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				key := fmt.Sprintf("%s:%d:%d", turnID, round, e.Index)
 				switch e.Kind {
 				case provider.Delta:
+					if err := r.setPhase(ctx, protocol.TurnPhaseStreaming); err != nil {
+						return err
+					}
 					filter := filters[key]
 					if filter == nil {
 						base, err := conversationFilter()
@@ -932,6 +954,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 					}
 					if item.Type != "message" || item.Role != "assistant" {
 						return nil
+					}
+					if err := r.setPhase(ctx, protocol.TurnPhaseStreaming); err != nil {
+						return err
 					}
 					var text strings.Builder
 					for _, part := range item.Content {
