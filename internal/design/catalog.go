@@ -383,6 +383,6 @@ var catalog = map[string]translation{
 	"shell.running_unavailable":  {"This Core cannot show running work.", "이 Core는 진행 중인 작업 목록을 제공하지 않습니다."},
 	"shell.waiting_unavailable":  {"This Core cannot show waiting decisions.", "이 Core는 대기 중인 결정 목록을 제공하지 않습니다."},
 	"shell.composer":             {"Conversation input: unsupported", "대화 입력: 지원되지 않음"},
-	"composer.placeholder":       {"Talk to LINA · Enter to send · Alt+Enter for a new line", "리나에게 말하기 · Enter 보내기 · Alt+Enter 줄바꿈"},
-	"composer.shift_enter":       {"Talk to LINA · Enter to send · Shift+Enter for a new line", "리나에게 말하기 · Enter 보내기 · Shift+Enter 줄바꿈"},
+	"composer.placeholder":       {"Talk to %s · Enter to send · Alt+Enter for a new line", "%s에게 말하기 · Enter 보내기 · Alt+Enter 줄바꿈"},
+	"composer.shift_enter":       {"Talk to %s · Enter to send · Shift+Enter for a new line", "%s에게 말하기 · Enter 보내기 · Shift+Enter 줄바꿈"},
 }
