@@ -108,6 +108,8 @@ type conversationRuntime struct {
 	agents           *agents.Store
 	skills           *skills.Store
 	records          *records.Store
+	recordCaptureMu  sync.Mutex
+	recordCaptures   map[string]*recordCapture
 	persona          *coreexec.Persona
 	personaAuthority *authority.Service
 	personaGrants    map[string]grant.Grant
@@ -249,6 +251,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	}
 	relay := clientsrv.NewSignInRelay(r.person, r.signin)
 	for kind, op := range clientsrv.AccountOperations(r.person, r.accounts, relay) {
+		r.identity.Operations[kind] = op
+	}
+	for kind, op := range clientsrv.RecordOperations(r) {
 		r.identity.Operations[kind] = op
 	}
 	for kind, op := range clientsrv.WebOperations(r) {

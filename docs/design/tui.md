@@ -556,7 +556,9 @@ overview hides the summary. Before an overview arrives, the waiting topic's
 decision cards provide the summary. Updates and replacement snapshots preserve
 the draft and focus, and stale stream frames cannot restore old rows.
 
-The overview is display-only. F6 still opens the first unresolved authenticated
+The overview is display-only. Saved memos and to-dos are reachable through
+`/records` and `/memos` in `/help`; they use the separate Core record query
+capability and do not depend on work being in progress. F6 still opens the first unresolved authenticated
 decision card; its revision, choices and two-step answer flow remain attached to
 the waiting topic. A decision appears once in the Home summary even when both
 topics carry it. `e2e/m2/tui-home-waiting.json` checks an outside-change request
@@ -619,6 +621,12 @@ frame observable without relying on tool speed; it fabricates no tool events.
 `e2e/m1/tui_activity_reconnect_test.go` holds a same-Core reconnect across an
 interrupted turn and a queued turn that executes a real tool. The restored
 activity has unknown timing, and Esc can stop the new turn.
+
+Record lists open the selected record with Enter. Record bodies use the same
+searchable pager, with their title, note and planning chips; internal references
+and saved revision tokens remain request data. Esc returns to the list and then
+to the unchanged conversation draft. Reading a record never submits a model
+turn or accepts a change made outside LINA.
 
 **The pager** shows Details, the activity log and long results: scroll, search, quit. Copy is the person's act in their own terminal: the pager offers a sanitized-text overlay to select with the terminal's own copy. A write by OSC 52 waits for the open point on the clipboard rule below.
 
@@ -778,6 +786,35 @@ Contract: [surfaces.md](surfaces.md#agent-surfaces), [surfaces.md](surfaces.md#s
 - **Steering:** `/note <run> <text>` queues a note for the target's next step. `/stop <run>` or `s` on a running row requests a stop; `/stop all` targets the person's background runs and live workers. These requests use the same Core handlers as a paired channel. Bare `/stop` interrupts the conversation. `/progress` reads the compact digest. `/waiting priority|lightest` opens the full waiting list; `o` switches its Core order, which survives refreshes.
 - **Agent tree and lanes (developer view):** indented lines (the persona as initial and name, sub-agents as plain indented text, workers as `[name]`), one line per worker for lanes, hand-offs as arrows, folded to one line by default. `/developer` opts into the recorded worker view through the `worker_lanes` capability. Core supplies each persona's name and each current task execution's worker/session identity; two sessions using the same tool remain separate lanes. Persona headings show initial and name, and indented `[worker] › task` lines are clipped to one physical row. Enter toggles the selected lane's thread, turn, node, generation and source-labeled stage summaries. Up/Down selects; `r` refreshes the current first page and `n` replaces it with the next bounded page. Refresh preserves selected and expanded identities; new executions start folded. Esc returns to the composer. Closing/reopening or reconnecting discards this view's expansion state and pending responses. No sub-agent relationship is inferred from worker names or text; the work ledger and installed worker runtime supply persona-to-worker edges only. Runtime sessions retain their adapter state and show masked output/version on expansion.
 - **Usage meter:** one line per connected account: plan, state, a block-character meter or "unknown".
+
+Record commands are also listed in `/help`. `/records` opens the memo inbox;
+`/memos` is its direct alias. `/records <view> [search]` accepts Core's `today`,
+`upcoming`, `anytime`, `later`, `memos`, `board`, `list` and `week` lenses;
+`/records all [search]` searches every record kind. The client passes the local
+civil day and IANA zone for dated views. It draws rows in the order returned by
+Core, including Core's overdue and blocked annotations; it never ranks or
+recomputes membership. Up/Down selects, Enter opens, `r` refreshes and Ctrl+N
+requests the next bounded page with the same view and search. Empty results
+have an explicit empty state. Closed or reconnected views discard pending
+responses. Missing `records` capability is handled locally before conversation
+input, including for invalid record commands.
+
+`/add <text>` opens a Core-generated preview. A sentence alone creates an
+undated to-do. Explicit `YYYY-MM-DD`, `#project`, `%tag`, `!` and `{YYYY-MM-DD}`
+tokens set the planned date, belonging, tag, importance and deadline. Quotes
+allow spaces in project or tag names. Core resolves a belonging name to exactly
+one existing project or area; a missing or ambiguous name cannot save. A deadline
+token is the person's explicit deadline source. This direct path does not infer
+natural-language dates; natural-language interpretation remains in conversation.
+Invalid or ambiguous numeric dates are refused without saving a record.
+
+The preview shows date, project, tags and repeat, including unset fields, before
+Enter can save. Esc cancels without saving. Confirmation sends only the opaque
+preview token, never a second interpretation of the text. The token belongs to
+the authenticated connection, expires after fifteen minutes and is replaced by
+its next preview. Repeated confirmation returns the original saved record.
+Reconnect drops the view and does not replay a save. Memo promotion and its undo
+remain #156; the inbox does not offer actions that Core has not implemented.
 
 Settings are commands and labeled blocks, all requests to Core:
 
