@@ -67,7 +67,7 @@ installed Core/TUI journey and the separate fake-Core streaming scenario with:
 go test -count=1 -v ./e2e/... -run '^TestM1TUIConversation(InstalledCore|Stream)$'
 ```
 
-[`TestM1TUIConversationInstalledCore`](../e2e/tui_conversation_test.go) installs
+[`TestM1TUIConversationInstalledCore`](../e2e/m1/tui_conversation_test.go) installs
 the binaries in scratch with a fixture service manager, starts a loopback HTTP
 provider, and passes these settings to installed Core's otherwise isolated
 environment:
@@ -193,7 +193,7 @@ still a real account and is outside this automated QA authorization.
 The skills portion is covered by [its fixture](../e2e/m1/skills.json) and:
 
 ```sh
-go test -count=1 -v ./e2e -run '^TestM1SkillsInstalledCore$'
+go test -count=1 -v ./e2e/m1 -run '^TestM1SkillsInstalledCore$'
 ```
 
 Installed Core offers all four skill tools to a synthetic Responses provider,

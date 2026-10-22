@@ -254,6 +254,80 @@ A channel is an external messaging platform through which the person talks with 
 
 Core talks to each platform through one adapter and knows no platform limit. An adapter offers: connect and disconnect with a durable cursor; an inbound event carrying the platform's ids; send, returning a result id or an error class (retry later, permanently blocked, too long, unauthorized); edit; answer an interaction; fetch an attachment; and a static capability descriptor (text length, edit, buttons, files, threads, streaming, and which result types the channel can show). The first adapters are Telegram and Discord. A further platform is a new adapter behind this boundary, added by a release and not by a change to this contract. The adapter code is LINA's own, and its client library is a Go dependency under [dependencies.md](../policy/dependencies.md).
 
+Discord uses API v10 and an outbound Gateway WebSocket, with no inbound
+listener. The client protocol's optional `platform` selects `telegram` or
+`discord`; omission retains Telegram for existing clients. `/channels` offers
+Discord connection alongside Telegram and preserves the selected platform for
+pairing, binding, scope changes and disconnect. Discord bot identity comes from
+`users/@me`, not from decoding the token. Only the credential store retains the
+bot token. Explicit Discord connect registers only the `/lina text` command,
+preserving other application commands. Its interaction is acknowledged once
+after durable admission while Core finishes the turn. Interaction tokens remain transient and never enter inbox or canon.
+
+The Discord adapter uses `github.com/coder/websocket` v1.8.15 for framing and
+standard-library HTTPS for individual REST calls. Core owns heartbeat,
+identify/resume, reconnect backoff and the durable session/sequence cursor.
+Gateway close 4007 (invalid sequence) or 4009 (session timed out) durably clears
+only that bot's session/sequence cursor before reconnecting with Identify,
+including a close received before Hello. Native receipts, pairing and bindings
+survive; other transport closes retain the cursor for Resume.
+The privileged message-content intent is requested only for an explicit
+`all_messages` binding; changing that requirement reconnects the session.
+Native message and interaction IDs remain deduplicated across sessions and
+restarts. Bot-authored input cannot begin a conversation. Guild thread ancestry
+comes from channel metadata, so the most specific thread binding wins.
+
+Discord text is shaped into at most three parts of 2,000 UTF-16 units. A
+paragraph separator is retained at the split; an oversized individual paragraph
+splits at a Unicode rune boundary without losing text. Longer replies send one `reply.txt` attachment containing the complete text
+(up to 8 MiB). Automatic mentions are disabled. Streaming stays off; this
+increment supports outbound text files; inbound attachment import remains
+unavailable.
+A 429 keeps the full retry-after; ambiguous responses and transport failures
+remain unknown. A permanent refusal marks the chat unreachable through the
+shared queue and appears in channel controls.
+
+Discord approval buttons contain only a canonical request ID and once/deny.
+The durable presentation binds bot, chat, thread and message to that request.
+Before accepting a press, Core rechecks the numeric paired owner, current tools
+scope, agent, epoch and presentation. A non-owner cannot change the approval or
+edit the owner's message. A repeated interaction never repeats a decision or
+platform edit. The pending-button inbox contains no interaction token.
+
+Both adapters are attached to Core's existing turn lanes and outbound queue.
+Committed owner input starts the existing model/tool flow with its channel
+conversation and scope. The paired owner's private chat shares `main:<agent>`
+and its live app/TUI history; shared chats keep separate conversations. Admission
+continues during an active turn and uses the same steering coordinator. A
+durable consumed-steering marker prevents replay after restart. Unclaimed
+private inbox rows from the earlier gateway are moved to the main conversation
+without dropping their native receipts. Memory-disabled bindings omit personal memory and
+relationship context; tools-disabled bindings offer no tools. Binding changes
+are checked again before model dispatch and tool execution at the original
+inbound address. A new thread binding supersedes a captured parent fallback
+even when the parent binding remains unchanged. A channel with tools
+may start the existing read-only background run; its verified landing returns
+as a new message in the originating chat after the turn boundary. The delivery
+projection retains native background-notice provenance and its existing notice
+JSON shape, and remains untrusted external evidence in subsequent model history.
+The channel adapter receives the projected summary text; restart restores the
+notice through the ordinary history path. The outbound queue accepts that
+committed notice only for its bound agent and conversation; relabeling a generic
+system event as a notice does not authorize delivery. Recovery uses
+the original inbox and turn claims and does not rerun an already started turn or
+resend an unknown delivery. Private, reachable bindings with tools can present
+canonical approvals while the Gateway is active.
+
+The headless `e2e/m2/discord.json` scenario runs production boot in its own
+process with synthetic Gateway, REST and model endpoints. It covers protocol
+connection/pairing/binding, duplicated interactions, owner-only admission,
+foreground and background execution, long reply shaping, blocked delivery and
+restart. Adapter tests independently cover owner-only approval decisions,
+presentation matching, token-free inboxes and REST error classification.
+The separate `e2e/m2/discord-recovery.json` scenario injects both non-resumable
+close codes into the running Core, checks fresh Identify and duplicate receipt
+handling, then completes tool/background work and delivers its results.
+
 Telegram's initial adapter uses `github.com/PaulSonOfLars/gotgbot/v2` at
 `v2.0.0-rc.37`, with no transitive modules. It advertises text, edits,
 buttons, files and topics; streaming remains off. The adapter shapes queued text
@@ -284,6 +358,14 @@ supplied message identity and an explicit not-modified refusal counts as success
 Transport failures,
 malformed responses and server failures have unknown delivery outcome and are
 never automatically sent again.
+
+Startup independence also applies to saved connections: Core restores their
+credentials locally and performs bot identity verification in the channel's
+supervisor. While that request is unavailable, Core reaches READY and the
+channel control service projects the connection as unavailable, including when
+no model route is configured. Shutdown cancels and joins the supervisor before
+closing its stores. `e2e/m1/telegram.json` verifies this through production boot
+and the client socket with a request held until cancellation.
 
 ### Gateway core persistence
 
@@ -367,6 +449,31 @@ The shared role rule is in [product-families.md](product-families.md). [work-and
 - Before LINA Core records a merge made by a person as an observed result ([main-authority.md](main-authority.md)), it checks on GitHub that the merge commit exists and that the target ref points to it. It also reads the check results on that commit.
 - A merge that went in without passing required checks is recorded as observed and reported to the user. LINA Core never reverts another actor's merge without a user decision.
 - A merge is not verification. It records that a draft was applied. LINA Core still judges the task's delivery from evidence ([work-and-delegation.md](work-and-delegation.md)).
+
+The Core implementation exposes merge control separately from read/watch as the
+`github_merge` protocol capability. Its connection captures named local
+`refs/heads/` in the parent clone (including the target branch) and verifies that
+`origin` identifies the connected GitHub repository. A later request cannot
+replace those hashes. Head acceptance and merge admission both compare the
+captured refs. Before writing, Core rereads PR identity after reading checks and
+reviews; a changed head/base blocks the call, and a changed head is read again.
+The fixed command is `gh pr merge <number> --repo github.com/<repository> --merge
+--match-head-commit <head>`; Core supplies neither admin bypass nor auto-merge.
+An unresolved P0/P1 marker blocks admission, including an outdated unresolved
+thread. Pending, missing or failed check evidence blocks admission. GitHub also
+enforces its protection rules at the pinned call. The explicit hostname keeps
+reads and writes on the same service even when the user configures `GH_HOST`.
+
+A durable intent reserves the repository/base before the call. A queued or
+uncertain outcome retains that reservation across restart and cannot dispatch
+again. Observation can settle it only with a merged PR, a matching existing merge
+commit, the exact target ref pointing to that commit, and readable check/status
+evidence on that commit. A target that has already advanced remains unconfirmed;
+Core does not infer ancestry or silently accept different evidence. Missing or
+failed checks on a confirmed person's merge are reported with
+`merged_without_green_checks`, without reverting anything. The stored result
+keeps checks, source and commit separately from any delivery judgment.
+
 
 ## Google
 

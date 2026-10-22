@@ -1,13 +1,20 @@
 # Headless acceptance harness
 
-Run `go test ./e2e/...` (or `go test -count=1 -v ./e2e/...` for uncached scenario
+`m3/non-competition.json` runs installed Core's record tools through a local
+fixture provider and its public client socket. It checks a real saved record,
+refusal of an out-of-scope path used as an id, and preservation of an external
+edit against an old revision while Core stays running. It is supporting
+protocol evidence; the [Linux non-competition ladder](../evidence/non-competition/README.md)
+still requires human concurrent-session measurements.
+
+Run `go test ./e2e/m1/...` (or `go test -count=1 -v ./e2e/...` for uncached scenario
 output). Node.js and the workspace's Go toolchain are required. The harness uses
 native Linux and macOS pseudo-terminals; it needs no window, display server,
 provider account, external network service or human input. Conversation screens
 use the pinned terminal library and a VT emulator.
 
 The suite builds each command once per test run and removes the shared binaries
-after all scenarios finish. Each scenario starts real Core with a synthetic
+after all scenarios finish. Foundation enumerates the acceptance tests and runs two disjoint batches under its shared components budget. This keeps a growing corpus from exhausting one package watchdog while preserving every scenario, assertion and operation deadline. A direct `go test ./e2e/...` still runs the complete suite in one process. Each scenario starts real Core with a synthetic
 installed identity and a private temporary state root, and connects a generated-type JSON-RPC client
 to its Unix socket. A second process runs real `lina tui` with a controlling PTY
 at 80 by 24 cells. The script waits for the `live` connection-state code, sends an
@@ -70,13 +77,33 @@ entry, private-chat pairing, binding and disconnect through the real TUI and
 boot composition. A separate Core test process retains the production peer
 ancestry checks; only Telegram HTTP replies are scripted. Boot package tests
 also reopen the poller against durable connection and secret state.
+`m1/telegram.json` starts production boot in process against a saved channel and
+secret, without a model route. Only the platform HTTP transport is replaced:
+the restored bot's identity lookup stays blocked until shutdown. READY and a
+socket channel listing must succeed while it is blocked, the channel must show
+unavailable without exposing the token, and Core must cancel and join the
+request before stopping.
 `m1/tui-talk-log.json` seeds a durable exchange, restarts installed Core, and
 checks one summary row and its explicit ledger expansion without a model call.
 
-Helpers are test-only Go files in this package, shared by scenario tests. Keeping
+The M1 acceptance map is [m1/README.md](m1/README.md). Helpers are test-only Go files in `m1/`, shared by scenario tests. Keeping
 process creation in test files follows the architecture rule for command
-acceptance harnesses. Future milestones can add scenario files here; new
+acceptance harnesses. Existing persona-growth extensions retain the same harness and their `m2/` fixture; future milestones can add scenario files here; new
 subpackages under `e2e/` are also covered by the registered package pattern.
+
+`m3/websocket.json` runs installed Core through an HTTP upgrade on its authenticated
+Unix client socket. A headless WebSocket client discovers and subscribes to the
+conversation, submits an input, and receives the committed acknowledgement, a
+live delta and the completed result. The fixture provider requests the real
+`change_persona` tool and checks its execution result. Core restart must restore
+the conversation rows and apply the saved tool effect to the next turn without
+replaying the provider request. Its companion runs the same journey through production Core boot and the
+Tailscale-authenticated listener over TCP, substituting only LocalAPI responses
+and physical addresses. That companion installs the executable hosting boot so
+normal build-digest checks remain enabled. Both compare stored input/result
+identities and contents across restart. Neither claims a physical mobile device
+or two-host tailnet test. All identities, model responses and stored values are
+synthetic.
 
 `m2/update-preflight.json` checks separate `core --preflight` processes against
 compatible, older, newer, corrupt and WAL-backed stores while another owner holds
@@ -152,7 +179,7 @@ After setting the endpoint, model and key privately, run:
 ```sh
 export LINA_QA_REAL_MODEL=1
 export LINA_RESPONSES_BASE_URL LINA_RESPONSES_MODEL LINA_RESPONSES_API_KEY
-go test -count=1 -v ./e2e -run 'TestResponsesRoundTrip|TestRealModelHeadlessConversation'
+go test -count=1 -v ./e2e/m1 -run 'TestResponsesRoundTrip|TestRealModelHeadlessConversation'
 ```
 
 Keep endpoint values and credentials out of shell tracing, logs, reports and
@@ -224,6 +251,41 @@ code gains theme colours in dark/light; high-contrast and `NO_COLOR` remain
 plain. The provider is released by a channel after the open screen is observed,
 without timing-based assertions.
 
+The M2 Discord scenario is `m2/discord.json`, executed by `TestM2DiscordCore`.
+It installs the test host with a matching build manifest, runs production Core
+boot in a separate process, and controls it through the generated socket
+protocol. Synthetic outbound Gateway/REST and Responses endpoints demonstrate
+channel input, read tools, background results, deduplication, shaping, blocked
+state and restart without live credentials.
+
+`m2/work-area.json`, executed by `TestM2WorkArea`, drives `prepare_work` and
+`retain_work_result` through the installed Core's conversation tools. Two real
+linked worktrees share a parent clone at separately pinned source commits.
+Worker Git subprocesses create and commit each assigned branch; cross-task
+updates and deletion are rejected without moving the original result head.
+Core retains the fixture file and exact branch bundle, and the test restores
+them from backup after Core restart and loss of the work area. Worker lifecycle
+and receipt observations are seeded while Core is stopped; vendor dispatch is
+covered by the worker adapter scenarios. Run with
+`go test -count=1 ./e2e/m1 -run '^TestM2WorkArea$'`.
+
+`m2/tui-composer-identity.json` installs Core/TUI into a temporary root and creates
+and chooses another agent through the real TUI. It checks that the empty composer,
+header and reply speaker name that agent before and after Core reconnect, using
+a loopback Responses fixture and a real PTY.
+
+`m2/github-ci.json` starts the real Core binary with a synthetic `gh` executable
+in its isolated PATH. It negotiates the GitHub capability, refuses an unnegotiated
+read, observes rate-limited CI pending and its retry deadline, then observes head,
+review threads and successful checks. It verifies conditional headers and one
+review read per head, with no network credentials or GitHub service dependency.
+
+`m2/github-merge.json` drives the installed Core's merge capability with a
+synthetic `gh` process and real temporary parent clone. It proves head and
+protected-ref changes prevent writes, the accepted head is pinned, confirmed
+results survive restart without a second merge, and external merges require
+commit/ref evidence and report failed checks. It uses no external credentials.
+
 `m2/codex-session.json` runs installed Core, its real conversation model loop,
 tool authority and stdio child ownership with a synthetic installed Codex. It
 asserts version reporting for an unverified version, active steering, confirmed
@@ -231,7 +293,7 @@ interrupt, idle continuation, a file produced by the worker and terminal output
 in the originating conversation before and after Core restart. The worker checks
 that no sandbox, approval, model-provider or config override is sent and that
 Core's dedicated provider credential is absent. Run it with
-`go test -count=1 ./e2e -run '^TestM2InstalledCodexSession$'`.
+`go test -count=1 ./e2e/m1 -run '^TestM2InstalledCodexSession$'`.
 The opt-in `LINA_CODEX_LIVE=1 go test -count=1 -v ./internal/core/worker/codex -run '^TestInstalledCodex$'`
 uses the user's installed Codex and own configuration. It verifies control and a
 model-generated result without changing approval or sandbox settings.
@@ -255,13 +317,65 @@ unconfigured Core), rather than unavailable during recovery, before the scenario
 continues. This probe cannot create a conversation event or model request.
 Restored-memory and replay startup paths use the same readiness check as installs.
 
-`LINA_CODEX_LIVE=1 go test -count=1 -v ./e2e -run '^TestM2InstalledCodexLive$'`
+`go test ./e2e/m1 -run '^TestM2UpdateActivation$' -count=1` runs
+`m2/update-activation.json`, which drives `lina update --activate` against
+the installed Core. A test-owned service manager launches real service processes;
+Core drains through its client protocol, snapshots and swaps, runs a real
+conversation and bundled-worker readiness check, and resumes with a verified
+tool result. Start refusal rolls back, while provider failure and updater death
+after READY hold the new state. Package SIGKILL tests acknowledge each rename
+boundary without fixed startup delays.
+
+`go test ./e2e/m1 -run '^TestM2UpdateDataOperations$' -count=1` runs
+`m2/update-data-operations.json`. It injects a 31-second delay into the installed
+backup or restore command before executing the real CLI, crossing the installer's
+30-second probe budget. The backup case completes activation, worker readiness
+and a resumed tool result; the restore case recovers from a candidate start
+failure and verifies a conversation on the restored Core.
+
+`go test ./e2e/m1 -run '^TestM2UpdateClaudeCredential$' -count=1` uses the same
+installed update harness with a synthetic Claude token and an empty login home.
+The production Claude adapter must complete smoke using that token; the missing
+token case must hold after READY. A bundled-worker probe checks its environment
+before running the real readiness check, and outputs and durable state are
+checked for credential disclosure.
+
+`m3/crw-takeover.json` runs the operator import binary against an installed Core's
+stopped state root, checks exclusive ownership and idempotent retry, removes the
+source snapshot, then exercises the running Core's record tools. Imported evidence
+is found through search and read by LINA id, source-id lookup fails, a new result
+is saved, and restart keeps the imported identity. This operator-only test and
+fixture are excluded from release archives together with the takeover tool.
+
+`m3/antigravity.json` dispatches through installed Core's conversation tool,
+starts its supervised headless worker in a new worktree, produces a real file
+and commit, and verifies a recorded PR at that head. Separate cases cover soft
+denial despite SUCCESS, exit zero without result, pending checks, and durable
+conversation results without execution replay on restart. No personal worker
+account or GitHub write is used.
+
+`LINA_CODEX_LIVE=1 go test -count=1 -v ./e2e/m1 -run '^TestM2InstalledCodexLive$'`
 also drives installed Core's normal tool path into the actual installed Codex,
 then waits on the worker's conversation result before reading its snapshot. Only
 Core's conversation provider is synthetic; the worker uses its own model setup.
 
-`m2/github-ci.json` starts the real Core binary with a synthetic `gh` executable
-in its isolated PATH. It negotiates the GitHub capability, refuses an unnegotiated
-read, observes rate-limited CI pending and its retry deadline, then observes head,
-review threads and successful checks. It verifies conditional headers and one
-review read per head, with no network credentials or GitHub service dependency.
+`go test ./e2e/m1 -run '^TestM2CodexWorkTools$' -count=1` runs
+`m2/codex-work-tools.json` through the built Core, its Unix client protocol and a
+separate synthetic installed worker on stdio. It checks all four declared LINA
+work tools, authenticated owner approval and question answers, worker-written
+artifact contents, reported quota windows, and restored completion history.
+Worker settings remain omitted. This scenario uses no real account or provider
+credentials and does not measure live Codex quota.
+
+`TestM1WebUnconfigured` checks installed Core's explicit missing-provider status, absence of web declarations and one-round notice. `TestM1WebSearchExtractAndCitation` runs the production Core composition in a separate test helper with a synthetic manifest recording that executable, and injects only the Firecrawl HTTP transport. The real TUI saves a hidden key; the protocol client approves each network request; the real provider adapter searches and extracts against stub responses; TUI cells show both running activities; the scripted model cites the source URL. No real provider account is used, and model compliance beyond the scripted boundary is not claimed.
+
+`m3/worker-lanes.json` uses installed Core and a real headless TUI to show two
+sessions of the same worker as separate folded lanes. A fixture writes a real
+artifact and records its receipt, terminal observation and content verification
+through the work service before startup. The second unfinished execution becomes
+unknown during Core recovery. The scenario checks protocol identities, explicit
+expansion with stage provenance, refresh, folding and reopening. It exercises
+Core's read path and TUI. `TestM3WorkerLanesLiveSession` additionally starts the
+installed stdio worker fixture through Core's conversation tools, makes it write
+a real artifact, and expands its runtime lane to show the worker output without
+calling the model. Vendor transport is synthetic; no personal account is used.

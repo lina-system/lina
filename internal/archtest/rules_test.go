@@ -27,6 +27,11 @@ func TestRules(t *testing.T) {
 	for _, tc := range []struct {
 		name, file, source, want string
 	}{
+		{"Core excludes takeover", "internal/core/boot/boot.go", `package boot; import _ "` + module + `/tools/crw-takeover/importer"`, "operator tool"},
+		{"command excludes takeover", "cmd/lina/main.go", `package main; import _ "` + module + `/tools/crw-takeover/importer"`, "operator tool"},
+		{"bridge excludes takeover", "internal/bridge/bridge.go", `package bridge; import _ "` + module + `/tools/crw-takeover/importer"`, "operator tool"},
+		{"product tests exclude takeover", "internal/core/boot/boot_test.go", `package boot; import _ "` + module + `/tools/crw-takeover/importer"`, "operator tool"},
+		{"takeover may use Core records", "tools/crw-takeover/importer/import.go", `package importer; import _ "` + module + `/internal/core/records"`, ""},
 		{"importer outside Core", "internal/core/importer/reader.go", `package importer`, "unmapped"},
 		{"Core excludes importer add-ons", "internal/core/boot/boot.go", `package boot; import _ "` + module + `/internal/addons/importer/hermes"`, "importer"},
 		{"default command excludes importer add-ons", "cmd/lina/main.go", `package main; import _ "` + module + `/internal/addons/importer/hermes"`, "importer"},

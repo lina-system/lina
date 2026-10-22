@@ -491,6 +491,8 @@ On Windows the wrapper runs commands only inside a verified Windows sandbox. A v
 
 LINA Core checks on start, and before the first tool call, that the sandbox works on this host. Unprivileged user namespaces, AppArmor restrictions and hardened kernels can each disable bubblewrap. When the sandbox is missing or fails, conversation continues, only shell and file tools are unsupported, and the user sees why.
 
+The Linux acceptance scenario in `e2e/m1/sandbox.json` exercises both a missing launcher and a failing probe through production Core composition over installed state with an explicit launcher path. An installed TUI message receives a provider reply, the turn completes and reopening the TUI restores the reply without another model call. The scenario also verifies the failure cause in Core's startup snapshot and the localized TUI setup notice without leaking private diagnostics.
+
 The wrapper's `lina-sandbox-1` policy ships compiled seccomp programs for Linux amd64 and arm64, with separate blocked-network and authorized-network variants. Other Linux architectures fail closed. The source, pinned Codex provenance and regeneration instructions live in `kit/sandbox/policy/README.md`. The filter rejects alternate syscall ABIs, namespace and mount changes, process inspection, kernel keyrings, io_uring and VM sockets. It forces `clone3` callers to fall back to filtered `clone`. Authorized network permits IP sockets without removing filesystem masks or syscall restrictions. Host Unix-socket connections remain denied in both modes, including hard-linked socket aliases; local socket pairs remain available for subprocess IPC.
 
 Core passes the canon, secrets, system, version, backup, materials, derived and staging areas and its client socket as protected paths. The wrapper resolves symlinks and refuses writable grants overlapping those paths. Existing Git metadata in writable roots, including nested repositories and gitdir indirections, is mounted read-only. Its writable ancestors are anchored against rename/replacement. Gitdir files are opened without following symlinks or blocking on special files, checked as regular files and read with a 4 KiB limit. The probe uses the actual launcher and a synthetic denied-read canary, verifies Linux seccomp and no-new-privileges, and has a five-second deadline. The first tool call repeats it; an unavailable wrapper never starts a command. A canceled caller or invalid/released lease does not latch a confinement failure or consume that first-call recheck. Causes are stable codes (`launcher_missing`, `unsupported_platform`, `unsupported_architecture`, `invalid_policy`, `probe_setup_failed`, `probe_failed`); explicit probes also report transient `probe_cancelled` or `invalid_lease` without changing the wrapper’s availability. Core exposes the status to its tool composition and reports `shell_file_tools_unsupported` with the cause while leaving the client service running. Linux discovery tries an absolute PATH result, then `/usr/bin/bwrap`, `/bin/bwrap`, `/usr/local/bin/bwrap`, `/opt/homebrew/bin/bwrap` and `/home/linuxbrew/.linuxbrew/bin/bwrap`; macOS uses `/usr/bin/sandbox-exec`. Empty PATH does not hide an installed launcher. Only executable absolute paths qualify; a trusted explicit launcher pin fails closed and does not fall back. After probing, Core publishes a boolean availability view on the core topic; TUI presents one localized setup notice when false. Raw cause codes remain in diagnostics.
@@ -499,7 +501,7 @@ Core passes the canon, secrets, system, version, backup, materials, derived and 
 
 On Linux, `kit/proc` starts commands through the explicit `proc-supervise` subcommand of the current host executable, registered by both `lina` and `lina-node`. The helper sets `PR_SET_CHILD_SUBREAPER` before starting the command. It discovers immediate children through the parent PID in ordinary `/proc/<pid>/stat` records, kills and waits for them, and repeats for reparented descendants until `wait4` reports `ECHILD`. It does not require the optional per-thread `children` interface or `CONFIG_CHECKPOINT_RESTORE`. Session and process-group changes, intermediate-parent exit and a cleared environment cannot detach a descendant from this lifetime. The helper receives command arguments and environment over a private control descriptor, preserves the command's stdio and extra descriptors, and reports startup errors separately from exit status. Closing control, including when the owner process dies, requests cleanup. Each command has its own supervisor, so owners do not reap one another's commands or unrelated children. Hosts embedding the kit register `proc.SuperviseMain` explicitly; there is no automatic initialization hook.
 
-On macOS, cleanup is best effort. Each command receives a random `LINA_PROC_OWNER` environment token inherited by ordinary descendants. After killing the process group, the owner scans same-user processes with `KERN_PROCARGS2` and kills processes carrying that exact environment entry, rechecking process identity and credentials before signalling. It repeats the scan while tagged processes remain, with a bounded cleanup deadline. A child which clears its environment or makes its token unreadable can escape. This is an acknowledged gap, not an unprivileged equivalent of a subreaper or Job Object. Seatbelt still inherits confinement across children and denies protected file and Unix-socket access even with network enabled.
+On macOS, cleanup is best effort. Each command receives a random `LINA_PROC_OWNER` environment token inherited by ordinary descendants. The owner retains the unreaped leader until cleanup finishes, so its PID and group id cannot be recycled. It signals the group while the leader is live, then scans same-user processes with `KERN_PROCARGS2` and kills processes carrying that exact environment entry, rechecking process identity and credentials before signalling. It repeats the scan while tagged processes remain, with a bounded cleanup deadline. A Darwin `EPERM` is ignored only after reinspection proves that the same identity has ended or become a zombie; permission failure on a live child remains an error. A child which clears its environment or makes its token unreadable can escape. This is an acknowledged gap, not an unprivileged equivalent of a subreaper or Job Object. Seatbelt still inherits confinement across children and denies protected file and Unix-socket access even with network enabled.
 
 On Windows, the process owner creates each command suspended, assigns it to a Job Object, and only then resumes its initial thread. Assignment failure kills and joins the suspended command before returning an error. The job disallows breakaway and is not inherited as a handle; descendants remain members even when they change console groups or detach from the console. Cancellation, owner shutdown and leader exit terminate the job. The call retains its lease until the leader is joined and the job reports no active processes, including descendants holding stdio open. Job handles use kill-on-close as a final resource cleanup guard. This process lifetime mechanism grants no filesystem or network confinement; Windows sandboxed commands remain unsupported until the separate sandbox acceptance passes.
 
@@ -808,7 +810,39 @@ and normal Core startup refuse a newer store with exit 78 without changing the
 database, sidecars, lock, epoch or sentinel. Headless scenarios are in
 `e2e/m2/update-preflight.json` and exercise actual candidate Core processes.
 
-Rollback restores the previous compatible composition from the kept binaries and the pre-update snapshot. Binaries are never rolled back over an irreversible migration. When an update fails, the install restores the previous compatible composition, or holds: it stops, keeps the current state intact and reports. It never leaves a half-updated component running against data it can't read. LINA OS adds steps of its own around this order (see Deferred).
+The installed activation command is `lina update --activate --state-root <path>
+--candidate <prepared-directory>`. It persists an update attempt outside backup
+generations, requests the running Core's explicit drain and waits for its
+committed fence and exit before taking a verified snapshot. Candidate preflight
+is repeated against the stopped store. The binary, manifest and pinned adapter
+composition is kept for rollback; no user-installed worker or tool is changed.
+
+Activation backup and rollback restore run with the updater caller's cancellation
+and deadline, without the installer's 30-second command timeout. Their duration
+depends on the installed data size. The same rule applies to restore during
+`update --resume`; owned child cleanup, environment filtering and output bounds
+remain in force. Service-manager commands retain their short timeout.
+
+The candidate runs first on the private `run/update.sock`. Core writes a durable
+READY receipt before admitting the smoke conversation. Smoke requires a real
+completed conversation result and, when installed, the bundled Moirai worker's
+read-only `--preflight` against canon and the live job socket. It does not dispatch
+background jobs. The candidate then drains; the updater records completion and
+starts and checks the ordinary service. Missing account/model readiness is a
+smoke failure. Core refuses normal startup during an unfinished update, before
+opening canon or minting an epoch. `lina update --resume --state-root <path>`
+recovers an interrupted attempt using its recorded paths, composition and
+generation, or retains a hold with a closed cause. Changed installation/data
+paths and foreign services are refused before controlling another service.
+
+An explicitly configured Claude OAuth token also reaches the trusted smoke Core
+and its model adapter, so smoke does not require a cached vendor login. Core
+consumes that token from its environment after configuring the adapter and before
+starting workers. This Core-only launch exception does not widen tool or worker
+environments or forward other filtered provider variables. The token stays out
+of logs, receipts and diagnostics.
+
+Rollback restores the previous compatible composition from the kept binaries and the pre-update snapshot. Automatic rollback is allowed only while the candidate has never reached READY. A possibly started forward schema migration without an undo proof holds instead of rolling back. Binaries are never rolled back over an irreversible migration. When an update fails, the install restores the previous compatible composition, or holds: it stops, keeps the current state intact and reports. It never leaves a half-updated component running against data it can't read. LINA OS adds steps of its own around this order (see Deferred).
 
 - The main gets release artifacts from the private GitHub Releases of the LINA repository with the owner's `gh` authentication, and distributes Node binaries and their updates to devices over the tailnet ([releases.md](../policy/releases.md)).
 - The Claude adapter, its lockfile and the SDK package it installs are updated only as part of a LINA update, by their pin. An update never starts, stops or updates a tool the user installed, such as a worker, the `grok` command or Node.js.
@@ -834,6 +868,16 @@ These install and update failures must end in the previous compatible compositio
 - a backup that doesn't form a compatible pair with the installed version
 - a process killed between update steps
 
+The activation failure matrix is exercised by `e2e/m2/update-activation.json`
+through the installed executable, client protocol and actual bundled worker.
+It includes pre-READY start refusal, post-READY provider failure and updater death
+after dispatch. Package injections cover truncated gzip/digest failures, ENOSPC,
+service/snapshot/swap failures, incompatible generation refusal, changed paths,
+and SIGKILL acknowledged at each binary/adapter rename. Failure evidence uses
+closed causes and durable receipts; it does not infer success from a running
+service or from elapsed time. Existing runtime-specific injections below remain
+with their owning components and are included in full foundation verification.
+
 These runtime failures must end as their rules require:
 
 | Injection | Required outcome |
@@ -851,6 +895,10 @@ These runtime failures must end as their rules require:
 ## Remote access
 
 Remote access uses [Tailscale](https://tailscale.com/kb) only. LINA APP, the TUI and Node connect to LINA Core directly inside the tailnet. A mobile app host may connect with a WebSocket on that same tailnet address ([host-protocol.md](host-protocol.md#client-connection)). Tailscale owns device identity and access control. LINA runs no account service and no login that a client or a device presents to LINA Core, and registers a device on its first connection. The sign-in that this product calls LINA login is the owner's ChatGPT sign-in ([LINA login](#lina-login)): it is made once, on the main, binds the owner's ChatGPT identity to the owner's person id and gives the conversation its default model account. It is not checked when a client or a device connects, and it opens LINA Core to nobody outside the tailnet. A LINA admits only its owner, so every client connection acts for the owner ([host-protocol.md](host-protocol.md)). LINA Core accepts remote connections only on its tailnet address; there is no relay and no public listener. Channel connections are outbound as well: LINA Core opens its own connection to each platform, and no platform calls in. There is no webhook endpoint and no listener for channels ([integrations.md](integrations.md#channels)). A relay, and the login of LINA's own that a relay would need, are on the backlog ([cognition-and-life.md](cognition-and-life.md)).
+
+Remote TCP is explicitly enabled with `lina core --state-root <path> --socket <path> --tailnet-listen <IP:port>`. Core asks the local Tailscale daemon for the current assigned addresses and owner before binding only that exact address, and authenticates every remote peer with its source IP and port. The daemon must be running; a missing daemon, non-owned address or bind failure fails startup and closes acquired listeners. There is no fallback address. The trusted LocalAPI Unix socket defaults to `/var/run/tailscale/tailscaled.sock`; installations with a different socket may specify `--tailscale-socket <absolute-path>` together with the listener option. The owner uses another untagged device under the same Tailscale user; same-device clients retain the Unix socket and its ancestry boundary.
+
+Both client listeners run during RECOVERING and share the READY transition, installed handlers and graceful shutdown. Signal cancellation, startup failure or a listener failure joins both services and closes accepted clients, including incomplete handshakes. The `running` capability's typed stop cancels an owned background run without approval and preserves its collected work. WebSocket framing is a separate increment (#203). The automated scenario is [e2e/m3/tailnet-listener.json](../../e2e/m3/tailnet-listener.json); its synthetic LocalAPI and network seam verify Core composition without claiming live two-device tailnet connectivity.
 
 ## LINA OS composition
 
@@ -901,3 +949,7 @@ The first implementation issue demonstrates the runtime with these checks. Each 
 - Narrowing a plugin server's network to named hosts: needs a filter in the sandbox wrapper; chosen at implementation acceptance of the plugin system, and until then the allowance is network on or off.
 - The starting values of the turn budget (acknowledgement, soft and hard budget, tool deadline), which only set the hand-off point: tuned by measurement during implementation acceptance of the conversation engine, on waiting time and completion quality together (rework, corrections and "that is not what I asked"), never on waiting time alone.
 - Replay uses immutable history references, pinned persona and recorded request configuration; missing reconstructible assembly excludes the turn. Raw ContextPackets remain unstored.
+
+### Built-in web reads
+
+[Web search and page reading](web-tools.md) implement `web_search(query, limit)` and `web_extract(url)` in ordinary turns. The same tool registry and network approval path govern both. Only configured providers are offered, returned content is untrusted evidence, and the provider key belongs to the existing secret store.

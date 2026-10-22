@@ -46,6 +46,7 @@ function registryFor(cwd) {
     'internal/core/lifecycle/',
     'internal/core/memory/',
     'internal/core/modelpath/',
+    'internal/core/progress/',
     'internal/core/replay/',
     'internal/core/records/',
     'internal/core/reply/',
@@ -56,6 +57,7 @@ function registryFor(cwd) {
     'internal/core/skills/',
     'internal/core/turn/',
     'internal/core/update/',
+    'internal/core/recover/',
     'internal/core/waiting/',
     'internal/core/work/',
     'internal/core/worker/',
@@ -76,6 +78,7 @@ function registryFor(cwd) {
   // selects the acceptance suite, including transitive kit changes.
   const e2e = existsSync(join(cwd, 'e2e')) ? ['./e2e/...'] : [];
   return [
+    { name: 'crw-takeover', module: '.', directories: ['tools/crw-takeover/'], files: [], packages: ['./tools/crw-takeover/...'] },
     { name: 'kit', module: 'kit', directories: ['kit/', 'protocol/schema/', 'protocol/fixtures/'], files: [], packages: ['./...'] },
     { name: 'lina', module: '.', directories: ['cmd/lina/', 'internal/archtest/', 'internal/buildinfo/', 'internal/core/manifest/', 'e2e/', 'persona/', 'skills/', 'testdata/korean/', 'testdata/hermes/', 'testdata/crw/', ...coreDirectories, ...addonDirectories, ...clientDirectories, 'third_party/codex-app-server/'], files: ['doc.go'], packages: ['.', './cmd/lina/...', ...architecture, ...buildinfo, ...manifest, ...persona, ...skills, ...corePackages, ...addonPackages, ...clientPackages, ...e2e, ...vendored], binary: 'lina' },
     { name: 'moirai-worker', module: '.', directories: ['cmd/moirai-worker/', 'internal/moirai/'], files: [], packages: ['./cmd/moirai-worker/...', './internal/moirai/...'], binary: 'moirai-worker' },

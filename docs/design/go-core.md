@@ -95,7 +95,7 @@ type API interface {
 
 ## Start, recovery, idle and update
 
-**C-03 Lock, control files, epoch (kept).** Core takes a non-blocking `flock` on `system/core/core.lock`. The files under `system/core/` are the lock, `epoch` (a decimal string, CP-02), `run.sentinel`, `halt.json`, `lifecycle.json` (the restart request) and `main.json` (the main id; no key). Data records are written by temp file, fsync, rename and directory fsync, at mode 0600 in a 0700 directory. The lock is the exception: it is created once and fsynced with its directory, then opened and flocked without replacement or unlinking, so all contenders use the same inode. None is in a backup generation, and a LINA restore preserves them except for clearing the halt latch after verified recovery (C-04, CP-03). A state root on a non-local filesystem is refused. The new epoch is `max(epoch file, highest epoch in canon by read-only peek, peer_seen_max) + 1`, fsynced before canon opens (CP-01). `peer_seen_max` is the highest epoch a peer reported when it refused a stale one. The epoch fence is the first statement of every write transaction. A lower epoch fails `stale_epoch` and latches the writer.
+**C-03 Lock, control files, epoch (kept).** Core takes a non-blocking `flock` on `system/core/core.lock`. The files under `system/core/` are the lock, `epoch` (a decimal string, CP-02), `run.sentinel`, `halt.json`, `lifecycle.json` (the restart request), `update.json` (the update attempt), `update.lock` (updater exclusion) and `main.json` (the main id; no key). Data records are written by temp file, fsync, rename and directory fsync, at mode 0600 in a 0700 directory. The lock is the exception: it is created once and fsynced with its directory, then opened and flocked without replacement or unlinking, so all contenders use the same inode. None is in a backup generation, and a LINA restore preserves them except for clearing the halt latch after verified recovery (C-04, CP-03). A state root on a non-local filesystem is refused. The new epoch is `max(epoch file, highest epoch in canon by read-only peek, peer_seen_max) + 1`, fsynced before canon opens (CP-01). `peer_seen_max` is the highest epoch a peer reported when it refused a stale one. The epoch fence is the first statement of every write transaction. A lower epoch fails `stale_epoch` and latches the writer.
 
 The initial identity and sentinel formats are:
 
@@ -202,7 +202,8 @@ The #149 preparation boundary is `lina update --prepare --state-root <path>
 the download before unpacking, checks every manifest artifact, then runs the
 candidate's `lina core --preflight` through `kit/proc`. Candidate versions live
 under `system/updates/<archive-sha256>`; creation is exclusive and never replaces
-another attempt. A successful candidate gets a durable `prepared.json` receipt.
+another attempt. A successful candidate gets a durable `prepared.json` receipt, including the
+verified manifest digest. Activation rechecks that digest and all copied artifacts.
 The active binaries, service, control records and canon remain unchanged.
 
 `core --preflight --state-root <path> [--manifest <path>]
@@ -229,14 +230,75 @@ Preparation establishes candidate verification, schema relation, peer rows and
 staging space only. Idle and verified-generation remain `unknown` until the
 activation owner supplies a fenced idle observation and a recent verified
 backup. A prepared receipt is not activation authority or a READY receipt.
-The lifecycle swap, smoke and rollback orchestration belongs to #150.
+The #150 activation command is `lina update --activate --state-root <path>
+--candidate <prepared-directory>`. Both binaries must advertise `update_protocol: 1` in preflight; older
+binaries without the durable boot/READY guard are refused before drain. It
+verifies the installed service's exact
+paths and refuses foreign units or drop-ins before controlling it. An independent
+`update.lock` excludes competing updaters and grants no canon authority. Core's
+existing `core.lock` remains the only writer lock. The updater persists its
+attempt before requesting the running Core's explicit drain, waits for durable
+commitment and lock release without forcing active work, and then stops the
+owned service. It takes a new verified generation through the installed old
+binary, verifies the generation/version pair and reruns candidate preflight on
+the stopped store. Release-owned binaries, manifest and adapter files move as
+one recorded composition; the prior directories and failed candidates are kept.
+Settings stay in their installed control records, outside binary replacement.
+The installed binary's backup and rollback restore (including resumed rollback)
+use the updater context without an added installer command deadline; data size
+must not impose a fixed 30-second failure boundary. Both retain `kit/proc`
+ownership and cancellation, filtered environments and bounded command output.
+
+`update.json` is a schema-1 private atomic control record outside backups. It
+binds the root, normal socket, candidate, previous composition, binary digests,
+generation and phase. Phases are `draining`, `drained`, `snapshot`, `swapping`,
+`starting`, `booting`, `ready`, `complete`, `rollback`, `rolled_back` and `held`.
+It also records the forward-migration flag, a sticky `reached_ready` bit and a
+closed cause. Core checks this record under its writer lock before minting an
+epoch or opening canon. An unfinished attempt refuses ordinary startup with
+`update_held`; a changed root is `update_path_changed`. Only the recorded
+candidate's digest may claim a single `starting` launch on `run/update.sock`.
+Core durably records READY before opening admission. Failure to observe a
+process or a deadline is never evidence that READY was not reached.
+
+Smoke runs that actual candidate on the private update socket, sends one
+conversation request through the client protocol and requires an acknowledged
+input, completed agent answer and finished turn. A bundled Moirai worker runs
+`--preflight`: it reads canon and checks the Core job API's `moirai/1` readiness
+reply without applying a job. User-installed coding tools are untouched. The
+smoke Core drains and exits before `complete` is recorded and the normal service
+is started and checked for readiness. Smoke input and its result remain ordinary
+durable conversation evidence. A missing account or failed provider fails smoke.
+The trusted candidate Core launch preserves the explicitly configured
+`CLAUDE_CODE_OAUTH_TOKEN` in addition to the filtered environment; this exception
+does not admit other filtered provider variables. Core captures that credential
+in its Claude model adapter and removes it from the process environment before
+boot captures worker environments. Tool filtering and the smoke worker's empty
+environment remain unchanged. Credential values never enter logs, update
+receipts or diagnostics.
+
+Automatic rollback is allowed only before READY and when no forward schema
+migration may have begun. It restores the kept composition and its independently
+verified generation using the old binary's own restore command and schema
+catalog. Rename recovery is repeatable at every component boundary, including
+when an adapter was absent in the old composition. After READY, or after a
+possibly irreversible migration, failures preserve the current data in a hold;
+they never restore the old snapshot. `lina update --resume --state-root <path>`
+resolves an interrupted pre-READY attempt or retains that hold. Closed causes
+include interrupted update, changed path, invalid candidate, snapshot/pair,
+swap, startup, smoke, resume, rollback, disk-full and irreversible-migration
+failures. If a record cannot be durably advanced, its prior unfinished phase
+still fences ordinary Core startup.
 
 ## Client service
 
 **C-42 Client service (changed).** The wire is [host-protocol.md](host-protocol.md#client-connection). This decision fixes the server side.
 
 - Listeners: a Unix socket in a 0700 directory at mode 0600 with a peer user check (`SO_PEERCRED`, `LOCAL_PEERCRED`); and the tailnet address only, never another interface, with a WebSocket framing of the same JSON-RPC messages for a mobile host. Types are generated from the schema. The roadmap builds the Unix socket first and the tailnet listener and the WebSocket framing with remote clients.
+- Remote TCP startup is opt-in through `lina core --tailnet-listen <IP:port>`. The literal address must be in Tailscale's IPv4 or IPv6 range and in the running local daemon's `TailscaleIPs`; wildcard, DNS, loopback, LAN, public and other tailnet addresses fail before binding. Core queries the trusted Unix LocalAPI (`/var/run/tailscale/tailscaled.sock` by default, or `--tailscale-socket`), never an HTTP proxy or remote identity endpoint. The local listener and optional tailnet listener share the same identity, manifest, recovery admission, codecs, operations and shutdown lifetime.
+- Remote admission uses LocalAPI `status` and `whois` for the transport's source IP and port. The peer must be an untagged other device owned by the same Tailscale user as Core's device, with the exact source address in its node addresses. Unknown identity, another user, a changed local identity or a stopped daemon fail closed. Connections originating on Core's own Tailscale device use the Unix socket instead, preserving its process-ancestry checks. Approval and question answers revalidate remote identity; payload claims cannot confer decider authority.
 - Handshake: `hello`, then `welcome` with the highest version both sides speak that the build manifest's supported-combination table lists for the peer; capabilities are the intersection with that row. Otherwise `unsupported_combination` and close.
+- WebSocket framing: an authenticated client stream also accepts an HTTP/1.1 upgrade at `/client`, sharing its listener and session engine with newline JSON-RPC. Authentication happens before transport selection; HTTP headers never supply the owner or approval eligibility. Native clients may omit Origin; browser requests must have the same origin host as the endpoint. Other paths, queries and foreign origins are refused. Header reads are bounded to five seconds and 16 KiB (plus the HTTP parser's fixed buffer); initial framing detection is bounded to 45 seconds. Each complete text message contains one JSON-RPC object, no literal CR/LF, and fewer than 1 MiB of UTF-8 bytes. Binary messages, batches, joined objects and oversized messages close the connection; fragmented text and control frames retain standard WebSocket semantics. No compression is negotiated. Disconnect and Core shutdown cancel active handlers and join the upgraded connection; writes retain the 45-second bound. This does not add a supported peer/platform row or a schema field.
 - Delivery: a table of recent `message_id` values with their first answer (retention (P): 24 hours). A repeat gets the first answer. An uncertain delivery is settled by asking for the outcome, never by resending.
 - Streams: the envelope has no sequence field, so the payloads carry the stream mechanics. Topics are `conversation:<id>`, `running`, `progress`, `waiting`, `results:<conversation>`, `exchanges`, `accounts`, `channels` and `core`. Each topic has a gapless cursor `(epoch, seq)`, a ring of recent frames (P: 1,024), and on any gap a `resync` followed by a snapshot window (P: 200 items). Associative frames coalesce (appended text, replace-style rows). `item_done`, approvals and questions are never dropped or coalesced. A slow client overflows only its own topic with `resync_required`. Text deltas batch per 16 ms or 4 KiB (P). Heartbeat 15 s, client timeout 45 s (P).
 - Approval decider: an answer to an approval or a question is accepted only from a client connection whose peer is not a descendant of Core by process ancestry. The socket path is not mapped into any sandbox. Remote clients are identified by Tailscale. The residual risk is another process of the same OS user that Core did not start. Acceptance test: a connect from inside the sandbox fails.
@@ -273,7 +335,9 @@ The local listener uses the generated `kit/protocol` types. It creates missing s
 
 Frames are newline-delimited JSON-RPC 2.0, capped at 1 MiB including the newline; EOF without that newline is not a message. The first request is `hello`; its response preserves the JSON-RPC id and carries the answer envelope in `result`. Lookup matches the connection, hello peer and platform, and exact protocol version against an evidenced supported-combination row, chooses the highest common numeric version, and intersects client offers, the row and installed server handlers. Product version never decides compatibility. The current codec speaks only client 1.0. Boot accepts a `supportedCombinations` build-manifest section; a missing or malformed explicit table fails startup and an empty table refuses all combinations. The compiled default and build-manifest writer share one table: connection `client`, peer `lina-tui`, the build target as `GOOS/GOARCH`, protocol `1.0`, capability `lifecycle` version `1.0`, and evidence from protocol conformance and the planned-restart scenario. The optional string fields `peer` and `platform` are a minor-compatible addition to the client 1.0 hello schema. Missing, empty or unlisted values receive `unsupported_combination` and close; Core never guesses them from product version or its own platform. The TUI supplies its compiled target. A future app or remote platform requires its own evidenced row.
 
-Boot supplies the durable main id and epoch and can supply the installed person, agents and operation handlers. Until installation connects those services, the source-build welcome retains `person-placeholder` and an empty agent array, and grants lifecycle only when offered and installed. After welcome, sender identity is bound to the connection and a different epoch is refused `stale_epoch`. RECOVERING rejects every mutation with `unavailable` before decider or capability dispatch, while negotiated read and subscription kinds remain available. Sender and epoch validation still run first. An unnegotiated operation is refused `capability_not_negotiated`; a valid welcome stays open until disconnect or shutdown. Approval, question and waiting-list answers also require an eligible decider: Core itself, its children and grandchildren, unreadable ancestry and a changed process identity are refused `not_authorized`. The initial ineligible verdict survives reparenting and eligibility is rechecked before each decision. Deduplication, event recording and the remaining client operations are separate client-service work.
+Boot supplies the durable main id and epoch and can supply the installed person, agents and operation handlers. Until installation connects those services, the source-build welcome retains `person-placeholder` and an empty agent array, and grants lifecycle only when offered and installed. After welcome, sender identity is bound to the connection and a different epoch is refused `stale_epoch`. RECOVERING rejects every mutation with `unavailable` before decider or capability dispatch, while negotiated read and subscription kinds remain available. Sender and epoch validation still run first. An unnegotiated operation is refused `capability_not_negotiated`; a valid welcome stays open until disconnect or shutdown. Approval, question and waiting-list answers also require an eligible decider: Core itself, its children and grandchildren, unreadable ancestry and a changed process identity are refused `not_authorized`. The initial ineligible verdict survives reparenting and eligibility is rechecked before each decision. The `running` capability also installs `stop {run_id}` on both listeners. It checks the session owner against the durable background run before calling the existing idempotent cancellation path, without an approval or decider requirement. `stop_result {run_id, outcome}` reports the committed outcome (`cancelled`, or an already landed `complete`, `partial` or `failed`); it never rewrites a previously landed outcome. Empty targets are `malformed`, absent or foreign runs are `out_of_scope`, and the ordinary epoch and RECOVERING rules still apply. This stops one background run; it does not terminate Core. Deduplication, event recording and the remaining client operations are separate client-service work.
+
+`e2e/m3/tailnet-listener.json` runs installed Core through `boot.Run`, with real TCP and Unix sockets, a synthetic Unix LocalAPI and a loopback network seam that observes the requested tailnet bind/source addresses. It compares complete welcomes, performs real tool rounds and a background model request, and proves typed, approval-free, repeated stop cancels that request from either transport. The built CLI separately proves public-bind startup refusal. This does not claim a two-device Tailscale deployment test; WebSocket framing remains #203.
 
 ```go
 type Hub interface {
@@ -680,7 +744,7 @@ Only a built-in sandbox network request offers always allow. It creates a standi
 
 **C-14 Sandbox (changed).** The sandbox is that of [runtime.md](runtime.md#sandbox), invoked through `kit/sandbox`, with the seccomp program compiled per architecture at build. The probe runs at start and before the first call; if the sandbox is unusable, shell and file tools turn off with a cause and conversation continues.
 
-The startup coordinator creates the workspace and protected state directories while holding the root lock, composes a Core-owned `kit/proc` owner and probes the wrapper after reconciliation and before READY. The startup snapshot carries availability and a stable cause; the shell/file service receives that same wrapper, including its first-call recheck. Failure reports `shell_file_tools_unsupported` privately and publishes `connected.shell_file_tools_available=false` on the core topic for one localized TUI setup notice. It never prevents the client handshake or enables an unsandboxed fallback. Reverse shutdown closes process admission and kills and joins owned commands. The #50 acceptance canary checks canon, secrets, material revisions, symlink aliases, the client socket and its hard-link aliases with network both blocked and authorized; `e2e/m1/sandbox.json` covers a missing or failing launcher with a live real Core and TUI. That scenario uses connection-only boot and establishes client-service continuity. The configured conversation route and its installed-Core reply proof are specified in [host-protocol.md](host-protocol.md#conversation-payloads).
+The startup coordinator creates the workspace and protected state directories while holding the root lock, composes a Core-owned `kit/proc` owner and probes the wrapper after reconciliation and before READY. The startup snapshot carries availability and a stable cause; the shell/file service receives that same wrapper, including its first-call recheck. Failure reports `shell_file_tools_unsupported` privately and publishes `connected.shell_file_tools_available=false` on the core topic for one localized TUI setup notice. It never prevents the client handshake or enables an unsandboxed fallback. Reverse shutdown closes process admission and kills and joins owned commands. The #50 acceptance canary checks canon, secrets, material revisions, symlink aliases, the client socket and its hard-link aliases with network both blocked and authorized; `e2e/m1/sandbox.json` covers a missing or failing launcher with production Core composition over installed state and the installed TUI. Each case submits a TUI message through the configured conversation route, receives a scripted provider reply, waits for turn completion and recovers the reply after reopening the TUI without another model call. It also checks the stable sandbox-failure cause and localized setup notices. The configured conversation route and its installed-Core reply proof are specified in [host-protocol.md](host-protocol.md#conversation-payloads).
 
 Linux process ownership uses the explicit per-command `proc-supervise` helper with `PR_SET_CHILD_SUBREAPER`. It kills and waits for the whole descendant tree, including `setsid`/`setpgid` escapes and orphans, before returning. The tests cover owner shutdown, cancellation, normal leader exit and owner process death. macOS first kills the process group, then scans same-user processes for an inherited owner token using `KERN_PROCARGS2`. This macOS cleanup is best effort: a child that clears its environment can escape, and this remaining limitation is not accepted as complete unescapable supervision.
 
@@ -1017,9 +1081,47 @@ committed pairing and binding scope. Disconnect joins the poller, revokes bindin
 and pairing, blocks pending outbound work and removes the credential, retaining
 ownership and delivery receipts so reconnect cannot transfer ownership or replay
 old input. Core shutdown joins pollers before closing their stores. Ordinary
-bound channel messages remain in the durable gateway inbox; channel turn execution
-and outbound reply scheduling attach through their owning flows.
+bound owner messages enter the durable gateway inbox; the channel worker drains
+them through the existing turn execution and outbound queue.
 
+
+#147 adds `gateway/discord` behind the same adapter boundary and boots one
+outbound Gateway session per saved Discord bot. Its `coder/websocket` transport
+is pinned at v1.8.15; REST calls use the fixed Discord v10 origin without redirects
+or automatic effect retries. The shared catalog appends Discord presentations
+and pending buttons plus consumed channel steering at migration 32, leaving migrations 1–31 unchanged.
+The optional channel control `platform` field defaults to Telegram. Discord
+connection verifies the bot identity before replacing its credential or worker.
+Gateway close 4007/4009 clears that bot's durable session/sequence cursor before
+the existing supervisor retries with Identify. This also applies before Hello.
+Other transport closes retain Resume state; native-event receipts and bindings
+are preserved across the reset (#548).
+
+The channel worker now drains committed owner inbox rows into the existing turn
+lanes. Private owner inputs use the shared main conversation and admission/steering
+coordinator; shared chats retain their separate conversation. Admission never
+waits for a running turn or outbound HTTP call. Consumed channel steering is
+marked durably before the next model request so restart cannot turn it into
+another turn. Channel ledger events retain platform/chat provenance and binding scope;
+the same model, tool and background-run services execute the work. A completed
+reply and a landed background artifact are projected once into the channel
+ledger and shaped for the existing durable outbound queue. Restart finds the
+same inbox/turn/queue identities. It cannot repeat a started model turn or an
+uncertain send. Scoped runners retain the original inbound address and resolve
+its current effective binding before model dispatch and tool execution, including
+new thread overrides of a parent fallback. Background delivery projections keep
+`EntryBackgroundNotice` and `background_notice` provenance; queue validation
+recognizes those committed events without promoting them to agent history.
+No channel stream publishes provisional deltas. Controls expose
+permanent delivery failure as the binding's unreachable flag.
+
+Discord approval presentations are Core-computed, with once/deny components.
+A live private tools binding supplies local surface availability, and an
+independent presentation worker does not hold the turn lane. Interaction
+receipt, token-free pending inbox and session cursor commit together. Recovery
+rechecks current owner pairing, binding, epoch and the original platform
+presentation before answering authority. Foreign presses and duplicate native
+interaction IDs cannot alter that decision or edit its message.
 
 The Telegram adapter uses the pinned `gotgbot/v2` client for individual API calls;
 LINA owns the polling loop. Construction is local and starts no platform request.
@@ -1063,7 +1165,7 @@ Connections start denied. Pairing uses a random 128-bit code, stores only its SH
 
 The outbound queue retains the ledger reference and adapter-shaped parts. It requires a committed agent ledger event for the bound agent and conversation, and verifies the current pairing, binding and an admitted reply source, or explicit may-start scope, and serializes sends across topics within a bot/chat. A hard lease encloses a durable `sending` claim, one network call, and settlement. Each claim has a monotonic attempt number. Only an explicit refusal before delivery makes a part retryable at its persisted retry-after time; successfully sent parts are not repeated. Missing or ambiguous outcomes, transport errors, and `sending` rows found after fencing the old epoch become terminal `unknown`. A blocked chat marks all its bindings unreachable and stops its pending sends. The caller runs queue recovery once before starting adapters.
 
-Package scenarios use real canon and SIGKILL barriers before admission commit, after commit and during a send. This increment adds no TUI or Core-protocol operation; platform pollers, credentials, channel approval interactions, live turn composition and app delivery views attach in their owning increments. No channel scenario can yet be driven through the #34 protocol harness.
+Package scenarios use real canon and SIGKILL barriers before admission commit, after commit and during a send. The #96 completion scenario, `e2e/m1/telegram.json`, reopens a saved connection and its secret through production boot with only the platform HTTP transport replaced. It holds the bot identity lookup until shutdown, verifies READY and the unavailable connection through the channel protocol, and requires Core to cancel and join the request before stopping. It does not install a separate canon service or start its own adapter. Live channel turn composition and app delivery views attach in their owning flows.
 
 **C-25 Agent exchanges (changed).** Client agent selection addresses an existing agent id in the one Core; it starts no exchange and creates no per-agent engine. Management uses the existing agent store and shared conversation flow ([T-14](tui.md#memory-and-agent-command-requests)). Contract: [conversation-and-memory.md](conversation-and-memory.md#agent-exchanges).
 
@@ -1121,8 +1223,28 @@ type Adapter interface {
 - #132 connects session start, input, interrupt and snapshot to Core's normal conversation tool registry. Launch receipts record the installed version and control handle; version and terminal-output notices survive in conversation history. The per-session process belongs to Core, and hard activity is held per active turn. Session completion is not task delivery; full work dispatch, recovery, approvals and dynamic work tools remain their separate roadmap steps.
 - Workers run with the user's own setup and get no LINA sandbox, credential, hook or skill ([work-and-delegation.md](work-and-delegation.md#workers)). Approvals go to the originating conversation. A worker on another device is started and relayed by that device's Node.
 - A process group kill is the stop. A cut turn's effects are unknown until `Snapshot` and a read of GitHub settle them.
+- The #133 running-Core bridge declares the four `lina` dynamic work tools, routes worker approvals through authenticated authority cards carrying the originating conversation, claims each answer before its single send, and exposes measured/unknown quota rows through `worker_quota`. Request withdrawal and terminal turns stop pending decisions. Tool results and completion receipts remain worker evidence, not verification verdicts. The headless `e2e/m2/codex-work-tools.json` scenario covers the stdio and conversation protocol round trip.
 - Work tools: for Codex, `lina` dynamic tools (submit receipt, ask, coordinate, read projection). For the others, the receipt is built from the final result and the pull request and marked adapter-derived.
 - The delegated-task store records the requesting agent and conversation, done condition, artifact roots and whether application is required. A run binds its task, generation, worker, thread, turn and observing node. Admission appends an event and updates the active-run reservation in one fenced canon transaction; a task cannot admit a second active run. A terminal observation releases execution capacity but is not a delivery or acceptance.
+
+`internal/core/worker/antigravity` implements C-29 against the documented `agy`
+headless stream. A `result` emits exactly one typed finish before process exit;
+`denied_actions` overrides a `SUCCESS` status. The supervised process owner
+retains its hard activity until all descendants have been reaped. No result or
+exit code constitutes delivery. Fixed `ghclient` reads verify the task PR's identity,
+current head, checks and review, with a head recheck after inline comments.
+
+`internal/core/worker/dispatch` wires the adapter into installed Core's `dispatch_work`
+tool and existing work ledger. Migration 31 adds the dispatch journal; a committed
+conversation tool receipt gates execution. The journal reserves each repository
+through queued/running/unknown states. Core creates the worktree, checks design
+references, protected refs and write areas, and persists an adapter-derived
+artifact/receipt. Terminal observations publish to the source conversation and
+survive restart. Recovery retains uncertain reservations without replay. The
+adapter does not advertise unsupported approval replies, steering or work tools;
+manager design acceptance, parallel scheduling and merge remain their own flows.
+See [Antigravity headless adapter](work-and-delegation.md#antigravity-headless-adapter)
+for the evidence boundary and account-free acceptance limits.
 
 **C-57 Work definition, choice and splitting (new).**
 
@@ -1142,7 +1264,8 @@ type Definition struct {
 - Core does not split work itself. The dev preset carries the splitting criteria as guidance ([work-and-delegation.md](work-and-delegation.md#splitting-into-tasks)). Core checks mechanically that each task has one done condition and a write area, that overlapping areas are ordered by a dependency, that dependencies have no cycle, and that hotspot files are taken whole or moved to one task.
 - `Chooser` ranks workers from situation tags, quota rows and host capacity, using an editable rule table marked provisional. A quota or login stop hands the same packet to the next worker.
 - `Scheduler.Release` runs on events (landed, new task, quota change, a parked worker's reset), not on a poll. It starts every task whose dependencies landed, whose area lease is free and whose worker has quota. Area leases live from hand-off to landed, closed or abandoned. Concurrency is the free slots that the reported load and resources of the main host and each Node allow, with no fixed count per repository ([work-and-delegation.md](work-and-delegation.md#capacity)). A task that cannot start shows exactly one reason.
-- One task, one worker, one worktree, one branch, created by Core with the Git command from a parent clone in `work/clones/`.
+- One task, one worker, one worktree, one branch, created by Core with the Git command from a parent clone in `work/clones/`. #127 wires `prepare_work` and `retain_work_result` into the running conversation tool registry. `work.Area` owns leased Git subprocesses through `kit/proc`, detached allocation at the pinned base, protected refs and branch bundles. Core closes its process owner during shutdown.
+- The developer lane projection reads current `work_cards` in a canon snapshot through `internal/core/progress`. Installed Core registers read-only `progress_get` under `worker_lanes` 1.0, independently of a provider route. `after` is an opaque source/id cursor; `progress.lanes` contains up to 32 current worker sessions and `next_cursor` only when another visible session exists. Rows carry run/task/persona identity, persona name, worker, thread, turn, node, generation, task state/title and source-labeled stage details. Display fields are bounded before transport. Core authorizes the installation's person and excludes explicitly foreign-person tasks and deleted personas; legacy unowned records belong to the installation. Tasks without a run and superseded generations do not create lanes. A finished worker turn remains distinct from Core-verified task completion. Refresh rereads authoritative state; this view neither dispatches work nor infers scheduler transitions. Boot appends the installed worker runtime's sessions after durable work pages, using their adapter snapshots and masking output before display. Idle means only the worker turn ended; it is not a work verdict.
 - The CRW pin is the start gate for the work ledger records: a pin record and a LINA fixture runner whose expected values come from the fixture ([work-and-delegation.md](work-and-delegation.md#start-gate)).
 - `internal/core/work/pin` verifies SHA-256 over every adopted file before running
   any case. The runner passes only inputs to the record validator; a validator
@@ -1153,12 +1276,14 @@ type Definition struct {
 
 - A completion event is a row keyed by task, attempt and head SHA, and its claim is idempotent. Chat input and events share one reaction path.
 - `Reactor.On` does, in order: one read of the pull request through `ghclient` (a `gh` child with fixed arguments); one design-conformance review; return of P0 and P1 findings once; merge or close; then `Scheduler.Release`. The CI watcher follows [completion signals](integrations.md#completion-signals).
-- `ghclient` is owned by boot for one Core epoch. Each fixed-argument `gh` child runs through `kit/proc` with a live activity lease, the user's GitHub login and no model-provider credentials. The client serializes observation in one watcher per normalized repository/PR, bounds response bytes and pagination, retains conditional REST validators, and exposes pending causes and retry times through the `github` client capability. No shell, events feed, webhook, merge or external write is part of this read service. Boot cancels and joins it before releasing its resources. The installed-Core scenario in `e2e/m2/github-ci.json` covers the socket-to-child-to-result path.
+- `ghclient` is owned by boot for one Core epoch. Each fixed-argument `gh` child runs through `kit/proc` with a live activity lease, the user's GitHub login and no model-provider credentials. The client serializes observation in one watcher per normalized repository/PR, bounds response bytes and pagination, retains conditional REST validators, and exposes pending causes and retry times through the `github` client capability. The read/watch operations use no shell, events feed, webhook or external write. Boot cancels and joins it before releasing its resources. The installed-Core scenario in `e2e/m2/github-ci.json` covers the socket-to-child-to-result path.
 - The review is Core's own call on the `background` role. The diff, the design reference text at the base commit and the work definition go in as an enveloped data block. Findings come back as schema-validated records `{id, severity P0..P3, file, claim}`. A failing required check and a change outside the write area are P1 findings computed by Core. A prose-only reply stores none. A large diff is reviewed by file group and merged into one finding set.
 - The return, the close on a residual finding and the merge steps are those of the contract. Core takes the merge slot, merges pinned to the head last read, and only one read after the merge lands the task.
+- #141 adds the running Core's `github_merge` capability and the shared `ghclient.Merge` service. A person connects a PR to its parent clone and named protected local branches; Core verifies the clone's origin and captures those refs before work. Head acceptance reads GitHub and compares those refs again. The merge takes a repository/base slot, reads checks and unresolved priority findings, rechecks PR identity, compares protected refs and commits an unknown intent before the fixed head-pinned child runs. A moved head is returned as fresh evidence and requires explicit acceptance; there is no automatic merge or review retry. A command's success alone is not landing: Core checks the merge commit, exact target ref and checks on that commit. Queue/unknown states retain a durable base reservation and permit only observation. Restart never repeats a write.
+- `authority.Merges` stores the connection, captured refs, accepted head, requesting person/agent and final evidence in canon migration 30. It is merge authority bookkeeping, not a replacement for the pinned work-ledger receipt/verdict schemas. The work reactor can consume the same service and evidence. A confirmed external merge is `observed`, a confirmed successful Core call is a `receipt`; neither issues a delivery verdict. Restore invalidates unused merge permission while retaining uncertain reservations and terminal evidence. `e2e/m2/github-merge.json` drives the installed Core, a synthetic gh child and a real temporary Git clone, including restart and failed checks on a person's merge.
 - Stall handling and the reconcile sweep (every 5 minutes (P), no model call) follow the contract.
 
-**C-30 Task states and stage sources (changed).** Card states, `done` and verdicts are those of [work-and-delegation.md](work-and-delegation.md#progress-display) and [work-and-delegation.md](work-and-delegation.md#judgment-and-delivery). `Project(ledger) Card` rebuilds from the ledger at any time. Each stage summary carries a source label: worker report, GitHub, Core's own review, or unknown. Only Core writes verdicts (`verified`, `needs_changes`). The append-only `work_ledger` is authoritative; `work_cards` and `work_active_runs` are disposable indexes rebuilt together from its ordered events. A receipt stays a worker claim, and is held until the matching terminal observation. A verified result without required application remains ready for review; only a matching apply record makes it done. New generations clear the prior receipt, verdict and application. Startup rebuilds the indexes and records unfinished executions as unknown while retaining their reservations until reconciliation observes an end.
+**C-30 Task states and stage sources (changed).** Card states, `done` and verdicts are those of [work-and-delegation.md](work-and-delegation.md#progress-display) and [work-and-delegation.md](work-and-delegation.md#judgment-and-delivery). `Project(ledger) Card` rebuilds from the ledger at any time. Each stage summary carries a source label: worker report, GitHub, Core's own review, or unknown. Only Core writes verdicts (`verified`, `needs_changes`). Retained material references replay from the same ledger; retaining bytes neither verifies nor applies a result. The append-only `work_ledger` is authoritative; `work_cards` and `work_active_runs` are disposable indexes rebuilt together from its ordered events. A receipt stays a worker claim, and is held until the matching terminal observation. A verified result without required application remains ready for review; only a matching apply record makes it done. New generations clear the prior receipt, verdict and application. Startup rebuilds the indexes and records unfinished executions as unknown while retaining their reservations until reconciliation observes an end.
 
 ## Timers, progress and waiting
 
@@ -1232,7 +1357,7 @@ local source identities, so an old export cannot resurrect forgotten content.
 
 ## Storage, backup and diagnosis
 
-**C-39 Data placement (changed).** The areas are those of [filesystem.md](filesystem.md#state-root-and-layout). The Go owners: `canon` owns `canon/`; `ctlfiles` and `eventstore` own `system/`; `records`, `skills` and `agents` own `versions/`; `assets` owns `materials/` and `derived/`; `work` owns `work/`; `backup` owns `backups/`; `secrets` owns `secrets/`. Credentials are not backed up. Node execution state is outside the state root. Delegated-task events, receipts, provenance and acceptance records live in canon, never only in `work/`. Provenance for every manifest entry includes artifact id, task, node, normalized observed path, content hash and observation time, and must match the current run and the declared manifest before the receipt is admitted.
+**C-39 Data placement (changed).** The areas are those of [filesystem.md](filesystem.md#state-root-and-layout). The Go owners: `canon` owns `canon/`; `ctlfiles` and `eventstore` own `system/`; `records`, `skills` and `agents` own `versions/`; `assets` owns `materials/` and `derived/`; `work` owns `work/`; `backup` owns `backups/`; `secrets` owns `secrets/`. Credentials are not backed up. Node execution state is outside the state root. No-PR task output and local branch bundles are retained as LINA materials with the task agent as author. Their references and material metadata commit together; the ordinary materials inventory copies them into backup generations while excluding `work/`. Delegated-task events, receipts, provenance and acceptance records live in canon, never only in `work/`. Provenance for every manifest entry includes artifact id, task, node, normalized observed path, content hash and observation time, and must match the current run and the declared manifest before the receipt is admitted.
 
 `assets` also owns import and export staging. Its materials implementation uses private directories and files, paths confined to an open state-root handle, random ids, increasing revision directories and SHA-256 hashes. Rename updates the observed path; edit preserves the id and older bytes. Its backup operation copies and verifies all recorded material revisions, including trash, into an unpublished generation supplied by the backup coordinator. The store has no TUI or protocol operation yet; package tests exercise real files and canon for identity, staging, export, trash and backup corruption. Version-space text, derived-data production, whole-generation backup, and coordinated permanent deletion retain their respective owners.
 

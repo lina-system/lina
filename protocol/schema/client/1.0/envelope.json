@@ -36,6 +36,7 @@
         "running",
         "running_update",
         "stop",
+        "stop_result",
         "follow_up",
         "background_notice",
         "progress_get",
@@ -87,7 +88,9 @@
         "export_request",
         "export_result",
         "replay_request",
-        "replay_result"
+        "replay_result",
+        "web_request",
+        "web_result"
       ]
     },
     "message_id": {
@@ -1453,6 +1456,54 @@
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "stop_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/stop_result"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "web_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/web_request"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "web_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/web_result"
+          }
+        }
+      }
     }
   ],
   "$defs": {
@@ -1923,6 +1974,10 @@
     "approval_request": {
       "type": "object",
       "properties": {
+        "conversation_id": {
+          "type": "string",
+          "minLength": 1
+        },
         "choices": {
           "type": "array",
           "items": {
@@ -2252,9 +2307,12 @@
       "additionalProperties": false
     },
     "stop": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "run_id": {
+          "type": "string"
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
@@ -2279,16 +2337,28 @@
       "additionalProperties": false
     },
     "progress_get": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "after": {
+          "type": "string"
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
     "progress": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "lanes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/worker_lane"
+          }
+        },
+        "next_cursor": {
+          "type": "string"
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
@@ -2452,7 +2522,12 @@
           "type": "string",
           "enum": [
             "github_read",
-            "github_watch"
+            "github_watch",
+            "github_bind",
+            "github_accept",
+            "github_merge",
+            "github_observe_merge",
+            "github_merge_status"
           ]
         },
         "repository": {
@@ -2463,6 +2538,40 @@
           "type": "string",
           "pattern": "^[1-9][0-9]*$",
           "maxLength": 10
+        },
+        "binding_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "agent_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "clone": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "base": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "head": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "protected_refs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "type": "string",
+            "maxLength": 256
+          }
         }
       },
       "required": [],
@@ -2514,6 +2623,18 @@
           "items": {
             "$ref": "#/$defs/github_review"
           }
+        },
+        "binding_id": {
+          "type": "string"
+        },
+        "base": {
+          "type": "string"
+        },
+        "merge_commit": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
         }
       },
       "required": [],
@@ -2838,6 +2959,13 @@
         },
         "scope": {
           "$ref": "#/$defs/channel_scope"
+        },
+        "platform": {
+          "type": "string",
+          "enum": [
+            "telegram",
+            "discord"
+          ]
         }
       },
       "required": [],
@@ -4000,7 +4128,8 @@
       "enum": [
         "person",
         "agent",
-        "system"
+        "system",
+        "forwarded"
       ]
     },
     "account_summary": {
@@ -4668,6 +4797,131 @@
         "resolved",
         "outdated",
         "comments"
+      ],
+      "additionalProperties": false
+    },
+    "stop_result": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/stop_outcome"
+        }
+      },
+      "required": [
+        "run_id",
+        "outcome"
+      ],
+      "additionalProperties": false
+    },
+    "stop_outcome": {
+      "type": "string",
+      "enum": [
+        "cancelled",
+        "complete",
+        "partial",
+        "failed"
+      ]
+    },
+    "web_request": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "status",
+            "set",
+            "clear"
+          ]
+        },
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "required": [
+        "operation"
+      ],
+      "additionalProperties": false
+    },
+    "web_result": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": [
+            "firecrawl"
+          ]
+        },
+        "configured": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "provider",
+        "configured"
+      ],
+      "additionalProperties": false
+    },
+    "worker_lane": {
+      "type": "object",
+      "properties": {
+        "lane_id": {
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "agent_name": {
+          "type": "string"
+        },
+        "worker": {
+          "type": "string"
+        },
+        "thread_id": {
+          "type": "string"
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "node_id": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "generation": {
+          "type": "string"
+        },
+        "details": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "lane_id",
+        "task_id",
+        "agent_id",
+        "agent_name",
+        "worker",
+        "thread_id",
+        "turn_id",
+        "node_id",
+        "state",
+        "title",
+        "generation",
+        "details"
       ],
       "additionalProperties": false
     }

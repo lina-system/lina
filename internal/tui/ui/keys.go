@@ -27,7 +27,8 @@ var keyBindings = []keyBinding{
 	{"shortcuts.send", []string{"Enter"}, 3, "shortcuts.send", ""},
 	{"action.quit", []string{"Ctrl+D"}, 4, "action.quit", ""},
 	{"shortcuts.newline", []string{"Alt+Enter", "Shift+Enter", "Ctrl+J"}, 5, "shortcuts.newline", ""},
-	{"shortcuts.scroll", []string{"PgUp/PgDn"}, 6, "shortcuts.scroll", ""},
+	{"shortcuts.scroll", []string{"PgUp/PgDn"}, 6, "", ""},
+	{"conversation.latest", []string{"End"}, 16, "", ""},
 	{"shortcuts.card", []string{"Ctrl+O"}, 7, "shortcuts.open_hint", ""},
 	{"shortcuts.decisions", []string{"F6"}, 8, "shortcuts.decisions", ""},
 	{"shortcuts.clear", []string{"Ctrl+C"}, 9, "", ""},
@@ -46,9 +47,11 @@ var keyBindings = []keyBinding{
 	{"memory.heading", []string{"/memory"}, 3, "", "commands"},
 	{"agents.heading", []string{"/agents"}, 4, "", "commands"},
 	{"channel.heading", []string{"/channels"}, 5, "", "commands"},
+	{"developer.heading", []string{"/developer"}, 6, "", "commands"},
 	{"talk.heading", []string{"/talk"}, 6, "", "commands"},
 	{"interrupt", []string{"/stop"}, 7, "", "commands"},
 	{"shortcuts.queue", []string{"/queue <text>"}, 8, "", "commands"},
+	{"web.heading", []string{"/web"}, 9, "", "commands"},
 }
 
 func bindingsFor(section string) []keyBinding {
@@ -85,6 +88,10 @@ func (m *shellModel) conversationFooter(showNotice bool) string {
 	if m.conversation.pager.open {
 		section = "pager"
 	}
+	if section == "" && m.conversation.viewport.unseen {
+		marker := "  " + design.Text(m.styles.options.Language, "conversation.new_messages")
+		line = ansi.Truncate(line, max(0, width-ansi.StringWidth(marker)), "") + marker
+	}
 	var hints []string
 	for _, binding := range bindingsFor(section) {
 		if binding.Hint != "" {
@@ -92,11 +99,15 @@ func (m *shellModel) conversationFooter(showNotice bool) string {
 		}
 	}
 	// A notice cannot displace the first shortcut or the connection identity.
-	notice := ""
-	if m.status.Cause != "" {
-		notice = status.Detail
-	} else if showNotice {
-		notice = m.localNotice()
+	// Quit confirmation is transient input feedback, even when local notices
+	// are suppressed. Expiry restores the usual cause or notice and key hints.
+	notice := m.quitHint()
+	if notice == "" {
+		if m.status.Cause != "" {
+			notice = status.Detail
+		} else if showNotice {
+			notice = m.localNotice()
+		}
 	}
 	if notice != "" && len(hints) > 0 {
 		budget := width - ansi.StringWidth(line+"  "+hints[0]) - 2
@@ -115,6 +126,12 @@ func (m *shellModel) conversationFooter(showNotice bool) string {
 		budget := width - ansi.StringWidth(line) - 2
 		if budget > 0 {
 			line += "  " + ansi.Truncate(m.conversation.pager.query, budget, "")
+		}
+	}
+	if section == "" && m.conversation.viewport.overflow {
+		hint := "  " + design.Text(m.styles.options.Language, "conversation.scroll_hint")
+		if ansi.StringWidth(line+hint) <= width {
+			line += hint
 		}
 	}
 	// Below the supported terminal minimum even the connection may not fit.
