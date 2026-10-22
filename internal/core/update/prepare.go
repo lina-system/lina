@@ -32,11 +32,12 @@ type Config struct {
 	RequiredManifest string
 }
 type Prepared struct {
-	Directory string          `json:"directory"`
-	Version   string          `json:"version"`
-	SHA256    string          `json:"sha256"`
-	Preflight PreflightResult `json:"preflight"`
-	Gate      Gate            `json:"gate"`
+	Directory      string          `json:"directory"`
+	Version        string          `json:"version"`
+	SHA256         string          `json:"sha256"`
+	ManifestSHA256 string          `json:"manifest_sha256"`
+	Preflight      PreflightResult `json:"preflight"`
+	Gate           Gate            `json:"gate"`
 }
 
 // Prepare preserves the active composition. A content-addressed directory is
@@ -148,6 +149,11 @@ func Prepare(ctx context.Context, cfg Config) (prepared Prepared, err error) {
 	if p.StoreSchema < 0 || p.BinarySchema < 1 || p.StoreSchema > p.BinarySchema || p.PeerRows < 1 || (p.StoreSchema == p.BinarySchema && p.SchemaRelation != "equal") || (p.StoreSchema < p.BinarySchema && p.SchemaRelation != "forward") {
 		return prepared, errors.New("incomplete candidate preflight result")
 	}
+	manifestBytes, err := os.ReadFile(metadata)
+	if err != nil {
+		return prepared, err
+	}
+	prepared.ManifestSHA256 = fmt.Sprintf("%x", sha256.Sum256(manifestBytes))
 	prepared.Directory, prepared.Version, prepared.SHA256 = directory, m.Version, cfg.SHA256
 	prepared.Gate.Schema, prepared.Gate.Peers = Pass, Pass
 	data, err := json.Marshal(prepared)

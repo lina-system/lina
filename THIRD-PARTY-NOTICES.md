@@ -27,6 +27,14 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ## Terminal UI behaviour references
 
+Hermes Agent (Nous Research, MIT), revision
+`944c3a434071f43e64b443d033f3eba30c64434c`, is a reference for draft-clearing
+priority and a second Ctrl+C within two seconds. See the
+[observations and differences](internal/tui/ui/REFERENCE.md). LINA implements
+its own client-only confirmation and expiring hint; no upstream code is copied.
+The Hermes copyright and MIT permission notice appear in the Hermes Agent
+section below.
+
 The composer separation and newline keys in LINA's terminal UI independently adapt behaviour
 from these permissive projects. No upstream implementation code is copied or
 bundled by this change:
