@@ -510,6 +510,11 @@ This epic also folds in the owner's Node direction, which is not yet in the cont
 - Depends on: G2-04. Design refs: C-29; [work-and-delegation.md](work-and-delegation.md#completion-signals).
 
 **G3-16 Antigravity adapter.** Headless child; success from the pull request.
+- Implementation evidence: `internal/core/worker/antigravity`, Core's durable
+  `dispatch_work` composition and `e2e/m3/antigravity.json`. Recorded stream and
+  GitHub fixtures cover immediate result termination, soft denial, missing result,
+  PR evidence and restart; the installed worker makes a real worktree commit.
+  Live account compatibility remains unverified.
 - Done when: the result event ends the turn; success is confirmed from the pull request and never from the exit code; an unapproved tool soft-denial is reported.
 - Depends on: G2-04. Design refs: C-29; [work-and-delegation.md](work-and-delegation.md#completion-signals).
 
