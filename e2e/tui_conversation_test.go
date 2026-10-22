@@ -75,7 +75,7 @@ func TestM1TUIConversationInstalledCore(t *testing.T) {
 	if snapshot, err := client.Receive(h.ctx); err != nil || snapshot.Kind != protocol.KindSnapshot {
 		t.Fatal("no history snapshot")
 	}
-	terminal, _ := h.startConversationTUI(80, 24, "TERM=xterm-256color", "COLORTERM=truecolor")
+	terminal := startReadyScreenTUI(t, h, []string{"TERM=xterm-256color", "COLORTERM=truecolor"}, 80, 24, nil)
 	fresh := waitComposerReady(t, h, terminal)
 	if text := screenText(fresh); strings.Contains(strings.ToLower(text), "unsupported") {
 		t.Fatalf("fresh install shows an unsupported placeholder: %s", text)

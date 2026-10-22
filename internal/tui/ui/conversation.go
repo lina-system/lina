@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -270,7 +271,7 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 
 func (m *shellModel) conversationPlan() layout.Layout {
 	m.syncComposer()
-	return layout.Plan(m.size, layout.Caps{SidePane: true, Running: m.hasCapability("running"), Cards: m.hasCapability("waiting")}, layout.Shape{SidePane: m.conversation.pager.open, ComposerRows: m.conversation.composer.Height(), RunningCount: len(m.topicBlocks("running")), CardCount: len(m.topicBlocks("waiting")), CardRows: len(m.topicBlocks("waiting")), Attachments: len(m.content.Draft.Attachments) > 0})
+	return layout.Plan(m.size, layout.Caps{SidePane: true, Running: m.hasCapability("running"), Cards: m.hasCapability("waiting")}, layout.Shape{Activity: m.activityRequested(), SidePane: m.conversation.pager.open, ComposerRows: m.conversation.composer.Height(), RunningCount: len(m.topicBlocks("running")), CardCount: len(m.topicBlocks("waiting")), CardRows: len(m.topicBlocks("waiting")), Attachments: len(m.content.Draft.Attachments) > 0})
 }
 
 func (m *shellModel) topicBlocks(topic string) []state.Block {
@@ -507,6 +508,7 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 	}
 	rows[plan.Header.Y] = clip(m.styles.Title.Render(name))
 	var transcript []render.StyledRow
+	mutedRows := make(map[int]bool)
 	plainRow := func(text string) render.StyledRow { return render.StyledRow{Spans: []render.Span{{Text: text}}} }
 	if !m.hasCapability("conversation") {
 		code := "account.empty"
@@ -522,7 +524,7 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		transcript = append(transcript, plainRow(design.Text(m.styles.options.Language, code)+"  /accounts"))
 	}
 	for _, b := range m.content.Blocks {
-		if b.Topic == "core" || b.Topic == "running" || (b.Topic == "waiting" && b.Card == nil) || b.Topic == "progress" || b.Kind == protocol.KindTurnState {
+		if b.Topic == "core" || b.Topic == "running" || (b.Topic == "waiting" && b.Card == nil) || b.Topic == "progress" || b.Kind == protocol.KindTurnState || b.Kind == protocol.KindToolActivity {
 			continue
 		}
 		cached := m.blocks[b.ID]
@@ -538,6 +540,10 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 			transcript = append(transcript, plainRow(design.Text(m.styles.options.Language, "result")+"  "+sanitize.Display(b.Title)+"  Ctrl+O"))
 		}
 		transcript = append(transcript, cached.stream.Markdown(render.Config{Width: plan.Conversation.Width, Theme: m.styles.options.Theme}, m.styles.listBullet(), parseMarkdown)...)
+		if elapsed, ok := m.content.Worked[b.ID]; ok {
+			mutedRows[len(transcript)] = true
+			transcript = append(transcript, plainRow(fmt.Sprintf(design.Text(m.styles.options.Language, "activity.worked_for"), formatElapsed(elapsed))))
+		}
 	}
 	m.conversation.scroll = min(m.conversation.scroll, max(0, len(transcript)-plan.Conversation.Height))
 	start := max(0, len(transcript)-plan.Conversation.Height-m.conversation.scroll)
@@ -546,6 +552,9 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 			break
 		}
 		rows[plan.Conversation.Y+y] = clip(m.styles.markdownRow(line))
+		if mutedRows[start+y] {
+			rows[plan.Conversation.Y+y] = m.styles.Muted.Render(render.Truncate(line.Spans[0].Text, plan.Conversation.Width, render.Unicode{}))
+		}
 	}
 	drawTopic := func(topic string, region layout.Rect) {
 		if region.Height == 0 {
@@ -574,6 +583,9 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 			rule = m.styles.tokens.GlyphAsciiRule
 		}
 		rows[plan.ComposerRule.Y] = m.styles.Line.Render(strings.Repeat(rule, plan.ComposerRule.Width))
+	}
+	if plan.Activity.Height > 0 {
+		rows[plan.Activity.Y] = m.styles.Muted.Render(m.activityText())
 	}
 	m.conversation.composer.SetHeight(plan.Composer.Height)
 	for i, line := range strings.Split(m.conversation.composer.View(), "\n") {
