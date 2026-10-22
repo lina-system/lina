@@ -21,3 +21,22 @@ schema; design authority is C-29 and the Codex adapter contract.
   capabilities before they are implemented.
 
 No reference implementation code is copied or executed.
+
+## Work tools, approvals and quota (#133)
+
+- **Seen:** CRW commit `821d6453aacfc9053b17c3b24a134c0ce4077f80`,
+  `internal/bridge/appserver/responder.go`, retains thread ownership and the
+  method-specific response shape. Its flow responder only refuses requests;
+  it cannot approve on a person's behalf. The vendored Codex 0.163.0 schema
+  defines dynamic tool declarations, request ids, approval responses and account
+  quota snapshots/updates.
+- **Inferred:** LINA must keep pending requests bound to the original thread,
+  turn and process, expose approvals through its existing person decision path,
+  and return the chosen response without changing worker arguments. Dynamic
+  tools need declared names and scoped Core handlers. Quota windows remain
+  distinct; absent measurements are unknown rather than zero.
+- **Unknown:** reference behavior does not prove live account quota or every
+  installed Codex version. Synthetic stdio and headless Core scenarios establish
+  integration; no Hermes, Honcho or LCM-X behavior is ported here.
+
+Reference files are read only; no CRW commands or services are executed.

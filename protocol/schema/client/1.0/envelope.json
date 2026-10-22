@@ -1940,6 +1940,10 @@
     "approval_request": {
       "type": "object",
       "properties": {
+        "conversation_id": {
+          "type": "string",
+          "minLength": 1
+        },
         "choices": {
           "type": "array",
           "items": {
