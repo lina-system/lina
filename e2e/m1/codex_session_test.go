@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -106,6 +107,19 @@ func codexSessionFixture() {
 				status = "inProgress"
 			}
 			reply(map[string]any{"thread": map[string]any{"id": "fixture-thread", "cwd": cwd, "status": map[string]any{"type": state}, "turns": []any{map[string]any{"id": turn, "status": status}}}})
+			if gate := os.Getenv("LINA_WORKER_FINISH_GATE"); gate != "" && count == 1 && state == "active" {
+				response, err := http.Get(gate)
+				if err != nil {
+					os.Exit(101)
+				}
+				response.Body.Close()
+				if err := os.WriteFile(filepath.Join(cwd, "result.txt"), []byte("LINA_WORKER_RESULT"), 0600); err != nil {
+					os.Exit(97)
+				}
+				notify("item/completed", map[string]any{"threadId": "fixture-thread", "turnId": turn, "item": map[string]any{"type": "agentMessage", "id": "result", "text": "Created result.txt: LINA_WORKER_RESULT"}})
+				state = "idle"
+				notify("turn/completed", map[string]any{"threadId": "fixture-thread", "turn": map[string]any{"id": turn, "status": "completed"}})
+			}
 		default:
 			os.Exit(100)
 		}
@@ -148,6 +162,9 @@ func TestM2InstalledCodexSession(t *testing.T) {
 				emitResponse(w, "missing worker tool", true)
 				return
 			}
+		}
+		if respondWorkerCompletion(w, req.Input, fixture.Result) {
+			return
 		}
 		n := calls.Add(1)
 		if n > 1 {
@@ -223,6 +240,7 @@ func TestM2InstalledCodexSession(t *testing.T) {
 	core := start()
 	c, conversation := conversationClient(t, h)
 	frames := admittedTurn(t, h, c, conversation, "worker-journey", fixture.Input)
+	frames = append(frames, receiveWorkerFollowups(t, h, c, 2)...)
 	if calls.Load() != 7 {
 		t.Fatalf("provider steps=%d", calls.Load())
 	}
@@ -265,7 +283,6 @@ func TestM2InstalledCodexLive(t *testing.T) {
 		t.Skip("explicit installed-worker acceptance only")
 	}
 	workdir := t.TempDir()
-	finished := make(chan struct{})
 	var calls atomic.Int32
 	var session string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -275,7 +292,7 @@ func TestM2InstalledCodexLive(t *testing.T) {
 			return
 		}
 		n := calls.Add(1)
-		if n > 1 {
+		if n == 2 || n == 4 {
 			var item struct{ Output string }
 			json.Unmarshal(req.Input[len(req.Input)-1], &item)
 			var result struct {
@@ -294,7 +311,7 @@ func TestM2InstalledCodexLive(t *testing.T) {
 			if n == 2 {
 				t.Logf("Core launched installed Codex %s verified=%t", result.Output.Version, result.Output.Verified)
 			}
-			if n == 3 && (result.Output.State != "idle" || result.Output.Output != "LINA_CODEX_OK") {
+			if n == 4 && (result.Output.State != "idle" || result.Output.Output != "LINA_CODEX_OK") {
 				t.Errorf("worker result state=%s output=%q", result.Output.State, result.Output.Output)
 			}
 		}
@@ -302,14 +319,11 @@ func TestM2InstalledCodexLive(t *testing.T) {
 		case 1:
 			emitPersonaCall(w, "live-start", "worker_start", map[string]any{"workdir": workdir, "task_packet": "Reply with exactly LINA_CODEX_OK. Do not use any tools."})
 		case 2:
-			select {
-			case <-finished:
-			case <-r.Context().Done():
-				return
-			}
+			emitResponse(w, "Worker delegated.", true)
+		case 3:
 			emitPersonaCall(w, "live-snapshot", "worker_snapshot", map[string]any{"session": session})
 		default:
-			emitResponse(w, "live worker result received", true)
+			emitResponse(w, "live worker result received: LINA_CODEX_OK", true)
 		}
 	}))
 	defer server.Close()
@@ -334,17 +348,48 @@ func TestM2InstalledCodexLive(t *testing.T) {
 		if frame.Error != nil {
 			t.Fatalf("Core refused: %s", frame.Error.Code)
 		}
-		if item, ok := frame.Payload.(protocol.ItemDone); ok && item.Text != nil && item.Speaker != nil && *item.Speaker == protocol.ConversationSpeakerSystem && strings.Contains(*item.Text, "LINA_CODEX_OK") && !observed {
+		if item, ok := frame.Payload.(protocol.ItemDone); ok && item.Text != nil && item.Speaker != nil && *item.Speaker == protocol.ConversationSpeakerAgent && strings.Contains(*item.Text, "LINA_CODEX_OK") && !observed {
 			observed = true
-			close(finished)
 		}
-		if state, ok := frame.Payload.(protocol.TurnState); ok && state.Active != nil && !*state.Active {
+		if state, ok := frame.Payload.(protocol.TurnState); ok && state.Active != nil && !*state.Active && observed {
 			break
 		}
 	}
-	if !observed || calls.Load() != 3 {
+	if !observed || calls.Load() != 4 {
 		t.Fatalf("live result=%t provider calls=%d", observed, calls.Load())
 	}
 	c.Close()
 	h.stopCore(core)
+}
+
+// Existing adapter journeys explicitly handle the additional persona turns.
+func respondWorkerCompletion(w http.ResponseWriter, inputs []json.RawMessage, result string) bool {
+	if len(inputs) == 0 {
+		return false
+	}
+	var item struct{ Content string }
+	if json.Unmarshal(inputs[len(inputs)-1], &item) != nil || !strings.Contains(item.Content, `<external_evidence origin="worker-session:`) {
+		return false
+	}
+	if strings.Contains(item.Content, result) {
+		emitResponse(w, "Worker outcome: "+result, true)
+	} else {
+		emitResponse(w, "Worker stopped.", true)
+	}
+	return true
+}
+func receiveWorkerFollowups(t *testing.T, h *harness, c *clientapi.Client, count int) []protocol.Envelope {
+	t.Helper()
+	var frames []protocol.Envelope
+	for count > 0 {
+		frame, err := c.Receive(h.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		frames = append(frames, frame)
+		if state, ok := frame.Payload.(protocol.TurnState); ok && state.Active != nil && !*state.Active {
+			count--
+		}
+	}
+	return frames
 }

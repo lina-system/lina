@@ -275,6 +275,9 @@ func TestM2CodexWorkTools(t *testing.T) {
 				t.Errorf("model can approve worker requests through %s", tool.Name)
 			}
 		}
+		if respondWorkerCompletion(w, req.Input, fixture.Result) {
+			return
+		}
 		n := calls.Add(1)
 		if n == 1 {
 			emitPersonaCall(w, "start-worker", "worker_start", map[string]any{"workdir": workdir, "task_packet": fixture.TaskPacket})
@@ -429,6 +432,9 @@ func TestM2CodexWorkTools(t *testing.T) {
 		case protocol.ItemDone:
 			notice = notice || payload.Text != nil && strings.Contains(*payload.Text, fixture.Result)
 		case protocol.TurnState:
+			if payload.Active != nil && *payload.Active {
+				done = false
+			}
 			if payload.Active != nil && !*payload.Active {
 				done = true
 				if !quotaChecked.Load() {

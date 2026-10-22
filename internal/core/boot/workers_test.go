@@ -59,7 +59,7 @@ func TestWorkerControlsAreBoundToConversationAndCurrentHandle(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		result, err := r.workerOperation(t.Context(), "worker_input", "conversation-turn", ledger.Event{}, in)
+		result, err := r.workerOperation(t.Context(), "worker_input", "conversation-turn", ledger.Event{}, in, lease.Lease{})
 		if err != nil {
 			t.Fatal(err)
 		}

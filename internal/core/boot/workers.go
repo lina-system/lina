@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -53,6 +54,7 @@ type workerSession struct {
 
 type workerArgs struct {
 	Session    string `json:"session,omitempty"`
+	Path       string `json:"path,omitempty"`
 	Turn       string `json:"turn,omitempty"`
 	Generation uint64 `json:"generation,omitempty"`
 	Binding    uint64 `json:"binding,omitempty"`
@@ -62,6 +64,7 @@ type workerArgs struct {
 	TaskPacket string `json:"task_packet,omitempty"`
 }
 type workerResult struct {
+	Live             bool               `json:"live"`
 	Session          string             `json:"session"`
 	Turn             string             `json:"turn"`
 	Generation       uint64             `json:"generation"`
@@ -107,6 +110,11 @@ func workerSchema(name string, raw json.RawMessage) (tools.Input, error) {
 		if a.Generation == 0 || a.Binding == 0 || a.Turn == "" {
 			return tools.Input{}, tools.ErrInvalid
 		}
+	case "worker_read_file":
+		allowed["session"], allowed["path"] = true, true
+		if !tools.FilePath(a.Path) {
+			return tools.Input{}, tools.ErrInvalid
+		}
 	case "worker_snapshot", "worker_quota":
 		allowed["session"] = true
 	default:
@@ -123,7 +131,7 @@ func workerSchema(name string, raw json.RawMessage) (tools.Input, error) {
 		return tools.Input{}, tools.ErrInvalid
 	}
 	normalized, _ := json.Marshal(a)
-	return tools.Input{Arguments: normalized, Target: "worker:" + target, What: name, Where: target, ScopeKey: "worker-session", Write: name != "worker_snapshot" && name != "worker_quota"}, nil
+	return tools.Input{Arguments: normalized, Target: "worker:" + target, What: name, Where: target, ScopeKey: "worker-session", Write: name != "worker_snapshot" && name != "worker_quota" && name != "worker_read_file"}, nil
 }
 
 func workerDeclarations() []provider.ToolDecl {
@@ -137,7 +145,8 @@ func workerDeclarations() []provider.ToolDecl {
 		declaration("worker_input", "Continue an idle worker or steer an active turn. Use the current handle from worker_snapshot; stale handles are refused.", control+`,"text":{"type":"string"}`, `"session","turn","generation","binding","text"`),
 		declaration("worker_interrupt", "Request cancellation only when the user asks to stop this worker. Quote the current user request exactly. An acknowledgement is not cancellation completion; inspect worker_snapshot.", control+`,"quote":{"type":"string"}`, `"session","turn","generation","binding","quote"`),
 		declaration("worker_quota", "Read the installed worker account quota rows, retaining unknown windows and reset times.", `"session":{"type":"string"}`, `"session"`),
-		declaration("worker_snapshot", "Read a worker session owned by this conversation, its current control handle, state, version and last completed assistant output. A completed worker turn is not proof of task delivery.", `"session":{"type":"string"}`, `"session"`),
+		declaration("worker_read_file", "Read a UTF-8 file and its revision in this conversation worker session work directory through the file sandbox. Path is relative. Available from the recorded completion after restart. Use it to check a claimed file effect before reporting the result. An absent revision means the file does not exist.", `"session":{"type":"string"},"path":{"type":"string"}`, `"session","path"`),
+		declaration("worker_snapshot", "Read a worker session owned by this conversation or its recorded terminal outcome after restart (live=false, not a control handle). A completed worker turn is not proof of task delivery.", `"session":{"type":"string"}`, `"session"`),
 	}
 }
 
@@ -146,10 +155,10 @@ func (r *conversationRuntime) prepareWorkerTools(turnID string, input ledger.Eve
 		return nil
 	}
 	registry := tools.NewRegistry(r.personaAuthority, r.activities)
-	for _, name := range []string{"worker_start", "worker_input", "worker_interrupt", "worker_snapshot", "worker_quota"} {
+	for _, name := range []string{"worker_start", "worker_input", "worker_interrupt", "worker_snapshot", "worker_quota", "worker_read_file"} {
 		spec := tools.Spec{Name: name, Schema: func(raw json.RawMessage) (tools.Input, error) { return workerSchema(name, raw) }, Conc: 1, Deadline: 30 * time.Second, Placement: tools.Core}
-		err := registry.Register(spec, func(ctx context.Context, _ lease.Lease, in tools.Input) (tools.Result, error) {
-			return r.workerOperation(ctx, name, turnID, input, in)
+		err := registry.Register(spec, func(ctx context.Context, activity lease.Lease, in tools.Input) (tools.Result, error) {
+			return r.workerOperation(ctx, name, turnID, input, in, activity)
 		})
 		if err != nil {
 			return err
@@ -163,7 +172,7 @@ func (r *conversationRuntime) prepareWorkerTools(turnID string, input ledger.Eve
 			if name == "worker_interrupt" {
 				var a workerArgs
 				_ = json.Unmarshal(in.Arguments, &a)
-				if !strings.Contains(input.Body.Text(), a.Quote) {
+				if input.SpeakerKind != guard.Person || !strings.Contains(input.Body.Text(), a.Quote) {
 					return loop.Result{ID: call.ID, Code: loop.Denied}
 				}
 			}
@@ -179,7 +188,7 @@ func (r *conversationRuntime) prepareWorkerTools(turnID string, input ledger.Eve
 	return nil
 }
 
-func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID string, input ledger.Event, in tools.Input) (tools.Result, error) {
+func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID string, input ledger.Event, in tools.Input, toolActivity lease.Lease) (tools.Result, error) {
 	var a workerArgs
 	_ = json.Unmarshal(in.Arguments, &a)
 	b := r.workers
@@ -237,8 +246,22 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 	entry := b.sessions[a.Session]
 	closed := b.closed
 	b.mu.Unlock()
+	if !closed && entry == nil && (name == "worker_snapshot" || name == "worker_read_file") {
+		record, err := r.recordedWorker(ctx, a.Session)
+		if err != nil {
+			return tools.Result{State: tools.Failed, Body: workerError(errors.New("worker outcome unavailable in this conversation"))}, nil
+		}
+		if name == "worker_read_file" {
+			return r.readWorkerFile(ctx, toolActivity, record.Workdir, a.Path)
+		}
+		raw, err := json.Marshal(record)
+		return tools.Result{State: tools.Applied, Body: raw}, err
+	}
 	if closed || entry == nil || entry.origin.person != r.person || entry.origin.agent != r.agent || entry.origin.conversation != r.conversation {
 		return tools.Result{State: tools.Failed, Body: workerError(errors.New("worker session unavailable in this conversation"))}, nil
+	}
+	if name == "worker_read_file" {
+		return r.readWorkerFile(ctx, toolActivity, entry.workdir, a.Path)
 	}
 	if name == "worker_quota" {
 		rows, err := entry.adapter.Quota(ctx)
@@ -310,7 +333,7 @@ func (e *workerSession) result(ctx context.Context, t worker.Thread) (tools.Resu
 	return e.encode(snap), nil
 }
 func (e *workerSession) encode(s worker.ThreadSnapshot) tools.Result {
-	raw, _ := json.Marshal(workerResult{Session: s.Thread.ID, Turn: s.Thread.TurnID, Generation: s.Thread.ProcessGeneration, Binding: s.Thread.BindingEpoch, State: s.State, Worker: s.Worker, Version: s.Version, Verified: e.compatibility.Verified, VerifiedVersions: e.compatibility.VerifiedVersions, Output: s.Output})
+	raw, _ := json.Marshal(workerResult{Live: true, Session: s.Thread.ID, Turn: s.Thread.TurnID, Generation: s.Thread.ProcessGeneration, Binding: s.Thread.BindingEpoch, State: s.State, Worker: s.Worker, Version: s.Version, Verified: e.compatibility.Verified, VerifiedVersions: e.compatibility.VerifiedVersions, Output: s.Output})
 	return tools.Result{State: tools.Applied, Body: raw, Revision: s.Thread.ID + ":" + s.Thread.TurnID}
 }
 func (e *workerSession) observe() {
@@ -331,14 +354,9 @@ func (e *workerSession) observe() {
 			e.active[event.Thread.TurnID].Release()
 			delete(e.active, event.Thread.TurnID)
 			e.mu.Unlock()
-			text := "Codex turn " + string(event.Finish.Status) + "."
-			if event.Finish.Failure != "" {
-				text += " " + string(event.Finish.Failure)
+			if err := e.finish(e.origin.ctx, event); err != nil && e.origin.ctx.Err() == nil {
+				fmt.Fprintf(os.Stderr, "worker completion admission failed: %v\n", err)
 			}
-			if e.output != "" {
-				text += "\n" + e.output
-			}
-			_ = e.origin.workerNotice(e.origin.ctx, e.input, "worker-finish:"+event.Thread.ID+":"+event.Thread.TurnID, text)
 			e.output = ""
 		case worker.ApprovalEvent:
 			e.requestApproval(event)
