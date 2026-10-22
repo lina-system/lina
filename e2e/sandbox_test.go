@@ -4,6 +4,7 @@ package e2e_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/core/boot"
+	"github.com/thisisjun786/lina/internal/core/manifest"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
 	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/protocol"
@@ -59,6 +61,31 @@ func TestM1SandboxUnavailable(t *testing.T) {
 			}))
 			defer provider.Close()
 			h, _ := installedConversationHarness(t, provider.URL)
+			// Core runs in this test executable so the explicit launcher seam
+			// remains in-process. Keep build verification enabled with exact
+			// provenance for that executable; the TUI uses the installed CLI.
+			executable, err := os.Executable()
+			if err != nil {
+				t.Fatal(err)
+			}
+			binary, err := os.ReadFile(executable)
+			if err != nil {
+				t.Fatal(err)
+			}
+			manifestPath := filepath.Join(h.root, "system/bin/manifest.json")
+			provenance, err := manifest.Read(manifestPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for i := range provenance.Binaries {
+				if provenance.Binaries[i].Name == "lina" {
+					provenance.Binaries[i].Size = int64(len(binary))
+					provenance.Binaries[i].SHA256 = fmt.Sprintf("%x", sha256.Sum256(binary))
+				}
+			}
+			if err := os.WriteFile(manifestPath, mustJSON(t, provenance), 0600); err != nil {
+				t.Fatal(err)
+			}
 			route, err := modelpath.ResponsesFromEnv(func(key string) string {
 				return map[string]string{"LINA_RESPONSES_BASE_URL": provider.URL + "/v1", "LINA_RESPONSES_MODEL": "fixture-model", "LINA_RESPONSES_API_KEY": "synthetic-key"}[key]
 			})
