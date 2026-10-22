@@ -49,7 +49,7 @@ func TestM3TailnetListener(t *testing.T) {
 		Address, Remote, Input, Outcome string
 		Capabilities                    []protocol.Capability
 	}
-	data, err := os.ReadFile("m3/tailnet-listener.json")
+	data, err := os.ReadFile("../m3/tailnet-listener.json")
 	if err != nil {
 		t.Fatal(err)
 	}
