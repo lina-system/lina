@@ -34,6 +34,12 @@ streaming completion and steering sequence through the same PTY lifecycle.
 They require no personal credentials. The physical terminal spike and real-model
 acceptance remain separate.
 
+`TestM1TUIFirstRunInstalledCore` uses a fresh installed Core and a 100x34 PTY
+in Korean and English. It checks the wordmark and three catalog suggestions,
+their removal on the first input while the fixture reply is held, and their
+absence from Core snapshots and a reopened TUI after Core restart. The typed
+input reaches the provider exactly once; no sleeps establish display state.
+
 `m1/tui-speaker-gutter.json` runs two exchanges against installed Core and a
 fixture provider in a 100x34 PTY. Parsed cells check speaker marks, foregrounds,
 header bold and exactly one empty row between messages. ASCII runs retain words;
