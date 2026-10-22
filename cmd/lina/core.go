@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
+	"github.com/thisisjun786/lina/internal/core/update"
 )
 
 func runCore(args []string) int {
@@ -22,7 +24,12 @@ func runCore(args []string) int {
 	flags.SetOutput(os.Stderr)
 	root := flags.String("state-root", "", "path to the installed local state root")
 	socket := flags.String("socket", "", "path to the private client Unix socket")
-	flags.Usage = func() { fmt.Fprintln(os.Stderr, "usage: lina core --state-root <path> --socket <path>") }
+	preflight := flags.Bool("preflight", false, "inspect schema and peer compatibility without starting Core")
+	metadata := flags.String("manifest", "", "candidate build manifest (default: compiled rows)")
+	required := flags.String("required-manifest", "", "installed peer requirements for preflight")
+	flags.Usage = func() {
+		fmt.Fprintln(os.Stderr, "usage: lina core --state-root <path> (--socket <path> | --preflight) [--manifest <path>] [--required-manifest <path>]")
+	}
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -30,12 +37,23 @@ func runCore(args []string) int {
 		flags.Usage()
 		return 64
 	}
-	if *root == "" || *socket == "" || flags.NArg() != 0 {
+	if *root == "" || (!*preflight && *socket == "") || (*preflight && *socket != "") || (!*preflight && *required != "") || flags.NArg() != 0 {
 		flags.Usage()
 		return 64
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
+	if *preflight {
+		result, err := update.Preflight(ctx, *root, *metadata, *required)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "lina core preflight: %v\n", err)
+			return 78
+		}
+		if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
+			return 78
+		}
+		return 0
+	}
 	if version, err := canon.SQLiteVectorVersion(); err != nil || version != canon.SQLiteVecVersion {
 		if err == nil {
 			err = fmt.Errorf("unexpected sqlite-vec version %q", version)
@@ -48,7 +66,7 @@ func runCore(args []string) int {
 		fmt.Fprintln(os.Stderr, "lina core: invalid model configuration")
 		return 78
 	}
-	if err := boot.Run(ctx, boot.Config{StateRoot: *root, Socket: *socket, Conversation: route}); err != nil {
+	if err := boot.Run(ctx, boot.Config{StateRoot: *root, Socket: *socket, Conversation: route, ClientManifest: *metadata}); err != nil {
 		if errors.Is(err, lifecycle.ErrRestart) {
 			return 75
 		}

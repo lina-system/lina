@@ -551,7 +551,7 @@ Supported platforms are defined in [product-families.md](product-families.md). A
 
 `lina import-hermes` is an explicit optional-import entry point. It takes a source directory and confirmed profile/agent/person maps, prints rehearsal without a model call, and separately confirms import and promotion. Core must be stopped for canon writes. `--rehearse` writes nothing to canon; successful completion includes verified backup generations. Its arguments and boundaries are defined under [Importing a Hermes install](conversation-and-memory.md#importing-a-hermes-install).
 
-The command recognizes `lina core`, `lina tui`, `lina install`, `lina version` and `lina-node version`. Both hosts also list the internal `proc-supervise --control-fd <fd> --status-fd <fd> --files <count>` helper used by `kit/proc` on Linux. Command descriptor numbers start at 3; control and startup status follow them. The helper is not a user shell or a new shipped binary. Missing or unknown subcommands print usage on stderr and exit 64.
+The command recognizes `lina core`, `lina tui`, `lina install`, `lina update --prepare`, `lina version` and `lina-node version`. Both hosts also list the internal `proc-supervise --control-fd <fd> --status-fd <fd> --files <count>` helper used by `kit/proc` on Linux. Command descriptor numbers start at 3; control and startup status follow them. The helper is not a user shell or a new shipped binary. Missing or unknown subcommands print usage on stderr and exit 64.
 
 LINA Core and the TUI are one executable, `lina`. Its subcommands cover these uses:
 
@@ -560,6 +560,7 @@ LINA Core and the TUI are one executable, `lina`. Its subcommands cover these us
 | Core service | Runs LINA Core. The service manager starts LINA Core this way (see Services). |
 | TUI | Opens the terminal surface, a separate process that connects to LINA Core over the `client` connection ([surfaces.md](surfaces.md)) |
 | Install | Places LINA Core's artifacts, including the Claude adapter's files and lockfile, registers the LINA Core service, and `moirai-worker` when it is part of the install, and creates the state root ([filesystem.md](filesystem.md)). It signs in to no provider: the first run of a client offers the ChatGPT sign-in ([surfaces.md](surfaces.md#settings)). |
+| Update preparation | `lina update --prepare` verifies a local release archive, stages a version and runs its Core preflight (see Updates). It returns preparation evidence without switching the active composition. |
 | Backup and restore | Takes a backup generation and restores one ([filesystem.md](filesystem.md)) |
 | Diagnosis | Reports the state and readiness of each component, with the cause of each failure |
 | Replay | Re-runs a recorded turn sandboxed and without effects, optionally under candidate harness files, and writes the result as files. It is a development tool and runs only when it is called ([Replay command](#replay-command)). |
@@ -758,6 +759,43 @@ An update runs in this order:
 3. Prepare the new composition: new binaries and settings, with the previous ones kept for rollback.
 4. Smoke: one conversation request with its readiness checks, and the worker readiness check when a worker is installed.
 5. Resume.
+
+The preparation command is `lina update --prepare --state-root <path> --archive
+<tar.gz> --sha256 <digest> [--required-manifest <path>]`. The expected digest
+comes from release metadata supplied by the caller. The command freezes and
+verifies the archive before extraction, accepts only bounded regular files and
+directories, and refuses traversal, links, duplicate entries and truncated
+archives. It verifies the build target and every binary/adapter artifact's size
+and digest, including a pinned Claude package and lockfile when present.
+The limits are 512 MiB compressed, 1 GiB expanded, 256 MiB per file and 4096
+entries. Staging requires space for the compressed and expanded limits before
+it starts. No provider credential or inherited configuration reaches the child.
+
+Versions are private directories at `system/updates/<archive-sha256>`. Existing
+directories are refused and preserved. A failed attempt removes only its own
+new directory and temporary files; interruption may leave an incomplete directory
+which is never reused or treated as prepared. Only a successful candidate
+preflight publishes and fsyncs `prepared.json`. The command returns its directory,
+version, archive digest, schema/peer result and all six gate cells as JSON.
+Success exits 0, invalid arguments 64, and preparation refusal 78.
+
+The candidate runs `core --preflight` in a separate owned process with a
+one-minute deadline, without the Core lock or installed-state writes. It can run
+beside a live Core; a changing database or WAL causes refusal and requires a
+fresh attempt. The schema check allows equal and forward-migratable versions,
+refuses newer or incompatible development schemas, and never migrates. Peer
+checks use exact protocol, platform and required capabilities from the installed
+manifest (or compiled local TUI requirements), bounded by the candidate's own
+implemented rows. `--required-manifest` explicitly selects another requirements
+table. No product-version comparison substitutes for these checks.
+
+Preparation leaves idle and recent verified generation unknown, so its gate is
+closed even on successful staging. Activation must supply those observations
+through the drain and backup boundaries and revalidate the preparation evidence;
+the preparation command does not perform a swap or restart. Both this preflight
+and normal Core startup refuse a newer store with exit 78 without changing the
+database, sidecars, lock, epoch or sentinel. Headless scenarios are in
+`e2e/m2/update-preflight.json` and exercise actual candidate Core processes.
 
 Rollback restores the previous compatible composition from the kept binaries and the pre-update snapshot. Binaries are never rolled back over an irreversible migration. When an update fails, the install restores the previous compatible composition, or holds: it stops, keeps the current state intact and reports. It never leaves a half-updated component running against data it can't read. LINA OS adds steps of its own around this order (see Deferred).
 
