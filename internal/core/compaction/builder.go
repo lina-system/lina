@@ -105,6 +105,7 @@ func (b *Builder) capture(ctx context.Context, segment PassSegment) (Proposal, P
 		if err != nil {
 			return err
 		}
+		tail := false
 		for _, e := range all {
 			var owner string
 			if err := tx.QueryRowContext(ctx, `SELECT agent_id FROM conv_event WHERE id=?`, e.id).Scan(&owner); err != nil {
@@ -127,14 +128,17 @@ func (b *Builder) capture(ctx context.Context, segment PassSegment) (Proposal, P
 				}
 				p.Verbatim = append(p.Verbatim, e.id)
 				delete(kept, e.id)
-			case !e.visible:
-				p.Cover = append(p.Cover, Coverage{EventID: e.id, Reason: "retracted"})
-			case e.replay != "":
-				p.Cover = append(p.Cover, Coverage{EventID: e.id, Reason: "replay"})
-			case e.scaffold != "" && e.scaffold != "provider_item":
-				p.Cover = append(p.Cover, Coverage{EventID: e.id, Reason: "scaffold"})
+				tail = true
 			default:
-				return ErrCoverage
+				c := Coverage{EventID: e.id, Reason: skipReason(e)}
+				if c.Reason == "" {
+					return ErrCoverage
+				}
+				if tail {
+					p.TailSkips = append(p.TailSkips, c)
+				} else {
+					p.Cover = append(p.Cover, c)
+				}
 			}
 		}
 		if len(wanted) != 0 || len(kept) != 0 {

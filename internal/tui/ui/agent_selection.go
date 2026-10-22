@@ -12,6 +12,9 @@ import (
 )
 
 func (m *shellModel) discoveryHistory() *protocol.HistoryGet {
+	if !m.hasCapability("conversation") {
+		return nil
+	}
 	if m.conversation.agentMissing {
 		m.agentDiscoveryDone()
 		return nil
