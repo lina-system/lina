@@ -1,0 +1,17 @@
+{
+  "side": "server",
+  "input": [
+    "normal/web_request.json"
+  ],
+  "output": [
+    "normal/web_request.json"
+  ],
+  "errors": [
+    ""
+  ],
+  "outcome": {
+    "accepted": 1,
+    "malformed": 0,
+    "unknown_kinds": 0
+  }
+}
