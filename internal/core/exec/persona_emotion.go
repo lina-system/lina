@@ -86,7 +86,7 @@ func RegisterEmotion(registry *tools.Registry, p *Persona, scope PersonaScope) (
 	}
 	var specs []tools.Spec
 	for _, name := range []string{"record_emotion", "set_emotion_expression"} {
-		spec := tools.Spec{Name: name, Placement: tools.Core, Conc: 1, Deadline: 10 * time.Second, Schema: func(raw json.RawMessage) (tools.Input, error) {
+		spec := tools.Spec{Classify: tools.Class(tools.PrivateDraft), Name: name, Placement: tools.Core, Conc: 1, Deadline: 10 * time.Second, Schema: func(raw json.RawMessage) (tools.Input, error) {
 			var value any
 			target := "persona-state:" + scope.Agent
 			what := "Record an emotional reaction"

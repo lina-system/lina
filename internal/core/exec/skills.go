@@ -128,7 +128,12 @@ func RegisterSkills(registry *tools.Registry, store *skills.Store) ([]tools.Spec
 	}
 	var specs []tools.Spec
 	for _, name := range []string{"skill_index", "read_skill", "write_skill", "undo_skill"} {
-		spec := tools.Spec{Name: name, Placement: tools.Core, Conc: 1, Deadline: 10 * time.Second, Schema: func(raw json.RawMessage) (tools.Input, error) { return skillInput(raw, name) }}
+		spec := tools.Spec{Classify: func(in tools.Input) tools.EffectClass {
+			if in.Write {
+				return tools.LocalWrite
+			}
+			return tools.Research
+		}, Name: name, Placement: tools.Core, Conc: 1, Deadline: 10 * time.Second, Schema: func(raw json.RawMessage) (tools.Input, error) { return skillInput(raw, name) }}
 		handler := func(ctx context.Context, _ lease.Lease, input tools.Input) (tools.Result, error) {
 			var value any
 			var revision string

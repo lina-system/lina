@@ -221,6 +221,7 @@ func (s Source) loadSnapshot(ctx context.Context, scope Scope, id string) (Episo
 			// it outside this snapshot before classifying unavailable bytes.
 			var needed *materialNeeded
 			if errors.As(err, &needed) {
+				needed.exclusion = Exclusion("missing_assembly")
 				return err
 			}
 			var exclusion Exclusion

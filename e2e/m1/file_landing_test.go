@@ -178,7 +178,15 @@ func testM2FileLanding(t *testing.T, committed bool) {
 		r.EventID = work.ReceiptID(r)
 		return r
 	}
-	invoke("report_work_result", coreexec.ReportWork{TaskID: scenario.TaskID, RunID: run.ID, Receipt: receipt()}, false)
+	pending := invoke("report_work_result", coreexec.ReportWork{TaskID: scenario.TaskID, RunID: run.ID, Receipt: receipt()}, false)
+	var refusal struct {
+		Code      string `json:"code"`
+		Retryable bool   `json:"retryable"`
+		Next      string `json:"next_action"`
+	}
+	if err = json.Unmarshal(pending, &refusal); err != nil || refusal.Code != "worker_termination_unobserved" || !refusal.Retryable || refusal.Next != "wait_for_worker_termination_then_report_again" {
+		t.Fatalf("unobserved report: %s", pending)
+	}
 	invoke("land_work_result", coreexec.LandWork{TaskID: scenario.TaskID, ReceiptID: receipt().EventID, Fingerprint: "unobserved", Judgment: "Completion claim is not an exit."}, false)
 	entries, err := os.ReadDir(destination)
 	if err != nil || len(entries) != 0 {
@@ -200,7 +208,7 @@ func testM2FileLanding(t *testing.T, committed bool) {
 	withFileCanon(t, h, func(db *canon.Store) {
 		service := work.New(db)
 		card, e := service.Get(h.ctx, run.TaskID)
-		if e != nil || !card.Active || card.TurnStatus != "" || card.Receipt != nil || card.FileSnapshot != nil {
+		if e != nil || !card.Active || card.State != "unknown" || card.TurnStatus != "" || card.Receipt != nil || card.FileSnapshot != nil {
 			t.Fatalf("report manufactured termination or snapshot: %+v %v", card, e)
 		}
 		next := run
