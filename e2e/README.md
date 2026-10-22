@@ -389,8 +389,11 @@ worker notices and late replies cannot satisfy or reject that probe. A scripted
 regression interleaves those frames without depending on scheduler timing.
 
 `m3/delegation-readiness.json` exercises absent executables, failed worker
-handshakes and unavailable quota observations. Installed Core keeps conversation
+handshakes and unavailable or unanswered quota observations. Installed Core keeps conversation
 available, omits unavailable graph tools and reaps partial worker processes.
+The unanswered-quota case exercises the startup readiness deadline with a
+worker that stays connected but never replies, then verifies conversation and
+worker process cleanup.
 The scenario uses the shared acceptance harness in `e2e/m1/`.
 
 `TestM1WebUnconfigured` checks installed Core's explicit missing-provider status, absence of web declarations and one-round notice. `TestM1WebSearchExtractAndCitation` runs the production Core composition in a separate test helper with a synthetic manifest recording that executable, and injects only the Firecrawl HTTP transport. The real TUI saves a hidden key; the protocol client approves each network request; the real provider adapter searches and extracts against stub responses; TUI cells show both running activities; the scripted model cites the source URL. No real provider account is used, and model compliance beyond the scripted boundary is not claimed.

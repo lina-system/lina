@@ -42,7 +42,7 @@ func TestM3DelegationUnavailableLeavesConversation(t *testing.T) {
 				emitResponse(w, "Conversation remains available.", true)
 			}))
 			defer server.Close()
-			h, start := installedConversationHarness(t, server.URL)
+			h, _ := installedConversationHarness(t, server.URL)
 			ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 			defer cancel()
 			h.ctx = ctx
@@ -73,7 +73,13 @@ func TestM3DelegationUnavailableLeavesConversation(t *testing.T) {
 			if err = os.WriteFile(filepath.Join(h.root, "system", "core", "delegation.json"), cfg, 0600); err != nil {
 				t.Fatal(err)
 			}
-			core := start(true)
+			core := h.command("core", "--state-root", h.root, "--socket", h.socket)
+			core.command.Env = append(core.command.Env, "LINA_RESPONSES_BASE_URL="+server.URL, "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=fixture-key")
+			core.start(t)
+			// Optional readiness has a fifteen-second deadline, so observe
+			// startup beyond that bound rather than the usual ten-second dial.
+			h.connectWithin(core, 30*time.Second).Close()
+			waitCoreReady(t, h)
 			client, conversation := conversationClient(t, h)
 			admittedTurn(t, h, client, conversation, "readiness", "Can we still talk?")
 			client.Close()

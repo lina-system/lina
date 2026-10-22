@@ -1277,6 +1277,9 @@ type Definition struct {
   Readiness is checked before releasing persisted queued work. Errors while
   releasing recovered tasks remain task failures: they do not close the ready
   runtime, stop other workers, or remove the graph tools.
+  The initial quota read has its own fifteen-second deadline. A worker that
+  initializes but never answers quota is closed and disables only delegation;
+  its unresponsive optional endpoint cannot indefinitely hold Core startup.
 - `schedule_work` admits a graph of definitions (key, what, why, done, areas,
   dependencies and design sections) scoped to the authenticated conversation.
   Core resolves design references at the registered base, mints stable task ids

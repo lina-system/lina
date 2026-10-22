@@ -107,7 +107,10 @@ func (r *conversationRuntime) startDelegation(ctx context.Context) error {
 	// Establish optional installation readiness before releasing persisted work.
 	// Once dispatch begins, errors belong to individual attempts; closing the
 	// runtime could kill other workers that the same wake successfully started.
-	if _, err = d.availability(ctx); err != nil {
+	readiness, stopReadiness := context.WithTimeout(ctx, 15*time.Second)
+	_, err = d.availability(readiness)
+	stopReadiness()
+	if err != nil {
 		cancel()
 		_ = d.adapter.Close()
 		d.connection.Release()

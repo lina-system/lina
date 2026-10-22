@@ -132,6 +132,40 @@ test('commands across modules share a deadline instead of resetting the budget',
   assert.deepEqual(budgets, Array.from({ length: 11 }, (_, i) => 20_000 - i * 1000));
 });
 
+test('a growing acceptance corpus fits each diagnostic deadline without extending the outer budget', t => {
+  const sb = fixture(t);
+  const names = Array.from({ length: 12 }, (_, i) => `TestScenario${String(i).padStart(2, '0')}`);
+  const ran = [];
+  const durations = [];
+  let elapsed = 0;
+  t.mock.method(performance, 'now', () => elapsed);
+  const result = checkComponents({ cwd: sb.dir, components: [{ name: 'lina', module: '.', packages: ['./e2e/...'] }],
+    execute(command, args, options) {
+      args = testingArgs(args);
+      if (args[0] === 'build') elapsed += 150_000;
+      if (args[0] === 'list') return { status: 0, stdout: acceptanceListing(sb), stderr: '' };
+      if (args.includes('-list')) return { status: 0, stdout: names.join('\n')+'\n', stderr: '' };
+      if (args[0] === 'test') {
+        const index = args.indexOf('-run');
+        const selected = names.filter(name => new RegExp(args[index + 1]).test(name));
+        const duration = selected.length * 60_000;
+        const minutes = Number(args.find(arg => arg.startsWith('-timeout='))?.match(/^\-timeout=(\d+)m$/)?.[1]);
+        assert.equal(minutes, 6, 'retain Go timeout diagnostics');
+        ran.push(...selected);
+        durations.push(duration);
+        elapsed += duration;
+        return { status: duration >= minutes * 60_000 || duration >= options.timeoutMs ? 1 : 0,
+          stdout: '', stderr: 'modeled acceptance batch duration\n' };
+      }
+      return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
+    } });
+  assert.equal(result.status, 0, result.output);
+  assert.deepEqual(ran.sort(), names, 'every enumerated test executes once');
+  assert.ok(Math.max(...durations) <= 240_000, 'batches retain headroom below six minutes');
+  assert.equal(elapsed, 870_000);
+  assert.equal(componentsTimeoutMs, 900_000, 'retain the outer components watchdog');
+});
+
 test('an exhausted components budget stops before starting another command', t => {
   const sb = fixture(t);
   let elapsed = 0;
@@ -271,8 +305,8 @@ test('acceptance batches run every enumerated test once within the shared budget
         const index = args.indexOf('-run');
         const selected = index < 0 ? (args.includes('./e2e/...') ? names : []) : names.filter(name => new RegExp(args[index + 1]).test(name));
         runs.push({ selected, budget: options.timeoutMs });
-        // The growing package exceeds six minutes; either half finishes well
-        // inside that bound and both still share the outer components deadline.
+        // The growing package exceeds six minutes; each disjoint batch fits
+        // that bound while all batches share the outer components deadline.
         const duration = selected.length * 80_000;
         elapsed += duration;
         return { status: duration >= 360_000 || duration >= options.timeoutMs ? 1 : 0, stdout: '', stderr: '' };
@@ -282,8 +316,8 @@ test('acceptance batches run every enumerated test once within the shared budget
   assert.equal(result.status, 0, result.output);
   assert.deepEqual(runs.flatMap(run => run.selected).sort(), [...names].sort());
   const batches = runs.filter(run => run.selected.length > 0);
-  assert.equal(batches.length, 2);
-  assert.ok(batches[1].budget < batches[0].budget);
+  assert.equal(batches.length, 4);
+  assert.ok(batches.every((batch, i) => i === 0 || batch.budget < batches[i - 1].budget));
   assert.ok(elapsed < componentsTimeoutMs);
 });
 
@@ -335,7 +369,7 @@ func FuzzInput(f *testing.F) { f.Add("seed");f.Fuzz(func(t *testing.T,s string){
   assert.equal(result.status, 0, result.output);
   assert.equal(readFileSync(join(sb.dir, 'ordinary-ran'), 'utf8'), 'yes');
   assert.deepEqual(readFileSync(join(sb.dir, 'e2e/ran'), 'utf8').trim().split('\n').sort(), ['child', 'example', 'fuzz:seed', 'one', 'two']);
-  assert.equal(acceptanceBuilds.length, 1, 'compile acceptance once for enumeration and both batches');
+  assert.equal(acceptanceBuilds.length, 1, 'compile acceptance once for enumeration and all batches');
   assert.ok(acceptanceBuilds[0].includes('-c'));
 });
 

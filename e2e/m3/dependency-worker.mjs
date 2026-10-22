@@ -72,6 +72,7 @@ if (mode === '--version') { process.stdout.write('codex-cli 99.0.0\n'); } else i
       } else throw new Error('unbound worker reply');
       return;
     }
+    if (cfg.fail==='quota_hang'&&method==='account/rateLimits/read') return;
     if ((cfg.fail==='handshake'&&method==='initialize')||(cfg.fail==='quota'&&method==='account/rateLimits/read')) { send({id,error:{code:-32000,message:'synthetic readiness failure'}});return; }
     let result = {};
     switch (method) {

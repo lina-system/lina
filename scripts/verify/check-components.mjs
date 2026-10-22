@@ -116,7 +116,7 @@ export function checkComponents({ cwd = process.cwd(), components, execute: run 
       if (acceptance) {
         // The acceptance corpus grows across milestones. Enumerate each
         // package's actual tests, examples and fuzz seeds, then run disjoint
-        // halves. No test is omitted or repeated; each half retains Go's
+        // batches. No test is omitted or repeated; each batch retains Go's
         // diagnostic timeout and consumes the same outer components budget.
         const listed = invoke('go', ['list', '-mod=readonly', '-f', '{{.ImportPath}}\t{{.Dir}}\t{{if or .TestGoFiles .XTestGoFiles}}tests{{end}}', './e2e/...'], directory);
         if (listed.status !== 0) return { status: 1, output };
@@ -128,7 +128,7 @@ export function checkComponents({ cwd = process.cwd(), components, execute: run 
           // Packages without test files were already built and analyzed above.
           if (!hasTests) continue;
           // Compile and link once. Enumerating and executing disjoint batches
-          // from this candidate's binary avoids three Go package loads/links.
+          // from this candidate's binary avoids repeated Go package loads/links.
           const binary = join(context.directory, `acceptance-${index}.test${process.platform === 'win32' ? '.exe' : ''}`);
           if (invoke('go', ['test', '-c', '-mod=readonly', '-o', binary, pkg], directory).status !== 0) return { status: 1, output };
           const binaryArgs = ['-test.count=1', '-test.timeout=6m', '-test.paniconexit0'];
@@ -139,8 +139,9 @@ export function checkComponents({ cwd = process.cwd(), components, execute: run 
             if (invoke(binary, binaryArgs, packageDirectory, true).status !== 0) return { status: 1, output };
             continue;
           }
-          for (let batch = 0; batch < 2; batch++) {
-            const tests = names.filter((_, index) => index % 2 === batch);
+          const batchCount = 4;
+          for (let batch = 0; batch < batchCount; batch++) {
+            const tests = names.filter((_, index) => index % batchCount === batch);
             if (tests.length && invoke(binary, [...binaryArgs, '-test.v', '-test.run', `^(${tests.join('|')})$`], packageDirectory, true).status !== 0) return { status: 1, output };
           }
         }
