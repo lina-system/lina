@@ -33,7 +33,7 @@ import (
 // asks a question and writes its result. Only model/worker service wires are scripted.
 func TestM2ProgressDigestWorker(t *testing.T) {
 	t.Parallel()
-	runCodexWorkTools(t, "../m2/progress-controls.json", "", func(h *harness, phase string) {
+	runCodexWorkTools(t, "../m2/progress-controls.json", "", func(h *harness, phase string, _ []protocol.Question) {
 		c, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "digest", []protocol.Capability{{Name: "progress", Version: "1.0"}})
 		if err != nil {
 			t.Fatal(err)
