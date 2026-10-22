@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -117,6 +119,76 @@ func TestFileDoneKeepsFingerprintAndSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestFileDoneAfterDirectoryOnlyChanges(t *testing.T) {
+	for _, kind := range []string{"add", "remove", "rename"} {
+		t.Run(kind, func(t *testing.T) {
+			s, w, r, writer := fileFixture(t)
+			first := submitFiles(t, s, r)
+			if err := s.Judge(t.Context(), first.Task.ID, r.EventID, "verified", "Checked the original tree."); err != nil {
+				t.Fatal(err)
+			}
+			var err error
+			wantDirs := []string{"out"}
+			switch kind {
+			case "add":
+				err = os.Mkdir(filepath.Join(w.Path, "out/new"), 0700)
+				wantDirs = append(wantDirs, "out/empty", "out/new")
+			case "remove":
+				err = os.Remove(filepath.Join(w.Path, "out/empty"))
+			case "rename":
+				err = os.Rename(filepath.Join(w.Path, "out/empty"), filepath.Join(w.Path, "out/renamed"))
+				wantDirs = append(wantDirs, "out/renamed")
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = landFiles(t, s, first); !errors.Is(err, ErrFilesChanged) {
+				t.Fatalf("changed directory accepted: %v", err)
+			}
+			next := fileReceipt(t, w)
+			if next.EventID != r.EventID || next.RevisionHash != r.RevisionHash {
+				t.Fatal("directory change altered the file receipt")
+			}
+			current := submitFiles(t, s, next)
+			if current.FileSnapshot.Revision != first.FileSnapshot.Revision+1 || current.FileSnapshot.Fingerprint == first.FileSnapshot.Fingerprint || !slices.Equal(current.FileSnapshot.Tree.Directories, wantDirs) {
+				t.Fatalf("directory change missing from new snapshot: %+v", current.FileSnapshot)
+			}
+			if current.Verdict != "" || current.FileEvidence != nil || current.Applied || current.Run.ID != first.Run.ID {
+				t.Fatal("new snapshot kept old judgment or changed worker run")
+			}
+			if len(writer.bodies) != 4 {
+				t.Fatal("new snapshot did not retain independent materials")
+			}
+			// Replaying the same tree must not create another revision or materials.
+			again := submitFiles(t, s, next)
+			if !reflect.DeepEqual(again.FileSnapshot, current.FileSnapshot) || len(writer.bodies) != 4 {
+				t.Fatal("unchanged report duplicated the snapshot")
+			}
+			if err = s.Rebuild(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			rebuilt, err := s.Get(t.Context(), current.Task.ID)
+			if err != nil || !reflect.DeepEqual(rebuilt.FileSnapshot, current.FileSnapshot) || rebuilt.Verdict != "" {
+				t.Fatalf("rebuild lost replacement snapshot: %+v %v", rebuilt, err)
+			}
+			if _, err = landFiles(t, s, first); !errors.Is(err, ErrState) {
+				t.Fatalf("old fingerprint accepted: %v", err)
+			}
+			evidence, err := landFiles(t, s, rebuilt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(evidence.Tree.Directories, wantDirs) {
+				t.Fatalf("wrong landed directories: %v", evidence.Tree.Directories)
+			}
+			if err = verifyBundle(t.Context(), evidence.Path, current.FileSnapshot.Fingerprint); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestFileLandingFreshBundleEvidenceAndReplay(t *testing.T) {
 	s, _, r, _ := fileFixture(t)
 	c := submitFiles(t, s, r)

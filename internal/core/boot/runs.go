@@ -304,7 +304,13 @@ func (r *conversationRuntime) runReadTools() (map[string]runs.Tool, error) {
 				}
 				var value any
 				if spec.Name == "skill_index" {
-					value, err = r.skills.Catalog(ctx)
+					var args struct {
+						Methodology string `json:"methodology,omitempty"`
+					}
+					err = json.Unmarshal(input.Arguments, &args)
+					if err == nil {
+						value, err = r.skills.Index(ctx, args.Methodology)
+					}
 				} else {
 					var ref skills.Version
 					err = json.Unmarshal(input.Arguments, &ref)
@@ -455,7 +461,13 @@ func (r *conversationRuntime) publishRunning(ctx context.Context) error {
 		if b.published[entry.Ref.ID] == text {
 			continue
 		}
-		data, err := json.Marshal(protocol.RunningUpdate{Text: &text, RunID: &entry.Ref.ID})
+		state := protocol.RunningState(entry.View.State)
+		update := protocol.RunningUpdate{Text: &text, RunID: &entry.Ref.ID, State: &state, Summary: &entry.View.Summary}
+		if entry.View.Reason != "" {
+			reason := protocol.RunningReason(entry.View.Reason)
+			update.Reason = &reason
+		}
+		data, err := json.Marshal(update)
 		if err != nil {
 			return err
 		}
