@@ -99,6 +99,25 @@ func violations(root string, standard map[string]bool) ([]string, error) {
 		if core && layers[ownerFamily] == 0 {
 			report(file.Package, "unmapped", owner+" has no C-40 layer")
 		}
+		if !within(owner, "internal/archtest") && (within(owner, "internal") || within(owner, "cmd") || within(owner, "kit")) {
+			ast.Inspect(file, func(n ast.Node) bool {
+				literal, ok := n.(*ast.BasicLit)
+				if !ok || literal.Kind != token.STRING {
+					return true
+				}
+				value, e := strconv.Unquote(literal.Value)
+				if e != nil {
+					return true
+				}
+				for _, forbidden := range []string{"/tools/crw-takeover", "github.com/thisisjun786/codex-relay-workflow/", "codex-session-relay/", ".crw/", ".codex/plugins/crw"} {
+					if strings.Contains(value, forbidden) {
+						report(literal.Pos(), "operator", "product must not resolve an external coordination runtime or state path")
+						break
+					}
+				}
+				return true
+			})
+		}
 		osNames := make(map[string]bool)
 		dotOS := false
 		for _, spec := range file.Imports {

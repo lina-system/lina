@@ -15,15 +15,16 @@ var (
 )
 
 type Task struct {
-	PersonID       string   `json:"person_id,omitempty"`
-	GoalID         string   `json:"goal_id,omitempty"`
-	ID             string   `json:"id"`
-	AgentID        string   `json:"agent_id"`
-	ConversationID string   `json:"conversation_id"`
-	Title          string   `json:"title"`
-	Done           string   `json:"done"`
-	ArtifactRoots  []string `json:"artifact_roots"`
-	RequiresApply  bool     `json:"requires_apply"`
+	ExternalControl bool     `json:"external_control,omitempty"`
+	PersonID        string   `json:"person_id,omitempty"`
+	GoalID          string   `json:"goal_id,omitempty"`
+	ID              string   `json:"id"`
+	AgentID         string   `json:"agent_id"`
+	ConversationID  string   `json:"conversation_id"`
+	Title           string   `json:"title"`
+	Done            string   `json:"done"`
+	ArtifactRoots   []string `json:"artifact_roots"`
+	RequiresApply   bool     `json:"requires_apply"`
 }
 
 type Run struct {

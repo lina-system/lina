@@ -979,6 +979,42 @@ At the operational switch LINA takes over CRW's coordination functions and CRW r
 - The owner's existing intent card data is imported once by the same tool and under the same rules, into LINA's intent card model (see Intent cards). Only the data comes in; no code or database structure comes with it.
 - The product never depends on CRW's plugin, relay or state paths.
 
+### Switch admission and recovery
+
+The one-time operator command in `tools/crw-takeover/` connects to the running
+Core's owner-only `work` capability. It is excluded from release artifacts.
+Imported tasks carry `external_control: true` and their LINA person identity;
+Core refuses a new execution until an approved switch has activated their exact
+task set. Observation and a source snapshot never grant execution authority.
+
+An explicit owner `approve_switch` records the authenticated person, input
+message id, sorted task set and SHA-256 of the verified operator manifest. That
+manifest binds the import snapshot and the owner's inventory of quiesced parent
+sessions, flow engines and other hosts. Approval does not stop the old service.
+Core serializes one switch procedure, refuses overlapping task ownership and
+checks admission and each new run in the same canon write transaction.
+
+The operator records the old service state, disables its launch intent, stops it
+and independently verifies disabled intent, no running service, a free lock and
+no conflicting scope. Only then does `activate_switch` transfer control. Core
+stores the evidence as an opaque receipt; it never resolves external paths.
+Independent directors are not proven absent by a daemon status: the single owner
+must quiesce them before approval and keep them stopped while LINA directs work.
+
+The durable states are `approved`, `active`, `rollback_pending` and `rolled_back`.
+A failed or explicitly reversed transfer first enters `rollback_pending`, which
+blocks new runs. `release_switch` refuses while any active or unknown execution
+remains. Restart retains these reservations; timeout is not evidence of drain.
+Only durable `rolled_back` permits the operator to restore the previous service
+state, followed by a separate status verification. An interrupted operator or
+failed restoration requires explicit rollback with the retained journal.
+Preflight refusals before any external mutation leave the approval held.
+
+Switch history is append-only. Rollback preserves task facts, receipts,
+originals, worktrees, branches and produced results; it does not undo completed
+work. Rolled-back tasks remain gated as externally controlled. A rolled-back approval cannot be reused to reactivate control.
+The running-Core acceptance scenario is `e2e/m3/operational-switch.json`.
+
 ## Deferred
 
 - The task state set of the ledger projection: set by the ledger implementation against the pinned record contracts. Adopted schema documents and fixture domains are fixed in the start-gate pin record.

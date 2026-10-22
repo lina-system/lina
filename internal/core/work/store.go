@@ -65,7 +65,12 @@ func (s *Service) Start(ctx context.Context, r Run) error {
 	if r.ID == "" || r.TaskID == "" || r.Worker == "" || r.ThreadID == "" || r.TurnID == "" || r.NodeID == "" || r.Generation < 1 {
 		return ErrInvalid
 	}
-	return s.append(ctx, Event{Key: "run:" + r.ID, TaskID: r.TaskID, Kind: "started", Run: &r})
+	return s.db.Write(ctx, func(tx *canon.Tx) error {
+		if err := mayDirect(ctx, tx, r.TaskID); err != nil {
+			return err
+		}
+		return appendEvent(ctx, tx, Event{Key: "run:" + r.ID, TaskID: r.TaskID, Kind: "started", Run: &r})
+	})
 }
 func (s *Service) Submit(ctx context.Context, runID string, r Receipt) error {
 	return s.append(ctx, Event{Key: "receipt:" + r.EventID, TaskID: r.RelationshipID, Kind: "receipt", RunID: runID, Receipt: &r})

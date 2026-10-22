@@ -18,3 +18,8 @@ func (c *Client) Memory(ctx context.Context, request protocol.MemoryRequest) (st
 func (c *Client) Running(ctx context.Context, request protocol.RunningGet) (string, error) {
 	return c.request(ctx, protocol.KindRunningGet, request)
 }
+
+// Work sends an owner operation once; Receive owns the correlated result.
+func (c *Client) Work(ctx context.Context, request protocol.WorkRequest) (string, error) {
+	return c.request(ctx, protocol.KindWorkRequest, request)
+}

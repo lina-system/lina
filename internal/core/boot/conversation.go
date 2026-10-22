@@ -231,6 +231,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err = r.work.Recover(ctx, strconv.FormatUint(r.epoch, 10)); err != nil {
 		return nil, err
 	}
+	for kind, op := range clientsrv.WorkOperations(r) {
+		r.identity.Operations[kind] = op
+	}
 	if err = r.startWorkWaiting(ctx); err != nil {
 		return nil, err
 	}

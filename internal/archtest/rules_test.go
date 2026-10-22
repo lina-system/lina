@@ -27,6 +27,9 @@ func TestRules(t *testing.T) {
 	for _, tc := range []struct {
 		name, file, source, want string
 	}{
+		{"product excludes operator", "internal/core/boot/switch.go", `package boot; import _ "` + module + `/tools/crw-takeover"`, "operator"},
+		{"product excludes relay", "internal/core/work/relay.go", `package work; import _ "github.com/thisisjun786/codex-relay-workflow/internal/relay"`, "operator"},
+		{"product excludes state paths", "cmd/lina/switch.go", `package main; const state = "/tmp/codex-session-relay/state"`, "operator"},
 		{"importer outside Core", "internal/core/importer/reader.go", `package importer`, "unmapped"},
 		{"Core excludes importer add-ons", "internal/core/boot/boot.go", `package boot; import _ "` + module + `/internal/addons/importer/hermes"`, "importer"},
 		{"default command excludes importer add-ons", "cmd/lina/main.go", `package main; import _ "` + module + `/internal/addons/importer/hermes"`, "importer"},

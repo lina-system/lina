@@ -427,3 +427,24 @@ Mutating management replies use `applied` only after the existing Core service
 commits. Listing and choosing use `none`. Every reply is correlated to its
 request; neither client reconnect nor navigation repeats a mutation. Management
 requests retain conservative mutation admission during Core recovery.
+
+## Operational work control
+
+The negotiated `work` capability, version `1.0`, installs `work_request` and
+`work_result` for the [operational switch](work-and-delegation.md#operational-switch).
+Every request requires a `switch_id` and `operation`. Only an eligible owner
+connection may call it, including status. Core obtains the person and input
+message identity from the authenticated transport, never a supplied owner field.
+
+- `approve_switch` requires `tasks` and `snapshot` and accepts no evidence field.
+  It records approval for the exact task set and operator-manifest digest.
+- `activate_switch`, `rollback_switch` and `release_switch` require an opaque
+  `evidence` string; they accept neither a new snapshot nor a new task set.
+- `switch_status` takes no additional fields and returns the durable state.
+
+The result contains the switch id, state, approval input id, snapshot digest,
+task identities and ordered state/evidence events. Conflicting transitions,
+including release with active runs, return `stale_revision`; malformed records
+return `malformed`, absent tasks or switches return `out_of_scope`, and an
+ineligible connection returns `not_authorized`. Unknown or canceled outcomes
+are reconciled through status before explicit rollback; they never mean success.

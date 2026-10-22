@@ -94,6 +94,8 @@ func concretePayloads() map[string]any {
 				"payload": map[string]any{"text": "complete"},
 			}},
 		},
+		"work_request":    map[string]any{"operation": "switch_status", "switch_id": "switch-1"},
+		"work_result":     map[string]any{"switch_id": "switch-1", "state": "approved", "approval": "input-1", "snapshot": "hash", "tasks": []any{"task-1"}, "events": []any{}},
 		"resync":          map[string]any{"topic": "conversation:example", "cursor": map[string]any{"epoch": "7", "seq": float64(2)}},
 		"resync_required": map[string]any{"topic": "conversation:example", "cursor": map[string]any{"epoch": "7", "seq": float64(2)}},
 	}

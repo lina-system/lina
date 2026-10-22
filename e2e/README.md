@@ -224,3 +224,11 @@ and deleted agents in conversation and management requests, plus channel
 binding/scope replacement. A paired synthetic channel and an existing binding
 exercise the actual target-agent checks. Read-only canon snapshots prove that
 refused requests preserve agent revisions, actions, conversations and bindings.
+
+`m3/operational-switch.json` exercises the owner-only switch on the real Core
+socket: missing approval, a held external task, successful transfer, a real
+fixture worker output and receipt, restart with an outstanding execution,
+rollback refusal until drain, and preservation after explicit rollback. The
+external coordinator is synthetic; its call log checks that approval precedes
+stop and durable LINA release precedes external restart. Work fixture admission
+uses the engine API while Core is stopped, as in the M2 ledger scenario.
