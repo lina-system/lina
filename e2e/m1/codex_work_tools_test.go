@@ -241,8 +241,11 @@ func codexWorkToolsFixture() {
 
 func TestM2CodexWorkTools(t *testing.T) {
 	t.Parallel()
+	runCodexWorkTools(t, "../m2/codex-work-tools.json", nil)
+}
 
-	data, err := os.ReadFile("../m2/codex-work-tools.json")
+func runCodexWorkTools(t *testing.T, scenario string, observe func(*harness, string)) {
+	data, err := os.ReadFile(scenario)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -326,7 +329,7 @@ func TestM2CodexWorkTools(t *testing.T) {
 		}
 		emitResponse(w, "worker quota checked", true)
 	}))
-	defer server.Close()
+	defer func() { server.CloseClientConnections(); server.Close() }()
 	h, _ := installedConversationHarness(t, server.URL)
 	bin := t.TempDir()
 	exe, err := os.Executable()
@@ -396,6 +399,9 @@ func TestM2CodexWorkTools(t *testing.T) {
 			if answerID != "" {
 				continue // A waiting snapshot may repeat the same pending card.
 			}
+			if observe != nil {
+				observe(h, "approval")
+			}
 			answerID, err = c.AnswerApproval(h.ctx, protocol.ApprovalAnswer{CardID: &payload.Card.ID, Revision: &payload.Card.Revision, Choice: protocol.ApprovalChoiceOnce})
 			if err != nil {
 				t.Fatal(err)
@@ -413,6 +419,9 @@ func TestM2CodexWorkTools(t *testing.T) {
 			}
 			if questionAnswerID != "" {
 				continue
+			}
+			if observe != nil {
+				observe(h, "question")
 			}
 			values := protocol.FormValues{"answer": protocol.FormValue{String: &fixture.Answer}}
 			questionAnswerID, err = c.AnswerQuestion(h.ctx, protocol.QuestionAnswer{CardID: &payload.Card.ID, Revision: &payload.Card.Revision, Answer: protocol.QuestionAnswerActionAccept, Values: &values})
@@ -444,9 +453,15 @@ func TestM2CodexWorkTools(t *testing.T) {
 	if err != nil || string(artifact) != fixture.Result {
 		t.Fatalf("real worker artifact=%q: %v", artifact, err)
 	}
+	if observe != nil {
+		observe(h, "completed")
+	}
 	c.Close()
 	h.stopCore(core)
 	core = start()
+	if observe != nil {
+		observe(h, "restarted")
+	}
 	c, restored := conversationClient(t, h)
 	if restored != conversation {
 		t.Fatal("Core restart lost originating conversation")

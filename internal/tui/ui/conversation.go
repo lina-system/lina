@@ -51,6 +51,8 @@ type textPager struct {
 	laneNext                 *string
 	transcript               bool
 	running                  bool
+	progress                 bool
+	waiting                  bool
 	selected                 int
 	runID                    string
 	next                     *json.Number
@@ -241,13 +243,15 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	case "ctrl+w":
 		m.openPager(m.topicText("waiting"))
-		return nil
+		m.conversation.pager.waiting = true
+		return m.waitingRequest()
 	case "ctrl+r":
 		m.openRunning()
 		return nil
 	case "ctrl+p":
 		m.openPager(m.topicText("progress"))
-		return nil
+		m.conversation.pager.progress = true
+		return m.subscribeSnapshot("progress")
 	case "tab", "shift+tab":
 		m.conversation.cardsFocused = !m.conversation.cardsFocused
 		return nil

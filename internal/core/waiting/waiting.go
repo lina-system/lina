@@ -105,18 +105,35 @@ type Decision struct {
 type Service struct {
 	db      Canon
 	sources map[string]Source
+	live    map[string]LiveSource
 }
 
 func New(db Canon, sources map[string]Source) *Service {
 	return &Service{db: db, sources: cloneSources(sources)}
 }
 
+// LiveSource owns an authoritative in-memory source (for example a live worker
+// adapter). Snapshot reads it under its own lock, outside canon's writer, so
+// adapter callbacks may commit work without reversing the storage lock order.
+type LiveItem struct {
+	ID   string
+	Item Item
+}
+type LiveSource interface {
+	Snapshot(context.Context, string) ([]LiveItem, error)
+}
+
+func NewWithLive(db Canon, sources map[string]Source, live map[string]LiveSource) *Service {
+	s := New(db, sources)
+	s.live = map[string]LiveSource{}
+	for name, source := range live {
+		s.live[name] = source
+	}
+	return s
+}
+
 // Schema is installed by the composition root in a numbered canon migration.
-const Schema = `CREATE TABLE waiting_decisions (
- source TEXT NOT NULL, item_id TEXT NOT NULL, revision TEXT NOT NULL,
- person TEXT NOT NULL, agent TEXT NOT NULL, answer TEXT NOT NULL, answered_at TEXT NOT NULL,
- PRIMARY KEY(source,item_id,revision)
-);`
+const Schema = canon.WaitingDecisionsSchema
 
 // Build re-reads every candidate before projecting it. A source failure refuses
 // the whole snapshot rather than presenting an incomplete list as authoritative.
@@ -190,6 +207,19 @@ func (s *Service) Build(ctx context.Context, person string, opts Options) (List,
 	})
 	if err != nil {
 		return List{}, err
+	}
+	for name, source := range s.live {
+		items, err := source.Snapshot(ctx, person)
+		if err != nil {
+			return List{}, err
+		}
+		for _, current := range items {
+			item := current.Item
+			if item.Person != person || !eligible(item) {
+				continue
+			}
+			rows = append(rows, ranked{Entry{Ref: Ref{Source: name, ID: current.ID, Revision: item.Revision}, View: item.View}, item})
+		}
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
 		a, b := rows[i].item, rows[j].item

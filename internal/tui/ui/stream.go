@@ -11,6 +11,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/internal/tui/state"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
@@ -87,7 +88,11 @@ type streamProjection struct {
 
 // projectStream consumes only generated payloads. It converts the wire
 // view into the existing pure reducer's messages; it defines no wire fields.
-func projectStream(envelope protocol.Envelope) (streamProjection, error) {
+func projectStream(envelope protocol.Envelope, languages ...design.Language) (streamProjection, error) {
+	var language design.Language
+	if len(languages) > 0 {
+		language = languages[0]
+	}
 	p := streamProjection{}
 	switch payload := envelope.Payload.(type) {
 	case protocol.Snapshot:
@@ -109,6 +114,7 @@ func projectStream(envelope protocol.Envelope) (streamProjection, error) {
 				continue // Optional activity consumes the snapshot cursor, never history.
 			}
 			_, text := streamFields(body)
+			text = progressText(body, language, text)
 			block := state.Block{ID: streamKey(payload.Topic, item.Key), Kind: item.Kind, Revision: revision, Done: item.Kind != protocol.KindOutputDelta}
 			block.Card = projectCard(body, envelope.Epoch, revision)
 			if text != nil {
@@ -125,6 +131,7 @@ func projectStream(envelope protocol.Envelope) (streamProjection, error) {
 		p = streamProjection{topic: payload.Topic, cursor: payload.Cursor, resync: true, request: true}
 	default:
 		metadata, text := streamFields(envelope.Payload)
+		text = progressText(envelope.Payload, language, text)
 		if metadata == nil {
 			return p, nil
 		}
