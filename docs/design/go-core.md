@@ -694,6 +694,9 @@ object/hash and index codecs behind a confined local filesystem adapter. Result
 saving uses the same repository implementation. Core opens the repository with
 the published canon migration catalog; `records_state` journals the pending
 publication and `records_index` holds disposable id/path/blob/revision locators.
+Backup reads the published records head from its canon snapshot. Before the first
+saved version (also after an interrupted first attempt), it copies the repository
+files and intent without inventing a commit entry in the generation manifest.
 The adapter writes loose objects and a linear local history; it has no Git
 subprocess, remote, transport or credential dependency.
 

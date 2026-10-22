@@ -22,6 +22,16 @@ func repositories(ctx context.Context, root *os.Root, snapshot string) ([]Reposi
 	if err != nil {
 		return nil, err
 	}
+	// An opened records repository may have no saved version yet, including
+	// after an interrupted first attempt. Its files/intent still belong to the
+	// generation, but there is no commit to put in the repository manifest.
+	empty := map[string]bool{}
+	for path, head := range published {
+		if head == "" {
+			empty[path] = true
+			delete(published, path)
+		}
+	}
 	result := []Repository{}
 	if _, err := root.Lstat("versions"); errors.Is(err, os.ErrNotExist) {
 		if len(published) != 0 {
@@ -47,6 +57,9 @@ func repositories(ctx context.Context, root *os.Root, snapshot string) ([]Reposi
 			gitdir = filepath.Join(path, ".git")
 		} else if !errors.Is(e, os.ErrNotExist) {
 			return e
+		}
+		if empty[path] {
+			return fs.SkipDir
 		}
 		if _, e := root.Lstat(filepath.Join(gitdir, "objects")); errors.Is(e, os.ErrNotExist) {
 			return nil
@@ -195,6 +208,16 @@ func publishedHeads(ctx context.Context, path string) (map[string]string, error)
 		if err = errors.Join(rows.Err(), rows.Close()); err != nil {
 			return nil, err
 		}
+	}
+	if err = db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name='records_state'").Scan(&exists); err != nil {
+		return nil, err
+	}
+	if exists != 0 {
+		var head string
+		if err = db.QueryRowContext(ctx, "SELECT head FROM records_state WHERE singleton=1").Scan(&head); err != nil {
+			return nil, err
+		}
+		heads["versions/records"] = head
 	}
 	return heads, nil
 }
