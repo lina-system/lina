@@ -317,7 +317,6 @@ func actionID(a Action) string {
 	hash := sha256.Sum256(raw)
 	return hex.EncodeToString(hash[:])
 }
-func areaKey(t Task) string { return t.Repository + "\x00" + t.Area }
 
 // Derive is a deterministic projection of authoritative observations. It never
 // calls a model or an adapter. The caller must persist its actions/reservations
@@ -336,7 +335,11 @@ func Derive(state State, now time.Time) (Plan, error) {
 		depth int
 	}
 	var ready []candidate
-	occupied := map[string]string{}
+	type areaLease struct {
+		goal string
+		task Task
+	}
+	var occupied []areaLease
 	mergeSlots := map[string]bool{}
 	for _, g := range goals {
 		if err := validateGoal(g); err != nil {
@@ -349,7 +352,7 @@ func Derive(state State, now time.Time) (Plan, error) {
 				}
 			}
 			if t.Stage != TaskReady && t.Stage != TaskDone && t.Stage != TaskMerged && t.Stage != TaskQAFailed {
-				occupied[areaKey(t)] = g.ID + "\x00" + t.ID
+				occupied = append(occupied, areaLease{g.ID, t})
 			}
 		}
 	}
@@ -582,7 +585,17 @@ func Derive(state State, now time.Time) (Plan, error) {
 	})
 	for _, c := range ready {
 		g, t, kind := c.goal, c.task, c.kind
-		if owner := occupied[areaKey(t)]; owner != "" && owner != g.ID+"\x00"+t.ID {
+		overlaps := false
+		for _, held := range occupied {
+			if held.goal == g.ID && held.task.ID == t.ID {
+				continue
+			}
+			if held.task.Repository == t.Repository && areasOverlap(held.task.Area, t.Area) {
+				overlaps = true
+				break
+			}
+		}
+		if overlaps {
 			wait(g, t, "area", "merge.landed")
 			continue
 		}
@@ -607,7 +620,7 @@ func Derive(state State, now time.Time) (Plan, error) {
 			continue
 		}
 		add(g, t, kind, t.Head, best)
-		occupied[areaKey(t)] = g.ID + "\x00" + t.ID
+		occupied = append(occupied, areaLease{g.ID, t})
 	}
 	return plan, nil
 }
