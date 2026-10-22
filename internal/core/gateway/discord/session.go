@@ -4,15 +4,16 @@ package discord
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"sync/atomic"
+	"time"
+
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/gateway"
 	"github.com/thisisjun786/lina/kit/secret"
-	"net/http"
-	"sync/atomic"
-	"time"
 )
 
 type frame struct {
@@ -60,6 +61,9 @@ func (a *Adapter) Run(ctx context.Context, in gateway.Admitter) error {
 	var hello frame
 	err = wsjson.Read(helloCtx, conn, &hello)
 	cancelHello()
+	if websocket.CloseStatus(err) != -1 {
+		return a.sessionReadError(ctx, err)
+	}
 	var h struct {
 		Interval int64 `json:"heartbeat_interval"`
 	}
@@ -120,11 +124,8 @@ func (a *Adapter) Run(ctx context.Context, in gateway.Admitter) error {
 	token = ""
 	for {
 		var f frame
-		if wsjson.Read(ctx, conn, &f) != nil {
-			if parent.Err() != nil {
-				return parent.Err()
-			}
-			return errUnavailable
+		if err := wsjson.Read(ctx, conn, &f); err != nil {
+			return a.sessionReadError(parent, err)
 		}
 		switch f.Op {
 		case 11:
@@ -138,14 +139,7 @@ func (a *Adapter) Run(ctx context.Context, in gateway.Admitter) error {
 		case 9:
 			// An invalid session cannot resume. Keep all native receipts, reset only
 			// session identity, and let the supervisor reconnect with backoff.
-			err := a.db.Write(ctx, func(tx *canon.Tx) error {
-				_, err := tx.ExecContext(ctx, "UPDATE channel_connections SET cursor='' WHERE bot=?", a.bot.Key())
-				if err != nil {
-					return err
-				}
-				return nil
-			})
-			if err != nil {
+			if err := a.clearSession(ctx); err != nil {
 				return err
 			}
 			return errUnavailable
@@ -171,6 +165,28 @@ func (a *Adapter) Run(ctx context.Context, in gateway.Admitter) error {
 			seq.Store(*f.Seq)
 		}
 	}
+}
+
+func (a *Adapter) sessionReadError(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	// Discord requires a fresh Identify for invalid sequence and expired
+	// sessions. Other transport closes can Resume from the committed cursor.
+	switch websocket.CloseStatus(err) {
+	case 4007, 4009:
+		if err := a.clearSession(ctx); err != nil {
+			return err
+		}
+	}
+	return errUnavailable
+}
+
+func (a *Adapter) clearSession(ctx context.Context) error {
+	return a.db.Write(ctx, func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(ctx, "UPDATE channel_connections SET cursor='' WHERE bot=?", a.bot.Key())
+		return err
+	})
 }
 
 // Message content is privileged on Discord. DMs and addressed guild messages
