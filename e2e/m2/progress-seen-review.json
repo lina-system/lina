@@ -1,0 +1,5 @@
+{
+  "title": "Prepare review materials",
+  "output": "Synthetic review artifact",
+  "actions": ["open", "dismiss"]
+}

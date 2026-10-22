@@ -50,7 +50,7 @@ func UnplannedWork(cards map[string]work.Card) []Unit {
 	units := []Unit{}
 	for id, c := range cards {
 		u := Unit{ID: id, Parent: c.Task.GoalID, Kind: "project", Name: c.Task.Title, Active: c.Run != nil || c.State == "input_needed"}
-		u.Terminal = c.State == "done" || c.State == "failed" || c.State == "stopped"
+		u.Landed = c.State == "ready_for_review" || c.State == "done" || c.State == "failed" || c.State == "stopped"
 		if goals[id] {
 			u.Kind = "goal"
 		}

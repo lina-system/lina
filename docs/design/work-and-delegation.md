@@ -1145,8 +1145,10 @@ from the current epoch keep their reservations.
 same run, with a status matching the receipt, before admitting the receipt and
 capturing the snapshot. It never records worker termination from model-supplied
 fields. A still-active or recovered unknown run retains its reservation and has
-no new receipt or snapshot after a refused report. A fresh report can retry once
-Core records the worker's actual terminal observation; a stale run or a completed
+no new receipt or snapshot after a refused report. The refusal returns the typed
+retryable `worker_termination_unobserved` error and asks the caller to wait for
+worker termination before reporting again with a fresh tool call. A fresh report
+can retry once Core records the worker's actual terminal observation; a stale run or a completed
 claim for a failed or interrupted turn remains refused. `land_work_result` binds
 the manager's judgment to its receipt and fingerprint and performs the copy and readback in Core. Worker dispatch and
 whole-goal scheduling are separate from these file-delivery operations.
