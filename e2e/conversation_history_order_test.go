@@ -72,6 +72,9 @@ func TestM1ConversationHistoryOrder(t *testing.T) {
 			h, start := installedConversationHarness(t, server.URL)
 			core := start(true)
 			observer, conversation := conversationClient(t, h)
+			// The composer is visible before History resolves its destination.
+			// The helper waits for this conversation's subscription response,
+			// proving that the TUI consumed History before input is submitted.
 			terminal := h.startConversationTUI([]string{"TERM=xterm-256color"}, scenario.Width, scenario.Height, conversation)
 			waitScreen(t, h, terminal, "Ctrl+D")
 			h.keys(terminal, scenario.FirstInput+"\r")

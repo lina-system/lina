@@ -29,7 +29,11 @@ func (s *Service) TransferNotices(ctx context.Context, conversation string, acce
 		if err != nil {
 			return err
 		}
-		r.Noticed = true
+		if n.EffectQuestion {
+			r.EffectsQuestion.Noticed = true
+		} else {
+			r.Noticed = true
+		}
 		if err := s.save(ctx, r, false); err != nil {
 			return err
 		}
