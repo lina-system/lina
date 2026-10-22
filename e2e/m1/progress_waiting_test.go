@@ -12,7 +12,7 @@ import (
 
 func TestM2ProgressWaitingInstalledCore(t *testing.T) {
 	t.Parallel()
-	runCodexWorkTools(t, "../m2/progress-waiting.json", func(h *harness, phase string) {
+	runCodexWorkTools(t, "../m2/progress-waiting.json", "", func(h *harness, phase string) {
 		c, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "progress-reader", []protocol.Capability{{Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}})
 		if err != nil {
 			t.Fatal(err)
