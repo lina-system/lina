@@ -463,12 +463,16 @@ func (m *shellModel) selectedCard() (state.Block, bool) {
 	}
 	return state.Block{}, false
 }
+func resultText(b state.Block) string {
+	if b.Body != "" {
+		return b.Body
+	}
+	return b.Text
+}
+
 func (m *shellModel) cardText() string {
 	if b, ok := m.selectedCard(); ok {
-		if b.Body != "" {
-			return b.Body
-		}
-		return b.Text
+		return resultText(b)
 	}
 	var lines []string
 	for _, b := range m.content.Blocks {
@@ -538,7 +542,7 @@ func (m *shellModel) refreshOpenCard() {
 	}
 	for _, card := range m.resultCards() {
 		if card.ID == p.cardID {
-			p.text = sanitize.Display(card.Body)
+			p.text = sanitize.Display(resultText(card))
 			if p.followEnd {
 				p.offset = len(m.pagerLines())
 			}
@@ -553,29 +557,30 @@ func (m *shellModel) refreshResultStreams(message state.Msg) {
 	live, isUpdate := message.(state.ItemDone)
 	next := make(map[string]shellBlock)
 	for _, card := range m.resultCards() {
+		text := resultText(card)
 		cached, ok := m.resultStreams[card.ID]
 		done := !ok || cached.done
-		if isUpdate && live.Block.ID == card.ID && (!ok || cached.text != card.Body) {
+		if isUpdate && live.Block.ID == card.ID && (!ok || cached.text != text) {
 			done = !m.content.TurnActive
 		}
 		if !m.content.TurnActive {
 			done = true
 		}
-		if !ok || cached.text != card.Body || cached.done != done {
+		if !ok || cached.text != text || cached.done != done {
 			revision := cached.revision + 1
 			stream := cached.stream
-			if !ok || cached.done || !strings.HasPrefix(card.Body, cached.text) {
+			if !ok || cached.done || !strings.HasPrefix(text, cached.text) {
 				stream = render.NewStream(card.ID, render.Config{Width: max(1, m.size.Width)}, nil)
 				if !done {
-					stream.Append(revision, card.Body)
+					stream.Append(revision, text)
 				}
 			} else if !done {
-				stream.Append(revision, card.Body[len(cached.text):])
+				stream.Append(revision, text[len(cached.text):])
 			}
 			if done {
-				stream.Seal(revision, card.Body)
+				stream.Seal(revision, text)
 			}
-			cached = shellBlock{card.Body, revision, done, stream}
+			cached = shellBlock{text, revision, done, stream}
 		}
 		next[card.ID] = cached
 	}

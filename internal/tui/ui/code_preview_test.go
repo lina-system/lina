@@ -228,3 +228,29 @@ func TestInlineReplyDecorationsDoNotMutateMarkdownCache(t *testing.T) {
 		})
 	}
 }
+
+func TestResultDetailsRetainSummaryFallback(t *testing.T) {
+	m := conversationShell()
+	topic := "conversation:" + m.conversation.id
+	m.Update(shellData{Generation: 1, Message: state.Snapshot{Epoch: "1", Revocation: "1", Topic: topic}})
+	update := func(revision uint64, summary, body string) {
+		m.Update(shellData{Generation: 1, Message: state.ItemDone{Epoch: "1", Topic: topic, Cursor: revision,
+			Block: state.Block{ID: "result", Kind: protocol.KindResult, Text: summary, Body: body, Revision: revision, Done: true},
+		}})
+	}
+	update(1, "Summary without optional text", "")
+	m.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+	check := func(want string) {
+		t.Helper()
+		if got := strings.Join(m.pagerLines(), "\n"); got != want || m.conversation.pager.text != want {
+			t.Fatalf("Details = %q, pager text = %q, want %q", got, m.conversation.pager.text, want)
+		}
+	}
+	check("Summary without optional text")
+	update(2, "Updated summary", "")
+	check("Updated summary")
+	update(3, "Summary with full detail", "Complete detail")
+	check("Complete detail")
+	update(4, "Summary restored", "")
+	check("Summary restored")
+}
