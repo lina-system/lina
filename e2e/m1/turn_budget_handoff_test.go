@@ -15,6 +15,7 @@ import (
 	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/runs"
+	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -154,7 +155,7 @@ func TestM1TurnBudgetHandoffInstalledCore(t *testing.T) {
 	terminal := h.startTerminalSize([]string{"TERM=xterm-256color"}, false, true, 120, 60)
 	waitComposerReady(t, h, terminal)
 	h.keys(terminal, "\x12")
-	waitScreen(t, h, terminal, "in_progress: "+scenario.Input)
+	waitScreen(t, h, terminal, design.Text(design.English, "running.state.in_progress")+": "+scenario.Input)
 	h.keys(terminal, "\x1b")
 	key := "boundary-407"
 	if _, err = client.Input(h.ctx, protocol.Input{ConversationID: &conversation, InputID: &key, Text: &scenario.Next}); err != nil {
