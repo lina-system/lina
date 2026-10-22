@@ -74,6 +74,18 @@ A tier must pass before the next one is attempted. Passing a tier means every ap
 
 Tiers are per row. Evidence collected on one row says nothing about another.
 
+For Linux tiers 1 and 2, the record checker is
+[`scripts/non-competition.mjs`](../../scripts/non-competition.mjs). It checks
+one installation and OS version at a time, requires exactly one record for
+each of the eight columns at each tier, and rejects tier 2 records unless
+every tier 1 cell passed before tier 2 began. Missing cells remain unverified;
+a correctly recorded failed cell stops the ladder. Invalid evidence prevents
+its tier from reporting a pass even if eight valid cells also exist; a record
+whose tier cannot be identified prevents either tier from reporting a pass.
+The CLI exits successfully
+only when both tiers pass. A headless protocol scenario is supporting evidence,
+not a measurement of a person working concurrently on the Linux machine.
+
 ## Pass criteria
 
 A measured cell passes only when all of the following are observed during a concurrent session where the person is working, LINA is working and the full background load is running:
@@ -90,6 +102,14 @@ A measured cell passes only when all of the following are observed during a conc
 Bounds for latency, resource use, yield time and recovery time are declared per test before the test runs and recorded with the evidence. A test without declared bounds is not a measurement. The resident budget each LINA process declares in [runtime.md](runtime.md) is one of the bounds of the CPU and memory yield column.
 
 Zero means zero. One injected key, one stolen focus, one clipboard read or one lost edit fails the cell.
+
+The Linux checker computes measured-minus-bound deltas, including CPU and
+resident bytes for every declared process; an excess fails the resources cell.
+All cells report the zero-violation counters. File-scope and lifecycle cells
+also record that the relevant events were exercised and their required
+outcomes observed. An omitted counter, resource bound, process measurement or
+required event outcome is not a zero or a pass. Declared bounds predate the
+session and trace coverage spans its full duration.
 
 ## Non-claims
 
@@ -119,6 +139,20 @@ Each measured cell has one record, and it holds:
 - the result per column: which pass criteria were met and which were not, against the declared bounds
 
 Records are kept with the acceptance evidence of the implementation that produced them. A record that lacks any of these fields is not evidence.
+
+The Linux schema version 1, template, field units and collection procedure are
+in [`evidence/non-competition/`](../../evidence/non-competition/README.md).
+Records use stable aliases for private identities and synthetic work content;
+sanitized attachments preserve the event counts, timing and task/grant
+correlation needed for acceptance without publishing personal content. Each
+trace attachment has a relative path and SHA-256 digest, verified by the CLI.
+Every LINA artifact category is explicitly versioned or marked absent with a
+reason. Additional involved artifacts use the same version/digest fields.
+Agent totals, agents doing background work, background runs and the complete
+process inventory are separate fields. The checker distinguishes validity of
+the record from passing the tier; structural checks and matching hashes do
+not authenticate the observer's measurements or establish the completeness of
+the declared normal load. Those remain part of manual acceptance.
 
 ## Deferred
 

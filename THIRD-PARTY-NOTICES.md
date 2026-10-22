@@ -6,7 +6,63 @@ This file collects the notices of every included component: the `NOTICE` file of
 
 Add an entry when third-party code or other material is included in LINA. Record its source, version or commit, license, original notices, and any modifications. Include the required license texts and notices with the distribution.
 
+## github.com/coder/websocket
+
+Source: https://github.com/coder/websocket, version v1.8.15. License: ISC.
+Used without modifications for bounded WebSocket framing, HTTP upgrade and the Discord Gateway transport.
+
+Copyright (c) 2025 Coder
+
+Permission to use, copy, modify, and distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
 ## Terminal UI behaviour references
+
+The empty-conversation wordmark and input hints draw on Hermes Agent's
+startup banner and command hint (`hermes_cli/banner.py`, revision
+`944c3a434071f43e64b443d033f3eba30c64434c`, MIT). LINA's three localized
+suggestions and their removal on first input follow its own conversation
+contract; no reference implementation code is copied.
+
+The conversation speaker gutter adapts behaviour described in these permissive
+projects: distinct first-line speaker marks, indented continuation text and
+spacing between turns. No implementation code is copied.
+
+- [Codex CLI](https://github.com/openai/codex), Apache-2.0, revision
+  `86e17e98`: person/assistant marks, two-cell continuation indent and empty rows.
+- [Gemini CLI](https://github.com/google-gemini/gemini-cli), Apache-2.0, revision
+  `09d81bf1`: distinct speaker marks and accented assistant identity.
+- [Hermes Agent](https://github.com/NousResearch/hermes-agent), MIT, revision
+  `e06df9c2`: person prompt and assistant gutter. Its MIT notice appears below.
+
+[Codex CLI](https://github.com/openai/codex) (Apache-2.0, OpenAI) informs the
+whole-conversation transcript overlay opened with Ctrl+T. No upstream code is
+copied. Source observations and limits are recorded in
+[the TUI reference specification](internal/tui/ui/REFERENCE.md).
+
+[Hermes Agent](https://github.com/NousResearch/hermes-agent) (MIT, copyright
+2025 Nous Research) informs the TUI's complete inline assistant replies and
+paged transcript reading, wheel acceleration and sticky-bottom scrolling. No
+upstream code is copied. The source-survey
+observations and limits are recorded in [the TUI reference specification](internal/tui/ui/REFERENCE.md).
+The Hermes Agent license text is included in its notice below.
+
+Hermes Agent (Nous Research, MIT), revision
+`944c3a434071f43e64b443d033f3eba30c64434c`, is a reference for draft-clearing
+priority and a second Ctrl+C within two seconds. See the
+[observations and differences](internal/tui/ui/REFERENCE.md). LINA implements
+its own client-only confirmation and expiring hint; no upstream code is copied.
+The Hermes copyright and MIT permission notice appear in the Hermes Agent
+section below.
 
 The composer separation and newline keys in LINA's terminal UI independently adapt behaviour
 from these permissive projects. No upstream implementation code is copied or
@@ -30,6 +86,40 @@ bundled by this change:
 
 LINA uses its own semantic tokens, localized catalog, row-budget planner and
 hardware cursor placement. It uses a hairline instead of a surrounding box.
+
+Input recall also independently adapts Hermes Agent's first/last-line Up/Down
+behaviour and separation of secret forms (`hermes_cli/cli_tui_mixin.py`, revision
+`e06df9c2`, MIT, Nous Research and contributors). No implementation code is
+copied. LINA derives in-memory history from Core's current conversation instead
+of using the reference's file history. Observations and limits are recorded in
+[`INPUT-HISTORY-REFERENCE.md`](internal/tui/ui/INPUT-HISTORY-REFERENCE.md).
+
+The shortcut sheet and adaptive footer also follow the behaviour requested from
+Codex CLI (`?` discovery and priority hints) and Gemini CLI (a shared key table).
+The progressive disclosure reference was read directly in Hermes Agent revision
+`944c3a434071f43e64b443d033f3eba30c64434c`,
+`hermes_cli/cli_status_bar_mixin.py`: shared ordered segments and width tiers.
+LINA independently implements whole-hint fitting and a persistent connection
+label in Go. No upstream code is copied. See the
+[observations and limits](docs/design/tui-shortcuts-reference.md).
+
+The activity row draws on behavioural observations of Codex CLI
+([openai/codex](https://github.com/openai/codex), Apache-2.0) and Hermes Agent
+([NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent), MIT):
+status above the composer, compact elapsed time, a completion duration, frame
+sets and pausing animation while hidden or idle. No source code is copied.
+The seen/inferred/unknown specification is in
+[the activity reference](internal/tui/ACTIVITY-REFERENCE.md).
+
+Narrow activity and footer layout also reference Hermes Agent's measured
+essential widths and priority-based omission of whole status segments
+(`ui-tui/src/components/appChrome.tsx`, revision `e06df9c2`). The adaptation
+uses LINA's width thresholds and row planner; no upstream source is copied.
+See the [narrow terminal reference](internal/tui/NARROW-REFERENCE.md).
+
+Tool activity also follows Hermes Agent’s friendly catalog verbs and timed
+completion indication, observed at revision `944c3a434071f43e64b443d033f3eba30c64434c`
+in `agent/display.py`. LINA’s protocol and journal wiring are original.
 
 ## Memory design references
 
@@ -1317,36 +1407,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## Terminal UI behaviour references
-
-The conversation speaker gutter adapts behaviour described in these permissive
-projects: distinct first-line speaker marks, indented continuation text and
-spacing between turns. No implementation code is copied.
-
-- [Codex CLI](https://github.com/openai/codex), Apache-2.0, revision
-  `86e17e98`: person/assistant marks, two-cell continuation indent and empty rows.
-- [Gemini CLI](https://github.com/google-gemini/gemini-cli), Apache-2.0, revision
-  `09d81bf1`: distinct speaker marks and accented assistant identity.
-- [Hermes Agent](https://github.com/NousResearch/hermes-agent), MIT, revision
-  `e06df9c2`: person prompt and assistant gutter. Its MIT notice appears above.
-
-The empty-conversation wordmark and input hints also draw on Hermes Agent's
-startup banner and command hint (`hermes_cli/banner.py`, revision
-`944c3a434071f43e64b443d033f3eba30c64434c`, MIT). LINA's three localized
-suggestions and their removal on first input follow its own conversation
-contract; no reference implementation code is copied.
-
-[Codex CLI](https://github.com/openai/codex) (Apache-2.0, OpenAI) informs the
-whole-conversation transcript overlay opened with Ctrl+T. No upstream code is
-copied. Source observations and limits are recorded in
-[the TUI reference specification](internal/tui/ui/REFERENCE.md).
-
-[Hermes Agent](https://github.com/NousResearch/hermes-agent) (MIT, copyright
-2025 Nous Research) informs the TUI's complete inline assistant replies and
-paged transcript reading. No upstream code is copied. The source-survey
-observations and limits are recorded in [the TUI reference specification](internal/tui/ui/REFERENCE.md).
-The Hermes Agent license text is included above.
-
 ## codex-app-server
 
 Source: https://github.com/openai/codex. Generated protocol baseline: **0.163.0**
@@ -1402,6 +1462,16 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
+## Codex Relay Workflow GitHub observation reference
+
+Source: https://github.com/thisisjun786/codex-relay-workflow, commit
+`7e65fcb82d426d228e18958d728fe63a0991ddd0`. License: MIT.
+
+The tracker and its tests informed rate-limit classification and bounded reads
+in LINA's independent GitHub observation implementation. The merge-order reading
+and merged-PR tests informed stale-evidence and observed-result boundaries. The seen/inferred/unknown
+record is `internal/core/ghclient/REFERENCE.md`. No CRW source is copied,
+translated, vendored or linked; no relay or operational state is consumed.
 
 ## CRW contract schemas and fixtures
 
@@ -1491,20 +1561,20 @@ Source: https://github.com/pjbgf/sha1cd. Version: `v0.7.0`. License: Apache-2.0.
 
 The Apache License, Version 2.0 is reproduced in [LICENSE](LICENSE).
 
-## Codex Relay Workflow GitHub observation reference
+## Hermes Agent web tools
 
-Source: https://github.com/thisisjun786/codex-relay-workflow, commit
-`7e65fcb82d426d228e18958d728fe63a0991ddd0`. License: MIT.
+Source: https://github.com/NousResearch/hermes-agent/tree/81a55437f3f31a9f12a30c53b6c5d49d420898aa. License: MIT.
 
-The tracker and its tests informed rate-limit classification and bounded reads
-in LINA's independent GitHub observation implementation. The seen/inferred/unknown
-record is `internal/core/ghclient/REFERENCE.md`. No CRW source is copied,
-translated, vendored or linked; no relay or operational state is consumed.
+LINA's Go web tools adapt search metadata, limit normalization, readable page
+extraction, bounded results and missing-provider behavior from `tools/web_tools.py`,
+`tools/web_tools_extract.py`, `tools/web_tools_truncate.py` and the Firecrawl
+provider. The observation record is [web-tools.md](docs/design/web-tools.md).
+No Python implementation or runtime is bundled.
 
 ```text
 MIT License
 
-Copyright (c) 2026 thisisjun786 and contributors
+Copyright (c) 2025 Nous Research
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

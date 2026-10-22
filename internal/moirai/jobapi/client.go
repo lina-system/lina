@@ -80,3 +80,17 @@ func (c *Client) Apply(ctx context.Context, p Proposal) (Applied, error) {
 func (c *Client) Report(ctx context.Context, id string, state JobState) error {
 	return c.call(ctx, "Report", ReportRequest{id, state}, nil)
 }
+
+// Ready checks the private job protocol without admitting or replaying a job.
+func (c *Client) Ready(ctx context.Context) error {
+	var result struct {
+		Protocol string `json:"protocol"`
+	}
+	if err := c.call(ctx, "Ready", struct{}{}, &result); err != nil {
+		return err
+	}
+	if result.Protocol != "moirai/1" {
+		return ErrInvalid
+	}
+	return nil
+}

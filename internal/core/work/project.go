@@ -79,6 +79,8 @@ func advance(c *Card, e Event) error {
 		c.Active = true
 		c.State = "working"
 		c.Receipt = nil
+		c.Materials = nil
+		c.ResultHead = ""
 		c.Verdict = ""
 		c.Applied = false
 		c.TurnStatus = ""
@@ -101,6 +103,18 @@ func advance(c *Card, e Event) error {
 		if !c.Active {
 			setOutcome(c)
 		}
+	case "retained":
+		if c.Active || c.Receipt == nil || c.Receipt.EventID != e.ReceiptID || c.Receipt.Outcome != "ready_for_review" || c.TurnStatus != "completed" || len(e.Materials) == 0 || len(c.Materials) != 0 {
+			return ErrState
+		}
+		for _, m := range e.Materials {
+			if m.ID == "" || m.Revision < 1 || m.Path == "" || len(m.SHA256) != 64 {
+				return ErrInvalid
+			}
+		}
+		c.Materials = e.Materials
+		c.ResultHead = e.Value
+
 	case "finished":
 		if c.Run == nil || c.Run.ID != e.RunID {
 			return ErrState

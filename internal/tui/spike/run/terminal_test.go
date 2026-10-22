@@ -494,7 +494,7 @@ func TestHarnessScenarioUsesRealRecorder(t *testing.T) {
 		t.Fatal(err)
 	}
 	if result, err := verdict("S8", values); err != nil || result != "pass" {
-		t.Fatalf("%s: %v", result, err)
+		t.Fatalf("%s: %v; observations=%v", result, err, values)
 	}
 }
 

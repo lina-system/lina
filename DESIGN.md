@@ -79,6 +79,8 @@ of app pixels. Duration values are milliseconds.
 | color.surface | `#EEF0F6` (255 / 7) | `#20232B` (235 / 0) | `#000000` (16 / 0) |
 | color.text | `#20232D` (234 / 0) | `#F4F5F9` (255 / 15) | `#FFFFFF` (231 / 15) |
 | glyph.ascii.action | `">"` | `">"` | `">"` |
+| glyph.ascii.activityFrames | `"|/-\\"` | `"|/-\\"` | `"|/-\\"` |
+| glyph.ascii.activitySeparator | `"-"` | `"-"` | `"-"` |
 | glyph.ascii.agent | `"*"` | `"*"` | `"*"` |
 | glyph.ascii.connecting | `"~"` | `"~"` | `"~"` |
 | glyph.ascii.failed | `"x"` | `"x"` | `"x"` |
@@ -95,6 +97,8 @@ of app pixels. Duration values are milliseconds.
 | glyph.ascii.unknown | `"?"` | `"?"` | `"?"` |
 | glyph.ascii.waiting | `"?"` | `"?"` | `"?"` |
 | glyph.unicode.action | `"›"` | `"›"` | `"›"` |
+| glyph.unicode.activityFrames | `"◐◓◑◒"` | `"◐◓◑◒"` | `"◐◓◑◒"` |
+| glyph.unicode.activitySeparator | `"·"` | `"·"` | `"·"` |
 | glyph.unicode.agent | `"●"` | `"●"` | `"●"` |
 | glyph.unicode.connecting | `"◌"` | `"◌"` | `"◌"` |
 | glyph.unicode.failed | `"×"` | `"×"` | `"×"` |
@@ -111,6 +115,8 @@ of app pixels. Duration values are milliseconds.
 | glyph.unicode.unknown | `"?"` | `"?"` | `"?"` |
 | glyph.unicode.waiting | `"?"` | `"?"` | `"?"` |
 | icon.size | `20px` | `20px` | `20px` |
+| motion.activityElapsed | `1000ms` | `1000ms` | `1000ms` |
+| motion.activityFrame | `100ms` | `100ms` | `100ms` |
 | motion.reduced | `0ms` | `0ms` | `0ms` |
 | motion.settle | `160ms` | `160ms` | `160ms` |
 | radius.card | `12px` | `12px` | `12px` |

@@ -48,9 +48,23 @@ func (p *tokenProcess) kill() error {
 	p.stop.Do(func() {
 		go func() {
 			defer close(p.stopped)
-			// Group kill first, then find tokens independently of ancestry/PGID.
-			if err := syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
-				p.stopErr = err
+			// Keep the leader unreaped until cleanup finishes. A dead Darwin
+			// process group can report EPERM instead of ESRCH; never signal
+			// a recycled group id after cmd.Wait has released its leader.
+			info, inspectErr := unix.SysctlKinfoProc("kern.proc.pid", p.cmd.Process.Pid)
+			if inspectErr == nil && info.Proc.P_stat != 5 {
+				err := syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
+				if errors.Is(err, syscall.EPERM) {
+					current, e := unix.SysctlKinfoProc("kern.proc.pid", p.cmd.Process.Pid)
+					if e == nil && current.Proc.P_stat == 5 {
+						err = nil
+					}
+				}
+				if err != nil && !errors.Is(err, syscall.ESRCH) {
+					p.stopErr = err
+				}
+			} else if inspectErr != nil && !errors.Is(inspectErr, syscall.ESRCH) {
+				p.stopErr = inspectErr
 			}
 			p.stopErr = errors.Join(p.stopErr, killTokenProcesses(p.token))
 		}()
@@ -58,24 +72,18 @@ func (p *tokenProcess) kill() error {
 	return nil
 }
 func (p *tokenProcess) wait() error {
-	cleaned := make(chan error, 1)
-	// Observe exit independently of exec.Wait, whose stream copies may be
-	// held open by an escaped descendant. Descendant discovery uses
-	// KERN_PROCARGS2, not unsupported kqueue NOTE_TRACK.
-	go func() {
-		for {
-			info, err := unix.SysctlKinfoProc("kern.proc.pid", p.cmd.Process.Pid)
-			if err != nil || info.Proc.P_stat == 5 {
-				break
-			} // SZOMB
-			time.Sleep(10 * time.Millisecond)
-		}
-		_ = p.kill()
-		<-p.stopped
-		cleaned <- p.stopErr
-	}()
-	err := p.cmd.Wait()
-	return errors.Join(err, <-cleaned)
+	// Observe exit without reaping: escaped descendants can hold stdio open,
+	// and cleanup must finish while the leader still reserves its PID/PGID.
+	for {
+		info, err := unix.SysctlKinfoProc("kern.proc.pid", p.cmd.Process.Pid)
+		if err != nil || info.Proc.P_stat == 5 {
+			break
+		} // SZOMB
+		time.Sleep(10 * time.Millisecond)
+	}
+	_ = p.kill()
+	<-p.stopped
+	return errors.Join(p.cmd.Wait(), p.stopErr)
 }
 
 func killTokenProcesses(token string) error {
@@ -98,10 +106,19 @@ func killTokenProcesses(token string) error {
 			// Recheck identity and credentials after reading arguments to avoid
 			// signalling a replacement process found under a recycled PID.
 			current, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
-			if err != nil || current.Proc.P_starttime != info.Proc.P_starttime || current.Eproc.Ucred.Uid != uint32(os.Geteuid()) {
+			if err != nil || current.Proc.P_starttime != info.Proc.P_starttime || current.Eproc.Ucred.Uid != uint32(os.Geteuid()) || current.Proc.P_stat == 5 {
 				continue
 			}
 			if err := syscall.Kill(pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+				// Darwin can refuse a signal after the process became a
+				// zombie between inspection and kill. Ignore only a positively
+				// observed end of this identity, never EPERM on a live child.
+				if errors.Is(err, syscall.EPERM) {
+					after, readErr := unix.SysctlKinfoProc("kern.proc.pid", pid)
+					if errors.Is(readErr, syscall.ESRCH) || readErr == nil && (after.Proc.P_stat == 5 || after.Proc.P_starttime != info.Proc.P_starttime) {
+						continue
+					}
+				}
 				return err
 			}
 			live = true
