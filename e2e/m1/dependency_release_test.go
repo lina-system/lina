@@ -371,7 +371,8 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 		attempts += conflict.Returns
 	}
 	a := await(taskIDs[0], func(c work.Card) bool {
-		return c.Run != nil && c.Run.Generation == attempts && !c.Active && c.TurnStatus == "completed"
+		return c.Run != nil && c.Run.Generation == attempts && !c.Active && c.TurnStatus == "completed" &&
+			(conflict == nil || c.Scheduling.PRRun == c.Run.ID)
 	})
 	if conflict != nil {
 		if !a.Scheduling.ReturnSent || a.State != "input_needed" {
