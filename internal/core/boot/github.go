@@ -3,6 +3,7 @@ package boot
 
 import (
 	"context"
+	"github.com/thisisjun786/lina/internal/core/authority"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/ghclient"
 	"github.com/thisisjun786/lina/kit/protocol"
@@ -10,9 +11,16 @@ import (
 	"time"
 )
 
-type githubService struct{ client *ghclient.Client }
+type githubService struct {
+	client      *ghclient.Client
+	merges      *authority.Merges
+	agentExists func(context.Context, string) bool
+}
 
-func (g githubService) ObserveGitHub(ctx context.Context, _ clientsrv.Session, p protocol.WorkRequest) (protocol.WorkResult, error) {
+func (g githubService) ObserveGitHub(ctx context.Context, session clientsrv.Session, p protocol.WorkRequest) (protocol.WorkResult, error) {
+	if *p.Operation != "github_read" && *p.Operation != "github_watch" {
+		return g.mergeRequest(ctx, session, p)
+	}
 	number, err := strconv.Atoi(*p.PrNumber)
 	if err != nil {
 		return protocol.WorkResult{}, &clientsrv.OperationError{Code: protocol.ErrorMalformed}
