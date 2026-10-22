@@ -120,6 +120,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-11 Inbox, lanes, steering and deadlines.** Inbox, lanes, steering, stop, expiry timers.
 - Done when: a duplicate key inserts one row and preserves its original bytes across restart; the acknowledgement follows the commit and no failed commit is acknowledged; each conversation runs one turn at a time while other conversations can proceed; a message during a turn is applied as steering at the next round; stop ends open calls as aborted; after `kill -9` mid-turn the input is not replayed and the conversation shows one plain line.
 - Depends on: G1-03, G1-09, G1-10. Design refs: C-09; [runtime.md](runtime.md#conversation-loop).
+- #60 and #61 supply the inbox, lane and turn boundaries. The [G1-11 acceptance record](../../evidence/inbox-lanes-acceptance.md) maps the parent #59 conditions to existing package tests and installed Core/TUI scenarios, including their uncached verification on `dev`.
 
 **G1-12 Agents, presets, persona layers and first run.** Persona layers, presets, deletion, first run.
 - Done when: a new revision applies from the next turn and the preparation acknowledgement names it; a preset update changes only core and default voice; one agent's change never alters another's; a deleted agent sits in the trash 30 days and its channel bindings end at once.
