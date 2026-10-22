@@ -433,8 +433,10 @@ func runCodexWorkTools(t *testing.T, scenario, kind string, observe func(*harnes
 	answerID := ""
 	questions := []protocol.Question{}
 	questionAnswerIDs := map[string]bool{}
+	answerNotices := map[string]string{}
+	answerNoticeCount := 0
 	questionResolved, questionCount := 0, max(1, fixture.QuestionCount)
-	for !ack || !done || !notice || !resolved || questionResolved < questionCount {
+	for !ack || !done || !notice || !resolved || questionResolved < questionCount || answerNoticeCount < questionCount {
 		frame, err := c.Receive(h.ctx)
 		if err != nil {
 			t.Fatalf("worker journey ack=%t done=%t notice=%t resolved=%t questionResolved=%d: %v", ack, done, notice, resolved, questionResolved, err)
@@ -483,6 +485,7 @@ func runCodexWorkTools(t *testing.T, scenario, kind string, observe func(*harnes
 			}
 			values := protocol.FormValues{"answer": protocol.FormValue{String: &fixture.Answer}}
 			for _, question := range questions {
+				answerNotices[question.Card.ID+":answer"] = ""
 				questionAnswerID, err := c.AnswerQuestion(h.ctx, protocol.QuestionAnswer{CardID: &question.Card.ID, Revision: &question.Card.Revision, Answer: protocol.QuestionAnswerActionAccept, Values: &values})
 				if err != nil {
 					t.Fatal(err)
@@ -498,6 +501,15 @@ func runCodexWorkTools(t *testing.T, scenario, kind string, observe func(*harnes
 				delete(questionAnswerIDs, *frame.ReplyTo)
 			}
 		case protocol.ItemDone:
+			if payload.Stream != nil {
+				if previous, expected := answerNotices[payload.Stream.Key]; expected {
+					assertWorkerAnswerNotice(t, payload)
+					if previous == "" {
+						answerNoticeCount++
+					}
+					answerNotices[payload.Stream.Key] = *payload.Text
+				}
+			}
 			notice = notice || payload.Text != nil && strings.Contains(*payload.Text, fixture.Result)
 		case protocol.TurnState:
 			if payload.Active != nil && !*payload.Active {
@@ -540,6 +552,42 @@ func runCodexWorkTools(t *testing.T, scenario, kind string, observe func(*harnes
 	if err != nil || !strings.Contains(string(raw), fixture.Result) {
 		t.Fatalf("worker finish notice not durable: %s: %v", raw, err)
 	}
+	snapshot, ok := frame.Payload.(protocol.Snapshot)
+	if !ok {
+		t.Fatalf("expected restored conversation snapshot, got %T", frame.Payload)
+	}
+	restoredAnswers := map[string]bool{}
+	for _, item := range snapshot.Items {
+		answerNotice, expected := answerNotices[item.Key]
+		if !expected {
+			continue
+		}
+		var payload protocol.ItemDone
+		if err := json.Unmarshal(item.Payload, &payload); err != nil {
+			t.Fatal(err)
+		}
+		assertWorkerAnswerNotice(t, payload)
+		if *payload.Text != answerNotice {
+			t.Fatalf("answer notice changed after restart: %q -> %q", answerNotice, *payload.Text)
+		}
+		restoredAnswers[item.Key] = true
+	}
+	if len(restoredAnswers) != questionCount {
+		t.Fatalf("worker answer acknowledgements after Core restart=%d, want %d", len(restoredAnswers), questionCount)
+	}
 	c.Close()
 	h.stopCore(core)
+}
+
+func assertWorkerAnswerNotice(t *testing.T, notice protocol.ItemDone) {
+	t.Helper()
+	if notice.Speaker == nil || *notice.Speaker != protocol.ConversationSpeakerSystem || notice.Text == nil || strings.TrimSpace(*notice.Text) == "" {
+		t.Fatalf("missing worker answer acknowledgement: %+v", notice)
+	}
+	// Check the display boundary, not the wording of the acknowledgement.
+	for _, internal := range []string{"contentItems", "inputText", `"success":`, `"action":`, `"answer":`} {
+		if strings.Contains(*notice.Text, internal) {
+			t.Errorf("worker answer notice exposes transport field %q: %s", internal, *notice.Text)
+		}
+	}
 }

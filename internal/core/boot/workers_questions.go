@@ -73,7 +73,8 @@ func (e *workerSession) presentQuestion(event worker.Event, requestID, kind, tex
 	if targets == nil {
 		targets = []protocol.DecisionTarget{}
 	}
-	raw, err := json.Marshal(protocol.Question{ConversationID: e.origin.workerDelivery().conversation, Card: &protocol.DecisionCard{ID: id, Revision: "1", Agent: e.origin.agent, Summary: text, Targets: targets}, Form: &protocol.QuestionForm{PluginName: "Codex", Fields: fields}})
+	name := e.origin.router.root.decisions.AgentName(e.origin.agent)
+	raw, err := json.Marshal(protocol.Question{ConversationID: e.origin.workerDelivery().conversation, Card: &protocol.DecisionCard{ID: id, Revision: "1", Agent: name, Summary: text, Targets: targets}, Form: &protocol.QuestionForm{PluginName: "Codex", Fields: fields}})
 	if err != nil {
 		e.bridgeFailure(err)
 		return
@@ -200,7 +201,7 @@ func (q workerQuestions) AnswerQuestion(ctx context.Context, person string, answ
 		raw, err = json.Marshal(wire.McpServerElicitationRequestResponse{Action: action})
 	}
 	if err == nil {
-		err = e.origin.workerNotice(ctx, e.input, *answer.CardID+":answer", "Worker question answered by the originating person: "+string(raw))
+		err = e.origin.workerNotice(ctx, e.input, *answer.CardID+":answer", "Your response to the worker was recorded.")
 	}
 	if err == nil {
 		sendCtx, cancel := context.WithTimeout(e.origin.ctx, 10*time.Second)
