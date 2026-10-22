@@ -230,7 +230,7 @@ func (d *codeGoalDriver) checkCriterion(ctx context.Context, s goal.State, g goa
 		if e != nil {
 			return o, e
 		}
-		merge, e := d.runtime.workerGitHub.ObserveMerge(ctx, ghclient.Ref{Repository: t.Repository, Number: record.PR.Number}, t.Base)
+		merge, e := d.runtime.workerGitHub.ReadLanded(ctx, ghclient.Ref{Repository: t.Repository, Number: record.PR.Number}, t.Base, t.Head, a.Revision)
 		if e != nil {
 			return o, e
 		}

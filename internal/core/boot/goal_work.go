@@ -76,6 +76,9 @@ func (r *conversationRuntime) startWork(ctx context.Context, cfg *WorkConfig) er
 	// Startup derivation precedes publishing the integration's ingress. Its
 	// effects wait for the runner, after the durable epoch and canon mirror.
 	if err = e.Reconcile(ctx); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return err
 	}
 	if cfg.Ready != nil {

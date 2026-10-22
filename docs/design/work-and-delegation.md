@@ -1287,7 +1287,11 @@ Core captures protected refs before starting the worker, re-reads the PR's curre
 head, checks and review, requires the dev manager's verified verdict, and merges
 through the existing durable merge authority and shared-base slot. Only a
 confirming GitHub read releases QA. Criterion checks read their retained QA
-output and current external evidence again before closing the goal. Completion
+output and current external evidence again before closing the goal. An earlier
+merge remains valid when its recorded commit is still an ancestor of the current
+base; a base that removed the commit fails the check. A custom criterion targeting
+a repository uses that repository's observed merged revision, independently of
+the service repository. Completion
 returns to the originating conversation and survives restart without repeating
 effects. An uncertain worker, merge, QA or deployment is observed; it is never
 re-executed by the observation path. A deployment retains its original connection

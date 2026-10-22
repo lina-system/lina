@@ -123,7 +123,7 @@ func (r *conversationRuntime) mergeGoalPR(ctx context.Context, record dispatch.R
 	var result ghclient.MergeResult
 	var err error
 	if observe {
-		result, err = r.workerGitHub.ObserveMerge(ctx, ref, record.Definition.Base)
+		result, err = r.workerGitHub.ReadLanded(ctx, ref, record.Definition.Base, a.Revision, "")
 	} else {
 		// Re-read the full current-head review and manager binding at dispatch.
 		if _, err = r.inspectGoalPR(ctx, record, repository); err != nil {

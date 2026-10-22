@@ -77,6 +77,16 @@ func criterionRevision(g Goal, c Criterion) string {
 		}
 		return ""
 	}
+	// A repository-targeted outcome belongs to that repository's observed merge,
+	// independently of which repository supplies the deployed service.
+	if !strings.HasPrefix(c.ID, "code:") && has(g.Scope.Repositories, c.Check.Target) {
+		if revision := g.MergedRevisions[c.Check.Target]; revision != "" {
+			return revision
+		}
+		if len(g.Scope.Repositories) != 1 || len(g.MergedRevisions) != 0 {
+			return ""
+		}
+	}
 	return targetRevision(g)
 }
 func validCriteria(g Goal) bool {
