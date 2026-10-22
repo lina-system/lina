@@ -148,6 +148,11 @@ func (s *managementSession) request(ctx context.Context, c *clientapi.Client, p 
 	var id string
 	var err error
 	switch p := p.(type) {
+	case protocol.ProgressGet:
+		id, err = c.Progress(ctx, p)
+		if err == nil {
+			s.model.conversation.pager.developerID = id
+		}
 	case protocol.RunningGet:
 		id, err = c.Running(ctx, p)
 	case protocol.AgentRequest:
@@ -170,11 +175,25 @@ func (s *managementSession) response(ctx context.Context, c *clientapi.Client, e
 	}
 	delete(s.pending, *e.ReplyTo)
 	m := s.model
+	if _, developer := request.(protocol.ProgressGet); developer {
+		p := &m.conversation.pager
+		if !p.open || !p.developer || p.developerID != *e.ReplyTo {
+			return true, nil
+		}
+		p.developerBusy = false
+	}
 	if e.Error != nil {
 		m.openPager(design.Text(m.styles.options.Language, string(e.Error.Code)))
 		return true, nil
 	}
 	switch p := e.Payload.(type) {
+	case protocol.Progress:
+		if _, ok := request.(protocol.ProgressGet); !ok || p.Lanes == nil {
+			return true, errStream
+		}
+		m.conversation.pager.lanes = m.conversation.pager.lanes.Replace(*p.Lanes)
+		m.conversation.pager.laneNext = p.NextCursor
+		m.refreshDeveloper()
 	case protocol.Running:
 		original, ok := request.(protocol.RunningGet)
 		if !ok || original.RunID == nil || p.RunID == nil || *p.RunID != *original.RunID {
