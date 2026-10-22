@@ -145,15 +145,22 @@ func TestM1ConversationHistoryOrder(t *testing.T) {
 			snapshot := func() []message {
 				t.Helper()
 				topic := "conversation:" + conversation
-				if _, err := observer.Subscribe(h.ctx, protocol.Subscribe{Topic: &topic}); err != nil {
-					t.Fatal(err)
-				}
-				frame, err := observer.Receive(h.ctx)
+				request, err := observer.Subscribe(h.ctx, protocol.Subscribe{Topic: &topic})
 				if err != nil {
 					t.Fatal(err)
 				}
+				var frame protocol.Envelope
+				for {
+					frame, err = observer.Receive(h.ctx)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if frame.ReplyTo != nil && *frame.ReplyTo == request {
+						break
+					}
+				}
 				history, ok := frame.Payload.(protocol.Snapshot)
-				if !ok {
+				if !ok || history.Topic != topic {
 					t.Fatalf("expected snapshot, got %s", frame.Kind)
 				}
 				var messages []message
