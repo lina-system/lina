@@ -165,6 +165,7 @@ The Korean acceptance corpus is `testdata/korean/search.json`: both stores asser
 - Depends on: G1-08, G1-10, G1-13, G1-14. Design refs: C-18; [conversation-and-memory.md](conversation-and-memory.md#compaction-and-resume).
 - #70 supplies the request-fitting pass, auxiliary summary validation, continuation dispatch guard and scoped `expand` tool boundary. Package scenarios verify failure preservation, exact evidence recovery and no dispatch above the threshold; client-protocol and TUI wiring remain in their consuming flows.
 - #69 implements summary tables, exact coverage and single-parent checks, frontier/epoch-fenced publication, and atomic bottom-up rebuilding after retraction. Real SQLite scenarios cover concurrent changes, summarizer/storage failures, migration and reopen. This is a package API; request compaction, provider wiring, continuation and `expand` remain with their consuming flows, and no client/TUI scenario is introduced here.
+- #67's [acceptance record](../../evidence/g1-15-compaction.md) maps every parent done condition to the existing regressions on dev. Both sub-issues are closed, and the compaction, canon and exec suites pass; this acceptance adds no runtime behavior or client endpoint.
 
 **G1-16 Skills written by agents, adopted at once, undone in one action.** Reversible-write check, notice, undo, index.
 - Done when: an instruction-only patch is adopted as a new version with a one-line notice after the commit; undo restores the previous text as a new version; a skill with executable code is not adopted this way; the index holds name and description and bodies load only when needed.
@@ -209,10 +210,11 @@ The staged increment (#117) supplies registered SQLite mapping, per-conversation
 ### 1.F Backup, install and restart
 
 **G1-22 Backup generations and restore.** `lina backup` and `lina restore`; removal list applied first.
-- #89 implements whole-generation capture, removal-list replay before copying, online SQLite snapshots, verified file/material inventories and manifest-last publication. Package failure scenarios include SIGKILL during copying; `e2e/m1/backup.json` drives a synthetic conversation and backup through the installed executable. Restore and its zero-exposure acceptance remain with #90.
+- #89 implements whole-generation capture, removal-list replay before copying, online SQLite snapshots, verified file/material inventories and manifest-last publication. Package failure scenarios include SIGKILL during copying; `e2e/m1/backup.json` drives a synthetic conversation and backup through the installed executable.
 - Done when: a kill during copy leaves no generation; a hash mismatch fails the backup; the zero-exposure test passes also into another root; after restore non-terminal external-effect rows are unknown, leases are void and accounts show needs sign-in; the epoch never falls.
 - Depends on: G1-03, G1-11, G1-14, G1-15, G1-29. Design refs: C-32; [filesystem.md](filesystem.md#backup-generations).
 - #90 supplies the stopped-main restore CLI, independent generation checks, replay before first read, authority invalidation and recoverable publication. Package tests cover zero exposure after losing canon in the original or a second root, source removals during interruption, and process death. The M1 installed-binary scenario restores conversation history through the Core protocol and proves subsequent epoch advancement and new input.
+- #88 extends restore invalidation to queued and in-flight channel deliveries. Same-root, other-root and resumed-restore tests prove old sends cannot be claimed or settled while terminal outcomes and partial receipts survive; `e2e/m1/restore.json` checks delivery outcomes through the installed restore command.
 
 **G1-23 Install.** `lina install`: state root, services, adapter files, tool discovery.
 - Done when: install succeeds with no account and the first preparation fails with a plain cause and the sign-in offer; a foreign unit or an occupied port is refused and nothing is overwritten; versions of discovered tools are recorded and unverified ones listed.
@@ -358,7 +360,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 
 **G2-20 Persona growth step with undo.** Adopted at once into the growth snapshot layer; undo.
 - Done when: a step is a new revision applied from the next turn; undo restores the previous text as a new revision; an undone step is not proposed again; only the growth snapshot layer changes.
-- Implementation: Core's deterministic Moirai growth definition publishes the revision and one-line notice with the job receipt. Agent-bound notice/undo tools retain other layers and reject undone candidate ids and content hashes across restart. `e2e/m2/persona-growth.json` covers the real worker and installed Core, including the growth capability, next-turn model instructions, conversation notice, one-action undo, migration upgrades and restart suppression using synthetic candidates.
+- Implementation: Core's deterministic Moirai growth definition publishes the revision and one-line notice with the job receipt. Agent-bound notice/undo tools retain other layers and reject undone candidate ids and content hashes across restart. `e2e/m2/persona-growth.json` covers the real worker and installed Core, including the growth capability, next-turn model instructions, conversation notice, one-action undo, migration upgrades and restart suppression using synthetic candidates. `e2e/m2/persona-growth-followups.json` covers near-limit candidates, replacement agents after an empty startup and repeated undo; fault-injected Core tests verify that committed adoption survives notice delivery failure.
 - Depends on: G1-12, G1-37. Design refs: C-23; [cognition-and-life.md](cognition-and-life.md#growth).
 
 ### 2.D Owner views

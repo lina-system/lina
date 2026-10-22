@@ -44,6 +44,12 @@ func invalidateAuthority(ctx context.Context, db *canon.Store) error {
 		if _, err := tx.ExecContext(ctx, "UPDATE authority_targets SET active_key=''"); err != nil {
 			return err
 		}
+		// A captured queue predates any delivery after the generation. Even an
+		// unclaimed or retryable send has an unknown outcome after restoration.
+		// Preserve parts and receipts, but neither dispatch nor settle old claims.
+		if _, err := tx.ExecContext(ctx, "UPDATE channel_outbound SET state='unknown' WHERE state IN ('queued','sending')"); err != nil {
+			return err
+		}
 		if err := rewriteRestoreRecords(ctx, tx, "authority_approvals", "approval_id", func(id string, raw []byte) ([]byte, error) {
 			var a authority.Approval
 			if err := json.Unmarshal(raw, &a); err != nil {

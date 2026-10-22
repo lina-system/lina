@@ -38,6 +38,7 @@ func TestReconnectHistoryRetainsChosenAgentAndUnacknowledgedDraft(t *testing.T) 
 
 func TestInitialHistoryDiscoveryKeepsDraftUntilDestinationKnown(t *testing.T) {
 	m := conversationShell()
+	m.conversation.id = ""
 	m.content.Agents = []protocol.Agent{{AgentID: "default"}}
 	m.Update(tea.PasteMsg{Content: "early input"})
 	request := m.discoveryHistory()
@@ -60,6 +61,7 @@ func TestInitialHistoryDiscoveryKeepsDraftUntilDestinationKnown(t *testing.T) {
 
 func TestInitialDiscoveryWithoutConversationKeepsAccountsUsable(t *testing.T) {
 	m := conversationShell()
+	m.conversation.id = ""
 	m.content.Capabilities = []protocol.Capability{{Name: "accounts", Version: "1.0"}}
 	m.content.Agents = []protocol.Agent{{AgentID: "default"}}
 	request := m.discoveryHistory()

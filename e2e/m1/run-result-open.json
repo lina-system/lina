@@ -1,0 +1,5 @@
+{
+  "input": "Inspect the available skills and finish the inventory",
+  "artifact": "BACKGROUND-RESULT: synthetic inspection finished",
+  "prior": "Describe the initial observation"
+}
