@@ -89,6 +89,7 @@ func TestConversationRapidResizeStreamMatchesFresh(t *testing.T) {
 		fresh.conversation.id = "fixture"
 		fresh.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 		fresh.Update(shellData{Generation: 1, Message: state.Snapshot{Epoch: "1", Revocation: "1", Topic: topic, Cursor: m.content.Topics[topic].Cursor, Items: m.content.Blocks}})
+		fresh.Update(shellData{Generation: 1, Message: state.Turn{Active: m.content.TurnActive}})
 		fresh.Update(tea.PasteMsg{Content: m.content.Draft.Text})
 		expected, err := tuiterm.NewRecorder(120, 40)
 		if err != nil {

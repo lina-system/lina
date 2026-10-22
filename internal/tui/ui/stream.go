@@ -142,6 +142,12 @@ func projectStream(envelope protocol.Envelope) (streamProjection, error) {
 		} else {
 			block := state.Block{ID: streamKey(metadata.Topic, metadata.Key), Kind: envelope.Kind, Revision: revision, Text: value}
 			projectConversationBlock(&block, envelope.Payload)
+			if block.TurnKnown {
+				block.TurnAt, _ = time.Parse(time.RFC3339Nano, envelope.SentAt)
+				if block.TurnActive {
+					block.TurnStarted = block.TurnAt
+				}
+			}
 			block.Card = projectCard(envelope.Payload, envelope.Epoch, revision)
 			p.message = state.ItemDone{Epoch: metadata.Cursor.Epoch, Topic: metadata.Topic, Cursor: seq, Block: block}
 		}

@@ -1,0 +1,21 @@
+# Activity behaviour reference
+
+This is a behavioural port; no reference implementation is copied.
+
+- **Seen:** Codex CLI (`openai/codex`, Apache-2.0, revision `86e17e98`),
+  `tui/src/status_indicator_widget.rs:76–90,226–265`, places a glyph, working
+  word, compact elapsed duration and interrupt hint above the composer. Its
+  completed turn has a muted duration line. Hermes Agent
+  (`NousResearch/hermes-agent`, MIT, revision `e06df9c2`),
+  `ui-tui/src/components/appChrome.tsx:52–83,138–188`, uses frame tables,
+  a one-second elapsed refresh, and pauses motion under overlays.
+- **Inferred:** LINA can use its typed active flag, accepted output deltas and
+  interrupt request to show thinking, replying and stopping. Animation adds
+  emphasis; the word and duration must remain useful with a static glyph.
+- **Unknown:** These references do not establish LINA's server clock offset,
+  snapshot restoration or protocol ordering. LINA's reducer and installed-Core
+  tests establish those separately. Tool phases cannot be inferred from text.
+
+LINA uses one row above the composer, a 100 ms frame interval while visible,
+elapsed seconds, and no idle timer. Reduced motion and monochrome output keep
+the first frame. Completion durations are client display state, never history.

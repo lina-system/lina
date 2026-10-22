@@ -22,10 +22,10 @@ func TestPlanHidesEmptyAndUnavailableWorkLists(t *testing.T) {
 func TestPlanEveryTerminalSize(t *testing.T) {
 	for width := 0; width <= 240; width++ {
 		for height := 0; height <= 100; height++ {
-			for _, shape := range []Shape{{}, {ComposerRows: 6, Attachments: true, SidePane: true, RunningCount: 12, CardCount: 8, CardRows: 5}} {
+			for _, shape := range []Shape{{}, {Activity: true, ComposerRows: 6, Attachments: true, SidePane: true, RunningCount: 12, CardCount: 8, CardRows: 5}} {
 				for _, caps := range []Caps{{}, {SidePane: true, Running: true, Cards: true}} {
 					p := Plan(Size{width, height}, caps, shape)
-					regions := []Rect{p.Header, p.Conversation, p.SidePane, p.Running, p.Cards, p.Attachments, p.Composer, p.Status, p.Notice}
+					regions := []Rect{p.Header, p.Conversation, p.SidePane, p.Running, p.Cards, p.Attachments, p.Activity, p.Composer, p.Status, p.Notice}
 					for i, a := range regions {
 						if a.X < 0 || a.Y < 0 || a.Width < 0 || a.Height < 0 || a.X+a.Width > width || a.Y+a.Height > height {
 							t.Fatalf("bounds %dx%d: %+v", width, height, p)
@@ -76,7 +76,7 @@ func TestExtremeSizes(t *testing.T) {
 	largest := int(^uint(0) >> 1)
 	for _, size := range []Size{{-1, -1}, {largest, largest}, {40, 10}, {39, 10}, {40, 9}, {80, 10}, {119, 10}, {120, 10}} {
 		p := Plan(size, Caps{true, true, true}, Shape{ComposerRows: largest, Attachments: true, SidePane: true, RunningCount: largest, CardCount: largest, CardRows: largest})
-		for _, r := range []Rect{p.Header, p.Conversation, p.SidePane, p.Running, p.Cards, p.Attachments, p.Composer, p.Status, p.Notice} {
+		for _, r := range []Rect{p.Header, p.Conversation, p.SidePane, p.Running, p.Cards, p.Attachments, p.Activity, p.Composer, p.Status, p.Notice} {
 			if r.X < 0 || r.Y < 0 || r.Width < 0 || r.Height < 0 || r.Width > max(0, size.Width)-r.X || r.Height > max(0, size.Height)-r.Y {
 				t.Fatalf("invalid rectangle at %+v: %+v", size, r)
 			}
@@ -84,5 +84,13 @@ func TestExtremeSizes(t *testing.T) {
 		if size.Width >= 40 && size.Height >= 10 && p.Conversation.Height < 4 {
 			t.Fatal("lost floor")
 		}
+	}
+}
+
+func TestActivityImmediatelyAboveComposer(t *testing.T) {
+	idle := Plan(Size{100, 34}, Caps{}, Shape{})
+	busy := Plan(Size{100, 34}, Caps{}, Shape{Activity: true})
+	if idle.Activity.Height != 0 || busy.Activity.Height != 1 || busy.Activity.Y+1 != busy.Composer.Y || busy.Conversation.Height != idle.Conversation.Height-1 {
+		t.Fatalf("activity row budget: idle=%+v busy=%+v", idle, busy)
 	}
 }
