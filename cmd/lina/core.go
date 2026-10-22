@@ -18,6 +18,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
 	"github.com/thisisjun786/lina/internal/core/update"
+	"github.com/thisisjun786/lina/kit/provider"
 )
 
 func runCore(args []string) int {
@@ -68,6 +69,14 @@ func runCore(args []string) int {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "lina core: invalid model configuration")
 		return 78
+	}
+	// The adapter now owns the configured credential. Consume it before boot
+	// captures environments for workers, which keep their own provider setup.
+	if route != nil && route.Adapter.Provider() == provider.Claude {
+		if err := os.Unsetenv("CLAUDE_CODE_OAUTH_TOKEN"); err != nil {
+			fmt.Fprintln(os.Stderr, "lina core: cannot isolate model credential")
+			return 78
+		}
 	}
 	cfg := boot.Config{StateRoot: *root, Socket: *socket, Conversation: route, ClientManifest: *metadata}
 	if *tailnet != "" {

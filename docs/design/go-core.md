@@ -265,6 +265,13 @@ reply without applying a job. User-installed coding tools are untouched. The
 smoke Core drains and exits before `complete` is recorded and the normal service
 is started and checked for readiness. Smoke input and its result remain ordinary
 durable conversation evidence. A missing account or failed provider fails smoke.
+The trusted candidate Core launch preserves the explicitly configured
+`CLAUDE_CODE_OAUTH_TOKEN` in addition to the filtered environment; this exception
+does not admit other filtered provider variables. Core captures that credential
+in its Claude model adapter and removes it from the process environment before
+boot captures worker environments. Tool filtering and the smoke worker's empty
+environment remain unchanged. Credential values never enter logs, update
+receipts or diagnostics.
 
 Automatic rollback is allowed only before READY and when no forward schema
 migration may have begun. It restores the kept composition and its independently
