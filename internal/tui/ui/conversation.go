@@ -506,6 +506,7 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		body   render.StyledRow
 		prefix string
 		person bool
+		muted  bool
 	}
 	var transcript []transcriptRow
 	plainRow := func(text string) render.StyledRow { return render.StyledRow{Spans: []render.Span{{Text: text}}} }
@@ -522,10 +523,12 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		}
 		transcript = append(transcript, transcriptRow{body: plainRow(design.Text(m.styles.options.Language, code) + "  /accounts")})
 	}
+	hasItems := false
 	for _, b := range m.content.Blocks {
 		if b.Topic == "core" || b.Topic == "running" || (b.Topic == "waiting" && b.Card == nil) || b.Topic == "progress" || b.Kind == protocol.KindTurnState {
 			continue
 		}
+		hasItems = true
 		cached := m.blocks[b.ID]
 		if cached.stream == nil {
 			continue
@@ -570,6 +573,18 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 			transcript = append(transcript, transcriptRow{body: row, prefix: lead, person: person})
 		}
 	}
+	// Starter hints are local presentation, never reducer blocks or Core items.
+	// Wait for history so reconnecting to an existing conversation cannot flash
+	// a first-run screen. Account setup can show hints before chat is negotiated.
+	_, historyKnown := m.content.Topics["conversation:"+m.conversation.id]
+	if !hasItems && !m.conversation.agentMissing && !m.conversation.agentPending && (historyKnown || !m.hasCapability("conversation")) {
+		rows[plan.Header.Y] = clip(m.styles.wordmark() + "  " + m.styles.Title.Render(name) + "  " + m.styles.Text.Render(status.Label))
+		var hints []transcriptRow
+		for _, id := range []string{"conversation.start.memory", "conversation.start.voice", "conversation.start.task"} {
+			hints = append(hints, transcriptRow{body: plainRow(design.Text(m.styles.options.Language, id)), muted: true})
+		}
+		transcript = append(hints, transcript...)
+	}
 	m.conversation.scroll = min(m.conversation.scroll, max(0, len(transcript)-plan.Conversation.Height))
 	start := max(0, len(transcript)-plan.Conversation.Height-m.conversation.scroll)
 	for y, line := range transcript[start:] {
@@ -577,7 +592,7 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 			break
 		}
 		styles := m.styles
-		if line.person {
+		if line.person || line.muted {
 			styles.Text = styles.Muted
 		}
 		prefix := ""

@@ -1304,3 +1304,9 @@ spacing between turns. No implementation code is copied.
   `09d81bf1`: distinct speaker marks and accented assistant identity.
 - [Hermes Agent](https://github.com/NousResearch/hermes-agent), MIT, revision
   `e06df9c2`: person prompt and assistant gutter. Its MIT notice appears above.
+
+The empty-conversation wordmark and input hints also draw on Hermes Agent's
+startup banner and command hint (`hermes_cli/banner.py`, revision
+`944c3a434071f43e64b443d033f3eba30c64434c`, MIT). LINA's three localized
+suggestions and their removal on first input follow its own conversation
+contract; no reference implementation code is copied.
