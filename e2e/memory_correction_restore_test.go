@@ -50,7 +50,13 @@ func TestM1MemoryCorrectionForgetRestore(t *testing.T) {
 				emitResponse(w, "Synthetic fixture reply", true)
 			}))
 			defer provider.Close()
-			h, start := installConversationBundle(t, newHarness(t, binary), bundle, provider.URL)
+			h := newHarness(t, binary)
+			// Multiple Core restarts, backup/restore and terminal sessions share
+			// this scenario; the default three-operation harness budget is too short.
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+			t.Cleanup(cancel)
+			h.ctx = ctx
+			h, start := installConversationBundle(t, h, bundle, provider.URL)
 			core := start(true)
 			command, closeTUI := correctionMemoryTUI(t, h)
 			first := command("/memory remember --holder=all --scope=local " + scenario.Facts[0])
