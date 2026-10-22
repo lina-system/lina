@@ -4192,7 +4192,8 @@
       "enum": [
         "person",
         "agent",
-        "system"
+        "system",
+        "forwarded"
       ]
     },
     "account_summary": {

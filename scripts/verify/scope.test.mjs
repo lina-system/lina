@@ -8,6 +8,20 @@ import { git as runGit } from '../git.mjs';
 import { componentRegistry, kind, scopeFor } from './scope.mjs';
 import { evaluateGate } from './gate.mjs';
 
+test('takeover tool and its fixtures have Go verification without a release binary', t => {
+  const r = repository(t);
+  const base = r.git('rev-parse', 'HEAD');
+  mkdirSync(join(r.cwd, 'tools/crw-takeover/testdata'), { recursive: true });
+  writeFileSync(join(r.cwd, 'tools/crw-takeover/main.go'), 'package main\nfunc main() {}\n');
+  writeFileSync(join(r.cwd, 'tools/crw-takeover/testdata/snapshot.json'), '{}\n');
+  const scope = r.classify(r.commit(), { base, full: true });
+  assert.deepEqual(scope.unmapped, []);
+  assert.ok(scope.selectedComponents.includes('crw-takeover'));
+  const tool = componentRegistry.find(component => component.name === 'crw-takeover');
+  assert.deepEqual(tool.packages, ['./tools/crw-takeover/...']);
+  assert.equal(tool.binary, undefined);
+});
+
 test('accounts are registered with the lina Go checks', t => {
   const r = repository(t);
   const base = r.git('rev-parse', 'HEAD');

@@ -34,6 +34,11 @@ streaming completion and steering sequence through the same PTY lifecycle.
 They require no personal credentials. The physical terminal spike and real-model
 acceptance remain separate.
 
+`m1/tui-speaker-gutter.json` runs two exchanges against installed Core and a
+fixture provider in a 100x34 PTY. Parsed cells check speaker marks, foregrounds,
+header bold and exactly one empty row between messages. ASCII runs retain words;
+`NO_COLOR` runs retain ASCII speaker identity and emit no terminal escapes.
+
 `TestM1TUIIdentityFromAgentStore` installs a synthetic named agent with four
 distinct persona layers, types "who are you" through the real TUI, and checks
 the provider stub's request for that stored identity, owner and persona, plus
@@ -246,6 +251,17 @@ protocol. Synthetic outbound Gateway/REST and Responses endpoints demonstrate
 channel input, read tools, background results, deduplication, shaping, blocked
 state and restart without live credentials.
 
+`m2/work-area.json`, executed by `TestM2WorkArea`, drives `prepare_work` and
+`retain_work_result` through the installed Core's conversation tools. Two real
+linked worktrees share a parent clone at separately pinned source commits.
+Worker Git subprocesses create and commit each assigned branch; cross-task
+updates and deletion are rejected without moving the original result head.
+Core retains the fixture file and exact branch bundle, and the test restores
+them from backup after Core restart and loss of the work area. Worker lifecycle
+and receipt observations are seeded while Core is stopped; vendor dispatch is
+covered by the worker adapter scenarios. Run with
+`go test -count=1 ./e2e/m1 -run '^TestM2WorkArea$'`.
+
 `m2/tui-composer-identity.json` installs Core/TUI into a temporary root and creates
 and chooses another agent through the real TUI. It checks that the empty composer,
 header and reply speaker name that agent before and after Core reconnect, using
@@ -310,6 +326,13 @@ The production Claude adapter must complete smoke using that token; the missing
 token case must hold after READY. A bundled-worker probe checks its environment
 before running the real readiness check, and outputs and durable state are
 checked for credential disclosure.
+
+`m3/crw-takeover.json` runs the operator import binary against an installed Core's
+stopped state root, checks exclusive ownership and idempotent retry, removes the
+source snapshot, then exercises the running Core's record tools. Imported evidence
+is found through search and read by LINA id, source-id lookup fails, a new result
+is saved, and restart keeps the imported identity. This operator-only test and
+fixture are excluded from release archives together with the takeover tool.
 
 `m3/antigravity.json` dispatches through installed Core's conversation tool,
 starts its supervised headless worker in a new worktree, produces a real file
