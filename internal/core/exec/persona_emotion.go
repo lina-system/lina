@@ -10,6 +10,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/provider"
 	"github.com/thisisjun786/lina/kit/tools"
@@ -61,7 +62,8 @@ func (p *Persona) RecordEmotion(ctx context.Context, scope PersonaScope, in Emot
 	return p.agents.RecordEmotion(ctx, scope.Agent, scope.StateRevision, agents.EmotionEvent{ConversationID: scope.Conversation, EventID: event.ID, Affect: agents.Affect{Valence: in.Valence, Arousal: in.Arousal}, At: p.now(), Sensitive: in.Sensitive || SensitivePersonaInput(event)}, scope.Person, p.emotionPolicy)
 }
 func (p *Persona) SetExpression(ctx context.Context, scope PersonaScope, in ExpressionChange) (ExpressionReceipt, error) {
-	if err := p.confirm(ctx, scope, in.Quote); err != nil {
+	event, err := p.confirmed(ctx, scope, in.Quote)
+	if err != nil {
 		return ExpressionReceipt{}, err
 	}
 	result, err := p.agents.SetEmotionExpression(ctx, scope.Agent, scope.ExpressionRevision, in.Enabled, scope.Input, scope.Person)
@@ -70,9 +72,9 @@ func (p *Persona) SetExpression(ctx context.Context, scope PersonaScope, in Expr
 	}
 	receipt := ExpressionReceipt{ExpressionResult: result}
 	if result.Changed {
-		receipt.Notice = "Emotional expression is off."
+		receipt.Notice = design.Text(design.ConversationLanguage(event.Body.Text(), design.Language(event.Surface.Language)), "notice.emotion_off")
 		if result.Enabled {
-			receipt.Notice = "Emotional expression is on."
+			receipt.Notice = design.Text(design.ConversationLanguage(event.Body.Text(), design.Language(event.Surface.Language)), "notice.emotion_on")
 		}
 	}
 	return receipt, nil
