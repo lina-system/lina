@@ -1,0 +1,100 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "service": "results",
+  "setup": {
+    "person_id": "person",
+    "agent_id": "agent",
+    "conversation_id": "conversation",
+    "turn_id": "turn",
+    "task_id": null
+  },
+  "input": {
+    "type": "diagram",
+    "title": "Fixture result",
+    "summary": "Synthetic result body.",
+    "body": {
+      "kind": "flow",
+      "direction": "right",
+      "nodes": [
+        {
+          "id": "a",
+          "label": "Start"
+        },
+        {
+          "id": "b",
+          "label": "End"
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "b",
+          "label": "Next"
+        }
+      ],
+      "groups": [
+        {
+          "label": "Both",
+          "nodes": [
+            "a",
+            "b"
+          ]
+        }
+      ]
+    }
+  },
+  "output": {
+    "error": "",
+    "result": {
+      "type": "diagram",
+      "body": {
+        "kind": "flow",
+        "direction": "right",
+        "nodes": [
+          {
+            "id": "a",
+            "label": "Start"
+          },
+          {
+            "id": "b",
+            "label": "End"
+          }
+        ],
+        "edges": [
+          {
+            "from": "a",
+            "to": "b",
+            "label": "Next"
+          }
+        ],
+        "groups": [
+          {
+            "label": "Both",
+            "nodes": [
+              "a",
+              "b"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "outcome": {
+    "events": 1,
+    "heads": 1,
+    "saves": 0,
+    "revision": 1,
+    "status": "preview",
+    "title": "Fixture result",
+    "summary": "Synthetic result body.",
+    "saved_as": null,
+    "revised_by": "agent",
+    "provenance": {
+      "agent_id": "agent",
+      "conversation_id": "conversation",
+      "turn_id": "turn",
+      "task_id": null
+    },
+    "text_complete": true
+  }
+}

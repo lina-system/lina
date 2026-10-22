@@ -44,7 +44,10 @@ type Proposal struct {
 	Children []string
 	Cover    []Coverage
 	Verbatim []string
-	Output   Output
+	// TailSkips accounts for excluded events after the summary prefix. They
+	// remain outside this node until a later compaction reaches their position.
+	TailSkips []Coverage
+	Output    Output
 }
 
 type Node struct {

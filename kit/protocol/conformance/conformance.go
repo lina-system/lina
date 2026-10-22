@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package conformance loads the language-neutral client fixture corpus and
-// checks codecs and receive boundaries. It does not simulate application state.
+// checks codecs, receive boundaries and adapters to real application services.
+// It does not simulate application state.
 package conformance
 
 import (
@@ -36,14 +37,18 @@ type Suite struct {
 	inputs    map[string]json.RawMessage
 }
 
-// Load reads every JSON file below fsys. cases/ contains case descriptions,
-// invalid/ contains schema-invalid input, and all other JSON files are valid
-// envelopes that every codec must round-trip. No files are rewritten.
+// Load reads the wire corpus below fsys. cases/ contains case descriptions,
+// invalid/ contains schema-invalid input, and application/ is loaded separately
+// by LoadApplications. All other JSON files are valid envelopes that every codec
+// must round-trip. No files are rewritten.
 func Load(fsys fs.FS) (*Suite, error) {
 	s := &Suite{Envelopes: map[string]json.RawMessage{}, inputs: map[string]json.RawMessage{}}
 	err := fs.WalkDir(fsys, ".", func(name string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		if entry.IsDir() && name == "application" {
+			return fs.SkipDir
 		}
 		if entry.IsDir() || !strings.HasSuffix(name, ".json") {
 			return nil
