@@ -511,6 +511,21 @@ Scripted wires establish these adapter invariants, and clean-build tests establi
 - Core refuses the turn if `init` lists anything LINA did not put there.
 - First use installs the SDK from the release lockfile ([runtime.md](runtime.md#provider-adapters)); it is never shipped in LINA artifacts.
 
+#167 implements the external TypeScript program and the [version 1 JSON-line
+wire](../../adapters/claude/README.md#c-45-wire-version-1), including correlated
+MCP tool results, cancellation, ping/pong, init refusal and reported usage.
+The SDK is installed from the adapter lockfile with lifecycle scripts disabled;
+foundation verifies sources, integrity, exact pins, registry signatures and the
+stub suite in a disposable installation. An explicitly configured Core route
+starts the program through `kit/proc`, routes runtime tool calls through the
+existing admission and durable call/result journal, and joins it on stream close.
+The ledger records `AgentRuntime`; the ordered context travels as a JSON
+transcript in the SDK prompt, so native vendor request fidelity is not claimed.
+`e2e/m2/claude-adapter.json` exercises the installed Core, a real Core tool,
+streamed reply and restart persistence with a stub vendor runtime. Automatic
+account setup, first-use installation, quota projection and idle pooling remain
+#168; this increment's explicit route launches one process per request.
+
 **C-46 Grok adapter (new).** A Go Agent Client Protocol client over the `grok` command on stdio, best effort. The steps are `initialize`, session create with LINA tools handed as MCP servers, prompt, updates, permission requests routed to Core's approval path, and cancel. Telemetry and trace upload are switched off explicitly. Account state comes from a cheap authenticated call, not from the command's files.
 
 **C-47 Accounts, credentials and sign-in (new).**
@@ -791,7 +806,7 @@ The memory store keeps the current item and immutable revision snapshots in cano
 
 **C-21 Person model (changed).** The views are those of [conversation-and-memory.md](conversation-and-memory.md#person-model). `recall_person` at depth 1 makes one auxiliary request over at most N items (P: 12), with citations checked against the retrieved set and capped at 10 s. Deeper work is a background run. The person brief and the maintenance pass are jobs for `moirai-worker` ([cognition-and-life.md](cognition-and-life.md#memory-jobs)). Duplicate clusters inside one subject use normalized equality, token overlap and, when available, embedding similarity; never across subjects.
 
-The `recall_person` tool requires a nonempty retrieval query alongside the question, so an omitted query cannot silently choose the most recent items. The initial executor uses a limit of 12 combined memory items and own-ledger hits, with depth 0 as the default. Depth 1 makes one cancellable auxiliary call with a 10-second deadline and no retries. Its structured sentences retain only citations to the retrieved id and revision; sentences left without citations are dropped. A depth above 1 returns the background-required outcome to the caller. The standing profile is an ephemeral view ordered by the latest committed revision, with line and tokenizer budgets supplied by assembly. These operations are callable Core/tool services; no memory operation is exposed by the current client protocol, so acceptance uses real canon and ledger package scenarios. The indexed memory matcher and the ledger search service are described in C-22.
+The `recall_person` tool requires a nonempty retrieval query alongside the question, so an omitted query cannot silently choose the most recent items. The initial executor uses a limit of 12 combined memory items and own-ledger hits, with depth 0 as the default. Depth 1 makes one cancellable auxiliary call with a 10-second deadline and no retries. Its structured sentences retain only citations to the retrieved id and revision; sentences left without citations are dropped. A depth above 1 returns the background-required outcome to the caller. The standing profile is an ephemeral view ordered by the latest committed revision, with line and tokenizer budgets supplied by assembly. These operations are callable Core/tool services, tested with real canon and ledger package scenarios. Explicit client memory actions also have installed-Core acceptance through the [TUI memory requests](tui.md#memory-and-agent-command-requests); the condition-by-condition evidence is listed under [G1-13](go-roadmap.md#1d-memory-context-and-skills). The indexed memory matcher and the ledger search service are described in C-22.
 
 The memory-job increment exposes Core-owned preparation, pre-dispatch checks and
 `ExtractionApply`, `MaintenanceApply` and `BriefApply` callbacks in
