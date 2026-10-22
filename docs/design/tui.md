@@ -74,7 +74,7 @@ acceptance remains the T-08 spike gate.
 - It never opens canon, never runs `lina core` and never holds the lock. Every message it sends is a request that Core accepts or refuses, and when the two disagree Core wins and the TUI refreshes.
 - It uses only the client connection. Its types are the Go types generated from the schema ([host-protocol.md](host-protocol.md#schema-and-generated-types)).
 - Protocol errors and Core logs go to the status line and a log, never into the conversation ([host-protocol.md](host-protocol.md#client-connection)). `TEA_TRACE` and `TEA_DEBUG` stay unset, and panic output is masked.
-- Import rule: `internal/tui/...` imports only `internal/clientapi`, `internal/design`, `kit/protocol` and other `internal/tui` packages. Charm packages are imported only in `tui/term` and `tui/ui`. The Markdown UI adapter may additionally import the already pinned `github.com/yuin/goldmark`, `/ast`, `/text` and `/util` packages; this exception does not extend to `render`, `state`, `layout`, `term` or other Goldmark packages. The one architecture `go test` of [go-core.md](go-core.md) (C-40) checks it.
+- Import rule: `internal/tui/...` imports only `internal/clientapi`, `internal/design`, `kit/protocol` and other `internal/tui` packages. Charm packages are imported only in `tui/term` and `tui/ui`. The Markdown UI adapter may additionally import the already pinned `github.com/yuin/goldmark`, `/ast`, `/parser`, `/text` and `/util` packages, plus `github.com/alecthomas/chroma/v2` and `/lexers` for code token roles; this exception does not extend to `render`, `state`, `layout`, `term` or other Goldmark/Chroma packages. The one architecture `go test` of [go-core.md](go-core.md) (C-40) checks it.
 - Trust: the socket's user check and the rule for who may decide an approval are Core's ([go-core.md](go-core.md), C-42). The TUI shows a refusal as a refusal and adds no rule of its own.
 - Parity with the LINA app comes from the shared conformance fixtures ([host-protocol.md](host-protocol.md#conformance-fixtures)). The app is not designed here.
 
@@ -502,8 +502,14 @@ The conversation screen projects granted waiting/running topic rows in Core
 order and keeps their counts when folded. Ctrl+W and Ctrl+R open their complete
 retained text in the pager; Ctrl+P opens the granted progress topic. Missing
 capabilities use the single local explanation of T-07 and leave no placeholder
-rows. Granted empty lists are hidden without an unavailable notice. Rows appear
-when Core sends items and disappear on a removal update or when its snapshot clears the list.
+rows. Granted empty lists are hidden on Home without an unavailable notice.
+Opening an empty granted Waiting for me list with Ctrl+W shows the localized
+"nothing to decide now" line in the pager. Closing and reopening it preserves
+the draft; the line never enters conversation history or other list views.
+`TestM1TUIWaitingEmptyInstalledCore` checks this through a 100x32 PTY against
+installed Core, then submits the retained draft and renders the fixture reply.
+Rows appear when Core sends items and disappear on a removal update or when
+its snapshot clears the list.
 An open running pager applies accepted `running` topic updates and replacement
 snapshots immediately, including completed and removed rows, without polling or
 requiring the person to close and reopen it. Refreshing its text preserves the
@@ -771,6 +777,16 @@ type Stream interface {
   trimmed rows before adding completion durations or pager affordances, so
   identical redraws cannot accumulate metadata in message content.
   Only visible conversation rows receive terminal styles.
+- Language-tagged fenced code receives syntax highlighting only after its
+  matching closing fence. The pinned Chroma lexer produces semantic spans:
+  keywords, strings, numbers, built-ins, functions and class names use accent;
+  comments use muted; other tokens keep text, all on the code surface. Unknown
+  or absent languages, indented code and unterminated fences keep plain code.
+  High-contrast suppresses syntax colours; `NO_COLOR` emits plain text without
+  escapes. Highlight spans share the existing block/revision, width, theme and
+  width-mode cache; resizing or changing theme does not re-lex closed source.
+  `e2e/m1/tui-syntax.json` checks open streamed code and the closed result through
+  the installed Core, a fixture provider and parsed PTY cells.
 - One width function serves all layout: wcwidth by default, grapheme clusters once mode 2027 is confirmed, ambiguous East Asian width narrow, Hangul syllables two cells. The mode is part of the cache key. The Charm-free `Measurer` uses pinned Unicode 17 data and UAX #29 segmentation for wrapping and clipping in both modes. A cluster wider than the entire row is omitted with a typed clipped flag, never split. Cursor offsets inside a cluster clamp to its start.
 - The hardware cursor is placed on every frame at the display width of the text before it on the wrapped row, so IME composition appears in place. The TUI never requests all-keys-as-escape-codes. Committed IME text arrives as UTF-8, one grapheme cluster at a time ([surfaces.md](surfaces.md#korean-input)).
 - Only the viewport plus overscan (P) is laid out, so cost follows viewport rows and not history. `Stream` indexes new text as it arrives. `Window` takes a retained byte anchor within a block and stops reflow at the requested row count, including after a width change. `Renderer.Draw` reads and paints only those indexed rows, retains only the current viewport cache, and returns changed-row patches; an empty patch list causes no writes. A trusted UI painter styles only closed rows after sanitizing and clipping.
@@ -1016,6 +1032,16 @@ outstanding acceptance. Harness completion does not establish the spike gate.
 Fallbacks, in order. F1: Bubble Tea with its own probe, a quiet spinner, a lower frame rate while streaming and a frame memo. F2: a row-string renderer on Ultraviolet with changed rows only, in synchronized output. F3: tcell v3. The reducer, render, layout and `clientapi` do not change in any fallback.
 
 ## Tests, tokens and theme (T-11)
+
+Installed-Core transcript and LONG-QA PTY scenarios run in English and Korean.
+Pager entry, resize, search and return waits observe parsed cursor and viewport
+state together with expected transcript or draft content. They do not pin footer
+prose or spacing; any required visible label comes from the design catalog.
+Transcript ordering, one copy of each message, search, draft restoration and
+complete LONG-QA body/scroll checks remain independent of those readiness waits.
+The first-run PTY scenario likewise waits for its draft, composer cursor and
+catalog suggestions in one parsed snapshot before checking presentation; separate
+observations across redraws do not establish that they were visible together.
 
 **Tests.** The fake Core, `internal/fakecore`, is built from the conformance fixtures ([host-protocol.md](host-protocol.md#conformance-fixtures)) with an injected clock and fault switches: drop, slow reader, epoch change, duplicate delivery, disconnect mid-batch, recovering and refusal.
 
