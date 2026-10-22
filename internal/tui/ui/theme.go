@@ -9,6 +9,8 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/thisisjun786/lina/internal/design"
+	"github.com/thisisjun786/lina/internal/tui/render"
+	"github.com/thisisjun786/lina/internal/tui/sanitize"
 )
 
 // Profile describes the output capability, independently of the chosen theme.
@@ -245,4 +247,22 @@ func environmentOptions(getenv func(string) string) Options {
 		opts.Profile = ANSI256
 	}
 	return opts
+}
+
+// Speaker words remain available in ASCII and monochrome, independent of color.
+func (s Styles) speakerPrefix(person bool, name string, width int) string {
+	mark := s.tokens.GlyphUnicodeAgent
+	if person {
+		mark = s.tokens.GlyphUnicodePerson
+	}
+	gap := strings.Repeat(" ", s.tokens.SpaceInline.Cells)
+	if s.options.ASCII || s.options.Profile == Monochrome {
+		mark = s.tokens.GlyphAsciiAgent
+		if person {
+			mark = s.tokens.GlyphAsciiPerson
+			name = design.Text(s.options.Language, "person")
+		}
+		mark += gap + sanitize.Display(name) + ":"
+	}
+	return render.Truncate(mark+gap, max(0, width-1), render.Unicode{})
 }

@@ -12,7 +12,7 @@ const fields = {
   space: ['inline', 'gutter', 'section', 'page'], radius: ['card'],
   motion: ['settle', 'reduced'], icon: ['size'],
 };
-const glyphs = ['mark', 'connecting', 'live', 'resyncing', 'retrying', 'refused', 'recovering', 'stopped', 'failed', 'quit', 'rule', 'action', 'waiting', 'unknown'];
+const glyphs = ['mark', 'connecting', 'live', 'resyncing', 'retrying', 'refused', 'recovering', 'stopped', 'failed', 'quit', 'rule', 'action', 'waiting', 'unknown', 'person', 'agent'];
 const expected = [...Object.entries(fields).flatMap(([group, roles]) => roles.map(role => `${group}.${role}`)),
   ...['unicode', 'ascii'].flatMap(set => glyphs.map(role => `glyph.${set}.${role}`))].sort();
 const identifier = path => path.split(/[.-]/).map(word => word[0].toUpperCase() + word.slice(1)).join('');

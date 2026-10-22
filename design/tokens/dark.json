@@ -287,6 +287,14 @@
       "unknown": {
         "$type": "string",
         "$value": "?"
+      },
+      "person": {
+        "$type": "string",
+        "$value": "›"
+      },
+      "agent": {
+        "$type": "string",
+        "$value": "●"
       }
     },
     "ascii": {
@@ -345,6 +353,14 @@
       "unknown": {
         "$type": "string",
         "$value": "?"
+      },
+      "person": {
+        "$type": "string",
+        "$value": ">"
+      },
+      "agent": {
+        "$type": "string",
+        "$value": "*"
       }
     }
   }
