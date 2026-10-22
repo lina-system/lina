@@ -55,7 +55,7 @@ func managementFixture(t *testing.T) (*conversationRuntime, clientsrv.Session, s
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { removals.Close() })
-	return &conversationRuntime{db: db, agents: store, removals: removals, person: "person", lanes: lane.New()}, clientsrv.Session{PersonID: "person"}, first.Agent.ID, second.ID
+	return &conversationRuntime{root: root, controls: controls, main: "fixture", epoch: 1, db: db, agents: store, removals: removals, person: "person", lanes: lane.New()}, clientsrv.Session{PersonID: "person"}, first.Agent.ID, second.ID
 }
 func textptr(s string) *string { return &s }
 func TestManagementBindsPersonAndScopesTargets(t *testing.T) {

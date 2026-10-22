@@ -184,6 +184,23 @@ func validReason(c Coverage, e event) bool {
 		return false
 	}
 }
+
+// skipReason reconstructs canonical exclusions without treating provider items
+// (native conversation content) as scaffolding.
+func skipReason(e event) string {
+	switch {
+	case !e.visible:
+		return "retracted"
+	case e.replay != "":
+		return "replay"
+	case e.scaffold == "compaction_recorded":
+		return "summary_echo"
+	case e.scaffold != "" && e.scaffold != "provider_item":
+		return "scaffold"
+	default:
+		return ""
+	}
+}
 func validOutput(o Output) bool {
 	if strings.TrimSpace(o.Text) == "" || strings.TrimSpace(o.Model) == "" || strings.TrimSpace(o.PromptVersion) == "" || o.BuiltAt.IsZero() {
 		return false
