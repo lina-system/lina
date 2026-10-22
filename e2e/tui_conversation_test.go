@@ -75,8 +75,8 @@ func TestM1TUIConversationInstalledCore(t *testing.T) {
 	if snapshot, err := client.Receive(h.ctx); err != nil || snapshot.Kind != protocol.KindSnapshot {
 		t.Fatal("no history snapshot")
 	}
-	terminal := startReadyScreenTUI(t, h, []string{"TERM=xterm-256color", "COLORTERM=truecolor"}, 80, 24, nil)
-	fresh := waitScreen(t, h, terminal, "Ctrl+D")
+	terminal := h.startScreenTUI("TERM=xterm-256color", "COLORTERM=truecolor")
+	fresh := waitComposerReady(t, h, terminal)
 	if text := screenText(fresh); strings.Contains(strings.ToLower(text), "unsupported") {
 		t.Fatalf("fresh install shows an unsupported placeholder: %s", text)
 	}
@@ -171,6 +171,12 @@ func screenText(snapshot tuiterm.Snapshot) string {
 	}
 	return text.String()
 }
+func waitComposerReady(t *testing.T, h *harness, terminal *terminal) tuiterm.Snapshot {
+	t.Helper()
+	// waitScreen's composer barrier also requires the Connected status.
+	return waitScreen(t, h, terminal, "Ctrl+D")
+}
+
 func waitScreen(t *testing.T, h *harness, terminal *terminal, text string) tuiterm.Snapshot {
 	t.Helper()
 	snapshot, err := terminal.screen.Wait(h.ctx, func(snapshot tuiterm.Snapshot) bool {
@@ -233,16 +239,15 @@ func installConversationBundle(t *testing.T, h *harness, bundle, providerURL str
 		}
 		core.start(t)
 		h.connect(core).Close()
-		waitCoreMutationReady(t, h)
+		waitCoreReady(t, h)
 		return core
 	}
 
 	return h, start
 }
 
-// Read access to the socket does not imply mutation admission after startup or
-// restore. Share the existing harmless probe with custom Core launch paths.
-func waitCoreMutationReady(t *testing.T, h *harness) {
+// Share the installed harness readiness barrier with custom Core launch paths.
+func waitCoreReady(t *testing.T, h *harness) {
 	t.Helper()
 	// A bound socket accepts reads while Core is still reconciling/probing.
 	// Wait for mutation admission via an empty, always-refused input; no
