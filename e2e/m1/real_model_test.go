@@ -196,6 +196,8 @@ const headlessQAInput = "Reply with a short greeting."
 // The fixture withholds completion until the client receives a live delta.
 // This proves streaming without a timing assumption or a real credential.
 func TestHeadlessConversationFixture(t *testing.T) {
+	t.Parallel()
+
 	var calls atomic.Int32
 	deltaSeen := make(chan struct{})
 	var once sync.Once
@@ -238,6 +240,7 @@ func TestHeadlessConversationFixture(t *testing.T) {
 	}
 }
 
+// Serial: these guards change the test process provider environment.
 func TestRealModelOptIn(t *testing.T) {
 	for _, tc := range []struct{ name, optIn, key string }{
 		{"neither", "", ""}, {"no-opt-in", "", "synthetic-key"}, {"no-key", "1", ""},

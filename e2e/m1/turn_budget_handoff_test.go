@@ -20,6 +20,8 @@ import (
 )
 
 func TestM1TurnBudgetHandoffInstalledCore(t *testing.T) {
+	t.Parallel()
+
 	var scenario struct{ Input, Next, Reply, Artifact string }
 	data, err := os.ReadFile("turn-budget-handoff.json")
 	if err != nil {
@@ -245,6 +247,8 @@ func TestM1TurnBudgetHandoffInstalledCore(t *testing.T) {
 }
 
 func TestM1StartRunAtSoftInstalledCore(t *testing.T) {
+	t.Parallel()
+
 	var foreground, background atomic.Int32
 	runStarted := make(chan struct{}, 1)
 	const goal = "SOFT-RUN-407"

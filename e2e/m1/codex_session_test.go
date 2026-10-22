@@ -113,6 +113,8 @@ func codexSessionFixture() {
 }
 
 func TestM2InstalledCodexSession(t *testing.T) {
+	t.Parallel()
+
 	var fixture struct {
 		Input                     string
 		CancelQuote               string `json:"cancel_quote"`

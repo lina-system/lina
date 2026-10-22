@@ -17,6 +17,8 @@ import (
 )
 
 func TestM1RunResultOpenInstalledCore(t *testing.T) {
+	t.Parallel()
+
 	for _, language := range []design.Language{design.English, design.Korean} {
 		t.Run(string(language), func(t *testing.T) { runResultOpenLocalized(t, language) })
 	}
