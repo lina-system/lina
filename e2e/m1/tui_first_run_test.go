@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/design"
+	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -90,10 +91,23 @@ func TestM1TUIFirstRunInstalledCore(t *testing.T) {
 				}
 			}
 			h.keys(terminal, input)
-			// The tap observes socket writes, not reducer consumption. Wait for
-			// the empty-history presentation as well as the draft before sampling.
-			waitScreen(t, h, terminal, "lina.")
-			fresh := waitScreen(t, h, terminal, input)
+			// Socket writes and separate matching frames do not establish one
+			// complete presentation. Observe the empty history and draft together.
+			fresh, err := terminal.screen.Wait(h.ctx, func(snapshot tuiterm.Snapshot) bool {
+				text := screenText(snapshot)
+				if !snapshot.AltScreen || !strings.Contains(text, "lina.") || !strings.Contains(text, input) || !strings.Contains(text, design.Text(language, "live")) {
+					return false
+				}
+				for _, id := range firstRunSuggestionIDs {
+					if !strings.Contains(text, design.Text(language, id)) {
+						return false
+					}
+				}
+				return true
+			})
+			if err != nil {
+				t.Fatalf("first-run presentation and draft did not converge: %v; cells=%s", err, screenText(fresh))
+			}
 			text := screenText(fresh)
 			if !fresh.AltScreen || !strings.Contains(text, "lina.") {
 				t.Fatalf("fresh conversation has no wordmark: %s", text)
