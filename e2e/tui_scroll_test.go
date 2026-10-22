@@ -39,6 +39,12 @@ func TestM1TUIWheelStickyConversation(t *testing.T) {
 	waitScreen(t, h, terminal, design.Text(design.English, "live"))
 	admittedTurn(t, h, client, conversation, "scroll-first", "Show the synthetic rows.")
 	plan := layout.Plan(layout.Size{Width: 100, Height: 34}, layout.Caps{SidePane: true}, layout.Shape{ComposerRows: 1})
+	activePlan := layout.Plan(layout.Size{Width: 100, Height: 34}, layout.Caps{SidePane: true}, layout.Shape{ComposerRows: 1, Activity: true})
+	idle := func(s tuiterm.Snapshot) bool {
+		// Turn activity temporarily borrows one transcript row. Compare the
+		// full idle viewport only after the TUI consumes the completed turn.
+		return !strings.Contains(screenRows(s)[activePlan.Activity.Y], design.Text(design.English, "activity.stop"))
+	}
 	region := func(s tuiterm.Snapshot) []string {
 		return screenRows(s)[plan.Conversation.Y : plan.Conversation.Y+plan.Conversation.Height]
 	}
@@ -53,7 +59,7 @@ func TestM1TUIWheelStickyConversation(t *testing.T) {
 		return s
 	}
 	latest := wait("latest reply", func(s tuiterm.Snapshot) bool {
-		return strings.Contains(strings.Join(region(s), "\n"), lines[79]) && strings.Contains(screenText(s), "Ctrl+O")
+		return idle(s) && strings.Contains(strings.Join(region(s), "\n"), lines[79]) && strings.Contains(screenText(s), "Ctrl+O")
 	})
 	first := region(latest)[0]
 	var index int
@@ -68,7 +74,9 @@ func TestM1TUIWheelStickyConversation(t *testing.T) {
 	t.Logf("wheel-up viewport:\n%s", frozen)
 	marker := design.Text(design.English, "conversation.new_messages")
 	admittedTurn(t, h, client, conversation, "scroll-next", "Send another reply.")
-	arrived := wait("new messages marker", func(s tuiterm.Snapshot) bool { return strings.Contains(screenRows(s)[plan.Status.Y], marker) })
+	arrived := wait("new messages marker", func(s tuiterm.Snapshot) bool {
+		return idle(s) && strings.Contains(screenRows(s)[plan.Status.Y], marker)
+	})
 	if got := strings.Join(region(arrived), "\n"); got != frozen {
 		t.Fatalf("new output moved viewport:\nBEFORE\n%s\nAFTER\n%s", frozen, got)
 	}

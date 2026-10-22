@@ -27,7 +27,8 @@ var keyBindings = []keyBinding{
 	{"shortcuts.send", []string{"Enter"}, 3, "shortcuts.send", ""},
 	{"action.quit", []string{"Ctrl+D"}, 4, "action.quit", ""},
 	{"shortcuts.newline", []string{"Alt+Enter", "Shift+Enter", "Ctrl+J"}, 5, "shortcuts.newline", ""},
-	{"shortcuts.scroll", []string{"PgUp/PgDn"}, 6, "shortcuts.scroll", ""},
+	{"shortcuts.scroll", []string{"PgUp/PgDn"}, 6, "", ""},
+	{"conversation.latest", []string{"End"}, 16, "", ""},
 	{"shortcuts.card", []string{"Ctrl+O"}, 7, "shortcuts.open_hint", ""},
 	{"shortcuts.decisions", []string{"F6"}, 8, "shortcuts.decisions", ""},
 	{"shortcuts.clear", []string{"Ctrl+C"}, 9, "", ""},
@@ -85,6 +86,10 @@ func (m *shellModel) conversationFooter(showNotice bool) string {
 	if m.conversation.pager.open {
 		section = "pager"
 	}
+	if section == "" && m.conversation.viewport.unseen {
+		marker := "  " + design.Text(m.styles.options.Language, "conversation.new_messages")
+		line = ansi.Truncate(line, max(0, width-ansi.StringWidth(marker)), "") + marker
+	}
 	var hints []string
 	for _, binding := range bindingsFor(section) {
 		if binding.Hint != "" {
@@ -115,6 +120,12 @@ func (m *shellModel) conversationFooter(showNotice bool) string {
 		budget := width - ansi.StringWidth(line) - 2
 		if budget > 0 {
 			line += "  " + ansi.Truncate(m.conversation.pager.query, budget, "")
+		}
+	}
+	if section == "" && m.conversation.viewport.overflow {
+		hint := "  " + design.Text(m.styles.options.Language, "conversation.scroll_hint")
+		if ansi.StringWidth(line+hint) <= width {
+			line += hint
 		}
 	}
 	// Below the supported terminal minimum even the connection may not fit.

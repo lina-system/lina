@@ -6,8 +6,6 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
-	"github.com/thisisjun786/lina/internal/design"
 )
 
 type conversationAnchor struct {
@@ -19,6 +17,7 @@ type conversationViewport struct {
 	anchor         conversationAnchor
 	changed        map[string]bool
 	unseen         bool
+	overflow       bool
 	wheelAt        time.Time
 	wheelDirection tea.MouseButton
 	wheelRows      int
@@ -93,20 +92,4 @@ func (m *shellModel) conversationStart(anchors []conversationAnchor, total, heig
 	}
 	clear(v.changed)
 	return start
-}
-
-func (m *shellModel) conversationStatus(status string, overflow bool) string {
-	if m.conversation.viewport.unseen {
-		marker := "  " + design.Text(m.styles.options.Language, "conversation.new_messages")
-		status = ansi.Truncate(status, max(0, m.size.Width-ansi.StringWidth(marker)), "") + marker
-	}
-	status += "  /help  Enter  Ctrl+D  /memory  /agents"
-	if overflow {
-		hint := "  " + design.Text(m.styles.options.Language, "conversation.scroll_hint")
-		// Keep the new-output marker and existing status ahead of the optional hint.
-		if ansi.StringWidth(status+hint) <= m.size.Width {
-			status += hint
-		}
-	}
-	return status
 }

@@ -106,6 +106,7 @@ func TestConversationScrollStaysPutForNewOutput(t *testing.T) {
 
 func TestConversationScrollHintAndOverlays(t *testing.T) {
 	m := scrollShell()
+	m.Update(tea.WindowSizeMsg{Width: 240, Height: 24})
 	hint := design.Text(design.English, "conversation.scroll_hint")
 	if !strings.Contains(m.View().Content, hint) {
 		t.Fatal("overflow has no scroll hint")
