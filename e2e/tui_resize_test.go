@@ -260,7 +260,7 @@ func TestM1TUINarrowActivityResize(t *testing.T) {
 					// Wait for complete chrome, not the clipped previous frame.
 					for _, segment := range strings.Split(rows[size.height-1], "  ")[1:] {
 						switch segment {
-						case "/help", "Enter", "Ctrl+D", "/memory", "/agents":
+						case "/help", "Enter", "Ctrl+D", "/memory", "/agents", "Ctrl+T":
 						default:
 							return false
 						}
@@ -287,7 +287,7 @@ func TestM1TUINarrowActivityResize(t *testing.T) {
 				}
 				for _, segment := range strings.Split(rows[size.height-1], "  ")[1:] {
 					switch segment {
-					case "/help", "Enter", "Ctrl+D", "/memory", "/agents":
+					case "/help", "Enter", "Ctrl+D", "/memory", "/agents", "Ctrl+T":
 					default:
 						t.Errorf("footer cut hint %q", segment)
 					}

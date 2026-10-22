@@ -60,8 +60,9 @@ type Journal struct {
 	Partial func(context.Context, int, int64, string) error
 }
 type Config struct {
-	Request provider.Request
-	Stream  StreamFunc
+	RuntimeTools bool // agent-runtime calls execute through the journaled Core bridge
+	Request      provider.Request
+	Stream       StreamFunc
 	// Observe forwards streaming events; it must not execute tools.
 	Observe   func(context.Context, provider.Event) error
 	Tools     map[string]Tool
@@ -132,9 +133,10 @@ func Run(ctx context.Context, cfg Config) (out Outcome, err error) {
 				return out, err
 			}
 		}
-		batch, err := collect(ctx, cfg, round, req)
+		batch, err := collect(ctx, cfg, round, req, seen)
 		out.Rounds++
 		out.Meta = batch.meta
+		out.Results = append(out.Results, batch.results...)
 		for _, c := range batch.calls {
 			if seen[c.ID] {
 				return out, errors.Join(ErrResponse, err)

@@ -50,7 +50,13 @@ func TestM1MemoryCorrectionForgetRestore(t *testing.T) {
 				emitResponse(w, "Synthetic fixture reply", true)
 			}))
 			defer provider.Close()
-			h, start := installConversationBundle(t, newHarness(t, binary), bundle, provider.URL)
+			h := newHarness(t, binary)
+			// Multiple Core restarts, backup/restore and terminal sessions share
+			// this scenario; the default three-operation harness budget is too short.
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+			t.Cleanup(cancel)
+			h.ctx = ctx
+			h, start := installConversationBundle(t, h, bundle, provider.URL)
 			core := start(true)
 			command, closeTUI := correctionMemoryTUI(t, h)
 			first := command("/memory remember --holder=all --scope=local " + scenario.Facts[0])
@@ -201,17 +207,22 @@ func correctionMemoryTUI(t *testing.T, h *harness) (func(string) protocol.Memory
 				t.Fatalf("%s refused: %s", text, e.Error.Code)
 			}
 			if result, ok := e.Payload.(protocol.MemoryResult); ok {
-				// The in-flight help already contains the command examples.
-				// Wait for the response-only heading before closing its pager.
 				if result.Operation == nil {
-					t.Fatal("memory result has no operation")
+					t.Fatal("memory reply has no operation")
+				}
+				// The shared help text can still belong to the previous reply.
+				// Observe this result's heading before closing its view, otherwise
+				// its delayed render can reopen over the next command's composer.
+				marker := design.Text(design.English, *result.Operation)
+				if result.ItemID != nil {
+					marker = *result.ItemID
 				}
 				heading := design.Text(design.English, *result.Operation)
-				if _, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
+				if view, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
 					rows := screenRows(s)
-					return s.CursorHidden && len(rows) > 0 && strings.HasPrefix(rows[len(rows)-1], "Esc") && strings.TrimSpace(rows[0]) == heading
+					return s.CursorHidden && len(rows) > 0 && strings.HasPrefix(rows[len(rows)-1], "Esc") && strings.TrimSpace(rows[0]) == heading && strings.Contains(screenText(s), marker)
 				}); err != nil {
-					t.Fatalf("memory result was not rendered: %v", err)
+					t.Fatalf("memory result was not rendered: %v\n%s", err, screenText(view))
 				}
 				opened = true
 				return result

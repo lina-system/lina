@@ -59,7 +59,7 @@ func TestNarrowFooterOmitsWholeHints(t *testing.T) {
 			parts := strings.Split(footer, "  ")
 			for _, part := range parts[1:] {
 				switch part {
-				case "/help", "Enter", "Ctrl+D", "/memory", "/agents":
+				case "/help", "Enter", "Ctrl+D", "/memory", "/agents", "Ctrl+T":
 				default:
 					t.Errorf("%s/%d: footer cuts hint %q: %q", lang, width, part, footer)
 				}
