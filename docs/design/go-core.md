@@ -511,6 +511,21 @@ Scripted wires establish these adapter invariants, and clean-build tests establi
 - Core refuses the turn if `init` lists anything LINA did not put there.
 - First use installs the SDK from the release lockfile ([runtime.md](runtime.md#provider-adapters)); it is never shipped in LINA artifacts.
 
+#167 implements the external TypeScript program and the [version 1 JSON-line
+wire](../../adapters/claude/README.md#c-45-wire-version-1), including correlated
+MCP tool results, cancellation, ping/pong, init refusal and reported usage.
+The SDK is installed from the adapter lockfile with lifecycle scripts disabled;
+foundation verifies sources, integrity, exact pins, registry signatures and the
+stub suite in a disposable installation. An explicitly configured Core route
+starts the program through `kit/proc`, routes runtime tool calls through the
+existing admission and durable call/result journal, and joins it on stream close.
+The ledger records `AgentRuntime`; the ordered context travels as a JSON
+transcript in the SDK prompt, so native vendor request fidelity is not claimed.
+`e2e/m2/claude-adapter.json` exercises the installed Core, a real Core tool,
+streamed reply and restart persistence with a stub vendor runtime. Automatic
+account setup, first-use installation, quota projection and idle pooling remain
+#168; this increment's explicit route launches one process per request.
+
 **C-46 Grok adapter (new).** A Go Agent Client Protocol client over the `grok` command on stdio, best effort. The steps are `initialize`, session create with LINA tools handed as MCP servers, prompt, updates, permission requests routed to Core's approval path, and cancel. Telemetry and trace upload are switched off explicitly. Account state comes from a cheap authenticated call, not from the command's files.
 
 **C-47 Accounts, credentials and sign-in (new).**
