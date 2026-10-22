@@ -32,7 +32,7 @@ func (m *shellModel) scrollConversation(rows int) {
 }
 
 func (m *shellModel) conversationWheel(msg tea.MouseWheelMsg) {
-	if !m.hasComposer() || m.conversation.pager.open || m.accounts.open || m.channels.open || m.talk.open || m.content.CardView.ID != "" {
+	if !m.hasComposer() || m.conversation.pager.open || m.accounts.open || m.web.open || m.channels.open || m.talk.open || m.content.CardView.ID != "" {
 		return
 	}
 	region := m.conversationPlan().Conversation
