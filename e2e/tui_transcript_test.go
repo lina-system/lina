@@ -107,6 +107,9 @@ func TestM1TUITranscriptInstalledCore(t *testing.T) {
 	// Shrink below the transcript height, move to the end, then search back
 	// to the first message. Success depends on rendered cells, never a sleep.
 	h.resizeTerminal(terminal, 100, 12)
+	wait(func(s tuiterm.Snapshot) bool {
+		return len(s.Cells) == 12 && strings.Contains(screenRows(s)[11], "Esc  /  n")
+	})
 	h.keys(terminal, "\x1b[F")
 	wait(func(s tuiterm.Snapshot) bool {
 		text := screenText(s)
