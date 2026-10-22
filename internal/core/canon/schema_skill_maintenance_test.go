@@ -19,8 +19,8 @@ func TestSkillMaintenanceMigrationPreservesExistingSkills(t *testing.T) {
 	if index < 1 {
 		t.Fatal("missing migration")
 	}
-	if all[index].Version != 30 || all[index-1].Version != 29 {
-		t.Fatalf("skill maintenance version=%d, predecessor=%d; want 30 after published 29", all[index].Version, all[index-1].Version)
+	if all[index].Version != 32 || all[index-1].Version != 31 {
+		t.Fatalf("skill maintenance version=%d, predecessor=%d; want 32 after published 31", all[index].Version, all[index-1].Version)
 	}
 	cfg.Migrations = all[:index]
 	db := openStore(t, cfg)

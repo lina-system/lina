@@ -18,3 +18,21 @@ C-58 and GitHub completion-signal contract.
   therefore uses fixed GraphQL POST queries for reviews and conditional REST GET
   for PR identity and checks, using only returned validators. No worker relay,
   outbox, Hermes code or CRW state is consumed by this increment.
+
+## Head-pinned merge (#141)
+
+The same reference commit was read through GitHub's read-only contents API:
+`internal/relay/dagsched/mergeorder.go` and
+`internal/relay/dagsched/mergedreading_test.go`.
+
+- **Seen:** merge ordering labels measured heads current, stale or unknown;
+  merged PRs remain readable but incomplete evidence remains a read failure.
+  A merged candidate does not manufacture a delivery judgment.
+- **Inferred:** LINA must serialize one repository/base merge at a time, compare
+  the freshly read head with the accepted head, and never use a stale measurement
+  as merge authority. Observing a merge must remain separate from issuing one.
+- **Unknown:** those files do not establish GitHub's atomic head-pin behavior or
+  the local protected-ref algorithm. LINA implements its own C-58 contract:
+  fixed `gh pr merge --match-head-commit` arguments, local Git ref snapshots,
+  and explicit commit/ref/check reads before accepting an external merge.
+  No reference code or operational records are copied.
