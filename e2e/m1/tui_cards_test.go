@@ -143,7 +143,7 @@ func TestM1TUICards(t *testing.T) {
 	scenario := readCardScenario(t)
 	h := newHarness(t, "")
 	child := exec.CommandContext(h.ctx, os.Args[0], "-test.run=^TestDecisionCoreHelper$")
-	child.Env = []string{"LINA_TEST_DECISION_ROOT=" + h.root}
+	child.Env = []string{"LINA_TEST_DECISION_ROOT=" + h.root, sqliteCacheEnv + "=" + os.Getenv(sqliteCacheEnv)}
 	input, err := child.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
