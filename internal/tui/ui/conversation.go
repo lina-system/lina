@@ -530,10 +530,13 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		} else if b.Speaker == protocol.ConversationSpeakerAgent || b.Kind == protocol.KindOutputDelta {
 			transcript = append(transcript, plainRow(name))
 		}
-		if b.Kind == protocol.KindResult {
+		if b.Kind == protocol.KindResult && !b.InlineReply {
 			transcript = append(transcript, plainRow(design.Text(m.styles.options.Language, "result")+"  "+sanitize.Display(b.Title)+"  Ctrl+O"))
 		}
 		transcript = append(transcript, cached.stream.Markdown(render.Config{Width: plan.Conversation.Width, Theme: m.styles.options.Theme}, m.styles.listBullet(), parseMarkdown)...)
+		if b.InlineReply {
+			transcript = append(transcript, plainRow(design.Text(m.styles.options.Language, "reply.open_pager")))
+		}
 	}
 	m.conversation.scroll = min(m.conversation.scroll, max(0, len(transcript)-plan.Conversation.Height))
 	start := max(0, len(transcript)-plan.Conversation.Height-m.conversation.scroll)

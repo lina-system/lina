@@ -4,7 +4,7 @@ This document fixes how the LINA terminal UI is built in Go on Bubble Tea where 
 
 ## North star
 
-Short replies, waiting for me first, progress as lines, detail in a pager. The TUI follows [product-families.md](product-families.md#north-star) and [surfaces.md](surfaces.md#default-view): the person sees the design at a glance with how far each piece of work has come, and the list of what they must do or decide. The TUI never prints a long form into the scrollback. A card line stays there, and a key opens the rest.
+Short replies, waiting for me first, progress as lines, detail in a pager. The TUI follows [product-families.md](product-families.md#north-star) and [surfaces.md](surfaces.md#default-view): the person sees the design at a glance with how far each piece of work has come, and the list of what they must do or decide. Complete assistant replies stay inline in the scrollable conversation, even when they exceed the reply budget. A one-line `Open in pager · Ctrl+O` affordance follows a long reply. Structured results keep their summary cards and open their detail on request.
 
 Numbers marked (P) are starting values to measure. A number without (P) comes from a contract or a protocol.
 
@@ -99,6 +99,11 @@ text or a claim that reads prove Core mutation readiness. Resync and its fresh
 snapshot restore the subscribed view in Core's history order. A durable stopped
 outcome stays with its interrupted turn before later inputs and replies, including
 after reconnect and terminal resize.
+
+Initial conversation discovery also stays Resyncing until History supplies the
+destination. The connected conversation state is a usable input boundary, not
+just a successful socket handshake. Input typed during discovery remains a
+draft; discovery never sends it automatically.
 
 Quit (Ctrl+C with an empty draft or Ctrl+D), input EOF and termination signals close only this
 client and exit 0, including during handshake or retry. The raw terminal reader
@@ -381,9 +386,13 @@ routing data and never appear in that line or the waiting summary.
 
 **The pager** shows Details, the activity log and long results: scroll, search, quit. Copy is the person's act in their own terminal: the pager offers a sanitized-text overlay to select with the terminal's own copy. A write by OSC 52 waits for the open point on the clipboard rule below.
 
-Text result cards retain the summary in the conversation and the sanitized
-`text` fallback separately for the pager. Ctrl+O opens the selected card (the
-latest by default); on wide terminals it occupies the side pane and otherwise
+Structured text result cards retain the summary in the conversation and the
+sanitized `text` fallback separately for the pager. Core-generated reply-shape
+previews instead display that complete masked text once as assistant prose,
+followed by `Open in pager · Ctrl+O`. No summary is repeated above it. The latest
+position shows the end of the reply, and Page Up reaches its beginning without
+opening the pager. Live updates and restored history use the same projection.
+Ctrl+O opens the selected card (the latest by default); on wide terminals it occupies the side pane and otherwise
 the full screen. The pager supports arrows, Page Up/Down, Home/End, `/` search,
 `n` for the next match, and Esc or `q` to return. Its text can be selected with
 the terminal's own copy. No host clipboard read or write is installed by the
