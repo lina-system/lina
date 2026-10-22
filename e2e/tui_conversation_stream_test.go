@@ -193,8 +193,8 @@ func TestM1TUIConversationStream(t *testing.T) {
 			t.Errorf("scripted conversation: %v", err)
 		}
 	})
-	terminal := h.startConversationTerminal(script.Conversation, []string{"TERM=xterm-256color"}, 80, 24)
-	waitScreen(t, h, terminal, "Ctrl+D")
+	terminal := h.startScreenTUI("TERM=xterm-256color")
+	waitComposerReady(t, h, terminal)
 	h.keys(terminal, script.Input+"\r")
 	waitScreen(t, h, terminal, script.Partial)
 	h.keys(terminal, script.Steering+"\r")

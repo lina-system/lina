@@ -49,28 +49,36 @@ func TestM1TUIConversationInstalledCore(t *testing.T) {
 	defer provider.Close()
 	h, start := installedConversationHarness(t, provider.URL)
 	core := start(true)
-	// Read-only history is available during recovery. Wait for input admission
-	// as well before exercising the configured conversation through the TUI.
-	client, conversation := conversationClient(t, h)
+	client, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "test", []protocol.Capability{{Name: "conversation", Version: "1.0"}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer client.Close()
 	if len(client.Welcome.Capabilities) == 0 {
 		t.Fatal("installed Core has no conversation service")
 	}
-	socket := h.socket
-	tap := newAccountTap(t, h, socket)
-	h.socket = tap.socket
+	if _, err = client.History(h.ctx, protocol.HistoryGet{}); err != nil {
+		t.Fatal(err)
+	}
+	discovery, err := client.Receive(h.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	history, ok := discovery.Payload.(protocol.History)
+	if !ok || history.ConversationID == nil {
+		t.Fatal("no conversation discovery")
+	}
+	topic := "conversation:" + *history.ConversationID
+	if _, err = client.Subscribe(h.ctx, protocol.Subscribe{Topic: &topic}); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot, err := client.Receive(h.ctx); err != nil || snapshot.Kind != protocol.KindSnapshot {
+		t.Fatal("no history snapshot")
+	}
 	terminal := h.startScreenTUI("TERM=xterm-256color", "COLORTERM=truecolor")
-	h.socket = socket
-	fresh := waitScreen(t, h, terminal, "Ctrl+D")
+	fresh := waitComposerReady(t, h, terminal)
 	if text := screenText(fresh); strings.Contains(strings.ToLower(text), "unsupported") {
 		t.Fatalf("fresh install shows an unsupported placeholder: %s", text)
-	}
-	// Wait for the TUI's own History discovery, not just the observer's.
-	for {
-		frame := tap.next(t, h)
-		if snapshot, ok := frame.Payload.(protocol.Snapshot); ok && snapshot.Topic == "conversation:"+conversation {
-			break
-		}
 	}
 	h.keys(terminal, scenario.Input+"\r")
 	snapshot := waitScreen(t, h, terminal, scenario.Reply)
@@ -97,7 +105,7 @@ func TestM1TUIConversationInstalledCore(t *testing.T) {
 		t.Fatal("missing durable input echo")
 	}
 	changed := "MUST-NOT-REPLACE"
-	if _, err = client.Input(h.ctx, protocol.Input{ConversationID: &conversation, InputID: &echo, Text: &changed}); err != nil {
+	if _, err = client.Input(h.ctx, protocol.Input{ConversationID: history.ConversationID, InputID: &echo, Text: &changed}); err != nil {
 		t.Fatal(err)
 	}
 	duplicate, err := client.Receive(h.ctx)
@@ -163,6 +171,12 @@ func screenText(snapshot tuiterm.Snapshot) string {
 	}
 	return text.String()
 }
+func waitComposerReady(t *testing.T, h *harness, terminal *terminal) tuiterm.Snapshot {
+	t.Helper()
+	// waitScreen's composer barrier also requires the Connected status.
+	return waitScreen(t, h, terminal, "Ctrl+D")
+}
+
 func waitScreen(t *testing.T, h *harness, terminal *terminal, text string) tuiterm.Snapshot {
 	t.Helper()
 	snapshot, err := terminal.screen.Wait(h.ctx, func(snapshot tuiterm.Snapshot) bool {
@@ -177,10 +191,9 @@ func waitScreen(t *testing.T, h *harness, terminal *terminal, text string) tuite
 	if err != nil {
 		select {
 		case <-terminal.process.done:
-		case <-h.ctx.Done():
-			terminal.process.killAndWait()
+			t.Logf("TUI exited: %v; stderr=%s", terminal.process.err, &terminal.process.stderr)
+		default:
 		}
-		t.Logf("TUI exited: %v; stderr=%s", terminal.process.err, &terminal.process.stderr)
 		t.Fatalf("screen missing %q: %v; cells=%s", text, err, screenText(snapshot))
 	}
 	return snapshot
@@ -196,7 +209,7 @@ func (h *harness) startConversationTerminal(conversation string, environment []s
 	h.socket = tap.socket
 	terminal := h.startTerminalSize(environment, false, true, width, height)
 	h.socket = socket
-	waitScreen(h.t, h, terminal, design.Text(design.English, "live"))
+	waitComposerReady(h.t, h, terminal)
 	for {
 		frame := tap.next(h.t, h)
 		if snapshot, ok := frame.Payload.(protocol.Snapshot); ok && snapshot.Topic == "conversation:"+conversation {
@@ -249,15 +262,15 @@ func installConversationBundle(t *testing.T, h *harness, bundle, providerURL str
 		}
 		core.start(t)
 		h.connect(core).Close()
-		waitCoreInputReady(t, h)
+		waitCoreReady(t, h)
 		return core
 	}
 
 	return h, start
 }
 
-// waitCoreInputReady observes admission after recovery, not just a bound socket.
-func waitCoreInputReady(t *testing.T, h *harness) {
+// Share the installed harness readiness barrier with custom Core launch paths.
+func waitCoreReady(t *testing.T, h *harness) {
 	t.Helper()
 	// A bound socket accepts reads while Core is still reconciling/probing.
 	// Wait for mutation admission via an empty, always-refused input; no

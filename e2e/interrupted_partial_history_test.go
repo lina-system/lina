@@ -124,6 +124,7 @@ func TestM1InterruptedPartialHistory(t *testing.T) {
 			waitScreen(t, h, terminal, "Ctrl+D")
 			// Controls can appear before negotiation permits input. Wait for Live.
 			waitScreen(t, h, terminal, design.Text(design.English, "live"))
+			waitComposerReady(t, h, terminal)
 			h.keys(terminal, scenario.Input+"\r")
 			for _, partial := range scenario.Partials {
 				waitScreen(t, h, terminal, partial)
