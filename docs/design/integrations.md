@@ -326,7 +326,9 @@ restart. Adapter tests independently cover owner-only approval decisions,
 presentation matching, token-free inboxes and REST error classification.
 The separate `e2e/m2/discord-recovery.json` scenario injects both non-resumable
 close codes into the running Core, checks fresh Identify and duplicate receipt
-handling, then completes tool/background work and delivers its results.
+handling for both commands and approval buttons, then completes tool/background
+work and delivers its results. After restarting Core it requires Resume with
+the replacement session ID and its last committed sequence (#547).
 
 Telegram's initial adapter uses `github.com/PaulSonOfLars/gotgbot/v2` at
 `v2.0.0-rc.37`, with no transitive modules. It advertises text, edits,

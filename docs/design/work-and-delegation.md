@@ -460,7 +460,7 @@ Rules:
 
 ## Development method
 
-LINA ships no coding harness. It runs no review loop of its own around a worker, installs no hook, skill or plugin into one, and keeps no stage workflow. Codex, Claude Code, Antigravity and Cursor are used as the user installed them. LINA's development role is a method, which the dev preset carries ([conversation-and-memory.md](conversation-and-memory.md#preset-methodologies)). The dev preset agent owns coding work and its manager sessions, including requests handed over by Lina or another starter. How to implement, split, join or interpret work is the judgment of the worker and that owning persona. The worker writes the code, the branch and the pull request body, opens the pull request and owns it to green. The manager checks the work definition and decides merge or close. LINA Core keeps the flow moving: start, reliable delivery with receipts, true state, recovery, merge on green, QA after each merge and report.
+LINA ships no coding harness. It runs no review loop of its own around a worker, installs no hook, skill or plugin into one, and keeps no stage workflow. Codex, Claude Code, Antigravity and Cursor are used as the user installed them. LINA's development role is a method, which the dev preset carries ([conversation-and-memory.md](conversation-and-memory.md#preset-methodologies)). Its work settings, such as worker dispatch, the evidence required before a delivery is reported done and the shape of status reports, are data in the dev preset's work-method record ([preset-work-methods.md](preset-work-methods.md)), not a harness around a worker. The dev preset agent owns coding work and its manager sessions, including requests handed over by Lina or another starter. How to implement, split, join or interpret work is the judgment of the worker and that owning persona. The worker writes the code, the branch and the pull request body, opens the pull request and owns it to green. The manager checks the work definition and decides merge or close. LINA Core keeps the flow moving: start, reliable delivery with receipts, true state, recovery, merge on green, QA after each merge and report.
 
 ### Work definition
 
@@ -847,7 +847,7 @@ A worker returning a completion receipt and the manager accepting the result are
 Delivery of every task:
 
 1. LINA Core registers the assignment before the worker's first output.
-2. For each execution generation the worker submits a completion receipt for the actual output path. It is held until the end of the turn is observed.
+2. For each execution generation the worker submits a completion receipt for the actual output path. It is held until the end of the turn is observed. Receipt fields, including `turnStatus`, are claims and cannot create that observation or release the active-run reservation.
 3. LINA Core records the receipt in the ledger and acknowledges it.
 4. **Read.** For code-change work LINA Core reads the pull request the receipt names, once: its state, its head SHA, its review records and the conclusions of the required checks at that head. It checks that the head matches the receipt and that the protected refs did not move. A pending check or review stays a named wait with a deadline in the worker's turn (see Event-driven flow); it never becomes a findings round trip through the manager. For work without a pull request the manager reads the artifacts against the done condition once and judges `verified` or `needs_changes`, and Core records the verdict.
 
@@ -933,6 +933,7 @@ After every event Core commits for a goal, Core derives the goal's next actions 
 | Goal handed over | `defining`, done condition written | Split into tasks with dependencies and write areas, say the start line, move to `running` and fill capacity. | Manager, then Core |
 | Slot released, a host's load changed, or a task became ready | Any goal with ready tasks | Fill every compatible slot across the main host and Nodes with ready tasks (see Capacity). | Core |
 | Worker turn ended with a completion receipt | Task in progress | Read the receipt and, for code, the pull request once; continue as Judgment and delivery says. | Core, then manager |
+| File result reported before worker termination is observed | Task in progress or unknown after recovery | Refuse `report_work_result` without changing the receipt, snapshot or active-run reservation; admit a fresh report only after the matching terminal observation. | Core |
 | Worker turn ended without a receipt | Task in progress | One continuation that asks the worker to finish or report the blocker; a second ending without a receipt is a failure under Stall and failure. | Core |
 | Code task's head is green with no open P0 or P1, and the manager judged it `verified` | Task ready to merge | Merge that head through the merge slot. | Core |
 | Merge observed | Code task landed | Release its dependents, start QA on the merged commit once, and fill capacity. | Core |
@@ -1063,9 +1064,14 @@ verified bundle for an already committed landing. Unrelated effects and calls
 from the current epoch keep their reservations.
 
 `prepare_work` binds the destination to the conversation-owned task.
-`report_work_result` admits the observed worker completion receipt and captures
-the snapshot; `land_work_result` binds the manager's judgment to its receipt and
-fingerprint and performs the copy and readback in Core. Worker dispatch and
+`report_work_result` requires a previously recorded terminal observation for the
+same run, with a status matching the receipt, before admitting the receipt and
+capturing the snapshot. It never records worker termination from model-supplied
+fields. A still-active or recovered unknown run retains its reservation and has
+no new receipt or snapshot after a refused report. A fresh report can retry once
+Core records the worker's actual terminal observation; a stale run or a completed
+claim for a failed or interrupted turn remains refused. `land_work_result` binds
+the manager's judgment to its receipt and fingerprint and performs the copy and readback in Core. Worker dispatch and
 whole-goal scheduling are separate from these file-delivery operations.
 
 ### Stop and ask

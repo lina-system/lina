@@ -90,6 +90,9 @@ func (s *Service) Submit(ctx context.Context, runID string, r Receipt) error {
 	}
 	return s.append(ctx, Event{Key: "receipt:" + r.EventID, TaskID: r.RelationshipID, Kind: "receipt", RunID: runID, Receipt: &r})
 }
+
+// Finish records a trusted worker termination observation. Model and worker
+// receipt handlers must not call it using a receipt's claimed turn status.
 func (s *Service) Finish(ctx context.Context, taskID, runID, status string) error {
 	s.workspaceMu.Lock()
 	defer s.workspaceMu.Unlock()
