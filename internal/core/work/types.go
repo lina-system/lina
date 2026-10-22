@@ -15,6 +15,7 @@ var (
 )
 
 type Task struct {
+	Destination    string     `json:"destination,omitempty"`
 	Workspace      *Workspace `json:"workspace,omitempty"`
 	ID             string     `json:"id"`
 	AgentID        string     `json:"agent_id"`
@@ -77,31 +78,37 @@ type Stage struct {
 	Source  string `json:"source"`
 }
 type Card struct {
-	Materials  []Material `json:"materials,omitempty"`
-	ResultHead string     `json:"result_head,omitempty"`
-	Task       Task       `json:"task"`
-	State      string     `json:"state"`
-	Run        *Run       `json:"run,omitempty"`
-	Active     bool       `json:"active"`
-	TurnStatus string     `json:"turn_status,omitempty"`
-	Receipt    *Receipt   `json:"receipt,omitempty"`
-	Verdict    string     `json:"verdict,omitempty"`
-	Applied    bool       `json:"applied"`
-	Stages     []Stage    `json:"stages"`
+	FileSnapshot *FileSnapshot `json:"file_snapshot,omitempty"`
+	FileEvidence *FileEvidence `json:"file_evidence,omitempty"`
+	FileCopies   []FileCopy    `json:"file_copies,omitempty"`
+	Materials    []Material    `json:"materials,omitempty"`
+	ResultHead   string        `json:"result_head,omitempty"`
+	Task         Task          `json:"task"`
+	State        string        `json:"state"`
+	Run          *Run          `json:"run,omitempty"`
+	Active       bool          `json:"active"`
+	TurnStatus   string        `json:"turn_status,omitempty"`
+	Receipt      *Receipt      `json:"receipt,omitempty"`
+	Verdict      string        `json:"verdict,omitempty"`
+	Applied      bool          `json:"applied"`
+	Stages       []Stage       `json:"stages"`
 }
 
 // Event has one payload selected by Kind. Events are admitted by Service only;
 // clients and workers never append arbitrary events or acceptance judgments.
 type Event struct {
-	Materials []Material `json:"materials,omitempty"`
-	Key       string     `json:"key"`
-	TaskID    string     `json:"task_id"`
-	Kind      string     `json:"kind"`
-	Task      *Task      `json:"task,omitempty"`
-	Run       *Run       `json:"run,omitempty"`
-	Receipt   *Receipt   `json:"receipt,omitempty"`
-	RunID     string     `json:"run_id,omitempty"`
-	Value     string     `json:"value,omitempty"`
-	ReceiptID string     `json:"receipt_id,omitempty"`
-	Evidence  string     `json:"evidence,omitempty"`
+	FileSnapshot *FileSnapshot `json:"file_snapshot,omitempty"`
+	FileEvidence *FileEvidence `json:"file_evidence,omitempty"`
+	FileCopy     *FileCopy     `json:"file_copy,omitempty"`
+	Materials    []Material    `json:"materials,omitempty"`
+	Key          string        `json:"key"`
+	TaskID       string        `json:"task_id"`
+	Kind         string        `json:"kind"`
+	Task         *Task         `json:"task,omitempty"`
+	Run          *Run          `json:"run,omitempty"`
+	Receipt      *Receipt      `json:"receipt,omitempty"`
+	RunID        string        `json:"run_id,omitempty"`
+	Value        string        `json:"value,omitempty"`
+	ReceiptID    string        `json:"receipt_id,omitempty"`
+	Evidence     string        `json:"evidence,omitempty"`
 }

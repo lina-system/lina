@@ -21,6 +21,7 @@ import (
 
 type workMaterials struct {
 	writer *assets.MaterialWriter
+	store  *assets.Store
 	person string
 }
 type workMaterial struct {
@@ -28,6 +29,9 @@ type workMaterial struct {
 	path string
 }
 
+func (m workMaterials) Open(ctx context.Context, material work.Material) (io.ReadCloser, error) {
+	return m.store.OpenRead(ctx, material.ID, material.Revision)
+}
 func (m workMaterials) Prepare(ctx context.Context, r io.Reader, path, agent string) (work.MaterialWrite, error) {
 	p, err := m.writer.Prepare(ctx, r, "work-result:"+path, assets.Actor{PersonID: m.person, AgentID: agent})
 	if err != nil {
