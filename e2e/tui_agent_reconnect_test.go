@@ -67,7 +67,7 @@ func TestM1TUIAgentReconnectInstalledCore(t *testing.T) {
 	agent := *created.AgentID
 	client.Close()
 	terminal := h.startTerminalSize([]string{"TERM=xterm-256color", "LC_ALL=C"}, false, true, 120, 35)
-	waitScreen(t, h, terminal, "Ctrl+D")
+	waitComposerReady(t, h, terminal)
 	h.keys(terminal, "/agents choose "+agent+"\r")
 	// The id also appears in the draft before the choose response. The agent
 	// name is displayed only after that response has updated the selection.
@@ -79,6 +79,7 @@ func TestM1TUIAgentReconnectInstalledCore(t *testing.T) {
 	}); err != nil {
 		t.Fatal("agent selection pager did not close", err)
 	}
+	waitComposerReady(t, h, terminal)
 	assertRequest := func(input string) {
 		t.Helper()
 		select {
