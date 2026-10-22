@@ -741,7 +741,7 @@ After every event Core commits for a goal, Core derives the goal's next actions 
 | Deploy observed | Code goal | Probe the running service at the deployed revision against the done condition; an exit code is not a probe. | Core |
 | Background run landed complete | Research or document task | Check citations, store the result, re-evaluate the criteria it serves. | Core, then manager |
 | Background run landed partial | Research or document task | Start one follow-up run on what is missing, or mark it open in the result when the sources cannot answer it. | Manager |
-| Draft or file result ready | Document or file task | Check it against the done condition and land it at its destination; a destination never has existing files merged or overwritten. | Manager, then Core |
+| Draft or file result ready | Document or file task | Check it against the done condition. Land a new artifact at its destination without merging or overwriting existing files. When the goal updates an existing document, use the revision-checked [in-place edit](materials-and-knowledge.md#editing-a-persons-files-in-place), keeping the old version and rejecting a stale revision. | Manager, then Core |
 | Effect performed through a plugin (calendar event, sent message, file move) | Effect task | Read back the external record; only the read sets the criterion. | Core |
 | Reply arrived in a waited thread, a record changed, or a date was reached | Wait open | Close the wait and re-evaluate the criteria behind it. | Core |
 | A wait's deadline passed | Wait open | Read the source once more; if still open, apply the wait's expiry action (see Waits on the outside). | Core |
@@ -770,6 +770,30 @@ Much non-code work waits on things LINA does not control: a reply, a confirmatio
 - A wait that belongs to a 할 일 is that 할 일's `waiting_on`, with the deadline as its next-check date, so the to-do views and the goal show the same wait.
 - If the other side is waiting on the person, that is the person's own 할 일, as the to-do record says.
 
+**Person-row admission and expiry.**
+
+A wait on the person is a row in "Waiting for me". Work admits the complete
+round with a goal, owner, requesting agent, conversation, deadline, and the
+questions and their dependent tasks. Each question has a recommendation,
+allowed answers and an explicit default. A missing deadline or default, or a
+default outside those answers, refuses the entire round. The deadline comes
+from the goal; a display due date alone is not an expiry policy.
+
+Core records the round and its dependency holds atomically. It schedules the
+nearest deadline and checks overdue rounds before admitting mutations after
+restart. At or after the deadline, the original defaults and the dependency
+changes commit together exactly once. Repeated timer delivery, concurrent
+answers and restarts cannot apply that default again. An answer received at
+the deadline first records expiry, then follows the late-answer rule below.
+There is no model call or read of an external service just to expire a person
+row. Other kinds of outside wait retain their service-specific readback rules.
+
+For an outside or irreversible effect the only admitted default is
+`do_not_act`. Its dependent tasks remain waiting; unrelated tasks and the
+questions with actionable defaults can proceed. A row answer records a
+decision, never an authority grant. Any later outward execution still needs
+the authorization of [main-authority.md](main-authority.md#approval).
+
 ### Capacity
 
 Every ready task starts at once, limited only by the person's quota and by what the Nodes can carry. Filling is driven by events: a goal admitted, a task landed, a slot released, a Node's load changing. It never waits for a timer or for a message from the person.
@@ -783,7 +807,7 @@ Every ready task starts at once, limited only by the person's quota and by what 
 
 ### Recovery
 
-- The goal record, its tasks, waits and evidence are canon in the work ledger. A restart loses no goal: Core reconciles effects whose outcome is unknown, then derives the next actions of every goal that is not final.
+- The goal definition is canon in the 일 or 목표 record in the records repository; the work ledger holds its execution state (criteria status and evidence, tasks, waits and state). A restart loses no goal: Core resolves the goal record by the id and revision referenced in the ledger and reads its execution state from the ledger, reconciles effects whose outcome is unknown, then derives the next actions of every goal that is not final.
 - Every derived action has an identity bound to the goal, the task, its attempt, its stage and the head or revision it acts on. Replaying an event or running two derivations at once never dispatches the same action twice.
 - Task-level recovery is the one recovery of Stall and failure. A goal does not add attempts on top: when a task's recovery is exhausted, the goal is `blocked` on that task while its independent tasks continue.
 - A wait survives restart with its deadline. A timer that should have fired while Core was down fires once at startup.
@@ -810,6 +834,26 @@ LINA asks the person only in these cases. Each is one row in "Waiting for me", i
 5. A task whose one recovery failed, or a criterion that failed with no repair inside the scope.
 
 Everything else is decided by LINA and shown as in progress: whether to start, in what order, how many at once, which worker, whether to retry, how to split, and every reversible edit. A question that is not on this list is a defect of the work engine, as Default posture says.
+
+Independent questions known for one goal are submitted as one row round,
+with one deadline and a default for every question. A second open round for
+the same goal is refused; a retry of the identical round is idempotent.
+Answering the round supplies all its question values together. Each question
+holds only its named dependents, so one unanswered effect cannot stop the
+rest of the goal.
+
+A timely answer and its originating message are recorded with the person and
+agent from the durable round. A late answer remains available after expiry
+and appends a new decision with its message identity and body; it increments
+the goal revision and returns the goal to work. Retrying the same message
+cannot create another revision. The expired default stays in the ledger.
+The manager derives revised work from the new decision: Core never rewrites
+the inputs or results of old executions, releases an old effect merely due
+to a late answer, or undoes an effect already applied. Work projections can
+be rebuilt from those same recorded transitions. If the person has stopped the
+goal, outstanding rounds still record their expiry or answer, but neither
+operation reopens that goal or releases its dependents. A stopped goal's row
+cannot prevent other goals from expiring or Core from restarting.
 
 ### What the person sees
 
