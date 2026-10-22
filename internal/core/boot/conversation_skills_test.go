@@ -90,3 +90,36 @@ func TestConversationSkillAuthorityAndReceipts(t *testing.T) {
 		t.Fatalf("undo catalog: %+v %v", entries, err)
 	}
 }
+
+func TestBackgroundSkillIndexUsesDevelopmentMethodology(t *testing.T) {
+	r, _, _, _ := managementFixture(t)
+	var err error
+	r.skills, err = skills.Open(t.TempDir(), r.db, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.skills.Close()
+	adapters, err := r.runReadTools()
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := provider.ToolCall{ID: "index", Name: "skill_index", Arguments: `{"methodology":"dev"}`}
+	if _, err = adapters[call.Name].Handler.Validate(call); err != nil {
+		t.Fatal(err)
+	}
+	result := adapters[call.Name].Handler.Execute(t.Context(), call)
+	var index struct {
+		Preset string
+		Routes []skills.MethodRoute
+		Skills []skills.Version
+	}
+	if result.Code != loop.OK || json.Unmarshal(result.Output, &index) != nil || index.Preset != "dev" || len(index.Routes) != 9 {
+		t.Fatalf("methodology response: %s", result.Output)
+	}
+	call.Arguments = `{}`
+	result = adapters[call.Name].Handler.Execute(t.Context(), call)
+	var catalog []skills.Version
+	if result.Code != loop.OK || json.Unmarshal(result.Output, &catalog) != nil {
+		t.Fatalf("legacy index: %s", result.Output)
+	}
+}

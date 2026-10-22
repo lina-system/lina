@@ -106,6 +106,15 @@ snapshot restore the subscribed view in Core's history order. A durable stopped
 outcome stays with its interrupted turn before later inputs and replies, including
 after reconnect and terminal resize.
 
+Connection loss includes a request write failing before the receive loop observes
+EOF. The client closes that transport and the same connection owner enters
+Retrying; a failed or unacknowledged submission returns to the draft and is never
+automatically resent. Only transport failures take this path. Invalid requests,
+malformed protocol frames, terminal input/output failures and caller cancellation
+retain their failure or cancellation behavior. The installed-Core headless test
+`TestM1TUISubmissionDisconnectInstalledCore` forces the write-first ordering,
+restarts Core and verifies retained history, an editable draft and explicit send.
+
 Initial conversation discovery stays Connecting until History supplies the
 destination. The connected conversation state is a usable input boundary, not
 just a successful socket handshake. Input typed during discovery remains a
@@ -196,7 +205,8 @@ The server side is [go-core.md](go-core.md) (C-42): topics, cursors, rings, batc
 - A different revocation epoch ([conversation-and-memory.md](conversation-and-memory.md#terms)) makes the TUI drop cached items before the snapshot applies, so a forgotten item cannot survive a reconnect.
 - Replaying a stream or a snapshot twice leaves state unchanged.
 - `tool_activity` start/finish events consume their stream cursor without
-  creating conversation blocks, completion durations or activity words. Core
+  creating conversation blocks, completion durations or activity words. They do
+  update the separate, ephemeral tool rows described in T-13. Core
   excludes them from snapshots; a client receiving an optional activity item
   there skips it while accepting the snapshot cursor. Unknown optional snapshot
   items likewise contribute no conversation content and cannot prevent the
@@ -438,6 +448,11 @@ follow-latest state when the settings screen closes.
 a 100×34 PTY, sends SGR wheel input, compares the retained rows after a second
 reply, verifies that `/web` blocks wheel input at the latest and retained
 positions, and verifies End and mouse-mode cleanup.
+Conversation observations in this unsynchronized PTY wait for the renderer to
+show the cursor after its cell diff, even when the expected first row or status
+marker is already visible. A split-output regression leaves a transcript row
+unpainted and splits the final cursor-show sequence; neither partial snapshot
+may establish the retained viewport used by the full-row comparisons.
 For the colour conversation screen, each new size reaches the cell renderer
 before its reflowed view, even if the view text is unchanged. The connection owner's latest dimensions remain authoritative: late renderer startup size messages are discarded before they can resize the cell buffer. Resizing keeps the
 draft and redraws header, status and composer within the current row budget;
@@ -534,6 +549,38 @@ An approval or form question keeps a short labeled line in the conversation.
 Its expanded view shows the requesting agent, recommendation when supplied,
 summary, targets and choices. Opaque card references and revision tokens are
 routing data and never appear in that line or the waiting summary.
+
+### Tool call rows
+
+Under the turn, the TUI projects each accepted `tool_activity` into a muted
+one-line row: status mark and localized word, catalog display name, and optional
+short display target. Running, ok and failed marks come from semantic tokens;
+ASCII mode uses an ASCII mark and an explicit word. A finish updates the same
+call in place. Consecutive calls of the same tool in the same turn and display
+position group into one row with a count. Running calls keep the group running;
+a failed count remains visible even while another call runs. Once complete, any
+failed member makes the group failed. Neither call success nor group success
+claims a verified work result.
+
+Only Core's optional, explicitly display-safe `target` and `summary` fields may
+supply a target or output preview. The current Core does not produce either;
+the client never derives them from private arguments, raw results or prose.
+Targets are sanitized, flattened and clipped to one row. Summaries are sanitized
+and wrapped at terminal cell boundaries, then folded to three rows, followed by
+`+N lines · Ctrl+O` when more rows remain. Ctrl+O opens tool summaries in the
+existing searchable pager, preserving the result-card action when a later card
+is selected. Assistant prose is never folded by this rule.
+
+These rows are ephemeral UI metadata anchored at first observation, separate
+from conversation blocks. Replay is idempotent; gaps wait for resync. Focus,
+epoch and revocation changes discard the rows; an accepted snapshot discards
+that topic's transient rows rather than inventing history from snapshot data.
+An open tool pager clears when its underlying rows are invalidated. Rows never
+enter model history, stored conversation text or exported conversation text.
+The installed-Core PTY test `e2e/m1/tui_tool_rows_test.go` executes a successful and
+failed fixture tool and checks both glyph modes plus model/export exclusion.
+Its socket gate holds delivery of the real finish event to make the running
+frame observable without relying on tool speed; it fabricates no tool events.
 
 **The pager** shows Details, the activity log and long results: scroll, search, quit. Copy is the person's act in their own terminal: the pager offers a sanitized-text overlay to select with the terminal's own copy. A write by OSC 52 waits for the open point on the clipboard rule below.
 
@@ -758,8 +805,9 @@ type Stream interface {
   the UI adds terminal styles. List continuations align under their content;
   code retains literal text and whitespace, including empty first and last
   lines and blocks containing only empty lines. Empty code rows retain their
-  semantic identity through wrapping; message-boundary trimming removes only
-  paragraph spacing. Escaped syntax remains literal.
+  block's code identity through wrapping, including language-tagged fences
+  with multiple syntax spans or no tokens; message-boundary trimming removes
+  only paragraph spacing. Escaped syntax remains literal.
   Unsupported HTML blocks and inline HTML display their literal source text.
   Tables use our own renderer.
 - Conversation spans use theme text, accent and surface tokens: bold and italic

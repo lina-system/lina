@@ -317,6 +317,18 @@
       "agent": {
         "$type": "string",
         "$value": "●"
+      },
+      "toolRunning": {
+        "$type": "string",
+        "$value": "◐"
+      },
+      "toolOk": {
+        "$type": "string",
+        "$value": "✓"
+      },
+      "toolFailed": {
+        "$type": "string",
+        "$value": "×"
       }
     },
     "ascii": {
@@ -391,6 +403,18 @@
       "agent": {
         "$type": "string",
         "$value": "*"
+      },
+      "toolRunning": {
+        "$type": "string",
+        "$value": "~"
+      },
+      "toolOk": {
+        "$type": "string",
+        "$value": "+"
+      },
+      "toolFailed": {
+        "$type": "string",
+        "$value": "x"
       }
     }
   }

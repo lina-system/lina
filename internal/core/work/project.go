@@ -79,12 +79,16 @@ func advance(c *Card, e Event) error {
 		c.Active = true
 		c.State = "working"
 		c.Receipt = nil
+		c.FileSnapshot = nil
+		c.FileEvidence = nil
 		c.Materials = nil
 		c.ResultHead = ""
 		c.Verdict = ""
 		c.Applied = false
 		c.TurnStatus = ""
 		c.Stages = []Stage{{Name: "worker", Source: "unknown"}, {Name: "review", Source: "unknown"}, {Name: "apply", Source: "unknown"}}
+	case "file_receipt", "copy_started", "copy_failed", "files_landed", "files_invalidated":
+		return advanceFiles(c, e)
 	case "receipt":
 		if c.Run == nil || c.Run.ID != e.RunID || e.Receipt == nil {
 			return ErrState
@@ -158,7 +162,7 @@ func advance(c *Card, e Event) error {
 			c.State = "working"
 		}
 	case "applied":
-		if c.Active || c.Receipt == nil || c.Receipt.EventID != e.ReceiptID || c.Verdict != "verified" || e.Evidence == "" || !c.Task.RequiresApply {
+		if c.Active || c.Receipt == nil || c.Receipt.EventID != e.ReceiptID || c.Verdict != "verified" || e.Evidence == "" || !c.Task.RequiresApply || c.Task.Destination != "" {
 			return ErrState
 		}
 		c.Applied = true
