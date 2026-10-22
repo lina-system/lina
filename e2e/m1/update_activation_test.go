@@ -84,9 +84,12 @@ func updateManager(t *testing.T, h *harness, start func(bool) *process, initial 
 					p := current
 					mu.Unlock()
 					if p != nil {
+						// The updater has observed the released Core lock. Reaping
+						// its process is a separate event; a real service stop joins
+						// that exit instead of requiring an already-closed channel.
 						select {
 						case <-p.done:
-						default:
+						case <-h.ctx.Done():
 							reply.Code = 98
 						}
 					}
