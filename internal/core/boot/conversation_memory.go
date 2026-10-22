@@ -97,5 +97,5 @@ func (r *conversationRuntime) topicAuthorized(ctx context.Context, topic string)
 			return err == nil
 		}
 	}
-	return topic == "core" || topic == "waiting" && r.decisions != nil
+	return topic == "running" && r.background != nil || topic == "core" || topic == "waiting" && r.decisions != nil
 }

@@ -499,3 +499,11 @@ func item(text string) provider.Item {
 	b, _ := json.Marshal(map[string]any{"type": "message", "role": "user", "content": text})
 	return b
 }
+
+// Changed returns the current notification generation. Capture it before
+// reading projections, then wait on it to avoid missing a committed change.
+func (s *Service) Changed() <-chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.changed
+}

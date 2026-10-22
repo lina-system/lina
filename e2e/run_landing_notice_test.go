@@ -45,7 +45,6 @@ func runNoticeScenario(t *testing.T, filename string) {
 	}
 	t.Cleanup(func() { controls.Close() })
 	ms := canon.Migrations()
-	ms = append(ms, canon.Migration{Version: len(ms) + 1, SQL: runs.Schema + runs.RunningListSchema + lane.NoticeSchema})
 	db, err := canon.Open(h.ctx, canon.Config{Path: filepath.Join(h.root, "canon.sqlite"), Epoch: 1, Controls: controls, Migrations: ms})
 	if err != nil {
 		t.Fatal(err)

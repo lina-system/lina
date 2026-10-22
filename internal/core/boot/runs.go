@@ -1,0 +1,394 @@
+// SPDX-License-Identifier: Apache-2.0
+package boot
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/thisisjun786/lina/internal/core/budget"
+	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/clientsrv"
+	coreexec "github.com/thisisjun786/lina/internal/core/exec"
+	"github.com/thisisjun786/lina/internal/core/lane"
+	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/internal/core/runs"
+	"github.com/thisisjun786/lina/internal/core/skills"
+	"github.com/thisisjun786/lina/internal/core/turn"
+	"github.com/thisisjun786/lina/kit/lease"
+	"github.com/thisisjun786/lina/kit/loop"
+	"github.com/thisisjun786/lina/kit/protocol"
+	"github.com/thisisjun786/lina/kit/provider"
+	"github.com/thisisjun786/lina/kit/tools"
+)
+
+var runningCapability = protocol.Capability{Name: "running", Version: "1.0"}
+
+// One service and one durable run store serve all conversation views.
+type backgroundRuntime struct {
+	service   *runs.Service
+	list      *runs.RunningList
+	notices   *lane.Notices
+	wake      chan struct{}
+	stop      context.CancelFunc
+	done      chan struct{}
+	mu        sync.Mutex
+	published map[string]string
+}
+
+func (b *backgroundRuntime) notify() {
+	select {
+	case b.wake <- struct{}{}:
+	default:
+	}
+}
+
+func (r *conversationRuntime) startRuns(ctx context.Context) error {
+	if r.route == nil {
+		return nil
+	}
+	b := &backgroundRuntime{wake: make(chan struct{}, 1), published: map[string]string{}}
+	r.background = b
+	adapters, err := r.runReadTools()
+	if err != nil {
+		return err
+	}
+	b.service, err = runs.New(runs.Config{Epoch: r.epoch, DB: r.db, Assets: r.assets, WorkDir: filepath.Join(r.root, "work"),
+		Model: r.route.Model, Tools: adapters, Authorize: r.authorizeRun, PublishPromotion: turn.PublishPromotion,
+		Stream: func(ctx context.Context, req provider.Request) (provider.Stream, error) {
+			activity, err := r.activities.Acquire(ctx, lease.Activity{Class: lease.Live, Reason: "background run"})
+			if err != nil {
+				return nil, err
+			}
+			req.Credential = r.route.Request(nil).Credential
+			stream, err := r.route.Adapter.Stream(ctx, activity, req)
+			if err != nil {
+				activity.Release()
+				return nil, err
+			}
+			return &backgroundStream{Stream: stream, activity: activity}, nil
+		},
+	})
+	if err != nil {
+		return err
+	}
+	b.list = runs.NewRunningList(r.db, map[string]runs.ListSource{"run": runs.RunListSource{}})
+	b.notices = lane.NewNotices(r.db, nil)
+	b.notices.OnDelivered = func(d lane.Delivery) {
+		// Delivery has committed and the lane is at its boundary. Publication is
+		// recoverable from the ledger if a client disappears here.
+		view, err := r.router.view(ctx, clientsrv.Session{PersonID: r.person}, d.Agent)
+		if err == nil {
+			_ = view.publishRunNotice(ctx, d.Notices)
+		}
+	}
+	if err := r.lanes.Close(ctx); err != nil {
+		return err
+	}
+	r.lanes = lane.NewWithNotices(b.notices)
+	r.identity.TopicCapabilities["running"] = runningCapability
+	r.identity.Operations[protocol.KindRunningGet] = clientsrv.Operation{Capability: runningCapability, Handle: func(ctx context.Context, s clientsrv.Session, e protocol.Envelope) (clientsrv.Result, error) {
+		if err := r.authorize(s, nil); err != nil {
+			return clientsrv.Result{}, err
+		}
+		return clientsrv.Result{Kind: protocol.KindRunning, Payload: protocol.Running{}}, r.publishRunning(ctx)
+	}}
+	refresh := r.identity.RefreshTopic
+	r.identity.RefreshTopic = func(ctx context.Context, topic string) error {
+		if topic == "running" {
+			return r.publishRunning(ctx)
+		}
+		if refresh != nil {
+			return refresh(ctx, topic)
+		}
+		return nil
+	}
+	if err = b.service.Recover(ctx); err != nil {
+		return err
+	}
+	// Resume the existing service's one checkpoint retry, including queued starts
+	// whose receipt committed just before shutdown. Never re-run a conversation.
+	records, err := r.runRecords(ctx)
+	if err != nil {
+		return err
+	}
+	for _, record := range records {
+		if record.State == runs.Waiting && record.Retries == 1 && record.Reason == "" {
+			if err = b.service.Release(ctx, record.ID); err != nil {
+				return err
+			}
+		}
+	}
+	if err = r.syncRuns(ctx); err != nil {
+		return err
+	}
+	if err = r.lanes.ResumeNotices(ctx); err != nil {
+		return err
+	}
+	watch, cancel := context.WithCancel(ctx)
+	b.stop, b.done = cancel, make(chan struct{})
+	go func() {
+		defer close(b.done)
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			changed := b.service.Changed()
+			// Failed publication remains durable and is retried at the next wake.
+			_ = r.syncRuns(watch)
+			select {
+			case <-watch.Done():
+				return
+			case <-changed:
+			case <-b.wake:
+			case now := <-ticker.C:
+				_ = b.service.CheckProgress(watch, now, 5*time.Minute)
+			}
+		}
+	}()
+	return nil
+}
+
+type backgroundStream struct {
+	provider.Stream
+	activity lease.Lease
+}
+
+func (s *backgroundStream) Close() error { defer s.activity.Release(); return s.Stream.Close() }
+
+func (r *conversationRuntime) authorizeRun(ctx context.Context, o runs.Origin, b runs.Brief) error {
+	if o.Person != r.person || o.Epoch != r.epoch || o.Job != "" || o.Conversation != "main:"+o.Agent || r.route == nil {
+		return runs.ErrScope
+	}
+	_, err := r.agents.Get(ctx, o.Agent)
+	if err != nil {
+		return err
+	}
+	// These installed adapters read only the shared instruction catalog. Material
+	// references and write-capable adapters require their own authority wiring.
+	if len(b.Refs) != 0 {
+		return runs.ErrScope
+	}
+	for _, name := range b.Allow {
+		if name != "skill_index" && name != "read_skill" {
+			return runs.ErrScope
+		}
+	}
+	return nil
+}
+
+func (r *conversationRuntime) runReadTools() (map[string]runs.Tool, error) {
+	registry := tools.NewRegistry(r.personaAuthority, r.activities)
+	specs, err := coreexec.RegisterSkills(registry, r.skills)
+	if err != nil {
+		return nil, err
+	}
+	declarations := map[string]provider.ToolDecl{}
+	for _, decl := range coreexec.SkillDeclarations() {
+		var name struct{ Name string }
+		if err = json.Unmarshal(decl, &name); err != nil {
+			return nil, err
+		}
+		declarations[name.Name] = decl
+	}
+	adapters := map[string]runs.Tool{}
+	for _, spec := range specs {
+		if spec.Name != "skill_index" && spec.Name != "read_skill" {
+			continue
+		}
+		adapters[spec.Name] = runs.Tool{Declaration: declarations[spec.Name], Kind: runs.Read,
+			Authorize: func(ctx context.Context, record runs.Record, _ provider.ToolCall) error {
+				return r.authorizeRun(ctx, record.Origin, record.Brief)
+			},
+			Handler: loop.Tool{Validate: func(c provider.ToolCall) (string, error) {
+				_, err := spec.Schema(json.RawMessage(c.Arguments))
+				return "", err
+			}, Execute: func(ctx context.Context, c provider.ToolCall) loop.Result {
+				ctx, cancel := context.WithTimeout(ctx, spec.Deadline)
+				defer cancel()
+				input, err := spec.Schema(json.RawMessage(c.Arguments))
+				if err != nil {
+					return loop.Result{ID: c.ID, Code: loop.Invalid}
+				}
+				var value any
+				if spec.Name == "skill_index" {
+					value, err = r.skills.Catalog(ctx)
+				} else {
+					var ref skills.Version
+					err = json.Unmarshal(input.Arguments, &ref)
+					if err == nil {
+						value, err = r.skills.Read(ctx, ref)
+					}
+				}
+				if err != nil {
+					return loop.Result{ID: c.ID, Code: loop.Failed}
+				}
+				body, err := json.Marshal(value)
+				if err != nil {
+					return loop.Result{ID: c.ID, Code: loop.Failed}
+				}
+				return loop.Result{ID: c.ID, Code: loop.OK, Output: body}
+			}},
+		}
+	}
+	return adapters, nil
+}
+
+func (r *conversationRuntime) runOrigin(turnID string) runs.Origin {
+	return runs.Origin{Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: turnID, Epoch: r.epoch}
+}
+func (r *conversationRuntime) promoteRun(ctx context.Context, input ledger.Event, h budget.Handoff) (budget.Handle, error) {
+	return r.background.service.StartFromTurn(ctx, r.runOrigin(h.Turn), runs.Brief{
+		Goal: input.Body.Text(), Scope: "Complete the whole original request using the gathered evidence and remaining reads and analysis.",
+		NotTouch: "Do not replay completed calls or make further effects. Preserve all original constraints and verification requirements, including applied steering.",
+		Done:     "The whole original request and its checks are satisfied; otherwise identify precisely what remains and why.",
+		Checks:   []runs.Check{{Name: "original request and its verification requirements", Kind: runs.Claimed}}, Result: "summary", Allow: []string{"skill_index", "read_skill"},
+	}, h)
+}
+
+func (r *conversationRuntime) runRecords(ctx context.Context) ([]runs.Record, error) {
+	var records []runs.Record
+	err := r.db.Read(ctx, func(tx *canon.Tx) error {
+		rows, err := tx.QueryContext(ctx, "SELECT record FROM background_runs ORDER BY seq")
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var raw []byte
+			var record runs.Record
+			if err = rows.Scan(&raw); err != nil {
+				return err
+			}
+			if err = json.Unmarshal(raw, &record); err != nil {
+				return err
+			}
+			records = append(records, record)
+		}
+		return rows.Err()
+	})
+	return records, err
+}
+
+func (r *conversationRuntime) syncRuns(ctx context.Context) error {
+	records, err := r.runRecords(ctx)
+	if err != nil {
+		return err
+	}
+	conversations := map[string]bool{}
+	for _, record := range records {
+		if record.Origin.Person != r.person {
+			continue
+		}
+		conversations[record.Origin.Conversation] = true
+		if !record.Released && record.Promotion == nil && (record.State == runs.Working || record.State == runs.Waiting && record.Reason == "") {
+			var committed int
+			err = r.db.Read(ctx, func(tx *canon.Tx) error {
+				return tx.QueryRowContext(ctx, `SELECT count(*) FROM turn_calls WHERE turn_id=? AND json_extract(call,'$.Name')='start_run' AND json_extract(result,'$.code')='ok' AND json_extract(result,'$.output.id')=?`, record.Origin.Turn, record.ID).Scan(&committed)
+			})
+			if err != nil {
+				return err
+			}
+			if committed > 0 {
+				if err = r.background.service.Release(ctx, record.ID); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	for conversation := range conversations {
+		err = r.background.service.TransferNotices(ctx, conversation, func(ctx context.Context, n runs.Notice) error {
+			return r.lanes.Notice(ctx, lane.Notice{ID: n.Key, Run: n.ID, Person: n.Origin.Person, Agent: n.Origin.Agent, Conversation: n.Origin.Conversation,
+				Outcome: string(n.Outcome), Summary: runSummary(n), Result: n.Material.ID, ResultRevision: n.Material.Revision, ResultType: n.Result, Landed: n.Landed, Surface: ledger.Surface{Kind: "tui"}})
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return r.publishRunning(ctx)
+}
+func runSummary(n runs.Notice) string {
+	var verified, unverified []string
+	for _, check := range n.Checks {
+		if check.Passed && check.Verified {
+			verified = append(verified, check.Check.Name)
+		} else {
+			unverified = append(unverified, check.Check.Name)
+		}
+	}
+	if len(verified) == 0 {
+		verified = []string{"none"}
+	}
+	if len(unverified) == 0 {
+		unverified = []string{"none"}
+	}
+	return fmt.Sprintf("Agent report: %s. Verified: %s. Unverified: %s. Result: %s (revision %d).", n.Outcome, strings.Join(verified, ", "), strings.Join(unverified, ", "), n.Material.ID, n.Material.Revision)
+}
+func (r *conversationRuntime) publishRunning(ctx context.Context) error {
+	b := r.background
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	snapshot, err := b.list.Build(ctx, r.person)
+	if err != nil {
+		return err
+	}
+	for _, entry := range snapshot.Entries {
+		text := entry.View.State + ": " + entry.View.Summary
+		if entry.View.Reason != "" {
+			text += " (" + entry.View.Reason + ")"
+		}
+		if b.published[entry.Ref.ID] == text {
+			continue
+		}
+		data, err := json.Marshal(protocol.RunningUpdate{Text: &text})
+		if err != nil {
+			return err
+		}
+		if err = r.topics.Publish("running", clientsrv.TopicEvent{Kind: protocol.KindRunningUpdate, Key: entry.Ref.ID, Data: data}); err != nil {
+			return err
+		}
+		b.published[entry.Ref.ID] = text
+	}
+	return nil
+}
+func (r *conversationRuntime) publishRunNotice(ctx context.Context, notices []lane.Notice) error {
+	if len(notices) == 0 {
+		return nil
+	}
+	// Match the ledger identity used by lane.Notices (one grouped delivery).
+	events, err := r.background.notices.Delivered(ctx, r.conversation)
+	if err != nil {
+		return err
+	}
+	for _, delivery := range events {
+		if delivery.ID != notices[0].ID {
+			continue
+		}
+		var id string
+		err = r.db.Read(ctx, func(tx *canon.Tx) error {
+			return tx.QueryRowContext(ctx, "SELECT id FROM conv_event WHERE conversation_id=? AND json_extract(origin,'$.locator')=?", r.conversation, "background-notice:"+delivery.ID).Scan(&id)
+		})
+		if err != nil {
+			return err
+		}
+		return r.publishNoticeText(ctx, id, notices)
+	}
+	return errors.New("missing committed background notice")
+}
+func (r *conversationRuntime) publishNoticeText(ctx context.Context, key string, notices []lane.Notice) error {
+	var summaries []string
+	for _, notice := range notices {
+		summaries = append(summaries, notice.Summary)
+	}
+	text := strings.Join(summaries, "\n")
+	return r.publish(ctx, protocol.KindBackgroundNotice, key, protocol.BackgroundNotice{Text: &text})
+}
+
+// Use the existing Brief wire names so StartTool remains the sole decoder.
+func startRunDeclaration() provider.ToolDecl {
+	return provider.ToolDecl(`{"type":"function","name":"start_run","description":"Move research, reading or analysis to a background run. Preserve the whole goal, done condition and checks. Returns immediately; never wait for completion. Allowed read tools: skill_index, read_skill.","parameters":{"type":"object","properties":{"Goal":{"type":"string"},"Scope":{"type":"string"},"NotTouch":{"type":"string"},"Done":{"type":"string"},"Checks":{"type":"array","minItems":1,"items":{"type":"object","properties":{"Name":{"type":"string"},"Kind":{"type":"string","enum":["claimed","tool_called","citations_resolve"]}},"required":["Name","Kind"],"additionalProperties":false}},"Result":{"type":"string"},"Allow":{"type":"array","items":{"type":"string","enum":["skill_index","read_skill"]}}},"required":["Goal","Scope","NotTouch","Done","Checks","Result","Allow"],"additionalProperties":false}}`)
+}

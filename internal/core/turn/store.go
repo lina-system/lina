@@ -266,6 +266,8 @@ type Options struct {
 	Continuation  string        // prior turn segment in this conversation, retaining meter and effects
 	Report        bool
 	StartFromTurn func(context.Context, budget.Handoff) (budget.Handle, error)
+	// ResultCommitted wakes consumers only after a durable tool receipt.
+	ResultCommitted func()
 }
 
 func (s *Store) Run(ctx context.Context, o Options) (out loop.Outcome, err error) {
@@ -396,6 +398,16 @@ func (s *Store) Run(ctx context.Context, o Options) (out loop.Outcome, err error
 		return out, err
 	}
 	cfg.Journal = s.Journal(o.ID)
+	if o.ResultCommitted != nil {
+		result := cfg.Journal.Result
+		cfg.Journal.Result = func(ctx context.Context, round, index int, r loop.Result) error {
+			if err := result(ctx, round, index, r); err != nil {
+				return err
+			}
+			o.ResultCommitted()
+			return nil
+		}
+	}
 	// The loop supplies unfinished visible text during cleanup. Commit it with
 	// the terminal state and interruption or failure notice, through the same completion
 	// transaction used for successful replies.
