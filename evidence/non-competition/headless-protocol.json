@@ -1,0 +1,36 @@
+{
+  "evidence_type": "headless_protocol",
+  "recorded_at": "2026-10-22T12:50:11Z",
+  "product_source_commit": "bf2de16ee55bff364e139604675d4ee3bf5150b5",
+  "scenario_sources": {
+    "e2e/m3/non-competition.json": "1410adab84b5bcf365f55c3fd932f272c7389407a6d5d358d47b9c09dfddef2e",
+    "e2e/non_competition_test.go": "0c8d90f43a13b145f8c3212b6a1a023bf4289f2d26154e95a49985ba46139e0a"
+  },
+  "command": "go test -count=1 -v ./e2e -run '^TestM3NonCompetitionInstalledCore$'",
+  "result": "pass",
+  "observed": [
+    "Installed Core executed write_record and saved the receipted bytes with a Git revision.",
+    "read_record refused a path outside Records while the repository was clean; the provider received no canary bytes.",
+    "A newer external edit survived an old-revision write attempt while Core stayed running.",
+    "Refused operations left the saved file, outside canary and Git head unchanged.",
+    "The tool-backed conversation completed through the public Core protocol."
+  ],
+  "fixtures": [
+    "Loopback model provider",
+    "Synthetic note and outside canary",
+    "Scripted external editor write"
+  ],
+  "manual_ladder": "unverified",
+  "not_measured": [
+    "Human concurrent activity",
+    "Full normal background load",
+    "Agent background counts in a real session",
+    "Focus and input events",
+    "Clipboard access",
+    "CPU and memory yield",
+    "Lock and unlock",
+    "Sleep and resume",
+    "Observed and silent disconnect",
+    "Dedicated browser profile"
+  ]
+}
