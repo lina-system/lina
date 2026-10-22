@@ -73,6 +73,20 @@ process creation in test files follows the architecture rule for command
 acceptance harnesses. Future milestones can add scenario files here; new
 subpackages under `e2e/` are also covered by the registered package pattern.
 
+`m3/websocket.json` runs installed Core through an HTTP upgrade on its authenticated
+Unix client socket. A headless WebSocket client discovers and subscribes to the
+conversation, submits an input, and receives the committed acknowledgement, a
+live delta and the completed result. The fixture provider requests the real
+`change_persona` tool and checks its execution result. Core restart must restore
+the conversation rows and apply the saved tool effect to the next turn without
+replaying the provider request. Its companion runs the same journey through production Core boot and the
+Tailscale-authenticated listener over TCP, substituting only LocalAPI responses
+and physical addresses. That companion installs the executable hosting boot so
+normal build-digest checks remain enabled. Both compare stored input/result
+identities and contents across restart. Neither claims a physical mobile device
+or two-host tailnet test. All identities, model responses and stored values are
+synthetic.
+
 `m2/update-preflight.json` checks separate `core --preflight` processes against
 compatible, older, newer, corrupt and WAL-backed stores while another owner holds
 the Core lock. It compares every installed file's bytes and metadata, including
@@ -212,6 +226,18 @@ replay count is consumed by the Bubble Tea recording-writer test.
 synthetic producer data, socket discovery/decisions, and a separate-key PTY approval.
 These scenarios create no second product decision store and use no timing sleeps.
 
+`m2/github-ci.json` starts the real Core binary with a synthetic `gh` executable
+in its isolated PATH. It negotiates the GitHub capability, refuses an unnegotiated
+read, observes rate-limited CI pending and its retry deadline, then observes head,
+review threads and successful checks. It verifies conditional headers and one
+review read per head, with no network credentials or GitHub service dependency.
+
+`m2/github-merge.json` drives the installed Core's merge capability with a
+synthetic `gh` process and real temporary parent clone. It proves head and
+protected-ref changes prevent writes, the accepted head is pinned, confirmed
+results survive restart without a second merge, and external merges require
+commit/ref evidence and report failed checks. It uses no external credentials.
+
 `m2/codex-session.json` runs installed Core, its real conversation model loop,
 tool authority and stdio child ownership with a synthetic installed Codex. It
 asserts version reporting for an unverified version, active steering, confirmed
@@ -237,6 +263,7 @@ binding/scope replacement. A paired synthetic channel and an existing binding
 exercise the actual target-agent checks. Read-only canon snapshots prove that
 refused requests preserve agent revisions, actions, conversations and bindings.
 
+
 `LINA_CODEX_LIVE=1 go test -count=1 -v ./e2e -run '^TestM2InstalledCodexLive$'`
 also drives installed Core's normal tool path into the actual installed Codex,
 then waits on the worker's conversation result before reading its snapshot. Only
@@ -249,9 +276,3 @@ work tools, authenticated owner approval and question answers, worker-written
 artifact contents, reported quota windows, and restored completion history.
 Worker settings remain omitted. This scenario uses no real account or provider
 credentials and does not measure live Codex quota.
-
-`m2/github-ci.json` starts the real Core binary with a synthetic `gh` executable
-in its isolated PATH. It negotiates the GitHub capability, refuses an unnegotiated
-read, observes rate-limited CI pending and its retry deadline, then observes head,
-review threads and successful checks. It verifies conditional headers and one
-review read per head, with no network credentials or GitHub service dependency.

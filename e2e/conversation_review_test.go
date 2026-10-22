@@ -38,8 +38,8 @@ func conversationClient(t *testing.T, h *harness, extra ...protocol.Capability) 
 	if _, err = c.Subscribe(h.ctx, protocol.Subscribe{Topic: &topic}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = c.Receive(h.ctx); err != nil {
-		t.Fatal(err)
+	if snapshot, err := c.Receive(h.ctx); err != nil || snapshot.Kind != protocol.KindSnapshot {
+		t.Fatal("no history snapshot")
 	}
 	// Empty input probes admission without creating a message. Only recovery's
 	// explicit refusal permits another probe.
