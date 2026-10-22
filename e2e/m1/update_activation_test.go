@@ -200,8 +200,12 @@ func testUpdateActivation(t *testing.T, scenarioPath string) {
 	brokenArchive, brokenDigest := packUpdate(t, broken)
 	for _, name := range scenario.Cases {
 		t.Run(name, func(t *testing.T) {
+			var err error // Each parallel data-operation scenario owns its errors.
 			failure, installedBundle := name, bundle
 			if name == "slow-backup" || name == "slow-restore" {
+				// Preserve both 31-second timeout injections without making one
+				// scenario wait for the other. Go's package parallel limit applies.
+				t.Parallel()
 				operation := strings.TrimPrefix(name, "slow-")
 				failure = "success"
 				if operation == "restore" {
