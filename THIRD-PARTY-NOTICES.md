@@ -36,8 +36,16 @@ copied. Source observations and limits are recorded in
 2025 Nous Research) informs the TUI's complete inline assistant replies and
 paged transcript reading. No upstream code is copied. The source-survey
 observations and limits are recorded in [the TUI reference specification](internal/tui/ui/REFERENCE.md).
-The Hermes Agent license text is included above.
+The Hermes Agent license text is included below.
 
+
+Hermes Agent (Nous Research, MIT), revision
+`944c3a434071f43e64b443d033f3eba30c64434c`, is a reference for draft-clearing
+priority and a second Ctrl+C within two seconds. See the
+[observations and differences](internal/tui/ui/REFERENCE.md). LINA implements
+its own client-only confirmation and expiring hint; no upstream code is copied.
+The Hermes copyright and MIT permission notice appear in the Hermes Agent
+section below.
 
 The composer separation and newline keys in LINA's terminal UI independently adapt behaviour
 from these permissive projects. No upstream implementation code is copied or

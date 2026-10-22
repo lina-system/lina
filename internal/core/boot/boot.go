@@ -27,6 +27,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/internal/core/manifest"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
+	"github.com/thisisjun786/lina/internal/core/recover"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/sandbox"
 )
@@ -207,6 +208,9 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		return err
 	}
 	if err := store.Acquire(); err != nil {
+		return err
+	}
+	if err := recover.UpdateStart(store, cfg.StateRoot, cfg.Socket); err != nil {
 		return err
 	}
 	if err := backup.CheckRestore(cfg.StateRoot); err != nil {
@@ -505,6 +509,9 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		cfg.Services.SandboxReady(box)
 	}
 	if len(recovery.Halt) == 0 && ctx.Err() == nil {
+		if err := recover.UpdateReady(store); err != nil {
+			return err
+		}
 		if err := restarter.Ready(); err != nil {
 			return err
 		}
