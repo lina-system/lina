@@ -110,7 +110,7 @@ type conversationRuntime struct {
 	main             string
 	epoch            uint64
 	controls         *ctlfiles.Store
-	personaWarned    bool
+	presets          *presetPublisher
 
 	growthMu                    sync.Mutex
 	growth                      *growthRuntime
