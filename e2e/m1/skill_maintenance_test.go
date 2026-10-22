@@ -451,24 +451,20 @@ func TestM2InstalledSkillMaintenance(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, a := range all {
-			if "main:"+a.ID != conversation {
-				newFirst = a.ID
-				break
-			}
-		}
-		if newFirst == "" {
-			t.Fatal("missing second agent")
+		if len(all) == 0 {
+			t.Fatal("missing original agent")
 		}
 		var person string
 		if err := db.Read(h.ctx, func(tx *canon.Tx) error {
-			return tx.QueryRowContext(h.ctx, "SELECT person_id FROM agent_revisions WHERE agent_id=? AND revision=1", newFirst).Scan(&person)
+			return tx.QueryRowContext(h.ctx, "SELECT person_id FROM agent_revisions WHERE agent_id=? AND revision=1", all[0].ID).Scan(&person)
 		}); err != nil {
 			t.Fatal(err)
 		}
-		if _, err = store.Rename(h.ctx, newFirst, "AAA", person); err != nil {
+		created, err := store.Create(h.ctx, agents.Create{Name: "AAA", PersonID: person, Preset: "lina"})
+		if err != nil {
 			t.Fatal(err)
 		}
+		newFirst = created.ID
 		journal := ledger.New(db, nil)
 		for i := range 205 {
 			id := fmt.Sprintf("after-maintenance:%03d", i)
