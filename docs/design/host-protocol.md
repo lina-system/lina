@@ -218,7 +218,19 @@ reads the run's pinned material revision through its integrity check, and return
 `next` only when another page remains. Dismiss only accepts landed rows. Neither
 operation deletes the run or material or changes its claimed outcome.
 
-A `running_update` optionally carries `run_id` and `removed`; a removal uses the
+A `running_update` optionally carries a typed presentation: `state`, `summary`
+and `reason`. When any presentation field is present, `state` and `summary` are
+required together. The closed states are `in_progress`, `waiting`, `needs_input`,
+`ready_for_review`, `failed`, `stopped`, `done` and `unknown`. The optional closed
+waiting reasons are `dependency`, `area`, `quota`, `host_capacity`, `ci_pending`,
+`run_limit`, `person` and `budget`. Core publishes these fields for background runs
+and delegated tasks; clients localize the codes and display the authored summary.
+The existing `text` retains its prior meaning for earlier clients. A client uses
+it only when the typed presentation is absent, without parsing it for status.
+These optional additions follow client 1.0's additive-field receive rule and do
+not change existing empty, text-only or removal payloads.
+
+A `running_update` also optionally carries `run_id` and `removed`; a removal uses the
 same stream key and next cursor, removes that row from retained snapshots, and
 is replayable to an existing subscriber. A background landing's `result` card
 optionally carries `run_id` as an opaque open reference. It is an agent-report
@@ -544,3 +556,29 @@ filters deleted personas and foreign-person records before pagination. Each page
 is one canon snapshot; a refresh starts a new snapshot. This request adds no
 subscription or execution authority and does not change the existing `progress`
 status-topic capability. The TUI retains fold/selection state locally by lane id.
+
+### Owner progress and waiting reads
+
+The `progress` capability (1.0) grants `progress_get` with `view: overview`
+and the `progress` topic. An omitted view retains the `worker_lanes` request;
+`view: lanes` is equivalent. Each request is gated by its selected capability.
+Overview reads reject lane pagination. The overview has `rows`, at most five
+`waiting` rows and `waiting_more`. A progress row separates its opaque `ref`
+from its display-only `line`: name, kind, stage, optional percent, just_finished,
+next, waiting count and hierarchy depth. An absent percent means unknown; it
+never means zero. Stage and unknown are codes localized by the client.
+
+A `progress_update` replaces the overview atomically, retaining the normal topic
+cursor and snapshot/replay behavior. A changed full waiting list advances this
+cursor even when the five Home rows and remaining count are unchanged; a client
+showing the full list rereads `waiting_get`. `text` is a plain fallback; typed clients
+render the rows. An empty rows list removes previous work. Reading progress is
+not a completion verdict or an acknowledgement that the person has seen it.
+
+The existing `waiting` capability grants `waiting_get` with optional `order`
+(priority or lightest) and `limit` (zero means the full list). The response has
+`rows`, `total` before limiting and `more`. Each row separates its source/key/
+revision reference from display data: kind, sentence, context, recommendation,
+agent name, choices, free-text flag, effort and due instant. References are not
+rendered. Answers to existing approvals and questions continue through their
+original authenticated protocols; reading a waiting row grants no authority.
