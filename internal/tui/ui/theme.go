@@ -216,14 +216,7 @@ func (s Styles) ScreenStatus(connection ConnectionStatus) string {
 
 func environmentOptions(getenv func(string) string) Options {
 	opts := Options{Theme: "dark", Profile: ANSI16, ASCII: getenv("LINA_GLYPHS") == "ascii", Width: 80}
-	locale := getenv("LC_ALL")
-	if locale == "" {
-		locale = getenv("LC_MESSAGES")
-	}
-	if locale == "" {
-		locale = getenv("LANG")
-	}
-	opts.Language = design.LanguageFor(locale)
+	opts.Language = design.EnvironmentLanguage(getenv)
 	switch getenv("LINA_NOTIFICATIONS") {
 	case "bell", "terminal":
 		opts.Notification = getenv("LINA_NOTIFICATIONS")

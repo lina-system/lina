@@ -1,0 +1,140 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "service": "results",
+  "setup": {
+    "person_id": "person",
+    "agent_id": "agent",
+    "conversation_id": "conversation",
+    "turn_id": "turn",
+    "task_id": null
+  },
+  "input": {
+    "type": "document_draft",
+    "title": "Fixture result",
+    "summary": "Synthetic result body.",
+    "body": {
+      "blocks": [
+        {
+          "kind": "heading",
+          "text": "Heading",
+          "level": 1
+        },
+        {
+          "kind": "paragraph",
+          "text": "Paragraph"
+        },
+        {
+          "kind": "list",
+          "items": [
+            "One",
+            "Two"
+          ]
+        },
+        {
+          "kind": "code",
+          "text": "print(1)",
+          "language": "python"
+        },
+        {
+          "kind": "quote",
+          "text": "Quotation"
+        },
+        {
+          "kind": "image",
+          "asset": {
+            "asset_id": "image",
+            "revision": 1
+          },
+          "text": "Alt"
+        },
+        {
+          "kind": "citation",
+          "anchor": {
+            "event_id": "event",
+            "start": 0,
+            "end": 2
+          },
+          "text": "Evidence"
+        }
+      ],
+      "from_summary": {
+        "result_id": "outline",
+        "revision": 1
+      }
+    }
+  },
+  "output": {
+    "error": "",
+    "result": {
+      "type": "document_draft",
+      "body": {
+        "blocks": [
+          {
+            "kind": "heading",
+            "text": "Heading",
+            "level": 1
+          },
+          {
+            "kind": "paragraph",
+            "text": "Paragraph"
+          },
+          {
+            "kind": "list",
+            "items": [
+              "One",
+              "Two"
+            ]
+          },
+          {
+            "kind": "code",
+            "text": "print(1)",
+            "language": "python"
+          },
+          {
+            "kind": "quote",
+            "text": "Quotation"
+          },
+          {
+            "kind": "image",
+            "asset": {
+              "asset_id": "image",
+              "revision": 1
+            },
+            "text": "Alt"
+          },
+          {
+            "kind": "citation",
+            "anchor": {
+              "event_id": "event",
+              "start": 0,
+              "end": 2
+            },
+            "text": "Evidence"
+          }
+        ],
+        "from_summary": {
+          "result_id": "outline",
+          "revision": 1
+        }
+      }
+    }
+  },
+  "outcome": {
+    "events": 1,
+    "heads": 1,
+    "saves": 0,
+    "revision": 1,
+    "status": "preview",
+    "title": "Fixture result",
+    "summary": "Synthetic result body.",
+    "saved_as": null,
+    "revised_by": "agent",
+    "provenance": {
+      "agent_id": "agent",
+      "conversation_id": "conversation",
+      "turn_id": "turn",
+      "task_id": null
+    },
+    "text_complete": true
+  }
+}

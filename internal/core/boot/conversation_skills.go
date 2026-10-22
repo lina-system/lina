@@ -6,6 +6,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"github.com/thisisjun786/lina/internal/design"
 	"strconv"
 	"strings"
 	"time"
@@ -89,7 +91,7 @@ func (r *conversationRuntime) prepareSkillTools(turnID string, bindings map[stri
 				if err != nil {
 					return loop.Result{ID: call.ID, Code: loop.Invalid}
 				}
-				// Core's instruction-only skill policy permits these four operations
+				// Core's instruction-only skill policy permits these skill operations
 				// in the authenticated turn. Mint only the schema-normalized target,
 				// never arbitrary model-supplied identity, scope or permissions.
 				auth := grant.Request{GrantID: turn.EffectKey(turnID, spec.Name, in.Target, call.ID) + ":skills", MainID: r.main, Epoch: r.epoch, TaskID: turnID, Host: r.main, OSUser: "core", Person: r.person, Agent: r.agent, Profile: "skills"}
@@ -143,6 +145,15 @@ func (r *conversationRuntime) skillNotice(ctx context.Context, input ledger.Even
 			return result
 		}
 	}
+	code := "notice.skill_changed"
+	if call.Name == "undo_skill" {
+		code = "notice.skill_undone"
+	}
+	name := receipt.Version.Name
+	if name == "" {
+		name = receipt.Version.ID
+	}
+	receipt.Notice = fmt.Sprintf(design.Text(eventLanguage(input), code), name)
 	now := time.Now()
 	event, err := r.journal().Admit(ctx, guard.EntrySystem, ledger.Input{ID: "skill-notice:" + input.ID + ":" + call.ID, ConversationID: r.conversation, ParentID: input.ID, AgentID: r.agent, Surface: input.Surface, ScaffoldKind: "skill_change", OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: receipt.Notice})
 	if err == nil {
