@@ -77,6 +77,36 @@ test('a progressing acceptance package can finish beyond four minutes', t => {
   assert.ok(elapsed < componentsTimeoutMs, 'the suite stays inside the shared components guard');
 });
 
+test('the growing e2e suite can finish beyond six minutes within the component deadline', t => {
+  const sb = fixture(t);
+  let elapsed = 0;
+  const names = ['TestFirst', 'TestSecond'];
+  const ran = [];
+  t.mock.method(performance, 'now', () => elapsed);
+  const result = checkComponents({ cwd: sb.dir, components: [{ name: 'lina', module: '.', packages: ['./e2e/...'] }], execute(command, args, options) {
+    if (args[0] === 'build') elapsed += 200_000;
+    if (args[0] === 'list') return { status: 0, stdout: 'example.invalid/e2e\n', stderr: '' };
+    if (args[0] === 'test' && args.includes('-list')) return { status: 0, stdout: names.join('\n')+'\n', stderr: '' };
+    if (args[0] === 'test') {
+      const minutes = Number(args.find(arg => arg.startsWith('-timeout='))?.match(/^\-timeout=(\d+)m$/)?.[1]);
+      const index = args.indexOf('-run');
+      const selected = index < 0 ? names : names.filter(name => new RegExp(args[index+1]).test(name));
+      const duration = 195_000 * selected.length;
+      if (!Number.isFinite(minutes) || minutes * 60_000 <= duration || options.timeoutMs <= duration) {
+        return { status: 1, stdout: 'e2e scenarios progressing\n', stderr: 'e2e package deadline expired\n' };
+      }
+      ran.push(...selected);
+      elapsed += duration;
+      return { status: 0, stdout: 'complete e2e batch finished\n', stderr: '' };
+    }
+    return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
+  } });
+  assert.equal(result.status, 0, result.output);
+  assert.deepEqual(ran.sort(), names, 'every scenario executes exactly once');
+  assert.equal(elapsed, 590_000, 'setup plus the full 390-second corpus must execute');
+  assert.ok(elapsed < componentsTimeoutMs, 'e2e remains within the shared component guard');
+});
+
 test('commands across modules share a deadline instead of resetting the budget', t => {
   const sb = fixture(t);
   let elapsed = 0;

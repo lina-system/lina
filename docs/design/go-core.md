@@ -1126,8 +1126,28 @@ type Adapter interface {
 - #132 connects session start, input, interrupt and snapshot to Core's normal conversation tool registry. Launch receipts record the installed version and control handle; version and terminal-output notices survive in conversation history. The per-session process belongs to Core, and hard activity is held per active turn. Session completion is not task delivery; full work dispatch, recovery, approvals and dynamic work tools remain their separate roadmap steps.
 - Workers run with the user's own setup and get no LINA sandbox, credential, hook or skill ([work-and-delegation.md](work-and-delegation.md#workers)). Approvals go to the originating conversation. A worker on another device is started and relayed by that device's Node.
 - A process group kill is the stop. A cut turn's effects are unknown until `Snapshot` and a read of GitHub settle them.
+- The #133 running-Core bridge declares the four `lina` dynamic work tools, routes worker approvals through authenticated authority cards carrying the originating conversation, claims each answer before its single send, and exposes measured/unknown quota rows through `worker_quota`. Request withdrawal and terminal turns stop pending decisions. Tool results and completion receipts remain worker evidence, not verification verdicts. The headless `e2e/m2/codex-work-tools.json` scenario covers the stdio and conversation protocol round trip.
 - Work tools: for Codex, `lina` dynamic tools (submit receipt, ask, coordinate, read projection). For the others, the receipt is built from the final result and the pull request and marked adapter-derived.
 - The delegated-task store records the requesting agent and conversation, done condition, artifact roots and whether application is required. A run binds its task, generation, worker, thread, turn and observing node. Admission appends an event and updates the active-run reservation in one fenced canon transaction; a task cannot admit a second active run. A terminal observation releases execution capacity but is not a delivery or acceptance.
+
+`internal/core/worker/antigravity` implements C-29 against the documented `agy`
+headless stream. A `result` emits exactly one typed finish before process exit;
+`denied_actions` overrides a `SUCCESS` status. The supervised process owner
+retains its hard activity until all descendants have been reaped. No result or
+exit code constitutes delivery. Fixed `ghclient` reads verify the task PR's identity,
+current head, checks and review, with a head recheck after inline comments.
+
+`internal/core/worker/dispatch` wires the adapter into installed Core's `dispatch_work`
+tool and existing work ledger. Migration 31 adds the dispatch journal; a committed
+conversation tool receipt gates execution. The journal reserves each repository
+through queued/running/unknown states. Core creates the worktree, checks design
+references, protected refs and write areas, and persists an adapter-derived
+artifact/receipt. Terminal observations publish to the source conversation and
+survive restart. Recovery retains uncertain reservations without replay. The
+adapter does not advertise unsupported approval replies, steering or work tools;
+manager design acceptance, parallel scheduling and merge remain their own flows.
+See [Antigravity headless adapter](work-and-delegation.md#antigravity-headless-adapter)
+for the evidence boundary and account-free acceptance limits.
 
 **C-57 Work definition, choice and splitting (new).**
 

@@ -34,7 +34,6 @@ type workerRuntime struct {
 	sessions map[string]*workerSession
 }
 type workerSession struct {
-	workdir         string
 	reservation     string
 	reservationTurn string
 	adapter         worker.Adapter
@@ -43,6 +42,10 @@ type workerSession struct {
 	origin          *conversationRuntime
 	input           ledger.Event
 	thread          worker.Thread
+	packet          string
+	workdir         string
+	approvals       map[string]worker.Event
+	questions       map[string]*workerQuestion
 	output          string
 	process         lease.Lease
 	mu              sync.Mutex
@@ -107,7 +110,7 @@ func workerSchema(name string, raw json.RawMessage) (tools.Input, error) {
 		if a.Generation == 0 || a.Binding == 0 || a.Turn == "" {
 			return tools.Input{}, tools.ErrInvalid
 		}
-	case "worker_snapshot":
+	case "worker_snapshot", "worker_quota":
 		allowed["session"] = true
 	default:
 		return tools.Input{}, tools.ErrInvalid
@@ -123,7 +126,7 @@ func workerSchema(name string, raw json.RawMessage) (tools.Input, error) {
 		return tools.Input{}, tools.ErrInvalid
 	}
 	normalized, _ := json.Marshal(a)
-	return tools.Input{Arguments: normalized, Target: "worker:" + target, What: name, Where: target, ScopeKey: "worker-session", Write: name != "worker_snapshot"}, nil
+	return tools.Input{Arguments: normalized, Target: "worker:" + target, What: name, Where: target, ScopeKey: "worker-session", Write: name != "worker_snapshot" && name != "worker_quota"}, nil
 }
 
 func workerDeclarations() []provider.ToolDecl {
@@ -133,9 +136,10 @@ func workerDeclarations() []provider.ToolDecl {
 		return json.RawMessage(`{"type":"function","name":"` + name + `","description":` + string(raw) + `,"parameters":{"type":"object","properties":{` + properties + `},"required":[` + required + `],"additionalProperties":false}}`)
 	}
 	return []provider.ToolDecl{
-		declaration("worker_start", "Start the installed Codex on an explicit task in an existing absolute work directory, using its own settings. Returns a session handle and version compatibility. This is a worker session, not verified task delivery. Worker approvals, dynamic work tools, automatic recovery and scheduling are not yet available.", `"workdir":{"type":"string"},"task_packet":{"type":"string"}`, `"workdir","task_packet"`),
+		declaration("worker_start", "Start the installed Codex on an explicit task in an existing absolute work directory, using its own settings. Returns a session handle and version compatibility. This is a worker session, not verified task delivery. Worker requests return to this conversation; automatic recovery and scheduling are separate.", `"workdir":{"type":"string"},"task_packet":{"type":"string"}`, `"workdir","task_packet"`),
 		declaration("worker_input", "Continue an idle worker or steer an active turn. Use the current handle from worker_snapshot; stale handles are refused.", control+`,"text":{"type":"string"}`, `"session","turn","generation","binding","text"`),
 		declaration("worker_interrupt", "Request cancellation only when the user asks to stop this worker. Quote the current user request exactly. An acknowledgement is not cancellation completion; inspect worker_snapshot.", control+`,"quote":{"type":"string"}`, `"session","turn","generation","binding","quote"`),
+		declaration("worker_quota", "Read the installed worker account quota rows, retaining unknown windows and reset times.", `"session":{"type":"string"}`, `"session"`),
 		declaration("worker_snapshot", "Read a worker session owned by this conversation, its current control handle, state, version and last completed assistant output. A completed worker turn is not proof of task delivery.", `"session":{"type":"string"}`, `"session"`),
 	}
 }
@@ -145,7 +149,7 @@ func (r *conversationRuntime) prepareWorkerTools(turnID string, input ledger.Eve
 		return nil
 	}
 	registry := tools.NewRegistry(r.personaAuthority, r.activities)
-	for _, name := range []string{"worker_start", "worker_input", "worker_interrupt", "worker_snapshot"} {
+	for _, name := range []string{"worker_start", "worker_input", "worker_interrupt", "worker_snapshot", "worker_quota"} {
 		spec := tools.Spec{Name: name, Schema: func(raw json.RawMessage) (tools.Input, error) { return workerSchema(name, raw) }, Conc: 1, Deadline: 30 * time.Second, Placement: tools.Core}
 		err := registry.Register(spec, func(ctx context.Context, _ lease.Lease, in tools.Input) (tools.Result, error) {
 			return r.workerOperation(ctx, name, turnID, input, in)
@@ -215,15 +219,15 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 			process.Release()
 			return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
 		}
-		entry := &workerSession{workdir: a.Workdir, reservation: reservation, adapter: adapter, close: adapter.Close, compatibility: adapter.Compatibility(), origin: r, input: input, process: process, done: make(chan struct{}), active: map[string]lease.Lease{}}
+		entry := &workerSession{reservation: reservation, adapter: adapter, close: adapter.Close, compatibility: adapter.Compatibility(), origin: r, input: input, process: process, done: make(chan struct{}), active: map[string]lease.Lease{}, packet: a.TaskPacket, workdir: a.Workdir, approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}}
 		activity, err := r.activities.Acquire(r.ctx, lease.Activity{Class: lease.Hard, Reason: "Codex turn"})
 		if err != nil {
 			adapter.Close()
 			process.Release()
 			return tools.Result{State: tools.Failed}, err
 		}
-		release = false // A launch error may have started a turn; retain its durable reservation.
-		thread, err := adapter.Start(ctx, process, worker.StartSpec{TaskID: turnID, AttemptID: turnID + ":" + strconv.FormatInt(time.Now().UnixNano(), 10), Workdir: a.Workdir, TaskPacket: a.TaskPacket, Required: worker.CapabilitySet{worker.StreamProgress, worker.SignalCompletion}})
+		release = false // A launch error may have started a turn; retain its reservation.
+		thread, err := adapter.Start(ctx, process, worker.StartSpec{TaskID: turnID, AttemptID: turnID + ":" + strconv.FormatInt(time.Now().UnixNano(), 10), Workdir: a.Workdir, TaskPacket: a.TaskPacket, Tools: workerWorkTools(), Required: worker.CapabilitySet{worker.StreamProgress, worker.SignalCompletion, worker.WorkTools, worker.RequestApprovals, worker.ReportQuota}})
 		if err != nil {
 			activity.Release()
 			adapter.Close()
@@ -258,6 +262,14 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 	b.mu.Unlock()
 	if closed || entry == nil || entry.origin.person != r.person || entry.origin.agent != r.agent || entry.origin.conversation != r.conversation {
 		return tools.Result{State: tools.Failed, Body: workerError(errors.New("worker session unavailable in this conversation"))}, nil
+	}
+	if name == "worker_quota" {
+		rows, err := entry.adapter.Quota(ctx)
+		if err != nil {
+			return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
+		}
+		body, err := json.Marshal(map[string]any{"rows": rows})
+		return tools.Result{State: tools.Applied, Body: body}, err
 	}
 	// Read the authoritative snapshot immediately before any control. The model's
 	// handle is compared to it; a thread id alone never authorizes input.
@@ -366,6 +378,9 @@ func (e *workerSession) observe() {
 	for event := range e.adapter.Events() {
 		switch event.Kind {
 		case worker.ProgressEvent:
+			if event.Progress.Phase == "server_request_resolved" {
+				e.stopRequest(event.Progress.ItemID)
+			}
 			if event.Progress.Phase == "item_completed" && event.Progress.Text != "" {
 				e.output = event.Progress.Text
 			}
@@ -373,6 +388,7 @@ func (e *workerSession) observe() {
 		case worker.FinishEvent:
 			// A transport-loss event is synthesized by the adapter. It proves
 			// neither terminal execution nor completed process cleanup.
+			e.stopRequests(event.Thread.TurnID)
 			e.mu.Lock()
 			if e.origin.work != nil && e.reservationTurn == event.Thread.TurnID && event.Finish.Failure != worker.ConnectionFailure {
 				if err := e.origin.work.ReleaseWorker(context.WithoutCancel(e.origin.ctx), e.reservation); err == nil {
@@ -394,10 +410,15 @@ func (e *workerSession) observe() {
 			}
 			_ = e.origin.workerNotice(e.origin.ctx, e.input, "worker-finish:"+event.Thread.ID+":"+event.Thread.TurnID, text)
 			e.output = ""
-		case worker.QuestionEvent, worker.ApprovalEvent, worker.ToolCallEvent:
-			// These capabilities are not offered by this session implementation.
+		case worker.ApprovalEvent:
+			e.requestApproval(event)
+		case worker.QuestionEvent:
+			e.requestQuestion(event)
+		case worker.ToolCallEvent:
+			e.workTool(event)
 		}
 	}
+	e.stopRequests("")
 	e.close()
 	e.process.Release()
 	e.mu.Lock()
