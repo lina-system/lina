@@ -42,7 +42,8 @@ func Migrations() []Migration {
 		{Version: 28, SQL: WorkWaitingSchema},
 		{Version: 29, SQL: RecordsSearchSchema},
 		{Version: 30, SQL: mergesSchema},
-		{Version: 31, SQL: ResultsSchema + PlanningSchema},
+		{Version: 31, SQL: WorkerDispatchSchema},
+		{Version: 32, SQL: ResultsSchema + PlanningSchema},
 	}
 }
 
@@ -76,7 +77,8 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 		{20, "conversation_order"},
 		{21, "agent_growth_steps"}, {22, "moirai_jobs"}, {22, "budget_usage"},
 		{23, "skill_versions"}, {23, "skill_heads"}, {23, "skill_undone"}, {23, "skill_repo"},
-		{31, "result_heads"}, {31, "plan_drafts"}, {31, "plan_confirmations"}, {31, "plan_rejections"},
+		{31, "worker_dispatch"},
+		{32, "result_heads"}, {32, "plan_drafts"}, {32, "plan_confirmations"}, {32, "plan_rejections"},
 		{28, "work_waiting_rounds"}, {28, "work_waiting_decisions"},
 		{26, "work_ledger"}, {26, "work_cards"}, {26, "work_active_runs"},
 		{30, "authority_merges"},

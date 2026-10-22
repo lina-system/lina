@@ -533,3 +533,12 @@ acyclic dependencies. The result stream replaces the whole card on update;
 `confirm: null`; its original approved revision remains the confirmation key.
 An `unknown` confirmation effect is not success. It is settled only by observing
 the exact saved records, never by automatically repeating publication.
+
+### Worker approval origin
+
+A worker `approval_request` may carry `conversation_id`, identifying the
+conversation that started its assignment. The existing card still binds the
+person, requesting agent, exact displayed arguments and revision. An
+`approval_answer` uses the existing authenticated owner decision path; it cannot
+supply a worker thread or change its arguments. Older approval producers omit
+this optional field. Worker questions use the existing `question.conversation_id`.

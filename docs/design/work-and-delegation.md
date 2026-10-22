@@ -583,8 +583,8 @@ reconciliation; they cannot become successful completion.
 session round trip (initialize, start, interrupt, idle input, model output and
 snapshot). The installed-Core opt-in headless journey also drives its normal model tool path into the installed worker and returns the worker's model output to the conversation. This does not verify approval or dynamic-tool support. Unlisted
 versions still run and report both their version and the verified list. The
-adapter currently declares progress, usage, completion and steering; questions,
-approvals, work tools and quota remain #133 and are not declared capabilities.
+adapter declares progress, usage, completion, steering, questions, approvals,
+work tools and quota. The #133 bridge below supplies the request/answer path.
 Thread recovery and automatic retry remain G2-08; a session handle from a prior
 Core process is unavailable, and its existing launch/result records remain.
 
@@ -595,6 +595,54 @@ worker, an actual fixture-worker file result, and conversation history after
 restart. The separately opted-in installed-Codex test preserves the user's setup;
 its file-tool probe encountered a worker approval, so live approval/file execution
 is not counted as session acceptance evidence.
+
+#### Work tools, approvals and quota (#133)
+
+At thread start Core declares four `lina` tools: `read_projection`, `ask`,
+`coordinate` and `submit_receipt`. The adapter accepts only declared names and
+binds each request to its thread, turn, process generation and binding epoch.
+An opaque request id retains the original JSON-RPC string/integer identity;
+the worker's tool call id is retained separately. A response consumes that request
+once. Pending requests block ordinary input, and completion or
+`serverRequest/resolved` withdraws them. Unknown requests fail visibly.
+
+The session projection contains only the explicit task packet, its digest,
+assignment identity and work directory. Its material and memory scopes are
+empty; a caller cannot enlarge them by passing another task id. Coordination
+requests are retained in the originating conversation as requests to Core.
+Questions use the authenticated waiting-card answer path and return the person's
+answer to the same worker call. Secret input is unsupported. The pinned MCP
+elicitation request has no form; that case offers only decline or cancel.
+
+`submit_receipt` accepts the existing version-1 work receipt shape, checked
+against the session assignment, generation, thread, turn and artifact root. It
+records a durable worker claim in conversation history and returns its event id;
+it does not create a verified verdict, merge, or mark a task delivered. The
+session bridge has one assignment generation; scheduler-owned task admission
+and receipt promotion remain with delegation. Repeated receipt identities
+cannot replace the recorded claim.
+
+Worker command, file and permission requests become authority records with the
+originating person, agent and conversation. The existing approval card carries
+that conversation id and offers once or deny. Only an authenticated owner answer
+can authorize the response; there is no model-facing approval-answer tool.
+A permission grant returns exactly the requested permission profile for the
+turn, and no arguments or worker settings are rewritten. Display copies are
+secret-masked. Claiming an answer durably precedes its single send; an uncertain
+send is reported, never automatically replayed. Request withdrawal, completion
+and Core restart stop unused answers.
+
+`worker_quota` exposes `Adapter.Quota` through the running Core conversation tool
+registry. It reads `account/rateLimits/read` and merges subsequent sparse
+`account/rateLimits/updated` observations without clearing absent values.
+Distinct reported limit ids/windows remain separate. Unknown usage and reset
+times stay unknown; Core never invents a reset.
+
+[`e2e/m2/codex-work-tools.json`](../../e2e/m2/codex-work-tools.json) drives the
+built Core over its Unix protocol and a separate synthetic stdio worker. It
+proves an owner approval returning to the worker, dynamic tool result delivery,
+quota rows and an actual worker-written artifact. This is protocol integration
+evidence; it does not measure live account quota or certify new Codex versions.
 
 ### Readiness
 
@@ -640,6 +688,51 @@ LINA Core, or the Node on a remote device, starts every worker as a child proces
 - A completion event ends a turn. It is not a delivery. For code-change work the worker reports done only after it has waited for CI and the review bots and handled CI failures and P0 and P1 findings inside its turn (see Operating the pull request). The completion receipt names the resulting green pull request head; the manager still checks the work definition and Core records the merge before the task has landed. A session that dies or stalls before delivery follows once-only recovery in the same work area, not a done signal.
 - LINA installs no hook, plugin or setting in a worker to obtain a signal.
 - A worker that reports a typed failure (an error code, an authentication or billing category, a rate-limit category) produces a failure event with that type.
+
+### Antigravity headless adapter
+
+Core resolves the installed `agy` executable and runs it as a supervised child
+with `--output-format stream-json`, the task packet on stdin and the task
+worktree as cwd. Its own login, integrations and permission mode remain in use;
+LINA's dedicated model secret is removed from the inherited environment, while
+the worker's own provider settings and credentials remain intact. An
+explicit model may be passed, otherwise none is selected by LINA. Initialization
+must report the requested cwd (and model when requested). The version probe is
+recorded as unverified until a live account round trip establishes compatibility.
+
+The documented `init`, `step_update` and `result` envelopes are the wire boundary.
+A result immediately ends the turn, including while the child remains alive;
+Core then closes and reaps the process tree. EOF without a result, malformed
+output and mismatched conversation identities are failures. `SUCCESS` with
+`denied_actions` is a reported `denied_actions` failure, retaining the denied
+action names. No permission bypass is added. The adapter advertises progress,
+usage and completion; interactive approval replies, dynamic work tools and
+active-turn steering are unsupported in this headless mode.
+
+When `agy`, `git` and `gh` are installed, the running Core exposes `dispatch_work`
+for a complete code-change definition and an existing local GitHub clone. The
+receipt returns immediately. Only its committed conversation tool result releases
+the dispatch. Core validates design references at the chosen base commit and
+creates a distinct branch and worktree. This single-worker increment reserves
+the repository while queued, running or uncertain. It preserves the worktree and
+branch after completion. It does not provide the parallel chooser or merge flow.
+
+After a successful result, Core compares protected refs and changed files with
+the definition, then reads the branch's PR through fixed `ghclient` calls. Delivery
+requires an open, non-draft PR on the requested base and branch, the actual local
+head, nonempty successful checks, a completed review at that head and no P0/P1
+findings in reviews or inline comments. A second PR read fences a head change
+during the paginated comment read. Pending, missing or failed evidence produces
+`pr_unverified`, never success. Exit code and worker prose supply no PR authority.
+The derived artifact and work receipt are labeled `adapter-derived`; design
+acceptance and merge remain separate and no merge is attempted here.
+
+Task receipts and observations persist in canon and return to the originating
+conversation. A restart never replays completed work. An execution active at
+shutdown becomes unknown and keeps its reservation pending reconciliation.
+`e2e/m3/antigravity.json` drives installed Core, a real worktree/commit and
+recorded worker/GitHub boundaries, including denial, missing result, pending CI
+and restart. This is account-free acceptance, not a live Antigravity login test.
 
 ### Approvals
 

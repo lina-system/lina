@@ -269,7 +269,23 @@ complete preview replacement, retirement of overlapping stale requests, stale co
 creation, and idempotent confirmation across Core restarts. A loopback provider
 supplies only model output; all tool, job, result, protocol and records paths are
 production paths. No external credentials or services are used.
+
+`m3/antigravity.json` dispatches through installed Core's conversation tool,
+starts its supervised headless worker in a new worktree, produces a real file
+and commit, and verifies a recorded PR at that head. Separate cases cover soft
+denial despite SUCCESS, exit zero without result, pending checks, and durable
+conversation results without execution replay on restart. No personal worker
+account or GitHub write is used.
+
 `LINA_CODEX_LIVE=1 go test -count=1 -v ./e2e -run '^TestM2InstalledCodexLive$'`
 also drives installed Core's normal tool path into the actual installed Codex,
 then waits on the worker's conversation result before reading its snapshot. Only
 Core's conversation provider is synthetic; the worker uses its own model setup.
+
+`go test ./e2e -run '^TestM2CodexWorkTools$' -count=1` runs
+`m2/codex-work-tools.json` through the built Core, its Unix client protocol and a
+separate synthetic installed worker on stdio. It checks all four declared LINA
+work tools, authenticated owner approval and question answers, worker-written
+artifact contents, reported quota windows, and restored completion history.
+Worker settings remain omitted. This scenario uses no real account or provider
+credentials and does not measure live Codex quota.
