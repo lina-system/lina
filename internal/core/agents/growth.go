@@ -81,7 +81,7 @@ func (s *Store) AdoptGrowth(ctx context.Context, id, person string, c GrowthCand
 // Git objects are immutable; only commit publishes the revision and its notice.
 // Callers must not expose the result until their enclosing transaction commits.
 func (s *Store) AdoptGrowthTx(ctx context.Context, tx *canon.Tx, id, person string, c GrowthCandidate) (GrowthNotice, error) {
-	if tx == nil || !present(person) || !growthLine(c.ID) || c.Expected <= 0 || !utf8.ValidString(c.Snapshot) || !growthLine(c.Notice) {
+	if tx == nil || !present(person) || !growthLine(c.ID) || c.Expected <= 0 || !utf8.ValidString(c.Snapshot) || utf8.RuneCountInString(c.Snapshot) > 262144 || !growthLine(c.Notice) {
 		return GrowthNotice{}, ErrInvalid
 	}
 	a, err := get(ctx, tx, id, false)
@@ -156,7 +156,6 @@ func (s *Store) UndoGrowth(ctx context.Context, id, person string, u GrowthUndo)
 			return err
 		}
 		if undone.Valid {
-			a.Revision = undone.Int64
 			out = a
 			return nil
 		}

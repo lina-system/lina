@@ -5,6 +5,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -14,10 +15,24 @@ import (
 	"github.com/charmbracelet/x/term"
 )
 
+type terminalInput interface {
+	io.Reader
+	Fd() uintptr
+}
+
+// The cancellation library needs a file-shaped reader to interrupt blocked
+// reads. Supply its unused methods without taking ownership of the input or
+// requiring wrappers to expose Write, Close and Name. Reads keep the wrapper.
+type borrowedTerminalInput struct{ terminalInput }
+
+func (borrowedTerminalInput) Write([]byte) (int, error) { return 0, os.ErrPermission }
+func (borrowedTerminalInput) Close() error              { return nil }
+func (borrowedTerminalInput) Name() string              { return "terminal input" }
+
 // One decoded reader owns the terminal until cancellation; it is joined before
 // Run restores raw mode. Paste is a single edit, never interpreted as keys.
-func readConversationInput(parent context.Context, input *os.File, visit func(tea.Msg) bool) (result error) {
-	reader, err := uv.NewCancelReader(input)
+func readConversationInput(parent context.Context, input terminalInput, visit func(tea.Msg) bool) (result error) {
+	reader, err := uv.NewCancelReader(borrowedTerminalInput{input})
 	if err != nil {
 		return err
 	}

@@ -163,6 +163,25 @@ shape. Application scenarios involving deferred payloads, negotiation, agent or
 result state, and the headless harness remain required before their corresponding
 supported rows can be claimed; a codec run does not stand in for those scenarios.
 
+## Background result reads
+
+The `running` capability supplies `running_get` with optional `run_id`, `action`
+(`open` or `dismiss`) and a nonnegative byte `offset`. An empty request refreshes
+the list; an action requires a run id. Open authenticates the connection's person,
+reads the run's pinned material revision through its integrity check, and returns
+`running` with `run_id`, artifact `text` (at most 16 KiB at UTF-8 boundaries), and
+`next` only when another page remains. Dismiss only accepts landed rows. Neither
+operation deletes the run or material or changes its claimed outcome.
+
+A `running_update` optionally carries `run_id` and `removed`; a removal uses the
+same stream key and next cursor, removes that row from retained snapshots, and
+is replayable to an existing subscriber. A background landing's `result` card
+optionally carries `run_id` as an opaque open reference. It is an agent-report
+preview whose body is read on demand through `running_get`; its material id and
+revision remain in the card metadata. The durable lane notice restores that card
+in conversation history after the running row is opened or dismissed. No run id,
+material id or revision is printed in the normal notice or card summary.
+
 ## Client connection
 
 The TUI and the LINA app on every platform talk to LINA Core over the `client` connection. A local client uses the LINA Core local socket, and a remote client reaches LINA Core directly inside the tailnet ([runtime.md](runtime.md)). Clients use only the public event and control API.
@@ -198,7 +217,7 @@ One connection reaches every agent of the main. A conversation kind, and a quest
 
 Version 1.0 of `client` has at least these kinds: `hello` and `welcome`; starting a conversation; sending input; interrupting; reading history; subscribing to events; the stream events, which are an output delta, an item done and the turn state; an approval request and its answer; a question and its answer, where a question may carry a flat form (the name of the asking plugin and fields that are text, a number, yes or no, or a choice) and its answer is accept with the values, decline or cancel; a result, and the requests to read, edit and save one; the running list of background runs and delegated tasks with its updates, a stop and a follow-up; the background notice that delivers a landing into a conversation; the progress view with its changes and its digest; the waiting list, its changes and the answer to a row; a request for Details and its result; a readiness failure that names the preparation step that failed ([conversation-and-memory.md](conversation-and-memory.md)); agent management requests and their results; work record requests and their results; account requests and their results; memory requests and their results, including the progress of an import and a promotion batch; channel management requests, their results and channel state notices; agent talk log entries and their expansion; and an error. The Approval, Agent management, Work records, Memory, Accounts, Results, Progress, Waiting list, Details, Channels and Agent exchanges capabilities are part of version 1.0. Their payload fields are set in the schema (see Deferred).
 
-The `growth` capability (1.0) uses `agent_request` and `agent_result`. These kinds also serve agent management; each operation requires its own negotiated capability (`growth` for growth operations, `agents` for management), and fields belonging to the other operation family are refused. A request selects `growth_adopt`, `growth_notices` or `growth_undo` with `operation` and the bound `agent_id`. Adopt carries `candidate` (`id`, decimal-string `expected` revision, complete `snapshot`, and one-line `notice`); undo carries the decimal-string growth `revision`. Other operation-specific fields are refused. The result contains `agent_id`, current decimal-string `revision`, and `notices`, each with its revision, one-line notice and `undo_revision` handle. Unknown fields, including other persona layers and a person selector, are refused. Empty legacy reserved shapes still decode but are not admitted operations. Mutations require an eligible decider; all operations bind the connection's person and the installed agent and require capability negotiation. A stale persona write returns `stale_revision`; invalid input returns `malformed`, a foreign agent returns `out_of_scope`, and unavailable storage returns `unavailable`. Committed learning lines also enter the ordinary conversation stream and history. The agent-bound undo tool uses Core's existing effect admission. Growth is independent of a model account and remains available when conversation has no route.
+The `growth` capability (1.0) uses `agent_request` and `agent_result`. These kinds also serve agent management; each operation requires its own negotiated capability (`growth` for growth operations, `agents` for management), and fields belonging to the other operation family are refused. A request selects `growth_adopt`, `growth_notices` or `growth_undo` with `operation` and the bound `agent_id`. Adopt carries `candidate` (`id`, decimal-string `expected` revision, complete `snapshot`, and one-line `notice`); undo carries the decimal-string growth `revision`. Other operation-specific fields are refused. The result contains `agent_id`, current decimal-string `revision`, and `notices`, each with its revision, one-line notice and `undo_revision` handle. Unknown fields, including other persona layers and a person selector, are refused. Empty legacy reserved shapes still decode but are not admitted operations. Mutations require an eligible decider; all operations bind the connection's person and a currently installed agent and require capability negotiation. Growth is advertised even with an empty agent list, so agents created during that boot can immediately use it. A stale persona write returns `stale_revision`; invalid input returns `malformed`, a foreign agent returns `out_of_scope`, and unavailable storage returns `unavailable`. A repeated undo returns the current revision without changing the original undo record. The snapshot limit is 262144 Unicode characters within the existing 1 MiB client frame bound. Committed adoption returns success even if learning-line publication fails; the durable notice remains available and delivery retries on notice reads, later adoption or restart. Committed learning lines also enter the ordinary conversation stream and history. The agent-bound undo tool uses Core's existing effect admission. Growth is independent of a model account and remains available when conversation has no route.
 
 
 
@@ -232,6 +251,8 @@ Rules:
 - A channel is not a client connection. A message from an external channel never reaches LINA Core on `client`: the channel adapter inside LINA Core receives it, and LINA Core records it as a conversation event. An approval answered by a button in a channel is recorded by LINA Core as an approval answer with the platform's ids; it is not carried on `client`.
 - No `client` message ever carries a channel token back to a client. A client passes a token to LINA Core once, when the person adds a connection.
 - A background notice is sent to clients at the turn boundary at which LINA Core delivers it ([conversation-and-memory.md](conversation-and-memory.md#background-results)). A running-list update may arrive at any time and is display state only.
+
+The core topic carries a `connected` item with optional `shell_file_tools_available` (boolean), keyed once per boot. It represents the completed sandbox probe and is included in snapshots and live updates, including for a client connected during recovery. A false value produces one local setup notice in the TUI's language; it is not a conversation event or model input. The field carries no launcher paths or diagnostic cause.
 
 ### Conversation payloads
 

@@ -40,11 +40,14 @@ type Result struct {
 // no Model or account binding. Apply enforces the job's
 // write rules inside the same transaction as its receipt and watermark.
 type Definition struct {
-	Agent    string
-	Account  provider.AccountID
-	Provider provider.ProviderID
-	Model    func(context.Context, Call) (Result, error)
-	Apply    func(context.Context, *canon.Tx, jobapi.Task, json.RawMessage) error
+	// MaxPayloadBytes bounds both queued input and proposals. Zero keeps the
+	// ordinary 256 KiB cap; Core can grant bounded headroom for encoded text.
+	MaxPayloadBytes int
+	Agent           string
+	Account         provider.AccountID
+	Provider        provider.ProviderID
+	Model           func(context.Context, Call) (Result, error)
+	Apply           func(context.Context, *canon.Tx, jobapi.Task, json.RawMessage) error
 }
 type Config struct {
 	Store       *canon.Store
@@ -58,13 +61,15 @@ type Config struct {
 }
 type Service struct{ cfg Config }
 
+const maxPayloadBytes = 6 << 20
+
 func New(cfg Config) (*Service, error) {
 	if cfg.Store == nil || cfg.Epoch == 0 || cfg.Limit < 0 {
 		return nil, jobapi.ErrInvalid
 	}
 	defs := make(map[string]Definition, len(cfg.Definitions))
 	for id, d := range cfg.Definitions {
-		if id == "" || d.Agent == "" || d.Apply == nil || (d.Model != nil && (d.Account == "" || d.Provider == "")) {
+		if id == "" || d.Agent == "" || d.Apply == nil || d.MaxPayloadBytes < 0 || d.MaxPayloadBytes > maxPayloadBytes || (d.Model != nil && (d.Account == "" || d.Provider == "")) {
 			return nil, jobapi.ErrInvalid
 		}
 		defs[id] = d
@@ -160,7 +165,8 @@ func (s *Service) SetEnabled(ctx context.Context, id string, enabled bool) error
 	})
 }
 func (s *Service) Enqueue(ctx context.Context, id string, task jobapi.Task) error {
-	if task.Sequence <= 0 || !validOutput(task.Input) {
+	d, ok := s.cfg.Definitions[id]
+	if !ok || task.Sequence <= 0 || !d.validPayload(task.Input) {
 		return jobapi.ErrInvalid
 	}
 	return s.apply(ctx, s.cfg.Epoch, func(tx *canon.Tx) error {
@@ -179,7 +185,14 @@ func (s *Service) Enqueue(ctx context.Context, id string, task jobapi.Task) erro
 	})
 }
 func validOutput(data json.RawMessage) bool {
-	return len(data) > 0 && len(data) <= 256<<10 && json.Valid(data) && string(data) != "null"
+	return (Definition{}).validPayload(data)
+}
+func (d Definition) validPayload(data json.RawMessage) bool {
+	limit := d.MaxPayloadBytes
+	if limit == 0 {
+		limit = 256 << 10
+	}
+	return len(data) > 0 && len(data) <= limit && json.Valid(data) && string(data) != "null"
 }
 func (s *Service) check(ctx context.Context, tx *canon.Tx, id string, from, through int64) (jobapi.Job, jobapi.Task, error) {
 	var task jobapi.Task
@@ -285,7 +298,7 @@ func (s *Service) Apply(ctx context.Context, p jobapi.Proposal) (jobapi.Applied,
 	if !ok {
 		return jobapi.Applied{}, jobapi.ErrUnavailable
 	}
-	if !validOutput(p.Output) || p.From < 0 || p.From == math.MaxInt64 || p.Through != p.From+1 {
+	if !d.validPayload(p.Output) || p.From < 0 || p.From == math.MaxInt64 || p.Through != p.From+1 {
 		return jobapi.Applied{}, jobapi.ErrInvalid
 	}
 	err := s.apply(ctx, p.Epoch, func(tx *canon.Tx) error { return s.applyProposal(ctx, tx, d, p) })
