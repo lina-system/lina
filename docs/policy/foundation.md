@@ -215,3 +215,11 @@ with an isolated home and no inherited credentials or npm configuration. It runs
 use scripted runtime events and the real SDK's MCP registration without model
 calls. Every command must succeed; missing signatures and invalid attestations
 fail the check. The root and adapter npm projects have independent lockfiles.
+
+PR #523's [CI run 39785658738](https://github.com/thisisjun786/lina/actions/runs/39785658738)
+reached the six-minute package limit while the current TUI lifecycle scenario
+had run for two seconds. That branch initially used a ten-minute package diagnostic deadline. The
+acceptance batching from #127 now covers that growing corpus with two disjoint
+six-minute batches inside the unchanged fifteen-minute shared components budget.
+Individual operation deadlines and acceptance assertions remain in force;
+timeout or missing observations still fail verification.

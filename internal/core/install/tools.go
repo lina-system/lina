@@ -19,7 +19,11 @@ func discover(ctx context.Context, cfg Config, host Host, verified map[string][]
 		path := cfg.ToolPaths[name]
 		var err error
 		if path == "" {
-			path, err = host.LookPath(name)
+			executable := name
+			if name == "antigravity" {
+				executable = "agy"
+			}
+			path, err = host.LookPath(executable)
 		}
 		if err == nil && filepath.IsAbs(path) {
 			tool.Path = path

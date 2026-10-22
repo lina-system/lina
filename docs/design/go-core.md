@@ -1130,6 +1130,25 @@ type Adapter interface {
 - Work tools: for Codex, `lina` dynamic tools (submit receipt, ask, coordinate, read projection). For the others, the receipt is built from the final result and the pull request and marked adapter-derived.
 - The delegated-task store records the requesting agent and conversation, done condition, artifact roots and whether application is required. A run binds its task, generation, worker, thread, turn and observing node. Admission appends an event and updates the active-run reservation in one fenced canon transaction; a task cannot admit a second active run. A terminal observation releases execution capacity but is not a delivery or acceptance.
 
+`internal/core/worker/antigravity` implements C-29 against the documented `agy`
+headless stream. A `result` emits exactly one typed finish before process exit;
+`denied_actions` overrides a `SUCCESS` status. The supervised process owner
+retains its hard activity until all descendants have been reaped. No result or
+exit code constitutes delivery. Fixed `ghclient` reads verify the task PR's identity,
+current head, checks and review, with a head recheck after inline comments.
+
+`internal/core/worker/dispatch` wires the adapter into installed Core's `dispatch_work`
+tool and existing work ledger. Migration 31 adds the dispatch journal; a committed
+conversation tool receipt gates execution. The journal reserves each repository
+through queued/running/unknown states. Core creates the worktree, checks design
+references, protected refs and write areas, and persists an adapter-derived
+artifact/receipt. Terminal observations publish to the source conversation and
+survive restart. Recovery retains uncertain reservations without replay. The
+adapter does not advertise unsupported approval replies, steering or work tools;
+manager design acceptance, parallel scheduling and merge remain their own flows.
+See [Antigravity headless adapter](work-and-delegation.md#antigravity-headless-adapter)
+for the evidence boundary and account-free acceptance limits.
+
 **C-57 Work definition, choice and splitting (new).**
 
 ```go
