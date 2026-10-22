@@ -161,7 +161,7 @@ export function validateEvidence(data, { readTrace } = {}) {
     requireValue(data.schema_version === 1, 'schema_version: expected 1');
     array(data.records, 'records');
   } catch (error) { return { valid: false, passed: false, errors: [error.message], cells, tiers }; }
-  const seen = new Set(), seenIDs = new Set();
+  const seen = new Set(), seenIDs = new Set(), invalidTiers = new Set();
   let row;
   for (const [i, r] of data.records.entries()) {
     try {
@@ -178,13 +178,18 @@ export function validateEvidence(data, { readTrace } = {}) {
         requireValue(bytes.length > 0 && createHash('sha256').update(bytes).digest('hex') === trace.sha256, `${kind}: missing or mismatched trace bytes`);
       }
       cells.push(cell);
-    } catch (error) { errors.push(`records[${i}]: ${error.message}`); }
+    } catch (error) {
+      errors.push(`records[${i}]: ${error.message}`);
+      // A rejected extra record must not leave a complete-looking tier passed.
+      // If its tier cannot be identified, neither tier can be certified.
+      for (const tier of r?.tier === 1 || r?.tier === 2 ? [r.tier] : [1, 2]) invalidTiers.add(tier);
+    }
   }
   for (const tier of tiers) {
     const measured = cells.filter(c => c.tier === tier.tier);
     tier.missing = columns.filter(column => !measured.some(c => c.column === column));
     if (measured.some(c => !c.passed)) tier.status = 'fail';
-    else if (!tier.missing.length) tier.status = 'pass';
+    else if (!tier.missing.length && !invalidTiers.has(tier.tier)) tier.status = 'pass';
   }
   const attemptedSecond = data.records.some(r => r?.tier === 2);
   if (attemptedSecond && tiers[0].status !== 'pass') errors.push('ladder stopped: tier 2 attempted before tier 1 passed');

@@ -79,7 +79,10 @@ For Linux tiers 1 and 2, the record checker is
 one installation and OS version at a time, requires exactly one record for
 each of the eight columns at each tier, and rejects tier 2 records unless
 every tier 1 cell passed before tier 2 began. Missing cells remain unverified;
-a correctly recorded failed cell stops the ladder. The CLI exits successfully
+a correctly recorded failed cell stops the ladder. Invalid evidence prevents
+its tier from reporting a pass even if eight valid cells also exist; a record
+whose tier cannot be identified prevents either tier from reporting a pass.
+The CLI exits successfully
 only when both tiers pass. A headless protocol scenario is supporting evidence,
 not a measurement of a person working concurrently on the Linux machine.
 
