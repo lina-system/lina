@@ -4,7 +4,6 @@ package e2e_test
 
 import (
 	"encoding/json"
-	"github.com/thisisjun786/lina/kit/protocol"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +12,10 @@ import (
 	"sync/atomic"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/thisisjun786/lina/internal/design"
+	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
+	"github.com/thisisjun786/lina/kit/protocol"
 )
 
 func TestM1TUISpeakerGutterInstalledCore(t *testing.T) {
@@ -72,7 +75,18 @@ func speakerGutterInstalledCore(t *testing.T, ascii, plain bool) {
 	h.socket = tap.socket
 	terminal := h.startTerminalSize(environment, false, true, scenario.Width, scenario.Height)
 	h.socket = socket
-	waitScreen(t, h, terminal, "Ctrl+D")
+	if plain {
+		// NO_COLOR never enters the alternate screen required by waitScreen's
+		// color-mode readiness check. Still require the connected composer.
+		if snapshot, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
+			content := screenText(s)
+			return !s.AltScreen && strings.Contains(content, design.Text(design.English, "live")+"  ") && strings.Contains(content, "Ctrl+D")
+		}); err != nil {
+			t.Fatalf("plain composer not ready: %v; cells=%s", err, screenText(snapshot))
+		}
+	} else {
+		waitScreen(t, h, terminal, "Ctrl+D")
+	}
 	// The composer is visible before its conversation destination is known.
 	// The subscription proves History was consumed; do not race initial discovery.
 	for {

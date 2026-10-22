@@ -97,6 +97,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-07 Sandbox, tool executor and trash.** Sandbox wrapper, network ask, file tools, recoverable deletion.
 - Done when: the start probe passes or shell and file tools turn off with a cause while conversation continues; a canary cannot read canon, secrets or the client socket; network waits for once, always allow or deny; a patch with stale context fails; a trash delete restores identical bytes.
 - Depends on: G1-02, G1-05, G1-06. Design refs: C-14; [runtime.md](runtime.md#sandbox).
+- #50 and #51 supply the wrapper and executor. Acceptance uses `kit/sandbox` and `internal/core/boot` for startup and protected-path canaries, `internal/core/exec` for real sandboxed network approvals and patch/trash execution, and `kit/tools` for stale-context refusal and byte-identical recovery after reopening the version store. The strengthened `e2e/m1/sandbox.json` scenario proves a completed installed-Core/TUI exchange and recovered history with either a missing launcher or a failed probe.
 
 ### 1.C Model path, accounts and loop
 
@@ -364,6 +365,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 - Depends on: G2-01, G2-04. Design refs: C-57; [work-and-delegation.md](work-and-delegation.md#work-definition).
 
 **G2-19 GitHub reads, CI watch and merge.** `gh` as Core's child, check watcher, head-pinned merge, observed merges.
+- Read/watch increment (#140): Core owns the fixed-argument gh client and one conditional CI watcher per PR; the negotiated GitHub observation capability reports head, reviews, checks and pending causes. `e2e/m2/github-ci.json` covers the running Core path. Merge and observed-merge safety remain separate work.
 - Done when: no webhook or events feed is used; one watcher per pull request ends at the conclusion; a rate limit shows CI pending with its cause; a moved head is read again and not merged; a protected-ref mismatch blocks the merge; a person's merge is observed only after the merge commit and target ref are checked.
 - Depends on: G1-05, G1-07. Design refs: C-58; [integrations.md](integrations.md#github).
 
