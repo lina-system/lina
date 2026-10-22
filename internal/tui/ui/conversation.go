@@ -508,6 +508,9 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		code := "account.empty"
 		if !m.accountsKnown {
 			code = "account.loading"
+			if m.accounts.code != "" {
+				code = m.accounts.code
+			}
 		}
 		for _, row := range m.accountRows {
 			if row.Status == "ok" {

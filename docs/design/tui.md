@@ -468,7 +468,11 @@ The conversation draft survives opening and closing the account block.
 An automatic account-list refusal at connection startup retains focus and the
 unsent draft. Its typed error stays in account display state; it does not open
 the account block over the conversation. A refusal in a block the person opened
-keeps that block visible.
+keeps that block visible. On an account-only connection, the conversation status
+shows that typed refusal instead of continuing to show account discovery in
+progress. A refusal does not establish a known empty account list. A successful
+list response establishes account status and clears the refusal.
+Reconnection resets discovery for the new connection.
 
 The client reports an ephemeral IPv4 loopback port for `/auth/callback`, or
 `cannot_listen` over SSH or when binding fails. It opens only an HTTPS
@@ -493,6 +497,11 @@ installed Core composition with the synthetic issuer through sign-in, list and
 sign-out. Captured client traffic, terminal output and state outside the secret
 store contain no provider tokens. Model routing and live provider acceptance
 remain their own contracts.
+`TestM1TUIAccountDiscoveryRefusalInstalledCore` holds the installed Core
+composition at recovery, observes its real startup account-list refusal, and
+checks the built TUI in a headless PTY. The refusal leaves the composer usable;
+an explicit account-list retry after recovery replaces it with the successful
+empty-list status.
 
 ## Agent surfaces and settings as text (T-14)
 
