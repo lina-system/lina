@@ -40,6 +40,7 @@ func Migrations() []Migration {
 		{Version: 26, SQL: WorkSchema},
 		{Version: 27, SQL: RecordsSchema},
 		{Version: 28, SQL: WorkWaitingSchema},
+		{Version: 29, SQL: RecordsSearchSchema},
 	}
 }
 

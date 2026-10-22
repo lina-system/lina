@@ -42,6 +42,9 @@ func (r *conversationRuntime) resolvePersonaGrant(ctx context.Context, id string
 	if !ok {
 		return grant.Grant{}, grant.Environment{}, grant.ErrGrant
 	}
+	if g.Identity.Profile == "worker-session" {
+		return g, grant.Environment{Epoch: r.epoch, Now: time.Now(), OSPermitted: true, Revision: strconv.FormatUint(r.epoch, 10)}, nil
+	}
 	if g.Identity.Profile == "records" {
 		env, err := r.recordEnvironment(ctx, g)
 		return g, env, err

@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"github.com/thisisjun786/lina/internal/core/replay"
-	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"io"
 	"net/http"
@@ -55,7 +54,7 @@ func TestM1ReplayExportInstalledCore(t *testing.T) {
 	h.connect(core).Close()
 	waitCoreReady(t, h)
 	terminal, _ := h.startConversationTUI(80, 24, "TERM=xterm-256color")
-	waitScreen(t, h, terminal, design.Text(design.English, "live"))
+	waitComposerReady(t, h, terminal)
 	h.keys(terminal, scenario.Input+"\r")
 	// The long reply ends at the latest transcript position. Open its pager
 	// to read the first sentence before exercising export and replay below.
