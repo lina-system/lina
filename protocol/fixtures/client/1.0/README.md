@@ -8,7 +8,7 @@ The Go runner is in `kit/protocol/conformance`; run it and both adapters with:
 go test ./kit/protocol/... ./internal/clientapi/...
 ```
 
-Every JSON file outside `cases/` and `invalid/` is a valid envelope. Each must
+Every JSON file outside `cases/`, `invalid/` and `application/` is a valid envelope. Each must
 round-trip through an implementation's codec without changing JSON values.
 Whitespace and object key order are irrelevant; exact numbers are retained.
 `normal/` supplies every kind not already represented by the root handshake
@@ -51,28 +51,58 @@ The runner checks the adapters' own counters and refusal codes; it does not
 compute a passing outcome from expected data. Adapters must use a fresh receiver
 for each case. Round-trip comparisons do not pass JSON numbers through float64.
 
+## Application fixtures
+
+`application/` runs through `conformance.LoadApplications` and
+`conformance.RunApplication`. Each case establishes fresh service state and
+contains `service`, `setup`, `input`, `output` and `outcome`. The runner gives
+only `input` to the executing adapter, compares its response to `output`, then
+separately reads and compares recorded state to `outcome`. Unknown fields,
+missing data and an empty corpus fail loading. JSON values are compared exactly,
+including numbers. The corpus inventory rejects cases without a Core consumer.
+
+- `agents/` contains schema-valid input envelopes. The installed Core scenario
+  replaces only the synthetic target agent id, supplies live connection
+  metadata, and checks response correlation, Core identity and epoch. Expected
+  output projects kind, effect state and refusal code; generated message ids and
+  timestamps are not fixed. Cases cover conversation start, history, input and
+  interrupt for missing/deleted agents, choose/rename/delete for deleted agents,
+  and binding or replacing a channel scope with a deleted target. Setup pairs a
+  real channel store and optionally binds another active agent first. Recorded
+  outcomes compare complete relevant canon rows before and after the request,
+  including the existing binding and scope, rather than trusting a refusal alone.
+- `results/` uses the existing native `Present`/`Read` service, not a client wire
+  payload. All eight body types are stored and read through Core's actual result
+  store and ledger. Unknown body fields are refused for each type. Outputs check
+  the complete body; outcomes check ledger/head/save counts, revision, preview
+  status, provenance and preservation of complete Core-rendered text. Malformed
+  bodies must create no result head, event or save.
+
+Run the actual Core adapters with:
+
+```sh
+go test ./internal/core/results -run TestCoreResultConformance -count=1
+go test ./e2e -run TestM1AgentLifecycleConformance -count=1
+```
+
+`e2e/m1/conformance-agents.json` selects the shared agent corpus for the headless
+harness; it starts installed Core and uses its public socket. The native result
+cases establish service behavior only, not client wire delivery or rendering.
+
 ## Remaining
 
-The following application scenarios require the deferred schemas or services;
-none is claimed as passing by a reserved empty payload or a card-only fixture:
+Client result body, saved reference and destination schemas remain reserved;
+`hello` capabilities have no result-type list and Core has no client result
+read/edit/save handlers. Full wire bodies and result-type negotiation (including
+an undeclared type and a client without `results`), stale edit/save, double-save
+and erased-conversation wire fixtures depend on
+[#419](https://github.com/thisisjun786/lina/issues/419). Native body fixtures and
+card-only wire fixtures do not establish these behaviors.
 
-- Conversation requests for a nonexistent agent and for a deleted agent need
-  agent/conversation state. Agent management on a deleted agent, channel binding
-  to a deleted agent, and changing a channel scope to a deleted agent also need
-  payload fields that are currently reserved.
-- Full bodies for summary, table, diagram, chart, document draft, comparison,
-  plan view and file results need their body schemas and validation. The current
-  fixtures cover each type's card fields only.
-- A result type the client did not declare needs result-type negotiation. A
-  client without `results` needs the ordinary output payload and fallback logic.
-- Edit at a stale revision, save at a stale revision, a save sent twice, and a
-  result whose conversation was erased need result state and effect handling.
-- Older/newer peer declarations round-trip here; selection or refusal needs the
-  supported-combination table and handshake service.
-- Normal application flow for reserved kinds and recording effect outcomes need
-  their services. This corpus preserves effect states but does not execute them.
-- The `e2e/m1/` scenario requires the headless harness and runnable Core/TUI.
-  Receive-boundary tests do not substitute for it.
+Older/newer peer declarations round-trip here; selection/refusal is exercised
+separately by the supported-combination and client-admission scenarios. Normal
+application flow for other reserved kinds and recording their effect outcomes
+still require their services; receive-boundary cases alone do not execute them.
 
 Node's stale-epoch, reboot and lost-receipt fixtures belong to the Node protocol
 version, outside this client 1.0 corpus.
