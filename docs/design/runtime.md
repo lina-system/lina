@@ -491,6 +491,8 @@ On Windows the wrapper runs commands only inside a verified Windows sandbox. A v
 
 LINA Core checks on start, and before the first tool call, that the sandbox works on this host. Unprivileged user namespaces, AppArmor restrictions and hardened kernels can each disable bubblewrap. When the sandbox is missing or fails, conversation continues, only shell and file tools are unsupported, and the user sees why.
 
+The Linux acceptance scenario in `e2e/m1/sandbox.json` exercises both a missing launcher and a failing probe through production Core composition over installed state with an explicit launcher path. An installed TUI message receives a provider reply, the turn completes and reopening the TUI restores the reply without another model call. The scenario also verifies the failure cause in Core's startup snapshot and the localized TUI setup notice without leaking private diagnostics.
+
 The wrapper's `lina-sandbox-1` policy ships compiled seccomp programs for Linux amd64 and arm64, with separate blocked-network and authorized-network variants. Other Linux architectures fail closed. The source, pinned Codex provenance and regeneration instructions live in `kit/sandbox/policy/README.md`. The filter rejects alternate syscall ABIs, namespace and mount changes, process inspection, kernel keyrings, io_uring and VM sockets. It forces `clone3` callers to fall back to filtered `clone`. Authorized network permits IP sockets without removing filesystem masks or syscall restrictions. Host Unix-socket connections remain denied in both modes, including hard-linked socket aliases; local socket pairs remain available for subprocess IPC.
 
 Core passes the canon, secrets, system, version, backup, materials, derived and staging areas and its client socket as protected paths. The wrapper resolves symlinks and refuses writable grants overlapping those paths. Existing Git metadata in writable roots, including nested repositories and gitdir indirections, is mounted read-only. Its writable ancestors are anchored against rename/replacement. Gitdir files are opened without following symlinks or blocking on special files, checked as regular files and read with a 4 KiB limit. The probe uses the actual launcher and a synthetic denied-read canary, verifies Linux seccomp and no-new-privileges, and has a five-second deadline. The first tool call repeats it; an unavailable wrapper never starts a command. A canceled caller or invalid/released lease does not latch a confinement failure or consume that first-call recheck. Causes are stable codes (`launcher_missing`, `unsupported_platform`, `unsupported_architecture`, `invalid_policy`, `probe_setup_failed`, `probe_failed`); explicit probes also report transient `probe_cancelled` or `invalid_lease` without changing the wrapper’s availability. Core exposes the status to its tool composition and reports `shell_file_tools_unsupported` with the cause while leaving the client service running. Linux discovery tries an absolute PATH result, then `/usr/bin/bwrap`, `/bin/bwrap`, `/usr/local/bin/bwrap`, `/opt/homebrew/bin/bwrap` and `/home/linuxbrew/.linuxbrew/bin/bwrap`; macOS uses `/usr/bin/sandbox-exec`. Empty PATH does not hide an installed launcher. Only executable absolute paths qualify; a trusted explicit launcher pin fails closed and does not fall back. After probing, Core publishes a boolean availability view on the core topic; TUI presents one localized setup notice when false. Raw cause codes remain in diagnostics.
@@ -808,7 +810,26 @@ and normal Core startup refuse a newer store with exit 78 without changing the
 database, sidecars, lock, epoch or sentinel. Headless scenarios are in
 `e2e/m2/update-preflight.json` and exercise actual candidate Core processes.
 
-Rollback restores the previous compatible composition from the kept binaries and the pre-update snapshot. Binaries are never rolled back over an irreversible migration. When an update fails, the install restores the previous compatible composition, or holds: it stops, keeps the current state intact and reports. It never leaves a half-updated component running against data it can't read. LINA OS adds steps of its own around this order (see Deferred).
+The installed activation command is `lina update --activate --state-root <path>
+--candidate <prepared-directory>`. It persists an update attempt outside backup
+generations, requests the running Core's explicit drain and waits for its
+committed fence and exit before taking a verified snapshot. Candidate preflight
+is repeated against the stopped store. The binary, manifest and pinned adapter
+composition is kept for rollback; no user-installed worker or tool is changed.
+
+The candidate runs first on the private `run/update.sock`. Core writes a durable
+READY receipt before admitting the smoke conversation. Smoke requires a real
+completed conversation result and, when installed, the bundled Moirai worker's
+read-only `--preflight` against canon and the live job socket. It does not dispatch
+background jobs. The candidate then drains; the updater records completion and
+starts and checks the ordinary service. Missing account/model readiness is a
+smoke failure. Core refuses normal startup during an unfinished update, before
+opening canon or minting an epoch. `lina update --resume --state-root <path>`
+recovers an interrupted attempt using its recorded paths, composition and
+generation, or retains a hold with a closed cause. Changed installation/data
+paths and foreign services are refused before controlling another service.
+
+Rollback restores the previous compatible composition from the kept binaries and the pre-update snapshot. Automatic rollback is allowed only while the candidate has never reached READY. A possibly started forward schema migration without an undo proof holds instead of rolling back. Binaries are never rolled back over an irreversible migration. When an update fails, the install restores the previous compatible composition, or holds: it stops, keeps the current state intact and reports. It never leaves a half-updated component running against data it can't read. LINA OS adds steps of its own around this order (see Deferred).
 
 - The main gets release artifacts from the private GitHub Releases of the LINA repository with the owner's `gh` authentication, and distributes Node binaries and their updates to devices over the tailnet ([releases.md](../policy/releases.md)).
 - The Claude adapter, its lockfile and the SDK package it installs are updated only as part of a LINA update, by their pin. An update never starts, stops or updates a tool the user installed, such as a worker, the `grok` command or Node.js.
@@ -833,6 +854,16 @@ These install and update failures must end in the previous compatible compositio
 - a path change of the installation or data location
 - a backup that doesn't form a compatible pair with the installed version
 - a process killed between update steps
+
+The activation failure matrix is exercised by `e2e/m2/update-activation.json`
+through the installed executable, client protocol and actual bundled worker.
+It includes pre-READY start refusal, post-READY provider failure and updater death
+after dispatch. Package injections cover truncated gzip/digest failures, ENOSPC,
+service/snapshot/swap failures, incompatible generation refusal, changed paths,
+and SIGKILL acknowledged at each binary/adapter rename. Failure evidence uses
+closed causes and durable receipts; it does not infer success from a running
+service or from elapsed time. Existing runtime-specific injections below remain
+with their owning components and are included in full foundation verification.
 
 These runtime failures must end as their rules require:
 
@@ -905,3 +936,7 @@ The first implementation issue demonstrates the runtime with these checks. Each 
 - Narrowing a plugin server's network to named hosts: needs a filter in the sandbox wrapper; chosen at implementation acceptance of the plugin system, and until then the allowance is network on or off.
 - The starting values of the turn budget (acknowledgement, soft and hard budget, tool deadline), which only set the hand-off point: tuned by measurement during implementation acceptance of the conversation engine, on waiting time and completion quality together (rework, corrections and "that is not what I asked"), never on waiting time alone.
 - Replay uses immutable history references, pinned persona and recorded request configuration; missing reconstructible assembly excludes the turn. Raw ContextPackets remain unstored.
+
+### Built-in web reads
+
+[Web search and page reading](web-tools.md) implement `web_search(query, limit)` and `web_extract(url)` in ordinary turns. The same tool registry and network approval path govern both. Only configured providers are offered, returned content is untrusted evidence, and the provider key belongs to the existing secret store.

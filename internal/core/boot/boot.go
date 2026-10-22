@@ -27,6 +27,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/internal/core/manifest"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
+	"github.com/thisisjun786/lina/internal/core/recover"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/sandbox"
 )
@@ -112,6 +113,8 @@ type Config struct {
 	SignInTransport http.RoundTripper
 	// ChannelTransport is an in-process platform test seam; production uses Telegram.
 	ChannelTransport http.RoundTripper
+	// WebTransport is an in-process test seam; production uses the fixed Firecrawl origin.
+	WebTransport http.RoundTripper
 	// ClientManifest selects the build manifest containing supportedCombinations.
 	// An explicit path must exist and contain a valid table, including an empty
 	// table when every client combination is intentionally unsupported.
@@ -205,6 +208,9 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		return err
 	}
 	if err := store.Acquire(); err != nil {
+		return err
+	}
+	if err := recover.UpdateStart(store, cfg.StateRoot, cfg.Socket); err != nil {
 		return err
 	}
 	if err := backup.CheckRestore(cfg.StateRoot); err != nil {
@@ -329,6 +335,7 @@ func Run(ctx context.Context, cfg Config) (result error) {
 			return openErr
 		}
 		runtime.replaySocket = cfg.Socket
+		runtime.webTransport = cfg.WebTransport
 		supported := cfg.Client.Supported
 		cfg.Client = runtime.identity
 		cfg.Client.Supported = supported
@@ -502,6 +509,9 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		cfg.Services.SandboxReady(box)
 	}
 	if len(recovery.Halt) == 0 && ctx.Err() == nil {
+		if err := recover.UpdateReady(store); err != nil {
+			return err
+		}
 		if err := restarter.Ready(); err != nil {
 			return err
 		}

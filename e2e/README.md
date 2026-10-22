@@ -65,6 +65,12 @@ entry, private-chat pairing, binding and disconnect through the real TUI and
 boot composition. A separate Core test process retains the production peer
 ancestry checks; only Telegram HTTP replies are scripted. Boot package tests
 also reopen the poller against durable connection and secret state.
+`m1/telegram.json` starts production boot in process against a saved channel and
+secret, without a model route. Only the platform HTTP transport is replaced:
+the restored bot's identity lookup stays blocked until shutdown. READY and a
+socket channel listing must succeed while it is blocked, the channel must show
+unavailable without exposing the token, and Core must cancel and join the
+request before stopping.
 `m1/tui-talk-log.json` seeds a durable exchange, restarts installed Core, and
 checks one summary row and its explicit ledger expansion without a model call.
 
@@ -277,6 +283,15 @@ observation releases the dependent onto the fetched remote base. The parent
 clone's checked-out base branch stays unchanged. Restart retains the merge without
 turning it into a delivery verdict. The fixture has no provider credential or
 external GitHub effect.
+
+`go test ./e2e/m1 -run '^TestM2UpdateActivation$' -count=1` runs
+`m2/update-activation.json`, which drives `lina update --activate` against
+the installed Core. A test-owned service manager launches real service processes;
+Core drains through its client protocol, snapshots and swaps, runs a real
+conversation and bundled-worker readiness check, and resumes with a verified
+tool result. Start refusal rolls back, while provider failure and updater death
+after READY hold the new state. Package SIGKILL tests acknowledge each rename
+boundary without fixed startup delays.
 `m3/antigravity.json` dispatches through installed Core's conversation tool,
 starts its supervised headless worker in a new worktree, produces a real file
 and commit, and verifies a recorded PR at that head. Separate cases cover soft
@@ -301,3 +316,5 @@ credentials and does not measure live Codex quota.
 handshakes and unavailable quota observations. Installed Core keeps conversation
 available, omits unavailable graph tools and reaps partial worker processes.
 The scenario uses the shared acceptance harness in `e2e/m1/`.
+
+`TestM1WebUnconfigured` checks installed Core's explicit missing-provider status, absence of web declarations and one-round notice. `TestM1WebSearchExtractAndCitation` runs the production Core composition in a separate test helper with a synthetic manifest recording that executable, and injects only the Firecrawl HTTP transport. The real TUI saves a hidden key; the protocol client approves each network request; the real provider adapter searches and extracts against stub responses; TUI cells show both running activities; the scripted model cites the source URL. No real provider account is used, and model compliance beyond the scripted boundary is not claimed.
