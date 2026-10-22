@@ -36,6 +36,7 @@ function registryFor(cwd) {
     'internal/core/exchange/',
     'internal/core/exec/',
     'internal/core/gateway/',
+    'internal/core/ghclient/',
     'internal/core/guard/',
     'internal/core/inbox/',
     'internal/core/install/',
