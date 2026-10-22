@@ -588,18 +588,17 @@ default state root is `$XDG_STATE_HOME/lina`, falling back to
 defaults to the directory of the executing binary. Installation validates its
 manifest, requires its target to match the host OS and architecture, and verifies
 the size and SHA-256 of the exact artifact bytes copied.
-`--persona-source <dir>` selects an absolute local checkout root containing
-`characters/<preset>/persona/core-v1.md` and `default-voice-v1.md` for each of the
-eight starter preset keys in [Presets](conversation-and-memory.md#presets).
-Install checks each pair independently, reports setup warnings without private
-paths or text when unavailable, and stores the root path (never the text) in
-private `system/core/config.json` as `persona_source`. Missing material publishes
-empty layers only for the affected preset and does not block installation,
-Core startup or creation of all eight starters. The existing `characters/lina/`
-source remains valid. To change the source in an existing
-install, edit that field in the 0600 config file; Core rereads it at the next turn.
-Older installs without the file use an unconfigured source. See
-[Presets](conversation-and-memory.md#presets) for fallback and revision behavior.
+The install includes the eight working personas from public
+`persona/<preset>/core-v1.md` and `default-voice-v1.md`, using the keys and names in
+[Presets](conversation-and-memory.md#presets). Release validation checks all eight
+pairs. Core loads them without a private checkout or persona-source setup;
+the legacy `--persona-source` / `persona_source` path does not override shipped
+starter layers. Migration publishes normal preset revisions while preserving
+prepared turns and agent-owned layers. Only backstory and world material stay
+in the private world repository and enter through material recall; their absence
+does not clear a working persona or block installation and first conversation.
+See [Presets](conversation-and-memory.md#presets) for validation, per-preset
+unavailable-pair fallback and revision behavior.
 The executable and its manifest are placed in `system/bin/`. The default client
 socket is `system/run/client.sock` under the state root; `--socket` can choose a
 shorter absolute path where the Unix socket path limit requires it.

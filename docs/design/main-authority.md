@@ -205,7 +205,7 @@ Every plugin that is on exposes its full tool set to every agent, in the same wa
 
 ### Preset effect limits
 
-The starter roles in [Presets](conversation-and-memory.md#presets) do not grant authority. Core enforces the investing preset's advise-only limit and the legal preset's draft-only limit as effect policy, before dispatch or an approval request. The restriction follows the agent's preset identity in canon, not its display name, persona wording, voice revision or the presence of private source files.
+The starter roles in [Presets](conversation-and-memory.md#presets) do not grant authority. Core enforces the investing preset's advise-only limit and the legal preset's draft-only limit as effect policy, before dispatch or an approval request. The restriction follows the agent's preset identity in canon, not its display name, persona wording, voice revision or the presence of shipped persona files.
 
 | Effect class | Investing preset | Legal preset |
 | --- | --- | --- |
