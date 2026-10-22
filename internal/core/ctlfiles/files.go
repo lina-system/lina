@@ -179,30 +179,63 @@ func record(name string) bool {
 }
 
 func (s *Store) Read(name string) ([]byte, error) {
+	return readRecord(name, s.dir.OpenFile, s.dir.Lstat)
+}
+
+func readRecord(name string, open func(string, int, os.FileMode) (*os.File, error), lstat func(string) (os.FileInfo, error)) ([]byte, error) {
 	if !record(name) {
 		return nil, errors.New("unknown control record")
 	}
-	// O_NONBLOCK prevents an unexpected FIFO from blocking before fstat rejects it.
-	file, err := s.dir.OpenFile(name, os.O_RDONLY|noFollow|nonBlock, 0)
-	if err != nil {
-		return nil, err
+	for attempt := 0; ; attempt++ {
+		// O_NONBLOCK prevents an unexpected FIFO from blocking before fstat rejects it.
+		file, err := open(name, os.O_RDONLY|noFollow|nonBlock, 0)
+		if err != nil {
+			return nil, err
+		}
+		info, err := file.Stat()
+		if err != nil {
+			file.Close()
+			return nil, err
+		}
+		if err := private(info, false); err != nil {
+			file.Close()
+			// Write may replace the record between open and fstat. Never read
+			// the unlinked inode; reopen and validate the replacement in full.
+			if attempt < 7 && unlinked(info) {
+				continue
+			}
+			return nil, err
+		}
+		// os.Root confines symlink traversal but can resolve a link within the
+		// root. Validate the entry itself and match it to the opened inode.
+		current, err := lstat(name)
+		if err == nil {
+			err = private(current, false)
+		}
+		if err != nil {
+			file.Close()
+			if attempt < 7 && current != nil && unlinked(current) {
+				continue
+			}
+			return nil, err
+		}
+		if !os.SameFile(info, current) {
+			file.Close()
+			if attempt < 7 {
+				continue
+			}
+			return nil, errors.New("control record changed during read")
+		}
+		defer file.Close()
+		data, err := io.ReadAll(io.LimitReader(file, 65537))
+		if err != nil {
+			return nil, err
+		}
+		if len(data) > 65536 {
+			return nil, errors.New("control record exceeds 64 KiB")
+		}
+		return data, nil
 	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if err := private(info, false); err != nil {
-		return nil, err
-	}
-	data, err := io.ReadAll(io.LimitReader(file, 65537))
-	if err != nil {
-		return nil, err
-	}
-	if len(data) > 65536 {
-		return nil, errors.New("control record exceeds 64 KiB")
-	}
-	return data, nil
 }
 
 // Write publishes a whole record only after its temporary file is synced, then
