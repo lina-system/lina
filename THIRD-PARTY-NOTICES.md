@@ -27,6 +27,17 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ## Terminal UI behaviour references
 
+The conversation speaker gutter adapts behaviour described in these permissive
+projects: distinct first-line speaker marks, indented continuation text and
+spacing between turns. No implementation code is copied.
+
+- [Codex CLI](https://github.com/openai/codex), Apache-2.0, revision
+  `86e17e98`: person/assistant marks, two-cell continuation indent and empty rows.
+- [Gemini CLI](https://github.com/google-gemini/gemini-cli), Apache-2.0, revision
+  `09d81bf1`: distinct speaker marks and accented assistant identity.
+- [Hermes Agent](https://github.com/NousResearch/hermes-agent), MIT, revision
+  `e06df9c2`: person prompt and assistant gutter. Its MIT notice appears below.
+
 [Codex CLI](https://github.com/openai/codex) (Apache-2.0, OpenAI) informs the
 whole-conversation transcript overlay opened with Ctrl+T. No upstream code is
 copied. Source observations and limits are recorded in
@@ -34,10 +45,9 @@ copied. Source observations and limits are recorded in
 
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) (MIT, copyright
 2025 Nous Research) informs the TUI's complete inline assistant replies and
-paged transcript reading. No upstream code is copied. The source-survey
+paged transcript reading, wheel acceleration and sticky-bottom scrolling. No upstream code is copied. The source-survey
 observations and limits are recorded in [the TUI reference specification](internal/tui/ui/REFERENCE.md).
 The Hermes Agent license text is included below.
-
 
 Hermes Agent (Nous Research, MIT), revision
 `944c3a434071f43e64b443d033f3eba30c64434c`, is a reference for draft-clearing
@@ -103,18 +113,6 @@ See the [narrow terminal reference](internal/tui/NARROW-REFERENCE.md).
 Tool activity also follows Hermes Agent’s friendly catalog verbs and timed
 completion indication, observed at revision `944c3a434071f43e64b443d033f3eba30c64434c`
 in `agent/display.py`. LINA’s protocol and journal wiring are original.
-
-[Codex CLI](https://github.com/openai/codex) (Apache-2.0, OpenAI) informs the
-whole-conversation transcript overlay opened with Ctrl+T. No upstream code is
-copied. Source observations and limits are recorded in
-[the TUI reference specification](internal/tui/ui/REFERENCE.md).
-
-[Hermes Agent](https://github.com/NousResearch/hermes-agent) (MIT, copyright
-2025 Nous Research) informs the TUI's complete inline assistant replies and
-paged transcript reading, wheel acceleration and sticky-bottom scrolling. No
-upstream code is copied. The source-survey
-observations and limits are recorded in [the TUI reference specification](internal/tui/ui/REFERENCE.md).
-The Hermes Agent license text is included in its notice below.
 
 ## Memory design references
 

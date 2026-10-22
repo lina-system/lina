@@ -278,7 +278,7 @@ func TestProductionCardNotificationReachesExistingRenderer(t *testing.T) {
 	defer recorder.Close()
 	m := newShell(Options{Width: 80, Notification: "bell"}, nil)
 	m.focused = false
-	d := &display{interactive: true, output: recorder, renderer: startTerminalRenderer(ctx, recorder, 80, 24)}
+	d := &display{interactive: true, output: recorder, renderer: startTerminalRenderer(ctx, recorder, 80, 24, TrueColor)}
 	defer d.renderer.close()
 	if err := d.notifyCard(m, state.CardBell{Agent: "Agent", Summary: "Send"}); err != nil {
 		t.Fatal(err)
