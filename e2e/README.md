@@ -231,3 +231,9 @@ and deleted agents in conversation and management requests, plus channel
 binding/scope replacement. A paired synthetic channel and an existing binding
 exercise the actual target-agent checks. Read-only canon snapshots prove that
 refused requests preserve agent revisions, actions, conversations and bindings.
+
+`m2/github-ci.json` starts the real Core binary with a synthetic `gh` executable
+in its isolated PATH. It negotiates the GitHub capability, refuses an unnegotiated
+read, observes rate-limited CI pending and its retry deadline, then observes head,
+review threads and successful checks. It verifies conditional headers and one
+review read per head, with no network credentials or GitHub service dependency.
