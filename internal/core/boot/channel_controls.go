@@ -63,6 +63,11 @@ func (c *channelRuntime) channelControl(ctx context.Context, shared *conversatio
 	if err != nil || !claimed {
 		return true, err
 	}
+	inputText := input.Body.Text()
+	person := protocol.ConversationSpeaker(input.SpeakerKind)
+	if err = shared.publish(ctx, protocol.KindItemDone, input.ID, protocol.ItemDone{Text: &inputText, Speaker: &person, PersonID: &input.PersonID, AgentID: &input.AgentID}); err != nil {
+		return true, err
+	}
 	session := clientsrv.Session{PersonID: b.Person}
 	result := clientsrv.Result{}
 	// Owner-wide views must never be projected into a shared destination.
@@ -108,8 +113,13 @@ func (c *channelRuntime) channelControl(ctx context.Context, shared *conversatio
 			text = "Stop requested."
 		}
 	}
-	_, err = shared.journal().Admit(ctx, guard.EntryAgent, ledger.Input{ID: "channel-control:" + strconv.FormatInt(in.id, 10), ParentID: input.ID, ConversationID: b.Conversation, AgentID: b.Agent, Surface: input.Surface, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: text})
-	return true, err
+	response, err := shared.journal().Admit(ctx, guard.EntryAgent, ledger.Input{ID: "channel-control:" + strconv.FormatInt(in.id, 10), ParentID: input.ID, ConversationID: b.Conversation, AgentID: b.Agent, Surface: input.Surface, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: text})
+	if err != nil {
+		return true, err
+	}
+	text = response.Body.Text()
+	agent := protocol.ConversationSpeaker(response.SpeakerKind)
+	return true, shared.publish(ctx, protocol.KindItemDone, response.ID, protocol.ItemDone{Text: &text, Speaker: &agent, AgentID: &response.AgentID})
 }
 
 type channelFollowSource struct {

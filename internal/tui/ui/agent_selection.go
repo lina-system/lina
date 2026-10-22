@@ -53,6 +53,7 @@ func (m *shellModel) discoveryFailed(code protocol.ErrorCode) bool {
 func (m *shellModel) reconnectHistory(agents []protocol.Agent) *protocol.HistoryGet {
 	if m.conversation.id == "" && !m.conversation.agentMissing {
 		if len(agents) == 0 {
+			m.agentDiscoveryDone()
 			return nil
 		}
 		return &protocol.HistoryGet{}
