@@ -266,7 +266,7 @@ func (s *managementSession) response(ctx context.Context, c *clientapi.Client, e
 					source = role + " (" + source + ")"
 				}
 			}
-			lines = append(lines, a.Name+" · "+source, "  main:"+a.AgentID)
+			lines = append(lines, a.Name+"  "+source, "  main:"+a.AgentID)
 			found = found || a.AgentID == active
 		}
 		m.openPager(strings.Join(lines, "\n"))
