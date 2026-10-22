@@ -208,6 +208,12 @@ replay count is consumed by the Bubble Tea recording-writer test.
 synthetic producer data, socket discovery/decisions, and a separate-key PTY approval.
 These scenarios create no second product decision store and use no timing sleeps.
 
+`m2/claude-adapter.json` starts installed Core with the external TypeScript adapter
+and a test-only vendor runtime. The runtime calls Core's real `skill_index` tool,
+checks its receipt, streams an assistant result, and the scenario reopens Core
+to verify durable history. It uses Node but no SDK installation, external service
+or personal credential; the SDK boundary has its own npm suite.
+
 `m1/conformance-agents.json` runs every shared `application/agents/` fixture
 against installed Core over its public socket. It checks refusals for missing
 and deleted agents in conversation and management requests, plus channel
