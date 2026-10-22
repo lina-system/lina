@@ -48,7 +48,6 @@ func TestM3OperationalSwitch(t *testing.T) {
 	defer cancelScenario()
 	h.ctx = scenarioContext
 	core := initialStart(false)
-	h.client(core)
 	identityClient, err := clientapi.Dial(h.ctx, h.socket, "test")
 	if err != nil {
 		t.Fatal(err)
@@ -176,7 +175,8 @@ func TestM3OperationalSwitch(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { c.Close() })
+		connection := c
+		t.Cleanup(func() { connection.Close() })
 		if !slices.Contains(c.Welcome.Capabilities, capability) {
 			t.Fatal("running Core does not expose the approved operational switch")
 		}
