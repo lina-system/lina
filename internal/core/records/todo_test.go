@@ -264,6 +264,11 @@ func TestTodoFieldsRoundTrip(t *testing.T) {
 }
 
 func TestTodoProjectionUpgrade(t *testing.T) {
+	testTodoUpgrade(t, todoDocument("existing", "when: \"2026-10-22\"\n"), "open", "")
+}
+
+func testTodoUpgrade(t *testing.T, data []byte, wantState, wantSource string) {
+	t.Helper()
 	root := t.TempDir()
 	if err := os.Chmod(root, 0700); err != nil {
 		t.Fatal(err)
@@ -281,7 +286,7 @@ func TestTodoProjectionUpgrade(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := Change{ID: "existing", Path: "inbox/existing.md", Data: todoDocument("existing", "when: \"2026-10-22\"\n")}
+	c := Change{ID: "existing", Path: "inbox/existing.md", Data: data}
 	rev := seedLegacyRecord(t, root, db, c)
 	if err = db.Close(context.Background()); err != nil {
 		t.Fatal(err)
@@ -298,12 +303,28 @@ func TestTodoProjectionUpgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	rows, err := s.Query(t.Context(), Params{Person: "person", View: "today", Day: "2026-10-22", Zone: "UTC"})
-	if err != nil || len(rows) != 1 || rows[0].Revision != rev || rows[0].ID != c.ID {
+	rows, err := s.Query(t.Context(), Params{Person: "person", View: "board"})
+	if err != nil || len(rows) != 1 || rows[0].Revision != rev || rows[0].ID != c.ID || rows[0].State != wantState || rows[0].Todo.DeadlineSource != wantSource {
 		t.Fatal("upgrade lost existing todo", rows, err)
 	}
 	r, gotRev, err := s.Read(t.Context(), c.ID)
 	if err != nil || gotRev != rev || !bytes.Equal(r.Data, c.Data) {
 		t.Fatal("upgrade changed canon", r, gotRev, err)
+	}
+}
+
+func TestTodoLegacyImportedProjectionUpgrade(t *testing.T) {
+	hash := strings.Repeat("a", 64)
+	source := "snapshot:" + hash + ":tracker:milestone:old"
+	for _, state := range []string{"active", "done"} {
+		t.Run(state, func(t *testing.T) {
+			data := todoDocument("existing", fmt.Sprintf("deadline: \"2026-10-22\"\nprovenance: {\"source\":\"tracker\",\"kind\":\"milestone\",\"id\":\"old\",\"snapshot_sha256\":%q}\n", hash))
+			data = bytes.Replace(data, []byte("state: open"), []byte("state: "+state), 1)
+			want := "open"
+			if state == "done" {
+				want = "completed"
+			}
+			testTodoUpgrade(t, data, want, source)
+		})
 	}
 }

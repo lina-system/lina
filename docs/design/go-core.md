@@ -883,7 +883,10 @@ there is no separate client endpoint.
   projection of typed front matter, appended at migration 36. Migration marks
   the index stale; startup rebuilds it from published files. Missing to-do rows
   also trigger repair even when the saved index head matches. No canonical
-  record is moved or deleted by the migration.
+  record is moved or deleted by the migration. Legacy tracker imports with
+  verified-snapshot provenance project `active`/`done` to `open`/`completed`
+  and derive a missing deadline source from that provenance, without rewriting
+  the published files.
 - `write_record(kind: todo)` accepts sentence-only capture and complete optional
   planning fields. It preserves them on text-only edits. Exact dates are checked
   before publication; unresolved input returns `ambiguous_date`. Dependency

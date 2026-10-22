@@ -3,6 +3,7 @@ package records
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"sort"
@@ -162,6 +163,7 @@ func parseTodo(fields map[string]string) (*Todo, error) {
 	if v.State == "" {
 		v.State = "open"
 	}
+	normalizeLegacyImportedTodo(&v, fields)
 	if err = v.Validate(); err != nil {
 		return nil, err
 	}
@@ -240,4 +242,34 @@ func (s *Store) validateTodoLinks(ctx context.Context, id string, d document) er
 		}
 		return nil
 	})
+}
+
+// Before C-54, the one-time tracker importer wrote active/done and kept the
+// deadline's source only in provenance. Project those published records into
+// the current shape without changing their canonical bytes or revision.
+func normalizeLegacyImportedTodo(v *Todo, fields map[string]string) {
+	if v.State != "active" && v.State != "done" {
+		return
+	}
+	var source struct {
+		Source string `json:"source"`
+		Kind   string `json:"kind"`
+		ID     string `json:"id"`
+		Hash   string `json:"snapshot_sha256"`
+	}
+	if json.Unmarshal([]byte(fields["provenance"]), &source) != nil || source.Source != "tracker" || (source.Kind != "issue" && source.Kind != "milestone") || source.ID == "" {
+		return
+	}
+	hash, err := hex.DecodeString(source.Hash)
+	if err != nil || len(hash) != 32 {
+		return
+	}
+	if v.State == "active" {
+		v.State = "open"
+	} else {
+		v.State = "completed"
+	}
+	if v.Deadline != "" && v.DeadlineSource == "" {
+		v.DeadlineSource = "snapshot:" + source.Hash + ":" + source.Source + ":" + source.Kind + ":" + source.ID
+	}
 }

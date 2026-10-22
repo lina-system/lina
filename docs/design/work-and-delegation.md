@@ -1350,7 +1350,10 @@ existing agent and person and writes through Core's versioned records repository
 Planning records carry LINA kinds and bindings, including native `belongs_to`
 index edges: initiatives remain goal drafts, projects retain
 their done condition, issues become to-dos, and milestones become to-dos with a
-deadline and done condition. Intent cards retain their intent text. CRW records
+deadline and done condition. Imported to-dos use `open` or `completed`; their
+verified snapshot provenance supplies `deadline_source`. Existing imports with
+`active`/`done` and that provenance project to the same planning fields on
+upgrade, preserving their files and saved revisions. Intent cards retain their intent text. CRW records
 are historical observations in reference documents; importing an assignment,
 receipt, verdict, branch or worktree starts no work and grants no authority.
 Complete source records are preserved as data, including unknown fields.
