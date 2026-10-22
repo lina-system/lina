@@ -172,6 +172,15 @@ func projectListItem(item ListItem) (view.Running, string, int, error) {
 	case "cancelled":
 		v.State = "stopped"
 		return v, "landed", 4, nil
+	case "ready_for_review":
+		v.State = item.State
+		return v, "landed", 1, nil
+	case "done", "stopped":
+		v.State = item.State
+		return v, "landed", 4, nil
+	case "unknown":
+		v.State = item.State
+		return v, "in_progress", 2, nil
 	}
 	return v, "", 0, ErrListItem
 }

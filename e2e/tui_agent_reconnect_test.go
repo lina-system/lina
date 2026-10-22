@@ -66,8 +66,8 @@ func TestM1TUIAgentReconnectInstalledCore(t *testing.T) {
 	}
 	agent := *created.AgentID
 	client.Close()
-	terminal := h.startTerminalSize([]string{"TERM=xterm-256color", "LC_ALL=C"}, false, true, 120, 35)
-	waitScreen(t, h, terminal, "Ctrl+D")
+	terminal, tap := h.startConversationTUI(120, 35, "TERM=xterm-256color", "LC_ALL=C")
+	waitComposerReady(t, h, terminal)
 	h.keys(terminal, "/agents choose "+agent+"\r")
 	// The id also appears in the composer. Await the selection response before
 	// closing its pager, otherwise a late response can open over the next input.
@@ -78,6 +78,7 @@ func TestM1TUIAgentReconnectInstalledCore(t *testing.T) {
 	}); err != nil {
 		t.Fatal("agent selection pager did not close", err)
 	}
+	waitComposerReady(t, h, terminal)
 	assertRequest := func(input string) {
 		t.Helper()
 		select {
@@ -99,6 +100,7 @@ func TestM1TUIAgentReconnectInstalledCore(t *testing.T) {
 			t.Fatal("provider request missing")
 		}
 	}
+	tap.waitConversation(h)
 	h.keys(terminal, scenario.Input+"\r")
 	waitScreen(t, h, terminal, scenario.Reply+"-1")
 	assertRequest(scenario.Input)
