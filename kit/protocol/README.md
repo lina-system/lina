@@ -45,7 +45,7 @@ wire and exported Go names, for example `output_delta`, `KindOutputDelta` and
 | --- | --- |
 | Handshake and errors | `hello`, `welcome`, `error` |
 | Conversation and history | `conversation_start`, `input`, `interrupt`, `history_get`, `history`, `subscribe` |
-| Stream events | `output_delta`, `item_done`, `turn_state` |
+| Stream events | `output_delta`, `item_done`, `turn_state`, `tool_activity` |
 | Approvals and questions | `approval_request`, `approval_answer`, `question`, `question_answer` |
 | Results | `result`, `result_get`, `result_edit`, `result_save` |
 | Running list and background work | `running_get`, `running`, `running_update`, `stop`, `follow_up`, `background_notice` |
@@ -57,6 +57,7 @@ wire and exported Go names, for example `output_delta`, `KindOutputDelta` and
 | Accounts | `account_request`, `account_result` |
 | Memory | `memory_request`, `memory_result`, `memory_import_progress`, `memory_promotion_batch` |
 | Channels | `channel_request`, `channel_result`, `channel_state` |
+| Web setup | `web_request`, `web_result` |
 | Agent exchanges | `agent_talk_get`, `agent_talk`, `agent_talk_entry`, `agent_talk_expand`, `agent_talk_subscribe` |
 | Connection and task control | `connected`, `disconnected`, `task_status`, `run_status`, `task_cancel`, `multi_task_control` |
 | Sign-in relay | `sign_in_listen`, `sign_in_listening`, `sign_in_open`, `sign_in_redirect` |
@@ -86,7 +87,14 @@ arbitrary draft 2020-12 validator.
 ## Receive boundaries and conformance
 
 `ClientDecoder` ignores and counts a well-formed unknown kind, returns no message
-for it, and counts malformed envelopes separately. Each connection owns a decoder
+for it, and counts malformed envelopes separately. For a known kind it discards
+additive payload fields, including nested fields, before strict validation of
+known data. Unknown snapshot item kinds are omitted after validating their common
+metadata, without changing the cursor or frame counters. Envelope fields remain
+strict. This behavior requires the updated receive boundary; an already installed
+older strict binary still rejects new payload fields. Core therefore sends the
+new activity shape only after negotiating `turn_activity` 1.0 and preserves the
+legacy projection for other connections. Each connection owns a decoder
 in its receive loop. `internal/clientapi.RequestDecoder` uses the strict codec and
 returns a typed `malformed` refusal without a partial request. Neither decoder
 negotiates versions, authorizes a request or implements application state.

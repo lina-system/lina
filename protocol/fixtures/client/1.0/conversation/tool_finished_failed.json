@@ -1,0 +1,38 @@
+{
+  "protocol": {
+    "name": "client",
+    "version": "1.0"
+  },
+  "kind": "tool_activity",
+  "message_id": "tool_finished_failed",
+  "attempt_id": "tool_finished_failed-attempt",
+  "reply_to": null,
+  "sender": {
+    "party": "core",
+    "id": "main-example"
+  },
+  "epoch": "42",
+  "sent_at": "2026-01-01T00:00:01Z",
+  "idempotency_key": null,
+  "effect_state": "none",
+  "receipt_ref": null,
+  "source_refs": [],
+  "error": null,
+  "payload": {
+    "call_id": "call-example-2",
+    "tool_name": "Searching",
+    "status": "finished",
+    "outcome": "failed",
+    "duration_ms": 12.5,
+    "agent_id": "agent-example",
+    "stream": {
+      "topic": "conversation:stream-fixture",
+      "key": "tool-call-example-2",
+      "revision": 1,
+      "cursor": {
+        "epoch": "42",
+        "seq": 3
+      }
+    }
+  }
+}

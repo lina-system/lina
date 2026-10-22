@@ -77,9 +77,10 @@ func violations(root string, standard map[string]bool) ([]string, error) {
 			}
 			return nil
 		}
-		if !strings.HasSuffix(filename, ".go") || strings.HasSuffix(filename, "_test.go") {
+		if !strings.HasSuffix(filename, ".go") {
 			return nil
 		}
+		testSource := strings.HasSuffix(filename, "_test.go")
 		relative, err := filepath.Rel(root, filename)
 		if err != nil {
 			return err
@@ -96,7 +97,7 @@ func violations(root string, standard map[string]bool) ([]string, error) {
 		}
 		core := within(owner, "internal/core")
 		ownerFamily := family(owner, "internal/core")
-		if core && layers[ownerFamily] == 0 {
+		if !testSource && core && layers[ownerFamily] == 0 {
 			report(file.Package, "unmapped", owner+" has no C-40 layer")
 		}
 		osNames := make(map[string]bool)
@@ -105,6 +106,13 @@ func violations(root string, standard map[string]bool) ([]string, error) {
 			imported, err := strconv.Unquote(spec.Path.Value)
 			if err != nil {
 				return err
+			}
+			product := within(owner, "cmd") || within(owner, "internal")
+			if ((!testSource && !within(owner, "tools")) || product) && within(imported, rootModule+"/tools/crw-takeover") {
+				report(spec.Pos(), "operator tool", "takeover must remain outside product dependencies: "+imported)
+			}
+			if testSource {
+				continue
 			}
 			if !within(owner, "internal/addons") && !(name == "cmd/lina/import_hermes.go" && imported == rootModule+"/internal/addons/importer/hermes") && within(imported, rootModule+"/internal/addons/importer") {
 				report(spec.Pos(), "importer", "memory importer add-ons must not be dependencies of Core or default packages: "+imported)

@@ -1,0 +1,6 @@
+{
+  "inputs": ["FIRST-449", "SECOND-449"],
+  "replies": ["FIRST-REPLY-449", "SECOND-REPLY-449"],
+  "draft": "한글 미전송 초안",
+  "token": "synthetic-token-449"
+}

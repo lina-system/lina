@@ -482,3 +482,39 @@ func TestReplyLedgerIdentityMustMatchDispatch(t *testing.T) {
 		})
 	}
 }
+
+func TestBackgroundDeliveryRequiresNativeNoticeProvenance(t *testing.T) {
+	for _, tc := range []struct {
+		name, scaffold, conversation, agent string
+		entry                               guard.Entry
+		allowed                             bool
+	}{
+		{"background", "background_notice", "conversation", "", guard.EntryBackgroundNotice, true},
+		{"system-label", "background_notice", "conversation", "", guard.EntrySystem, false},
+		{"missing-scaffold", "", "conversation", "", guard.EntryBackgroundNotice, false},
+		{"foreign-conversation", "background_notice", "other", "", guard.EntryBackgroundNotice, false},
+		{"foreign-agent", "background_notice", "conversation", "other", guard.EntryBackgroundNotice, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, store, agent := setup(t)
+			if err := gateway.New(db, func(context.Context, gateway.Delivery) error { return nil }).Admit(t.Context(), event("1", "", "next")); err != nil {
+				t.Fatal(err)
+			}
+			originAgent := agent
+			if tc.agent != "" {
+				originAgent = tc.agent
+			}
+			_, err := ledger.New(db, nil).Admit(t.Context(), tc.entry, ledger.Input{ID: "notice", ConversationID: tc.conversation, AgentID: originAgent, ScaffoldKind: tc.scaffold, Locator: "background-result", Surface: ledger.Surface{Kind: "channel", Platform: chat.Platform, ChatID: chat.Chat}, OccurredAt: now, RecordedAt: now, TimeQuality: "recorded", Body: "background result"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = store.Enqueue(t.Context(), channels.Message{ID: "delivery", Address: chat, Agent: agent, LedgerRef: "notice", ReplyTo: "1", Parts: []string{"background result"}})
+			if tc.allowed && err != nil {
+				t.Fatalf("native background result refused: %v", err)
+			}
+			if !tc.allowed && !errors.Is(err, channels.ErrDenied) {
+				t.Fatalf("unrelated or relabeled result accepted: %v", err)
+			}
+		})
+	}
+}

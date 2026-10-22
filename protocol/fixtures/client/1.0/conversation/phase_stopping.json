@@ -1,0 +1,26 @@
+{
+  "protocol": {
+    "name": "client",
+    "version": "1.0"
+  },
+  "kind": "turn_state",
+  "message_id": "phase_stopping",
+  "attempt_id": "phase_stopping-attempt",
+  "reply_to": null,
+  "sender": {
+    "party": "core",
+    "id": "main-example"
+  },
+  "epoch": "42",
+  "sent_at": "2026-01-01T00:00:01Z",
+  "idempotency_key": null,
+  "effect_state": "none",
+  "receipt_ref": null,
+  "source_refs": [],
+  "error": null,
+  "payload": {
+    "active": true,
+    "agent_id": "agent-example",
+    "phase": "stopping"
+  }
+}

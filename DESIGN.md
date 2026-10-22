@@ -22,6 +22,8 @@ monochrome. This decides the brand mark, not the persona's facial expressions.
   secondary; state words remain readable without colour.
 - Give every state a distinct mark and a word. Keep the same information in
   ASCII and `NO_COLOR`. Never depend on animation to explain progress.
+- Give conversation turns a first-line speaker gutter, align continuation text,
+  and leave one empty row between turns; keep speaker words in ASCII and monochrome.
 - Use the semantic tokens. Change their source, regenerate, and inspect the result.
 
 Do not fill panels with the accent, add rainbow status colours, use heavy boxes,
@@ -77,10 +79,14 @@ of app pixels. Duration values are milliseconds.
 | color.surface | `#EEF0F6` (255 / 7) | `#20232B` (235 / 0) | `#000000` (16 / 0) |
 | color.text | `#20232D` (234 / 0) | `#F4F5F9` (255 / 15) | `#FFFFFF` (231 / 15) |
 | glyph.ascii.action | `">"` | `">"` | `">"` |
+| glyph.ascii.activityFrames | `"|/-\\"` | `"|/-\\"` | `"|/-\\"` |
+| glyph.ascii.activitySeparator | `"-"` | `"-"` | `"-"` |
+| glyph.ascii.agent | `"*"` | `"*"` | `"*"` |
 | glyph.ascii.connecting | `"~"` | `"~"` | `"~"` |
 | glyph.ascii.failed | `"x"` | `"x"` | `"x"` |
 | glyph.ascii.live | `"*"` | `"*"` | `"*"` |
 | glyph.ascii.mark | `"."` | `"."` | `"."` |
+| glyph.ascii.person | `">"` | `">"` | `">"` |
 | glyph.ascii.quit | `"+"` | `"+"` | `"+"` |
 | glyph.ascii.recovering | `":"` | `":"` | `":"` |
 | glyph.ascii.refused | `"!"` | `"!"` | `"!"` |
@@ -91,10 +97,14 @@ of app pixels. Duration values are milliseconds.
 | glyph.ascii.unknown | `"?"` | `"?"` | `"?"` |
 | glyph.ascii.waiting | `"?"` | `"?"` | `"?"` |
 | glyph.unicode.action | `"›"` | `"›"` | `"›"` |
+| glyph.unicode.activityFrames | `"◐◓◑◒"` | `"◐◓◑◒"` | `"◐◓◑◒"` |
+| glyph.unicode.activitySeparator | `"·"` | `"·"` | `"·"` |
+| glyph.unicode.agent | `"●"` | `"●"` | `"●"` |
 | glyph.unicode.connecting | `"◌"` | `"◌"` | `"◌"` |
 | glyph.unicode.failed | `"×"` | `"×"` | `"×"` |
 | glyph.unicode.live | `"●"` | `"●"` | `"●"` |
 | glyph.unicode.mark | `"."` | `"."` | `"."` |
+| glyph.unicode.person | `"›"` | `"›"` | `"›"` |
 | glyph.unicode.quit | `"✓"` | `"✓"` | `"✓"` |
 | glyph.unicode.recovering | `"◐"` | `"◐"` | `"◐"` |
 | glyph.unicode.refused | `"⊘"` | `"⊘"` | `"⊘"` |
@@ -105,6 +115,8 @@ of app pixels. Duration values are milliseconds.
 | glyph.unicode.unknown | `"?"` | `"?"` | `"?"` |
 | glyph.unicode.waiting | `"?"` | `"?"` | `"?"` |
 | icon.size | `20px` | `20px` | `20px` |
+| motion.activityElapsed | `1000ms` | `1000ms` | `1000ms` |
+| motion.activityFrame | `100ms` | `100ms` | `100ms` |
 | motion.reduced | `0ms` | `0ms` | `0ms` |
 | motion.settle | `160ms` | `160ms` | `160ms` |
 | radius.card | `12px` | `12px` | `12px` |

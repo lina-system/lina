@@ -101,6 +101,8 @@ func TestConversationMarkdownStreamingMarkers(t *testing.T) {
 			for i := range len(source) {
 				m.Update(shellData{Generation: 1, Message: state.Delta{Epoch: "1", Topic: "conversation:fixture", ID: "reply", Cursor: uint64(i + 1), Revision: uint64(i + 1), Text: source[i : i+1]}})
 				got := ansi.Strip(markdownTranscript(m))
+				// The accessible speaker mark is not Markdown syntax from the stream.
+				got = strings.TrimPrefix(got, m.styles.speakerPrefix(false, "LINA", m.size.Width))
 				if strings.ContainsAny(got, "*`[]") || strings.Contains(got, "https:") || strings.Contains(got, "- ") {
 					t.Fatalf("prefix %q exposed markup: %q", source[:i+1], got)
 				}
