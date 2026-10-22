@@ -23,7 +23,7 @@ import (
 
 // Offer only rendered families; the conversation discovers and maintains its
 // concrete conversation/results subscriptions after welcome.
-var shellCapabilities = []protocol.Capability{{Name: "worker_lanes", Version: "1.0"}, {Name: "agents", Version: "1.0"}, {Name: "memory", Version: "1.0"}, {Name: "exchanges", Version: "1.0"}, {Name: "channels", Version: "1.0"}, {Name: "accounts", Version: "1.0"}, {Name: "sign_in_relay", Version: "1.0"}, {Name: "conversation", Version: "1.0"}, {Name: "running", Version: "1.0"}, {Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}}
+var shellCapabilities = []protocol.Capability{{Name: "worker_lanes", Version: "1.0"}, {Name: "agents", Version: "1.0"}, {Name: "memory", Version: "1.0"}, {Name: "exchanges", Version: "1.0"}, {Name: "channels", Version: "1.0"}, {Name: "accounts", Version: "1.0"}, {Name: "sign_in_relay", Version: "1.0"}, {Name: "conversation", Version: "1.0"}, {Name: "turn_activity", Version: "1.0"}, {Name: "running", Version: "1.0"}, {Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}}
 
 type clientPeer struct{ client *clientapi.Client }
 
@@ -453,8 +453,19 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 		}
 		return display.showShell(model)
 	}
+	var activity activityClock
+	defer activity.stop()
 	for {
+		if display.interactive {
+			activity.sync(model.activityInterval())
+		}
 		select {
+		case now := <-activity.C:
+			model.Update(activityTick(now))
+			if err := display.showShell(model); err != nil {
+				return err
+			}
+			activity.next()
 		case <-ctx.Done():
 			cause := context.Cause(ctx)
 			if errors.Is(cause, errQuit) {

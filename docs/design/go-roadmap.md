@@ -214,6 +214,7 @@ The staged increment (#117) supplies registered SQLite mapping, per-conversation
 - Depends on: G1-12, G1-18, G1-19, G1-20, G1-35. Design refs: T-04, T-05, T-07, T-10, T-12, T-13, T-15.
 
 **G1-30 TUI memory, agent, account, channel and talk-log commands.** Memory, agent, account, import, channel and talk-log commands. The memory/agent increment provides explicit sourced remember, correct and forget plus agent list/create/choose/rename/delete by id; installed PTY acceptance is `e2e/m1/tui-memory-agents.json`.
+- [Acceptance evidence](../../evidence/tui-management.md) maps every #110 done condition to the existing implementation and passing focused tests; sub-issues #111, #112 and #113 are closed.
 - #113 owns `/channels` and `/talk`, their thin client-service adapters, and installed-Core PTY acceptance. The completion gate requires platform pairing, durable binding and a real exchange-ledger expansion; command interception alone is insufficient.
 - #112 connects installed Core's existing account service to the TUI. Synthetic PTY scenarios cover loopback and pasted redirects, account list and sign-out, and the no-account sign-in offer. Owner real-account validation remains #81.
 - Done when: a forget from the TUI gives zero hits in the next request; agent create, choose, rename and delete round-trip by id; a ChatGPT sign-in completes through the relay from the TUI, including a pasted URL; a channel connection is paired and bound from the TUI, and the agent talk log lists one line per exchange and expands it.
@@ -329,7 +330,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
   retains the complete provenance in the build manifest.
 - Depends on: G1-01. Design refs: C-57; [work-and-delegation.md](work-and-delegation.md#start-gate).
 
-**G2-01 Task records and work area.** Work ledger, card projection, `work/` directories, protected refs.
+**G2-01 Task records and work area.** Work ledger, card projection, `work/` directories, protected refs. #127 adds installed-Core allocation and result-retention tools, pinned task worktrees and no-PR material/bundle recovery, exercised by `e2e/m2/work-area.json`.
 - The ledger increment (#126) keeps task/run/receipt facts in canon, reserves at most one active run per task, rebuilds card and reservation indexes from events, and rejects missing or mismatched artifact provenance. Core startup rebuilds these indexes and retains unfinished reservations as unknown. Workspace creation and protected-ref enforcement remain the separate work-area increment.
 - Done when: a second active run on a task is refused; a task worktree is created from the base commit under `work/tasks`; the projection rebuilt from the ledger equals the live one; a result without a pull request is copied into the generation; a receipt for a changed artifact without provenance is rejected.
 - Depends on: G1-05, G1-11, G1-12, G2-17. Design refs: C-29, C-30, C-39; [work-and-delegation.md](work-and-delegation.md#work-area).
@@ -344,7 +345,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 
 ### 2.B Delegation
 
-**G2-04 Worker adapter boundary and the Codex adapter.** `worker.Adapter`, generated types, dynamic tools, approvals, quota rows. It runs first and does not wait for the pin. Issue #131 supplies the common boundary, generated schema baseline and vendored-file integrity gate; #132 proves session execution, and #133 connects work tools, approvals and quota. A schema baseline alone does not satisfy the runtime done condition.
+**G2-04 Worker adapter boundary and the Codex adapter.** `worker.Adapter`, generated types, dynamic tools, approvals, quota rows. It runs first and does not wait for the pin. Issue #131 supplies the common boundary, generated schema baseline and vendored-file integrity gate; #132 proves session execution, and #133 connects the four declared work tools, authenticated approvals tied to the originating conversation and quota rows to the running Core. Its headless stdio scenario verifies a real fixture-worker artifact after approval and tool-result delivery. A schema baseline alone does not satisfy the runtime done condition. #132 adds the installed-Core session tools and `e2e/m2/codex-session.json`; its separate installed-Codex 0.163.0 round trip covers session control and model output, while approval/file execution through the real worker remains #133.
 - Done when: the round trip completes with the installed Codex and records its version; an unverified version is reported and still used; a worker approval reaches the originating conversation and the answer returns; no sandbox, credential or setting is imposed on the worker.
 - Depends on: G1-05, G1-18. Design refs: C-29; [work-and-delegation.md](work-and-delegation.md#codex-adapter).
 
@@ -367,6 +368,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 **G2-19 GitHub reads, CI watch and merge.** `gh` as Core's child, check watcher, head-pinned merge, observed merges.
 - Read/watch increment (#140): Core owns the fixed-argument gh client and one conditional CI watcher per PR; the negotiated GitHub observation capability reports head, reviews, checks and pending causes. `e2e/m2/github-ci.json` covers the running Core path. Merge and observed-merge safety remain separate work.
 - Done when: no webhook or events feed is used; one watcher per pull request ends at the conclusion; a rate limit shows CI pending with its cause; a moved head is read again and not merged; a protected-ref mismatch blocks the merge; a person's merge is observed only after the merge commit and target ref are checked.
+- Implementation (#141): head-pinned merge, protected local refs and confirmed external merges run through Core's `github_merge` capability. `e2e/m2/github-merge.json` covers head/ref refusal, one pinned write, durable restart replay and observed merges with failed checks. Authority and ghclient tests cover uncertain reservations, admission and serialization.
 - Depends on: G1-05, G1-07. Design refs: C-58; [integrations.md](integrations.md#github).
 
 ### 2.C Memory and growth upkeep
@@ -508,6 +510,11 @@ This epic also folds in the owner's Node direction, which is not yet in the cont
 - Depends on: G2-04. Design refs: C-29; [work-and-delegation.md](work-and-delegation.md#completion-signals).
 
 **G3-16 Antigravity adapter.** Headless child; success from the pull request.
+- Implementation evidence: `internal/core/worker/antigravity`, Core's durable
+  `dispatch_work` composition and `e2e/m3/antigravity.json`. Recorded stream and
+  GitHub fixtures cover immediate result termination, soft denial, missing result,
+  PR evidence and restart; the installed worker makes a real worktree commit.
+  Live account compatibility remains unverified.
 - Done when: the result event ends the turn; success is confirmed from the pull request and never from the exit code; an unapproved tool soft-denial is reported.
 - Depends on: G2-04. Design refs: C-29; [work-and-delegation.md](work-and-delegation.md#completion-signals).
 

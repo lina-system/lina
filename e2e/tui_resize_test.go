@@ -6,9 +6,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -74,6 +76,13 @@ func TestM1TUIConversationResize(t *testing.T) {
 	h.keys(session, scenario.Input+"\r")
 	waitTurn()
 	waitScreen(t, h, session, "REPLY-340")
+	// Compare clients with the same restored display state. A live turn's
+	// completion duration belongs only to that client, not persisted history.
+	h.keys(session, "\x04")
+	session.process.wait(t, 0)
+	h.expectTerminalRestored(session)
+	session = h.startTerminalSize(environment, false, true, size.Width, size.Height)
+	waitScreen(t, h, session, "REPLY-340")
 	h.keys(session, scenario.Draft)
 	initial := waitResizeChrome(t, h, session, size.Height, scenario.Draft)
 	header := screenRows(initial)[0]
@@ -103,14 +112,13 @@ func TestM1TUIConversationResize(t *testing.T) {
 	waitTurn()
 	waitScreen(t, h, session, scenario.NextReply)
 	size = scenario.Sizes[len(scenario.Sizes)-1]
-	fresh := h.startTerminalSize(environment, false, true, size.Width, size.Height)
-	waitScreen(t, h, fresh, scenario.NextReply)
-	expected := waitResizeChrome(t, h, fresh, size.Height, "")
-	waitMatchingScreen(t, h, session, expected)
+	// Sending after the resizes must still complete through Core and restore
+	// the empty composer. Activity completion metadata is checked separately.
+	waitResizeChrome(t, h, session, size.Height, "")
 	if calls.Load() != 2 {
 		t.Fatalf("resize sent the draft or repeated a request: calls=%d", calls.Load())
 	}
-	for _, term := range []*terminal{session, fresh} {
+	for _, term := range []*terminal{session} {
 		h.keys(term, "\x04")
 		term.process.wait(t, 0)
 		h.expectTerminalRestored(term)
@@ -154,10 +162,209 @@ func waitMatchingScreen(t *testing.T, h *harness, term *terminal, expected tuite
 	defer cancel()
 	want := strings.Join(screenRows(expected), "\n")
 	actual, err := term.screen.Wait(ctx, func(s tuiterm.Snapshot) bool {
-		return strings.Join(screenRows(s), "\n") == want && s.CursorX == expected.CursorX &&
+		reserve := completionRowCount(s)
+		return strings.Join(resizeComparableRows(s, reserve), "\n") == strings.Join(resizeComparableRows(expected, reserve), "\n") && s.CursorX == expected.CursorX &&
 			s.CursorY == expected.CursorY && s.CursorHidden == expected.CursorHidden && s.AltScreen
 	})
 	if err != nil {
 		t.Fatalf("resized screen differs from fresh client: %v\nactual:\n%s\nexpected:\n%s", err, strings.Join(screenRows(actual), "\n"), want)
 	}
+}
+
+// Completion durations are local display metadata, so a fresh client has none.
+// Reserve their viewport rows in both clients before comparing the visible tail.
+// The header, composer rule, composer, status, wrapping and cursor still compare
+// exactly. These fixtures have a one-row composer and a visible rule.
+func completionRowCount(s tuiterm.Snapshot) int {
+	prefix := strings.TrimSuffix(design.Text(design.English, "activity.worked_for"), "%s")
+	count := 0
+	for _, row := range screenRows(s) {
+		if strings.HasPrefix(row, prefix) {
+			count++
+		}
+	}
+	return count
+}
+
+func resizeComparableRows(s tuiterm.Snapshot, reserve int) []string {
+	rows := screenRows(s)
+	prefix := strings.TrimSuffix(design.Text(design.English, "activity.worked_for"), "%s")
+	var transcript []string
+	for _, row := range rows[1 : len(rows)-3] {
+		if !strings.HasPrefix(row, prefix) {
+			transcript = append(transcript, row)
+		}
+	}
+	for len(transcript) > 0 && transcript[len(transcript)-1] == "" {
+		transcript = transcript[:len(transcript)-1]
+	}
+	capacity := len(rows) - 4
+	if len(transcript) > capacity-reserve {
+		transcript = transcript[len(transcript)-(capacity-reserve):]
+	}
+	for len(transcript) < capacity {
+		transcript = append(transcript, "")
+	}
+	result := append([]string{rows[0]}, transcript...)
+	return append(result, rows[len(rows)-3:]...)
+}
+
+// Exercise both a clipped transcript and a padded transcript. A local duration
+// may change the visible tail, but must never move or mask composer chrome.
+func TestResizeComparisonPreservesEverySharedRow(t *testing.T) {
+	for _, height := range []int{12, 35} {
+		t.Run(fmt.Sprint(height), func(t *testing.T) {
+			const width = 40
+			makeRows := func(completed bool) []string {
+				rows := make([]string, height)
+				rows[0] = "header"
+				transcript := []string{"input label", "input", "agent label", "reply 1", "reply 2", "reply 3", "reply 4", "reply 5", "reply 6"}
+				if completed {
+					transcript = append(transcript, fmt.Sprintf(design.Text(design.English, "activity.worked_for"), "2s"))
+				}
+				if len(transcript) > height-4 {
+					transcript = transcript[len(transcript)-(height-4):]
+				}
+				copy(rows[1:], transcript)
+				rows[height-3] = strings.Repeat(design.Dark().GlyphUnicodeRule, width)
+				rows[height-2], rows[height-1] = "draft", "status"
+				return rows
+			}
+			snapshot := func(rows []string) tuiterm.Snapshot {
+				s := tuiterm.Snapshot{Cells: make([][]tuiterm.Cell, height)}
+				for y, row := range rows {
+					s.Cells[y] = make([]tuiterm.Cell, width)
+					for x, r := range []rune(row) {
+						s.Cells[y][x] = tuiterm.Cell{Content: string(r), Width: 1}
+					}
+				}
+				return s
+			}
+			actualRows := makeRows(true)
+			expected := snapshot(makeRows(false))
+			equal := func(rows []string) bool {
+				actual := snapshot(rows)
+				reserve := completionRowCount(actual)
+				return strings.Join(resizeComparableRows(actual, reserve), "\n") == strings.Join(resizeComparableRows(expected, reserve), "\n")
+			}
+			if !equal(actualRows) {
+				t.Fatal("local duration changed the comparison of shared rows")
+			}
+			// Include every blank row and all four fixed regions. No ignored
+			// row, relaxed substring match or delayed retry may hide corruption.
+			for y := range actualRows {
+				changed := append([]string(nil), actualRows...)
+				changed[y] = "corrupt row"
+				if equal(changed) {
+					t.Errorf("corruption at row %d escaped comparison", y)
+				}
+			}
+		})
+	}
+}
+
+// Exercise the production Core and TUI while a provider response is held by an
+// explicit gate. Resize and rendered cells, not sleeps, establish each frame.
+func TestM1TUINarrowActivityResize(t *testing.T) {
+	for _, locale := range []struct {
+		name     string
+		language design.Language
+	}{{"en_US.UTF-8", design.English}, {"ko_KR.UTF-8", design.Korean}} {
+		t.Run(locale.name, func(t *testing.T) {
+			release, received := make(chan struct{}), make(chan struct{}, 2)
+			stop := make(chan struct{})
+			defer close(stop)
+			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				io.Copy(io.Discard, r.Body)
+				received <- struct{}{}
+				select {
+				case <-release:
+					emitResponse(w, "NARROW-RESULT", true)
+				case <-stop:
+				case <-r.Context().Done():
+				}
+			}))
+			t.Cleanup(provider.Close)
+			h, start := installedConversationHarness(t, provider.URL)
+			core := start(true)
+			term := startReadyScreenTUI(t, h, []string{"TERM=xterm-256color", "COLORTERM=truecolor", "LC_ALL=" + locale.name}, 79, 12, nil)
+			waitScreen(t, h, term, design.Text(locale.language, "live"))
+			h.keys(term, "\x1b[200~NARROW-01\nNARROW-02\nNARROW-03\nNARROW-04\x1b[201~\r")
+			select {
+			case <-received:
+			case <-h.ctx.Done():
+				t.Fatal("input did not reach Core's provider")
+			}
+			// A full composer forces the planner to preserve the transcript floor.
+			h.keys(term, "\x1b[200~draft-1\ndraft-2\ndraft-3\ndraft-4\ndraft-5\ndraft-6\x1b[201~")
+			for _, size := range []struct{ width, height int }{{79, 12}, {50, 10}, {40, 10}, {79, 12}} {
+				hint := design.Text(locale.language, "activity.stop")
+				if size.width < 50 {
+					hint = "Esc"
+				}
+				activity := regexp.MustCompile(`\([0-9]+s · ` + regexp.QuoteMeta(hint) + `\)`)
+				h.resizeTerminal(term, size.width, size.height)
+				ctx, cancel := context.WithTimeout(h.ctx, operationTimeout)
+				snapshot, err := term.screen.Wait(ctx, func(s tuiterm.Snapshot) bool {
+					text := screenText(s)
+					rows := screenRows(s)
+					if len(rows) != size.height || !activity.MatchString(text) {
+						return false
+					}
+					// The emulator can resize before SIGWINCH reaches the TUI.
+					// Wait for complete chrome, not the clipped previous frame.
+					if !wholeNarrowFooter(rows[size.height-1], locale.language) {
+						return false
+					}
+					return strings.Contains(rows[size.height-1], design.Text(locale.language, "live")) &&
+						strings.Contains(rows[size.height-2], "draft-6") &&
+						strings.Contains(text, design.Text(locale.language, "activity.thinking")) &&
+						strings.Contains(text, "NARROW-01") && strings.Contains(text, "NARROW-04")
+				})
+				cancel()
+				t.Logf("held turn %dx%d:\n%s", size.width, size.height, strings.Join(screenRows(snapshot), "\n"))
+				if err != nil {
+					t.Fatalf("activity/composer/transcript floor: %v", err)
+				}
+				rows := screenRows(snapshot)
+				for _, marker := range []string{"NARROW-01", "NARROW-02", "NARROW-03", "NARROW-04"} {
+					if !strings.Contains(screenText(snapshot), marker) {
+						t.Errorf("four-row transcript floor lost %s", marker)
+					}
+				}
+
+				if !activity.MatchString(screenText(snapshot)) {
+					t.Errorf("complete elapsed and interrupt hint missing (want %s)", activity)
+				}
+				if !wholeNarrowFooter(rows[size.height-1], locale.language) {
+					t.Errorf("footer cut or reordered a hint: %q", rows[size.height-1])
+				}
+			}
+			close(release)
+			waitScreen(t, h, term, "NARROW-RESULT")
+			select {
+			case <-received:
+				t.Error("resize repeated provider request")
+			default:
+			}
+			h.keys(term, "\x04")
+			term.process.wait(t, 0)
+			h.expectTerminalRestored(term)
+			h.stopCore(core)
+		})
+	}
+}
+
+func wholeNarrowFooter(footer string, language design.Language) bool {
+	parts := strings.Split(footer, "  ")
+	hints := [][2]string{{"?", "shortcuts.title"}, {"Esc", "shortcuts.stop"}, {"Enter", "shortcuts.send"}, {"Ctrl+D", "action.quit"}, {"Alt+Enter", "shortcuts.newline"}, {"PgUp/PgDn", "shortcuts.scroll"}, {"Ctrl+O", "shortcuts.open_hint"}, {"F6", "shortcuts.decisions"}, {"Ctrl+T", "shortcuts.transcript"}}
+	if len(parts) < 2 || len(parts)-1 > len(hints) {
+		return false
+	}
+	for i, part := range parts[1:] {
+		if part != hints[i][0]+" "+design.Text(language, hints[i][1]) {
+			return false
+		}
+	}
+	return true
 }
