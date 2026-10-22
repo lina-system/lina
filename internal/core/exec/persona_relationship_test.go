@@ -93,8 +93,20 @@ func TestRelationshipWriterConfirmsEvidenceAndKeepsEmotionSeparate(t *testing.T)
 }
 
 func TestRelationshipDeletionNeverRevivesPredecessor(t *testing.T) {
-	for _, expire := range []bool{false, true} {
-		t.Run(map[bool]string{false: "permanent", true: "trash-expiry"}[expire], func(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		expire   bool
+		remember bool
+		recover  bool
+	}{
+		{name: "permanent"},
+		{name: "trash-expiry", expire: true},
+		{name: "remember-permanent", remember: true},
+		{name: "remember-trash-expiry", expire: true, remember: true},
+		{name: "recover-predecessor-trash-expiry", expire: true, recover: true},
+		{name: "remember-recover-predecessor-trash-expiry", expire: true, remember: true, recover: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			db := memoryDB(t)
 			root := t.TempDir()
 			store, err := agents.Open(root, db)
@@ -114,11 +126,30 @@ func TestRelationshipDeletionNeverRevivesPredecessor(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				result, err := flow.RecordRelationship(t.Context(), PersonaScope{Agent: a.ID, Person: "person", Conversation: "chat", Input: id, Revision: a.Revision}, RelationshipChange{Quote: quote})
+				var result RememberReceipt
+				if tc.remember && i == 1 {
+					// The ordinary memory writer can also replace a relationship.
+					result, err = flow.memory.Remember(t.Context(), memory.Write{Agent: a.ID, Person: "person", Item: memory.Item{
+						Kind: memory.Relationship, Content: quote, Subject: memory.Subject{Kind: memory.Person, ID: "person"},
+						Basis: memory.Stated, ValidFrom: int64(10 + i), Supersedes: current,
+						Evidence: []memory.Evidence{{Kind: memory.Event, ID: id, Precision: memory.Exact}},
+					}})
+				} else {
+					result, err = flow.RecordRelationship(t.Context(), PersonaScope{Agent: a.ID, Person: "person", Conversation: "chat", Input: id, Revision: a.Revision}, RelationshipChange{Quote: quote})
+				}
 				if err != nil {
 					t.Fatal(err)
 				}
 				previous, current = current, result.ID
+			}
+			scope := memory.RecallScope{Agent: a.ID, Person: "person", ExternalModel: true}
+			hits, err := memory.New(db).CurrentRelationship(t.Context(), scope, 100)
+			if err != nil || len(hits) != 1 || hits[0].ID != current || hits[0].Supersedes != previous {
+				t.Fatalf("replacement not current before deletion: %+v %v", hits, err)
+			}
+			history, err := memory.New(db).Recall(t.Context(), scope, memory.Query{At: 100, History: true, ID: previous})
+			if err != nil || len(history) != 1 || !history[0].Older || history[0].ValidUntil != 11 || history[0].Revision != 2 {
+				t.Fatalf("predecessor interval before deletion: %+v %v", history, err)
 			}
 			now := time.Unix(100, 0)
 			removal, err := retract.Open(t.Context(), retract.Config{Canon: db, Root: root, Now: func() time.Time { return now }})
@@ -127,9 +158,14 @@ func TestRelationshipDeletionNeverRevivesPredecessor(t *testing.T) {
 			}
 			defer removal.Close()
 			request := retract.Request{Person: "person", Targets: []retract.Ref{{Kind: retract.Memory, ID: current}}}
-			if expire {
+			if tc.expire {
 				if err := removal.Forget(t.Context(), request); err != nil {
 					t.Fatal(err)
+				}
+				if tc.recover {
+					if err := removal.Restore(t.Context(), retract.Request{Person: "person", Targets: []retract.Ref{{Kind: retract.Memory, ID: previous}}}); err != nil {
+						t.Fatal(err)
+					}
 				}
 				now = now.Add(retract.TrashRetention)
 				if err := removal.Expire(t.Context(), "person"); err != nil {
@@ -138,18 +174,21 @@ func TestRelationshipDeletionNeverRevivesPredecessor(t *testing.T) {
 			} else if err := removal.Delete(t.Context(), request); err != nil {
 				t.Fatal(err)
 			}
-			scope := memory.RecallScope{Agent: a.ID, Person: "person", ExternalModel: true}
-			hits, err := memory.New(db).CurrentRelationship(t.Context(), scope, now.Unix())
+			hits, err = memory.New(db).CurrentRelationship(t.Context(), scope, now.Unix())
 			if err != nil || len(hits) != 0 {
 				t.Fatalf("erased replacement resurrected predecessor: %+v %v", hits, err)
 			}
-			history, err := memory.New(db).Recall(t.Context(), scope, memory.Query{At: now.Unix(), History: true})
-			if err != nil || len(history) != 0 {
+			history, err = memory.New(db).Recall(t.Context(), scope, memory.Query{At: now.Unix(), History: true})
+			if tc.recover {
+				if err != nil || len(history) != 1 || history[0].ID != previous || !history[0].Older || history[0].ValidUntil != 11 || history[0].Revision != 2 {
+					t.Fatalf("recovery or expiry reopened predecessor interval: %+v %v", history, err)
+				}
+			} else if err != nil || len(history) != 0 {
 				t.Fatalf("historical predecessor: %+v %v", history, err)
 			}
 			view, err := removal.Snapshot(t.Context(), "person", a.ID)
-			if err != nil || view.Visible(retract.Ref{Kind: retract.Memory, ID: previous}) {
-				t.Fatalf("predecessor was not retracted: %v", err)
+			if err != nil || view.Visible(retract.Ref{Kind: retract.Memory, ID: previous}) != tc.recover {
+				t.Fatalf("unexpected predecessor removal visibility: %v", err)
 			}
 		})
 	}
