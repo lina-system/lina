@@ -6,6 +6,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"strings"
+	"time"
 
 	"github.com/thisisjun786/lina/internal/core/budget"
 	"github.com/thisisjun786/lina/kit/loop"
@@ -19,6 +21,68 @@ type EffectQuestion struct {
 	RunID, Turn, State string
 	Effects            []budget.Effect
 	Noticed            bool
+	Answer             *EffectAnswer
+}
+
+// An answer is direction for the conversation, never a grant for an effect.
+// Delivery to that conversation is an idempotent outbox in the existing record.
+type EffectAnswer struct {
+	Person, Action, Text string
+	At                   time.Time
+	Delivered            bool
+}
+
+func (s *Service) AnswerEffectQuestion(ctx context.Context, person, id, action, text string) error {
+	if action != "accept" && action != "decline" && action != "cancel" || action == "accept" && strings.TrimSpace(text) == "" || action != "accept" && text != "" {
+		return ErrInvalid
+	}
+	var err error
+	text, err = masked(&s.masker, text)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return ErrClosed
+	}
+	r, err := s.read(ctx, id)
+	if err != nil {
+		return err
+	}
+	if person == "" || person != r.Origin.Person {
+		return ErrScope
+	}
+	if r.EffectsQuestion == nil {
+		return ErrState
+	}
+	q := r.EffectsQuestion
+	if q.Answer != nil {
+		if q.Answer.Person == person && q.Answer.Action == action && q.Answer.Text == text {
+			return nil
+		}
+		return ErrState
+	}
+	q.Answer = &EffectAnswer{Person: person, Action: action, Text: text, At: s.cfg.Now().UTC(), Delivered: action != "accept"}
+	q.State = "answered"
+	return s.save(ctx, r, false)
+}
+
+func (s *Service) AcknowledgeEffectAnswer(ctx context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return ErrClosed
+	}
+	r, err := s.read(ctx, id)
+	if err != nil {
+		return err
+	}
+	if r.EffectsQuestion == nil || r.EffectsQuestion.Answer == nil {
+		return ErrState
+	}
+	r.EffectsQuestion.Answer.Delivered = true
+	return s.save(ctx, r, false)
 }
 
 // EffectQuestions supplies pending question cards at the conversation boundary
@@ -97,6 +161,33 @@ func (s *Service) StartFromTurn(ctx context.Context, o Origin, b Brief, h budget
 
 func samePromotion(r Record, o Origin) bool {
 	return r.Promotion != nil && r.Origin.Person == o.Person && r.Origin.Agent == o.Agent && r.Origin.Conversation == o.Conversation && r.Origin.Turn == o.Turn
+}
+
+// replayPromotion recovers committed work before a later budget/account hold
+// can reject admission. It neither republishes the handle nor releases the run.
+func (s *Service) replayPromotion(ctx context.Context, o Origin, b Brief, h *budget.Handoff) (string, State, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return "", "", ErrClosed
+	}
+	rows, err := s.records(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	return findPromotion(rows, o, b, h)
+}
+
+func findPromotion(rows []Record, o Origin, b Brief, h *budget.Handoff) (string, State, error) {
+	for _, r := range rows {
+		if samePromotion(r, o) {
+			if !sameGathered(r, b, h) {
+				return "", "", ErrInvalid
+			}
+			return r.ID, r.State, nil
+		}
+	}
+	return "", "", nil
 }
 
 func sameGathered(r Record, b Brief, h *budget.Handoff) bool {

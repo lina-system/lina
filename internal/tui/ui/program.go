@@ -130,7 +130,6 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 	management := &managementSession{model: model, pending: make(map[string]protocol.Payload)}
 	var peer connectionPeer
 	pending := make(map[string]state.SendRequest)
-	var discoveryInput *state.SendRequest
 	channelPending := make(map[string]uint64)
 	talkPending := make(map[string]uint64)
 	var agentListID, reconnectAgent, historyID string
@@ -146,7 +145,6 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 		if begin, ok := message.(shellBegin); ok && begin.Generation > model.generation {
 			signin.close()
 			clear(pending)
-			discoveryInput = nil // ConnectionLost restores the unsent draft.
 			clear(management.pending)
 			model.conversation.pager = textPager{}
 			clear(channelPending)
@@ -269,17 +267,8 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 			if client, ok := peer.(clientPeer); ok {
 				switch request := effect.Message.(type) {
 				case state.SendRequest:
-					if request.Gen != model.content.Gen || !model.content.Busy {
-						return nil // A focus change can supersede discovery's pending input.
-					}
-					if model.conversation.agentMissing || model.conversation.agentPending {
+					if model.conversation.id == "" || model.conversation.agentMissing || model.conversation.agentPending {
 						model.reduceInput(state.SendResult{Gen: request.Gen, Key: request.Key, Failed: true})
-						return nil
-					}
-					if model.conversation.id == "" {
-						// Welcome can render the composer before history supplies
-						// its destination. Retain this one pending send until then.
-						discoveryInput = &request
 						return nil
 					}
 					mode := protocol.InputModeSteer
@@ -305,10 +294,6 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 				if err == nil && e != nil {
 					if e.ReplyTo != nil && *e.ReplyTo == historyID {
 						historyID = ""
-						if e.Error != nil && discoveryInput != nil {
-							model.reduceInput(state.SendResult{Gen: discoveryInput.Gen, Key: discoveryInput.Key, Failed: true})
-							discoveryInput = nil
-						}
 						if model.conversation.agentPending && model.activeAgent() == reconnectAgent && e.Error != nil {
 							if model.discoveryFailed(e.Error.Code) {
 								peer.Close()
@@ -402,13 +387,6 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 						model.agentDiscoveryDone()
 						for _, topic := range []string{"conversation:" + model.conversation.id, "results:" + model.conversation.id} {
 							if err := handle(shellSubscription{Generation: model.generation, Request: protocol.Subscribe{Topic: &topic}}); err != nil {
-								return err
-							}
-						}
-						if discoveryInput != nil {
-							request := *discoveryInput
-							discoveryInput = nil
-							if err := handle(shellEffect{Generation: model.generation, Message: request}); err != nil {
 								return err
 							}
 						}

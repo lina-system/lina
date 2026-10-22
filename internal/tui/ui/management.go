@@ -148,6 +148,8 @@ func (s *managementSession) request(ctx context.Context, c *clientapi.Client, p 
 	var id string
 	var err error
 	switch p := p.(type) {
+	case protocol.RunningGet:
+		id, err = c.Running(ctx, p)
 	case protocol.AgentRequest:
 		id, err = c.Agent(ctx, p)
 	case protocol.MemoryRequest:
@@ -173,6 +175,24 @@ func (s *managementSession) response(ctx context.Context, c *clientapi.Client, e
 		return true, nil
 	}
 	switch p := e.Payload.(type) {
+	case protocol.Running:
+		original, ok := request.(protocol.RunningGet)
+		if !ok || original.RunID == nil || p.RunID == nil || *p.RunID != *original.RunID {
+			return true, errStream
+		}
+		if original.Action != nil && string(*original.Action) == "dismiss" {
+			m.openRunning()
+			return true, nil
+		}
+		if p.Text == nil {
+			return true, errStream
+		}
+		m.openPager(*p.Text)
+		m.conversation.pager.runID, m.conversation.pager.next = *p.RunID, p.Next
+		if p.Next != nil {
+			m.conversation.pager.text += "\n\n" + design.Text(m.styles.options.Language, "running.next")
+		}
+
 	case protocol.MemoryResult:
 		original, ok := request.(protocol.MemoryRequest)
 		if !ok || p.Operation == nil {

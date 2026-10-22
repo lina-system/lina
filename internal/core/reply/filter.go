@@ -123,7 +123,7 @@ func (f *Filter) lastSentence(text string) string {
 func terminated(text string) bool {
 	for len(text) > 0 {
 		r, size := utf8.DecodeLastRuneInString(text)
-		if strings.ContainsRune(".!?。！？…", r) {
+		if unicode.Is(unicode.Sentence_Terminal, r) || r == '…' {
 			return true
 		}
 		if unicode.IsSpace(r) || unicode.Is(unicode.Pe, r) || unicode.Is(unicode.Pf, r) || r == '\'' || r == '"' {
