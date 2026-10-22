@@ -153,3 +153,23 @@ func TestReconnectDiscoveryUnavailableRemainsRetryable(t *testing.T) {
 		t.Fatal("authoritative refusal must require an explicit selection")
 	}
 }
+
+func TestInitialDiscoveryHoldsLiveUntilHistory(t *testing.T) {
+	m := conversationShell()
+	m.conversation.id = ""
+	m.content.Agents = []protocol.Agent{{AgentID: "default"}}
+	if request := m.discoveryHistory(); request == nil {
+		t.Fatal("initial history was not requested")
+	}
+	m.Update(shellConnection{Generation: 1, Status: ConnectionStatus{State: Live}})
+	m.Update(tea.PasteMsg{Content: "early input"})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd != nil || m.content.Draft.Text != "early input" || m.status.State == Live {
+		t.Fatalf("initial discovery advertised readiness: pending=%v state=%v", m.conversation.agentPending, m.status.State)
+	}
+	m.conversation.id = "main:default"
+	m.agentDiscoveryDone()
+	if _, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}); cmd == nil || m.status.State != Live {
+		t.Fatal("matching history did not admit explicit send")
+	}
+}

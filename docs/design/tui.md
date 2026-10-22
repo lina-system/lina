@@ -142,7 +142,9 @@ with newer typing after it. The client never automatically resends that input.
 When conversation is granted, initial history discovery leaves the destination
 unknown until History supplies its id; the composer gates conversation submission
 on that id (T-10). Reconnect also uses the pending-agent guard to validate the
-retained destination. Without the conversation capability, discovery requests no
+retained destination. Initial discovery sets that same pending guard before
+requesting History, so the terminal cannot display a ready connection while
+Enter would still be refused for lack of a destination. Without the conversation capability, discovery requests no
 history, so account and management commands remain available.
 Until the history response identifies the destination conversation, the composer
 retains typed text and Enter sends nothing. Completing discovery makes the

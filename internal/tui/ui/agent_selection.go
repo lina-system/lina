@@ -20,12 +20,16 @@ func (m *shellModel) discoveryHistory() *protocol.HistoryGet {
 		return nil
 	}
 	if m.conversation.id != "" {
+		m.conversation.agentPending = true
 		agent := m.activeAgent()
 		return &protocol.HistoryGet{AgentID: &agent}
 	}
 	if len(m.content.Agents) == 0 {
 		return nil
 	}
+	// Welcome precedes the History reply that supplies the destination.
+	// Keep the visible connection recovering until that discovery completes.
+	m.conversation.agentPending = true
 	return &protocol.HistoryGet{}
 }
 
