@@ -224,6 +224,8 @@ These limits apply on every execution path, including tools, commands, Node work
 
 Core records the class supplied by its trusted definition after argument validation: research, calculation, private draft, local write, external effect, investment order, binding execution, command, worker, relay or unclassified. Known bounded local writes retain ordinary grant policy; generic commands and installed workers are not assumed safe from their task description. Research/calculation definitions that write are unclassified, and an outward operation cannot claim the private-draft boundary. Classified external effects retain ordinary outward approval for unrestricted presets.
 
+Generic `land_work_result` destinations are unclassified for this ceiling: a model-selected path does not prove a private draft boundary. Advice and draft agents can retain private records and materials, but cannot use file landing to turn an accepted draft into external delivery. Other agents retain the existing local-file grant and recovery policy.
+
 Delegation ceilings are immutable task bindings. Their intersection survives restart and origin deletion, and a task cannot be rebound to a less restricted origin. A relay classification applies only to a Core handler that binds these limits before scheduling the receiver. The initial exchange reader offers no execution tools. Worker approval relays and merge admission check the same ceiling; a refusal records its person, agent, target and class without claiming an external operation.
 
 ### Channels

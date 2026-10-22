@@ -47,6 +47,17 @@ func TestPresetCeilingSurvivesPersonaEditsRenameAndChannelScope(t *testing.T) {
 				if calculation.Code != loop.OK {
 					t.Fatalf("private calculation refused: %+v", calculation)
 				}
+				if err = view.prepareWorkTools(turnID, bindings); err != nil {
+					t.Fatal(err)
+				}
+				landing := bindings["land_work_result"].Execute(t.Context(), provider.ToolCall{ID: "land", Name: "land_work_result", Arguments: `{"task_id":"synthetic-draft","receipt_id":"receipt","fingerprint":"fingerprint","judgment":"Accepted draft; copy it to the supplied destination."}`})
+				if landing.Code != loop.Denied {
+					t.Fatalf("unknown destination bypassed draft ceiling: %+v", landing)
+				}
+				_ = json.Unmarshal(landing.Output, &refusal)
+				if refusal.Code != "preset_effect_limit" {
+					t.Fatalf("landing reached handler before policy: %+v", landing)
+				}
 			}
 		})
 	}
