@@ -1378,3 +1378,46 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+
+## CRW contract schemas and fixtures
+
+Source: https://github.com/thisisjun786/codex-relay-workflow.
+Commit: `7e65fcb82d426d228e18958d728fe63a0991ddd0`. License: MIT.
+
+The work-ledger start gate adopts CRW record schemas and contract test data,
+with upstream paths and file hashes recorded by the pin. No CRW implementation
+is copied, translated, linked or executed. Reference observations are recorded
+in `internal/core/work/pin/REFERENCE.md`.
+
+```text
+MIT License
+
+Copyright (c) 2026 thisisjun786 and contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## github.com/santhosh-tekuri/jsonschema/v6
+
+Source: https://github.com/santhosh-tekuri/jsonschema. Version: `v6.0.3`.
+License: Apache-2.0. Used without modifications to validate the pinned CRW
+Draft 7 record schemas; unpinned schema resources cannot be loaded.
+Copyright 2017 Santhosh Kumar Tekuri. The upstream release has no NOTICE file.
+The license text is the Apache License, Version 2.0, reproduced in [LICENSE](LICENSE).
