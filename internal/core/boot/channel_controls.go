@@ -4,6 +4,7 @@ package boot
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -41,7 +42,10 @@ func (c *channelRuntime) channelControl(ctx context.Context, shared *conversatio
 	}
 	id := "channel-input:" + strconv.FormatInt(in.id, 10)
 	now := time.Now()
-	input, err := shared.journal().Admit(ctx, guard.EntryOwner, ledger.Input{ID: id, ConversationID: b.Conversation, PersonID: b.Person, AgentID: b.Agent, Surface: ledger.Surface{Kind: "channel", Platform: event.Platform, ChatID: event.Chat}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Locator: in.native, Body: body.Text})
+	input, err := shared.journal().Get(ctx, id)
+	if errors.Is(err, ledger.ErrNotFound) {
+		input, err = shared.journal().Admit(ctx, guard.EntryOwner, ledger.Input{ID: id, ConversationID: b.Conversation, PersonID: b.Person, AgentID: b.Agent, Surface: ledger.Surface{Kind: "channel", Platform: event.Platform, ChatID: event.Chat}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Locator: in.native, Body: body.Text})
+	}
 	if err != nil {
 		return true, err
 	}

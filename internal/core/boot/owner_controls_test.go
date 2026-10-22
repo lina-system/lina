@@ -9,11 +9,16 @@ import (
 	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/gateway"
+	"github.com/thisisjun786/lina/internal/core/guard"
+	"github.com/thisisjun786/lina/internal/core/inbox"
+	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/runs"
 	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/protocol"
+	"strconv"
 	"testing"
+	"time"
 )
 
 func TestOwnerDigestAndControlsRegistered(t *testing.T) {
@@ -155,5 +160,43 @@ func TestOwnerControlsWithoutRunServiceDoNotAdvertiseRunning(t *testing.T) {
 	}
 	if _, ok := r.identity.Operations[protocol.KindProgressDigestGet]; !ok {
 		t.Fatal("read-only digest needs no model")
+	}
+}
+
+func TestChannelControlRecoversAdmissionBeforeClaim(t *testing.T) {
+	r := controlRuntime(t)
+	receipt, err := inbox.New(r.db).Admit(t.Context(), inbox.Input{Key: inbox.Key{Conversation: r.conversation, Source: "channel-fixture", NativeID: "control"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := "channel-input:" + strconv.FormatInt(receipt.ID, 10)
+	now := time.Now()
+	_, err = r.journal().Admit(t.Context(), guard.EntryOwner, ledger.Input{ID: id, ConversationID: r.conversation, PersonID: r.person, AgentID: r.agent, Surface: ledger.Surface{Kind: "channel", Platform: "telegram", ChatID: "100"}, Locator: "control", OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "/progress"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := gateway.Inbound{Address: channels.Address{Bot: channels.Bot{Platform: "telegram", Account: "fixture"}, Chat: "100"}, Direct: true, Body: []byte(`{"text":"/progress"}`)}
+	binding := channels.Binding{Person: r.person, Agent: r.agent, Conversation: r.conversation, Scope: channels.PrivateScope()}
+	in := channelInput{id: receipt.ID, native: "control"}
+	for range 2 {
+		handled, err := r.channels.channelControl(t.Context(), r, event, binding, in)
+		if err != nil || !handled {
+			t.Fatalf("admitted command blocked recovery: %t %v", handled, err)
+		}
+	}
+	if err := r.db.Read(t.Context(), func(tx *canon.Tx) error {
+		var claimed, replies int
+		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM channel_steering WHERE inbox_id=?", receipt.ID).Scan(&claimed); err != nil {
+			return err
+		}
+		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM conv_event WHERE parent_id=?", id).Scan(&replies); err != nil {
+			return err
+		}
+		if claimed != 1 || replies != 1 {
+			t.Fatalf("duplicate claim/reply: %d/%d", claimed, replies)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
