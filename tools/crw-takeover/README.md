@@ -100,7 +100,7 @@ operation; this tool never deletes originals or rolls back unrelated work.
 
 ```sh
 go test ./tools/crw-takeover/... ./internal/archtest/...
-go test ./e2e -run '^TestM3CRWTakeoverInstalledCore$' -count=1
+go test ./e2e/m1 -run '^TestM3CRWTakeoverInstalledCore$' -count=1
 node --test scripts/verify/scope.test.mjs
 node --test --test-name-pattern='source archives exclude' scripts/release.test.mjs
 ```

@@ -59,7 +59,8 @@
     "results/file.json",
     "results/saved_card.json",
     "values/references_and_max_epoch.json",
-    "normal/restart_status.json"
+    "normal/restart_status.json",
+    "normal/stop_result.json"
   ],
   "output": [
     "welcome.json",
@@ -120,9 +121,11 @@
     "results/file.json",
     "results/saved_card.json",
     "values/references_and_max_epoch.json",
-    "normal/restart_status.json"
+    "normal/restart_status.json",
+    "normal/stop_result.json"
   ],
   "errors": [
+    "",
     "",
     "",
     "",
@@ -184,7 +187,7 @@
     ""
   ],
   "outcome": {
-    "accepted": 59,
+    "accepted": 60,
     "malformed": 0,
     "unknown_kinds": 0
   }

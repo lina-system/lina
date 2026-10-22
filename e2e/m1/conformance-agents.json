@@ -1,4 +1,4 @@
 {
   "$comment": "SPDX-License-Identifier: Apache-2.0",
-  "corpus": "../protocol/fixtures/client/1.0/application/agents"
+  "corpus": "../../protocol/fixtures/client/1.0/application/agents"
 }

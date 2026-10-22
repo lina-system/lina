@@ -19,7 +19,7 @@ test('source archives exclude the one-time takeover tool', t => {
     '.gitattributes': readFileSync(new URL('../.gitattributes', import.meta.url), 'utf8'),
     'tools/crw-takeover/main.go': 'package main\nfunc main() {}\n',
     'tools/crw-takeover/testdata/snapshot.json': '{}\n',
-    'e2e/crw_takeover_test.go': 'package e2e_test\n',
+    'e2e/m1/crw_takeover_test.go': 'package e2e_test\n',
     'e2e/m3/crw-takeover.json': '{}\n',
     'cmd/lina/main.go': 'package main\nfunc main() {}\n',
   });

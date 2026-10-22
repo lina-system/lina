@@ -8,11 +8,17 @@ import (
 	"errors"
 	"reflect"
 	"strings"
+	"sync"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 )
 
-type Service struct{ db *canon.Store }
+type Service struct {
+	db          *canon.Store
+	area        *Area
+	materials   MaterialWriter
+	workspaceMu sync.Mutex
+}
 
 func New(db *canon.Store) *Service { return &Service{db: db} }
 
@@ -233,4 +239,21 @@ func (s *Service) Rebuild(ctx context.Context) error {
 		}
 		return nil
 	})
+}
+
+// Revision pins tool authority to the current projected facts. No task is
+// revision zero; successful writes return the new revision to the effect store.
+func (s *Service) Revision(ctx context.Context, id string) (string, error) {
+	c, err := s.Get(ctx, id)
+	if errors.Is(err, ErrNotFound) {
+		return "0", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	raw, err := json.Marshal(c)
+	if err != nil {
+		return "", err
+	}
+	return digest(string(raw)), nil
 }

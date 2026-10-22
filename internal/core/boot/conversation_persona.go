@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/agents"
@@ -41,6 +42,9 @@ func (r *conversationRuntime) resolvePersonaGrant(ctx context.Context, id string
 	if !ok {
 		return grant.Grant{}, grant.Environment{}, grant.ErrGrant
 	}
+	if g.Identity.Profile == "worker-session" {
+		return g, grant.Environment{Epoch: r.epoch, Now: time.Now(), OSPermitted: true, Revision: strconv.FormatUint(r.epoch, 10)}, nil
+	}
 	if g.Identity.Profile == "records" {
 		env, err := r.recordEnvironment(ctx, g)
 		return g, env, err
@@ -48,6 +52,10 @@ func (r *conversationRuntime) resolvePersonaGrant(ctx context.Context, id string
 	if g.Identity.Profile == "skills" {
 		env, err := r.skillEnvironment(ctx, g)
 		return g, env, err
+	}
+	if g.Identity.Profile == "work" {
+		revision, err := r.work.Revision(ctx, strings.TrimPrefix(g.Scope[0].Target, "work:"))
+		return g, grant.Environment{Epoch: r.epoch, Now: time.Now(), OSPermitted: true, Revision: revision}, err
 	}
 	if g.Identity.Profile == "relationship" {
 		return g, grant.Environment{Epoch: r.epoch, Now: time.Now(), OSPermitted: true, Revision: g.Identity.Revision}, nil
