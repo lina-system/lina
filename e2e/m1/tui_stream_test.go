@@ -21,6 +21,8 @@ import (
 )
 
 func TestM1TUIStream(t *testing.T) {
+	t.Parallel()
+
 	data, err := os.ReadFile("tui-stream.json")
 	if err != nil {
 		t.Fatal(err)

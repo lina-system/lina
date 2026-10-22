@@ -100,6 +100,8 @@ func emitResponse(w http.ResponseWriter, text string, complete bool) {
 }
 
 func TestM1ConversationLargeUnicodeAndMasking(t *testing.T) {
+	t.Parallel()
+
 	var scenario struct {
 		Runes         int
 		Secret, Reply string
@@ -168,6 +170,8 @@ func TestM1ConversationLargeUnicodeAndMasking(t *testing.T) {
 }
 
 func TestM1ConversationFailedResponseIsNotFinalHistory(t *testing.T) {
+	t.Parallel()
+
 	var scenario struct{ Input, FailedReply, NextInput, Reply string }
 	data, err := os.ReadFile("conversation-failure.json")
 	if err != nil {

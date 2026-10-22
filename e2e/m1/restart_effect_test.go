@@ -15,6 +15,8 @@ import (
 )
 
 func TestM1RestartWaitsForEffect(t *testing.T) {
+	t.Parallel()
+
 	h := newHarness(t, "")
 	directory := filepath.Join(h.root, "system/core")
 	if err := os.MkdirAll(directory, 0700); err != nil {

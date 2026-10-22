@@ -240,6 +240,7 @@ func codexWorkToolsFixture() {
 }
 
 func TestM2CodexWorkTools(t *testing.T) {
+	t.Parallel()
 	runCodexWorkTools(t, "../m2/codex-work-tools.json", nil)
 }
 

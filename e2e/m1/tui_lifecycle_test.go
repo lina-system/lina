@@ -19,6 +19,8 @@ import (
 )
 
 func TestTUITerminalLifecycle(t *testing.T) {
+	t.Parallel()
+
 	binary := buildLina(t)
 	for _, stage := range []string{"live", "handshake"} {
 		for _, action := range []struct {
@@ -98,6 +100,8 @@ func TestTUITerminalLifecycle(t *testing.T) {
 }
 
 func TestTUIControlCConfirmation(t *testing.T) {
+	t.Parallel()
+
 	binary := buildLina(t)
 	for _, expire := range []bool{false, true} {
 		t.Run(fmt.Sprintf("expired=%t", expire), func(t *testing.T) {

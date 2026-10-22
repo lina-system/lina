@@ -19,6 +19,8 @@ import (
 )
 
 func TestM1TUIIdentityFromAgentStore(t *testing.T) {
+	t.Parallel()
+
 	for _, defaultAgent := range []bool{false, true} {
 		t.Run(fmt.Sprint(defaultAgent), func(t *testing.T) {
 			var want agents.Preparation
