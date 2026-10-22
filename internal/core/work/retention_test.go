@@ -27,6 +27,13 @@ type retentionWrite struct {
 	path  string
 }
 
+func (w *retentionWriter) Open(_ context.Context, m Material) (io.ReadCloser, error) {
+	var n int
+	if _, err := fmt.Sscan(m.ID, &n); err != nil || n < 1 || n > len(w.bodies) {
+		return nil, ErrInvalid
+	}
+	return io.NopCloser(bytes.NewReader(w.bodies[n-1])), nil
+}
 func (w *retentionWriter) Prepare(_ context.Context, r io.Reader, path, agent string) (MaterialWrite, error) {
 	b, e := io.ReadAll(r)
 	return &retentionWrite{w, b, path}, e

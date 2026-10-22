@@ -92,6 +92,15 @@ func TestSkillToolsCommitNoticeReadUndoAndRefuseCode(t *testing.T) {
 	if err = json.Unmarshal(index.Body, &entries); err != nil || len(entries) != 1 {
 		t.Fatalf("index: %s %v", index.Body, err)
 	}
+	methodIndex := call("methods", "skill_index", map[string]string{"methodology": "dev"})
+	var methodology struct {
+		Preset string
+		Routes []skills.MethodRoute
+		Skills []skills.Version
+	}
+	if err = json.Unmarshal(methodIndex.Body, &methodology); err != nil || methodIndex.State != tools.Applied || methodology.Preset != "dev" || len(methodology.Routes) != 9 || len(methodology.Skills) != 1 || methodology.Skills[0] != entries[0] {
+		t.Fatalf("method index: %s %v", methodIndex.Body, err)
+	}
 	read := call("read", "read_skill", entries[0])
 	if read.State != tools.Applied {
 		t.Fatal(read)

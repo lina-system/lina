@@ -18,9 +18,18 @@ import (
 )
 
 func TestM1TUISpeakerBoundariesInstalledCore(t *testing.T) {
+	for _, language := range []string{"", "go"} {
+		t.Run("language="+language, func(t *testing.T) {
+			testTUISpeakerBoundariesInstalledCore(t, language)
+		})
+	}
+}
+
+func testTUISpeakerBoundariesInstalledCore(t *testing.T, language string) {
+	t.Helper()
 	const input = "Show the code result"
-	const code = "한글 결과"
-	const reply = "```\n\n" + code + "\n\n```"
+	const code = "var 한글 = 42"
+	reply := "```" + language + "\n\n" + code + "\n\n```"
 	var calls atomic.Int32
 	requests := make(chan string, 1)
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
