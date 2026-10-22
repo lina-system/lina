@@ -440,6 +440,9 @@ func (m *shellModel) topicText(topic string) string {
 	for _, b := range m.topicBlocks(topic) {
 		lines = append(lines, b.Text)
 	}
+	if topic == "waiting" && len(lines) == 0 {
+		return design.Text(m.styles.options.Language, "waiting.empty")
+	}
 	return strings.Join(lines, "\n")
 }
 func (m *shellModel) resultCards() []state.Block {
@@ -678,9 +681,14 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 	}
 	name := m.conversationName()
 	rows[plan.Header.Y] = clip(m.styles.Title.Render(name))
-	var transcript []render.StyledRow
+	type transcriptRow struct {
+		body   render.StyledRow
+		prefix string
+		person bool
+		muted  bool
+	}
+	var transcript []transcriptRow
 	var anchors []conversationAnchor
-	mutedRows := make(map[int]bool)
 	plainRow := func(text string) render.StyledRow { return render.StyledRow{Spans: []render.Span{{Text: text}}} }
 	if !m.hasCapability("conversation") {
 		code := "account.empty"
@@ -696,38 +704,97 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 				break
 			}
 		}
-		transcript = append(transcript, plainRow(design.Text(m.styles.options.Language, code)+"  /accounts"))
+		transcript = append(transcript, transcriptRow{body: plainRow(design.Text(m.styles.options.Language, code) + "  /accounts")})
 	}
+	hasItems := false
 	for _, b := range m.content.Blocks {
 		if !conversationBlock(b) {
 			continue
 		}
+		hasItems = true
 		cached := m.blocks[b.ID]
 		if cached.stream == nil {
+			continue
+		}
+		person := b.Local || b.Speaker == protocol.ConversationSpeakerPerson
+		prefix := ""
+		if person || b.Speaker == protocol.ConversationSpeakerAgent || b.Kind == protocol.KindOutputDelta {
+			prefix = m.styles.speakerPrefix(person, name, plan.Conversation.Width)
+		}
+		indent := strings.Repeat(" ", (render.Unicode{}).Width(prefix))
+		body := cached.stream.Markdown(render.Config{Width: plan.Conversation.Width - len(indent), Theme: m.styles.options.Theme}, m.styles.listBullet(), parseMarkdown)
+		// Paragraph spacing belongs inside a message; boundaries get exactly one
+		// section gap even if the provider ended a message with empty lines.
+		blank := func(row render.StyledRow) bool {
+			for _, span := range row.Spans {
+				if span.Style.Code || strings.TrimSpace(span.Text) != "" {
+					return false
+				}
+			}
+			return true
+		}
+		for len(body) > 0 && blank(body[0]) {
+			body = body[1:]
+		}
+		for len(body) > 0 && blank(body[len(body)-1]) {
+			body = body[:len(body)-1]
+		}
+		// Markdown owns these rows. Appending presentation metadata to a
+		// shortened slice must not overwrite the cache's trimmed boundary rows.
+		body = slices.Clone(body)
+		if b.Kind == protocol.KindResult && !b.InlineReply {
+			body = append([]render.StyledRow{plainRow(design.Text(m.styles.options.Language, "result") + "  " + sanitize.Display(b.Title) + "  Ctrl+O")}, body...)
+		}
+		workedRow := -1
+		if elapsed, ok := m.content.Worked[b.ID]; ok {
+			workedRow = len(body)
+			body = append(body, plainRow(fmt.Sprintf(design.Text(m.styles.options.Language, "activity.worked_for"), formatElapsed(elapsed))))
+		}
+		if b.InlineReply {
+			body = append(body, plainRow(design.Text(m.styles.options.Language, "reply.open_pager")))
+		}
+		if len(body) == 0 {
 			continue
 		}
 		// The account placeholder has no retained conversation identity.
 		for len(anchors) < len(transcript) {
 			anchors = append(anchors, conversationAnchor{})
 		}
+		if len(transcript) > 0 {
+			transcript = append(transcript, make([]transcriptRow, m.styles.tokens.SpaceSection.Cells)...)
+			// Anchor separator rows to the following block without shifting
+			// its body row identities when older messages are inserted above it.
+			for row := -m.styles.tokens.SpaceSection.Cells; row < 0; row++ {
+				anchors = append(anchors, conversationAnchor{block: b.ID, row: row})
+			}
+		}
 		blockStart := len(transcript)
-		if speaker := m.speakerName(b); speaker != "" {
-			transcript = append(transcript, plainRow(speaker))
-		}
-		if b.Kind == protocol.KindResult && !b.InlineReply {
-			transcript = append(transcript, plainRow(design.Text(m.styles.options.Language, "result")+"  "+sanitize.Display(b.Title)+"  Ctrl+O"))
-		}
-		transcript = append(transcript, cached.stream.Markdown(render.Config{Width: plan.Conversation.Width, Theme: m.styles.options.Theme}, m.styles.listBullet(), parseMarkdown)...)
-		if elapsed, ok := m.content.Worked[b.ID]; ok {
-			mutedRows[len(transcript)] = true
-			transcript = append(transcript, plainRow(fmt.Sprintf(design.Text(m.styles.options.Language, "activity.worked_for"), formatElapsed(elapsed))))
-		}
-		if b.InlineReply {
-			transcript = append(transcript, plainRow(design.Text(m.styles.options.Language, "reply.open_pager")))
+		for i, row := range body {
+			lead := indent
+			if i == 0 {
+				lead = prefix
+			}
+			if i == workedRow {
+				lead = ""
+			}
+			transcript = append(transcript, transcriptRow{body: row, prefix: lead, person: person, muted: i == workedRow})
 		}
 		for row := 0; row < len(transcript)-blockStart; row++ {
 			anchors = append(anchors, conversationAnchor{block: b.ID, row: row})
 		}
+	}
+	// Starter hints are local presentation, never reducer blocks or Core items.
+	// Wait for history so reconnecting to an existing conversation cannot flash
+	// a first-run screen. Account setup can show hints before chat is negotiated.
+	_, historyKnown := m.content.Topics["conversation:"+m.conversation.id]
+	if !hasItems && !m.conversation.agentMissing && !m.conversation.agentPending && (historyKnown || !m.hasCapability("conversation")) {
+		status := m.styles.presentation(m.status)
+		rows[plan.Header.Y] = clip(m.styles.wordmark() + "  " + m.styles.Title.Render(name) + "  " + m.styles.Text.Render(status.Label))
+		var hints []transcriptRow
+		for _, id := range []string{"conversation.start.memory", "conversation.start.voice", "conversation.start.task"} {
+			hints = append(hints, transcriptRow{body: plainRow(design.Text(m.styles.options.Language, id)), muted: true})
+		}
+		transcript = append(hints, transcript...)
 	}
 	start := m.conversationStart(anchors, len(transcript), plan.Conversation.Height)
 	m.conversation.viewport.overflow = len(transcript) > plan.Conversation.Height
@@ -736,9 +803,18 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		if y >= plan.Conversation.Height {
 			break
 		}
-		rows[plan.Conversation.Y+y] = clip(m.styles.markdownRow(line))
-		if mutedRows[start+y] {
-			rows[plan.Conversation.Y+y] = m.styles.Muted.Render(render.Truncate(line.Spans[0].Text, plan.Conversation.Width, render.Unicode{}))
+		styles := m.styles
+		if line.person {
+			styles.Text = styles.Muted
+		}
+		prefix := ""
+		if line.prefix != "" {
+			prefix = m.styles.Accent.Render(line.prefix)
+		}
+		rows[plan.Conversation.Y+y] = clip(prefix + styles.markdownRow(line.body))
+		if line.muted {
+			width := plan.Conversation.Width - (render.Unicode{}).Width(line.prefix)
+			rows[plan.Conversation.Y+y] = clip(prefix + m.styles.Muted.Render(render.Truncate(line.body.Spans[0].Text, width, render.Unicode{})))
 		}
 	}
 	drawTopic := func(topic string, region layout.Rect) {

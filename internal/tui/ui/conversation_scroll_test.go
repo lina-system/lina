@@ -130,6 +130,36 @@ func TestConversationScrollHintAndOverlays(t *testing.T) {
 	}
 }
 
+func TestConversationWheelIgnoresWebOverlay(t *testing.T) {
+	for _, scrolled := range []bool{false, true} {
+		for _, form := range []struct {
+			name          string
+			busy, editing bool
+		}{
+			{name: "status"},
+			{name: "pending", busy: true},
+			{name: "editing", editing: true},
+		} {
+			t.Run(fmt.Sprintf("scrolled=%t/%s", scrolled, form.name), func(t *testing.T) {
+				m := scrollShell()
+				if scrolled {
+					m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp, X: 5, Y: 5})
+					m.View()
+				}
+				before := m.conversation.scroll
+				viewport := m.conversation.viewport
+				m.web = webView{open: true, busy: form.busy, editing: form.editing}
+				for _, button := range []tea.MouseButton{tea.MouseWheelUp, tea.MouseWheelDown} {
+					m.Update(tea.MouseWheelMsg{Button: button, X: 5, Y: 5})
+					if m.conversation.scroll != before || !reflect.DeepEqual(m.conversation.viewport, viewport) {
+						t.Fatalf("wheel %v changed hidden conversation: scroll %d -> %d, viewport %+v -> %+v", button, before, m.conversation.scroll, viewport, m.conversation.viewport)
+					}
+				}
+			})
+		}
+	}
+}
+
 func TestConversationInputOnlyDispatchesWheel(t *testing.T) {
 	reader, writer, err := os.Pipe()
 	if err != nil {

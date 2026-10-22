@@ -306,6 +306,9 @@ func replaceIndex(ctx context.Context, tx *canon.Tx, rows []indexRow) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM records_fts"); err != nil {
 		return err
 	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM records_korean_fts"); err != nil {
+		return err
+	}
 	for _, r := range rows {
 		if _, err := tx.ExecContext(ctx, "INSERT INTO records_index(id,path,blob,revision) VALUES(?,?,?,?)", r.id, r.path, r.blob, r.revision); err != nil {
 			return err

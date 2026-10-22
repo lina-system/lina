@@ -16,6 +16,8 @@ import (
 )
 
 func TestM2TUIComposerIdentityInstalledCore(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile("../m2/tui-composer-identity.json")
 	if err != nil {
 		t.Fatal(err)
@@ -89,8 +91,17 @@ func TestM2TUIComposerIdentityInstalledCore(t *testing.T) {
 	h.keys(terminal, scenario.Input+"\r")
 	snapshot := waitScreen(t, h, terminal, scenario.Reply)
 	assertComposer("replied", snapshot)
-	if strings.Count(screenText(snapshot), scenario.Agent) < 3 {
-		t.Error("selected agent missing from header, reply speaker or composer")
+	tokens := design.Dark()
+	replyPrefix := tokens.GlyphUnicodeAgent + strings.Repeat(" ", tokens.SpaceInline.Cells)
+	replySpeaker := false
+	for _, row := range screenRows(snapshot) {
+		if strings.HasPrefix(row, replyPrefix) && strings.Contains(row, scenario.Reply) {
+			replySpeaker = true
+			break
+		}
+	}
+	if !replySpeaker {
+		t.Error("reply first row missing the agent gutter mark")
 	}
 	select {
 	case body := <-requests:

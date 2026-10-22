@@ -95,6 +95,8 @@ func (c *conversationScriptConn) Write(data []byte) (int, error) {
 }
 
 func TestM1TUIConversationStream(t *testing.T) {
+	t.Parallel()
+
 	data, err := os.ReadFile("tui-conversation-stream.json")
 	if err != nil {
 		t.Fatal(err)

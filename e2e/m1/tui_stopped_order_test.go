@@ -17,6 +17,8 @@ import (
 )
 
 func TestM1TUIStoppedNoticeOrder(t *testing.T) {
+	t.Parallel()
+
 	var scenario struct {
 		Width, Height                int
 		ResizedWidth                 int `json:"resized_width"`

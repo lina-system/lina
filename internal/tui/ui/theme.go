@@ -9,6 +9,8 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/thisisjun786/lina/internal/design"
+	"github.com/thisisjun786/lina/internal/tui/render"
+	"github.com/thisisjun786/lina/internal/tui/sanitize"
 )
 
 // Profile describes the output capability, independently of the chosen theme.
@@ -181,18 +183,22 @@ func (s Styles) Screen(state Connection) string {
 	return s.ScreenStatus(ConnectionStatus{State: state})
 }
 
+func (s Styles) wordmark() string {
+	mark := s.tokens.GlyphUnicodeMark
+	if s.options.ASCII {
+		mark = s.tokens.GlyphAsciiMark
+	}
+	return s.Title.Render("lina") + s.Accent.Bold(s.Title.GetBold()).Render(mark)
+}
+
 func (s Styles) ScreenStatus(connection ConnectionStatus) string {
 	t := s.tokens
 	view := s.presentation(connection)
-	mark := t.GlyphUnicodeMark
-	if s.options.ASCII {
-		mark = t.GlyphAsciiMark
-	}
 	gutter := min(t.SpaceGutter.Cells, max(0, (s.options.Width-1)/2))
 	width := max(1, s.options.Width-2*gutter)
 	gap := strings.Repeat(" ", t.SpaceInline.Cells)
 	section := strings.Repeat("\n", t.SpaceSection.Cells+1)
-	title := s.Title.Render("lina") + s.Accent.Bold(s.Title.GetBold()).Render(mark)
+	title := s.wordmark()
 	stateStyle := s.Muted
 	if connection.State.active() {
 		stateStyle = s.Accent
@@ -241,4 +247,26 @@ func environmentOptions(getenv func(string) string) Options {
 		opts.Profile = ANSI256
 	}
 	return opts
+}
+
+// Speaker words remain available in ASCII and monochrome, independent of color.
+func (s Styles) speakerPrefix(person bool, name string, width int) string {
+	mark := s.tokens.GlyphUnicodeAgent
+	if person {
+		mark = s.tokens.GlyphUnicodePerson
+	}
+	gap := strings.Repeat(" ", s.tokens.SpaceInline.Cells)
+	// Bound the gutter independently of long names and reserve at least half
+	// the viewport for content, including two-cell graphemes at narrow sizes.
+	budget := max(0, min(20, width/2))
+	if s.options.ASCII || s.options.Profile == Monochrome {
+		mark = s.tokens.GlyphAsciiAgent
+		if person {
+			mark = s.tokens.GlyphAsciiPerson
+			name = design.Text(s.options.Language, "person")
+		}
+		nameWidth := max(0, budget-(render.Unicode{}).Width(mark+gap+":"+gap))
+		mark += gap + render.Truncate(sanitize.Display(name), nameWidth, render.Unicode{}) + ":"
+	}
+	return render.Truncate(mark+gap, budget, render.Unicode{})
 }

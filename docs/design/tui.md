@@ -272,7 +272,15 @@ The screen is a pure function of State and terminal size. Core's validated welco
 Regions:
 
 - Header: the focused agent's name and mark, and the connection word.
-- Conversation.
+- Conversation: first-line speaker gutter, with the person marked by `›` and the
+  agent by `●`; no separate name row per message. The agent name stays in the
+  header. Person prose uses muted text, both marks use accent, and agent prose
+  uses text color. Continuation rows align under the message text. Exactly one
+  empty row separates messages. ASCII and monochrome use `> You:` and
+  `* <agent name>:` (the person word follows the UI language). The gutter is
+  capped at 20 cells (P) and half the conversation width, whichever is smaller.
+  Truncate only the name at grapheme boundaries, retaining the mark, colon and
+  separating space so long names leave usable reply width, including Hangul.
 - Activity: one or two measured rows above the composer's optional rule while a
   send is pending or a turn is active, with a glyph, localized
   thinking/replying/stopping word, elapsed duration and Esc hint. It consumes no
@@ -280,6 +288,21 @@ Regions:
 - Composer, with its attachment strip and a full-width hairline immediately above the input.
 - Card row above the composer, on Home (T-12).
 - Status line below the composer: connection mark and word first, agent, the running count ("2 running, 1 waiting for you"), restart pending, Core messages, then key hints.
+
+Once the focused conversation's snapshot is known to have no items, its header
+shows the token-based `lina.` wordmark, the agent name and the connection word.
+Three muted Korean/English catalog suggestions invite the person to ask what
+the agent remembers, set its speaking style or hand over a task. They are
+ordinary text examples: the person types into the existing composer, with no
+new selection key. Unsent drafts and non-conversation status updates do not
+hide them. The first conversation item, including a local input echo, removes
+the wordmark and suggestions. These are display-only rows, never history or
+snapshot items. A restored nonempty conversation never shows them. Account
+setup may show the same hints alongside the existing sign-in action before
+conversation is negotiated; no extra onboarding step is introduced.
+The hints fit the existing row budget and use the current text clipping rules.
+`TestM1TUIFirstRunInstalledCore` verifies both languages in a 100x34 PTY against
+installed Core, a held first reply, snapshots and a Core restart.
 
 Overlays form a stack and the top one receives keys first: agent list, command palette, pager. The agent list is the agents screen of [surfaces.md](surfaces.md#agents) in text: mark, name, source and last conversation; Enter opens the agent's main conversation.
 
@@ -408,9 +431,13 @@ following. Scroll keys preserve the composer draft. When the transcript exceeds
 its region, the status row adds the localized `PgUp scroll` hint only if it fits;
 this optional hint is dropped before existing status and the new-output marker.
 The wheel does not act through an overlay or outside the conversation region.
+This includes `/web` while it shows status, awaits Core or edits a key: wheel
+input preserves the hidden conversation's position, retained anchor and
+follow-latest state when the settings screen closes.
 `TestM1TUIWheelStickyConversation` exercises the installed Core and real TUI in
 a 100×34 PTY, sends SGR wheel input, compares the retained rows after a second
-reply, and verifies End and mouse-mode cleanup.
+reply, verifies that `/web` blocks wheel input at the latest and retained
+positions, and verifies End and mouse-mode cleanup.
 For the colour conversation screen, each new size reaches the cell renderer
 before its reflowed view, even if the view text is unchanged. The connection owner's latest dimensions remain authoritative: late renderer startup size messages are discarded before they can resize the cell buffer. Resizing keeps the
 draft and redraws header, status and composer within the current row budget;
@@ -470,8 +497,14 @@ The conversation screen projects granted waiting/running topic rows in Core
 order and keeps their counts when folded. Ctrl+W and Ctrl+R open their complete
 retained text in the pager; Ctrl+P opens the granted progress topic. Missing
 capabilities use the single local explanation of T-07 and leave no placeholder
-rows. Granted empty lists are hidden without an unavailable notice. Rows appear
-when Core sends items and disappear on a removal update or when its snapshot clears the list.
+rows. Granted empty lists are hidden on Home without an unavailable notice.
+Opening an empty granted Waiting for me list with Ctrl+W shows the localized
+"nothing to decide now" line in the pager. Closing and reopening it preserves
+the draft; the line never enters conversation history or other list views.
+`TestM1TUIWaitingEmptyInstalledCore` checks this through a 100x32 PTY against
+installed Core, then submits the retained draft and renders the fixture reply.
+Rows appear when Core sends items and disappear on a removal update or when
+its snapshot clears the list.
 An open running pager applies accepted `running` topic updates and replacement
 snapshots immediately, including completed and removed rows, without polling or
 requiring the person to close and reopen it. Refreshing its text preserves the
@@ -723,7 +756,10 @@ type Stream interface {
   to produce semantic spans for closed blocks; `render` receives a parser
   callback and remains free of external dependencies. The shared `Measurer` wraps the visible text before
   the UI adds terminal styles. List continuations align under their content;
-  code retains literal text and whitespace. Escaped syntax remains literal.
+  code retains literal text and whitespace, including empty first and last
+  lines and blocks containing only empty lines. Empty code rows retain their
+  semantic identity through wrapping; message-boundary trimming removes only
+  paragraph spacing. Escaped syntax remains literal.
   Unsupported HTML blocks and inline HTML display their literal source text.
   Tables use our own renderer.
 - Conversation spans use theme text, accent and surface tokens: bold and italic
@@ -732,11 +768,22 @@ type Stream interface {
   ASCII fallback). `NO_COLOR` keeps readable content without terminal escapes.
   `Stream.Markdown` caches closed semantic rows by width, theme and width mode,
   incrementally projects the open tail, and replaces the projection at `Seal`.
+  Consumers treat cached rows as read-only. Conversation rendering copies
+  trimmed rows before adding completion durations or pager affordances, so
+  identical redraws cannot accumulate metadata in message content.
   Only visible conversation rows receive terminal styles.
 - One width function serves all layout: wcwidth by default, grapheme clusters once mode 2027 is confirmed, ambiguous East Asian width narrow, Hangul syllables two cells. The mode is part of the cache key. The Charm-free `Measurer` uses pinned Unicode 17 data and UAX #29 segmentation for wrapping and clipping in both modes. A cluster wider than the entire row is omitted with a typed clipped flag, never split. Cursor offsets inside a cluster clamp to its start.
 - The hardware cursor is placed on every frame at the display width of the text before it on the wrapped row, so IME composition appears in place. The TUI never requests all-keys-as-escape-codes. Committed IME text arrives as UTF-8, one grapheme cluster at a time ([surfaces.md](surfaces.md#korean-input)).
 - Only the viewport plus overscan (P) is laid out, so cost follows viewport rows and not history. `Stream` indexes new text as it arrives. `Window` takes a retained byte anchor within a block and stops reflow at the requested row count, including after a width change. `Renderer.Draw` reads and paints only those indexed rows, retains only the current viewport cache, and returns changed-row patches; an empty patch list causes no writes. A trusted UI painter styles only closed rows after sanitizing and clipping.
 - Resize events coalesce to one reflow per 32 ms (P).
+- The conversation renderer explicitly receives the display's detected 16-color,
+  256-color or truecolor profile; wrapping its output must not discard color or
+  bold. `NO_COLOR` retains the escape-free plain path.
+- Speaker marks come from the person/agent glyph tokens. Reserve the prefix's
+  display width with the shared `Measurer` before Markdown wrapping, including
+  ASCII words and wide agent names, and indent every continuation by that width.
+  Trim empty paragraph boundary rows before adding the section gap; preserve
+  paragraph spacing and literal code whitespace within a message.
 - Conversation wrapping uses the current width; the indexed row count at the
   old width must not truncate newly wrapped rows or the final reply.
 - An unchanged idle state writes zero bytes. A light frame tick runs only while
@@ -970,6 +1017,16 @@ outstanding acceptance. Harness completion does not establish the spike gate.
 Fallbacks, in order. F1: Bubble Tea with its own probe, a quiet spinner, a lower frame rate while streaming and a frame memo. F2: a row-string renderer on Ultraviolet with changed rows only, in synchronized output. F3: tcell v3. The reducer, render, layout and `clientapi` do not change in any fallback.
 
 ## Tests, tokens and theme (T-11)
+
+Installed-Core transcript and LONG-QA PTY scenarios run in English and Korean.
+Pager entry, resize, search and return waits observe parsed cursor and viewport
+state together with expected transcript or draft content. They do not pin footer
+prose or spacing; any required visible label comes from the design catalog.
+Transcript ordering, one copy of each message, search, draft restoration and
+complete LONG-QA body/scroll checks remain independent of those readiness waits.
+The first-run PTY scenario likewise waits for its draft, composer cursor and
+catalog suggestions in one parsed snapshot before checking presentation; separate
+observations across redraws do not establish that they were visible together.
 
 **Tests.** The fake Core, `internal/fakecore`, is built from the conformance fixtures ([host-protocol.md](host-protocol.md#conformance-fixtures)) with an injected clock and fault switches: drop, slow reader, epoch change, duplicate delivery, disconnect mid-batch, recovering and refusal.
 
