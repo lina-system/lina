@@ -68,7 +68,11 @@ func (m *shellModel) refreshDeveloper() {
 		if p.lanes.Expanded[row.LaneID] {
 			fold = "-"
 		}
-		summary := mark + "  " + fold + " [" + oneLaneLine(row.Worker) + "] → " + oneLaneLine(row.Title) + "  " + text("developer.state."+row.State)
+		handoff := m.styles.tokens.GlyphUnicodeAction
+		if m.styles.options.ASCII {
+			handoff = m.styles.tokens.GlyphAsciiAction
+		}
+		summary := mark + "  " + fold + " [" + oneLaneLine(row.Worker) + "] " + handoff + " " + oneLaneLine(row.Title) + "  " + text("developer.state."+row.State)
 		// A collapsed lane occupies exactly one terminal row, even with long or
 		// multiline worker text. Full summaries remain available on expansion.
 		lines = append(lines, render.Truncate(summary, max(1, width-2), render.Unicode{}))
