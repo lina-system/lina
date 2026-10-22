@@ -3,6 +3,7 @@
 package e2e_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/design"
+	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -91,9 +93,27 @@ func TestM1TUIFirstRunInstalledCore(t *testing.T) {
 			}
 			h.keys(terminal, input)
 			// The tap observes socket writes, not reducer consumption. Wait for
-			// the empty-history presentation as well as the draft before sampling.
-			waitScreen(t, h, terminal, "lina.")
-			fresh := waitScreen(t, h, terminal, input)
+			// the empty-history presentation and draft in the same snapshot. Two
+			// separate waits can accept different redraws while history settles.
+			ctx, cancel := context.WithTimeout(h.ctx, operationTimeout)
+			defer cancel()
+			fresh, err := terminal.screen.Wait(ctx, func(s tuiterm.Snapshot) bool {
+				text := screenText(s)
+				if !s.AltScreen || s.CursorHidden || s.CursorY != 32 ||
+					!strings.Contains(text, "lina.") || !strings.Contains(text, input) ||
+					!strings.Contains(text, design.Text(language, "live")) {
+					return false
+				}
+				for _, id := range firstRunSuggestionIDs {
+					if !strings.Contains(text, design.Text(language, id)) {
+						return false
+					}
+				}
+				return true
+			})
+			if err != nil {
+				t.Fatalf("first-run draft and presentation: %v\n%s", err, screenText(fresh))
+			}
 			text := screenText(fresh)
 			if !fresh.AltScreen || !strings.Contains(text, "lina.") {
 				t.Fatalf("fresh conversation has no wordmark: %s", text)

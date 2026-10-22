@@ -506,8 +506,14 @@ The conversation screen projects granted waiting/running topic rows in Core
 order and keeps their counts when folded. Ctrl+W and Ctrl+R open their complete
 retained text in the pager; Ctrl+P opens the granted progress topic. Missing
 capabilities use the single local explanation of T-07 and leave no placeholder
-rows. Granted empty lists are hidden without an unavailable notice. Rows appear
-when Core sends items and disappear on a removal update or when its snapshot clears the list.
+rows. Granted empty lists are hidden on Home without an unavailable notice.
+Opening an empty granted Waiting for me list with Ctrl+W shows the localized
+"nothing to decide now" line in the pager. Closing and reopening it preserves
+the draft; the line never enters conversation history or other list views.
+`TestM1TUIWaitingEmptyInstalledCore` checks this through a 100x32 PTY against
+installed Core, then submits the retained draft and renders the fixture reply.
+Rows appear when Core sends items and disappear on a removal update or when
+its snapshot clears the list.
 An open running pager applies accepted `running` topic updates and replacement
 snapshots immediately, including completed and removed rows, without polling or
 requiring the person to close and reopen it. Refreshing its text preserves the
@@ -1020,6 +1026,16 @@ outstanding acceptance. Harness completion does not establish the spike gate.
 Fallbacks, in order. F1: Bubble Tea with its own probe, a quiet spinner, a lower frame rate while streaming and a frame memo. F2: a row-string renderer on Ultraviolet with changed rows only, in synchronized output. F3: tcell v3. The reducer, render, layout and `clientapi` do not change in any fallback.
 
 ## Tests, tokens and theme (T-11)
+
+Installed-Core transcript and LONG-QA PTY scenarios run in English and Korean.
+Pager entry, resize, search and return waits observe parsed cursor and viewport
+state together with expected transcript or draft content. They do not pin footer
+prose or spacing; any required visible label comes from the design catalog.
+Transcript ordering, one copy of each message, search, draft restoration and
+complete LONG-QA body/scroll checks remain independent of those readiness waits.
+The first-run PTY scenario likewise waits for its draft, composer cursor and
+catalog suggestions in one parsed snapshot before checking presentation; separate
+observations across redraws do not establish that they were visible together.
 
 **Tests.** The fake Core, `internal/fakecore`, is built from the conformance fixtures ([host-protocol.md](host-protocol.md#conformance-fixtures)) with an injected clock and fault switches: drop, slow reader, epoch change, duplicate delivery, disconnect mid-batch, recovering and refusal.
 
