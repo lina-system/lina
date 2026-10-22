@@ -4,6 +4,7 @@ package memory
 import (
 	"context"
 	"encoding/json"
+
 	"github.com/thisisjun786/lina/internal/core/canon"
 )
 
@@ -17,11 +18,11 @@ func (s *Store) CurrentRelationship(ctx context.Context, scope RecallScope, at i
 	return s.recall(ctx, scope, Query{At: at, Limit: 1, PersonOnly: true}, false, true)
 }
 
-// EndRelationshipPredecessor closes the previous validity interval in the
-// replacement's transaction. The end survives deletion of the replacement;
+// endRelationshipPredecessor closes the previous validity interval in Insert's
+// transaction for every writer. The end survives deletion of the replacement;
 // historical recall can still distinguish the earlier view from a current one.
 // Use the existing validity/revision format, without retaining erased content.
-func EndRelationshipPredecessor(ctx context.Context, tx *canon.Tx, replacement Item) error {
+func endRelationshipPredecessor(ctx context.Context, tx *canon.Tx, replacement Item) error {
 	if replacement.Supersedes == "" {
 		return nil
 	}
