@@ -205,7 +205,7 @@ func (s *Service) Tool(origin Origin) loop.Tool {
 	return loop.Tool{Validate: func(c provider.ToolCall) (string, error) {
 		d, err := decode(c)
 		if err == nil {
-			_, err = s.methodForAdmission(s.ctx, origin, c.ID, d)
+			_, _, err = s.recordForAdmission(s.ctx, origin, c.ID, d)
 		}
 		return d.Repository, err
 	}, Execute: func(ctx context.Context, c provider.ToolCall) loop.Result {
@@ -213,7 +213,7 @@ func (s *Service) Tool(origin Origin) loop.Tool {
 		if err != nil {
 			return loop.Result{ID: c.ID, Code: loop.Invalid}
 		}
-		method, err := s.methodForAdmission(ctx, origin, c.ID, d)
+		r, replay, err := s.recordForAdmission(ctx, origin, c.ID, d)
 		if err != nil {
 			if errors.Is(err, work.ErrState) {
 				return loop.Result{ID: c.ID, Code: loop.Denied}
@@ -236,8 +236,10 @@ func (s *Service) Tool(origin Origin) loop.Tool {
 			}
 			return loop.Result{ID: c.ID, Code: loop.Denied, Output: mustJSON(body)}
 		}
-		r := Record{ID: key, Origin: origin, Definition: d, Branch: taskBranch(d.Branch, key), Method: method, State: "queued"}
-		if s.cfg.Manage != nil {
+		r.Definition = d
+		// A durable admission already passed Manage. Rebuilding it here can
+		// change older manager arguments or rerun a completed handoff.
+		if !replay && s.cfg.Manage != nil {
 			r, err = s.cfg.Manage(ctx, r)
 			if err != nil {
 				return loop.Result{ID: c.ID, Code: loop.Denied, Output: mustJSON(map[string]string{"code": err.Error()})}
@@ -270,31 +272,33 @@ func admissionID(origin Origin, callID string) string {
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(origin.Turn+"\x00"+callID)))
 }
 
-func (s *Service) methodForAdmission(ctx context.Context, origin Origin, callID string, d Definition) (*skills.Body, error) {
+func (s *Service) recordForAdmission(ctx context.Context, origin Origin, callID string, d Definition) (Record, bool, error) {
+	key := admissionID(origin, callID)
 	var raw []byte
 	err := s.cfg.DB.Read(ctx, func(tx *canon.Tx) error {
-		return tx.QueryRowContext(ctx, "SELECT record FROM worker_dispatch WHERE id=?", admissionID(origin, callID)).Scan(&raw)
+		return tx.QueryRowContext(ctx, "SELECT record FROM worker_dispatch WHERE id=?", key).Scan(&raw)
 	})
 	if errors.Is(err, sql.ErrNoRows) {
-		return s.cfg.Skills.ResolveMethod(ctx, d.Kind, d.Skill)
+		method, err := s.cfg.Skills.ResolveMethod(ctx, d.Kind, d.Skill)
+		return Record{ID: key, Origin: origin, Definition: d, Branch: taskBranch(d.Branch, key), Method: method, State: "queued"}, false, err
 	}
 	if err != nil {
-		return nil, err
+		return Record{}, false, err
 	}
 	var saved Record
 	if err := json.Unmarshal(raw, &saved); err != nil {
-		return nil, err
+		return Record{}, false, err
 	}
 	// A durable admission owns its snapshot even if the catalog entry was
 	// subsequently removed. Compare the complete request before replaying it.
 	d.Repository, err = filepath.EvalSymlinks(d.Repository)
 	if err != nil {
-		return nil, err
+		return Record{}, false, err
 	}
 	if saved.Origin != origin || !reflect.DeepEqual(saved.Definition, d) {
-		return nil, work.ErrState
+		return Record{}, false, work.ErrState
 	}
-	return saved.Method, nil
+	return saved, true, nil
 }
 func mustJSON(v any) []byte { b, _ := json.Marshal(v); return b }
 func (s *Service) save(ctx context.Context, r Record) error {
