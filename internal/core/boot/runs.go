@@ -20,6 +20,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/runs"
 	"github.com/thisisjun786/lina/internal/core/skills"
 	"github.com/thisisjun786/lina/internal/core/turn"
+	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/protocol"
@@ -302,8 +303,12 @@ func (r *conversationRuntime) syncRuns(ctx context.Context) error {
 	}
 	for conversation := range conversations {
 		err = r.background.service.TransferNotices(ctx, conversation, func(ctx context.Context, n runs.Notice) error {
+			language, err := r.turnLanguage(ctx, n.Origin.Turn)
+			if err != nil {
+				return err
+			}
 			return r.lanes.Notice(ctx, lane.Notice{ID: n.Key, Run: n.ID, Person: n.Origin.Person, Agent: n.Origin.Agent, Conversation: n.Origin.Conversation,
-				Outcome: string(n.Outcome), Summary: runSummary(n), Result: n.Material.ID, ResultRevision: n.Material.Revision, ResultType: n.Result, Landed: n.Landed, Surface: ledger.Surface{Kind: "tui"}})
+				Outcome: string(n.Outcome), Summary: runSummary(n, language), Result: n.Material.ID, ResultRevision: n.Material.Revision, ResultType: n.Result, Landed: n.Landed, Surface: ledger.Surface{Kind: "tui"}})
 		})
 		if err != nil {
 			return err
@@ -311,7 +316,7 @@ func (r *conversationRuntime) syncRuns(ctx context.Context) error {
 	}
 	return r.publishRunning(ctx)
 }
-func runSummary(n runs.Notice) string {
+func runSummary(n runs.Notice, language design.Language) string {
 	var verified, unverified []string
 	for _, check := range n.Checks {
 		if check.Passed && check.Verified {
@@ -321,12 +326,12 @@ func runSummary(n runs.Notice) string {
 		}
 	}
 	if len(verified) == 0 {
-		verified = []string{"none"}
+		verified = []string{design.Text(language, "notice.none")}
 	}
 	if len(unverified) == 0 {
-		unverified = []string{"none"}
+		unverified = []string{design.Text(language, "notice.none")}
 	}
-	return fmt.Sprintf("Agent report: %s. Verified: %s. Unverified: %s. Result: %s (revision %d).", n.Outcome, strings.Join(verified, ", "), strings.Join(unverified, ", "), n.Material.ID, n.Material.Revision)
+	return fmt.Sprintf(design.Text(language, "notice.run_report"), design.Text(language, "notice.run_"+string(n.Outcome)), strings.Join(verified, ", "), strings.Join(unverified, ", "), n.Material.ID, n.Material.Revision)
 }
 func (r *conversationRuntime) publishRunning(ctx context.Context) error {
 	b := r.background
