@@ -3,7 +3,7 @@ name: CI
 
 on:
   pull_request:
-    branches: [dev, 'codex/ln-369-*']
+    branches: [dev, 'codex/ln-369-*', 'codex/ln-477-*']
   push:
     branches: [dev]
 
@@ -87,8 +87,11 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           HEAD_SHA: ${{ github.sha }}
+          PR_HEAD_REF: ${{ github.head_ref }}
         run: |
-          if [[ -n "$BASE_SHA" && "$BASE_SHA" != 0000000000000000000000000000000000000000 ]]; then
+          if [[ "$PR_HEAD_REF" == codex/ln-477-* ]]; then
+            node scripts/foundation.mjs --full --no-note
+          elif [[ -n "$BASE_SHA" && "$BASE_SHA" != 0000000000000000000000000000000000000000 ]]; then
             node scripts/foundation.mjs --range "$BASE_SHA..$HEAD_SHA" --no-note
           else
             node scripts/foundation.mjs --full --no-note
