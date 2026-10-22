@@ -2903,6 +2903,9 @@
         },
         "text": {
           "type": "string"
+        },
+        "shell_file_tools_available": {
+          "type": "boolean"
         }
       },
       "required": [],

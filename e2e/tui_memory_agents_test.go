@@ -407,7 +407,7 @@ func memoryAgentPages(t *testing.T, binary, bundle string) {
 		}
 		e, err := client.Receive(h.ctx)
 		if err != nil || e.Error != nil {
-			t.Fatal("page setup refused", err)
+			t.Fatalf("page setup %d refused: transport=%v protocol=%+v", i, err, e.Error)
 		}
 	}
 	client.Close()

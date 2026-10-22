@@ -46,6 +46,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/internal/core/skills"
 	"github.com/thisisjun786/lina/internal/core/turn"
+	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/internal/tui/render"
 	"github.com/thisisjun786/lina/kit/grant"
 	"github.com/thisisjun786/lina/kit/lease"
@@ -342,8 +343,12 @@ func (r *conversationRuntime) Input(ctx context.Context, s clientsrv.Session, p 
 	digest := sha256.Sum256([]byte(r.person + "\x00" + r.conversation + "\x00" + *p.InputID))
 	eventID := "input:" + hex.EncodeToString(digest[:])
 	admission := &conversationAdmission{db: r.db, input: inbox.Input{Key: inbox.Key{Conversation: r.conversation, Source: "client", NativeID: *p.InputID}, Body: []byte(masked.Text())}}
+	language, err := r.inputLanguage(ctx, *p.Text)
+	if err != nil {
+		return protocol.ItemDone{}, err
+	}
 	now := time.Now()
-	event, err := ledger.New(admission, r.materials).Admit(ctx, guard.EntryOwner, ledger.Input{ID: eventID, ConversationID: r.conversation, PersonID: r.person, AgentID: r.agent, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Locator: *p.InputID, Body: *p.Text})
+	event, err := ledger.New(admission, r.materials).Admit(ctx, guard.EntryOwner, ledger.Input{ID: eventID, ConversationID: r.conversation, PersonID: r.person, AgentID: r.agent, Surface: ledger.Surface{Kind: "tui", Language: string(language)}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Locator: *p.InputID, Body: *p.Text})
 	receipt := admission.receipt
 	if errors.Is(err, errAdmittedInput) {
 		event, err = r.journal().Get(ctx, eventID)
@@ -484,17 +489,17 @@ func (s *conversationReplyStream) Push(delta string) (reply.View, string, error)
 	return view, next, err
 }
 
-func (r *conversationRuntime) replyCard(key, turnID string, view reply.View) reply.Card {
+func (r *conversationRuntime) replyCard(key, turnID string, view reply.View, language design.Language) reply.Card {
 	return reply.Card{Preview: *view.Card, ResultID: "result:" + key, Revision: 1,
-		Title: "Full reply", Summary: view.Text, RevisedBy: r.agent,
+		Title: design.Text(language, "reply.full"), Summary: view.Text, RevisedBy: r.agent,
 		Provenance: protocol.ResultProvenance{AgentID: r.agent, ConversationID: r.conversation, TurnID: turnID}}
 }
 
 const conversationPreviewBytes = 64 << 10
 
-func (r *conversationRuntime) publishReply(ctx context.Context, key, turnID string, view reply.View) error {
+func (r *conversationRuntime) publishReply(ctx context.Context, key, turnID string, view reply.View, language design.Language) error {
 	if view.Card != nil {
-		card := r.replyCard(key, turnID, view)
+		card := r.replyCard(key, turnID, view, language)
 		// Bound the wire preview independently of the complete ledger card.
 		// Even JSON's worst-case six-byte escapes leave ample envelope space
 		// below the RPC writer's 1 MiB limit.
@@ -504,7 +509,7 @@ func (r *conversationRuntime) publishReply(ctx context.Context, key, turnID stri
 			for !utf8.RuneStart(text[end]) {
 				end--
 			}
-			text = text[:end] + "\n… Preview truncated; full reply retained in conversation history."
+			text = text[:end] + "\n… " + design.Text(language, "reply.truncated")
 		}
 		return r.publish(ctx, protocol.KindResult, key, protocol.Result{
 			ResultID: card.ResultID, Revision: "1", Type: card.Type, Status: card.Status,
@@ -597,7 +602,7 @@ func (r *conversationRuntime) seedHistory(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			if err = r.publishReply(ctx, e.ID, "turn:"+e.ParentID, view); err != nil {
+			if err = r.publishReply(ctx, e.ID, "turn:"+e.ParentID, view, eventLanguage(e)); err != nil {
 				return err
 			}
 			continue
@@ -638,7 +643,11 @@ func (r *conversationRuntime) publishPartial(ctx context.Context, key, turnID, t
 	if err != nil {
 		return err
 	}
-	return r.publishReply(ctx, key, turnID, view)
+	language, err := r.turnLanguage(ctx, turnID)
+	if err != nil {
+		return err
+	}
+	return r.publishReply(ctx, key, turnID, view, language)
 }
 
 func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, input ledger.Event, inboxID int64) (err error) {
@@ -744,7 +753,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				return turn.PreparedRequest{}, err
 			}
 			request, report := assemble.Assemble(assemble.Input{
-				Core:    assemble.PersonaCoreV1,
+				Core:    assemble.PersonaCoreV1 + "\n" + assemble.TUIFormatting,
 				AgentID: r.agent, PersonaRevision: persona.Commit, Persona: persona.Layers,
 				AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID,
 				Catalog: catalog, AlwaysTools: declarations,
@@ -758,7 +767,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				}
 				return turn.PreparedRequest{}, turn.ErrInvalid
 			}
-			assembly := turn.Assembly{AgentID: r.agent, PersonaRevision: persona.Commit, InstructionFormat: "persona-v1", PreparedAt: at.Format(time.RFC3339Nano), Profile: append([]turn.Reference(nil), memoryRefs...), AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID, Items: append([]turn.Reference(nil), memoryRefs...)}
+			assembly := turn.Assembly{AgentID: r.agent, PersonaRevision: persona.Commit, InstructionFormat: "persona-tui-v1", PreparedAt: at.Format(time.RFC3339Nano), Profile: append([]turn.Reference(nil), memoryRefs...), AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID, Items: append([]turn.Reference(nil), memoryRefs...)}
 			assembly.Context, err = r.recordContextSources(ctx, packet, report)
 			if err != nil {
 				return turn.PreparedRequest{}, err
@@ -795,7 +804,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			completed = append(completed, ledger.Admission{Entry: guard.EntrySystem, Input: ledger.Input{
 				ID: "handoff:" + turnID, ConversationID: r.conversation, ParentID: input.ID, AgentID: r.agent, Surface: input.Surface,
 				OccurredAt: now, RecordedAt: now, TimeQuality: "recorded", ScaffoldKind: "run_handoff",
-				Body: "The gathered work is saved and continues in the background. Run: " + promoted.ID,
+				Body: design.Text(eventLanguage(input), "notice.handoff"),
 			}})
 		}
 		if len(completed) == 0 {
@@ -819,13 +828,13 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				return err
 			}
 			if view.Card != nil {
-				card := r.replyCard(item.Input.ID, turnID, view)
-				body, err := json.Marshal(card)
+				card := r.replyCard(item.Input.ID, turnID, view, eventLanguage(input))
+				body, err := json.Marshal(card.Reference(item.Input.ID))
 				if err != nil {
 					return err
 				}
 				source := item.Input
-				batch = append(batch, ledger.Admission{Entry: guard.EntryAgent, Input: ledger.Input{
+				batch = append(batch, ledger.Admission{Entry: guard.EntrySystem, Input: ledger.Input{
 					ID: card.ResultID, ParentID: source.ID, ConversationID: source.ConversationID, AgentID: source.AgentID,
 					Surface: source.Surface, OccurredAt: source.OccurredAt, RecordedAt: source.RecordedAt, TimeQuality: source.TimeQuality,
 					ScaffoldKind: "result", Body: string(body),
@@ -894,7 +903,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 					if view.Cut {
 						// A result replaces the same stream row, retracting the unfinished
 						// sentence while retaining all subsequent text in its preview.
-						return r.publishReply(ctx, key, turnID, view)
+						return r.publishReply(ctx, key, turnID, view, eventLanguage(input))
 					}
 					return r.publish(ctx, protocol.KindOutputDelta, key, delta)
 				case provider.ItemDone:
@@ -952,7 +961,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				err = filterErr
 				break
 			}
-			if publishErr := r.publishReply(ctx, item.ID, turnID, view); publishErr != nil {
+			if publishErr := r.publishReply(ctx, item.ID, turnID, view, eventLanguage(input)); publishErr != nil {
 				err = publishErr
 				break
 			}
@@ -986,8 +995,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			return errors.Join(err, r.publish(ctx, protocol.KindItemDone, notice.ID, protocol.ItemDone{Text: &text, Speaker: &speaker}))
 		}
 		err = errors.Join(err, readErr)
-		text := "The reply could not be completed. Send a new message to continue."
-		_ = r.publish(ctx, protocol.KindItemDone, turnID+":status", protocol.ItemDone{Text: &text})
+		text := design.Text(eventLanguage(input), "notice.failed")
+		speaker := protocol.ConversationSpeakerSystem
+		_ = r.publish(ctx, protocol.KindItemDone, turnID+":status", protocol.ItemDone{Text: &text, Speaker: &speaker})
 	}
 	return err
 }

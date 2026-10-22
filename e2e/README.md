@@ -202,3 +202,10 @@ boot in a separate process, and controls it through the generated socket
 protocol. Synthetic outbound Gateway/REST and Responses endpoints demonstrate
 channel input, read tools, background results, deduplication, shaping, blocked
 state and restart without live credentials.
+
+`m1/conformance-agents.json` runs every shared `application/agents/` fixture
+against installed Core over its public socket. It checks refusals for missing
+and deleted agents in conversation and management requests, plus channel
+binding/scope replacement. A paired synthetic channel and an existing binding
+exercise the actual target-agent checks. Read-only canon snapshots prove that
+refused requests preserve agent revisions, actions, conversations and bindings.
