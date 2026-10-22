@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-func TestSessionCloseRecovery(t *testing.T) {
+func TestSessionCloseRecoveryPreservesReceipts(t *testing.T) {
 	for _, code := range []websocket.StatusCode{4007, 4009, 4000, 4008, websocket.StatusNormalClosure} {
 		t.Run(fmt.Sprint(code), func(t *testing.T) {
 			reset := code == 4007 || code == 4009

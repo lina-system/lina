@@ -31,11 +31,15 @@ import (
 )
 
 func TestM2DiscordCore(t *testing.T) {
+	runM2DiscordCore(t, nil)
+}
+
+func runM2DiscordCore(t *testing.T, closeCodes []websocket.StatusCode) {
+	t.Helper()
 	var scenario struct {
 		Platform, Account, Owner, Chat, Input string
 		Paragraphs                            []int
-		Blocked                               int   `json:"blocked_code"`
-		SessionCloseCodes                     []int `json:"session_close_codes"`
+		Blocked                               int `json:"blocked_code"`
 	}
 	data, err := os.ReadFile("../m2/discord.json")
 	if err != nil {
@@ -453,20 +457,6 @@ func TestM2DiscordCore(t *testing.T) {
 	case <-h.ctx.Done():
 		t.Fatal("initial channel turn did not start")
 	}
-	// Reject each established session while real Core work is pending. The
-	// supervisor must Identify again without replaying admitted interactions.
-	for i, code := range scenario.SessionCloseCodes {
-		barrier(fmt.Sprint(60 + i))
-		frames <- websocket.StatusCode(code)
-		waitAuth(2, "", 0)
-		seq = 1
-		interaction()
-		button("51", scenario.Owner)
-		barrier(fmt.Sprint(70 + i))
-		if approvalState().State != authority.Approved || len(edits) != 1 || buttonAnswers.Load() != 1 {
-			t.Fatal("session reset lost the native interaction receipt")
-		}
-	}
 	message("14", scenario.Owner, steeringText)
 	for {
 		var conversation string
@@ -486,6 +476,21 @@ func TestM2DiscordCore(t *testing.T) {
 		case <-h.ctx.Done():
 			t.Fatal("active channel turn blocked steering admission")
 		case <-time.After(10 * time.Millisecond):
+		}
+	}
+
+	// Reject each established session while real Core work is pending. The
+	// supervisor must Identify again without replaying admitted interactions.
+	for i, code := range closeCodes {
+		barrier(fmt.Sprint(60 + i))
+		frames <- code
+		waitAuth(2, "", 0)
+		seq = 1
+		interaction()
+		button("51", scenario.Owner)
+		barrier(fmt.Sprint(70 + i))
+		if approvalState().State != authority.Approved || len(edits) != 1 || buttonAnswers.Load() != 1 {
+			t.Fatal("session reset lost the native interaction receipt")
 		}
 	}
 
@@ -548,7 +553,7 @@ func TestM2DiscordCore(t *testing.T) {
 		t.Fatalf("duplicate/external dispatch: model=%d sends=%d", modelCalls.Load(), sendCalls.Load())
 	}
 	core = start()
-	waitAuth(6, fmt.Sprintf("session-%d", len(scenario.SessionCloseCodes)+1), seq)
+	waitAuth(6, fmt.Sprintf("session-%d", len(closeCodes)+1), seq)
 	c = connect()
 	defer c.conn.Close()
 	waitConnection(func(row protocol.ChannelConnection) bool {

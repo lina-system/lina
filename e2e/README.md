@@ -243,8 +243,11 @@ The M2 Discord scenario is `m2/discord.json`, executed by `TestM2DiscordCore`.
 It installs the test host with a matching build manifest, runs production Core
 boot in a separate process, and controls it through the generated socket
 protocol. Synthetic outbound Gateway/REST and Responses endpoints demonstrate
-channel input, read tools, background results, deduplication across Gateway
-4007/4009 session resets, shaping, blocked state and restart without live credentials.
+channel input, read tools, background results, deduplication, shaping, blocked
+state and restart without live credentials. `m2/discord-recovery.json` repeats
+the journey across Gateway 4007/4009 closes, including command and approval-button
+deduplication and Resume with the exact replacement session and committed sequence
+after Core restart.
 
 `m2/tui-composer-identity.json` installs Core/TUI into a temporary root and creates
 and chooses another agent through the real TUI. It checks that the empty composer,
@@ -296,6 +299,13 @@ conversation and bundled-worker readiness check, and resumes with a verified
 tool result. Start refusal rolls back, while provider failure and updater death
 after READY hold the new state. Package SIGKILL tests acknowledge each rename
 boundary without fixed startup delays.
+
+`go test ./e2e/m1 -run '^TestM2UpdateDataOperations$' -count=1` runs
+`m2/update-data-operations.json`. It injects a 31-second delay into the installed
+backup or restore command before executing the real CLI, crossing the installer's
+30-second probe budget. The backup case completes activation, worker readiness
+and a resumed tool result; the restore case recovers from a candidate start
+failure and verifies a conversation on the restored Core.
 
 `go test ./e2e/m1 -run '^TestM2UpdateClaudeCredential$' -count=1` uses the same
 installed update harness with a synthetic Claude token and an empty login home.

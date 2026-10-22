@@ -4,15 +4,16 @@ package discord
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"sync/atomic"
+	"time"
+
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/gateway"
 	"github.com/thisisjun786/lina/kit/secret"
-	"net/http"
-	"sync/atomic"
-	"time"
 )
 
 type frame struct {
@@ -60,6 +61,9 @@ func (a *Adapter) Run(ctx context.Context, in gateway.Admitter) error {
 	var hello frame
 	err = wsjson.Read(helloCtx, conn, &hello)
 	cancelHello()
+	if websocket.CloseStatus(err) != -1 {
+		return a.sessionReadError(ctx, err)
+	}
 	var h struct {
 		Interval int64 `json:"heartbeat_interval"`
 	}
@@ -121,16 +125,7 @@ func (a *Adapter) Run(ctx context.Context, in gateway.Admitter) error {
 	for {
 		var f frame
 		if err := wsjson.Read(ctx, conn, &f); err != nil {
-			if parent.Err() != nil {
-				return parent.Err()
-			}
-			// Discord's invalid sequence and expired session cannot Resume.
-			if code := websocket.CloseStatus(err); code == 4007 || code == 4009 {
-				if err := a.resetSession(ctx); err != nil {
-					return err
-				}
-			}
-			return errUnavailable
+			return a.sessionReadError(parent, err)
 		}
 		switch f.Op {
 		case 11:
@@ -142,7 +137,9 @@ func (a *Adapter) Run(ctx context.Context, in gateway.Admitter) error {
 		case 7:
 			return errUnavailable
 		case 9:
-			if err := a.resetSession(ctx); err != nil {
+			// An invalid session cannot resume. Keep all native receipts, reset only
+			// session identity, and let the supervisor reconnect with backoff.
+			if err := a.clearSession(ctx); err != nil {
 				return err
 			}
 			return errUnavailable
@@ -170,9 +167,21 @@ func (a *Adapter) Run(ctx context.Context, in gateway.Admitter) error {
 	}
 }
 
-// Keep native receipts while discarding the unusable session and sequence.
-// The supervisor reconnects with backoff and Run sends a fresh Identify.
-func (a *Adapter) resetSession(ctx context.Context) error {
+func (a *Adapter) sessionReadError(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	// Discord requires a fresh Identify for invalid sequence and expired
+	// sessions. Other transport closes can Resume from the committed cursor.
+	if code := websocket.CloseStatus(err); code == 4007 || code == 4009 {
+		if err := a.clearSession(ctx); err != nil {
+			return err
+		}
+	}
+	return errUnavailable
+}
+
+func (a *Adapter) clearSession(ctx context.Context) error {
 	return a.db.Write(ctx, func(tx *canon.Tx) error {
 		_, err := tx.ExecContext(ctx, "UPDATE channel_connections SET cursor='' WHERE bot=?", a.bot.Key())
 		return err

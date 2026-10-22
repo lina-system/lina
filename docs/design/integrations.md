@@ -267,9 +267,10 @@ after durable admission while Core finishes the turn. Interaction tokens remain 
 The Discord adapter uses `github.com/coder/websocket` v1.8.15 for framing and
 standard-library HTTPS for individual REST calls. Core owns heartbeat,
 identify/resume, reconnect backoff and the durable session/sequence cursor.
-Gateway close codes 4007 (invalid sequence) and 4009 (session timed out) clear
-only that cursor before reconnecting with a fresh Identify. Native message and
-interaction receipts survive the reset; resumable disconnects retain the cursor.
+Gateway close 4007 (invalid sequence) or 4009 (session timed out) durably clears
+only that bot's session/sequence cursor before reconnecting with Identify,
+including a close received before Hello. Native receipts, pairing and bindings
+survive; other transport closes retain the cursor for Resume.
 The privileged message-content intent is requested only for an explicit
 `all_messages` binding; changing that requirement reconnects the session.
 Native message and interaction IDs remain deduplicated across sessions and
@@ -320,10 +321,14 @@ canonical approvals while the Gateway is active.
 The headless `e2e/m2/discord.json` scenario runs production boot in its own
 process with synthetic Gateway, REST and model endpoints. It covers protocol
 connection/pairing/binding, duplicated interactions, owner-only admission,
-foreground and background execution across non-resumable session closes, long
-reply shaping, blocked delivery and restart. Adapter tests independently cover
-close-code recovery, owner-only approval decisions,
+foreground and background execution, long reply shaping, blocked delivery and
+restart. Adapter tests independently cover owner-only approval decisions,
 presentation matching, token-free inboxes and REST error classification.
+The separate `e2e/m2/discord-recovery.json` scenario injects both non-resumable
+close codes into the running Core, checks fresh Identify and duplicate receipt
+handling for both commands and approval buttons, then completes tool/background
+work and delivers its results. After restarting Core it requires Resume with
+the replacement session ID and its last committed sequence (#547).
 
 Telegram's initial adapter uses `github.com/PaulSonOfLars/gotgbot/v2` at
 `v2.0.0-rc.37`, with no transitive modules. It advertises text, edits,

@@ -6,6 +6,5 @@
   "chat": "100",
   "input": "Return the synthetic channel result.",
   "paragraphs": [1500, 900],
-  "blocked_code": 50007,
-  "session_close_codes": [4007, 4009]
+  "blocked_code": 50007
 }
