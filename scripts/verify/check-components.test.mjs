@@ -77,21 +77,22 @@ test('a progressing acceptance package can finish beyond four minutes', t => {
   assert.ok(elapsed < componentsTimeoutMs, 'the suite stays inside the shared components guard');
 });
 
-test('the growing e2e suite can finish beyond six minutes within the component deadline', t => {
+test('cold setup and two progressing acceptance batches fit the shared deadline', t => {
   const sb = fixture(t);
   let elapsed = 0;
   const names = ['TestFirst', 'TestSecond'];
   const ran = [];
   t.mock.method(performance, 'now', () => elapsed);
   const result = checkComponents({ cwd: sb.dir, components: [{ name: 'lina', module: '.', packages: ['./e2e/...'] }], execute(command, args, options) {
-    if (args[0] === 'build') elapsed += 200_000;
+    // The cold CI run spent about 342 seconds before its acceptance batches.
+    if (args[0] === 'build') elapsed += 342_000;
     if (args[0] === 'list') return { status: 0, stdout: 'example.invalid/e2e\n', stderr: '' };
     if (args[0] === 'test' && args.includes('-list')) return { status: 0, stdout: names.join('\n')+'\n', stderr: '' };
     if (args[0] === 'test') {
       const minutes = Number(args.find(arg => arg.startsWith('-timeout='))?.match(/^\-timeout=(\d+)m$/)?.[1]);
       const index = args.indexOf('-run');
       const selected = index < 0 ? names : names.filter(name => new RegExp(args[index+1]).test(name));
-      const duration = 195_000 * selected.length;
+      const duration = 350_000 * selected.length;
       if (!Number.isFinite(minutes) || minutes * 60_000 <= duration || options.timeoutMs <= duration) {
         return { status: 1, stdout: 'e2e scenarios progressing\n', stderr: 'e2e package deadline expired\n' };
       }
@@ -103,7 +104,7 @@ test('the growing e2e suite can finish beyond six minutes within the component d
   } });
   assert.equal(result.status, 0, result.output);
   assert.deepEqual(ran.sort(), names, 'every scenario executes exactly once');
-  assert.equal(elapsed, 590_000, 'setup plus the full 390-second corpus must execute');
+  assert.equal(elapsed, 1_042_000, 'cold setup plus both progressing batches must execute');
   assert.ok(elapsed < componentsTimeoutMs, 'e2e remains within the shared component guard');
 });
 
@@ -240,7 +241,7 @@ test('module tests retain a diagnostic deadline inside their process budget', t 
   const suite = calls.find(call => call.args[0] === 'test');
   assert.ok(suite.args.includes('-timeout=6m'), 'Go must emit stuck-test stacks before the process guard');
   assert.ok(suite.timeoutMs > 360_000, 'the shared budget leaves time for Go timeout diagnostics');
-  assert.ok(suite.timeoutMs <= 895_000, 'the test command retains the shared components deadline');
+  assert.ok(suite.timeoutMs <= componentsTimeoutMs - 5000, 'the test command retains the shared components deadline');
   assert.ok(calls.every(call => call.timeoutMs > 0 && call.timeoutMs <= componentsTimeoutMs));
 });
 
