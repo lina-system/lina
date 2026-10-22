@@ -78,9 +78,8 @@ func telegramWire(body string) *http.Response {
 	return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}
 }
 
+// Serial: Telegram polling is guarded process-wide by the shared bot ID.
 func TestM1TelegramCommitCrash(t *testing.T) {
-	t.Parallel()
-
 	for _, boundary := range []string{"before_commit", "after_commit"} {
 		t.Run(boundary, func(t *testing.T) {
 			h := newHarness(t, "")
@@ -177,9 +176,8 @@ func TestM1TelegramCommitChild(t *testing.T) {
 	}
 }
 
+// Serial: Telegram polling is guarded process-wide by the shared bot ID.
 func TestM1TelegramOwnerButton(t *testing.T) {
-	t.Parallel()
-
 	h := newHarness(t, "")
 	agent := seedAcceptanceTelegram(t, h.root)
 	db, _ := acceptanceStore(t, h.root, 2)

@@ -21,7 +21,7 @@ assertion and operation deadline. Independent scenarios call `t.Parallel()` and
 foundation limits each batch to four concurrent tests, including parallel
 subtests. Each scenario owns its state, sockets, provider fixtures and cleanup;
 the shared command-build cache is locked and removed after `m.Run`.
-The Claude credential update scenario, environment-mutating tests, live-provider checks and subprocess entry points stay
+Same-bot Telegram scenarios, the Claude credential update scenario, environment-mutating tests, live-provider checks and subprocess entry points stay
 serial. A direct `go test -parallel=4 ./e2e/...` still runs the complete suite in
 one process. Each scenario starts real Core with a synthetic
 installed identity and a private temporary state root, and connects a generated-type JSON-RPC client

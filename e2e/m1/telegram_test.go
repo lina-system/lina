@@ -40,9 +40,8 @@ func (u unavailableTelegram) RoundTrip(r *http.Request) (*http.Response, error) 
 	return nil, r.Context().Err()
 }
 
+// Serial: Telegram polling is guarded process-wide by the shared bot ID.
 func TestM1TelegramUnreachable(t *testing.T) {
-	t.Parallel()
-
 	data, err := os.ReadFile("telegram.json")
 	if err != nil {
 		t.Fatal(err)
