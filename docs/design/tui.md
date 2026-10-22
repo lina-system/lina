@@ -275,6 +275,10 @@ The client computes no state of work. It shows the words and marks Core sends ([
 
 **Presentation kinds** are the kinds of version 1.0 of the client connection ([host-protocol.md](host-protocol.md#client-connection)): output delta, item done, turn state, approval request, question, result card, running-list update, background notice, progress view, waiting list, Details, readiness failure, and the results of agent, work-record, account, memory, channel and exchange requests, and error. An unknown kind is ignored and counted. The wire carries codes and parameters, and the TUI owns the Korean and English catalogs. Display strings travel only for text the person or an agent wrote. A secret placeholder from Core renders as a placeholder, and the TUI has no way to reveal one.
 
+Worker question-answer notices in conversation history carry a short, readable
+acknowledgement. Core keeps dynamic-tool response envelopes out of these display
+bodies, both during delivery and when restoring history.
+
 ## Layout, tiers and row budget (T-07)
 
 The screen is a pure function of State and terminal size. Core's validated welcome determines which regions are available ([host-protocol.md](host-protocol.md#versions-and-capabilities)). Running and waiting lists take no rows when empty or not granted. Missing list capabilities produce one localized, plain-language local notice outside conversation history, combining both missing lists into one explanation. Replayed welcomes and reconnects with the same capabilities do not add another notice; a later grant removes the obsolete explanation from the status line. No fallback string or peer diagnostic decides capability availability.

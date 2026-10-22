@@ -198,7 +198,7 @@ func (q workerQuestions) AnswerQuestion(ctx context.Context, person string, answ
 		raw, err = json.Marshal(wire.McpServerElicitationRequestResponse{Action: action})
 	}
 	if err == nil {
-		err = e.origin.workerNotice(ctx, e.input, *answer.CardID+":answer", "Worker question answered by the originating person: "+string(raw))
+		err = e.origin.workerNotice(ctx, e.input, *answer.CardID+":answer", "Your response to the worker was recorded.")
 	}
 	if err == nil {
 		sendCtx, cancel := context.WithTimeout(e.origin.ctx, 10*time.Second)
