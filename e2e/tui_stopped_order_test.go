@@ -77,7 +77,7 @@ func TestM1TUIStoppedNoticeOrder(t *testing.T) {
 		}
 	}
 	environment := []string{"TERM=xterm-256color", "COLORTERM=truecolor"}
-	terminal := h.startTerminalSize(environment, false, true, scenario.Width, scenario.Height)
+	terminal := startReadyScreenTUI(t, h, environment, scenario.Width, scenario.Height, nil)
 	waitScreen(t, h, terminal, design.Text(design.English, "live"))
 	h.keys(terminal, scenario.Input+"\r")
 	waitScreen(t, h, terminal, scenario.Partial)

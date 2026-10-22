@@ -68,7 +68,7 @@ func TestM1TUIConversationResize(t *testing.T) {
 	}
 	environment := []string{"TERM=xterm-256color", "COLORTERM=truecolor"}
 	size := scenario.Sizes[0]
-	session := h.startTerminalSize(environment, false, true, size.Width, size.Height)
+	session := startReadyScreenTUI(t, h, environment, size.Width, size.Height, nil)
 	waitScreen(t, h, session, design.Text(design.English, "live"))
 	h.keys(session, scenario.Input+"\r")
 	waitTurn()
@@ -148,10 +148,48 @@ func waitMatchingScreen(t *testing.T, h *harness, term *terminal, expected tuite
 	defer cancel()
 	want := strings.Join(screenRows(expected), "\n")
 	actual, err := term.screen.Wait(ctx, func(s tuiterm.Snapshot) bool {
-		return strings.Join(screenRows(s), "\n") == want && s.CursorX == expected.CursorX &&
+		reserve := completionRowCount(s)
+		return strings.Join(resizeComparableRows(s, reserve), "\n") == strings.Join(resizeComparableRows(expected, reserve), "\n") && s.CursorX == expected.CursorX &&
 			s.CursorY == expected.CursorY && s.CursorHidden == expected.CursorHidden && s.AltScreen
 	})
 	if err != nil {
 		t.Fatalf("resized screen differs from fresh client: %v\nactual:\n%s\nexpected:\n%s", err, strings.Join(screenRows(actual), "\n"), want)
 	}
+}
+
+// Completion durations are local display metadata, so a fresh client has none.
+// Reserve their viewport rows in both clients before comparing the visible tail.
+// The header, composer, status, wrapping and cursor still compare exactly.
+func completionRowCount(s tuiterm.Snapshot) int {
+	prefix := strings.TrimSuffix(design.Text(design.English, "activity.worked_for"), "%s")
+	count := 0
+	for _, row := range screenRows(s) {
+		if strings.HasPrefix(row, prefix) {
+			count++
+		}
+	}
+	return count
+}
+
+func resizeComparableRows(s tuiterm.Snapshot, reserve int) []string {
+	rows := screenRows(s)
+	prefix := strings.TrimSuffix(design.Text(design.English, "activity.worked_for"), "%s")
+	var transcript []string
+	for _, row := range rows[1 : len(rows)-2] {
+		if !strings.HasPrefix(row, prefix) {
+			transcript = append(transcript, row)
+		}
+	}
+	for len(transcript) > 0 && transcript[len(transcript)-1] == "" {
+		transcript = transcript[:len(transcript)-1]
+	}
+	capacity := len(rows) - 3
+	if len(transcript) > capacity-reserve {
+		transcript = transcript[len(transcript)-(capacity-reserve):]
+	}
+	for len(transcript) < capacity {
+		transcript = append(transcript, "")
+	}
+	result := append([]string{rows[0]}, transcript...)
+	return append(result, rows[len(rows)-2:]...)
 }

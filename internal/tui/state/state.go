@@ -25,6 +25,7 @@ type Block struct {
 	Body, Title              string
 	RunID                    string
 	TurnKnown, TurnActive    bool
+	TurnStarted, TurnAt      time.Time
 	Revision                 uint64
 	Kind                     protocol.Kind
 	Done, Local              bool
@@ -57,6 +58,8 @@ type State struct {
 	Draft              Draft
 	Busy, Stopping     bool
 	TurnActive         bool
+	Activity           Activity
+	Worked             map[string]time.Duration
 	Gen                uint64
 	pending            *SendRequest
 	Offset             time.Duration
@@ -108,7 +111,10 @@ type Send struct {
 	Key   string
 	Queue bool
 }
-type Turn struct{ Active bool }
+type Turn struct {
+	Active      bool
+	Started, At time.Time
+}
 type ConnectionLost struct{}
 
 func (ConnectionLost) isMsg() {}
@@ -158,6 +164,7 @@ func (s State) clone() State {
 	s.Topics = maps.Clone(s.Topics)
 	s.Folds = maps.Clone(s.Folds)
 	s.Notices = slices.Clone(s.Notices)
+	s.Worked = maps.Clone(s.Worked)
 	return s
 }
 
@@ -215,6 +222,7 @@ func (s *State) setEpoch(e string) []string {
 	}
 	s.Stopping = false
 	s.TurnActive = false
+	s.Activity = Activity{}
 	s.Gen++
 	topics := slices.Sorted(maps.Keys(s.Topics))
 	for _, name := range topics {
@@ -282,6 +290,10 @@ func (s *State) put(b Block) {
 // Reduce never mutates its input or reads time. Commands carry intents for the
 // UI's effect runner, and every async response must carry its issuing Gen.
 func Reduce(s State, m Msg) (State, []Cmd) {
+	if tick, ok := m.(Tick); ok {
+		s.ServerNow = tick.Now.Add(s.Offset)
+		return s, nil
+	}
 	s = s.clone()
 	switch m := m.(type) {
 	case FocusConversation:
@@ -303,6 +315,9 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 			s.Cards = nil
 			s.CardView = CardView{}
 			s.Blocks = nil
+			s.Worked = nil
+			s.Activity = Activity{}
+			s.TurnActive = false
 			s.Folds = nil
 			s.Selected = ""
 			s.Scroll = Position{}
@@ -378,6 +393,30 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 		}
 		appendThrough(len(order) - 1)
 		s.Blocks = kept
+		for id := range s.Worked {
+			if s.find(id) < 0 {
+				delete(s.Worked, id)
+			}
+		}
+		turnKnown := false
+		for _, b := range m.Items {
+			if b.Kind == protocol.KindTurnState && b.TurnKnown {
+				turnKnown = true
+				// A snapshot can restore activity, but cannot create a completion notice.
+				b.TurnAt = time.Time{}
+				s.activityBlock(b)
+			}
+		}
+		if strings.HasPrefix(m.Topic, "conversation:") && !turnKnown {
+			s.turn(Turn{})
+		}
+		if s.TurnActive {
+			for _, b := range m.Items {
+				if !b.Done && b.Kind == protocol.KindOutputDelta {
+					s.activityBlock(b)
+				}
+			}
+		}
 		if s.Topics == nil {
 			s.Topics = map[string]Topic{}
 		}
@@ -448,6 +487,7 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 		b.Text += text
 		b.Revision = m.Revision
 		s.put(b)
+		s.activityBlock(b)
 	case ItemDone:
 		if !epoch(m.Epoch) || compare(m.Epoch, s.Epoch) < 0 || m.Block.ID == "" || m.Topic == "" {
 			return s, nil
@@ -492,7 +532,7 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 		b.Body = sanitize.Display(b.Body)
 		b.filter = sanitize.Stream{}
 		s.put(b)
-		s.Stopping = false
+		s.activityBlock(b)
 		if b.Card != nil {
 			return s.reduceCard(PutCard{Card: *b.Card, Notify: m.Notify})
 		}
@@ -591,10 +631,7 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 			s.Gen++
 		}
 	case Turn:
-		s.TurnActive = m.Active
-		if !m.Active {
-			s.Stopping = false
-		}
+		s.turn(m)
 	case Interrupt:
 		if s.Stopping {
 			return s, nil
@@ -602,8 +639,6 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 		s.Stopping = true
 		req := InterruptRequest{Gen: s.Gen}
 		return s, []Cmd{func(context.Context) Msg { return req }}
-	case Tick:
-		s.ServerNow = m.Now.Add(s.Offset)
 	default:
 		return s.reduceCard(m)
 	}

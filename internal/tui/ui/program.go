@@ -451,8 +451,19 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 		}
 		return display.showShell(model)
 	}
+	var activity activityClock
+	defer activity.stop()
 	for {
+		if display.interactive {
+			activity.sync(model.activityInterval())
+		}
 		select {
+		case now := <-activity.C:
+			model.Update(activityTick(now))
+			if err := display.showShell(model); err != nil {
+				return err
+			}
+			activity.next()
 		case <-ctx.Done():
 			cause := context.Cause(ctx)
 			if errors.Is(cause, errQuit) {
