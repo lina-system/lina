@@ -1,0 +1,27 @@
+{
+  "license": "SPDX-License-Identifier: Apache-2.0",
+  "profile": "synthetic-profile",
+  "owner_session": "synthetic-session",
+  "statement": "Synthetic request",
+  "expected_references": 11,
+  "expected_events": 3,
+  "expected_promoted": 1,
+  "sources": [
+    {
+      "kind": "lcm",
+      "setup": "UPDATE host_uid_bindings SET lineage_key='home:synthetic-session'; INSERT INTO host_uid_bindings(store_id,uid,lineage_key,kind,binding_version) VALUES(2,'synthetic-message-2','home:synthetic-session','canonical',1)",
+      "keys": {
+        "messages": ["store_id"],
+        "summary_nodes": ["node_id"],
+        "summary_node_provenance": ["node_id"],
+        "message_relations": ["relation_id"],
+        "host_uid_bindings": ["lineage_key", "uid", "store_id", "kind"]
+      }
+    },
+    {
+      "kind": "state",
+      "setup": "INSERT INTO messages(id,session_id,role,content,timestamp,display_identity) VALUES(7,'synthetic-session','tool','Synthetic tool output',103.5,x'00ff')",
+      "keys": {"messages": ["id"], "sessions": ["id"]}
+    }
+  ]
+}
