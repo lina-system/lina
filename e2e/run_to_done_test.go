@@ -19,7 +19,15 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/boot"
 	work "github.com/thisisjun786/lina/internal/core/work/goal"
+	"github.com/thisisjun786/lina/kit/proc"
 )
+
+func TestMain(m *testing.M) {
+	if len(os.Args) > 1 && os.Args[1] == "proc-supervise" {
+		os.Exit(proc.SuperviseMain(os.Args[2:], os.Stderr))
+	}
+	os.Exit(m.Run())
+}
 
 func TestRunToDoneStubWorker(t *testing.T) {
 	if os.Getenv("LINA_RUN_TO_DONE_STUB") != "1" {
