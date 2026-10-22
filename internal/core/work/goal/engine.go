@@ -265,6 +265,9 @@ func (e *Engine) Reconcile(ctx context.Context) error {
 	}
 	now := e.cfg.Now()
 	err := e.journal.Update(ctx, Transition{ID: "derive:" + rand.Text(), Kind: "work.derived", At: now.Unix()}, func(v *View) error {
+		if err := e.reconcileRetired(v); err != nil {
+			return err
+		}
 		s, err := snapshotView(v)
 		if err != nil {
 			return err
@@ -301,7 +304,7 @@ func (e *Engine) Reconcile(ctx context.Context) error {
 				if t != nil && a.Kind == PlanGoal {
 					t.RepairAsked = true
 				}
-				if t != nil && reserves(a) {
+				if t != nil && reserves(a) && a.ObserveActionID == "" {
 					t.Stage = TaskBuilding
 					t.Attempt = a.Attempt
 					t.NodeID = a.NodeID
@@ -419,14 +422,15 @@ func (e *Engine) Claim(ctx context.Context, id string) (Action, error) {
 		if g.State == GoalDone || g.State == GoalStopped {
 			return ErrConflict
 		}
-		if t := goalTask(&g, a.TaskID); t != nil && a.Kind == Merge && t.Head != a.Revision {
+		if changedInputs(g, a) || a.ObserveActionID == "" && !currentActionTarget(g, a) {
 			return ErrConflict
 		}
-		if g.DefinitionPending && a.Kind != PlanGoal || a.GoalRevision != 0 && a.GoalRevision != g.Revision {
+		if g.DefinitionPending && a.Kind != PlanGoal && a.ObserveActionID == "" {
 			return ErrConflict
 		}
 		a.State = "claimed"
 		a.Epoch = e.cfg.Epoch
+		a.InputVersion = inputVersion(g, a)
 		out = a
 		return put(v, "action", id, a)
 	})
@@ -475,10 +479,11 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 		a.ObserverEpoch = e.cfg.Epoch
 		a.Receipt = encode(o)
 		a.Deadline = e.cfg.Now().Add(SafetySweep).Unix()
-		if staleJudgment(g, a) {
+		if staleInputs(g, a) {
 			// Retain the obsolete response as history, never as current evidence
 			// or a plan for this revision. A late result is not a Core failure.
 			a.State = "finished"
+			a.Superseded = true
 			return put(v, "action", id, a)
 		}
 		if a.State == "finished" {
@@ -600,7 +605,7 @@ func applySuccess(g *Goal, t *Task, a Action, o Observation, now int64) error {
 				break
 			}
 		}
-		if g.Revision != a.GoalRevision || g.CheckRound != a.CheckRound || !currentEvidence(*g, criterion, *o.Criterion) || o.Criterion.Revision != a.Revision {
+		if !currentEvidence(*g, criterion, *o.Criterion) || o.Criterion.Revision != a.Revision {
 			return ErrConflict
 		}
 		for i, old := range g.Checks {
@@ -790,9 +795,13 @@ func (e *Engine) step(ctx context.Context) error {
 			defer func() { e.mu.Lock(); delete(e.running, a.ID); e.mu.Unlock() }()
 			var o Observation
 			var err error
-			effectMayHaveStarted := observe
-			if observe {
-				o, err = e.cfg.Driver.Observe(ctx, a)
+			effectMayHaveStarted := observe || a.ObserveActionID != ""
+			if effectMayHaveStarted {
+				source := a
+				if a.ObserveActionID != "" {
+					source.ID = a.ObserveActionID
+				}
+				o, err = e.cfg.Driver.Observe(ctx, source)
 			} else if err = e.cfg.Driver.Authorize(ctx, a); err == nil {
 				effectMayHaveStarted = true
 				o, err = e.cfg.Driver.Execute(ctx, a)

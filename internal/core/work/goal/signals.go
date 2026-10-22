@@ -32,6 +32,24 @@ func (e *Engine) Signal(ctx context.Context, s Signal) error {
 			if a.State == "finished" {
 				return nil
 			}
+			if a.TaskID != "" {
+				g, err := loadGoal(v, a.GoalID)
+				if err != nil {
+					return err
+				}
+				if err = e.hydrate(&g); err != nil {
+					return err
+				}
+				t := goalTask(&g, a.TaskID)
+				if t == nil {
+					return ErrInvalid
+				}
+				t.PRGeneration++
+				t.PR = PRState{}
+				if err = put(v, "goal", g.ID, g); err != nil {
+					return err
+				}
+			}
 			a.Signal = hex.EncodeToString(sum[:])
 			a.Deadline = e.cfg.Now().Unix()
 			return put(v, "action", a.ID, a)
@@ -53,6 +71,7 @@ func (e *Engine) Signal(ctx context.Context, s Signal) error {
 		// Every task hint invalidates the prior observation, even while this PR
 		// waits for another task's merge slot and has no queued merge yet.
 		t.PR = PRState{}
+		t.PRGeneration++
 		for _, r := range v.Records("action") {
 			var a Action
 			if err = json.Unmarshal(r.Body, &a); err != nil {
