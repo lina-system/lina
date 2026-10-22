@@ -44,6 +44,7 @@ func Migrations() []Migration {
 		{Version: 30, SQL: mergesSchema},
 		{Version: 31, SQL: WorkerDispatchSchema},
 		{Version: 32, SQL: DiscordSchema},
+		{Version: 33, SQL: recordsKoreanSearchSchema},
 	}
 }
 

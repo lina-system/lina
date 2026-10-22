@@ -830,8 +830,26 @@ and derives record revisions from their history; it never adopts an outside
 commit as a new Core publication.
 
 `query_records` searches or lists the authenticated person's records, optionally
-filtering kind, with deterministic id ordering and a bounded page. Person and
-filesystem paths are not model arguments. A changed, added, deleted, invalid or
+filtering kind, with deterministic id ordering and a bounded page.
+Title/note searches containing an adjacent pair of composed Hangul syllables
+use literal substring matching, so `연필` finds `연필을` and `등대` finds `등대는`.
+As in conversation and memory search, this also matches inside compounds such
+as `연필통`; it is not morphological analysis or a dictionary of particles.
+Three or more characters use a separate FTS5 trigram index, and a two-syllable
+query uses distinct adjacent Hangul pairs. Pairs never bridge title/note,
+spaces, punctuation or another script. Quotes and operator words remain part
+of the literal Korean phrase. Other queries retain the existing word-token
+FTS search, including one-character and short Latin queries. Empty searches
+still list records. Person/kind/cursor filters apply before the page limit,
+and multiple occurrences return one row per record.
+
+An appended migration backfills both Korean indexes from the existing text
+projection and records their tokenizer/fallback in `search_index_config`.
+Projection replacement updates these indexes in the same transaction; rebuild
+derives them again from validated published files. Neither migration nor
+rebuild changes the record's id, bytes or saved revision.
+
+Person and filesystem paths are not model arguments. A changed, added, deleted, invalid or
 non-regular file, or a changed repository head, refuses reads, queries, writes
 and rebuild with `records_changed`. Tool results show a bounded list of change
 kinds and validation outcomes without outside bytes or filesystem paths. Startup

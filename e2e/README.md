@@ -251,6 +251,12 @@ and chooses another agent through the real TUI. It checks that the empty compose
 header and reply speaker name that agent before and after Core reconnect, using
 a loopback Responses fixture and a real PTY.
 
+`m2/records-korean-search.json` runs the installed Core and a real PTY TUI
+against a loopback Responses fixture. It saves a Korean memo, checks the
+attached-word and list controls, searches by the noun before and after an edit,
+restarts Core and checks the same id, revision and note through search and read.
+Run `go test -count=1 ./e2e/m1 -run '^TestM2KoreanRecordSearchInstalledTUI$'`.
+
 `m2/github-ci.json` starts the real Core binary with a synthetic `gh` executable
 in its isolated PATH. It negotiates the GitHub capability, refuses an unnegotiated
 read, observes rate-limited CI pending and its retry deadline, then observes head,

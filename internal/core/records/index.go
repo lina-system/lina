@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 )
@@ -156,10 +157,19 @@ func (s *Store) Query(ctx context.Context, p Params) ([]Row, error) {
 			query += " AND t.kind=?"
 			args = append(args, p.Kind)
 		}
-		if strings.TrimSpace(p.Search) != "" {
+		if search := strings.TrimSpace(p.Search); search != "" {
 			// Quote the whole phrase; model text cannot inject FTS query operators.
-			query += " AND i.id IN (SELECT id FROM records_fts WHERE records_fts MATCH ?)"
-			args = append(args, `"`+strings.ReplaceAll(strings.TrimSpace(p.Search), `"`, `""`)+`"`)
+			switch {
+			case len(canon.HangulBigrams(search)) == 0:
+				query += " AND i.id IN (SELECT id FROM records_fts WHERE records_fts MATCH ?)"
+				args = append(args, canon.TrigramPhrase(search))
+			case utf8.RuneCountInString(search) == 2:
+				query += " AND i.id IN (SELECT id FROM records_korean_bigram WHERE gram=?)"
+				args = append(args, search)
+			default:
+				query += " AND i.id IN (SELECT id FROM records_korean_fts WHERE records_korean_fts MATCH ?)"
+				args = append(args, canon.TrigramPhrase(search))
+			}
 		}
 		query += " ORDER BY i.id LIMIT ?"
 		args = append(args, p.Limit)

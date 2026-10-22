@@ -340,6 +340,14 @@ How the work engine's terms map to the frame:
 
 Goals, 일, 할 일, 계속 챙기는 것, memos and knowledge documents are human-readable records. They are files in a Git repository under a PARA folder layout, and LINA Core is their only writer. The database indexes the files and can be rebuilt from them at any time. Machine state stays in the database: the conversation ledger, grants, receipts, the work queue and work ledger, cursors, leases, claims and idempotency keys. A cursor moves only after the write it covers has succeeded.
 
+Title and note search finds Korean nouns of two or more composed syllables with
+attached particles, including `연필` in `연필을` and `등대` in `등대는`. It uses the
+literal substring approach of conversation and memory search, including matches
+within compound words. Existing saved records gain this search on upgrade;
+edits, index rebuilds and Core restarts preserve it. Non-Korean word search,
+owner/kind filters and bounded id-ordered pages remain as described in
+[C-53](go-core.md#records-and-memory).
+
 - A record is one Markdown file with small typed front matter: id, kind, state category, dates, recurrence, blocked-by ids, tags and the ids it belongs to. Dates are ISO 8601, with a zone for timed values and plain dates otherwise. LINA Core allocates the id. It lives in the front matter and never in the path. Promotion and archiving change fields of the record (its kind or state), never its id or its file. The file name carries a slug for people to read.
 - The folder layout and the place of the repository in the state root are defined in [filesystem.md](filesystem.md#records-repository).
 - Git words stay hidden from people who do not use Git: every change is a saved version. The revision of a record is the commit that holds it, and a write against a stale revision is refused with `stale_revision`.
