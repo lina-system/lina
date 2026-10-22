@@ -383,7 +383,11 @@ further effects. Delivered effect questions use the existing authenticated quest
 card handler. Accepted direction is durably recorded in the run and admitted to
 the originating conversation with a stable input key; recovery retries that
 delivery without admitting another input or clearing unknown effect receipts.
-Decline and cancel close only the question. Ordinary first-error checkpoint retries are scheduled by the
+Decline and cancel close only the question. A deleted recipient withdraws its
+question; a previously accepted direction remains durable, and a delivery failure
+for that recipient cannot block other runs, notices or Core startup. With no
+configured model route, startup retains the existing notice history without
+requiring a live run service. Ordinary first-error checkpoint retries are scheduled by the
 run supervisor after the failed execution leaves the live set.
 
 **C-51 Reply shape (new).** [conversation-and-memory.md](conversation-and-memory.md#reply-shape) sets the budgets. This decision fixes the engine.

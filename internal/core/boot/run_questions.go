@@ -3,6 +3,8 @@ package boot
 
 import (
 	"context"
+	"errors"
+	"github.com/thisisjun786/lina/internal/core/agents"
 	"strings"
 
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
@@ -46,6 +48,13 @@ func (q runQuestions) Question(ctx context.Context, person, id string) (protocol
 		outcome := protocol.DecisionOutcomeResolved
 		card.Outcome = &outcome
 	}
+	if _, err := r.agents.Get(ctx, record.Origin.Agent); err != nil {
+		if !errors.Is(err, agents.ErrNotFound) {
+			return protocol.Question{}, err
+		}
+		outcome := protocol.DecisionOutcomeWithdrawn
+		card.Outcome = &outcome
+	}
 	return protocol.Question{ConversationID: record.Origin.Conversation, Card: card, Form: &protocol.QuestionForm{PluginName: "Background work", Fields: []protocol.FormField{{Name: "Direction", Type: protocol.FormFieldTypeText}}}}, nil
 }
 
@@ -53,8 +62,12 @@ func (q runQuestions) AnswerQuestion(ctx context.Context, person string, answer 
 	if answer.CardID == nil || answer.Revision == nil || *answer.Revision != "1" {
 		return protocol.DecisionOutcomeStaleGroup, nil
 	}
-	if _, err := q.Question(ctx, person, *answer.CardID); err != nil {
+	question, err := q.Question(ctx, person, *answer.CardID)
+	if err != nil {
 		return "", err
+	}
+	if question.Card.Outcome != nil {
+		return *question.Card.Outcome, nil
 	}
 	text := ""
 	if answer.Answer == protocol.QuestionAnswerActionAccept {
@@ -67,7 +80,7 @@ func (q runQuestions) AnswerQuestion(ctx context.Context, person string, answer 
 		}
 		text = *value.String
 	}
-	err := q.runtime.background.service.AnswerEffectQuestion(ctx, person, strings.TrimSuffix(*answer.CardID, ":effects"), string(answer.Answer), text)
+	err = q.runtime.background.service.AnswerEffectQuestion(ctx, person, strings.TrimSuffix(*answer.CardID, ":effects"), string(answer.Answer), text)
 	if err != nil {
 		return "", err
 	}

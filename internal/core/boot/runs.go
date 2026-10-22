@@ -326,8 +326,11 @@ func (r *conversationRuntime) syncRuns(ctx context.Context) error {
 			continue
 		}
 		conversations[record.Origin.Conversation] = true
-		if err = r.deliverEffectAnswer(ctx, record); err != nil {
-			return err
+		// Answer delivery is a per-recipient outbox. An unavailable/deleted
+		// agent must not block unrelated runs or Core startup. Keep the answer
+		// pending for a later pass (including restoration of that agent).
+		if err = r.deliverEffectAnswer(ctx, record); err != nil && ctx.Err() != nil {
+			return ctx.Err()
 		}
 		if !record.Released && record.Promotion == nil && (record.State == runs.Working || record.State == runs.Waiting && record.Reason == "") {
 			var committed int
@@ -451,12 +454,19 @@ func (r *conversationRuntime) publishNoticeText(ctx context.Context, key string,
 	for _, notice := range notices {
 		summaries = append(summaries, notice.Summary)
 	}
-	if err := r.publishRunQuestions(ctx, notices); err != nil {
-		return err
+	if r.background != nil {
+		if err := r.publishRunQuestions(ctx, notices); err != nil {
+			return err
+		}
 	}
 	text := strings.Join(summaries, "\n")
 	if err := r.publish(ctx, protocol.KindBackgroundNotice, key, protocol.BackgroundNotice{Text: &text}); err != nil {
 		return err
+	}
+	// Unconfigured Core retains its existing history-only view; no running
+	// service or result-read capability has been admitted.
+	if r.background == nil {
+		return nil
 	}
 	for _, notice := range notices {
 		if notice.Result == "" {

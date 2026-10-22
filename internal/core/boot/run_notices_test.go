@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/budget"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
@@ -159,5 +160,75 @@ func TestEffectQuestionReachesConversationAtBoundary(t *testing.T) {
 	record, err := r.background.service.Get(t.Context(), h.ID)
 	if err != nil || record.EffectsQuestion == nil || record.EffectsQuestion.Effects[0].Code != loop.Unknown || !record.EffectsQuestion.Answer.Delivered {
 		t.Fatal("question delivery changed effect authority", err)
+	}
+}
+
+func TestRunNoticeRestoresWithoutConfiguredModel(t *testing.T) {
+	r := controlRuntime(t)
+	if r.background != nil {
+		t.Fatal("fixture unexpectedly configured a model")
+	}
+	if err := r.publishNoticeText(t.Context(), "retained-notice", []lane.Notice{{ID: "retained-notice", Run: "retained-run", Summary: "Retained report", Result: "retained-material", ResultRevision: 1}}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDeletedEffectRecipientDoesNotBlockOtherRunNotices(t *testing.T) {
+	r := runRuntime(t)
+	b := runs.Brief{Goal: "finish request", Scope: "reads", NotTouch: "effects", Done: "report", Result: "summary", Checks: []runs.Check{{Name: "report", Kind: runs.Claimed}}}
+	h, err := r.background.service.StartFromTurn(t.Context(), r.runOrigin("deleted-effect"), b, budget.Handoff{Turn: "deleted-effect", Input: "whole request", Effects: []budget.Effect{{CallID: "send", Key: "send-key", Tool: "send", Code: loop.Unknown}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = r.background.service.AnswerEffectQuestion(t.Context(), r.person, h.ID, "accept", "Continue reading only"); err != nil {
+		t.Fatal(err)
+	}
+	if err = r.agents.Delete(t.Context(), r.agent, r.person, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	other, err := r.agents.Create(t.Context(), agents.Create{Name: "Other", PersonID: r.person, Preset: "lina"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	origin := r.runOrigin("unrelated")
+	origin.Agent, origin.Conversation = other.ID, "main:"+other.ID
+	id, _, err := r.background.service.Start(t.Context(), origin, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = r.background.service.Stop(t.Context(), id); err != nil {
+		t.Fatal(err)
+	}
+	deliveries := make(chan lane.Delivery, 4)
+	r.background.notices.OnDelivered = func(d lane.Delivery) { deliveries <- d }
+	for range 2 {
+		if err = r.syncRuns(t.Context()); err != nil {
+			t.Fatalf("unavailable recipient stopped global sync: %v", err)
+		}
+	}
+	for seen, questionSeen := false, false; !seen || !questionSeen; {
+		select {
+		case d := <-deliveries:
+			for _, n := range d.Notices {
+				if n.Run == id {
+					seen = true
+				}
+				if n.Run == h.ID {
+					questionSeen = true
+				}
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("unrelated landing blocked")
+		}
+	}
+	record, err := r.background.service.Get(t.Context(), h.ID)
+	if err != nil || record.EffectsQuestion.Answer == nil || record.EffectsQuestion.Answer.Delivered || record.EffectsQuestion.Effects[0].Code != loop.Unknown {
+		t.Fatal("undelivered answer or unknown effect lost", err)
+	}
+	// Already delivered cards cannot accept new direction after their agent is deleted.
+	key := h.ID + ":effects"
+	q, err := (runQuestions{runtime: r}).Question(t.Context(), r.person, key)
+	if err != nil || q.Card.Outcome == nil || *q.Card.Outcome != protocol.DecisionOutcomeWithdrawn {
+		t.Fatalf("deleted recipient card=%+v err=%v", q, err)
 	}
 }
