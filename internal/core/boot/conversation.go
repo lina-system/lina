@@ -26,6 +26,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/assemble/atropos"
 	"github.com/thisisjun786/lina/internal/core/assets"
 	"github.com/thisisjun786/lina/internal/core/authority"
+	"github.com/thisisjun786/lina/internal/core/budget"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
@@ -39,6 +40,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/modelpath"
 	"github.com/thisisjun786/lina/internal/core/reply"
 	"github.com/thisisjun786/lina/internal/core/retract"
+	"github.com/thisisjun786/lina/internal/core/runs"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/internal/core/skills"
 	"github.com/thisisjun786/lina/internal/core/turn"
@@ -59,6 +61,8 @@ type acceptedSteering struct {
 }
 
 type conversationRuntime struct {
+	background   *backgroundRuntime
+	router       *conversationRouter
 	decisions    *clientsrv.Decisions
 	replaySocket string
 	dispatchMu   *sync.RWMutex
@@ -175,7 +179,8 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err != nil {
 		return nil, err
 	}
-	r.identity = clientsrv.Identity{PersonID: r.person, Agents: []protocol.Agent{{AgentID: r.agent, Name: first.Agent.Name}}, Operations: clientsrv.ConversationOperations(&conversationRouter{root: r, views: map[string]*conversationRuntime{r.agent: r}}), Topics: r.topics, AuthorizeTopic: r.topicAuthorized, TopicCapabilities: map[string]protocol.Capability{
+	r.router = &conversationRouter{root: r, views: map[string]*conversationRuntime{r.agent: r}}
+	r.identity = clientsrv.Identity{PersonID: r.person, Agents: []protocol.Agent{{AgentID: r.agent, Name: first.Agent.Name}}, Operations: clientsrv.ConversationOperations(r.router), Topics: r.topics, AuthorizeTopic: r.topicAuthorized, TopicCapabilities: map[string]protocol.Capability{
 		"core": clientsrv.ConversationCapability, "conversation:": clientsrv.ConversationCapability, "results:": clientsrv.ConversationCapability,
 	}}
 	if r.agent == "" {
@@ -205,6 +210,12 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	for kind, op := range clientsrv.ReplayOperations(r) {
 		r.identity.Operations[kind] = op
 	}
+	if err = r.startDecisions(ctx); err != nil {
+		return nil, err
+	}
+	if err = r.startRuns(ctx); err != nil {
+		return nil, err
+	}
 	r.channels, err = startChannels(r, epoch, channelTransport)
 	if err != nil {
 		return nil, err
@@ -224,9 +235,6 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 		}
 	}
 	if err = r.startGrowth(ctx, main, epoch, controls); err != nil {
-		return nil, err
-	}
-	if err = r.startDecisions(ctx); err != nil {
 		return nil, err
 	}
 	success = true
@@ -251,6 +259,19 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 		err = r.lanes.Close(ctx)
 		if err != nil {
 			return err
+		}
+	}
+	if b := r.background; b != nil {
+		if b.stop != nil {
+			b.stop()
+			select {
+			case <-b.done:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		if b.service != nil {
+			err = errors.Join(err, b.service.Close())
 		}
 	}
 	if r.signin != nil {
@@ -358,7 +379,7 @@ func (r *conversationRuntime) publish(ctx context.Context, kind protocol.Kind, k
 	// including when input admission races the provider observer.
 	r.publicationMu.Lock()
 	defer r.publicationMu.Unlock()
-	if kind == protocol.KindItemDone || kind == protocol.KindOutputDelta || kind == protocol.KindResult {
+	if kind == protocol.KindItemDone || kind == protocol.KindOutputDelta || kind == protocol.KindResult || kind == protocol.KindBackgroundNotice {
 		if !r.positioned[key] {
 			// A committed outcome still publishes after its turn is cancelled.
 			saveCtx := context.WithoutCancel(ctx)
@@ -375,7 +396,7 @@ func (r *conversationRuntime) publish(ctx context.Context, kind protocol.Kind, k
 		}
 	}
 	agent := r.agent
-	if kind == protocol.KindResult {
+	if kind == protocol.KindResult || kind == protocol.KindBackgroundNotice {
 		// Results carry attribution in provenance, not an agent_id wire field.
 		agent = ""
 	}
@@ -493,7 +514,7 @@ func (r *conversationRuntime) setActive(ctx context.Context, active bool) error 
 func (r *conversationRuntime) events(ctx context.Context, through string) ([]ledger.Event, error) {
 	var ids []string
 	err := r.db.Read(ctx, func(tx *canon.Tx) error {
-		query := `SELECT id FROM conv_event WHERE conversation_id=? AND (speaker_kind IN ('person','agent') OR scaffold_kind IN ('interruption','failure','persona_change'))`
+		query := `SELECT id FROM conv_event WHERE conversation_id=? AND (speaker_kind IN ('person','agent') OR scaffold_kind IN ('interruption','failure','persona_change','run_handoff','background_notice'))`
 		args := []any{r.conversation}
 		if through != "" {
 			query += ` AND (speaker_kind<>'person' OR rowid <= (SELECT rowid FROM conv_event WHERE id=?))`
@@ -549,6 +570,16 @@ func (r *conversationRuntime) seedHistory(ctx context.Context) error {
 			return err
 		}
 		text := e.Body.Text()
+		if e.ScaffoldKind == "background_notice" {
+			var notices []lane.Notice
+			if err := json.Unmarshal([]byte(text), &notices); err != nil {
+				return err
+			}
+			if err := r.publishNoticeText(ctx, e.ID, notices); err != nil {
+				return err
+			}
+			continue
+		}
 		if e.SpeakerKind == guard.Agent {
 			filter, err := conversationFilter()
 			if err != nil {
@@ -614,6 +645,8 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 	}
 	defer activity.Release()
 	bindings := map[string]loop.Tool{}
+	bindings[runs.StartToolName] = r.background.service.StartTool(r.runOrigin(turnID))
+	var promoted budget.Handle
 	defer func() {
 		r.personaMu.Lock()
 		delete(r.personaGrants, turnID)
@@ -675,6 +708,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			declarations = append(declarations, coreexec.EmotionDeclarations()...)
 			declarations = append(declarations, coreexec.RelationshipDeclaration())
 			declarations = append(declarations, coreexec.SkillDeclarations()...)
+			declarations = append(declarations, startRunDeclaration())
 			packet, _, err := atropos.Packet(ctx, minimum, 0, func(ctx context.Context) (assemble.ContextPacket, error) { return r.relationshipPacket(ctx, at) })
 			if err != nil {
 				return turn.PreparedRequest{}, err
@@ -729,6 +763,14 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 	var completed []ledger.Admission
 	var saved []ledger.Event
 	complete := func(ctx context.Context, db turn.Canon) error {
+		if promoted.ID != "" {
+			now := time.Now()
+			completed = append(completed, ledger.Admission{Entry: guard.EntrySystem, Input: ledger.Input{
+				ID: "handoff:" + turnID, ConversationID: r.conversation, ParentID: input.ID, AgentID: r.agent, Surface: input.Surface,
+				OccurredAt: now, RecordedAt: now, TimeQuality: "recorded", ScaffoldKind: "run_handoff",
+				Body: "The gathered work is saved and continues in the background. Run: " + promoted.ID,
+			}})
+		}
 		if len(completed) == 0 {
 			return db.Write(ctx, func(*canon.Tx) error { return nil })
 		}
@@ -768,88 +810,106 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		saved, err = ledger.New(db, r.materials).AdmitBatch(ctx, batch)
 		return err
 	}
-	out, err := turn.New(r.db).Run(ctx, turn.Options{ID: turnID, Conversation: r.conversation, InboxID: inboxID, InputEvent: input.ID, Preparation: prep, Complete: complete, Loop: loop.Config{
-		Tools: bindings,
-		After: func(ctx context.Context, call provider.ToolCall, result loop.Result) loop.Result {
-			return r.skillNotice(ctx, input, call, r.personaNotice(ctx, input, call, result))
+	out, err := turn.New(r.db).Run(ctx, turn.Options{ID: turnID, Conversation: r.conversation, InboxID: inboxID, InputEvent: input.ID, Preparation: prep, Complete: complete,
+		StartFromTurn: func(ctx context.Context, h budget.Handoff) (budget.Handle, error) {
+			var err error
+			promoted, err = r.promoteRun(ctx, input, h)
+			return promoted, err
 		},
-		Inputs: &conversationInputs{runtime: r, inputs: inputs},
-		Stream: func(ctx context.Context, request provider.Request) (provider.Stream, error) {
-			round++
-			r.dispatchMu.RLock()
-			defer r.dispatchMu.RUnlock()
-			// Never dispatch a cached preparation after a committed forget. This also
-			// fences follow-up rounds; the existing turn flow records the refusal.
-			if err := r.validateModelContext(ctx, memoryEpoch, memoryRefs); err != nil {
-				return nil, err
-			}
-			if _, err := r.agents.Get(ctx, r.agent); err != nil {
-				return nil, err
-			}
-			return r.route.Adapter.Stream(ctx, activity, request)
-		},
-		Observe: func(ctx context.Context, e provider.Event) error {
-			key := fmt.Sprintf("%s:%d:%d", turnID, round, e.Index)
-			switch e.Kind {
-			case provider.Delta:
-				filter := filters[key]
-				if filter == nil {
-					base, err := conversationFilter()
+		ResultCommitted: r.background.notify, Loop: loop.Config{
+			Tools: bindings,
+			After: func(ctx context.Context, call provider.ToolCall, result loop.Result) loop.Result {
+				return r.skillNotice(ctx, input, call, r.personaNotice(ctx, input, call, result))
+			},
+			Inputs: &conversationInputs{runtime: r, inputs: inputs},
+			Stream: func(ctx context.Context, request provider.Request) (provider.Stream, error) {
+				round++
+				r.dispatchMu.RLock()
+				defer r.dispatchMu.RUnlock()
+				// Never dispatch a cached preparation after a committed forget. This also
+				// fences follow-up rounds; the existing turn flow records the refusal.
+				if err := r.validateModelContext(ctx, memoryEpoch, memoryRefs); err != nil {
+					return nil, err
+				}
+				if _, err := r.agents.Get(ctx, r.agent); err != nil {
+					return nil, err
+				}
+				return r.route.Adapter.Stream(ctx, activity, request)
+			},
+			Observe: func(ctx context.Context, e provider.Event) error {
+				key := fmt.Sprintf("%s:%d:%d", turnID, round, e.Index)
+				switch e.Kind {
+				case provider.Delta:
+					filter := filters[key]
+					if filter == nil {
+						base, err := conversationFilter()
+						if err != nil {
+							return err
+						}
+						filter = &conversationReplyStream{filter: base}
+						filters[key] = filter
+					}
+					view, delta, err := filter.Push(e.Delta)
 					if err != nil {
 						return err
 					}
-					filter = &conversationReplyStream{filter: base}
-					filters[key] = filter
-				}
-				view, delta, err := filter.Push(e.Delta)
-				if err != nil {
-					return err
-				}
-				if delta == "" {
-					return nil
-				}
-				// Persist exactly the safe visible prefix before publishing it.
-				// Deferred loop cleanup cannot run after SIGKILL.
-				if err := turn.New(r.db).CheckpointPartial(ctx, turnID, turn.Partial{Round: round - 1, Index: e.Index, Text: filter.sent}); err != nil {
-					return err
-				}
-				if view.Cut {
-					// A result replaces the same stream row, retracting the unfinished
-					// sentence while retaining all subsequent text in its preview.
-					return r.publishReply(ctx, key, turnID, view)
-				}
-				return r.publish(ctx, protocol.KindOutputDelta, key, delta)
-			case provider.ItemDone:
-				var item struct {
-					Type, Role string
-					Content    []struct{ Type, Text string }
-				}
-				if err := json.Unmarshal(e.Item, &item); err != nil {
-					return err
-				}
-				if item.Type != "message" || item.Role != "assistant" {
-					return nil
-				}
-				var text strings.Builder
-				for _, part := range item.Content {
-					if part.Type == "output_text" {
-						text.WriteString(part.Text)
+					if delta == "" {
+						return nil
 					}
+					// Persist exactly the safe visible prefix before publishing it.
+					// Deferred loop cleanup cannot run after SIGKILL.
+					if err := turn.New(r.db).CheckpointPartial(ctx, turnID, turn.Partial{Round: round - 1, Index: e.Index, Text: filter.sent}); err != nil {
+						return err
+					}
+					if view.Cut {
+						// A result replaces the same stream row, retracting the unfinished
+						// sentence while retaining all subsequent text in its preview.
+						return r.publishReply(ctx, key, turnID, view)
+					}
+					return r.publish(ctx, protocol.KindOutputDelta, key, delta)
+				case provider.ItemDone:
+					var item struct {
+						Type, Role string
+						Content    []struct{ Type, Text string }
+					}
+					if err := json.Unmarshal(e.Item, &item); err != nil {
+						return err
+					}
+					if item.Type != "message" || item.Role != "assistant" {
+						return nil
+					}
+					var text strings.Builder
+					for _, part := range item.Content {
+						if part.Type == "output_text" {
+							text.WriteString(part.Text)
+						}
+					}
+					now := time.Now()
+					completed = append(completed, ledger.Admission{Entry: guard.EntryAgent, Input: ledger.Input{ID: key, ConversationID: r.conversation, ParentID: input.ID, AgentID: r.agent, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: text.String()}})
+					return nil
+				case provider.ToolCallReady, provider.Terminal:
+					return nil
 				}
-				now := time.Now()
-				completed = append(completed, ledger.Admission{Entry: guard.EntryAgent, Input: ledger.Input{ID: key, ConversationID: r.conversation, ParentID: input.ID, AgentID: r.agent, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: text.String()}})
 				return nil
-			case provider.ToolCallReady, provider.Terminal:
-				return nil
-			}
-			return nil
-		},
-	}})
+			},
+		}})
+	if promoted.ID != "" {
+		// The handle is durable before execution, and the run outlives this turn.
+		err = errors.Join(err, r.background.service.Release(context.WithoutCancel(ctx), promoted.ID))
+	}
 	// Provider ItemDone stays provisional until completion and reply admission
 	// commit together. Publication can be recovered from history after a crash.
 	if err == nil {
 		for _, item := range saved {
 			if item.ScaffoldKind == "result" {
+				continue
+			}
+			if item.SpeakerKind == guard.System {
+				text, speaker := item.Body.Text(), protocol.ConversationSpeakerSystem
+				err = r.publish(ctx, protocol.KindItemDone, item.ID, protocol.ItemDone{Text: &text, Speaker: &speaker})
+				if err != nil {
+					break
+				}
 				continue
 			}
 			filter, filterErr := conversationFilter()

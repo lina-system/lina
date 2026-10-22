@@ -41,7 +41,7 @@ func TestExchangeThroughBackgroundRun(t *testing.T) {
 	if err := os.Mkdir(root, 0700); err != nil {
 		t.Fatal(err)
 	}
-	db := openAt(t, root, 1, runs.Schema)
+	db := openAt(t, root, 1)
 	a, err := assets.Open(t.Context(), root, db)
 	if err != nil {
 		t.Fatal(err)

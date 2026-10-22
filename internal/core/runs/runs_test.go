@@ -39,7 +39,6 @@ func setupWith(t *testing.T, stream loop.StreamFunc, configure func(*runs.Config
 		t.Fatal(err)
 	}
 	migrations := canon.Migrations()
-	migrations = append(migrations, canon.Migration{Version: len(migrations) + 1, SQL: runs.Schema})
 	for _, schema := range schemas {
 		migrations = append(migrations, canon.Migration{Version: len(migrations) + 1, SQL: schema})
 	}

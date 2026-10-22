@@ -32,7 +32,6 @@ func recoveredService(t *testing.T, root string, epoch uint64, stream loop.Strea
 	}
 	t.Cleanup(func() { controls.Close() })
 	migrations := canon.Migrations()
-	migrations = append(migrations, canon.Migration{Version: len(migrations) + 1, SQL: runs.Schema})
 	db, err := canon.Open(t.Context(), canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: epoch, Controls: controls, Migrations: migrations})
 	if err != nil {
 		t.Fatal(err)

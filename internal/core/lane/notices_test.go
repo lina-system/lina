@@ -35,7 +35,6 @@ func noticeDB(t *testing.T) *canon.Store {
 	}
 	t.Cleanup(func() { c.Close() })
 	ms := canon.Migrations()
-	ms = append(ms, canon.Migration{Version: len(ms) + 1, SQL: lane.NoticeSchema})
 	db, err := canon.Open(t.Context(), canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: 1, Controls: c, Migrations: ms})
 	if err != nil {
 		t.Fatal(err)

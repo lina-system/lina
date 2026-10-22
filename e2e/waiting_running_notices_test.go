@@ -54,7 +54,7 @@ func TestM1WaitingRunningNotices(t *testing.T) {
 	}
 	t.Cleanup(func() { controls.Close() })
 	ms := canon.Migrations()
-	ms = append(ms, canon.Migration{Version: len(ms) + 1, SQL: waiting.Schema + runs.RunningListSchema + lane.NoticeSchema + `CREATE TABLE scenario_waiting(id TEXT PRIMARY KEY, record BLOB, handled INTEGER DEFAULT 0);`})
+	ms = append(ms, canon.Migration{Version: len(ms) + 1, SQL: waiting.Schema + `CREATE TABLE scenario_waiting(id TEXT PRIMARY KEY, record BLOB, handled INTEGER DEFAULT 0);`})
 	db, err := canon.Open(h.ctx, canon.Config{Path: filepath.Join(h.root, "canon.sqlite"), Epoch: 1, Controls: controls, Migrations: ms})
 	if err != nil {
 		t.Fatal(err)

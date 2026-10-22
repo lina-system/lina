@@ -1,0 +1,6 @@
+{
+  "input": "BUDGET-407: inspect all available skills and verify the complete inventory",
+  "next": "BOUNDARY-407",
+  "reply": "BOUNDARY-REPLY-407",
+  "artifact": "INVENTORY-407"
+}

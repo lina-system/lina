@@ -49,7 +49,7 @@ func NewRunningList(db ListCanon, sources map[string]ListSource) *RunningList {
 	return &RunningList{db: db, sources: copy}
 }
 
-const RunningListSchema = `CREATE TABLE running_seen(source TEXT NOT NULL, item_id TEXT NOT NULL, person TEXT NOT NULL, PRIMARY KEY(source,item_id,person));`
+const RunningListSchema = canon.RunningListSchema
 
 // Build combines authoritative run and task records. It never infers progress
 // from elapsed time, and one waiting reason comes from each owning scheduler.

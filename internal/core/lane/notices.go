@@ -36,11 +36,7 @@ type NoticeCanon interface {
 
 // NoticeSchema is installed by the composition root as a numbered migration.
 // The outbox is durable before Notice returns. Events exist only at delivery.
-const NoticeSchema = `
-CREATE TABLE lane_notices(id TEXT PRIMARY KEY, conversation TEXT NOT NULL, record BLOB NOT NULL, delivered INTEGER NOT NULL DEFAULT 0);
-CREATE INDEX lane_notices_pending ON lane_notices(conversation,delivered);
-CREATE TABLE lane_notice_events(seq INTEGER PRIMARY KEY, id TEXT NOT NULL UNIQUE, conversation TEXT NOT NULL, record BLOB NOT NULL);
-`
+const NoticeSchema = canon.LaneNoticeSchema
 
 // NoticeSink appends the system-originated conversation event in the same
 // transaction as delivery. It must not emit to clients before that commit.

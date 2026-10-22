@@ -14,13 +14,7 @@ import (
 
 // Schema is installed in a numbered migration by the Core composition root,
 // like turn.Schema. Runs never open or migrate a second writer.
-const Schema = `
-CREATE TABLE background_runs (
- seq INTEGER PRIMARY KEY AUTOINCREMENT,
- id TEXT NOT NULL UNIQUE,
- record BLOB NOT NULL
-);
-`
+const Schema = canon.RunsSchema
 
 func (s *Service) read(ctx context.Context, id string) (r Record, err error) {
 	err = s.cfg.DB.Read(ctx, func(tx *canon.Tx) error {
