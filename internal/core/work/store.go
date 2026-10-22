@@ -8,11 +8,17 @@ import (
 	"errors"
 	"reflect"
 	"strings"
+	"sync"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 )
 
-type Service struct{ db *canon.Store }
+type Service struct {
+	db          *canon.Store
+	area        *Area
+	materials   MaterialWriter
+	workspaceMu sync.Mutex
+}
 
 func New(db *canon.Store) *Service { return &Service{db: db} }
 
@@ -117,51 +123,53 @@ func (s *Service) append(ctx context.Context, e Event) error {
 	if err = json.Unmarshal(raw, &e); err != nil {
 		return err
 	}
-	return s.db.Write(ctx, func(tx *canon.Tx) error {
-		events, err := ledger(ctx, tx, e.TaskID)
-		if err != nil {
-			return err
-		}
-		var c Card
-		if len(events) > 0 {
-			c, err = Project(events)
-			if err != nil {
-				return err
-			}
-		}
-		// Do not let retries from an old generation overwrite or acknowledge the
-		// current worker's delivery. Identical current-generation retries are safe.
-		if e.Kind == "receipt" && (c.Run == nil || c.Run.ID != e.RunID) {
-			return ErrState
-		}
-		var prior []byte
-		err = tx.QueryRowContext(ctx, "SELECT record FROM work_ledger WHERE event_key=?", e.Key).Scan(&prior)
-		if err == nil {
-			var old Event
-			if err = json.Unmarshal(prior, &old); err != nil {
-				return err
-			}
-			if reflect.DeepEqual(old, e) {
-				return nil
-			}
-			return ErrState
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-		if err = advance(&c, e); err != nil {
-			return err
-		}
-		b, err := json.Marshal(e)
-		if err != nil {
-			return err
-		}
-		if _, err = tx.ExecContext(ctx, "INSERT INTO work_ledger(task_id,event_key,record) VALUES(?,?,?)", e.TaskID, e.Key, b); err != nil {
-			return err
-		}
-		return saveCard(ctx, tx, c)
-	})
+	return s.db.Write(ctx, func(tx *canon.Tx) error { return appendWork(ctx, tx, e) })
 }
+func appendWork(ctx context.Context, tx *canon.Tx, e Event) error {
+	events, err := ledger(ctx, tx, e.TaskID)
+	if err != nil {
+		return err
+	}
+	var c Card
+	if len(events) > 0 {
+		c, err = Project(events)
+		if err != nil {
+			return err
+		}
+	}
+	// Do not let retries from an old generation overwrite or acknowledge the
+	// current worker's delivery. Identical current-generation retries are safe.
+	if e.Kind == "receipt" && (c.Run == nil || c.Run.ID != e.RunID) {
+		return ErrState
+	}
+	var prior []byte
+	err = tx.QueryRowContext(ctx, "SELECT record FROM work_ledger WHERE event_key=?", e.Key).Scan(&prior)
+	if err == nil {
+		var old Event
+		if err = json.Unmarshal(prior, &old); err != nil {
+			return err
+		}
+		if reflect.DeepEqual(old, e) {
+			return nil
+		}
+		return ErrState
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if err = advance(&c, e); err != nil {
+		return err
+	}
+	b, err := json.Marshal(e)
+	if err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, "INSERT INTO work_ledger(task_id,event_key,record) VALUES(?,?,?)", e.TaskID, e.Key, b); err != nil {
+		return err
+	}
+	return saveCard(ctx, tx, c)
+}
+
 func saveCard(ctx context.Context, tx *canon.Tx, c Card) error {
 	b, err := json.Marshal(c)
 	if err != nil {
@@ -232,4 +240,21 @@ func (s *Service) Rebuild(ctx context.Context) error {
 		}
 		return nil
 	})
+}
+
+// Revision pins tool authority to the current projected facts. No task is
+// revision zero; successful writes return the new revision to the effect store.
+func (s *Service) Revision(ctx context.Context, id string) (string, error) {
+	c, err := s.Get(ctx, id)
+	if errors.Is(err, ErrNotFound) {
+		return "0", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	raw, err := json.Marshal(c)
+	if err != nil {
+		return "", err
+	}
+	return digest(string(raw)), nil
 }

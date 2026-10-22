@@ -15,13 +15,14 @@ var (
 )
 
 type Task struct {
-	ID             string   `json:"id"`
-	AgentID        string   `json:"agent_id"`
-	ConversationID string   `json:"conversation_id"`
-	Title          string   `json:"title"`
-	Done           string   `json:"done"`
-	ArtifactRoots  []string `json:"artifact_roots"`
-	RequiresApply  bool     `json:"requires_apply"`
+	Workspace      *Workspace `json:"workspace,omitempty"`
+	ID             string     `json:"id"`
+	AgentID        string     `json:"agent_id"`
+	ConversationID string     `json:"conversation_id"`
+	Title          string     `json:"title"`
+	Done           string     `json:"done"`
+	ArtifactRoots  []string   `json:"artifact_roots"`
+	RequiresApply  bool       `json:"requires_apply"`
 }
 
 type Run struct {
@@ -76,28 +77,31 @@ type Stage struct {
 	Source  string `json:"source"`
 }
 type Card struct {
-	Task       Task     `json:"task"`
-	State      string   `json:"state"`
-	Run        *Run     `json:"run,omitempty"`
-	Active     bool     `json:"active"`
-	TurnStatus string   `json:"turn_status,omitempty"`
-	Receipt    *Receipt `json:"receipt,omitempty"`
-	Verdict    string   `json:"verdict,omitempty"`
-	Applied    bool     `json:"applied"`
-	Stages     []Stage  `json:"stages"`
+	Materials  []Material `json:"materials,omitempty"`
+	ResultHead string     `json:"result_head,omitempty"`
+	Task       Task       `json:"task"`
+	State      string     `json:"state"`
+	Run        *Run       `json:"run,omitempty"`
+	Active     bool       `json:"active"`
+	TurnStatus string     `json:"turn_status,omitempty"`
+	Receipt    *Receipt   `json:"receipt,omitempty"`
+	Verdict    string     `json:"verdict,omitempty"`
+	Applied    bool       `json:"applied"`
+	Stages     []Stage    `json:"stages"`
 }
 
 // Event has one payload selected by Kind. Events are admitted by Service only;
 // clients and workers never append arbitrary events or acceptance judgments.
 type Event struct {
-	Key       string   `json:"key"`
-	TaskID    string   `json:"task_id"`
-	Kind      string   `json:"kind"`
-	Task      *Task    `json:"task,omitempty"`
-	Run       *Run     `json:"run,omitempty"`
-	Receipt   *Receipt `json:"receipt,omitempty"`
-	RunID     string   `json:"run_id,omitempty"`
-	Value     string   `json:"value,omitempty"`
-	ReceiptID string   `json:"receipt_id,omitempty"`
-	Evidence  string   `json:"evidence,omitempty"`
+	Materials []Material `json:"materials,omitempty"`
+	Key       string     `json:"key"`
+	TaskID    string     `json:"task_id"`
+	Kind      string     `json:"kind"`
+	Task      *Task      `json:"task,omitempty"`
+	Run       *Run       `json:"run,omitempty"`
+	Receipt   *Receipt   `json:"receipt,omitempty"`
+	RunID     string     `json:"run_id,omitempty"`
+	Value     string     `json:"value,omitempty"`
+	ReceiptID string     `json:"receipt_id,omitempty"`
+	Evidence  string     `json:"evidence,omitempty"`
 }
