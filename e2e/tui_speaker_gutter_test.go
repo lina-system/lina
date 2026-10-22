@@ -27,7 +27,11 @@ func TestM1TUISpeakerGutterInstalledCore(t *testing.T) {
 		{name: "truecolor"}, {name: "ascii", ascii: true},
 		{name: "no-color", plain: true}, {name: "no-color-ascii", ascii: true, plain: true},
 	} {
-		t.Run(mode.name, func(t *testing.T) { speakerGutterInstalledCore(t, mode.ascii, mode.plain) })
+		t.Run(mode.name, func(t *testing.T) {
+			// Each mode owns its installed Core, provider, PTY and state root.
+			t.Parallel()
+			speakerGutterInstalledCore(t, mode.ascii, mode.plain)
+		})
 	}
 }
 
