@@ -53,6 +53,7 @@ function registryFor(cwd) {
     'internal/core/secrets/',
     'internal/core/skills/',
     'internal/core/turn/',
+    'internal/core/update/',
     'internal/core/waiting/',
   ];
   const addonDirectories = ['internal/addons/importer/hermes/'];
