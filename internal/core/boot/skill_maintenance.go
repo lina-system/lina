@@ -180,20 +180,17 @@ func (r *conversationRuntime) publishSkillMaintenance(ctx context.Context) error
 		}
 		id := fmt.Sprintf("skill-maintenance:%d", n.Sequence)
 		event, err := view.journal().Get(ctx, id)
-		// The ledger is the delivery outbox acknowledgement across restart. Existing
-		// notices are already in history; do not publish a second live item.
-		if err == nil {
-			m.delivered[n.Sequence] = true
-			continue
+		if errors.Is(err, ledger.ErrNotFound) {
+			now := time.Now()
+			event, err = view.journal().Admit(ctx, guard.EntrySystem, ledger.Input{ID: id, ConversationID: view.conversation, AgentID: view.agent, Surface: ledger.Surface{Kind: "tui"}, ScaffoldKind: "skill_change", OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: n.Notice})
 		}
-		if !errors.Is(err, ledger.ErrNotFound) {
-			return err
-		}
-		now := time.Now()
-		event, err = view.journal().Admit(ctx, guard.EntrySystem, ledger.Input{ID: id, ConversationID: view.conversation, AgentID: view.agent, Surface: ledger.Surface{Kind: "tui"}, ScaffoldKind: "skill_change", OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: n.Notice})
 		if err != nil {
 			return err
 		}
+		// Admission may have committed before live publication failed. Retry the
+		// stable topic key even when the ledger row already exists; snapshots
+		// retain one item and delivered is set only after publication succeeds.
+
 		text, speaker := event.Body.Text(), protocol.ConversationSpeakerSystem
 		if err = view.publish(ctx, protocol.KindItemDone, id, protocol.ItemDone{Text: &text, Speaker: &speaker}); err != nil {
 			return err
