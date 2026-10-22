@@ -40,7 +40,7 @@ func runCore(args []string) int {
 		flags.Usage()
 		return 64
 	}
-	if *root == "" || (!*preflight && *socket == "") || (*preflight && *socket != "") || (!*preflight && *required != "") || flags.NArg() != 0 || (*tailscaleSocket != "" && *tailnet == "") || (*preflight && *tailnet != "") {
+	if *root == "" || (!*preflight && *socket == "") || (*preflight && (*socket != "" || *tailnet != "" || *tailscaleSocket != "")) || (!*preflight && *required != "") || flags.NArg() != 0 || (*tailscaleSocket != "" && *tailnet == "") {
 		flags.Usage()
 		return 64
 	}
