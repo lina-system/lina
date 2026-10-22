@@ -485,12 +485,16 @@ func (m *shellModel) selectedCard() (state.Block, bool) {
 	}
 	return state.Block{}, false
 }
+func resultText(b state.Block) string {
+	if b.Body != "" {
+		return b.Body
+	}
+	return b.Text
+}
+
 func (m *shellModel) cardText() string {
 	if b, ok := m.selectedCard(); ok {
-		if b.Body != "" {
-			return b.Body
-		}
-		return b.Text
+		return resultText(b)
 	}
 	var lines []string
 	for _, b := range m.content.Blocks {
@@ -567,13 +571,49 @@ func (m *shellModel) refreshOpenCard() {
 	}
 	for _, card := range m.resultCards() {
 		if card.ID == p.cardID {
-			p.text = sanitize.Display(card.Body)
+			p.text = sanitize.Display(resultText(card))
 			if p.followEnd {
 				p.offset = len(m.pagerLines())
 			}
 			return
 		}
 	}
+}
+
+// Results carry complete replacement previews. Only a live update during a
+// turn opens a streaming projection; history and earlier results remain sealed.
+func (m *shellModel) refreshResultStreams(message state.Msg) {
+	live, isUpdate := message.(state.ItemDone)
+	next := make(map[string]shellBlock)
+	for _, card := range m.resultCards() {
+		text := resultText(card)
+		cached, ok := m.resultStreams[card.ID]
+		done := !ok || cached.done
+		if isUpdate && live.Block.ID == card.ID && (!ok || cached.text != text) {
+			done = !m.content.TurnActive
+		}
+		if !m.content.TurnActive {
+			done = true
+		}
+		if !ok || cached.text != text || cached.done != done {
+			revision := cached.revision + 1
+			stream := cached.stream
+			if !ok || cached.done || !strings.HasPrefix(text, cached.text) {
+				stream = render.NewStream(card.ID, render.Config{Width: max(1, m.size.Width)}, nil)
+				if !done {
+					stream.Append(revision, text)
+				}
+			} else if !done {
+				stream.Append(revision, text[len(cached.text):])
+			}
+			if done {
+				stream.Seal(revision, text)
+			}
+			cached = shellBlock{text, revision, done, stream}
+		}
+		next[card.ID] = cached
+	}
+	m.resultStreams = next
 }
 
 func (m *shellModel) pagerKey(msg tea.KeyMsg, name string) tea.Cmd {
@@ -657,16 +697,28 @@ func (m *shellModel) pagerKey(msg tea.KeyMsg, name string) tea.Cmd {
 	}
 	return nil
 }
-func (m *shellModel) pagerLines() []string {
+func (m *shellModel) pagerRows() []render.StyledRow {
 	width := m.size.Width
 	if plan := m.conversationPlan(); plan.SidePane.Width > 0 {
 		width = plan.SidePane.Width
 	}
-	stream := render.NewStream("pager", render.Config{Width: max(1, width)}, nil)
-	stream.Seal(1, m.pagerText())
+	config := render.Config{Width: max(1, width)}
+	stream := m.resultStreams[m.conversation.pager.cardID].stream
+	if stream == nil {
+		stream = render.NewStream("pager", config, nil)
+		stream.Seal(1, m.pagerText())
+	}
+	return stream.CodePreview(config)
+}
+
+func (m *shellModel) pagerLines() []string {
 	var lines []string
-	for _, row := range stream.Window(0, stream.Len(), render.Config{Width: max(1, width)}, nil) {
-		lines = append(lines, row.Text)
+	for _, row := range m.pagerRows() {
+		var line strings.Builder
+		for _, span := range row.Spans {
+			line.WriteString(span.Text)
+		}
+		lines = append(lines, line.String())
 	}
 	return lines
 }
@@ -698,10 +750,10 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 	}
 	if m.conversation.pager.open && plan.SidePane.Height == 0 {
 		p := &m.conversation.pager
-		lines := m.pagerLines()
+		lines := m.pagerRows()
 		p.offset = min(p.offset, max(0, len(lines)-(m.size.Height-1)))
 		for y := 0; y < m.size.Height-1 && p.offset+y < len(lines); y++ {
-			rows[y] = clip(lines[p.offset+y])
+			rows[y] = clip(m.styles.markdownRow(lines[p.offset+y]))
 		}
 		return strings.Join(rows, "\n")
 	}
@@ -760,7 +812,11 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 			prefix = m.styles.speakerPrefix(person, name, plan.Conversation.Width)
 		}
 		indent := strings.Repeat(" ", (render.Unicode{}).Width(prefix))
-		body := cached.stream.Markdown(render.Config{Width: plan.Conversation.Width - len(indent), Theme: m.styles.options.Theme}, m.styles.listBullet(), parseMarkdown)
+		stream := cached.stream
+		if b.InlineReply && m.resultStreams[b.ID].stream != nil {
+			stream = m.resultStreams[b.ID].stream
+		}
+		body := stream.Markdown(render.Config{Width: plan.Conversation.Width - len(indent), Theme: m.styles.options.Theme}, m.styles.listBullet(), parseMarkdown)
 		// Paragraph spacing belongs inside a message; boundaries get exactly one
 		// section gap even if the provider ended a message with empty lines.
 		blank := func(row render.StyledRow) bool {
@@ -932,20 +988,15 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 	}
 	if plan.SidePane.Height > 0 {
 		p := &m.conversation.pager
-		stream := render.NewStream("pager", render.Config{Width: plan.SidePane.Width}, nil)
-		stream.Seal(1, m.pagerText())
-		p.offset = min(p.offset, max(0, stream.Len()-plan.SidePane.Height))
-		anchor := 0
-		if stream.Len() > 0 {
-			anchor = stream.At(p.offset).Offset
-		}
-		lines := stream.Window(anchor, plan.SidePane.Height, render.Config{Width: plan.SidePane.Width}, nil)
+		lines := m.pagerRows()
+		p.offset = min(p.offset, max(0, len(lines)-plan.SidePane.Height))
+		lines = lines[p.offset:]
 		for y := 0; y < plan.SidePane.Height; y++ {
 			left := ansi.Truncate(rows[plan.SidePane.Y+y], plan.Conversation.Width, "")
 			left += strings.Repeat(" ", max(0, plan.Conversation.Width-ansi.StringWidth(left)))
 			right := ""
 			if y < len(lines) {
-				right = lines[y].Text
+				right = m.styles.markdownRow(lines[y])
 			}
 			rows[plan.SidePane.Y+y] = left + right
 		}

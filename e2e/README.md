@@ -63,6 +63,12 @@ fixture provider in a 100x34 PTY. Parsed cells check speaker marks, foregrounds,
 header bold and exactly one empty row between messages. ASCII runs retain words;
 `NO_COLOR` runs retain ASCII speaker identity and emit no terminal escapes.
 
+`TestM1TUIStreamingCodeInstalledCore` holds a fixture provider at an open
+200-line code fence, its closing delta, and final completion through installed
+Core and a real PTY. Result Details shows one muted notice plus six trailing
+rows while open and all 200 rows on close, before completion. The test checks
+the retained result text and restores the terminal without timed sleeps.
+
 `TestM1TUISpeakerBoundariesInstalledCore` creates and selects a long-named agent
 through the real TUI, then requests a fenced Korean reply from installed Core
 in a 40x34 ASCII PTY. It checks provider routing, usable reply width, literal
