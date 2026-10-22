@@ -262,7 +262,7 @@ func (s *managementSession) response(ctx context.Context, c *clientapi.Client, e
 					boundary = "agents.development"
 				}
 				if boundary != "" {
-					label += " · " + design.Text(m.styles.options.Language, boundary)
+					label += " (" + design.Text(m.styles.options.Language, boundary) + ")"
 				}
 			}
 			lines = append(lines, label)
