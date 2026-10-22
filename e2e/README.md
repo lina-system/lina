@@ -241,3 +241,9 @@ refused requests preserve agent revisions, actions, conversations and bindings.
 also drives installed Core's normal tool path into the actual installed Codex,
 then waits on the worker's conversation result before reading its snapshot. Only
 Core's conversation provider is synthetic; the worker uses its own model setup.
+
+`m2/github-ci.json` starts the real Core binary with a synthetic `gh` executable
+in its isolated PATH. It negotiates the GitHub capability, refuses an unnegotiated
+read, observes rate-limited CI pending and its retry deadline, then observes head,
+review threads and successful checks. It verifies conditional headers and one
+review read per head, with no network credentials or GitHub service dependency.
