@@ -20,10 +20,12 @@ type Tokens struct {
 	ColorSurface           Color
 	ColorText              Color
 	GlyphAsciiAction       string
+	GlyphAsciiAgent        string
 	GlyphAsciiConnecting   string
 	GlyphAsciiFailed       string
 	GlyphAsciiLive         string
 	GlyphAsciiMark         string
+	GlyphAsciiPerson       string
 	GlyphAsciiQuit         string
 	GlyphAsciiRecovering   string
 	GlyphAsciiRefused      string
@@ -34,10 +36,12 @@ type Tokens struct {
 	GlyphAsciiUnknown      string
 	GlyphAsciiWaiting      string
 	GlyphUnicodeAction     string
+	GlyphUnicodeAgent      string
 	GlyphUnicodeConnecting string
 	GlyphUnicodeFailed     string
 	GlyphUnicodeLive       string
 	GlyphUnicodeMark       string
+	GlyphUnicodePerson     string
 	GlyphUnicodeQuit       string
 	GlyphUnicodeRecovering string
 	GlyphUnicodeRefused    string
@@ -72,10 +76,12 @@ func Light() Tokens {
 		ColorSurface:           Color{Hex: "#EEF0F6", ANSI256: 255, ANSI16: 7},
 		ColorText:              Color{Hex: "#20232D", ANSI256: 234, ANSI16: 0},
 		GlyphAsciiAction:       ">",
+		GlyphAsciiAgent:        "*",
 		GlyphAsciiConnecting:   "~",
 		GlyphAsciiFailed:       "x",
 		GlyphAsciiLive:         "*",
 		GlyphAsciiMark:         ".",
+		GlyphAsciiPerson:       ">",
 		GlyphAsciiQuit:         "+",
 		GlyphAsciiRecovering:   ":",
 		GlyphAsciiRefused:      "!",
@@ -86,10 +92,12 @@ func Light() Tokens {
 		GlyphAsciiUnknown:      "?",
 		GlyphAsciiWaiting:      "?",
 		GlyphUnicodeAction:     "›",
+		GlyphUnicodeAgent:      "●",
 		GlyphUnicodeConnecting: "◌",
 		GlyphUnicodeFailed:     "×",
 		GlyphUnicodeLive:       "●",
 		GlyphUnicodeMark:       ".",
+		GlyphUnicodePerson:     "›",
 		GlyphUnicodeQuit:       "✓",
 		GlyphUnicodeRecovering: "◐",
 		GlyphUnicodeRefused:    "⊘",
@@ -125,10 +133,12 @@ func Dark() Tokens {
 		ColorSurface:           Color{Hex: "#20232B", ANSI256: 235, ANSI16: 0},
 		ColorText:              Color{Hex: "#F4F5F9", ANSI256: 255, ANSI16: 15},
 		GlyphAsciiAction:       ">",
+		GlyphAsciiAgent:        "*",
 		GlyphAsciiConnecting:   "~",
 		GlyphAsciiFailed:       "x",
 		GlyphAsciiLive:         "*",
 		GlyphAsciiMark:         ".",
+		GlyphAsciiPerson:       ">",
 		GlyphAsciiQuit:         "+",
 		GlyphAsciiRecovering:   ":",
 		GlyphAsciiRefused:      "!",
@@ -139,10 +149,12 @@ func Dark() Tokens {
 		GlyphAsciiUnknown:      "?",
 		GlyphAsciiWaiting:      "?",
 		GlyphUnicodeAction:     "›",
+		GlyphUnicodeAgent:      "●",
 		GlyphUnicodeConnecting: "◌",
 		GlyphUnicodeFailed:     "×",
 		GlyphUnicodeLive:       "●",
 		GlyphUnicodeMark:       ".",
+		GlyphUnicodePerson:     "›",
 		GlyphUnicodeQuit:       "✓",
 		GlyphUnicodeRecovering: "◐",
 		GlyphUnicodeRefused:    "⊘",
@@ -178,10 +190,12 @@ func HighContrast() Tokens {
 		ColorSurface:           Color{Hex: "#000000", ANSI256: 16, ANSI16: 0},
 		ColorText:              Color{Hex: "#FFFFFF", ANSI256: 231, ANSI16: 15},
 		GlyphAsciiAction:       ">",
+		GlyphAsciiAgent:        "*",
 		GlyphAsciiConnecting:   "~",
 		GlyphAsciiFailed:       "x",
 		GlyphAsciiLive:         "*",
 		GlyphAsciiMark:         ".",
+		GlyphAsciiPerson:       ">",
 		GlyphAsciiQuit:         "+",
 		GlyphAsciiRecovering:   ":",
 		GlyphAsciiRefused:      "!",
@@ -192,10 +206,12 @@ func HighContrast() Tokens {
 		GlyphAsciiUnknown:      "?",
 		GlyphAsciiWaiting:      "?",
 		GlyphUnicodeAction:     "›",
+		GlyphUnicodeAgent:      "●",
 		GlyphUnicodeConnecting: "◌",
 		GlyphUnicodeFailed:     "×",
 		GlyphUnicodeLive:       "●",
 		GlyphUnicodeMark:       ".",
+		GlyphUnicodePerson:     "›",
 		GlyphUnicodeQuit:       "✓",
 		GlyphUnicodeRecovering: "◐",
 		GlyphUnicodeRefused:    "⊘",
