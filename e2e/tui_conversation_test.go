@@ -75,10 +75,21 @@ func TestM1TUIConversationInstalledCore(t *testing.T) {
 	if snapshot, err := client.Receive(h.ctx); err != nil || snapshot.Kind != protocol.KindSnapshot {
 		t.Fatal("no history snapshot")
 	}
+	socket := h.socket
+	tap := newAccountTap(t, h, socket)
+	h.socket = tap.socket
 	terminal := h.startScreenTUI("TERM=xterm-256color", "COLORTERM=truecolor")
+	h.socket = socket
 	fresh := waitScreen(t, h, terminal, "Ctrl+D")
 	if text := screenText(fresh); strings.Contains(strings.ToLower(text), "unsupported") {
 		t.Fatalf("fresh install shows an unsupported placeholder: %s", text)
+	}
+	// Wait for the TUI's subscription, not merely its connection status.
+	for {
+		frame := tap.next(t, h)
+		if snapshot, ok := frame.Payload.(protocol.Snapshot); ok && snapshot.Topic == "conversation:"+*history.ConversationID {
+			break
+		}
 	}
 	h.keys(terminal, scenario.Input+"\r")
 	snapshot := waitScreen(t, h, terminal, scenario.Reply)
