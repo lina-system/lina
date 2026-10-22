@@ -244,6 +244,10 @@ binary, verifies the generation/version pair and reruns candidate preflight on
 the stopped store. Release-owned binaries, manifest and adapter files move as
 one recorded composition; the prior directories and failed candidates are kept.
 Settings stay in their installed control records, outside binary replacement.
+The installed binary's backup and rollback restore (including resumed rollback)
+use the updater context without an added installer command deadline; data size
+must not impose a fixed 30-second failure boundary. Both retain `kit/proc`
+ownership and cancellation, filtered environments and bounded command output.
 
 `update.json` is a schema-1 private atomic control record outside backups. It
 binds the root, normal socket, candidate, previous composition, binary digests,
@@ -1088,6 +1092,10 @@ or automatic effect retries. The shared catalog appends Discord presentations
 and pending buttons plus consumed channel steering at migration 32, leaving migrations 1–31 unchanged.
 The optional channel control `platform` field defaults to Telegram. Discord
 connection verifies the bot identity before replacing its credential or worker.
+Gateway close 4007/4009 clears that bot's durable session/sequence cursor before
+the existing supervisor retries with Identify. This also applies before Hello.
+Other transport closes retain Resume state; native-event receipts and bindings
+are preserved across the reset (#548).
 
 The channel worker now drains committed owner inbox rows into the existing turn
 lanes. Private owner inputs use the shared main conversation and admission/steering
@@ -1257,6 +1265,7 @@ type Definition struct {
 - `Chooser` ranks workers from situation tags, quota rows and host capacity, using an editable rule table marked provisional. A quota or login stop hands the same packet to the next worker.
 - `Scheduler.Release` runs on events (landed, new task, quota change, a parked worker's reset), not on a poll. It starts every task whose dependencies landed, whose area lease is free and whose worker has quota. Area leases live from hand-off to landed, closed or abandoned. Concurrency is the free slots that the reported load and resources of the main host and each Node allow, with no fixed count per repository ([work-and-delegation.md](work-and-delegation.md#capacity)). A task that cannot start shows exactly one reason.
 - One task, one worker, one worktree, one branch, created by Core with the Git command from a parent clone in `work/clones/`. #127 wires `prepare_work` and `retain_work_result` into the running conversation tool registry. `work.Area` owns leased Git subprocesses through `kit/proc`, detached allocation at the pinned base, protected refs and branch bundles. Core closes its process owner during shutdown.
+- The developer lane projection reads current `work_cards` in a canon snapshot through `internal/core/progress`. Installed Core registers read-only `progress_get` under `worker_lanes` 1.0, independently of a provider route. `after` is an opaque source/id cursor; `progress.lanes` contains up to 32 current worker sessions and `next_cursor` only when another visible session exists. Rows carry run/task/persona identity, persona name, worker, thread, turn, node, generation, task state/title and source-labeled stage details. Display fields are bounded before transport. Core authorizes the installation's person and excludes explicitly foreign-person tasks and deleted personas; legacy unowned records belong to the installation. Tasks without a run and superseded generations do not create lanes. A finished worker turn remains distinct from Core-verified task completion. Refresh rereads authoritative state; this view neither dispatches work nor infers scheduler transitions. Boot appends the installed worker runtime's sessions after durable work pages, using their adapter snapshots and masking output before display. Idle means only the worker turn ended; it is not a work verdict.
 - The CRW pin is the start gate for the work ledger records: a pin record and a LINA fixture runner whose expected values come from the fixture ([work-and-delegation.md](work-and-delegation.md#start-gate)).
 - `internal/core/work/pin` verifies SHA-256 over every adopted file before running
   any case. The runner passes only inputs to the record validator; a validator

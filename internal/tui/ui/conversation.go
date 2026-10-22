@@ -27,6 +27,7 @@ type conversationView struct {
 	undo         []state.Draft
 	history      *inputHistory
 	scroll       int
+	viewport     conversationViewport
 	id           string
 	agentMissing bool
 	agentPending bool
@@ -43,18 +44,22 @@ type inputHistory struct {
 }
 
 type textPager struct {
-	transcript bool
-	running    bool
-	selected   int
-	runID      string
-	next       *json.Number
-	open       bool
-	text       string
-	cardID     string
-	followEnd  bool
-	offset     int
-	query      string
-	searching  bool
+	developer, developerBusy bool
+	developerID              string
+	lanes                    state.WorkerLanes
+	laneNext                 *string
+	transcript               bool
+	running                  bool
+	selected                 int
+	runID                    string
+	next                     *json.Number
+	open                     bool
+	text                     string
+	cardID                   string
+	followEnd                bool
+	offset                   int
+	query                    string
+	searching                bool
 }
 
 func newConversationView(styles Styles) conversationView {
@@ -207,10 +212,13 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		}
 		return nil
 	case "pgup":
-		m.conversation.scroll += max(1, m.size.Height/2)
+		m.scrollConversation(max(1, m.size.Height/2))
 		return nil
 	case "pgdown":
-		m.conversation.scroll = max(0, m.conversation.scroll-max(1, m.size.Height/2))
+		m.scrollConversation(-max(1, m.size.Height/2))
+		return nil
+	case "end":
+		m.scrollConversation(-m.conversation.scroll)
 		return nil
 	case "ctrl+t":
 		m.openPager("")
@@ -253,6 +261,11 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		}
 		if !m.mutationsAllowed() {
 			return nil
+		}
+		if handled, command := m.developerCommand(text); handled {
+			m.reduceInput(state.EditDraft{})
+			m.conversation.undo = nil
+			return command
 		}
 		if handled, command := m.talkCommand(text); handled {
 			m.reduceInput(state.EditDraft{})
@@ -536,6 +549,11 @@ func (m *shellModel) refreshOpenCard() {
 
 func (m *shellModel) pagerKey(msg tea.KeyMsg, name string) tea.Cmd {
 	p := &m.conversation.pager
+	if p.developer && !p.searching {
+		if handled, cmd := m.developerKey(name); handled {
+			return cmd
+		}
+	}
 	if p.running && !p.searching {
 		rows := m.topicBlocks("running")
 		if len(rows) > 0 {
@@ -667,6 +685,7 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		muted  bool
 	}
 	var transcript []transcriptRow
+	var anchors []conversationAnchor
 	plainRow := func(text string) render.StyledRow { return render.StyledRow{Spans: []render.Span{{Text: text}}} }
 	if !m.hasCapability("conversation") {
 		code := "account.empty"
@@ -729,9 +748,19 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		if len(body) == 0 {
 			continue
 		}
+		// The account placeholder has no retained conversation identity.
+		for len(anchors) < len(transcript) {
+			anchors = append(anchors, conversationAnchor{})
+		}
 		if len(transcript) > 0 {
 			transcript = append(transcript, make([]transcriptRow, m.styles.tokens.SpaceSection.Cells)...)
+			// Anchor separator rows to the following block without shifting
+			// its body row identities when older messages are inserted above it.
+			for row := -m.styles.tokens.SpaceSection.Cells; row < 0; row++ {
+				anchors = append(anchors, conversationAnchor{block: b.ID, row: row})
+			}
 		}
+		blockStart := len(transcript)
 		for i, row := range body {
 			lead := indent
 			if i == 0 {
@@ -742,9 +771,13 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 			}
 			transcript = append(transcript, transcriptRow{body: row, prefix: lead, person: person, muted: i == workedRow})
 		}
+		for row := 0; row < len(transcript)-blockStart; row++ {
+			anchors = append(anchors, conversationAnchor{block: b.ID, row: row})
+		}
 	}
-	m.conversation.scroll = min(m.conversation.scroll, max(0, len(transcript)-plan.Conversation.Height))
-	start := max(0, len(transcript)-plan.Conversation.Height-m.conversation.scroll)
+	start := m.conversationStart(anchors, len(transcript), plan.Conversation.Height)
+	m.conversation.viewport.overflow = len(transcript) > plan.Conversation.Height
+	rows[plan.Status.Y] = m.conversationFooter(showNotice)
 	for y, line := range transcript[start:] {
 		if y >= plan.Conversation.Height {
 			break
