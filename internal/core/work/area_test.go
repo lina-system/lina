@@ -23,7 +23,7 @@ func areaGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	c := exec.Command("git", args...)
 	c.Dir = dir
-	c.Env = append(proc.InheritedEnvironment(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_AUTHOR_NAME=Fixture", "GIT_AUTHOR_EMAIL=fixture@example.invalid", "GIT_COMMITTER_NAME=Fixture", "GIT_COMMITTER_EMAIL=fixture@example.invalid")
+	c.Env = append([]string{"PATH=" + os.Getenv("PATH")}, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_AUTHOR_NAME=Fixture", "GIT_AUTHOR_EMAIL=fixture@example.invalid", "GIT_COMMITTER_NAME=Fixture", "GIT_COMMITTER_EMAIL=fixture@example.invalid")
 	b, err := c.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, b)
@@ -162,5 +162,32 @@ func TestAreaNewBaseDoesNotResetOtherTask(t *testing.T) {
 	}
 	if body, err := os.ReadFile(file); err != nil || string(body) != "keep" {
 		t.Fatal("other task was reset")
+	}
+}
+
+func TestAreaRefusesReplacedHookWithoutOverwritingTarget(t *testing.T) {
+	a, s, _ := areaFixture(t)
+	l := lease.New(func() {})
+	defer l.Release()
+	if _, err := a.Prepare(t.Context(), l, "task-1", s); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "keep.txt")
+	if err := os.WriteFile(outside, []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	hook := filepath.Join(a.path, "clones", s.RepositoryID, "hooks/reference-transaction")
+	if err := os.Remove(hook); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, hook); err != nil {
+		t.Fatal(err)
+	}
+	s.Branch = "task/task-2"
+	if _, err := a.Prepare(t.Context(), l, "task-2", s); err == nil {
+		t.Error("accepted substituted hook")
+	}
+	if body, err := os.ReadFile(outside); err != nil || string(body) != "keep" {
+		t.Fatal("overwrote linked file")
 	}
 }

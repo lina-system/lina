@@ -9,7 +9,6 @@ import (
 	"github.com/thisisjun786/lina/internal/core/backup"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
-	"github.com/thisisjun786/lina/kit/proc"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -42,7 +41,7 @@ func TestM2WorkArea(t *testing.T) {
 		t.Helper()
 		c := exec.Command("git", args...)
 		c.Dir = dir
-		c.Env = append(proc.InheritedEnvironment(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_AUTHOR_NAME=Fixture", "GIT_AUTHOR_EMAIL=fixture@example.invalid", "GIT_COMMITTER_NAME=Fixture", "GIT_COMMITTER_EMAIL=fixture@example.invalid")
+		c.Env = append([]string{"PATH=" + os.Getenv("PATH")}, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_AUTHOR_NAME=Fixture", "GIT_AUTHOR_EMAIL=fixture@example.invalid", "GIT_COMMITTER_NAME=Fixture", "GIT_COMMITTER_EMAIL=fixture@example.invalid")
 		b, e := c.CombinedOutput()
 		if e != nil {
 			t.Fatalf("git %v: %v %s", args, e, b)
@@ -120,6 +119,7 @@ func TestM2WorkArea(t *testing.T) {
 		p.command.Env = append(p.command.Env, "PATH="+filepath.Dir(gitPath), "LINA_RESPONSES_BASE_URL="+server.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
 		p.start(t)
 		h.connect(p).Close()
+		waitCoreReady(t, h)
 		return p
 	}
 	core := start(true)
@@ -138,7 +138,7 @@ func TestM2WorkArea(t *testing.T) {
 	// returned directory. Vendor selection/dispatch is outside this issue.
 	worker := exec.Command("sh", "-c", `git switch -c "$BRANCH" && printf '%s' "$RESULT" > report.txt && git add report.txt && git -c user.name=Fixture -c user.email=fixture@example.invalid commit -m result`)
 	worker.Dir = allocated.Path
-	worker.Env = append(proc.InheritedEnvironment(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "BRANCH="+branch, "RESULT="+scenario.Output)
+	worker.Env = append([]string{"PATH=" + os.Getenv("PATH")}, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "BRANCH="+branch, "RESULT="+scenario.Output)
 	if b, e := worker.CombinedOutput(); e != nil {
 		t.Fatalf("fixture worker: %v %s", e, b)
 	}

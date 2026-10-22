@@ -4,6 +4,7 @@ package work
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -196,7 +197,7 @@ func (a *Area) Prepare(ctx context.Context, l lease.Lease, id string, s Workspac
 	if err = privateAreaDir(a.root, filepath.Join(rel, "hooks")); err != nil {
 		return Workspace{}, err
 	}
-	if err = os.WriteFile(filepath.Join(hookPath, "reference-transaction"), []byte(refGuard), 0700); err != nil {
+	if err = a.installGuard(filepath.Join(rel, "hooks")); err != nil {
 		return Workspace{}, err
 	}
 	if _, err = a.command(ctx, l, clone, "config", "core.hooksPath", hookPath); err != nil {
@@ -266,4 +267,29 @@ func (a *Area) Bundle(ctx context.Context, l lease.Lease, w Workspace, head stri
 		return "", err
 	}
 	return path, nil
+}
+
+// Publish the guard by rename inside the open work root. A substituted link
+// must never turn allocation into a write to an unrelated user file.
+func (a *Area) installGuard(dir string) (err error) {
+	path := filepath.Join(dir, "reference-transaction")
+	if info, e := a.root.Lstat(path); e == nil {
+		if !info.Mode().IsRegular() {
+			return ErrInvalid
+		}
+	} else if !errors.Is(e, os.ErrNotExist) {
+		return e
+	}
+	temp := filepath.Join(dir, ".reference-"+rand.Text())
+	f, err := a.root.OpenFile(temp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0700)
+	if err != nil {
+		return err
+	}
+	defer a.root.Remove(temp)
+	_, err = f.WriteString(refGuard)
+	err = errors.Join(err, f.Sync(), f.Close())
+	if err != nil {
+		return err
+	}
+	return a.root.Rename(temp, path)
 }
