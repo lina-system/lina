@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/thisisjun786/lina/internal/design"
 	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 )
 
@@ -85,9 +86,12 @@ func TestM2ConversationWorkerRunningInstalledCore(t *testing.T) {
 		return screenText(screen)
 	}
 	wait(func(s string) bool {
+		if !strings.Contains(s, design.Text(design.English, "running.keys")) {
+			return false
+		}
 		for _, line := range strings.Split(s, "\n") {
 			owner, tool := strings.Index(line, "LINA"), strings.Index(line, "Codex")
-			if owner >= 0 && tool > owner && strings.Contains(line, "in_progress") {
+			if owner >= 0 && tool > owner {
 				return true
 			}
 		}
@@ -96,7 +100,9 @@ func TestM2ConversationWorkerRunningInstalledCore(t *testing.T) {
 	// Keep the pager open: completion must arrive as a live removal, without
 	// requiring Ctrl+R again or confusing an idle session with verified delivery.
 	admittedTurn(t, h, c, conversation, "finish-delegation", "Finish the worker's current job.")
-	wait(func(s string) bool { return strings.Contains(s, "dismiss") && !strings.Contains(s, "Codex") })
+	wait(func(s string) bool {
+		return strings.Contains(s, design.Text(design.English, "running.keys")) && !strings.Contains(s, "Codex")
+	})
 	if calls.Load() != 4 {
 		t.Fatalf("worker rounds=%d", calls.Load())
 	}
