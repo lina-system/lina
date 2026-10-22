@@ -1,0 +1,7 @@
+{
+  "input": "Show the syntax fixture",
+  "open": "```go\nvar syntaxAnswer = 42\n",
+  "close": "```\n\nsyntax-finished-456",
+  "code": "var syntaxAnswer = 42",
+  "finished": "syntax-finished-456"
+}
