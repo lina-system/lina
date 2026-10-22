@@ -17,6 +17,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	memoryexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/internal/core/memory"
+	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -202,7 +203,15 @@ func correctionMemoryTUI(t *testing.T, h *harness) (func(string) protocol.Memory
 				if result.ItemID != nil {
 					marker = *result.ItemID
 				}
-				waitScreen(t, h, terminal, marker)
+				// A returned item id can already appear in the command draft.
+				// Wait for the result pager as well as its text before sending Esc.
+				view, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
+					rows := screenRows(s)
+					return s.CursorHidden && len(rows) > 0 && strings.HasPrefix(rows[len(rows)-1], "Esc") && strings.Contains(screenText(s), marker)
+				})
+				if err != nil {
+					t.Fatalf("memory result pager missing: %v\n%s", err, screenText(view))
+				}
 				opened = true
 				return result
 			}
