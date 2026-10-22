@@ -284,6 +284,12 @@ clone's checked-out base branch stays unchanged. Restart retains the merge witho
 turning it into a delivery verdict. The fixture has no provider credential or
 external GitHub effect.
 
+The worker also calls all four LINA work tools, receives both work-tool and
+native question answers, and submits a receipt for its committed artifact.
+`m3/dependency-start-failure.json` injects a failed initial Git fetch with one
+host slot: another task must finish and submit its receipt, while restart must
+retain the failed attempt without its reservations or a duplicate dispatch.
+
 `go test ./e2e/m1 -run '^TestM2UpdateActivation$' -count=1` runs
 `m2/update-activation.json`, which drives `lina update --activate` against
 the installed Core. A test-owned service manager launches real service processes;

@@ -10,8 +10,12 @@ import (
 	"github.com/thisisjun786/lina/internal/core/work"
 )
 
-// Hooks are bound by boot to worker and forge adapters. A start error has an
-// unknown outcome: its durable reservation remains held until reconciliation.
+// ErrNotStarted marks a failure observed before any worker start was sent.
+// All other start errors retain reservations because their outcome is unknown.
+var ErrNotStarted = errors.New("worker start was not sent")
+
+// Hooks are bound by boot to worker and forge adapters. Unless a start error
+// wraps ErrNotStarted, its durable reservation remains held for reconciliation.
 type Hooks struct {
 	Availability func(context.Context) (work.Availability, error)
 	Start        func(context.Context, work.Card) (work.Run, error)
@@ -73,16 +77,28 @@ func (r *Reactor) release(ctx context.Context) error {
 		}
 		result = errors.Join(result, e)
 	}
-	cards, err := r.store.Release(ctx, av)
-	if err != nil {
-		return err
-	}
-	for _, c := range cards {
-		run, e := r.hooks.Start(ctx, c)
-		if e == nil {
-			e = r.store.Start(ctx, run)
+	for {
+		cards, err := r.store.Release(ctx, av)
+		if err != nil {
+			return errors.Join(result, err)
 		}
-		result = errors.Join(result, e)
+		freed := false
+		for _, c := range cards {
+			run, e := r.hooks.Start(ctx, c)
+			if errors.Is(e, ErrNotStarted) {
+				settled := r.store.StartFailed(ctx, c.Task.ID)
+				freed = freed || settled == nil
+				e = errors.Join(e, settled)
+			} else if e == nil {
+				e = r.store.Start(ctx, run)
+			}
+			result = errors.Join(result, e)
+		}
+		if !freed {
+			break
+		}
+		// Known failures settle durably and never retry here. Reconsider other
+		// tasks immediately using the slots and areas they just freed.
 	}
 	return result
 }

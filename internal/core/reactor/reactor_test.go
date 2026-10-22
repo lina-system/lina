@@ -122,6 +122,43 @@ func TestFailedForgeReadAndUnknownDispatchKeepLeases(t *testing.T) {
 	}
 }
 
+func TestKnownPreDispatchFailureReleasesReservations(t *testing.T) {
+	s := fixture(t)
+	starts := map[string]int{}
+	a, b, dependent := task("a"), task("b"), task("dependent", "a")
+	b.Schedule.Group = "other"
+	b.Schedule.Areas = a.Schedule.Areas
+	r := New(s, Hooks{Availability: func(context.Context) (work.Availability, error) {
+		return work.Availability{Hosts: map[string]int{"local": 1}}, nil
+	}, Start: func(_ context.Context, c work.Card) (work.Run, error) {
+		starts[c.Task.ID]++
+		if c.Task.ID == "a" {
+			return work.Run{}, errors.Join(ErrNotStarted, errors.New("fetch failed"))
+		}
+		return work.Run{ID: "run:" + c.Task.ID, TaskID: c.Task.ID, Worker: "worker", NodeID: "local", ThreadID: "thread:" + c.Task.ID, TurnID: "turn", Generation: 1}, nil
+	}})
+	if err := r.Schedule(t.Context(), []work.Task{a, b, dependent}); !errors.Is(err, ErrNotStarted) {
+		t.Fatalf("known failure hidden: %v", err)
+	}
+	failed, err := s.Get(t.Context(), "a")
+	if err != nil || failed.Run != nil || failed.Scheduling.AreaHeld || failed.Scheduling.CapacityHeld || failed.State != "failed" {
+		t.Fatalf("pre-dispatch failure kept reservations: %+v %v", failed, err)
+	}
+	if starts["b"] != 1 || starts["dependent"] != 0 {
+		t.Fatalf("released work: %v", starts)
+	}
+	if err := s.Recover(t.Context(), "restart"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Wake(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	failed, err = s.Get(t.Context(), "a")
+	if err != nil || starts["a"] != 1 || starts["b"] != 1 || starts["dependent"] != 0 || failed.Scheduling.AreaHeld || failed.Scheduling.CapacityHeld || failed.State != "failed" {
+		t.Fatalf("recovery replayed or lost failure: starts=%v failed=%+v err=%v", starts, failed, err)
+	}
+}
+
 func TestImmediateCompletionWaitsForAdmission(t *testing.T) {
 	s := fixture(t)
 	completed := make(chan error, 1)

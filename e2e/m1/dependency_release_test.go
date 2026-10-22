@@ -22,6 +22,27 @@ import (
 )
 
 func TestM3DependencyReleaseInstalledCore(t *testing.T) {
+	testM3DependencyRelease(t, nil)
+}
+
+type delegationStartFailure struct {
+	Command string `json:"command"`
+	Slots   int    `json:"slots"`
+}
+
+func TestM3DelegationStartFailureReleasesCapacity(t *testing.T) {
+	raw, err := os.ReadFile("../m3/dependency-start-failure.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fault delegationStartFailure
+	if err := json.Unmarshal(raw, &fault); err != nil {
+		t.Fatal(err)
+	}
+	testM3DependencyRelease(t, &fault)
+}
+
+func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure) {
 	raw, err := os.ReadFile("../m3/dependency-release.json")
 	if err != nil {
 		t.Fatal(err)
@@ -69,7 +90,11 @@ func TestM3DependencyReleaseInstalledCore(t *testing.T) {
 				Code   string
 				Output struct{ Result []string }
 			}
-			if err := json.Unmarshal([]byte(item.Output), &result); err != nil || result.Code != "ok" {
+			want := "ok"
+			if fault != nil {
+				want = "failed"
+			}
+			if err := json.Unmarshal([]byte(item.Output), &result); err != nil || result.Code != want {
 				t.Errorf("dispatch result: %s %v", item.Output, err)
 			}
 			taskIDs = result.Output.Result
@@ -137,7 +162,7 @@ func TestM3DependencyReleaseInstalledCore(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	writeJSON(filepath.Join(h.root, "fixture.json"), map[string]any{"git": git, "clone": clone, "forge": forge, "requests": true})
+	writeJSON(filepath.Join(h.root, "fixture.json"), map[string]any{"git": git, "clone": clone, "forge": forge, "requests": fault == nil})
 	gh := filepath.Join(h.root, "fixture-gh")
 	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
 	if err = os.WriteFile(gh, []byte(fmt.Sprintf("#!/bin/sh\nexec %s %s %s forge \"$@\"\n", quote(node), quote(program), quote(h.root))), 0700); err != nil {
@@ -148,6 +173,15 @@ func TestM3DependencyReleaseInstalledCore(t *testing.T) {
 		t.Fatal(err)
 	}
 	config := map[string]any{"codex": codex, "git": git, "gh": gh, "slots": 4, "repositories": map[string]any{"fixture/repo": map[string]string{"clone": clone, "base": "dev"}}}
+	if fault != nil {
+		failingGit := filepath.Join(h.root, "fixture-git")
+		marker := filepath.Join(h.root, "fetch-failed")
+		script := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = %s ] && [ ! -f %s ]; then : > %s; exit 1; fi\nexec %s \"$@\"\n", quote(fault.Command), quote(marker), quote(marker), quote(git))
+		if err = os.WriteFile(failingGit, []byte(script), 0700); err != nil {
+			t.Fatal(err)
+		}
+		config["git"], config["slots"] = failingGit, fault.Slots
+	}
 	writeJSON(filepath.Join(h.root, "system", "core", "delegation.json"), config)
 	start := func() *process {
 		p := h.command("core", "--state-root", h.root, "--socket", h.socket)
@@ -178,20 +212,25 @@ func TestM3DependencyReleaseInstalledCore(t *testing.T) {
 		t.Fatal(err)
 	}
 	admittedTurn(t, h, client, conversation, "dispatch-input", "Complete the three related tasks.")
-	questionAnswered, approvalAnswered := false, false
+	answeredQuestions := map[string]bool{}
+	approvalAnswered := false
+	wantQuestions := 2
+	if fault != nil {
+		wantQuestions, approvalAnswered = 0, true
+	}
 	answerCtx, stopAnswers := context.WithTimeout(h.ctx, operationTimeout)
 	defer stopAnswers()
-	for !questionAnswered || !approvalAnswered {
+	for len(answeredQuestions) < wantQuestions || !approvalAnswered {
 		frame, err := waiting.Receive(answerCtx)
 		if err != nil {
-			t.Fatalf("scheduled requests not delivered: question=%v approval=%v: %v", questionAnswered, approvalAnswered, err)
+			t.Fatalf("scheduled requests not delivered: questions=%d approval=%v: %v", len(answeredQuestions), approvalAnswered, err)
 		}
 		if frame.Error != nil {
 			t.Fatal(frame.Error)
 		}
 		switch card := frame.Payload.(type) {
 		case protocol.Question:
-			if questionAnswered {
+			if card.Card != nil && answeredQuestions[card.Card.ID] {
 				continue
 			}
 			if card.Card == nil || card.ConversationID != conversation {
@@ -202,7 +241,7 @@ func TestM3DependencyReleaseInstalledCore(t *testing.T) {
 			if _, err = waiting.AnswerQuestion(answerCtx, protocol.QuestionAnswer{CardID: &card.Card.ID, Revision: &card.Card.Revision, Answer: protocol.QuestionAnswerActionAccept, Values: &values}); err != nil {
 				t.Fatal(err)
 			}
-			questionAnswered = true
+			answeredQuestions[card.Card.ID] = true
 		case protocol.ApprovalRequest:
 			if approvalAnswered {
 				continue
@@ -243,6 +282,34 @@ func TestM3DependencyReleaseInstalledCore(t *testing.T) {
 			}
 		}
 	}
+	if fault != nil {
+		failedID := ""
+		for _, id := range []string{taskIDs[0], taskIDs[2]} {
+			card := await(id, func(c work.Card) bool {
+				return c.State == "failed" || c.Run != nil && !c.Active && c.TurnStatus == "completed"
+			})
+			if card.State == "failed" {
+				if failedID != "" || card.Run != nil || card.Scheduling.CapacityHeld || card.Scheduling.AreaHeld {
+					t.Fatalf("failed dispatch retained reservations: %+v", card)
+				}
+				failedID = id
+			} else if _, err := os.Stat(filepath.Join(h.root, id+".receipt.json")); err != nil {
+				t.Fatalf("independent worker did not deliver: %v", err)
+			}
+		}
+		if failedID == "" {
+			t.Fatal("fixture did not exercise pre-dispatch failure")
+		}
+		client.Close()
+		h.stopCore(core)
+		core = start()
+		failed, err := store.Get(h.ctx, failedID)
+		if err != nil || failed.State != "failed" || failed.Run != nil || failed.Scheduling.CapacityHeld || failed.Scheduling.AreaHeld {
+			t.Fatalf("restart replayed failed dispatch: %+v %v", failed, err)
+		}
+		h.stopCore(core)
+		return
+	}
 	a := await(taskIDs[0], func(c work.Card) bool { return c.Run != nil && !c.Active && c.TurnStatus == "completed" })
 	await(taskIDs[2], func(c work.Card) bool { return c.Run != nil && !c.Active })
 	b, err := store.Get(h.ctx, taskIDs[1])
@@ -268,6 +335,9 @@ func TestM3DependencyReleaseInstalledCore(t *testing.T) {
 		dir := filepath.Join(h.root, "work", "tasks", id)
 		if _, err = os.Stat(dir); err != nil {
 			t.Fatal(err)
+		}
+		if _, err = os.Stat(filepath.Join(h.root, id+".receipt.json")); err != nil {
+			t.Fatalf("worker receipt was not acknowledged: %v", err)
 		}
 		count, err := os.ReadFile(filepath.Join(h.root, id+".started"))
 		if err != nil || string(count) != "1" {

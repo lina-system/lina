@@ -312,6 +312,28 @@ func (s *Service) Release(ctx context.Context, av Availability) (released []Card
 	return
 }
 
+// StartFailed settles a known failure before dispatch. Reserved remains a
+// durable attempt claim so recovery cannot replay setup or overwrite its files.
+func (s *Service) StartFailed(ctx context.Context, id string) error {
+	return s.db.Write(ctx, func(tx *canon.Tx) error {
+		events, err := ledger(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		c, err := Project(events)
+		if err != nil {
+			return err
+		}
+		if c.Task.Schedule == nil || c.Run != nil || !c.Scheduling.Reserved || !c.Scheduling.CapacityHeld || !c.Scheduling.AreaHeld {
+			return ErrState
+		}
+		state := c.Scheduling
+		state.CapacityHeld = false
+		state.AreaHeld = false
+		return schedulingEvent(ctx, tx, c, "schedule_start_failed", state, nil)
+	})
+}
+
 // ObservePullRequest takes a Core-owned forge read, never a worker merge claim.
 // Its run binding rejects stale completions and a merged record is monotonic.
 func (s *Service) ObservePullRequest(ctx context.Context, id, run string, pr PullRequest) (request bool, err error) {

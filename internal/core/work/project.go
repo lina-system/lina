@@ -58,7 +58,7 @@ func advance(c *Card, e Event) error {
 			c.Revision++
 			c.State = "working"
 		}
-	case "schedule_wait", "schedule_reserved", "schedule_observed", "schedule_conflict", "schedule_return", "schedule_input", "schedule_answered":
+	case "schedule_wait", "schedule_reserved", "schedule_observed", "schedule_conflict", "schedule_return", "schedule_input", "schedule_answered", "schedule_start_failed":
 		if c.Task.Schedule == nil || e.Scheduling == nil {
 			return ErrState
 		}
@@ -75,6 +75,9 @@ func advance(c *Card, e Event) error {
 		}
 		if e.Kind == "schedule_conflict" || e.Kind == "schedule_input" {
 			c.State = "input_needed"
+		}
+		if e.Kind == "schedule_start_failed" {
+			c.State = "failed"
 		}
 		if c.Scheduling.Closed {
 			c.State = "stopped"

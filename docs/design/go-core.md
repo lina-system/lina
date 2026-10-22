@@ -1242,6 +1242,9 @@ type Definition struct {
   only the matching thread/turn releases the slot. Unknown external outcomes
   retain reservations. A terminal provider connection failure frees execution
   capacity; only a lost App Server observation leaves the execution unknown.
+  A failure known to precede the worker start settles the task as failed and
+  releases its execution and area reservations immediately. Recovery retains
+  that failed attempt without replaying setup or deleting any prepared worktree.
   A conflict is returned to the same worker once, with the
   claim durable before input; a second conflicting head requires input.
 - Scheduled sessions register with the existing originating-conversation worker
@@ -1250,6 +1253,11 @@ type Definition struct {
   Ordinary `worker_input` cannot start a scheduled session outside scheduler
   admission. Task ids are stable opaque identifiers that remain valid unmasked
   metadata; their spelling carries no authority.
+- Scheduled assignments declare the existing LINA `read_projection`, `ask`,
+  `coordinate` and `submit_receipt` work tools and route each call through the
+  same bound worker-session bridge. A submitted receipt is retained as
+  unverified worker evidence in the originating conversation; it cannot grant
+  merge authority or satisfy a dependency.
 - One task, one worker, one worktree, one branch, created by Core with the Git command from a parent clone in `work/clones/`. #127 wires `prepare_work` and `retain_work_result` into the running conversation tool registry. `work.Area` owns leased Git subprocesses through `kit/proc`, detached allocation at the pinned base, protected refs and branch bundles. Core closes its process owner during shutdown.
 - The CRW pin is the start gate for the work ledger records: a pin record and a LINA fixture runner whose expected values come from the fixture ([work-and-delegation.md](work-and-delegation.md#start-gate)).
 - `internal/core/work/pin` verifies SHA-256 over every adopted file before running

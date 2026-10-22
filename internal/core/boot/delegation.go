@@ -224,7 +224,18 @@ func (b *limitedOutput) Write(p []byte) (int, error) {
 	}
 	return b.Buffer.Write(p)
 }
-func (d *delegationRuntime) start(ctx context.Context, c work.Card) (work.Run, error) {
+func (d *delegationRuntime) start(ctx context.Context, c work.Card) (run work.Run, err error) {
+	sent := false
+	defer func() {
+		if err != nil && !sent {
+			err = errors.Join(reactor.ErrNotStarted, err)
+			d.mu.Lock()
+			activity := d.leases["pending:"+c.Task.ID]
+			delete(d.leases, "pending:"+c.Task.ID)
+			d.mu.Unlock()
+			activity.Release()
+		}
+	}()
 	p := c.Task.Schedule
 	repo, ok := d.config.Repositories[p.Repository]
 	if !ok || p.Worker != "codex" || p.Host != "local" {
@@ -296,7 +307,9 @@ func (d *delegationRuntime) start(ctx context.Context, c work.Card) (work.Run, e
 	d.processLeases = append(d.processLeases, process)
 	d.mu.Unlock()
 
-	thread, err := adapter.Start(ctx, l, worker.StartSpec{TaskID: c.Task.ID, AttemptID: c.Task.ID + ":1", Workdir: p.Workdir, TaskPacket: p.Packet, Required: worker.CapabilitySet{worker.SignalCompletion}})
+	// After this boundary a failed response can conceal an accepted start.
+	sent = true
+	thread, err := adapter.Start(ctx, l, worker.StartSpec{TaskID: c.Task.ID, AttemptID: c.Task.ID + ":1", Workdir: p.Workdir, TaskPacket: p.Packet, Tools: workerWorkTools(), Required: worker.CapabilitySet{worker.StreamProgress, worker.SignalCompletion, worker.WorkTools, worker.RequestApprovals, worker.ReportQuota}})
 	if err != nil {
 		return work.Run{}, err
 	}
@@ -483,7 +496,19 @@ func (d *delegationRuntime) events(ctx context.Context) {
 						entry.requestApproval(event)
 					}
 				}
-			case worker.ProgressEvent, worker.UsageEvent, worker.ToolCallEvent:
+			case worker.ToolCallEvent:
+				if event.ToolCall.Name == "ask" {
+					if err := d.reactor.InputNeeded(ctx, event.Thread.TaskID, event.Thread.ID, event.Thread.TurnID); err != nil {
+						continue
+					}
+				}
+				d.root.workers.mu.Lock()
+				entry := d.root.workers.sessions[event.Thread.ID]
+				d.root.workers.mu.Unlock()
+				if entry != nil {
+					entry.workTool(event)
+				}
+			case worker.ProgressEvent, worker.UsageEvent:
 			}
 		case <-d.resetChanged:
 			continue
