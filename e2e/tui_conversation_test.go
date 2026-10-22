@@ -191,6 +191,29 @@ func waitScreen(t *testing.T, h *harness, terminal *terminal, text string) tuite
 	return snapshot
 }
 
+// Initial text submission needs the TUI's own history discovery, not just a
+// live transport or an observer's History reply. Later connections stay direct
+// so restart scenarios keep the real socket's offline and refusal semantics.
+func (h *harness) startConversationTerminal(conversation string, environment []string, width, height int) *terminal {
+	h.t.Helper()
+	socket := h.socket
+	tap := newAccountTap(h.t, h, socket)
+	h.socket = tap.socket
+	terminal := h.startTerminalSize(environment, false, true, width, height)
+	h.socket = socket
+	waitScreen(h.t, h, terminal, design.Text(design.English, "live"))
+	for {
+		frame := tap.next(h.t, h)
+		if snapshot, ok := frame.Payload.(protocol.Snapshot); ok && snapshot.Topic == "conversation:"+conversation {
+			break
+		}
+	}
+	if err := tap.directReconnect(); err != nil {
+		h.t.Fatal(err)
+	}
+	return terminal
+}
+
 func installedConversationHarness(t *testing.T, providerURL string, installArgs ...string) (*harness, func(bool) *process) {
 	t.Helper()
 	h := newHarness(t, buildLina(t))
