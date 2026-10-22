@@ -45,6 +45,7 @@ func TestM2DiscordCore(t *testing.T) {
 	}
 	reply := strings.Repeat("a", scenario.Paragraphs[0]) + "\n\n" + strings.Repeat("b", scenario.Paragraphs[1])
 	var modelCalls, sendCalls, foreground, background atomic.Int32
+	var backgroundEvidence atomic.Bool
 	turnEntered := make(chan struct{}, 1)
 	releaseTurn := make(chan struct{})
 	const steeringText = "CHANNEL-STEERING-CORRECTION"
@@ -110,6 +111,20 @@ func TestM2DiscordCore(t *testing.T) {
 			}
 			emitResponse(w, reply, true)
 		default:
+			for _, raw := range request.Input {
+				var item struct{ Role, Content string }
+				if json.Unmarshal(raw, &item) != nil || !strings.Contains(item.Content, workResult) {
+					continue
+				}
+				if item.Role != "user" || !strings.Contains(item.Content, "<external_evidence origin=") || !strings.Contains(item.Content, "</external_evidence>") {
+					t.Errorf("background result became trusted history: %s", raw)
+				} else {
+					backgroundEvidence.Store(true)
+				}
+			}
+			if !backgroundEvidence.Load() {
+				t.Error("next model request lost untrusted background result")
+			}
 			if len(request.Tools) != 0 {
 				t.Error("tools-disabled binding still offered tools")
 			}
@@ -551,6 +566,7 @@ func TestDiscordBootHelper(t *testing.T) {
 		}
 		return nil
 	}}); err != nil {
+		fmt.Fprintln(os.Stderr, "Discord Core helper:", err)
 		t.Fatal(err)
 	}
 }

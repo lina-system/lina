@@ -299,9 +299,17 @@ durable consumed-steering marker prevents replay after restart. Unclaimed
 private inbox rows from the earlier gateway are moved to the main conversation
 without dropping their native receipts. Memory-disabled bindings omit personal memory and
 relationship context; tools-disabled bindings offer no tools. Binding changes
-are checked again before model dispatch and tool execution. A channel with tools
+are checked again before model dispatch and tool execution at the original
+inbound address. A new thread binding supersedes a captured parent fallback
+even when the parent binding remains unchanged. A channel with tools
 may start the existing read-only background run; its verified landing returns
-as a new message in the originating chat after the turn boundary. Recovery uses
+as a new message in the originating chat after the turn boundary. The delivery
+projection retains native background-notice provenance and its existing notice
+JSON shape, and remains untrusted external evidence in subsequent model history.
+The channel adapter receives the projected summary text; restart restores the
+notice through the ordinary history path. The outbound queue accepts that
+committed notice only for its bound agent and conversation; relabeling a generic
+system event as a notice does not authorize delivery. Recovery uses
 the original inbox and turn claims and does not rerun an already started turn or
 resend an unknown delivery. Private, reachable bindings with tools can present
 canonical approvals while the Gateway is active.

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -15,6 +16,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/gateway/discord"
 	"github.com/thisisjun786/lina/internal/core/gateway/telegram"
 	"github.com/thisisjun786/lina/internal/core/guard"
+	"github.com/thisisjun786/lina/internal/core/lane"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/protocol"
@@ -146,6 +148,7 @@ func (c *channelRuntime) admitChannelInput(ctx context.Context, shared *conversa
 	}
 	runner := newConversationView(c.r, binding.Agent, binding.Conversation)
 	runner.channelBinding = &binding
+	runner.channelAddress = event.Address
 	runner.coordinator = shared
 	return shared.submitInput(input, in.id, true, runner)
 }
@@ -161,6 +164,7 @@ func (c *channelRuntime) channelDeliveries(ctx context.Context, bot channels.Bot
 		}
 		view := newConversationView(c.r, binding.Agent, binding.Conversation)
 		view.channelBinding = &binding
+		view.channelAddress = event.Address
 		id := "channel-input:" + strconv.FormatInt(in.id, 10)
 		if err = c.channelRunResults(ctx, view, id); err != nil {
 			return err
@@ -187,7 +191,7 @@ func (c *channelRuntime) normalizePrivate(ctx context.Context) error {
 func (c *channelRuntime) channelReplies(ctx context.Context, view *conversationRuntime, event gateway.Inbound, in channelInput, parent string, adapter channelAdapter) error {
 	var ids []string
 	if err := c.r.db.Read(ctx, func(tx *canon.Tx) error {
-		rows, err := tx.QueryContext(ctx, "SELECT id FROM conv_event WHERE parent_id=? AND speaker_kind='agent' AND scaffold_kind IS NULL ORDER BY rowid", parent)
+		rows, err := tx.QueryContext(ctx, `SELECT id FROM conv_event WHERE parent_id=? AND ((speaker_kind='agent' AND scaffold_kind IS NULL) OR (speaker_kind='system' AND scaffold_kind='background_notice' AND json_extract(origin,'$.kind')='native' AND json_extract(origin,'$.entry')=?)) ORDER BY rowid`, parent, guard.EntryBackgroundNotice)
 		if err != nil {
 			return err
 		}
@@ -216,7 +220,19 @@ func (c *channelRuntime) channelReplies(ctx context.Context, view *conversationR
 		if event.Platform == "discord" {
 			summary, link = "", ""
 		}
-		parts, err := shape(item.Body.Text(), summary, link)
+		text := item.Body.Text()
+		if item.Origin.Entry == guard.EntryBackgroundNotice {
+			var notices []lane.Notice
+			if err := json.Unmarshal([]byte(text), &notices); err != nil {
+				return err
+			}
+			var summaries []string
+			for _, notice := range notices {
+				summaries = append(summaries, notice.Summary)
+			}
+			text = strings.Join(summaries, "\n\n")
+		}
+		parts, err := shape(text, summary, link)
 		if err != nil {
 			return err
 		}
@@ -244,7 +260,12 @@ func (r *conversationRuntime) validateChannel(ctx context.Context) error {
 	if r.channelBinding == nil {
 		return nil
 	}
-	b, err := channels.New(r.db).Binding(ctx, r.channelBinding.Address)
+	if !r.channelAddress.Valid() {
+		return channels.ErrDenied
+	}
+	// Resolve at the originating thread, since a new specific binding can
+	// supersede the captured parent fallback without changing that parent.
+	b, err := channels.New(r.db).Binding(ctx, r.channelAddress)
 	if err != nil {
 		return err
 	}
@@ -255,7 +276,7 @@ func (r *conversationRuntime) validateChannel(ctx context.Context) error {
 }
 
 // Delivered notices establish the turn boundary. Project each landed artifact
-// once into the agent's channel ledger, then let the same durable queue send it
+// once into the channel ledger as untrusted background evidence, then let the queue send it
 // as a new message. An unknown send never repeats on restart.
 func (c *channelRuntime) channelRunResults(ctx context.Context, view *conversationRuntime, parent string) error {
 	deliveries, err := c.r.background.notices.Delivered(ctx, view.conversation)
@@ -296,8 +317,16 @@ func (c *channelRuntime) channelRunResults(ctx context.Context, view *conversati
 				}
 				text += "\n\n" + body
 			}
+			// Keep the existing notice wire shape so restart can restore its
+			// summary and result card through the ordinary history path.
+			notice := n
+			notice.Summary = text
+			body, err := json.Marshal([]lane.Notice{notice})
+			if err != nil {
+				return err
+			}
 			b := view.channelBinding
-			_, err = view.journal().Admit(ctx, guard.EntryAgent, ledger.Input{ID: id, ParentID: parent, ConversationID: view.conversation, AgentID: view.agent, Surface: ledger.Surface{Kind: "channel", Platform: b.Platform, ChatID: b.Chat}, OccurredAt: n.Landed, RecordedAt: n.Landed, TimeQuality: "recorded", Locator: n.ID, Body: text})
+			_, err = view.journal().Admit(ctx, guard.EntryBackgroundNotice, ledger.Input{ID: id, ParentID: parent, ConversationID: view.conversation, AgentID: view.agent, ScaffoldKind: "background_notice", Surface: ledger.Surface{Kind: "channel", Platform: b.Platform, ChatID: b.Chat}, OccurredAt: n.Landed, RecordedAt: n.Landed, TimeQuality: "recorded", Locator: n.ID, Body: string(body)})
 			if err != nil {
 				return err
 			}

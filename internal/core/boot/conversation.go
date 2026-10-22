@@ -87,6 +87,7 @@ type conversationRuntime struct {
 	workArea        *work.Area
 	channelSurfaces atomic.Int64
 	channelBinding  *channels.Binding
+	channelAddress  channels.Address
 	coordinator     *conversationRuntime
 
 	materials        *conversationMaterials
