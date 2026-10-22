@@ -27,6 +27,13 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ## Terminal UI behaviour references
 
+Fenced-code highlighting also references Hermes Agent's
+[`hermes_cli/cli_render.py`](https://github.com/NousResearch/hermes-agent/blob/944c3a434071f43e64b443d033f3eba30c64434c/hermes_cli/cli_render.py)
+at `944c3a434071f43e64b443d033f3eba30c64434c` (MIT): final assistant content is
+rendered through Rich Markdown, with separate raw and stripped-text modes.
+LINA independently uses its pinned Chroma lexer and theme tokens; its streaming
+closure, cache and accessibility behaviour follow T-09. No upstream code is copied.
+
 The empty-conversation wordmark and input hints draw on Hermes Agent's
 startup banner and command hint (`hermes_cli/banner.py`, revision
 `944c3a434071f43e64b443d033f3eba30c64434c`, MIT). LINA's three localized
