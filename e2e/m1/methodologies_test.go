@@ -19,6 +19,7 @@ import (
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
+	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/tools"
 )
 
@@ -393,15 +394,29 @@ func TestSystemObservesRepairsAndVerifiesThroughInstalledCore(t *testing.T) {
 	h.stopCore(core)
 	seedMethodologyAgents(t, h, person, "system")
 	core = start(true)
-	c, conversation := conversationClient(t, h)
+	c, conversation := conversationClient(t, h, protocol.Capability{Name: "progress", Version: "1.0"})
 	db, err := canon.OpenSQLite(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	// Fault injection affects only a disposable projection in synthetic canon.
-	if _, err = db.Exec("UPDATE records_index_state SET head='synthetic-stale-index'"); err != nil {
+	// An orphaned search row survives routine head/locator reconciliation and
+	// requires the explicit rebuild. No canonical record or user data is changed.
+	if _, err = db.Exec("INSERT INTO records_fts(id,title,note) VALUES('synthetic-orphan','Synthetic stale projection','')"); err != nil {
 		t.Fatal(err)
+	}
+	// Normal overview reads must not consume the fault before the tool observes
+	// it; order this read explicitly instead of depending on background timing.
+	mode := "overview"
+	if _, err = c.Progress(h.ctx, protocol.ProgressGet{View: &mode}); err != nil {
+		t.Fatal(err)
+	}
+	frame, err := c.Receive(h.ctx)
+	if err != nil || frame.Error != nil {
+		t.Fatalf("overview read failed: %v %+v", err, frame.Error)
+	}
+	if _, ok := frame.Payload.(protocol.Progress); !ok {
+		t.Fatal("missing overview snapshot")
 	}
 	admittedTurn(t, h, c, conversation, "repair", "Observe the records index, repair that component if needed, and verify the result.")
 	c.Close()

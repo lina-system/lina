@@ -876,9 +876,6 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			if err := r.prepareRecordTools(turnID, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
-			if err := r.prepareMethodologyTools(turnID, bindings); err != nil {
-				return turn.PreparedRequest{}, err
-			}
 			workDeclarations, err := r.prepareGoalWorkTools(turnID, bindings)
 			if err != nil {
 				return turn.PreparedRequest{}, err
