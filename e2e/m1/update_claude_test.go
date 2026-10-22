@@ -90,6 +90,15 @@ func TestM2UpdateClaudeCredential(t *testing.T) {
 			if configured {
 				code = 0
 			}
+			// Activation spans drain, backup, swap, smoke and service resume.
+			// As in the shared activation scenario, wait for the actual process
+			// within this scenario's deadline before checking its exit status.
+			select {
+			case <-activate.done:
+			case <-ctx.Done():
+				activate.killAndWait()
+				t.Fatalf("activation did not finish: %s", &activate.stderr)
+			}
 			activate.wait(t, code)
 			var receipt ctlfiles.UpdateRecord
 			if err := json.Unmarshal(activate.stdout.Bytes(), &receipt); err != nil {
