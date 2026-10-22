@@ -23,7 +23,7 @@ func TestM2ProgressWaitingInstalledCore(t *testing.T) {
 	if err != nil || json.Unmarshal(data, &fixture) != nil || fixture.OutsideText == "" {
 		t.Fatal("missing outside-change fixture", err)
 	}
-	runCodexWorkTools(t, "../m2/progress-waiting.json", func(h *harness, phase string) {
+	runCodexWorkTools(t, "../m2/progress-waiting.json", "", func(h *harness, phase string) {
 		c, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "progress-reader", []protocol.Capability{{Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}})
 		if err != nil {
 			t.Fatal(err)

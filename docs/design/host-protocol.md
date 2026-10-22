@@ -218,7 +218,19 @@ reads the run's pinned material revision through its integrity check, and return
 `next` only when another page remains. Dismiss only accepts landed rows. Neither
 operation deletes the run or material or changes its claimed outcome.
 
-A `running_update` optionally carries `run_id` and `removed`; a removal uses the
+A `running_update` optionally carries a typed presentation: `state`, `summary`
+and `reason`. When any presentation field is present, `state` and `summary` are
+required together. The closed states are `in_progress`, `waiting`, `needs_input`,
+`ready_for_review`, `failed`, `stopped`, `done` and `unknown`. The optional closed
+waiting reasons are `dependency`, `area`, `quota`, `host_capacity`, `ci_pending`,
+`run_limit`, `person` and `budget`. Core publishes these fields for background runs
+and delegated tasks; clients localize the codes and display the authored summary.
+The existing `text` retains its prior meaning for earlier clients. A client uses
+it only when the typed presentation is absent, without parsing it for status.
+These optional additions follow client 1.0's additive-field receive rule and do
+not change existing empty, text-only or removal payloads.
+
+A `running_update` also optionally carries `run_id` and `removed`; a removal uses the
 same stream key and next cursor, removes that row from retained snapshots, and
 is replayable to an existing subscriber. A background landing's `result` card
 optionally carries `run_id` as an opaque open reference. It is an agent-report

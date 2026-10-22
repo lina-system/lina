@@ -44,6 +44,23 @@ type translation struct{ en, ko string }
 // Keys are wire codes or local presentation ids, never English source text.
 // Keep both languages together so a new entry cannot omit a translation.
 var catalog = map[string]translation{
+	"running.state.in_progress":      {"In progress", "진행 중"},
+	"running.state.waiting":          {"Waiting", "대기 중"},
+	"running.state.needs_input":      {"Input needed", "응답 필요"},
+	"running.state.ready_for_review": {"Ready for review", "검토 준비됨"},
+	"running.state.failed":           {"Failed", "실패"},
+	"running.state.stopped":          {"Stopped", "중지됨"},
+	"running.state.done":             {"Done", "완료"},
+	"running.state.unknown":          {"Unknown", "알 수 없음"},
+	"running.reason.dependency":      {"Waiting for a dependency", "선행 작업 대기"},
+	"running.reason.area":            {"Waiting for the work area", "작업 공간 대기"},
+	"running.reason.quota":           {"Waiting for quota", "사용 한도 대기"},
+	"running.reason.host_capacity":   {"Waiting for host capacity", "기기 여유 자원 대기"},
+	"running.reason.ci_pending":      {"Waiting for CI", "CI 결과 대기"},
+	"running.reason.run_limit":       {"Waiting for a run slot", "실행 순서 대기"},
+	"running.reason.person":          {"Waiting for you", "내 응답 대기"},
+	"running.reason.budget":          {"Waiting for work allowance", "작업 한도 대기"},
+
 	"conversation.start.memory": {"What do you remember about me?", "나에 대해 무엇을 기억해?"},
 	"conversation.start.voice":  {"Please keep your replies brief.", "앞으로 짧게 답해 줘."},
 	"conversation.start.task":   {"Help me finish a task.", "이 일을 끝까지 맡아서 해 줘."},

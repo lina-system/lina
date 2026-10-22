@@ -2,9 +2,11 @@
 package boot
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/core/runs"
+	"github.com/thisisjun786/lina/kit/protocol"
 )
 
 func TestDismissedRunningRowLeavesPublishedSnapshot(t *testing.T) {
@@ -27,6 +29,16 @@ func TestDismissedRunningRowLeavesPublishedSnapshot(t *testing.T) {
 	defer live.Close()
 	if before.Snapshot == nil || len(before.Snapshot.Items) != 1 {
 		t.Fatal("missing landed row")
+	}
+	var row protocol.RunningUpdate
+	if err := json.Unmarshal(before.Snapshot.Items[0].Data, &row); err != nil {
+		t.Fatal(err)
+	}
+	if row.State == nil || *row.State != protocol.RunningStateStopped || row.Summary == nil || *row.Summary != b.Goal || row.RunID == nil || *row.RunID != id {
+		t.Fatalf("running publication lacks typed presentation or routing identity: %+v", row)
+	}
+	if row.Text == nil || *row.Text != "stopped: "+b.Goal {
+		t.Fatal("legacy running text changed")
 	}
 	if err = r.background.list.Dismiss(t.Context(), r.person, runs.ListRef{Source: "run", ID: id}); err != nil {
 		t.Fatal(err)
