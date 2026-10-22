@@ -17,6 +17,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	memoryexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/internal/core/memory"
+	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -166,6 +167,7 @@ func TestM1MemoryCorrectionForgetRestore(t *testing.T) {
 			core.command.Env = append(core.command.Env, "LINA_RESPONSES_BASE_URL="+provider.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
 			core.start(t)
 			h.connect(core).Close()
+			waitCoreInputReady(t, h)
 			command, closeTUI = correctionMemoryTUI(t, h)
 			assertList()
 			closeTUI()
@@ -183,13 +185,13 @@ func correctionMemoryTUI(t *testing.T, h *harness) (func(string) protocol.Memory
 	tap := newAccountTap(t, h, socket, true)
 	h.socket = tap.socket
 	terminal := h.startScreenTUI("TERM=xterm-256color")
-	waitScreen(t, h, terminal, "Ctrl+D")
+	waitScreen(t, h, terminal, design.Text(design.English, "live"))
 	opened := false
 	command := func(text string) protocol.MemoryResult {
 		t.Helper()
 		if opened {
 			h.keys(terminal, "\x1b")
-			waitScreen(t, h, terminal, "Ctrl+D")
+			waitScreen(t, h, terminal, design.Text(design.English, "live"))
 		}
 		h.keys(terminal, text+"\r")
 		for {
