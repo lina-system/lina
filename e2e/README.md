@@ -242,3 +242,9 @@ An empty input must be refused as malformed (or capability-not-negotiated for an
 unconfigured Core), rather than unavailable during recovery, before the scenario
 continues. This probe cannot create a conversation event or model request.
 Restored-memory and replay startup paths use the same readiness check as installs.
+
+`m2/github-ci.json` starts the real Core binary with a synthetic `gh` executable
+in its isolated PATH. It negotiates the GitHub capability, refuses an unnegotiated
+read, observes rate-limited CI pending and its retry deadline, then observes head,
+review threads and successful checks. It verifies conditional headers and one
+review read per head, with no network credentials or GitHub service dependency.

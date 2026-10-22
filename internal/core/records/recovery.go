@@ -117,6 +117,10 @@ func (r *Store) checkpoint(ctx context.Context, p publication) error {
 	if err != nil {
 		return err
 	}
+	doc, err := parseDocument(data)
+	if err != nil {
+		return err
+	}
 	raw, _ := json.Marshal(p)
 	return r.db.Write(ctx, func(tx *canon.Tx) error {
 		changed, err := tx.ExecContext(ctx, "UPDATE records_state SET head=?,pending=NULL WHERE singleton=1 AND head=? AND pending=?", p.Commit, p.Parent, raw)
@@ -131,6 +135,13 @@ func (r *Store) checkpoint(ctx context.Context, p publication) error {
 			return ErrRecordsChanged
 		}
 		_, err = tx.ExecContext(ctx, "INSERT INTO records_index(id,path,blob,revision) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET path=excluded.path,blob=excluded.blob,revision=excluded.revision", id, p.Path, p.Blob, p.Commit)
+		if err != nil {
+			return err
+		}
+		if err = putProjection(ctx, tx, indexRow{id: id, path: p.Path, blob: p.Blob, revision: p.Commit, doc: doc}); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, "UPDATE records_index_state SET head=? WHERE singleton=1", p.Commit)
 		return err
 	})
 }
