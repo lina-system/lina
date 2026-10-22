@@ -57,6 +57,7 @@ func TestM3OperationalSwitch(t *testing.T) {
 	identityClient.Close()
 	waitCoreReady(t, h)
 	h.stopCore(core)
+	seedMethodologyAgents(t, h, person, "")
 	path := filepath.Join(h.root, "canon", "canon.sqlite")
 	withWork := func(f func(*work.Service)) {
 		ctl, e := ctlfiles.Open(h.root)
