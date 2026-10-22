@@ -217,6 +217,13 @@ func (s Source) loadSnapshot(ctx context.Context, scope Scope, id string) (Episo
 		}
 		evidence, err := journal.Get(ctx, "request:"+id+":0")
 		if err != nil {
+			// Large request evidence is a material too. Let withMaterials fetch
+			// it outside this snapshot before classifying unavailable bytes.
+			var needed *materialNeeded
+			if errors.As(err, &needed) {
+				needed.exclusion = Exclusion("missing_assembly")
+				return err
+			}
 			var exclusion Exclusion
 			if errors.As(err, &exclusion) || errors.Is(err, sql.ErrNoRows) || errors.Is(err, ledger.ErrBytesUnavailable) {
 				return Exclusion("missing_assembly")

@@ -3,22 +3,87 @@ package replay_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/lina/internal/core/assemble"
 	"github.com/thisisjun786/lina/internal/core/assets"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/replay"
 	"github.com/thisisjun786/lina/internal/core/secrets"
+	"github.com/thisisjun786/lina/kit/provider"
 )
 
 type observedReader struct {
 	db     *canon.Store
 	active bool
+}
+
+func TestRequestAssemblyMaterialReleasesSnapshotAndRechecksRetraction(t *testing.T) {
+	for _, mode := range []string{"read", "retracted", "assembly retracted", "trashed"} {
+		t.Run(mode, func(t *testing.T) {
+			db, source, root := fixture(t)
+			store, err := assets.Open(t.Context(), root, db)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			writer, err := assets.OpenMaterialWriter(t.Context(), store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			reader := &observedReader{db: db}
+			materials := &materialBytes{store: store, writer: writer, reader: reader}
+			id := seedRequestMaterial(t, db, materials)
+			assembly, err := ledger.New(db, materials).Get(t.Context(), "request:"+id+":0")
+			if err != nil || assembly.Material.ID == "" {
+				t.Fatalf("request evidence was not stored as a material: %v", err)
+			}
+			source.DB, source.Materials = reader, materials
+			reads := 0
+			materials.afterRead = func(ref ledger.Material) {
+				reads++
+				if ref != assembly.Material {
+					t.Fatal("expected request evidence to be fetched first")
+				}
+				if mode == "read" {
+					return
+				}
+				if err := db.Write(t.Context(), func(tx *canon.Tx) error {
+					if mode == "trashed" {
+						_, err := tx.ExecContext(t.Context(), "UPDATE assets SET trashed_at=1 WHERE id=?", ref.ID)
+						return err
+					}
+					event := "input"
+					if mode == "assembly retracted" {
+						event = assembly.ID
+					}
+					_, err := tx.ExecContext(t.Context(), "INSERT INTO retract_block(item_id,person,holder,event_id,conversation_id) VALUES('forgotten','person','agent',?,'')", event)
+					return err
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ep, err := source.Load(t.Context(), replay.Scope{Person: "person", Agent: "agent"}, id)
+			if reads != 1 || materials.nested != 0 {
+				t.Fatalf("request material reads=%d nested=%d err=%v", reads, materials.nested, err)
+			}
+			if mode == "read" {
+				if err != nil || len(ep.Evidence.Tools) != 1 || len(ep.Evidence.Tools[0]) <= ledger.InlineBytes {
+					t.Fatalf("large request evidence was not reconstructed: %v", err)
+				}
+			} else if err == nil {
+				t.Fatal("revoked request evidence was accepted after its material read")
+			}
+		})
+	}
 }
 
 func (r *observedReader) Read(ctx context.Context, fn func(*canon.Tx) error) error {
@@ -112,4 +177,111 @@ func TestMaterialReadReleasesSnapshotAndRechecksRetraction(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A growing tool catalog moves request evidence over the inline boundary.
+func seedRequestMaterial(t *testing.T, db *canon.Store, materials ledger.Materials) string {
+	t.Helper()
+	return seedWithEvidence(t, db, "input", guard.EntryOwner, func(e *ledger.RequestEvidence) {
+		tool, err := json.Marshal(map[string]string{"type": "function", "name": "fixture", "description": strings.Repeat("synthetic description ", ledger.InlineBytes/10)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.Tools = []provider.Item{tool}
+		event, err := ledger.New(db, materials).Get(t.Context(), "input")
+		if err != nil {
+			t.Fatal(err)
+		}
+		items, err := assemble.History([]ledger.Event{event}, "conversation", "agent")
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.Hash = assemble.Digest(provider.Request{Model: e.Model, Effort: e.Effort, Instructions: "original instructions\n\n\n", Items: items, Tools: e.Tools, Purpose: provider.Turn})
+	}, materials)
+}
+
+func TestUnavailableRequestMaterialExcludesOnlyItsTurn(t *testing.T) {
+	for _, mode := range []string{"trashed", "missing file", "no reader", "cancelled", "deadline"} {
+		t.Run(mode, func(t *testing.T) {
+			db, source, root := fixture(t)
+			store, err := assets.Open(t.Context(), root, db)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			writer, err := assets.OpenMaterialWriter(t.Context(), store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			reader := &observedReader{db: db}
+			materials := &materialBytes{store: store, writer: writer, reader: reader}
+			id := seedRequestMaterial(t, db, materials)
+			valid := seed(t, db, "valid", guard.EntryOwner)
+			source.DB, source.Materials = reader, materials
+			scope := replay.Scope{Person: "person", Agent: "agent"}
+			if episodes, manifest, err := source.Episodes(t.Context(), scope, selection()); err != nil || len(episodes) != 2 || manifest.Exported != 2 {
+				t.Fatalf("healthy fixture: episodes=%d manifest=%+v err=%v", len(episodes), manifest, err)
+			}
+			assembly, err := ledger.New(db, materials).Get(t.Context(), "request:"+id+":0")
+			if err != nil || assembly.Material.ID == "" {
+				t.Fatalf("request material: %v", err)
+			}
+			var readErr error
+			switch mode {
+			case "cancelled", "deadline":
+				readErr = context.Canceled
+				if mode == "deadline" {
+					readErr = context.DeadlineExceeded
+				}
+				source.Materials = failingMaterialRead{Materials: materials, err: readErr}
+			case "trashed":
+				err = db.Write(t.Context(), func(tx *canon.Tx) error {
+					_, err := tx.ExecContext(t.Context(), "UPDATE assets SET trashed_at=1 WHERE id=?", assembly.Material.ID)
+					return err
+				})
+			case "missing file":
+				var path string
+				err = db.Read(t.Context(), func(tx *canon.Tx) error {
+					return tx.QueryRowContext(t.Context(), "SELECT path FROM asset_revisions WHERE asset_id=? AND revision=?", assembly.Material.ID, assembly.Material.Revision).Scan(&path)
+				})
+				if err == nil {
+					err = os.Remove(filepath.Join(root, path))
+				}
+			case "no reader":
+				source.Materials = nil
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if readErr != nil {
+				_, _, err := source.Episodes(t.Context(), scope, selection())
+				var excluded replay.Exclusion
+				if !errors.Is(err, readErr) || errors.As(err, &excluded) {
+					t.Fatalf("operation failure hidden: %v", err)
+				}
+				return
+			}
+			_, err = source.Load(t.Context(), scope, id)
+			var excluded replay.Exclusion
+			if !errors.As(err, &excluded) || excluded != "missing_assembly" {
+				t.Errorf("unavailable request must be missing_assembly: %v", err)
+			}
+			episodes, manifest, err := source.Episodes(t.Context(), scope, selection())
+			if err != nil || len(episodes) != 1 || episodes[0].TurnID != valid || manifest.Selected != 2 || manifest.Exported != 1 || manifest.LeftOut != 1 || manifest.Reasons["missing_assembly"] != 1 || len(manifest.Reasons) != 1 {
+				t.Fatalf("unavailable request aborted or corrupted export: episodes=%d manifest=%+v err=%v", len(episodes), manifest, err)
+			}
+			if reader.active || materials.nested != 0 {
+				t.Fatal("material read held the snapshot")
+			}
+		})
+	}
+}
+
+type failingMaterialRead struct {
+	ledger.Materials
+	err error
+}
+
+func (m failingMaterialRead) Read(context.Context, ledger.Material) (string, error) {
+	return "", m.err
 }

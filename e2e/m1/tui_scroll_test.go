@@ -4,6 +4,7 @@ package e2e_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -42,10 +43,15 @@ func TestM1TUIWheelStickyConversation(t *testing.T) {
 	admittedTurn(t, h, client, conversation, "scroll-first", "Show the synthetic rows.")
 	plan := layout.Plan(layout.Size{Width: 100, Height: 34}, layout.Caps{SidePane: true}, layout.Shape{ComposerRows: 1})
 	activePlan := layout.Plan(layout.Size{Width: 100, Height: 34}, layout.Caps{SidePane: true}, layout.Shape{ComposerRows: 1, ActivityRows: 1})
+	conversationReady := func(s tuiterm.Snapshot) bool {
+		// PTY reads can split a redraw between transcript rows. The renderer
+		// returns its hardware cursor to the composer after painting the view.
+		return s.AltScreen && !s.CursorHidden && s.CursorY == plan.Composer.Y && s.CursorX == 2
+	}
 	idle := func(s tuiterm.Snapshot) bool {
 		// Turn activity temporarily borrows one transcript row. Compare the
 		// full idle viewport only after the TUI consumes the completed turn.
-		return !strings.Contains(screenRows(s)[activePlan.Activity.Y], design.Text(design.English, "activity.stop"))
+		return conversationReady(s) && !strings.Contains(screenRows(s)[activePlan.Activity.Y], design.Text(design.English, "activity.stop"))
 	}
 	region := func(s tuiterm.Snapshot) []string {
 		return screenRows(s)[plan.Conversation.Y : plan.Conversation.Y+plan.Conversation.Height]
@@ -54,7 +60,9 @@ func TestM1TUIWheelStickyConversation(t *testing.T) {
 		t.Helper()
 		ctx, cancel := context.WithTimeout(h.ctx, operationTimeout)
 		defer cancel()
-		s, err := terminal.screen.Wait(ctx, predicate)
+		s, err := terminal.screen.Wait(ctx, func(frame tuiterm.Snapshot) bool {
+			return renderedFrame(terminal, frame) && predicate(frame)
+		})
 		if err != nil {
 			t.Fatalf("%s: %v\n%s", label, err, screenText(s))
 		}
@@ -76,7 +84,7 @@ func TestM1TUIWheelStickyConversation(t *testing.T) {
 		})
 		h.keys(terminal, wheel+"\x1b")
 		return wait("conversation after closing web settings", func(s tuiterm.Snapshot) bool {
-			return !s.CursorHidden && strings.Contains(screenText(s), "SCROLL-")
+			return conversationReady(s) && strings.Contains(screenText(s), "SCROLL-")
 		})
 	}
 	if got := strings.Join(region(webWheel("\x1b[<64;10;10M")), "\n"); got != strings.Join(region(latest), "\n") {
@@ -84,7 +92,7 @@ func TestM1TUIWheelStickyConversation(t *testing.T) {
 	}
 	h.keys(terminal, "\x1b[<64;10;10M")
 	scrolled := wait("wheel up by three rows", func(s tuiterm.Snapshot) bool {
-		return strings.Contains(region(s)[0], fmt.Sprintf("SCROLL-%03d", index-3))
+		return conversationReady(s) && wheelViewportReached(s, plan.Conversation.Y, index-3)
 	})
 	frozen := strings.Join(region(scrolled), "\n")
 	t.Logf("wheel-up viewport:\n%s", frozen)
@@ -101,7 +109,7 @@ func TestM1TUIWheelStickyConversation(t *testing.T) {
 	}
 	h.keys(terminal, "\x1b[F")
 	end := wait("End returns to latest", func(s tuiterm.Snapshot) bool {
-		return strings.Contains(strings.Join(region(s), "\n"), "SCROLL-NEW") && !strings.Contains(screenRows(s)[plan.Status.Y], marker)
+		return conversationReady(s) && strings.Contains(strings.Join(region(s), "\n"), "SCROLL-NEW") && !strings.Contains(screenRows(s)[plan.Status.Y], marker)
 	})
 	t.Logf("End viewport:\n%s", screenText(end))
 	h.keys(terminal, "\x04")
@@ -130,5 +138,54 @@ func TestM1TUIWheelStickyConversation(t *testing.T) {
 	}
 	if calls.Load() != 2 {
 		t.Fatalf("provider calls = %d", calls.Load())
+	}
+}
+
+func wheelViewportReached(s tuiterm.Snapshot, top, index int) bool {
+	// This PTY does not negotiate synchronized output. Bubble Tea hides the
+	// cursor around each conversation diff; a matching first row alone can
+	// still be a partial frame when the PTY splits the renderer's write.
+	return !s.CursorHidden && strings.Contains(screenRows(s)[top], fmt.Sprintf("SCROLL-%03d", index))
+}
+
+func TestTUIWheelViewportWaitsForCompleteFrame(t *testing.T) {
+	screen, err := tuiterm.NewRecorder(40, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer screen.Close()
+	write := func(data string) {
+		t.Helper()
+		if _, err := screen.Write([]byte(data)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The PTY may split one renderer write after the scroll optimization has
+	// moved the first row, but before it fills a cleared row. Bubble Tea hides
+	// the cursor during the diff and shows it after completing the frame.
+	write("\x1b[?1049h\x1b[?25l\x1b[HSCROLL-050\x1b[3;1HSCROLL-052")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel() // Bound a rejected snapshot without any sleep or scheduler race.
+	ready := func(s tuiterm.Snapshot) bool { return wheelViewportReached(s, 0, 50) }
+	assertPending := func() {
+		t.Helper()
+		if s, err := screen.Wait(ctx, ready); !errors.Is(err, context.Canceled) {
+			t.Fatalf("accepted an incomplete wheel frame: hidden=%v, err=%v\n%s", s.CursorHidden, err, screenText(s))
+		}
+	}
+	assertPending()
+	write("\x1b[2;1HSCROLL-051\x1b[4;3H")
+	// Also split the cursor-show sequence itself across PTY reads.
+	for _, b := range []byte("\x1b[?25") {
+		write(string(b))
+		assertPending()
+	}
+	write("h")
+	s, err := screen.Wait(ctx, ready)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(screenRows(s)[:3], "\n"); got != "SCROLL-050\nSCROLL-051\nSCROLL-052" {
+		t.Fatalf("completed viewport: %q", got)
 	}
 }

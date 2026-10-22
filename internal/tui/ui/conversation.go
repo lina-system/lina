@@ -44,12 +44,15 @@ type inputHistory struct {
 }
 
 type textPager struct {
+	tool                     bool
 	developer, developerBusy bool
 	developerID              string
 	lanes                    state.WorkerLanes
 	laneNext                 *string
 	transcript               bool
 	running                  bool
+	progress                 bool
+	waiting                  bool
 	selected                 int
 	runID                    string
 	next                     *json.Number
@@ -225,6 +228,11 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		m.conversation.pager.transcript = true
 		return nil
 	case "ctrl+o":
+		if summary := m.toolSummary(); summary != "" {
+			m.openPager(summary)
+			m.conversation.pager.tool = true
+			return nil
+		}
 		if card, ok := m.selectedCard(); ok && card.RunID != "" {
 			return m.runningRequest(card.RunID, "open", nil)
 		}
@@ -235,13 +243,15 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	case "ctrl+w":
 		m.openPager(m.topicText("waiting"))
-		return nil
+		m.conversation.pager.waiting = true
+		return m.waitingRequest()
 	case "ctrl+r":
 		m.openRunning()
 		return nil
 	case "ctrl+p":
 		m.openPager(m.topicText("progress"))
-		return nil
+		m.conversation.pager.progress = true
+		return m.subscribeSnapshot("progress")
 	case "tab", "shift+tab":
 		m.conversation.cardsFocused = !m.conversation.cardsFocused
 		return nil
@@ -280,6 +290,10 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		if handled, command := m.channelCommand(text); handled {
 			m.reduceInput(state.EditDraft{})
 			m.conversation.undo = nil
+			return command
+		}
+		if handled, command := m.ownerCommand(text); handled {
+			m.reduceInput(state.EditDraft{})
 			return command
 		}
 		if handled, command := m.managementCommand(text); handled {
@@ -407,13 +421,22 @@ func (m *shellModel) conversationPlan() layout.Layout {
 	if m.activityRequested() {
 		activityRows = len(strings.Split(m.activityText(), "\n"))
 	}
-	return layout.Plan(m.size, layout.Caps{SidePane: true, Running: m.hasCapability("running"), Cards: m.hasCapability("waiting")}, layout.Shape{ActivityRows: activityRows, SidePane: m.conversation.pager.open, ComposerRows: m.conversation.composer.Height(), RunningCount: len(m.topicBlocks("running")), CardCount: len(m.topicBlocks("waiting")), CardRows: len(m.topicBlocks("waiting")), Attachments: len(m.content.Draft.Attachments) > 0})
+	cardRows := len(m.topicBlocks("waiting"))
+	cardCount := cardRows
+	if summary := m.homeWaiting(); summary != nil {
+		cardRows = len(summary.Lines)
+		cardCount = cardRows + summary.More
+	}
+	return layout.Plan(m.size, layout.Caps{SidePane: true, Running: m.hasCapability("running"), Cards: m.hasCapability("waiting")}, layout.Shape{ActivityRows: activityRows, SidePane: m.conversation.pager.open, ComposerRows: m.conversation.composer.Height(), RunningCount: len(m.topicBlocks("running")), CardCount: cardCount, CardRows: cardRows, Attachments: len(m.content.Draft.Attachments) > 0})
 }
 
 func (m *shellModel) topicBlocks(topic string) []state.Block {
 	var blocks []state.Block
 	for _, b := range m.content.Blocks {
 		if b.Topic == topic {
+			if topic == "running" && b.RunState != "" {
+				b.Text = m.runningRowText(b)
+			}
 			if b.Card != nil {
 				card := *b.Card
 				for _, current := range m.content.Cards {
@@ -440,6 +463,9 @@ func (m *shellModel) topicText(topic string) string {
 	for _, b := range m.topicBlocks(topic) {
 		lines = append(lines, b.Text)
 	}
+	if topic == "waiting" && len(lines) == 0 {
+		return design.Text(m.styles.options.Language, "waiting.empty")
+	}
 	return strings.Join(lines, "\n")
 }
 func (m *shellModel) resultCards() []state.Block {
@@ -463,12 +489,16 @@ func (m *shellModel) selectedCard() (state.Block, bool) {
 	}
 	return state.Block{}, false
 }
+func resultText(b state.Block) string {
+	if b.Body != "" {
+		return b.Body
+	}
+	return b.Text
+}
+
 func (m *shellModel) cardText() string {
 	if b, ok := m.selectedCard(); ok {
-		if b.Body != "" {
-			return b.Body
-		}
-		return b.Text
+		return resultText(b)
 	}
 	var lines []string
 	for _, b := range m.content.Blocks {
@@ -533,12 +563,19 @@ func (m *shellModel) pagerText() string {
 
 func (m *shellModel) refreshOpenCard() {
 	p := &m.conversation.pager
+	if p.open && p.tool {
+		p.text = m.toolSummary()
+		if p.text == "" {
+			*p = textPager{}
+		}
+		return
+	}
 	if !p.open || p.cardID == "" {
 		return
 	}
 	for _, card := range m.resultCards() {
 		if card.ID == p.cardID {
-			p.text = sanitize.Display(card.Body)
+			p.text = sanitize.Display(resultText(card))
 			if p.followEnd {
 				p.offset = len(m.pagerLines())
 			}
@@ -547,12 +584,56 @@ func (m *shellModel) refreshOpenCard() {
 	}
 }
 
+// Results carry complete replacement previews. Only a live update during a
+// turn opens a streaming projection; history and earlier results remain sealed.
+func (m *shellModel) refreshResultStreams(message state.Msg) {
+	live, isUpdate := message.(state.ItemDone)
+	next := make(map[string]shellBlock)
+	for _, card := range m.resultCards() {
+		text := resultText(card)
+		cached, ok := m.resultStreams[card.ID]
+		done := !ok || cached.done
+		if isUpdate && live.Block.ID == card.ID && (!ok || cached.text != text) {
+			done = !m.content.TurnActive
+		}
+		if !m.content.TurnActive {
+			done = true
+		}
+		if !ok || cached.text != text || cached.done != done {
+			revision := cached.revision + 1
+			stream := cached.stream
+			if !ok || cached.done || !strings.HasPrefix(text, cached.text) {
+				stream = render.NewStream(card.ID, render.Config{Width: max(1, m.size.Width)}, nil)
+				if !done {
+					stream.Append(revision, text)
+				}
+			} else if !done {
+				stream.Append(revision, text[len(cached.text):])
+			}
+			if done {
+				stream.Seal(revision, text)
+			}
+			cached = shellBlock{text, revision, done, stream}
+		}
+		next[card.ID] = cached
+	}
+	m.resultStreams = next
+}
+
 func (m *shellModel) pagerKey(msg tea.KeyMsg, name string) tea.Cmd {
 	p := &m.conversation.pager
 	if p.developer && !p.searching {
 		if handled, cmd := m.developerKey(name); handled {
 			return cmd
 		}
+	}
+	if p.waiting && !p.searching && name == "o" {
+		if m.waitingOrder == "lightest" {
+			m.waitingOrder = "priority"
+		} else {
+			m.waitingOrder = "lightest"
+		}
+		return m.waitingRequest()
 	}
 	if p.running && !p.searching {
 		rows := m.topicBlocks("running")
@@ -569,6 +650,9 @@ func (m *shellModel) pagerKey(msg tea.KeyMsg, name string) tea.Cmd {
 				return nil
 			case "enter":
 				return m.runningRequest(rows[p.selected].RunID, "open", nil)
+			case "s":
+				_, cmd := m.ownerCommand("/stop " + rows[p.selected].RunID)
+				return cmd
 			case "d":
 				return m.runningRequest(rows[p.selected].RunID, "dismiss", nil)
 			}
@@ -628,16 +712,28 @@ func (m *shellModel) pagerKey(msg tea.KeyMsg, name string) tea.Cmd {
 	}
 	return nil
 }
-func (m *shellModel) pagerLines() []string {
+func (m *shellModel) pagerRows() []render.StyledRow {
 	width := m.size.Width
 	if plan := m.conversationPlan(); plan.SidePane.Width > 0 {
 		width = plan.SidePane.Width
 	}
-	stream := render.NewStream("pager", render.Config{Width: max(1, width)}, nil)
-	stream.Seal(1, m.pagerText())
+	config := render.Config{Width: max(1, width)}
+	stream := m.resultStreams[m.conversation.pager.cardID].stream
+	if stream == nil {
+		stream = render.NewStream("pager", config, nil)
+		stream.Seal(1, m.pagerText())
+	}
+	return stream.CodePreview(config)
+}
+
+func (m *shellModel) pagerLines() []string {
 	var lines []string
-	for _, row := range stream.Window(0, stream.Len(), render.Config{Width: max(1, width)}, nil) {
-		lines = append(lines, row.Text)
+	for _, row := range m.pagerRows() {
+		var line strings.Builder
+		for _, span := range row.Spans {
+			line.WriteString(span.Text)
+		}
+		lines = append(lines, line.String())
 	}
 	return lines
 }
@@ -669,10 +765,10 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 	}
 	if m.conversation.pager.open && plan.SidePane.Height == 0 {
 		p := &m.conversation.pager
-		lines := m.pagerLines()
+		lines := m.pagerRows()
 		p.offset = min(p.offset, max(0, len(lines)-(m.size.Height-1)))
 		for y := 0; y < m.size.Height-1 && p.offset+y < len(lines); y++ {
-			rows[y] = clip(lines[p.offset+y])
+			rows[y] = clip(m.styles.markdownRow(lines[p.offset+y]))
 		}
 		return strings.Join(rows, "\n")
 	}
@@ -703,6 +799,18 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		}
 		transcript = append(transcript, transcriptRow{body: plainRow(design.Text(m.styles.options.Language, code) + "  /accounts")})
 	}
+	groups := m.toolGroups()
+	appendTools := func(anchor string) {
+		for _, group := range groups {
+			if group.calls[0].Anchor != anchor {
+				continue
+			}
+			for _, row := range m.toolGroupRows(group, plan.Conversation.Width) {
+				transcript = append(transcript, transcriptRow{body: plainRow(row), muted: true})
+			}
+		}
+	}
+	appendTools("")
 	hasItems := false
 	for _, b := range m.content.Blocks {
 		if !conversationBlock(b) {
@@ -719,7 +827,11 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 			prefix = m.styles.speakerPrefix(person, name, plan.Conversation.Width)
 		}
 		indent := strings.Repeat(" ", (render.Unicode{}).Width(prefix))
-		body := cached.stream.Markdown(render.Config{Width: plan.Conversation.Width - len(indent), Theme: m.styles.options.Theme}, m.styles.listBullet(), parseMarkdown)
+		stream := cached.stream
+		if b.InlineReply && m.resultStreams[b.ID].stream != nil {
+			stream = m.resultStreams[b.ID].stream
+		}
+		body := stream.Markdown(render.Config{Width: plan.Conversation.Width - len(indent), Theme: m.styles.options.Theme}, m.styles.listBullet(), parseMarkdown)
 		// Paragraph spacing belongs inside a message; boundaries get exactly one
 		// section gap even if the provider ended a message with empty lines.
 		blank := func(row render.StyledRow) bool {
@@ -742,6 +854,7 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		if b.Kind == protocol.KindResult && !b.InlineReply {
 			body = append([]render.StyledRow{plainRow(design.Text(m.styles.options.Language, "result") + "  " + sanitize.Display(b.Title) + "  Ctrl+O")}, body...)
 		}
+		toolRowsAt := len(body)
 		workedRow := -1
 		if elapsed, ok := m.content.Worked[b.ID]; ok {
 			workedRow = len(body)
@@ -750,7 +863,7 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		if b.InlineReply {
 			body = append(body, plainRow(design.Text(m.styles.options.Language, "reply.open_pager")))
 		}
-		if len(body) == 0 {
+		if len(body) == 0 && !slices.ContainsFunc(groups, func(group toolGroup) bool { return group.calls[0].Anchor == b.ID }) {
 			continue
 		}
 		// The account placeholder has no retained conversation identity.
@@ -766,6 +879,9 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 			}
 		}
 		blockStart := len(transcript)
+		if toolRowsAt == 0 {
+			appendTools(b.ID)
+		}
 		for i, row := range body {
 			lead := indent
 			if i == 0 {
@@ -775,6 +891,9 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 				lead = ""
 			}
 			transcript = append(transcript, transcriptRow{body: row, prefix: lead, person: person, muted: i == workedRow})
+			if i+1 == toolRowsAt {
+				appendTools(b.ID)
+			}
 		}
 		for row := 0; row < len(transcript)-blockStart; row++ {
 			anchors = append(anchors, conversationAnchor{block: b.ID, row: row})
@@ -817,6 +936,25 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 	drawTopic := func(topic string, region layout.Rect) {
 		if region.Height == 0 {
 			return
+		}
+		if topic == "waiting" {
+			if summary := m.homeWaiting(); summary != nil {
+				total := len(summary.Lines) + summary.More
+				label := design.Text(m.styles.options.Language, "waiting") + " " + strconv.Itoa(total)
+				shown := min(region.Height, len(summary.Lines))
+				for i := 0; i < max(1, shown); i++ {
+					line := label
+					if i < shown {
+						line += "  " + summary.Lines[i]
+					}
+					if i == max(1, shown)-1 && total > shown {
+						suffix := "  " + fmt.Sprintf(design.Text(m.styles.options.Language, "progress.more"), strconv.Itoa(total-shown))
+						line = render.Truncate(line, max(0, region.Width-(render.Unicode{}).Width(suffix)), render.Unicode{}) + suffix
+					}
+					rows[region.Y+i] = clip(line)
+				}
+				return
+			}
 		}
 		blocks := m.topicBlocks(topic)
 		label := design.Text(m.styles.options.Language, topic) + " " + strconv.Itoa(len(blocks))
@@ -865,20 +1003,15 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 	}
 	if plan.SidePane.Height > 0 {
 		p := &m.conversation.pager
-		stream := render.NewStream("pager", render.Config{Width: plan.SidePane.Width}, nil)
-		stream.Seal(1, m.pagerText())
-		p.offset = min(p.offset, max(0, stream.Len()-plan.SidePane.Height))
-		anchor := 0
-		if stream.Len() > 0 {
-			anchor = stream.At(p.offset).Offset
-		}
-		lines := stream.Window(anchor, plan.SidePane.Height, render.Config{Width: plan.SidePane.Width}, nil)
+		lines := m.pagerRows()
+		p.offset = min(p.offset, max(0, len(lines)-plan.SidePane.Height))
+		lines = lines[p.offset:]
 		for y := 0; y < plan.SidePane.Height; y++ {
 			left := ansi.Truncate(rows[plan.SidePane.Y+y], plan.Conversation.Width, "")
 			left += strings.Repeat(" ", max(0, plan.Conversation.Width-ansi.StringWidth(left)))
 			right := ""
 			if y < len(lines) {
-				right = lines[y].Text
+				right = m.styles.markdownRow(lines[y])
 			}
 			rows[plan.SidePane.Y+y] = left + right
 		}

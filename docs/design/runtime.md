@@ -189,6 +189,7 @@ LINA Core can re-run a recorded turn, sandboxed and without effects, so that a c
 - Input. An episode written by the episode export ([conversation-and-memory.md](conversation-and-memory.md#episode-export)) or the id of a recorded turn of the install the command runs on, and optionally a directory of candidate harness files that stand in for the persona layers, skill bodies and instruction text that the turn recorded.
 - Output. The replayed reply, its tool calls and its usage, written as files in a directory that the caller names. A replay scores nothing and judges nothing; the caller compares.
 - A replay rebuilds each selected packet item from its recorded ID and revision and verifies the original request digest before applying candidates. Skills come from the recorded skill commit; the four persona-owned state projections come from their content-addressed ledger materials. Personal-memory text is never retained for reconstruction: it is re-read under current scope and removal rules. If memory is missing, forgotten or retracted, the whole turn is excluded as `forgotten`; if its revision or scope changed, the reason is `source_changed`. The manifest counts the exclusion. The packet clock is the recorded preparation clock, and memory source validity is checked at that instant. Unknown or insufficient assembly evidence remains `missing_assembly`.
+- Request assembly evidence that exceeds the ledger's inline limit is read from its exact material revision outside the canon read snapshot. Replay then rechecks current scope, retraction and material visibility before accepting it, as it does for other material-backed sources. If that material cannot be read, the turn is excluded as `missing_assembly` and export continues with valid turns. Cancellation and deadline failures still stop the operation.
 - A replay uses the kit's loop core with the candidate files, on the model and effort that the turn used unless the caller names others. It runs in the sandbox with network blocked and with a scratch directory of its own, and it never touches the working directory of a conversation.
 - A turn that only answered replays in full. A turn that read replays with LINA's local read tools live and the results of its network reads taken from the ledger. A turn whose tool call had an effect replays with that call answered by the recorded result, and is left out of the replay when no result was recorded. A replay never runs an effect and never writes the effect ledger or the conversation ledger.
 - A replay's usage is recorded in its output as a run kind of its own, with the model account it used and each provider round. The installed development command writes no canon state, including budget reservations or settlements; its usage artifacts are separate from the install's budget totals ([Usage and cost](#usage-and-cost)).
@@ -588,14 +589,17 @@ default state root is `$XDG_STATE_HOME/lina`, falling back to
 defaults to the directory of the executing binary. Installation validates its
 manifest, requires its target to match the host OS and architecture, and verifies
 the size and SHA-256 of the exact artifact bytes copied.
-`--persona-source <dir>` selects an absolute local checkout root containing
-`characters/lina/persona/core-v1.md` and `default-voice-v1.md`. Install checks both
-files, reports a setup warning when unavailable, and stores the path (never the
-text) in private `system/core/config.json` as `persona_source`. Missing material
-does not block installation or Core startup. To change the source in an existing
-install, edit that field in the 0600 config file; Core rereads it at the next turn.
-Older installs without the file use an unconfigured source. See
-[Presets](conversation-and-memory.md#presets) for fallback and revision behavior.
+The install includes the eight working personas from public
+`persona/<preset>/core-v1.md` and `default-voice-v1.md`, using the keys and names in
+[Presets](conversation-and-memory.md#presets). Release validation checks all eight
+pairs before building release artifacts, independently enforcing the 64 KiB JSON-escaped pair budget. The files are embedded in the Core binary and covered by its artifact hash; installation needs no separate persona copy. Core loads them without a private checkout or persona-source setup;
+the legacy `--persona-source` / `persona_source` path does not override shipped
+starter layers. Migration publishes normal preset revisions while preserving
+prepared turns and agent-owned layers. Only backstory and world material stay
+in the private world repository and enter through material recall; their absence
+does not clear a working persona or block installation and first conversation.
+See [Presets](conversation-and-memory.md#presets) for validation, per-preset
+unavailable-pair fallback and revision behavior.
 The executable and its manifest are placed in `system/bin/`. The default client
 socket is `system/run/client.sock` under the state root; `--socket` can choose a
 shorter absolute path where the Unix socket path limit requires it.
@@ -608,14 +612,16 @@ account credential. It supplies the durable random main identity. The unit
 explicit root and socket arguments. A bundled `moirai-worker` receives its own
 `lina-moirai.service`, ordered after and dependent on Core, with
 `--canon <state-root>/canon/canon.sqlite` and
-`--socket <state-root>/system/run/moirai.sock`. No provider adapter receives
+`--socket <state-root>/run/jobs.sock`. No provider adapter receives
 a service unit.
 
-The current Core command does not connect canon or the job API. A bundled
-worker and its unit are installed but left disabled, and background memory
-and planning are reported unavailable with that cause. Enabling the worker
-requires the increment that connects those Core services; a copied executable
-or a successful systemd start job is not evidence of worker readiness.
+Core opens canon and serves the job API at that socket. Install enables the
+included worker after Core. The worker's service retries initial unavailability
+because Core may still be opening canon when systemd starts the worker. A
+missing model route makes model-based jobs unavailable without stopping Core
+or deterministic growth jobs. A copied executable or a successful systemd start
+job is not evidence of readiness; the installed skill maintenance scenario
+exercises the socket with the actual worker and verifies committed results.
 
 Preflight refuses an existing state root, socket, named service, service
 override or enablement link, and refuses linked destination ancestors. An
@@ -636,10 +642,16 @@ bounded `--version` output, observed status and the bundle's verified version
 list. `--tool name=/absolute/path` overrides PATH discovery for a named tool.
 Probes are bounded, missing or unstartable tools do not block installation, and
 unverified versions are listed together with the verified versions and remain
-usable. A missing verified list is empty, never an implicit verification.
+usable. The list comes from `verifiedWorkerVersions`; for Codex, install compares
+versions after removing the optional `codex-cli ` prefix on both sides, while
+preserving the original output and list in the inventory. An older or otherwise
+unlisted version stays unverified. A missing verified list is empty, never an
+implicit verification.
 `system/install.json` records the identity, socket, tools and missing optional
-components. The bundle's optional `verifiedTools` and `installFiles` fields are
-described in [packaging](../../packaging/README.md). Adapter files and their
+components. The bundle's optional `verifiedWorkerVersions` and `installFiles` fields are
+described in [packaging](../../packaging/README.md). The legacy `verifiedTools`
+field remains a fallback only when `verifiedWorkerVersions` is absent or null;
+an empty canonical map does not inherit legacy verification. Adapter files and their
 lockfile are copied only after digest verification; no SDK or user tool is
 downloaded during install. Until the build includes Claude adapter artifacts,
 that provider is reported unavailable. Missing background-worker artifacts
@@ -710,6 +722,7 @@ The initial JSON object contains these required fields; later implementation iss
 | `kitVersion` | Positive integer read from `kit/VERSION`, initially `1`. |
 | `sqlite` | Object with binding `module`, exact `version`, Go `moduleSum` (`h1:`), `sqliteVersion`, `wasmSHA256` (64 lowercase hex characters), `execution: "wazero"`, and `sqliteVec` (exact `version` and `sha256` of the complete custom Wasm engine; older manifests may have null). |
 | `providers.chatgpt` | `adapter: "responses"`, `retryCount: 0`, and `requestFields`, the explicit array of allowed top-level request fields. |
+| `verifiedWorkerVersions` | Optional object mapping worker names to verified version arrays; `codex` uses bare versions from the adapter's `versions.json`, such as `["0.163.0"]`. |
 | `binaries` | Array of objects with `name` (basename), `size` (positive byte count), and `sha256` (64 lowercase hexadecimal characters). Includes both `lina` and `lina-node`, with platform suffixes. |
 
 The writer copies `providers` from `kit/provider/responses/manifest.json` and checks its adapter identity and zero retry count. The Responses adapter reads that configuration from the generated manifest, validates required and forbidden fields, and permits per-request narrowing only. The initial list is exercised by scripted wires; live V1 acceptance remains required before conversation acceptance.
@@ -834,6 +847,11 @@ opening canon or minting an epoch. `lina update --resume --state-root <path>`
 recovers an interrupted attempt using its recorded paths, composition and
 generation, or retains a hold with a closed cause. Changed installation/data
 paths and foreign services are refused before controlling another service.
+If the resumed service fails to start or pass readiness, recovery records
+`held` with `update_resume_failed`, including when the interrupted attempt had
+already recorded `complete` or `rolled_back`. A failed readiness check stops the
+service with a bounded cleanup context even if the updater was cancelled.
+The READY receipt stays sticky, and normal Core startup remains blocked.
 
 An explicitly configured Claude OAuth token also reaches the trusted smoke Core
 and its model adapter, so smoke does not require a cached vendor login. Core
@@ -877,6 +895,9 @@ and SIGKILL acknowledged at each binary/adapter rename. Failure evidence uses
 closed causes and durable receipts; it does not infer success from a running
 service or from elapsed time. Existing runtime-specific injections below remain
 with their owning components and are included in full foundation verification.
+`e2e/m2/update-resume-failure.json` kills the updater after smoke completes but
+before the ordinary service starts, then refuses the recovery start. It checks
+the durable hold, blocked Core startup and unchanged data and composition.
 
 These runtime failures must end as their rules require:
 

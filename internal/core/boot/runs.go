@@ -63,7 +63,7 @@ func (r *conversationRuntime) startRuns(ctx context.Context) error {
 		return err
 	}
 	b.service, err = runs.New(runs.Config{Epoch: r.epoch, DB: r.db, Assets: r.assets, WorkDir: filepath.Join(r.root, "work"),
-		Model: r.route.Model, Tools: adapters, Authorize: r.authorizeRun, PublishPromotion: turn.PublishPromotion,
+		Model: r.route.Model, Tools: adapters, Authorize: r.authorizeRun, AuthorizeFollowUp: r.authorizeRunFollowSource, PublishPromotion: turn.PublishPromotion,
 		Stream: func(ctx context.Context, req provider.Request) (provider.Stream, error) {
 			activity, err := r.activities.Acquire(ctx, lease.Activity{Class: lease.Live, Reason: "background run"})
 			if err != nil {
@@ -304,7 +304,13 @@ func (r *conversationRuntime) runReadTools() (map[string]runs.Tool, error) {
 				}
 				var value any
 				if spec.Name == "skill_index" {
-					value, err = r.skills.Catalog(ctx)
+					var args struct {
+						Methodology string `json:"methodology,omitempty"`
+					}
+					err = json.Unmarshal(input.Arguments, &args)
+					if err == nil {
+						value, err = r.skills.Index(ctx, args.Methodology)
+					}
 				} else {
 					var ref skills.Version
 					err = json.Unmarshal(input.Arguments, &ref)
@@ -455,7 +461,13 @@ func (r *conversationRuntime) publishRunning(ctx context.Context) error {
 		if b.published[entry.Ref.ID] == text {
 			continue
 		}
-		data, err := json.Marshal(protocol.RunningUpdate{Text: &text, RunID: &entry.Ref.ID})
+		state := protocol.RunningState(entry.View.State)
+		update := protocol.RunningUpdate{Text: &text, RunID: &entry.Ref.ID, State: &state, Summary: &entry.View.Summary}
+		if entry.View.Reason != "" {
+			reason := protocol.RunningReason(entry.View.Reason)
+			update.Reason = &reason
+		}
+		data, err := json.Marshal(update)
 		if err != nil {
 			return err
 		}

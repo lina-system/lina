@@ -7,7 +7,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-export const componentsTimeoutMs = 900_000;
+export const componentsTimeoutMs = 1_200_000;
 
 export function execute(command, args, { cwd, env, timeoutMs = 120_000 }) {
   const started = performance.now();
@@ -127,7 +127,7 @@ export function checkComponents({ cwd = process.cwd(), components, execute: run 
         const acceptanceArgs = [...testArgs, '-parallel=4'];
         // The acceptance corpus grows across milestones. Enumerate each
         // package's actual tests, examples and fuzz seeds, then run disjoint
-        // halves. No test is omitted or repeated; each half retains Go's
+        // batches. No test is omitted or repeated; each batch retains Go's
         // diagnostic timeout and consumes the same outer components budget.
         const listed = invoke('go', ['list', '-mod=readonly', './e2e/...'], directory);
         if (listed.status !== 0) return { status: 1, output };
@@ -141,8 +141,9 @@ export function checkComponents({ cwd = process.cwd(), components, execute: run 
             if (invoke('go', [...acceptanceArgs, pkg], directory).status !== 0) return { status: 1, output };
             continue;
           }
-          for (let batch = 0; batch < 2; batch++) {
-            const tests = names.filter((_, index) => index % 2 === batch);
+          const batchCount = 3;
+          for (let batch = 0; batch < batchCount; batch++) {
+            const tests = names.filter((_, index) => index % batchCount === batch);
             if (tests.length && invoke('go', [...acceptanceArgs, '-run', `^(${tests.join('|')})$`, pkg], directory).status !== 0) return { status: 1, output };
           }
         }

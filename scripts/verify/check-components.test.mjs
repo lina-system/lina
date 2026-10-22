@@ -123,6 +123,67 @@ test('commands across modules share a deadline instead of resetting the budget',
   assert.deepEqual(budgets, Array.from({ length: 11 }, (_, i) => 20_000 - i * 1000));
 });
 
+test('uneven acceptance durations fit the package deadline without dropping scenarios', t => {
+  const sb = fixture(t);
+  const names = Array.from({ length: 8 }, (_, i) => `TestScenario${i}`);
+  let elapsed = 0;
+  const ran = [];
+  t.mock.method(performance, 'now', () => elapsed);
+  const result = checkComponents({ cwd: sb.dir, components: [{ name: 'lina', module: '.', packages: ['./e2e/...'] }], execute(command, args, options) {
+    if (args[0] === 'build') elapsed += 200_000;
+    if (args[0] === 'list') return { status: 0, stdout: 'example.invalid/e2e\n', stderr: '' };
+    if (args.includes('-list')) return { status: 0, stdout: names.join('\n') + '\n', stderr: '' };
+    if (args[0] === 'test') {
+      const pattern = new RegExp(args[args.indexOf('-run') + 1]);
+      const selected = names.filter(name => pattern.test(name));
+      // Two equal-count batches can still put all long scenarios together.
+      // Model the six-minute watchdog and the shared outer budget separately.
+      const duration = selected.reduce((sum, name) => sum + (Number(name.at(-1)) % 2 ? 100_000 : 20_000), 0);
+      const minutes = Number(args.find(arg => arg.startsWith('-timeout='))?.match(/=(\d+)m$/)?.[1]);
+      if (duration >= minutes * 60_000 || duration >= options.timeoutMs) {
+        return { status: 1, stdout: 'scenarios progressing\n', stderr: 'acceptance deadline expired\n' };
+      }
+      ran.push(...selected);
+      elapsed += duration;
+    }
+    return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
+  } });
+  assert.equal(result.status, 0, result.output);
+  assert.deepEqual(ran.sort(), names, 'all long and short scenarios run exactly once');
+  assert.equal(elapsed, 680_000, 'setup and every scenario consume the shared budget');
+});
+
+test('cold setup and three passing acceptance batches share enough command budget', t => {
+  const sb = fixture(t);
+  const durations = new Map([['TestBatchA', 252_000], ['TestBatchB', 234_000], ['TestBatchC', 300_000]]);
+  let elapsed = 0;
+  const ran = [];
+  t.mock.method(performance, 'now', () => elapsed);
+  const result = checkComponents({ cwd: sb.dir, components: [{ name: 'lina', module: '.', packages: ['./e2e/...'] }], execute(command, args, options) {
+    // The failed CI run consumed about 300 s before acceptance, then passed
+    // batches taking 251.7 s and 234.3 s. The last batch received only 103.9 s.
+    if (args[0] === 'build') elapsed += 300_000;
+    if (args[0] === 'list') return { status: 0, stdout: 'example.invalid/e2e\n', stderr: '' };
+    if (args.includes('-list')) return { status: 0, stdout: [...durations.keys()].join('\n') + '\n', stderr: '' };
+    if (args[0] === 'test') {
+      const pattern = new RegExp(args[args.indexOf('-run') + 1]);
+      const selected = [...durations].filter(([name]) => pattern.test(name));
+      const duration = selected.reduce((sum, [, milliseconds]) => sum + milliseconds, 0);
+      assert.ok(args.includes('-timeout=6m'));
+      if (duration >= 360_000 || duration >= options.timeoutMs) {
+        return { status: 1, stdout: 'scenarios progressing\n', stderr: `remaining command budget ${options.timeoutMs} ms expired\n` };
+      }
+      elapsed += duration;
+      ran.push(...selected.map(([name]) => name));
+    }
+    return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
+  } });
+  assert.equal(result.status, 0, result.output);
+  assert.deepEqual(ran, [...durations.keys()]);
+  assert.equal(elapsed, 1_086_000);
+  assert.ok(elapsed < componentsTimeoutMs - 5000);
+});
+
 test('an exhausted components budget stops before starting another command', t => {
   const sb = fixture(t);
   let elapsed = 0;
@@ -247,7 +308,7 @@ test('module tests retain a diagnostic deadline inside their process budget', t 
   const suite = calls.find(call => call.args[0] === 'test');
   assert.ok(suite.args.includes('-timeout=6m'), 'Go must emit stuck-test stacks before the process guard');
   assert.ok(suite.timeoutMs > 360_000, 'the shared budget leaves time for Go timeout diagnostics');
-  assert.ok(suite.timeoutMs <= 895_000, 'the test command retains the shared components deadline');
+  assert.ok(suite.timeoutMs <= componentsTimeoutMs - 5000, 'the test command retains the shared components deadline');
   assert.ok(calls.every(call => call.timeoutMs > 0 && call.timeoutMs <= componentsTimeoutMs));
 });
 
@@ -268,8 +329,9 @@ test('acceptance batches run every enumerated test once within the shared budget
         const index = args.indexOf('-run');
         const selected = index < 0 ? (args.includes('./e2e/...') ? names : []) : names.filter(name => new RegExp(args[index + 1]).test(name));
         runs.push({ selected, budget: options.timeoutMs });
-        // The growing package exceeds six minutes; either half finishes well
-        // inside that bound and both still share the outer components deadline.
+        if (selected.length) assert.ok(args.includes('-parallel=4'), 'each acceptance batch retains bounded Core concurrency');
+        // The growing package exceeds six minutes; each batch finishes within
+        // that bound and all share the outer components deadline.
         const duration = selected.length * 80_000;
         elapsed += duration;
         return { status: duration >= 360_000 || duration >= options.timeoutMs ? 1 : 0, stdout: '', stderr: '' };
@@ -279,8 +341,8 @@ test('acceptance batches run every enumerated test once within the shared budget
   assert.equal(result.status, 0, result.output);
   assert.deepEqual(runs.flatMap(run => run.selected).sort(), [...names].sort());
   const batches = runs.filter(run => run.selected.length > 0);
-  assert.equal(batches.length, 2);
-  assert.ok(batches[1].budget < batches[0].budget);
+  assert.ok(batches.length > 1);
+  assert.ok(batches.slice(1).every((batch, i) => batch.budget < batches[i].budget));
   assert.ok(elapsed < componentsTimeoutMs);
 });
 

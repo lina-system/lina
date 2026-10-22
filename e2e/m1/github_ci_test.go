@@ -24,6 +24,7 @@ func TestM2GitHubCIInstalledCore(t *testing.T) {
 		InitialCI    string `json:"initial_ci"`
 		InitialCause string `json:"initial_cause"`
 		FinalCI      string `json:"final_ci"`
+		Environment  []string
 	}
 	data, err := os.ReadFile("../m2/github-ci.json")
 	if err != nil {
@@ -44,6 +45,14 @@ func TestM2GitHubCIInstalledCore(t *testing.T) {
 # SPDX-License-Identifier: Apache-2.0
 set -eu
 printf '%s\n' "$*" >> "$LINA_GH_FIXTURE/calls"
+# A nonempty GH_FORCE_TTY (including 0) enables terminal output in gh.
+if [ -z "${NO_COLOR-}" ] && [ "${CLICOLOR-}" != 0 ]; then
+ if [ -n "${GH_FORCE_TTY-}" ] || [ "${CLICOLOR_FORCE-0}" != 0 ]; then
+  printf '\033[32m'
+ fi
+fi
+[ -z "${GH_FORCE_TTY-}" ] && [ -n "${NO_COLOR-}" ] && [ "${CLICOLOR-}" = 0 ] || exit 91
+[ "${CLICOLOR_FORCE-0}" = 0 ] && [ "${FORCE_COLOR-0}" = 0 ] || exit 92
 if [ ! -f "$LINA_GH_FIXTURE/limited" ]; then
  : > "$LINA_GH_FIXTURE/limited"
  printf 'HTTP/2.0 403 Forbidden\r\nRetry-After: 1\r\nX-Poll-Interval: 1\r\n\r\n{"message":"secondary rate limit"}'
@@ -65,6 +74,7 @@ esac
 	}
 	core := h.command("core", "--state-root", h.root, "--socket", h.socket)
 	core.command.Env = append(core.command.Env, "PATH="+h.root+":/usr/bin:/bin", "LINA_GH_FIXTURE="+h.root)
+	core.command.Env = append(core.command.Env, fixture.Environment...)
 	core.start(t)
 	connect := func(caps []protocol.Capability) *client {
 		conn := h.connect(core)
@@ -104,7 +114,7 @@ esac
 	}
 	first := read()
 	if *first.Ci != fixture.InitialCI || *first.Cause != fixture.InitialCause || *first.Done || first.RetryAt == nil {
-		t.Fatalf("rate limit: %+v", first)
+		t.Fatalf("rate limit: ci=%s cause=%s done=%t retry=%v", *first.Ci, *first.Cause, *first.Done, first.RetryAt)
 	}
 	// Bounded polling observes protocol state; elapsed time never proves completion.
 	poll := time.NewTicker(10 * time.Millisecond)
@@ -128,6 +138,9 @@ esac
 		if *result.Done {
 			if *result.Ci != fixture.FinalCI || result.Head == nil || *result.Head != fixture.Head || result.Reviews == nil || len(*result.Reviews) != 1 {
 				t.Fatalf("conclusion: %+v", result)
+			}
+			if result.Checks == nil || len(*result.Checks) != 1 || (*result.Checks)[0].Name != "foundation" || (*result.Checks)[0].Conclusion != "success" {
+				t.Fatalf("check results: %+v", result.Checks)
 			}
 			break
 		}

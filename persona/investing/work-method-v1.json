@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "preset": "investing",
+  "tools": {
+    "declare_first": [
+      "web_research",
+      "materials"
+    ]
+  },
+  "handoff": {
+    "owns": [
+      "investment_analysis"
+    ]
+  }
+}

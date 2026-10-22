@@ -7,6 +7,7 @@ import (
 	"errors"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/persona"
 )
 
 func presetAgents(ctx context.Context, tx *canon.Tx, id string) ([]Agent, error) {
@@ -36,6 +37,20 @@ func (s *Store) updatePreset(ctx context.Context, p Preset, person string, expec
 	if !present(p.ID) || !present(person) {
 		return ErrInvalid
 	}
+	key := ""
+	if persona.IsStarter(p.ID) {
+		key = p.ID
+	}
+	if p.WorkMethod == "" {
+		p.WorkMethod = persona.EmptyWorkMethod(key)
+	}
+	method, err := persona.ParseWorkMethod([]byte(p.WorkMethod), key)
+	if err != nil {
+		return ErrInvalid
+	}
+	p.WorkMethod = method
+	triple, _ := json.Marshal(struct{ Core, Voice, Method string }{p.Core, p.DefaultVoice, method})
+	p.Revision = persona.WorkMethodRevision(string(triple))
 	seen := map[string]bool{}
 	for _, name := range p.BlankSettings {
 		if !present(name) || seen[name] {
@@ -44,7 +59,7 @@ func (s *Store) updatePreset(ctx context.Context, p Preset, person string, expec
 		seen[name] = true
 	}
 	var before []Agent
-	err := s.db.Read(ctx, func(tx *canon.Tx) error { var err error; before, err = presetAgents(ctx, tx, p.ID); return err })
+	err = s.db.Read(ctx, func(tx *canon.Tx) error { var err error; before, err = presetAgents(ctx, tx, p.ID); return err })
 	if err != nil {
 		return err
 	}
@@ -54,12 +69,12 @@ func (s *Store) updatePreset(ctx context.Context, p Preset, person string, expec
 		if err != nil {
 			return err
 		}
-		if old.Layers.Core == p.Core && old.Layers.DefaultVoice == p.DefaultVoice {
+		if old.Layers.Core == p.Core && old.Layers.DefaultVoice == p.DefaultVoice && old.WorkMethod == p.WorkMethod {
 			continue
 		}
 		old.Layers.Core = p.Core
 		old.Layers.DefaultVoice = p.DefaultVoice
-		commit, err := s.save(ctx, a.ID, old.Commit, old.Layers, person)
+		commit, err := s.save(ctx, a.ID, old.Commit, old.Layers, person, p.WorkMethod)
 		if err != nil {
 			return err
 		}
@@ -69,6 +84,9 @@ func (s *Store) updatePreset(ctx context.Context, p Preset, person string, expec
 	return s.db.Write(ctx, func(tx *canon.Tx) error {
 		if expected != nil {
 			current, err := preset(ctx, tx, p.ID)
+			if errors.Is(err, ErrNotFound) {
+				current, err = Preset{ID: p.ID}, nil
+			}
 			if err != nil {
 				return err
 			}
@@ -100,6 +118,37 @@ func (s *Store) updatePreset(ctx context.Context, p Preset, person string, expec
 		}
 		return nil
 	})
+}
+
+// UpdatePresetLayers preserves preset metadata owned by other features while
+// publishing the shipped pair. Existing agents keep all agent-owned state.
+func (s *Store) UpdatePresetLayers(ctx context.Context, id, core, voice, person string) error {
+	return s.updatePresetMaterial(ctx, id, core, voice, nil, person)
+}
+
+// UpdatePresetMaterial publishes the triple without changing blank definitions.
+func (s *Store) UpdatePresetMaterial(ctx context.Context, id, core, voice, method, person string) error {
+	return s.updatePresetMaterial(ctx, id, core, voice, &method, person)
+}
+func (s *Store) updatePresetMaterial(ctx context.Context, id, core, voice string, method *string, person string) error {
+	var before Preset
+	err := s.db.Read(ctx, func(tx *canon.Tx) error {
+		var err error
+		before, err = preset(ctx, tx, id)
+		return err
+	})
+	if errors.Is(err, ErrNotFound) {
+		before, err = Preset{ID: id}, nil
+	}
+	if err != nil {
+		return err
+	}
+	next := before
+	next.Core, next.DefaultVoice = core, voice
+	if method != nil {
+		next.WorkMethod = *method
+	}
+	return s.updatePreset(ctx, next, person, &before)
 }
 
 // Only the exact shipped placeholders are eligible. Owner-supplied material and

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -40,7 +41,7 @@ func definition(t *testing.T) Definition {
 }
 func TestDispatchWaitsForCommittedReceiptAndNeverReplaysUncertainWork(t *testing.T) {
 	db := store(t)
-	s, err := Open(t.Context(), Config{DB: db})
+	s, err := Open(t.Context(), Config{DB: db, Epoch: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +81,7 @@ func TestDispatchWaitsForCommittedReceiptAndNeverReplaysUncertainWork(t *testing
 	if err = s.save(t.Context(), r); err != nil {
 		t.Fatal(err)
 	}
-	restarted, err := Open(t.Context(), Config{DB: db})
+	restarted, err := Open(t.Context(), Config{DB: db, Epoch: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +94,7 @@ func TestDispatchWaitsForCommittedReceiptAndNeverReplaysUncertainWork(t *testing
 	}
 }
 func TestDefinitionRefusesMissingScopeAndProtectedBranches(t *testing.T) {
-	for _, name := range []string{"done", "writes", "design", "main", "dev", "relative", "glob", "design_escape"} {
+	for _, name := range []string{"done", "writes", "design", "main", "master", "dev", "relative", "glob", "design_escape"} {
 		t.Run(name, func(t *testing.T) {
 			d := definition(t)
 			switch name {
@@ -103,7 +104,7 @@ func TestDefinitionRefusesMissingScopeAndProtectedBranches(t *testing.T) {
 				d.WriteArea = nil
 			case "design":
 				d.DesignRefs = nil
-			case "main", "dev":
+			case "main", "master", "dev":
 				d.Branch = name
 			case "relative":
 				d.Repository = "repo"
@@ -119,5 +120,48 @@ func TestDefinitionRefusesMissingScopeAndProtectedBranches(t *testing.T) {
 	}
 	if allowedFiles("result.txt\nprivate.txt", []string{"result.txt"}) {
 		t.Fatal("out of scope file accepted")
+	}
+}
+
+func TestDispatchReturnsAssignedBranchWithoutChangingInput(t *testing.T) {
+	for _, alreadyNamed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "append", true: "preserve"}[alreadyNamed], func(t *testing.T) {
+			db := store(t)
+			origin := Origin{Person: "person", Agent: "agent", Conversation: "main:agent", Turn: "turn:input"}
+			id := admissionID(origin, "call")
+			d := definition(t)
+			want := d.Branch + "." + id
+			if alreadyNamed {
+				d.Branch = want
+			}
+			s, err := Open(t.Context(), Config{DB: db, Epoch: 1, Manage: func(_ context.Context, r Record) (Record, error) {
+				// The persisted request remains available for idempotency; the
+				// manager and worker must receive the actual assigned definition.
+				packet, err := taskPacket(r)
+				if err != nil || !strings.Contains(packet, want) {
+					t.Errorf("task packet lost assigned branch: %s %v", packet, err)
+				}
+				return r, nil
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close(context.Background())
+			raw, _ := json.Marshal(d)
+			call := provider.ToolCall{ID: "call", Name: "dispatch_work", Arguments: string(raw)}
+			tool := s.Tool(origin)
+			first := tool.Execute(t.Context(), call)
+			var result struct{ ID, Branch string }
+			if first.Code != loop.OK || json.Unmarshal(first.Output, &result) != nil || result.ID != id || result.Branch != want {
+				t.Fatalf("assigned branch absent or duplicated: %s", first.Output)
+			}
+			if again := tool.Execute(t.Context(), call); string(again.Output) != string(first.Output) {
+				t.Fatal("retry changed branch", again)
+			}
+			records, err := s.records(t.Context())
+			if err != nil || len(records) != 1 || records[0].Definition.Branch != d.Branch {
+				t.Fatal("requested definition lost", err)
+			}
+		})
 	}
 }

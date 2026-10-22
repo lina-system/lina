@@ -79,7 +79,7 @@ jobs:
       matrix: ${{ fromJSON(needs.selection.outputs.matrix) }}
     name: ${{ matrix.id }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Check out the candidate
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -132,8 +132,8 @@ jobs:
       - name: Install sandbox launcher
         if: matrix.sandbox
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends bubblewrap
+          sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update
+          sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install --yes --no-install-recommends bubblewrap
           sudo tee /etc/apparmor.d/bwrap >/dev/null <<'PROFILE'
           abi <abi/4.0>,
           include <tunables/global>,

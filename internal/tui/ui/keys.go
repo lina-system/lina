@@ -49,7 +49,8 @@ var keyBindings = []keyBinding{
 	{"channel.heading", []string{"/channels"}, 5, "", "commands"},
 	{"developer.heading", []string{"/developer"}, 6, "", "commands"},
 	{"talk.heading", []string{"/talk"}, 6, "", "commands"},
-	{"interrupt", []string{"/stop"}, 7, "", "commands"},
+	{"progress", []string{"/progress", "/waiting priority|lightest"}, 7, "", "commands"},
+	{"interrupt", []string{"/stop", "/stop <run>", "/stop all", "/note <run> <text>"}, 7, "", "commands"},
 	{"shortcuts.queue", []string{"/queue <text>"}, 8, "", "commands"},
 	{"web.heading", []string{"/web"}, 9, "", "commands"},
 }

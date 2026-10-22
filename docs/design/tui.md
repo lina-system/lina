@@ -74,7 +74,7 @@ acceptance remains the T-08 spike gate.
 - It never opens canon, never runs `lina core` and never holds the lock. Every message it sends is a request that Core accepts or refuses, and when the two disagree Core wins and the TUI refreshes.
 - It uses only the client connection. Its types are the Go types generated from the schema ([host-protocol.md](host-protocol.md#schema-and-generated-types)).
 - Protocol errors and Core logs go to the status line and a log, never into the conversation ([host-protocol.md](host-protocol.md#client-connection)). `TEA_TRACE` and `TEA_DEBUG` stay unset, and panic output is masked.
-- Import rule: `internal/tui/...` imports only `internal/clientapi`, `internal/design`, `kit/protocol` and other `internal/tui` packages. Charm packages are imported only in `tui/term` and `tui/ui`. The Markdown UI adapter may additionally import the already pinned `github.com/yuin/goldmark`, `/ast`, `/text` and `/util` packages; this exception does not extend to `render`, `state`, `layout`, `term` or other Goldmark packages. The one architecture `go test` of [go-core.md](go-core.md) (C-40) checks it.
+- Import rule: `internal/tui/...` imports only `internal/clientapi`, `internal/design`, `kit/protocol` and other `internal/tui` packages. Charm packages are imported only in `tui/term` and `tui/ui`. The Markdown UI adapter may additionally import the already pinned `github.com/yuin/goldmark`, `/ast`, `/parser`, `/text` and `/util` packages, plus `github.com/alecthomas/chroma/v2` and `/lexers` for code token roles; this exception does not extend to `render`, `state`, `layout`, `term` or other Goldmark/Chroma packages. The one architecture `go test` of [go-core.md](go-core.md) (C-40) checks it.
 - Trust: the socket's user check and the rule for who may decide an approval are Core's ([go-core.md](go-core.md), C-42). The TUI shows a refusal as a refusal and adds no rule of its own.
 - Parity with the LINA app comes from the shared conformance fixtures ([host-protocol.md](host-protocol.md#conformance-fixtures)). The app is not designed here.
 
@@ -105,6 +105,15 @@ text or a claim that reads prove Core mutation readiness. Resync and its fresh
 snapshot restore the subscribed view in Core's history order. A durable stopped
 outcome stays with its interrupted turn before later inputs and replies, including
 after reconnect and terminal resize.
+
+Connection loss includes a request write failing before the receive loop observes
+EOF. The client closes that transport and the same connection owner enters
+Retrying; a failed or unacknowledged submission returns to the draft and is never
+automatically resent. Only transport failures take this path. Invalid requests,
+malformed protocol frames, terminal input/output failures and caller cancellation
+retain their failure or cancellation behavior. The installed-Core headless test
+`TestM1TUISubmissionDisconnectInstalledCore` forces the write-first ordering,
+restarts Core and verifies retained history, an editable draft and explicit send.
 
 Initial conversation discovery stays Connecting until History supplies the
 destination. The connected conversation state is a usable input boundary, not
@@ -196,7 +205,8 @@ The server side is [go-core.md](go-core.md) (C-42): topics, cursors, rings, batc
 - A different revocation epoch ([conversation-and-memory.md](conversation-and-memory.md#terms)) makes the TUI drop cached items before the snapshot applies, so a forgotten item cannot survive a reconnect.
 - Replaying a stream or a snapshot twice leaves state unchanged.
 - `tool_activity` start/finish events consume their stream cursor without
-  creating conversation blocks, completion durations or activity words. Core
+  creating conversation blocks, completion durations or activity words. They do
+  update the separate, ephemeral tool rows described in T-13. Core
   excludes them from snapshots; a client receiving an optional activity item
   there skips it while accepting the snapshot cursor. Unknown optional snapshot
   items likewise contribute no conversation content and cannot prevent the
@@ -264,6 +274,10 @@ sanitized independently and replaces that continuation.
 The client computes no state of work. It shows the words and marks Core sends ([work-and-delegation.md](work-and-delegation.md#progress-display)), and "unknown" is shown as "unknown", never as none, zero or done.
 
 **Presentation kinds** are the kinds of version 1.0 of the client connection ([host-protocol.md](host-protocol.md#client-connection)): output delta, item done, turn state, approval request, question, result card, running-list update, background notice, progress view, waiting list, Details, readiness failure, and the results of agent, work-record, account, memory, channel and exchange requests, and error. An unknown kind is ignored and counted. The wire carries codes and parameters, and the TUI owns the Korean and English catalogs. Display strings travel only for text the person or an agent wrote. A secret placeholder from Core renders as a placeholder, and the TUI has no way to reveal one.
+
+Worker question-answer notices in conversation history carry a short, readable
+acknowledgement. Core keeps dynamic-tool response envelopes out of these display
+bodies, both during delivery and when restoring history.
 
 ## Layout, tiers and row budget (T-07)
 
@@ -358,7 +372,12 @@ clock offset (T-06 rule 4), formatted as `0s`, `59s`, `1m 00s`, `59m 59s`, or
 A phase transition or repeated active event never restarts elapsed time.
 A fresh snapshot restores the current phase and label but, without a start
 timestamp, shows unknown; later phases do not invent a start. A same-session
-resync retains an observed start. Completion adds one muted, localized `Worked for 12s`
+resync retains an observed start, reply identity and local stopping state only
+when the snapshot contains the same active `turn_state` key and nonzero revision
+as the last observed state. A changed or unidentifiable state may belong to a
+queued turn that started while disconnected: discard the previous activity,
+restore unknown timing and use the snapshot's authoritative stopping phase.
+Later phase events cannot supply the missed start time. Completion adds one muted, localized `Worked for 12s`
 line under the reply, using the inactive event's server timestamp. This is client
 display metadata: it survives same-session redraw and resync, is cleared with
 revoked or unfocused content, and is never stored or restored from history.
@@ -438,6 +457,11 @@ follow-latest state when the settings screen closes.
 a 100×34 PTY, sends SGR wheel input, compares the retained rows after a second
 reply, verifies that `/web` blocks wheel input at the latest and retained
 positions, and verifies End and mouse-mode cleanup.
+Conversation observations in this unsynchronized PTY wait for the renderer to
+show the cursor after its cell diff, even when the expected first row or status
+marker is already visible. A split-output regression leaves a transcript row
+unpainted and splits the final cursor-show sequence; neither partial snapshot
+may establish the retained viewport used by the full-row comparisons.
 For the colour conversation screen, each new size reaches the cell renderer
 before its reflowed view, even if the view text is unchanged. The connection owner's latest dimensions remain authoritative: late renderer startup size messages are discarded before they can resize the cell buffer. Resizing keeps the
 draft and redraws header, status and composer within the current row budget;
@@ -497,8 +521,26 @@ The conversation screen projects granted waiting/running topic rows in Core
 order and keeps their counts when folded. Ctrl+W and Ctrl+R open their complete
 retained text in the pager; Ctrl+P opens the granted progress topic. Missing
 capabilities use the single local explanation of T-07 and leave no placeholder
-rows. Granted empty lists are hidden without an unavailable notice. Rows appear
-when Core sends items and disappear on a removal update or when its snapshot clears the list.
+rows. Granted empty lists are hidden on Home without an unavailable notice.
+Opening an empty granted Waiting for me list with Ctrl+W shows the localized
+"nothing to decide now" line in the pager. Closing and reopening it preserves
+the draft; the line never enters conversation history or other list views.
+`TestM1TUIWaitingEmptyInstalledCore` checks this through a 100x32 PTY against
+installed Core, then submits the retained draft and renders the fixture reply.
+Rows appear when Core sends items and disappear on a removal update or when
+its snapshot clears the list.
+
+Both the conversation's running strip and Ctrl+R's list localize the typed
+`running_update.state` and optional `reason` through the selected Korean or
+English catalog, followed by the sanitized authored `summary`. They share the
+same row presentation on live updates and restored snapshots. For example,
+`ready_for_review` appears as "Ready for review" or "검토 준비됨". The client
+does not compute a state or translate the summary. When typed fields are absent,
+it displays the sanitized legacy `text` without interpreting a status prefix.
+`TestM1RunResultOpenInstalledCore` checks both languages through installed Core,
+ten foreground tool calls, a completed background run, Core restart, the real
+TUI's 100×32 PTY strip/list, and opening the retained result.
+
 An open running pager applies accepted `running` topic updates and replacement
 snapshots immediately, including completed and removed rows, without polling or
 requiring the person to close and reopen it. Refreshing its text preserves the
@@ -506,9 +548,20 @@ pager's reading offset (clamped to the remaining content) and active search.
 List updates do not focus the pager or change the draft. Decision answering remains the typed approval/question flow
 of T-04; the composer never turns a list row into an approval.
 
-The waiting summary shows the number of unresolved decision cards and the first
-card in Core's publication order. F6 opens that card without changing the draft.
-New cards update the summary and conversation label without taking keyboard focus.
+Home uses the accepted progress overview's waiting rows and remaining count in
+Core order. The summary includes requests from exchanges, blocked work and
+outside record changes as well as approvals and questions. It shows up to five
+rows; a shorter terminal folds rows into the localized "+N more" count. An empty
+overview hides the summary. Before an overview arrives, the waiting topic's
+decision cards provide the summary. Updates and replacement snapshots preserve
+the draft and focus, and stale stream frames cannot restore old rows.
+
+The overview is display-only. F6 still opens the first unresolved authenticated
+decision card; its revision, choices and two-step answer flow remain attached to
+the waiting topic. A decision appears once in the Home summary even when both
+topics carry it. `e2e/m2/tui-home-waiting.json` checks an outside-change request
+on Home while an installed Core runs a worker through approval, a question and
+an artifact result, then removes resolved requests without changing the draft.
 
 ## Results, cards and the pager (T-13)
 
@@ -528,6 +581,44 @@ An approval or form question keeps a short labeled line in the conversation.
 Its expanded view shows the requesting agent, recommendation when supplied,
 summary, targets and choices. Opaque card references and revision tokens are
 routing data and never appear in that line or the waiting summary.
+
+### Tool call rows
+
+Under the turn, the TUI projects each accepted `tool_activity` into a muted
+one-line row: status mark and localized word, catalog display name, and optional
+short display target. Running, ok and failed marks come from semantic tokens;
+ASCII mode uses an ASCII mark and an explicit word. A finish updates the same
+call in place. Consecutive calls of the same tool in the same turn and display
+position group into one row with a count. Running calls keep the group running;
+a failed count remains visible even while another call runs. Once complete, any
+failed member makes the group failed. Neither call success nor group success
+claims a verified work result.
+
+Only Core's optional, explicitly display-safe `target` and `summary` fields may
+supply a target or output preview. The current Core does not produce either;
+the client never derives them from private arguments, raw results or prose.
+Targets are sanitized, flattened and clipped to one row. Summaries are sanitized
+and wrapped at terminal cell boundaries, then folded to three rows, followed by
+`+N lines · Ctrl+O` when more rows remain. Ctrl+O opens tool summaries in the
+existing searchable pager, preserving the result-card action when a later card
+is selected. Assistant prose is never folded by this rule.
+
+These rows are ephemeral UI metadata anchored at first observation, separate
+from conversation blocks. An anchor with an empty or whitespace-only rendered
+body still displays its tool rows, before any later reply, without adding an
+empty speaker line. Replay is idempotent; gaps wait for resync. Focus,
+epoch and revocation changes discard the rows; an accepted snapshot discards
+that topic's transient rows rather than inventing history from snapshot data.
+An open tool pager clears when its underlying rows are invalidated. Rows never
+enter model history, stored conversation text or exported conversation text.
+The installed-Core PTY test `e2e/m1/tui_tool_rows_test.go` executes a successful and
+failed fixture tool and checks both glyph modes plus model/export exclusion.
+It also covers whitespace streamed before each call.
+Its socket gate holds delivery of the real finish event to make the running
+frame observable without relying on tool speed; it fabricates no tool events.
+`e2e/m1/tui_activity_reconnect_test.go` holds a same-Core reconnect across an
+interrupted turn and a queued turn that executes a real tool. The restored
+activity has unknown timing, and Esc can stop the new turn.
 
 **The pager** shows Details, the activity log and long results: scroll, search, quit. Copy is the person's act in their own terminal: the pager offers a sanitized-text overlay to select with the terminal's own copy. A write by OSC 52 waits for the open point on the clipboard rule below.
 
@@ -620,6 +711,15 @@ changed group cannot partially approve.
 
 **Questions.** A form question renders its flat schema as prompts, and a URL question follows the contract, opening the URL only on an explicit key. Core refuses a form that asks for a secret, and the TUI shows the refusal. An unknown outcome of an effect is a question card with the dispositions of [main-authority.md](main-authority.md#command-outcomes). The TUI adds no option Core did not list.
 
+Worker questions identify the originating agent by its display name in both the
+form header and the conversation card row, consistently with Home and approvals.
+Core resolves decision names from the agent store, including agents created or
+renamed since startup. Agent IDs remain routing data. The installed-Core test
+`TestM2TUIWorkerQuestionNameInstalledCore` types a worker request in the real TUI,
+accepts its approval, answers its question and checks the resulting artifact.
+It distinguishes the worker's owning coding agent from the conversation agent
+and covers renaming that owner after Core starts.
+
 **Sign-in.** The TUI is the client side of one relay for plugin and model-provider sign-in. It opens a loopback listener and reports its port, opens the system browser when it runs locally, and relays `code`, `state` and `iss`, or the `error` fields, exactly as received. Over SSH it takes a pasted URL instead. A secret the person types, such as an API key, is a masked field with no undo and no history, and travels once to Core.
 
 The TUI negotiates `accounts` and `sign_in_relay` independently of conversation.
@@ -675,7 +775,7 @@ empty-list status.
 Contract: [surfaces.md](surfaces.md#agent-surfaces), [surfaces.md](surfaces.md#settings). Each view is data that Core already computes. The TUI draws it as lines with keys. The roadmap builds the views with the Core feature behind each, and a view whose capability was not granted shows as unsupported (T-07).
 
 - **Board:** three groups of one-line rows (Waiting for me, Running, Done). Enter unfolds a row, with keys for the actions that apply.
-- **Steering:** `/note` queues a note for the run's next step, which is the follow-up of the running list. Esc or `/stop` on a row stops it.
+- **Steering:** `/note <run> <text>` queues a note for the target's next step. `/stop <run>` or `s` on a running row requests a stop; `/stop all` targets the person's background runs and live workers. These requests use the same Core handlers as a paired channel. Bare `/stop` interrupts the conversation. `/progress` reads the compact digest. `/waiting priority|lightest` opens the full waiting list; `o` switches its Core order, which survives refreshes.
 - **Agent tree and lanes (developer view):** indented lines (the persona as initial and name, sub-agents as plain indented text, workers as `[name]`), one line per worker for lanes, hand-offs as arrows, folded to one line by default. `/developer` opts into the recorded worker view through the `worker_lanes` capability. Core supplies each persona's name and each current task execution's worker/session identity; two sessions using the same tool remain separate lanes. Persona headings show initial and name, and indented `[worker] › task` lines are clipped to one physical row. Enter toggles the selected lane's thread, turn, node, generation and source-labeled stage summaries. Up/Down selects; `r` refreshes the current first page and `n` replaces it with the next bounded page. Refresh preserves selected and expanded identities; new executions start folded. Esc returns to the composer. Closing/reopening or reconnecting discards this view's expansion state and pending responses. No sub-agent relationship is inferred from worker names or text; the work ledger and installed worker runtime supply persona-to-worker edges only. Runtime sessions retain their adapter state and show masked output/version on expansion.
 - **Usage meter:** one line per connected account: plan, state, a block-character meter or "unknown".
 
@@ -742,6 +842,22 @@ type Stream interface {
 
 - A closed top-level block (paragraph, closed fence, list, table, heading) is frozen into a stable prefix and cached on (block id, revision, width in cells, theme, width mode). The plain-text foundation closes paragraphs, lists and tables at blank lines, headings at newline and fenced blocks at a matching closing fence. These conservative boundaries keep incomplete markup unstyled.
 - The open tail is an unstyled, marker-free preview and wraps incrementally: complete lines freeze and each delta re-wraps the last partial line and its boundary row, because a late combining mark or ZWJ can extend the last cluster. Breaks fall at whitespace, else at a grapheme boundary, never inside a cluster. An open code fence belongs to the tail until it closes. Pending emphasis, inline-code, link and list delimiters and fence headers are withheld across delta boundaries; their text remains readable. Literal markup inside code is preserved.
+- An open code fence exceeding eight wrapped content rows shows one muted
+  `writing code… (N lines)` row followed by its last six content rows. N counts
+  source code lines, including a nonempty partial line but excluding the empty
+  cursor row after a final newline. The notice clips to one row at narrow widths;
+  resizing recomputes the eight-row threshold. Prose outside the fence and the
+  cached settled prefix remain unchanged. A matching newline-terminated closing
+  fence restores the entire block immediately; `item_done` also restores the
+  authoritative text, including a closing fence without a final newline.
+  Core's reply ceiling still sends long code as a generated reply preview. The
+  TUI displays its complete text inline with the same open-fence bound. Its
+  Ctrl+O Details view also applies the bound to live replacement previews, both
+  full screen and in the side pane, preserving literal text outside the
+  collapsed fence. Turn completion seals any unclosed code and reveals the
+  entire reply; subsequent turns do not collapse an earlier result. Restored history
+  starts sealed until a live update arrives. Core's existing wire-preview size
+  bound and durable full source remain unchanged.
 - A block that closes is painted once, off the UI goroutine. A stale result is dropped. The visible change from plain to styled at close is accepted: rendering the whole tail on every flush grows quadratically.
 - `Seal()` at `item_done` replaces the stitched render once.
 - The conversation Markdown subset is bold, italic, inline code, ordered and
@@ -752,8 +868,9 @@ type Stream interface {
   the UI adds terminal styles. List continuations align under their content;
   code retains literal text and whitespace, including empty first and last
   lines and blocks containing only empty lines. Empty code rows retain their
-  semantic identity through wrapping; message-boundary trimming removes only
-  paragraph spacing. Escaped syntax remains literal.
+  block's code identity through wrapping, including language-tagged fences
+  with multiple syntax spans or no tokens; message-boundary trimming removes
+  only paragraph spacing. Escaped syntax remains literal.
   Unsupported HTML blocks and inline HTML display their literal source text.
   Tables use our own renderer.
 - Conversation spans use theme text, accent and surface tokens: bold and italic
@@ -766,6 +883,16 @@ type Stream interface {
   trimmed rows before adding completion durations or pager affordances, so
   identical redraws cannot accumulate metadata in message content.
   Only visible conversation rows receive terminal styles.
+- Language-tagged fenced code receives syntax highlighting only after its
+  matching closing fence. The pinned Chroma lexer produces semantic spans:
+  keywords, strings, numbers, built-ins, functions and class names use accent;
+  comments use muted; other tokens keep text, all on the code surface. Unknown
+  or absent languages, indented code and unterminated fences keep plain code.
+  High-contrast suppresses syntax colours; `NO_COLOR` emits plain text without
+  escapes. Highlight spans share the existing block/revision, width, theme and
+  width-mode cache; resizing or changing theme does not re-lex closed source.
+  `e2e/m1/tui-syntax.json` checks open streamed code and the closed result through
+  the installed Core, a fixture provider and parsed PTY cells.
 - One width function serves all layout: wcwidth by default, grapheme clusters once mode 2027 is confirmed, ambiguous East Asian width narrow, Hangul syllables two cells. The mode is part of the cache key. The Charm-free `Measurer` uses pinned Unicode 17 data and UAX #29 segmentation for wrapping and clipping in both modes. A cluster wider than the entire row is omitted with a typed clipped flag, never split. Cursor offsets inside a cluster clamp to its start.
 - The hardware cursor is placed on every frame at the display width of the text before it on the wrapped row, so IME composition appears in place. The TUI never requests all-keys-as-escape-codes. Committed IME text arrives as UTF-8, one grapheme cluster at a time ([surfaces.md](surfaces.md#korean-input)).
 - Only the viewport plus overscan (P) is laid out, so cost follows viewport rows and not history. `Stream` indexes new text as it arrives. `Window` takes a retained byte anchor within a block and stops reflow at the requested row count, including after a width change. `Renderer.Draw` reads and paints only those indexed rows, retains only the current viewport cache, and returns changed-row patches; an empty patch list causes no writes. A trusted UI painter styles only closed rows after sanitizing and clipping.
@@ -1011,6 +1138,23 @@ outstanding acceptance. Harness completion does not establish the spike gate.
 Fallbacks, in order. F1: Bubble Tea with its own probe, a quiet spinner, a lower frame rate while streaming and a frame memo. F2: a row-string renderer on Ultraviolet with changed rows only, in synchronized output. F3: tcell v3. The reducer, render, layout and `clientapi` do not change in any fallback.
 
 ## Tests, tokens and theme (T-11)
+
+Installed-Core transcript and LONG-QA PTY scenarios run in English and Korean.
+Pager entry, resize, search and return waits observe parsed cursor and viewport
+state together with expected transcript or draft content. They do not pin footer
+prose or spacing; any required visible label comes from the design catalog.
+Transcript ordering, one copy of each message, search, draft restoration and
+complete LONG-QA body/scroll checks remain independent of those readiness waits.
+The first-run PTY scenario likewise waits for its draft, composer cursor and
+catalog suggestions in one parsed snapshot before checking presentation; separate
+observations across redraws do not establish that they were visible together.
+
+The LONG-QA transcript acceptance test starts PgUp stitching only after the
+result affordance occupies the bottom row of the inactive conversation viewport
+and the visible cursor is back in the composer. End-of-body text can arrive
+before the activity row disappears; that intermediate frame is not a settled
+scroll baseline. Subsequent pages likewise require the composer cursor before
+checking overlap, preserving the complete-body and no-duplication assertions.
 
 **Tests.** The fake Core, `internal/fakecore`, is built from the conformance fixtures ([host-protocol.md](host-protocol.md#conformance-fixtures)) with an injected clock and fault switches: drop, slow reader, epoch change, duplicate delivery, disconnect mid-batch, recovering and refusal.
 

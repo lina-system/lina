@@ -15,6 +15,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/lane"
 	"github.com/thisisjun786/lina/internal/core/runs"
+	"github.com/thisisjun786/lina/internal/core/waiting"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/provider"
 	"strings"
@@ -23,7 +24,7 @@ import (
 func runRuntime(t *testing.T) *conversationRuntime {
 	t.Helper()
 	r := controlRuntime(t)
-	s, err := runs.New(runs.Config{Epoch: r.epoch, DB: r.db, Assets: r.assets, WorkDir: filepath.Join(r.root, "work"), Authorize: func(context.Context, runs.Origin, runs.Brief) error { return nil }, PublishPromotion: func(context.Context, *canon.Tx, string, budget.Handle, budget.Handoff) error { return nil }, Stream: func(context.Context, provider.Request) (provider.Stream, error) {
+	s, err := runs.New(runs.Config{Epoch: r.epoch, DB: r.db, Assets: r.assets, AuthorizeFollowUp: r.authorizeRunFollowSource, WorkDir: filepath.Join(r.root, "work"), Authorize: func(context.Context, runs.Origin, runs.Brief) error { return nil }, PublishPromotion: func(context.Context, *canon.Tx, string, budget.Handle, budget.Handoff) error { return nil }, Stream: func(context.Context, provider.Request) (provider.Stream, error) {
 		t.Error("unexpected model request")
 		return nil, nil
 	}})
@@ -41,6 +42,21 @@ func runRuntime(t *testing.T) *conversationRuntime {
 
 func TestEffectQuestionReachesConversationAtBoundary(t *testing.T) {
 	r := runRuntime(t)
+	assertWaiting := func(want int) {
+		t.Helper()
+		names, err := r.ownerAgentNames(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		list, err := r.ownerWaiting(t.Context(), names, waiting.Options{Now: time.Now()})
+		if err != nil || list.Total != want {
+			t.Fatalf("effect waiting count: want %d, got %+v, err=%v", want, list, err)
+		}
+		p, err := r.ownerSnapshot(t.Context())
+		if err != nil || p.Waiting == nil || len(*p.Waiting) != want {
+			t.Fatalf("effect overview count: want %d, got %+v, err=%v", want, p, err)
+		}
+	}
 	deliveredEvent := make(chan lane.Delivery, 1)
 	r.background.notices.OnDelivered = func(d lane.Delivery) {
 		if err := r.publishNoticeText(t.Context(), d.ID, d.Notices); err != nil {
@@ -79,6 +95,7 @@ func TestEffectQuestionReachesConversationAtBoundary(t *testing.T) {
 	if err != nil || len(delivered) != 0 {
 		t.Fatalf("question interrupted turn: %+v %v", delivered, err)
 	}
+	assertWaiting(0)
 	close(finish)
 	if err = <-turn; err != nil {
 		t.Fatal(err)
@@ -92,6 +109,11 @@ func TestEffectQuestionReachesConversationAtBoundary(t *testing.T) {
 	if err != nil || len(delivered) != 1 || len(delivered[0].Notices) != 1 || delivered[0].Notices[0].Run != h.ID || delivered[0].Notices[0].Outcome != "needs_input" {
 		t.Fatalf("conversation question=%+v %v", delivered, err)
 	}
+	assertWaiting(1)
+	if err = r.background.service.Stop(t.Context(), h.ID); err != nil {
+		t.Fatal(err)
+	}
+	assertWaiting(1) // Landing does not answer the independent effect question.
 	snapshot, subscription, err := r.topics.Subscribe("waiting", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -140,6 +162,7 @@ func TestEffectQuestionReachesConversationAtBoundary(t *testing.T) {
 	if err != nil || *response.Payload.(protocol.QuestionAnswer).Outcome != protocol.DecisionOutcomeResolved {
 		t.Fatal("authenticated answer refused", err)
 	}
+	assertWaiting(0)
 	pendingAnswer, err := r.background.service.Get(t.Context(), h.ID)
 	if err != nil || pendingAnswer.EffectsQuestion.Answer == nil {
 		t.Fatal("answer not durable", err)

@@ -28,6 +28,9 @@ type SkillFailure struct {
 	Code     string         `json:"code"`
 	Proposal *SkillProposal `json:"proposal,omitempty"`
 }
+type skillIndexArgs struct {
+	Methodology string `json:"methodology,omitempty"`
+}
 
 func decodeSkill(raw json.RawMessage, out any) error {
 	if len(raw) > 2<<20 {
@@ -48,6 +51,12 @@ func skillInput(raw json.RawMessage, name string) (tools.Input, error) {
 	var args any
 	switch name {
 	case "skill_index":
+		var a skillIndexArgs
+		if err := decodeSkill(raw, &a); err != nil || a.Methodology != "" && a.Methodology != "dev" {
+			return tools.Input{}, tools.ErrInvalid
+		}
+		args = a
+	case "skill_notices":
 		var a struct{}
 		if err := decodeSkill(raw, &a); err != nil {
 			return tools.Input{}, err
@@ -83,7 +92,7 @@ func skillInput(raw json.RawMessage, name string) (tools.Input, error) {
 	default:
 		return tools.Input{}, tools.ErrInvalid
 	}
-	if name != "skill_index" && id == "" {
+	if name != "skill_index" && name != "skill_notices" && id == "" {
 		return tools.Input{}, tools.ErrInvalid
 	}
 	target := "skills"
@@ -124,15 +133,26 @@ func RegisterSkills(registry *tools.Registry, store *skills.Store) ([]tools.Spec
 		return nil, tools.ErrInvalid
 	}
 	var specs []tools.Spec
-	for _, name := range []string{"skill_index", "read_skill", "write_skill", "undo_skill"} {
-		spec := tools.Spec{Name: name, Placement: tools.Core, Conc: 1, Deadline: 10 * time.Second, Schema: func(raw json.RawMessage) (tools.Input, error) { return skillInput(raw, name) }}
+	for _, name := range []string{"skill_index", "read_skill", "write_skill", "undo_skill", "skill_notices"} {
+		spec := tools.Spec{Classify: func(in tools.Input) tools.EffectClass {
+			if in.Write {
+				return tools.LocalWrite
+			}
+			return tools.Research
+		}, Name: name, Placement: tools.Core, Conc: 1, Deadline: 10 * time.Second, Schema: func(raw json.RawMessage) (tools.Input, error) { return skillInput(raw, name) }}
 		handler := func(ctx context.Context, _ lease.Lease, input tools.Input) (tools.Result, error) {
 			var value any
 			var revision string
 			var err error
 			switch name {
 			case "skill_index":
-				value, err = store.Catalog(ctx)
+				var a skillIndexArgs
+				err = decodeSkill(input.Arguments, &a)
+				if err == nil {
+					value, err = store.Index(ctx, a.Methodology)
+				}
+			case "skill_notices":
+				value, err = store.MaintenanceNotices(ctx)
 			case "read_skill":
 				var v skills.Version
 				err = decodeSkill(input.Arguments, &v)

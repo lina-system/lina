@@ -12,12 +12,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/authority"
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/secrets"
+	"github.com/thisisjun786/lina/internal/core/skills"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/antigravity"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/proc"
+	"github.com/thisisjun786/lina/kit/tools"
 )
 
 func (s *Service) execute(r Record) {
@@ -35,6 +39,31 @@ func (s *Service) execute(r Record) {
 		}
 	}()
 	r.Code = "start_failed"
+	if s.cfg.Work == nil || s.cfg.Area == nil {
+		return
+	}
+	// Queued records from before shared allocation have no assigned branch.
+	// Persist the assignment before creating any workspace or worker process.
+	if r.Branch == "" {
+		r.Branch = taskBranch(r.Definition.Branch, r.ID)
+		if err := s.save(ctx, r); err != nil {
+			return
+		}
+	}
+	if r.Owner != "" {
+		var live int
+		err := s.cfg.DB.Read(ctx, func(tx *canon.Tx) error {
+			return tx.QueryRowContext(ctx, "SELECT count(*) FROM agents WHERE id=? AND preset='dev' AND trashed_at=0", r.Owner).Scan(&live)
+		})
+		if err != nil || live != 1 {
+			r.Code = "dev_agent_unavailable"
+			return
+		}
+		if err = authority.CheckPreset(ctx, s.cfg.DB, s.cfg.Epoch, authority.PolicyRequest{Key: "preset:worker:" + r.ID, Person: r.Origin.Person, Agent: r.Owner, TaskID: "coding:" + r.ID, Tool: "dispatch_work", Target: r.Definition.Repository, Class: tools.WorkerEffect, Arguments: mustJSON(r.Definition)}); err != nil {
+			r.Code = "preset_effect_limit"
+			return
+		}
+	}
 	l, err := s.cfg.Activities.Acquire(ctx, lease.Activity{Class: lease.Hard, Reason: "delegated worker task"})
 	if err != nil {
 		return
@@ -43,7 +72,7 @@ func (s *Service) execute(r Record) {
 	owner := proc.NewOwner()
 	defer owner.Close(context.Background())
 	git := func(dir string, args ...string) (string, error) { return s.command(ctx, l, owner, dir, args...) }
-	d := r.Definition
+	d := r.TaskDefinition()
 	repo, err := filepath.EvalSymlinks(d.Repository)
 	if err != nil {
 		return
@@ -71,7 +100,8 @@ func (s *Service) execute(r Record) {
 	if err != nil {
 		return
 	}
-	protectedArgs := []string{"for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/main", "refs/heads/dev", "refs/remotes/origin/main", "refs/remotes/origin/dev"}
+	r.BaseCommit = base
+	protectedArgs := []string{"for-each-ref", "--format=%(refname) %(objectname)", "refs/heads", "refs/remotes", "refs/lina"}
 	protected, err := git(repo, protectedArgs...)
 	if err != nil {
 		return
@@ -84,19 +114,43 @@ func (s *Service) execute(r Record) {
 			return
 		}
 	}
-	taskRoot := filepath.Join(s.cfg.Root, "work", "tasks", r.ID)
-	workdir := filepath.Join(s.cfg.Root, "work", "worktrees", r.ID)
+	workdir := filepath.Join(s.cfg.Root, "work", "tasks", r.ID)
+	// Keep adapter evidence outside the worker's checkout so observing a result
+	// neither dirties its commit nor overwrites a file it produced.
+	taskRoot := filepath.Join(s.cfg.Root, "work", "runs", r.ID)
+	workspace := work.Workspace{TaskID: r.ID, Path: workdir, Spec: work.WorkspaceSpec{
+		RepositoryID: fmt.Sprintf("%x", sha256.Sum256([]byte(repo))), Source: repo, Base: base, Branch: d.Branch,
+	}}
+	service := s.cfg.Work
+	ownerAgent, manager := r.Owner, r.Manager
+	if ownerAgent == "" {
+		ownerAgent = r.Origin.Agent
+		manager = r.Origin.Conversation
+	}
+	if err = service.Create(ctx, work.Task{ID: r.ID, PersonID: r.Origin.Person, AgentID: ownerAgent, ConversationID: manager, Title: d.What, Done: d.Done, ArtifactRoots: []string{workdir, taskRoot}, Workspace: &workspace, RequiresApply: true}); err != nil {
+		return
+	}
+	if _, err = s.cfg.Area.Prepare(ctx, l, r.ID, workspace.Spec); err != nil {
+		return
+	}
+	if _, err = git(workdir, "remote", "set-url", "origin", remote); err != nil {
+		return
+	}
 	if err = os.MkdirAll(taskRoot, 0700); err != nil {
 		return
 	}
-	if err = os.MkdirAll(filepath.Dir(workdir), 0700); err != nil {
-		return
+	protectedWorkRefs := func() (string, error) {
+		refs, err := git(workdir, protectedArgs...)
+		var protected []string
+		for _, ref := range strings.Split(refs, "\n") {
+			if !strings.HasPrefix(ref, "refs/heads/"+d.Branch+" ") {
+				protected = append(protected, ref)
+			}
+		}
+		return strings.Join(protected, "\n"), err
 	}
-	service := work.New(s.cfg.DB)
-	if err = service.Create(ctx, work.Task{ID: r.ID, PersonID: r.Origin.Person, AgentID: r.Origin.Agent, ConversationID: r.Origin.Conversation, Title: d.What, Done: d.Done, ArtifactRoots: []string{taskRoot}, RequiresApply: true}); err != nil {
-		return
-	}
-	if _, err = git(repo, "worktree", "add", "-b", d.Branch, workdir, base); err != nil {
+	workProtected, err := protectedWorkRefs()
+	if err != nil {
 		return
 	}
 	adapter := antigravity.New(antigravity.Config{Binary: s.cfg.Binary, Environment: s.cfg.Environment, Epoch: s.cfg.Epoch, Leaser: s.cfg.Activities})
@@ -105,11 +159,11 @@ func (s *Service) execute(r Record) {
 	if err != nil {
 		return
 	}
-	packet, err := json.MarshalIndent(d, "", "  ")
+	packet, err := taskPacket(r)
 	if err != nil {
 		return
 	}
-	thread, err := adapter.Start(ctx, l, worker.StartSpec{TaskID: r.ID, AttemptID: r.ID + ":1", Workdir: workdir, TaskPacket: "Implement this task definition in this worktree using your own setup. Open the branch's pull request, wait for its checks and review, handle failures and report the result. Do not change protected base refs.\n" + string(packet)})
+	thread, err := adapter.Start(ctx, l, worker.StartSpec{TaskID: r.ID, AttemptID: r.ID + ":1", Workdir: workdir, TaskPacket: packet})
 	if err != nil {
 		return
 	}
@@ -149,15 +203,25 @@ func (s *Service) execute(r Record) {
 	} else {
 		r.Code = "pr_unverified"
 		after, e := git(repo, protectedArgs...)
+		workAfter, workErr := protectedWorkRefs()
 		head, headErr := git(workdir, "rev-parse", "HEAD")
 		branch, branchErr := git(workdir, "branch", "--show-current")
 		dirty, dirtyErr := git(workdir, "status", "--porcelain")
 		files, filesErr := git(workdir, "diff", "--name-only", base+".."+head)
-		if e == nil && after == protected && headErr == nil && head != base && branchErr == nil && branch == d.Branch && dirtyErr == nil && dirty == "" && filesErr == nil && allowedFiles(files, d.WriteArea) {
+		if e == nil && after == protected && workErr == nil && workAfter == workProtected && headErr == nil && head != base && branchErr == nil && branch == d.Branch && dirtyErr == nil && dirty == "" && filesErr == nil && allowedFiles(files, d.WriteArea) {
 			pr, prErr := antigravity.ReadPullRequest(ctx, s.cfg.PR, repository, d.Branch, d.Base, head)
 			if prErr == nil {
 				r.PR = &pr
-				r.Code = "ready_for_review"
+				r.Code = "change_evidence_unavailable"
+				patch, patchErr := git(workdir, "diff", "--no-ext-diff", "--no-textconv", base, head, "--")
+				if patchErr == nil && len(patch) <= 64<<10 {
+					masked, maskErr := secrets.Mask(patch)
+					if maskErr == nil && strings.TrimSpace(masked.Text()) != "" {
+						r.PR = &pr
+						r.Code = "ready_for_review"
+						r.ChangeEvidence = masked.Text()
+					}
+				}
 			}
 		}
 		if r.PR == nil {
@@ -167,7 +231,9 @@ func (s *Service) execute(r Record) {
 	// The artifact contains source-labeled observations, never an acceptance or
 	// merge verdict. Strip remote prose before persisting; it is untrusted input.
 	if r.PR != nil {
-		r.PR.Reviews = nil
+		for i := range r.PR.Reviews {
+			r.PR.Reviews[i].Body = ""
+		}
 		r.PR.Comments = nil
 	}
 	evidence := mustJSON(r)
@@ -195,6 +261,13 @@ func (s *Service) execute(r Record) {
 	} else {
 		settled = true
 	}
+}
+func taskPacket(r Record) (string, error) {
+	definition, err := json.MarshalIndent(r.TaskDefinition(), "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return skills.MethodPacket("Implement this task definition in this worktree using your own setup. Create the named task branch from the detached base. Open the branch's pull request, wait for its checks and review, handle failures and report the result. Do not change protected base refs.\n"+string(definition), r.Method)
 }
 func hasHeading(body, anchor string) bool {
 	for _, line := range strings.Split(body, "\n") {

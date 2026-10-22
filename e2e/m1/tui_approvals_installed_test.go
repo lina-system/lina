@@ -9,12 +9,14 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/core/authority"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/design"
+	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -121,6 +123,7 @@ func TestM1TUIApprovalsInstalledCore(t *testing.T) {
 	// using negotiated event types instead of a timing delay between keys.
 	approval.ID += "-tui"
 	approval.EffectKey = approval.ID
+	approval.What = "Approve the second fixture document in the TUI"
 	data, err = json.Marshal(approval)
 	if err != nil {
 		t.Fatal(err)
@@ -129,7 +132,21 @@ func TestM1TUIApprovalsInstalledCore(t *testing.T) {
 		t.Fatal(err)
 	}
 	terminal := h.startScreenTUI("TERM=xterm-256color")
-	waitScreen(t, h, terminal, fixture.Summary)
+	waitComposerReady(t, h, terminal)
+	// The overview can show this request before its decision card arrives.
+	// Wait for the actual pending card before F6 tries to open it.
+	pending := "[" + design.Text(design.English, string(protocol.KindApprovalRequest)) + "] " + approval.What
+	screen, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
+		for _, row := range screenRows(s) {
+			if strings.HasSuffix(strings.TrimSpace(row), pending) {
+				return true
+			}
+		}
+		return false
+	})
+	if err != nil {
+		t.Fatalf("pending approval card missing: %v; cells=%s", err, screenText(screen))
+	}
 	h.keys(terminal, "\x1b[?3u\x1b[17~")
 	waitScreen(t, h, terminal, fixture.Target)
 	h.keys(terminal, "1")

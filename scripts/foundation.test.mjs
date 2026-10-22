@@ -197,6 +197,7 @@ package e2e
 import "testing"
 func TestOne(t *testing.T) { t.Parallel() }
 func TestTwo(t *testing.T) { t.Parallel() }
+func TestThree(t *testing.T) { t.Parallel() }
 `);
   for (const name of ['lina', 'lina-node']) sb.write(work, `cmd/${name}/main.go`,
     'package main\nimport ("fmt"; "os")\nfunc main() { fmt.Fprintln(os.Stderr, "usage: fixture"); os.Exit(64) }\n');
