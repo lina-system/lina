@@ -58,7 +58,7 @@ func TestM1TUIInterruptedReplySurvivesCoreRestart(t *testing.T) {
 	core := start(true)
 	c, conversation := conversationClient(t, h)
 	terminal := h.startScreenTUI("TERM=xterm-256color")
-	waitScreen(t, h, terminal, "Ctrl+D")
+	waitComposerReady(t, h, terminal)
 	h.keys(terminal, scenario.Input+"\r")
 	waitScreen(t, h, terminal, scenario.Partial)
 	h.keys(terminal, "\x1b")
