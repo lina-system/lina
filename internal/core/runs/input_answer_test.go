@@ -4,7 +4,6 @@ package runs_test
 import (
 	"context"
 	"errors"
-	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/runs"
 	"github.com/thisisjun786/lina/internal/core/waiting"
 	"github.com/thisisjun786/lina/kit/provider"
@@ -31,9 +30,7 @@ func TestRunInputWaitingAnswerIsAttributedAndResumesOnlyItsRun(t *testing.T) {
 		cfg.Tools["read"] = tool
 	})
 	// Extend this dependency's existing private fixture with the waiting schema.
-	if err := db.Write(t.Context(), func(tx *canon.Tx) error { _, err := tx.ExecContext(t.Context(), waiting.Schema); return err }); err != nil {
-		t.Fatal(err)
-	}
+
 	id := start(t, s)
 	other := start(t, s)
 	if err := s.Release(t.Context(), id); err != nil {
