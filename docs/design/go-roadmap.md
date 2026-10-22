@@ -330,7 +330,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
   retains the complete provenance in the build manifest.
 - Depends on: G1-01. Design refs: C-57; [work-and-delegation.md](work-and-delegation.md#start-gate).
 
-**G2-01 Task records and work area.** Work ledger, card projection, `work/` directories, protected refs.
+**G2-01 Task records and work area.** Work ledger, card projection, `work/` directories, protected refs. #127 adds installed-Core allocation and result-retention tools, pinned task worktrees and no-PR material/bundle recovery, exercised by `e2e/m2/work-area.json`.
 - The ledger increment (#126) keeps task/run/receipt facts in canon, reserves at most one active run per task, rebuilds card and reservation indexes from events, and rejects missing or mismatched artifact provenance. Core startup rebuilds these indexes and retains unfinished reservations as unknown. Workspace creation and protected-ref enforcement remain the separate work-area increment.
 - Done when: a second active run on a task is refused; a task worktree is created from the base commit under `work/tasks`; the projection rebuilt from the ledger equals the live one; a result without a pull request is copied into the generation; a receipt for a changed artifact without provenance is rejected.
 - Depends on: G1-05, G1-11, G1-12, G2-17. Design refs: C-29, C-30, C-39; [work-and-delegation.md](work-and-delegation.md#work-area).

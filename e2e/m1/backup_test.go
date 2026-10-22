@@ -29,6 +29,11 @@ func TestM1BackupInstalledConversation(t *testing.T) {
 	if err = json.Unmarshal(data, &scenario); err != nil {
 		t.Fatal(err)
 	}
+	// Compile the inspection helper's SQLite engine before the bounded product
+	// scenario. Core runs in a separate process and still starts cold.
+	if _, _, err := canon.SQLiteEngine(); err != nil {
+		t.Fatal(err)
+	}
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { emitResponse(w, scenario.Reply, true) }))
 	defer provider.Close()
 	h, start := installedConversationHarness(t, provider.URL)

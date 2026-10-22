@@ -63,6 +63,7 @@ func TestM2UpdatePrepare(t *testing.T) {
 	live := restartClient(h, core)
 	before := doctorState(t, h.root)
 	command := func(source, sha string, code int) *process {
+		t.Helper()
 		p := h.command("update", "--prepare", "--state-root", h.root, "--archive", source, "--sha256", sha)
 		p.start(t)
 		p.wait(t, code)
