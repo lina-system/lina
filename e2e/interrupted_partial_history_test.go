@@ -121,7 +121,9 @@ func TestM1InterruptedPartialHistory(t *testing.T) {
 			core := start(true)
 			client, conversation := conversationClient(t, h)
 			terminal := h.startTerminalSize([]string{"TERM=xterm-256color"}, false, true, 120, 60)
-			waitScreen(t, h, terminal, "Ctrl+D")
+			// The quit hint is visible during connection setup too. Send the
+			// scenario input only after the conversation is actually live.
+			waitScreen(t, h, terminal, design.Text(design.English, "live"))
 			h.keys(terminal, scenario.Input+"\r")
 			for _, partial := range scenario.Partials {
 				waitScreen(t, h, terminal, partial)
