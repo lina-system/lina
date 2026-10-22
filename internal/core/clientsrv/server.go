@@ -242,8 +242,12 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 		}
 	}()
 	writer := rpc.NewWriter(conn)
+	legacy := legacyActivity{}
 	topics := newTopicSession(ctx, identity, identity.Topics,
 		func(id json.RawMessage, envelope protocol.Envelope) error {
+			if !slices.Contains(capabilities, TurnActivityCapability) {
+				envelope = legacy.project(envelope)
+			}
 			if id != nil {
 				return writer.Write(ctx, response{JSONRPC: "2.0", ID: id, Result: envelope})
 			}
@@ -330,7 +334,7 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 			refuse(&answer, protocol.ErrorNotAuthorized, "client identity changed")
 		case welcomed && envelope.Epoch != identity.Epoch:
 			refuse(&answer, protocol.ErrorStaleEpoch, "request epoch differs from Core")
-		case welcomed && identity.Recovering != nil && identity.Recovering() && !readOnlyKinds[envelope.Kind]:
+		case welcomed && identity.Recovering != nil && identity.Recovering() && !readOnlyEnvelope(envelope):
 			refuse(&answer, protocol.ErrorUnavailable, "Core is recovering")
 		case welcomed && (envelope.Kind == protocol.KindApprovalAnswer || envelope.Kind == protocol.KindQuestionAnswer || envelope.Kind == protocol.KindWaitingAnswer) && !peer.canDecide():
 			refuse(&answer, protocol.ErrorNotAuthorized, "client is not an eligible decider")

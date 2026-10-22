@@ -4,6 +4,7 @@ package boot
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 
@@ -62,7 +63,9 @@ func (r *conversationRuntime) prepareRecordTools(turnID string, bindings map[str
 			// without weakening either the grant check or Commit's final CAS.
 			if result.Code == loop.Denied && len(result.Output) == 0 && in.Write {
 				env, err := r.recordEnvironment(ctx, g)
-				if err == nil && env.Revision != auth.Revision {
+				if errors.Is(err, records.ErrRecordsChanged) {
+					result.Output = coreexec.RecordFailure(err).Body
+				} else if err == nil && env.Revision != auth.Revision {
 					result.Output = json.RawMessage(`{"code":"stale_revision"}`)
 				}
 			}
