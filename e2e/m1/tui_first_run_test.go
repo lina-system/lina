@@ -3,6 +3,7 @@
 package e2e_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -91,11 +92,16 @@ func TestM1TUIFirstRunInstalledCore(t *testing.T) {
 				}
 			}
 			h.keys(terminal, input)
-			// Socket writes and separate matching frames do not establish one
-			// complete presentation. Observe the empty history and draft together.
-			fresh, err := terminal.screen.Wait(h.ctx, func(snapshot tuiterm.Snapshot) bool {
-				text := screenText(snapshot)
-				if !snapshot.AltScreen || !strings.Contains(text, "lina.") || !strings.Contains(text, input) || !strings.Contains(text, design.Text(language, "live")) {
+			// The tap observes socket writes, not reducer consumption. Wait for
+			// the empty-history presentation and draft in the same snapshot. Two
+			// separate waits can accept different redraws while history settles.
+			ctx, cancel := context.WithTimeout(h.ctx, operationTimeout)
+			defer cancel()
+			fresh, err := terminal.screen.Wait(ctx, func(s tuiterm.Snapshot) bool {
+				text := screenText(s)
+				if !s.AltScreen || s.CursorHidden || s.CursorY != 32 ||
+					!strings.Contains(text, "lina.") || !strings.Contains(text, input) ||
+					!strings.Contains(text, design.Text(language, "live")) {
 					return false
 				}
 				for _, id := range firstRunSuggestionIDs {
@@ -106,7 +112,7 @@ func TestM1TUIFirstRunInstalledCore(t *testing.T) {
 				return true
 			})
 			if err != nil {
-				t.Fatalf("first-run presentation and draft did not converge: %v; cells=%s", err, screenText(fresh))
+				t.Fatalf("first-run draft and presentation: %v\n%s", err, screenText(fresh))
 			}
 			text := screenText(fresh)
 			if !fresh.AltScreen || !strings.Contains(text, "lina.") {
