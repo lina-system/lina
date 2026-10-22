@@ -34,6 +34,7 @@ type Request struct {
 
 type projection struct {
 	resolve func(context.Context, *canon.Tx, Ref, string) (Target, error)
+	expand  func(context.Context, *canon.Tx, entry) ([]Target, error)
 	apply   func(context.Context, *canon.Tx, entry, Target) error
 }
 
@@ -231,6 +232,13 @@ func (s *Store) changeMode(ctx context.Context, r Request, a action, expiry bool
 					return err
 				}
 				e.Targets = append(e.Targets, target)
+			}
+			if s.projection.expand != nil {
+				var err error
+				e.Targets, err = s.projection.expand(ctx, tx, e)
+				if err != nil {
+					return err
+				}
 			}
 			if !e.valid() {
 				return ErrInvalid

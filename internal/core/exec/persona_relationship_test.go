@@ -83,6 +83,10 @@ func TestRelationshipWriterConfirmsEvidenceAndKeepsEmotionSeparate(t *testing.T)
 	if err != nil || len(hits) != 0 {
 		t.Fatalf("retracted relationship or superseded view returned: %+v %v", hits, err)
 	}
+	history, err := memory.New(db).Recall(t.Context(), memory.RecallScope{Agent: a.ID, Person: "person"}, memory.Query{At: 100, History: true})
+	if err != nil || len(history) != 0 {
+		t.Fatalf("forgotten relationship history returned: %+v %v", history, err)
+	}
 	if r, err := flow.RecordRelationship(t.Context(), scope, RelationshipChange{Quote: "We completed our first project together."}); err == nil || r.Remembered() {
 		t.Fatal("retracted evidence reused")
 	}
@@ -140,8 +144,12 @@ func TestRelationshipDeletionNeverRevivesPredecessor(t *testing.T) {
 				t.Fatalf("erased replacement resurrected predecessor: %+v %v", hits, err)
 			}
 			history, err := memory.New(db).Recall(t.Context(), scope, memory.Query{At: now.Unix(), History: true})
-			if err != nil || len(history) != 1 || history[0].ID != previous || !history[0].Older {
+			if err != nil || len(history) != 0 {
 				t.Fatalf("historical predecessor: %+v %v", history, err)
+			}
+			view, err := removal.Snapshot(t.Context(), "person", a.ID)
+			if err != nil || view.Visible(retract.Ref{Kind: retract.Memory, ID: previous}) {
+				t.Fatalf("predecessor was not retracted: %v", err)
 			}
 		})
 	}
