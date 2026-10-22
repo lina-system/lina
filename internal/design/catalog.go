@@ -48,6 +48,11 @@ var catalog = map[string]translation{
 	"conversation.start.voice":  {"Please keep your replies brief.", "앞으로 짧게 답해 줘."},
 	"conversation.start.task":   {"Help me finish a task.", "이 일을 끝까지 맡아서 해 줘."},
 
+	"github_read":  {"Read pull request", "풀 리퀘스트 읽기"},
+	"github_watch": {"Watch CI", "CI 상태 보기"},
+	"success":      {"Succeeded", "성공"},
+	"failure":      {"Failed", "실패"},
+
 	"notice.run_effect_question": {"How should the remaining actions proceed? Reads and analysis can continue; further actions need a separate authorized decision, and any unknown earlier outcome must be checked first.", "남은 작업을 어떻게 진행할까요? 읽기와 분석은 계속할 수 있어요. 추가 실행에는 별도의 승인된 결정이 필요하며, 이전 실행의 결과가 불확실하다면 먼저 확인해야 해요."},
 	"notice.run_input_needed":    {"Your input is needed before this background work can continue.", "이 백그라운드 작업을 계속하려면 응답이 필요해요."},
 
