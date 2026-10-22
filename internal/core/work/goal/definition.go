@@ -178,18 +178,8 @@ func (e *Engine) RefreshDefinitions(ctx context.Context) error {
 			current.State = GoalRunning
 			current.Checks = nil
 			current.CheckRound++
-			for _, r := range v.Records("action") {
-				var a Action
-				if err = json.Unmarshal(r.Body, &a); err != nil {
-					return err
-				}
-				if a.GoalID == g.ID && a.State == "queued" {
-					restoreUndispatchedTask(&current, a)
-					a.State = "finished"
-					if err = put(v, "action", a.ID, a); err != nil {
-						return err
-					}
-				}
+			if err = retireUndispatchedActions(v, &current); err != nil {
+				return err
 			}
 			return put(v, "goal", g.ID, current)
 		})
@@ -198,41 +188,6 @@ func (e *Engine) RefreshDefinitions(ctx context.Context) error {
 		}
 	}
 	return nil
-}
-
-// A correction may retire an undispatched reservation, but it must not leave
-// the task waiting for a worker that never started or spend a recovery.
-func restoreUndispatchedTask(g *Goal, a Action) {
-	t := goalTask(g, a.TaskID)
-	if t == nil {
-		return
-	}
-	switch a.Kind {
-	case Assign:
-		t.Stage, t.NodeID = TaskReady, ""
-	case Resume:
-		t.Stage = TaskWorkerLost
-		t.Recoveries = max(0, t.Recoveries-1)
-	case RepairConflict:
-		t.Stage = TaskConflicted
-		t.Conflicts = max(0, t.Conflicts-1)
-	case RepairQA:
-		t.Stage = TaskQAFailed
-		t.QARepairs = max(0, t.QARepairs-1)
-	case ContinueWorker:
-		t.Stage = TaskNoReceipt
-		t.Continuations = max(0, t.Continuations-1)
-	case PlanGoal:
-		t.RepairAsked = false
-	case InspectPR, Merge, RunQA, Deploy, Verify, Observe, Decide, CheckCriterion:
-		return
-	default:
-		return
-	}
-	if reserves(a) {
-		t.Attempt = max(0, t.Attempt-1)
-		t.EffectsSettled = true
-	}
 }
 
 // Execution history and evidence stay in the journal. Only the current task

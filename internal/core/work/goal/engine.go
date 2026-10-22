@@ -197,6 +197,66 @@ func goalTask(g *Goal, id string) *Task {
 	return nil
 }
 
+// A goal revision invalidates undispatched actions, including their reservations and
+// one-shot planning/recovery counters. They have never been dispatched. Claimed
+// actions retain their receipts and reservations until their effects settle.
+func retireUndispatchedActions(v *View, g *Goal) error {
+	for _, r := range v.Records("action") {
+		var a Action
+		if err := json.Unmarshal(r.Body, &a); err != nil {
+			return err
+		}
+		if a.GoalID != g.ID || (a.State != "queued" && a.State != "awaiting_authorization") || a.GoalRevision == g.Revision {
+			continue
+		}
+		t := goalTask(g, a.TaskID)
+		if t != nil {
+			switch a.Kind {
+			case Assign:
+				t.Stage = TaskReady
+				t.NodeID = ""
+			case Resume:
+				t.Stage = TaskWorkerLost
+			case RepairConflict:
+				t.Stage = TaskConflicted
+			case ContinueWorker:
+				t.Stage = TaskNoReceipt
+			case RepairQA:
+				t.Stage = TaskQAFailed
+			case PlanGoal:
+				t.RepairAsked = false
+			case InspectPR, Merge, RunQA, Deploy, Verify, Observe, Decide, CheckCriterion:
+			}
+			if reserves(a) {
+				refundRecovery(t, a.Kind)
+				t.Attempt--
+				t.EffectsSettled = true
+			}
+		}
+		a.State = "finished"
+		if err := put(v, "action", a.ID, a); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Cancellation before dispatch and a settled quota interruption both leave the
+// task's one recovery available. A quota attempt still retains its attempt id.
+func refundRecovery(t *Task, kind ActionKind) {
+	switch kind {
+	case Resume:
+		t.Recoveries--
+	case ContinueWorker:
+		t.Continuations--
+	case RepairConflict:
+		t.Conflicts--
+	case RepairQA:
+		t.QARepairs--
+	case Assign, InspectPR, Merge, RunQA, Deploy, Verify, Observe, Decide, PlanGoal, CheckCriterion:
+	}
+}
+
 func (e *Engine) Admit(ctx context.Context, g Goal) error {
 	if e.cfg.AuthorizeGoal != nil {
 		if err := e.cfg.AuthorizeGoal(ctx, g); err != nil {
@@ -352,7 +412,7 @@ func (e *Engine) Reconcile(ctx context.Context) error {
 					if a.GoalID != g.ID || a.State == "finished" {
 						continue
 					}
-					if a.State == "needs_person" {
+					if a.State == "needs_person" || a.State == "awaiting_authorization" {
 						person = true
 					} else {
 						active = true
@@ -469,6 +529,7 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 			return err
 		}
 		t := goalTask(&g, a.TaskID)
+		previousRevision := g.Revision
 		a.ObservedAt = e.cfg.Now().Unix()
 		a.ObserverEpoch = e.cfg.Epoch
 		a.Receipt = encode(o)
@@ -508,6 +569,7 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 				return err
 			}
 			a.State = "finished"
+			refundRecovery(t, a.Kind)
 			t.Stage = TaskReady
 			t.NodeID = ""
 			t.EffectsSettled = true
@@ -590,6 +652,11 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 		default:
 			return ErrInvalid
 		}
+		if g.Revision != previousRevision {
+			if err = retireUndispatchedActions(v, &g); err != nil {
+				return err
+			}
+		}
 		if err = put(v, "goal", g.ID, g); err != nil {
 			return err
 		}
@@ -600,6 +667,9 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 func staleAssessment(g Goal, a Action) bool {
 	if a.Kind != CheckCriterion && a.Kind != Verify && a.Kind != PlanGoal {
 		return false
+	}
+	if a.Kind == PlanGoal {
+		return a.RecordRevision != g.RecordRevision
 	}
 	if a.GoalRevision != g.Revision {
 		return true
@@ -634,7 +704,13 @@ func applySuccess(g *Goal, t *Task, a Action, o Observation, now int64) error {
 				break
 			}
 		}
-		if g.Revision != a.GoalRevision || g.CheckRound != a.CheckRound || !currentEvidence(*g, criterion, *o.Criterion) || o.Criterion.Revision != a.Revision {
+		if g.Revision != a.GoalRevision || g.CheckRound != a.CheckRound || criterionRevision(*g, criterion) != a.Revision {
+			// This read completed for an obsolete target. Keep its receipt, but
+			// neither apply its evidence nor turn a normal revision into a fatal
+			// engine error. The current definition can now be assessed.
+			return nil
+		}
+		if !currentEvidence(*g, criterion, *o.Criterion) || o.Criterion.Revision != a.Revision {
 			return ErrConflict
 		}
 		for i, old := range g.Checks {
@@ -645,6 +721,15 @@ func applySuccess(g *Goal, t *Task, a Action, o Observation, now int64) error {
 		}
 		g.Checks = append(g.Checks, *o.Criterion)
 	case PlanGoal:
+		if a.RecordRevision != g.RecordRevision {
+			// An old plan cannot assess a newer definition, even if a newer
+			// manager has already cleared its fence. Execution-only revisions
+			// keep the record revision and allow independent repairs to settle.
+			if t != nil {
+				t.RepairAsked = false
+			}
+			return nil
+		}
 		if g.DefinitionPending {
 			g.AssessedFailure = "definition:" + g.RecordRevision
 			if len(o.Tasks) == 0 {
@@ -789,6 +874,48 @@ func (e *Engine) Run(ctx context.Context) error {
 		}
 	}
 }
+
+// Only a pre-dispatch authority refusal enters this state. Execution outcomes
+// needing a person remain distinct: a change hint cannot safely replay them.
+func (e *Engine) awaitAuthorization(ctx context.Context, claimed Action) error {
+	return e.journal.Update(ctx, Transition{ID: "authorization.wait:" + rand.Text(), Kind: "authorization.waiting", At: e.cfg.Now().Unix()}, func(v *View) error {
+		a, err := loadAction(v, claimed.ID)
+		if err != nil {
+			return err
+		}
+		if a.State != "claimed" || a.Epoch != e.cfg.Epoch {
+			return ErrConflict
+		}
+		a.State = "awaiting_authorization"
+		if a.Signal != claimed.Signal {
+			// An approval hint arrived while Authorize was still reading. Do
+			// not lose that wake; the next claim rechecks current authority.
+			a.State = "queued"
+		}
+		if err = put(v, "action", a.ID, a); err != nil {
+			return err
+		}
+		g, err := loadGoal(v, a.GoalID)
+		if err != nil {
+			return err
+		}
+		// A definition/repair revision can commit while Authorize runs.
+		if err = retireUndispatchedActions(v, &g); err != nil {
+			return err
+		}
+		return put(v, "goal", g.ID, g)
+	})
+}
+
+func (e *Engine) releaseDispatch(id string) {
+	e.mu.Lock()
+	delete(e.running, id)
+	e.mu.Unlock()
+	// Reconciliation may have consumed an authorization hint while this slot
+	// was still busy. Wake again after release so a queued retry runs now.
+	e.journal.notify()
+}
+
 func (e *Engine) step(ctx context.Context) error {
 	if err := e.Reconcile(ctx); err != nil {
 		return err
@@ -829,13 +956,16 @@ func (e *Engine) step(ctx context.Context) error {
 			a = claimed
 		}
 		e.wg.Go(func() {
-			defer func() { e.mu.Lock(); delete(e.running, a.ID); e.mu.Unlock() }()
+			defer e.releaseDispatch(a.ID)
 			var o Observation
 			var err error
+			authorizationDenied := false
 			if observe {
 				o, err = e.cfg.Driver.Observe(ctx, a)
 			} else if err = e.cfg.Driver.Authorize(ctx, a); err == nil {
 				o, err = e.cfg.Driver.Execute(ctx, a)
+			} else if errors.Is(err, ErrNeedsPerson) {
+				authorizationDenied = true
 			}
 			if errors.Is(err, ErrNeedsPerson) {
 				o = Observation{Status: OutcomeNeedsPerson}
@@ -845,7 +975,12 @@ func (e *Engine) step(ctx context.Context) error {
 			// Cancellation can leave a dispatched effect uncertain. The durable claim
 			// survives; only an active generation may acknowledge the observation.
 			if ctx.Err() == nil {
-				if err := e.Report(ctx, a.ID, e.cfg.Epoch, o); err != nil && ctx.Err() == nil {
+				if authorizationDenied {
+					err = e.awaitAuthorization(ctx, a)
+				} else {
+					err = e.Report(ctx, a.ID, e.cfg.Epoch, o)
+				}
+				if err != nil && ctx.Err() == nil {
 					select {
 					case e.failures <- err:
 					default:
