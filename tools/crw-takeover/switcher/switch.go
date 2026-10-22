@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-// Package takeover implements an operator procedure, excluded from LINA releases.
-package takeover
+// Package switcher implements an operator procedure, excluded from LINA releases.
+package switcher
 
 import (
 	"context"

@@ -24,7 +24,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/kit/protocol"
-	takeover "github.com/thisisjun786/lina/tools/crw-takeover"
+	takeover "github.com/thisisjun786/lina/tools/crw-takeover/switcher"
 )
 
 // Live switch operations go through the real Core binary. The executor fixture

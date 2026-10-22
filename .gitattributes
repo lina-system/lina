@@ -5,3 +5,9 @@
 *.pdf binary
 *.zip binary
 *.gz binary
+# Operator-only migration code never ships in source release archives.
+/tools/crw-takeover export-ignore
+/e2e/m1/crw_takeover_test.go export-ignore
+/e2e/m3/crw-takeover.json export-ignore
+/e2e/m1/operational_switch_test.go export-ignore
+/e2e/m3/operational-switch.json export-ignore

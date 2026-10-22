@@ -131,11 +131,21 @@ func (a *Area) command(ctx context.Context, l lease.Lease, dir string, args ...s
 const refGuard = `#!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
 [ "$1" = prepared ] || exit 0
+assigned=
+binding=$(git rev-parse --git-path lina-task-ref) || exit 1
+if [ -f "$binding" ]; then
+ IFS= read -r assigned < "$binding" || exit 1
+fi
 while read -r old new ref; do
  case "$ref" in
  refs/heads/main|refs/heads/master|refs/heads/dev|refs/remotes/*|refs/lina/*)
   echo 'LINA protected ref' >&2
   exit 1;;
+ refs/heads/*)
+  if [ "$ref" != "$assigned" ]; then
+   echo 'LINA protected ref: branch belongs to another task' >&2
+   exit 1
+  fi;;
  esac
 done
 `
@@ -221,7 +231,9 @@ func (a *Area) Prepare(ctx context.Context, l lease.Lease, id string, s Workspac
 		if err != nil || filepath.Clean(common) != clone {
 			return Workspace{}, ErrState
 		}
-		return w, nil // Never reset or clean existing task work.
+		// Never reset or clean existing task work. A retry also binds worktrees
+		// created before branch ownership was recorded.
+		return w, a.bindTaskBranch(ctx, l, w, rel)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return Workspace{}, err
 	}
@@ -231,7 +243,50 @@ func (a *Area) Prepare(ctx context.Context, l lease.Lease, id string, s Workspac
 	if err = os.Chmod(w.Path, 0700); err != nil {
 		return Workspace{}, err
 	}
-	return w, nil
+	return w, a.bindTaskBranch(ctx, l, w, rel)
+}
+
+// The binding lives beside this linked worktree's HEAD, not in shared config
+// or in the checkout. Changing HEAD never changes the task's assigned branch.
+func (a *Area) bindTaskBranch(ctx context.Context, l lease.Lease, w Workspace, clone string) error {
+	dir, err := a.command(ctx, l, w.Path, "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return err
+	}
+	rel, err := filepath.Rel(a.path, dir)
+	worktrees := filepath.Join(clone, "worktrees")
+	if err != nil || filepath.Dir(rel) != worktrees {
+		return ErrState
+	}
+	ref := "refs/heads/" + w.Spec.Branch + "\n"
+	// A branch can contain more than one task id. Reserve its exact name for
+	// one allocation even before either worker has created the branch.
+	d, err := a.root.Open(worktrees)
+	if err != nil {
+		return err
+	}
+	entries, err := d.ReadDir(-1)
+	err = errors.Join(err, d.Close())
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		other := filepath.Join(worktrees, entry.Name())
+		body, err := a.root.ReadFile(filepath.Join(other, "lina-task-ref"))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if (other == rel && string(body) != ref) || (other != rel && string(body) == ref) {
+			return ErrState
+		}
+	}
+	return a.writeAreaFile(filepath.Join(rel, "lina-task-ref"), ref, 0600)
 }
 
 // Bundle captures the exact named branch, including its complete object history.
@@ -272,7 +327,10 @@ func (a *Area) Bundle(ctx context.Context, l lease.Lease, w Workspace, head stri
 // Publish the guard by rename inside the open work root. A substituted link
 // must never turn allocation into a write to an unrelated user file.
 func (a *Area) installGuard(dir string) (err error) {
-	path := filepath.Join(dir, "reference-transaction")
+	return a.writeAreaFile(filepath.Join(dir, "reference-transaction"), refGuard, 0700)
+}
+
+func (a *Area) writeAreaFile(path, body string, mode os.FileMode) (err error) {
 	if info, e := a.root.Lstat(path); e == nil {
 		if !info.Mode().IsRegular() {
 			return ErrInvalid
@@ -280,13 +338,13 @@ func (a *Area) installGuard(dir string) (err error) {
 	} else if !errors.Is(e, os.ErrNotExist) {
 		return e
 	}
-	temp := filepath.Join(dir, ".reference-"+rand.Text())
-	f, err := a.root.OpenFile(temp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0700)
+	temp := filepath.Join(filepath.Dir(path), ".reference-"+rand.Text())
+	f, err := a.root.OpenFile(temp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 	if err != nil {
 		return err
 	}
 	defer a.root.Remove(temp)
-	_, err = f.WriteString(refGuard)
+	_, err = f.WriteString(body)
 	err = errors.Join(err, f.Sync(), f.Close())
 	if err != nil {
 		return err

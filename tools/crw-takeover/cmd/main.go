@@ -5,7 +5,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/thisisjun786/lina/kit/proc"
-	takeover "github.com/thisisjun786/lina/tools/crw-takeover"
+	takeover "github.com/thisisjun786/lina/tools/crw-takeover/switcher"
 	"os"
 )
 

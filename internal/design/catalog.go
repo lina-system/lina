@@ -220,6 +220,7 @@ var catalog = map[string]translation{
 	"queue":                      {"Follow-up", "후속 메시지"},
 	"person":                     {"You", "나"},
 	"agent":                      {"Agent", "에이전트"},
+	"forwarded":                  {"Forwarded", "전달된 메시지"},
 	"growth_adopt":               {"Apply growth", "성장 반영"},
 	"growth_notices":             {"Growth updates", "성장 알림"},
 	"growth_undo":                {"Undo growth", "성장 되돌리기"},

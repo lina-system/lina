@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-package takeover
+package switcher
 
 import (
 	"context"
