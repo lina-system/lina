@@ -611,6 +611,11 @@ func (r *conversationRuntime) events(ctx context.Context, through string) ([]led
 	return events, nil
 }
 func (r *conversationRuntime) seedHistory(ctx context.Context) error {
+	if r.plans != nil {
+		if err := r.publishPlanRejections(ctx); err != nil {
+			return err
+		}
+	}
 	items, err := r.historyItems(ctx)
 	if err != nil {
 		return err

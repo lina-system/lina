@@ -14,10 +14,12 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
+	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/jobs"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/results"
 	"github.com/thisisjun786/lina/internal/core/turn"
+	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/internal/moirai/jobapi"
 	"github.com/thisisjun786/lina/kit/grant"
 	"github.com/thisisjun786/lina/kit/lease"
@@ -67,8 +69,7 @@ func (r *conversationRuntime) ensurePlanning(ctx context.Context) error {
 			if json.Compact(&a, cached) != nil || json.Compact(&b, raw) != nil || !bytes.Equal(a.Bytes(), b.Bytes()) {
 				return jobapi.ErrInvalid
 			}
-			_, err := r.plans.DraftTx(ctx, tx, r.planScope(input.TurnID), input, raw)
-			return err
+			return r.plans.ApplyDraftTx(ctx, tx, r.planScope(input.TurnID), id, task.Sequence, input, raw)
 		},
 	}}, AfterApply: r.publishPlans})
 	if err != nil {
@@ -216,6 +217,9 @@ func planWire(r result.Result) protocol.Result {
 	return protocol.Result{ResultID: r.ID, Revision: json.Number(strconv.Itoa(r.Revision)), Type: protocol.ResultTypePlanView, Title: r.Title, Summary: r.Summary, Text: &r.Text, Body: &body, Status: protocol.ResultStatusPreview, RevisedBy: r.RevisedBy, Provenance: protocol.ResultProvenance{AgentID: r.Provenance.AgentID, ConversationID: r.Provenance.ConversationID, TurnID: r.Provenance.TurnID}}
 }
 func (r *conversationRuntime) publishPlans(ctx context.Context) error {
+	if err := r.publishPlanRejections(ctx); err != nil {
+		return err
+	}
 	var ids []string
 	err := r.db.Read(ctx, func(tx *canon.Tx) error {
 		rows, err := tx.QueryContext(ctx, "SELECT h.id FROM result_heads h JOIN plan_drafts p ON p.result_id=h.id WHERE h.person=? AND h.agent=? AND h.conversation=? ORDER BY h.rowid", r.person, r.agent, r.conversation)
@@ -339,5 +343,33 @@ func (r *conversationRuntime) initPlanning() error {
 }
 func (r *conversationRuntime) startPlanning(ctx context.Context) error {
 	r.identity.Operations[protocol.KindPlanRequest] = clientsrv.Operation{Capability: protocol.Capability{Name: "planning", Version: "1.0"}, Handle: r.planOperation}
+	return nil
+}
+
+func (r *conversationRuntime) publishPlanRejections(ctx context.Context) error {
+	rows, err := r.plans.Rejections(ctx, r.planScope("planning-publication"))
+	if err != nil {
+		return err
+	}
+	for _, rejected := range rows {
+		id := "plan-rejection:" + rejected.Job + ":" + strconv.FormatInt(rejected.Sequence, 10)
+		event, err := r.journal().Get(ctx, id)
+		if errors.Is(err, ledger.ErrNotFound) {
+			language, e := r.turnLanguage(ctx, rejected.TurnID)
+			if e != nil {
+				language = design.English
+			}
+			text := design.Text(language, "plan_draft_obsolete")
+			now := time.Now()
+			event, err = r.journal().Admit(ctx, guard.EntrySystem, ledger.Input{ID: id, ConversationID: r.conversation, AgentID: r.agent, Surface: ledger.Surface{Kind: "tui"}, ScaffoldKind: "plan_rejection", OccurredAt: now, RecordedAt: now, TimeQuality: "write_time_only", Body: text})
+		}
+		if err != nil {
+			return err
+		}
+		text, speaker := event.Body.Text(), protocol.ConversationSpeakerSystem
+		if err = r.publish(ctx, protocol.KindItemDone, id, protocol.ItemDone{Text: &text, Speaker: &speaker}); err != nil {
+			return err
+		}
+	}
 	return nil
 }

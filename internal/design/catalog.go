@@ -44,6 +44,14 @@ type translation struct{ en, ko string }
 // Keys are wire codes or local presentation ids, never English source text.
 // Keep both languages together so a new entry cannot omit a translation.
 var catalog = map[string]translation{
+	"plan_request":  {"Plan request", "계획 요청"},
+	"plan_response": {"Plan result", "계획 결과"},
+	"goal":          {"Goal", "목표"}, "project": {"Project", "일"}, "todo": {"To-do", "할 일"},
+	"area": {"Area", "계속 챙기는 것"}, "memo": {"Memo", "메모"}, "resource": {"Reference", "자료"},
+	"planned": {"Planned", "계획됨"}, "active": {"Active", "진행 중"}, "blocked": {"Blocked", "막힘"}, "done": {"Done", "끝"},
+	"accept_goal": {"Accept goal", "목표 수락"}, "accept_project": {"Accept project", "일 수락"},
+	"get": {"Open", "열기"}, "confirm": {"Confirm", "확인"},
+	"plan_draft_obsolete": {"The plan changed before this update was ready. Your current plan is unchanged.", "수정안을 준비하는 동안 계획이 바뀌었습니다. 현재 계획은 그대로 유지됩니다."},
 	"waiting_model":       {"Waiting for model", "모델 응답 대기"},
 	"streaming":           {"Replying", "답하는 중"},
 	"tool":                {"Running tool", "도구 실행"},

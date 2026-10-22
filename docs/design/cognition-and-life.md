@@ -192,7 +192,12 @@ and preview revisions; `read_plan` explicitly reads a complete preview. Moirai
 requests the auxiliary, tool-free Klotho model call through Core and submits its
 validated proposal through the job API. Core accepts only that call's retained
 output and commits the complete `plan_view` revision with the job watermark.
-This work produces no project or to-do records and starts no execution.
+This work produces no project or to-do records and starts no execution. A queued
+replacement that becomes obsolete because its preview changed or was confirmed
+ends with a durable rejection in the same transaction as the job watermark. It
+leaves the preview and records unchanged and releases the next queued request.
+The originating conversation receives one retained outcome line, including when
+startup recovers a rejection committed before publication.
 
 The client `planning` capability provides the person-only acceptance and
 confirmation actions. Acceptance saves the goal or directly handed-over project

@@ -453,3 +453,47 @@ func (p *Planning) Index(ctx context.Context, s result.Scope) (PlanIndex, error)
 	})
 	return out, err
 }
+
+// ApplyDraftTx retires a valid but obsolete proposal in the same transaction as
+// the job watermark. Unexpected failures still roll back; workers cannot turn
+// a forged output or a storage failure into a successful terminal receipt.
+func (p *Planning) ApplyDraftTx(ctx context.Context, tx *canon.Tx, s result.Scope, job string, sequence int64, in jobapi.PlanInput, raw json.RawMessage) error {
+	_, err := p.DraftTx(ctx, tx, s, in, raw)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, ErrStaleRevision) && !errors.Is(err, ErrOutOfScope) && !errors.Is(err, ErrUnavailable) {
+		return err
+	}
+	code := err.Error()
+	_, err = tx.ExecContext(ctx, `INSERT INTO plan_rejections(job,sequence,person,agent,conversation,turn_id,result_id,code) VALUES(?,?,?,?,?,?,?,?)`, job, sequence, s.PersonID, s.AgentID, s.ConversationID, s.TurnID, in.ResultID, code)
+	return err
+}
+
+type PlanRejection struct {
+	Job      string `json:"job_id"`
+	Sequence int64  `json:"sequence"`
+	TurnID   string `json:"turn_id"`
+	ResultID string `json:"result_id"`
+	Code     string `json:"code"`
+}
+
+func (p *Planning) Rejections(ctx context.Context, s result.Scope) ([]PlanRejection, error) {
+	out := []PlanRejection{}
+	err := p.results.db.Read(ctx, func(tx *canon.Tx) error {
+		rows, err := tx.QueryContext(ctx, "SELECT job,sequence,turn_id,result_id,code FROM plan_rejections WHERE person=? AND agent=? AND conversation=? ORDER BY rowid", s.PersonID, s.AgentID, s.ConversationID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var item PlanRejection
+			if err = rows.Scan(&item.Job, &item.Sequence, &item.TurnID, &item.ResultID, &item.Code); err != nil {
+				return err
+			}
+			out = append(out, item)
+		}
+		return rows.Err()
+	})
+	return out, err
+}

@@ -92,7 +92,7 @@ func TestM3PlanDrafting(t *testing.T) {
 				t.Error("Core did not offer draft_plan")
 			}
 			emitPersonaCall(w, "draft", "draft_plan", coreexec.PlanDraftRequest{RootID: root, ResultID: id, BaseRevision: revision, Instruction: "Draft the full plan"})
-		case 3, 7:
+		case 3, 7, 8:
 			var item struct{ Output string }
 			if len(req.Input) == 0 {
 				t.Error("no tool result")
@@ -107,8 +107,13 @@ func TestM3PlanDrafting(t *testing.T) {
 			if receipt.Code != "ok" || receipt.Output.State != "queued" {
 				t.Errorf("draft queue failed: %s", item.Output)
 			}
-			emitResponse(w, "Preparing your plan.", true)
-		case 4, 8:
+			if n == 7 {
+				// Queue a second valid replacement before the worker applies the first.
+				emitPersonaCall(w, "draft-overlap", "draft_plan", coreexec.PlanDraftRequest{RootID: root, ResultID: id, BaseRevision: revision, Instruction: "Replace the complete draft"})
+			} else {
+				emitResponse(w, "Preparing your plan.", true)
+			}
+		case 4, 9, 10:
 			if len(req.Tools) != 0 || req.Instructions != "" || len(req.Input) != 2 {
 				t.Error("planning did not use auxiliary tool-free route")
 			}
@@ -123,7 +128,7 @@ func TestM3PlanDrafting(t *testing.T) {
 				}
 			}
 			draft := scenario.Initial
-			if n == 8 {
+			if n != 4 {
 				draft = scenario.Replacement
 			}
 			out, _ := json.Marshal(draft)
@@ -136,7 +141,7 @@ func TestM3PlanDrafting(t *testing.T) {
 	defer server.Close()
 	workerBinary := buildCommand(t, "moirai-worker")
 	h, _ := installedConversationHarness(t, server.URL)
-	// This scenario owns three cold Core starts, two worker processes and eight
+	// This scenario owns three cold Core starts, three worker processes and ten
 	// model exchanges. Each process retains its own bounded readiness/exit wait.
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	t.Cleanup(cancel)
@@ -241,6 +246,25 @@ func TestM3PlanDrafting(t *testing.T) {
 	if git("rev-parse", "HEAD") != before {
 		t.Fatal("replacement created plan objects")
 	}
+	// The obsolete second replacement must finish, publish its outcome and leave
+	// revision 2 intact instead of pinning the worker at an unconsumable task.
+	worker()
+	for {
+		event, err := conv.Receive(h.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if item, ok := event.Payload.(protocol.ItemDone); ok && item.Stream != nil && strings.HasPrefix(item.Stream.Key, "plan-rejection:") {
+			if item.Speaker == nil || *item.Speaker != protocol.ConversationSpeakerSystem || item.Text == nil || *item.Text == "" {
+				t.Fatal("missing rejection outcome", item)
+			}
+			break
+		}
+	}
+	unchanged, failure := request(protocol.PlanRequest{Operation: "get", ResultID: &id})
+	if failure != nil || unchanged.Result == nil || unchanged.Result.Revision != "2" {
+		t.Fatal("rejection changed current plan", unchanged, failure)
+	}
 	old := json.Number("1")
 	if _, failure = request(protocol.PlanRequest{Operation: "confirm", ResultID: &id, Revision: &old}); failure == nil || failure.Code != protocol.ErrorStaleRevision {
 		t.Fatal("stale confirmation", failure)
@@ -281,7 +305,7 @@ func TestM3PlanDrafting(t *testing.T) {
 	if failure != nil || again.Revision == nil || *again.Revision != head || git("rev-parse", "HEAD") != head {
 		t.Fatal("repeat confirmation changed records", again, failure)
 	}
-	if calls.Load() != 8 {
+	if calls.Load() != 10 {
 		t.Fatal("replayed planning on restart", calls.Load())
 	}
 	if git("status", "--porcelain") != "" {

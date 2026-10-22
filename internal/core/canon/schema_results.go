@@ -23,4 +23,11 @@ CREATE TABLE plan_confirmations (
  state TEXT NOT NULL CHECK(state IN ('unknown','applied')),
  changes BLOB NOT NULL, receipt BLOB NOT NULL
 );
+CREATE TABLE plan_rejections (
+ job TEXT NOT NULL, sequence INTEGER NOT NULL,
+ person TEXT NOT NULL, agent TEXT NOT NULL, conversation TEXT NOT NULL,
+ turn_id TEXT NOT NULL, result_id TEXT NOT NULL,
+ code TEXT NOT NULL CHECK(code IN ('stale_revision','out_of_scope','unavailable')),
+ PRIMARY KEY(job,sequence)
+);
 `

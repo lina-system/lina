@@ -1154,7 +1154,10 @@ type Definition struct {
 - Klotho drafting runs through Moirai's job API and the Core auxiliary model
   route. The worker validates the proposed structure and holds no write or
   confirmation authority. Core writes a full preview revision and its job receipt
-  in one transaction. Only the client confirmation creates the corresponding
+  in one transaction. Obsolete replacements commit a terminal rejection and
+  advance the watermark without replacing the card, so they cannot strand later
+  planning jobs. Their outcome lines are recovered from the same durable receipt.
+  Only the client confirmation creates the corresponding
   Markdown records, as one recoverable Git publication. Splitting the confirmed
   work into hand-off tasks uses the existing work ledger, without another plan
   confirmation or another planning receipt.
