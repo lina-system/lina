@@ -269,9 +269,10 @@ Regions:
 
 - Header: the focused agent's name and mark, and the connection word.
 - Conversation.
-- Activity: one row immediately above the composer hairline while a send is pending or a
-  turn is active, with a glyph, localized thinking/replying/stopping word, elapsed
-  duration and Esc hint. It consumes no rows when idle.
+- Activity: one or two measured rows above the composer's optional rule while a
+  send is pending or a turn is active, with a glyph, localized
+  thinking/replying/stopping word, elapsed duration and Esc hint. It consumes no
+  rows when idle.
 - Composer, with its attachment strip and a full-width hairline immediately above the input.
 - Card row above the composer, on Home (T-12).
 - Status line below the composer: connection mark and word first, agent, the running count ("2 running, 1 waiting for you"), restart pending, Core messages, then key hints.
@@ -335,12 +336,26 @@ line under the reply, using the inactive event's server timestamp. This is clien
 display metadata: it survives same-session redraw and resync, is cleared with
 revoked or unfocused content, and is never stored or restored from history.
 
-`e2e/tui_activity_test.go` uses an installed Core and a held fixture provider in
+`e2e/m1/tui_activity_test.go` uses an installed Core and a held fixture provider in
 a 100x34 PTY. It checks initial activity within one second, advancing elapsed
 time, replying after the first delta, stopping before interrupt delivery,
 completion and zero idle bytes. The recording harness separately checks idle
 output and the unit clock checks timer removal, hidden rows and static glyphs.
 
+Below 80 columns, if the complete activity line does not fit, its elapsed and
+interrupt details move together to a second row. Below 50 columns, the hint
+shortens to `Esc`; the glyph, localized word and complete elapsed value remain.
+The display measures those rows before planning the transcript and composer.
+The footer uses T-10's localized key-and-label priorities. It admits only whole
+hint segments, preserving the connection and highest-priority hint at supported
+widths; a hint that does not fit and the hints after it are omitted together.
+
+`e2e/m1/tui_resize_test.go` holds a real installed-Core turn behind a fixture
+provider gate, resizes the PTY through 79, 50 and 40 columns in English and
+Korean, and checks complete activity and footer segments plus four transcript
+rows with a growing composer. Releasing the gate produces a real result without
+repeating the input. Unit tests exercise wrapped activity, long elapsed values
+and the planner's two-row budget under pressure.
 
 **Row budget** is a pure function in `tui/layout`.
 
@@ -359,8 +374,12 @@ func Plan(size Size, caps Caps, st Shape) Layout // regions disjoint, sum fits, 
   when folded. Empty or ungranted lists reserve no rows, even under pressure.
   The attachment strip
   uses one row. After the stated shedding, composer growth yields as necessary
-  to preserve the transcript floor. Counts and unsupported flags remain typed
-  output even when their region folds.
+  to preserve the transcript floor. The active row reserves one or two measured
+  rows above the composer rule and input. At the ten-row minimum, if a two-row
+  activity still cannot fit after composer and attachment shedding, running and
+  waiting share one summary row containing both counts. Their full lists remain
+  available through the existing keys. Counts and unsupported flags remain
+  typed output even when their region folds.
 - Property tests enumerate widths 0–240 and heights 0–100 with empty and crowded
   shapes and granted and missing capabilities, and exercise threshold and
   integer-limit dimensions. The planner itself imposes no maximum size.
@@ -398,7 +417,10 @@ clears the retained draft and completes another exchange.
 The first visible composer row starts with the accent `glyph.action` (`›`, or
 `>` in ASCII) and one space. Continuations align under the draft, including when
 the textarea scrolls. An empty draft shows the muted `composer.placeholder`
-catalog entry in Korean or English; it is display text and is never submitted.
+catalog entry in Korean or English, formatted with the same sanitized agent
+display name as the conversation header and reply speaker. The name is refreshed
+from client focus on redraw, including after selection, rename and reconnect;
+it is display text and is never submitted.
 When the keyboard enhancement reply reports key disambiguation, the placeholder
 uses `composer.shift_enter` to advertise Shift+Enter. Until then it
 advertises Alt+Enter. This terminal-local change preserves the draft and cursor.
@@ -626,6 +648,10 @@ Settings are commands and labeled blocks, all requests to Core:
 Agent choice is client focus and survives reconnect (T-05). A missing selection
 requires an explicit new choice before conversation input can be sent; listing,
 creating or deleting another agent does not redirect the retained draft.
+The empty composer names the focused agent, consistently with the header and
+reply speaker; LINA is not a fixed recipient label. The installed Core/TUI
+scenario `e2e/m2/tui-composer-identity.json` covers creation and selection through
+the TUI, a synthetic reply, and the empty composer after Core reconnect.
 
 `/help` opens the local command reference, including `/channels` and `/talk`.
 These commands are consumed locally even when Core has not granted their
@@ -724,7 +750,7 @@ cell limits still apply. Pager overlays and side panes retain the connection wit
 whole pager hints (Esc, search, next match), rather than replacing it with controls.
 Both English and Korean labels come from the catalog.
 
-`e2e/tui_shortcuts_test.go` exercises the installed Core and a Responses fixture
+`e2e/m1/tui_shortcuts_test.go` exercises the installed Core and a Responses fixture
 through PTYs at 100, 60 and 40 columns, in English/Unicode and Korean/ASCII. It
 checks whole priority prefixes, both sheet entry paths, the connection inside
 the sheet, Esc returning to the conversation, and a drafted `why?` sent through
@@ -735,6 +761,8 @@ and limits are recorded in [the shortcut reference](tui-shortcuts-reference.md).
 | --- | --- |
 | Enter | Send the draft |
 | Shift+Enter (when distinguished by the terminal), Alt+Enter, Ctrl+J | Newline (Ctrl+J because Alt may not reach the application) |
+| Up on the first composer line | Recall an older sent input; otherwise move the cursor up |
+| Down on the last composer line | Recall a newer input, then restore the unsent draft; otherwise move the cursor down |
 | Esc | Close the top overlay; with none, interrupt the turn |
 | Ctrl+C | Clear the draft; with an empty draft, quit the TUI only, never Core |
 | Tab, Shift+Tab | Move focus |
@@ -776,6 +804,24 @@ or input request. Discovery does not send it automatically; a fresh Enter sends
 the retained draft to the discovered conversation. Management commands remain
 available during discovery.
 Resizing preserves the draft and its cursor without submitting it.
+
+Input recall is session display state in memory, derived newest first from the
+current conversation's accepted person inputs. Pending local echoes, other
+conversations, agent output and masked fields (including channel tokens and
+sign-in callbacks) never enter it. Up/Down use visual line boundaries, including
+soft wrapping. Browsing preserves the unsent draft's text, attachments and cursor;
+Down past the newest entry restores them. Editing a recalled input starts a new
+draft, and sending or clearing resets navigation. Recall issues no request.
+Snapshot replacement and focus changes invalidate removed recall identities and
+restore the unsent draft. A new TUI derives history from Core's current snapshot,
+but restores no unsent draft from disk (T-01).
+
+`e2e/m1/tui-input-history.json` sends two inputs through an installed Core and
+fixture provider in a 100x34 PTY, checks recall and draft restoration on parsed
+composer cells, excludes a masked channel-token form, and checks multiline
+cursor movement and history in a fresh TUI. The behaviour reference and its
+limits are recorded in
+[`INPUT-HISTORY-REFERENCE.md`](../../internal/tui/ui/INPUT-HISTORY-REFERENCE.md).
 
 Explicitly decoded Shift+Enter is an Edit key even before a capability reply;
 its releases are ignored and repeats insert newlines through the same key gate.
@@ -1049,7 +1095,7 @@ with the fixture Responses provider, types in the real TUI, checks reply cells,
 and reopens the conversation. It exercises the existing Core turn, lane and
 ledger composition; a direct provider call is not its acceptance proof. The
 real-model headless client journey is covered by
-`TestRealModelHeadlessConversation` in `e2e/real_model_test.go`, including streamed
+`TestRealModelHeadlessConversation` in `e2e/m1/real_model_test.go`, including streamed
 output and canon readback after Core restart. It requires explicit real-model
 opt-in and credentials; the physical terminal spike remains T-08.
 `e2e/m1/conversation-admission.json` verifies large Unicode inputs and replies

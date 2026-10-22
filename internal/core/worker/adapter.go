@@ -143,6 +143,8 @@ type Answer struct {
 }
 
 type ToolCall struct {
+	// CallID preserves the worker wire call id; ID is the opaque Answer request id.
+	CallID              string
 	ID, Namespace, Name string
 	Arguments           json.RawMessage
 }

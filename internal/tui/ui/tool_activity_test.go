@@ -113,8 +113,13 @@ func TestToolActivitySanitizesDisplayName(t *testing.T) {
 	}
 	m.size.Width = 40
 	applyToolProjection(t, m, toolTurn(t, 2, "tool", strings.Repeat("읽기", 100)))
-	if width := (render.Unicode{}).Width(m.activityText()); width > 40 {
-		t.Fatalf("tool row width=%d", width)
+	for _, row := range strings.Split(m.activityText(), "\n") {
+		if width := (render.Unicode{}).Width(row); width > 40 {
+			t.Fatalf("tool row width=%d", width)
+		}
+	}
+	if !strings.Contains(m.activityText(), "Esc)") {
+		t.Fatal("long tool name displaced the interrupt key")
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/boot"
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
@@ -24,11 +25,13 @@ func runCore(args []string) int {
 	flags.SetOutput(os.Stderr)
 	root := flags.String("state-root", "", "path to the installed local state root")
 	socket := flags.String("socket", "", "path to the private client Unix socket")
+	tailnet := flags.String("tailnet-listen", "", "optional exact Tailscale IP:port for remote clients")
+	tailscaleSocket := flags.String("tailscale-socket", "", "trusted local tailscaled Unix socket")
 	preflight := flags.Bool("preflight", false, "inspect schema and peer compatibility without starting Core")
 	metadata := flags.String("manifest", "", "candidate build manifest (default: compiled rows)")
 	required := flags.String("required-manifest", "", "installed peer requirements for preflight")
 	flags.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: lina core --state-root <path> (--socket <path> | --preflight) [--manifest <path>] [--required-manifest <path>]")
+		fmt.Fprintln(os.Stderr, "usage: lina core --state-root <path> (--socket <path> | --preflight) [--manifest <path>] [--required-manifest <path>] [--tailnet-listen <IP:port>] [--tailscale-socket <path>]")
 	}
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -37,7 +40,7 @@ func runCore(args []string) int {
 		flags.Usage()
 		return 64
 	}
-	if *root == "" || (!*preflight && *socket == "") || (*preflight && *socket != "") || (!*preflight && *required != "") || flags.NArg() != 0 {
+	if *root == "" || (!*preflight && *socket == "") || (*preflight && (*socket != "" || *tailnet != "" || *tailscaleSocket != "")) || (!*preflight && *required != "") || flags.NArg() != 0 || (*tailscaleSocket != "" && *tailnet == "") {
 		flags.Usage()
 		return 64
 	}
@@ -66,7 +69,11 @@ func runCore(args []string) int {
 		fmt.Fprintln(os.Stderr, "lina core: invalid model configuration")
 		return 78
 	}
-	if err := boot.Run(ctx, boot.Config{StateRoot: *root, Socket: *socket, Conversation: route, ClientManifest: *metadata}); err != nil {
+	cfg := boot.Config{StateRoot: *root, Socket: *socket, Conversation: route, ClientManifest: *metadata}
+	if *tailnet != "" {
+		cfg.Tailnet = &clientsrv.TailnetConfig{Address: *tailnet, Socket: *tailscaleSocket}
+	}
+	if err := boot.Run(ctx, cfg); err != nil {
 		if errors.Is(err, lifecycle.ErrRestart) {
 			return 75
 		}

@@ -88,8 +88,11 @@ its JSON output; positive deltas fail the resources cell.
 ```sh
 node --test scripts/non-competition.test.mjs
 node scripts/non-competition.mjs evidence/non-competition/records/linux.json
-go test -count=1 -v ./e2e -run '^TestM3NonCompetitionInstalledCore$'
+go test -count=1 -v ./e2e/m1 -run '^TestM3NonCompetitionInstalledCore$'
 ```
+
+The Go scenario uses the shared harness in `e2e/m1`; its M3 fixture remains in
+`e2e/m3/non-competition.json`.
 
 The CLI reads and hashes every attachment (regular files of at most 32 MiB).
 Exit 0 requires **both** tiers complete and passing. Exit 1 includes malformed

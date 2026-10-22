@@ -410,7 +410,7 @@ func TestEventOverflowAndOversizedFrameAreObservable(t *testing.T) {
 func TestUnknownRequiredCapabilityAndWorkerSettingsAreRefusedBeforeAssignment(t *testing.T) {
 	s, ctx, l := openFixture(t, "normal")
 	base := worker.StartSpec{TaskID: "task", AttemptID: "attempt", Workdir: t.TempDir(), TaskPacket: "hold"}
-	for _, capability := range []worker.Capability{worker.RequestApprovals, worker.AskQuestions, worker.WorkTools, worker.ReportQuota} {
+	for _, capability := range []worker.Capability{worker.Capability("future-capability")} {
 		spec := base
 		spec.Required = worker.CapabilitySet{capability}
 		if _, err := s.Start(ctx, l, spec); err == nil {

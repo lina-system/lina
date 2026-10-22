@@ -1,0 +1,10 @@
+{
+  "cases": [
+    {"name":"success","expected":"ready_for_review"},
+    {"name":"denied","expected":"denied_actions"},
+    {"name":"exit-zero","expected":"missing_result"},
+    {"name":"pending","expected":"pr_unverified"}
+  ],
+  "what":"Write a small result file and submit its pull request",
+  "done":"The result file is committed and the current PR head has green checks and a completed review"
+}
