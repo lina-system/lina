@@ -197,11 +197,28 @@ Core validates a tool's arguments before checking authority or claiming its effe
 
 ### Plugin tools
 
-Every plugin that is on exposes its full tool set to every agent, in the same way. There are no permission scopes for a plugin or an MCP server, no read-only start and no tiers of tools. When an agent reads and when it writes through a tool is decided by the agent's rules (its persona and methodology), not by the plugin ([work-and-delegation.md](work-and-delegation.md#default-posture)).
+Every plugin that is on exposes its full tool set to every agent, in the same way. There are no permission scopes for a plugin or an MCP server, no read-only start and no tiers of tools. Tool visibility is not permission to execute: Core checks the preset effect limits below before applying the ordinary approval policy. Within those limits, when an agent reads and when it writes is its judgment ([work-and-delegation.md](work-and-delegation.md#default-posture)).
 
-- The one approval a plugin tool can need is the one of Approval: an outward or irreversible effect (sending, payment, public posting, unrecoverable deletion) asks every time, with the choices once and deny. [integrations.md](integrations.md#tool-classification) defines how LINA Core knows which tools those are. Every other plugin tool runs without asking, and the effect ledger records it.
+- The one approval a plugin tool can need is the one of Approval: an outward or irreversible effect (sending, payment, public posting, unrecoverable deletion) asks every time, with the choices once and deny. [integrations.md](integrations.md#tool-classification) defines how LINA Core knows which tools those are. Every other permitted plugin tool runs without asking, and the effect ledger records it.
 - LINA Core makes every such decision. Prompt wording, tool descriptions and content read through a plugin never change it.
-- There is no standing grant for a plugin tool. A tool whose definition changed since the person turned the plugin on is marked as changed on the plugin card, with what changed. Nothing is suspended, and an outward or irreversible tool still asks every time.
+- There is no standing grant for a plugin tool. A tool whose definition changed since the person turned the plugin on is marked as changed on the plugin card, with what changed. A changed definition alone suspends nothing; preset effect limits still apply, and a permitted outward or irreversible tool asks every time.
+
+### Preset effect limits
+
+The starter roles in [Presets](conversation-and-memory.md#presets) do not grant authority. Core enforces the investing preset's advise-only limit and the legal preset's draft-only limit as effect policy, before dispatch or an approval request. The restriction follows the agent's preset identity in canon, not its display name, persona wording, voice revision or the presence of private source files.
+
+| Effect class | Investing preset | Legal preset |
+| --- | --- | --- |
+| Read, research, calculation, private analysis or a private draft | Allowed inside the existing grant | Allowed inside the existing grant |
+| Investment order execution: placing, modifying or cancelling an order, or committing funds to a trade | Refused | Refused |
+| External or binding execution of the advice or draft: sending to a third party, publishing, signing, filing/submitting, payment or purchase | Refused | Refused |
+| Other effects | Ordinary grant and approval policy applies; it cannot authorize execution of investment advice | Ordinary grant and approval policy applies; it cannot authorize execution of legal, tax, accounting, contract or copyright drafts |
+
+Refused effects never become an "approve once" request. A standing grant, an accepted draft, a channel binding or an approval answer cannot override these limits. Core records the refusal with the agent, person, target and effect class and explains that the agent can provide advice or a draft. The person executes the resulting investment decision or binding document outside that preset's work. A rename or persona update cannot turn advice into execution.
+
+Classification comes from Core's operation definitions and a plugin's service profile ([integrations.md](integrations.md#tool-classification)), using the validated operation and arguments, never a model's claim or text in a document. Profiles distinguish research and private draft operations from order execution and external or binding acts. If Core cannot establish that an operation falls within the restricted preset's permitted effects, it refuses dispatch. A generic command or an unclassified plugin is not an escape from that check.
+
+These limits apply on every execution path, including tools, commands, Node work, workers and requests relayed to another agent. Delegation retains the originating preset's restriction and intersects it with the receiver's authority; a hand-off cannot execute a refused effect. The system preset receives no special administrator authority, and dev's ownership of coding does not widen a grant. Other effects of all eight starters retain the ordinary approval policy above.
 
 ### Channels
 

@@ -589,10 +589,14 @@ defaults to the directory of the executing binary. Installation validates its
 manifest, requires its target to match the host OS and architecture, and verifies
 the size and SHA-256 of the exact artifact bytes copied.
 `--persona-source <dir>` selects an absolute local checkout root containing
-`characters/lina/persona/core-v1.md` and `default-voice-v1.md`. Install checks both
-files, reports a setup warning when unavailable, and stores the path (never the
-text) in private `system/core/config.json` as `persona_source`. Missing material
-does not block installation or Core startup. To change the source in an existing
+`characters/<preset>/persona/core-v1.md` and `default-voice-v1.md` for each of the
+eight starter preset keys in [Presets](conversation-and-memory.md#presets).
+Install checks each pair independently, reports setup warnings without private
+paths or text when unavailable, and stores the root path (never the text) in
+private `system/core/config.json` as `persona_source`. Missing material publishes
+empty layers only for the affected preset and does not block installation,
+Core startup or creation of all eight starters. The existing `characters/lina/`
+source remains valid. To change the source in an existing
 install, edit that field in the 0600 config file; Core rereads it at the next turn.
 Older installs without the file use an unconfigured source. See
 [Presets](conversation-and-memory.md#presets) for fallback and revision behavior.
