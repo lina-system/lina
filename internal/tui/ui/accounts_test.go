@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -34,6 +35,51 @@ func TestAccountDiscoveryRefusalPreservesFocus(t *testing.T) {
 		}
 		if m.accounts.code != "unavailable" || m.accounts.busy || len(s.pending) != 0 {
 			t.Fatal("account refusal did not settle its pending request")
+		}
+		view := m.View().Content
+		if !strings.Contains(view, design.Text(m.styles.options.Language, "unavailable")) || strings.Contains(view, design.Text(m.styles.options.Language, "account.loading")) {
+			t.Fatalf("settled refusal is not visible (account block open=%v):\n%s", open, view)
+		}
+		if m.accountsKnown {
+			t.Fatal("refusal was treated as a successful account listing")
+		}
+	}
+}
+
+func TestAccountDiscoveryStatusTransitions(t *testing.T) {
+	for _, language := range []design.Language{design.English, design.Korean} {
+		for _, connected := range []bool{false, true} {
+			m := accountShell()
+			m.styles = NewStyles(Options{Width: 120, Profile: Monochrome, Language: language})
+			m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+			check := func(want string) {
+				t.Helper()
+				if view := m.View().Content; !strings.Contains(view, design.Text(language, want)) {
+					t.Fatalf("missing account state %s:\n%s", want, view)
+				}
+			}
+			check("account.loading")
+			s := &signInSession{ctx: t.Context(), model: m, pending: map[string]protocol.Kind{"list": protocol.KindAccountRequest}}
+			if _, err := s.response(protocol.Envelope{ReplyTo: stringPointer("list"), Error: &protocol.Error{Code: protocol.ErrorUnavailable}}); err != nil {
+				t.Fatal(err)
+			}
+			check("unavailable")
+			rows := []protocol.AccountSummary{}
+			want := "account.empty"
+			if connected {
+				rows = append(rows, protocol.AccountSummary{AccountID: "synthetic", Label: "Synthetic", Status: "ok"})
+				want = "account.ready"
+			}
+			s.pending["retry"] = protocol.KindAccountRequest
+			if _, err := s.response(protocol.Envelope{ReplyTo: stringPointer("retry"), Payload: protocol.AccountResult{Operation: stringPointer("list"), Accounts: &rows}}); err != nil {
+				t.Fatal(err)
+			}
+			if !m.accountsKnown || m.accounts.code != "" || m.accounts.open {
+				t.Fatal("successful retry retained the refusal or changed focus")
+			}
+			check(want)
+			m.Update(shellBegin{Generation: 2})
+			check("account.loading")
 		}
 	}
 }
