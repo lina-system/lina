@@ -42,6 +42,10 @@ TUI and ends on success, failure or cancellation. With no provider configured,
 neither tool is offered; the agent is told plainly that web access is not set up.
 Credentials belong only to the existing secret store and the provider request;
 they never enter conversation history, tool arguments, results or diagnostics.
+Core replaces the configured key in decoded provider response strings before
+returning search titles, URLs, snippets or extracted Markdown, or validating a
+returned final URL. JSON escapes cannot bypass this redaction; model inputs and
+durable tool receipts receive only the redacted content.
 
 ## Provider setup
 
