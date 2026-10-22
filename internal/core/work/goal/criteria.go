@@ -91,7 +91,7 @@ func validCriteria(g Goal) bool {
 		repositories[repo] = true
 	}
 	for _, t := range g.Tasks {
-		if !repositories[t.Repository] {
+		if !g.DefinitionPending && !repositories[t.Repository] {
 			return false
 		}
 	}
@@ -118,7 +118,7 @@ func validCriteria(g Goal) bool {
 		default:
 			return false
 		}
-		if c.Check.TaskID != "" {
+		if c.Check.TaskID != "" && !g.DefinitionPending {
 			found := false
 			for _, t := range g.Tasks {
 				found = found || t.ID == c.Check.TaskID

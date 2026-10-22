@@ -147,7 +147,7 @@ func TestOldRepairPlanCannotReenterAfterDefinitionAssessment(t *testing.T) {
 		t.Fatal(err)
 	}
 	revisionEdit(t, e)
-	revisionReport(t, e, "", PlanGoal, Observation{Status: OutcomeSucceeded, Tasks: []Task{readyTask("current")}})
+	revisionReport(t, e, "", PlanGoal, Observation{Status: OutcomeSucceeded, Tasks: []Task{readyTask("a"), readyTask("current")}})
 	repair := readyTask("stale-repair")
 	repair.Repairs, repair.DependsOn = "a", []string{"a"}
 	if err = e.Report(t.Context(), a.ID, a.Epoch, Observation{Status: OutcomeSucceeded, Tasks: []Task{repair}}); err != nil {
@@ -285,7 +285,7 @@ func TestRevisionCancelsOnlyUndispatchedWorkerReservations(t *testing.T) {
 			if err = e.Report(t.Context(), live.ID, cfg.Epoch, Observation{Status: OutcomeSucceeded, Head: "live-head", EffectsSettled: true}); err != nil {
 				t.Fatal(err)
 			}
-			revisionReport(t, e, "", PlanGoal, Observation{Status: OutcomeSucceeded, Tasks: []Task{readyTask("extra")}})
+			revisionReport(t, e, "", PlanGoal, Observation{Status: OutcomeSucceeded, Tasks: []Task{readyTask("a"), readyTask("live"), readyTask("extra")}})
 			replacement := revisionAction(t, e, "a", kind)
 			if replacement.ID == old.ID || replacement.Attempt != old.Attempt {
 				t.Fatalf("cancellation consumed an attempt or reused its identity: old=%+v new=%+v", old, replacement)
@@ -359,7 +359,25 @@ func TestTaskSignalInvalidatesProofsWhileWaitingForMergeSlot(t *testing.T) {
 			t.Fatal("fresh failing check allowed merge")
 		}
 	}
-	if s.Goals[0].Tasks[1].Head != "new-head-b" {
+	if s.Goals[0].Tasks[1].Head != "head-b" || s.Goals[0].Tasks[1].PR.Head != "new-head-b" {
 		t.Fatal("PR head was not read back")
+	}
+}
+
+func TestInspectionCannotReplaceReceiptedHead(t *testing.T) {
+	e := revisionEngine(t, readyTask("a"))
+	revisionReport(t, e, "a", Assign, Observation{Status: OutcomeSucceeded, Head: "receipted-A", EffectsSettled: true})
+	revisionReport(t, e, "a", InspectPR, revisionPR("unreceipted-B"))
+	g := revisionSnapshot(t, e).Goals[0]
+	if g.Tasks[0].Head != "receipted-A" || g.Tasks[0].PR.Head != "unreceipted-B" {
+		t.Fatalf("inspection overwrote the delivered head: %+v", g.Tasks[0])
+	}
+	if err := e.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range revisionSnapshot(t, e).Actions {
+		if a.Kind == Merge && a.State == "queued" {
+			t.Fatalf("unreceipted head allowed merge: %+v", a)
+		}
 	}
 }

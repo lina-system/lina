@@ -166,6 +166,9 @@ const CheckCriterion ActionKind = "check_criterion"
 const ContinueWorker ActionKind = "continue_worker"
 
 type Action struct {
+	// RetiredTask binds observation and reservations to a superseded definition.
+	// It is internal execution state, never an instruction to dispatch again.
+	RetiredTask *Task `json:"retired_task,omitempty"`
 	// Manager plans are bound to the canonical definition independently of
 	// execution revisions added by concurrent sibling repairs.
 	RecordRevision string          `json:"record_revision,omitempty"`
@@ -343,13 +346,25 @@ func Derive(state State, now time.Time) (Plan, error) {
 		}
 		for _, t := range g.Tasks {
 			for _, a := range state.Actions {
-				if a.GoalID == g.ID && a.TaskID == t.ID && a.Kind == Merge && a.State != "finished" {
+				if a.GoalID == g.ID && a.TaskID == t.ID && a.RetiredTask == nil && a.Kind == Merge && a.State != "finished" {
 					mergeSlots[t.Repository+"\x00"+t.Base] = true
 				}
 			}
 			if t.Stage != TaskReady && t.Stage != TaskDone && t.Stage != TaskMerged && t.Stage != TaskQAFailed {
 				occupied[areaKey(t)] = g.ID + "\x00" + t.ID
 			}
+		}
+	}
+	for _, a := range state.Actions {
+		if a.RetiredTask == nil || a.State == "finished" {
+			continue
+		}
+		t := *a.RetiredTask
+		if reserves(a) || t.Stage != TaskReady && t.Stage != TaskDone && t.Stage != TaskMerged && t.Stage != TaskQAFailed {
+			occupied[areaKey(t)] = "retired:" + a.ID
+		}
+		if a.Kind == Merge {
+			mergeSlots[t.Repository+"\x00"+t.Base] = true
 		}
 	}
 	wait := func(g Goal, t Task, reason, wake string) {
@@ -401,6 +416,16 @@ func Derive(state State, now time.Time) (Plan, error) {
 			tasks[t.ID] = t
 		}
 		allDone := true
+		for _, a := range state.Actions {
+			if a.GoalID == g.ID && a.RetiredTask != nil && a.State != "finished" {
+				allDone = false
+				reason := "unknown_effect"
+				if a.State == "needs_person" {
+					reason = "person"
+				}
+				wait(g, *a.RetiredTask, reason, "effect.observed")
+			}
+		}
 		for _, t := range g.Tasks {
 			done := taskDone(t)
 			allDone = allDone && done

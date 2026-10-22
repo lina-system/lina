@@ -210,6 +210,9 @@ func retireUndispatchedActions(v *View, g *Goal) error {
 			continue
 		}
 		t := goalTask(g, a.TaskID)
+		if a.RetiredTask != nil {
+			t = a.RetiredTask
+		}
 		if t != nil {
 			switch a.Kind {
 			case Assign:
@@ -534,6 +537,17 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 		a.ObserverEpoch = e.cfg.Epoch
 		a.Receipt = encode(o)
 		a.Deadline = e.cfg.Now().Add(SafetySweep).Unix()
+		if a.RetiredTask != nil {
+			if err = reportRetired(&a, o); err != nil {
+				return err
+			}
+			return put(v, "action", a.ID, a)
+		}
+		if o.Status == OutcomeSucceeded && a.Kind == PlanGoal && a.RecordRevision == g.RecordRevision && g.DefinitionPending {
+			if err = retireCorrectedActions(v, g, o.Tasks); err != nil {
+				return err
+			}
+		}
 		switch o.Status {
 		case OutcomeQuota:
 			if t == nil || !reserves(a) || !o.EffectsSettled || o.QuotaReset <= e.cfg.Now().Unix() {
@@ -678,13 +692,7 @@ func applySuccess(g *Goal, t *Task, a Action, o Observation, now int64) error {
 		}
 		if g.DefinitionPending {
 			g.AssessedFailure = "definition:" + g.RecordRevision
-			if len(o.Tasks) == 0 {
-				g.State = GoalBlocked
-				g.AttentionID = "goal:" + g.ID + ":definition"
-				g.BlockedReason = "The corrected goal needs a revised work definition."
-				return nil
-			}
-			g.DefinitionPending = false
+			return applyCorrectedPlan(g, o.Tasks)
 		}
 		if t != nil && (t.Stage != TaskQAFailed || t.RepairedBy != "") {
 			return ErrInvalid
@@ -729,7 +737,6 @@ func applySuccess(g *Goal, t *Task, a Action, o Observation, now int64) error {
 		if t == nil || o.PR.Head == "" {
 			return ErrInvalid
 		}
-		t.Head = o.PR.Head
 		t.PR = o.PR
 		t.PR.ObservedAt = now
 	case Merge:
