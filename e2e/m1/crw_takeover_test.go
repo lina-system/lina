@@ -113,8 +113,23 @@ func TestM3CRWTakeoverInstalledCore(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	h, start := installedConversationHarness(t, server.URL)
-	core := start(true)
+	// This scenario includes installation, two imports and three
+	// Core starts. Compile commands before its runtime budget starts; wait for
+	// explicit listening/admission at each start, never for an elapsed delay.
+	buildCommand(t, "lina-node")
+	h, _ := installedConversationHarness(t, server.URL)
+	scenarioContext, stop := context.WithTimeout(t.Context(), 2*time.Minute)
+	t.Cleanup(stop)
+	h.ctx = scenarioContext
+	start := func() *process {
+		core := h.command("core", "--state-root", h.root, "--socket", h.socket)
+		core.command.Env = append(core.command.Env, "LINA_RESPONSES_BASE_URL="+server.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
+		core.start(t)
+		h.connectWithin(core, time.Minute).Close()
+		waitCoreReady(t, h)
+		return core
+	}
+	core := start()
 	client, _ := conversationClient(t, h)
 	person, agent := client.Welcome.PersonID, client.Welcome.Agents[0].AgentID
 	raw, err := os.ReadFile("../m3/crw-takeover.json")
@@ -164,7 +179,7 @@ func TestM3CRWTakeoverInstalledCore(t *testing.T) {
 	if err = os.Remove(source); err != nil {
 		t.Fatal(err)
 	}
-	core = start(true)
+	core = start()
 	client, conversation := conversationClient(t, h)
 	admittedTurn(t, h, client, conversation, "takeover-read", "Read the imported workshop and save a conclusion.")
 	var saved coreexec.RecordReceipt
@@ -178,7 +193,7 @@ func TestM3CRWTakeoverInstalledCore(t *testing.T) {
 	}
 	client.Close()
 	h.stopCore(core)
-	core = start(true)
+	core = start()
 	client, conversation = conversationClient(t, h)
 	admittedTurn(t, h, client, conversation, "takeover-restart", "Read the imported workshop again.")
 	client.Close()
