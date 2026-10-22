@@ -157,7 +157,7 @@ func TestM1SkillsInstalledCore(t *testing.T) {
 	core := start(true)
 	c, conversation := conversationClient(t, h)
 	terminal := h.startScreenTUI("TERM=xterm-256color")
-	waitScreen(t, h, terminal, "Ctrl+D")
+	waitComposerReady(t, h, terminal)
 	checkNotice := func(frames []protocol.Envelope, want string) {
 		t.Helper()
 		var notices []string

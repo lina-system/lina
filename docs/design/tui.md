@@ -80,7 +80,11 @@ remains the T-08 spike gate.
 
 `lina tui` never starts a main. The connection is in one of eight states. Each is a screen state, never an empty conversation and never a conversation item.
 
-A validated welcome enters Live. Initial absence shows the Core-absent screen
+A validated welcome enters Live. When conversation is granted, the initial
+connection stays Connecting until history discovery supplies its conversation
+id. Early typing remains in the draft and Enter causes no input effect until
+that destination is known; discovery does not automatically send the draft.
+Initial absence shows the Core-absent screen
 and exits 69; initial `unsupported_combination` shows Refused and exits 78. Bad
 arguments exit 64; malformed handshakes, invalid session frames and other terminal
 failures exit 70. Connection and handshake share a five-second timeout. The
@@ -252,9 +256,9 @@ Regions:
 
 - Header: the focused agent's name and mark, and the connection word.
 - Conversation.
-- Composer, with its attachment strip.
+- Composer, with its attachment strip and a full-width hairline immediately above the input.
 - Card row above the composer, on Home (T-12).
-- Status line: connection, agent, the running count ("2 running, 1 waiting for you"), restart pending, and Core messages.
+- Status line below the composer: connection mark and word first, agent, the running count ("2 running, 1 waiting for you"), restart pending, Core messages, then key hints.
 
 Overlays form a stack and the top one receives keys first: agent list, command palette, pager. The agent list is the agents screen of [surfaces.md](surfaces.md#agents) in text: mark, name, source and last conversation; Enter opens the agent's main conversation.
 
@@ -284,10 +288,10 @@ Width tiers (P):
 +--------------------------------------------+---------------------------------------+
 | WAITING FOR ME  1   Send the signed form to the supplier?  Recommended: send      |
 | AT A GLANCE         Move  [###--]  building  just done: ...  next: ...  !         |
-+-----------------------------------------------------------------------------------+
-| > composer                                                                        |
-+-----------------------------------------------------------------------------------+
- live  Lina  2 running, 1 waiting for you
+─────────────────────────────────────────────────────────────────────────────────────
+ › composer
+   continuation aligned under the draft
+ live  Lina  2 running, 1 waiting for you  /help  Enter  Ctrl+D
 ```
 
 The diagram is schematic: it fixes the regions and their order, not glyphs or widths.
@@ -300,7 +304,8 @@ func Plan(size Size, caps Caps, st Shape) Layout // regions disjoint, sum fits, 
 
 - The header, the status line, one composer row and a transcript floor of four rows (P) always survive.
 - The composer grows with the draft to six rows (P), then scrolls inside itself.
-- What remains is shared in a stated order of shedding: the side pane closes first, then the running strip folds to a count, then the card row folds to one summary line. A folded part keeps its count, so a count on screen always equals the list.
+- The composer rule consumes one row, using `glyph.rule` and `color.line` across the full terminal width. It is a hairline, not a box.
+- What remains is shared in a stated order of shedding: the side pane closes first, then the running strip folds to a count, then the card row folds to one summary line, then the composer rule disappears. A folded part keeps its count, so a count on screen always equals the list.
 - `Plan` treats negative dimensions as zero. At too-small sizes it reserves one
   status row when a cell exists and uses the remaining rows for the size notice.
   At usable sizes a granted, populated running strip starts at one to three rows
@@ -343,6 +348,16 @@ does not rely on scheduler timing or sleeps.
 `e2e/m1/tui-resize.json` exercises 80x24 → 40x12 → 120x35 through a real PTY,
 compares every row and the cursor with a fresh client at the same size, then
 clears the retained draft and completes another exchange.
+
+The first visible composer row starts with the accent `glyph.action` (`›`, or
+`>` in ASCII) and one space. Continuations align under the draft, including when
+the textarea scrolls. An empty draft shows the muted `composer.placeholder`
+catalog entry in Korean or English; it is display text and is never submitted.
+The prompt reserves its display width in both wrapping and hardware cursor
+placement, so Korean IME composition remains at the draft insertion point.
+`e2e/m1/tui-composer.json` checks a 100x34 installed-Core PTY with a fixture
+provider: rule cells, localized placeholder, prompt, Korean draft cursor and
+the status/hints below the input in Unicode and ASCII modes.
 
 ## Home, waiting for me and progress (T-12)
 
@@ -910,7 +925,10 @@ authoritative completion, duplicate completion, and terminal restoration.
 with the fixture Responses provider, types in the real TUI, checks reply cells,
 and reopens the conversation. It exercises the existing Core turn, lane and
 ledger composition; a direct provider call is not its acceptance proof. The
-real-model journey remains #312 and the physical terminal spike remains T-08.
+real-model headless client journey is covered by
+`TestRealModelHeadlessConversation` in `e2e/real_model_test.go`, including streamed
+output and canon readback after Core restart. It requires explicit real-model
+opt-in and credentials; the physical terminal spike remains T-08.
 `e2e/m1/conversation-admission.json` verifies large Unicode inputs and replies
 through durable materials, secret removal before model input, and restart
 readback. `e2e/m1/conversation-failure.json` verifies that a provider item followed
