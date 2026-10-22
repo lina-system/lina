@@ -129,6 +129,8 @@ func TestQuestionCoreHelper(t *testing.T) {
 	}
 }
 func TestM1TUIQuestions(t *testing.T) {
+	t.Parallel()
+
 	scenario := readQuestionScenario(t)
 	h := newHarness(t, "")
 	child := exec.CommandContext(h.ctx, os.Args[0], "-test.run=^TestQuestionCoreHelper$")

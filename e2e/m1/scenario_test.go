@@ -9,6 +9,8 @@ import (
 )
 
 func TestHeadless(t *testing.T) {
+	t.Parallel()
+
 	binary := buildLina(t)
 	for _, quit := range []struct{ name, keys string }{{"quit", "\x04"}, {"interrupt", "\x03\x03"}, {"terminal EOF", "\x04"}} {
 		t.Run(quit.name, func(t *testing.T) {
@@ -50,6 +52,8 @@ func TestHeadless(t *testing.T) {
 }
 
 func TestStyledFailureIsPresentedOnce(t *testing.T) {
+	t.Parallel()
+
 	binary := buildLina(t)
 	for _, combined := range []bool{true, false} {
 		h := newHarness(t, binary)

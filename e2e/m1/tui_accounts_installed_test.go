@@ -28,6 +28,8 @@ import (
 )
 
 func TestM1TUIAccountsInstalledCore(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile("tui-accounts-installed.json")
 	if err != nil {
 		t.Fatal(err)

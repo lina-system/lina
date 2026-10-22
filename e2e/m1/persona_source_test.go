@@ -38,6 +38,8 @@ func setPersonaSource(t *testing.T, root, source string) {
 }
 
 func TestM1PersonaSource(t *testing.T) {
+	t.Parallel()
+
 	for _, mode := range []string{"configured", "unconfigured", "missing voice", "missing core", "oversize core", "oversize combined", "oversize encoded"} {
 		t.Run(mode, func(t *testing.T) {
 			requests := make(chan string, 8)
@@ -146,6 +148,8 @@ func TestM1PersonaSource(t *testing.T) {
 }
 
 func TestM1InstallPersonaSource(t *testing.T) {
+	t.Parallel()
+
 	source := personaFixture(t, "fixture-install-core", "fixture-install-voice")
 	h := newHarness(t, buildLina(t))
 	bundle := makeInstallBundle(t, h.root, h.binary, buildCommand(t, "lina-node"))
