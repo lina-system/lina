@@ -27,13 +27,15 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ## Terminal UI behaviour references
 
-The composer separation in LINA's terminal UI independently adapts behaviour
+The composer separation and newline keys in LINA's terminal UI independently adapt behaviour
 from these permissive projects. No upstream implementation code is copied or
 bundled by this change:
 
 - [Codex CLI](https://github.com/openai/codex), OpenAI and contributors,
   Apache-2.0, reference revision `86e17e98`: prompt glyph, dim placeholder,
-  growing composer and footer hints below it.
+  growing composer and footer hints below it; Shift+Enter, Ctrl+J and Alt+Enter
+  newline bindings and the capability-dependent Shift+Enter hint
+  (`codex-rs/tui/src/keymap.rs` and `bottom_pane/chat_composer.rs`).
 - [opencode](https://github.com/sst/opencode), opencode contributors, MIT,
   reference revision `c93aaae3`: input edge, placeholder and separate hint row.
 - [Gemini CLI](https://github.com/google-gemini/gemini-cli), Google and

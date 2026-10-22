@@ -87,6 +87,15 @@ identities and contents across restart. Neither claims a physical mobile device
 or two-host tailnet test. All identities, model responses and stored values are
 synthetic.
 
+`m2/update-preflight.json` checks separate `core --preflight` processes against
+compatible, older, newer, corrupt and WAL-backed stores while another owner holds
+the Core lock. It compares every installed file's bytes and metadata, including
+the WAL index, and checks normal old-Core refusal before control-file writes.
+Its preparation companion hashes and unpacks a real command bundle, runs its
+candidate preflight alongside a live Core, checks the durable preparation result,
+rejects digest/artifact/peer failures and starts the prepared Core through the
+public socket. Preparation keeps the idle and backup gate cells unknown.
+
 `m1/import-reconciliation.json` runs the installed `lina import-hermes` command
 on synthetic LCM and host databases. It reconciles every source table, including
 explicitly omitted indexes and operational state, and checks each retained row
