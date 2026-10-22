@@ -24,7 +24,7 @@ func TestConversationRapidResizeStreamMatchesFresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer output.Close()
-	renderer := startTerminalRenderer(ctx, rawTerminalWriter{output}, 100, 32)
+	renderer := startTerminalRenderer(ctx, rawTerminalWriter{output}, 100, 32, TrueColor)
 	defer renderer.close()
 	m := conversationShell()
 	m.Update(tea.WindowSizeMsg{Width: 100, Height: 32})
@@ -89,13 +89,14 @@ func TestConversationRapidResizeStreamMatchesFresh(t *testing.T) {
 		fresh.conversation.id = "fixture"
 		fresh.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 		fresh.Update(shellData{Generation: 1, Message: state.Snapshot{Epoch: "1", Revocation: "1", Topic: topic, Cursor: m.content.Topics[topic].Cursor, Items: m.content.Blocks}})
+		fresh.Update(shellData{Generation: 1, Message: state.Turn{Active: m.content.TurnActive}})
 		fresh.Update(tea.PasteMsg{Content: m.content.Draft.Text})
 		expected, err := tuiterm.NewRecorder(120, 40)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer expected.Close()
-		other := startTerminalRenderer(ctx, rawTerminalWriter{expected}, 120, 40)
+		other := startTerminalRenderer(ctx, rawTerminalWriter{expected}, 120, 40, TrueColor)
 		defer other.close()
 		v := fresh.View()
 		if err := other.show(v, tea.WindowSizeMsg{Width: 120, Height: 40}); err != nil {

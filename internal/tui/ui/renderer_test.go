@@ -3,6 +3,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -19,7 +20,7 @@ func TestRendererLateInitialSizeCannotClipCurrentView(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer output.Close()
-	renderer := startTerminalRenderer(ctx, rawTerminalWriter{output}, 80, 24)
+	renderer := startTerminalRenderer(ctx, rawTerminalWriter{output}, 80, 24, TrueColor)
 	defer renderer.close()
 	frame := func(marker string) tea.View {
 		rows := make([]string, 60)
@@ -51,5 +52,73 @@ func TestRendererLateInitialSizeCannotClipCurrentView(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("late initial dimensions clipped current composer: %v; cursor=(%d,%d)", err, snapshot.CursorX, snapshot.CursorY)
+	}
+}
+
+func TestRendererPreservesDetectedColorProfile(t *testing.T) {
+	for _, profile := range []Profile{ANSI16, ANSI256, TrueColor} {
+		t.Run(fmt.Sprint(profile), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+			defer cancel()
+			output, err := tuiterm.NewRecorder(80, 24)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer output.Close()
+			renderer := startTerminalRenderer(ctx, rawTerminalWriter{output}, 80, 24, profile)
+			defer renderer.close()
+			styles := NewStyles(Options{Profile: profile})
+			view := tea.NewView(styles.Title.Render("Styled"))
+			view.AltScreen = true
+			if err := renderer.show(view, tea.WindowSizeMsg{Width: 80, Height: 24}); err != nil {
+				t.Fatal(err)
+			}
+			snapshot, err := output.Wait(ctx, func(s tuiterm.Snapshot) bool { return s.AltScreen && s.Cells[0][0].Content == "S" })
+			if err != nil {
+				t.Fatal(err)
+			}
+			cell := snapshot.Cells[0][0]
+			if cell.Foreground == nil || !cell.Bold {
+				t.Fatalf("display profile %d became NoTTY: foreground=%v bold=%t", profile, cell.Foreground, cell.Bold)
+			}
+		})
+	}
+}
+
+func TestRendererCancellationRestoresWheelModes(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	output, err := tuiterm.NewRecorder(80, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer output.Close()
+	renderer := startTerminalRenderer(ctx, rawTerminalWriter{output}, 80, 24, TrueColor)
+	defer renderer.close()
+	view := tea.NewView("mode-cleanup")
+	view.AltScreen = true
+	if err := renderer.show(view, tea.WindowSizeMsg{Width: 80, Height: 24}); err != nil {
+		t.Fatal(err)
+	}
+	wait, stop := context.WithTimeout(t.Context(), 2*time.Second)
+	defer stop()
+	if _, err := output.Wait(wait, func(s tuiterm.Snapshot) bool { return s.AltScreen }); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	if err := renderer.close(); err != nil {
+		t.Fatal(err)
+	}
+	raw := string(output.Bytes())
+	for _, mode := range []string{"1000", "1006"} {
+		enabled, disabled := strings.Index(raw, "\x1b[?"+mode+"h"), strings.LastIndex(raw, "\x1b[?"+mode+"l")
+		if enabled < 0 || disabled <= enabled {
+			t.Errorf("mode %s not restored on cancellation", mode)
+		}
+	}
+	for _, mode := range []string{"1002", "1003"} {
+		if strings.Contains(raw, "\x1b[?"+mode+"h") {
+			t.Errorf("motion mode %s enabled", mode)
+		}
 	}
 }

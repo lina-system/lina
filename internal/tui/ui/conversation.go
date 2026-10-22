@@ -6,6 +6,8 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -23,7 +25,9 @@ import (
 
 type conversationView struct {
 	undo         []state.Draft
+	history      *inputHistory
 	scroll       int
+	viewport     conversationViewport
 	id           string
 	agentMissing bool
 	agentPending bool
@@ -33,24 +37,35 @@ type conversationView struct {
 	selected     int
 }
 
+type inputHistory struct {
+	id     string
+	draft  state.Draft
+	column int // Recall starts on the first visual line of the saved draft.
+}
+
 type textPager struct {
-	running   bool
-	selected  int
-	runID     string
-	next      *json.Number
-	open      bool
-	text      string
-	cardID    string
-	followEnd bool
-	offset    int
-	query     string
-	searching bool
+	developer, developerBusy bool
+	developerID              string
+	lanes                    state.WorkerLanes
+	laneNext                 *string
+	transcript               bool
+	running                  bool
+	selected                 int
+	runID                    string
+	next                     *json.Number
+	open                     bool
+	text                     string
+	cardID                   string
+	followEnd                bool
+	offset                   int
+	query                    string
+	searching                bool
 }
 
 func newConversationView(styles Styles) conversationView {
 	c := textarea.New()
 	c.Prompt = ""
-	c.Placeholder = design.Text(styles.options.Language, "composer.placeholder")
+	c.Placeholder = fmt.Sprintf(design.Text(styles.options.Language, "composer.placeholder"), "LINA")
 	c.ShowLineNumbers = false
 	c.CharLimit = 16384
 	c.MaxWidth, c.MaxHeight = 0, 6
@@ -78,7 +93,13 @@ func (m *shellModel) hasCapability(name string) bool {
 }
 
 func (m *shellModel) syncComposer() {
+	m.syncInputHistory()
 	c := &m.conversation.composer
+	placeholder := "composer.placeholder"
+	if m.disambiguated {
+		placeholder = "composer.shift_enter"
+	}
+	c.Placeholder = fmt.Sprintf(design.Text(m.styles.options.Language, placeholder), m.conversationName())
 	if c.Value() != m.content.Draft.Text {
 		c.SetValue(m.content.Draft.Text)
 	}
@@ -98,6 +119,7 @@ func (m *shellModel) editComposer(msg tea.Msg) tea.Cmd {
 	m.conversation.composer = c
 	draft := m.content.Draft
 	if draft.Text != c.Value() {
+		m.conversation.history = nil
 		m.conversation.undo = append(m.conversation.undo, draft)
 		if len(m.conversation.undo) > 64 {
 			m.conversation.undo = m.conversation.undo[1:]
@@ -109,6 +131,12 @@ func (m *shellModel) editComposer(msg tea.Msg) tea.Cmd {
 }
 
 func (m *shellModel) reduceInput(msg state.Msg) tea.Cmd {
+	switch msg.(type) {
+	case state.FocusConversation:
+		m.restoreHistoryDraft()
+	case state.EditDraft, state.Send:
+		m.conversation.history = nil
+	}
 	var commands []state.Cmd
 	m.content, commands = state.Reduce(m.content, msg)
 	m.syncComposer()
@@ -123,9 +151,16 @@ func (m *shellModel) reduceInput(msg state.Msg) tea.Cmd {
 
 func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 	key := term.FromTea(msg, m.events)
+	// Enhanced keyboards can report Shift+/ with the produced text "?".
+	if msg.Key().Text == "?" && msg.Key().Mod & ^tea.ModShift == 0 {
+		key.Name = "?"
+	}
 	class := term.Edit
+	if key.Name == "?" && m.content.Draft.Text == "" && len(m.content.Draft.Attachments) == 0 {
+		class = term.Toggle
+	}
 	switch key.Name {
-	case "enter", "esc", "ctrl+c", "ctrl+d", "tab", "shift+tab", "ctrl+o", "ctrl+w", "ctrl+r", "ctrl+p":
+	case "enter", "esc", "ctrl+c", "ctrl+d", "tab", "shift+tab", "ctrl+o", "ctrl+t", "ctrl+w", "ctrl+r", "ctrl+p":
 		class = term.Toggle
 	}
 	if !m.gate.Admit(key, class, m.now()) {
@@ -149,6 +184,16 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	}
 	switch key.Name {
+	case "up", "down":
+		if m.recallInput(key.Name == "up") {
+			return nil
+		}
+	case "?":
+		if m.content.Draft.Text == "" && len(m.content.Draft.Attachments) == 0 {
+			m.openPager(m.shortcutSheet())
+			return nil
+		}
+		return m.editComposer(msg)
 	case "ctrl+z":
 		if n := len(m.conversation.undo); n > 0 {
 			draft := m.conversation.undo[n-1]
@@ -157,10 +202,7 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		}
 		return nil
 	case "ctrl+c":
-		if m.content.Draft.Text != "" || len(m.content.Draft.Attachments) != 0 {
-			return m.reduceInput(state.EditDraft{})
-		}
-		fallthrough
+		return m.controlC()
 	case "ctrl+d":
 		m.status = ConnectionStatus{State: Quit}
 		return tea.Quit
@@ -170,10 +212,17 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		}
 		return nil
 	case "pgup":
-		m.conversation.scroll += max(1, m.size.Height/2)
+		m.scrollConversation(max(1, m.size.Height/2))
 		return nil
 	case "pgdown":
-		m.conversation.scroll = max(0, m.conversation.scroll-max(1, m.size.Height/2))
+		m.scrollConversation(-max(1, m.size.Height/2))
+		return nil
+	case "end":
+		m.scrollConversation(-m.conversation.scroll)
+		return nil
+	case "ctrl+t":
+		m.openPager("")
+		m.conversation.pager.transcript = true
 		return nil
 	case "ctrl+o":
 		if card, ok := m.selectedCard(); ok && card.RunID != "" {
@@ -204,20 +253,26 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 			m.openPager(m.cardText())
 			return nil
 		}
-		if !m.mutationsAllowed() {
-			return nil
-		}
 		text := strings.TrimSpace(m.content.Draft.Text)
 		if text == "/help" {
 			m.reduceInput(state.EditDraft{})
-			text := func(id string) string { return design.Text(m.styles.options.Language, id) }
-			m.openPager(strings.Join([]string{text("controls.help"),
-				"/accounts  " + text("account.heading"), "/signin  " + text("sign_in_open"),
-				"/memory  " + text("memory.heading"), "/agents  " + text("agents.heading"), "/channels  " + text("channel.heading"), "/talk  " + text("talk.heading"), "/stop  " + text("interrupt"),
-			}, "\n"))
+			m.openPager(m.shortcutSheet())
 			return nil
 		}
+		if !m.mutationsAllowed() {
+			return nil
+		}
+		if handled, command := m.developerCommand(text); handled {
+			m.reduceInput(state.EditDraft{})
+			m.conversation.undo = nil
+			return command
+		}
 		if handled, command := m.talkCommand(text); handled {
+			m.reduceInput(state.EditDraft{})
+			m.conversation.undo = nil
+			return command
+		}
+		if handled, command := m.webCommand(text); handled {
 			m.reduceInput(state.EditDraft{})
 			m.conversation.undo = nil
 			return command
@@ -262,15 +317,97 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		}
 		m.conversation.undo = nil
 		return m.reduceInput(state.Send{Key: rand.Text(), Queue: queue})
-	case "alt+enter", "ctrl+j":
+	case "shift+enter", "alt+enter", "ctrl+j":
 		return m.editComposer(tea.PasteMsg{Content: "\n"})
 	}
 	return m.editComposer(msg)
 }
 
+func (m *shellModel) restoreHistoryDraft() {
+	h := m.conversation.history
+	if h == nil {
+		return
+	}
+	m.conversation.history = nil
+	m.content, _ = state.Reduce(m.content, state.EditDraft{Draft: h.draft})
+	c := &m.conversation.composer
+	c.SetValue(h.draft.Text)
+	for c.Line() > 0 || c.LineInfo().RowOffset > 0 {
+		c.CursorUp()
+	}
+	c.SetCursorColumn(h.column)
+}
+
+func (m *shellModel) syncInputHistory() {
+	h := m.conversation.history
+	if h == nil {
+		return
+	}
+	for _, entry := range m.content.InputHistory(m.conversation.id) {
+		if entry.ID == h.id {
+			if m.content.Draft.Text != entry.Text {
+				m.content, _ = state.Reduce(m.content, state.EditDraft{Draft: state.Draft{Text: entry.Text}})
+			}
+			return
+		}
+	}
+	// A replaced snapshot, revocation or focus change removed the selection.
+	m.restoreHistoryDraft()
+}
+
+func (m *shellModel) recallInput(older bool) bool {
+	m.syncComposer()
+	c := &m.conversation.composer
+	line := c.LineInfo()
+	if older && (c.Line() != 0 || line.RowOffset != 0) ||
+		!older && (c.Line() != c.LineCount()-1 || line.RowOffset != line.Height-1) {
+		return false
+	}
+	entries := m.content.InputHistory(m.conversation.id)
+	h := m.conversation.history
+	index := -1
+	if h != nil {
+		index = slices.IndexFunc(entries, func(e state.InputHistoryEntry) bool { return e.ID == h.id })
+	}
+	if older {
+		if len(entries) == 0 {
+			return false
+		}
+		index = min(index+1, len(entries)-1)
+		if h == nil {
+			draft := m.content.Draft
+			draft.Attachments = slices.Clone(draft.Attachments)
+			h = &inputHistory{draft: draft, column: c.Column()}
+			m.conversation.history = h
+		}
+	} else {
+		if h == nil {
+			return false
+		}
+		index--
+		if index < 0 {
+			m.restoreHistoryDraft()
+			return true
+		}
+	}
+	h.id = entries[index].ID
+	m.content, _ = state.Reduce(m.content, state.EditDraft{Draft: state.Draft{Text: entries[index].Text}})
+	c.SetValue(entries[index].Text)
+	if older {
+		for c.Line() > 0 || c.LineInfo().RowOffset > 0 {
+			c.CursorUp()
+		}
+	}
+	return true
+}
+
 func (m *shellModel) conversationPlan() layout.Layout {
 	m.syncComposer()
-	return layout.Plan(m.size, layout.Caps{SidePane: true, Running: m.hasCapability("running"), Cards: m.hasCapability("waiting")}, layout.Shape{SidePane: m.conversation.pager.open, ComposerRows: m.conversation.composer.Height(), RunningCount: len(m.topicBlocks("running")), CardCount: len(m.topicBlocks("waiting")), CardRows: len(m.topicBlocks("waiting")), Attachments: len(m.content.Draft.Attachments) > 0})
+	activityRows := 0
+	if m.activityRequested() {
+		activityRows = len(strings.Split(m.activityText(), "\n"))
+	}
+	return layout.Plan(m.size, layout.Caps{SidePane: true, Running: m.hasCapability("running"), Cards: m.hasCapability("waiting")}, layout.Shape{ActivityRows: activityRows, SidePane: m.conversation.pager.open, ComposerRows: m.conversation.composer.Height(), RunningCount: len(m.topicBlocks("running")), CardCount: len(m.topicBlocks("waiting")), CardRows: len(m.topicBlocks("waiting")), Attachments: len(m.content.Draft.Attachments) > 0})
 }
 
 func (m *shellModel) topicBlocks(topic string) []state.Block {
@@ -345,6 +482,55 @@ func (m *shellModel) openPager(text string) {
 	m.conversation.pager = textPager{open: true, text: sanitize.Display(text)}
 }
 
+func conversationBlock(b state.Block) bool {
+	return b.Topic != "core" && b.Topic != "running" && (b.Topic != "waiting" || b.Card != nil) && b.Topic != "progress" && b.Kind != protocol.KindTurnState && b.Kind != protocol.KindToolActivity
+}
+
+func (m *shellModel) conversationName() string {
+	if m.conversation.agentMissing {
+		return design.Text(m.styles.options.Language, "agents.unavailable")
+	}
+	for _, a := range m.content.Agents {
+		if a.AgentID == m.activeAgent() {
+			return sanitize.Display(a.Name)
+		}
+	}
+	return "LINA"
+}
+
+func (m *shellModel) speakerName(b state.Block) string {
+	if b.Local || b.Speaker == protocol.ConversationSpeakerPerson {
+		return design.Text(m.styles.options.Language, "person")
+	}
+	if b.Speaker == protocol.ConversationSpeakerAgent || b.Kind == protocol.KindOutputDelta {
+		return m.conversationName()
+	}
+	return ""
+}
+
+func (m *shellModel) pagerText() string {
+	if !m.conversation.pager.transcript {
+		return m.conversation.pager.text
+	}
+	// Read the current projection, without retaining another history copy that
+	// could outlive authoritative replacements, revocation or a focus change.
+	var messages []string
+	for _, b := range m.content.Blocks {
+		if !conversationBlock(b) {
+			continue
+		}
+		text := b.Text
+		if b.Kind == protocol.KindResult && !b.InlineReply {
+			text = design.Text(m.styles.options.Language, "result") + "  " + b.Title + "\n" + text
+		}
+		if speaker := m.speakerName(b); speaker != "" {
+			text = speaker + "\n" + text
+		}
+		messages = append(messages, text)
+	}
+	return sanitize.Display(strings.Join(messages, "\n\n"))
+}
+
 func (m *shellModel) refreshOpenCard() {
 	p := &m.conversation.pager
 	if !p.open || p.cardID == "" {
@@ -363,6 +549,11 @@ func (m *shellModel) refreshOpenCard() {
 
 func (m *shellModel) pagerKey(msg tea.KeyMsg, name string) tea.Cmd {
 	p := &m.conversation.pager
+	if p.developer && !p.searching {
+		if handled, cmd := m.developerKey(name); handled {
+			return cmd
+		}
+	}
 	if p.running && !p.searching {
 		rows := m.topicBlocks("running")
 		if len(rows) > 0 {
@@ -443,7 +634,7 @@ func (m *shellModel) pagerLines() []string {
 		width = plan.SidePane.Width
 	}
 	stream := render.NewStream("pager", render.Config{Width: max(1, width)}, nil)
-	stream.Seal(1, m.conversation.pager.text)
+	stream.Seal(1, m.pagerText())
 	var lines []string
 	for _, row := range stream.Window(0, stream.Len(), render.Config{Width: max(1, width)}, nil) {
 		lines = append(lines, row.Text)
@@ -469,14 +660,7 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 	plan := m.conversationPlan()
 	rows := make([]string, m.size.Height)
 	clip := func(s string) string { return ansi.Truncate(s, m.size.Width, "") }
-	status := m.styles.presentation(m.status)
-	statusLine := status.Mark + " " + status.Label
-	if m.status.Cause != "" {
-		statusLine += " " + status.Detail
-	} else if notice := m.localNotice(); showNotice && notice != "" {
-		statusLine += "  " + notice
-	}
-	rows[plan.Status.Y] = clip(statusLine + "  /help  Enter  Ctrl+D  /memory  /agents")
+	rows[plan.Status.Y] = m.conversationFooter(showNotice)
 	if plan.Tier == layout.TooSmall {
 		if plan.Notice.Height > 0 {
 			rows[0] = clip(design.Text(m.styles.options.Language, "shell.too_small"))
@@ -490,28 +674,26 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		for y := 0; y < m.size.Height-1 && p.offset+y < len(lines); y++ {
 			rows[y] = clip(lines[p.offset+y])
 		}
-		rows[plan.Status.Y] = clip("Esc  /  n  " + p.query)
 		return strings.Join(rows, "\n")
 	}
-	name := "LINA"
-	if m.conversation.agentMissing {
-		name = design.Text(m.styles.options.Language, "agents.unavailable")
-	}
-	if !m.conversation.agentMissing {
-		for _, a := range m.content.Agents {
-			if a.AgentID == m.activeAgent() {
-				name = a.Name
-				break
-			}
-		}
-	}
+	name := m.conversationName()
 	rows[plan.Header.Y] = clip(m.styles.Title.Render(name))
-	var transcript []render.StyledRow
+	type transcriptRow struct {
+		body   render.StyledRow
+		prefix string
+		person bool
+		muted  bool
+	}
+	var transcript []transcriptRow
+	var anchors []conversationAnchor
 	plainRow := func(text string) render.StyledRow { return render.StyledRow{Spans: []render.Span{{Text: text}}} }
 	if !m.hasCapability("conversation") {
 		code := "account.empty"
 		if !m.accountsKnown {
 			code = "account.loading"
+			if m.accounts.code != "" {
+				code = m.accounts.code
+			}
 		}
 		for _, row := range m.accountRows {
 			if row.Status == "ok" {
@@ -519,33 +701,100 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 				break
 			}
 		}
-		transcript = append(transcript, plainRow(design.Text(m.styles.options.Language, code)+"  /accounts"))
+		transcript = append(transcript, transcriptRow{body: plainRow(design.Text(m.styles.options.Language, code) + "  /accounts")})
 	}
 	for _, b := range m.content.Blocks {
-		if b.Topic == "core" || b.Topic == "running" || (b.Topic == "waiting" && b.Card == nil) || b.Topic == "progress" || b.Kind == protocol.KindTurnState {
+		if !conversationBlock(b) {
 			continue
 		}
 		cached := m.blocks[b.ID]
 		if cached.stream == nil {
 			continue
 		}
-		if b.Local || b.Speaker == protocol.ConversationSpeakerPerson {
-			transcript = append(transcript, plainRow(design.Text(m.styles.options.Language, "person")))
-		} else if b.Speaker == protocol.ConversationSpeakerAgent || b.Kind == protocol.KindOutputDelta {
-			transcript = append(transcript, plainRow(name))
+		person := b.Local || b.Speaker == protocol.ConversationSpeakerPerson
+		prefix := ""
+		if person || b.Speaker == protocol.ConversationSpeakerAgent || b.Kind == protocol.KindOutputDelta {
+			prefix = m.styles.speakerPrefix(person, name, plan.Conversation.Width)
 		}
-		if b.Kind == protocol.KindResult {
-			transcript = append(transcript, plainRow(design.Text(m.styles.options.Language, "result")+"  "+sanitize.Display(b.Title)+"  Ctrl+O"))
+		indent := strings.Repeat(" ", (render.Unicode{}).Width(prefix))
+		body := cached.stream.Markdown(render.Config{Width: plan.Conversation.Width - len(indent), Theme: m.styles.options.Theme}, m.styles.listBullet(), parseMarkdown)
+		// Paragraph spacing belongs inside a message; boundaries get exactly one
+		// section gap even if the provider ended a message with empty lines.
+		blank := func(row render.StyledRow) bool {
+			for _, span := range row.Spans {
+				if span.Style.Code || strings.TrimSpace(span.Text) != "" {
+					return false
+				}
+			}
+			return true
 		}
-		transcript = append(transcript, cached.stream.Markdown(render.Config{Width: plan.Conversation.Width, Theme: m.styles.options.Theme}, m.styles.listBullet(), parseMarkdown)...)
+		for len(body) > 0 && blank(body[0]) {
+			body = body[1:]
+		}
+		for len(body) > 0 && blank(body[len(body)-1]) {
+			body = body[:len(body)-1]
+		}
+		if b.Kind == protocol.KindResult && !b.InlineReply {
+			body = append([]render.StyledRow{plainRow(design.Text(m.styles.options.Language, "result") + "  " + sanitize.Display(b.Title) + "  Ctrl+O")}, body...)
+		}
+		workedRow := -1
+		if elapsed, ok := m.content.Worked[b.ID]; ok {
+			workedRow = len(body)
+			body = append(body, plainRow(fmt.Sprintf(design.Text(m.styles.options.Language, "activity.worked_for"), formatElapsed(elapsed))))
+		}
+		if b.InlineReply {
+			body = append(body, plainRow(design.Text(m.styles.options.Language, "reply.open_pager")))
+		}
+		if len(body) == 0 {
+			continue
+		}
+		// The account placeholder has no retained conversation identity.
+		for len(anchors) < len(transcript) {
+			anchors = append(anchors, conversationAnchor{})
+		}
+		if len(transcript) > 0 {
+			transcript = append(transcript, make([]transcriptRow, m.styles.tokens.SpaceSection.Cells)...)
+			// Anchor separator rows to the following block without shifting
+			// its body row identities when older messages are inserted above it.
+			for row := -m.styles.tokens.SpaceSection.Cells; row < 0; row++ {
+				anchors = append(anchors, conversationAnchor{block: b.ID, row: row})
+			}
+		}
+		blockStart := len(transcript)
+		for i, row := range body {
+			lead := indent
+			if i == 0 {
+				lead = prefix
+			}
+			if i == workedRow {
+				lead = ""
+			}
+			transcript = append(transcript, transcriptRow{body: row, prefix: lead, person: person, muted: i == workedRow})
+		}
+		for row := 0; row < len(transcript)-blockStart; row++ {
+			anchors = append(anchors, conversationAnchor{block: b.ID, row: row})
+		}
 	}
-	m.conversation.scroll = min(m.conversation.scroll, max(0, len(transcript)-plan.Conversation.Height))
-	start := max(0, len(transcript)-plan.Conversation.Height-m.conversation.scroll)
+	start := m.conversationStart(anchors, len(transcript), plan.Conversation.Height)
+	m.conversation.viewport.overflow = len(transcript) > plan.Conversation.Height
+	rows[plan.Status.Y] = m.conversationFooter(showNotice)
 	for y, line := range transcript[start:] {
 		if y >= plan.Conversation.Height {
 			break
 		}
-		rows[plan.Conversation.Y+y] = clip(m.styles.markdownRow(line))
+		styles := m.styles
+		if line.person {
+			styles.Text = styles.Muted
+		}
+		prefix := ""
+		if line.prefix != "" {
+			prefix = m.styles.Accent.Render(line.prefix)
+		}
+		rows[plan.Conversation.Y+y] = clip(prefix + styles.markdownRow(line.body))
+		if line.muted {
+			width := plan.Conversation.Width - (render.Unicode{}).Width(line.prefix)
+			rows[plan.Conversation.Y+y] = clip(prefix + m.styles.Muted.Render(render.Truncate(line.body.Spans[0].Text, width, render.Unicode{})))
+		}
 	}
 	drawTopic := func(topic string, region layout.Rect) {
 		if region.Height == 0 {
@@ -563,10 +812,19 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 			rows[region.Y+region.Height-1] = clip(label + "  +" + strconv.Itoa(len(blocks)-region.Height+1))
 		}
 	}
-	drawTopic("running", plan.Running)
-	drawTopic("waiting", plan.Cards)
+	if plan.CombinedWork {
+		rows[plan.Running.Y] = fmt.Sprintf("%s %d  %s %d", design.Text(m.styles.options.Language, "running"), plan.RunningCount, design.Text(m.styles.options.Language, "waiting"), plan.CardCount)
+	} else {
+		drawTopic("running", plan.Running)
+		drawTopic("waiting", plan.Cards)
+	}
 	if plan.Attachments.Height > 0 {
 		rows[plan.Attachments.Y] = clip(strings.Join(m.content.Draft.Attachments, "  "))
+	}
+	if plan.Activity.Height > 0 {
+		for i, line := range strings.Split(m.activityText(), "\n") {
+			rows[plan.Activity.Y+i] = m.styles.Muted.Render(line)
+		}
 	}
 	if plan.ComposerRule.Height > 0 {
 		rule := m.styles.tokens.GlyphUnicodeRule
@@ -590,7 +848,7 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 	if plan.SidePane.Height > 0 {
 		p := &m.conversation.pager
 		stream := render.NewStream("pager", render.Config{Width: plan.SidePane.Width}, nil)
-		stream.Seal(1, p.text)
+		stream.Seal(1, m.pagerText())
 		p.offset = min(p.offset, max(0, stream.Len()-plan.SidePane.Height))
 		anchor := 0
 		if stream.Len() > 0 {
@@ -606,7 +864,6 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 			}
 			rows[plan.SidePane.Y+y] = left + right
 		}
-		rows[plan.Status.Y] = clip("Esc  /  n  " + p.query)
 	}
 	return strings.Join(rows, "\n")
 }

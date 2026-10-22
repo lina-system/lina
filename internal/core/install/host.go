@@ -25,7 +25,7 @@ type ProcessHost struct {
 }
 
 func NewProcessHost() *ProcessHost {
-	return &ProcessHost{owner: proc.NewOwner(), env: proc.InheritedEnvironment(), activity: lifecycle.NewRegistry(nil)}
+	return &ProcessHost{owner: proc.NewOwner(), env: proc.InheritedEnvironment("LINA_RESPONSES_API_KEY"), activity: lifecycle.NewRegistry(nil)}
 }
 func (h *ProcessHost) Close(ctx context.Context) error { return h.owner.Close(ctx) }
 func (h *ProcessHost) LookPath(name string) (string, error) {
@@ -53,6 +53,13 @@ func (h *ProcessHost) LookPath(name string) (string, error) {
 func (h *ProcessHost) Run(ctx context.Context, path string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	return h.RunWithContext(ctx, path, args...)
+}
+
+// RunWithContext uses only the caller's cancellation and deadline. Backup and
+// restore scale with installed data and must not inherit the installer probe
+// timeout. Process ownership, environment filtering and output bounds still apply.
+func (h *ProcessHost) RunWithContext(ctx context.Context, path string, args ...string) ([]byte, error) {
 	l, err := h.activity.Acquire(ctx, lease.Activity{Class: lease.Hard, Reason: "installation command"})
 	if err != nil {
 		return nil, err

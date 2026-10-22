@@ -47,6 +47,9 @@ func (r *conversationRuntime) modelContext(ctx context.Context, through string) 
 	if err != nil {
 		return nil, nil, 0, nil, err
 	}
+	if r.channelBinding != nil && !r.channelBinding.Scope.Memory {
+		return history, nil, snapshot.Epoch, visible, nil
+	}
 	profile, err := memory.New(r.db).Profile(ctx, memory.RecallScope{Person: r.person, Agent: r.agent, ExternalModel: true}, time.Now().Unix(), 32, 4096, func(text string) int { return len(text) })
 	if err != nil {
 		return nil, nil, 0, nil, err

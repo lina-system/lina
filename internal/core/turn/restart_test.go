@@ -105,6 +105,10 @@ func TestKillDuringTurnRecordsOneLineWithoutReplay(t *testing.T) {
 	})
 	line, err := bufio.NewReader(stdout).ReadString('\n')
 	if err != nil || line != "committed\n" {
+		// Wait joins the stderr copier before the failure diagnostic reads it.
+		_ = child.Process.Kill()
+		_ = child.Wait()
+		waited = true
 		t.Fatalf("readiness=%q err=%v stderr=%s", line, err, stderr.String())
 	}
 	if err = child.Process.Kill(); err != nil {
