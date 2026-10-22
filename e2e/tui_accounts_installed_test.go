@@ -175,76 +175,67 @@ func newAccountTap(t *testing.T, h *harness, target string, notifications ...boo
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithCancel(h.ctx)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		var connections sync.WaitGroup
-		defer connections.Wait()
-		for {
-			local, err := listener.Accept()
-			if err != nil {
-				return
-			}
-			connections.Add(1)
-			go func() {
-				defer connections.Done()
-				defer local.Close()
-				remote, err := net.Dial("unix", target)
-				if err != nil {
-					return
-				}
-				defer remote.Close()
-				stop := context.AfterFunc(ctx, func() { local.Close(); remote.Close() })
-				defer stop()
-				var wg sync.WaitGroup
-				pump := func(dst, src net.Conn, reply bool) {
-					defer wg.Done()
-					defer dst.Close()
-					scanner := bufio.NewScanner(src)
-					scanner.Buffer(make([]byte, 4096), 1<<20)
-					for scanner.Scan() {
-						line := append(bytes.Clone(scanner.Bytes()), '\n')
-						tap.mu.Lock()
-						tap.raw.Write(line)
-						tap.mu.Unlock()
-						if reply {
-							var rpc struct{ Result, Params json.RawMessage }
-							if json.Unmarshal(line, &rpc) == nil {
-								if len(rpc.Result) == 0 && len(notifications) > 0 && notifications[0] {
-									rpc.Result = rpc.Params
-								}
-								if len(rpc.Result) == 0 {
-									if _, err := dst.Write(line); err != nil {
-										return
-									}
-									continue
-								}
-								var decoder protocol.ClientDecoder
-								e, err := decoder.Decode(rpc.Result)
-								if err == nil && e != nil {
-									select {
-									case tap.replies <- *e:
-									case <-ctx.Done():
-										return
-									}
-								}
-							}
+		local, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer local.Close()
+		remote, err := net.Dial("unix", target)
+		if err != nil {
+			return
+		}
+		defer remote.Close()
+		stop := context.AfterFunc(h.ctx, func() { local.Close(); remote.Close() })
+		defer stop()
+		var wg sync.WaitGroup
+		pump := func(dst, src net.Conn, reply bool) {
+			defer wg.Done()
+			defer dst.Close()
+			scanner := bufio.NewScanner(src)
+			scanner.Buffer(make([]byte, 4096), 1<<20)
+			for scanner.Scan() {
+				line := append(bytes.Clone(scanner.Bytes()), '\n')
+				tap.mu.Lock()
+				tap.raw.Write(line)
+				tap.mu.Unlock()
+				if reply {
+					var rpc struct{ Result, Params json.RawMessage }
+					if json.Unmarshal(line, &rpc) == nil {
+						if len(rpc.Result) == 0 && len(notifications) > 0 && notifications[0] {
+							rpc.Result = rpc.Params
 						}
-						if _, err := dst.Write(line); err != nil {
-							return
+						if len(rpc.Result) == 0 {
+							if _, err := dst.Write(line); err != nil {
+								return
+							}
+							continue
+						}
+						var decoder protocol.ClientDecoder
+						e, err := decoder.Decode(rpc.Result)
+						if err == nil && e != nil {
+							select {
+							case tap.replies <- *e:
+							case <-h.ctx.Done():
+								return
+							}
 						}
 					}
 				}
-				wg.Add(2)
-				go pump(remote, local, false)
-				go pump(local, remote, true)
-				wg.Wait()
-			}()
+				if _, err := dst.Write(line); err != nil {
+					return
+				}
+			}
 		}
+		wg.Add(2)
+		go pump(remote, local, false)
+		go pump(local, remote, true)
+		wg.Wait()
 	}()
 	var once sync.Once
-	tap.close = func() { once.Do(func() { cancel(); listener.Close(); <-done }) }
+	tap.close = func() { once.Do(func() { listener.Close(); <-done }) }
 	t.Cleanup(tap.close)
 	return tap
 }

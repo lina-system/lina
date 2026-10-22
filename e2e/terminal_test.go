@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -32,10 +33,23 @@ func (h *harness) startConversationTUI(width, height int, environment ...string)
 	h.t.Helper()
 	socket := h.socket
 	tap := newAccountTap(h.t, h, socket)
-	h.socket = tap.socket
+	// The first connection is observed through the tap. Later connections must
+	// dial Core directly so a stopped Core still produces connection refused,
+	// rather than an accepted proxy connection followed by a handshake EOF.
+	link := filepath.Join(h.root, "tui-ready.sock")
+	if err := os.Symlink(tap.socket, link); err != nil {
+		h.t.Fatal(err)
+	}
+	h.socket = link
 	defer func() { h.socket = socket }()
 	terminal := h.startTerminalSize(environment, false, true, width, height)
 	tap.waitConversation(h)
+	if err := os.Symlink(socket, link+".next"); err != nil {
+		h.t.Fatal(err)
+	}
+	if err := os.Rename(link+".next", link); err != nil {
+		h.t.Fatal(err)
+	}
 	return terminal, tap
 }
 
