@@ -79,9 +79,13 @@ conversation, submits an input, and receives the committed acknowledgement, a
 live delta and the completed result. The fixture provider requests the real
 `change_persona` tool and checks its execution result. Core restart must restore
 the conversation rows and apply the saved tool effect to the next turn without
-replaying the provider request. This uses the same transport/session path as the
-tailnet listener but does not claim a physical mobile device or two-host tailnet
-test. All identities, model responses and stored values are synthetic.
+replaying the provider request. Its companion runs the same journey through production Core boot and the
+Tailscale-authenticated listener over TCP, substituting only LocalAPI responses
+and physical addresses. That companion installs the executable hosting boot so
+normal build-digest checks remain enabled. Both compare stored input/result
+identities and contents across restart. Neither claims a physical mobile device
+or two-host tailnet test. All identities, model responses and stored values are
+synthetic.
 
 `m1/import-reconciliation.json` runs the installed `lina import-hermes` command
 on synthetic LCM and host databases. It reconciles every source table, including

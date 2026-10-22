@@ -241,7 +241,20 @@ func websocketConversation(t *testing.T, tailnet bool) {
 		}
 	}))
 	t.Cleanup(provider.Close)
-	h, start := installedConversationHarness(t, provider.URL)
+	var h *harness
+	var start func(bool) *process
+	if tailnet {
+		// The manifest verifies the executable actually hosting boot.Run.
+		executable, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		h = newHarness(t, buildLina(t))
+		bundle := makeInstallBundle(t, h.root, executable, buildCommand(t, "lina-node"))
+		h, start = installConversationBundle(t, h, bundle, provider.URL)
+	} else {
+		h, start = installedConversationHarness(t, provider.URL)
+	}
 	endpoint := ""
 	launch := func() func() {
 		core := start(true)
