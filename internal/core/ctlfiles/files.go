@@ -18,13 +18,14 @@ var ErrLocked = errors.New("another Core holds the state root lock")
 // Store holds directory descriptors and, after Acquire, the stable lock inode.
 // A Store has one owner; callers serialize its operations.
 type Store struct {
-	dir  *os.Root
-	lock *os.File
+	dir      *os.Root
+	lock     *os.File
+	lockName string
 }
 
 // Locked reports whether this owner holds the stable Core lock. Callers must
 // keep it held for the complete lifetime of storage services they construct.
-func (s *Store) Locked() bool { return s != nil && s.lock != nil }
+func (s *Store) Locked() bool { return s != nil && s.lock != nil && s.lockName == "core.lock" }
 
 // Open validates an existing local state root and creates its private control
 // directories. Installation owns creation of the root and main.json.
@@ -116,10 +117,21 @@ func private(info os.FileInfo, directory bool) error {
 // Acquire never replaces or unlinks core.lock: every contender must flock the
 // same inode. Unlike data records, the lock is created once, then fsynced.
 func (s *Store) Acquire() error {
+	return s.acquire("core.lock")
+}
+
+// AcquireUpdate serializes update coordinators, independently of the running
+// Core. It confers no canon authority. The owner writes only update.json.
+func (s *Store) AcquireUpdate() error { return s.acquire("update.lock") }
+
+func (s *Store) acquire(name string) error {
 	if s.lock != nil {
+		if s.lockName != name {
+			return errors.New("control lock kind mismatch")
+		}
 		return nil
 	}
-	file, err := s.dir.OpenFile("core.lock", os.O_CREATE|os.O_RDWR|noFollow, 0600)
+	file, err := s.dir.OpenFile(name, os.O_CREATE|os.O_RDWR|noFollow, 0600)
 	if err != nil {
 		return err
 	}
@@ -139,7 +151,7 @@ func (s *Store) Acquire() error {
 	if err := lockFile(file); err != nil {
 		return err
 	}
-	current, err := s.dir.Lstat("core.lock")
+	current, err := s.dir.Lstat(name)
 	if err != nil {
 		return err
 	}
@@ -153,13 +165,14 @@ func (s *Store) Acquire() error {
 		return err
 	}
 	s.lock = file
+	s.lockName = name
 	success = true
 	return nil
 }
 
 func record(name string) bool {
 	switch name {
-	case "epoch", "run.sentinel", "halt.json", "lifecycle.json", "main.json", "config.json":
+	case "epoch", "run.sentinel", "halt.json", "lifecycle.json", "main.json", "config.json", "update.json":
 		return true
 	}
 	return false
@@ -195,7 +208,7 @@ func (s *Store) Read(name string) ([]byte, error) {
 // Write publishes a whole record only after its temporary file is synced, then
 // syncs the containing directory. On failure, callers must stop startup.
 func (s *Store) Write(name string, data []byte) error {
-	if s.lock == nil {
+	if s.lock == nil || (s.lockName != "core.lock" && name != "update.json") {
 		return errors.New("control write requires the lock")
 	}
 	if !record(name) {
@@ -234,7 +247,7 @@ func (s *Store) Write(name string, data []byte) error {
 
 // RemoveSentinel marks an orderly shutdown. The epoch and halt marker remain.
 func (s *Store) RemoveSentinel() error {
-	if s.lock == nil {
+	if !s.Locked() {
 		return errors.New("control write requires the lock")
 	}
 	if err := s.dir.Remove("run.sentinel"); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -246,7 +259,7 @@ func (s *Store) RemoveSentinel() error {
 // ClearHalt is used only after whole-generation restore verifies and reconciles
 // the replacement. Ordinary startup and shutdown must retain the failure latch.
 func (s *Store) ClearHalt() error {
-	if s.lock == nil {
+	if !s.Locked() {
 		return errors.New("control write requires the lock")
 	}
 	if _, err := s.Read("halt.json"); errors.Is(err, os.ErrNotExist) {

@@ -810,7 +810,26 @@ and normal Core startup refuse a newer store with exit 78 without changing the
 database, sidecars, lock, epoch or sentinel. Headless scenarios are in
 `e2e/m2/update-preflight.json` and exercise actual candidate Core processes.
 
-Rollback restores the previous compatible composition from the kept binaries and the pre-update snapshot. Binaries are never rolled back over an irreversible migration. When an update fails, the install restores the previous compatible composition, or holds: it stops, keeps the current state intact and reports. It never leaves a half-updated component running against data it can't read. LINA OS adds steps of its own around this order (see Deferred).
+The installed activation command is `lina update --activate --state-root <path>
+--candidate <prepared-directory>`. It persists an update attempt outside backup
+generations, requests the running Core's explicit drain and waits for its
+committed fence and exit before taking a verified snapshot. Candidate preflight
+is repeated against the stopped store. The binary, manifest and pinned adapter
+composition is kept for rollback; no user-installed worker or tool is changed.
+
+The candidate runs first on the private `run/update.sock`. Core writes a durable
+READY receipt before admitting the smoke conversation. Smoke requires a real
+completed conversation result and, when installed, the bundled Moirai worker's
+read-only `--preflight` against canon and the live job socket. It does not dispatch
+background jobs. The candidate then drains; the updater records completion and
+starts and checks the ordinary service. Missing account/model readiness is a
+smoke failure. Core refuses normal startup during an unfinished update, before
+opening canon or minting an epoch. `lina update --resume --state-root <path>`
+recovers an interrupted attempt using its recorded paths, composition and
+generation, or retains a hold with a closed cause. Changed installation/data
+paths and foreign services are refused before controlling another service.
+
+Rollback restores the previous compatible composition from the kept binaries and the pre-update snapshot. Automatic rollback is allowed only while the candidate has never reached READY. A possibly started forward schema migration without an undo proof holds instead of rolling back. Binaries are never rolled back over an irreversible migration. When an update fails, the install restores the previous compatible composition, or holds: it stops, keeps the current state intact and reports. It never leaves a half-updated component running against data it can't read. LINA OS adds steps of its own around this order (see Deferred).
 
 - The main gets release artifacts from the private GitHub Releases of the LINA repository with the owner's `gh` authentication, and distributes Node binaries and their updates to devices over the tailnet ([releases.md](../policy/releases.md)).
 - The Claude adapter, its lockfile and the SDK package it installs are updated only as part of a LINA update, by their pin. An update never starts, stops or updates a tool the user installed, such as a worker, the `grok` command or Node.js.
@@ -835,6 +854,16 @@ These install and update failures must end in the previous compatible compositio
 - a path change of the installation or data location
 - a backup that doesn't form a compatible pair with the installed version
 - a process killed between update steps
+
+The activation failure matrix is exercised by `e2e/m2/update-activation.json`
+through the installed executable, client protocol and actual bundled worker.
+It includes pre-READY start refusal, post-READY provider failure and updater death
+after dispatch. Package injections cover truncated gzip/digest failures, ENOSPC,
+service/snapshot/swap failures, incompatible generation refusal, changed paths,
+and SIGKILL acknowledged at each binary/adapter rename. Failure evidence uses
+closed causes and durable receipts; it does not infer success from a running
+service or from elapsed time. Existing runtime-specific injections below remain
+with their owning components and are included in full foundation verification.
 
 These runtime failures must end as their rules require:
 

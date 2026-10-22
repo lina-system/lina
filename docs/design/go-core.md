@@ -95,7 +95,7 @@ type API interface {
 
 ## Start, recovery, idle and update
 
-**C-03 Lock, control files, epoch (kept).** Core takes a non-blocking `flock` on `system/core/core.lock`. The files under `system/core/` are the lock, `epoch` (a decimal string, CP-02), `run.sentinel`, `halt.json`, `lifecycle.json` (the restart request) and `main.json` (the main id; no key). Data records are written by temp file, fsync, rename and directory fsync, at mode 0600 in a 0700 directory. The lock is the exception: it is created once and fsynced with its directory, then opened and flocked without replacement or unlinking, so all contenders use the same inode. None is in a backup generation, and a LINA restore preserves them except for clearing the halt latch after verified recovery (C-04, CP-03). A state root on a non-local filesystem is refused. The new epoch is `max(epoch file, highest epoch in canon by read-only peek, peer_seen_max) + 1`, fsynced before canon opens (CP-01). `peer_seen_max` is the highest epoch a peer reported when it refused a stale one. The epoch fence is the first statement of every write transaction. A lower epoch fails `stale_epoch` and latches the writer.
+**C-03 Lock, control files, epoch (kept).** Core takes a non-blocking `flock` on `system/core/core.lock`. The files under `system/core/` are the lock, `epoch` (a decimal string, CP-02), `run.sentinel`, `halt.json`, `lifecycle.json` (the restart request), `update.json` (the update attempt), `update.lock` (updater exclusion) and `main.json` (the main id; no key). Data records are written by temp file, fsync, rename and directory fsync, at mode 0600 in a 0700 directory. The lock is the exception: it is created once and fsynced with its directory, then opened and flocked without replacement or unlinking, so all contenders use the same inode. None is in a backup generation, and a LINA restore preserves them except for clearing the halt latch after verified recovery (C-04, CP-03). A state root on a non-local filesystem is refused. The new epoch is `max(epoch file, highest epoch in canon by read-only peek, peer_seen_max) + 1`, fsynced before canon opens (CP-01). `peer_seen_max` is the highest epoch a peer reported when it refused a stale one. The epoch fence is the first statement of every write transaction. A lower epoch fails `stale_epoch` and latches the writer.
 
 The initial identity and sentinel formats are:
 
@@ -202,7 +202,8 @@ The #149 preparation boundary is `lina update --prepare --state-root <path>
 the download before unpacking, checks every manifest artifact, then runs the
 candidate's `lina core --preflight` through `kit/proc`. Candidate versions live
 under `system/updates/<archive-sha256>`; creation is exclusive and never replaces
-another attempt. A successful candidate gets a durable `prepared.json` receipt.
+another attempt. A successful candidate gets a durable `prepared.json` receipt, including the
+verified manifest digest. Activation rechecks that digest and all copied artifacts.
 The active binaries, service, control records and canon remain unchanged.
 
 `core --preflight --state-root <path> [--manifest <path>]
@@ -229,7 +230,54 @@ Preparation establishes candidate verification, schema relation, peer rows and
 staging space only. Idle and verified-generation remain `unknown` until the
 activation owner supplies a fenced idle observation and a recent verified
 backup. A prepared receipt is not activation authority or a READY receipt.
-The lifecycle swap, smoke and rollback orchestration belongs to #150.
+The #150 activation command is `lina update --activate --state-root <path>
+--candidate <prepared-directory>`. Both binaries must advertise `update_protocol: 1` in preflight; older
+binaries without the durable boot/READY guard are refused before drain. It
+verifies the installed service's exact
+paths and refuses foreign units or drop-ins before controlling it. An independent
+`update.lock` excludes competing updaters and grants no canon authority. Core's
+existing `core.lock` remains the only writer lock. The updater persists its
+attempt before requesting the running Core's explicit drain, waits for durable
+commitment and lock release without forcing active work, and then stops the
+owned service. It takes a new verified generation through the installed old
+binary, verifies the generation/version pair and reruns candidate preflight on
+the stopped store. Release-owned binaries, manifest and adapter files move as
+one recorded composition; the prior directories and failed candidates are kept.
+Settings stay in their installed control records, outside binary replacement.
+
+`update.json` is a schema-1 private atomic control record outside backups. It
+binds the root, normal socket, candidate, previous composition, binary digests,
+generation and phase. Phases are `draining`, `drained`, `snapshot`, `swapping`,
+`starting`, `booting`, `ready`, `complete`, `rollback`, `rolled_back` and `held`.
+It also records the forward-migration flag, a sticky `reached_ready` bit and a
+closed cause. Core checks this record under its writer lock before minting an
+epoch or opening canon. An unfinished attempt refuses ordinary startup with
+`update_held`; a changed root is `update_path_changed`. Only the recorded
+candidate's digest may claim a single `starting` launch on `run/update.sock`.
+Core durably records READY before opening admission. Failure to observe a
+process or a deadline is never evidence that READY was not reached.
+
+Smoke runs that actual candidate on the private update socket, sends one
+conversation request through the client protocol and requires an acknowledged
+input, completed agent answer and finished turn. A bundled Moirai worker runs
+`--preflight`: it reads canon and checks the Core job API's `moirai/1` readiness
+reply without applying a job. User-installed coding tools are untouched. The
+smoke Core drains and exits before `complete` is recorded and the normal service
+is started and checked for readiness. Smoke input and its result remain ordinary
+durable conversation evidence. A missing account or failed provider fails smoke.
+
+Automatic rollback is allowed only before READY and when no forward schema
+migration may have begun. It restores the kept composition and its independently
+verified generation using the old binary's own restore command and schema
+catalog. Rename recovery is repeatable at every component boundary, including
+when an adapter was absent in the old composition. After READY, or after a
+possibly irreversible migration, failures preserve the current data in a hold;
+they never restore the old snapshot. `lina update --resume --state-root <path>`
+resolves an interrupted pre-READY attempt or retains that hold. Closed causes
+include interrupted update, changed path, invalid candidate, snapshot/pair,
+swap, startup, smoke, resume, rollback, disk-full and irreversible-migration
+failures. If a record cannot be durably advanced, its prior unfinished phase
+still fences ordinary Core startup.
 
 ## Client service
 
