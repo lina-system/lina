@@ -212,6 +212,18 @@ replay count is consumed by the Bubble Tea recording-writer test.
 synthetic producer data, socket discovery/decisions, and a separate-key PTY approval.
 These scenarios create no second product decision store and use no timing sleeps.
 
+`m2/github-ci.json` starts the real Core binary with a synthetic `gh` executable
+in its isolated PATH. It negotiates the GitHub capability, refuses an unnegotiated
+read, observes rate-limited CI pending and its retry deadline, then observes head,
+review threads and successful checks. It verifies conditional headers and one
+review read per head, with no network credentials or GitHub service dependency.
+
+`m2/github-merge.json` drives the installed Core's merge capability with a
+synthetic `gh` process and real temporary parent clone. It proves head and
+protected-ref changes prevent writes, the accepted head is pinned, confirmed
+results survive restart without a second merge, and external merges require
+commit/ref evidence and report failed checks. It uses no external credentials.
+
 `m2/codex-session.json` runs installed Core, its real conversation model loop,
 tool authority and stdio child ownership with a synthetic installed Codex. It
 asserts version reporting for an unverified version, active steering, confirmed
@@ -237,13 +249,8 @@ binding/scope replacement. A paired synthetic channel and an existing binding
 exercise the actual target-agent checks. Read-only canon snapshots prove that
 refused requests preserve agent revisions, actions, conversations and bindings.
 
+
 `LINA_CODEX_LIVE=1 go test -count=1 -v ./e2e -run '^TestM2InstalledCodexLive$'`
 also drives installed Core's normal tool path into the actual installed Codex,
 then waits on the worker's conversation result before reading its snapshot. Only
 Core's conversation provider is synthetic; the worker uses its own model setup.
-
-`m2/github-ci.json` starts the real Core binary with a synthetic `gh` executable
-in its isolated PATH. It negotiates the GitHub capability, refuses an unnegotiated
-read, observes rate-limited CI pending and its retry deadline, then observes head,
-review threads and successful checks. It verifies conditional headers and one
-review read per head, with no network credentials or GitHub service dependency.
