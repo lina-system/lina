@@ -39,7 +39,7 @@ func TestM1TUIWheelStickyConversation(t *testing.T) {
 	waitScreen(t, h, terminal, design.Text(design.English, "live"))
 	admittedTurn(t, h, client, conversation, "scroll-first", "Show the synthetic rows.")
 	plan := layout.Plan(layout.Size{Width: 100, Height: 34}, layout.Caps{SidePane: true}, layout.Shape{ComposerRows: 1})
-	activePlan := layout.Plan(layout.Size{Width: 100, Height: 34}, layout.Caps{SidePane: true}, layout.Shape{ComposerRows: 1, Activity: true})
+	activePlan := layout.Plan(layout.Size{Width: 100, Height: 34}, layout.Caps{SidePane: true}, layout.Shape{ComposerRows: 1, ActivityRows: 1})
 	idle := func(s tuiterm.Snapshot) bool {
 		// Turn activity temporarily borrows one transcript row. Compare the
 		// full idle viewport only after the TUI consumes the completed turn.
