@@ -312,6 +312,14 @@ For the colour conversation screen, each new size reaches the cell renderer
 before its reflowed view, even if the view text is unchanged. The connection owner's latest dimensions remain authoritative: late renderer startup size messages are discarded before they can resize the cell buffer. Resizing keeps the
 draft and redraws header, status and composer within the current row budget;
 cells from the previous dimensions must not survive as stale transcript rows.
+The terminal output boundary restores full-height scrolling margins after each
+write while preserving the hardware cursor. A frame queued at a smaller size
+may arrive after the physical terminal has grown; its cached height must not
+leave later frames scrolling inside the old region. The real-model recording
+regression holds this ordering across 40x12 → 120x40, starts a streamed reply,
+and compares every cell row and cursor with a fresh client during streaming,
+after interruption and after a same-epoch reconnect. Writes and cursor updates
+establish settlement without sleeps or assertions on UI wording.
 Only dimensions forwarded by the owning input decoder may resize the renderer.
 The renderer filters the library's asynchronous initial size notification so a
 late startup value cannot undo a newer size and clip the composer or status.
