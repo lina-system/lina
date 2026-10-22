@@ -209,8 +209,11 @@ func (s *Service) Tool(origin Origin) loop.Tool {
 		d.Repository = canonical
 		key := admissionID(origin, c.ID)
 		if err := authority.CheckPreset(ctx, s.cfg.DB, s.cfg.Epoch, authority.PolicyRequest{Key: "preset:dispatch:" + key, Person: origin.Person, Agent: origin.Agent, TaskID: origin.Turn, Tool: "dispatch_work", Target: d.Repository, Class: tools.WorkerEffect, Arguments: mustJSON(d)}); err != nil {
-			body := mustJSON(map[string]string{"code": err.Error(), "boundary": "This preset supports advice or private drafts; unrestricted worker execution is unavailable."})
-			return loop.Result{ID: c.ID, Code: loop.Denied, Output: body}
+			body := map[string]string{"code": err.Error()}
+			if errors.Is(err, authority.ErrPresetLimit) {
+				body["boundary"] = "This work is limited to advice or private drafts; unrestricted worker execution is unavailable."
+			}
+			return loop.Result{ID: c.ID, Code: loop.Denied, Output: mustJSON(body)}
 		}
 		r := Record{ID: key, Origin: origin, Definition: d, Method: method, State: "queued"}
 		if s.cfg.Manage != nil {
