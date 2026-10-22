@@ -240,6 +240,8 @@ func codexWorkToolsFixture() {
 }
 
 func TestM2CodexWorkTools(t *testing.T) {
+	t.Parallel()
+
 	data, err := os.ReadFile("../m2/codex-work-tools.json")
 	if err != nil {
 		t.Fatal(err)

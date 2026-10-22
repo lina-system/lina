@@ -20,6 +20,8 @@ import (
 )
 
 func TestM1TUIMemoryAgentsInstalledCore(t *testing.T) {
+	t.Parallel()
+
 	// One immutable build serves this scenario group. Every subtest still installs
 	// it into fresh state and owns its own Core, provider and terminal processes.
 	binary := buildLina(t)

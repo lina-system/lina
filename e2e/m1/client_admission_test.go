@@ -46,6 +46,8 @@ func readAdmissionScenario(t *testing.T) admissionScenario {
 }
 
 func TestM1ClientAdmission(t *testing.T) {
+	t.Parallel()
+
 	scenario := readAdmissionScenario(t)
 	binary := buildLina(t)
 	for _, tc := range scenario.Cases {

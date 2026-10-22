@@ -18,6 +18,8 @@ import (
 )
 
 func TestM2InstalledPersonaGrowth(t *testing.T) {
+	t.Parallel()
+
 	var fixture struct {
 		Candidate struct {
 			ID       string `json:"id"`

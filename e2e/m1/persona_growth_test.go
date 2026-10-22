@@ -28,6 +28,8 @@ import (
 // socket readiness, deadlines and cleanup. The Core job and tool services are
 // production services hosted here with synthetic, precomputed Lachesis input.
 func TestM2PersonaGrowth(t *testing.T) {
+	t.Parallel()
+
 	var scenario struct {
 		JobID     string                 `json:"job_id"`
 		Initial   agents.Layers          `json:"initial"`

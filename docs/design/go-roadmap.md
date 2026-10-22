@@ -392,6 +392,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 
 **G2-21 Discord adapter.** Gateway adapter with interactions and buttons.
 - Implemented by #147 through the shared gateway and running Core. `e2e/m2/discord.json` exercises pairing, duplicate interactions, real tool/background execution with synthetic endpoints, paragraph splits, unreachable bindings and restart; adapter tests cover owner-only buttons. Live Discord account validation remains separate.
+- #548 adds fresh-session recovery for Gateway close 4007/4009; `e2e/m2/discord-recovery.json` verifies Identify, duplicate suppression and continued tool/background results in running Core.
 - Done when: a repeated interaction is handled once; a press by anyone but the paired owner changes nothing; text over 2,000 characters splits on paragraph boundaries; a blocked chat marks the binding unreachable.
 - Depends on: G1-25. Design refs: C-27; [integrations.md](integrations.md#channels).
 
@@ -401,6 +402,11 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 - Done when: each failure injection of runtime.md leaves the previous composition running or the install held with a closed cause; an old binary against a newer store leaves the store byte-identical.
 - Preparation (#149) verifies a frozen release archive, stages an exclusive version directory and runs the candidate Core's lock-free, non-mutating schema/peer preflight. Six explicit gate cells fail closed on missing evidence; idle and a verified generation are supplied by the activation owner. Headless M2 tests exercise the live Core, candidate process, digest/peer refusals and a newer schema in both database and WAL. #150 wires the installed activation and resume commands into Core's drain, durable boot/READY guard, snapshot, composition swap and rollback. The M2 activation scenario uses real Core and worker processes, verifies a resumed tool result, and covers start failure, provider failure and updater death. Package tests cover ENOSPC, changed paths, compatible-pair checks and process death at every binary/adapter rename. Automatic rollback stops at READY or a potentially irreversible migration.
 - Depends on: G1-22, G1-23, G1-24. Design refs: C-38; [runtime.md](runtime.md#updates).
+
+Update backup and rollback restore, including resumed rollback, follow the
+caller's context without the installer command timeout. The M2 data-operation
+scenario verifies backup and restore exceeding that timeout through the installed
+Core's activation and recovery paths.
 
 **G2-15 Phase 2 acceptance run.** Run script and evidence record for LINA 2.
 - Done when: one record holds every field of the phase rules and a result per check; the interruption injection now stops a running task and its citations pass; Codex and Claude Code versions are recorded.
@@ -508,8 +514,8 @@ This epic also folds in the owner's Node direction, which is not yet in the cont
 - Done when: overlapping areas are never in flight together; a dependent is released only after the predecessor is confirmed merged; a task nothing depends on never waits; a waiting task shows exactly one reason; an unmergeable pull request goes back once to its worker; the developer view shows one lane for each worker, folded to one line by default.
 - Depends on: G2-02, G2-07, G2-18. Design refs: C-57, T-14; [work-and-delegation.md](work-and-delegation.md#parallel-hand-off).
 
-**G3-10 Devin adapter.** Hosted session API; polling only in flight.
-- Done when: polling starts at dispatch and ends at a terminal state; a waiting-for-user state is blocked; a suspended state with a quota reason parks the worker; the adapter is an opt-in account of the person.
+**G3-10 Cursor adapter.** The user's installed `cursor-agent`, running headless with `stream-json`; implementation and installed-version confirmation belong to [#210](https://github.com/thisisjun786/lina/issues/210).
+- Done when: readiness records the installed version and sign-in state, with not signed in reported as unsupported delegation; one headless run per task streams progress from its worktree; process exit plus the final stream event ends the run, while exit 0 without a final event is unknown; interrupt stops the run and once-only recovery resumes the same chat id in the same work area; quota or rate-limit replies park the worker until reset without spending a retry; the adapter is an opt-in account of the person. Exact flags, stream events and control behavior are to be confirmed by #210.
 - Depends on: G2-04. Design refs: C-29; [work-and-delegation.md](work-and-delegation.md#completion-signals).
 
 **G3-16 Antigravity adapter.** Headless child; success from the pull request.
@@ -525,7 +531,7 @@ This epic also folds in the owner's Node direction, which is not yet in the cont
 - Done when: no plan object exists before confirmation; a draft is replaced completely on each update; splitting into tasks is not a second confirmation.
 - Depends on: G1-34, G2-23. Design refs: C-52, C-57; [cognition-and-life.md](cognition-and-life.md#klotho-project-planning).
 
-**G3-18 CRW takeover.** One-time import tool outside every release, single-owner switch with rollback.
+**G3-18 CRW takeover.** One-time import tool outside every release, single-owner switch with rollback. The import/report slice uses a verified offline snapshot, durable operator id reservations and Core's versioned records; its M3 headless scenario exercises the installed Core's tools after import. This does not perform the operational switch.
 - Done when: every fetched record is reported imported, lost or unsupported; each is mapped to a LINA id once; a failed switch is rolled back explicitly; no product path resolves a source id.
 - Depends on: G2-01, G2-17, G2-22. Design refs: [work-and-delegation.md](work-and-delegation.md#operational-switch).
 
@@ -562,7 +568,7 @@ A given-back slice moves to the start of the next phase and is listed as not del
 | --- | --- | --- |
 | LINA 1 | Telegram (G1-25) and exchanges (G1-26), which then start LINA 2; the Hermes import (G1-27); prepared summaries (G1-38) | Epoch and recovery (G1-02), approvals (G1-05), ledger (G1-10), retraction (G1-14), the turn budget and background runs (G1-32, G1-33), restart fence (G1-24) |
 | LINA 2 | Discord (G2-21), Gemini and Grok adapters (G2-27, G2-28), skill pruning (G2-12), persona growth (G2-20), the progress digest for channels (part of G2-13) | The delegation core (G2-01, G2-02, G2-04, G2-07, G2-08, G2-18, G2-19), records (G2-22, G2-23), update (G2-14) |
-| LINA 3 | Antigravity and Devin (G3-16, G3-10), the macOS seat lease (G3-07), plan drafting (G3-17), the CRW takeover (G3-18), mobile transport (part of G3-06) | Node gate and reconcile (G3-03, G3-04), outward-effect marks (G3-02), splitting and parallel hand-off (G3-09) |
+| LINA 3 | Antigravity and Cursor (G3-16, G3-10), the macOS seat lease (G3-07), plan drafting (G3-17), the CRW takeover (G3-18), mobile transport (part of G3-06) | Node gate and reconcile (G3-03, G3-04), outward-effect marks (G3-02), splitting and parallel hand-off (G3-09) |
 
 ## Numbers to set by measurement
 

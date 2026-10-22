@@ -19,6 +19,8 @@ import (
 )
 
 func TestM1ClientAdmissionSandbox(t *testing.T) {
+	t.Parallel()
+
 	h := newHarness(t, "")
 	dir := filepath.Join(h.root, "system", "core")
 	if err := os.MkdirAll(dir, 0700); err != nil {

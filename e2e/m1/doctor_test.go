@@ -19,6 +19,8 @@ import (
 )
 
 func TestM1Doctor(t *testing.T) {
+	t.Parallel()
+
 	data, err := os.ReadFile("doctor.json")
 	if err != nil {
 		t.Fatal(err)

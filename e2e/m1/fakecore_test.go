@@ -52,7 +52,7 @@ func tuiFixtures(t *testing.T) fstest.MapFS {
 		t.Fatal(err)
 	}
 	hello := envelope.Payload.(protocol.Hello)
-	hello.Capabilities = []protocol.Capability{{Name: "web", Version: "1.0"}, {Name: "agents", Version: "1.0"}, {Name: "memory", Version: "1.0"}, {Name: "exchanges", Version: "1.0"}, {Name: "channels", Version: "1.0"}, {Name: "accounts", Version: "1.0"}, {Name: "sign_in_relay", Version: "1.0"}, {Name: "conversation", Version: "1.0"}, {Name: "turn_activity", Version: "1.0"}, {Name: "running", Version: "1.0"}, {Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}}
+	hello.Capabilities = []protocol.Capability{{Name: "worker_lanes", Version: "1.0"}, {Name: "web", Version: "1.0"}, {Name: "agents", Version: "1.0"}, {Name: "memory", Version: "1.0"}, {Name: "exchanges", Version: "1.0"}, {Name: "channels", Version: "1.0"}, {Name: "accounts", Version: "1.0"}, {Name: "sign_in_relay", Version: "1.0"}, {Name: "conversation", Version: "1.0"}, {Name: "turn_activity", Version: "1.0"}, {Name: "running", Version: "1.0"}, {Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}}
 	envelope.Payload = hello
 	data, err := json.Marshal(envelope)
 	if err != nil {
@@ -109,6 +109,8 @@ func (h *harness) fakeCore(steps []fakecore.Step, tui ...bool) <-chan error {
 }
 
 func TestM1FakeCore(t *testing.T) {
+	t.Parallel()
+
 	data, err := os.ReadFile("fakecore.json")
 	if err != nil {
 		t.Fatal(err)

@@ -23,7 +23,7 @@ import (
 
 // Offer only rendered families; the conversation discovers and maintains its
 // concrete conversation/results subscriptions after welcome.
-var shellCapabilities = []protocol.Capability{{Name: "web", Version: "1.0"}, {Name: "agents", Version: "1.0"}, {Name: "memory", Version: "1.0"}, {Name: "exchanges", Version: "1.0"}, {Name: "channels", Version: "1.0"}, {Name: "accounts", Version: "1.0"}, {Name: "sign_in_relay", Version: "1.0"}, {Name: "conversation", Version: "1.0"}, {Name: "turn_activity", Version: "1.0"}, {Name: "running", Version: "1.0"}, {Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}}
+var shellCapabilities = []protocol.Capability{{Name: "worker_lanes", Version: "1.0"}, {Name: "web", Version: "1.0"}, {Name: "agents", Version: "1.0"}, {Name: "memory", Version: "1.0"}, {Name: "exchanges", Version: "1.0"}, {Name: "channels", Version: "1.0"}, {Name: "accounts", Version: "1.0"}, {Name: "sign_in_relay", Version: "1.0"}, {Name: "conversation", Version: "1.0"}, {Name: "turn_activity", Version: "1.0"}, {Name: "running", Version: "1.0"}, {Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}}
 
 type clientPeer struct{ client *clientapi.Client }
 
@@ -198,7 +198,7 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 			}
 			if model.hasComposer() {
 				if terminal && display.interactive && display.styles.options.Profile != Monochrome && display.renderer == nil {
-					display.renderer = startTerminalRenderer(parent, rawTerminalWriter{display.output}, model.size.Width, model.size.Height)
+					display.renderer = startTerminalRenderer(parent, rawTerminalWriter{display.output}, model.size.Width, model.size.Height, display.styles.options.Profile)
 				}
 				// Nonterminal input only reads quit after the handshake; it has
 				// no draft destination to discover before reporting live.

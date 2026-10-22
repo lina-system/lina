@@ -272,7 +272,15 @@ The screen is a pure function of State and terminal size. Core's validated welco
 Regions:
 
 - Header: the focused agent's name and mark, and the connection word.
-- Conversation.
+- Conversation: first-line speaker gutter, with the person marked by `›` and the
+  agent by `●`; no separate name row per message. The agent name stays in the
+  header. Person prose uses muted text, both marks use accent, and agent prose
+  uses text color. Continuation rows align under the message text. Exactly one
+  empty row separates messages. ASCII and monochrome use `> You:` and
+  `* <agent name>:` (the person word follows the UI language). The gutter is
+  capped at 20 cells (P) and half the conversation width, whichever is smaller.
+  Truncate only the name at grapheme boundaries, retaining the mark, colon and
+  separating space so long names leave usable reply width, including Hangul.
 - Activity: one or two measured rows above the composer's optional rule while a
   send is pending or a turn is active, with a glyph, localized
   thinking/replying/stopping word, elapsed duration and Esc hint. It consumes no
@@ -280,6 +288,21 @@ Regions:
 - Composer, with its attachment strip and a full-width hairline immediately above the input.
 - Card row above the composer, on Home (T-12).
 - Status line below the composer: connection mark and word first, agent, the running count ("2 running, 1 waiting for you"), restart pending, Core messages, then key hints.
+
+Once the focused conversation's snapshot is known to have no items, its header
+shows the token-based `lina.` wordmark, the agent name and the connection word.
+Three muted Korean/English catalog suggestions invite the person to ask what
+the agent remembers, set its speaking style or hand over a task. They are
+ordinary text examples: the person types into the existing composer, with no
+new selection key. Unsent drafts and non-conversation status updates do not
+hide them. The first conversation item, including a local input echo, removes
+the wordmark and suggestions. These are display-only rows, never history or
+snapshot items. A restored nonempty conversation never shows them. Account
+setup may show the same hints alongside the existing sign-in action before
+conversation is negotiated; no extra onboarding step is introduced.
+The hints fit the existing row budget and use the current text clipping rules.
+`TestM1TUIFirstRunInstalledCore` verifies both languages in a 100x34 PTY against
+installed Core, a held first reply, snapshots and a Core restart.
 
 Overlays form a stack and the top one receives keys first: agent list, command palette, pager. The agent list is the agents screen of [surfaces.md](surfaces.md#agents) in text: mark, name, source and last conversation; Enter opens the agent's main conversation.
 
@@ -396,6 +419,25 @@ and Page Down move through the retained conversation. Tab switches composer and
 card focus; arrows select a result card. The composer keeps its draft when an
 overlay opens or connection status changes. An identical frame and cursor is
 not submitted to the renderer, and the plain display writes no duplicate frame.
+In the colour conversation, the mouse wheel over the transcript moves three
+rows per notch. Same-direction repeats within 120 ms add three rows to the
+step, capped at twelve; idle input or a direction change resets it to three.
+The latest position follows arriving output. Scrolling up retains the first
+visible block and row when output arrives, including streamed and completed
+replies and same-identity resyncs. While away from the latest position, changed
+output below the viewport adds the localized `↓ new messages · End` marker to
+the status row. End returns to the latest output, clears the marker and resumes
+following. Scroll keys preserve the composer draft. When the transcript exceeds
+its region, the status row adds the localized `PgUp scroll` hint only if it fits;
+this optional hint is dropped before existing status and the new-output marker.
+The wheel does not act through an overlay or outside the conversation region.
+This includes `/web` while it shows status, awaits Core or edits a key: wheel
+input preserves the hidden conversation's position, retained anchor and
+follow-latest state when the settings screen closes.
+`TestM1TUIWheelStickyConversation` exercises the installed Core and real TUI in
+a 100×34 PTY, sends SGR wheel input, compares the retained rows after a second
+reply, verifies that `/web` blocks wheel input at the latest and retained
+positions, and verifies End and mouse-mode cleanup.
 For the colour conversation screen, each new size reaches the cell renderer
 before its reflowed view, even if the view text is unchanged. The connection owner's latest dimensions remain authoritative: late renderer startup size messages are discarded before they can resize the cell buffer. Resizing keeps the
 draft and redraws header, status and composer within the current row budget;
@@ -634,7 +676,7 @@ Contract: [surfaces.md](surfaces.md#agent-surfaces), [surfaces.md](surfaces.md#s
 
 - **Board:** three groups of one-line rows (Waiting for me, Running, Done). Enter unfolds a row, with keys for the actions that apply.
 - **Steering:** `/note` queues a note for the run's next step, which is the follow-up of the running list. Esc or `/stop` on a row stops it.
-- **Agent tree and lanes (developer view):** indented lines (the persona as initial and name, sub-agents as plain indented text, workers as `[name]`), one line per worker for lanes, hand-offs as arrows, folded to one line by default.
+- **Agent tree and lanes (developer view):** indented lines (the persona as initial and name, sub-agents as plain indented text, workers as `[name]`), one line per worker for lanes, hand-offs as arrows, folded to one line by default. `/developer` opts into the recorded worker view through the `worker_lanes` capability. Core supplies each persona's name and each current task execution's worker/session identity; two sessions using the same tool remain separate lanes. Persona headings show initial and name, and indented `[worker] › task` lines are clipped to one physical row. Enter toggles the selected lane's thread, turn, node, generation and source-labeled stage summaries. Up/Down selects; `r` refreshes the current first page and `n` replaces it with the next bounded page. Refresh preserves selected and expanded identities; new executions start folded. Esc returns to the composer. Closing/reopening or reconnecting discards this view's expansion state and pending responses. No sub-agent relationship is inferred from worker names or text; the work ledger and installed worker runtime supply persona-to-worker edges only. Runtime sessions retain their adapter state and show masked output/version on expansion.
 - **Usage meter:** one line per connected account: plan, state, a block-character meter or "unknown".
 
 Settings are commands and labeled blocks, all requests to Core:
@@ -708,7 +750,10 @@ type Stream interface {
   to produce semantic spans for closed blocks; `render` receives a parser
   callback and remains free of external dependencies. The shared `Measurer` wraps the visible text before
   the UI adds terminal styles. List continuations align under their content;
-  code retains literal text and whitespace. Escaped syntax remains literal.
+  code retains literal text and whitespace, including empty first and last
+  lines and blocks containing only empty lines. Empty code rows retain their
+  semantic identity through wrapping; message-boundary trimming removes only
+  paragraph spacing. Escaped syntax remains literal.
   Unsupported HTML blocks and inline HTML display their literal source text.
   Tables use our own renderer.
 - Conversation spans use theme text, accent and surface tokens: bold and italic
@@ -717,11 +762,22 @@ type Stream interface {
   ASCII fallback). `NO_COLOR` keeps readable content without terminal escapes.
   `Stream.Markdown` caches closed semantic rows by width, theme and width mode,
   incrementally projects the open tail, and replaces the projection at `Seal`.
+  Consumers treat cached rows as read-only. Conversation rendering copies
+  trimmed rows before adding completion durations or pager affordances, so
+  identical redraws cannot accumulate metadata in message content.
   Only visible conversation rows receive terminal styles.
 - One width function serves all layout: wcwidth by default, grapheme clusters once mode 2027 is confirmed, ambiguous East Asian width narrow, Hangul syllables two cells. The mode is part of the cache key. The Charm-free `Measurer` uses pinned Unicode 17 data and UAX #29 segmentation for wrapping and clipping in both modes. A cluster wider than the entire row is omitted with a typed clipped flag, never split. Cursor offsets inside a cluster clamp to its start.
 - The hardware cursor is placed on every frame at the display width of the text before it on the wrapped row, so IME composition appears in place. The TUI never requests all-keys-as-escape-codes. Committed IME text arrives as UTF-8, one grapheme cluster at a time ([surfaces.md](surfaces.md#korean-input)).
 - Only the viewport plus overscan (P) is laid out, so cost follows viewport rows and not history. `Stream` indexes new text as it arrives. `Window` takes a retained byte anchor within a block and stops reflow at the requested row count, including after a width change. `Renderer.Draw` reads and paints only those indexed rows, retains only the current viewport cache, and returns changed-row patches; an empty patch list causes no writes. A trusted UI painter styles only closed rows after sanitizing and clipping.
 - Resize events coalesce to one reflow per 32 ms (P).
+- The conversation renderer explicitly receives the display's detected 16-color,
+  256-color or truecolor profile; wrapping its output must not discard color or
+  bold. `NO_COLOR` retains the escape-free plain path.
+- Speaker marks come from the person/agent glyph tokens. Reserve the prefix's
+  display width with the shared `Measurer` before Markdown wrapping, including
+  ASCII words and wide agent names, and indent every continuation by that width.
+  Trim empty paragraph boundary rows before adding the section gap; preserve
+  paragraph spacing and literal code whitespace within a message.
 - Conversation wrapping uses the current width; the indexed row count at the
   old width must not truncate newly wrapped rows or the final reply.
 - An unchanged idle state writes zero bytes. A light frame tick runs only while
@@ -746,10 +802,13 @@ pasted `?` remain ordinary input. Toggle repeats and releases never open it.
 The conversation footer keeps the connection mark and localized word first.
 It adds whole key-and-label hints in ascending priority, dropping the lowest
 priorities first when their display-cell width does not fit. The highest priority
-is `? Shortcuts`, followed by Esc, Enter, Ctrl+D, Alt+Enter, PgUp/PgDn, Ctrl+O and
-F6, with Ctrl+T for the retained transcript following those hints. Notices and cause details may be shortened to leave space for the connection
+is `? Shortcuts`, followed by Esc, Enter, Ctrl+D, Alt+Enter, Ctrl+O and
+F6, with Ctrl+T for the retained transcript following those hints. When the
+conversation overflows, `PgUp scroll` is the last optional hint and is dropped first. Notices and cause details may be shortened to leave space for the connection
 and the first hint. At every supported width (40 columns and above), neither the
-connection nor the first hint is dropped. Below the supported minimum, physical
+connection nor the first hint is dropped, except that the new-output marker
+reserves space ahead of shortcut hints while reading older output. End is also
+listed in the shortcut sheet as the return-to-latest action. Below the supported minimum, physical
 cell limits still apply. Pager overlays and side panes retain the connection with
 whole pager hints (Esc, search, next match), rather than replacing it with controls.
 Both English and Korean labels come from the catalog.
@@ -778,6 +837,8 @@ and limits are recorded in [the shortcut reference](tui-shortcuts-reference.md).
 | Ctrl+W, Ctrl+P, Ctrl+R | Waiting for me, progress, running list |
 | Ctrl+O | Open the selected result |
 | F6 | Open the first unresolved decision |
+| End | Return to the latest conversation output and resume following |
+| Mouse wheel over the conversation | Scroll three rows, accelerated on fast repeats |
 | Ctrl+T | Open the retained conversation transcript in the pager |
 
 Clearing a draft (including attachments) cancels any pending quit confirmation
@@ -807,6 +868,15 @@ The terminal input adapter decodes enhanced keys before dispatch and excludes
 paste and terminal replies from key actions. Cancellation drains pending decoder
 events without dispatching them, joins the input reader, and closes only its own
 cancellation resources before the caller restores terminal mode.
+
+Mouse support is wheel-only in the colour conversation renderer. It enables
+DEC normal mouse reporting (1000) with SGR coordinates (1006), dispatches only
+wheel events and ignores button presses/releases. It never requests cell-motion
+(1002) or all-motion (1003) reporting. Both enabled modes are disabled when the
+renderer exits, including cancellation. Native text selection stays the
+terminal's responsibility: hold Shift while dragging in xterm or GNOME Terminal,
+or Option while dragging in iTerm2. Other terminals may configure their own
+mouse-reporting override. LINA neither selects text nor reads the clipboard.
 
 **Mid-turn input** is steering by default and applies at the next round boundary ([runtime.md](runtime.md#conversation-loop)). `/queue` makes the input a follow-up. `/stop` cancels.
 
@@ -1144,7 +1214,7 @@ removed and requires connection-only startup.
 
 Withdrawn without an id: the hand-off pane, which the agent talk log replaces, and the work-panel worker mirror, which no contract defines.
 
-Open points, each decided by its owner or by measurement: the side-pane width (S11); Korean table rendering (S10); the terminal list of the spike gate; image paste over SSH; how the shared list of slash commands travels (a schema matter); whether a copy by OSC 52 on an explicit key fits the clipboard rule of [surfaces.md](surfaces.md#launcher) and [non-competition.md](non-competition.md), which S5 measures for support; mouse support; locales beyond Korean and English; and non-competition evidence for the TUI on a device-OS install ([non-competition.md](non-competition.md)).
+Open points, each decided by its owner or by measurement: the side-pane width (S11); Korean table rendering (S10); the terminal list of the spike gate; image paste over SSH; how the shared list of slash commands travels (a schema matter); whether a copy by OSC 52 on an explicit key fits the clipboard rule of [surfaces.md](surfaces.md#launcher) and [non-competition.md](non-competition.md), which S5 measures for support; locales beyond Korean and English; and non-competition evidence for the TUI on a device-OS install ([non-competition.md](non-competition.md)).
 
 ### Memory and agent command requests
 

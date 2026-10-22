@@ -127,7 +127,8 @@ func (c *channelRuntime) admitChannelInput(ctx context.Context, shared *conversa
 	shared.mu.Lock()
 	defer shared.mu.Unlock()
 	var body struct {
-		Text string `json:"text"`
+		Text      string `json:"text"`
+		Forwarded bool   `json:"forwarded"`
 	}
 	if json.Unmarshal(event.Body, &body) != nil {
 		return channels.ErrInvalid
@@ -136,14 +137,24 @@ func (c *channelRuntime) admitChannelInput(ctx context.Context, shared *conversa
 	input, err := shared.journal().Get(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		now := time.Now()
-		input, err = shared.journal().Admit(ctx, guard.EntryOwner, ledger.Input{ID: id, ConversationID: binding.Conversation, PersonID: binding.Person, AgentID: binding.Agent, Surface: ledger.Surface{Kind: "channel", Platform: event.Platform, ChatID: event.Chat}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Locator: in.native, Body: body.Text})
+		entry, person := guard.EntryOwner, binding.Person
+		// The authenticated sender can forward someone else's words. Only the
+		// adapter's metadata establishes that route, never the message text.
+		if body.Forwarded {
+			entry, person = guard.EntryForwarded, ""
+		}
+		input, err = shared.journal().Admit(ctx, entry, ledger.Input{ID: id, ConversationID: binding.Conversation, PersonID: person, AgentID: binding.Agent, Surface: ledger.Surface{Kind: "channel", Platform: event.Platform, ChatID: event.Chat}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Locator: in.native, Body: body.Text})
 	}
 	if err != nil {
 		return err
 	}
 	text := input.Body.Text()
-	speaker := protocol.ConversationSpeakerPerson
-	if err = shared.publish(ctx, protocol.KindItemDone, id, protocol.ItemDone{Text: &text, Speaker: &speaker, PersonID: &binding.Person, AgentID: &binding.Agent}); err != nil {
+	speaker := protocol.ConversationSpeaker(input.SpeakerKind)
+	answer := protocol.ItemDone{Text: &text, Speaker: &speaker, AgentID: &input.AgentID}
+	if input.SpeakerKind == guard.Person {
+		answer.PersonID = &input.PersonID
+	}
+	if err = shared.publish(ctx, protocol.KindItemDone, id, answer); err != nil {
 		return err
 	}
 	runner := newConversationView(c.r, binding.Agent, binding.Conversation)

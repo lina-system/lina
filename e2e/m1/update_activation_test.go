@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -150,7 +151,20 @@ func alterUpdateManifest(t *testing.T, bundle string, change func(map[string]any
 	}
 }
 func TestM2UpdateActivation(t *testing.T) {
-	data, err := os.ReadFile("../m2/update-activation.json")
+	t.Parallel()
+
+	testUpdateActivation(t, "../m2/update-activation.json")
+}
+
+func TestM2UpdateDataOperations(t *testing.T) {
+	t.Parallel()
+
+	testUpdateActivation(t, "../m2/update-data-operations.json")
+}
+
+func testUpdateActivation(t *testing.T, scenarioPath string) {
+	t.Helper()
+	data, err := os.ReadFile(scenarioPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,8 +198,23 @@ func TestM2UpdateActivation(t *testing.T) {
 		}
 	})
 	brokenArchive, brokenDigest := packUpdate(t, broken)
-	for _, failure := range scenario.Cases {
-		t.Run(failure, func(t *testing.T) {
+	for _, name := range scenario.Cases {
+		t.Run(name, func(t *testing.T) {
+			var err error // Each parallel data-operation scenario owns its errors.
+			failure, installedBundle := name, bundle
+			if name == "slow-backup" || name == "slow-restore" {
+				// Preserve both 31-second timeout injections without making one
+				// scenario wait for the other. Go's package parallel limit applies.
+				t.Parallel()
+				operation := strings.TrimPrefix(name, "slow-")
+				failure = "success"
+				if operation == "restore" {
+					failure = "before-ready"
+				}
+				installedBundle = makeInstallBundle(t, t.TempDir(), real, node)
+				addUpdateWorker(t, installedBundle)
+				delayUpdateDataOperation(t, installedBundle, real, operation)
+			}
 			smokeReached := make(chan struct{})
 			releaseProvider := make(chan struct{})
 			var calls atomic.Int32
@@ -227,7 +256,7 @@ func TestM2UpdateActivation(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
 			defer cancel()
 			h.ctx = ctx
-			h, start := installConversationBundle(t, h, bundle, provider.URL)
+			h, start := installConversationBundle(t, h, installedBundle, provider.URL)
 			core := start(true)
 			tools, manager, current := updateManager(t, h, start, core)
 			source, sha := archive, digest
@@ -324,4 +353,28 @@ func TestM2UpdateActivation(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Delay only the selected data command beyond the installer's 30-second budget.
+// This is a timeout injection, not a startup/readiness sleep: all operations
+// still execute the real CLI and all readiness checks use protocol receipts.
+func delayUpdateDataOperation(t *testing.T, bundle, real, operation string) {
+	t.Helper()
+	sleep, err := exec.LookPath("sleep")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := []byte(fmt.Sprintf("#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\nif [ \"$1\" = %q ]; then %q 31 || exit 98; fi\nexec %q \"$@\"\n", operation, sleep, real))
+	if err = os.WriteFile(filepath.Join(bundle, "lina"), script, 0700); err != nil {
+		t.Fatal(err)
+	}
+	alterUpdateManifest(t, bundle, func(m map[string]any) {
+		for _, v := range m["binaries"].([]any) {
+			b := v.(map[string]any)
+			if b["name"] == "lina" {
+				b["size"] = len(script)
+				b["sha256"] = fmt.Sprintf("%x", sha256.Sum256(script))
+			}
+		}
+	})
 }

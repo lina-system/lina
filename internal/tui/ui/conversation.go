@@ -27,6 +27,7 @@ type conversationView struct {
 	undo         []state.Draft
 	history      *inputHistory
 	scroll       int
+	viewport     conversationViewport
 	id           string
 	agentMissing bool
 	agentPending bool
@@ -43,18 +44,22 @@ type inputHistory struct {
 }
 
 type textPager struct {
-	transcript bool
-	running    bool
-	selected   int
-	runID      string
-	next       *json.Number
-	open       bool
-	text       string
-	cardID     string
-	followEnd  bool
-	offset     int
-	query      string
-	searching  bool
+	developer, developerBusy bool
+	developerID              string
+	lanes                    state.WorkerLanes
+	laneNext                 *string
+	transcript               bool
+	running                  bool
+	selected                 int
+	runID                    string
+	next                     *json.Number
+	open                     bool
+	text                     string
+	cardID                   string
+	followEnd                bool
+	offset                   int
+	query                    string
+	searching                bool
 }
 
 func newConversationView(styles Styles) conversationView {
@@ -207,10 +212,13 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		}
 		return nil
 	case "pgup":
-		m.conversation.scroll += max(1, m.size.Height/2)
+		m.scrollConversation(max(1, m.size.Height/2))
 		return nil
 	case "pgdown":
-		m.conversation.scroll = max(0, m.conversation.scroll-max(1, m.size.Height/2))
+		m.scrollConversation(-max(1, m.size.Height/2))
+		return nil
+	case "end":
+		m.scrollConversation(-m.conversation.scroll)
 		return nil
 	case "ctrl+t":
 		m.openPager("")
@@ -253,6 +261,11 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		}
 		if !m.mutationsAllowed() {
 			return nil
+		}
+		if handled, command := m.developerCommand(text); handled {
+			m.reduceInput(state.EditDraft{})
+			m.conversation.undo = nil
+			return command
 		}
 		if handled, command := m.talkCommand(text); handled {
 			m.reduceInput(state.EditDraft{})
@@ -536,6 +549,11 @@ func (m *shellModel) refreshOpenCard() {
 
 func (m *shellModel) pagerKey(msg tea.KeyMsg, name string) tea.Cmd {
 	p := &m.conversation.pager
+	if p.developer && !p.searching {
+		if handled, cmd := m.developerKey(name); handled {
+			return cmd
+		}
+	}
 	if p.running && !p.searching {
 		rows := m.topicBlocks("running")
 		if len(rows) > 0 {
@@ -660,8 +678,14 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 	}
 	name := m.conversationName()
 	rows[plan.Header.Y] = clip(m.styles.Title.Render(name))
-	var transcript []render.StyledRow
-	mutedRows := make(map[int]bool)
+	type transcriptRow struct {
+		body   render.StyledRow
+		prefix string
+		person bool
+		muted  bool
+	}
+	var transcript []transcriptRow
+	var anchors []conversationAnchor
 	plainRow := func(text string) render.StyledRow { return render.StyledRow{Spans: []render.Span{{Text: text}}} }
 	if !m.hasCapability("conversation") {
 		code := "account.empty"
@@ -677,40 +701,117 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 				break
 			}
 		}
-		transcript = append(transcript, plainRow(design.Text(m.styles.options.Language, code)+"  /accounts"))
+		transcript = append(transcript, transcriptRow{body: plainRow(design.Text(m.styles.options.Language, code) + "  /accounts")})
 	}
+	hasItems := false
 	for _, b := range m.content.Blocks {
 		if !conversationBlock(b) {
 			continue
 		}
+		hasItems = true
 		cached := m.blocks[b.ID]
 		if cached.stream == nil {
 			continue
 		}
-		if speaker := m.speakerName(b); speaker != "" {
-			transcript = append(transcript, plainRow(speaker))
+		person := b.Local || b.Speaker == protocol.ConversationSpeakerPerson
+		prefix := ""
+		if person || b.Speaker == protocol.ConversationSpeakerAgent || b.Kind == protocol.KindOutputDelta {
+			prefix = m.styles.speakerPrefix(person, name, plan.Conversation.Width)
 		}
+		indent := strings.Repeat(" ", (render.Unicode{}).Width(prefix))
+		body := cached.stream.Markdown(render.Config{Width: plan.Conversation.Width - len(indent), Theme: m.styles.options.Theme}, m.styles.listBullet(), parseMarkdown)
+		// Paragraph spacing belongs inside a message; boundaries get exactly one
+		// section gap even if the provider ended a message with empty lines.
+		blank := func(row render.StyledRow) bool {
+			for _, span := range row.Spans {
+				if span.Style.Code || strings.TrimSpace(span.Text) != "" {
+					return false
+				}
+			}
+			return true
+		}
+		for len(body) > 0 && blank(body[0]) {
+			body = body[1:]
+		}
+		for len(body) > 0 && blank(body[len(body)-1]) {
+			body = body[:len(body)-1]
+		}
+		// Markdown owns these rows. Appending presentation metadata to a
+		// shortened slice must not overwrite the cache's trimmed boundary rows.
+		body = slices.Clone(body)
 		if b.Kind == protocol.KindResult && !b.InlineReply {
-			transcript = append(transcript, plainRow(design.Text(m.styles.options.Language, "result")+"  "+sanitize.Display(b.Title)+"  Ctrl+O"))
+			body = append([]render.StyledRow{plainRow(design.Text(m.styles.options.Language, "result") + "  " + sanitize.Display(b.Title) + "  Ctrl+O")}, body...)
 		}
-		transcript = append(transcript, cached.stream.Markdown(render.Config{Width: plan.Conversation.Width, Theme: m.styles.options.Theme}, m.styles.listBullet(), parseMarkdown)...)
+		workedRow := -1
 		if elapsed, ok := m.content.Worked[b.ID]; ok {
-			mutedRows[len(transcript)] = true
-			transcript = append(transcript, plainRow(fmt.Sprintf(design.Text(m.styles.options.Language, "activity.worked_for"), formatElapsed(elapsed))))
+			workedRow = len(body)
+			body = append(body, plainRow(fmt.Sprintf(design.Text(m.styles.options.Language, "activity.worked_for"), formatElapsed(elapsed))))
 		}
 		if b.InlineReply {
-			transcript = append(transcript, plainRow(design.Text(m.styles.options.Language, "reply.open_pager")))
+			body = append(body, plainRow(design.Text(m.styles.options.Language, "reply.open_pager")))
+		}
+		if len(body) == 0 {
+			continue
+		}
+		// The account placeholder has no retained conversation identity.
+		for len(anchors) < len(transcript) {
+			anchors = append(anchors, conversationAnchor{})
+		}
+		if len(transcript) > 0 {
+			transcript = append(transcript, make([]transcriptRow, m.styles.tokens.SpaceSection.Cells)...)
+			// Anchor separator rows to the following block without shifting
+			// its body row identities when older messages are inserted above it.
+			for row := -m.styles.tokens.SpaceSection.Cells; row < 0; row++ {
+				anchors = append(anchors, conversationAnchor{block: b.ID, row: row})
+			}
+		}
+		blockStart := len(transcript)
+		for i, row := range body {
+			lead := indent
+			if i == 0 {
+				lead = prefix
+			}
+			if i == workedRow {
+				lead = ""
+			}
+			transcript = append(transcript, transcriptRow{body: row, prefix: lead, person: person, muted: i == workedRow})
+		}
+		for row := 0; row < len(transcript)-blockStart; row++ {
+			anchors = append(anchors, conversationAnchor{block: b.ID, row: row})
 		}
 	}
-	m.conversation.scroll = min(m.conversation.scroll, max(0, len(transcript)-plan.Conversation.Height))
-	start := max(0, len(transcript)-plan.Conversation.Height-m.conversation.scroll)
+	// Starter hints are local presentation, never reducer blocks or Core items.
+	// Wait for history so reconnecting to an existing conversation cannot flash
+	// a first-run screen. Account setup can show hints before chat is negotiated.
+	_, historyKnown := m.content.Topics["conversation:"+m.conversation.id]
+	if !hasItems && !m.conversation.agentMissing && !m.conversation.agentPending && (historyKnown || !m.hasCapability("conversation")) {
+		status := m.styles.presentation(m.status)
+		rows[plan.Header.Y] = clip(m.styles.wordmark() + "  " + m.styles.Title.Render(name) + "  " + m.styles.Text.Render(status.Label))
+		var hints []transcriptRow
+		for _, id := range []string{"conversation.start.memory", "conversation.start.voice", "conversation.start.task"} {
+			hints = append(hints, transcriptRow{body: plainRow(design.Text(m.styles.options.Language, id)), muted: true})
+		}
+		transcript = append(hints, transcript...)
+	}
+	start := m.conversationStart(anchors, len(transcript), plan.Conversation.Height)
+	m.conversation.viewport.overflow = len(transcript) > plan.Conversation.Height
+	rows[plan.Status.Y] = m.conversationFooter(showNotice)
 	for y, line := range transcript[start:] {
 		if y >= plan.Conversation.Height {
 			break
 		}
-		rows[plan.Conversation.Y+y] = clip(m.styles.markdownRow(line))
-		if mutedRows[start+y] {
-			rows[plan.Conversation.Y+y] = m.styles.Muted.Render(render.Truncate(line.Spans[0].Text, plan.Conversation.Width, render.Unicode{}))
+		styles := m.styles
+		if line.person {
+			styles.Text = styles.Muted
+		}
+		prefix := ""
+		if line.prefix != "" {
+			prefix = m.styles.Accent.Render(line.prefix)
+		}
+		rows[plan.Conversation.Y+y] = clip(prefix + styles.markdownRow(line.body))
+		if line.muted {
+			width := plan.Conversation.Width - (render.Unicode{}).Width(line.prefix)
+			rows[plan.Conversation.Y+y] = clip(prefix + m.styles.Muted.Render(render.Truncate(line.body.Spans[0].Text, width, render.Unicode{})))
 		}
 	}
 	drawTopic := func(topic string, region layout.Rect) {

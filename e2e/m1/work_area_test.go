@@ -23,12 +23,15 @@ import (
 )
 
 func TestM2WorkArea(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile("../m2/work-area.json")
 	if err != nil {
 		t.Fatal(err)
 	}
 	var scenario struct {
 		TaskID              string `json:"task_id"`
+		PeerTaskID          string `json:"peer_task_id"`
 		Title, Done, Output string
 		Tools               []string
 	}
@@ -55,6 +58,7 @@ func TestM2WorkArea(t *testing.T) {
 	git(source, "add", ".")
 	git(source, "commit", "-m", "base")
 	base := git(source, "rev-parse", "HEAD")
+	var peerBase string
 	branch := "task/" + scenario.TaskID
 	workspace := make(chan work.Workspace, 1)
 	results := make(chan []work.Material, 2)
@@ -84,7 +88,10 @@ func TestM2WorkArea(t *testing.T) {
 		case 1:
 			emitPersonaCall(w, "prepare", "prepare_work", map[string]any{"task_id": scenario.TaskID, "title": scenario.Title, "done": scenario.Done, "workspace": work.WorkspaceSpec{RepositoryID: "fixture", Source: source, Base: base, Branch: branch}, "requires_apply": true})
 			return
-		case 3, 5:
+		case 3:
+			emitPersonaCall(w, "prepare-peer", "prepare_work", map[string]any{"task_id": scenario.PeerTaskID, "title": "Independent task", "done": "Keep each task branch intact", "workspace": work.WorkspaceSpec{RepositoryID: "fixture", Source: source, Base: peerBase, Branch: "task/" + scenario.PeerTaskID}, "requires_apply": true})
+			return
+		case 5, 7:
 			emitPersonaCall(w, fmt.Sprint("retain-", count), "retain_work_result", map[string]any{"task_id": scenario.TaskID, "receipt_id": receiptID, "head": head})
 			return
 		}
@@ -97,7 +104,7 @@ func TestM2WorkArea(t *testing.T) {
 		_ = json.Unmarshal([]byte(item.Output), &result)
 		if result.Code != "ok" {
 			t.Errorf("work tool: %s", item.Output)
-		} else if count == 2 {
+		} else if count == 2 || count == 4 {
 			var allocated work.Workspace
 			_ = json.Unmarshal(result.Output, &allocated)
 			workspace <- allocated
@@ -143,6 +150,50 @@ func TestM2WorkArea(t *testing.T) {
 		t.Fatalf("fixture worker: %v %s", e, b)
 	}
 	head = git(allocated.Path, "rev-parse", "HEAD")
+	// A later Core allocation shares the clone but pins a newly fetched source
+	// commit. The worker's existing branch and files must survive it unchanged.
+	git(source, "commit", "--allow-empty", "-m", "new base")
+	peerBase = git(source, "rev-parse", "HEAD")
+	admittedTurn(t, h, c, conversation, "prepare-peer-area", "Prepare the independent task workspace.")
+	var peer work.Workspace
+	select {
+	case peer = <-workspace:
+	default:
+		t.Fatal("no peer allocation")
+	}
+	if git(peer.Path, "rev-parse", "HEAD") != peerBase || git(allocated.Path, "rev-parse", "HEAD") != head {
+		t.Fatal("Core changed an existing task or did not pin the new base")
+	}
+	// The peer owns its name before creating its branch. A worker must not
+	// steal that reservation by renaming its own completed result into it.
+	for _, flag := range []string{"-m", "-M"} {
+		rejected := exec.Command("git", "branch", flag, branch, peer.Spec.Branch)
+		rejected.Dir = allocated.Path
+		rejected.Env = []string{"PATH=" + os.Getenv("PATH"), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null"}
+		if b, e := rejected.CombinedOutput(); e == nil || !strings.Contains(string(b), "LINA protected ref") {
+			t.Fatalf("worker renamed result into peer's reserved branch: %v %s", e, b)
+		}
+		if git(allocated.Path, "symbolic-ref", "HEAD") != "refs/heads/"+branch || git(allocated.Path, "rev-parse", "HEAD") != head {
+			t.Fatal("rejected rename stranded the original result")
+		}
+	}
+	git(peer.Path, "switch", "-c", peer.Spec.Branch)
+	git(peer.Path, "commit", "--allow-empty", "-m", "peer result")
+	peerHead := git(peer.Path, "rev-parse", "HEAD")
+	for _, args := range [][]string{
+		{"update-ref", "refs/heads/" + branch, peerHead},
+		{"update-ref", "-d", "refs/heads/" + branch},
+	} {
+		rejected := exec.Command("git", args...)
+		rejected.Dir = peer.Path
+		if b, e := rejected.CombinedOutput(); e == nil || !strings.Contains(string(b), "LINA protected ref") {
+			t.Fatalf("peer changed task branch: %v %s", e, b)
+		}
+		if git(allocated.Path, "rev-parse", "HEAD") != head {
+			t.Fatal("peer moved the retained result head")
+		}
+	}
+	git(peer.Path, "commit", "--allow-empty", "-m", "peer continues")
 	rejected := exec.Command("git", "update-ref", "refs/heads/main", head)
 	rejected.Dir = allocated.Path
 	if b, e := rejected.CombinedOutput(); e == nil {

@@ -356,7 +356,7 @@ acceptance alone does not grant a capability.
 | `history` | `conversation_id`, `agent_id`, and optional `snapshot`. The installed implementation discovers the concrete conversation; its subscription delivers the authoritative window. |
 | `input` | Nonempty `conversation_id`, `input_id`, `text` (at most 16,384 Unicode characters), and optional `mode` (`steer` or `queue`). Missing mode means steering when a turn is active and a new turn otherwise. Queue starts a follow-up through the same conversation lane. |
 | `interrupt` | Nonempty `conversation_id`; cancels the active turn with the person's typed cause. It does not terminate Core, close the client or cancel unrelated work. |
-| `item_done` | Existing `text` and stream metadata, with optional `echo_key`, `speaker` (`person`, `agent`, `system`), `agent_id`, and `person_id`. `echo_key` is the admitted input id, allowing replacement of one local echo. |
+| `item_done` | Existing `text` and stream metadata, with optional `echo_key`, `speaker` (`person`, `agent`, `system`, `forwarded`), `agent_id`, and `person_id`. Forwarded channel content keeps its speaker kind and carries no person id, both live and in restored history. `echo_key` is the admitted input id, allowing replacement of one local echo. |
 | `output_delta` | Existing text delta and stream metadata, with optional `agent_id`. The same topic/key becomes the completed item. |
 | `turn_state` | Existing stream metadata and optional `active` boolean plus `agent_id`. Optional `phase` is `waiting_model`, `streaming`, `tool` or `stopping`; optional `tool_name` is a trusted display name from the tool registry's display catalog. Clients do not parse activity from display text. |
 | `tool_activity` | Core-to-client display event with optional `stream` and `agent_id`, required string `call_id`, required string `tool_name` (the registry's display catalog label), and required `status` (`started` or `finished`). `finished` requires `outcome` (`ok` or `failed`) and a nonnegative numeric `duration_ms`; `started` forbids both. No arguments or output are fields of this event. |
@@ -525,3 +525,21 @@ person, requesting agent, exact displayed arguments and revision. An
 `approval_answer` uses the existing authenticated owner decision path; it cannot
 supply a worker thread or change its arguments. Older approval producers omit
 this optional field. Worker questions use the existing `question.conversation_id`.
+
+### Developer worker lanes
+
+The optional `worker_lanes` capability (1.0) grants the read-only `progress_get`
+request and its `progress` response. An absent `after` starts at the first task;
+otherwise it is an opaque source/id cursor. `lanes` is a page of at most 32 current
+worker executions, with `next_cursor` when another visible row exists. Durable
+work rows are followed by installed Codex runtime sessions, whose adapter
+snapshots preserve active, idle, waiting, dead and unknown states without
+claiming verified delivery. Runtime detail contains masked worker output and
+version; the entire runtime-page snapshot attempt has a five-second deadline,
+and unavailable snapshots remain visible as unknown. Generated
+`WorkerLane` fields carry persona, task and execution identities, display names,
+state and source-labeled stage details. Core authorizes the connected person and
+filters deleted personas and foreign-person records before pagination. Each page
+is one canon snapshot; a refresh starts a new snapshot. This request adds no
+subscription or execution authority and does not change the existing `progress`
+status-topic capability. The TUI retains fold/selection state locally by lane id.
