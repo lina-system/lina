@@ -18,6 +18,7 @@ import (
 	memoryexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/internal/core/memory"
 	"github.com/thisisjun786/lina/internal/design"
+	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -191,13 +192,13 @@ func correctionMemoryTUI(t *testing.T, h *harness) (func(string) protocol.Memory
 	tap := newAccountTap(t, h, socket, true)
 	h.socket = tap.socket
 	terminal := h.startScreenTUI("TERM=xterm-256color")
-	waitScreen(t, h, terminal, "Ctrl+D")
+	waitComposerReady(t, h, terminal)
 	opened := false
 	command := func(text string) protocol.MemoryResult {
 		t.Helper()
 		if opened {
 			h.keys(terminal, "\x1b")
-			waitScreen(t, h, terminal, "Ctrl+D")
+			waitComposerReady(t, h, terminal)
 		}
 		h.keys(terminal, text+"\r")
 		for {
@@ -210,7 +211,15 @@ func correctionMemoryTUI(t *testing.T, h *harness) (func(string) protocol.Memory
 				if result.ItemID != nil {
 					marker += " " + *result.ItemID
 				}
-				waitScreen(t, h, terminal, marker)
+				// A returned item id can already appear in the command draft.
+				// Wait for the result pager as well as its text before sending Esc.
+				view, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
+					rows := screenRows(s)
+					return s.CursorHidden && len(rows) > 0 && strings.HasPrefix(rows[len(rows)-1], "Esc") && strings.Contains(screenText(s), marker)
+				})
+				if err != nil {
+					t.Fatalf("memory result pager missing: %v\n%s", err, screenText(view))
+				}
 				opened = true
 				return result
 			}

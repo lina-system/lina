@@ -261,10 +261,15 @@ conversation protocol, turn execution or persistence.
 
 Real-model QA uses this Core configuration boundary and the Responses adapter
 with `LINA_QA_REAL_MODEL=1`; the [headless harness](../../e2e/README.md#real-model-mode)
-documents the opt-in environment and evidence. The fixture and real modes share
-the same streaming and temporary probe-record assertions. A client-level streamed,
-persisted conversation remains skipped until the turn loop and conversation
-surface are wired by #55 and #108; a provider probe is not evidence of that journey.
+documents the opt-in environment and evidence. The Core-side probe checks the
+provider stream and a temporary probe record. The separate headless conversation
+journey runs installed Core with the same explicit route and checks a client's
+durable input acknowledgement, live deltas, completed reply and turn completion.
+Restarting Core must restore the same canon conversation and item identities,
+order and text. A loopback fixture runs these assertions in CI and holds completion
+until the client observes a delta. The real journey skips only when opt-in or the
+API key is absent; configured failures fail acceptance. A provider probe alone
+does not establish this client-level journey.
 
 - `store` is `false` and `stream` is `true`. Every request carries the full input it needs.
 - The adapter sends only fields that the Sign in with ChatGPT request surface accepts. `input` is an array. Instructions go in `instructions` or in developer-role items, never in system-role items. The fields that surface lists as unsupported (among them output limits, sampling parameters, truncation, `user`, `metadata` and `previous_response_id`) are never sent. Function and custom tools are declared in the form that surface requires. A field the surface does not document enters the request field list only after V1 shows it is accepted.
@@ -384,6 +389,17 @@ Claude is the person's Claude subscription, used through the Claude Agent SDK. T
 - The product names it "Claude" or "Claude Agent", never "Claude Code" or in that tool's styling.
 - Quota comes from the rate-limit events the runtime emits (window, utilization, reset) and from the SDK's usage report where it returns one for the token the adapter holds. The cost the runtime reports is an estimate.
 - A Claude API-key account can stand in for the token without any change to this contract.
+
+The #167 adapter is in [adapters/claude](../../adapters/claude/README.md), pinned
+to SDK 0.3.308 with a separate npm lockfile. Node 24.20.0 runs its TypeScript
+without a bundled compiler or runtime. Explicit Core route configuration uses
+absolute Node/program paths and an exact model; ambiguous provider configuration
+is refused. Each request owns its child and its lease until the child is joined.
+The stub acceptance covers tool/result correlation, init rejection, cancellation,
+missing versus reported usage, and a persisted reply through installed Core.
+This is not live V4 entitlement evidence; account installation and idle pooling
+remain #168. Source releases carry only the LINA program and lockfile, and binary
+release assembly retains its explicit file allowlist without the SDK.
 
 ### Grok
 

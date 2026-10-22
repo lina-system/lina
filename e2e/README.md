@@ -99,6 +99,8 @@ composition is used in that companion.
   product processes receive no inherited account, provider, display or user
   configuration environment. All fixtures are synthetic.
 - Readiness comes from socket connections and protocol/terminal observations.
+  Composer scenarios wait for both the composer controls and Connected status;
+  controls alone can appear while initial conversation discovery is pending.
   Socket startup retries are bounded; there are no fixed sleeps. A recovering
   Core may explicitly refuse an input probe as `unavailable`; only that refusal
   allows a fresh probe. Malformed frames, wrong identities or correlations, and
@@ -155,20 +157,31 @@ test removes its state on completion, including failure.
 
 Real tests skip when the opt-in switch or key is absent, including credential-free
 CI and foundation. With both present, invalid configuration, an unavailable
-endpoint or a broken stream fails the provider journey. Ordinary fixture tests
-still run. Builds and ordinary product subprocesses retain their isolated
-environment; credentials stay in the explicitly opted-in Core-side probe.
+endpoint or a broken stream fails the journey. Ordinary fixture tests still run.
+Builds and ordinary product subprocesses retain their isolated environment;
+only the opted-in probe and the headless journey's Core receive the explicit
+provider configuration.
 
-`TestRealModelHeadlessConversation` is the pending client journey. With real mode
-enabled it starts actual Core in temporary state, performs the client handshake,
-verifies the current input refusal and shuts Core down, then reports **SKIP**.
-Core currently grants no conversation capability and its payload fields are
-reserved. #55 and #108 must wire conversation input, streaming and canon
-persistence before this test can assert the full TUI/headless journey. At that
-point it must replace the refusal/skip with those assertions and pass the same
-explicit provider configuration to Core. A successful provider probe does not
-establish a client-level streamed or persisted turn. This PR adds no turn loop,
-conversation schema, or CLI conversation route.
+`TestRealModelHeadlessConversation` installs the built binaries in private
+temporary state and starts actual Core with the configured route. A typed
+headless client negotiates conversation over Core's Unix socket, discovers and
+subscribes to the conversation, and sends one synthetic greeting request. It
+requires durable input acknowledgement, nonempty live deltas, completed assistant
+items replacing the streamed identities, and an inactive turn. It then stops and
+restarts Core and compares restored canon history with the live input and reply,
+including text, order and item identities, under the same conversation id and a
+new Core epoch. Output reports only counts and outcomes, never configuration or
+reply text. The model call and restart have a two-minute deadline; cleanup
+removes the installation, canon and child processes, including on failure.
+
+`TestHeadlessConversationFixture` runs that same client journey without external
+credentials. Its loopback Responses server waits for the client to receive the
+first delta before completing the reply, proving streaming without timing sleeps.
+Exactly one provider request across restart rules out replay.
+`TestRealModelOptIn` checks that either missing opt-in or missing key skips before
+configuration or model work. The real journey also reports **SKIP** in ordinary
+credential-free CI; a successful provider probe alone remains insufficient
+evidence of a client-level persisted turn.
 
 `m1/tui-memory-agents.json` covers management commands in the installed Core and
 real TUI. A loopback Responses fixture detects command leakage, verifies memory
@@ -189,6 +202,12 @@ replay count is consumed by the Bubble Tea recording-writer test.
 `m1/tui-approvals-installed.json` uses the installed Core and TUI binaries, seeded
 synthetic producer data, socket discovery/decisions, and a separate-key PTY approval.
 These scenarios create no second product decision store and use no timing sleeps.
+
+`m2/claude-adapter.json` starts installed Core with the external TypeScript adapter
+and a test-only vendor runtime. The runtime calls Core's real `skill_index` tool,
+checks its receipt, streams an assistant result, and the scenario reopens Core
+to verify durable history. It uses Node but no SDK installation, external service
+or personal credential; the SDK boundary has its own npm suite.
 
 `m1/conformance-agents.json` runs every shared `application/agents/` fixture
 against installed Core over its public socket. It checks refusals for missing

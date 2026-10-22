@@ -66,8 +66,8 @@ func TestM1ProviderFailureHistory(t *testing.T) {
 			h, start := installedConversationHarness(t, server.URL)
 			core := start(true)
 			client, conversation := conversationClient(t, h)
-			terminal := h.startTerminalSize([]string{"TERM=xterm-256color"}, false, true, 120, 60)
-			waitScreen(t, h, terminal, "Ctrl+D")
+			terminal, _ := h.startConversationTUI(120, 60, "TERM=xterm-256color")
+			waitComposerReady(t, h, terminal)
 			h.keys(terminal, input+"\r")
 			var notice, noticeKey, partialKey string
 			for {
