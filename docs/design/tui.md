@@ -106,7 +106,7 @@ snapshot restore the subscribed view in Core's history order. A durable stopped
 outcome stays with its interrupted turn before later inputs and replies, including
 after reconnect and terminal resize.
 
-Initial conversation discovery also stays Resyncing until History supplies the
+Initial conversation discovery stays Connecting until History supplies the
 destination. The connected conversation state is a usable input boundary, not
 just a successful socket handshake. Input typed during discovery remains a
 draft; discovery never sends it automatically.
