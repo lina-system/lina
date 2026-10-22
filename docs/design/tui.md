@@ -753,6 +753,8 @@ and limits are recorded in [the shortcut reference](tui-shortcuts-reference.md).
 | --- | --- |
 | Enter | Send the draft |
 | Shift+Enter (when distinguished by the terminal), Alt+Enter, Ctrl+J | Newline (Ctrl+J because Alt may not reach the application) |
+| Up on the first composer line | Recall an older sent input; otherwise move the cursor up |
+| Down on the last composer line | Recall a newer input, then restore the unsent draft; otherwise move the cursor down |
 | Esc | Close the top overlay; with none, interrupt the turn |
 | Ctrl+C | Clear the draft; with an empty draft, quit the TUI only, never Core |
 | Tab, Shift+Tab | Move focus |
@@ -805,6 +807,24 @@ or input request. Discovery does not send it automatically; a fresh Enter sends
 the retained draft to the discovered conversation. Management commands remain
 available during discovery.
 Resizing preserves the draft and its cursor without submitting it.
+
+Input recall is session display state in memory, derived newest first from the
+current conversation's accepted person inputs. Pending local echoes, other
+conversations, agent output and masked fields (including channel tokens and
+sign-in callbacks) never enter it. Up/Down use visual line boundaries, including
+soft wrapping. Browsing preserves the unsent draft's text, attachments and cursor;
+Down past the newest entry restores them. Editing a recalled input starts a new
+draft, and sending or clearing resets navigation. Recall issues no request.
+Snapshot replacement and focus changes invalidate removed recall identities and
+restore the unsent draft. A new TUI derives history from Core's current snapshot,
+but restores no unsent draft from disk (T-01).
+
+`e2e/m1/tui-input-history.json` sends two inputs through an installed Core and
+fixture provider in a 100x34 PTY, checks recall and draft restoration on parsed
+composer cells, excludes a masked channel-token form, and checks multiline
+cursor movement and history in a fresh TUI. The behaviour reference and its
+limits are recorded in
+[`INPUT-HISTORY-REFERENCE.md`](../../internal/tui/ui/INPUT-HISTORY-REFERENCE.md).
 
 Explicitly decoded Shift+Enter is an Edit key even before a capability reply;
 its releases are ignored and repeats insert newlines through the same key gate.
