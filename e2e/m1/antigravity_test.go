@@ -18,6 +18,8 @@ import (
 )
 
 func TestM3AntigravityThroughInstalledCore(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile("../m3/antigravity.json")
 	if err != nil {
 		t.Fatal(err)

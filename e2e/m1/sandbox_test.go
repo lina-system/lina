@@ -27,6 +27,8 @@ import (
 // Production boot composition over installed state and the installed TUI must
 // complete a conversation even when the explicitly selected launcher fails.
 func TestM1SandboxUnavailable(t *testing.T) {
+	t.Parallel()
+
 	data, err := os.ReadFile("sandbox.json")
 	if err != nil {
 		t.Fatal(err)
@@ -175,6 +177,7 @@ func TestM1SandboxUnavailable(t *testing.T) {
 	}
 }
 
+// Serial: this scenario changes the test process PATH.
 func TestM1SandboxEmptyPATH(t *testing.T) {
 	h := newHarness(t, buildLina(t))
 	dir := filepath.Join(h.root, "system/core")

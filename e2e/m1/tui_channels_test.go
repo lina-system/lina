@@ -34,9 +34,13 @@ import (
 )
 
 func TestM1TUIChannelsInstalledCore(t *testing.T) {
+	t.Parallel()
+
 	testTUIControlInstalledCore(t, "tui-channels.json", protocol.KindChannelResult)
 }
 func TestM1TUITalkLogInstalledCore(t *testing.T) {
+	t.Parallel()
+
 	testTUIControlInstalledCore(t, "tui-talk-log.json", protocol.KindAgentTalk)
 }
 func testTUIControlInstalledCore(t *testing.T, path string, kind protocol.Kind) {
@@ -139,6 +143,8 @@ func testTUIControlInstalledCore(t *testing.T, path string, kind protocol.Kind) 
 // The installed TUI talks to the actual boot composition. Only Telegram's HTTP
 // transport is scripted; connection, pairing, binding and secret writes are real.
 func TestM1TUIChannelPairing(t *testing.T) {
+	t.Parallel()
+
 	var scenario struct{ Command, Token string }
 	data, err := os.ReadFile("tui-channels.json")
 	if err != nil {

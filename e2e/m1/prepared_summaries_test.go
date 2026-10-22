@@ -25,6 +25,8 @@ import (
 // #34's harness runs the real worker binary against Core's Unix job protocol.
 // The model is synthetic; all admission, preparation, Apply and fitting are real.
 func TestM1PreparedSummaries(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile("prepared-summaries.json")
 	if err != nil {
 		t.Fatal(err)

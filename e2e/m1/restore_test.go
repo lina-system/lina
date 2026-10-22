@@ -40,6 +40,8 @@ func readRestoreScenario(t *testing.T) restoreScenario {
 }
 
 func TestRestoreCommandBoundaries(t *testing.T) {
+	t.Parallel()
+
 	scenario := readRestoreScenario(t)
 	binary := buildLina(t)
 	h := newHarness(t, binary)
@@ -70,6 +72,8 @@ func TestRestoreCommandBoundaries(t *testing.T) {
 }
 
 func TestM1RestoreInstalledConversation(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS != "linux" {
 		t.Skip("Linux installation")
 	}

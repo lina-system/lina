@@ -834,8 +834,26 @@ and derives record revisions from their history; it never adopts an outside
 commit as a new Core publication.
 
 `query_records` searches or lists the authenticated person's records, optionally
-filtering kind, with deterministic id ordering and a bounded page. Person and
-filesystem paths are not model arguments. A changed, added, deleted, invalid or
+filtering kind, with deterministic id ordering and a bounded page.
+Title/note searches containing an adjacent pair of composed Hangul syllables
+use literal substring matching, so `연필` finds `연필을` and `등대` finds `등대는`.
+As in conversation and memory search, this also matches inside compounds such
+as `연필통`; it is not morphological analysis or a dictionary of particles.
+Three or more characters use a separate FTS5 trigram index, and a two-syllable
+query uses distinct adjacent Hangul pairs. Pairs never bridge title/note,
+spaces, punctuation or another script. Quotes and operator words remain part
+of the literal Korean phrase. Other queries retain the existing word-token
+FTS search, including one-character and short Latin queries. Empty searches
+still list records. Person/kind/cursor filters apply before the page limit,
+and multiple occurrences return one row per record.
+
+An appended migration backfills both Korean indexes from the existing text
+projection and records their tokenizer/fallback in `search_index_config`.
+Projection replacement updates these indexes in the same transaction; rebuild
+derives them again from validated published files. Neither migration nor
+rebuild changes the record's id, bytes or saved revision.
+
+Person and filesystem paths are not model arguments. A changed, added, deleted, invalid or
 non-regular file, or a changed repository head, refuses reads, queries, writes
 and rebuild with `records_changed`. Tool results show a bounded list of change
 kinds and validation outcomes without outside bytes or filesystem paths. Startup
@@ -1219,7 +1237,7 @@ type Adapter interface {
 ```
 
 - The common event kinds are progress, usage, finish, question, approval and work-tool call. Each event has one matching payload and a thread identity; malformed combinations are rejected. A finish distinguishes done, interrupted and typed failures (quota, rate limit, login expiry, connection and worker errors). Done ends a turn and is not a delivery verdict. Thread controls carry the turn id, process generation and binding epoch for reconciliation.
-- Adapters: Codex over `codex app-server` on stdio (Go types generated for each verified version; exhaustive switches). Claude Code and Antigravity as headless children with streaming output. Devin through its session API, read about every 10 seconds only while a task is in flight.
+- Adapters: Codex over `codex app-server` on stdio (Go types generated for each verified version; exhaustive switches). Claude Code, Antigravity and Cursor (`cursor-agent`) as headless children with streaming output. Cursor uses `stream-json`, process exit plus a final stream event, and session resume by chat id; these are to be confirmed against the installed version in [#210](https://github.com/thisisjun786/lina/issues/210).
 - #132 connects session start, input, interrupt and snapshot to Core's normal conversation tool registry. Launch receipts record the installed version and control handle; version and terminal-output notices survive in conversation history. The per-session process belongs to Core, and hard activity is held per active turn. Session completion is not task delivery; full work dispatch, recovery, approvals and dynamic work tools remain their separate roadmap steps.
 - Workers run with the user's own setup and get no LINA sandbox, credential, hook or skill ([work-and-delegation.md](work-and-delegation.md#workers)). Approvals go to the originating conversation. A worker on another device is started and relayed by that device's Node.
 - A process group kill is the stop. A cut turn's effects are unknown until `Snapshot` and a read of GitHub settle them.

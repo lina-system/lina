@@ -81,6 +81,8 @@ func (w *signInWires) RoundTrip(r *http.Request) (*http.Response, error) {
 // cleanup. Production sign-in and accounts run behind the real client listener;
 // only the remote issuer is replaced by synthetic signed recorded wires.
 func TestM1ChatGPTSignInOwnerBinding(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile("chatgpt-signin.json")
 	if err != nil {
 		t.Fatal(err)
