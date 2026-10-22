@@ -1,0 +1,8 @@
+{
+  "title": "Concurrent editing probe",
+  "initial": "The original synthetic note.",
+  "human_edit": "The person's newer edit must survive.",
+  "stale_edit": "This stale automated edit must be refused.",
+  "outside": "Synthetic out-of-scope canary.",
+  "refusal": "denied"
+}

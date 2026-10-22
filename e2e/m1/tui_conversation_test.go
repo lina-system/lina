@@ -162,14 +162,21 @@ func screenText(snapshot tuiterm.Snapshot) string {
 func waitScreen(t *testing.T, h *harness, terminal *terminal, text string) tuiterm.Snapshot {
 	t.Helper()
 	snapshot, err := terminal.screen.Wait(h.ctx, func(snapshot tuiterm.Snapshot) bool {
-		content := screenText(snapshot)
-		// Callers use the composer hints as an input-readiness barrier. Those
-		// hints also render while initial history is still being discovered.
-		if (text == "Ctrl+D" || text == design.Text(design.English, "live")) &&
-			(!snapshot.AltScreen || !strings.Contains(content, design.Text(design.English, "live")+"  ")) {
-			return false
+		cells := screenText(snapshot)
+		if text == "Ctrl+D" {
+			// Callers use this as a composer/overlay barrier. Notices can crowd
+			// the key hint off the status row; readiness is the live composer
+			// and its hardware cursor, not whether optional hints fit.
+			return snapshot.AltScreen && !snapshot.CursorHidden && strings.Contains(cells, design.Text(design.English, "live"))
 		}
-		return strings.Contains(content, text)
+		// Startup waits must observe the usable conversation, not the connection
+		// screen or composer chrome drawn while History is still being fetched.
+		if text == design.Text(design.English, "live") {
+			if !snapshot.AltScreen || !strings.Contains(cells, design.Text(design.English, "live")) {
+				return false
+			}
+		}
+		return strings.Contains(cells, text)
 	})
 	if err != nil {
 		select {
