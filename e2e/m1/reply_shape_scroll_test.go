@@ -44,7 +44,7 @@ func replyRowsPainted(rows, lines []string, input string) bool {
 	if firstLine < 0 {
 		return false
 	}
-	if firstLine == 0 {
+	if firstLine == 0 && firstRow > 0 {
 		if !strings.Contains(strings.Join(rows[:firstRow], "\n"), input) {
 			return false
 		}
@@ -90,6 +90,10 @@ func TestReplyShapeScrollRejectsPartialPaint(t *testing.T) {
 	}
 	if replyPageReady([]string{"reply 2", "reply 3"}, []string{"reply 5", "reply 6"}, lines, "request") {
 		t.Fatal("page without overlap accepted")
+	}
+	// The first reply line can reach the viewport before the preceding input.
+	if !replyPageReady([]string{"reply 1", "reply 2", "reply 3", "reply 4"}, complete, lines, "request") {
+		t.Fatal("complete page with the input still above the viewport not accepted")
 	}
 	first := []string{"request", "", "reply 1", "reply 2"}
 	if !replyPageReady(first, complete, lines, "request") {
