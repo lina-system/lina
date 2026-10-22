@@ -3,6 +3,7 @@ package retract
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"slices"
@@ -14,7 +15,74 @@ import (
 // serving reads. Conversation-content deletion and source registry lifecycle
 // have their own owners; this coordinator accepts memory targets.
 func Open(ctx context.Context, cfg Config) (*Store, error) {
-	return openStore(ctx, cfg, projection{resolve: resolveMemory, apply: applyMemory})
+	return openStore(ctx, cfg, projection{resolve: resolveMemory, expand: expandMemory, apply: applyMemory})
+}
+
+// Resolve the whole supersession chain while the writer is fenced, before the
+// single durable journal append. An older generation may contain only the first
+// item, so replay must not depend on finding the replacement or its links there.
+func expandMemory(ctx context.Context, tx *canon.Tx, e entry) ([]Target, error) {
+	if e.Action == restore {
+		// Recover only the requested item; its superseded history stays forgotten.
+		return e.Targets, nil
+	}
+	targets := slices.Clone(e.Targets)
+	seen := map[string]bool{}
+	for _, target := range targets {
+		seen[target.ID] = true
+	}
+	for _, root := range e.Targets {
+		rows, err := tx.QueryContext(ctx, `WITH RECURSIVE chain(id) AS (
+ SELECT supersedes FROM memory_item WHERE id=?
+ UNION SELECT m.supersedes FROM memory_item m JOIN chain c ON m.id=c.id
+) SELECT id FROM chain WHERE id<>'' ORDER BY id`, root.ID)
+		if err != nil {
+			return nil, err
+		}
+		var ids []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			ids = append(ids, id)
+		}
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return nil, err
+		}
+		for _, id := range ids {
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+			var state, person string
+			err := tx.QueryRowContext(ctx, "SELECT state,person FROM retract_target WHERE kind='memory' AND id=?", id).Scan(&state, &person)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return nil, err
+			}
+			if person != "" && person != e.Person {
+				return nil, ErrInvalid
+			}
+			// Existing removals already travel with every generation. Do not reset
+			// their trash deadline or try to resolve content that was erased.
+			if state == "erased" || state == "trashed" && e.Action == forget {
+				continue
+			}
+			target, err := resolveMemory(ctx, tx, Ref{Kind: Memory, ID: id}, e.Person)
+			if err != nil {
+				return nil, err
+			}
+			if target.Holder != root.Holder {
+				return nil, ErrInvalid
+			}
+			if err := transition(ctx, tx, target, e); err != nil {
+				return nil, err
+			}
+			targets = append(targets, target)
+		}
+	}
+	return targets, nil
 }
 
 type memoryRecord struct {

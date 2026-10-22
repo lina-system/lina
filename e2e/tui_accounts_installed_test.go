@@ -162,6 +162,7 @@ func TestM1TUIAccountsInstalledCore(t *testing.T) {
 // messages. It proves no provider token reaches the real TUI client.
 type accountTap struct {
 	socket  string
+	close   func()
 	mu      sync.Mutex
 	raw     bytes.Buffer
 	replies chan protocol.Envelope
@@ -233,7 +234,9 @@ func newAccountTap(t *testing.T, h *harness, target string, notifications ...boo
 		go pump(local, remote, true)
 		wg.Wait()
 	}()
-	t.Cleanup(func() { listener.Close(); <-done })
+	var once sync.Once
+	tap.close = func() { once.Do(func() { listener.Close(); <-done }) }
+	t.Cleanup(tap.close)
 	return tap
 }
 func (tap *accountTap) bytes() []byte {

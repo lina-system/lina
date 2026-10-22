@@ -1,0 +1,7 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "facts": ["Synthetic copper orchard preference", "Synthetic silver meadow preference", "Synthetic golden forest preference"],
+  "direct": "Synthetic violet island preference",
+  "retained": "Synthetic teal mountain preference",
+  "depths": [1, 2]
+}
