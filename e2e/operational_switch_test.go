@@ -43,12 +43,18 @@ func TestM3OperationalSwitch(t *testing.T) {
 	if err = json.Unmarshal(data, &scenario); err != nil {
 		t.Fatal(err)
 	}
-	h := newHarness(t, buildLina(t))
+	h, initialStart := installedConversationHarness(t, "http://127.0.0.1:1")
 	scenarioContext, cancelScenario := context.WithTimeout(t.Context(), 3*time.Minute)
 	defer cancelScenario()
 	h.ctx = scenarioContext
-	core := h.startCore()
+	core := initialStart(false)
 	h.client(core)
+	identityClient, err := clientapi.Dial(h.ctx, h.socket, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	person := identityClient.Welcome.PersonID
+	identityClient.Close()
 	waitCoreReady(t, h)
 	h.stopCore(core)
 	path := filepath.Join(h.root, "canon", "canon.sqlite")
@@ -82,7 +88,7 @@ func TestM3OperationalSwitch(t *testing.T) {
 	}
 	run := work.Run{ID: "execution", TaskID: scenario.TaskID, Generation: 1, Worker: "fixture", ThreadID: "thread", TurnID: "turn", NodeID: "local"}
 	withWork(func(s *work.Service) {
-		if e := s.Create(h.ctx, work.Task{ID: scenario.TaskID, PersonID: "person:main-e2e", AgentID: "agent", ConversationID: "conversation", Title: scenario.Title, Done: scenario.Done, ArtifactRoots: []string{dir}, ExternalControl: true}); e != nil {
+		if e := s.Create(h.ctx, work.Task{ID: scenario.TaskID, PersonID: person, AgentID: "agent", ConversationID: "conversation", Title: scenario.Title, Done: scenario.Done, ArtifactRoots: []string{dir}, ExternalControl: true}); e != nil {
 			t.Fatal(e)
 		}
 		if e := s.Start(h.ctx, run); !errors.Is(e, work.ErrControlHeld) {
@@ -237,7 +243,7 @@ func TestM3OperationalSwitch(t *testing.T) {
 	conversation, conversationID := conversationClient(t, h)
 	admittedTurn(t, h, conversation, conversationID, "switch-blocked", "Start the transferred worker")
 	if providerCalls.Load() != 2 {
-		t.Fatal("missing live worker refusal")
+		t.Fatal("missing live worker refusal", providerCalls.Load())
 	}
 	if err = procedure.Apply(h.ctx); err != nil {
 		t.Fatal(err)
