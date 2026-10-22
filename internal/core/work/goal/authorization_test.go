@@ -1,0 +1,170 @@
+// SPDX-License-Identifier: Apache-2.0
+package goal
+
+import "testing"
+
+func authorizationStep(t *testing.T, e *Engine) State {
+	t.Helper()
+	if err := e.step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	e.wg.Wait()
+	select {
+	case err := <-e.failures:
+		t.Fatal(err)
+	default:
+	}
+	return revisionSnapshot(t, e)
+}
+
+func TestAuthorizationSignalRechecksGrantAndExecutesOnceAcrossRestart(t *testing.T) {
+	e := revisionEngine(t, readyTask("a"))
+	checks, effects := 0, 0
+	granted := false
+	e.cfg.Driver = &fixtureDriver{
+		authorize: func(Action) error {
+			checks++
+			if !granted {
+				return ErrNeedsPerson
+			}
+			return nil
+		},
+		run: func(Action) (Observation, error) {
+			effects++
+			return Observation{Status: OutcomeRunning, Handle: "worker"}, nil
+		},
+		observe: func(Action) (Observation, error) {
+			t.Error("undispatched authorization wait was observed as an effect")
+			return Observation{}, ErrInvalid
+		},
+	}
+	s := authorizationStep(t, e)
+	a := s.Actions[0]
+	if a.State != "awaiting_authorization" || effects != 0 || checks != 1 {
+		t.Fatalf("authorization wait is not distinguished from execution: %+v checks=%d effects=%d", a, checks, effects)
+	}
+	// A hint is not approval. Retry only the authority check while still denied.
+	if err := e.Signal(t.Context(), Signal{ID: "grant-still-denied", ActionID: a.ID}); err != nil {
+		t.Fatal(err)
+	}
+	s = authorizationStep(t, e)
+	if s.Actions[0].State != "awaiting_authorization" || checks != 2 || effects != 0 {
+		t.Fatal("change hint granted authority or failed to recheck it")
+	}
+	cfg := e.cfg
+	cfg.Epoch++
+	var err error
+	e, err = NewEngine(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s = authorizationStep(t, e)
+	if checks != 2 || effects != 0 || s.Goals[0].State != GoalBlocked || s.Goals[0].AttentionID == "" {
+		t.Fatal("restart lost or replayed the authorization wait")
+	}
+	granted = true
+	signal := Signal{ID: "grant-approved", ActionID: a.ID}
+	if err = e.Signal(t.Context(), signal); err != nil {
+		t.Fatal(err)
+	}
+	s = authorizationStep(t, e)
+	if checks != 3 || effects != 1 || s.Actions[0].ID != a.ID || s.Actions[0].State != "running" || s.Goals[0].Tasks[0].Attempt != 1 {
+		t.Fatalf("approved action did not resume once: %+v checks=%d effects=%d", s, checks, effects)
+	}
+	if err = e.Signal(t.Context(), signal); err != nil {
+		t.Fatal(err)
+	}
+	_ = authorizationStep(t, e)
+	if checks != 3 || effects != 1 {
+		t.Fatal("duplicate approval signal repeated dispatch")
+	}
+}
+
+func TestRevisionRetiresAuthorizationWaitWithoutDispatch(t *testing.T) {
+	for _, inFlight := range []bool{false, true} {
+		t.Run(map[bool]string{false: "parked", true: "authorization-in-flight"}[inFlight], func(t *testing.T) {
+			e := revisionEngine(t, readyTask("a"))
+			entered, release := make(chan struct{}), make(chan struct{})
+			e.cfg.Driver = &fixtureDriver{authorize: func(Action) error {
+				close(entered)
+				<-release
+				return ErrNeedsPerson
+			}}
+			if err := e.step(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			<-entered
+			if inFlight {
+				revisionEdit(t, e)
+			}
+			close(release)
+			e.wg.Wait()
+			if !inFlight {
+				revisionEdit(t, e)
+			}
+			s := revisionSnapshot(t, e)
+			if s.Actions[0].State != "finished" || s.Goals[0].Tasks[0].Stage != TaskReady || s.Goals[0].Tasks[0].Attempt != 0 {
+				t.Fatalf("revision retained obsolete authorization reservation: %+v", s)
+			}
+			if err := e.Signal(t.Context(), Signal{ID: "late-approval", ActionID: s.Actions[0].ID}); err != nil {
+				t.Fatal(err)
+			}
+			if revisionSnapshot(t, e).Actions[0].State != "finished" {
+				t.Fatal("late approval revived obsolete work")
+			}
+		})
+	}
+}
+
+func TestSignalDoesNotRepeatExecutedActionNeedingPerson(t *testing.T) {
+	e := revisionEngine(t, readyTask("a"))
+	effects := 0
+	e.cfg.Driver = &fixtureDriver{run: func(Action) (Observation, error) {
+		effects++
+		return Observation{Status: OutcomeNeedsPerson}, nil
+	}}
+	s := authorizationStep(t, e)
+	a := s.Actions[0]
+	if a.State != "needs_person" {
+		t.Fatal("executed action lost its outcome")
+	}
+	if err := e.Signal(t.Context(), Signal{ID: "person-answered", ActionID: a.ID}); err != nil {
+		t.Fatal(err)
+	}
+	_ = authorizationStep(t, e)
+	if effects != 1 {
+		t.Fatal("person signal repeated an effect that was already dispatched")
+	}
+}
+
+func TestAuthorizationSignalDuringCheckIsNotLost(t *testing.T) {
+	e := revisionEngine(t, readyTask("a"))
+	entered, release := make(chan struct{}), make(chan struct{})
+	checks, effects := 0, 0
+	e.cfg.Driver = &fixtureDriver{authorize: func(Action) error {
+		checks++
+		if checks == 1 {
+			close(entered)
+			<-release
+			return ErrNeedsPerson
+		}
+		return nil
+	}, run: func(Action) (Observation, error) {
+		effects++
+		return Observation{Status: OutcomeRunning, Handle: "worker"}, nil
+	}}
+	if err := e.step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	<-entered
+	a := revisionSnapshot(t, e).Actions[0]
+	if err := e.Signal(t.Context(), Signal{ID: "approval-during-check", ActionID: a.ID}); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	e.wg.Wait()
+	s := authorizationStep(t, e)
+	if checks != 2 || effects != 1 || s.Actions[0].State != "running" {
+		t.Fatalf("in-flight approval wake was lost: checks=%d effects=%d action=%+v", checks, effects, s.Actions[0])
+	}
+}

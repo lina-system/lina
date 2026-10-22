@@ -20,7 +20,26 @@ func revisionTask(id string) work.Task {
 	return work.Task{ID: id, Done: "merged and QA passes", Repository: "fixture-repo", Base: "dev", Area: id, Worker: "stub", Resources: work.Resources{CPU: 2, MemoryMB: 1000, DiskMB: 1000}, Stage: work.TaskReady}
 }
 
-type revisionWorld struct{ *codeWorld }
+type revisionWorld struct {
+	*codeWorld
+	authorizationChecks, approvalSignals int
+	granted                              bool
+}
+
+func (w *revisionWorld) Authorize(ctx context.Context, a work.Action) error {
+	if err := w.codeWorld.Authorize(ctx, a); err != nil {
+		return err
+	}
+	if a.Kind == work.Deploy {
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		w.authorizationChecks++
+		if !w.granted {
+			return work.ErrNeedsPerson
+		}
+	}
+	return nil
+}
 
 func (w *revisionWorld) Execute(ctx context.Context, a work.Action) (work.Observation, error) {
 	if a.Kind == work.PlanGoal {
@@ -89,7 +108,7 @@ func TestM2RunToDoneAfterQueuedSiblingRevision(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "system/core/main.json"), []byte(`{"main_id":"revision-host"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	w := &revisionWorld{&codeWorld{heads: map[string]string{}, merges: map[string]string{}, qa: map[string]bool{}, root: root}}
+	w := &revisionWorld{codeWorld: &codeWorld{heads: map[string]string{}, merges: map[string]string{}, qa: map[string]bool{}, root: root}}
 	service := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, _ *http.Request) {
 		w.mu.Lock()
 		defer w.mu.Unlock()
@@ -142,7 +161,21 @@ func TestM2RunToDoneAfterQueuedSiblingRevision(t *testing.T) {
 			// manager revises the goal; Core must dispatch the others afterwards.
 			return w.finish(ctx, e, "left", work.PlanGoal)
 		},
-		Changed: func(_ context.Context, s work.State) error {
+		Changed: func(ctx context.Context, s work.State) error {
+			for _, a := range s.Actions {
+				if a.Kind == work.Deploy && a.State == "awaiting_authorization" {
+					w.mu.Lock()
+					w.approvalSignals++
+					count := w.approvalSignals
+					// The first change hint still has no grant. The second models
+					// the trusted authority recording approval for this action.
+					w.granted = count == 2
+					w.mu.Unlock()
+					if err := engine.Signal(ctx, work.Signal{ID: fmt.Sprintf("deployment-approval-%d", count), ActionID: a.ID}); err != nil {
+						return err
+					}
+				}
+			}
 			for _, g := range s.Goals {
 				if g.State == work.GoalDone {
 					select {
@@ -197,5 +230,16 @@ func TestM2RunToDoneAfterQueuedSiblingRevision(t *testing.T) {
 	}
 	if _, err := engine.Summary(t.Context(), g.ID); err != nil {
 		t.Fatal(err)
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	deployments := 0
+	for _, a := range w.calls {
+		if a.Kind == work.Deploy {
+			deployments++
+		}
+	}
+	if w.authorizationChecks != 3 || w.approvalSignals != 2 || deployments != 1 {
+		t.Fatalf("approval did not recheck authority and deploy once: checks=%d signals=%d deploys=%d", w.authorizationChecks, w.approvalSignals, deployments)
 	}
 }

@@ -178,7 +178,7 @@ func (e *Engine) RefreshDefinitions(ctx context.Context) error {
 			current.State = GoalRunning
 			current.Checks = nil
 			current.CheckRound++
-			if err = retireQueuedActions(v, &current); err != nil {
+			if err = retireUndispatchedActions(v, &current); err != nil {
 				return err
 			}
 			return put(v, "goal", g.ID, current)

@@ -197,16 +197,16 @@ func goalTask(g *Goal, id string) *Task {
 	return nil
 }
 
-// A goal revision invalidates queued actions, including their reservations and
+// A goal revision invalidates undispatched actions, including their reservations and
 // one-shot planning/recovery counters. They have never been dispatched. Claimed
 // actions retain their receipts and reservations until their effects settle.
-func retireQueuedActions(v *View, g *Goal) error {
+func retireUndispatchedActions(v *View, g *Goal) error {
 	for _, r := range v.Records("action") {
 		var a Action
 		if err := json.Unmarshal(r.Body, &a); err != nil {
 			return err
 		}
-		if a.GoalID != g.ID || a.State != "queued" || a.GoalRevision == g.Revision {
+		if a.GoalID != g.ID || (a.State != "queued" && a.State != "awaiting_authorization") || a.GoalRevision == g.Revision {
 			continue
 		}
 		t := goalTask(g, a.TaskID)
@@ -412,7 +412,7 @@ func (e *Engine) Reconcile(ctx context.Context) error {
 					if a.GoalID != g.ID || a.State == "finished" {
 						continue
 					}
-					if a.State == "needs_person" {
+					if a.State == "needs_person" || a.State == "awaiting_authorization" {
 						person = true
 					} else {
 						active = true
@@ -627,7 +627,7 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 			return ErrInvalid
 		}
 		if g.Revision != previousRevision {
-			if err = retireQueuedActions(v, &g); err != nil {
+			if err = retireUndispatchedActions(v, &g); err != nil {
 				return err
 			}
 		}
@@ -819,6 +819,39 @@ func (e *Engine) Run(ctx context.Context) error {
 		}
 	}
 }
+
+// Only a pre-dispatch authority refusal enters this state. Execution outcomes
+// needing a person remain distinct: a change hint cannot safely replay them.
+func (e *Engine) awaitAuthorization(ctx context.Context, claimed Action) error {
+	return e.journal.Update(ctx, Transition{ID: "authorization.wait:" + rand.Text(), Kind: "authorization.waiting", At: e.cfg.Now().Unix()}, func(v *View) error {
+		a, err := loadAction(v, claimed.ID)
+		if err != nil {
+			return err
+		}
+		if a.State != "claimed" || a.Epoch != e.cfg.Epoch {
+			return ErrConflict
+		}
+		a.State = "awaiting_authorization"
+		if a.Signal != claimed.Signal {
+			// An approval hint arrived while Authorize was still reading. Do
+			// not lose that wake; the next claim rechecks current authority.
+			a.State = "queued"
+		}
+		if err = put(v, "action", a.ID, a); err != nil {
+			return err
+		}
+		g, err := loadGoal(v, a.GoalID)
+		if err != nil {
+			return err
+		}
+		// A definition/repair revision can commit while Authorize runs.
+		if err = retireUndispatchedActions(v, &g); err != nil {
+			return err
+		}
+		return put(v, "goal", g.ID, g)
+	})
+}
+
 func (e *Engine) step(ctx context.Context) error {
 	if err := e.Reconcile(ctx); err != nil {
 		return err
@@ -862,10 +895,13 @@ func (e *Engine) step(ctx context.Context) error {
 			defer func() { e.mu.Lock(); delete(e.running, a.ID); e.mu.Unlock() }()
 			var o Observation
 			var err error
+			authorizationDenied := false
 			if observe {
 				o, err = e.cfg.Driver.Observe(ctx, a)
 			} else if err = e.cfg.Driver.Authorize(ctx, a); err == nil {
 				o, err = e.cfg.Driver.Execute(ctx, a)
+			} else if errors.Is(err, ErrNeedsPerson) {
+				authorizationDenied = true
 			}
 			if errors.Is(err, ErrNeedsPerson) {
 				o = Observation{Status: OutcomeNeedsPerson}
@@ -875,7 +911,12 @@ func (e *Engine) step(ctx context.Context) error {
 			// Cancellation can leave a dispatched effect uncertain. The durable claim
 			// survives; only an active generation may acknowledge the observation.
 			if ctx.Err() == nil {
-				if err := e.Report(ctx, a.ID, e.cfg.Epoch, o); err != nil && ctx.Err() == nil {
+				if authorizationDenied {
+					err = e.awaitAuthorization(ctx, a)
+				} else {
+					err = e.Report(ctx, a.ID, e.cfg.Epoch, o)
+				}
+				if err != nil && ctx.Err() == nil {
 					select {
 					case e.failures <- err:
 					default:

@@ -18,6 +18,8 @@ type Signal struct {
 
 // Signal persists an integration's change hint. It carries no instructions or
 // outcome claims: dispatch reads the current receipt or PR before progressing.
+// An action-id hint for an authorization wait retries Authorize, not approval;
+// the trusted authority must still grant the exact action before Execute runs.
 func (e *Engine) Signal(ctx context.Context, s Signal) error {
 	if s.ID == "" || (s.ActionID == "") == (s.GoalID == "" || s.TaskID == "") {
 		return ErrInvalid
@@ -34,6 +36,9 @@ func (e *Engine) Signal(ctx context.Context, s Signal) error {
 			}
 			a.Signal = hex.EncodeToString(sum[:])
 			a.Deadline = e.cfg.Now().Unix()
+			if a.State == "awaiting_authorization" {
+				a.State = "queued"
+			}
 			return put(v, "action", a.ID, a)
 		}
 		g, err := loadGoal(v, s.GoalID)
