@@ -1,0 +1,14 @@
+{
+  "digest": "/progress",
+  "order": "/waiting lightest",
+  "note": "Read the appendix before finishing.",
+  "input": "Ask the installed worker to produce the assigned artifact, then report its quota.",
+  "task_packet": "Write result.txt after reading the assigned task projection and receiving command approval.",
+  "question": "Which label should the worker use for this synthetic artifact?",
+  "answer": "Approved fixture label",
+  "coordination": "Record that the synthetic artifact still needs independent review.",
+  "result": "LINA_PROGRESS_CONTROLS_RESULT",
+  "artifact": "result.txt",
+  "five_hour": 12,
+  "weekly": 100
+}

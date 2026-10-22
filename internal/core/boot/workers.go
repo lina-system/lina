@@ -36,8 +36,8 @@ type workerRuntime struct {
 	sessions map[string]*workerSession
 }
 type workerSession struct {
-	scheduled     bool
-	answered      func(context.Context, worker.Thread)
+	ownerControl  sync.Mutex
+	ownerRequests map[string]string
 	adapter       worker.Adapter
 	close         func() error
 	compatibility codex.Compatibility
@@ -46,6 +46,8 @@ type workerSession struct {
 	thread        worker.Thread
 	packet        string
 	workdir       string
+	scheduled     bool
+	answered      func(context.Context, worker.Thread)
 	approvals     map[string]worker.Event
 	questions     map[string]*workerQuestion
 	output        string

@@ -404,6 +404,45 @@ A 할 일 is one record with two views. The personal view follows fast-capture l
 - **Priority and tags.** Everyone has an `important` flag. An optional four-level priority (none, normal, high, urgent) is a power setting. Tags are free-form with no hierarchy, and the agent suggests an existing tag before it creates a new one. Estimates are opt-in.
 - **Code work.** A 할 일 in a connected repository maps to one pull request: opening the pull request moves it to `started`, and it completes under Judgment and delivery, never by a merge or a model's sentence alone.
 
+The installed record tools accept `kind: todo`. Capture needs only a title;
+its planning state starts at `open`. `write_record` optionally takes a `todo`
+object with the fields above. On an edit, omitting that object preserves the
+planning fields; supplying it replaces them as a whole. The title and note
+remain Markdown, and the typed fields remain in the same versioned front matter.
+A deadline also requires `deadline_source`. `waiting_on` carries `who`, `since`
+and `next_check`; an assignee carries `kind` and `id`. Checklist items carry only
+`text` and `checked`. A repeat retains `rule`, the original `text`,
+`from_completion` and its current `next` occurrence; advancing it is #156.
+The record tool cannot write execution observations or complete delegated work.
+
+The current conversation path accepts exact ISO dates and offset-bearing
+RFC 3339 times. Natural-language dates, ambiguous numeric dates, nonexistent
+calendar dates and times without an offset return `ambiguous_date` before any
+saved version. The agent asks the person to resolve the date and then supplies
+the exact value; it must not invent a resolution. Natural-language parsing and
+date chips are not supplied by this record API. The quick-add chip surface is
+owned by G2-24.
+
+`query_records` accepts `view: today|upcoming|anytime|later|memos|board|list|week`.
+Dated lenses require an explicit civil `day` and IANA `zone`. Timed values are
+compared with that day's local midnight boundaries, including daylight saving
+changes. Today returns active tasks under the rule above and marks overdue
+starts with `overdue` for their separate block. Completed and canceled tasks are
+excluded from personal active lenses. Upcoming selects any future start,
+deadline or current recurrence; anytime retains all undated active tasks,
+including backlog; later selects backlog. The week lens covers seven calendar
+days beginning at `day`. Board and list include all five planning states and
+return the fields needed to group by project, assignee, priority or tag. Pages
+remain ordered by id with an exclusive `after` cursor, matching record search.
+
+Core checks dependency targets and cycles under the same writer lock as
+publication. Targets must be the person's existing to-dos; belonging targets
+must be that person's projects or areas. A self-edge or transitive cycle returns
+`dependency_cycle` without changing the file, index or saved revision. The
+`blocked` overlay is queried from direct nonterminal blockers, never stored;
+completed or canceled predecessors no longer block. Human completion remains a
+soft dependency signal. Releasing delegated work remains the work engine's gate.
+
 How an agent manages 할 일 (capture, briefing, review) is the methodology of the LINA preset ([conversation-and-memory.md](conversation-and-memory.md#preset-methodologies)).
 
 ### Development mode
@@ -773,6 +812,25 @@ proves an owner approval returning to the worker, dynamic tool result delivery,
 quota rows and an actual worker-written artifact. It also checks that the live
 and restored question-answer notices contain no transport fields. This is protocol integration
 evidence; it does not measure live account quota or certify new Codex versions.
+
+#### Parent acceptance (#130)
+
+The parent uses the implemented sub-issue paths above. All three sub-issues
+(#131, #132 and #133) must be closed, and the following evidence must hold:
+
+| Condition | Evidence |
+| --- | --- |
+| Installed-worker round trip and version | `TestInstalledCodex` exercises initialize, start, interrupt, idle input and snapshot. `TestM2InstalledCodexLive` starts the installed worker through Core's conversation tool path and returns its model output. Both require `LINA_CODEX_LIVE=1` and report the installed version. |
+| Unverified version reported and used | `TestM2InstalledCodexSession` uses a synthetic unlisted version, checks its launch result and conversation notice, and reads the file it produces. The notice and result survive Core restart. |
+| Approval reaches its conversation and the answer returns | `TestM2CodexWorkTools` checks the originating conversation on the approval card, answers through the authenticated client protocol, and requires the worker to receive that answer before it can write its artifact. It also exercises questions, all four dynamic work tools and quota. |
+| No worker sandbox, credential or setting imposed | Both synthetic Core scenarios reject extra launch arguments and thread/turn settings, retain the worker's Codex home, and reject Core's dedicated model credential. The live tests inherit the installed worker's setup. |
+
+The headless scenarios use the [shared acceptance harness](../../e2e/README.md).
+Their worker-written files and restored conversation results establish the Core
+integration. Live session evidence and synthetic approval/tool evidence are
+recorded separately: a passing synthetic worker does not verify an installed
+Codex version, and a live text response does not prove live approval or file
+execution. Session completion remains distinct from verified task delivery.
 
 ### Readiness
 
@@ -1420,7 +1478,10 @@ existing agent and person and writes through Core's versioned records repository
 Planning records carry LINA kinds and bindings, including native `belongs_to`
 index edges: initiatives remain goal drafts, projects retain
 their done condition, issues become to-dos, and milestones become to-dos with a
-deadline and done condition. Intent cards retain their intent text. CRW records
+deadline and done condition. Imported to-dos use `open` or `completed`; their
+verified snapshot provenance supplies `deadline_source`. Existing imports with
+`active`/`done` and that provenance project to the same planning fields on
+upgrade, preserving their files and saved revisions. Intent cards retain their intent text. CRW records
 are historical observations in reference documents; importing an assignment,
 receipt, verdict, branch or worktree starts no work and grants no authority.
 Complete source records are preserved as data, including unknown fields.
