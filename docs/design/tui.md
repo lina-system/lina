@@ -103,7 +103,10 @@ after reconnect and terminal resize.
 Quit (Ctrl+C with an empty draft or Ctrl+D), input EOF and termination signals close only this
 client and exit 0, including during handshake or retry. The raw terminal reader
 ignores releases, toggle repeats and pasted quit text. Nonterminal input keeps
-the handshake-then-read behavior. No failure path starts Core or creates state.
+the handshake-then-read behavior: it does not discover a conversation destination,
+and reports Live (`live` on plain output) after the validated welcome even when no
+destination is available. Destination discovery gates the terminal composer's input only.
+No failure path starts Core or creates state.
 
 | State | Screen |
 | --- | --- |
@@ -136,10 +139,17 @@ status writes nothing. The key gate also covers the legacy quit input. Connectio
 including one in the same epoch, restores an unacknowledged input into the draft
 with newer typing after it. The client never automatically resends that input.
 
-On the first connection, conversation input stays in the editable draft until
-the initial history reply supplies its destination. The welcome's live transport
-status does not admit Enter while that discovery is pending; completion restores
-the live state and the person can send the retained draft explicitly.
+When conversation is granted, initial history discovery leaves the destination
+unknown until History supplies its id; the composer gates conversation submission
+on that id (T-10). Reconnect also uses the pending-agent guard to validate the
+retained destination. Without the conversation capability, discovery requests no
+history, so account and management commands remain available.
+Until the history response identifies the destination conversation, the composer
+retains typed text and Enter sends nothing. Completing discovery makes the
+conversation ready; it does not submit the retained draft automatically. The
+person explicitly sends it when ready. Installed conversation scenarios wait
+for the ready connection status and the discovered conversation's subscription
+snapshot before submitting input, not just the presence of the composer's key hints.
 
 Reconnect also retains the selected agent identity. History discovery and the
 preserved draft use that agent, regardless of the welcome's agent order. A fresh
@@ -357,8 +367,11 @@ retained text in the pager; Ctrl+P opens the granted progress topic. Missing
 capabilities use the single local explanation of T-07 and leave no placeholder
 rows. Granted empty lists are hidden without an unavailable notice. Rows appear
 when Core sends items and disappear on a removal update or when its snapshot clears the list.
-List updates do not focus the pager or
-change the draft. Decision answering remains the typed approval/question flow
+An open running pager applies accepted `running` topic updates and replacement
+snapshots immediately, including completed and removed rows, without polling or
+requiring the person to close and reopen it. Refreshing its text preserves the
+pager's reading offset (clamped to the remaining content) and active search.
+List updates do not focus the pager or change the draft. Decision answering remains the typed approval/question flow
 of T-04; the composer never turns a list row into an approval.
 
 The waiting summary shows the number of unresolved decision cards and the first
@@ -834,6 +847,13 @@ request fields. These checks establish the boundary behavior used by T-06; they
 do not establish rendering, live Core behavior or the end-to-end scenarios that
 depend on the headless harness.
 
+The companion application runner executes the shared agent lifecycle cases
+against installed Core's socket through `e2e/m1/conformance-agents.json`, checking
+refusals and unchanged canon for missing/deleted agents and channel targets.
+Native result-body cases run against Core's result store and ledger; client
+result-type negotiation and full wire bodies remain tracked in
+[#419](https://github.com/thisisjun786/lina/issues/419).
+
 | Layer | Runs | Asserts |
 | --- | --- | --- |
 | Reducer | Fixtures replayed through `Reduce` | Unique block ids; duplicates change nothing; a resumed state equals a run that never disconnected |
@@ -871,6 +891,10 @@ rendering checks; they do not replace the physical terminal and IME spike.
 - Connection-screen display overrides are `LINA_THEME=light|dark|high-contrast` and `LINA_GLYPHS=ascii`. Otherwise `COLORFGBG` selects a light or dark background (dark by default); terminal capability selects RGB, 256 or 16 colours. Nonempty `NO_COLOR` preserves the layout, marks, labels and actions without escapes; subsequent states append compact lines. These overrides persist no preferences.
 - On LINA OS the complete TUI follows the active Omarchy theme file ([surfaces.md](surfaces.md#platform-adaptation)); theme-file discovery remains part of platform preferences work.
 - Every code in the closed lists has an entry in both the Korean and English catalogs, checked by id and never by wording.
+
+Core's TUI turn instructions describe the surface's rendered Markdown: paragraphs, headings, bold, italic, inline code, links, ordered and unordered lists, block quotes and fenced code. They request simple formatting, short lists, prose or code for wide tables, and no HTML or terminal escapes. The `persona-tui-v1` instruction format records this prefix for exact replay; older `persona-v1` turns retain their original prefix.
+
+The core topic's sandbox availability item produces one local setup notice when file and shell tools are unavailable. Snapshots, repeated publications and reconnects do not duplicate the notice; a subsequent available status clears it from the visible shell. It uses the same Korean/English catalog as other shell labels and never exposes private launcher diagnostics.
 
 The connection shell resolves labels and next actions through
 `internal/design` catalog ids. `LC_ALL`, then `LC_MESSAGES`, then `LANG` selects

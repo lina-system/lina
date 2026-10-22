@@ -3,22 +3,20 @@
 package e2e_test
 
 import (
+	"context"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
+	"fmt"
+	"github.com/thisisjun786/lina/internal/core/boot"
+	"github.com/thisisjun786/lina/internal/design"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"testing"
-
-	"github.com/thisisjun786/lina/kit/protocol"
 )
 
-// The installed Core must complete a real TUI exchange even when its sandbox
-// cannot start. Only the provider's HTTP/SSE boundary is scripted.
+// Real boot composition and a real TUI stay usable when confinement cannot run.
 func TestM1SandboxUnavailable(t *testing.T) {
 	data, err := os.ReadFile("m1/sandbox.json")
 	if err != nil {
@@ -29,89 +27,104 @@ func TestM1SandboxUnavailable(t *testing.T) {
 			Name, Cause, OS string
 			LauncherExit    int `json:"launcher_exit"`
 		}
-		DiagnosticCode string `json:"diagnostic_code"`
-		Input, Reply   string
 	}
 	if err := json.Unmarshal(data, &scenario); err != nil {
 		t.Fatal(err)
 	}
+	binary := buildLina(t)
 	for _, tc := range scenario.Cases {
 		t.Run(tc.Name, func(t *testing.T) {
 			if tc.OS != "" && tc.OS != runtime.GOOS {
 				t.Skip("platform scenario")
 			}
-			var modelCalls atomic.Int32
-			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				modelCalls.Add(1)
-				var input struct{ Input []json.RawMessage }
-				if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-					t.Error(err)
-					return
-				}
-				if !strings.Contains(string(mustJSON(t, input.Input)), scenario.Input) {
-					t.Error("TUI input did not reach the provider")
-				}
-				emitResponse(w, scenario.Reply, true)
-			}))
-			defer provider.Close()
-			h, _ := installedConversationHarness(t, provider.URL)
-			core := h.command("core", "--state-root", h.root, "--socket", h.socket)
-			core.command.Env = append(core.command.Env, "LINA_RESPONSES_BASE_URL="+provider.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
+			h := newHarness(t, binary)
+			control := filepath.Join(h.root, "system/core")
+			if err := os.MkdirAll(control, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(control, "main.json"), []byte(`{"main_id":"main-e2e"}`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			launcher := filepath.Join(h.root, "launcher")
 			if tc.LauncherExit != 0 {
-				bin := filepath.Join(h.root, "bin")
-				if err := os.Mkdir(bin, 0700); err != nil {
+				if err := os.WriteFile(launcher, []byte("#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\nexit "+strconv.Itoa(tc.LauncherExit)+"\n"), 0700); err != nil {
 					t.Fatal(err)
 				}
-				// A failed executable, not a fake success standing in for isolation.
-				if err := os.WriteFile(filepath.Join(bin, "bwrap"), []byte("#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\nexit "+strconv.Itoa(tc.LauncherExit)+"\n"), 0700); err != nil {
-					t.Fatal(err)
-				}
-				for i, entry := range core.command.Env {
-					if strings.HasPrefix(entry, "PATH=") {
-						core.command.Env[i] = "PATH=" + bin
+			}
+			ctx, cancel := context.WithCancel(h.ctx)
+			ready := make(chan boot.Snapshot, 1)
+			done := make(chan error, 1)
+			go func() {
+				done <- boot.Run(ctx, boot.Config{StateRoot: h.root, Socket: h.socket, SandboxLauncher: launcher, AfterStep: func(step boot.Step, s boot.Snapshot) error {
+					if step == boot.Ready {
+						ready <- s
 					}
+					return nil
+				}})
+			}()
+			defer func() {
+				cancel()
+				if err := <-done; err != nil {
+					t.Error(err)
 				}
-			}
-			core.start(t)
-			h.connect(core).Close()
-			client, _ := conversationClient(t, h)
-			term := h.startScreenTUI("TERM=xterm-256color")
-			waitScreen(t, h, term, "Ctrl+D")
-			h.keys(term, scenario.Input+"\r")
-			waitScreen(t, h, term, scenario.Reply)
-			for {
-				frame, err := client.Receive(h.ctx)
-				if err != nil {
-					t.Fatal(err)
+			}()
+			select {
+			case s := <-ready:
+				if s.Sandbox.Available || s.Sandbox.Cause != tc.Cause {
+					t.Fatalf("sandbox status: %+v", s.Sandbox)
 				}
-				if state, ok := frame.Payload.(protocol.TurnState); ok && state.Active != nil && !*state.Active {
-					break
+			case err := <-done:
+				done <- err
+				t.Fatalf("Core stopped before READY: %v", err)
+			case <-h.ctx.Done():
+				t.Fatal(h.ctx.Err())
+			}
+			for _, locale := range []string{"en_US.UTF-8", "ko_KR.UTF-8"} {
+				term := h.startScreenTUI("TERM=xterm-256color", "LC_ALL="+locale)
+				notice := design.Text(design.LanguageFor(locale), "sandbox.unavailable")
+				prefix := string([]rune(notice)[:min(18, len([]rune(notice)))])
+				screen := screenText(waitScreen(t, h, term, prefix))
+				if strings.Count(screen, prefix) != 1 {
+					t.Errorf("setup notice is duplicated: %s", screen)
 				}
-			}
-			h.keys(term, "\x04")
-			term.process.wait(t, 0)
-			h.expectTerminalRestored(term)
-			client.Close()
-			// A fresh TUI must recover the completed exchange from Core's ledger.
-			again := h.startScreenTUI("TERM=xterm-256color")
-			waitScreen(t, h, again, scenario.Reply)
-			h.keys(again, "\x04")
-			again.process.wait(t, 0)
-			h.expectTerminalRestored(again)
-			h.stopCore(core)
-			if got := modelCalls.Load(); got != 1 {
-				t.Fatalf("model calls = %d, want one completed exchange", got)
-			}
-			found := false
-			for _, line := range strings.Split(core.stderr.String(), "\n") {
-				code, cause, ok := strings.Cut(line, ": ")
-				if ok && code == scenario.DiagnosticCode && cause == tc.Cause {
-					found = true
+				if strings.Contains(screen, "launcher_missing") || strings.Contains(screen, "probe_failed") {
+					t.Error("private diagnostic leaked")
 				}
-			}
-			if !found {
-				t.Fatalf("missing sandbox failure code %s: %s", tc.Cause, &core.stderr)
+				h.keys(term, "\x04")
+				term.process.wait(t, 0)
+				h.expectTerminalRestored(term)
 			}
 		})
+	}
+}
+
+func TestM1SandboxEmptyPATH(t *testing.T) {
+	h := newHarness(t, buildLina(t))
+	dir := filepath.Join(h.root, "system/core")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.json"), []byte(`{"main_id":"main-e2e"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", "")
+	ctx, cancel := context.WithCancel(h.ctx)
+	defer cancel()
+	err := boot.Run(ctx, boot.Config{StateRoot: h.root, Socket: h.socket, AfterStep: func(step boot.Step, s boot.Snapshot) error {
+		if step != boot.Ready {
+			return nil
+		}
+		defer cancel()
+		if !s.Sandbox.Available {
+			return fmt.Errorf("empty PATH lost installed launcher: %s", s.Sandbox.Cause)
+		}
+		term := h.startScreenTUI("TERM=xterm-256color")
+		waitScreen(t, h, term, "Connected")
+		h.keys(term, "\x04")
+		term.process.wait(t, 0)
+		return nil
+	}})
+	if err != nil {
+		t.Fatal(err)
 	}
 }

@@ -201,3 +201,10 @@ synthetic `gh` process and real temporary parent clone. It proves head and
 protected-ref changes prevent writes, the accepted head is pinned, confirmed
 results survive restart without a second merge, and external merges require
 commit/ref evidence and report failed checks. It uses no external credentials.
+
+`m1/conformance-agents.json` runs every shared `application/agents/` fixture
+against installed Core over its public socket. It checks refusals for missing
+and deleted agents in conversation and management requests, plus channel
+binding/scope replacement. A paired synthetic channel and an existing binding
+exercise the actual target-agent checks. Read-only canon snapshots prove that
+refused requests preserve agent revisions, actions, conversations and bindings.
