@@ -54,6 +54,29 @@ setInterval(() => {}, 1000);
   assert.match(result.stderr, /command timed out after [\d.]+ s.*hung\.mjs/);
 });
 
+test('a progressing acceptance package can finish beyond four minutes', t => {
+  const sb = fixture(t);
+  let elapsed = 0;
+  t.mock.method(performance, 'now', () => elapsed);
+  const result = checkComponents({ cwd: sb.dir, components: [kit], execute(command, args, options) {
+    if (args[0] === 'build') elapsed += 250_000;
+    if (args[0] === 'test') {
+      const limit = args.find(arg => arg.startsWith('-timeout='));
+      const minutes = Number(limit?.match(/^\-timeout=(\d+)m$/)?.[1]);
+      const duration = 300_000;
+      if (!Number.isFinite(minutes) || minutes * 60_000 <= duration || options.timeoutMs <= duration) {
+        return { status: 1, stdout: 'acceptance scenarios progressing\n', stderr: 'acceptance package deadline expired\n' };
+      }
+      elapsed += duration;
+      return { status: 0, stdout: 'acceptance package finished\n', stderr: '' };
+    }
+    return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
+  } });
+  assert.equal(result.status, 0, result.output);
+  assert.match(result.output, /acceptance package finished/);
+  assert.ok(elapsed < componentsTimeoutMs, 'the suite stays inside the shared components guard');
+});
+
 test('commands across modules share a deadline instead of resetting the budget', t => {
   const sb = fixture(t);
   let elapsed = 0;
@@ -98,7 +121,7 @@ setInterval(() => {}, 1000);
       return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
     } });
   assert.equal(result.status, 1);
-  assert.match(result.output, /\$ go test -count=1 -timeout=4m -mod=readonly \.\/\.\.\./);
+  assert.match(result.output, /\$ go test -count=1 -timeout=6m -mod=readonly \.\/\.\.\./);
   assert.match(result.output, /command timed out after [\d.]+ s \(budget 0\.\d+ s\): .*hung\.mjs/);
 });
 
@@ -115,7 +138,7 @@ test('components use the pinned toolchain, readonly commands, module verificatio
     ['env', 'GOVERSION'], ['mod', 'verify'], ['mod', 'verify'],
     ['build', '-mod=readonly', './...'],
     ['vet', '-mod=readonly', './...'], ['tool', 'exhaustive', './...'],
-    ['test', '-count=1', '-timeout=4m', '-mod=readonly', './...'],
+    ['test', '-count=1', '-timeout=6m', '-mod=readonly', './...'],
   ]);
   for (const call of calls) {
     assert.equal(call.env.GOTOOLCHAIN, 'go1.27.3');
@@ -185,8 +208,8 @@ test('module tests retain a diagnostic deadline inside their process budget', t 
   } });
   assert.equal(result.status, 0, result.output);
   const suite = calls.find(call => call.args[0] === 'test');
-  assert.ok(suite.args.includes('-timeout=4m'), 'Go must emit stuck-test stacks before the process guard');
-  assert.ok(suite.timeoutMs > 240_000, 'the shared budget leaves time for Go timeout diagnostics');
+  assert.ok(suite.args.includes('-timeout=6m'), 'Go must emit stuck-test stacks before the process guard');
+  assert.ok(suite.timeoutMs > 360_000, 'the shared budget leaves time for Go timeout diagnostics');
   assert.ok(suite.timeoutMs <= 895_000, 'the test command retains the shared components deadline');
   assert.ok(calls.every(call => call.timeoutMs > 0 && call.timeoutMs <= componentsTimeoutMs));
 });

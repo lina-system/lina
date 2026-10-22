@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/design"
+	"github.com/thisisjun786/lina/internal/tui/sanitize"
 	"github.com/thisisjun786/lina/internal/tui/state"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
@@ -124,6 +126,7 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 	pending := make(map[string]state.SendRequest)
 	channelPending := make(map[string]uint64)
 	talkPending := make(map[string]uint64)
+	var agentListID, reconnectAgent, historyID string
 	var stopInput func() error
 	defer func() {
 		if stopInput != nil {
@@ -140,7 +143,7 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 			model.conversation.pager = textPager{}
 			clear(channelPending)
 			clear(talkPending)
-			model.conversation.id = ""
+			agentListID, reconnectAgent, historyID = "", "", ""
 		}
 		if attached, ok := message.(shellPeer); ok {
 			peer = attached.Peer
@@ -148,6 +151,16 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 				signin.peer = client.client
 			}
 			w := peer.Welcome()
+			// Welcome may advertise only the default. Retain the selected
+			// display name while list/history discovery validates its identity.
+			if selected := model.activeAgent(); model.conversation.agentPending && !slices.ContainsFunc(w.Agents, func(a protocol.Agent) bool { return a.AgentID == selected }) {
+				for _, a := range model.content.Agents {
+					if a.AgentID == selected {
+						w.Agents = append(slices.Clone(w.Agents), a)
+						break
+					}
+				}
+			}
 			envelope := protocol.Envelope{Protocol: protocol.Protocol{Name: "client", Version: "1.0"}, Kind: protocol.KindWelcome, MessageID: "local-welcome", AttemptID: "local-welcome", Sender: protocol.Sender{Party: protocol.PartyCore, ID: w.MainID}, Epoch: w.Epoch, SentAt: time.Now().UTC().Format(time.RFC3339Nano), EffectState: protocol.EffectNone, SourceRefs: []protocol.SourceRef{}, Payload: w}
 			data, err := json.Marshal(envelope)
 			if err != nil {
@@ -179,8 +192,14 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 				if terminal && display.interactive && display.styles.options.Profile != Monochrome && display.renderer == nil {
 					display.renderer = startTerminalRenderer(parent, rawTerminalWriter{display.output}, model.size.Width, model.size.Height)
 				}
-				if client, ok := peer.(clientPeer); ok && model.hasCapability("conversation") && len(model.content.Agents) > 0 {
-					_, err := client.client.History(ctx, protocol.HistoryGet{})
+				if client, ok := peer.(clientPeer); ok {
+					if model.conversation.agentPending && model.hasCapability("agents") {
+						reconnectAgent = model.activeAgent()
+						agentListID, err = client.client.Agent(ctx, protocol.AgentRequest{Operation: stringPointer("list")})
+					} else if history := model.discoveryHistory(); history != nil && model.hasCapability("conversation") {
+						reconnectAgent = model.activeAgent()
+						historyID, err = client.client.History(ctx, *history)
+					}
 					if err != nil {
 						return err
 					}
@@ -239,6 +258,10 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 			if client, ok := peer.(clientPeer); ok {
 				switch request := effect.Message.(type) {
 				case state.SendRequest:
+					if model.conversation.agentMissing || model.conversation.agentPending {
+						model.reduceInput(state.SendResult{Gen: request.Gen, Key: request.Key, Failed: true})
+						return nil
+					}
 					mode := protocol.InputModeSteer
 					if request.Mode == state.InputQueue {
 						mode = protocol.InputModeQueue
@@ -260,6 +283,45 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 				var decoder protocol.ClientDecoder
 				e, err := decoder.Decode(frame.Data)
 				if err == nil && e != nil {
+					if e.ReplyTo != nil && *e.ReplyTo == historyID {
+						historyID = ""
+						if model.conversation.agentPending && model.activeAgent() == reconnectAgent && e.Error != nil {
+							if model.discoveryFailed(e.Error.Code) {
+								peer.Close()
+							}
+							return display.showShell(model)
+						}
+					}
+					if e.ReplyTo != nil && *e.ReplyTo == agentListID {
+						agentListID = ""
+						if !model.conversation.agentPending || model.activeAgent() != reconnectAgent {
+							return nil
+						}
+						p, ok := e.Payload.(protocol.AgentResult)
+						if e.Error != nil {
+							if model.discoveryFailed(e.Error.Code) {
+								peer.Close()
+							}
+						} else if !ok || p.Agents == nil || p.Operation == nil || *p.Operation != "list" {
+							return errStream
+						} else {
+							model.content.Agents = append([]protocol.Agent(nil), (*p.Agents)...)
+							for i := range model.content.Agents {
+								model.content.Agents[i].Name = sanitize.Display(model.content.Agents[i].Name)
+							}
+							if history := model.reconnectHistory(model.content.Agents); history != nil {
+								if client, ok := peer.(clientPeer); ok && model.hasCapability("conversation") {
+									historyID, err = client.client.History(ctx, *history)
+									if err != nil {
+										return err
+									}
+								} else {
+									model.agentDiscoveryDone()
+								}
+							}
+						}
+						return display.showShell(model)
+					}
 					if client, ok := peer.(clientPeer); ok {
 						if consumed, err := management.response(ctx, client.client, *e); consumed {
 							if err != nil {
@@ -309,7 +371,11 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 						}
 					}
 					if history, ok := e.Payload.(protocol.History); ok && history.ConversationID != nil {
+						if model.conversation.agentMissing || model.conversation.id != "" && model.conversation.id != *history.ConversationID {
+							return nil
+						}
 						model.conversation.id = *history.ConversationID
+						model.agentDiscoveryDone()
 						for _, topic := range []string{"conversation:" + model.conversation.id, "results:" + model.conversation.id} {
 							if err := handle(shellSubscription{Generation: model.generation, Request: protocol.Subscribe{Topic: &topic}}); err != nil {
 								return err

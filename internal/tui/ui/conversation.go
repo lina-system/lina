@@ -24,6 +24,8 @@ type conversationView struct {
 	undo         []state.Draft
 	scroll       int
 	id           string
+	agentMissing bool
+	agentPending bool
 	composer     textarea.Model
 	pager        textPager
 	cardsFocused bool
@@ -219,6 +221,9 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 			m.reduceInput(state.EditDraft{})
 			m.conversation.undo = nil
 			return command
+		}
+		if m.conversation.agentMissing || m.conversation.agentPending {
+			return nil
 		}
 		if !m.hasCapability("conversation") {
 			m.accounts = accountView{open: true, code: "needs_sign_in"}
@@ -435,7 +440,10 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		return strings.Join(rows, "\n")
 	}
 	name := "LINA"
-	if len(m.content.Agents) > 0 {
+	if m.conversation.agentMissing {
+		name = design.Text(m.styles.options.Language, "agents.unavailable")
+	}
+	if !m.conversation.agentMissing {
 		for _, a := range m.content.Agents {
 			if a.AgentID == m.activeAgent() {
 				name = a.Name
