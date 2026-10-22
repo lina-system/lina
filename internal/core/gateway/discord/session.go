@@ -124,8 +124,8 @@ func (a *Adapter) Run(ctx context.Context, in gateway.Admitter) error {
 			if parent.Err() != nil {
 				return parent.Err()
 			}
-			switch websocket.CloseStatus(err) {
-			case 4007, 4009: // Invalid sequence or expired session: Resume cannot succeed.
+			// Discord's invalid sequence and expired session cannot Resume.
+			if code := websocket.CloseStatus(err); code == 4007 || code == 4009 {
 				if err := a.resetSession(ctx); err != nil {
 					return err
 				}
