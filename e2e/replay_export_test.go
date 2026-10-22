@@ -53,6 +53,7 @@ func TestM1ReplayExportInstalledCore(t *testing.T) {
 	core.command.Env = append(core.command.Env, "PATH="+os.Getenv("PATH"), "LINA_RESPONSES_BASE_URL="+provider.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
 	core.start(t)
 	h.connect(core).Close()
+	waitConversationAdmission(t, h)
 	socket := h.socket
 	tap := newAccountTap(t, h, socket)
 	h.socket = tap.socket
