@@ -129,7 +129,8 @@ func startReadyScreenTUI(t *testing.T, h *harness, environment []string, width, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	ready := make(chan struct{}, 4)
+	ready := make(chan struct{})
+	var readyOnce sync.Once
 	ctx, cancel := context.WithCancel(h.ctx)
 	var workers sync.WaitGroup
 	workers.Add(1)
@@ -188,11 +189,7 @@ func startReadyScreenTUI(t *testing.T, h *harness, environment []string, width, 
 						return
 					}
 					if request, ok := rpc.Params.Payload.(protocol.Subscribe); ok && request.Topic != nil && strings.HasPrefix(*request.Topic, "conversation:") {
-						select {
-						case ready <- struct{}{}:
-						case <-ctx.Done():
-							return
-						}
+						readyOnce.Do(func() { close(ready) })
 					}
 				}
 			}()
