@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import test from 'node:test';
@@ -151,14 +152,19 @@ test('versioned replacement selectors must also be exact', t => {
 });
 
 test('workspace overrides enforce the same local replacement boundary, including symlinks', t => {
-  const f = fixture(t);
+  const f = vendorFixture(t);
   const outside = sandbox(t);
   outside.write(outside.dir, 'go.mod', 'module example.invalid/outside\n');
   symlinkSync(outside.dir, join(f.dir, 'escaped'));
   f.seed('go.work', { Replace: [{ Old: { Path: 'example.invalid/dep' }, New: { Path: './escaped' } }] });
   assert.equal(f.check().status, 1);
-  f.write(f.dir, 'third_party/dep/upstream/go.mod', 'module example.invalid/dep\n');
-  f.seed('go.work', { Replace: [{ Old: { Path: 'example.invalid/dep' }, New: { Path: './third_party/dep/upstream' } }] });
+  const content = 'module example.invalid/dep\n';
+  f.write(f.dir, `${f.prefix}/upstream/go.mod`, content);
+  const digest = createHash('sha256').update(content).digest('hex');
+  f.manifest.files['go.mod'] = { upstream: digest, vendored: digest };
+  f.manifest.scope.push('go.mod');
+  f.save();
+  f.seed('go.work', { Replace: [{ Old: { Path: 'example.invalid/dep' }, New: { Path: `./${f.prefix}/upstream` } }] });
   assert.equal(f.check().status, 0);
 });
 
@@ -360,3 +366,82 @@ test('malformed findings and unsupported vulnerability protocols cannot pass sil
     assert.equal(f.check().status, 1);
   }
 });
+
+function vendorFixture(t) {
+  const f = fixture(t);
+  const prefix = 'third_party/example';
+  const content = 'package example\n';
+  const digest = createHash('sha256').update(content).digest('hex');
+  const manifest = {
+    name: 'example', source: 'https://example.invalid/example', license: 'MIT',
+    commit: '1'.repeat(40), scope: ['types.go', 'LICENSE'], patches: [],
+    files: Object.fromEntries(['types.go', 'LICENSE'].map(name => [name, { upstream: digest, vendored: digest }])),
+  };
+  f.write(f.dir, `${prefix}/upstream/types.go`, content);
+  f.write(f.dir, `${prefix}/upstream/LICENSE`, content);
+  f.write(f.dir, 'THIRD-PARTY-NOTICES.md', `## example.invalid/dep\n\nMIT fixture.\n\n## example\n\nSource: ${manifest.source}\nCommit: ${manifest.commit}\nLicense: MIT\n`);
+  const save = () => f.write(f.dir, `${prefix}/vendor.json`, JSON.stringify(manifest));
+  save();
+  return { ...f, prefix, manifest, save };
+}
+
+test('vendored tree with a complete hash inventory passes', t => {
+  const f = vendorFixture(t);
+  const result = f.check();
+  assert.equal(result.status, 0, result.output);
+  assert.match(result.output, /vendored trees: 1 verified/);
+});
+
+for (const mutation of ['modified', 'missing', 'extra', 'manifest missing', 'traversal', 'symlink', 'patch incomplete', 'notice revision']) {
+  test(`vendored trees reject ${mutation} before running Go`, t => {
+    const f = vendorFixture(t);
+    const file = `${f.prefix}/upstream/types.go`;
+    if (mutation === 'modified') f.write(f.dir, file, 'changed');
+    if (mutation === 'missing') rmSync(join(f.dir, file));
+    if (mutation === 'extra') f.write(f.dir, `${f.prefix}/upstream/extra.go`, 'extra');
+    if (mutation === 'manifest missing') rmSync(join(f.dir, f.prefix, 'vendor.json'));
+    if (mutation === 'traversal') { f.manifest.files['../outside'] = f.manifest.files['types.go']; f.save(); }
+    if (mutation === 'symlink') { rmSync(join(f.dir, file)); symlinkSync('LICENSE', join(f.dir, file)); }
+    if (mutation === 'patch incomplete') { f.manifest.patches = [{ id: 'fix' }]; f.save(); }
+    if (mutation === 'notice revision') f.write(f.dir, 'THIRD-PARTY-NOTICES.md', '## example\n\nWrong revision.\n');
+    const result = f.check();
+    assert.equal(result.status, 1, result.output);
+    assert.match(result.output, /vendored trees:/);
+    assert.equal(f.calls.length, 0);
+  });
+}
+
+function generatedVendorFixture(t) {
+  const f = vendorFixture(t);
+  delete f.manifest.commit;
+  const generator = '// fixture generator\n';
+  f.write(f.dir, `${f.prefix}/generate.mjs`, generator);
+  f.manifest.generation = {
+    tools: [{ name: 'fixture', version: '1.2.3', sha256: createHash('sha256').update(generator).digest('hex'), path: 'generate.mjs' }],
+    commands: ['node generate.mjs'],
+  };
+  f.write(f.dir, 'THIRD-PARTY-NOTICES.md', `## example.invalid/dep\n\nMIT fixture.\n\n## example\n\nSource: ${f.manifest.source}\nGenerated: 1.2.3\nLicense: MIT\n`);
+  f.save();
+  return f;
+}
+
+test('generated vendored trees record tool provenance instead of a source commit', t => {
+  const f = generatedVendorFixture(t);
+  const result = f.check();
+  assert.equal(result.status, 0, result.output);
+});
+
+for (const mutation of ['version', 'digest', 'commands', 'generator drift']) {
+  test(`generated vendored trees reject incomplete provenance: ${mutation}`, t => {
+    const f = generatedVendorFixture(t);
+    if (mutation === 'version') delete f.manifest.generation.tools[0].version;
+    if (mutation === 'digest') f.manifest.generation.tools[0].sha256 = 'not a digest';
+    if (mutation === 'commands') f.manifest.generation.commands = [];
+    if (mutation === 'generator drift') f.write(f.dir, `${f.prefix}/generate.mjs`, 'changed');
+    f.save();
+    const result = f.check();
+    assert.equal(result.status, 1, result.output);
+    assert.match(result.output, /vendored trees:/);
+    assert.equal(f.calls.length, 0);
+  });
+}
