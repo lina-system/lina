@@ -5,6 +5,7 @@ package ui
 import (
 	"context"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/thisisjun786/lina/internal/design"
@@ -12,40 +13,42 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
-func TestInitialHistoryDiscoveryRetainsDraftUntilDestinationKnown(t *testing.T) {
-	m := conversationShell()
-	m.conversation.id = ""
+func TestInitialConversationDiscoveryRetainsDraftUntilDestinationKnown(t *testing.T) {
+	m := newShell(Options{Width: 80, Profile: Monochrome}, time.Now)
+	m.content.Capabilities = []protocol.Capability{{Name: "conversation", Version: "1.0"}}
 	m.content.Agents = []protocol.Agent{{AgentID: "default"}}
-	if request := m.discoveryHistory(); request == nil || request.AgentID != nil {
-		t.Fatal("initial connection did not request default history")
+	if m.discoveryHistory() == nil {
+		t.Fatal("initial connection did not request conversation discovery")
 	}
-	// Welcome's live notification precedes the history reply. A typed draft
-	// must remain editable, but Enter cannot dispatch with an empty destination.
+	// Welcome can arrive before history. Hold history until after an early Enter.
 	m.Update(shellConnection{Generation: 1, Status: ConnectionStatus{State: Live}})
-	m.Update(tea.PasteMsg{Content: "first draft"})
-	if _, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}); cmd != nil || m.content.Busy || m.content.Draft.Text != "first draft" {
-		t.Fatal("initial discovery sent or lost the draft before knowing its destination")
+	m.Update(tea.PasteMsg{Content: "preserved initial draft"})
+	if _, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}); cmd != nil || m.content.Draft.Text != "preserved initial draft" || len(m.content.Blocks) != 0 {
+		t.Fatal("initial input was sent before conversation discovery")
+	}
+	if m.status.State != Connecting {
+		t.Fatal("initial connection advertised readiness before discovery")
 	}
 	m.conversation.id = "main:default"
 	m.agentDiscoveryDone()
-	if m.status.State != Live {
-		t.Fatal("history completion did not restore live status")
+	if m.status.State != Live || m.content.Draft.Text != "preserved initial draft" {
+		t.Fatal("discovery did not make the preserved draft ready")
 	}
-	if _, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}); cmd == nil {
-		t.Fatal("resolved destination cannot accept the retained draft")
+	if _, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}); cmd == nil || m.content.Draft.Text != "" || len(m.content.Blocks) != 1 {
+		t.Fatal("explicit Enter after discovery did not send exactly once")
 	}
 }
 
-func TestAccountOnlyWelcomeDoesNotWaitForConversationDiscovery(t *testing.T) {
-	m := conversationShell()
-	m.content.Capabilities = []protocol.Capability{{Name: "accounts", Version: "1.0"}}
+func TestConnectionOnlyWelcomeDoesNotWaitForConversationDiscovery(t *testing.T) {
+	m := newShell(Options{Width: 80, Profile: Monochrome}, time.Now)
+	m.content.Capabilities = []protocol.Capability{{Name: "agents", Version: "1.0"}}
 	m.content.Agents = []protocol.Agent{{AgentID: "default"}}
-	if request := m.discoveryHistory(); request != nil || m.conversation.agentPending {
-		t.Fatal("account-only welcome requested unavailable conversation history")
+	if m.discoveryHistory() != nil {
+		t.Fatal("unconfigured connection requested conversation history")
 	}
 	m.Update(shellConnection{Generation: 1, Status: ConnectionStatus{State: Live}})
-	if m.status.State != Live {
-		t.Fatal("account-only connection cannot become live")
+	if m.status.State != Live || m.conversation.agentPending {
+		t.Fatal("connection-only welcome waited for unavailable conversation")
 	}
 }
 

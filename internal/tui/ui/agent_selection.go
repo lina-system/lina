@@ -20,14 +20,13 @@ func (m *shellModel) discoveryHistory() *protocol.HistoryGet {
 		return nil
 	}
 	if m.conversation.id != "" {
+		m.conversation.agentPending = true
 		agent := m.activeAgent()
 		return &protocol.HistoryGet{AgentID: &agent}
 	}
 	if len(m.content.Agents) == 0 {
 		return nil
 	}
-	// Welcome can mark the transport live before this first history reply.
-	// Keep input in the draft until Core supplies its conversation identity.
 	m.conversation.agentPending = true
 	return &protocol.HistoryGet{}
 }
@@ -78,8 +77,9 @@ func (m *shellModel) reconnectHistory(agents []protocol.Agent) *protocol.History
 }
 
 func (m *shellModel) agentDiscoveryDone() {
+	pending := m.conversation.agentPending
 	m.conversation.agentPending = false
-	if m.status.State == Resyncing && !m.hasGap() && len(m.resyncPending) == 0 {
+	if (m.status.State == Resyncing || pending && m.status.State == Connecting) && !m.hasGap() && len(m.resyncPending) == 0 {
 		m.status = ConnectionStatus{State: Live}
 	}
 }
