@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/json"
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/replay"
 	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/protocol"
@@ -131,6 +132,7 @@ func TestM1ReplayExportInstalledCore(t *testing.T) {
 	}
 	before := digest()
 	export := func(args ...string) protocol.ExportResult {
+		t.Helper()
 		p := h.command(append([]string{"export", "--socket", h.socket}, args...)...)
 		p.start(t)
 		p.wait(t, 0)
@@ -223,6 +225,35 @@ func TestM1ReplayExportInstalledCore(t *testing.T) {
 	}
 	if after := digest(); after != before {
 		t.Fatal("export/replay changed canon or its WAL")
+	}
+	// Lose only the last turn's request material in this disposable install.
+	// The running Core must still export the first turn and count the exclusion.
+	db, err := canon.OpenSQLiteReader(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var materialPath string
+	if err = db.QueryRowContext(h.ctx, `SELECT r.path FROM conv_event e JOIN asset_revisions r ON r.asset_id=e.material_id AND r.revision=e.material_revision WHERE e.id=?`, "request:"+ep.TurnID+":0").Scan(&materialPath); err != nil {
+		t.Fatalf("request evidence must be material-backed: %v", err)
+	}
+	if err = os.Remove(filepath.Join(h.root, materialPath)); err != nil {
+		t.Fatal(err)
+	}
+	remaining := export("--agent", agent, "--conversation", conversation, "--since", "2020-01-01T00:00:00Z", "--until", "2100-01-01T00:00:00Z")
+	if err = json.Unmarshal([]byte(remaining.Manifest), &manifest); err != nil || manifest.Selected != 2 || manifest.Exported != 1 || manifest.LeftOut != 1 || manifest.Reasons["missing_assembly"] != 1 || len(manifest.Reasons) != 1 {
+		t.Fatalf("export with missing request material: %+v %v", manifest, err)
+	}
+	data, err = os.ReadFile(filepath.Join(remaining.Directory, "episodes.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var retained replay.Episode
+	if err = json.Unmarshal(bytes.TrimSpace(data), &retained); err != nil || retained.Input.Text != scenario.Input || retained.TurnID == ep.TurnID {
+		t.Fatalf("export did not retain exactly the healthy turn: %v", err)
+	}
+	if calls.Load() != 4 || digest() != before {
+		t.Fatal("partial export changed model usage or canon")
 	}
 	h.stopCore(core)
 }
