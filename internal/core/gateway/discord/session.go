@@ -173,8 +173,7 @@ func (a *Adapter) sessionReadError(ctx context.Context, err error) error {
 	}
 	// Discord requires a fresh Identify for invalid sequence and expired
 	// sessions. Other transport closes can Resume from the committed cursor.
-	switch websocket.CloseStatus(err) {
-	case 4007, 4009:
+	if code := websocket.CloseStatus(err); code == 4007 || code == 4009 {
 		if err := a.clearSession(ctx); err != nil {
 			return err
 		}
