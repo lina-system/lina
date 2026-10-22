@@ -11,9 +11,10 @@ import (
 // An indeterminate ancestry is not an eligible decider. The initial verdict is
 // retained even if a descendant is later reparented out of Core's process tree.
 type peerIdentity struct {
-	pid      int
-	start    string
-	eligible bool
+	remoteDecider func() bool
+	pid           int
+	start         string
+	eligible      bool
 }
 
 type processIdentity struct {
@@ -39,6 +40,9 @@ func inspectPeer(conn *net.UnixConn) (peerIdentity, error) {
 }
 
 func (p peerIdentity) canDecide() bool {
+	if p.remoteDecider != nil {
+		return p.remoteDecider()
+	}
 	if !p.eligible {
 		return false
 	}
