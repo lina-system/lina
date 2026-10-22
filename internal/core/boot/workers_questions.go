@@ -21,6 +21,7 @@ type workerQuestion struct {
 	event     worker.Event
 	requestID string
 	kind      string
+	requested time.Time
 }
 type workerQuestions struct{ runtime *conversationRuntime }
 
@@ -62,6 +63,7 @@ func (e *workerSession) requestQuestion(event worker.Event) {
 	}
 }
 func (e *workerSession) presentQuestion(event worker.Event, requestID, kind, text string, fields []protocol.FormField, targets []protocol.DecisionTarget) {
+	requested := time.Now()
 	defer e.origin.notifyOwnerViews()
 	id := e.requestKey(requestID)
 	if len(fields) == 0 {
@@ -91,7 +93,7 @@ func (e *workerSession) presentQuestion(event worker.Event, requestID, kind, tex
 		return
 	}
 	e.mu.Lock()
-	e.questions[id] = &workerQuestion{card: card, event: event, requestID: requestID, kind: kind}
+	e.questions[id] = &workerQuestion{card: card, event: event, requestID: requestID, kind: kind, requested: requested}
 	e.mu.Unlock()
 	if err := e.origin.router.root.decisions.PublishQuestion(e.origin.ctx, id); err != nil {
 		e.bridgeFailure(err)
