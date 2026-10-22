@@ -56,6 +56,7 @@ type Record struct {
 	ID             string                     `json:"id"`
 	Origin         Origin                     `json:"origin"`
 	Definition     Definition                 `json:"definition"`
+	Branch         string                     `json:"branch,omitempty"`
 	State          string                     `json:"state"`
 	Code           string                     `json:"code,omitempty"`
 	Version        string                     `json:"version,omitempty"`
@@ -63,10 +64,30 @@ type Record struct {
 	Denied         []antigravity.DeniedAction `json:"denied_actions,omitempty"`
 	Announced      bool                       `json:"announced"`
 }
+
+// TaskDefinition exposes the actual assigned branch while retaining the
+// caller's definition for admission retries. Older records retain their name.
+func (r Record) TaskDefinition() Definition {
+	d := r.Definition
+	if r.Branch != "" {
+		d.Branch = r.Branch
+	}
+	return d
+}
+
+func taskBranch(requested, id string) string {
+	if strings.Contains(requested, id) {
+		return requested
+	}
+	return requested + "." + id
+}
+
 type Config struct {
 	Manage      func(context.Context, Record) (Record, error)
 	Skills      *skills.Store
 	DB          *canon.Store
+	Work        *work.Service
+	Area        *work.Area
 	Root, Main  string
 	Epoch       uint64
 	Binary, Git string
@@ -138,7 +159,7 @@ func (s *Service) Close(ctx context.Context) error {
 var branchName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
 
 func validate(d Definition) error {
-	if !filepath.IsAbs(d.Repository) || filepath.Clean(d.Repository) != d.Repository || !branchName.MatchString(d.Base) || !branchName.MatchString(d.Branch) || d.Branch == d.Base || d.Branch == "main" || d.Branch == "dev" || strings.TrimSpace(d.What) == "" || strings.TrimSpace(d.Why) == "" || strings.TrimSpace(d.Done) == "" || len(d.Scope) == 0 || len(d.DesignRefs) == 0 || len(d.WriteArea) == 0 {
+	if !filepath.IsAbs(d.Repository) || filepath.Clean(d.Repository) != d.Repository || !branchName.MatchString(d.Base) || !branchName.MatchString(d.Branch) || d.Branch == d.Base || d.Branch == "main" || d.Branch == "master" || d.Branch == "dev" || strings.TrimSpace(d.What) == "" || strings.TrimSpace(d.Why) == "" || strings.TrimSpace(d.Done) == "" || len(d.Scope) == 0 || len(d.DesignRefs) == 0 || len(d.WriteArea) == 0 {
 		return work.ErrInvalid
 	}
 	for _, pattern := range d.WriteArea {
@@ -215,7 +236,7 @@ func (s *Service) Tool(origin Origin) loop.Tool {
 			}
 			return loop.Result{ID: c.ID, Code: loop.Denied, Output: mustJSON(body)}
 		}
-		r := Record{ID: key, Origin: origin, Definition: d, Method: method, State: "queued"}
+		r := Record{ID: key, Origin: origin, Definition: d, Branch: taskBranch(d.Branch, key), Method: method, State: "queued"}
 		if s.cfg.Manage != nil {
 			r, err = s.cfg.Manage(ctx, r)
 			if err != nil {
@@ -230,6 +251,7 @@ func (s *Service) Tool(origin Origin) loop.Tool {
 				if json.Unmarshal(prior, &saved) != nil || saved.Origin != origin || !reflect.DeepEqual(saved.Definition, d) {
 					return work.ErrState
 				}
+				r = saved
 				return nil
 			}
 			if !errors.Is(readErr, sql.ErrNoRows) {
@@ -241,7 +263,7 @@ func (s *Service) Tool(origin Origin) loop.Tool {
 		if err != nil {
 			return loop.Result{ID: c.ID, Code: loop.Denied}
 		}
-		return loop.Result{ID: c.ID, Code: loop.OK, Output: mustJSON(map[string]string{"id": r.ID, "state": "queued", "owner": r.Owner, "manager": r.Manager})}
+		return loop.Result{ID: c.ID, Code: loop.OK, Output: mustJSON(map[string]string{"id": r.ID, "branch": r.TaskDefinition().Branch, "state": "queued", "owner": r.Owner, "manager": r.Manager})}
 	}}
 }
 func admissionID(origin Origin, callID string) string {
@@ -345,7 +367,7 @@ func (s *Service) sync() {
 	}
 }
 func Declaration() provider.ToolDecl {
-	return provider.ToolDecl(`{"type":"function","name":"dispatch_work","description":"Delegate a code change to the person's installed Antigravity worker. Core creates its own worktree from a local GitHub repository clone. Supply the complete authorized task, design sections, done condition and write area. The dev manager checks the definition before Core returns a task receipt; completion returns to this conversation. The worker uses its own permissions and login. Optional kind selects a development method from skill_index methodology=dev; skill overrides it with one catalog ID. Core includes that version in the task packet.","parameters":{"type":"object","properties":{"kind":{"type":"string"},"skill":{"type":"string"},"repository":{"type":"string"},"base":{"type":"string"},"branch":{"type":"string"},"what":{"type":"string"},"why":{"type":"string"},"scope":{"type":"array","items":{"type":"string"}},"not_touch":{"type":"array","items":{"type":"string"}},"done":{"type":"string"},"design_refs":{"type":"array","items":{"type":"string"}},"write_area":{"type":"array","items":{"type":"string"}}},"required":["repository","base","branch","what","why","scope","not_touch","done","design_refs","write_area"],"additionalProperties":false}}`)
+	return provider.ToolDecl(`{"type":"function","name":"dispatch_work","description":"Delegate a code change to the person's installed Antigravity worker. Core allocates a detached task worktree from a local GitHub clone. It appends the generated task ID to the requested branch unless already present, and returns the assigned branch. The worker creates that branch. Supply the complete authorized task, design sections, done condition and write area. The dev manager checks the definition before Core returns a task receipt; completion returns to this conversation. The worker uses its own permissions and login. Optional kind selects a development method from skill_index methodology=dev; skill overrides it with one catalog ID. Core includes that version in the task packet.","parameters":{"type":"object","properties":{"kind":{"type":"string"},"skill":{"type":"string"},"repository":{"type":"string"},"base":{"type":"string"},"branch":{"type":"string"},"what":{"type":"string"},"why":{"type":"string"},"scope":{"type":"array","items":{"type":"string"}},"not_touch":{"type":"array","items":{"type":"string"}},"done":{"type":"string"},"design_refs":{"type":"array","items":{"type":"string"}},"write_area":{"type":"array","items":{"type":"string"}}},"required":["repository","base","branch","what","why","scope","not_touch","done","design_refs","write_area"],"additionalProperties":false}}`)
 }
 
 type output struct{ bytes.Buffer }
