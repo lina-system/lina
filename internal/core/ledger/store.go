@@ -29,6 +29,7 @@ var (
 )
 
 type Surface struct {
+	Language string `json:"language,omitempty"`
 	Kind     string `json:"kind"`
 	Platform string `json:"platform,omitempty"`
 	ChatID   string `json:"chat_id,omitempty"`
@@ -284,6 +285,9 @@ func prepare(entry guard.Entry, in Input) (Event, error) {
 		if !safeText(text) {
 			return Event{}, ErrInvalid
 		}
+	}
+	if in.Surface.Language != "" && in.Surface.Language != "ko" && in.Surface.Language != "en" {
+		return Event{}, ErrInvalid
 	}
 	switch in.Surface.Kind {
 	case "tui", "app", "agent_exchange":
