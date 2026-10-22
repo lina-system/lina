@@ -44,6 +44,10 @@ type translation struct{ en, ko string }
 // Keys are wire codes or local presentation ids, never English source text.
 // Keep both languages together so a new entry cannot omit a translation.
 var catalog = map[string]translation{
+	"conversation.start.memory": {"What do you remember about me?", "나에 대해 무엇을 기억해?"},
+	"conversation.start.voice":  {"Please keep your replies brief.", "앞으로 짧게 답해 줘."},
+	"conversation.start.task":   {"Help me finish a task.", "이 일을 끝까지 맡아서 해 줘."},
+
 	"developer.state.active":           {"Working", "진행 중"},
 	"developer.state.idle":             {"Idle", "대기 중"},
 	"developer.state.waiting":          {"Waiting for input", "응답 대기"},
@@ -220,6 +224,7 @@ var catalog = map[string]translation{
 	"queue":                      {"Follow-up", "후속 메시지"},
 	"person":                     {"You", "나"},
 	"agent":                      {"Agent", "에이전트"},
+	"forwarded":                  {"Forwarded", "전달된 메시지"},
 	"growth_adopt":               {"Apply growth", "성장 반영"},
 	"growth_notices":             {"Growth updates", "성장 알림"},
 	"growth_undo":                {"Undo growth", "성장 되돌리기"},

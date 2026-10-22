@@ -7,16 +7,20 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"image/color"
 	"io"
 	"sync"
 
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/vt"
 )
 
 // Cell is a parsed cell, including the zero-width continuation of a wide cell.
 type Cell struct {
-	Content string
-	Width   int
+	Content    string
+	Width      int
+	Foreground color.Color
+	Bold       bool
 }
 
 // Snapshot is an independent copy of the screen after an output write.
@@ -79,7 +83,7 @@ func (r *Recorder) snapshot() Snapshot {
 		s.Cells[y] = make([]Cell, r.emulator.Width())
 		for x := range s.Cells[y] {
 			if c := r.emulator.CellAt(x, y); c != nil {
-				s.Cells[y][x] = Cell{Content: c.Content, Width: c.Width}
+				s.Cells[y][x] = Cell{Content: c.Content, Width: c.Width, Foreground: c.Style.Fg, Bold: c.Style.Attrs&uv.AttrBold != 0}
 			}
 		}
 	}
