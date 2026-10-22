@@ -73,6 +73,14 @@ process creation in test files follows the architecture rule for command
 acceptance harnesses. Future milestones can add scenario files here; new
 subpackages under `e2e/` are also covered by the registered package pattern.
 
+`m1/import-reconciliation.json` runs the installed `lina import-hermes` command
+on synthetic LCM and host databases. It reconciles every source table, including
+explicitly omitted indexes and operational state, and checks each retained row
+against both legacy-reference directions and the reverse mapper's hash. It also
+checks rehearsal, repeat-import row counts, source bytes and metadata, unknown
+schema refusal, and empty recall before promotion with a positive control after
+promotion. `m1/import-promotion.json` additionally covers sidecars and backups.
+
 `m2/persona-growth.json` uses a real Moirai worker process against Core's job
 socket with a synthetic precomputed growth candidate. It checks forged proposal
 refusal, next-turn persona application, a committed learning notice and one-action
