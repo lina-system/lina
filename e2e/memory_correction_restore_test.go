@@ -167,6 +167,7 @@ func TestM1MemoryCorrectionForgetRestore(t *testing.T) {
 			core.command.Env = append(core.command.Env, "LINA_RESPONSES_BASE_URL="+provider.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
 			core.start(t)
 			h.connect(core).Close()
+			waitCoreReady(t, h)
 			command, closeTUI = correctionMemoryTUI(t, h)
 			assertList()
 			closeTUI()
@@ -180,21 +181,17 @@ func TestM1MemoryCorrectionForgetRestore(t *testing.T) {
 // closing its view. The tap observes the same committed result the TUI receives.
 func correctionMemoryTUI(t *testing.T, h *harness) (func(string) protocol.MemoryResult, func()) {
 	t.Helper()
-	// A socket handshake can precede recovery completion after restore.
-	// Probe admission before the TUI sends management requests.
-	ready, _ := conversationClient(t, h)
-	ready.Close()
 	socket := h.socket
 	tap := newAccountTap(t, h, socket, true)
 	h.socket = tap.socket
 	terminal := h.startScreenTUI("TERM=xterm-256color")
-	waitScreen(t, h, terminal, "Ctrl+D")
+	waitComposerReady(t, h, terminal)
 	opened := false
 	command := func(text string) protocol.MemoryResult {
 		t.Helper()
 		if opened {
 			h.keys(terminal, "\x1b")
-			waitScreen(t, h, terminal, "Ctrl+D")
+			waitComposerReady(t, h, terminal)
 		}
 		h.keys(terminal, text+"\r")
 		for {

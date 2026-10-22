@@ -123,6 +123,7 @@ func TestM1InterruptedPartialHistory(t *testing.T) {
 			terminal := h.startConversationTUI([]string{"TERM=xterm-256color"}, 120, 60, conversation)
 			// Controls can appear before negotiation permits input. Wait for Live.
 			waitScreen(t, h, terminal, design.Text(design.English, "live"))
+			waitComposerReady(t, h, terminal)
 			h.keys(terminal, scenario.Input+"\r")
 			for _, partial := range scenario.Partials {
 				waitScreen(t, h, terminal, partial)

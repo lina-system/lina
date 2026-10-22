@@ -77,7 +77,7 @@ func TestM1ConversationHistoryOrder(t *testing.T) {
 			// The helper waits for this conversation's subscription response,
 			// proving that the TUI consumed History before input is submitted.
 			terminal := h.startConversationTUI([]string{"TERM=xterm-256color"}, scenario.Width, scenario.Height, conversation)
-			waitScreen(t, h, terminal, "Ctrl+D")
+			waitComposerReady(t, h, terminal)
 			// Controls can appear before negotiation permits input. Wait for Live.
 			waitScreen(t, h, terminal, design.Text(design.English, "live"))
 			h.keys(terminal, scenario.FirstInput)
