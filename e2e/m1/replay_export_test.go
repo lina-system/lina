@@ -53,8 +53,21 @@ func TestM1ReplayExportInstalledCore(t *testing.T) {
 	core.command.Env = append(core.command.Env, "PATH="+os.Getenv("PATH"), "LINA_RESPONSES_BASE_URL="+provider.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
 	core.start(t)
 	h.connect(core).Close()
+	ready, conversation := conversationClient(t, h)
+	ready.Close()
+	socket := h.socket
+	tap := newAccountTap(t, h, socket)
+	h.socket = tap.socket
 	terminal := h.startScreenTUI("TERM=xterm-256color")
+	h.socket = socket
 	waitScreen(t, h, terminal, design.Text(design.English, "live"))
+	// Wait for Core admission and the TUI's conversation discovery before input.
+	for {
+		frame := tap.next(t, h)
+		if snapshot, ok := frame.Payload.(protocol.Snapshot); ok && snapshot.Topic == "conversation:"+conversation {
+			break
+		}
+	}
 	h.keys(terminal, scenario.Input+"\r")
 	waitScreen(t, h, terminal, scenario.Reply)
 	h.keys(terminal, "\x04")
