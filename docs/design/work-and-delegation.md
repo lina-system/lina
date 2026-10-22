@@ -727,6 +727,25 @@ proves an owner approval returning to the worker, dynamic tool result delivery,
 quota rows and an actual worker-written artifact. This is protocol integration
 evidence; it does not measure live account quota or certify new Codex versions.
 
+#### Parent acceptance (#130)
+
+The parent uses the implemented sub-issue paths above. All three sub-issues
+(#131, #132 and #133) must be closed, and the following evidence must hold:
+
+| Condition | Evidence |
+| --- | --- |
+| Installed-worker round trip and version | `TestInstalledCodex` exercises initialize, start, interrupt, idle input and snapshot. `TestM2InstalledCodexLive` starts the installed worker through Core's conversation tool path and returns its model output. Both require `LINA_CODEX_LIVE=1` and report the installed version. |
+| Unverified version reported and used | `TestM2InstalledCodexSession` uses a synthetic unlisted version, checks its launch result and conversation notice, and reads the file it produces. The notice and result survive Core restart. |
+| Approval reaches its conversation and the answer returns | `TestM2CodexWorkTools` checks the originating conversation on the approval card, answers through the authenticated client protocol, and requires the worker to receive that answer before it can write its artifact. It also exercises questions, all four dynamic work tools and quota. |
+| No worker sandbox, credential or setting imposed | Both synthetic Core scenarios reject extra launch arguments and thread/turn settings, retain the worker's Codex home, and reject Core's dedicated model credential. The live tests inherit the installed worker's setup. |
+
+The headless scenarios use the [shared acceptance harness](../../e2e/README.md).
+Their worker-written files and restored conversation results establish the Core
+integration. Live session evidence and synthetic approval/tool evidence are
+recorded separately: a passing synthetic worker does not verify an installed
+Codex version, and a live text response does not prove live approval or file
+execution. Session completion remains distinct from verified task delivery.
+
 ### Readiness
 
 Delegation to a worker is ready when:
