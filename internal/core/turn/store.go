@@ -121,12 +121,16 @@ func (s *Store) Journal(id string) loop.Journal {
 		},
 		Calls: func(ctx context.Context, round int, calls []provider.ToolCall) error {
 			return write(ctx, func(tx *canon.Tx) error {
+				var offset int
+				if err := tx.QueryRowContext(ctx, "SELECT COALESCE(MAX(ordinal)+1,0) FROM turn_calls WHERE turn_id=? AND round=?", id, round).Scan(&offset); err != nil {
+					return err
+				}
 				for i, c := range calls {
 					b, err := json.Marshal(c)
 					if err != nil {
 						return err
 					}
-					if _, err = tx.ExecContext(ctx, "INSERT INTO turn_calls(turn_id,round,ordinal,call_id,call) VALUES(?,?,?,?,?)", id, round, i, c.ID, b); err != nil {
+					if _, err = tx.ExecContext(ctx, "INSERT INTO turn_calls(turn_id,round,ordinal,call_id,call) VALUES(?,?,?,?,?)", id, round, offset+i, c.ID, b); err != nil {
 						return err
 					}
 				}

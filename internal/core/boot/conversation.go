@@ -38,6 +38,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/internal/core/manifest"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
+	"github.com/thisisjun786/lina/internal/core/records"
 	"github.com/thisisjun786/lina/internal/core/reply"
 	"github.com/thisisjun786/lina/internal/core/retract"
 	"github.com/thisisjun786/lina/internal/core/runs"
@@ -83,6 +84,7 @@ type conversationRuntime struct {
 	signin           *accounts.SignIn
 	agents           *agents.Store
 	skills           *skills.Store
+	records          *records.Store
 	persona          *coreexec.Persona
 	personaAuthority *authority.Service
 	personaGrants    map[string]grant.Grant
@@ -166,6 +168,10 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	}
 	r.materials = &conversationMaterials{store: r.assets, writer: writer, actor: assets.Actor{PersonID: r.person, AgentID: r.agent}}
 	r.skills, err = skills.Open(root, db, builtin.Builtins())
+	if err != nil {
+		return nil, err
+	}
+	r.records, err = records.Open(root, db)
 	if err != nil {
 		return nil, err
 	}
@@ -305,6 +311,9 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 	}
 	if r.agents != nil {
 		err = errors.Join(err, r.agents.Close())
+	}
+	if r.records != nil {
+		err = errors.Join(err, r.records.Close())
 	}
 	if r.skills != nil {
 		err = errors.Join(err, r.skills.Close())
@@ -690,7 +699,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		VerifyBuild: r.verifyBuild,
 		Account:     func(context.Context) (provider.Credential, error) { return r.route.Request(nil).Credential, nil },
 		Resolve: func(context.Context) (turn.ModelPolicy, error) {
-			return turn.ModelPolicy{Model: r.route.Model, Revision: "configured", Class: provider.ModelAPI}, nil
+			return turn.ModelPolicy{Model: r.route.Model, Revision: "configured", Class: r.route.Adapter.Class()}, nil
 		},
 		Context: func(ctx context.Context, policy turn.ModelPolicy) (turn.PreparedRequest, error) {
 			if err := r.refreshPersona(ctx); err != nil {
@@ -728,10 +737,14 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			if err := r.prepareSkillTools(turnID, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
+			if err := r.prepareRecordTools(turnID, bindings); err != nil {
+				return turn.PreparedRequest{}, err
+			}
 			declarations := append(coreexec.PersonaDeclarations(), coreexec.PersonaSettingDeclaration())
 			declarations = append(declarations, coreexec.EmotionDeclarations()...)
 			declarations = append(declarations, coreexec.RelationshipDeclaration())
 			declarations = append(declarations, coreexec.SkillDeclarations()...)
+			declarations = append(declarations, coreexec.RecordDeclarations()...)
 			declarations = append(declarations, startRunDeclaration())
 			packet, _, err := atropos.Packet(ctx, minimum, 0, func(ctx context.Context) (assemble.ContextPacket, error) { return r.relationshipPacket(ctx, at) })
 			if err != nil {
@@ -841,7 +854,8 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			return promoted, err
 		},
 		ResultCommitted: r.background.notify, ToolActivity: r.toolActivity, Loop: loop.Config{
-			Tools: bindings,
+			RuntimeTools: r.route.Adapter.Class() == provider.AgentRuntime,
+			Tools:        bindings,
 			After: func(ctx context.Context, call provider.ToolCall, result loop.Result) loop.Result {
 				return r.skillNotice(ctx, input, call, r.personaNotice(ctx, input, call, result))
 			},

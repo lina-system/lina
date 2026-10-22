@@ -1,0 +1,6 @@
+{
+  "title": "Workshop notes",
+  "note": "Bring the prototype to the next meeting.",
+  "updated": "Bring the tested prototype and its measurements.",
+  "tools": ["read_record", "write_record"]
+}
