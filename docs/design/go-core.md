@@ -758,10 +758,25 @@ matter id. Every applied change has one commit naming the person and asking
 agent. A durable intent names immutable before/after objects; startup finishes
 only that publication and never re-dispatches its tool effect. An outside edit,
 commit, foreign lock or incompatible recovery state returns `records_changed`
-without overwriting it. Outside-change acceptance/presentation and the richer
-FTS/edge index are subsequent records-index work.
+without overwriting it. The derived index includes title/note FTS and belongs-to
+and blocked-by edges. Its own head is separate from the last Core-published
+head. Startup and every read/write repair a missing or stale index only after
+checking the published files. Rebuild reads those files, validates unique ids,
+and derives record revisions from their history; it never adopts an outside
+commit as a new Core publication.
 
-Installed conversations register `read_record` and `write_record` through the
+`query_records` searches or lists the authenticated person's records, optionally
+filtering kind, with deterministic id ordering and a bounded page. Person and
+filesystem paths are not model arguments. A changed, added, deleted, invalid or
+non-regular file, or a changed repository head, refuses reads, queries, writes
+and rebuild with `records_changed`. Tool results show a bounded list of change
+kinds and validation outcomes without outside bytes or filesystem paths. Startup
+keeps ordinary conversations available when an outside change is present; the
+next record operation shows the refusal. Only Core-journaled recovery may finish
+an interrupted publication. Outside-change acceptance is not automatic and no
+accept/merge operation is supplied by this increment.
+
+Installed conversations register `read_record`, `write_record` and `query_records` through the
 ordinary authority, lease and effect-receipt registry. These tools capture and
 edit memos and knowledge documents; Core supplies the owner, asking agent, id
 and PARA path. Model arguments cannot supply identities or paths. Existing
@@ -1004,7 +1019,7 @@ them through the existing turn execution and outbound queue.
 outbound Gateway session per saved Discord bot. Its `coder/websocket` transport
 is pinned at v1.8.15; REST calls use the fixed Discord v10 origin without redirects
 or automatic effect retries. The shared catalog appends Discord presentations
-and pending buttons plus consumed channel steering at migration 29, leaving migrations 1–28 unchanged.
+and pending buttons plus consumed channel steering at migration 30, leaving migrations 1–29 unchanged.
 The optional channel control `platform` field defaults to Telegram. Discord
 connection verifies the bot identity before replacing its credential or worker.
 
@@ -1160,6 +1175,7 @@ type Definition struct {
 
 - A completion event is a row keyed by task, attempt and head SHA, and its claim is idempotent. Chat input and events share one reaction path.
 - `Reactor.On` does, in order: one read of the pull request through `ghclient` (a `gh` child with fixed arguments); one design-conformance review; return of P0 and P1 findings once; merge or close; then `Scheduler.Release`. The CI watcher follows [completion signals](integrations.md#completion-signals).
+- `ghclient` is owned by boot for one Core epoch. Each fixed-argument `gh` child runs through `kit/proc` with a live activity lease, the user's GitHub login and no model-provider credentials. The client serializes observation in one watcher per normalized repository/PR, bounds response bytes and pagination, retains conditional REST validators, and exposes pending causes and retry times through the `github` client capability. No shell, events feed, webhook, merge or external write is part of this read service. Boot cancels and joins it before releasing its resources. The installed-Core scenario in `e2e/m2/github-ci.json` covers the socket-to-child-to-result path.
 - The review is Core's own call on the `background` role. The diff, the design reference text at the base commit and the work definition go in as an enveloped data block. Findings come back as schema-validated records `{id, severity P0..P3, file, claim}`. A failing required check and a change outside the write area are P1 findings computed by Core. A prose-only reply stores none. A large diff is reviewed by file group and merged into one finding set.
 - The return, the close on a residual finding and the merge steps are those of the contract. Core takes the merge slot, merges pinned to the head last read, and only one read after the merge lands the task.
 - Stall handling and the reconcile sweep (every 5 minutes (P), no model call) follow the contract.
