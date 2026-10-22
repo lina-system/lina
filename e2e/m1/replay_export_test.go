@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"github.com/thisisjun786/lina/internal/core/replay"
+	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"io"
 	"net/http"
@@ -60,6 +61,7 @@ func TestM1ReplayExportInstalledCore(t *testing.T) {
 	h.socket = tap.socket
 	terminal := h.startScreenTUI("TERM=xterm-256color")
 	h.socket = socket
+	waitScreen(t, h, terminal, design.Text(design.English, "live"))
 	waitComposerReady(t, h, terminal)
 	// Wait for Core admission and the TUI's conversation discovery before input.
 	for {
