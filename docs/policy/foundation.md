@@ -166,6 +166,18 @@ The component check shares an 895-second command budget, leaving five seconds fo
 
 On PR #298, [CI run 39659531710](https://github.com/thisisjun786/lina/actions/runs/39659531710) exhausted the former 595-second components budget after about 200 seconds of setup, builds and analysis and 395 seconds of module compilation and tests. Completed packages passed, including exchanges; end-to-end verification was still unfinished. The 895-second budget accommodates that cold-run workload while retaining the four-minute Go package timeout and individual operation deadlines. Build-only and automation budgets remain unchanged.
 
+On PR #485, [CI run 39783991019](https://github.com/thisisjun786/lina/actions/runs/39783991019)
+reached the six-minute e2e package limit while the 108-test suite was still
+progressing through shortcut fixtures (the current subtest had just started).
+No assertion failed before the package watchdog fired. The component check used
+548.3 seconds of its 895-second budget. The common acceptance batching now
+runs this growing corpus in disjoint groups without raising the six-minute
+package limit or changing individual operation deadlines and the shared
+895-second command budget. The regression simulates a progressing 390-second
+e2e suite after 200 seconds of setup and requires every scenario to run once
+while the enclosing component guard holds.
+
+
 On PR #398, [CI run 39682857682](https://github.com/thisisjun786/lina/actions/runs/39682857682) reached the four-minute end-to-end package limit while an installed-Core scenario had run for nine seconds and its current subtest for one second. The package-wide diagnostic deadline is now six minutes for the accumulated acceptance workload; individual operation deadlines and the fifteen-minute components guard are unchanged. A controlled-clock test verifies that a progressing five-minute package fits after compilation, while the existing hung-command tests retain the shared guard.
 
 Build regression fixtures also share a 595-second allowance across their build CLI calls, including both cross-build targets, under automation's 600-second watchdog. They pass the remaining budget to `scripts/build.mjs --timeout-ms <milliseconds>`, reserving one second for the CLI to report failures before its wrapper expires. The build script defaults to 595 seconds when invoked directly. Its inner Go builds share the remaining deadline, with environment queries capped at 30 seconds and module verification and metadata generation at 120 seconds. Inner commands and the fixture wrapper use the same timeout diagnostics.
