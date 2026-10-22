@@ -54,13 +54,21 @@ func (r *conversationRuntime) refreshPersona(ctx context.Context) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for _, key := range keys {
+		method, missing, methodErr := persona.LoadWorkMethod(p.source, key)
 		core, voice, err := persona.Load(p.source, key)
-		if err != nil && !p.warned[key] {
-			fmt.Fprintln(p.warnings, persona.SetupWarning(key))
+		if !p.warned[key] && (err != nil || methodErr != nil || missing) {
+			warning := persona.WorkMethodWarning(key, missing)
+			if methodErr == nil && err != nil {
+				warning = persona.SetupWarning(key)
+			}
+			fmt.Fprintln(p.warnings, warning)
 			p.warned[key] = true
 		}
+		if methodErr != nil {
+			continue
+		}
 		for {
-			err = r.agents.UpdatePresetLayers(ctx, key, core, voice, r.person)
+			err = r.agents.UpdatePresetMaterial(ctx, key, core, voice, method, r.person)
 			if !errors.Is(err, agents.ErrConflict) {
 				break
 			}

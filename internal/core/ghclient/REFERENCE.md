@@ -36,3 +36,16 @@ The same reference commit was read through GitHub's read-only contents API:
   fixed `gh pr merge --match-head-commit` arguments, local Git ref snapshots,
   and explicit commit/ref/check reads before accepting an external merge.
   No reference code or operational records are copied.
+
+## Head changes during evidence reads (#139)
+
+The pinned `internal/relay/dagsched/mergeorder.go` was read again through the
+read-only contents API before this correction.
+
+- **Seen:** current, stale and unknown heads describe the relationship between
+  a measurement and the node's current head; the reading is not a merge gate.
+- **Inferred:** when PR identity and review reads disagree, LINA must refresh
+  the evidence and return it without admitting a merge, as C-58 requires.
+- **Unknown:** the reference does not define gh read races or retry counts.
+  LINA refreshes once, remains blocked even if the original head returns, and
+  leaves further observation and explicit head acceptance to the caller.

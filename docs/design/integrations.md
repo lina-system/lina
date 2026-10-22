@@ -463,6 +463,10 @@ The Core implementation exposes merge control separately from read/watch as the
 replace those hashes. Head acceptance and merge admission both compare the
 captured refs. Before writing, Core rereads PR identity after reading checks and
 reviews; a changed head/base blocks the call, and a changed head is read again.
+If review reads detect a different head from the initial PR read, Core also
+refreshes the observation once and returns it with the merge blocked. It never
+continues to admission from that refresh, even if the original head returns.
+Another head change or read failure ends that attempt without a write.
 The fixed command is `gh pr merge <number> --repo github.com/<repository> --merge
 --match-head-commit <head>`; Core supplies neither admin bypass nor auto-merge.
 An unresolved P0/P1 marker blocks admission, including an outdated unresolved

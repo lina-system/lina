@@ -19,6 +19,7 @@ import (
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
+	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/tools"
 )
 
@@ -356,6 +357,8 @@ func TestSystemObservesRepairsAndVerifiesThroughInstalledCore(t *testing.T) {
 	var before, after struct {
 		Revision, Source string
 		Healthy          bool
+		Records, Texts   int
+		SearchRows       int    `json:"search_rows"`
 		ObservedAt       string `json:"observed_at"`
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -366,8 +369,8 @@ func TestSystemObservesRepairsAndVerifiesThroughInstalledCore(t *testing.T) {
 			emitPersonaCall(w, "before", "observe_health", map[string]any{})
 		case 2:
 			methodologyOutput(t, request, "ok", &before)
-			if before.Healthy || before.Source == "" || before.ObservedAt == "" {
-				t.Error("unobserved or undetected fault")
+			if before.Healthy || before.Source == "" || before.ObservedAt == "" || before.Records != before.Texts || before.SearchRows != before.Texts+1 {
+				t.Errorf("unobserved or undetected fault: %+v", before)
 			}
 			emitPersonaCall(w, "repair", "repair_records_index", map[string]string{"revision": before.Revision})
 		case 3:
@@ -393,17 +396,35 @@ func TestSystemObservesRepairsAndVerifiesThroughInstalledCore(t *testing.T) {
 	h.stopCore(core)
 	seedMethodologyAgents(t, h, person, "system")
 	core = start(true)
-	c, conversation := conversationClient(t, h)
+	c, conversation := conversationClient(t, h, protocol.Capability{Name: "progress", Version: "1.0"})
 	db, err := canon.OpenSQLite(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	// A head mismatch is automatically repaired by progress source reads. An
-	// orphaned FTS row survives those reads until the explicit rebuild, so this
-	// fault cannot disappear depending on which observer wins a timing race.
-	if _, err = db.Exec("INSERT INTO records_fts(id,title,note) VALUES('synthetic-orphan','Synthetic fault','')"); err != nil {
+	// An orphan search row affects only a disposable projection. Unlike a stale
+	// index head, ordinary overview reads do not repair it before observation.
+	if _, err = db.Exec("INSERT INTO records_fts(id,title,note) VALUES('synthetic-orphan','Fixture','No canonical record')"); err != nil {
 		t.Fatal(err)
+	}
+	// Reconcile the overview before the health tool runs. The background
+	// publisher can do the same read between fault injection and observation.
+	mode := "overview"
+	id, err := c.Progress(h.ctx, protocol.ProgressGet{View: &mode})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		frame, err := c.Receive(h.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if frame.ReplyTo != nil && *frame.ReplyTo == id {
+			if _, ok := frame.Payload.(protocol.Progress); frame.Error != nil || !ok {
+				t.Fatalf("overview reconciliation failed: %+v", frame)
+			}
+			break
+		}
 	}
 	admittedTurn(t, h, c, conversation, "repair", "Observe the records index, repair that component if needed, and verify the result.")
 	c.Close()

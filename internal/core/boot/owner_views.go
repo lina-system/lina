@@ -177,6 +177,7 @@ func (r *conversationRuntime) ownerWaiting(ctx context.Context, names map[string
 	}
 	if r.background != nil {
 		sources["run"] = &waiting.RunInputSource{DB: r.db, Owner: r.background.service, AgentName: name}
+		sources["run_effect"] = waiting.RunEffectSource{AgentName: name}
 	}
 	if _, err := r.records.Head(ctx); err != nil {
 		if !errors.Is(err, records.ErrRecordsChanged) {

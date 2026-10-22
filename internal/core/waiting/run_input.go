@@ -24,12 +24,14 @@ type RunInputSource struct {
 // This read projection contains only fields needed by the waiting producer;
 // the run owner alone writes the run and validates its current generation.
 type runInputRecord struct {
-	ID, State     string
-	Origin        struct{ Person, Agent string }
-	Brief         struct{ Goal string }
-	NoticeVersion uint64
-	NoticeAt      int64
-	InputAnswers  []struct {
+	ID, State       string
+	Origin          struct{ Person, Agent, Conversation string }
+	Brief           struct{ Goal string }
+	Created         int64
+	EffectsQuestion *struct{ Answer *json.RawMessage }
+	NoticeVersion   uint64
+	NoticeAt        int64
+	InputAnswers    []struct {
 		Revision              uint64
 		Person, Agent, Answer string
 		At                    time.Time
