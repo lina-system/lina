@@ -1296,6 +1296,7 @@ SOFTWARE.
 
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) (MIT, copyright
 2025 Nous Research) informs the TUI's complete inline assistant replies and
-paged transcript reading. No upstream code is copied. The source-survey
+paged transcript reading, wheel acceleration and sticky-bottom scrolling. No
+upstream code is copied. The source-survey
 observations and limits are recorded in [the TUI reference specification](internal/tui/ui/REFERENCE.md).
 The Hermes Agent license text is included above.
