@@ -30,7 +30,7 @@ selection ----+---- docs --------+---- gate
               +---- components --+
 ```
 
-Everything runs in one process. `selection` records the exact base and candidate commits, the changed paths, the selected checks and the selection reason. It also checks Git whitespace errors: `git diff --check` over the range, or `git show --check` on the `HEAD` commit with `--full`. The selected checks run in parallel after selection. The gate only evaluates their results; it never reruns their commands. Each check has a bounded timeout. Go build, vet, analyzer and whole-module test commands share the remaining components budget described below; `go test -timeout=6m` also bounds package execution and emits stuck-test stack traces when that deadline is reached. This accommodates subprocess acceptance builds under concurrent cold-cache CI verification without changing individual test operation deadlines. The enclosing components check remains bounded at fifteen minutes. The growing headless acceptance corpus is enumerated per package and executed in two disjoint batches of top-level tests, examples and fuzz seed tests. Both batches run uncached with the same six-minute diagnostic timeout and share the original fifteen-minute components budget; individual operation and scenario deadlines are unchanged. Each enumerated test runs exactly once, with its subtests. An enumeration or batch failure fails the gate immediately.
+Everything runs in one process. `selection` records the exact base and candidate commits, the changed paths, the selected checks and the selection reason. It also checks Git whitespace errors: `git diff --check` over the range, or `git show --check` on the `HEAD` commit with `--full`. The selected checks run in parallel after selection. The gate only evaluates their results; it never reruns their commands. Each check has a bounded timeout. Go build, vet, analyzer and whole-module test commands share the remaining components budget described below; `go test -timeout=6m` also bounds package execution and emits stuck-test stack traces when that deadline is reached. This accommodates subprocess acceptance builds under concurrent cold-cache CI verification without changing individual test operation deadlines. The enclosing components check remains bounded at fifteen minutes. The growing headless acceptance corpus is enumerated per package and executed in three disjoint batches of top-level tests, examples and fuzz seed tests. All batches run uncached with the same six-minute diagnostic timeout and share the original fifteen-minute components budget; individual operation and scenario deadlines are unchanged. Each enumerated test runs exactly once, with its subtests. An enumeration or batch failure fails the gate immediately.
 
 ## Evidence
 
@@ -219,7 +219,17 @@ fail the check. The root and adapter npm projects have independent lockfiles.
 PR #523's [CI run 39785658738](https://github.com/thisisjun786/lina/actions/runs/39785658738)
 reached the six-minute package limit while the current TUI lifecycle scenario
 had run for two seconds. That branch initially used a ten-minute package diagnostic deadline. The
-acceptance batching from #127 now covers that growing corpus with two disjoint
+acceptance batching from #127 now covers that growing corpus with three disjoint
 six-minute batches inside the unchanged fifteen-minute shared components budget.
 Individual operation deadlines and acceptance assertions remain in force;
 timeout or missing observations still fail verification.
+
+On the #459 branch after the dependency stack landed, the first of two batches
+reached its six-minute package limit during `TestM2WorkArea`, two seconds into
+that scenario. Three disjoint batches retain every enumerated test, example and
+fuzz seed exactly once while reducing the duration of each package invocation.
+The six-minute diagnostic deadline, individual scenario and operation limits,
+and shared fifteen-minute component budget remain unchanged. A controlled-clock
+fixture covers a twelve-minute corpus that cannot fit in two invocations but
+fits in three under the same shared budget; the real fixture checks execution
+of ordinary tests, subtests, examples and fuzz seeds.
