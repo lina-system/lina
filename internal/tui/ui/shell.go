@@ -354,6 +354,7 @@ func (m *shellModel) View() tea.View {
 		if plan.Tier != layout.TooSmall && !m.conversation.pager.open && !m.accounts.open && !m.channels.open && !m.talk.open && m.content.CardView.ID == "" {
 			view.Cursor = m.conversation.composer.Cursor()
 			if view.Cursor != nil {
+				view.Cursor.Position.X += m.styles.composerPromptWidth()
 				view.Cursor.Position.Y += plan.Composer.Y
 			}
 		}
