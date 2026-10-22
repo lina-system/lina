@@ -1255,6 +1255,11 @@ result-type negotiation and full wire bodies remain tracked in
 | End to end | The program with a recording writer and an emulator | Zero bytes on an unchanged state; bounds on writes; final cells |
 | PTY | The built binary against the fake Core | Start, connect, refuse, recover, quit |
 
+The recording writer derives cursor visibility from parsed DECTCEM (DEC mode
+25) changes. This state is global across main and alternate screens; switching
+screens does not restore an obsolete per-screen visibility value. The recorder
+retains the original output bytes and never injects a successful teardown.
+
 No test sleeps. Assertions check ids, codes, counts and bytes, never prose or rendered strings, and no golden file pins renderer bytes ([AGENTS.md](../../AGENTS.md)). Wall-clock bounds are measured in the spike and in benchmark runs, and recorded as evidence. The PTY layer does not replace S1 to S11.
 
 Invariants that need a test:

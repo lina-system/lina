@@ -77,6 +77,12 @@ func TestConversationWorkerRunningObservesOutsideCanon(t *testing.T) {
 func runningWorkerFixture(t *testing.T) (*conversationRuntime, *runningWorkerProbe) {
 	t.Helper()
 	r := runRuntime(t)
+	// Stop the periodic owner-view observer before installing mutable unit
+	// probes. Installed-Core scenarios exercise both live view producers.
+	if r.ownerViews != nil {
+		r.ownerViews.stop()
+		<-r.ownerViews.done
+	}
 	probe := &runningWorkerProbe{snapshot: worker.ThreadSnapshot{State: worker.Active, Worker: "codex"}}
 	body, err := secrets.Mask("Compare the options\nwithout changing files")
 	if err != nil {
