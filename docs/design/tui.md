@@ -1009,6 +1009,9 @@ state together with expected transcript or draft content. They do not pin footer
 prose or spacing; any required visible label comes from the design catalog.
 Transcript ordering, one copy of each message, search, draft restoration and
 complete LONG-QA body/scroll checks remain independent of those readiness waits.
+The first-run PTY scenario likewise waits for its draft, composer cursor and
+catalog suggestions in one parsed snapshot before checking presentation; separate
+observations across redraws do not establish that they were visible together.
 
 **Tests.** The fake Core, `internal/fakecore`, is built from the conformance fixtures ([host-protocol.md](host-protocol.md#conformance-fixtures)) with an injected clock and fault switches: drop, slow reader, epoch change, duplicate delivery, disconnect mid-batch, recovering and refusal.
 
