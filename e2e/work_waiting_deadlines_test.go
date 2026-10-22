@@ -179,6 +179,40 @@ func TestM2WorkWaitingDeadlines(t *testing.T) {
 			t.Fatalf("incomplete question round: %+v", question)
 		}
 	}
+	// Refreshing from another subscription must not reset an in-progress form.
+	subscription, err = client.Subscribe(h.ctx, protocol.Subscribe{Topic: &topic})
+	if err != nil {
+		t.Fatal(err)
+	}
+	againSnapshot := receive(subscription).Payload.(protocol.Snapshot)
+	if !reflect.DeepEqual(snapshot, againSnapshot) {
+		t.Errorf("unchanged work questions republished on subscription: before=%+v after=%+v", snapshot, againSnapshot)
+	}
+	assertResolved := func(id string) {
+		t.Helper()
+		request, err := client.Subscribe(h.ctx, protocol.Subscribe{Topic: &topic})
+		if err != nil {
+			t.Fatal(err)
+		}
+		frame := receive(request)
+		snapshot, ok := frame.Payload.(protocol.Snapshot)
+		if !ok {
+			t.Fatalf("missing waiting snapshot: %+v", frame)
+		}
+		for _, item := range snapshot.Items {
+			var question protocol.Question
+			if err := json.Unmarshal(item.Payload, &question); err != nil {
+				t.Fatal(err)
+			}
+			if question.Card != nil && question.Card.ID == id {
+				if question.Card.Outcome == nil || *question.Card.Outcome != protocol.DecisionOutcomeResolved {
+					t.Fatalf("late answer left question card open: %+v", question.Card)
+				}
+				return
+			}
+		}
+		t.Fatalf("resolved question %s missing from snapshot", id)
+	}
 	goal := script.Goals[0]
 	id, revision := "work:"+goal, "1"
 	a, b := "B", waiting.DoNotAct
@@ -199,6 +233,20 @@ func TestM2WorkWaitingDeadlines(t *testing.T) {
 	if err != nil || revised.Revision != 2 || len(revised.Decisions) != 2 || revised.Decisions[1].Decision.MessageID != request || revised.Decisions[1].Decision.Message == "" {
 		t.Fatalf("missing revision/message: %+v %v", revised, err)
 	}
+	assertResolved(id)
+	// A different message from a stale surface cannot create another revision.
+	request, err = client.AnswerQuestion(h.ctx, protocol.QuestionAnswer{CardID: &id, Revision: &revision, Answer: protocol.QuestionAnswerActionAccept, Values: &values})
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame = receive(request)
+	if frame.Error != nil {
+		t.Fatalf("repeat answer: %+v", frame.Error)
+	}
+	afterRepeat, err := read.Get(h.ctx, goal)
+	if err != nil || !reflect.DeepEqual(revised, afterRepeat) {
+		t.Fatalf("resolved card accepted another decision: %+v %v", afterRepeat, err)
+	}
 	client.Close()
 	h.stopCore(core)
 	// A second boot must preserve both the default and the later decision.
@@ -209,6 +257,13 @@ func TestM2WorkWaitingDeadlines(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(revised, again) {
 		t.Fatalf("restart repeated effect: %+v %v", again, err)
 	}
+	client, err = clientapi.DialWithCapabilities(h.ctx, h.socket, "test", []protocol.Capability{{Name: "waiting", Version: "1.0"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	assertResolved(id)
+	client.Close()
 	h.stopCore(core)
 	reader.Close(context.Background())
 	db, closeWriter = openWriter()
