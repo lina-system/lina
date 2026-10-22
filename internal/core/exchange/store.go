@@ -142,6 +142,7 @@ func deliver(ctx context.Context, tx *canon.Tx, r Record, at time.Time) (Record,
 
 // Deliver atomically admits one agent-origin input and records its delivery.
 // Re-delivery after commit returns the existing mailbox row, even after a kill.
+// While the exchange is pending, its receipt survives the delivery deadline.
 func (s *Store) Deliver(ctx context.Context, delivery string, at time.Time) (Receipt, error) {
 	if !timestamp(at) {
 		return Receipt{}, ErrInvalid
@@ -153,8 +154,12 @@ func (s *Store) Deliver(ctx context.Context, delivery string, at time.Time) (Rec
 			return err
 		}
 		inserted := r.State == Queued
-		if _, err = deliver(ctx, tx, r, at); err != nil {
-			return err
+		// A committed delivery needs no new admission. Keep deliver's deadline
+		// checks for callers that prepare or finish work after delivery.
+		if inserted || r.Outcome != Pending {
+			if _, err = deliver(ctx, tx, r, at); err != nil {
+				return err
+			}
 		}
 		receipt = Receipt{ID: r.ID, DeliveryID: delivery, Inserted: inserted}
 		return nil

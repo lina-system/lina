@@ -272,6 +272,70 @@ func TestRetryAfterDeadlineReturnsOriginalReceipt(t *testing.T) {
 		t.Fatalf("late retry: %+v %v", got, err)
 	}
 }
+
+func TestCommittedDeliveryReceiptSurvivesDeadline(t *testing.T) {
+	for _, state := range []exchange.State{exchange.Queued, exchange.Delivered, exchange.Read} {
+		for _, delay := range []time.Duration{time.Hour, 2 * time.Hour} {
+			t.Run(string(state)+"/"+delay.String(), func(t *testing.T) {
+				db := database(t)
+				s := exchange.New(db)
+				r := start(t, s)
+				if state != exchange.Queued {
+					first, err := s.Deliver(t.Context(), r.DeliveryID, now)
+					if err != nil || !first.Inserted {
+						t.Fatalf("first delivery: %+v %v", first, err)
+					}
+				}
+				if state == exchange.Read {
+					if _, err := s.Prepare(t.Context(), r.DeliveryID, "answerer", now, &knowledge{t: t}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				before := record(t, s, r.ID)
+				// A fresh adapter must recover the committed receipt from canon.
+				s = exchange.New(db)
+				got, err := s.Deliver(t.Context(), r.DeliveryID, now.Add(delay))
+				if state == exchange.Queued {
+					if !errors.Is(err, exchange.ErrClosed) || got != (exchange.Receipt{}) {
+						t.Fatalf("late first delivery: %+v %v", got, err)
+					}
+				} else if err != nil || got != (exchange.Receipt{ID: r.ID, DeliveryID: r.DeliveryID}) {
+					t.Errorf("late committed delivery: %+v %v", got, err)
+				}
+				after := record(t, s, r.ID)
+				if after.State != before.State || after.Outcome != before.Outcome || !after.Updated.Equal(before.Updated) {
+					t.Fatalf("retry mutated mailbox: before=%+v after=%+v", before, after)
+				}
+				var count int
+				want := 1
+				if state == exchange.Queued {
+					want = 0
+				}
+				if err := db.Read(t.Context(), func(tx *canon.Tx) error {
+					return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM inbox WHERE source='exchange'").Scan(&count)
+				}); err != nil || count != want {
+					t.Fatalf("inbox count=%d want=%d err=%v", count, want, err)
+				}
+				events, err := s.Events(t.Context(), r.ID)
+				wantEvents := want + 1
+				if state == exchange.Read {
+					wantEvents++
+				}
+				if err != nil || len(events) != wantEvents {
+					t.Fatalf("events=%d want=%d err=%v", len(events), wantEvents, err)
+				}
+				if state == exchange.Delivered {
+					if _, err := s.Prepare(t.Context(), r.DeliveryID, "answerer", now.Add(delay), &knowledge{t: t}); !errors.Is(err, exchange.ErrClosed) {
+						t.Errorf("late preparation: %v", err)
+					}
+					if err := s.Acknowledge(t.Context(), r.DeliveryID, "answerer", now.Add(delay)); !errors.Is(err, exchange.ErrClosed) {
+						t.Errorf("late acknowledgement: %v", err)
+					}
+				}
+			})
+		}
+	}
+}
 func TestWrongAgentAndMissingEvidenceCannotAnswer(t *testing.T) {
 	s := exchange.New(database(t))
 	r := start(t, s)

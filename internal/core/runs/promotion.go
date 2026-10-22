@@ -99,6 +99,33 @@ func samePromotion(r Record, o Origin) bool {
 	return r.Promotion != nil && r.Origin.Person == o.Person && r.Origin.Agent == o.Agent && r.Origin.Conversation == o.Conversation && r.Origin.Turn == o.Turn
 }
 
+// replayPromotion recovers committed work before a later budget/account hold
+// can reject admission. It neither republishes the handle nor releases the run.
+func (s *Service) replayPromotion(ctx context.Context, o Origin, b Brief, h *budget.Handoff) (string, State, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return "", "", ErrClosed
+	}
+	rows, err := s.records(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	return findPromotion(rows, o, b, h)
+}
+
+func findPromotion(rows []Record, o Origin, b Brief, h *budget.Handoff) (string, State, error) {
+	for _, r := range rows {
+		if samePromotion(r, o) {
+			if !sameGathered(r, b, h) {
+				return "", "", ErrInvalid
+			}
+			return r.ID, r.State, nil
+		}
+	}
+	return "", "", nil
+}
+
 func sameGathered(r Record, b Brief, h *budget.Handoff) bool {
 	return r.PromotionDigest == promotionDigest(b, h)
 }
