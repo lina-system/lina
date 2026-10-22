@@ -71,6 +71,8 @@ type acceptedSteering struct {
 }
 
 type conversationRuntime struct {
+	completionStop  context.CancelFunc
+	completionDone  chan struct{}
 	coding          *codingTurn
 	codingDelivery  *conversationRuntime
 	workerDispatch  *dispatch.Service
@@ -278,6 +280,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err = r.startWorkerDispatch(ctx); err != nil {
 		return nil, err
 	}
+	if err = r.startCompletions(ctx); err != nil {
+		return nil, err
+	}
 	if err = r.startRuns(ctx); err != nil {
 		return nil, err
 	}
@@ -317,6 +322,14 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 		r.ownerViews.stop()
 		select {
 		case <-r.ownerViews.done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	if r.completionStop != nil {
+		r.completionStop()
+		select {
+		case <-r.completionDone:
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -494,7 +507,7 @@ func (r *conversationRuntime) submitInput(event ledger.Event, inboxID int64, ste
 		r.steering[string(body)] = append(r.steering[string(body)], acceptedSteering{event: event, inboxID: inboxID, runner: runner})
 		return nil
 	}
-	_, err = r.lanes.SubmitLoop(r.ctx, r.conversation, func(ctx context.Context, inputs *loop.Inputs) error { return runner.run(ctx, inputs, event, inboxID) })
+	_, err = r.queueReaction(r.ctx, r.conversation, func(ctx context.Context, inputs *loop.Inputs) error { return runner.run(ctx, inputs, event, inboxID) })
 	return err
 }
 
@@ -1160,7 +1173,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 	// and binding checks even when the preceding turn began in the app.
 	for _, body := range out.FollowUps {
 		if pending, ok := r.takeSteering(body); ok {
-			_, submitErr := r.lanes.SubmitLoop(r.ctx, r.conversation, func(ctx context.Context, inputs *loop.Inputs) error {
+			_, submitErr := r.queueReaction(r.ctx, r.conversation, func(ctx context.Context, inputs *loop.Inputs) error {
 				return pending.runner.run(ctx, inputs, pending.event, pending.inboxID)
 			})
 			err = errors.Join(err, submitErr)

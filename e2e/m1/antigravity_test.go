@@ -29,9 +29,10 @@ func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, pres
 		t.Fatal(err)
 	}
 	var scenario struct {
-		Cases      []struct{ Name, Expected, Preset string }
-		What, Done string
-		WorkArea   bool `json:"work_area"`
+		Cases            []struct{ Name, Expected, Preset string }
+		What, Done       string
+		WorkArea         bool `json:"work_area"`
+		CompletionEvents bool `json:"completion_events"`
 	}
 	if err = json.Unmarshal(raw, &scenario); err != nil {
 		t.Fatal(err)
@@ -90,9 +91,11 @@ func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, pres
 					t.Fatal(err)
 				}
 			}
-			var calls atomic.Int32
+			var calls, providerCalls atomic.Int32
+			var completionHarness *harness
 			var offered atomic.Bool
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				providerCalls.Add(1)
 				var req struct {
 					Tools []struct{ Name string }
 					Input []json.RawMessage
@@ -100,6 +103,12 @@ func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, pres
 				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 					t.Error(err)
 					return
+				}
+				if scenario.CompletionEvents && completionHarness != nil {
+					raw, _ := json.Marshal(req.Input)
+					if strings.Contains(string(raw), "coding_delivery") {
+						assertClaimBeforeManager(t, completionHarness)
+					}
 				}
 				if scriptedCodingManager(t, w, req) {
 					return
@@ -124,6 +133,7 @@ func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, pres
 			defer server.Close()
 			h, bootstrap := installedConversationHarness(t, server.URL)
 			ids := seedCodingFixture(t, h, bootstrap, test.Preset)
+			completionHarness = h
 			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 			t.Cleanup(cancel)
 			h.ctx = ctx
@@ -162,9 +172,15 @@ func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, pres
 				}
 				inspect(e)
 			}
+			if scenario.CompletionEvents {
+				waitCompletionHandled(t, h)
+			}
 			c.Close()
 			h.stopCore(core)
 			assertCodingOwnership(t, h, ids["dev"], conversation, workerCase == "success")
+			if scenario.CompletionEvents {
+				assertWorkCompletion(t, h)
+			}
 			if git("rev-parse", "dev") != base {
 				t.Fatal("worker changed protected base")
 			}
@@ -184,6 +200,10 @@ func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, pres
 					t.Fatal("worker did not open PR")
 				}
 			}
+			beforeRestart := providerCalls.Load()
+			if scenario.CompletionEvents {
+				loseCompletion(t, h)
+			}
 			core = start()
 			c, _ = conversationClient(t, h)
 			topic := "conversation:" + conversation
@@ -200,6 +220,12 @@ func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, pres
 			}
 			c.Close()
 			h.stopCore(core)
+			if scenario.CompletionEvents {
+				assertWorkCompletion(t, h)
+			}
+			if scenario.CompletionEvents && providerCalls.Load() != beforeRestart {
+				t.Fatal("restart replayed a manager or conversation model call")
+			}
 			if calls.Load() != 2 {
 				t.Fatalf("restart replayed provider: %d", calls.Load())
 			}

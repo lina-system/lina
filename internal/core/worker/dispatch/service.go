@@ -299,8 +299,7 @@ func (s *Service) methodForAdmission(ctx context.Context, origin Origin, callID 
 func mustJSON(v any) []byte { b, _ := json.Marshal(v); return b }
 func (s *Service) save(ctx context.Context, r Record) error {
 	return s.cfg.DB.Write(ctx, func(tx *canon.Tx) error {
-		_, err := tx.ExecContext(ctx, "UPDATE worker_dispatch SET state=?,record=? WHERE id=?", r.State, mustJSON(r), r.ID)
-		return err
+		return saveRecord(ctx, tx, r)
 	})
 }
 func (s *Service) records(ctx context.Context) ([]Record, error) {
@@ -359,6 +358,12 @@ func (s *Service) sync() {
 			s.wg.Add(1)
 			go func() { defer s.wg.Done(); s.execute(r) }()
 		} else if (r.State == "finished" || r.State == "unknown") && !r.Announced {
+			// Completed ledger deliveries belong exclusively to the durable reactor.
+			if s.cfg.Work != nil {
+				if card, e := s.cfg.Work.Get(s.ctx, r.ID); e == nil && card.Receipt != nil && !card.Active && card.TurnStatus != "" {
+					continue
+				}
+			}
 			if s.cfg.Publish != nil && s.cfg.Publish(s.ctx, r) == nil {
 				r.Announced = true
 				_ = s.save(s.ctx, r)

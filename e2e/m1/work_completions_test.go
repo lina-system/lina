@@ -1,0 +1,122 @@
+// SPDX-License-Identifier: Apache-2.0
+package e2e_test
+
+import (
+	"context"
+	"github.com/thisisjun786/lina/internal/core/ctlfiles"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/thisisjun786/lina/internal/core/canon"
+)
+
+func TestM2WorkCompletions(t *testing.T) {
+	t.Parallel()
+	testAntigravityThroughInstalledCore(t, "../m2/work-completions.json", false)
+}
+
+func assertWorkCompletion(t *testing.T, h *harness) {
+	t.Helper()
+	db, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon", "canon.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close(context.Background())
+	err = db.Read(h.ctx, func(tx *canon.Tx) error {
+		var events, handled, inputs int
+		if err := tx.QueryRowContext(h.ctx, "SELECT count(*) FROM work_completions").Scan(&events); err != nil {
+			return err
+		}
+		if err := tx.QueryRowContext(h.ctx, "SELECT count(*) FROM work_completion_claims WHERE state='handled'").Scan(&handled); err != nil {
+			return err
+		}
+		if err := tx.QueryRowContext(h.ctx, "SELECT count(*) FROM inbox WHERE source='coding' AND native_id LIKE 'coding-delivery:%'").Scan(&inputs); err != nil {
+			return err
+		}
+		if events != 1 || handled != 1 || inputs != 1 {
+			t.Fatalf("completion events=%d handled=%d manager inputs=%d", events, handled, inputs)
+		}
+		var matching int
+		if err := tx.QueryRowContext(h.ctx, `SELECT count(*) FROM work_completions e JOIN work_cards c ON c.task_id=e.task_id JOIN worker_dispatch d ON d.id=e.task_id WHERE e.attempt=json_extract(c.record,'$.run.id') AND e.head=json_extract(d.record,'$.pull_request.headRefOid') AND e.head=json_extract(c.record,'$.head') AND json_extract(e.record,'$.receipt_id')=json_extract(c.record,'$.receipt.eventId')`).Scan(&matching); err != nil {
+			return err
+		}
+		if matching != 1 {
+			t.Fatal("completion lost current attempt, head or receipt")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertClaimBeforeManager(t *testing.T, h *harness) {
+	t.Helper()
+	db, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon", "canon.sqlite"))
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	defer db.Close(context.Background())
+	var n int
+	err = db.Read(h.ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(h.ctx, `SELECT count(*) FROM work_completions e JOIN work_completion_claims c ON c.id=e.id WHERE c.state='claimed'`).Scan(&n)
+	})
+	if err != nil || n != 1 {
+		t.Errorf("manager reacted before durable completion and claim: %d %v", n, err)
+	}
+}
+
+func waitCompletionHandled(t *testing.T, h *harness) {
+	t.Helper()
+	db, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon", "canon.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close(context.Background())
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var n int
+		if err = db.Read(h.ctx, func(tx *canon.Tx) error {
+			return tx.QueryRowContext(h.ctx, "SELECT count(*) FROM work_completion_claims WHERE state='handled'").Scan(&n)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if n == 1 {
+			return
+		}
+		select {
+		case <-h.ctx.Done():
+			t.Fatal("completion was not acknowledged", h.ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+// Fault injection only while the installed Core is stopped. The next real
+// startup must recreate this signal once, preserving its handled tombstone.
+func loseCompletion(t *testing.T, h *harness) {
+	t.Helper()
+	ctl, err := ctlfiles.Open(h.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ctl.Close()
+	if err = ctl.Acquire(); err != nil {
+		t.Fatal(err)
+	}
+	epoch, err := ctl.Epoch()
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := canon.Open(h.ctx, canon.Config{Path: filepath.Join(h.root, "canon", "canon.sqlite"), Epoch: epoch, Controls: ctl, Migrations: canon.Migrations()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close(context.Background())
+	if err = db.Write(h.ctx, func(tx *canon.Tx) error { _, err := tx.ExecContext(h.ctx, "DELETE FROM work_completions"); return err }); err != nil {
+		t.Fatal(err)
+	}
+}
