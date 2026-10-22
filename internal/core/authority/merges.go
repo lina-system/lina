@@ -141,6 +141,10 @@ func (m *Merges) Record(ctx context.Context, id, person, state string, result js
 		if b.State == "merged" {
 			return nil
 		}
+		// Observation failures cannot revive permission invalidated by restore.
+		if b.State == "restored" && state != "merged" {
+			state = b.State
+		}
 		if (b.State == "unknown" || b.State == "queued") && state == "blocked" {
 			state = b.State
 		}

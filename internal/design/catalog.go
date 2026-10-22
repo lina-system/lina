@@ -44,6 +44,12 @@ type translation struct{ en, ko string }
 // Keys are wire codes or local presentation ids, never English source text.
 // Keep both languages together so a new entry cannot omit a translation.
 var catalog = map[string]translation{
+	"github_bind":          {"Connect merge target", "병합 대상 연결"},
+	"github_accept":        {"Accept pull request head", "풀 리퀘스트 변경 확인"},
+	"github_merge":         {"Merge pull request", "풀 리퀘스트 병합"},
+	"github_observe_merge": {"Observe merged pull request", "병합 결과 확인"},
+	"github_merge_status":  {"Read merge status", "병합 상태 보기"},
+
 	"github_read":  {"Read pull request", "풀 리퀘스트 읽기"},
 	"github_watch": {"Watch CI", "CI 상태 보기"},
 	"success":      {"Succeeded", "성공"},

@@ -193,7 +193,7 @@ func (c *Client) Merge(ctx context.Context, ref Ref, base, head string, admit fu
 	deadline, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	// Never --admin, --auto, a shell, or a caller-provided strategy.
-	runErr := c.runner.Run(deadline, l, proc.Command{Path: c.cfg.Path, Args: []string{"pr", "merge", strconv.Itoa(ref.Number), "--repo", ref.Repository, "--merge", "--match-head-commit", head}, Env: c.cfg.Env, Stdout: io.Discard, Stderr: io.Discard})
+	runErr := c.runner.Run(deadline, l, proc.Command{Path: c.cfg.Path, Args: []string{"pr", "merge", strconv.Itoa(ref.Number), "--repo", "github.com/" + ref.Repository, "--merge", "--match-head-commit", head}, Env: c.cfg.Env, Stdout: io.Discard, Stderr: io.Discard})
 	// One confirming read also reconciles a CLI failure; no write retry.
 	p, err = c.pull(ctx, ref)
 	if err != nil {

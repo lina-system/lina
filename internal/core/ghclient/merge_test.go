@@ -60,6 +60,7 @@ func TestMergePinsLastHeadAndConfirmsResult(t *testing.T) {
 	replies = append(replies, mergedBundle(mergedSHA)...)
 	f := &fakeRunner{replies: replies}
 	c := testClient(t, f)
+	c.cfg.Env = append(c.cfg.Env, "GH_HOST=enterprise.example.invalid")
 	permits := 0
 	r, err := c.Merge(t.Context(), Ref{"o/r", 140}, "dev", sha, func(context.Context) error { permits++; return nil })
 	if err != nil || r.State != "merged" || r.Commit != mergedSHA || r.Source != "receipt" || permits != 1 {
@@ -70,7 +71,7 @@ func TestMergePinsLastHeadAndConfirmsResult(t *testing.T) {
 		if args[0] == "pr" {
 			count++
 			got := strings.Join(args, " ")
-			if got != "pr merge 140 --repo o/r --merge --match-head-commit "+sha {
+			if got != "pr merge 140 --repo github.com/o/r --merge --match-head-commit "+sha {
 				t.Fatal(got)
 			}
 		}

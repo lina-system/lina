@@ -190,6 +190,17 @@ func TestRestoreInvalidatesMergePermissionButKeepsUncertainReservation(t *testin
 	if ready.State != "restored" {
 		t.Fatalf("restored permission: %+v", ready)
 	}
+
+	// A refused request or unsuccessful observation must not undo invalidation.
+	for _, state := range []string{"blocked", "unknown", "queued"} {
+		if err = service.Record(t.Context(), "ready", "person", state, json.RawMessage(`{"State":"blocked"}`)); err != nil {
+			t.Fatal(err)
+		}
+		after, e := service.Get(t.Context(), "ready", "person")
+		if e != nil || after.State != "restored" {
+			t.Fatalf("%s revived restored binding: %+v %v", state, after, e)
+		}
+	}
 	if err = service.Accept(t.Context(), "ready", "person", "head"); err == nil {
 		t.Fatal("restored permission accepted")
 	}

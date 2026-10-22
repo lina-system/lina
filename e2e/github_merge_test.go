@@ -77,6 +77,7 @@ phase=$(/bin/cat "$LINA_GH_FIXTURE/phase")
 head=HEAD_SHA
 if [ "$phase" = moved ]; then head=MOVED_SHA; fi
 if [ "$1" = pr ]; then
+ [ "$4" = --repo ] && [ "$5" = github.com/REPOSITORY ] || exit 92
  printf merged > "$LINA_GH_FIXTURE/phase"
  exit 0
 fi
@@ -113,7 +114,7 @@ esac
 	}
 	start := func() (*process, *client) {
 		core := h.command("core", "--state-root", h.root, "--socket", h.socket)
-		core.command.Env = append(core.command.Env, "PATH="+h.root, "LINA_GH_FIXTURE="+h.root)
+		core.command.Env = append(core.command.Env, "PATH="+h.root, "LINA_GH_FIXTURE="+h.root, "GH_HOST=enterprise.example.invalid")
 		core.start(t)
 		t.Cleanup(func() {
 			if t.Failed() {
