@@ -1,0 +1,39 @@
+# Terminal UI behaviour references
+
+## Whole-conversation overlay (#458)
+
+Reference: [Codex CLI](https://github.com/openai/codex), Apache-2.0,
+revision `b337fe06b7d8d6e5b42295e04c5e92c2b9c46567`. Source read before implementation;
+no upstream code is copied.
+
+- **Seen:** `codex-rs/tui/src/pager_overlay.rs` constructs a transcript overlay
+  from retained history cells and restores default input when it closes.
+  `pager_overlay/transcript.rs` identifies the inline Ctrl+T view and delegates
+  scrolling, search and its live tail to the transcript viewport.
+- **Inferred:** LINA can expose the retained visible conversation through its
+  existing sanitized plain-text pager, preserving speaker words and composer
+  state. It should read current display state so replacements and revocations
+  also apply while the overlay is open.
+- **Unknown:** reference terminal selection, Korean input and clipboard effects
+  were not exercised. LINA retains terminal-owned copying without clipboard
+  writes and verifies its own installed Core, PTY, search and draft restoration.
+
+## Complete assistant replies (#445)
+
+Reference: [Hermes Agent](https://github.com/NousResearch/hermes-agent), MIT,
+revision `e06df9c2`, as recorded in the 2026-10-22 terminal UI source survey.
+This is a behaviour reference; no upstream code is copied.
+
+- **Seen (source survey):** `ui-tui/src/components/messageLine.tsx:211-213`
+  renders completed assistant prose with the full Markdown component.
+  `useInputHandlers.ts:622-640` pages the transcript by half a viewport.
+  `lib/text.ts:107-130` bounds only live prose, with a visible live-tail label;
+  completed prose is not folded behind a key.
+- **Inferred:** a completed long answer should remain one scrollable conversation
+  item. LINA can display the already masked generated reply card's text in that
+  position, retaining an optional pager affordance after the text. Structured
+  result cards keep their separate summary-and-detail presentation.
+- **Unknown:** Korean terminal rendering and restart recovery were not exercised
+  in the reference survey. LINA verifies those behaviours with its own installed
+  Core and real PTY acceptance test. Native terminal scrollback and mouse input
+  are outside this change.
