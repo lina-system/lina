@@ -41,13 +41,16 @@ func ChannelOperations(service ChannelService) map[protocol.Kind]Operation {
 }
 
 func validChannelRequest(p protocol.ChannelRequest) bool {
+	if p.Platform != nil && *p.Platform != "telegram" && *p.Platform != "discord" {
+		return false
+	}
 	if p.Operation == nil {
 		return false
 	}
 	address := p.Chat != nil || p.Topic != nil || p.AgentID != nil || p.Scope != nil
 	switch *p.Operation {
 	case "list":
-		return p.Account == nil && p.Token == nil && !address
+		return p.Platform == nil && p.Account == nil && p.Token == nil && !address
 	case "connect":
 		return p.Account == nil && p.Token != nil && !address
 	case "pair", "disconnect":

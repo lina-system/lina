@@ -265,6 +265,8 @@ One connection reaches every agent of the main. A conversation kind, and a quest
 | Web setup | Inspect, set or remove the web provider key through a private settings form; the key passes to Core once and is never returned |
 | Agent exchanges | Read the agent talk log, expand one exchange, and subscribe to log entries and to the flag that an exchange needs the person |
 
+Channel control requests accept an optional `platform` (`telegram` or `discord`); omission retains Telegram. List returns both platforms, while every mutation identifies the bot within its selected platform. The platform never comes from token syntax or a conversation message.
+
 The running-list projection also carries delegated task cards. Their opaque row ids
 use a `task:` prefix and bind the execution generation; `running_get` with `open` returns a paged, source-labeled
 summary, and `dismiss` hides only landed cards. These read/open/dismiss operations

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/guard"
 )
 
 type State string
@@ -63,7 +64,9 @@ func (s *Store) Enqueue(ctx context.Context, m Message) error {
 		}
 		// The queue cannot invent a reply: its immutable ledger event must
 		// already exist and belong to this dispatch's agent and conversation.
-		if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM conv_event WHERE id=? AND speaker_kind='agent' AND agent_id=? AND conversation_id=?", m.LedgerRef, m.Agent, b.Conversation).Scan(&n); err != nil {
+		// Background results retain native notice provenance; a system label or
+		// copied scaffold alone never authorizes outbound content.
+		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM conv_event WHERE id=? AND agent_id=? AND conversation_id=? AND (speaker_kind='agent' OR (speaker_kind='system' AND scaffold_kind='background_notice' AND json_extract(origin,'$.kind')='native' AND json_extract(origin,'$.entry')=?))`, m.LedgerRef, m.Agent, b.Conversation, guard.EntryBackgroundNotice).Scan(&n); err != nil {
 			return err
 		}
 		if n != 1 {
