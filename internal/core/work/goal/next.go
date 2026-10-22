@@ -46,6 +46,10 @@ func (p Proof) proves(revision string) bool {
 	return revision != "" && p.Revision == revision && strings.TrimSpace(p.Ref) != "" && p.Passed
 }
 
+func (p Proof) fails(revision string) bool {
+	return revision != "" && p.Revision == revision && strings.TrimSpace(p.Ref) != "" && !p.Passed
+}
+
 type PRState struct {
 	Head       string `json:"head"`
 	Checks     Proof  `json:"checks"`
@@ -500,7 +504,18 @@ func Derive(state State, now time.Time) (Plan, error) {
 			continue
 		}
 		if !g.Verification.proves(g.TargetRevision) {
-			add(g, Task{}, Verify, g.TargetRevision, "")
+			if g.Verification.fails(g.TargetRevision) {
+				failure := fmt.Sprintf("verify:%d:%s", g.Revision, g.TargetRevision)
+				if g.AssessedFailure == failure {
+					plan.Block = append(plan.Block, g.ID)
+				} else {
+					a := Action{GoalID: g.ID, Kind: PlanGoal, Revision: g.TargetRevision, GoalRevision: g.Revision, FailureKey: failure, State: "queued", Deadline: now.Add(SafetySweep).Unix()}
+					a.ID = actionID(a)
+					plan.Actions = append(plan.Actions, a)
+				}
+			} else {
+				add(g, Task{}, Verify, g.TargetRevision, "")
+			}
 			continue
 		}
 		if g.CheckRound == 0 {

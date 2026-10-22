@@ -957,6 +957,15 @@ After every event Core commits for a goal, Core derives the goal's next actions 
 | A met criterion's target changed afterwards (the document was edited, the event moved) | Goal not final | Mark the criterion open again and derive. | Core |
 | No task, wait, recovery or row | Goal not final | The liveness rule. | Core, then manager |
 
+A failed post-merge or post-deployment runtime probe records its output and
+the revision it checked, finishes the probe action, and gives the manager one
+repair assessment for that failure. It does not create a person row before
+that assessment. A repair stays within the goal's scope and goes through its
+own merge, QA, deployment where applicable, and fresh runtime and criterion
+checks. The original failure remains in the evidence history. If the manager
+finds no repair within scope, the goal becomes `blocked` with a row; restart
+or repeated delivery does not repeat that assessment.
+
 ### Waits on the outside
 
 Much non-code work waits on things LINA does not control: a reply, a confirmation mail, a date, a review by someone else, a document another person is editing. A wait is a record, never a loop.

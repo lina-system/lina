@@ -530,6 +530,18 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 			a.State = "finished"
 			t.Stage = TaskConflicted
 		case OutcomeFailed:
+			if a.Kind == Verify {
+				if t != nil || !o.Proof.fails(a.Revision) {
+					return ErrInvalid
+				}
+				if g.TargetRevision != a.Revision || g.Revision != a.GoalRevision {
+					return ErrConflict
+				}
+				a.State = "finished"
+				g.Verification = o.Proof
+				g.Evidence = append(g.Evidence, o.Proof)
+				break
+			}
 			if t == nil {
 				a.State = "needs_person"
 				break
