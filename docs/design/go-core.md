@@ -244,6 +244,10 @@ binary, verifies the generation/version pair and reruns candidate preflight on
 the stopped store. Release-owned binaries, manifest and adapter files move as
 one recorded composition; the prior directories and failed candidates are kept.
 Settings stay in their installed control records, outside binary replacement.
+The installed binary's backup and rollback restore (including resumed rollback)
+use the updater context without an added installer command deadline; data size
+must not impose a fixed 30-second failure boundary. Both retain `kit/proc`
+ownership and cancellation, filtered environments and bounded command output.
 
 `update.json` is a schema-1 private atomic control record outside backups. It
 binds the root, normal socket, candidate, previous composition, binary digests,
@@ -1088,6 +1092,10 @@ or automatic effect retries. The shared catalog appends Discord presentations
 and pending buttons plus consumed channel steering at migration 32, leaving migrations 1–31 unchanged.
 The optional channel control `platform` field defaults to Telegram. Discord
 connection verifies the bot identity before replacing its credential or worker.
+Gateway close 4007/4009 clears that bot's durable session/sequence cursor before
+the existing supervisor retries with Identify. This also applies before Hello.
+Other transport closes retain Resume state; native-event receipts and bindings
+are preserved across the reset (#548).
 
 The channel worker now drains committed owner inbox rows into the existing turn
 lanes. Private owner inputs use the shared main conversation and admission/steering

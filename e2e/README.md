@@ -306,6 +306,13 @@ tool result. Start refusal rolls back, while provider failure and updater death
 after READY hold the new state. Package SIGKILL tests acknowledge each rename
 boundary without fixed startup delays.
 
+`go test ./e2e/m1 -run '^TestM2UpdateDataOperations$' -count=1` runs
+`m2/update-data-operations.json`. It injects a 31-second delay into the installed
+backup or restore command before executing the real CLI, crossing the installer's
+30-second probe budget. The backup case completes activation, worker readiness
+and a resumed tool result; the restore case recovers from a candidate start
+failure and verifies a conversation on the restored Core.
+
 `go test ./e2e/m1 -run '^TestM2UpdateClaudeCredential$' -count=1` uses the same
 installed update harness with a synthetic Claude token and an empty login home.
 The production Claude adapter must complete smoke using that token; the missing
