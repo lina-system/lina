@@ -15,15 +15,16 @@ var (
 )
 
 type Task struct {
-	PersonID       string   `json:"person_id,omitempty"`
-	GoalID         string   `json:"goal_id,omitempty"`
-	ID             string   `json:"id"`
-	AgentID        string   `json:"agent_id"`
-	ConversationID string   `json:"conversation_id"`
-	Title          string   `json:"title"`
-	Done           string   `json:"done"`
-	ArtifactRoots  []string `json:"artifact_roots"`
-	RequiresApply  bool     `json:"requires_apply"`
+	Workspace      *Workspace `json:"workspace,omitempty"`
+	PersonID       string     `json:"person_id,omitempty"`
+	GoalID         string     `json:"goal_id,omitempty"`
+	ID             string     `json:"id"`
+	AgentID        string     `json:"agent_id"`
+	ConversationID string     `json:"conversation_id"`
+	Title          string     `json:"title"`
+	Done           string     `json:"done"`
+	ArtifactRoots  []string   `json:"artifact_roots"`
+	RequiresApply  bool       `json:"requires_apply"`
 }
 
 type Run struct {
@@ -87,6 +88,8 @@ type GoalDecision struct {
 	Decision QuestionDecision
 }
 type Card struct {
+	Materials  []Material      `json:"materials,omitempty"`
+	ResultHead string          `json:"result_head,omitempty"`
 	Revision   uint64          `json:"revision"`
 	Waits      map[string]Wait `json:"waits,omitempty"`
 	Decisions  []GoalDecision  `json:"decisions,omitempty"`
@@ -104,6 +107,7 @@ type Card struct {
 // Event has one payload selected by Kind. Events are admitted by Service only;
 // clients and workers never append arbitrary events or acceptance judgments.
 type Event struct {
+	Materials []Material    `json:"materials,omitempty"`
 	Wait      *Wait         `json:"wait,omitempty"`
 	Decision  *GoalDecision `json:"decision,omitempty"`
 	Key       string        `json:"key"`

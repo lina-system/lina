@@ -54,6 +54,7 @@ import (
 	"github.com/thisisjun786/lina/kit/grant"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/loop"
+	"github.com/thisisjun786/lina/kit/proc"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/provider"
 	builtin "github.com/thisisjun786/lina/skills"
@@ -81,6 +82,7 @@ type conversationRuntime struct {
 	dispatchMu     *sync.RWMutex
 	removals       *retract.Store
 	channels       *channelRuntime
+	workArea       *work.Area
 
 	materials        *conversationMaterials
 	assets           *assets.Store
@@ -238,7 +240,12 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err = r.startDecisions(ctx); err != nil {
 		return nil, err
 	}
-	r.work = work.New(r.db)
+	git, _ := proc.LookPath("git")
+	r.workArea, err = work.OpenArea(root, git)
+	if err != nil {
+		return nil, err
+	}
+	r.work = work.NewWithArea(r.db, r.workArea, workMaterials{writer: writer, person: r.person})
 	if err = r.work.Recover(ctx, strconv.FormatUint(r.epoch, 10)); err != nil {
 		return nil, err
 	}
@@ -354,6 +361,9 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 	}
 	if r.skills != nil {
 		err = errors.Join(err, r.skills.Close())
+	}
+	if r.workArea != nil {
+		err = errors.Join(err, r.workArea.Close(ctx))
 	}
 	if r.assets != nil {
 		err = errors.Join(err, r.assets.Close())
@@ -777,6 +787,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			if err := r.prepareSkillTools(turnID, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
+			if err := r.prepareWorkTools(turnID, bindings); err != nil {
+				return turn.PreparedRequest{}, err
+			}
 			if err := r.prepareWorkerTools(turnID, input, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
@@ -792,6 +805,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			if r.router.root.workerDispatch != nil {
 				declarations = append(declarations, dispatch.Declaration())
 			}
+			declarations = append(declarations, coreexec.WorkDeclarations()...)
 			declarations = append(declarations, workerDeclarations()...)
 			packet, _, err := atropos.Packet(ctx, minimum, 0, func(ctx context.Context) (assemble.ContextPacket, error) { return r.relationshipPacket(ctx, at) })
 			if err != nil {

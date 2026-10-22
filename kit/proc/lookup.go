@@ -7,7 +7,8 @@ import (
 	"path/filepath"
 )
 
-// LookPath rejects relative executable resolution before changing workdirs.
+// LookPath resolves a tool at the process boundary. Relative PATH entries must
+// never select a program in a worker-controlled current directory.
 func LookPath(name string) (string, error) {
 	path, err := exec.LookPath(name)
 	if err != nil {
@@ -16,5 +17,5 @@ func LookPath(name string) (string, error) {
 	if !filepath.IsAbs(path) {
 		return "", errors.New("executable must resolve to an absolute path")
 	}
-	return path, nil
+	return filepath.Abs(path)
 }
