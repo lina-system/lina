@@ -30,7 +30,7 @@ selection ----+---- docs --------+---- gate
               +---- components --+
 ```
 
-Everything runs in one process. `selection` records the exact base and candidate commits, the changed paths, the selected checks and the selection reason. It also checks Git whitespace errors: `git diff --check` over the range, or `git show --check` on the `HEAD` commit with `--full`. The selected checks run in parallel after selection. The gate only evaluates their results; it never reruns their commands. Each check has a bounded timeout. Go build, vet, analyzer and whole-module test commands share the remaining components budget described below; `go test -timeout=6m` also bounds package execution and emits stuck-test stack traces when that deadline is reached. This accommodates subprocess acceptance builds under concurrent cold-cache CI verification without changing individual test operation deadlines. The enclosing components check remains bounded at fifteen minutes. The growing headless acceptance corpus is enumerated per package and executed in two disjoint batches of top-level tests, examples and fuzz seed tests. Both batches run uncached with the same six-minute diagnostic timeout and share the original fifteen-minute components budget; individual operation and scenario deadlines are unchanged. Each enumerated test runs exactly once, with its subtests. An enumeration or batch failure fails the gate immediately.
+Everything runs in one process. `selection` records the exact base and candidate commits, the changed paths, the selected checks and the selection reason. It also checks Git whitespace errors: `git diff --check` over the range, or `git show --check` on the `HEAD` commit with `--full`. The selected checks run in parallel after selection. The gate only evaluates their results; it never reruns their commands. Each check has a bounded timeout. Go build, vet, analyzer and whole-module test commands share the remaining components budget described below; `go test -timeout=6m` also bounds package execution and emits stuck-test stack traces when that deadline is reached. This accommodates subprocess acceptance builds under concurrent cold-cache CI verification without changing individual test operation deadlines. The enclosing components check remains bounded at fifteen minutes. The growing headless acceptance corpus is enumerated per package and executed in three disjoint batches of top-level tests, examples and fuzz seed tests. All batches run uncached with the same six-minute diagnostic timeout and share the original fifteen-minute components budget; individual operation and scenario deadlines are unchanged. Each enumerated test runs exactly once, with its subtests. An enumeration or batch failure fails the gate immediately.
 
 ## Evidence
 
@@ -219,7 +219,18 @@ fail the check. The root and adapter npm projects have independent lockfiles.
 PR #523's [CI run 39785658738](https://github.com/thisisjun786/lina/actions/runs/39785658738)
 reached the six-minute package limit while the current TUI lifecycle scenario
 had run for two seconds. That branch initially used a ten-minute package diagnostic deadline. The
-acceptance batching from #127 now covers that growing corpus with two disjoint
+acceptance batching from #127 now covers that growing corpus with three disjoint
 six-minute batches inside the unchanged fifteen-minute shared components budget.
 Individual operation deadlines and acceptance assertions remain in force;
 timeout or missing observations still fail verification.
+
+On PR #569, [CI run 39831123978](https://github.com/thisisjun786/lina/actions/runs/39831123978)
+passed its first acceptance batch in 245.6 seconds, then reached the second
+batch's six-minute diagnostic deadline during `TestM2UpdateDataOperations`;
+the current `slow-backup` subtest had run for 24 seconds. No assertion failed.
+Components used 800.9 seconds of the existing 895-second command budget.
+Acceptance now uses three disjoint batches to leave room for uneven scenario
+durations, preserving every test, example and fuzz seed exactly once. A virtual
+clock regression models a 400-second group of long scenarios alongside shorter
+ones and requires the full corpus to finish under the unchanged package and
+shared deadlines.
