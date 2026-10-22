@@ -32,7 +32,7 @@ File tools use the explicit internal `lina file-tool --root <directory> --versio
 
 The control-file increment (#36) starts with `lina core --state-root <path> --socket <path>`. The state root must already exist, and installation supplies `system/core/main.json`; Core never invents a replacement identity. `lina install` verifies the build bundle, creates a random main id in a new private state root, and registers the `lina-core.service` user unit with explicit state-root and socket arguments. Existing state and services are refused, including an install's own previous identity; installation is not an update or implicit restart. The concrete layout and failure behavior are specified in [runtime.md](runtime.md#the-lina-command).
 
-**C-02 Binaries and modules (changed).** Subcommands of `lina`, proposed here because [runtime.md](runtime.md#the-lina-command) defers the names: `core`, `tui`, `install`, `backup`, `restore` (main stopped), `doctor`, `replay`, `export`, `about`, `version`. `version` prints the version, the commit and the build date that the build sets with `-ldflags` ([versioning.md](versioning.md)). Separate artifacts: `lina-node` and `moirai-worker`. Modules: the root module and `kit` (`github.com/thisisjun786/lina/kit`), joined by `go.work` and a `replace`.
+**C-02 Binaries and modules (changed).** Subcommands of `lina`, proposed here because [runtime.md](runtime.md#the-lina-command) defers the names: `core`, `tui`, `install`, `update` (prepare only), `backup`, `restore` (main stopped), `doctor`, `replay`, `export`, `about`, `version`. `version` prints the version, the commit and the build date that the build sets with `-ldflags` ([versioning.md](versioning.md)). Separate artifacts: `lina-node` and `moirai-worker`. Modules: the root module and `kit` (`github.com/thisisjun786/lina/kit`), joined by `go.work` and a `replace`.
 
 The command registers `core`, `tui`, `install`, `doctor` and `version` in `lina`, and `version` in `lina-node`. Both `version` commands print the shared `internal/buildinfo` version line on stdout and exit 0 ([versioning.md](versioning.md#what-a-binary-reports)). Missing or unknown subcommands print usage on stderr and exit 64. The install handler dispatches into `internal/core/install`; failed installation exits 78 and preserves existing files and services. Node depends on the permitted kit packages and the Go standard library; its command entry point may also import `internal/buildinfo`.
 
@@ -196,6 +196,40 @@ Boot constructs this controller under its existing lock, validates the restart r
 - Resume.
 
 The gate needs every cell: idle, candidate verified, schema relation, peer rows, free space, a recent verified generation. Rollback restores the kept binaries, is automatic only while the new binary never reached READY, and never runs over a migration that cannot be undone; afterwards the default is a forward fix. The Claude adapter, its lockfile and the SDK pin move only with a LINA update; tools the user installed are never touched. A store newer than the binary exits 78 without writing. Migrations are forward-only, numbered, one transaction each.
+
+The #149 preparation boundary is `lina update --prepare --state-root <path>
+--archive <tar.gz> --sha256 <digest>`. `internal/core/update` freezes and hashes
+the download before unpacking, checks every manifest artifact, then runs the
+candidate's `lina core --preflight` through `kit/proc`. Candidate versions live
+under `system/updates/<archive-sha256>`; creation is exclusive and never replaces
+another attempt. A successful candidate gets a durable `prepared.json` receipt.
+The active binaries, service, control records and canon remain unchanged.
+
+`core --preflight --state-root <path> [--manifest <path>]
+[--required-manifest <path>]` exits 0 with a JSON schema/peer result or 78 with a
+cause. It takes no Core lock, creates no authority or socket, loads no provider
+configuration and makes no installed-state writes. Canon inspection includes
+committed WAL through a private temporary WAL index, checks the numbered schema,
+published catalog and SQLite quick check, and discards a result if the database,
+WAL or rollback journal changed during inspection. A nonempty rollback journal
+requires recovery. Temporary inspection files are removed. Candidate rows must
+be implemented by this binary and cover every required peer protocol and
+capability. Product version does not decide compatibility. Preparation uses the
+installed manifest's rows when present; otherwise the local compiled TUI row is
+required. Explicit malformed or empty required tables are refused.
+
+Normal application Core startup also checks the schema before creating control
+directories or taking its lock, then checks again under the lock before minting
+an epoch. A newer schema is refused before interpreting its metadata tables.
+Both ordinary startup and preflight preserve a newer store and its sidecars
+byte for byte, including a schema version present only in committed WAL.
+
+The six gate cells are `pass`, `fail` or `unknown`; every cell must be `pass`.
+Preparation establishes candidate verification, schema relation, peer rows and
+staging space only. Idle and verified-generation remain `unknown` until the
+activation owner supplies a fenced idle observation and a recent verified
+backup. A prepared receipt is not activation authority or a READY receipt.
+The lifecycle swap, smoke and rollback orchestration belongs to #150.
 
 ## Client service
 

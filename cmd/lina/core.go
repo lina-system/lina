@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
+	"github.com/thisisjun786/lina/internal/core/update"
 )
 
 func runCore(args []string) int {
@@ -25,8 +27,11 @@ func runCore(args []string) int {
 	socket := flags.String("socket", "", "path to the private client Unix socket")
 	tailnet := flags.String("tailnet-listen", "", "optional exact Tailscale IP:port for remote clients")
 	tailscaleSocket := flags.String("tailscale-socket", "", "trusted local tailscaled Unix socket")
+	preflight := flags.Bool("preflight", false, "inspect schema and peer compatibility without starting Core")
+	metadata := flags.String("manifest", "", "candidate build manifest (default: compiled rows)")
+	required := flags.String("required-manifest", "", "installed peer requirements for preflight")
 	flags.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: lina core --state-root <path> --socket <path> [--tailnet-listen <IP:port>] [--tailscale-socket <path>]")
+		fmt.Fprintln(os.Stderr, "usage: lina core --state-root <path> (--socket <path> | --preflight) [--manifest <path>] [--required-manifest <path>] [--tailnet-listen <IP:port>] [--tailscale-socket <path>]")
 	}
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -35,12 +40,23 @@ func runCore(args []string) int {
 		flags.Usage()
 		return 64
 	}
-	if *root == "" || *socket == "" || flags.NArg() != 0 || (*tailscaleSocket != "" && *tailnet == "") {
+	if *root == "" || (!*preflight && *socket == "") || (*preflight && (*socket != "" || *tailnet != "" || *tailscaleSocket != "")) || (!*preflight && *required != "") || flags.NArg() != 0 || (*tailscaleSocket != "" && *tailnet == "") {
 		flags.Usage()
 		return 64
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
+	if *preflight {
+		result, err := update.Preflight(ctx, *root, *metadata, *required)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "lina core preflight: %v\n", err)
+			return 78
+		}
+		if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
+			return 78
+		}
+		return 0
+	}
 	if version, err := canon.SQLiteVectorVersion(); err != nil || version != canon.SQLiteVecVersion {
 		if err == nil {
 			err = fmt.Errorf("unexpected sqlite-vec version %q", version)
@@ -53,7 +69,7 @@ func runCore(args []string) int {
 		fmt.Fprintln(os.Stderr, "lina core: invalid model configuration")
 		return 78
 	}
-	cfg := boot.Config{StateRoot: *root, Socket: *socket, Conversation: route}
+	cfg := boot.Config{StateRoot: *root, Socket: *socket, Conversation: route, ClientManifest: *metadata}
 	if *tailnet != "" {
 		cfg.Tailnet = &clientsrv.TailnetConfig{Address: *tailnet, Socket: *tailscaleSocket}
 	}
