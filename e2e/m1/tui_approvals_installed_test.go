@@ -121,6 +121,7 @@ func TestM1TUIApprovalsInstalledCore(t *testing.T) {
 	// using negotiated event types instead of a timing delay between keys.
 	approval.ID += "-tui"
 	approval.EffectKey = approval.ID
+	approval.What = "Send the second fixture document"
 	data, err = json.Marshal(approval)
 	if err != nil {
 		t.Fatal(err)
@@ -129,7 +130,9 @@ func TestM1TUIApprovalsInstalledCore(t *testing.T) {
 		t.Fatal(err)
 	}
 	terminal := h.startScreenTUI("TERM=xterm-256color")
-	waitScreen(t, h, terminal, fixture.Summary)
+	// The previous resolved card has the original summary. Require this new
+	// pending card's rendered body before F6; a Home summary is not a card.
+	waitScreen(t, h, terminal, "["+design.Text(design.English, "approval_request")+"] "+approval.What)
 	h.keys(terminal, "\x1b[?3u\x1b[17~")
 	waitScreen(t, h, terminal, fixture.Target)
 	h.keys(terminal, "1")
