@@ -29,15 +29,15 @@ func TestM1TUIAccountDiscoveryRefusalInstalledCore(t *testing.T) {
 	socket := h.socket
 	go func() {
 		done <- boot.Run(ctx, boot.Config{StateRoot: h.root, Socket: socket, Client: clientsrv.Identity{Supported: rows}, AfterStep: func(step boot.Step, _ boot.Snapshot) error {
-			switch step {
-			case boot.SocketsBound:
+			if step == boot.SocketsBound {
 				close(bound)
 				select {
 				case <-recoverCore:
 				case <-ctx.Done():
 					return ctx.Err()
 				}
-			case boot.Ready:
+			}
+			if step == boot.Ready {
 				close(ready)
 			}
 			return nil
