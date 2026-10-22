@@ -35,6 +35,11 @@ type Definition struct {
 	Decisions   []GoalDecision `json:"decisions,omitempty"`
 	Criteria    []Criterion    `json:"criteria"`
 }
+
+// Definitions are immutable per record revision. In-flight journal transactions
+// may still reference the prior revision while a refresh publishes a new one.
+type definitionKey struct{ id, revision string }
+
 type savedDefinition struct {
 	definition     Definition
 	revision, text string
@@ -112,11 +117,11 @@ func (e *Engine) prepareDefinition(ctx context.Context, g *Goal) error {
 		return ErrConflict
 	}
 	g.RecordRevision = rev
-	e.definitions.Store(g.RecordID, savedDefinition{d, rev, string(r.Data)})
+	e.definitions.Store(definitionKey{g.RecordID, rev}, savedDefinition{d, rev, string(r.Data)})
 	return nil
 }
 func (e *Engine) hydrate(g *Goal) error {
-	cached, ok := e.definitions.Load(g.RecordID)
+	cached, ok := e.definitions.Load(definitionKey{g.RecordID, g.RecordRevision})
 	if !ok {
 		return ErrConflict
 	}
@@ -149,7 +154,7 @@ func (e *Engine) RefreshDefinitions(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		e.definitions.Store(g.RecordID, savedDefinition{d, rev, string(r.Data)})
+		e.definitions.Store(definitionKey{g.RecordID, rev}, savedDefinition{d, rev, string(r.Data)})
 		if rev == g.RecordRevision {
 			continue
 		}

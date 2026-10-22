@@ -151,7 +151,7 @@ func (e *Engine) Snapshot(ctx context.Context) (State, error) {
 	if err == nil {
 		for i := range s.Goals {
 			g := &s.Goals[i]
-			cached, ok := e.definitions.Load(g.RecordID)
+			cached, ok := e.definitions.Load(definitionKey{g.RecordID, g.RecordRevision})
 			if !ok || cached.(savedDefinition).revision != g.RecordRevision {
 				r, rev, readErr := e.cfg.Records.Read(ctx, g.RecordID)
 				if readErr != nil {
@@ -161,7 +161,7 @@ func (e *Engine) Snapshot(ctx context.Context) (State, error) {
 				if readErr != nil {
 					return s, readErr
 				}
-				e.definitions.Store(g.RecordID, savedDefinition{d, rev, string(r.Data)})
+				e.definitions.Store(definitionKey{g.RecordID, rev}, savedDefinition{d, rev, string(r.Data)})
 			}
 			if err = e.hydrate(g); err != nil {
 				return s, err
@@ -362,6 +362,8 @@ func (e *Engine) Reconcile(ctx context.Context) error {
 					person = person || w.Reason == "person"
 				}
 				switch {
+				case g.DefinitionPending && g.AssessedFailure == "definition:"+g.RecordRevision:
+					g.State = GoalBlocked
 				case has(p.Close, g.ID):
 					g.State = GoalDone
 				case has(p.Block, g.ID) || person:
@@ -593,7 +595,6 @@ func applySuccess(g *Goal, t *Task, a Action, o Observation, now int64) error {
 		g.Checks = append(g.Checks, *o.Criterion)
 	case PlanGoal:
 		if g.DefinitionPending {
-			g.DefinitionPending = false
 			g.AssessedFailure = "definition:" + g.RecordRevision
 			if len(o.Tasks) == 0 {
 				g.State = GoalBlocked
@@ -601,6 +602,7 @@ func applySuccess(g *Goal, t *Task, a Action, o Observation, now int64) error {
 				g.BlockedReason = "The corrected goal needs a revised work definition."
 				return nil
 			}
+			g.DefinitionPending = false
 		}
 		if t != nil && (t.Stage != TaskQAFailed || t.RepairedBy != "") {
 			return ErrInvalid
