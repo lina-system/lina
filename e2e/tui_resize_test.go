@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/design"
+	"github.com/thisisjun786/lina/internal/tui/render"
 	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
@@ -70,10 +71,17 @@ func TestM1TUIConversationResize(t *testing.T) {
 	}
 	environment := []string{"TERM=xterm-256color", "COLORTERM=truecolor"}
 	size := scenario.Sizes[0]
-	session := startReadyScreenTUI(t, h, environment, size.Width, size.Height, nil)
+	session, _ := h.startConversationTUI(size.Width, size.Height, environment...)
 	waitScreen(t, h, session, design.Text(design.English, "live"))
 	h.keys(session, scenario.Input+"\r")
 	waitTurn()
+	waitScreen(t, h, session, "REPLY-340")
+	// Compare clients with the same restored display state. A live turn's
+	// completion duration belongs only to that client, not persisted history.
+	h.keys(session, "\x04")
+	session.process.wait(t, 0)
+	h.expectTerminalRestored(session)
+	session = h.startTerminalSize(environment, false, true, size.Width, size.Height)
 	waitScreen(t, h, session, "REPLY-340")
 	h.keys(session, scenario.Draft)
 	initial := waitResizeChrome(t, h, session, size.Height, scenario.Draft)
@@ -104,14 +112,13 @@ func TestM1TUIConversationResize(t *testing.T) {
 	waitTurn()
 	waitScreen(t, h, session, scenario.NextReply)
 	size = scenario.Sizes[len(scenario.Sizes)-1]
-	fresh := h.startTerminalSize(environment, false, true, size.Width, size.Height)
-	waitScreen(t, h, fresh, scenario.NextReply)
-	expected := waitResizeChrome(t, h, fresh, size.Height, "")
-	waitMatchingScreen(t, h, session, expected)
+	// Sending after the resizes must still complete through Core and restore
+	// the empty composer. Activity completion metadata is checked separately.
+	waitResizeChrome(t, h, session, size.Height, "")
 	if calls.Load() != 2 {
 		t.Fatalf("resize sent the draft or repeated a request: calls=%d", calls.Load())
 	}
-	for _, term := range []*terminal{session, fresh} {
+	for _, term := range []*terminal{session} {
 		h.keys(term, "\x04")
 		term.process.wait(t, 0)
 		h.expectTerminalRestored(term)
@@ -132,10 +139,15 @@ func waitResizeChrome(t *testing.T, h *harness, term *terminal, height int, draf
 	t.Helper()
 	ctx, cancel := context.WithTimeout(h.ctx, operationTimeout)
 	defer cancel()
+	content := draft
+	if content == "" {
+		content = design.Text(design.English, "composer.placeholder")
+	}
 	snapshot, err := term.screen.Wait(ctx, func(s tuiterm.Snapshot) bool {
 		rows := screenRows(s)
 		return len(rows) == height && s.AltScreen && !s.CursorHidden &&
-			s.CursorY == height-2 && strings.TrimSpace(rows[height-2]) == draft &&
+			s.CursorY == height-2 && strings.TrimSpace(rows[height-2]) == "› "+content &&
+			s.CursorX == (render.Unicode{}).Width("› "+draft) &&
 			strings.Contains(rows[height-1], design.Text(design.English, "live"))
 	})
 	if err != nil {

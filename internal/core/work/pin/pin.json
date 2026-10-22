@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "repository": "https://github.com/thisisjun786/codex-relay-workflow",
+  "commit": "7e65fcb82d426d228e18958d728fe63a0991ddd0",
+  "domains": [
+    "record-schema",
+    "runtime-attribution",
+    "independent-review",
+    "relationship-reasons"
+  ],
+  "schemas": [
+    {
+      "path": "schema/acknowledgement.json",
+      "source": "contract/schema/acknowledgement.json",
+      "sha256": "193c2a1dbdb6197f852aaa38c6b8b4e55ba804ffc66e7b2a73925365b133eb7c"
+    },
+    {
+      "path": "schema/completion-receipt.json",
+      "source": "contract/schema/completion-receipt.json",
+      "sha256": "fd6498fdca80c7e8f4d97e37ceec12935bf1afce10211826fdc232593b9fb0d5"
+    },
+    {
+      "path": "schema/delivery-attempt.json",
+      "source": "contract/schema/delivery-attempt.json",
+      "sha256": "ad856f98872952ffc2235acc12ccc5942bbd6e5cae0df1771f063dc74526d24b"
+    },
+    {
+      "path": "schema/relationship.json",
+      "source": "contract/schema/relationship.json",
+      "sha256": "6a994cad6400a07d3e2faaf2161a16818ac7784be651cdcb2d6c9b9439988cbd"
+    },
+    {
+      "path": "schema/verification-verdict.json",
+      "source": "contract/schema/verification-verdict.json",
+      "sha256": "0b3f8f4b061cff2992fc60a7c1f45dec6f803116894735751c40df3a8d356af9"
+    }
+  ],
+  "fixtures": [
+    {
+      "path": "fixtures/draft7-verdicts.json.gz",
+      "source": "internal/relay/store/testdata/fixtures/draft7-verdicts.json.gz",
+      "sha256": "7b52f1762783eb7bba5796b61371e6bd42e3fa74535efa973edff434c03cbc24",
+      "domain": "record-schema"
+    },
+    {
+      "path": "fixtures/runtime-attempt-verdicts.json.gz",
+      "source": "internal/relay/store/testdata/fixtures/runtime-attempt-verdicts.json.gz",
+      "sha256": "e709008d9bbee7af9336b3076df12c687f5d9cc997f028dffd429042d9d557f6",
+      "domain": "runtime-attribution"
+    },
+    {
+      "path": "fixtures/independent-review-verdicts.json.gz",
+      "source": "internal/relay/store/testdata/fixtures/independent-review-verdicts.json.gz",
+      "sha256": "ac7e656b628ad6b0cb2a27534f958dae8f56ce417b2234f211d6dbaa5dd7c934",
+      "domain": "independent-review"
+    },
+    {
+      "path": "fixtures/relationship-reason-verdicts.json.gz",
+      "source": "internal/relay/store/testdata/fixtures/relationship-reason-verdicts.json.gz",
+      "sha256": "009d7607719be19795cb6a70d0a21b8242bfe56f53c61dfca1b0b73b162d5764",
+      "domain": "relationship-reasons"
+    }
+  ],
+  "replay": {
+    "path": "replay.json",
+    "sha256": "4bb5172de5deeedb073d406bb4cbfc1c6a3baf840512f3d7c7c2e516ec9bda59"
+  }
+}

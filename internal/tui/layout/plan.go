@@ -22,11 +22,11 @@ type Shape struct {
 	RunningCount, CardCount, CardRows int
 }
 type Layout struct {
-	Tier                                                                                            Tier
-	Header, Conversation, SidePane, Running, Cards, Attachments, Activity, Composer, Status, Notice Rect
-	RunningCount, CardCount                                                                         int
-	RunningFolded, CardsFolded, CombinedWork                                                        bool
-	SideUnsupported, RunningUnsupported, CardsUnsupported                                           bool
+	Tier                                                                                                          Tier
+	Header, Conversation, SidePane, Running, Cards, Attachments, Activity, ComposerRule, Composer, Status, Notice Rect
+	RunningCount, CardCount                                                                                       int
+	RunningFolded, CardsFolded, CombinedWork                                                                      bool
+	SideUnsupported, RunningUnsupported, CardsUnsupported                                                         bool
 }
 
 // Plan keeps counts even when a region folds or is unsupported. At usable sizes
@@ -69,7 +69,8 @@ func Plan(size Size, caps Caps, st Shape) Layout {
 		cards = min(5, max(1, st.CardRows))
 	}
 	side := st.SidePane && caps.SidePane && p.Tier == Wide
-	used := func() int { return 2 + 4 + composer + attachment + running + cards + activity }
+	rule := 1
+	used := func() int { return 2 + 4 + composer + attachment + running + cards + activity + rule }
 	if used() > h {
 		side = false
 	}
@@ -80,6 +81,9 @@ func Plan(size Size, caps Caps, st Shape) Layout {
 	if used() > h && cards > 1 {
 		cards = 1
 		p.CardsFolded = true
+	}
+	if used() > h {
+		rule = 0
 	}
 	if used() > h {
 		composer = max(1, composer-(used()-h))
@@ -104,7 +108,7 @@ func Plan(size Size, caps Caps, st Shape) Layout {
 		return r
 	}
 	p.Header = take(1)
-	p.Conversation = take(h - 2 - composer - attachment - running - cards - activity)
+	p.Conversation = take(h - 2 - composer - attachment - running - cards - activity - rule)
 	if side {
 		sideWidth := w / 3
 		p.Conversation.Width = w - sideWidth
@@ -114,6 +118,7 @@ func Plan(size Size, caps Caps, st Shape) Layout {
 	p.Cards = take(cards)
 	p.Attachments = take(attachment)
 	p.Activity = take(activity)
+	p.ComposerRule = take(rule)
 	p.Composer = take(composer)
 	return p
 }

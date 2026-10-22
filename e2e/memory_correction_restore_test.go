@@ -208,7 +208,8 @@ func correctionMemoryTUI(t *testing.T, h *harness) (func(string) protocol.Memory
 				}
 				heading := design.Text(design.English, *result.Operation)
 				if _, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
-					return strings.TrimSpace(screenRows(s)[0]) == heading
+					rows := screenRows(s)
+					return s.CursorHidden && len(rows) > 0 && strings.HasPrefix(rows[len(rows)-1], "Esc") && strings.TrimSpace(rows[0]) == heading
 				}); err != nil {
 					t.Fatalf("memory result was not rendered: %v", err)
 				}

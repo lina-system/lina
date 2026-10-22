@@ -67,7 +67,7 @@ func TestM1TUIActivity(t *testing.T) {
 	defer cancel()
 	thinking := design.Text(design.English, "activity.thinking")
 	first, err := terminal.screen.Wait(ctx, func(s tuiterm.Snapshot) bool {
-		return strings.Contains(screenRows(s)[31], thinking+" (0s") && strings.Contains(screenText(s), "Show activity")
+		return strings.Contains(screenRows(s)[30], thinking+" (0s") && strings.Contains(screenText(s), "Show activity")
 	})
 	t.Logf("holding response (100x34):\n%s", strings.Join(screenRows(first), "\n"))
 	if err != nil {
@@ -76,7 +76,7 @@ func TestM1TUIActivity(t *testing.T) {
 	ctx2, cancel2 := context.WithTimeout(h.ctx, 4*time.Second)
 	defer cancel2()
 	later, err := terminal.screen.Wait(ctx2, func(s tuiterm.Snapshot) bool {
-		return strings.Contains(screenRows(s)[31], thinking+" (2s")
+		return strings.Contains(screenRows(s)[30], thinking+" (2s")
 	})
 	if err != nil {
 		t.Fatalf("elapsed did not increase while provider held response: %v", err)
@@ -87,7 +87,7 @@ func TestM1TUIActivity(t *testing.T) {
 	t.Logf("replying (100x34):\n%s", strings.Join(screenRows(replying), "\n"))
 	close(finish)
 	completed := waitScreen(t, h, terminal, strings.TrimSuffix(design.Text(design.English, "activity.worked_for"), "%s"))
-	if strings.Contains(screenRows(completed)[31], "Esc") {
+	if strings.Contains(screenRows(completed)[30], "Esc") {
 		t.Fatal("activity row survived completion")
 	}
 	t.Logf("completed (100x34):\n%s", strings.Join(screenRows(completed), "\n"))
@@ -99,7 +99,7 @@ func TestM1TUIActivity(t *testing.T) {
 	t.Logf("stopping (100x34):\n%s", strings.Join(screenRows(stopping), "\n"))
 	close(interrupt)
 	stopped, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
-		return !strings.Contains(screenRows(s)[31], design.Text(design.English, "activity.stop"))
+		return !strings.Contains(screenRows(s)[30], design.Text(design.English, "activity.stop"))
 	})
 	if err != nil {
 		t.Fatalf("stop did not end activity: %v", err)
