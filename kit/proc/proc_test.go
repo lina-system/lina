@@ -4,11 +4,15 @@ package proc_test
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 	"time"
 
@@ -24,7 +28,54 @@ func TestEnvironment(t *testing.T) {
 	}
 }
 
+func TestCommandResults(t *testing.T) {
+	owner := proc.NewOwner()
+	defer owner.Close(t.Context())
+	l := lease.New(func() {})
+	defer l.Release()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	var output bytes.Buffer
+	err = owner.Run(t.Context(), l, proc.Command{
+		Path: exe, Args: []string{"-test.run=^TestCommandResultProcess$"}, Dir: dir,
+		Env: []string{"LINA_PROC_RESULT_TEST=1", "LINA_PROC_VALUE=child-value"}, Stdout: &output,
+	})
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 47 {
+		t.Fatalf("exit status = %v", err)
+	}
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "child-value\n" + resolved + "\n"; output.String() != want {
+		t.Fatalf("output = %q, want %q", output.String(), want)
+	}
+	err = owner.Run(t.Context(), l, proc.Command{Path: filepath.Join(dir, "missing")})
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("start failure = %v", err)
+	}
+}
+
+func TestCommandResultProcess(t *testing.T) {
+	if os.Getenv("LINA_PROC_RESULT_TEST") != "1" {
+		return
+	}
+	dir, err := os.Getwd()
+	if err != nil {
+		os.Exit(48)
+	}
+	_, _ = io.WriteString(os.Stdout, os.Getenv("LINA_PROC_VALUE")+"\n"+dir+"\n")
+	os.Exit(47)
+}
+
 func TestOwnerCancelsWholeGroup(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix shell; Windows descendants are covered by TestOwnerReapsEscapedDescendants")
+	}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	owner := proc.NewOwner()
