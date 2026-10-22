@@ -405,6 +405,10 @@ and `next_check`; an assignee carries `kind` and `id`. Checklist items carry onl
 `text` and `checked`. A repeat retains `rule`, the original `text`,
 `from_completion` and its current `next` occurrence; advancing it is #156.
 The record tool cannot write execution observations or complete delegated work.
+It may replace planning fields while preserving an already `completed` state,
+including on a to-do with an agent or worker assignee or a pull-request link.
+The completion guard applies to transitions into `completed`; preserving that
+state does not permit changing an execution observation.
 
 The current conversation path accepts exact ISO dates and offset-bearing
 RFC 3339 times. Natural-language dates, ambiguous numeric dates, nonexistent
