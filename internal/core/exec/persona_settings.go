@@ -54,7 +54,7 @@ func RegisterPersonaSettings(registry *tools.Registry, p *Persona, scope Persona
 	if registry == nil || p == nil || scope.Agent == "" || scope.StateRevision == "" {
 		return tools.Spec{}, tools.ErrInvalid
 	}
-	spec := tools.Spec{Name: "fill_persona_setting", Placement: tools.Core, Conc: 1, Deadline: 10 * time.Second, Schema: func(raw json.RawMessage) (tools.Input, error) {
+	spec := tools.Spec{Classify: tools.Class(tools.PrivateDraft), Name: "fill_persona_setting", Placement: tools.Core, Conc: 1, Deadline: 10 * time.Second, Schema: func(raw json.RawMessage) (tools.Input, error) {
 		var in SettingFill
 		if err := decodeSkill(raw, &in); err != nil || strings.TrimSpace(in.Quote) == "" || strings.TrimSpace(in.Name) == "" || strings.TrimSpace(in.Value) == "" || len(in.Value) > 8192 {
 			return tools.Input{}, tools.ErrInvalid

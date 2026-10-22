@@ -216,3 +216,39 @@ func TestPlanningUpgradePreservesPublishedWaitingDecisions(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPlanningUpgradePreservesPublishedPresetEffects(t *testing.T) {
+	cfg := storeConfig(t)
+	cfg.Migrations = append(append([]Migration{}, Migrations()[:34]...), Migration{Version: 35, SQL: presetEffectsSchema})
+	db := openStore(t, cfg)
+	if err := db.Write(t.Context(), func(tx *Tx) error {
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO authority_delegations(task_id,person,source,source_task,receiver,limits) VALUES('existing','person','source','source-task','receiver','{}')`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Migrations = Migrations()
+	db = openStore(t, cfg)
+	if err := db.Read(t.Context(), func(tx *Tx) error {
+		var receiver string
+		if err := tx.QueryRowContext(t.Context(), "SELECT receiver FROM authority_delegations WHERE task_id='existing'").Scan(&receiver); err != nil {
+			return err
+		}
+		if receiver != "receiver" {
+			t.Fatalf("upgrade changed published delegation: %q", receiver)
+		}
+		var plans int
+		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM plan_drafts").Scan(&plans); err != nil {
+			return err
+		}
+		if plans != 0 {
+			t.Fatalf("migration created plan drafts: %d", plans)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
