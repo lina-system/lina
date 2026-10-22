@@ -247,7 +247,7 @@ test('module tests retain a diagnostic deadline inside their process budget', t 
 test('acceptance batches run every enumerated test once within the shared budget', t => {
   const sb = fixture(t);
   sb.write(sb.dir, 'e2e/fixture_test.go', '// SPDX-License-Identifier: Apache-2.0\npackage e2e\n');
-  const names = ['TestOne', 'TestTwo', 'TestThree', 'ExampleFlow', 'FuzzInput'];
+  const names = ['TestOne', 'TestTwo', 'TestThree', 'TestFour', 'TestFive', 'TestSix', 'TestSeven', 'TestEight', 'ExampleFlow', 'FuzzInput'];
   const runs = [];
   let elapsed = 0;
   t.mock.method(performance, 'now', () => elapsed);
@@ -261,8 +261,8 @@ test('acceptance batches run every enumerated test once within the shared budget
         const index = args.indexOf('-run');
         const selected = index < 0 ? (args.includes('./e2e/...') ? names : []) : names.filter(name => new RegExp(args[index + 1]).test(name));
         runs.push({ selected, budget: options.timeoutMs });
-        // The growing package exceeds six minutes; either half finishes well
-        // inside that bound and both still share the outer components deadline.
+        // The growing package exceeds six minutes even in two halves.
+        // Every batch must fit while all tests share the outer deadline.
         const duration = selected.length * 80_000;
         elapsed += duration;
         return { status: duration >= 360_000 || duration >= options.timeoutMs ? 1 : 0, stdout: '', stderr: '' };
@@ -272,8 +272,8 @@ test('acceptance batches run every enumerated test once within the shared budget
   assert.equal(result.status, 0, result.output);
   assert.deepEqual(runs.flatMap(run => run.selected).sort(), [...names].sort());
   const batches = runs.filter(run => run.selected.length > 0);
-  assert.equal(batches.length, 2);
-  assert.ok(batches[1].budget < batches[0].budget);
+  assert.ok(batches.every(batch => batch.selected.length * 80_000 < 360_000));
+  assert.ok(batches.slice(1).every((batch, index) => batch.budget < batches[index].budget));
   assert.ok(elapsed < componentsTimeoutMs);
 });
 

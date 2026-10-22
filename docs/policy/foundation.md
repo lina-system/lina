@@ -223,3 +223,10 @@ acceptance batching from #127 now covers that growing corpus with two disjoint
 six-minute batches inside the unchanged fifteen-minute shared components budget.
 Individual operation deadlines and acceptance assertions remain in force;
 timeout or missing observations still fail verification.
+
+The growing installed acceptance corpus is partitioned into four disjoint batches
+per Go package. A full run on the code-goal stack reached the six-minute package
+deadline during update activation after 360 seconds in the first half, while
+its overall components check was at 505 seconds. Four batches leave room within
+the unchanged per-package diagnostic deadline. Enumeration still covers every
+test, example and fuzz seed exactly once, with the same shared components budget.
