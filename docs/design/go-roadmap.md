@@ -407,6 +407,11 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 - Done when: a turn runs with built-in tools off and LINA tools over MCP; a runtime that loaded anything unlisted is refused; competing credential variables are absent; quota from rate-limit events is recorded; the SDK is in no LINA artifact.
 - Depends on: G1-05, G1-08, G1-31. Design refs: C-45; [runtime.md](runtime.md#claude).
 
+#167 supplies the external program, pinned lockfile, npm dependency gate and
+an explicit Core route with a headless tool/result and restart scenario. Its
+stub evidence does not close the parent: #168 still owns account setup,
+first-use installation, quota projection and idle process management.
+
 **G2-27 Gemini adapter.** `genai` client, key header, stateless requests.
 - Done when: a turn returns provider state items as received; a missing key is needs sign-in with no fallback; quota comes from error codes and LINA's own count.
 - Depends on: G1-08, G1-31. Design refs: C-44; [runtime.md](runtime.md#gemini).

@@ -667,7 +667,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		VerifyBuild: r.verifyBuild,
 		Account:     func(context.Context) (provider.Credential, error) { return r.route.Request(nil).Credential, nil },
 		Resolve: func(context.Context) (turn.ModelPolicy, error) {
-			return turn.ModelPolicy{Model: r.route.Model, Revision: "configured", Class: provider.ModelAPI}, nil
+			return turn.ModelPolicy{Model: r.route.Model, Revision: "configured", Class: r.route.Adapter.Class()}, nil
 		},
 		Context: func(ctx context.Context, policy turn.ModelPolicy) (turn.PreparedRequest, error) {
 			if err := r.refreshPersona(ctx); err != nil {
@@ -818,7 +818,8 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			return promoted, err
 		},
 		ResultCommitted: r.background.notify, Loop: loop.Config{
-			Tools: bindings,
+			RuntimeTools: r.route.Adapter.Class() == provider.AgentRuntime,
+			Tools:        bindings,
 			After: func(ctx context.Context, call provider.ToolCall, result loop.Result) loop.Result {
 				return r.skillNotice(ctx, input, call, r.personaNotice(ctx, input, call, result))
 			},
