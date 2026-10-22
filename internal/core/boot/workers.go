@@ -380,8 +380,10 @@ func (e *workerSession) observe() {
 					e.reservationTurn = ""
 				}
 			}
-			e.active[event.Thread.TurnID].Release()
-			delete(e.active, event.Thread.TurnID)
+			if event.Finish.Failure != worker.ConnectionFailure {
+				e.active[event.Thread.TurnID].Release()
+				delete(e.active, event.Thread.TurnID)
+			}
 			e.mu.Unlock()
 			text := "Codex turn " + string(event.Finish.Status) + "."
 			if event.Finish.Failure != "" {

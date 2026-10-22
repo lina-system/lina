@@ -52,6 +52,14 @@ func reviewWorkerFixture(t *testing.T) (*conversationRuntime, *workerSession, *t
 }
 func TestSwitchConnectionLossDoesNotReleaseExecution(t *testing.T) {
 	r, entry, probe := reviewWorkerFixture(t)
+	released := false
+	entry.active["old"] = lease.New(func() { released = true })
+	entry.close = func() error {
+		if released {
+			t.Error("connection loss released activity before process cleanup")
+		}
+		return nil
+	}
 	probe.events <- worker.Event{Thread: entry.thread, Kind: worker.FinishEvent, Finish: &worker.Finish{Status: worker.Failed, Failure: worker.ConnectionFailure, Code: "connection_lost"}}
 	close(probe.events)
 	entry.observe()
