@@ -72,6 +72,36 @@ func TestWaitObservesWritesAndCancellation(t *testing.T) {
 	}
 }
 
+func TestCursorVisibilityIsGlobalAcrossScreenSwitches(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		data   string
+		hidden bool
+	}{
+		{"show in alternate screen", "\x1b[?25l\x1b[?1049h\x1b[?25h\x1b[?1049l", false},
+		{"hide in alternate screen", "\x1b[?25h\x1b[?1049h\x1b[?25l\x1b[?1049l", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, err := term.NewRecorder(20, 4)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer r.Close()
+			for _, b := range []byte(tc.data) {
+				if _, err := r.Write([]byte{b}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if s := r.Snapshot(); s.AltScreen || s.CursorHidden != tc.hidden {
+				t.Fatalf("screen switch restored stale cursor visibility: alt=%t hidden=%t, want hidden=%t", s.AltScreen, s.CursorHidden, tc.hidden)
+			}
+			if string(r.Bytes()) != tc.data {
+				t.Fatal("recorder altered terminal output")
+			}
+		})
+	}
+}
+
 type fixtureModel struct{ n int }
 
 func (m fixtureModel) Init() tea.Cmd { return nil }

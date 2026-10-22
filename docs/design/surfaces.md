@@ -436,7 +436,13 @@ The 할 일 views are lenses over the same records, computed by LINA Core ([work
 
 One list shows everything LINA is doing in the background for the person: background runs and delegated coding tasks alike. LINA Core owns it, and the app and the TUI show it.
 
-- A row is one run or task, with a one-line summary in plain words of what it does for the person. Rows are in three groups: in progress, waiting (not running, with one visible reason: a dependency, an area held by another task, a worker out of quota, host capacity, CI pending, a limit on background runs, or the person) and landed. Rows that need the person (input needed) and rows ready for review come first.
+Conversation-started workers also appear while their turn is active, even when
+the conversation turn that delegated them has ended. Each row names its owner
+persona before the worker tool and summarizes the person's request. An idle
+worker leaves the list; a completed worker turn alone is not verified delivery.
+An unavailable observation remains unknown rather than disappearing as done.
+
+- A row is one run, task or conversation-started worker, with a one-line summary in plain words of what it does for the person. Rows are in three groups: in progress, waiting (not running, with one visible reason: a dependency, an area held by another task, a worker out of quota, host capacity, CI pending, a limit on background runs, or the person) and landed. Rows that need the person (input needed) and rows ready for review come first.
 - The state words are those of the work cards ([work-and-delegation.md](work-and-delegation.md#progress-display)): working is in progress; waiting for a slot is waiting; input needed is "Waiting for me"; a landed complete or partial result is ready for review; failed and stopped are landed with their label. A landed row leaves the list once the person has opened or dismissed it, and stays reachable from its conversation.
 - A task that stalls or fails shows its state word on its row until it has been dispatched again once; a second failure becomes a decision for the person under "Waiting for me".
 - Within the attention-first ordering, ties use oldest start time and then a stable source key. An opened or dismissed landed row stays hidden after restart; an active row stays visible when opened.
