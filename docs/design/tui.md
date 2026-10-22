@@ -453,6 +453,11 @@ follow-latest state when the settings screen closes.
 a 100×34 PTY, sends SGR wheel input, compares the retained rows after a second
 reply, verifies that `/web` blocks wheel input at the latest and retained
 positions, and verifies End and mouse-mode cleanup.
+Conversation observations in this unsynchronized PTY wait for the renderer to
+show the cursor after its cell diff, even when the expected first row or status
+marker is already visible. A split-output regression leaves a transcript row
+unpainted and splits the final cursor-show sequence; neither partial snapshot
+may establish the retained viewport used by the full-row comparisons.
 For the colour conversation screen, each new size reaches the cell renderer
 before its reflowed view, even if the view text is unchanged. The connection owner's latest dimensions remain authoritative: late renderer startup size messages are discarded before they can resize the cell buffer. Resizing keeps the
 draft and redraws header, status and composer within the current row budget;
