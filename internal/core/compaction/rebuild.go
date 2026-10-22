@@ -19,7 +19,7 @@ func (s *Store) Rebuild(ctx context.Context, conversation string, summarize Summ
 	var expected Frontier
 	nodes := map[string]Node{}
 	var order []string
-	visible := map[string]bool{}
+	byID := map[string]event{}
 	err := s.db.Read(ctx, func(tx *canon.Tx) error {
 		var err error
 		expected, err = readFrontier(ctx, tx, conversation)
@@ -34,7 +34,7 @@ func (s *Store) Rebuild(ctx context.Context, conversation string, summarize Summ
 			return err
 		}
 		for _, e := range all {
-			visible[e.id] = e.visible
+			byID[e.id] = e
 		}
 		var visit func(string) error
 		visit = func(id string) error {
@@ -70,12 +70,15 @@ func (s *Store) Rebuild(ctx context.Context, conversation string, summarize Summ
 		}
 		in := Segment{NodeID: id}
 		for i, c := range n.Cover {
-			if !visible[c.EventID] {
+			e := byID[c.EventID]
+			if !e.visible {
 				n.Cover[i].Reason = "retracted"
 				continue
 			}
 			if c.Reason == "retracted" {
-				n.Cover[i].Reason = ""
+				// Visibility restoration does not make copies or scaffolding new
+				// evidence. Recover their exclusion from the canonical ledger.
+				n.Cover[i].Reason = skipReason(e)
 			}
 			if n.Cover[i].Reason == "" {
 				in.Events = append(in.Events, c.EventID)

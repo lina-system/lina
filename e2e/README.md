@@ -201,3 +201,10 @@ Core's dedicated provider credential is absent. Run it with
 The opt-in `LINA_CODEX_LIVE=1 go test -count=1 -v ./internal/core/worker/codex -run '^TestInstalledCodex$'`
 uses the user's installed Codex and own configuration. It verifies control and a
 model-generated result without changing approval or sandbox settings.
+
+`m1/conformance-agents.json` runs every shared `application/agents/` fixture
+against installed Core over its public socket. It checks refusals for missing
+and deleted agents in conversation and management requests, plus channel
+binding/scope replacement. A paired synthetic channel and an existing binding
+exercise the actual target-agent checks. Read-only canon snapshots prove that
+refused requests preserve agent revisions, actions, conversations and bindings.
