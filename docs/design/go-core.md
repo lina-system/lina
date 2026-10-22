@@ -1092,6 +1092,10 @@ or automatic effect retries. The shared catalog appends Discord presentations
 and pending buttons plus consumed channel steering at migration 32, leaving migrations 1–31 unchanged.
 The optional channel control `platform` field defaults to Telegram. Discord
 connection verifies the bot identity before replacing its credential or worker.
+Gateway close 4007/4009 clears that bot's durable session/sequence cursor before
+the existing supervisor retries with Identify. This also applies before Hello.
+Other transport closes retain Resume state; native-event receipts and bindings
+are preserved across the reset (#548).
 
 The channel worker now drains committed owner inbox rows into the existing turn
 lanes. Private owner inputs use the shared main conversation and admission/steering

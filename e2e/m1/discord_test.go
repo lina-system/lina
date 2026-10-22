@@ -31,6 +31,11 @@ import (
 )
 
 func TestM2DiscordCore(t *testing.T) {
+	runM2DiscordCore(t, nil)
+}
+
+func runM2DiscordCore(t *testing.T, closeCodes []websocket.StatusCode) {
+	t.Helper()
 	var scenario struct {
 		Platform, Account, Owner, Chat, Input string
 		Paragraphs                            []int
@@ -137,7 +142,8 @@ func TestM2DiscordCore(t *testing.T) {
 	var buttonAnswers atomic.Int32
 	frames := make(chan any, 16)
 	sent := make(chan string, 16)
-	identified := make(chan struct{}, 4)
+	identified := make(chan int, 4)
+	closeGateway := make(chan websocket.StatusCode)
 	var blocked atomic.Bool
 	platform := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/gateway" {
@@ -167,7 +173,7 @@ func TestM2DiscordCore(t *testing.T) {
 			if wsjson.Write(ctx, conn, map[string]any{"op": 0, "t": "READY", "s": 1, "d": map[string]any{"session_id": "session-fixture", "user": map[string]any{"id": scenario.Account, "bot": true}}}) != nil {
 				return
 			}
-			identified <- struct{}{}
+			identified <- identify.Op
 			joined := make(chan struct{})
 			go func() {
 				defer close(joined)
@@ -191,6 +197,9 @@ func TestM2DiscordCore(t *testing.T) {
 			for {
 				select {
 				case <-ctx.Done():
+					return
+				case code := <-closeGateway:
+					_ = conn.Close(code, "synthetic non-resumable session")
 					return
 				case frame := <-frames:
 					if wsjson.Write(ctx, conn, frame) != nil {
@@ -452,6 +461,26 @@ func TestM2DiscordCore(t *testing.T) {
 			t.Fatal("active channel turn blocked steering admission")
 		case <-time.After(10 * time.Millisecond):
 		}
+	}
+
+	// The native interaction is already committed and its model turn is active.
+	// Recovery must re-identify without losing receipts or interrupting that work.
+	for i, code := range closeCodes {
+		select {
+		case closeGateway <- code:
+		case <-h.ctx.Done():
+			t.Fatal("Gateway unavailable for close injection")
+		}
+		select {
+		case op := <-identified:
+			if op != 2 {
+				t.Fatalf("Gateway close %d reconnected with opcode %d; want Identify (2)", code, op)
+			}
+		case <-h.ctx.Done():
+			t.Fatalf("Gateway did not recover from close %d", code)
+		}
+		interaction()
+		barrier(fmt.Sprint(60 + i))
 	}
 
 	control(protocol.ChannelRequest{Operation: str("bind"), Platform: &scenario.Platform, Account: &scenario.Account, Chat: str("101"), AgentID: &agent, Scope: &protocol.ChannelScope{Reads: "addressed", Writes: "reply_only"}})
