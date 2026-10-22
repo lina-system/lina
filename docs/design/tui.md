@@ -81,7 +81,11 @@ acceptance remains the T-08 spike gate.
 
 `lina tui` never starts a main. The connection is in one of eight states. Each is a screen state, never an empty conversation and never a conversation item.
 
-A validated welcome enters Live. Initial absence shows the Core-absent screen
+A validated welcome enters Live. When conversation is granted, the initial
+connection stays Connecting until history discovery supplies its conversation
+id. Early typing remains in the draft and Enter causes no input effect until
+that destination is known; discovery does not automatically send the draft.
+Initial absence shows the Core-absent screen
 and exits 69; initial `unsupported_combination` shows Refused and exits 78. Bad
 arguments exit 64; malformed handshakes, invalid session frames and other terminal
 failures exit 70. Connection and handshake share a five-second timeout. The
@@ -876,6 +880,13 @@ request fields. These checks establish the boundary behavior used by T-06; they
 do not establish rendering, live Core behavior or the end-to-end scenarios that
 depend on the headless harness.
 
+The companion application runner executes the shared agent lifecycle cases
+against installed Core's socket through `e2e/m1/conformance-agents.json`, checking
+refusals and unchanged canon for missing/deleted agents and channel targets.
+Native result-body cases run against Core's result store and ledger; client
+result-type negotiation and full wire bodies remain tracked in
+[#419](https://github.com/thisisjun786/lina/issues/419).
+
 | Layer | Runs | Asserts |
 | --- | --- | --- |
 | Reducer | Fixtures replayed through `Reduce` | Unique block ids; duplicates change nothing; a resumed state equals a run that never disconnected |
@@ -932,7 +943,10 @@ authoritative completion, duplicate completion, and terminal restoration.
 with the fixture Responses provider, types in the real TUI, checks reply cells,
 and reopens the conversation. It exercises the existing Core turn, lane and
 ledger composition; a direct provider call is not its acceptance proof. The
-real-model journey remains #312 and the physical terminal spike remains T-08.
+real-model headless client journey is covered by
+`TestRealModelHeadlessConversation` in `e2e/real_model_test.go`, including streamed
+output and canon readback after Core restart. It requires explicit real-model
+opt-in and credentials; the physical terminal spike remains T-08.
 `e2e/m1/conversation-admission.json` verifies large Unicode inputs and replies
 through durable materials, secret removal before model input, and restart
 readback. `e2e/m1/conversation-failure.json` verifies that a provider item followed

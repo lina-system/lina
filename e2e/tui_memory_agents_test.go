@@ -52,7 +52,7 @@ func TestM1TUIMemoryAgentsInstalledCore(t *testing.T) {
 			tap := newAccountTap(t, h, h.socket)
 			h.socket = tap.socket
 			terminal := h.startScreenTUI("TERM=xterm-256color")
-			waitScreen(t, h, terminal, "Ctrl+D")
+			waitComposerReady(t, h, terminal)
 			h.keys(terminal, command+"\r")
 			wanted := protocol.KindMemoryResult
 			if command == "/agents" {
@@ -113,13 +113,13 @@ func memoryAgentRoundTrip(t *testing.T, binary, bundle string) {
 	tap := newAccountTap(t, h, socket, true)
 	h.socket = tap.socket
 	terminal := h.startScreenTUI("TERM=xterm-256color")
-	waitScreen(t, h, terminal, "Ctrl+D")
+	waitComposerReady(t, h, terminal)
 	opened := false
 	command := func(text string, kind protocol.Kind) protocol.Envelope {
 		t.Helper()
 		if opened {
 			h.keys(terminal, "\x1b")
-			waitScreen(t, h, terminal, "Ctrl+D")
+			waitComposerReady(t, h, terminal)
 		}
 		h.keys(terminal, text+"\r")
 		for {
@@ -169,7 +169,7 @@ func memoryAgentRoundTrip(t *testing.T, binary, bundle string) {
 		t.Helper()
 		if opened {
 			h.keys(terminal, "\x1b")
-			waitScreen(t, h, terminal, "Ctrl+D")
+			waitComposerReady(t, h, terminal)
 			opened = false
 		}
 		h.keys(terminal, prompt+"\r")
@@ -251,7 +251,7 @@ func memoryAgentRoundTrip(t *testing.T, binary, bundle string) {
 		t.Fatal("rename changed identity")
 	}
 	h.keys(terminal, "\x1b")
-	waitScreen(t, h, terminal, "Ctrl+D")
+	waitComposerReady(t, h, terminal)
 	waitScreen(t, h, terminal, "Fixture renamed")
 	opened = false
 	chat("second agent fixture", "", "Synthetic private orchard")
@@ -343,7 +343,7 @@ func managementWithoutModelOrDefaultAgent(t *testing.T, binary, bundle string) {
 	tap := newAccountTap(t, h, socket)
 	h.socket = tap.socket
 	terminal := h.startScreenTUI("TERM=xterm-256color")
-	waitScreen(t, h, terminal, "Ctrl+D")
+	waitComposerReady(t, h, terminal)
 	h.keys(terminal, "/agents create Fixture replacement\r")
 	for {
 		e := tap.next(t, h)
@@ -359,7 +359,7 @@ func managementWithoutModelOrDefaultAgent(t *testing.T, binary, bundle string) {
 		}
 	}
 	h.keys(terminal, "\x1b")
-	waitScreen(t, h, terminal, "Ctrl+D")
+	waitComposerReady(t, h, terminal)
 	h.keys(terminal, "/memory remember Fixture offline statement\r")
 	for {
 		e := tap.next(t, h)
@@ -407,14 +407,14 @@ func memoryAgentPages(t *testing.T, binary, bundle string) {
 		}
 		e, err := client.Receive(h.ctx)
 		if err != nil || e.Error != nil {
-			t.Fatal("page setup refused", err)
+			t.Fatalf("page setup %d refused: transport=%v protocol=%+v", i, err, e.Error)
 		}
 	}
 	client.Close()
 	tap := newAccountTap(t, h, socket)
 	h.socket = tap.socket
 	terminal := h.startScreenTUI("TERM=xterm-256color")
-	waitScreen(t, h, terminal, "Ctrl+D")
+	waitComposerReady(t, h, terminal)
 	h.keys(terminal, "/memory list paged\r")
 	seen := map[string]bool{}
 	for page := 0; page < scenario.PageItems; page++ {
@@ -443,7 +443,7 @@ func memoryAgentPages(t *testing.T, binary, bundle string) {
 			break
 		}
 		h.keys(terminal, "\x1b")
-		waitScreen(t, h, terminal, "Ctrl+D")
+		waitComposerReady(t, h, terminal)
 		h.keys(terminal, "/memory next\r")
 	}
 	if len(seen) != scenario.PageItems {
