@@ -792,7 +792,7 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		if b.InlineReply {
 			body = append(body, plainRow(design.Text(m.styles.options.Language, "reply.open_pager")))
 		}
-		if len(body) == 0 {
+		if len(body) == 0 && !slices.ContainsFunc(groups, func(group toolGroup) bool { return group.calls[0].Anchor == b.ID }) {
 			continue
 		}
 		// The account placeholder has no retained conversation identity.
