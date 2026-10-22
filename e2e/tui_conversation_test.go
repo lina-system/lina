@@ -75,7 +75,7 @@ func TestM1TUIConversationInstalledCore(t *testing.T) {
 	if snapshot, err := client.Receive(h.ctx); err != nil || snapshot.Kind != protocol.KindSnapshot {
 		t.Fatal("no history snapshot")
 	}
-	terminal := startConversationScreen(t, h, []string{"TERM=xterm-256color", "COLORTERM=truecolor"}, 80, 24, *history.ConversationID)
+	terminal, _ := h.startConversationTUI(80, 24, "TERM=xterm-256color", "COLORTERM=truecolor")
 	fresh := waitComposerReady(t, h, terminal)
 	if text := screenText(fresh); strings.Contains(strings.ToLower(text), "unsupported") {
 		t.Fatalf("fresh install shows an unsupported placeholder: %s", text)
@@ -197,32 +197,6 @@ func waitScreen(t *testing.T, h *harness, terminal *terminal, text string) tuite
 		t.Fatalf("screen missing %q: %v; cells=%s", text, err, screenText(snapshot))
 	}
 	return snapshot
-}
-
-// A conversation snapshot proves that this TUI handled history discovery and
-// subscribed to the expected conversation. Wait for it and the Live display
-// before typing input into the composer.
-func startConversationScreen(t *testing.T, h *harness, environment []string, width, height int, conversation string) *terminal {
-	t.Helper()
-	socket := h.socket
-	tap := newAccountTap(t, h, socket, true)
-	h.socket = tap.socket
-	terminal := h.startTerminalSize(environment, false, true, width, height)
-	h.socket = socket
-	for {
-		select {
-		case frame := <-tap.replies:
-			if frame.Error != nil {
-				t.Fatalf("TUI discovery refused: %s", frame.Error.Code)
-			}
-			if snapshot, ok := frame.Payload.(protocol.Snapshot); ok && snapshot.Topic == "conversation:"+conversation {
-				waitScreen(t, h, terminal, design.Text(design.English, "live"))
-				return terminal
-			}
-		case <-h.ctx.Done():
-			t.Fatal("TUI did not subscribe to its conversation")
-		}
-	}
 }
 
 func installedConversationHarness(t *testing.T, providerURL string, installArgs ...string) (*harness, func(bool) *process) {

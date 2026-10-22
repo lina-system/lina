@@ -1,0 +1,2624 @@
+{
+  "version": 1,
+  "sources": {
+    "internal/relay/store/schema_conformance_test.go": "d8298cf0a1c8244a2f81f890a1f5a6925dd16d11abb9f190632b13ed648793b3",
+    "internal/relay/store/schema_validator_test.go": "6ef979c97fc14143587b65cfb85e45b3570f569fb64ae862d578590846d75393",
+    "internal/relay/store/intake_fixture_test.go": "9de30e2ffe43331dcd4a77488760540d31992545f8e88c70ebefbb91f449d3e1",
+    "internal/relay/store/python_stores_test.go": "3c9b2e0e3266810e11b4ea6b87a363b75398f39070840b79561040a6df3110ef",
+    "internal/relay/store/runtime_schema_test.go": "db1ff9cab5ff3509ba80ee12aa83c8630209b6484ae47c12f01c637001f46937",
+    "internal/relay/store/independent_review_schema_test.go": "e81e2eee32fe107211c739353cbab5082661d7ef94a58c36804fb30c2c5a0f6b",
+    "internal/relay/store/relationship_reason_schema_test.go": "9f07c5a1d4486b19066c1c17d999369b00522aaae38d3adf3e03caf4e6a50fba"
+  },
+  "inputs": [
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 0,
+      "schema": "relationship",
+      "label": "anchor_pending relationship",
+      "normalizedSHA256": "0956e49bcf2cc165d4b1f3aa2222ef9830e127e1b740c28815ce0178a0a618ab",
+      "instance": {
+        "authorizedScope": {
+          "allowedRecipients": [
+            "01parent-task"
+          ],
+          "artifactRoots": [
+            "/synthetic/work"
+          ]
+        },
+        "child": {
+          "cwd": null,
+          "hostId": "host-a",
+          "taskId": "01child-task"
+        },
+        "createdAt": "2026-01-01T00:00:00Z",
+        "executionGeneration": 1,
+        "generations": [
+          {
+            "anchorState": "anchor_pending",
+            "boundAt": null,
+            "dispatchRequestId": "dispatch-REL-PENDING",
+            "dispatchTurnId": null,
+            "executionGeneration": 1,
+            "openedAt": "2026-01-01T00:00:00Z",
+            "reason": null
+          }
+        ],
+        "issueKey": "REL-PENDING",
+        "parent": {
+          "cwd": null,
+          "hostId": "host-a",
+          "taskId": "01parent-task"
+        },
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "status": "active"
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 1,
+      "schema": "relationship",
+      "label": "bound relationship",
+      "normalizedSHA256": "b518cf8ff0730955027e0714a06c6f34bddf8276e1a55946fcfdd3eb89fdcc53",
+      "instance": {
+        "authorizedScope": {
+          "allowedRecipients": [
+            "01parent-task"
+          ],
+          "artifactRoots": [
+            "/synthetic/work"
+          ]
+        },
+        "child": {
+          "cwd": null,
+          "hostId": "host-a",
+          "taskId": "01child-task"
+        },
+        "createdAt": "2026-01-01T00:00:00Z",
+        "executionGeneration": 1,
+        "generations": [
+          {
+            "anchorState": "bound",
+            "boundAt": "2026-01-01T00:00:00Z",
+            "dispatchRequestId": "dispatch-REL-PENDING",
+            "dispatchTurnId": "turn-dispatch-1",
+            "executionGeneration": 1,
+            "openedAt": "2026-01-01T00:00:00Z",
+            "reason": null
+          }
+        ],
+        "issueKey": "REL-PENDING",
+        "parent": {
+          "cwd": null,
+          "hostId": "host-a",
+          "taskId": "01parent-task"
+        },
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "status": "active"
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 2,
+      "schema": "relationship",
+      "label": "bound anchor with no turn id",
+      "normalizedSHA256": "7e32f946e75d576952f85a9960b83d515a84d77f3b1cd9e5308cab589b2c0159",
+      "instance": {
+        "authorizedScope": {
+          "allowedRecipients": [
+            "01parent-task"
+          ],
+          "artifactRoots": [
+            "/synthetic/work"
+          ]
+        },
+        "child": {
+          "cwd": null,
+          "hostId": "host-a",
+          "taskId": "01child-task"
+        },
+        "createdAt": "2026-01-01T00:00:00Z",
+        "executionGeneration": 1,
+        "generations": [
+          {
+            "anchorState": "bound",
+            "boundAt": "2026-01-01T00:00:00Z",
+            "dispatchRequestId": "dispatch-REL-PENDING",
+            "dispatchTurnId": null,
+            "executionGeneration": 1,
+            "openedAt": "2026-01-01T00:00:00Z",
+            "reason": null
+          }
+        ],
+        "issueKey": "REL-PENDING",
+        "parent": {
+          "cwd": null,
+          "hostId": "host-a",
+          "taskId": "01parent-task"
+        },
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "status": "active"
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 3,
+      "schema": "relationship",
+      "label": "malformed relationship id",
+      "normalizedSHA256": "756017324bf7b328ff8ff005be7183a8996ada2ed5afe3d3bc17d2db8eeb2b88",
+      "instance": {
+        "authorizedScope": {
+          "allowedRecipients": [
+            "01parent-task"
+          ],
+          "artifactRoots": [
+            "/synthetic/work"
+          ]
+        },
+        "child": {
+          "cwd": null,
+          "hostId": "host-a",
+          "taskId": "01child-task"
+        },
+        "createdAt": "2026-01-01T00:00:00Z",
+        "executionGeneration": 1,
+        "generations": [
+          {
+            "anchorState": "bound",
+            "boundAt": "2026-01-01T00:00:00Z",
+            "dispatchRequestId": "dispatch-REL-PENDING",
+            "dispatchTurnId": "turn-dispatch-1",
+            "executionGeneration": 1,
+            "openedAt": "2026-01-01T00:00:00Z",
+            "reason": null
+          }
+        ],
+        "issueKey": "REL-PENDING",
+        "parent": {
+          "cwd": null,
+          "hostId": "host-a",
+          "taskId": "01parent-task"
+        },
+        "relationshipId": "not-a-relationship-id",
+        "status": "active"
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 4,
+      "schema": "relationship",
+      "label": "unknown property",
+      "normalizedSHA256": "58cbec016d3bc329edb1cd43328d176f5eb9e29ef710398f1bbfa39d4044298e",
+      "instance": {
+        "authorizedScope": {
+          "allowedRecipients": [
+            "01parent-task"
+          ],
+          "artifactRoots": [
+            "/synthetic/work"
+          ]
+        },
+        "child": {
+          "cwd": null,
+          "hostId": "host-a",
+          "taskId": "01child-task"
+        },
+        "createdAt": "2026-01-01T00:00:00Z",
+        "executionGeneration": 1,
+        "generations": [
+          {
+            "anchorState": "bound",
+            "boundAt": "2026-01-01T00:00:00Z",
+            "dispatchRequestId": "dispatch-REL-PENDING",
+            "dispatchTurnId": "turn-dispatch-1",
+            "executionGeneration": 1,
+            "openedAt": "2026-01-01T00:00:00Z",
+            "reason": null
+          }
+        ],
+        "issueKey": "REL-PENDING",
+        "parent": {
+          "cwd": null,
+          "hostId": "host-a",
+          "taskId": "01parent-task"
+        },
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "status": "active",
+        "surprise": 1
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 5,
+      "schema": "relationship",
+      "label": "empty artifact roots",
+      "normalizedSHA256": "1e80728faffbc9195de08b67458bb90806e8396f21c7eac1b1594a5b25773b0f",
+      "instance": {
+        "authorizedScope": {
+          "allowedRecipients": [
+            "01parent-task"
+          ],
+          "artifactRoots": []
+        },
+        "child": {
+          "cwd": null,
+          "hostId": "host-a",
+          "taskId": "01child-task"
+        },
+        "createdAt": "2026-01-01T00:00:00Z",
+        "executionGeneration": 1,
+        "generations": [
+          {
+            "anchorState": "bound",
+            "boundAt": "2026-01-01T00:00:00Z",
+            "dispatchRequestId": "dispatch-REL-PENDING",
+            "dispatchTurnId": "turn-dispatch-1",
+            "executionGeneration": 1,
+            "openedAt": "2026-01-01T00:00:00Z",
+            "reason": null
+          }
+        ],
+        "issueKey": "REL-PENDING",
+        "parent": {
+          "cwd": null,
+          "hostId": "host-a",
+          "taskId": "01parent-task"
+        },
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "status": "active"
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 6,
+      "schema": "completion-receipt",
+      "label": "child blocked_needs_input",
+      "normalizedSHA256": "065b9d00b539d5b325ba9ea9044ad97ea17b26e0e9d3c85a591170eb99ffc805",
+      "instance": {
+        "attempt": 1,
+        "emittedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "manifest": null,
+        "outcome": "blocked_needs_input",
+        "producer": "child",
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "revisionHash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "turnRef": {
+          "threadId": "01child-task",
+          "turnId": "turn-dispatch-1",
+          "turnStatus": "completed"
+        }
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 7,
+      "schema": "completion-receipt",
+      "label": "child failed",
+      "normalizedSHA256": "39bb88e0af0bc63ec27b2435aea0cf19ba99f750af93dc847814f93e41afa9ee",
+      "instance": {
+        "attempt": 1,
+        "emittedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "manifest": null,
+        "outcome": "failed",
+        "producer": "child",
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "revisionHash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "turnRef": {
+          "threadId": "01child-task",
+          "turnId": "turn-dispatch-1",
+          "turnStatus": "failed"
+        }
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 8,
+      "schema": "completion-receipt",
+      "label": "child interrupted",
+      "normalizedSHA256": "1f17bfeacd115e87c92c383452a9705aa7bd7c0d025278e20fbd0c8a7a45fee7",
+      "instance": {
+        "attempt": 1,
+        "emittedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "manifest": null,
+        "outcome": "interrupted",
+        "producer": "child",
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "revisionHash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "turnRef": {
+          "threadId": "01child-task",
+          "turnId": "turn-dispatch-1",
+          "turnStatus": "interrupted"
+        }
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 9,
+      "schema": "completion-receipt",
+      "label": "child ready_for_review",
+      "normalizedSHA256": "ef3d6c2e9f926f3f17730fc6af9d42e59d09e737afe87924c1f409a2d96cc82e",
+      "instance": {
+        "attempt": 1,
+        "emittedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "manifest": [
+          {
+            "bytes": 21,
+            "path": "/synthetic/work/ready.txt",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "outcome": "ready_for_review",
+        "producer": "child",
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "revisionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "turnRef": {
+          "threadId": "01child-task",
+          "turnId": "turn-dispatch-1",
+          "turnStatus": "completed"
+        }
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 10,
+      "schema": "completion-receipt",
+      "label": "daemon failed",
+      "normalizedSHA256": "af95dc58f3def6e87bd343694980034c3e1743632a3f05644dc81cef61a1bfd0",
+      "instance": {
+        "attempt": null,
+        "emittedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "manifest": null,
+        "outcome": "failed",
+        "producer": "daemon_observation",
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "revisionHash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "turnRef": {
+          "threadId": "01child-task",
+          "turnId": "turn-dispatch-1",
+          "turnStatus": "failed"
+        }
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 11,
+      "schema": "completion-receipt",
+      "label": "daemon interrupted",
+      "normalizedSHA256": "87d2c572287a4e1d79feec0825617b7aea3ff74111b52b3fd818f274ff696fce",
+      "instance": {
+        "attempt": null,
+        "emittedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "manifest": null,
+        "outcome": "interrupted",
+        "producer": "daemon_observation",
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "revisionHash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "turnRef": {
+          "threadId": "01child-task",
+          "turnId": "turn-dispatch-1",
+          "turnStatus": "interrupted"
+        }
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 12,
+      "schema": "completion-receipt",
+      "label": "staged inProgress",
+      "normalizedSHA256": "c252574570b199eb2b62d670adee6b5bd4ee16f901fba97e8d7ef4abede492f0",
+      "instance": {
+        "attempt": 1,
+        "emittedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "manifest": [
+          {
+            "bytes": 22,
+            "path": "/synthetic/work/staged.txt",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "outcome": "ready_for_review",
+        "producer": "child",
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "revisionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "turnRef": {
+          "threadId": "01child-task",
+          "turnId": "turn-dispatch-1",
+          "turnStatus": "inProgress"
+        }
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 13,
+      "schema": "completion-receipt",
+      "label": "ready with a null manifest",
+      "normalizedSHA256": "c532d55073b0ff27d31ba5f8b2f4191ea15ff99f465a4b3a773fd510877a62a5",
+      "instance": {
+        "attempt": 1,
+        "emittedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "manifest": null,
+        "outcome": "ready_for_review",
+        "producer": "child",
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "revisionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "turnRef": {
+          "threadId": "01child-task",
+          "turnId": "turn-dispatch-1",
+          "turnStatus": "completed"
+        }
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 14,
+      "schema": "completion-receipt",
+      "label": "ready with the sentinel digest",
+      "normalizedSHA256": "ef3d6c2e9f926f3f17730fc6af9d42e59d09e737afe87924c1f409a2d96cc82e",
+      "instance": {
+        "attempt": 1,
+        "emittedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "manifest": [
+          {
+            "bytes": 21,
+            "path": "/synthetic/work/ready.txt",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "outcome": "ready_for_review",
+        "producer": "child",
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "revisionHash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "turnRef": {
+          "threadId": "01child-task",
+          "turnId": "turn-dispatch-1",
+          "turnStatus": "completed"
+        }
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 15,
+      "schema": "completion-receipt",
+      "label": "zero attempt",
+      "normalizedSHA256": "a78791c87479ec8103ca1211c1cb3e49484b788b6ac13a0c215280db65a39d9f",
+      "instance": {
+        "attempt": 0,
+        "emittedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "manifest": [
+          {
+            "bytes": 21,
+            "path": "/synthetic/work/ready.txt",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "outcome": "ready_for_review",
+        "producer": "child",
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "revisionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "turnRef": {
+          "threadId": "01child-task",
+          "turnId": "turn-dispatch-1",
+          "turnStatus": "completed"
+        }
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 16,
+      "schema": "completion-receipt",
+      "label": "boolean generation",
+      "normalizedSHA256": "0602b247abf86e2c61494cd3a429748d3cec3f00e02c6d19c9f7d4be5fb88b66",
+      "instance": {
+        "attempt": 1,
+        "emittedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": true,
+        "manifest": [
+          {
+            "bytes": 21,
+            "path": "/synthetic/work/ready.txt",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "outcome": "ready_for_review",
+        "producer": "child",
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "revisionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "turnRef": {
+          "threadId": "01child-task",
+          "turnId": "turn-dispatch-1",
+          "turnStatus": "completed"
+        }
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 17,
+      "schema": "completion-receipt",
+      "label": "malformed event id",
+      "normalizedSHA256": "49ecd6855228b5659c7f061861b29c770f2efdc52c2ac0d2adf0b066b01fb346",
+      "instance": {
+        "attempt": 1,
+        "emittedAt": "2026-01-01T00:00:00Z",
+        "eventId": "nope",
+        "executionGeneration": 1,
+        "manifest": [
+          {
+            "bytes": 21,
+            "path": "/synthetic/work/ready.txt",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "outcome": "ready_for_review",
+        "producer": "child",
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "revisionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "turnRef": {
+          "threadId": "01child-task",
+          "turnId": "turn-dispatch-1",
+          "turnStatus": "completed"
+        }
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 18,
+      "schema": "completion-receipt",
+      "label": "unknown outcome",
+      "normalizedSHA256": "11e774b67945e3e86a4cf2524e09b83878edb21708b9849a17a8e787844abac0",
+      "instance": {
+        "attempt": 1,
+        "emittedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "manifest": [
+          {
+            "bytes": 21,
+            "path": "/synthetic/work/ready.txt",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "outcome": "finished",
+        "producer": "child",
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "revisionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "turnRef": {
+          "threadId": "01child-task",
+          "turnId": "turn-dispatch-1",
+          "turnStatus": "completed"
+        }
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 19,
+      "schema": "completion-receipt",
+      "label": "unknown property",
+      "normalizedSHA256": "535fd36c795afc6a5e0e00282c5b553b0d42ccdfdf81f9b8afe3f12b9abac76f",
+      "instance": {
+        "attempt": 1,
+        "emittedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "manifest": [
+          {
+            "bytes": 21,
+            "path": "/synthetic/work/ready.txt",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "outcome": "ready_for_review",
+        "producer": "child",
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "revisionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "surprise": 1,
+        "turnRef": {
+          "threadId": "01child-task",
+          "turnId": "turn-dispatch-1",
+          "turnStatus": "completed"
+        }
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 20,
+      "schema": "completion-receipt",
+      "label": "relative manifest path",
+      "normalizedSHA256": "1696be0ab105b4fd1a5d8c744a6ca69b367d3455131f1fdba3d25acaf723b882",
+      "instance": {
+        "attempt": 1,
+        "emittedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "manifest": [
+          {
+            "bytes": 21,
+            "path": "relative/path",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "outcome": "ready_for_review",
+        "producer": "child",
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "revisionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "turnRef": {
+          "threadId": "01child-task",
+          "turnId": "turn-dispatch-1",
+          "turnStatus": "completed"
+        }
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 21,
+      "schema": "completion-receipt",
+      "label": "unknown turn status",
+      "normalizedSHA256": "ce5053873b39e4a47df0d281c81afbdffca40921ffb397cd90d8018b879b0d46",
+      "instance": {
+        "attempt": 1,
+        "emittedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "manifest": [
+          {
+            "bytes": 21,
+            "path": "/synthetic/work/ready.txt",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "outcome": "ready_for_review",
+        "producer": "child",
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "revisionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "turnRef": {
+          "threadId": "01child-task",
+          "turnId": "turn-dispatch-1",
+          "turnStatus": "gone"
+        }
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 22,
+      "schema": "completion-receipt",
+      "label": "daemon observation with an attempt",
+      "normalizedSHA256": "11a6eaff65663d4cfc6b422176c5ea86dcaf275d22699ab4bd78035b2dcb863f",
+      "instance": {
+        "attempt": 1,
+        "emittedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "manifest": null,
+        "outcome": "failed",
+        "producer": "daemon_observation",
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "revisionHash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "turnRef": {
+          "threadId": "01child-task",
+          "turnId": "turn-dispatch-1",
+          "turnStatus": "failed"
+        }
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 23,
+      "schema": "completion-receipt",
+      "label": "daemon failed on an interrupted turn",
+      "normalizedSHA256": "359d42cde84e13da30b3a23027dc9520d03e1c0209620145fb3f1b4514eac512",
+      "instance": {
+        "attempt": null,
+        "emittedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "manifest": null,
+        "outcome": "failed",
+        "producer": "daemon_observation",
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "revisionHash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "turnRef": {
+          "threadId": "01child-task",
+          "turnId": "turn-dispatch-1",
+          "turnStatus": "interrupted"
+        }
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 24,
+      "schema": "delivery-attempt",
+      "label": "dispatched attempt",
+      "normalizedSHA256": "617fed21868eff4953915d851ddc9945e6d3e44a85bf0737b4736b7bd7bcf036",
+      "instance": {
+        "attemptNo": 1,
+        "deliveryState": "dispatched",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "failedOperation": null,
+        "observedAt": "2026-01-01T00:00:00Z",
+        "recipientApprovalPolicy": "never",
+        "recipientStatusBefore": "idle",
+        "recipientTaskId": "01parent-task",
+        "requestId": "del-aaaaaaaaaaaa-a1",
+        "retrySafe": false,
+        "sendAttempted": "yes",
+        "transportReceiptStatus": "accepted",
+        "turnId": "turn-01parent-task-1"
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 25,
+      "schema": "delivery-attempt",
+      "label": "deferred_busy attempt",
+      "normalizedSHA256": "f86f910dd0db2df29868805f115f3adb56ebc9e8fd6af92a9ab35fad7f09ca71",
+      "instance": {
+        "attemptNo": 1,
+        "deliveryState": "deferred_busy",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "failedOperation": "thread/read",
+        "observedAt": "2026-01-01T00:00:00Z",
+        "recipientApprovalPolicy": null,
+        "recipientStatusBefore": "idle",
+        "recipientTaskId": "01parent-task",
+        "requestId": "del-aaaaaaaaaaaa-a1",
+        "retrySafe": true,
+        "sendAttempted": "no",
+        "transportReceiptStatus": "failed",
+        "turnId": null
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 26,
+      "schema": "delivery-attempt",
+      "label": "withheld_pre_send attempt",
+      "normalizedSHA256": "b40c962d331cab9d15a09f0af49f0938b7c553fe1677ec13c8370a3e6a37cee7",
+      "instance": {
+        "attemptNo": 1,
+        "deliveryState": "withheld_pre_send",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "failedOperation": "thread/read",
+        "observedAt": "2026-01-01T00:00:00Z",
+        "recipientApprovalPolicy": null,
+        "recipientStatusBefore": "idle",
+        "recipientTaskId": "01parent-task",
+        "requestId": "del-aaaaaaaaaaaa-a1",
+        "retrySafe": true,
+        "sendAttempted": "no",
+        "transportReceiptStatus": "failed",
+        "turnId": null
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 27,
+      "schema": "delivery-attempt",
+      "label": "withheld_pre_send attempt",
+      "normalizedSHA256": "e88998c0865d593b123cd2f327d68772f23fc825ea53edabb2c5d7f313ffa60e",
+      "instance": {
+        "attemptNo": 1,
+        "deliveryState": "withheld_pre_send",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "failedOperation": "thread/resume",
+        "observedAt": "2026-01-01T00:00:00Z",
+        "recipientApprovalPolicy": null,
+        "recipientStatusBefore": "idle",
+        "recipientTaskId": "01parent-task",
+        "requestId": "del-aaaaaaaaaaaa-a1",
+        "retrySafe": true,
+        "sendAttempted": "no",
+        "transportReceiptStatus": "failed",
+        "turnId": null
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 28,
+      "schema": "delivery-attempt",
+      "label": "held_uncertain attempt",
+      "normalizedSHA256": "69386c9349131733b14d05a65e4f45a03ffb73b6d004b230440c0c42afeb8d3e",
+      "instance": {
+        "attemptNo": 1,
+        "deliveryState": "held_uncertain",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "failedOperation": "turn/start",
+        "observedAt": "2026-01-01T00:00:00Z",
+        "recipientApprovalPolicy": "never",
+        "recipientStatusBefore": "idle",
+        "recipientTaskId": "01parent-task",
+        "requestId": "del-aaaaaaaaaaaa-a1",
+        "retrySafe": false,
+        "sendAttempted": "yes",
+        "transportReceiptStatus": "failed",
+        "turnId": null
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 29,
+      "schema": "delivery-attempt",
+      "label": "held_uncertain attempt",
+      "normalizedSHA256": "07e92c64bd9914058186295e9293439284993ce85bed08ad1dc2b52f43b58c45",
+      "instance": {
+        "attemptNo": 1,
+        "deliveryState": "held_uncertain",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "failedOperation": "initialize",
+        "observedAt": "2026-01-01T00:00:00Z",
+        "recipientApprovalPolicy": "never",
+        "recipientStatusBefore": "idle",
+        "recipientTaskId": "01parent-task",
+        "requestId": "del-aaaaaaaaaaaa-a1",
+        "retrySafe": false,
+        "sendAttempted": "unknown",
+        "transportReceiptStatus": "failed",
+        "turnId": null
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 30,
+      "schema": "delivery-attempt",
+      "label": "held_uncertain attempt",
+      "normalizedSHA256": "24d509ef69a0883e5165fae3339b010d8fe61f41ecdfc238dd5d7ca77098ceb2",
+      "instance": {
+        "attemptNo": 1,
+        "deliveryState": "held_uncertain",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "failedOperation": "transport",
+        "observedAt": "2026-01-01T00:00:00Z",
+        "recipientApprovalPolicy": null,
+        "recipientStatusBefore": "idle",
+        "recipientTaskId": "01parent-task",
+        "requestId": "del-aaaaaaaaaaaa-a1",
+        "retrySafe": false,
+        "sendAttempted": "unknown",
+        "transportReceiptStatus": "outcome_unknown",
+        "turnId": null
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 31,
+      "schema": "delivery-attempt",
+      "label": "held_uncertain attempt",
+      "normalizedSHA256": "4fca04a6a3439c3729e2c5b95c29b4aae030926db49bf759747ac4453c57c6c0",
+      "instance": {
+        "attemptNo": 1,
+        "deliveryState": "held_uncertain",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "failedOperation": null,
+        "observedAt": "2026-01-01T00:00:00Z",
+        "recipientApprovalPolicy": null,
+        "recipientStatusBefore": "idle",
+        "recipientTaskId": "01parent-task",
+        "requestId": "del-aaaaaaaaaaaa-a1",
+        "retrySafe": false,
+        "sendAttempted": "unknown",
+        "transportReceiptStatus": "in_progress_or_unknown",
+        "turnId": null
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 32,
+      "schema": "delivery-attempt",
+      "label": "inbox_only attempt",
+      "normalizedSHA256": "64da25128fd9db366d2c6b8d4d622e7e179aef3320638159d9527af352acac8c",
+      "instance": {
+        "attemptNo": 1,
+        "deliveryState": "inbox_only",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "failedOperation": "thread/resume",
+        "observedAt": "2026-01-01T00:00:00Z",
+        "recipientApprovalPolicy": "on-request",
+        "recipientStatusBefore": "idle",
+        "recipientTaskId": "01parent-task",
+        "requestId": "del-aaaaaaaaaaaa-a1",
+        "retrySafe": false,
+        "sendAttempted": "no",
+        "transportReceiptStatus": "failed",
+        "turnId": null
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 33,
+      "schema": "delivery-attempt",
+      "label": "reconciled held_uncertain attempt",
+      "normalizedSHA256": "2cc4d6e4013d351e6797e8dd6ee2248d8289e0d70507ed6112037cd0eb8e4529",
+      "instance": {
+        "attemptNo": 1,
+        "deliveryState": "held_uncertain",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "failedOperation": null,
+        "observedAt": "2026-01-01T00:00:00Z",
+        "recipientApprovalPolicy": null,
+        "recipientStatusBefore": "idle",
+        "recipientTaskId": "01parent-task",
+        "reconciliation": {
+          "affirmativeEvidence": "turn_found",
+          "checkedAt": "2026-01-01T00:00:00Z",
+          "operationReceiptChecked": true,
+          "recipientTurnsChecked": true
+        },
+        "requestId": "del-aaaaaaaaaaaa-a1",
+        "retrySafe": false,
+        "sendAttempted": "unknown",
+        "transportReceiptStatus": "in_progress_or_unknown",
+        "turnId": null
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 34,
+      "schema": "acknowledgement",
+      "label": "accepted acknowledgement",
+      "normalizedSHA256": "05e2ff76412d391affb0a288bce5a5feb822be2d76fa8873e0c935ec5f2d776c",
+      "instance": {
+        "accepted": true,
+        "ackAt": "2026-01-01T00:00:00Z",
+        "ackProof": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "ackTurnId": "turn-01parent-task-2",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "rejectionReason": null,
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "revisionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 35,
+      "schema": "acknowledgement",
+      "label": "stale_generation acknowledgement",
+      "normalizedSHA256": "9710771f3fbbe1e9ee54ea7da3e628ea932a9754a2b9156df670c03ffb16e88f",
+      "instance": {
+        "accepted": false,
+        "ackAt": "2026-01-01T00:00:00Z",
+        "ackProof": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "ackTurnId": "turn-01parent-task-2",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "rejectionReason": "stale_generation",
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "revisionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 36,
+      "schema": "verification-verdict",
+      "label": "verified verdict",
+      "normalizedSHA256": "a1e45a375c9659d3006548ffd676e1aa88d0c860eb4b9ed1250c4021d440b24e",
+      "instance": {
+        "decidedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "verdict": "verified",
+        "verdictTurnId": "verdict-verified"
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 37,
+      "schema": "verification-verdict",
+      "label": "unverified verdict",
+      "normalizedSHA256": "831b88acb5c23d97b162111b0988b6f0884219c3b5d30349cd0908aa1f807b96",
+      "instance": {
+        "decidedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "verdict": "unverified",
+        "verdictTurnId": "verdict-unverified"
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 38,
+      "schema": "verification-verdict",
+      "label": "aborted verdict",
+      "normalizedSHA256": "bc1a557d91f51d9a6a91c7e6d01f87227ba10d6a861b805ab0edea56598d4278",
+      "instance": {
+        "decidedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "verdict": "aborted",
+        "verdictTurnId": "verdict-aborted"
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 39,
+      "schema": "verification-verdict",
+      "label": "needs_changes verdict",
+      "normalizedSHA256": "3527d53dbbfd8a315e513217b01178cc61d138a08bc544b3409b4c50dbfdfe26",
+      "instance": {
+        "decidedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "nextExecutionGeneration": 2,
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "verdict": "needs_changes",
+        "verdictTurnId": "verdict-needs"
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 40,
+      "schema": "delivery-attempt",
+      "label": "dispatched with no turn",
+      "normalizedSHA256": "c5f3273d20f892e94522f75058b0219d5b194b15e72827e8fece5b1e326b4d2f",
+      "instance": {
+        "attemptNo": 1,
+        "deliveryState": "dispatched",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "failedOperation": null,
+        "observedAt": "2026-01-01T00:00:00Z",
+        "recipientApprovalPolicy": "never",
+        "recipientStatusBefore": "idle",
+        "recipientTaskId": "01parent-task",
+        "requestId": "del-aaaaaaaaaaaa-a1",
+        "retrySafe": false,
+        "sendAttempted": "yes",
+        "transportReceiptStatus": "accepted",
+        "turnId": null
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 41,
+      "schema": "delivery-attempt",
+      "label": "uncertain but retry safe",
+      "normalizedSHA256": "00b62f8afd80b93a749dd1743765fd5f28da00cccccd1d0a769df0a30893263e",
+      "instance": {
+        "attemptNo": 1,
+        "deliveryState": "held_uncertain",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "failedOperation": null,
+        "observedAt": "2026-01-01T00:00:00Z",
+        "recipientApprovalPolicy": "never",
+        "recipientStatusBefore": "idle",
+        "recipientTaskId": "01parent-task",
+        "requestId": "del-aaaaaaaaaaaa-a1",
+        "retrySafe": true,
+        "sendAttempted": "yes",
+        "transportReceiptStatus": "accepted",
+        "turnId": "turn-01parent-task-1"
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 42,
+      "schema": "delivery-attempt",
+      "label": "retry safe after turn/start",
+      "normalizedSHA256": "50dd48a15cbb7b9efc73f5585045fc1e4850a004e870026ca22f8cc2e4b2bdf2",
+      "instance": {
+        "attemptNo": 1,
+        "deliveryState": "withheld_pre_send",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "failedOperation": "turn/start",
+        "observedAt": "2026-01-01T00:00:00Z",
+        "recipientApprovalPolicy": "never",
+        "recipientStatusBefore": "idle",
+        "recipientTaskId": "01parent-task",
+        "requestId": "del-aaaaaaaaaaaa-a1",
+        "retrySafe": true,
+        "sendAttempted": "no",
+        "transportReceiptStatus": "failed",
+        "turnId": "turn-01parent-task-1"
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 43,
+      "schema": "delivery-attempt",
+      "label": "unfinished but certain",
+      "normalizedSHA256": "4b5d7540eccee13b9488cea9150c298b3ea76d065563141e60d7a839165feac9",
+      "instance": {
+        "attemptNo": 1,
+        "deliveryState": "dispatched",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "failedOperation": null,
+        "observedAt": "2026-01-01T00:00:00Z",
+        "recipientApprovalPolicy": "never",
+        "recipientStatusBefore": "idle",
+        "recipientTaskId": "01parent-task",
+        "requestId": "del-aaaaaaaaaaaa-a1",
+        "retrySafe": false,
+        "sendAttempted": "yes",
+        "transportReceiptStatus": "in_progress_or_unknown",
+        "turnId": "turn-01parent-task-1"
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 44,
+      "schema": "delivery-attempt",
+      "label": "malformed request id",
+      "normalizedSHA256": "665b54ce83f2a0f757a26e77a6fb3d5149842de375655da68eb35c6f9ba870df",
+      "instance": {
+        "attemptNo": 1,
+        "deliveryState": "dispatched",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "failedOperation": null,
+        "observedAt": "2026-01-01T00:00:00Z",
+        "recipientApprovalPolicy": "never",
+        "recipientStatusBefore": "idle",
+        "recipientTaskId": "01parent-task",
+        "requestId": "del-x-a1",
+        "retrySafe": false,
+        "sendAttempted": "yes",
+        "transportReceiptStatus": "accepted",
+        "turnId": "turn-01parent-task-1"
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 45,
+      "schema": "delivery-attempt",
+      "label": "unknown property",
+      "normalizedSHA256": "7c1db14bf34692a47ce90d5259af9cdaf5d2ccbbe2806b602b99a18e60e9452b",
+      "instance": {
+        "attemptNo": 1,
+        "deliveryState": "dispatched",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "failedOperation": null,
+        "observedAt": "2026-01-01T00:00:00Z",
+        "recipientApprovalPolicy": "never",
+        "recipientStatusBefore": "idle",
+        "recipientTaskId": "01parent-task",
+        "requestId": "del-aaaaaaaaaaaa-a1",
+        "retrySafe": false,
+        "sendAttempted": "yes",
+        "surprise": 1,
+        "transportReceiptStatus": "accepted",
+        "turnId": "turn-01parent-task-1"
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 46,
+      "schema": "acknowledgement",
+      "label": "accepted with a reason",
+      "normalizedSHA256": "c2d52da464e37c2be78389031d9905e69a83b2068a5872451224417f8634e3a7",
+      "instance": {
+        "accepted": true,
+        "ackAt": "2026-01-01T00:00:00Z",
+        "ackProof": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "ackTurnId": "turn-01parent-task-2",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "rejectionReason": "duplicate_event",
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "revisionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 47,
+      "schema": "acknowledgement",
+      "label": "rejected with no reason",
+      "normalizedSHA256": "b1cd5d976ca71516de81d1085ef417580680e10b94800ff31f57a0b2e7319d37",
+      "instance": {
+        "accepted": false,
+        "ackAt": "2026-01-01T00:00:00Z",
+        "ackProof": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "ackTurnId": "turn-01parent-task-2",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "rejectionReason": null,
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "revisionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 48,
+      "schema": "acknowledgement",
+      "label": "malformed proof",
+      "normalizedSHA256": "3555272e41f926a8e364ae69ed12d39a9e2fa7060601c287a9ce1d6b0c8a3002",
+      "instance": {
+        "accepted": true,
+        "ackAt": "2026-01-01T00:00:00Z",
+        "ackProof": "short",
+        "ackTurnId": "turn-01parent-task-2",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "rejectionReason": null,
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "revisionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 49,
+      "schema": "acknowledgement",
+      "label": "empty ack turn",
+      "normalizedSHA256": "be47b6513d4baf30e85e4288984b4b2dc85c85ea896bc24139d031bf3524f43b",
+      "instance": {
+        "accepted": true,
+        "ackAt": "2026-01-01T00:00:00Z",
+        "ackProof": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "ackTurnId": "",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "rejectionReason": null,
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "revisionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 50,
+      "schema": "acknowledgement",
+      "label": "unknown property",
+      "normalizedSHA256": "35419e354c4836d3af52eb80f1bae21730112937ee78b155dd7e21992fe79114",
+      "instance": {
+        "accepted": true,
+        "ackAt": "2026-01-01T00:00:00Z",
+        "ackProof": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "ackTurnId": "turn-01parent-task-2",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "rejectionReason": null,
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "revisionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "surprise": 1
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 51,
+      "schema": "verification-verdict",
+      "label": "unknown verdict",
+      "normalizedSHA256": "56fec74b9cbd6606c539fbf7887da86944656cf254deb0460b9b858efec7e3c7",
+      "instance": {
+        "decidedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "verdict": "maybe",
+        "verdictTurnId": "verdict-verified"
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 52,
+      "schema": "verification-verdict",
+      "label": "missing turn",
+      "normalizedSHA256": "1da6f0ca06758975e771b622dc53c399879d362633a8556bf2255f1d75351bd3",
+      "instance": {
+        "decidedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "verdict": "verified"
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 53,
+      "schema": "verification-verdict",
+      "label": "malformed event id",
+      "normalizedSHA256": "3c98a9e59cb29182a1709c341d1f6cff258c0922dd0fe26e43edb72b74334c5f",
+      "instance": {
+        "decidedAt": "2026-01-01T00:00:00Z",
+        "eventId": "nope",
+        "executionGeneration": 1,
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "verdict": "verified",
+        "verdictTurnId": "verdict-verified"
+      }
+    },
+    {
+      "fixture": "fixtures/draft7-verdicts.json.gz",
+      "index": 54,
+      "schema": "verification-verdict",
+      "label": "unknown property",
+      "normalizedSHA256": "818d22446c3c78c6b3994b335546f8bac98206eac5e045b16821387bac49412e",
+      "instance": {
+        "decidedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "surprise": 1,
+        "verdict": "verified",
+        "verdictTurnId": "verdict-verified"
+      }
+    },
+    {
+      "fixture": "fixtures/runtime-attempt-verdicts.json.gz",
+      "index": 0,
+      "schema": "delivery-attempt",
+      "label": "legacy without runtime",
+      "normalizedSHA256": "9e28df38d7eec60b29d9a21418703b874a9637088f3dda8696fd3eb92ab62307",
+      "instance": {
+        "attemptNo": 1,
+        "deliveryState": "held_uncertain",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observedAt": "2026-01-01T00:00:00Z",
+        "recipientTaskId": "synthetic-parent",
+        "requestId": "del-aaaaaaaaaaaa-a1",
+        "retrySafe": false,
+        "sendAttempted": "unknown"
+      }
+    },
+    {
+      "fixture": "fixtures/runtime-attempt-verdicts.json.gz",
+      "index": 1,
+      "schema": "delivery-attempt",
+      "label": "recorded runtime",
+      "normalizedSHA256": "b359da8360646cdfe5ff01c0b5021565c0739bc2423ba1ccac21b0947d6c42f9",
+      "instance": {
+        "attemptNo": 1,
+        "deliveryState": "held_uncertain",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observedAt": "2026-01-01T00:00:00Z",
+        "recipientTaskId": "synthetic-parent",
+        "requestId": "del-aaaaaaaaaaaa-a1",
+        "retrySafe": false,
+        "runtime": {
+          "build": "synthetic-build",
+          "executable": "/synthetic/bin/crw"
+        },
+        "sendAttempted": "unknown"
+      }
+    },
+    {
+      "fixture": "fixtures/runtime-attempt-verdicts.json.gz",
+      "index": 2,
+      "schema": "delivery-attempt",
+      "label": "unknown executable",
+      "normalizedSHA256": "fdc25ca766ed52ac09dcc7da7f300fe1783bc7c05060e8e9935e400d55203400",
+      "instance": {
+        "attemptNo": 1,
+        "deliveryState": "held_uncertain",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observedAt": "2026-01-01T00:00:00Z",
+        "recipientTaskId": "synthetic-parent",
+        "requestId": "del-aaaaaaaaaaaa-a1",
+        "retrySafe": false,
+        "runtime": {
+          "build": "synthetic-build",
+          "executable": null
+        },
+        "sendAttempted": "unknown"
+      }
+    },
+    {
+      "fixture": "fixtures/runtime-attempt-verdicts.json.gz",
+      "index": 3,
+      "schema": "delivery-attempt",
+      "label": "null runtime",
+      "normalizedSHA256": "3bd39c62850482b7095a4044099d3f2b18b65f767807993a0d8c8878c5a9334c",
+      "instance": {
+        "attemptNo": 1,
+        "deliveryState": "held_uncertain",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observedAt": "2026-01-01T00:00:00Z",
+        "recipientTaskId": "synthetic-parent",
+        "requestId": "del-aaaaaaaaaaaa-a1",
+        "retrySafe": false,
+        "runtime": null,
+        "sendAttempted": "unknown"
+      }
+    },
+    {
+      "fixture": "fixtures/runtime-attempt-verdicts.json.gz",
+      "index": 4,
+      "schema": "delivery-attempt",
+      "label": "wrong runtime type",
+      "normalizedSHA256": "6a3825cb977bc36c6cab9bb2ad3b99663b46216511e3a2e356e176f5f5242871",
+      "instance": {
+        "attemptNo": 1,
+        "deliveryState": "held_uncertain",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observedAt": "2026-01-01T00:00:00Z",
+        "recipientTaskId": "synthetic-parent",
+        "requestId": "del-aaaaaaaaaaaa-a1",
+        "retrySafe": false,
+        "runtime": "build",
+        "sendAttempted": "unknown"
+      }
+    },
+    {
+      "fixture": "fixtures/runtime-attempt-verdicts.json.gz",
+      "index": 5,
+      "schema": "delivery-attempt",
+      "label": "missing build",
+      "normalizedSHA256": "b33a827f1b792027317410493dc0c5374b38d8265e0a514e58a93fa483622a63",
+      "instance": {
+        "attemptNo": 1,
+        "deliveryState": "held_uncertain",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observedAt": "2026-01-01T00:00:00Z",
+        "recipientTaskId": "synthetic-parent",
+        "requestId": "del-aaaaaaaaaaaa-a1",
+        "retrySafe": false,
+        "runtime": {
+          "executable": null
+        },
+        "sendAttempted": "unknown"
+      }
+    },
+    {
+      "fixture": "fixtures/runtime-attempt-verdicts.json.gz",
+      "index": 6,
+      "schema": "delivery-attempt",
+      "label": "missing executable",
+      "normalizedSHA256": "07a3a4e5e4af2ea8149840fd3ebf99c48832eb8d49724c5a5837ddc48b721794",
+      "instance": {
+        "attemptNo": 1,
+        "deliveryState": "held_uncertain",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observedAt": "2026-01-01T00:00:00Z",
+        "recipientTaskId": "synthetic-parent",
+        "requestId": "del-aaaaaaaaaaaa-a1",
+        "retrySafe": false,
+        "runtime": {
+          "build": "synthetic-build"
+        },
+        "sendAttempted": "unknown"
+      }
+    },
+    {
+      "fixture": "fixtures/runtime-attempt-verdicts.json.gz",
+      "index": 7,
+      "schema": "delivery-attempt",
+      "label": "empty build",
+      "normalizedSHA256": "b85439fee5c3bd65f03d0a6c69c8e9ae2892cfe041235110ba998c5473983337",
+      "instance": {
+        "attemptNo": 1,
+        "deliveryState": "held_uncertain",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observedAt": "2026-01-01T00:00:00Z",
+        "recipientTaskId": "synthetic-parent",
+        "requestId": "del-aaaaaaaaaaaa-a1",
+        "retrySafe": false,
+        "runtime": {
+          "build": "",
+          "executable": null
+        },
+        "sendAttempted": "unknown"
+      }
+    },
+    {
+      "fixture": "fixtures/runtime-attempt-verdicts.json.gz",
+      "index": 8,
+      "schema": "delivery-attempt",
+      "label": "wrong build type",
+      "normalizedSHA256": "c2202e9011074319ab6b3f082b0040e1f0adae13c16b6f6e43cfe81a0846cb18",
+      "instance": {
+        "attemptNo": 1,
+        "deliveryState": "held_uncertain",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observedAt": "2026-01-01T00:00:00Z",
+        "recipientTaskId": "synthetic-parent",
+        "requestId": "del-aaaaaaaaaaaa-a1",
+        "retrySafe": false,
+        "runtime": {
+          "build": true,
+          "executable": null
+        },
+        "sendAttempted": "unknown"
+      }
+    },
+    {
+      "fixture": "fixtures/runtime-attempt-verdicts.json.gz",
+      "index": 9,
+      "schema": "delivery-attempt",
+      "label": "relative executable",
+      "normalizedSHA256": "b73d77d86568b0b26e57464f89fba23978d2bbacc87efa0dcbef8c08758ce201",
+      "instance": {
+        "attemptNo": 1,
+        "deliveryState": "held_uncertain",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observedAt": "2026-01-01T00:00:00Z",
+        "recipientTaskId": "synthetic-parent",
+        "requestId": "del-aaaaaaaaaaaa-a1",
+        "retrySafe": false,
+        "runtime": {
+          "build": "synthetic-build",
+          "executable": "bin/crw"
+        },
+        "sendAttempted": "unknown"
+      }
+    },
+    {
+      "fixture": "fixtures/runtime-attempt-verdicts.json.gz",
+      "index": 10,
+      "schema": "delivery-attempt",
+      "label": "wrong executable type",
+      "normalizedSHA256": "ccd36495f932ec45d4736f29f984cc5f559435a9f625ea049d6121df6b5606fe",
+      "instance": {
+        "attemptNo": 1,
+        "deliveryState": "held_uncertain",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observedAt": "2026-01-01T00:00:00Z",
+        "recipientTaskId": "synthetic-parent",
+        "requestId": "del-aaaaaaaaaaaa-a1",
+        "retrySafe": false,
+        "runtime": {
+          "build": "synthetic-build",
+          "executable": 1
+        },
+        "sendAttempted": "unknown"
+      }
+    },
+    {
+      "fixture": "fixtures/runtime-attempt-verdicts.json.gz",
+      "index": 11,
+      "schema": "delivery-attempt",
+      "label": "extra runtime key",
+      "normalizedSHA256": "055535ce50c00df8be22c8bd640170d44282dd916b98975b95ee49c4d86ff5bb",
+      "instance": {
+        "attemptNo": 1,
+        "deliveryState": "held_uncertain",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "observedAt": "2026-01-01T00:00:00Z",
+        "recipientTaskId": "synthetic-parent",
+        "requestId": "del-aaaaaaaaaaaa-a1",
+        "retrySafe": false,
+        "runtime": {
+          "build": "synthetic-build",
+          "executable": null,
+          "extra": true
+        },
+        "sendAttempted": "unknown"
+      }
+    },
+    {
+      "fixture": "fixtures/independent-review-verdicts.json.gz",
+      "index": 0,
+      "schema": "completion-receipt",
+      "label": "ready without the item",
+      "normalizedSHA256": "4d80308dde6555ec968893bef35f7dac7a791f95a11b90c859a0a3baf06643e1",
+      "instance": {
+        "attempt": 1,
+        "emittedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "manifest": [
+          {
+            "path": "/synthetic/handoff.json",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "outcome": "ready_for_review",
+        "producer": "child",
+        "relationshipId": "rel-synthetic",
+        "revisionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "turnRef": {
+          "threadId": "synthetic-child",
+          "turnId": "synthetic-turn",
+          "turnStatus": "inProgress"
+        }
+      }
+    },
+    {
+      "fixture": "fixtures/independent-review-verdicts.json.gz",
+      "index": 1,
+      "schema": "completion-receipt",
+      "label": "complete item",
+      "normalizedSHA256": "6fa5a829fc08a36e840b4b1c7893f93228f5c2a87835dde4021a530fe8ba97d6",
+      "instance": {
+        "attempt": 1,
+        "emittedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "independentReview": {
+          "artifact": {
+            "path": "/synthetic/review/artifact.json",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "dispositions": [
+            {
+              "disposition": "fixed",
+              "evidence": "synthetic commit",
+              "finding": 0
+            }
+          ],
+          "invalidReviewerCalls": 0,
+          "status": "complete"
+        },
+        "manifest": [
+          {
+            "path": "/synthetic/handoff.json",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "outcome": "ready_for_review",
+        "producer": "child",
+        "relationshipId": "rel-synthetic",
+        "revisionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "turnRef": {
+          "threadId": "synthetic-child",
+          "turnId": "synthetic-turn",
+          "turnStatus": "inProgress"
+        }
+      }
+    },
+    {
+      "fixture": "fixtures/independent-review-verdicts.json.gz",
+      "index": 2,
+      "schema": "completion-receipt",
+      "label": "partial item with a reason",
+      "normalizedSHA256": "68cc04aecf2d14d60bf00210fcee3f49865573547744bcbc48f8d0d3171cd80b",
+      "instance": {
+        "attempt": 1,
+        "emittedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "independentReview": {
+          "artifact": {
+            "path": "/synthetic/review/artifact.json",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "dispositions": [
+            {
+              "disposition": "fixed",
+              "evidence": "synthetic commit",
+              "finding": 0
+            }
+          ],
+          "invalidReviewerCalls": 0,
+          "reason": "one reviewer failed",
+          "status": "partial"
+        },
+        "manifest": [
+          {
+            "path": "/synthetic/handoff.json",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "outcome": "ready_for_review",
+        "producer": "child",
+        "relationshipId": "rel-synthetic",
+        "revisionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "turnRef": {
+          "threadId": "synthetic-child",
+          "turnId": "synthetic-turn",
+          "turnStatus": "inProgress"
+        }
+      }
+    },
+    {
+      "fixture": "fixtures/independent-review-verdicts.json.gz",
+      "index": 3,
+      "schema": "completion-receipt",
+      "label": "unavailable item with no artifact",
+      "normalizedSHA256": "b3648b2a393b1ca416f5e88c52cf4e768cb700d5b8e20a493243b25bd40d5260",
+      "instance": {
+        "attempt": 1,
+        "emittedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "independentReview": {
+          "dispositions": [
+            {
+              "disposition": "fixed",
+              "evidence": "synthetic commit",
+              "finding": 0
+            }
+          ],
+          "invalidReviewerCalls": 0,
+          "reason": "the daily cap stopped the run",
+          "status": "unavailable"
+        },
+        "manifest": [
+          {
+            "path": "/synthetic/handoff.json",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "outcome": "ready_for_review",
+        "producer": "child",
+        "relationshipId": "rel-synthetic",
+        "revisionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "turnRef": {
+          "threadId": "synthetic-child",
+          "turnId": "synthetic-turn",
+          "turnStatus": "inProgress"
+        }
+      }
+    },
+    {
+      "fixture": "fixtures/independent-review-verdicts.json.gz",
+      "index": 4,
+      "schema": "completion-receipt",
+      "label": "item with a patch-id and no dispositions",
+      "normalizedSHA256": "a8df450818e7d272e2c5beb0b7f707e1f3e4e9e44278d888858946607f46f2b5",
+      "instance": {
+        "attempt": 1,
+        "emittedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "independentReview": {
+          "artifact": {
+            "path": "/synthetic/review/artifact.json",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "dispositions": [],
+          "headPatchId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "invalidReviewerCalls": 0,
+          "status": "complete"
+        },
+        "manifest": [
+          {
+            "path": "/synthetic/handoff.json",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "outcome": "ready_for_review",
+        "producer": "child",
+        "relationshipId": "rel-synthetic",
+        "revisionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "turnRef": {
+          "threadId": "synthetic-child",
+          "turnId": "synthetic-turn",
+          "turnStatus": "inProgress"
+        }
+      }
+    },
+    {
+      "fixture": "fixtures/independent-review-verdicts.json.gz",
+      "index": 5,
+      "schema": "completion-receipt",
+      "label": "item on a blocked receipt",
+      "normalizedSHA256": "d9d4a88c0500c95dc3fbb8a09a64f37444a19e250d71dc383a899ecd3387227a",
+      "instance": {
+        "attempt": 1,
+        "emittedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "independentReview": {
+          "artifact": {
+            "path": "/synthetic/review/artifact.json",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "dispositions": [
+            {
+              "disposition": "fixed",
+              "evidence": "synthetic commit",
+              "finding": 0
+            }
+          ],
+          "invalidReviewerCalls": 0,
+          "status": "complete"
+        },
+        "manifest": null,
+        "outcome": "blocked_needs_input",
+        "producer": "child",
+        "relationshipId": "rel-synthetic",
+        "revisionHash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "turnRef": {
+          "threadId": "synthetic-child",
+          "turnId": "synthetic-turn",
+          "turnStatus": "inProgress"
+        }
+      }
+    },
+    {
+      "fixture": "fixtures/independent-review-verdicts.json.gz",
+      "index": 6,
+      "schema": "completion-receipt",
+      "label": "item on a failed receipt",
+      "normalizedSHA256": "4d9d43d7d0e871c5e854dbf40072f076944d2465a9a9bed7b869b819b9bc2d33",
+      "instance": {
+        "attempt": 1,
+        "emittedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "independentReview": {
+          "artifact": {
+            "path": "/synthetic/review/artifact.json",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "dispositions": [
+            {
+              "disposition": "fixed",
+              "evidence": "synthetic commit",
+              "finding": 0
+            }
+          ],
+          "invalidReviewerCalls": 0,
+          "status": "complete"
+        },
+        "manifest": null,
+        "outcome": "failed",
+        "producer": "child",
+        "relationshipId": "rel-synthetic",
+        "revisionHash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "turnRef": {
+          "threadId": "synthetic-child",
+          "turnId": "synthetic-turn",
+          "turnStatus": "inProgress"
+        }
+      }
+    },
+    {
+      "fixture": "fixtures/independent-review-verdicts.json.gz",
+      "index": 7,
+      "schema": "completion-receipt",
+      "label": "null item",
+      "normalizedSHA256": "e737c459e346e7af59d3e3d49e801803e8c5fb9d371b01c33490e5e363a45db7",
+      "instance": {
+        "attempt": 1,
+        "emittedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "independentReview": null,
+        "manifest": [
+          {
+            "path": "/synthetic/handoff.json",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "outcome": "ready_for_review",
+        "producer": "child",
+        "relationshipId": "rel-synthetic",
+        "revisionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "turnRef": {
+          "threadId": "synthetic-child",
+          "turnId": "synthetic-turn",
+          "turnStatus": "inProgress"
+        }
+      }
+    },
+    {
+      "fixture": "fixtures/independent-review-verdicts.json.gz",
+      "index": 8,
+      "schema": "completion-receipt",
+      "label": "complete without an artifact",
+      "normalizedSHA256": "f5a5c140d4a93d86743033233ecd423f44ceec3e235df0db79aecb1270f1b819",
+      "instance": {
+        "attempt": 1,
+        "emittedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "independentReview": {
+          "dispositions": [
+            {
+              "disposition": "fixed",
+              "evidence": "synthetic commit",
+              "finding": 0
+            }
+          ],
+          "invalidReviewerCalls": 0,
+          "status": "complete"
+        },
+        "manifest": [
+          {
+            "path": "/synthetic/handoff.json",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "outcome": "ready_for_review",
+        "producer": "child",
+        "relationshipId": "rel-synthetic",
+        "revisionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "turnRef": {
+          "threadId": "synthetic-child",
+          "turnId": "synthetic-turn",
+          "turnStatus": "inProgress"
+        }
+      }
+    },
+    {
+      "fixture": "fixtures/independent-review-verdicts.json.gz",
+      "index": 9,
+      "schema": "completion-receipt",
+      "label": "partial without a reason",
+      "normalizedSHA256": "faa1a788c0ab66db818306fc1ebada633a5dd387625fe6276c7c035694f40f51",
+      "instance": {
+        "attempt": 1,
+        "emittedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "independentReview": {
+          "artifact": {
+            "path": "/synthetic/review/artifact.json",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "dispositions": [
+            {
+              "disposition": "fixed",
+              "evidence": "synthetic commit",
+              "finding": 0
+            }
+          ],
+          "invalidReviewerCalls": 0,
+          "status": "partial"
+        },
+        "manifest": [
+          {
+            "path": "/synthetic/handoff.json",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "outcome": "ready_for_review",
+        "producer": "child",
+        "relationshipId": "rel-synthetic",
+        "revisionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "turnRef": {
+          "threadId": "synthetic-child",
+          "turnId": "synthetic-turn",
+          "turnStatus": "inProgress"
+        }
+      }
+    },
+    {
+      "fixture": "fixtures/independent-review-verdicts.json.gz",
+      "index": 10,
+      "schema": "completion-receipt",
+      "label": "unknown status",
+      "normalizedSHA256": "162c7d5d8524b159333940ca9b8422e8edab9f610426f3f181b3c4223d9d1bac",
+      "instance": {
+        "attempt": 1,
+        "emittedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "independentReview": {
+          "artifact": {
+            "path": "/synthetic/review/artifact.json",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "dispositions": [
+            {
+              "disposition": "fixed",
+              "evidence": "synthetic commit",
+              "finding": 0
+            }
+          ],
+          "invalidReviewerCalls": 0,
+          "status": "done"
+        },
+        "manifest": [
+          {
+            "path": "/synthetic/handoff.json",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "outcome": "ready_for_review",
+        "producer": "child",
+        "relationshipId": "rel-synthetic",
+        "revisionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "turnRef": {
+          "threadId": "synthetic-child",
+          "turnId": "synthetic-turn",
+          "turnStatus": "inProgress"
+        }
+      }
+    },
+    {
+      "fixture": "fixtures/independent-review-verdicts.json.gz",
+      "index": 11,
+      "schema": "completion-receipt",
+      "label": "negative invalid reviewer calls",
+      "normalizedSHA256": "5285cd266119d574b1d19e44c8f8fb124758fdd35048af9ee82420e6b4677eb3",
+      "instance": {
+        "attempt": 1,
+        "emittedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "independentReview": {
+          "artifact": {
+            "path": "/synthetic/review/artifact.json",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "dispositions": [
+            {
+              "disposition": "fixed",
+              "evidence": "synthetic commit",
+              "finding": 0
+            }
+          ],
+          "invalidReviewerCalls": -1,
+          "status": "complete"
+        },
+        "manifest": [
+          {
+            "path": "/synthetic/handoff.json",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "outcome": "ready_for_review",
+        "producer": "child",
+        "relationshipId": "rel-synthetic",
+        "revisionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "turnRef": {
+          "threadId": "synthetic-child",
+          "turnId": "synthetic-turn",
+          "turnStatus": "inProgress"
+        }
+      }
+    },
+    {
+      "fixture": "fixtures/independent-review-verdicts.json.gz",
+      "index": 12,
+      "schema": "completion-receipt",
+      "label": "relative artifact path",
+      "normalizedSHA256": "4318b7bfffa1eb9465821b1d20fdf76ea5d2b6662efde5be781ffe8919fa6056",
+      "instance": {
+        "attempt": 1,
+        "emittedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "independentReview": {
+          "artifact": {
+            "path": "review/artifact.json",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "dispositions": [
+            {
+              "disposition": "fixed",
+              "evidence": "synthetic commit",
+              "finding": 0
+            }
+          ],
+          "invalidReviewerCalls": 0,
+          "status": "complete"
+        },
+        "manifest": [
+          {
+            "path": "/synthetic/handoff.json",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "outcome": "ready_for_review",
+        "producer": "child",
+        "relationshipId": "rel-synthetic",
+        "revisionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "turnRef": {
+          "threadId": "synthetic-child",
+          "turnId": "synthetic-turn",
+          "turnStatus": "inProgress"
+        }
+      }
+    },
+    {
+      "fixture": "fixtures/independent-review-verdicts.json.gz",
+      "index": 13,
+      "schema": "completion-receipt",
+      "label": "unknown item member",
+      "normalizedSHA256": "72cac6ce6f7edb86ea484391ebb1a91cdbd0651bf1d9e6b3aa3d5346ed7c1a8f",
+      "instance": {
+        "attempt": 1,
+        "emittedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "independentReview": {
+          "artifact": {
+            "path": "/synthetic/review/artifact.json",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "dispositions": [
+            {
+              "disposition": "fixed",
+              "evidence": "synthetic commit",
+              "finding": 0
+            }
+          ],
+          "invalidReviewerCalls": 0,
+          "status": "complete",
+          "verdict": "good"
+        },
+        "manifest": [
+          {
+            "path": "/synthetic/handoff.json",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "outcome": "ready_for_review",
+        "producer": "child",
+        "relationshipId": "rel-synthetic",
+        "revisionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "turnRef": {
+          "threadId": "synthetic-child",
+          "turnId": "synthetic-turn",
+          "turnStatus": "inProgress"
+        }
+      }
+    },
+    {
+      "fixture": "fixtures/independent-review-verdicts.json.gz",
+      "index": 14,
+      "schema": "completion-receipt",
+      "label": "unknown disposition",
+      "normalizedSHA256": "f1fdb0daebddaa6086803d71cebaa042163f0ed3c5478b650fa007e65c3a12d5",
+      "instance": {
+        "attempt": 1,
+        "emittedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "independentReview": {
+          "artifact": {
+            "path": "/synthetic/review/artifact.json",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "dispositions": [
+            {
+              "disposition": "ignored",
+              "evidence": "synthetic commit",
+              "finding": 0
+            }
+          ],
+          "invalidReviewerCalls": 0,
+          "status": "complete"
+        },
+        "manifest": [
+          {
+            "path": "/synthetic/handoff.json",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "outcome": "ready_for_review",
+        "producer": "child",
+        "relationshipId": "rel-synthetic",
+        "revisionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "turnRef": {
+          "threadId": "synthetic-child",
+          "turnId": "synthetic-turn",
+          "turnStatus": "inProgress"
+        }
+      }
+    },
+    {
+      "fixture": "fixtures/independent-review-verdicts.json.gz",
+      "index": 15,
+      "schema": "completion-receipt",
+      "label": "disposition without evidence",
+      "normalizedSHA256": "c53a5e1dd64d7ea0d92a9886a2a14f32847b24420b6f9827de57873e52dd82ac",
+      "instance": {
+        "attempt": 1,
+        "emittedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "independentReview": {
+          "artifact": {
+            "path": "/synthetic/review/artifact.json",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "dispositions": [
+            {
+              "disposition": "fixed",
+              "finding": 0
+            }
+          ],
+          "invalidReviewerCalls": 0,
+          "status": "complete"
+        },
+        "manifest": [
+          {
+            "path": "/synthetic/handoff.json",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "outcome": "ready_for_review",
+        "producer": "child",
+        "relationshipId": "rel-synthetic",
+        "revisionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "turnRef": {
+          "threadId": "synthetic-child",
+          "turnId": "synthetic-turn",
+          "turnStatus": "inProgress"
+        }
+      }
+    },
+    {
+      "fixture": "fixtures/independent-review-verdicts.json.gz",
+      "index": 16,
+      "schema": "completion-receipt",
+      "label": "item without dispositions",
+      "normalizedSHA256": "cd3a080b5f554aaa2911969394b2c57943ba733f7f2193aa05e1f14a241fe01c",
+      "instance": {
+        "attempt": 1,
+        "emittedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "independentReview": {
+          "artifact": {
+            "path": "/synthetic/review/artifact.json",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "invalidReviewerCalls": 0,
+          "status": "complete"
+        },
+        "manifest": [
+          {
+            "path": "/synthetic/handoff.json",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "outcome": "ready_for_review",
+        "producer": "child",
+        "relationshipId": "rel-synthetic",
+        "revisionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "turnRef": {
+          "threadId": "synthetic-child",
+          "turnId": "synthetic-turn",
+          "turnStatus": "inProgress"
+        }
+      }
+    },
+    {
+      "fixture": "fixtures/independent-review-verdicts.json.gz",
+      "index": 17,
+      "schema": "completion-receipt",
+      "label": "patch-id that is not hex",
+      "normalizedSHA256": "3dfa058d40c021fde26478a0d4315c5bb3001ae039fca92fb1f79598be2d7b2e",
+      "instance": {
+        "attempt": 1,
+        "emittedAt": "2026-01-01T00:00:00Z",
+        "eventId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionGeneration": 1,
+        "independentReview": {
+          "artifact": {
+            "path": "/synthetic/review/artifact.json",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "dispositions": [
+            {
+              "disposition": "fixed",
+              "evidence": "synthetic commit",
+              "finding": 0
+            }
+          ],
+          "headPatchId": "same",
+          "invalidReviewerCalls": 0,
+          "status": "complete"
+        },
+        "manifest": [
+          {
+            "path": "/synthetic/handoff.json",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "outcome": "ready_for_review",
+        "producer": "child",
+        "relationshipId": "rel-synthetic",
+        "revisionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "turnRef": {
+          "threadId": "synthetic-child",
+          "turnId": "synthetic-turn",
+          "turnStatus": "inProgress"
+        }
+      }
+    },
+    {
+      "fixture": "fixtures/relationship-reason-verdicts.json.gz",
+      "index": 0,
+      "schema": "relationship",
+      "label": "correction of an accepted current result",
+      "normalizedSHA256": "485f757bb39ae8e52035d9400efd58e76ad9bf5c481060ca8ef15d3c9f1a4764",
+      "instance": {
+        "authorizedScope": {
+          "allowedRecipients": [
+            "01parent-task"
+          ],
+          "artifactRoots": [
+            "/synthetic/work"
+          ]
+        },
+        "child": {
+          "cwd": null,
+          "hostId": "host-a",
+          "taskId": "01child-task"
+        },
+        "createdAt": "2026-01-01T00:00:00Z",
+        "executionGeneration": 2,
+        "generations": [
+          {
+            "anchorState": "bound",
+            "boundAt": "2026-01-01T00:00:00Z",
+            "dispatchRequestId": "dispatch-1",
+            "dispatchTurnId": "turn-dispatch-1",
+            "executionGeneration": 1,
+            "openedAt": "2026-01-01T00:00:00Z",
+            "reason": null
+          },
+          {
+            "anchorState": "bound",
+            "boundAt": "2026-01-01T00:00:00Z",
+            "dispatchRequestId": "dispatch-2",
+            "dispatchTurnId": "turn-dispatch-2",
+            "executionGeneration": 2,
+            "openedAt": "2026-01-01T00:00:00Z",
+            "reason": "accepted_result_correction"
+          }
+        ],
+        "issueKey": "CRW-906",
+        "parent": {
+          "cwd": null,
+          "hostId": "host-a",
+          "taskId": "01parent-task"
+        },
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "status": "active"
+      }
+    },
+    {
+      "fixture": "fixtures/relationship-reason-verdicts.json.gz",
+      "index": 1,
+      "schema": "relationship",
+      "label": "correction of a stale result",
+      "normalizedSHA256": "1a8613099eeb54339e295efa48123dbf069599a060828a8a57cf071204615f5e",
+      "instance": {
+        "authorizedScope": {
+          "allowedRecipients": [
+            "01parent-task"
+          ],
+          "artifactRoots": [
+            "/synthetic/work"
+          ]
+        },
+        "child": {
+          "cwd": null,
+          "hostId": "host-a",
+          "taskId": "01child-task"
+        },
+        "createdAt": "2026-01-01T00:00:00Z",
+        "executionGeneration": 2,
+        "generations": [
+          {
+            "anchorState": "bound",
+            "boundAt": "2026-01-01T00:00:00Z",
+            "dispatchRequestId": "dispatch-1",
+            "dispatchTurnId": "turn-dispatch-1",
+            "executionGeneration": 1,
+            "openedAt": "2026-01-01T00:00:00Z",
+            "reason": null
+          },
+          {
+            "anchorState": "bound",
+            "boundAt": "2026-01-01T00:00:00Z",
+            "dispatchRequestId": "dispatch-2",
+            "dispatchTurnId": "turn-dispatch-2",
+            "executionGeneration": 2,
+            "openedAt": "2026-01-01T00:00:00Z",
+            "reason": "needs_changes_revision"
+          }
+        ],
+        "issueKey": "CRW-906",
+        "parent": {
+          "cwd": null,
+          "hostId": "host-a",
+          "taskId": "01parent-task"
+        },
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "status": "active"
+      }
+    },
+    {
+      "fixture": "fixtures/relationship-reason-verdicts.json.gz",
+      "index": 2,
+      "schema": "relationship",
+      "label": "the assignment itself",
+      "normalizedSHA256": "899c601fb5ad6944deccecf81df860263a8ed5eaa585ebb5b2cc21f7130f894f",
+      "instance": {
+        "authorizedScope": {
+          "allowedRecipients": [
+            "01parent-task"
+          ],
+          "artifactRoots": [
+            "/synthetic/work"
+          ]
+        },
+        "child": {
+          "cwd": null,
+          "hostId": "host-a",
+          "taskId": "01child-task"
+        },
+        "createdAt": "2026-01-01T00:00:00Z",
+        "executionGeneration": 2,
+        "generations": [
+          {
+            "anchorState": "bound",
+            "boundAt": "2026-01-01T00:00:00Z",
+            "dispatchRequestId": "dispatch-1",
+            "dispatchTurnId": "turn-dispatch-1",
+            "executionGeneration": 1,
+            "openedAt": "2026-01-01T00:00:00Z",
+            "reason": null
+          },
+          {
+            "anchorState": "bound",
+            "boundAt": "2026-01-01T00:00:00Z",
+            "dispatchRequestId": "dispatch-2",
+            "dispatchTurnId": "turn-dispatch-2",
+            "executionGeneration": 2,
+            "openedAt": "2026-01-01T00:00:00Z",
+            "reason": "initial_assignment"
+          }
+        ],
+        "issueKey": "CRW-906",
+        "parent": {
+          "cwd": null,
+          "hostId": "host-a",
+          "taskId": "01parent-task"
+        },
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "status": "active"
+      }
+    },
+    {
+      "fixture": "fixtures/relationship-reason-verdicts.json.gz",
+      "index": 3,
+      "schema": "relationship",
+      "label": "a returning tenure, which leaves the reason empty",
+      "normalizedSHA256": "75817754d1922917107b7f0a3d01d616efa189215c775efda1ae00ef5d2a1d21",
+      "instance": {
+        "authorizedScope": {
+          "allowedRecipients": [
+            "01parent-task"
+          ],
+          "artifactRoots": [
+            "/synthetic/work"
+          ]
+        },
+        "child": {
+          "cwd": null,
+          "hostId": "host-a",
+          "taskId": "01child-task"
+        },
+        "createdAt": "2026-01-01T00:00:00Z",
+        "executionGeneration": 2,
+        "generations": [
+          {
+            "anchorState": "bound",
+            "boundAt": "2026-01-01T00:00:00Z",
+            "dispatchRequestId": "dispatch-1",
+            "dispatchTurnId": "turn-dispatch-1",
+            "executionGeneration": 1,
+            "openedAt": "2026-01-01T00:00:00Z",
+            "reason": null
+          },
+          {
+            "anchorState": "bound",
+            "boundAt": "2026-01-01T00:00:00Z",
+            "dispatchRequestId": "dispatch-2",
+            "dispatchTurnId": "turn-dispatch-2",
+            "executionGeneration": 2,
+            "openedAt": "2026-01-01T00:00:00Z",
+            "reason": null
+          }
+        ],
+        "issueKey": "CRW-906",
+        "parent": {
+          "cwd": null,
+          "hostId": "host-a",
+          "taskId": "01parent-task"
+        },
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "status": "active"
+      }
+    },
+    {
+      "fixture": "fixtures/relationship-reason-verdicts.json.gz",
+      "index": 4,
+      "schema": "relationship",
+      "label": "a reason the relay never writes",
+      "normalizedSHA256": "a42f7b465eb5210e7f3451b7d0eb3c4961c6d0214055ba6aa12d1a36672a0bb0",
+      "instance": {
+        "authorizedScope": {
+          "allowedRecipients": [
+            "01parent-task"
+          ],
+          "artifactRoots": [
+            "/synthetic/work"
+          ]
+        },
+        "child": {
+          "cwd": null,
+          "hostId": "host-a",
+          "taskId": "01child-task"
+        },
+        "createdAt": "2026-01-01T00:00:00Z",
+        "executionGeneration": 2,
+        "generations": [
+          {
+            "anchorState": "bound",
+            "boundAt": "2026-01-01T00:00:00Z",
+            "dispatchRequestId": "dispatch-1",
+            "dispatchTurnId": "turn-dispatch-1",
+            "executionGeneration": 1,
+            "openedAt": "2026-01-01T00:00:00Z",
+            "reason": null
+          },
+          {
+            "anchorState": "bound",
+            "boundAt": "2026-01-01T00:00:00Z",
+            "dispatchRequestId": "dispatch-2",
+            "dispatchTurnId": "turn-dispatch-2",
+            "executionGeneration": 2,
+            "openedAt": "2026-01-01T00:00:00Z",
+            "reason": "ruled_again"
+          }
+        ],
+        "issueKey": "CRW-906",
+        "parent": {
+          "cwd": null,
+          "hostId": "host-a",
+          "taskId": "01parent-task"
+        },
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "status": "active"
+      }
+    },
+    {
+      "fixture": "fixtures/relationship-reason-verdicts.json.gz",
+      "index": 5,
+      "schema": "relationship",
+      "label": "a reason of the wrong type",
+      "normalizedSHA256": "bd841dac3dd6b49723f2af0bf11927fd78a07024fa2436a8a402199bdd1589db",
+      "instance": {
+        "authorizedScope": {
+          "allowedRecipients": [
+            "01parent-task"
+          ],
+          "artifactRoots": [
+            "/synthetic/work"
+          ]
+        },
+        "child": {
+          "cwd": null,
+          "hostId": "host-a",
+          "taskId": "01child-task"
+        },
+        "createdAt": "2026-01-01T00:00:00Z",
+        "executionGeneration": 2,
+        "generations": [
+          {
+            "anchorState": "bound",
+            "boundAt": "2026-01-01T00:00:00Z",
+            "dispatchRequestId": "dispatch-1",
+            "dispatchTurnId": "turn-dispatch-1",
+            "executionGeneration": 1,
+            "openedAt": "2026-01-01T00:00:00Z",
+            "reason": null
+          },
+          {
+            "anchorState": "bound",
+            "boundAt": "2026-01-01T00:00:00Z",
+            "dispatchRequestId": "dispatch-2",
+            "dispatchTurnId": "turn-dispatch-2",
+            "executionGeneration": 2,
+            "openedAt": "2026-01-01T00:00:00Z",
+            "reason": 2
+          }
+        ],
+        "issueKey": "CRW-906",
+        "parent": {
+          "cwd": null,
+          "hostId": "host-a",
+          "taskId": "01parent-task"
+        },
+        "relationshipId": "rel-aaaaaaaaaaaaaaaa",
+        "status": "active"
+      }
+    }
+  ]
+}
