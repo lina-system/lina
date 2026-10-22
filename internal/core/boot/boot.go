@@ -22,6 +22,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
+	"github.com/thisisjun786/lina/internal/core/ghclient"
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/internal/core/manifest"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
@@ -339,6 +340,17 @@ func Run(ctx context.Context, cfg Config) (result error) {
 			return errors.New("canon writer is nil")
 		}
 		stack = append(stack, canon.Close)
+	}
+	github, err := ghclient.New(ctx, ghclient.Config{Leaser: activities})
+	if err != nil {
+		return err
+	}
+	stack = append(stack, github.Close)
+	if cfg.Client.Operations == nil {
+		cfg.Client.Operations = make(map[protocol.Kind]clientsrv.Operation)
+	}
+	for kind, operation := range clientsrv.GitHubOperations(githubService{client: github}) {
+		cfg.Client.Operations[kind] = operation
 	}
 	if err := boundary(CanonOpened); err != nil {
 		return err
