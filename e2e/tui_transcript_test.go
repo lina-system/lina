@@ -51,7 +51,7 @@ func TestM1TUITranscriptInstalledCore(t *testing.T) {
 	core := start(true)
 	observer, _ := conversationClient(t, h)
 	terminal := h.startTerminalSize([]string{"TERM=xterm-256color"}, false, true, 100, 34)
-	waitScreen(t, h, terminal, "Ctrl+D")
+	waitScreen(t, h, terminal, design.Text(design.English, "live"))
 	for i, input := range scenario.Inputs {
 		h.keys(terminal, input+"\r")
 		for {
