@@ -21,15 +21,9 @@ import (
 var programs embed.FS
 
 func findLauncher() (string, error) {
-	if runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64" {
-		return "", errors.New("unsupported_architecture")
-	}
-	path, err := exec.LookPath("bwrap")
-	if err != nil {
-		return "", errors.New("launcher_missing")
-	}
-	return path, nil
+	return resolveHostLauncher(runtime.GOOS, runtime.GOARCH, exec.LookPath)
 }
+
 func probeScript() string {
 	return `while read key value rest; do case "$key" in NoNewPrivs:) nnp=$value;; Seccomp:) sec=$value;; esac; done < /proc/self/status; [ "$nnp" = 1 ] && [ "$sec" = 2 ]`
 }

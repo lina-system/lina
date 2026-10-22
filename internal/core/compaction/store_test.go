@@ -365,7 +365,8 @@ func TestPublicationRecordsSkipsAndRejectsIncompleteOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := proposal(t, s, "leaf")
-	p.Cover = append(p.Cover, Coverage{EventID: "copy", Reason: "replay"})
+	p.Cover = append(p.Cover, Coverage{EventID: "e2"}, Coverage{EventID: "copy", Reason: "replay"})
+	p.Verbatim = nil
 	for _, bad := range []Output{{}, {Text: "partial"}, output(" "), output("sk-proj-" + strings.Repeat("Synthetic", 5))} {
 		q := p
 		q.Output = bad
@@ -374,7 +375,7 @@ func TestPublicationRecordsSkipsAndRejectsIncompleteOutput(t *testing.T) {
 		}
 	}
 	n := publish(t, s, p)
-	if n.Cover[1].Reason != "replay" || !n.EndAt.Equal(time.Unix(40, 0)) {
+	if n.Cover[2].Reason != "replay" || !n.EndAt.Equal(time.Unix(40, 0)) {
 		t.Fatal(n)
 	}
 }

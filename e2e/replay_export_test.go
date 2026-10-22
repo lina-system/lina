@@ -147,6 +147,14 @@ func TestM1ReplayExportInstalledCore(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		if len(next.Reply) != 1 || len(next.ReplyRefs) != 1 {
+			t.Errorf("export duplicated assistant reply: %d items, %d refs", len(next.Reply), len(next.ReplyRefs))
+		}
+		for _, event := range next.History {
+			if strings.HasPrefix(event.ID, "result:") {
+				t.Error("card metadata entered exported history")
+			}
+		}
 		ep = next
 	}
 	if ep.Input.Text != large {
@@ -177,7 +185,7 @@ func TestM1ReplayExportInstalledCore(t *testing.T) {
 		p.start(t)
 		p.wait(t, 0)
 		reply, err := os.ReadFile(filepath.Join(out, "reply.json"))
-		if err != nil || !strings.Contains(string(reply), scenario.Reply) {
+		if err != nil || strings.Count(string(reply), scenario.Reply) != 1 {
 			t.Fatalf("replay reply: %s %v", reply, err)
 		}
 		for _, name := range []string{"usage.json", "tool-results.json", "manifest.json"} {
