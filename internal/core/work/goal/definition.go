@@ -204,6 +204,7 @@ func (e *Engine) RefreshDefinitions(ctx context.Context) error {
 				}
 				if retire {
 					a.State = "finished"
+					a.Superseded = true
 				}
 				if err = put(v, "action", a.ID, a); err != nil {
 					return err

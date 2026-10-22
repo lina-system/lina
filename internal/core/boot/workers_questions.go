@@ -62,6 +62,7 @@ func (e *workerSession) requestQuestion(event worker.Event) {
 	}
 }
 func (e *workerSession) presentQuestion(event worker.Event, requestID, kind, text string, fields []protocol.FormField, targets []protocol.DecisionTarget) {
+	defer e.origin.notifyOwnerViews()
 	id := e.requestKey(requestID)
 	if len(fields) == 0 {
 		e.bridgeFailure(errors.New("empty worker question"))
@@ -134,6 +135,7 @@ func (q workerQuestions) AnswerQuestionMessage(ctx context.Context, person strin
 }
 
 func (q workerQuestions) AnswerQuestion(ctx context.Context, person string, answer protocol.QuestionAnswer) (protocol.DecisionOutcome, error) {
+	defer q.runtime.notifyOwnerViews()
 	if answer.CardID == nil {
 		return protocol.DecisionOutcomeRefused, nil
 	}
