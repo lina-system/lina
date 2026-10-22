@@ -67,14 +67,15 @@ func Calculate(expression string) (string, error) {
 			if err != nil {
 				return nil, err
 			}
-			switch n.Op {
-			case token.ADD:
+			// Arithmetic is an explicit subset of Go's much larger token set.
+			switch {
+			case n.Op == token.ADD:
 				return left.Add(left, right), nil
-			case token.SUB:
+			case n.Op == token.SUB:
 				return left.Sub(left, right), nil
-			case token.MUL:
+			case n.Op == token.MUL:
 				return left.Mul(left, right), nil
-			case token.QUO:
+			case n.Op == token.QUO:
 				if right.Sign() != 0 {
 					return left.Quo(left, right), nil
 				}
