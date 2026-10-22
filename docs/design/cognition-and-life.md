@@ -186,6 +186,27 @@ Klotho never executes. It sends requests for code work, other work, research and
 - Splitting a confirmed item of code work into hand-off tasks, and ordering the tasks, is the work engine's method ([work-and-delegation.md](work-and-delegation.md#splitting-and-parallel-hand-off)). It is not a second plan confirmation.
 - Where a card's criteria and the observed state differ, Klotho may draft 할 일 to close the gap. Those drafts go through the same confirmation point.
 
+The planning implementation queues an immutable snapshot of an accepted goal or
+project through Core's `draft_plan` tool. `plan_index` discovers accepted roots
+and preview revisions; `read_plan` explicitly reads a complete preview. Moirai
+requests the auxiliary, tool-free Klotho model call through Core and submits its
+validated proposal through the job API. Core accepts only that call's retained
+output and commits the complete `plan_view` revision with the job watermark.
+This work produces no project or to-do records and starts no execution.
+
+The client `planning` capability provides the person-only acceptance and
+confirmation actions. Acceptance saves the goal or directly handed-over project
+and its done condition. Confirmation names the current preview id and revision;
+Core also checks that the accepted root has not changed. It creates the entire
+set of project/to-do records in one saved version, with their done conditions,
+parent ids, order, stages and dependencies. A replacement discards every previous draft
+entry, and a stale, foreign or already-confirmed replacement is refused. After
+confirmation the same card remains readable with no confirm action. Repeated
+confirmation returns the original receipt, including after restart. An uncertain
+publication is reconciled by reading its exact records, never by dispatching the
+write again. Work-engine hand-off records require no second plan confirmation.
+
+
 ### Progress, prediction and replanning
 
 - Klotho tracks progress, drift between the plan and the actual state, and expected completion time. It also proposes next-action candidates.

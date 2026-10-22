@@ -27,6 +27,7 @@ var clientKinds = []string{
 	"snapshot", "resync", "resync_required",
 	"restart_request", "restart_get", "restart_status",
 	"export_request", "export_result", "replay_request", "replay_result",
+	"plan_request", "plan_response",
 }
 
 func clientMessage(t *testing.T, kind string, payload any) map[string]any {
@@ -95,6 +96,7 @@ func concretePayloads() map[string]any {
 			}},
 		},
 		"resync":          map[string]any{"topic": "conversation:example", "cursor": map[string]any{"epoch": "7", "seq": float64(2)}},
+		"plan_request":    map[string]any{"operation": "get", "agent_id": "agent", "result_id": "plan"},
 		"resync_required": map[string]any{"topic": "conversation:example", "cursor": map[string]any{"epoch": "7", "seq": float64(2)}},
 	}
 }

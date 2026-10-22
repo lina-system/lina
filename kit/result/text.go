@@ -118,6 +118,15 @@ func PlainText(b Body, m Measurer) string {
 			if e.Parent != nil {
 				line += "; parent: " + *e.Parent
 			}
+			if e.Done != "" {
+				line += "; done: " + e.Done
+			}
+			if e.Stage != "" {
+				line += "; stage: " + e.Stage
+			}
+			if len(e.DependsOn) > 0 {
+				line += "; depends on: " + strings.Join(e.DependsOn, ", ")
+			}
 			add(line)
 		}
 	case *File:

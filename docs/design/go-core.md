@@ -66,7 +66,7 @@ The separate worker has its own downward import layers. Core may import only its
 | Worker layer | Packages |
 | --- | --- |
 | W1 | `internal/moirai/jobapi` (credential-free types and Unix-socket client) |
-| W2 | `internal/moirai/canon` (read-only job snapshots) |
+| W2 | `internal/moirai/canon` (read-only job snapshots), `internal/moirai/planning` (pure proposal validation) |
 | W3 | `internal/moirai` (job execution and scheduling) |
 | W4 | `cmd/moirai-worker` (command and signals) |
 
@@ -443,6 +443,14 @@ The current installed adapter uses Korean counting and the shared TUI renderer a
 - A revision is one ledger event with the whole result.
 - Save is a Core effect with the key of `result_save` (CP-05); destinations are those of the saving section.
 - Summary-first writing is a background run given the latest outline revision.
+- Managed planning previews use the same result ledger and revision checks.
+  Core installs the results and planning receipt schemas in the numbered canon
+  catalog. Generic presentation and saving cannot replace or confirm a managed
+  plan. The `planning` capability binds confirmation to the authenticated person,
+  agent, preview revision and accepted root revision. Complete plan bodies carry
+  done conditions, ordered stage labels and dependency ids in addition to card
+  entries. Confirmation removes the confirm action without changing the content
+  revision that the person approved.
 
 The #104 increment implements these boundaries in `kit/result`, `internal/core/results` and `internal/core/exec`. Core supplies the trusted person, agent, conversation and turn; none is accepted from tool arguments. `present_result` takes `type`, `title`, `summary` and a complete `body`, with `result_id` and `base_revision` only for replacement. `read_result` takes `result_id` and returns the complete current result and its revision. `save_result` takes `result_id`, `revision` and a resolved `destination`; its binding requires an exact matching request from the person in the current turn. A grant alone does not constitute that request. The three operations use the existing tool registry, authority gate and leases, run in Core, and require no network or approval interaction.
 
@@ -456,7 +464,7 @@ Body validation is a closed schema over [the kit types](../../kit/result/body.go
 | `chart` | `kind` is `bar`, `line`, `area`, `pie` or `scatter`; each series has `name` and inline `values` of `{x,y}`. `x` is text or a number, numeric for scatter; `y` is numeric, nonnegative for pie. `x_axis` and `y_axis` each have `label` and `unit`. |
 | `document_draft` | Ordered `blocks` are closed variants: heading (`text`, `level` 1–6), paragraph/quote (`text`), list (`items`), table (`table`), code (`text`, optional `language`), image (`asset`, `text` alternative description), citation (`anchor`, `text`). `from_summary` is null or `{result_id,revision}`. |
 | `comparison` | Each target has `label`, `old`, `new` and `hunks` with zero-based `old_start`, `old_count`, `new_start`, `new_count` within the corresponding text. `apply` is null or an opaque request id. Save is refused; applying is a separate flow. |
-| `plan_view` | Ordered entries have unique `id`, `kind` (`goal`, `project`, `todo`, `area`, `memo`, `resource`), `title`, `state` (`planned`, `active`, `blocked`, `done`, `cancelled`) and nullable `parent`, which must precede the child. `confirm` is null or an opaque confirmation id. Save is refused. |
+| `plan_view` | Ordered entries have unique `id`, `kind` (`goal`, `project`, `todo`, `area`, `memo`, `resource`), `title`, `state` (`planned`, `active`, `blocked`, `done`, `cancelled`) and nullable `parent`, which must precede the child. `confirm` is null or an opaque confirmation id. Optional `done`, `stage` and `depends_on` fields retain the plan details; managed Klotho entries require done conditions. Save is refused. |
 | `file` | `asset` is `{asset_id,revision}`, `name` is nonempty, `size` is nonnegative bytes and `media_type` is PDF, PPTX or ODP. Saving copies verified bytes into an independently owned material. |
 
 Asset and result references have positive revisions. A citation anchor has either `event_id` or `asset`, plus a nonempty half-open `start`/`end` passage range. Strings, including code and links, remain inert data.
@@ -1117,6 +1125,13 @@ type Definition struct {
 ```
 
 - The agent drafts a definition with the `dispatch_work` tool. Core validates required fields, glob syntax and that the design reference resolves in the repository at the base commit, and renders the task packet.
+- Klotho drafting runs through Moirai's job API and the Core auxiliary model
+  route. The worker validates the proposed structure and holds no write or
+  confirmation authority. Core writes a full preview revision and its job receipt
+  in one transaction. Only the client confirmation creates the corresponding
+  Markdown records, as one recoverable Git publication. Splitting the confirmed
+  work into hand-off tasks uses the existing work ledger, without another plan
+  confirmation or another planning receipt.
 - Core does not split work itself. The dev preset carries the splitting criteria as guidance ([work-and-delegation.md](work-and-delegation.md#splitting-into-tasks)). Core checks mechanically that each task has one done condition and a write area, that overlapping areas are ordered by a dependency, that dependencies have no cycle, and that hotspot files are taken whole or moved to one task.
 - `Chooser` ranks workers from situation tags, quota rows and host capacity, using an editable rule table marked provisional. A quota or login stop hands the same packet to the next worker.
 - `Scheduler.Release` runs on events (landed, new task, quota change, a parked worker's reset), not on a poll. It starts every task whose dependencies landed, whose area lease is free and whose worker has quota. Area leases live from hand-off to landed, closed or abandoned. Concurrency is the free slots that the reported load and resources of the main host and each Node allow, with no fixed count per repository ([work-and-delegation.md](work-and-delegation.md#capacity)). A task that cannot start shows exactly one reason.

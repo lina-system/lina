@@ -224,3 +224,10 @@ and deleted agents in conversation and management requests, plus channel
 binding/scope replacement. A paired synthetic channel and an existing binding
 exercise the actual target-agent checks. Read-only canon snapshots prove that
 refused requests preserve agent revisions, actions, conversations and bindings.
+
+`m3/plan-drafting.json` exercises accepted goal discovery through model tools,
+Klotho drafting through a real Moirai worker and installed Core job socket,
+complete preview replacement, stale confirmation refusal, one-version record
+creation, and idempotent confirmation across Core restarts. A loopback provider
+supplies only model output; all tool, job, result, protocol and records paths are
+production paths. No external credentials or services are used.

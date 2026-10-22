@@ -6,11 +6,13 @@ package moirai
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/moirai/jobapi"
+	"github.com/thisisjun786/lina/internal/moirai/planning"
 )
 
 type Reader interface {
@@ -34,6 +36,19 @@ func (w Worker) Step(ctx context.Context, work jobapi.Work) error {
 			return err
 		}
 		output = r.Output
+	}
+	if work.Job.Kind == jobapi.Planning && work.Job.Adoption == "plan-draft-v1" {
+		var input jobapi.PlanInput
+		if json.Unmarshal(work.Task.Input, &input) != nil {
+			return jobapi.ErrInvalid
+		}
+		draft, err := jobapi.DecodePlan(output, input.Kind)
+		if err != nil {
+			return err
+		}
+		if err = planning.Validate(input.Kind, draft); err != nil {
+			return err
+		}
 	}
 	applied, err := w.Core.Apply(ctx, jobapi.Proposal{Epoch: work.Epoch, JobID: work.Job.ID, From: work.Job.Watermark, Through: work.Task.Sequence, Output: output})
 	if err != nil {

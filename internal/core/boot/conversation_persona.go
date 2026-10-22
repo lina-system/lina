@@ -49,7 +49,7 @@ func (r *conversationRuntime) resolvePersonaGrant(ctx context.Context, id string
 		env, err := r.skillEnvironment(ctx, g)
 		return g, env, err
 	}
-	if g.Identity.Profile == "relationship" {
+	if g.Identity.Profile == "relationship" || g.Identity.Profile == "planning" {
 		return g, grant.Environment{Epoch: r.epoch, Now: time.Now(), OSPermitted: true, Revision: g.Identity.Revision}, nil
 	}
 	if g.Identity.Profile == "persona-state" || g.Identity.Profile == "persona-expression" {

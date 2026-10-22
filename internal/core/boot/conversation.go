@@ -40,6 +40,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/modelpath"
 	"github.com/thisisjun786/lina/internal/core/records"
 	"github.com/thisisjun786/lina/internal/core/reply"
+	"github.com/thisisjun786/lina/internal/core/results"
 	"github.com/thisisjun786/lina/internal/core/retract"
 	"github.com/thisisjun786/lina/internal/core/runs"
 	"github.com/thisisjun786/lina/internal/core/secrets"
@@ -54,6 +55,7 @@ import (
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/provider"
+	"github.com/thisisjun786/lina/kit/result"
 	builtin "github.com/thisisjun786/lina/skills"
 )
 
@@ -89,6 +91,10 @@ type conversationRuntime struct {
 	agents           *agents.Store
 	skills           *skills.Store
 	records          *records.Store
+	planResults      *results.Store
+	plans            *results.Planning
+	planning         *planningRuntime
+	planningMu       sync.Mutex
 	persona          *coreexec.Persona
 	personaAuthority *authority.Service
 	personaGrants    map[string]grant.Grant
@@ -173,6 +179,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err != nil {
 		return nil, err
 	}
+	if err = r.initPlanning(); err != nil {
+		return nil, err
+	}
 	r.persona = coreexec.NewPersona(db, r.agents, r.materials)
 	r.personaAuthority, err = authority.Open(ctx, db, authority.Config{Epoch: epoch, Resolve: r.resolvePersonaGrant,
 		CanPresent: func() bool { return r.decisions != nil && r.decisions.CanPresent() },
@@ -249,6 +258,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	}
 	for kind, op := range clientsrv.ManagementOperations(r) {
 		r.identity.Operations[kind] = op
+	}
+	if err = r.startPlanning(ctx); err != nil {
+		return nil, err
 	}
 	if r.agent != "" {
 		if err = r.seedHistory(ctx); err != nil {
@@ -607,6 +619,16 @@ func (r *conversationRuntime) seedHistory(ctx context.Context) error {
 			return err
 		}
 		text := e.Body.Text()
+		if e.ScaffoldKind == "result" {
+			var plan result.Result
+			if err := json.Unmarshal([]byte(text), &plan); err != nil {
+				return err
+			}
+			if err := r.publish(ctx, protocol.KindResult, plan.ID, planWire(plan)); err != nil {
+				return err
+			}
+			continue
+		}
 		if e.ScaffoldKind == "background_notice" {
 			var notices []lane.Notice
 			if err := json.Unmarshal([]byte(text), &notices); err != nil {
@@ -745,6 +767,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			if err := r.prepareSkillTools(turnID, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
+			if err := r.preparePlanningTools(turnID, bindings); err != nil {
+				return turn.PreparedRequest{}, err
+			}
 			if err := r.prepareRecordTools(turnID, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
@@ -753,6 +778,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			declarations = append(declarations, coreexec.RelationshipDeclaration())
 			declarations = append(declarations, coreexec.SkillDeclarations()...)
 			declarations = append(declarations, coreexec.RecordDeclarations()...)
+			declarations = append(declarations, coreexec.PlanningDeclarations()...)
 			declarations = append(declarations, startRunDeclaration())
 			packet, _, err := atropos.Packet(ctx, minimum, 0, func(ctx context.Context) (assemble.ContextPacket, error) { return r.relationshipPacket(ctx, at) })
 			if err != nil {
