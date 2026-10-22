@@ -77,6 +77,15 @@ func TestCeilingsAndCards(t *testing.T) {
 		{"decimal", "값은 3.14이고 " + strings.Repeat("가", 301), "", true},
 		{"quoted sentence", "“끝!” " + strings.Repeat("가", 301), "“끝!”", true},
 		{"CJK sentence", "끝。" + strings.Repeat("가", 301), "끝。", true},
+		{"Devanagari danda", "यह पूरा है। " + strings.Repeat("क", 301), "यह पूरा है।", true},
+		{"Devanagari double danda", "यह पूरा है॥ " + strings.Repeat("क", 301), "यह पूरा है॥", true},
+		{"Urdu full stop", "یہ مکمل ہے۔ " + strings.Repeat("ک", 301), "یہ مکمل ہے۔", true},
+		{"quoted Urdu question", "“کیا یہ مکمل ہے؟” " + strings.Repeat("ک", 301), "“کیا یہ مکمل ہے؟”", true},
+		{"Armenian full stop", "Ավարտված է։ " + strings.Repeat("ա", 301), "Ավարտված է։", true},
+		{"Myanmar full stop", "ပြီးပြီ။ " + strings.Repeat("က", 301), "ပြီးပြီ။", true},
+		{"Ethiopic full stop", "ተጠናቋል። " + strings.Repeat("ሀ", 301), "ተጠናቋል።", true},
+		{"unterminated paragraph", "unfinished\n" + strings.Repeat("가", 301), "", true},
+		{"Unicode sentence past ceiling", strings.Repeat("क", 300) + "।", "", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := filter(t, config())
@@ -137,6 +146,8 @@ func TestChunkBoundaries(t *testing.T) {
 		"끝. " + strings.Repeat("\u1100\u1161 ", 301),
 		"첫 문장! 다음 문장? " + strings.Repeat("가", 301),
 		"첫째.\n둘째.\n셋째.\n넷째.\n다섯째.\n여섯째.",
+		"यह पूरा है। " + strings.Repeat("क", 301),
+		"“یہ مکمل ہے۔” " + strings.Repeat("ک", 301),
 	} {
 		whole := filter(t, config())
 		want, err := whole.Push(s)
