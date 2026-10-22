@@ -114,6 +114,32 @@ test('missing, duplicate, foreign row and premature tier records cannot pass', (
   assert.equal(validateEvidence(onlySecond).valid, false);
 });
 
+test('invalid evidence cannot authorize advancing from an otherwise complete tier', () => {
+  for (const tier of [1, 2]) {
+    for (const defect of ['duplicate failure', 'malformed extra record', 'unknown tier']) {
+      for (const prepend of [false, true]) {
+        const data = fixture();
+        const extra = structuredClone(data.records.find(r => r.tier === tier));
+        if (defect === 'duplicate failure') {
+          extra.measured.focus_steals = 1;
+          extra.result = 'fail';
+        } else if (defect === 'malformed extra record') {
+          delete extra.workload;
+        } else {
+          extra.tier = 3;
+        }
+        data.records[prepend ? 'unshift' : 'push'](extra);
+        const result = validateEvidence(data);
+        assert.equal(result.valid, false);
+        assert.equal(result.passed, false);
+        assert.notEqual(result.tiers[tier - 1].status, 'pass', `${tier}: ${defect}, prepend=${prepend}`);
+        assert.notEqual(result.tiers[1].status, 'pass');
+        if (tier === 2 && defect !== 'unknown tier') assert.equal(result.tiers[0].status, 'pass');
+      }
+    }
+  }
+});
+
 test('observations, complete load, trace identity/coverage and advance bounds are mandatory', () => {
   for (const mutate of [
     r => r.observation.method = 'headless',
