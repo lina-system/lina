@@ -17,6 +17,8 @@ import (
 )
 
 func TestM2InstalledGrowthFollowups(t *testing.T) {
+	t.Parallel()
+
 	var scenario struct {
 		AgentName          string                        `json:"agent_name"`
 		SnapshotCharacters int                           `json:"snapshot_characters"`
