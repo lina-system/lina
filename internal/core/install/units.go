@@ -19,7 +19,9 @@ func coreUnit(binary, root, socket string) (string, error) {
 
 func workerUnit(binary, root, socket string) (string, error) {
 	args := []string{binary, "--canon", filepath.Join(root, "canon/canon.sqlite"), "--socket", socket}
-	return serviceUnit("LINA background memory and planning", "After=lina-core.service\nRequires=lina-core.service\n", args, binary, root, socket)
+	unit, err := serviceUnit("LINA background memory and planning", "After=lina-core.service\nRequires=lina-core.service\n", args, binary, root, socket)
+	// Type=simple Core may still be opening canon when this service starts.
+	return strings.Replace(unit, "RestartPreventExitStatus=69 78", "RestartSec=2\nRestartPreventExitStatus=78", 1), err
 }
 
 func serviceUnit(description, dependencies string, args []string, binary, root, socket string) (string, error) {

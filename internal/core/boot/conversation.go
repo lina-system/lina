@@ -89,6 +89,7 @@ type conversationRuntime struct {
 	controls         *ctlfiles.Store
 	personaWarned    bool
 
+	skillMaintenance            *skillMaintenanceRuntime
 	growthMu                    sync.Mutex
 	growth                      *growthRuntime
 	lanes                       *lane.Manager
@@ -235,6 +236,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 			return nil, err
 		}
 	}
+	if err = r.startSkillMaintenance(ctx); err != nil {
+		return nil, err
+	}
 	if err = r.startGrowth(ctx, controls); err != nil {
 		return nil, err
 	}
@@ -243,6 +247,15 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 }
 func (r *conversationRuntime) Close(ctx context.Context) error {
 	var err error
+	if m := r.skillMaintenance; m != nil && m.stop != nil {
+		m.stop()
+		select {
+		case <-m.done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		m.stop = nil
+	}
 	if r.growth != nil && r.growth.stop != nil {
 		r.growth.stop()
 		select {

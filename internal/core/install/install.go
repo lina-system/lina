@@ -141,7 +141,7 @@ func Run(ctx context.Context, cfg Config, host Host) (result Result, resultErr e
 	}
 	contents := map[string]string{"lina-core.service": unit}
 	if b.files["moirai-worker"] != nil {
-		workerSocket := filepath.Join(cfg.StateRoot, "system/run/moirai.sock")
+		workerSocket := filepath.Join(cfg.StateRoot, "run/jobs.sock")
 		if len(workerSocket) > 107 {
 			return result, errors.New("worker socket path exceeds 107 bytes")
 		}
@@ -168,8 +168,6 @@ func Run(ctx context.Context, cfg Config, host Host) (result Result, resultErr e
 	}
 	if b.files["moirai-worker"] == nil {
 		result.Unavailable = append(result.Unavailable, "Background memory and planning: moirai-worker is not included")
-	} else {
-		result.Unavailable = append(result.Unavailable, "Background memory and planning: Core job service is not connected in this build; worker activation is deferred")
 	}
 	var changes changes
 	serviceAttempted := false
@@ -238,10 +236,14 @@ func Run(ctx context.Context, cfg Config, host Host) (result Result, resultErr e
 		return result, errors.New("systemd could not reload the new service")
 	}
 	serviceAttempted = true
-	// The current Core command exposes only client IPC. Retain a bundled worker
-	// and its unit, but do not enable it until the canon/job service is wired.
+	// Core owns canon and the job socket; the optional worker follows its service.
 	if _, err := host.Run(ctx, systemctl, "--user", "enable", "--now", filepath.Join(cfg.UnitDir, "lina-core.service")); err != nil {
 		return result, errors.New("systemd could not enable and start Core; the new installation is retained for diagnosis")
+	}
+	if b.files["moirai-worker"] != nil {
+		if _, err := host.Run(ctx, systemctl, "--user", "enable", "--now", filepath.Join(cfg.UnitDir, "lina-moirai.service")); err != nil {
+			return result, errors.New("systemd could not start the worker; installation retained for diagnosis")
+		}
 	}
 	return result, nil
 }
@@ -258,7 +260,7 @@ func validateSocketLocation(cfg Config, units []string) error {
 	if withinPath(cfg.Socket, cfg.StateRoot) || (withinPath(cfg.StateRoot, cfg.Socket) && (cfg.Socket == run || !withinPath(run, cfg.Socket))) {
 		return errors.New("a client socket inside the state root must be below system/run")
 	}
-	reserved := []string{cfg.UnitDir, filepath.Join(run, "moirai.sock")}
+	reserved := []string{cfg.UnitDir, filepath.Join(cfg.StateRoot, "run/jobs.sock")}
 	for _, name := range units {
 		reserved = append(reserved, filepath.Join(cfg.UnitDir, name), filepath.Join(cfg.UnitDir, name+".d"), filepath.Join(cfg.UnitDir, "default.target.wants", name))
 	}

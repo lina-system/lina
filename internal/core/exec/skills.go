@@ -47,7 +47,7 @@ func skillInput(raw json.RawMessage, name string) (tools.Input, error) {
 	var id string
 	var args any
 	switch name {
-	case "skill_index":
+	case "skill_index", "skill_notices":
 		var a struct{}
 		if err := decodeSkill(raw, &a); err != nil {
 			return tools.Input{}, err
@@ -83,7 +83,7 @@ func skillInput(raw json.RawMessage, name string) (tools.Input, error) {
 	default:
 		return tools.Input{}, tools.ErrInvalid
 	}
-	if name != "skill_index" && id == "" {
+	if name != "skill_index" && name != "skill_notices" && id == "" {
 		return tools.Input{}, tools.ErrInvalid
 	}
 	target := "skills"
@@ -124,7 +124,7 @@ func RegisterSkills(registry *tools.Registry, store *skills.Store) ([]tools.Spec
 		return nil, tools.ErrInvalid
 	}
 	var specs []tools.Spec
-	for _, name := range []string{"skill_index", "read_skill", "write_skill", "undo_skill"} {
+	for _, name := range []string{"skill_index", "read_skill", "write_skill", "undo_skill", "skill_notices"} {
 		spec := tools.Spec{Name: name, Placement: tools.Core, Conc: 1, Deadline: 10 * time.Second, Schema: func(raw json.RawMessage) (tools.Input, error) { return skillInput(raw, name) }}
 		handler := func(ctx context.Context, _ lease.Lease, input tools.Input) (tools.Result, error) {
 			var value any
@@ -133,6 +133,8 @@ func RegisterSkills(registry *tools.Registry, store *skills.Store) ([]tools.Spec
 			switch name {
 			case "skill_index":
 				value, err = store.Catalog(ctx)
+			case "skill_notices":
+				value, err = store.MaintenanceNotices(ctx)
 			case "read_skill":
 				var v skills.Version
 				err = decodeSkill(input.Arguments, &v)

@@ -13,6 +13,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/internal/core/guard"
+	"github.com/thisisjun786/lina/internal/core/jobs"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/skills"
 	"github.com/thisisjun786/lina/internal/core/turn"
@@ -25,6 +26,18 @@ import (
 
 func (r *conversationRuntime) skillEnvironment(ctx context.Context, g grant.Grant) (grant.Environment, error) {
 	env := grant.Environment{Epoch: r.epoch, Now: time.Now(), OSPermitted: true}
+	if g.Scope[0].Target == "skill-maintenance" {
+		j, err := r.router.root.skillMaintenance.jobs.Policy(ctx, jobs.SkillMaintenanceJob)
+		env.Revision = strconv.FormatBool(j.Enabled)
+		return env, err
+	}
+	if g.Scope[0].Tool == "write_skill" && r.router != nil && r.router.root.skillMaintenance != nil {
+		j, err := r.router.root.skillMaintenance.jobs.Policy(ctx, jobs.SkillMaintenanceJob)
+		if err != nil {
+			return env, err
+		}
+		env.OSPermitted = j.Enabled
+	}
 	if !g.Scope[0].Write {
 		return env, nil // Immutable reads do not require the current head.
 	}
@@ -45,6 +58,24 @@ func (r *conversationRuntime) prepareSkillTools(turnID string, bindings map[stri
 	specs, err := coreexec.RegisterSkills(registry, r.skills)
 	if err != nil {
 		return err
+	}
+	if r.router != nil && r.router.root.skillMaintenance != nil {
+		root := r.router.root
+		spec, err := coreexec.RegisterSkillMaintenanceControl(registry, func(ctx context.Context, enabled *bool) (any, string, error) {
+			if enabled != nil {
+				if err := root.skillMaintenance.jobs.SetEnabled(ctx, jobs.SkillMaintenanceJob, *enabled); err != nil {
+					return nil, "", err
+				}
+				_ = root.queueSkillMaintenance(ctx)
+			}
+			_ = root.publishSkillMaintenance(ctx)
+			j, err := root.skillMaintenance.jobs.Policy(ctx, jobs.SkillMaintenanceJob)
+			return j, strconv.FormatBool(j.Enabled), err
+		})
+		if err != nil {
+			return err
+		}
+		specs = append(specs, spec)
 	}
 	for _, spec := range specs {
 		validated := turn.Tool(registry, spec, tools.Call{}, turnID)
@@ -73,6 +104,13 @@ func (r *conversationRuntime) prepareSkillTools(turnID string, bindings map[stri
 						revision = version.Revision
 					}
 					auth.Revision = strconv.FormatInt(revision, 10)
+					if spec.Name == "skill_maintenance" {
+						j, err := r.router.root.skillMaintenance.jobs.Policy(ctx, jobs.SkillMaintenanceJob)
+						if err != nil {
+							return loop.Result{ID: call.ID, Code: loop.Unknown}
+						}
+						auth.Revision = strconv.FormatBool(j.Enabled)
+					}
 					g.Identity = auth
 					g.Revisions = map[string]string{in.Target: auth.Revision}
 				}
@@ -96,6 +134,14 @@ func (r *conversationRuntime) skillNotice(ctx context.Context, input ledger.Even
 	var receipt skills.Applied
 	if json.Unmarshal(result.Output, &receipt) != nil || receipt.Notice == "" {
 		return result
+	}
+	if r.router != nil && r.router.root.skillMaintenance != nil {
+		root := r.router.root
+		_ = root.publishSkillMaintenance(ctx)
+		_ = root.queueSkillMaintenance(ctx)
+		if receipt.Maintenance {
+			return result
+		}
 	}
 	now := time.Now()
 	event, err := r.journal().Admit(ctx, guard.EntrySystem, ledger.Input{ID: "skill-notice:" + input.ID + ":" + call.ID, ConversationID: r.conversation, ParentID: input.ID, AgentID: r.agent, Surface: input.Surface, ScaffoldKind: "skill_change", OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: receipt.Notice})
