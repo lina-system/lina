@@ -115,6 +115,9 @@ func TestDispatchWorkToolUsesBoundOwnerAndRejectsExecutionClaims(t *testing.T) {
 	if len(snapshot.Goals) != 1 || snapshot.Goals[0].Person != r.person || snapshot.Goals[0].Agent != r.agent {
 		t.Fatalf("unbound goal admission: %+v", snapshot)
 	}
+	if snapshot.Goals[0].Conversation != r.conversation || snapshot.Goals[0].Turn != "turn" {
+		t.Fatalf("goal lost authenticated conversation origin: %+v", snapshot.Goals[0])
+	}
 	call.Arguments = strings.TrimSuffix(input, "}") + `,"person":"other","state":"done"}`
 	if _, err = tools["dispatch_code_goal"].Validate(call); err == nil {
 		t.Fatal("execution state/owner injection accepted")

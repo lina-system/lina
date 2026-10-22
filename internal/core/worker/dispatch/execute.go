@@ -24,10 +24,9 @@ import (
 	"github.com/thisisjun786/lina/kit/tools"
 )
 
-func (s *Service) execute(r Record) {
+func (s *Service) execute(ctx context.Context, r Record) {
 	// Shutdown does not replay a possibly effective dispatch. Recovery marks the
 	// running record unknown and retains the task's active reservation.
-	ctx := s.ctx
 	admitted, settled := false, false
 	defer func() {
 		if ctx.Err() == nil {
@@ -90,9 +89,19 @@ func (s *Service) execute(r Record) {
 		return
 	}
 	r.BaseCommit = base
-	protectedArgs := []string{"for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/main", "refs/heads/dev", "refs/remotes/origin/main", "refs/remotes/origin/dev"}
+	protectedArgs := []string{"for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/" + d.Base, "refs/heads/main", "refs/heads/dev", "refs/remotes/origin/main", "refs/remotes/origin/dev"}
 	protected, err := git(repo, protectedArgs...)
 	if err != nil {
+		return
+	}
+	r.Protected = map[string]string{}
+	for _, line := range strings.Split(protected, "\n") {
+		ref, head, ok := strings.Cut(line, " ")
+		if ok && strings.HasPrefix(ref, "refs/heads/") {
+			r.Protected[ref] = head
+		}
+	}
+	if err = s.save(ctx, r); err != nil {
 		return
 	}
 	for _, ref := range d.DesignRefs {

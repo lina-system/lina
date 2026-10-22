@@ -1,0 +1,269 @@
+// SPDX-License-Identifier: Apache-2.0
+package e2e_test
+
+import (
+	"context"
+	"encoding/json"
+	"github.com/thisisjun786/lina/internal/core/canon"
+	goal "github.com/thisisjun786/lina/internal/core/work/goal"
+	"github.com/thisisjun786/lina/kit/protocol"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+)
+
+func TestM2InstalledCodeGoalTool(t *testing.T) {
+	t.Parallel()
+	var offered atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct{ Tools []struct{ Name string } }
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			return
+		}
+		for _, tool := range request.Tools {
+			if tool.Name == "dispatch_code_goal" {
+				offered.Store(true)
+			}
+		}
+		emitResponse(w, "Ready.", true)
+	}))
+	defer server.Close()
+	h, start := installedConversationHarness(t, server.URL)
+	core := start(true)
+	c, conversation := conversationClient(t, h)
+	admittedTurn(t, h, c, conversation, "goal", "Run this code goal through verification.")
+	c.Close()
+	h.stopCore(core)
+	if !offered.Load() {
+		t.Fatal("installed Core does not supply the code-goal Driver or dispatch_code_goal")
+	}
+}
+
+func TestM2InstalledCodeGoalDriver(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"private", "public"} {
+		t.Run(mode, func(t *testing.T) { t.Parallel(); installedCodeGoal(t, mode) })
+	}
+}
+
+func installedCodeGoal(t *testing.T, mode string) {
+	fixture := t.TempDir()
+	repo := filepath.Join(fixture, "repo")
+	bin := filepath.Join(fixture, "bin")
+	for _, dir := range []string{repo, bin} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + fixture, "GIT_CONFIG_NOSYSTEM=1"}
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git: %s %v", out, err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git("init", "-b", "dev")
+	if err := os.WriteFile(filepath.Join(repo, "design.md"), []byte("# Result\nProduce result.txt.\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "design.md")
+	git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "Initial design")
+	base := git("rev-parse", "HEAD")
+	git("remote", "add", "origin", "https://github.com/fixture/project.git")
+	worker, err := os.ReadFile("../m3/antigravity-worker.mjs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	services, err := os.ReadFile("../m2/code-goal-services.mjs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(bin, "agy"), worker, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"gh", "qa", "acceptance", "deploy", "probe"} {
+		if err = os.WriteFile(filepath.Join(bin, name), services, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var mu sync.Mutex
+	deployed := map[string]string{}
+	service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if r.Method == http.MethodPost {
+			if err := json.NewDecoder(r.Body).Decode(&deployed); err != nil {
+				t.Error(err)
+				w.WriteHeader(400)
+				return
+			}
+		}
+		_ = json.NewEncoder(w).Encode(deployed)
+	}))
+	defer service.Close()
+	var calls atomic.Int32
+	model := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request methodologyRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			return
+		}
+		if scriptedCodingManager(t, w, request) {
+			return
+		}
+		if calls.Add(1) == 1 {
+			offered := false
+			for _, tool := range request.Tools {
+				offered = offered || tool.Name == "dispatch_code_goal"
+			}
+			if !offered {
+				t.Error("installed Core has no goal driver")
+				emitResponse(w, "Unavailable.", true)
+				return
+			}
+			emitPersonaCall(w, "code-goal", "dispatch_code_goal", map[string]any{"outcome": "Produce and run the result", "done": "The running service returns the result", "scope": map[string]any{"repositories": []string{"fixture/project"}, "includes": "result.txt", "excludes": "design.md"}, "criteria": []any{map[string]any{"id": "result", "statement": "The result matches the request", "check": map[string]any{"kind": "check", "method": "acceptance", "target": "fixture/project"}}}, "service_target": "fixture-service", "tasks": []any{map[string]any{"id": "change", "done": "Produce result.txt", "repository": "fixture/project", "base": "dev", "area": "result.txt", "worker": "antigravity", "resources": map[string]any{"cpu": 0.01, "memory_mb": 1, "disk_mb": 1}}}})
+		} else {
+			methodologyOutput(t, request, "ok", nil)
+			emitResponse(w, "Work started.", true)
+		}
+	}))
+	defer model.Close()
+	h, bootstrap := installedConversationHarness(t, model.URL)
+	seedCodingFixture(t, h, bootstrap)
+	command := func(name string) map[string]any { return map[string]any{"path": filepath.Join(bin, name)} }
+	config := map[string]any{"limits": map[string]any{"cpu": 1, "memory_mb": 4096, "disk_mb": 16384}, "repositories": map[string]any{"fixture/project": map[string]any{"clone": repo, "base": "dev", "design_refs": []string{"design.md#result"}, "qa": command("qa"), "checks": map[string]any{"acceptance": command("acceptance")}, "service": map[string]any{"target": "fixture-service", "public": mode == "public", "deploy": command("deploy"), "probe": command("probe")}}}}
+	raw, _ := json.Marshal(config)
+	if err = os.WriteFile(filepath.Join(h.root, "system", "code-work.json"), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
+	h.ctx = ctx
+	start := func() *process {
+		p := h.command("core", "--state-root", h.root, "--socket", h.socket)
+		p.command.Env = append(p.command.Env, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "LINA_WORKER_FIXTURE="+fixture, "LINA_WORKER_CASE=success", "LINA_GOAL_FIXTURE_URL="+service.URL, "LINA_RESPONSES_BASE_URL="+model.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
+		p.start(t)
+		h.connectWithin(p, time.Minute).Close()
+		waitCoreReady(t, h)
+		return p
+	}
+	core := start()
+	c, conversation := conversationClient(t, h)
+	events := admittedTurn(t, h, c, conversation, "goal", "Create the result and run it through deployment and verification.")
+	done := false
+	inspect := func(e protocol.Envelope) {
+		if item, ok := e.Payload.(protocol.ItemDone); ok && item.Text != nil {
+			done = done || strings.HasPrefix(*item.Text, "Done.")
+			if strings.HasPrefix(*item.Text, "This work needs attention.") {
+				if mode != "public" {
+					t.Error("goal blocked: " + *item.Text)
+				}
+				done = true
+			}
+		}
+	}
+	for _, e := range events {
+		inspect(e)
+	}
+	for !done && !t.Failed() {
+		e, err := c.Receive(h.ctx)
+		if err != nil {
+			t.Error("goal result missing: ", err)
+			break
+		}
+		inspect(e)
+	}
+	c.Close()
+	h.stopCore(core)
+	db, closeDB := installedAcceptanceStore(t, h)
+	var g goal.Goal
+	err = db.Read(t.Context(), func(tx *canon.Tx) error {
+		var raw []byte
+		if err := tx.QueryRowContext(t.Context(), "SELECT body FROM work_records WHERE kind='goal'").Scan(&raw); err != nil {
+			return err
+		}
+		return json.Unmarshal(raw, &g)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode == "public" {
+		closeDB()
+		mu.Lock()
+		writes := len(deployed)
+		mu.Unlock()
+		if g.State != goal.GoalBlocked || g.Deployment.Passed || writes != 0 {
+			t.Fatalf("public deployment bypassed approval: %+v", g)
+		}
+		events, err := os.ReadFile(filepath.Join(fixture, "events"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(events), "deploy\n") {
+			t.Fatal("unapproved deployment command ran")
+		}
+		return
+	}
+	if g.State != goal.GoalDone || len(g.Checks) != 5 || !g.Deployment.Passed || !g.Verification.Passed {
+		var debug []string
+		_ = db.Read(t.Context(), func(tx *canon.Tx) error {
+			rows, e := tx.QueryContext(t.Context(), "SELECT body FROM work_records WHERE kind='action'")
+			if e != nil {
+				return e
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var body string
+				_ = rows.Scan(&body)
+				debug = append(debug, body)
+			}
+			return rows.Err()
+		})
+		t.Fatalf("goal not closed with evidence: %+v\nactions: %v\ncore: %s", g, debug, core.stderr.String())
+	}
+	closeDB()
+	for _, check := range g.Checks {
+		if !check.Passed || check.Ref == "" {
+			t.Fatalf("missing criterion evidence: %+v", check)
+		}
+	}
+	merge, err := os.ReadFile(filepath.Join(fixture, "merged"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	revision, body := deployed["revision"], deployed["body"]
+	mu.Unlock()
+	if revision != string(merge) || body != "worker produced this result\n" || git("rev-parse", "dev") != base {
+		t.Fatal("deployment or protected base mismatch")
+	}
+	before, err := os.ReadFile(filepath.Join(fixture, "events"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"worker-pr", "merge", "qa", "deploy", "probe", "acceptance"} {
+		if !strings.Contains(string(before), name+"\n") {
+			t.Fatalf("stage %s never ran: %s", name, before)
+		}
+	}
+	core = start()
+	h.stopCore(core)
+	after, err := os.ReadFile(filepath.Join(fixture, "events"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) || calls.Load() != 2 {
+		t.Fatalf("restart replayed work: %s -> %s; calls=%d", before, after, calls.Load())
+	}
+}

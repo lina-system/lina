@@ -68,7 +68,7 @@ func (r *conversationRuntime) prepareGoalWorkTools(turnID string, bindings map[s
 			}
 			// Identity, execution state, criterion evidence and authority are never
 			// accepted from the model. Later effects are authorized by the driver.
-			goal := work.Goal{ID: turnID + ":" + c.ID, Person: r.person, Agent: r.agent, Summary: in.Outcome, Done: in.Done, Scope: in.Scope, Assumptions: in.Assumptions, Criteria: in.Criteria, ServiceTarget: in.ServiceTarget, NoServiceReason: in.NoServiceReason, Tasks: tasks}
+			goal := work.Goal{ID: turnID + ":" + c.ID, Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: turnID, Summary: in.Outcome, Done: in.Done, Scope: in.Scope, Assumptions: in.Assumptions, Criteria: in.Criteria, ServiceTarget: in.ServiceTarget, NoServiceReason: in.NoServiceReason, Tasks: tasks}
 			if err = runtime.engine.Admit(ctx, goal); err != nil {
 				return loop.Result{ID: c.ID, Code: loop.Invalid, Output: json.RawMessage(`{"code":"work_admission_failed"}`)}
 			}
