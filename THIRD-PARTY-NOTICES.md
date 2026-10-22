@@ -9,7 +9,7 @@ Add an entry when third-party code or other material is included in LINA. Record
 ## github.com/coder/websocket
 
 Source: https://github.com/coder/websocket, version v1.8.15. License: ISC.
-Used without modifications for bounded WebSocket framing and HTTP upgrade.
+Used without modifications for bounded WebSocket framing, HTTP upgrade and the Discord Gateway transport.
 
 Copyright (c) 2025 Coder
 
@@ -26,6 +26,26 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ## Terminal UI behaviour references
+
+[Codex CLI](https://github.com/openai/codex) (Apache-2.0, OpenAI) informs the
+whole-conversation transcript overlay opened with Ctrl+T. No upstream code is
+copied. Source observations and limits are recorded in
+[the TUI reference specification](internal/tui/ui/REFERENCE.md).
+
+[Hermes Agent](https://github.com/NousResearch/hermes-agent) (MIT, copyright
+2025 Nous Research) informs the TUI's complete inline assistant replies and
+paged transcript reading. No upstream code is copied. The source-survey
+observations and limits are recorded in [the TUI reference specification](internal/tui/ui/REFERENCE.md).
+The Hermes Agent license text is included below.
+
+
+Hermes Agent (Nous Research, MIT), revision
+`944c3a434071f43e64b443d033f3eba30c64434c`, is a reference for draft-clearing
+priority and a second Ctrl+C within two seconds. See the
+[observations and differences](internal/tui/ui/REFERENCE.md). LINA implements
+its own client-only confirmation and expiring hint; no upstream code is copied.
+The Hermes copyright and MIT permission notice appear in the Hermes Agent
+section below.
 
 The composer separation and newline keys in LINA's terminal UI independently adapt behaviour
 from these permissive projects. No upstream implementation code is copied or
@@ -1534,3 +1554,37 @@ THE SOFTWARE.
 Source: https://github.com/pjbgf/sha1cd. Version: `v0.7.0`. License: Apache-2.0. Unmodified upstream dependency used by the local records Git adapter.
 
 The Apache License, Version 2.0 is reproduced in [LICENSE](LICENSE).
+
+## Hermes Agent web tools
+
+Source: https://github.com/NousResearch/hermes-agent/tree/81a55437f3f31a9f12a30c53b6c5d49d420898aa. License: MIT.
+
+LINA's Go web tools adapt search metadata, limit normalization, readable page
+extraction, bounded results and missing-provider behavior from `tools/web_tools.py`,
+`tools/web_tools_extract.py`, `tools/web_tools_truncate.py` and the Firecrawl
+provider. The observation record is [web-tools.md](docs/design/web-tools.md).
+No Python implementation or runtime is bundled.
+
+```text
+MIT License
+
+Copyright (c) 2025 Nous Research
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```

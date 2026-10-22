@@ -95,7 +95,7 @@ type API interface {
 
 ## Start, recovery, idle and update
 
-**C-03 Lock, control files, epoch (kept).** Core takes a non-blocking `flock` on `system/core/core.lock`. The files under `system/core/` are the lock, `epoch` (a decimal string, CP-02), `run.sentinel`, `halt.json`, `lifecycle.json` (the restart request) and `main.json` (the main id; no key). Data records are written by temp file, fsync, rename and directory fsync, at mode 0600 in a 0700 directory. The lock is the exception: it is created once and fsynced with its directory, then opened and flocked without replacement or unlinking, so all contenders use the same inode. None is in a backup generation, and a LINA restore preserves them except for clearing the halt latch after verified recovery (C-04, CP-03). A state root on a non-local filesystem is refused. The new epoch is `max(epoch file, highest epoch in canon by read-only peek, peer_seen_max) + 1`, fsynced before canon opens (CP-01). `peer_seen_max` is the highest epoch a peer reported when it refused a stale one. The epoch fence is the first statement of every write transaction. A lower epoch fails `stale_epoch` and latches the writer.
+**C-03 Lock, control files, epoch (kept).** Core takes a non-blocking `flock` on `system/core/core.lock`. The files under `system/core/` are the lock, `epoch` (a decimal string, CP-02), `run.sentinel`, `halt.json`, `lifecycle.json` (the restart request), `update.json` (the update attempt), `update.lock` (updater exclusion) and `main.json` (the main id; no key). Data records are written by temp file, fsync, rename and directory fsync, at mode 0600 in a 0700 directory. The lock is the exception: it is created once and fsynced with its directory, then opened and flocked without replacement or unlinking, so all contenders use the same inode. None is in a backup generation, and a LINA restore preserves them except for clearing the halt latch after verified recovery (C-04, CP-03). A state root on a non-local filesystem is refused. The new epoch is `max(epoch file, highest epoch in canon by read-only peek, peer_seen_max) + 1`, fsynced before canon opens (CP-01). `peer_seen_max` is the highest epoch a peer reported when it refused a stale one. The epoch fence is the first statement of every write transaction. A lower epoch fails `stale_epoch` and latches the writer.
 
 The initial identity and sentinel formats are:
 
@@ -202,7 +202,8 @@ The #149 preparation boundary is `lina update --prepare --state-root <path>
 the download before unpacking, checks every manifest artifact, then runs the
 candidate's `lina core --preflight` through `kit/proc`. Candidate versions live
 under `system/updates/<archive-sha256>`; creation is exclusive and never replaces
-another attempt. A successful candidate gets a durable `prepared.json` receipt.
+another attempt. A successful candidate gets a durable `prepared.json` receipt, including the
+verified manifest digest. Activation rechecks that digest and all copied artifacts.
 The active binaries, service, control records and canon remain unchanged.
 
 `core --preflight --state-root <path> [--manifest <path>]
@@ -229,7 +230,61 @@ Preparation establishes candidate verification, schema relation, peer rows and
 staging space only. Idle and verified-generation remain `unknown` until the
 activation owner supplies a fenced idle observation and a recent verified
 backup. A prepared receipt is not activation authority or a READY receipt.
-The lifecycle swap, smoke and rollback orchestration belongs to #150.
+The #150 activation command is `lina update --activate --state-root <path>
+--candidate <prepared-directory>`. Both binaries must advertise `update_protocol: 1` in preflight; older
+binaries without the durable boot/READY guard are refused before drain. It
+verifies the installed service's exact
+paths and refuses foreign units or drop-ins before controlling it. An independent
+`update.lock` excludes competing updaters and grants no canon authority. Core's
+existing `core.lock` remains the only writer lock. The updater persists its
+attempt before requesting the running Core's explicit drain, waits for durable
+commitment and lock release without forcing active work, and then stops the
+owned service. It takes a new verified generation through the installed old
+binary, verifies the generation/version pair and reruns candidate preflight on
+the stopped store. Release-owned binaries, manifest and adapter files move as
+one recorded composition; the prior directories and failed candidates are kept.
+Settings stay in their installed control records, outside binary replacement.
+
+`update.json` is a schema-1 private atomic control record outside backups. It
+binds the root, normal socket, candidate, previous composition, binary digests,
+generation and phase. Phases are `draining`, `drained`, `snapshot`, `swapping`,
+`starting`, `booting`, `ready`, `complete`, `rollback`, `rolled_back` and `held`.
+It also records the forward-migration flag, a sticky `reached_ready` bit and a
+closed cause. Core checks this record under its writer lock before minting an
+epoch or opening canon. An unfinished attempt refuses ordinary startup with
+`update_held`; a changed root is `update_path_changed`. Only the recorded
+candidate's digest may claim a single `starting` launch on `run/update.sock`.
+Core durably records READY before opening admission. Failure to observe a
+process or a deadline is never evidence that READY was not reached.
+
+Smoke runs that actual candidate on the private update socket, sends one
+conversation request through the client protocol and requires an acknowledged
+input, completed agent answer and finished turn. A bundled Moirai worker runs
+`--preflight`: it reads canon and checks the Core job API's `moirai/1` readiness
+reply without applying a job. User-installed coding tools are untouched. The
+smoke Core drains and exits before `complete` is recorded and the normal service
+is started and checked for readiness. Smoke input and its result remain ordinary
+durable conversation evidence. A missing account or failed provider fails smoke.
+The trusted candidate Core launch preserves the explicitly configured
+`CLAUDE_CODE_OAUTH_TOKEN` in addition to the filtered environment; this exception
+does not admit other filtered provider variables. Core captures that credential
+in its Claude model adapter and removes it from the process environment before
+boot captures worker environments. Tool filtering and the smoke worker's empty
+environment remain unchanged. Credential values never enter logs, update
+receipts or diagnostics.
+
+Automatic rollback is allowed only before READY and when no forward schema
+migration may have begun. It restores the kept composition and its independently
+verified generation using the old binary's own restore command and schema
+catalog. Rename recovery is repeatable at every component boundary, including
+when an adapter was absent in the old composition. After READY, or after a
+possibly irreversible migration, failures preserve the current data in a hold;
+they never restore the old snapshot. `lina update --resume --state-root <path>`
+resolves an interrupted pre-READY attempt or retains that hold. Closed causes
+include interrupted update, changed path, invalid candidate, snapshot/pair,
+swap, startup, smoke, resume, rollback, disk-full and irreversible-migration
+failures. If a record cannot be durably advanced, its prior unfinished phase
+still fences ordinary Core startup.
 
 ## Client service
 
@@ -685,7 +740,7 @@ Only a built-in sandbox network request offers always allow. It creates a standi
 
 **C-14 Sandbox (changed).** The sandbox is that of [runtime.md](runtime.md#sandbox), invoked through `kit/sandbox`, with the seccomp program compiled per architecture at build. The probe runs at start and before the first call; if the sandbox is unusable, shell and file tools turn off with a cause and conversation continues.
 
-The startup coordinator creates the workspace and protected state directories while holding the root lock, composes a Core-owned `kit/proc` owner and probes the wrapper after reconciliation and before READY. The startup snapshot carries availability and a stable cause; the shell/file service receives that same wrapper, including its first-call recheck. Failure reports `shell_file_tools_unsupported` privately and publishes `connected.shell_file_tools_available=false` on the core topic for one localized TUI setup notice. It never prevents the client handshake or enables an unsandboxed fallback. Reverse shutdown closes process admission and kills and joins owned commands. The #50 acceptance canary checks canon, secrets, material revisions, symlink aliases, the client socket and its hard-link aliases with network both blocked and authorized; `e2e/m1/sandbox.json` covers a missing or failing launcher with a live real Core and TUI. That scenario uses connection-only boot and establishes client-service continuity. The configured conversation route and its installed-Core reply proof are specified in [host-protocol.md](host-protocol.md#conversation-payloads).
+The startup coordinator creates the workspace and protected state directories while holding the root lock, composes a Core-owned `kit/proc` owner and probes the wrapper after reconciliation and before READY. The startup snapshot carries availability and a stable cause; the shell/file service receives that same wrapper, including its first-call recheck. Failure reports `shell_file_tools_unsupported` privately and publishes `connected.shell_file_tools_available=false` on the core topic for one localized TUI setup notice. It never prevents the client handshake or enables an unsandboxed fallback. Reverse shutdown closes process admission and kills and joins owned commands. The #50 acceptance canary checks canon, secrets, material revisions, symlink aliases, the client socket and its hard-link aliases with network both blocked and authorized; `e2e/m1/sandbox.json` covers a missing or failing launcher with production Core composition over installed state and the installed TUI. Each case submits a TUI message through the configured conversation route, receives a scripted provider reply, waits for turn completion and recovers the reply after reopening the TUI without another model call. It also checks the stable sandbox-failure cause and localized setup notices. The configured conversation route and its installed-Core reply proof are specified in [host-protocol.md](host-protocol.md#conversation-payloads).
 
 Linux process ownership uses the explicit per-command `proc-supervise` helper with `PR_SET_CHILD_SUBREAPER`. It kills and waits for the whole descendant tree, including `setsid`/`setpgid` escapes and orphans, before returning. The tests cover owner shutdown, cancellation, normal leader exit and owner process death. macOS first kills the process group, then scans same-user processes for an inherited owner token using `KERN_PROCARGS2`. This macOS cleanup is best effort: a child that clears its environment can escape, and this remaining limitation is not accepted as complete unescapable supervision.
 
@@ -926,7 +981,7 @@ Persona growth uses `agents.AdoptGrowthTx` inside the Core job service's fenced 
 
 The main's `skill-maintenance` planning job snapshots user-created skill bundles and asks Core's auxiliary model path for pruning and near-duplicate merging decisions, without persona or tools. A stale procedure needs content evidence of retirement or replacement; age or non-use alone is insufficient. Core checks the exact cached model result against the queued IDs and revisions before adoption. Changed inputs and undone operations are consumed without another write or notice. Unchanged snapshots are not scheduled again; an unstarted pending snapshot may be refreshed, but a reserved model call is never replaced or replayed. Initial policy (P) is hourly, with a one-minute timeout, 8,192 tokens reserved per call and a 131,072-token allowance; unknown usage retains its reservation. Ordinary job payload limits apply. An oversized catalog cannot dispatch and does not block conversation.
 
-A prune archives its active entry. A merge writes the target and archives every source in one fenced transaction with the job watermark and receipt, using the ordinary immutable Git version writer. All affected revisions must still match. A single existing `undo_skill` handle restores every member atomically as new revisions, refusing if any member has changed. The store remembers the rejected operation by kind, member IDs and input content hashes, so changing the merge destination, generated wording or reason cannot repeat an undone merge. Rejected merged output hashes also use ordinary skill suppression. Built-in IDs are excluded even when locally patched. Migration 32 adds operation membership and a durable notice outbox, preserving the published work-waiting schema at version 28, records search at version 29, merge authority at version 30, worker dispatch at version 31 and all earlier migrations.
+A prune archives its active entry. A merge writes the target and archives every source in one fenced transaction with the job watermark and receipt, using the ordinary immutable Git version writer. All affected revisions must still match. A single existing `undo_skill` handle restores every member atomically as new revisions, refusing if any member has changed. The store remembers the rejected operation by kind, member IDs and input content hashes, so changing the merge destination, generated wording or reason cannot repeat an undone merge. Rejected merged output hashes also use ordinary skill suppression. Built-in IDs are excluded even when locally patched. Migration 33 adds operation membership and a durable notice outbox, preserving the published work-waiting schema at version 28, records search at version 29, merge authority at version 30, worker dispatch at version 31, Discord at version 32 and all earlier migrations.
 
 Installed Core registers this job on its shared `run/jobs.sock`, queues changes on skill writes and restart, and retries notice delivery and scheduling each minute. `skill_notices` returns the committed one-line notices and undo handles; Core also projects the notices into conversation history independently of a model reply. `skill_maintenance` reads the policy or changes its durable enablement when the person asks. Disabling skill suggestions stops background adoption and automatic conversation skill writes; undo remains available. An included worker is enabled by install and uses that same socket. `e2e/m2/skill-maintenance.json` exercises the installed Core, actual worker process and synthetic provider through pruning, merging, notices, grouped undo and restart suppression.
 
@@ -1028,9 +1083,43 @@ committed pairing and binding scope. Disconnect joins the poller, revokes bindin
 and pairing, blocks pending outbound work and removes the credential, retaining
 ownership and delivery receipts so reconnect cannot transfer ownership or replay
 old input. Core shutdown joins pollers before closing their stores. Ordinary
-bound channel messages remain in the durable gateway inbox; channel turn execution
-and outbound reply scheduling attach through their owning flows.
+bound owner messages enter the durable gateway inbox; the channel worker drains
+them through the existing turn execution and outbound queue.
 
+
+#147 adds `gateway/discord` behind the same adapter boundary and boots one
+outbound Gateway session per saved Discord bot. Its `coder/websocket` transport
+is pinned at v1.8.15; REST calls use the fixed Discord v10 origin without redirects
+or automatic effect retries. The shared catalog appends Discord presentations
+and pending buttons plus consumed channel steering at migration 32, leaving migrations 1–31 unchanged.
+The optional channel control `platform` field defaults to Telegram. Discord
+connection verifies the bot identity before replacing its credential or worker.
+
+The channel worker now drains committed owner inbox rows into the existing turn
+lanes. Private owner inputs use the shared main conversation and admission/steering
+coordinator; shared chats retain their separate conversation. Admission never
+waits for a running turn or outbound HTTP call. Consumed channel steering is
+marked durably before the next model request so restart cannot turn it into
+another turn. Channel ledger events retain platform/chat provenance and binding scope;
+the same model, tool and background-run services execute the work. A completed
+reply and a landed background artifact are projected once into the channel
+ledger and shaped for the existing durable outbound queue. Restart finds the
+same inbox/turn/queue identities. It cannot repeat a started model turn or an
+uncertain send. Scoped runners retain the original inbound address and resolve
+its current effective binding before model dispatch and tool execution, including
+new thread overrides of a parent fallback. Background delivery projections keep
+`EntryBackgroundNotice` and `background_notice` provenance; queue validation
+recognizes those committed events without promoting them to agent history.
+No channel stream publishes provisional deltas. Controls expose
+permanent delivery failure as the binding's unreachable flag.
+
+Discord approval presentations are Core-computed, with once/deny components.
+A live private tools binding supplies local surface availability, and an
+independent presentation worker does not hold the turn lane. Interaction
+receipt, token-free pending inbox and session cursor commit together. Recovery
+rechecks current owner pairing, binding, epoch and the original platform
+presentation before answering authority. Foreign presses and duplicate native
+interaction IDs cannot alter that decision or edit its message.
 
 The Telegram adapter uses the pinned `gotgbot/v2` client for individual API calls;
 LINA owns the polling loop. Construction is local and starts no platform request.
@@ -1074,7 +1163,7 @@ Connections start denied. Pairing uses a random 128-bit code, stores only its SH
 
 The outbound queue retains the ledger reference and adapter-shaped parts. It requires a committed agent ledger event for the bound agent and conversation, and verifies the current pairing, binding and an admitted reply source, or explicit may-start scope, and serializes sends across topics within a bot/chat. A hard lease encloses a durable `sending` claim, one network call, and settlement. Each claim has a monotonic attempt number. Only an explicit refusal before delivery makes a part retryable at its persisted retry-after time; successfully sent parts are not repeated. Missing or ambiguous outcomes, transport errors, and `sending` rows found after fencing the old epoch become terminal `unknown`. A blocked chat marks all its bindings unreachable and stops its pending sends. The caller runs queue recovery once before starting adapters.
 
-Package scenarios use real canon and SIGKILL barriers before admission commit, after commit and during a send. This increment adds no TUI or Core-protocol operation; platform pollers, credentials, channel approval interactions, live turn composition and app delivery views attach in their owning increments. No channel scenario can yet be driven through the #34 protocol harness.
+Package scenarios use real canon and SIGKILL barriers before admission commit, after commit and during a send. The #96 completion scenario, `e2e/m1/telegram.json`, reopens a saved connection and its secret through production boot with only the platform HTTP transport replaced. It holds the bot identity lookup until shutdown, verifies READY and the unavailable connection through the channel protocol, and requires Core to cancel and join the request before stopping. It does not install a separate canon service or start its own adapter. Live channel turn composition and app delivery views attach in their owning flows.
 
 **C-25 Agent exchanges (changed).** Client agent selection addresses an existing agent id in the one Core; it starts no exchange and creates no per-agent engine. Management uses the existing agent store and shared conversation flow ([T-14](tui.md#memory-and-agent-command-requests)). Contract: [conversation-and-memory.md](conversation-and-memory.md#agent-exchanges).
 

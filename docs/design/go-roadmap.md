@@ -97,7 +97,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-07 Sandbox, tool executor and trash.** Sandbox wrapper, network ask, file tools, recoverable deletion.
 - Done when: the start probe passes or shell and file tools turn off with a cause while conversation continues; a canary cannot read canon, secrets or the client socket; network waits for once, always allow or deny; a patch with stale context fails; a trash delete restores identical bytes.
 - Depends on: G1-02, G1-05, G1-06. Design refs: C-14; [runtime.md](runtime.md#sandbox).
-- #50 and #51 supply the wrapper and executor. Acceptance uses `kit/sandbox` and `internal/core/boot` for startup and protected-path canaries, `internal/core/exec` for real sandboxed network approvals and patch/trash execution, and `kit/tools` for stale-context refusal and byte-identical recovery after reopening the version store. The strengthened `e2e/m1/sandbox.json` scenario proves a completed installed-Core/TUI exchange and recovered history with either a missing launcher or a failed probe.
+- #50 and #51 supply the wrapper and executor. Acceptance uses `kit/sandbox` and `internal/core/boot` for startup and protected-path canaries, `internal/core/exec` for real sandboxed network approvals and patch/trash execution, and `kit/tools` for stale-context refusal and byte-identical recovery after reopening the version store. The strengthened `e2e/m1/sandbox.json` scenario proves a completed exchange through production Core composition over installed state and the installed TUI, plus recovered history with either a missing launcher or a failed probe.
 
 ### 1.C Model path, accounts and loop
 
@@ -251,6 +251,7 @@ The staged increment (#117) supplies registered SQLite mapping, per-conversation
 - Depends on: G1-06, G1-11, G1-12, G1-18, G1-29. Design refs: C-27; [integrations.md](integrations.md#channels).
 - #97 implements the gateway adapter contract, owner pairing, dispatch scope, atomic inbox/cursor admission and durable per-chat outbound queue. Real canon scenarios use SIGKILL at admission and send boundaries, prove no duplicate dispatch or uncertain resend, and exercise pairing, retry-after and agent-deletion binding removal. There is no channel TUI/protocol endpoint in this increment; Telegram transport, credential wiring and approval interactions remain separate work.
 - #98 adds Telegram long polling, secret-store token injection, current-owner approval interactions, and the adapter's send/edit/file boundary. Package tests cover masked inbox and ledger input, child environment isolation and non-owner/foreign-bot rejection. `e2e/m1/telegram.json` exercises real Core startup and socket requests while the platform transport is unreachable. These checks use synthetic credentials; live account setup and public channel settings are not established by this adapter increment.
+- #96 completes the gateway acceptance evidence using the existing #97/#98 package scenarios and production boot in `e2e/m1/telegram.json`. A saved bot connection and secret are reopened without a model route; a blocked identity lookup cannot delay READY or the socket's unavailable-channel projection, and shutdown joins the request. The earlier custom canon/reconcile fixture is no longer used. Live Telegram account setup remains outside this synthetic verification.
 
 **G1-26 Agent exchanges.** Mailbox, typed hand-off, round limit, one-line log, needs-person flag.
 - Done when: a request delivers once across `kill -9`; an acknowledgement ends the exchange without a model turn; no exchange message enters a person's conversation as a person turn; an exchange turn reads no personal knowledge; the flag is set only when the person owns the decision.
@@ -390,6 +391,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 - Depends on: G1-18, G1-21, G1-35, G2-02, G2-23. Design refs: C-55; [surfaces.md](surfaces.md#progress-at-a-glance).
 
 **G2-21 Discord adapter.** Gateway adapter with interactions and buttons.
+- Implemented by #147 through the shared gateway and running Core. `e2e/m2/discord.json` exercises pairing, duplicate interactions, real tool/background execution with synthetic endpoints, paragraph splits, unreachable bindings and restart; adapter tests cover owner-only buttons. Live Discord account validation remains separate.
 - Done when: a repeated interaction is handled once; a press by anyone but the paired owner changes nothing; text over 2,000 characters splits on paragraph boundaries; a blocked chat marks the binding unreachable.
 - Depends on: G1-25. Design refs: C-27; [integrations.md](integrations.md#channels).
 
@@ -397,7 +399,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 
 **G2-14 Update flow with rollback.** Digest, preflight, gate cells, lifecycle record, swap, rollback.
 - Done when: each failure injection of runtime.md leaves the previous composition running or the install held with a closed cause; an old binary against a newer store leaves the store byte-identical.
-- Preparation (#149) verifies a frozen release archive, stages an exclusive version directory and runs the candidate Core's lock-free, non-mutating schema/peer preflight. Six explicit gate cells fail closed on missing evidence; idle and a verified generation are supplied by the activation owner. Headless M2 tests exercise the live Core, candidate process, digest/peer refusals and a newer schema in both database and WAL. Lifecycle swap, smoke and rollback remain #150.
+- Preparation (#149) verifies a frozen release archive, stages an exclusive version directory and runs the candidate Core's lock-free, non-mutating schema/peer preflight. Six explicit gate cells fail closed on missing evidence; idle and a verified generation are supplied by the activation owner. Headless M2 tests exercise the live Core, candidate process, digest/peer refusals and a newer schema in both database and WAL. #150 wires the installed activation and resume commands into Core's drain, durable boot/READY guard, snapshot, composition swap and rollback. The M2 activation scenario uses real Core and worker processes, verifies a resumed tool result, and covers start failure, provider failure and updater death. Package tests cover ENOSPC, changed paths, compatible-pair checks and process death at every binary/adapter rename. Automatic rollback stops at READY or a potentially irreversible migration.
 - Depends on: G1-22, G1-23, G1-24. Design refs: C-38; [runtime.md](runtime.md#updates).
 
 **G2-15 Phase 2 acceptance run.** Run script and evidence record for LINA 2.

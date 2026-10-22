@@ -43,3 +43,10 @@ func serviceUnit(description, dependencies string, args []string, binary, root, 
 	}
 	return "# SPDX-License-Identifier: Apache-2.0\n[Unit]\nDescription=" + description + "\n" + dependencies + "\n[Service]\nType=simple\nExecStart=" + strings.Join(args, " ") + "\nUMask=0077\nRestart=on-failure\nRestartPreventExitStatus=69 78\n\n[Install]\nWantedBy=default.target\n", nil
 }
+
+// MatchesCoreUnit checks the exact installed service paths before an updater
+// controls a unit. A custom service must be updated by its owner.
+func MatchesCoreUnit(contents, root, socket string) bool {
+	expected, err := coreUnit(filepath.Join(root, "system/bin/lina"), root, socket)
+	return err == nil && contents == expected
+}

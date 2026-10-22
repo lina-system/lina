@@ -1,0 +1,4 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "cases": ["success", "before-ready", "after-ready", "killed-after-ready"]
+}
