@@ -39,6 +39,8 @@ type workerRuntime struct {
 	sessions map[string]*workerSession
 }
 type workerSession struct {
+	ownerControl    sync.Mutex
+	ownerRequests   map[string]string
 	reservation     string
 	reservationTurn string
 	adapter         worker.Adapter

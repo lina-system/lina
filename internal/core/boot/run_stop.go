@@ -16,12 +16,13 @@ func (r *conversationRuntime) stopRun(ctx context.Context, s clientsrv.Session, 
 	if request.RunID == nil || *request.RunID == "" {
 		return clientsrv.Result{}, malformedManagement()
 	}
-	if r.background == nil {
-		return clientsrv.Result{}, &clientsrv.OperationError{Code: protocol.ErrorUnavailable}
+	if workerReference(*request.RunID) {
+		err := r.ownerWorkerControl(ctx, s, *request.RunID, request.ConversationID, e.MessageID, "")
+		return clientsrv.Result{Kind: protocol.KindStopResult, Effect: protocol.EffectApplied, Payload: protocol.StopResult{RunID: *request.RunID, Outcome: protocol.StopOutcomeRequested}}, err
 	}
-	record, err := r.background.service.Get(ctx, *request.RunID)
-	if err != nil || record.Origin.Person != s.PersonID {
-		return clientsrv.Result{}, outsideManagement()
+	record, err := r.controlledRun(ctx, s, *request.RunID, request.ConversationID)
+	if err != nil {
+		return clientsrv.Result{}, err
 	}
 	if err := r.background.service.Stop(ctx, record.ID); err != nil {
 		return clientsrv.Result{}, err

@@ -3,13 +3,13 @@ package canon
 
 import "testing"
 
-func TestBackupFromWorkEngineUpgradesSwitchSchema(t *testing.T) {
+func TestBackupFromPublishedSchemaUpgradesSwitchSchema(t *testing.T) {
 	cfg := storeConfig(t)
 	all := Migrations()
-	if len(all) < 38 || all[35].Version != 36 || all[35].SQL != skillMaintenanceSchema || all[36].Version != 37 || all[36].SQL != workEngineSchema || all[37].Version != 38 || all[37].SQL != WorkSwitchSchema {
-		t.Fatal("switch migration must follow published skill maintenance 36 and work engine 37")
+	if len(all) < 39 || all[35].Version != 36 || all[35].SQL != skillMaintenanceSchema || all[36].Version != 37 || all[36].SQL != workEngineSchema || all[37].Version != 38 || all[37].SQL != recordsTodoSchema || all[38].Version != 39 || all[38].SQL != WorkSwitchSchema {
+		t.Fatal("switch migration must follow published skill maintenance 36, work engine 37 and records todo 38")
 	}
-	cfg.Migrations = all[:37]
+	cfg.Migrations = all[:38]
 	source := openStore(t, cfg)
 	if err := source.Write(t.Context(), func(tx *Tx) error {
 		_, err := tx.ExecContext(t.Context(), `INSERT INTO skill_maintenance VALUES('operation',1,'preserved','merge',0);

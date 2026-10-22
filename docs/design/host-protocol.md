@@ -603,3 +603,19 @@ revision reference from display data: kind, sentence, context, recommendation,
 agent name, choices, free-text flag, effort and due instant. References are not
 rendered. Answers to existing approvals and questions continue through their
 original authenticated protocols; reading a waiting row grants no authority.
+
+The `progress` capability also serves `progress_digest_get` with optional `order`
+(`priority` or `lightest`). `progress_digest` returns `lines` (at most five),
+`total`, `more` and `link`; counts do not occupy display rows.
+
+The `running` capability serves `stop` (`run_id`, optional `conversation_id`),
+`follow_up` (`run_id`, `text`, optional `conversation_id`) and `multi_task_control`
+(`action: stop_all`, optional `conversation_id`). Follow-up replies with the same
+payload after queueing; stop-all replies with its affected `count`. A request
+must not supply `count`. The conversation, when supplied, restricts every target;
+all targets still require the authenticated person. A live worker uses
+`session:<thread>`; a delegated card uses the existing `task:<task>:<generation>`
+running reference. Worker stop replies use `stop_result.outcome: requested`;
+background stops retain their terminal outcome. Acknowledgement never verifies
+work completion. Empty/malformed requests are refused and no control is inferred
+from forwarded channel text.

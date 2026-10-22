@@ -79,6 +79,7 @@ func indexDump(t *testing.T, db Canon) string {
 			"SELECT gram,id FROM records_korean_bigram ORDER BY gram,id",
 			"SELECT source,relation,target FROM records_edges ORDER BY source,relation,target",
 			"SELECT head FROM records_index_state",
+			"SELECT id,fields,when_value,deadline,repeat_next FROM records_todo ORDER BY id",
 		} {
 			rs, err := tx.QueryContext(t.Context(), query)
 			if err != nil {
