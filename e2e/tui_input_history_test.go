@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/internal/tui/render"
 	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"github.com/thisisjun786/lina/kit/protocol"
@@ -72,13 +73,13 @@ func TestM1TUIInputHistory(t *testing.T) {
 	// The real channel overlay receives the synthetic token. Cancel before
 	// connecting: this test requires no external platform or credential.
 	h.keys(terminal, "/channels\r")
-	waitScreen(t, h, terminal, "c Connect")
+	waitScreen(t, h, terminal, design.Text(design.English, "channel.help"))
 	h.keys(terminal, "c")
-	waitScreen(t, h, terminal, "bot token")
+	waitScreen(t, h, terminal, design.Text(design.English, "channel.token"))
 	h.keys(terminal, scenario.Token)
 	waitScreen(t, h, terminal, strings.Repeat("*", len(scenario.Token)))
 	h.keys(terminal, "\x1b")
-	waitScreen(t, h, terminal, "c Connect")
+	waitScreen(t, h, terminal, design.Text(design.English, "channel.help"))
 	h.keys(terminal, "\x1b")
 	waitHistoryComposer(t, h, terminal, "", 32)
 	h.keys(terminal, scenario.Draft)
@@ -131,7 +132,7 @@ func waitHistoryComposer(t *testing.T, h *harness, terminal *terminal, text stri
 		}
 		line := screenRows(s)[row]
 		if text == "" {
-			return strings.HasPrefix(line, "› Talk to LINA") && s.CursorX == 2
+			return line == "› "+design.Text(design.English, "composer.placeholder") && s.CursorX == 2
 		}
 		return strings.TrimPrefix(strings.TrimPrefix(line, "› "), "  ") == text && s.CursorX == 2+(render.Unicode{}).Width(text)
 	})
