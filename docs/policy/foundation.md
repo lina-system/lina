@@ -30,7 +30,7 @@ selection ----+---- docs --------+---- gate
               +---- components --+
 ```
 
-Everything runs in one process. `selection` records the exact base and candidate commits, the changed paths, the selected checks and the selection reason. It also checks Git whitespace errors: `git diff --check` over the range, or `git show --check` on the `HEAD` commit with `--full`. The selected checks run in parallel after selection. The gate only evaluates their results; it never reruns their commands. Each check has a bounded timeout. Go build, vet, analyzer and whole-module test commands share the remaining components budget described below; `go test -timeout=6m` also bounds package execution and emits stuck-test stack traces when that deadline is reached. This accommodates subprocess acceptance builds under concurrent cold-cache CI verification without changing individual test operation deadlines. The enclosing components check remains bounded at twenty minutes. The growing headless acceptance corpus is enumerated per package and executed in three disjoint batches of top-level tests, examples and fuzz seed tests. All batches run uncached with the same six-minute diagnostic timeout and share the twenty-minute components budget; individual operation and scenario deadlines are unchanged. Each enumerated test runs exactly once, with its subtests. Independent acceptance scenarios run in parallel with `-parallel=4`, bounding Core and PTY subprocess concurrency independently of host CPU count. Same-bot Telegram scenarios, the Claude credential update scenario, environment-mutating tests, live-provider checks and subprocess entry points remain serial. The command-build cache is shared under a lock and cleaned after all scenarios have finished. An enumeration or batch failure fails the gate immediately.
+Everything runs in one process. `selection` records the exact base and candidate commits, the changed paths, the selected checks and the selection reason. It also checks Git whitespace errors: `git diff --check` over the range, or `git show --check` on the `HEAD` commit with `--full`. The selected checks run in parallel after selection. The gate only evaluates their results; it never reruns their commands. Each check has a bounded timeout. Go build, vet, analyzer and whole-module test commands share the remaining components budget described below; `go test -timeout=6m` also bounds package execution and emits stuck-test stack traces when that deadline is reached. This accommodates subprocess acceptance builds under concurrent cold-cache CI verification without changing individual test operation deadlines. The enclosing components check remains bounded at twenty minutes. The growing headless acceptance corpus is enumerated per package and executed in three disjoint batches of top-level tests, examples and fuzz seed tests. All batches run uncached with the same six-minute diagnostic timeout and share the same twenty-minute components budget; individual operation and scenario deadlines are unchanged. Each enumerated test runs exactly once, with its subtests. Independent acceptance scenarios run in parallel with `-parallel=4`, bounding Core and PTY subprocess concurrency independently of host CPU count. Same-bot Telegram scenarios, the Claude credential update scenario, environment-mutating tests, live-provider checks and subprocess entry points remain serial. The command-build cache is shared under a lock and cleaned after all scenarios have finished. An enumeration or batch failure fails the gate immediately.
 
 ## Evidence
 
@@ -44,7 +44,7 @@ The executable path map is `scripts/verify/scope.mjs`.
 
 | Change | Selection |
 | --- | --- |
-| Only explicitly listed root documents, Markdown directly under `docs/policy/` or `docs/design/`, or JSON and Markdown records under `evidence/` | `docs`; no automation installation or test run. |
+| Only explicitly listed root documents, Markdown directly under `docs/policy/`, `docs/design/` or `docs/research/`, or JSON and Markdown records under `evidence/` | `docs`; no automation installation or test run. |
 | A verification script, `.github/workflows/*.yml` or `*.yaml`, `.node-version`, or shared repository configuration | `docs`, `automation`, and every registered Go component. |
 | Empty or unavailable diff | `docs`, `automation`, and every registered Go component; never assume documentation-only. |
 | An unmapped path in the changed paths or candidate tree | `docs`, `automation`, and every registered Go component, but the gate refuses to pass until its verification is registered. |
@@ -242,7 +242,31 @@ fail the check. The root and adapter npm projects have independent lockfiles.
 PR #523's [CI run 39785658738](https://github.com/thisisjun786/lina/actions/runs/39785658738)
 reached the six-minute package limit while the current TUI lifecycle scenario
 had run for two seconds. That branch initially used a ten-minute package diagnostic deadline. The
-acceptance batching from #127 covered that growing corpus with two disjoint
-six-minute batches inside the then-current fifteen-minute shared components budget.
+acceptance batching from #127 now covers that growing corpus with three disjoint
+six-minute batches inside the shared components budget described above.
 Individual operation deadlines and acceptance assertions remain in force;
 timeout or missing observations still fail verification.
+
+On PR #569, [CI run 39831123978](https://github.com/thisisjun786/lina/actions/runs/39831123978)
+passed its first acceptance batch in 245.6 seconds, then reached the second
+batch's six-minute diagnostic deadline during `TestM2UpdateDataOperations`;
+the current `slow-backup` subtest had run for 24 seconds. No assertion failed.
+Components used 800.9 seconds of the existing 895-second command budget.
+Acceptance now uses three disjoint batches to leave room for uneven scenario
+durations, preserving every test, example and fuzz seed exactly once. A virtual
+clock regression models a 400-second group of long scenarios alongside shorter
+ones and requires the full corpus to finish under the unchanged package and
+shared deadlines.
+
+The next [CI run 39834045143](https://github.com/thisisjun786/lina/actions/runs/39834045143)
+passed the first two batches in 251.7 and 234.3 seconds. Cold setup, builds,
+analysis and ordinary tests had already consumed about 300 seconds, so the
+895-second command budget left only 103.9 seconds for the final batch and
+interrupted it before its own six-minute diagnostic deadline. No assertion
+failed. The shared command budget is now 1195 seconds within a 1200-second
+outer guard, retaining the five-second cleanup reserve and every individual
+operation limit. A virtual-clock regression requires 300 seconds of setup
+plus batches of 252, 234 and 300 seconds to finish in the same shared budget;
+the existing exhausted-budget and hung-command regressions still require failure.
+The GitHub job allows 25 minutes so checkout, tool setup and post-job cleanup
+have room around that 20-minute component guard.

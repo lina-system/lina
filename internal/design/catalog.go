@@ -103,6 +103,10 @@ var catalog = map[string]translation{
 	"success":                          {"Succeeded", "성공"},
 	"failure":                          {"Failed", "실패"},
 
+	"tool.running":               {"running", "실행 중"},
+	"tool.ok":                    {"ok", "성공"},
+	"tool.failed":                {"failed", "실패"},
+	"tool.more":                  {"+%d lines", "+%d줄"},
 	"notice.run_effect_question": {"How should the remaining actions proceed? Reads and analysis can continue; further actions need a separate authorized decision, and any unknown earlier outcome must be checked first.", "남은 작업을 어떻게 진행할까요? 읽기와 분석은 계속할 수 있어요. 추가 실행에는 별도의 승인된 결정이 필요하며, 이전 실행의 결과가 불확실하다면 먼저 확인해야 해요."},
 	"notice.run_input_needed":    {"Your input is needed before this background work can continue.", "이 백그라운드 작업을 계속하려면 응답이 필요해요."},
 
@@ -291,6 +295,7 @@ var catalog = map[string]translation{
 	"progress_digest":            {"Progress summary", "진척 요약"},
 	"waiting_get":                {"Show waiting decisions", "기다리는 결정 보기"},
 	"waiting":                    {"Waiting for me", "내 결정 대기"},
+	"waiting.empty":              {"nothing to decide now", "지금 결정할 일이 없어요"},
 	"waiting_update":             {"Waiting decisions updated", "대기 중인 결정 업데이트"},
 	"waiting_answer":             {"Decision", "결정"},
 	"details_get":                {"Open details", "자세히 보기"},

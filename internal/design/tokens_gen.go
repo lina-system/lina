@@ -35,6 +35,9 @@ type Tokens struct {
 	GlyphAsciiRetrying            string
 	GlyphAsciiRule                string
 	GlyphAsciiStopped             string
+	GlyphAsciiToolFailed          string
+	GlyphAsciiToolOk              string
+	GlyphAsciiToolRunning         string
 	GlyphAsciiUnknown             string
 	GlyphAsciiWaiting             string
 	GlyphUnicodeAction            string
@@ -53,6 +56,9 @@ type Tokens struct {
 	GlyphUnicodeRetrying          string
 	GlyphUnicodeRule              string
 	GlyphUnicodeStopped           string
+	GlyphUnicodeToolFailed        string
+	GlyphUnicodeToolOk            string
+	GlyphUnicodeToolRunning       string
 	GlyphUnicodeUnknown           string
 	GlyphUnicodeWaiting           string
 	IconSize                      Dimension
@@ -97,6 +103,9 @@ func Light() Tokens {
 		GlyphAsciiRetrying:            ">",
 		GlyphAsciiRule:                "-",
 		GlyphAsciiStopped:             "o",
+		GlyphAsciiToolFailed:          "x",
+		GlyphAsciiToolOk:              "+",
+		GlyphAsciiToolRunning:         "~",
 		GlyphAsciiUnknown:             "?",
 		GlyphAsciiWaiting:             "?",
 		GlyphUnicodeAction:            "›",
@@ -115,6 +124,9 @@ func Light() Tokens {
 		GlyphUnicodeRetrying:          "↗",
 		GlyphUnicodeRule:              "─",
 		GlyphUnicodeStopped:           "○",
+		GlyphUnicodeToolFailed:        "×",
+		GlyphUnicodeToolOk:            "✓",
+		GlyphUnicodeToolRunning:       "◐",
 		GlyphUnicodeUnknown:           "?",
 		GlyphUnicodeWaiting:           "?",
 		IconSize:                      Dimension{PX: 20, Cells: 0},
@@ -160,6 +172,9 @@ func Dark() Tokens {
 		GlyphAsciiRetrying:            ">",
 		GlyphAsciiRule:                "-",
 		GlyphAsciiStopped:             "o",
+		GlyphAsciiToolFailed:          "x",
+		GlyphAsciiToolOk:              "+",
+		GlyphAsciiToolRunning:         "~",
 		GlyphAsciiUnknown:             "?",
 		GlyphAsciiWaiting:             "?",
 		GlyphUnicodeAction:            "›",
@@ -178,6 +193,9 @@ func Dark() Tokens {
 		GlyphUnicodeRetrying:          "↗",
 		GlyphUnicodeRule:              "─",
 		GlyphUnicodeStopped:           "○",
+		GlyphUnicodeToolFailed:        "×",
+		GlyphUnicodeToolOk:            "✓",
+		GlyphUnicodeToolRunning:       "◐",
 		GlyphUnicodeUnknown:           "?",
 		GlyphUnicodeWaiting:           "?",
 		IconSize:                      Dimension{PX: 20, Cells: 0},
@@ -223,6 +241,9 @@ func HighContrast() Tokens {
 		GlyphAsciiRetrying:            ">",
 		GlyphAsciiRule:                "-",
 		GlyphAsciiStopped:             "o",
+		GlyphAsciiToolFailed:          "x",
+		GlyphAsciiToolOk:              "+",
+		GlyphAsciiToolRunning:         "~",
 		GlyphAsciiUnknown:             "?",
 		GlyphAsciiWaiting:             "?",
 		GlyphUnicodeAction:            "›",
@@ -241,6 +262,9 @@ func HighContrast() Tokens {
 		GlyphUnicodeRetrying:          "↗",
 		GlyphUnicodeRule:              "─",
 		GlyphUnicodeStopped:           "○",
+		GlyphUnicodeToolFailed:        "×",
+		GlyphUnicodeToolOk:            "✓",
+		GlyphUnicodeToolRunning:       "◐",
 		GlyphUnicodeUnknown:           "?",
 		GlyphUnicodeWaiting:           "?",
 		IconSize:                      Dimension{PX: 20, Cells: 0},

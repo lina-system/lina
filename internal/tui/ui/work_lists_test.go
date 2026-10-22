@@ -111,6 +111,60 @@ func TestWorkListsAppearAndDisappearWithSnapshots(t *testing.T) {
 	}
 }
 
+func TestWaitingPagerEmptyState(t *testing.T) {
+	for _, language := range []design.Language{design.English, design.Korean} {
+		t.Run(string(language), func(t *testing.T) {
+			m := newShell(Options{Width: 100, Profile: Monochrome, Language: language}, time.Now)
+			m.Update(shellData{Generation: 1, Message: workListWelcome(t, "conversation", "waiting", "running", "progress")})
+			m.Update(shellConnection{Generation: 1, Status: ConnectionStatus{State: Live}})
+			m.Update(tea.PasteMsg{Content: "KEEP-DRAFT"})
+			for _, populated := range []bool{false, true, false} {
+				snapshot := state.Snapshot{Epoch: "42", Revocation: "1", Topic: "waiting", Cursor: m.content.Topics["waiting"].Cursor + 1}
+				if populated {
+					snapshot.Items = []state.Block{{ID: "first", Text: "FIRST-DECISION", Done: true}, {ID: "second", Text: "SECOND-DECISION", Done: true}}
+				}
+				m.Update(shellData{Generation: 1, Message: snapshot})
+				for range 2 {
+					m.Update(tea.KeyPressMsg{Code: 'w', Mod: tea.ModCtrl})
+					if !m.conversation.pager.open || m.conversation.pager.text == "" {
+						t.Fatal("Waiting for me opened a blank pager")
+					}
+					empty, ok := design.Lookup(language, "waiting.empty")
+					if !ok || empty == "" {
+						t.Fatal("missing localized waiting empty state")
+					}
+					view := m.View().Content
+					if populated {
+						first, second := strings.Index(view, "FIRST-DECISION"), strings.Index(view, "SECOND-DECISION")
+						if first < 0 || second < first || strings.Contains(view, empty) {
+							t.Fatalf("populated pager lost Core order or showed empty state: %s", view)
+						}
+					} else if strings.Count(view, empty) != 1 {
+						t.Fatalf("empty pager must explain its state once: %s", view)
+					}
+					m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+					if m.conversation.pager.open || m.content.Draft.Text != "KEEP-DRAFT" || strings.Contains(m.View().Content, empty) {
+						t.Fatal("closing waiting pager lost draft or leaked empty state into conversation")
+					}
+					if !populated && m.conversationPlan().Cards.Height != 0 {
+						t.Fatal("empty waiting home strip must stay hidden")
+					}
+				}
+			}
+			for _, topic := range []string{"running", "progress"} {
+				if strings.Contains(m.topicText(topic), design.Text(language, "waiting.empty")) {
+					t.Fatal("waiting empty state leaked to another list")
+				}
+			}
+			m.Update(shellData{Generation: 1, Message: workListWelcome(t, "conversation")})
+			m.Update(tea.KeyPressMsg{Code: 'w', Mod: tea.ModCtrl})
+			if m.conversation.pager.text != design.Text(language, "capability_not_negotiated") {
+				t.Fatal("unsupported waiting capability presented as an empty list")
+			}
+		})
+	}
+}
+
 func TestWorkListNoticePrintedOnceInPlainTerminal(t *testing.T) {
 	m := newShell(Options{Width: 100, Profile: Monochrome}, time.Now)
 	welcome := workListWelcome(t, "conversation")

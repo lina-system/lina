@@ -162,11 +162,12 @@ func violations(root string, standard map[string]bool) ([]string, error) {
 					within(imported, rootModule+"/kit/protocol")
 				charm := within(imported, "github.com/charmbracelet") || within(imported, "charm.land")
 				terminal := within(owner, "internal/tui/term") || within(owner, "internal/tui/ui")
-				// Goldmark supplies semantic Markdown spans only at the UI adapter.
+				// Goldmark and Chroma supply semantic spans only at the UI adapter.
 				// Keep the pure reducer/render/layout layers dependency-free.
 				markdown := within(owner, "internal/tui/ui") && (imported == "github.com/yuin/goldmark" ||
 					imported == "github.com/yuin/goldmark/ast" || imported == "github.com/yuin/goldmark/text" ||
-					imported == "github.com/yuin/goldmark/util")
+					imported == "github.com/yuin/goldmark/util" || imported == "github.com/yuin/goldmark/parser" ||
+					imported == "github.com/alecthomas/chroma/v2" || imported == "github.com/alecthomas/chroma/v2/lexers")
 				if !allowed && !(charm && terminal) && !markdown {
 					report(spec.Pos(), "TUI", "only standard/internal client dependencies and permitted UI/terminal libraries are allowed: "+imported)
 				}
