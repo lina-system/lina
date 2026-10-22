@@ -47,6 +47,7 @@ func Migrations() []Migration {
 		{Version: 33, SQL: recordsKoreanSearchSchema},
 		{Version: 34, SQL: WaitingDecisionsSchema},
 		{Version: 35, SQL: presetEffectsSchema},
+		{Version: 36, SQL: recordsTodoSchema},
 	}
 }
 
