@@ -73,7 +73,9 @@ func TestM1ConversationHistoryOrder(t *testing.T) {
 			core := start(true)
 			observer, conversation := conversationClient(t, h)
 			terminal := h.startTerminalSize([]string{"TERM=xterm-256color"}, false, true, scenario.Width, scenario.Height)
-			waitScreen(t, h, terminal, "Ctrl+D")
+			// The composer appears before history discovery finishes. Wait for
+			// the ready status before explicitly submitting the first input.
+			waitScreen(t, h, terminal, "Connected")
 			h.keys(terminal, scenario.FirstInput+"\r")
 			select {
 			case <-started:

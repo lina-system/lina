@@ -132,6 +132,14 @@ status writes nothing. The key gate also covers the legacy quit input. Connectio
 including one in the same epoch, restores an unacknowledged input into the draft
 with newer typing after it. The client never automatically resends that input.
 
+Initial history discovery uses the same pending-agent guard as reconnect.
+Until the history response identifies the destination conversation, the composer
+retains typed text and Enter sends nothing. Completing discovery makes the
+conversation ready; it does not submit the retained draft automatically. The
+person explicitly sends it when ready. Installed conversation scenarios wait
+for the ready connection status before submitting input, not just the presence
+of the composer's key hints.
+
 Reconnect also retains the selected agent identity. History discovery and the
 preserved draft use that agent, regardless of the welcome's agent order. A fresh
 agent list validates the selection because welcome may name only the default.
