@@ -285,6 +285,14 @@ Transport failures,
 malformed responses and server failures have unknown delivery outcome and are
 never automatically sent again.
 
+Startup independence also applies to saved connections: Core restores their
+credentials locally and performs bot identity verification in the channel's
+supervisor. While that request is unavailable, Core reaches READY and the
+channel control service projects the connection as unavailable, including when
+no model route is configured. Shutdown cancels and joins the supervisor before
+closing its stores. `e2e/m1/telegram.json` verifies this through production boot
+and the client socket with a request held until cancellation.
+
 ### Gateway core persistence
 
 The gateway core (#97) implements the adapter boundary, pairing, bindings, admission and the outbound queue as packages. Its composition root supplies the existing fenced canon writer, installs the channel schema in a numbered migration, routes committed deliveries to the conversation coordinator, and starts adapters only after recovery. The packages contain no bot token and make no platform connection at startup.

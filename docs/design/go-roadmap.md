@@ -21,7 +21,7 @@ This document is informative. It orders the Go design of LINA Core and the termi
 7. Fixtures, corpora and evidence records in the repository are synthetic or hold only ids, codes, counts and hashes.
 8. The checks of [runtime.md](runtime.md#runtime-acceptance) land as follows: V1 in G1-31, V2 in G1-40, V3 in G1-09, V4 in G2-26 to G2-28, V5 in G2-04, V6 and V7 in G1-01.
 9. The specification comes first. Each issue names the design sections it implements, and those sections are written before the code. A pull request that changes behavior updates those sections in the same pull request. Keeping the documents in step with the code is part of done, not a later task ([work-and-delegation.md](work-and-delegation.md#work-definition)).
-10. Each phase has a headless end-to-end suite that runs in `foundation` ([foundation.md](../policy/foundation.md)). The suite drives the TUI from a scripted terminal and LINA Core through its protocol. It runs every acceptance check that a program can observe. The person's part of a phase's acceptance is a check of UI and UX only. The harness is M0-14, and the suites are M1-80, M2-50 and M3-45 of [roadmap-github.md](roadmap-github.md).
+10. Each phase has a headless end-to-end suite that runs in `foundation` ([foundation.md](../policy/foundation.md)). The suite drives the TUI from a scripted terminal and LINA Core through its protocol. It runs every acceptance check that a program can observe. The person's part of a phase's acceptance is a check of UI and UX only. The harness is M0-14, and the suites are M1-80, M2-50 and M3-45 of [roadmap-github.md](roadmap-github.md). M1 scenarios and their shared test-only harness live in `e2e/m1/`; `go test ./e2e/m1/...` executes them directly, and foundation selects them once through `./e2e/...`. The [M1 acceptance map](../../e2e/m1/README.md) names the observable assertions and external UI/UX evidence prerequisites. A synthetic wire proves protocol and persistence behavior, not live issuer access, physical IME behavior or a measured terminal result. Missing terminal evidence is not a passing phase acceptance.
 11. One review per pull request. A high-risk contract change may get one extra independent read, and there is no standing gate of several verifiers.
 12. Design documents are written in English. Summaries for the person are in Korean.
 
@@ -66,7 +66,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-02 Control files, epoch, start order and idle registry.** Start order, RECOVERING, tri-state idle.
 - Done when: `kill -9` at each start step is followed by a start with a strictly higher epoch; a second `lina core` exits 69; a non-local state root exits 78; an external call without a lease does not compile; an unreadable registry reads as busy.
 - Depends on: G1-01. Design refs: C-01, C-03 to C-05; CP-01 to CP-03.
-- #36 implements control files, the lock, the durable epoch and the ten startup boundaries. Its subprocess tests kill Core after each acknowledged boundary and compare the next epoch against all previously durable epochs; before step 5 a new run has no epoch. The `e2e/m1/` startup protocol scenario remains pending the #34 harness.
+- #36 implements control files, the lock, the durable epoch and the ten startup boundaries. Its subprocess tests kill Core after each acknowledged boundary and compare the next epoch against all previously durable epochs; before step 5 a new run has no epoch. The `e2e/m1/` startup protocol scenario now kills a test Core at all thirteen acknowledged boot boundaries, then checks the installed Core for READY, the same identity and an epoch above both the baseline and the crashed process.
 - #37 implements the lease API, its missing-lease compile-fail fixture and the idle registry. Hard and Live leases block idle until their calls finish; Reported activity does not. Unreadable, invalid or canceled activity reads yield Unknown and count as busy. Package tests cover these rules, release and cancellation, notifications and concurrent activity. There is no TUI or protocol operation for this increment; restart and its observable fence remain G1-24 work.
 
 **G1-03 Canon writer, epoch fence, halt and SQLite binding.** One writer, halt marker, SQLite binding.
@@ -251,6 +251,7 @@ The staged increment (#117) supplies registered SQLite mapping, per-conversation
 - Depends on: G1-06, G1-11, G1-12, G1-18, G1-29. Design refs: C-27; [integrations.md](integrations.md#channels).
 - #97 implements the gateway adapter contract, owner pairing, dispatch scope, atomic inbox/cursor admission and durable per-chat outbound queue. Real canon scenarios use SIGKILL at admission and send boundaries, prove no duplicate dispatch or uncertain resend, and exercise pairing, retry-after and agent-deletion binding removal. There is no channel TUI/protocol endpoint in this increment; Telegram transport, credential wiring and approval interactions remain separate work.
 - #98 adds Telegram long polling, secret-store token injection, current-owner approval interactions, and the adapter's send/edit/file boundary. Package tests cover masked inbox and ledger input, child environment isolation and non-owner/foreign-bot rejection. `e2e/m1/telegram.json` exercises real Core startup and socket requests while the platform transport is unreachable. These checks use synthetic credentials; live account setup and public channel settings are not established by this adapter increment.
+- #96 completes the gateway acceptance evidence using the existing #97/#98 package scenarios and production boot in `e2e/m1/telegram.json`. A saved bot connection and secret are reopened without a model route; a blocked identity lookup cannot delay READY or the socket's unavailable-channel projection, and shutdown joins the request. The earlier custom canon/reconcile fixture is no longer used. Live Telegram account setup remains outside this synthetic verification.
 
 **G1-26 Agent exchanges.** Mailbox, typed hand-off, round limit, one-line log, needs-person flag.
 - Done when: a request delivers once across `kill -9`; an acknowledgement ends the exchange without a model turn; no exchange message enters a person's conversation as a person turn; an exchange turn reads no personal knowledge; the flag is set only when the person owns the decision.
@@ -345,7 +346,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 
 ### 2.B Delegation
 
-**G2-04 Worker adapter boundary and the Codex adapter.** `worker.Adapter`, generated types, dynamic tools, approvals, quota rows. It runs first and does not wait for the pin. Issue #131 supplies the common boundary, generated schema baseline and vendored-file integrity gate; #132 proves session execution, and #133 connects work tools, approvals and quota. A schema baseline alone does not satisfy the runtime done condition. #132 adds the installed-Core session tools and `e2e/m2/codex-session.json`; its separate installed-Codex 0.163.0 round trip covers session control and model output, while approval/file execution through the real worker remains #133.
+**G2-04 Worker adapter boundary and the Codex adapter.** `worker.Adapter`, generated types, dynamic tools, approvals, quota rows. It runs first and does not wait for the pin. Issue #131 supplies the common boundary, generated schema baseline and vendored-file integrity gate; #132 proves session execution, and #133 connects the four declared work tools, authenticated approvals tied to the originating conversation and quota rows to the running Core. Its headless stdio scenario verifies a real fixture-worker artifact after approval and tool-result delivery. A schema baseline alone does not satisfy the runtime done condition. #132 adds the installed-Core session tools and `e2e/m2/codex-session.json`; its separate installed-Codex 0.163.0 round trip covers session control and model output, while approval/file execution through the real worker remains #133.
 - Done when: the round trip completes with the installed Codex and records its version; an unverified version is reported and still used; a worker approval reaches the originating conversation and the answer returns; no sandbox, credential or setting is imposed on the worker.
 - Depends on: G1-05, G1-18. Design refs: C-29; [work-and-delegation.md](work-and-delegation.md#codex-adapter).
 
@@ -510,6 +511,11 @@ This epic also folds in the owner's Node direction, which is not yet in the cont
 - Depends on: G2-04. Design refs: C-29; [work-and-delegation.md](work-and-delegation.md#completion-signals).
 
 **G3-16 Antigravity adapter.** Headless child; success from the pull request.
+- Implementation evidence: `internal/core/worker/antigravity`, Core's durable
+  `dispatch_work` composition and `e2e/m3/antigravity.json`. Recorded stream and
+  GitHub fixtures cover immediate result termination, soft denial, missing result,
+  PR evidence and restart; the installed worker makes a real worktree commit.
+  Live account compatibility remains unverified.
 - Done when: the result event ends the turn; success is confirmed from the pull request and never from the exit code; an unapproved tool soft-denial is reported.
 - Depends on: G2-04. Design refs: C-29; [work-and-delegation.md](work-and-delegation.md#completion-signals).
 

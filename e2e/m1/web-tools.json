@@ -1,0 +1,7 @@
+{
+  "input": "What is the latest X? Search the web and cite your source.",
+  "notice": "Web access is not set up. Configure a web provider to search current information.",
+  "title": "Latest X release",
+  "url": "https://example.com/latest-x",
+  "snippet": "X version 42 is the latest release."
+}
