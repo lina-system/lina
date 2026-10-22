@@ -725,7 +725,10 @@ cannot create another revision. The expired default stays in the ledger.
 The manager derives revised work from the new decision: Core never rewrites
 the inputs or results of old executions, releases an old effect merely due
 to a late answer, or undoes an effect already applied. Work projections can
-be rebuilt from those same recorded transitions.
+be rebuilt from those same recorded transitions. If the person has stopped the
+goal, outstanding rounds still record their expiry or answer, but neither
+operation reopens that goal or releases its dependents. A stopped goal's row
+cannot prevent other goals from expiring or Core from restarting.
 
 ## Effects and unknown outcomes
 

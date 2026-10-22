@@ -50,11 +50,11 @@ func advance(c *Card, e Event) error {
 			c.State = "working"
 		}
 	case "goal_decided":
-		if e.Decision == nil || c.State == "stopped" {
+		if e.Decision == nil {
 			return ErrState
 		}
 		c.Decisions = append(c.Decisions, *e.Decision)
-		if e.Decision.Decision.Kind != "default" {
+		if e.Decision.Decision.Kind != "default" && c.State != "stopped" {
 			c.Revision++
 			c.State = "working"
 		}

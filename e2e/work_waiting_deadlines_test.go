@@ -23,9 +23,10 @@ import (
 // plugin are stubs. A past, fixed deadline makes recovery deterministic.
 func TestM2WorkWaitingDeadlines(t *testing.T) {
 	var script struct {
-		Deadline  time.Time
-		Goals     []string
-		Questions []waiting.Question
+		Deadline    time.Time
+		Goals       []string
+		Questions   []waiting.Question
+		StoppedGoal string `json:"stopped_goal"`
 	}
 	raw, err := os.ReadFile("m2/work-waiting-deadlines.json")
 	if err != nil {
@@ -69,10 +70,12 @@ func TestM2WorkWaitingDeadlines(t *testing.T) {
 	}
 	db, closeWriter := openWriter()
 	s := work.New(db)
+	rounds := waiting.NewWorkRounds(db, s)
 	start := func(s *work.Service, id string) error {
 		return s.Start(h.ctx, work.Run{ID: "stub:" + id, TaskID: id, Generation: 1, Worker: "stub-worker", ThreadID: "thread:" + id, TurnID: "turn", NodeID: "stub-node"})
 	}
-	for _, goal := range script.Goals {
+	allGoals := append(append([]string{}, script.Goals...), script.StoppedGoal)
+	for _, goal := range allGoals {
 		task := work.Task{ID: goal, PersonID: "person:main-e2e", AgentID: "agent", ConversationID: "main:agent", Title: goal, Done: "result checked"}
 		if err = s.Create(h.ctx, task); err != nil {
 			t.Fatal(err)
@@ -91,10 +94,10 @@ func TestM2WorkWaitingDeadlines(t *testing.T) {
 		r := waiting.Round{ID: goal, Goal: goal, Person: task.PersonID, Agent: task.AgentID, Conversation: task.ConversationID, Deadline: script.Deadline, Questions: questions}
 		invalid := r
 		invalid.Deadline = time.Time{}
-		if err = s.Waiting().Open(h.ctx, invalid); !errors.Is(err, waiting.ErrInvalid) {
+		if err = rounds.Open(h.ctx, invalid); !errors.Is(err, waiting.ErrInvalid) {
 			t.Fatalf("missing deadline accepted: %v", err)
 		}
-		if err = s.Waiting().Open(h.ctx, r); err != nil {
+		if err = rounds.Open(h.ctx, r); err != nil {
 			t.Fatal(err)
 		}
 		if err = start(s, goal+":draft"); !errors.Is(err, work.ErrState) {
@@ -102,6 +105,14 @@ func TestM2WorkWaitingDeadlines(t *testing.T) {
 		}
 		if err = start(s, goal+":independent"); err != nil {
 			t.Fatal(err)
+		}
+		if goal == script.StoppedGoal {
+			if err = start(s, goal); err != nil {
+				t.Fatal(err)
+			}
+			if err = s.Finish(h.ctx, goal, "stub:"+goal, "interrupted"); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 	closeWriter()
@@ -115,15 +126,20 @@ func TestM2WorkWaitingDeadlines(t *testing.T) {
 	}
 	defer reader.Close(context.Background())
 	read := work.New(reader)
-	for _, goal := range script.Goals {
-		r, err := read.Waiting().Get(h.ctx, goal)
+	readRounds := waiting.NewWorkRounds(reader, read)
+	for _, goal := range allGoals {
+		r, err := readRounds.Get(h.ctx, goal)
 		if err != nil || len(r.Decisions) != 1 || r.Decisions[0].Kind != "default" {
 			t.Fatalf("Core did not expire %s: %+v %v", goal, r, err)
 		}
 		draft, _ := read.Get(h.ctx, goal+":draft")
 		send, _ := read.Get(h.ctx, goal+":send")
 		independent, _ := read.Get(h.ctx, goal+":independent")
-		if draft.State != "working" || send.State != "input_needed" || !independent.Active {
+		wantDraft := "working"
+		if goal == script.StoppedGoal {
+			wantDraft = "input_needed"
+		}
+		if draft.State != wantDraft || send.State != "input_needed" || !independent.Active {
 			t.Fatalf("gating: %+v %+v %+v", draft, send, independent)
 		}
 	}
@@ -151,7 +167,7 @@ func TestM2WorkWaitingDeadlines(t *testing.T) {
 	}
 	snapshotFrame := receive(subscription)
 	snapshot, ok := snapshotFrame.Payload.(protocol.Snapshot)
-	if !ok || len(snapshot.Items) != len(script.Goals) {
+	if !ok || len(snapshot.Items) != len(allGoals) {
 		t.Fatalf("questions were not grouped by goal: %+v", snapshotFrame)
 	}
 	for _, item := range snapshot.Items {
@@ -197,6 +213,13 @@ func TestM2WorkWaitingDeadlines(t *testing.T) {
 	reader.Close(context.Background())
 	db, closeWriter = openWriter()
 	s = work.New(db)
+	stopped, err := s.Get(h.ctx, script.StoppedGoal)
+	if err != nil || stopped.State != "stopped" {
+		t.Fatalf("stopped goal resurrected: %+v %v", stopped, err)
+	}
+	if err = start(s, script.StoppedGoal+":draft"); !errors.Is(err, work.ErrState) {
+		t.Fatalf("stopped goal released dependent: %v", err)
+	}
 	workerCalls, pluginCalls := 0, 0
 	for _, goal := range script.Goals {
 		if err = start(s, goal+":draft"); err != nil {

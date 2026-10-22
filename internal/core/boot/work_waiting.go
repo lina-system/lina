@@ -12,9 +12,10 @@ import (
 )
 
 func (r *conversationRuntime) startWorkWaiting(ctx context.Context) error {
+	r.workWaiting = waiting.NewWorkRounds(r.db, r.work)
 	// Recovery is synchronous: a client can never answer an overdue row as if
 	// Core's downtime extended the deadline. Work hooks commit in the same write.
-	if err := r.work.Waiting().Expire(ctx, time.Now()); err != nil {
+	if err := r.workWaiting.Expire(ctx, time.Now()); err != nil {
 		return err
 	}
 	refresh := r.identity.RefreshTopic
@@ -31,11 +32,11 @@ func (r *conversationRuntime) startWorkWaiting(ctx context.Context) error {
 	}
 	watch, cancel := context.WithCancel(ctx)
 	r.waitingStop, r.waitingDone = cancel, make(chan struct{})
-	go func() { defer close(r.waitingDone); r.work.Waiting().Run(watch, r.publishWorkQuestions) }()
+	go func() { defer close(r.waitingDone); r.workWaiting.Run(watch, r.publishWorkQuestions) }()
 	return nil
 }
 func (r *conversationRuntime) publishWorkQuestions(ctx context.Context) error {
-	records, err := r.work.Waiting().List(ctx, r.person)
+	records, err := r.workWaiting.List(ctx, r.person)
 	if err != nil {
 		return err
 	}
@@ -47,7 +48,7 @@ func (r *conversationRuntime) publishWorkQuestions(ctx context.Context) error {
 	return nil
 }
 func (q runQuestions) workQuestion(ctx context.Context, person, id string) (protocol.Question, error) {
-	record, err := q.runtime.work.Waiting().Get(ctx, id)
+	record, err := q.runtime.workWaiting.Get(ctx, id)
 	if err != nil {
 		return protocol.Question{}, err
 	}
@@ -99,7 +100,7 @@ func (q runQuestions) AnswerQuestionMessage(ctx context.Context, person string, 
 	if err != nil {
 		return "", err
 	}
-	err = q.runtime.work.Waiting().Answer(ctx, person, strings.TrimPrefix(*a.CardID, "work:"), waiting.RoundAnswer{MessageID: messageID, Message: string(message), Values: values}, time.Now())
+	err = q.runtime.workWaiting.Answer(ctx, person, strings.TrimPrefix(*a.CardID, "work:"), waiting.RoundAnswer{MessageID: messageID, Message: string(message), Values: values}, time.Now())
 	if err != nil {
 		return "", err
 	}

@@ -10,20 +10,11 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
-	"github.com/thisisjun786/lina/internal/core/waiting"
 )
 
-type Service struct {
-	db      *canon.Store
-	waiting *waiting.Rounds
-}
+type Service struct{ db *canon.Store }
 
-func New(db *canon.Store) *Service {
-	s := &Service{db: db}
-	s.waiting = waiting.NewRounds(db, waiting.RoundHooks{Opened: s.openRound, Decided: s.decideRound})
-	return s
-}
-func (s *Service) Waiting() *waiting.Rounds { return s.waiting }
+func New(db *canon.Store) *Service { return &Service{db: db} }
 
 // Recover rebuilds before Core exposes work. An unobserved execution remains
 // reserved and becomes unknown; restart is never permission to run it again.

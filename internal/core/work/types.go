@@ -4,7 +4,6 @@ package work
 
 import (
 	"errors"
-	"github.com/thisisjun786/lina/internal/core/waiting"
 	"time"
 )
 
@@ -85,7 +84,7 @@ type Wait struct {
 }
 type GoalDecision struct {
 	Round    string
-	Decision waiting.RoundDecision
+	Decision QuestionDecision
 }
 type Card struct {
 	Revision   uint64          `json:"revision"`

@@ -1,8 +1,32 @@
 {
   "deadline": "2026-01-01T12:00:00Z",
-  "goals": ["code-change", "trip-itinerary"],
+  "goals": [
+    "code-change",
+    "trip-itinerary"
+  ],
   "questions": [
-    {"ID":"route","Prompt":"Which destination?","Recommendation":"A","Reason":"significant_choice","Choices":["A","B"],"Default":"A"},
-    {"ID":"send","Prompt":"Send the result?","Recommendation":"do_not_act","Reason":"outside_effect","Choices":["do_not_act","send"],"Default":"do_not_act"}
-  ]
+    {
+      "ID": "route",
+      "Prompt": "Which destination?",
+      "Recommendation": "A",
+      "Reason": "significant_choice",
+      "Choices": [
+        "A",
+        "B"
+      ],
+      "Default": "A"
+    },
+    {
+      "ID": "send",
+      "Prompt": "Send the result?",
+      "Recommendation": "do_not_act",
+      "Reason": "outside_effect",
+      "Choices": [
+        "do_not_act",
+        "send"
+      ],
+      "Default": "do_not_act"
+    }
+  ],
+  "stopped_goal": "stopped-goal"
 }

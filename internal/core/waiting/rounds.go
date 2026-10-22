@@ -12,36 +12,19 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/work"
 )
 
-const DoNotAct = "do_not_act"
+const DoNotAct = work.DoNotAct
 
 var ErrRoundOpen = errors.New("goal already has an open question round")
 
 // Round is one interruption containing every independent question currently
 // known for a goal. Only the work owner admits it, before its dependents start.
-type Round struct {
-	ID, Goal, Person, Agent, Conversation string
-	Deadline                              time.Time
-	Questions                             []Question
-}
-type Question struct {
-	ID, Prompt, Recommendation string
-	Reason                     Reason
-	Irreversible               bool
-	Choices                    []string
-	Default                    string
-	Dependents                 []string
-}
-type RoundAnswer struct {
-	MessageID, Message string
-	Values             map[string]string
-}
-type RoundDecision struct {
-	RoundAnswer
-	Kind string
-	At   time.Time
-}
+type Round = work.QuestionRound
+type Question = work.PersonQuestion
+type RoundAnswer = work.QuestionAnswer
+type RoundDecision = work.QuestionDecision
 type RoundRecord struct {
 	Round
 	Decisions []RoundDecision
@@ -62,6 +45,13 @@ type Rounds struct {
 func NewRounds(db Canon, hooks RoundHooks) *Rounds {
 	return &Rounds{db: db, hooks: hooks, wake: make(chan struct{}, 1)}
 }
+
+// NewWorkRounds composes the waiting flow over the authoritative work ledger.
+// The dependency runs down to work; work never imports this flow.
+func NewWorkRounds(db Canon, owner *work.Service) *Rounds {
+	return NewRounds(db, RoundHooks{Opened: owner.OpenQuestionRound, Decided: owner.DecideQuestionRound})
+}
+
 func (s *Rounds) signal() {
 	select {
 	case s.wake <- struct{}{}:

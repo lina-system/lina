@@ -44,6 +44,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/internal/core/skills"
 	"github.com/thisisjun786/lina/internal/core/turn"
+	"github.com/thisisjun786/lina/internal/core/waiting"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/internal/tui/render"
@@ -66,6 +67,7 @@ type conversationRuntime struct {
 	work         *work.Service
 	waitingStop  context.CancelFunc
 	waitingDone  chan struct{}
+	workWaiting  *waiting.Rounds
 	background   *backgroundRuntime
 	router       *conversationRouter
 	decisions    *clientsrv.Decisions
