@@ -106,7 +106,9 @@ func TestProcessDeathResumesOnceAndThenLandsPartial(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, epoch := range []string{"1", "2"} {
-		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		// The child includes cold SQLite initialization before reaching the crash.
+		// Use the run wait budget; exit 73 proves the checkpoint boundary.
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 		child := exec.CommandContext(ctx, binary, "-test.run=^TestProcessDeathResumesOnceAndThenLandsPartial$")
 		child.Env = []string{"LINA_RUN_CRASH_ROOT=" + root, "LINA_RUN_CRASH_EPOCH=" + epoch}
 		output, err := child.CombinedOutput()
