@@ -350,6 +350,7 @@ test('source edits or a new clean commit during a build suppress its manifest', 
       if (args[0] === 'env') return { status: 0, stdout: env.GOTOOLCHAIN, stderr: '' };
       if (args[0] === 'mod') return { status: 0, stdout: '', stderr: '' };
       assert.equal(command, 'go');
+      if (args.includes('./persona/validate')) return { status: 0, stdout: '', stderr: '' };
       assert.equal(args[0], 'build');
       const binary = args[args.indexOf('-o') + 1];
       f.write(dirname(binary), binary.split(/[\\/]/).at(-1), 'fixture executable');
