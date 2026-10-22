@@ -31,6 +31,8 @@ func TestM3AntigravityThroughInstalledCore(t *testing.T) {
 	}
 	for _, test := range scenario.Cases {
 		t.Run(test.Name, func(t *testing.T) {
+			t.Parallel()
+			var err error
 			fixture := t.TempDir()
 			repo := filepath.Join(fixture, "repo")
 			bin := filepath.Join(fixture, "bin")
