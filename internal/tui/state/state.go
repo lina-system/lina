@@ -19,6 +19,7 @@ type Msg interface{ isMsg() }
 type Cmd func(context.Context) Msg
 
 type Block struct {
+	ShellFileToolsAvailable  *bool
 	Card                     *Card
 	ID, Topic, EchoKey, Text string
 	Speaker                  protocol.ConversationSpeaker

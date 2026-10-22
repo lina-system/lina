@@ -32,6 +32,8 @@ type Status struct {
 // Config is trusted host configuration, never model-supplied tool arguments.
 // WriteRoots contains only authorized grant roots. ReadDenied always wins.
 type Config struct {
+	// Launcher optionally pins a trusted absolute executable. An invalid override fails closed.
+	Launcher               string
 	WorkDir                string
 	WriteRoots, ReadDenied []string
 	Env                    []string
@@ -92,7 +94,7 @@ func (s *Sandbox) probe(parent context.Context, l lease.Lease) (Status, error) {
 	if err != nil {
 		return Status{Cause: "invalid_policy"}, nil
 	}
-	launcher, err := findLauncher()
+	launcher, err := s.launcher()
 	if err != nil {
 		return Status{Cause: err.Error()}, nil
 	}
@@ -144,7 +146,7 @@ func (s *Sandbox) Run(ctx context.Context, l lease.Lease, command Command) error
 	if err != nil {
 		return fmt.Errorf("%w: invalid_policy", ErrUnavailable)
 	}
-	launcher, err := findLauncher()
+	launcher, err := s.launcher()
 	if err != nil {
 		return fmt.Errorf("%w: %s", ErrUnavailable, err)
 	}

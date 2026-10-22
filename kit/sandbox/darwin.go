@@ -5,22 +5,18 @@
 package sandbox
 
 import (
-	"errors"
 	"fmt"
 	"os/exec"
+	"runtime"
 	"strings"
 
 	"github.com/thisisjun786/lina/kit/proc"
 )
 
 func findLauncher() (string, error) {
-	// PATH discovery also makes missing-launcher probes deterministic in tests.
-	path, err := exec.LookPath("sandbox-exec")
-	if err != nil || path != "/usr/bin/sandbox-exec" {
-		return "", errors.New("launcher_missing")
-	}
-	return path, nil
+	return resolveHostLauncher(runtime.GOOS, runtime.GOARCH, exec.LookPath)
 }
+
 func probeScript() string { return "exit 0" }
 func prepare(launcher string, c Config, command Command) (proc.Command, func(), error) {
 	git, err := gitPaths(c.WriteRoots)
