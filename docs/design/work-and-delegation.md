@@ -155,6 +155,15 @@ Core alone uses its explicit administrative command path to maintain the base
 refs and clean up assigned branches. This repository guard is not a worker
 plugin or OS confinement: workers use their own runtime setup, and a process
 running as the user can deliberately bypass a Git hook. Core never resets or cleans another task's checkout.
+Scheduler allocations from registered clones install this same guard and exact
+branch binding before starting the worker. The clone's remote and local base
+remain unchanged. Existing unrelated executable hooks or a custom hooks path
+refuse the allocation rather than being disabled; a guard failure is a known
+pre-dispatch failure. Core's fixed Git administration can still fetch the next
+landed base and create a dependent worktree under the shared guard.
+Scheduled workers publish to origin's URL directly: a named-remote push also
+updates local tracking refs, which remain protected. The target remote and
+assigned branch are unchanged, and publication never disables the guard.
 The installed-Core [headless work-area scenario](../../e2e/m2/work-area.json)
 allocates two real linked worktrees, rejects cross-task branch updates, deletion
 and renaming into a reserved branch, commits on each assigned branch, and retains

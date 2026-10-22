@@ -351,6 +351,10 @@ observation releases the dependent onto the fetched remote base. The parent
 clone's checked-out base branch stays unchanged. Restart retains the merge without
 turning it into a delivery verdict. The fixture has no provider credential or
 external GitHub effect.
+Ordinary Git commands in the scheduled worktree must refuse base and tracking-ref
+writes, another task's branch update, and deletion of its own assigned branch.
+The same checks run after restart, while real worker commits, pushes, and Core's
+dependent allocation continue through the protected parent clone.
 
 The worker also calls all four LINA work tools, receives both work-tool and
 native question answers, and submits a receipt for its committed artifact.

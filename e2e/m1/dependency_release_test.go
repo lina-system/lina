@@ -205,14 +205,15 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 		t.Fatal(err)
 	}
 	codex := filepath.Join(h.root, "fixture-codex")
-	if err = os.WriteFile(codex, []byte(fmt.Sprintf("#!/bin/sh\nexec %s %s %s \"$@\"\n", quote(node), quote(program), quote(h.root))), 0700); err != nil {
+	workerLog := filepath.Join(h.root, "fixture-worker-errors.log")
+	if err = os.WriteFile(codex, []byte(fmt.Sprintf("#!/bin/sh\nexec %s %s %s \"$@\" 2>>%s\n", quote(node), quote(program), quote(h.root), quote(workerLog))), 0700); err != nil {
 		t.Fatal(err)
 	}
 	config := map[string]any{"codex": codex, "git": git, "gh": gh, "slots": 4, "repositories": map[string]any{"fixture/repo": map[string]string{"clone": clone, "base": "dev"}}}
 	if fault != nil {
 		failingGit := filepath.Join(h.root, "fixture-git")
 		marker := filepath.Join(h.root, "fetch-failed")
-		script := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = %s ] && [ ! -f %s ]; then : > %s; exit 1; fi\nexec %s \"$@\"\n", quote(fault.Command), quote(marker), quote(marker), quote(git))
+		script := fmt.Sprintf("#!/bin/sh\nfor arg do\nif [ \"$arg\" = %s ] && [ ! -f %s ]; then : > %s; exit 1; fi\ndone\nexec %s \"$@\"\n", quote(fault.Command), quote(marker), quote(marker), quote(git))
 		if err = os.WriteFile(failingGit, []byte(script), 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -230,6 +231,9 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 			if t.Failed() {
 				p.killAndWait()
 				t.Logf("Core stderr: %s", &p.stderr)
+				if body, err := os.ReadFile(workerLog); err == nil && len(body) > 0 {
+					t.Logf("fixture worker stderr: %s", body)
+				}
 			}
 		})
 		h.connectWithin(p, 30*time.Second).Close()
@@ -381,6 +385,30 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 		admittedTurn(t, h, client, conversation, "conflict-input", "Observe the remaining conflict again.")
 	}
 	await(taskIDs[2], func(c work.Card) bool { return c.Run != nil && !c.Active })
+	assertProtectedRefs := func() {
+		t.Helper()
+		dir := filepath.Join(h.root, "work", "tasks", taskIDs[0])
+		head := runGit("-C", dir, "rev-parse", "HEAD")
+		otherRef := "refs/heads/lina/" + taskIDs[2]
+		otherHead := runGit("rev-parse", otherRef)
+		for _, args := range [][]string{
+			{"update-ref", "refs/heads/dev", head},
+			{"update-ref", "refs/remotes/origin/dev", head},
+			{"update-ref", otherRef, head},
+			{"update-ref", "-d", "refs/heads/lina/" + taskIDs[0]},
+		} {
+			command := exec.CommandContext(h.ctx, git, append([]string{"-C", dir}, args...)...)
+			command.Env = []string{"HOME=" + h.root, "PATH=" + filepath.Dir(git), "GIT_CONFIG_NOSYSTEM=1"}
+			output, err := command.CombinedOutput()
+			if err == nil || !strings.Contains(string(output), "LINA protected ref") {
+				t.Fatalf("scheduled worker bypassed protected refs with git %v: %v %s", args, err, output)
+			}
+		}
+		if runGit("rev-parse", "dev") != initialBase || runGit("rev-parse", otherRef) != otherHead {
+			t.Fatal("rejected worker command changed a protected branch")
+		}
+	}
+	assertProtectedRefs()
 	b, err := store.Get(h.ctx, taskIDs[1])
 	if err != nil || b.Run != nil || b.WaitReason == nil || b.WaitReason.Kind != "dependency" {
 		t.Fatalf("premature dependent: %+v %v", b, err)
@@ -432,6 +460,7 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 	if runGit("rev-parse", "dev") != initialBase {
 		t.Fatal("scheduler rewrote parent clone local base")
 	}
+	assertProtectedRefs()
 	client.Close()
 	h.stopCore(core)
 }

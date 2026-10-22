@@ -230,6 +230,10 @@ func (d *delegationRuntime) command(ctx context.Context, path, dir string, args 
 	}
 	defer l.Release()
 	var out limitedOutput
+	if path == d.config.Git {
+		// Only Core's fixed administrative commands maintain protected refs.
+		args = append([]string{"-c", "core.hooksPath=/dev/null"}, args...)
+	}
 	err = d.processes.Run(ctx, l, proc.Command{Path: path, Args: args, Dir: dir, Env: proc.InheritedEnvironment("LINA_RESPONSES_API_KEY"), Stdout: &out, Stderr: io.Discard})
 	return out.Bytes(), err
 }
@@ -330,6 +334,9 @@ func (d *delegationRuntime) start(ctx context.Context, c work.Card) (run work.Ru
 	d.mu.Lock()
 	d.leases["pending:"+c.Task.ID] = l
 	d.mu.Unlock()
+	if err = d.root.workArea.ProtectLinkedWorktree(ctx, l, d.config.Git, c.Task.ID, repo.Clone, "lina/"+c.Task.ID); err != nil {
+		return work.Run{}, err
+	}
 	process, err := d.root.activities.Acquire(d.ctx, lease.Activity{Class: lease.Reported, Reason: "delegated Codex session"})
 	if err != nil {
 		return work.Run{}, err
@@ -346,7 +353,10 @@ func (d *delegationRuntime) start(ctx context.Context, c work.Card) (run work.Ru
 
 	// After this boundary a failed response can conceal an accepted start.
 	sent = true
-	thread, err := adapter.Start(ctx, l, worker.StartSpec{TaskID: c.Task.ID, AttemptID: c.Task.ID + ":1", Workdir: p.Workdir, TaskPacket: p.Packet, Tools: workerWorkTools(), Required: worker.CapabilitySet{worker.StreamProgress, worker.SignalCompletion, worker.WorkTools, worker.RequestApprovals, worker.ReportQuota}})
+	// A named-remote push also writes local tracking refs. Publish to the same
+	// origin URL directly so workers need no bypass of the shared ref guard.
+	packet := "The shared Git directory guards base, other-task and remote-tracking refs. Keep that guard enabled. Publish your assigned branch using origin's URL as the git push destination, rather than the origin alias, so only the remote branch is updated.\n" + p.Packet
+	thread, err := adapter.Start(ctx, l, worker.StartSpec{TaskID: c.Task.ID, AttemptID: c.Task.ID + ":1", Workdir: p.Workdir, TaskPacket: packet, Tools: workerWorkTools(), Required: worker.CapabilitySet{worker.StreamProgress, worker.SignalCompletion, worker.WorkTools, worker.RequestApprovals, worker.ReportQuota}})
 	if err != nil {
 		return work.Run{}, err
 	}
@@ -355,7 +365,7 @@ func (d *delegationRuntime) start(ctx context.Context, c work.Card) (run work.Ru
 	delete(d.leases, "pending:"+c.Task.ID)
 	d.leases[thread.ID+":"+thread.TurnID] = l
 	d.mu.Unlock()
-	entry := &workerSession{scheduled: true, adapter: adapter, close: adapter.Close, compatibility: adapter.Compatibility(), origin: origin, input: input, thread: thread, packet: p.Packet, workdir: p.Workdir, approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}, active: map[string]lease.Lease{}, done: make(chan struct{}), process: process}
+	entry := &workerSession{scheduled: true, adapter: adapter, close: adapter.Close, compatibility: adapter.Compatibility(), origin: origin, input: input, thread: thread, packet: packet, workdir: p.Workdir, approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}, active: map[string]lease.Lease{}, done: make(chan struct{}), process: process}
 	entry.answered = func(answerCtx context.Context, t worker.Thread) {
 		_ = d.reactor.Answered(answerCtx, t.TaskID, t.ID, t.TurnID)
 	}

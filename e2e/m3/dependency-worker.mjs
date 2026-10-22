@@ -28,7 +28,8 @@ if (mode === '--version') { process.stdout.write('codex-cli 99.0.0\n'); } else i
         if (definition.key==='b'&&!existsSync(join(thread.cwd,'shared','a.txt'))) throw new Error('dependent started before landed base');
         mkdirSync(join(thread.cwd,folder),{recursive:true});writeFileSync(join(thread.cwd,folder,`${definition.key}.txt`),'verified fixture result\n'+(thread.count>1?'conflict corrected\n':''));
         git(thread.cwd,'add','.');git(thread.cwd,'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m',`fixture ${definition.key}`);
-        git(thread.cwd,'push','origin',`HEAD:refs/heads/lina/${thread.id}`);
+        // Follow Core's packet: publish without updating protected tracking refs.
+        git(thread.cwd,'push',git(thread.cwd,'remote','get-url','origin'),`HEAD:refs/heads/lina/${thread.id}`);
         writeFileSync(join(root,`${thread.id}.started`),String(thread.count));
         const path=join(thread.cwd,folder,`${definition.key}.txt`), sha256=hash(readFileSync(path));
         const revision=hash(`${path}:${sha256}`), emitted=new Date().toISOString();
