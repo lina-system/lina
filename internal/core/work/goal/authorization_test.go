@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 package goal
 
-import "testing"
+import (
+	"context"
+	"testing"
+	"time"
+)
 
 func authorizationStep(t *testing.T, e *Engine) State {
 	t.Helper()
@@ -166,5 +170,47 @@ func TestAuthorizationSignalDuringCheckIsNotLost(t *testing.T) {
 	s := authorizationStep(t, e)
 	if checks != 2 || effects != 1 || s.Actions[0].State != "running" {
 		t.Fatalf("in-flight approval wake was lost: checks=%d effects=%d action=%+v", checks, effects, s.Actions[0])
+	}
+}
+
+func TestReleasedAuthorizationRetryWakesAfterEarlierSignalWasConsumed(t *testing.T) {
+	e := revisionEngine(t, readyTask("a"))
+	a := revisionAction(t, e, "a", Assign)
+	// An approval hint has requeued this identity while its previous authority
+	// check is still unwinding. Hold that dispatch slot until after a complete
+	// reconciliation has consumed the hint; no timing-based interleaving needed.
+	e.running[a.ID] = true
+	dispatched := make(chan struct{}, 1)
+	e.cfg.Driver = &fixtureDriver{run: func(Action) (Observation, error) {
+		dispatched <- struct{}{}
+		return Observation{Status: OutcomeRunning, Handle: "worker"}, nil
+	}}
+	if err := e.step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	for len(e.journal.wake) > 0 {
+		<-e.journal.Wake()
+	}
+	stepped := make(chan struct{}, 1)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	r := startReconciler(ctx, e.journal, func(ctx context.Context) error {
+		err := e.step(ctx)
+		select {
+		case stepped <- struct{}{}:
+		default:
+		}
+		return err
+	}, make(chan time.Time), nil) // No sweep can rescue a lost wake.
+	defer func() { cancel(); <-r.Done(); e.wg.Wait() }()
+	select {
+	case <-stepped:
+	case <-ctx.Done():
+		t.Fatal("initial reconciliation did not finish")
+	}
+	e.releaseDispatch(a.ID)
+	select {
+	case <-dispatched:
+	case <-ctx.Done():
+		t.Fatal("ready authorization retry required a sweep after dispatch released")
 	}
 }

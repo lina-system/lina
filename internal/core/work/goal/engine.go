@@ -852,6 +852,15 @@ func (e *Engine) awaitAuthorization(ctx context.Context, claimed Action) error {
 	})
 }
 
+func (e *Engine) releaseDispatch(id string) {
+	e.mu.Lock()
+	delete(e.running, id)
+	e.mu.Unlock()
+	// Reconciliation may have consumed an authorization hint while this slot
+	// was still busy. Wake again after release so a queued retry runs now.
+	e.journal.notify()
+}
+
 func (e *Engine) step(ctx context.Context) error {
 	if err := e.Reconcile(ctx); err != nil {
 		return err
@@ -892,7 +901,7 @@ func (e *Engine) step(ctx context.Context) error {
 			a = claimed
 		}
 		e.wg.Go(func() {
-			defer func() { e.mu.Lock(); delete(e.running, a.ID); e.mu.Unlock() }()
+			defer e.releaseDispatch(a.ID)
 			var o Observation
 			var err error
 			authorizationDenied := false
