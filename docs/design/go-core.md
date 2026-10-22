@@ -244,6 +244,10 @@ binary, verifies the generation/version pair and reruns candidate preflight on
 the stopped store. Release-owned binaries, manifest and adapter files move as
 one recorded composition; the prior directories and failed candidates are kept.
 Settings stay in their installed control records, outside binary replacement.
+The installed binary's backup and rollback restore (including resumed rollback)
+use the updater context without an added installer command deadline; data size
+must not impose a fixed 30-second failure boundary. Both retain `kit/proc`
+ownership and cancellation, filtered environments and bounded command output.
 
 `update.json` is a schema-1 private atomic control record outside backups. It
 binds the root, normal socket, candidate, previous composition, binary digests,

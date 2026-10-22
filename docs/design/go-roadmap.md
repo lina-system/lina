@@ -401,6 +401,11 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 - Preparation (#149) verifies a frozen release archive, stages an exclusive version directory and runs the candidate Core's lock-free, non-mutating schema/peer preflight. Six explicit gate cells fail closed on missing evidence; idle and a verified generation are supplied by the activation owner. Headless M2 tests exercise the live Core, candidate process, digest/peer refusals and a newer schema in both database and WAL. #150 wires the installed activation and resume commands into Core's drain, durable boot/READY guard, snapshot, composition swap and rollback. The M2 activation scenario uses real Core and worker processes, verifies a resumed tool result, and covers start failure, provider failure and updater death. Package tests cover ENOSPC, changed paths, compatible-pair checks and process death at every binary/adapter rename. Automatic rollback stops at READY or a potentially irreversible migration.
 - Depends on: G1-22, G1-23, G1-24. Design refs: C-38; [runtime.md](runtime.md#updates).
 
+Update backup and rollback restore, including resumed rollback, follow the
+caller's context without the installer command timeout. The M2 data-operation
+scenario verifies backup and restore exceeding that timeout through the installed
+Core's activation and recovery paths.
+
 **G2-15 Phase 2 acceptance run.** Run script and evidence record for LINA 2.
 - Done when: one record holds every field of the phase rules and a result per check; the interruption injection now stops a running task and its citations pass; Codex and Claude Code versions are recorded.
 - Depends on: G2-05, G2-07, G2-08, G2-12, G2-13, G2-14, G2-20, G2-21, G2-24, G2-27, G2-28, G2-29. Design refs: Phase rules.
