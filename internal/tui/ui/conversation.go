@@ -27,6 +27,7 @@ type conversationView struct {
 	undo         []state.Draft
 	history      *inputHistory
 	scroll       int
+	viewport     conversationViewport
 	id           string
 	agentMissing bool
 	agentPending bool
@@ -207,10 +208,13 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		}
 		return nil
 	case "pgup":
-		m.conversation.scroll += max(1, m.size.Height/2)
+		m.scrollConversation(max(1, m.size.Height/2))
 		return nil
 	case "pgdown":
-		m.conversation.scroll = max(0, m.conversation.scroll-max(1, m.size.Height/2))
+		m.scrollConversation(-max(1, m.size.Height/2))
+		return nil
+	case "end":
+		m.scrollConversation(-m.conversation.scroll)
 		return nil
 	case "ctrl+t":
 		m.openPager("")
@@ -661,6 +665,7 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 	name := m.conversationName()
 	rows[plan.Header.Y] = clip(m.styles.Title.Render(name))
 	var transcript []render.StyledRow
+	var anchors []conversationAnchor
 	mutedRows := make(map[int]bool)
 	plainRow := func(text string) render.StyledRow { return render.StyledRow{Spans: []render.Span{{Text: text}}} }
 	if !m.hasCapability("conversation") {
@@ -687,6 +692,11 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		if cached.stream == nil {
 			continue
 		}
+		// The account placeholder has no retained conversation identity.
+		for len(anchors) < len(transcript) {
+			anchors = append(anchors, conversationAnchor{})
+		}
+		blockStart := len(transcript)
 		if speaker := m.speakerName(b); speaker != "" {
 			transcript = append(transcript, plainRow(speaker))
 		}
@@ -701,9 +711,13 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		if b.InlineReply {
 			transcript = append(transcript, plainRow(design.Text(m.styles.options.Language, "reply.open_pager")))
 		}
+		for row := 0; row < len(transcript)-blockStart; row++ {
+			anchors = append(anchors, conversationAnchor{block: b.ID, row: row})
+		}
 	}
-	m.conversation.scroll = min(m.conversation.scroll, max(0, len(transcript)-plan.Conversation.Height))
-	start := max(0, len(transcript)-plan.Conversation.Height-m.conversation.scroll)
+	start := m.conversationStart(anchors, len(transcript), plan.Conversation.Height)
+	m.conversation.viewport.overflow = len(transcript) > plan.Conversation.Height
+	rows[plan.Status.Y] = m.conversationFooter(showNotice)
 	for y, line := range transcript[start:] {
 		if y >= plan.Conversation.Height {
 			break

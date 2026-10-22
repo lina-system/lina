@@ -85,6 +85,8 @@ func readConversationInput(parent context.Context, input terminalInput, visit fu
 			msg = tea.KeyPressMsg(e)
 		case uv.KeyReleaseEvent:
 			msg = tea.KeyReleaseMsg(e)
+		case uv.MouseWheelEvent:
+			msg = tea.MouseWheelMsg(e)
 		case uv.FocusEvent:
 			msg = tea.FocusMsg{}
 		case uv.BlurEvent:

@@ -260,6 +260,8 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyboardEnhancementsMsg:
 		m.events = msg.SupportsEventTypes()
 		m.disambiguated = msg.SupportsKeyDisambiguation()
+	case tea.MouseWheelMsg:
+		m.conversationWheel(msg)
 	case tea.PasteMsg:
 		if m.web.open {
 			m.webPaste(msg.Content)
@@ -340,6 +342,12 @@ func (m *shellModel) refreshBlocks() {
 			block.Text = m.cardSummary(card)
 		}
 		cached, ok := m.blocks[block.ID]
+		if m.conversation.scroll > 0 && conversationBlock(block) && (!ok || cached.text != block.Text) {
+			if m.conversation.viewport.changed == nil {
+				m.conversation.viewport.changed = make(map[string]bool)
+			}
+			m.conversation.viewport.changed[block.ID] = true
+		}
 		if !ok || cached.revision != block.Revision || cached.text != block.Text || cached.done != block.Done {
 			config := render.Config{Width: max(1, m.size.Width)}
 			stream := render.NewStream(block.ID, config, nil)

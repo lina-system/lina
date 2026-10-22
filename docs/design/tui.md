@@ -396,6 +396,21 @@ and Page Down move through the retained conversation. Tab switches composer and
 card focus; arrows select a result card. The composer keeps its draft when an
 overlay opens or connection status changes. An identical frame and cursor is
 not submitted to the renderer, and the plain display writes no duplicate frame.
+In the colour conversation, the mouse wheel over the transcript moves three
+rows per notch. Same-direction repeats within 120 ms add three rows to the
+step, capped at twelve; idle input or a direction change resets it to three.
+The latest position follows arriving output. Scrolling up retains the first
+visible block and row when output arrives, including streamed and completed
+replies and same-identity resyncs. While away from the latest position, changed
+output below the viewport adds the localized `↓ new messages · End` marker to
+the status row. End returns to the latest output, clears the marker and resumes
+following. Scroll keys preserve the composer draft. When the transcript exceeds
+its region, the status row adds the localized `PgUp scroll` hint only if it fits;
+this optional hint is dropped before existing status and the new-output marker.
+The wheel does not act through an overlay or outside the conversation region.
+`TestM1TUIWheelStickyConversation` exercises the installed Core and real TUI in
+a 100×34 PTY, sends SGR wheel input, compares the retained rows after a second
+reply, and verifies End and mouse-mode cleanup.
 For the colour conversation screen, each new size reaches the cell renderer
 before its reflowed view, even if the view text is unchanged. The connection owner's latest dimensions remain authoritative: late renderer startup size messages are discarded before they can resize the cell buffer. Resizing keeps the
 draft and redraws header, status and composer within the current row budget;
@@ -746,10 +761,13 @@ pasted `?` remain ordinary input. Toggle repeats and releases never open it.
 The conversation footer keeps the connection mark and localized word first.
 It adds whole key-and-label hints in ascending priority, dropping the lowest
 priorities first when their display-cell width does not fit. The highest priority
-is `? Shortcuts`, followed by Esc, Enter, Ctrl+D, Alt+Enter, PgUp/PgDn, Ctrl+O and
-F6, with Ctrl+T for the retained transcript following those hints. Notices and cause details may be shortened to leave space for the connection
+is `? Shortcuts`, followed by Esc, Enter, Ctrl+D, Alt+Enter, Ctrl+O and
+F6, with Ctrl+T for the retained transcript following those hints. When the
+conversation overflows, `PgUp scroll` is the last optional hint and is dropped first. Notices and cause details may be shortened to leave space for the connection
 and the first hint. At every supported width (40 columns and above), neither the
-connection nor the first hint is dropped. Below the supported minimum, physical
+connection nor the first hint is dropped, except that the new-output marker
+reserves space ahead of shortcut hints while reading older output. End is also
+listed in the shortcut sheet as the return-to-latest action. Below the supported minimum, physical
 cell limits still apply. Pager overlays and side panes retain the connection with
 whole pager hints (Esc, search, next match), rather than replacing it with controls.
 Both English and Korean labels come from the catalog.
@@ -778,6 +796,8 @@ and limits are recorded in [the shortcut reference](tui-shortcuts-reference.md).
 | Ctrl+W, Ctrl+P, Ctrl+R | Waiting for me, progress, running list |
 | Ctrl+O | Open the selected result |
 | F6 | Open the first unresolved decision |
+| End | Return to the latest conversation output and resume following |
+| Mouse wheel over the conversation | Scroll three rows, accelerated on fast repeats |
 | Ctrl+T | Open the retained conversation transcript in the pager |
 
 Clearing a draft (including attachments) cancels any pending quit confirmation
@@ -807,6 +827,15 @@ The terminal input adapter decodes enhanced keys before dispatch and excludes
 paste and terminal replies from key actions. Cancellation drains pending decoder
 events without dispatching them, joins the input reader, and closes only its own
 cancellation resources before the caller restores terminal mode.
+
+Mouse support is wheel-only in the colour conversation renderer. It enables
+DEC normal mouse reporting (1000) with SGR coordinates (1006), dispatches only
+wheel events and ignores button presses/releases. It never requests cell-motion
+(1002) or all-motion (1003) reporting. Both enabled modes are disabled when the
+renderer exits, including cancellation. Native text selection stays the
+terminal's responsibility: hold Shift while dragging in xterm or GNOME Terminal,
+or Option while dragging in iTerm2. Other terminals may configure their own
+mouse-reporting override. LINA neither selects text nor reads the clipboard.
 
 **Mid-turn input** is steering by default and applies at the next round boundary ([runtime.md](runtime.md#conversation-loop)). `/queue` makes the input a follow-up. `/stop` cancels.
 
@@ -1144,7 +1173,7 @@ removed and requires connection-only startup.
 
 Withdrawn without an id: the hand-off pane, which the agent talk log replaces, and the work-panel worker mirror, which no contract defines.
 
-Open points, each decided by its owner or by measurement: the side-pane width (S11); Korean table rendering (S10); the terminal list of the spike gate; image paste over SSH; how the shared list of slash commands travels (a schema matter); whether a copy by OSC 52 on an explicit key fits the clipboard rule of [surfaces.md](surfaces.md#launcher) and [non-competition.md](non-competition.md), which S5 measures for support; mouse support; locales beyond Korean and English; and non-competition evidence for the TUI on a device-OS install ([non-competition.md](non-competition.md)).
+Open points, each decided by its owner or by measurement: the side-pane width (S11); Korean table rendering (S10); the terminal list of the spike gate; image paste over SSH; how the shared list of slash commands travels (a schema matter); whether a copy by OSC 52 on an explicit key fits the clipboard rule of [surfaces.md](surfaces.md#launcher) and [non-competition.md](non-competition.md), which S5 measures for support; locales beyond Korean and English; and non-competition evidence for the TUI on a device-OS install ([non-competition.md](non-competition.md)).
 
 ### Memory and agent command requests
 
