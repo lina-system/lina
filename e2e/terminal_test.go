@@ -149,6 +149,12 @@ func (h *harness) startTerminalSize(environment []string, combined, screen bool,
 	}()
 	h.t.Cleanup(func() {
 		p.killAndWait()
+		if h.t.Failed() {
+			h.t.Logf("TUI exit: %v; stderr=%s", p.err, &p.stderr)
+			if term.screen != nil {
+				h.t.Logf("final screen:\n%s", screenText(term.screen.Snapshot()))
+			}
+		}
 		master.Close()
 		// Drain any remaining lines so cleanup also joins a blocked sender.
 		for range term.lines {

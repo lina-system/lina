@@ -328,7 +328,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 
 ### 2.B Delegation
 
-**G2-04 Worker adapter boundary and the Codex adapter.** `worker.Adapter`, generated types, dynamic tools, approvals, quota rows. It runs first and does not wait for the pin.
+**G2-04 Worker adapter boundary and the Codex adapter.** `worker.Adapter`, generated types, dynamic tools, approvals, quota rows. It runs first and does not wait for the pin. Issue #131 supplies the common boundary, generated schema baseline and vendored-file integrity gate; #132 proves session execution, and #133 connects work tools, approvals and quota. A schema baseline alone does not satisfy the runtime done condition.
 - Done when: the round trip completes with the installed Codex and records its version; an unverified version is reported and still used; a worker approval reaches the originating conversation and the answer returns; no sandbox, credential or setting is imposed on the worker.
 - Depends on: G1-05, G1-18. Design refs: C-29; [work-and-delegation.md](work-and-delegation.md#codex-adapter).
 
@@ -360,7 +360,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 
 **G2-20 Persona growth step with undo.** Adopted at once into the growth snapshot layer; undo.
 - Done when: a step is a new revision applied from the next turn; undo restores the previous text as a new revision; an undone step is not proposed again; only the growth snapshot layer changes.
-- Implementation: Core's deterministic Moirai growth definition publishes the revision and one-line notice with the job receipt. Agent-bound notice/undo tools retain other layers and reject undone candidate ids and content hashes across restart. `e2e/m2/persona-growth.json` covers the real worker and installed Core, including the growth capability, next-turn model instructions, conversation notice, one-action undo, migration upgrades and restart suppression using synthetic candidates.
+- Implementation: Core's deterministic Moirai growth definition publishes the revision and one-line notice with the job receipt. Agent-bound notice/undo tools retain other layers and reject undone candidate ids and content hashes across restart. `e2e/m2/persona-growth.json` covers the real worker and installed Core, including the growth capability, next-turn model instructions, conversation notice, one-action undo, migration upgrades and restart suppression using synthetic candidates. `e2e/m2/persona-growth-followups.json` covers near-limit candidates, replacement agents after an empty startup and repeated undo; fault-injected Core tests verify that committed adoption survives notice delivery failure.
 - Depends on: G1-12, G1-37. Design refs: C-23; [cognition-and-life.md](cognition-and-life.md#growth).
 
 ### 2.D Owner views

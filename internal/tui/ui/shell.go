@@ -180,6 +180,11 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		beforeCard, _ := m.content.CurrentCard()
 		var commands []state.Cmd
 		m.content, commands = state.Reduce(m.content, msg.Message)
+		for _, block := range m.content.Blocks {
+			if block.Topic == "core" && block.ShellFileToolsAvailable != nil && !*block.ShellFileToolsAvailable {
+				m.content, _ = state.Reduce(m.content, state.Notice{ID: "sandbox.unavailable", Code: "sandbox.unavailable"})
+			}
+		}
 		m.refreshOpenCard()
 		m.refreshRunning()
 		m.refreshBlocks()
@@ -361,6 +366,16 @@ func (m *shellModel) localNotice() string {
 	for i := len(m.content.Notices) - 1; i >= 0; i-- {
 		code := m.content.Notices[i].Code
 		switch code {
+		case "sandbox.unavailable":
+			unavailable := false
+			for _, block := range m.content.Blocks {
+				if block.Topic == "core" && block.ShellFileToolsAvailable != nil {
+					unavailable = !*block.ShellFileToolsAvailable
+				}
+			}
+			if !unavailable {
+				continue
+			}
 		case "shell.lists_unavailable":
 			if m.hasCapability("running") || m.hasCapability("waiting") {
 				continue
