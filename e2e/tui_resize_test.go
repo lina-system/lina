@@ -165,7 +165,8 @@ func waitMatchingScreen(t *testing.T, h *harness, term *terminal, expected tuite
 
 // Completion durations are local display metadata, so a fresh client has none.
 // Reserve their viewport rows in both clients before comparing the visible tail.
-// The header, composer, status, wrapping and cursor still compare exactly.
+// The header, composer rule, composer, status, wrapping and cursor still compare
+// exactly. These fixtures have a one-row composer and a visible rule.
 func completionRowCount(s tuiterm.Snapshot) int {
 	prefix := strings.TrimSuffix(design.Text(design.English, "activity.worked_for"), "%s")
 	count := 0
@@ -181,7 +182,7 @@ func resizeComparableRows(s tuiterm.Snapshot, reserve int) []string {
 	rows := screenRows(s)
 	prefix := strings.TrimSuffix(design.Text(design.English, "activity.worked_for"), "%s")
 	var transcript []string
-	for _, row := range rows[1 : len(rows)-2] {
+	for _, row := range rows[1 : len(rows)-3] {
 		if !strings.HasPrefix(row, prefix) {
 			transcript = append(transcript, row)
 		}
@@ -189,7 +190,7 @@ func resizeComparableRows(s tuiterm.Snapshot, reserve int) []string {
 	for len(transcript) > 0 && transcript[len(transcript)-1] == "" {
 		transcript = transcript[:len(transcript)-1]
 	}
-	capacity := len(rows) - 3
+	capacity := len(rows) - 4
 	if len(transcript) > capacity-reserve {
 		transcript = transcript[len(transcript)-(capacity-reserve):]
 	}
@@ -197,5 +198,59 @@ func resizeComparableRows(s tuiterm.Snapshot, reserve int) []string {
 		transcript = append(transcript, "")
 	}
 	result := append([]string{rows[0]}, transcript...)
-	return append(result, rows[len(rows)-2:]...)
+	return append(result, rows[len(rows)-3:]...)
+}
+
+// Exercise both a clipped transcript and a padded transcript. A local duration
+// may change the visible tail, but must never move or mask composer chrome.
+func TestResizeComparisonPreservesEverySharedRow(t *testing.T) {
+	for _, height := range []int{12, 35} {
+		t.Run(fmt.Sprint(height), func(t *testing.T) {
+			const width = 40
+			makeRows := func(completed bool) []string {
+				rows := make([]string, height)
+				rows[0] = "header"
+				transcript := []string{"input label", "input", "agent label", "reply 1", "reply 2", "reply 3", "reply 4", "reply 5", "reply 6"}
+				if completed {
+					transcript = append(transcript, fmt.Sprintf(design.Text(design.English, "activity.worked_for"), "2s"))
+				}
+				if len(transcript) > height-4 {
+					transcript = transcript[len(transcript)-(height-4):]
+				}
+				copy(rows[1:], transcript)
+				rows[height-3] = strings.Repeat(design.Dark().GlyphUnicodeRule, width)
+				rows[height-2], rows[height-1] = "draft", "status"
+				return rows
+			}
+			snapshot := func(rows []string) tuiterm.Snapshot {
+				s := tuiterm.Snapshot{Cells: make([][]tuiterm.Cell, height)}
+				for y, row := range rows {
+					s.Cells[y] = make([]tuiterm.Cell, width)
+					for x, r := range []rune(row) {
+						s.Cells[y][x] = tuiterm.Cell{Content: string(r), Width: 1}
+					}
+				}
+				return s
+			}
+			actualRows := makeRows(true)
+			expected := snapshot(makeRows(false))
+			equal := func(rows []string) bool {
+				actual := snapshot(rows)
+				reserve := completionRowCount(actual)
+				return strings.Join(resizeComparableRows(actual, reserve), "\n") == strings.Join(resizeComparableRows(expected, reserve), "\n")
+			}
+			if !equal(actualRows) {
+				t.Fatal("local duration changed the comparison of shared rows")
+			}
+			// Include every blank row and all four fixed regions. No ignored
+			// row, relaxed substring match or delayed retry may hide corruption.
+			for y := range actualRows {
+				changed := append([]string(nil), actualRows...)
+				changed[y] = "corrupt row"
+				if equal(changed) {
+					t.Errorf("corruption at row %d escaped comparison", y)
+				}
+			}
+		})
+	}
 }
