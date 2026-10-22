@@ -332,6 +332,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 - Depends on: G1-01. Design refs: C-57; [work-and-delegation.md](work-and-delegation.md#start-gate).
 
 **G2-01 Task records and work area.** Work ledger, card projection, `work/` directories, protected refs. #127 adds installed-Core allocation and result-retention tools, pinned task worktrees and no-PR material/bundle recovery, exercised by `e2e/m2/work-area.json`.
+- #125 connects installed worker dispatch to the same allocator and ledger. `e2e/m2/work-dispatch.json` exercises the conversation tool, detached base, protected refs, worker commit, PR observation and replayable receipt through running Core.
 - The ledger increment (#126) keeps task/run/receipt facts in canon, reserves at most one active run per task, rebuilds card and reservation indexes from events, and rejects missing or mismatched artifact provenance. Core startup rebuilds these indexes and retains unfinished reservations as unknown. Workspace creation and protected-ref enforcement remain the separate work-area increment.
 - Done when: a second active run on a task is refused; a task worktree is created from the base commit under `work/tasks`; the projection rebuilt from the ledger equals the live one; a result without a pull request is copied into the generation; a receipt for a changed artifact without provenance is rejected.
 - Depends on: G1-05, G1-11, G1-12, G2-17. Design refs: C-29, C-30, C-39; [work-and-delegation.md](work-and-delegation.md#work-area).
@@ -408,6 +409,11 @@ Update backup and rollback restore, including resumed rollback, follow the
 caller's context without the installer command timeout. The M2 data-operation
 scenario verifies backup and restore exceeding that timeout through the installed
 Core's activation and recovery paths.
+The parent #148 adds recovery failure coverage: an updater killed before service
+resume followed by a refused start leaves a durable hold, preserves data and
+composition, and blocks normal Core startup. Its headless scenario is
+`e2e/m2/update-resume-failure.json`; command tests also cover cancelled readiness
+from completed, rolled-back and pre-swap attempts.
 
 **G2-15 Phase 2 acceptance run.** Run script and evidence record for LINA 2.
 - Done when: one record holds every field of the phase rules and a result per check; the interruption injection now stops a running task and its citations pass; Codex and Claude Code versions are recorded.

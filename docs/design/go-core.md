@@ -248,6 +248,11 @@ The installed binary's backup and rollback restore (including resumed rollback)
 use the updater context without an added installer command deadline; data size
 must not impose a fixed 30-second failure boundary. Both retain `kit/proc`
 ownership and cancellation, filtered environments and bounded command output.
+Activation and interrupted-update recovery share the service start/readiness
+check. A recovery start or readiness failure persists `held` with
+`update_resume_failed` without clearing READY, even from a terminal record.
+Readiness failure stops the owned service using a bounded context independent
+of caller cancellation before returning the failure.
 
 `update.json` is a schema-1 private atomic control record outside backups. It
 binds the root, normal socket, candidate, previous composition, binary digests,
@@ -1264,7 +1269,12 @@ current head, checks and review, with a head recheck after inline comments.
 `internal/core/worker/dispatch` wires the adapter into installed Core's `dispatch_work`
 tool and existing work ledger. Migration 31 adds the dispatch journal; a committed
 conversation tool receipt gates execution. The journal reserves each repository
-through queued/running/unknown states. Core creates the worktree, checks design
+through queued/running/unknown states. Core allocates through its shared
+`work.Area`, records the pinned workspace on the task and starts the worker in
+`work/tasks/<task-id>` from the detached base. The independent parent clone
+keeps the GitHub origin for worker publishing and the local allocation source
+separately. Adapter observations live outside the checkout in `work/runs/`;
+receipt provenance names those files. Core checks design
 references, protected refs and write areas, and persists an adapter-derived
 artifact/receipt. Terminal observations publish to the source conversation and
 survive restart. Recovery retains uncertain reservations without replay. The

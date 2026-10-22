@@ -3,6 +3,7 @@ package work
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -171,6 +172,47 @@ func TestAreaPinnedWorktreeAndProtectedRefs(t *testing.T) {
 		t.Fatal("bundle cannot recover branch")
 	}
 }
+func TestAreaSourceIdentitySurvivesWorkerRemote(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		t.Run(fmt.Sprint("legacy=", legacy), func(t *testing.T) {
+			a, spec, source := areaFixture(t)
+			l := lease.New(func() {})
+			defer l.Release()
+			w, err := a.Prepare(t.Context(), l, "task-1", spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if legacy {
+				areaGit(t, w.Path, "config", "--unset", "lina.source")
+				areaGit(t, w.Path, "switch", "-c", spec.Branch)
+				areaGit(t, w.Path, "commit", "--allow-empty", "-m", "worker progress")
+				head := areaGit(t, w.Path, "rev-parse", "HEAD")
+				if _, err = a.Prepare(t.Context(), l, "task-1", spec); err != nil {
+					t.Fatal(err)
+				}
+				if areaGit(t, w.Path, "rev-parse", "HEAD") != head {
+					t.Fatal("source migration reset worker progress")
+				}
+			}
+			areaGit(t, w.Path, "remote", "set-url", "origin", "https://github.com/fixture/project.git")
+			// A worker's publishing remote must not replace the allocator's local source.
+			if _, err = a.Prepare(t.Context(), l, "task-1", spec); err != nil {
+				t.Fatalf("publishing remote lost allocation source: %v", err)
+			}
+			areaGit(t, source, "commit", "--allow-empty", "-m", "new source commit")
+			spec.Base = areaGit(t, source, "rev-parse", "HEAD")
+			spec.Branch = "task/task-2"
+			if _, err = a.Prepare(t.Context(), l, "task-2", spec); err != nil {
+				t.Fatal(err)
+			}
+			spec.Source = t.TempDir()
+			if _, err = a.Prepare(t.Context(), l, "task-2", spec); err == nil {
+				t.Fatal("different local source accepted")
+			}
+		})
+	}
+}
+
 func TestAreaRefusesEscapesAndConflictingAllocation(t *testing.T) {
 	a, s, _ := areaFixture(t)
 	l := lease.New(func() {})
