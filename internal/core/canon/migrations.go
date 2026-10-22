@@ -86,7 +86,7 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 		{26, "work_ledger"}, {26, "work_cards"}, {26, "work_active_runs"},
 		{30, "authority_merges"},
 		{32, "discord_presentations"}, {32, "discord_buttons"}, {32, "channel_steering"},
-		{34, "work_events"}, {34, "work_records"},
+		{35, "work_events"}, {35, "work_records"},
 	} {
 		var count int
 		if err = db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name=?", entry.table).Scan(&count); err != nil {
