@@ -805,10 +805,12 @@ func TestKeychainReadRecoveryDoesNotRequireSignIn(t *testing.T) {
 				return rotated("access-rotated", "refresh-rotated"), nil
 			}, backend)
 			add(t, f, "one")
+			// Make the keychain unavailable before waking the refresh actor.
+			// Otherwise an idle refresh can legitimately read tokens first.
+			backend.failRead.Store(true)
 			if refresh {
 				due(t, f, "one")
 			}
-			backend.failRead.Store(true)
 			c, err := f.s.Credential(t.Context(), "one")
 			if err == nil || c.Account != "" {
 				t.Fatal("keychain failure admitted credentials")
