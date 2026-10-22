@@ -84,9 +84,11 @@ func updateManager(t *testing.T, h *harness, start func(bool) *process, initial 
 					p := current
 					mu.Unlock()
 					if p != nil {
+						// Core can acknowledge drain before its process waiter joins.
+						// Like systemctl stop, wait for exit within the scenario deadline.
 						select {
 						case <-p.done:
-						default:
+						case <-h.ctx.Done():
 							reply.Code = 98
 						}
 					}
