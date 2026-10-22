@@ -336,7 +336,7 @@ line under the reply, using the inactive event's server timestamp. This is clien
 display metadata: it survives same-session redraw and resync, is cleared with
 revoked or unfocused content, and is never stored or restored from history.
 
-`e2e/tui_activity_test.go` uses an installed Core and a held fixture provider in
+`e2e/m1/tui_activity_test.go` uses an installed Core and a held fixture provider in
 a 100x34 PTY. It checks initial activity within one second, advancing elapsed
 time, replying after the first delta, stopping before interrupt delivery,
 completion and zero idle bytes. The recording harness separately checks idle
@@ -350,7 +350,7 @@ The footer uses T-10's localized key-and-label priorities. It admits only whole
 hint segments, preserving the connection and highest-priority hint at supported
 widths; a hint that does not fit and the hints after it are omitted together.
 
-`e2e/tui_resize_test.go` holds a real installed-Core turn behind a fixture
+`e2e/m1/tui_resize_test.go` holds a real installed-Core turn behind a fixture
 provider gate, resizes the PTY through 79, 50 and 40 columns in English and
 Korean, and checks complete activity and footer segments plus four transcript
 rows with a growing composer. Releasing the gate produces a real result without
@@ -750,7 +750,7 @@ cell limits still apply. Pager overlays and side panes retain the connection wit
 whole pager hints (Esc, search, next match), rather than replacing it with controls.
 Both English and Korean labels come from the catalog.
 
-`e2e/tui_shortcuts_test.go` exercises the installed Core and a Responses fixture
+`e2e/m1/tui_shortcuts_test.go` exercises the installed Core and a Responses fixture
 through PTYs at 100, 60 and 40 columns, in English/Unicode and Korean/ASCII. It
 checks whole priority prefixes, both sheet entry paths, the connection inside
 the sheet, Esc returning to the conversation, and a drafted `why?` sent through
@@ -1095,7 +1095,7 @@ with the fixture Responses provider, types in the real TUI, checks reply cells,
 and reopens the conversation. It exercises the existing Core turn, lane and
 ledger composition; a direct provider call is not its acceptance proof. The
 real-model headless client journey is covered by
-`TestRealModelHeadlessConversation` in `e2e/real_model_test.go`, including streamed
+`TestRealModelHeadlessConversation` in `e2e/m1/real_model_test.go`, including streamed
 output and canon readback after Core restart. It requires explicit real-model
 opt-in and credentials; the physical terminal spike remains T-08.
 `e2e/m1/conversation-admission.json` verifies large Unicode inputs and replies

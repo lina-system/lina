@@ -107,7 +107,7 @@ func TestV1OwnerSignIn(t *testing.T) {
 	rows := clientsrv.LocalCombinations()
 	for i := range rows {
 		rows[i].Capabilities = caps
-		rows[i].Evidence = []string{"go test ./e2e -run TestM1ChatGPTSignInOwnerBinding"}
+		rows[i].Evidence = []string{"go test ./e2e/m1 -run TestM1ChatGPTSignInOwnerBinding"}
 	}
 	// A short temporary socket path avoids platform limits. Credentials remain in
 	// the explicitly selected private state root.
