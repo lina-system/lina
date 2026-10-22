@@ -26,7 +26,7 @@ var clientKinds = []string{
 	"sign_in_listen", "sign_in_listening", "sign_in_open", "sign_in_redirect",
 	"snapshot", "resync", "resync_required",
 	"restart_request", "restart_get", "restart_status",
-	"export_request", "export_result", "replay_request", "replay_result",
+	"export_request", "export_result", "replay_request", "replay_result", "web_request", "web_result",
 }
 
 func clientMessage(t *testing.T, kind string, payload any) map[string]any {
@@ -59,6 +59,8 @@ func roundTrip(t *testing.T, value map[string]any) Envelope {
 func concretePayloads() map[string]any {
 	return map[string]any{
 		"restart_status":     map[string]any{"owed": false},
+		"web_request":        map[string]any{"operation": "status"},
+		"web_result":         map[string]any{"provider": "firecrawl", "configured": false},
 		"export_result":      map[string]any{"directory": "staging/export/synthetic", "manifest": "{}"},
 		"conversation_start": map[string]any{"agent_id": "agent-example"},
 		"approval_request":   map[string]any{"choices": []any{"once", "deny", "always_allow"}},

@@ -86,7 +86,9 @@
         "export_request",
         "export_result",
         "replay_request",
-        "replay_result"
+        "replay_result",
+        "web_request",
+        "web_result"
       ]
     },
     "message_id": {
@@ -1433,6 +1435,38 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/replay_result"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "web_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/web_request"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "web_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/web_result"
           }
         }
       }
@@ -4366,6 +4400,47 @@
         "refused",
         "stopped"
       ]
+    },
+    "web_request": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "status",
+            "set",
+            "clear"
+          ]
+        },
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "required": [
+        "operation"
+      ],
+      "additionalProperties": false
+    },
+    "web_result": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": [
+            "firecrawl"
+          ]
+        },
+        "configured": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "provider",
+        "configured"
+      ],
+      "additionalProperties": false
     }
   }
 }

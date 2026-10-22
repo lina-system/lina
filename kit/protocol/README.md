@@ -57,6 +57,7 @@ wire and exported Go names, for example `output_delta`, `KindOutputDelta` and
 | Accounts | `account_request`, `account_result` |
 | Memory | `memory_request`, `memory_result`, `memory_import_progress`, `memory_promotion_batch` |
 | Channels | `channel_request`, `channel_result`, `channel_state` |
+| Web setup | `web_request`, `web_result` |
 | Agent exchanges | `agent_talk_get`, `agent_talk`, `agent_talk_entry`, `agent_talk_expand`, `agent_talk_subscribe` |
 | Connection and task control | `connected`, `disconnected`, `task_status`, `run_status`, `task_cancel`, `multi_task_control` |
 | Sign-in relay | `sign_in_listen`, `sign_in_listening`, `sign_in_open`, `sign_in_redirect` |

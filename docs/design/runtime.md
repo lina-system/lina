@@ -841,3 +841,7 @@ The first implementation issue demonstrates the runtime with these checks. Each 
 - Narrowing a plugin server's network to named hosts: needs a filter in the sandbox wrapper; chosen at implementation acceptance of the plugin system, and until then the allowance is network on or off.
 - The starting values of the turn budget (acknowledgement, soft and hard budget, tool deadline), which only set the hand-off point: tuned by measurement during implementation acceptance of the conversation engine, on waiting time and completion quality together (rework, corrections and "that is not what I asked"), never on waiting time alone.
 - Replay uses immutable history references, pinned persona and recorded request configuration; missing reconstructible assembly excludes the turn. Raw ContextPackets remain unstored.
+
+### Built-in web reads
+
+[Web search and page reading](web-tools.md) implement `web_search(query, limit)` and `web_extract(url)` in ordinary turns. The same tool registry and network approval path govern both. Only configured providers are offered, returned content is untrusted evidence, and the provider key belongs to the existing secret store.

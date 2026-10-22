@@ -197,12 +197,17 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 			m.reduceInput(state.EditDraft{})
 			text := func(id string) string { return design.Text(m.styles.options.Language, id) }
 			m.openPager(strings.Join([]string{text("controls.help"),
-				"/accounts  " + text("account.heading"), "/signin  " + text("sign_in_open"),
+				"/web  " + text("web.heading"), "/accounts  " + text("account.heading"), "/signin  " + text("sign_in_open"),
 				"/memory  " + text("memory.heading"), "/agents  " + text("agents.heading"), "/channels  " + text("channel.heading"), "/talk  " + text("talk.heading"), "/stop  " + text("interrupt"),
 			}, "\n"))
 			return nil
 		}
 		if handled, command := m.talkCommand(text); handled {
+			m.reduceInput(state.EditDraft{})
+			m.conversation.undo = nil
+			return command
+		}
+		if handled, command := m.webCommand(text); handled {
 			m.reduceInput(state.EditDraft{})
 			m.conversation.undo = nil
 			return command

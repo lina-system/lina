@@ -65,6 +65,7 @@ type shellModel struct {
 	conversation  conversationView
 	talk          talkView
 	channels      channelView
+	web           webView
 	accounts      accountView
 	accountRows   []protocol.AccountSummary
 	accountsKnown bool
@@ -96,6 +97,7 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.generation = msg.Generation
 			m.talk = talkView{attempt: m.talk.attempt + 1}
 			m.channels = channelView{attempt: m.channels.attempt + 1}
+			m.web = webView{attempt: m.web.attempt + 1}
 			m.accounts = accountView{}
 			m.accountRows = nil
 			m.accountsKnown = false
@@ -239,6 +241,10 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyboardEnhancementsMsg:
 		m.events = msg.SupportsEventTypes()
 	case tea.PasteMsg:
+		if m.web.open {
+			m.webPaste(msg.Content)
+			return m, nil
+		}
 		if m.content.CardView.ID != "" {
 			return m, m.cardPaste(msg.Content)
 		}
@@ -257,6 +263,9 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.editComposer(tea.PasteMsg{Content: sanitize.Display(msg.Content)})
 		}
 	case tea.KeyMsg:
+		if m.web.open {
+			return m, m.webKey(msg)
+		}
 		if m.talk.open {
 			return m, m.talkKey(msg)
 		}
@@ -340,7 +349,7 @@ func (m *shellModel) View() tea.View {
 	view.KeyboardEnhancements.ReportEventTypes = true
 	if m.hasComposer() && m.status.State.active() {
 		plan := m.conversationPlan()
-		if plan.Tier != layout.TooSmall && !m.conversation.pager.open && !m.accounts.open && !m.channels.open && !m.talk.open && m.content.CardView.ID == "" {
+		if plan.Tier != layout.TooSmall && !m.conversation.pager.open && !m.accounts.open && !m.web.open && !m.channels.open && !m.talk.open && m.content.CardView.ID == "" {
 			view.Cursor = m.conversation.composer.Cursor()
 			if view.Cursor != nil {
 				view.Cursor.Position.Y += plan.Composer.Y
@@ -383,6 +392,9 @@ func (m *shellModel) viewContent(showNotice bool) string {
 	}
 	if m.size.Width <= 0 || m.size.Height <= 0 {
 		return ""
+	}
+	if m.web.open {
+		return m.webContent()
 	}
 	if m.talk.open {
 		return m.talkContent()

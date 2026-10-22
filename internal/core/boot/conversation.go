@@ -77,6 +77,7 @@ type conversationRuntime struct {
 	db               *canon.Store
 	accounts         *accounts.Store
 	vault            *secrets.Store
+	webTransport     http.RoundTripper
 	signin           *accounts.SignIn
 	agents           *agents.Store
 	skills           *skills.Store
@@ -205,6 +206,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	}
 	relay := clientsrv.NewSignInRelay(r.person, r.signin)
 	for kind, op := range clientsrv.AccountOperations(r.person, r.accounts, relay) {
+		r.identity.Operations[kind] = op
+	}
+	for kind, op := range clientsrv.WebOperations(r) {
 		r.identity.Operations[kind] = op
 	}
 	for kind, op := range clientsrv.ReplayOperations(r) {
@@ -644,6 +648,8 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		return err
 	}
 	defer activity.Release()
+	releaseCredentials := r.vault.BeginTurn()
+	defer releaseCredentials()
 	bindings := map[string]loop.Tool{}
 	bindings[runs.StartToolName] = r.background.service.StartTool(r.runOrigin(turnID))
 	var promoted budget.Handle
@@ -709,6 +715,15 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			declarations = append(declarations, coreexec.RelationshipDeclaration())
 			declarations = append(declarations, coreexec.SkillDeclarations()...)
 			declarations = append(declarations, startRunDeclaration())
+			webProvider, err := r.selectedWebProvider()
+			if err != nil {
+				return turn.PreparedRequest{}, err
+			}
+			webDeclarations, err := r.prepareWebTools(turnID, webProvider, bindings)
+			if err != nil {
+				return turn.PreparedRequest{}, err
+			}
+			declarations = append(declarations, webDeclarations...)
 			packet, _, err := atropos.Packet(ctx, minimum, 0, func(ctx context.Context) (assemble.ContextPacket, error) { return r.relationshipPacket(ctx, at) })
 			if err != nil {
 				return turn.PreparedRequest{}, err
