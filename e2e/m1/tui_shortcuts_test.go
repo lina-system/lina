@@ -18,6 +18,8 @@ import (
 )
 
 func TestM1TUIShortcuts(t *testing.T) {
+	t.Parallel()
+
 	for _, variant := range []struct {
 		name, locale, glyphs, mark string
 		language                   design.Language

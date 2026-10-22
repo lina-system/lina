@@ -150,6 +150,8 @@ func alterUpdateManifest(t *testing.T, bundle string, change func(map[string]any
 	}
 }
 func TestM2UpdateActivation(t *testing.T) {
+	t.Parallel()
+
 	data, err := os.ReadFile("../m2/update-activation.json")
 	if err != nil {
 		t.Fatal(err)

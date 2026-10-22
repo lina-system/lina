@@ -109,6 +109,8 @@ func (h *harness) fakeCore(steps []fakecore.Step, tui ...bool) <-chan error {
 }
 
 func TestM1FakeCore(t *testing.T) {
+	t.Parallel()
+
 	data, err := os.ReadFile("fakecore.json")
 	if err != nil {
 		t.Fatal(err)

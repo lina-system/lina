@@ -15,6 +15,8 @@ import (
 )
 
 func TestM2GitHubCIInstalledCore(t *testing.T) {
+	t.Parallel()
+
 	var fixture struct {
 		Repository   string
 		Number       string `json:"pr_number"`

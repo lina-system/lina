@@ -8,6 +8,8 @@ import (
 )
 
 func TestM3TailnetCoreRefusesPublicBind(t *testing.T) {
+	t.Parallel()
+
 	h := newHarness(t, buildLina(t))
 	directory := filepath.Join(h.root, "system/core")
 	if err := os.MkdirAll(directory, 0700); err != nil {

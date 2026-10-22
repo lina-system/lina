@@ -19,6 +19,8 @@ import (
 )
 
 func TestM2UpdateClaudeCredential(t *testing.T) {
+	t.Parallel()
+
 	real := buildLina(t)
 	node := buildCommand(t, "lina-node")
 	worker := buildCommand(t, "moirai-worker")

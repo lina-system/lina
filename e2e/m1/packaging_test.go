@@ -16,6 +16,8 @@ import (
 // Drive the real build output through the shared protocol harness. Native
 // service-manager startup is a separate packaging acceptance measurement.
 func TestPackagedService(t *testing.T) {
+	t.Parallel()
+
 	output := t.TempDir()
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()

@@ -13,6 +13,8 @@ import (
 )
 
 func TestM1KoreanMemoryByID(t *testing.T) {
+	t.Parallel()
+
 	var corpus struct {
 		Documents []struct{ ID, Body string }
 		Queries   []struct {

@@ -79,6 +79,8 @@ func telegramWire(body string) *http.Response {
 }
 
 func TestM1TelegramCommitCrash(t *testing.T) {
+	t.Parallel()
+
 	for _, boundary := range []string{"before_commit", "after_commit"} {
 		t.Run(boundary, func(t *testing.T) {
 			h := newHarness(t, "")
@@ -176,6 +178,8 @@ func TestM1TelegramCommitChild(t *testing.T) {
 }
 
 func TestM1TelegramOwnerButton(t *testing.T) {
+	t.Parallel()
+
 	h := newHarness(t, "")
 	agent := seedAcceptanceTelegram(t, h.root)
 	db, _ := acceptanceStore(t, h.root, 2)

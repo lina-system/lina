@@ -26,6 +26,8 @@ import (
 )
 
 func TestM1WebUnconfigured(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile("web-tools.json")
 	if err != nil {
 		t.Fatal(err)
@@ -77,6 +79,8 @@ func TestM1WebUnconfigured(t *testing.T) {
 }
 
 func TestM1WebSetupPersistsWithoutLeakingKey(t *testing.T) {
+	t.Parallel()
+
 	h, start := installedConversationHarness(t, "")
 	core := start(false)
 	const key = "fc-persistence-private-fixture"
@@ -157,6 +161,8 @@ func TestM1WebSetupPersistsWithoutLeakingKey(t *testing.T) {
 }
 
 func TestM1WebSearchExtractAndCitation(t *testing.T) {
+	t.Parallel()
+
 	var calls, searches, extracts atomic.Int32
 	releaseSearch, releaseExtract := make(chan struct{}), make(chan struct{})
 	const source = "https://93.184.216.34/latest-x"

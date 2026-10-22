@@ -23,6 +23,8 @@ import (
 )
 
 func TestM2WorkArea(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile("../m2/work-area.json")
 	if err != nil {
 		t.Fatal(err)

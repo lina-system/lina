@@ -63,6 +63,8 @@ func partialHistory(t *testing.T, h *harness, client *clientapi.Client, conversa
 }
 
 func TestM1InterruptedPartialHistory(t *testing.T) {
+	t.Parallel()
+
 	var scenario struct {
 		Input         string
 		Partials      []string

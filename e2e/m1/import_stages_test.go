@@ -19,6 +19,8 @@ import (
 // The #34 harness runs the real credential-free worker against Core's Unix job
 // protocol. The optional import host installs its schema and registered rules.
 func TestM1StagedImportWorker(t *testing.T) {
+	t.Parallel()
+
 	data, err := os.ReadFile("import-stages.json")
 	if err != nil {
 		t.Fatal(err)

@@ -41,6 +41,8 @@ func (u unavailableTelegram) RoundTrip(r *http.Request) (*http.Response, error) 
 }
 
 func TestM1TelegramUnreachable(t *testing.T) {
+	t.Parallel()
+
 	data, err := os.ReadFile("telegram.json")
 	if err != nil {
 		t.Fatal(err)

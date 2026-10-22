@@ -31,6 +31,8 @@ import (
 )
 
 func TestM2DiscordCore(t *testing.T) {
+	t.Parallel()
+
 	var scenario struct {
 		Platform, Account, Owner, Chat, Input string
 		Paragraphs                            []int

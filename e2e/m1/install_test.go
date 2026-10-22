@@ -23,6 +23,8 @@ import (
 // Only systemd and the optional installed tool are fixtures. Installation,
 // artifact verification, Core, the client protocol and the TUI are real.
 func TestM1Install(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS != "linux" {
 		t.Skip("Linux Core installation")
 	}
