@@ -49,6 +49,7 @@ var keyBindings = []keyBinding{
 	{"talk.heading", []string{"/talk"}, 6, "", "commands"},
 	{"interrupt", []string{"/stop"}, 7, "", "commands"},
 	{"shortcuts.queue", []string{"/queue <text>"}, 8, "", "commands"},
+	{"web.heading", []string{"/web"}, 9, "", "commands"},
 }
 
 func bindingsFor(section string) []keyBinding {
@@ -92,11 +93,15 @@ func (m *shellModel) conversationFooter(showNotice bool) string {
 		}
 	}
 	// A notice cannot displace the first shortcut or the connection identity.
-	notice := ""
-	if m.status.Cause != "" {
-		notice = status.Detail
-	} else if showNotice {
-		notice = m.localNotice()
+	// Quit confirmation is transient input feedback, even when local notices
+	// are suppressed. Expiry restores the usual cause or notice and key hints.
+	notice := m.quitHint()
+	if notice == "" {
+		if m.status.Cause != "" {
+			notice = status.Detail
+		} else if showNotice {
+			notice = m.localNotice()
+		}
 	}
 	if notice != "" && len(hints) > 0 {
 		budget := width - ansi.StringWidth(line+"  "+hints[0]) - 2

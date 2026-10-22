@@ -65,6 +65,12 @@ entry, private-chat pairing, binding and disconnect through the real TUI and
 boot composition. A separate Core test process retains the production peer
 ancestry checks; only Telegram HTTP replies are scripted. Boot package tests
 also reopen the poller against durable connection and secret state.
+`m1/telegram.json` starts production boot in process against a saved channel and
+secret, without a model route. Only the platform HTTP transport is replaced:
+the restored bot's identity lookup stays blocked until shutdown. READY and a
+socket channel listing must succeed while it is blocked, the channel must show
+unavailable without exposing the token, and Core must cancel and join the
+request before stopping.
 `m1/tui-talk-log.json` seeds a durable exchange, restarts installed Core, and
 checks one summary row and its explicit ledger expansion without a model call.
 
@@ -226,6 +232,11 @@ replay count is consumed by the Bubble Tea recording-writer test.
 synthetic producer data, socket discovery/decisions, and a separate-key PTY approval.
 These scenarios create no second product decision store and use no timing sleeps.
 
+`m2/tui-composer-identity.json` installs Core/TUI into a temporary root and creates
+and chooses another agent through the real TUI. It checks that the empty composer,
+header and reply speaker name that agent before and after Core reconnect, using
+a loopback Responses fixture and a real PTY.
+
 `m2/github-ci.json` starts the real Core binary with a synthetic `gh` executable
 in its isolated PATH. It negotiates the GitHub capability, refuses an unnegotiated
 read, observes rate-limited CI pending and its retry deadline, then observes head,
@@ -263,6 +274,22 @@ binding/scope replacement. A paired synthetic channel and an existing binding
 exercise the actual target-agent checks. Read-only canon snapshots prove that
 refused requests preserve agent revisions, actions, conversations and bindings.
 
+`go test ./e2e/m1 -run '^TestM2UpdateActivation$' -count=1` runs
+`m2/update-activation.json`, which drives `lina update --activate` against
+the installed Core. A test-owned service manager launches real service processes;
+Core drains through its client protocol, snapshots and swaps, runs a real
+conversation and bundled-worker readiness check, and resumes with a verified
+tool result. Start refusal rolls back, while provider failure and updater death
+after READY hold the new state. Package SIGKILL tests acknowledge each rename
+boundary without fixed startup delays.
+
+`m3/crw-takeover.json` runs the operator import binary against an installed Core's
+stopped state root, checks exclusive ownership and idempotent retry, removes the
+source snapshot, then exercises the running Core's record tools. Imported evidence
+is found through search and read by LINA id, source-id lookup fails, a new result
+is saved, and restart keeps the imported identity. This operator-only test and
+fixture are excluded from release archives together with the takeover tool.
+
 `m3/antigravity.json` dispatches through installed Core's conversation tool,
 starts its supervised headless worker in a new worktree, produces a real file
 and commit, and verifies a recorded PR at that head. Separate cases cover soft
@@ -283,9 +310,4 @@ artifact contents, reported quota windows, and restored completion history.
 Worker settings remain omitted. This scenario uses no real account or provider
 credentials and does not measure live Codex quota.
 
-`m3/crw-takeover.json` runs the operator import binary against an installed Core's
-stopped state root, checks exclusive ownership and idempotent retry, removes the
-source snapshot, then exercises the running Core's record tools. Imported evidence
-is found through search and read by LINA id, source-id lookup fails, a new result
-is saved, and restart keeps the imported identity. This operator-only test and
-fixture are excluded from release archives together with the takeover tool.
+`TestM1WebUnconfigured` checks installed Core's explicit missing-provider status, absence of web declarations and one-round notice. `TestM1WebSearchExtractAndCitation` runs the production Core composition in a separate test helper with a synthetic manifest recording that executable, and injects only the Firecrawl HTTP transport. The real TUI saves a hidden key; the protocol client approves each network request; the real provider adapter searches and extracts against stub responses; TUI cells show both running activities; the scripted model cites the source URL. No real provider account is used, and model compliance beyond the scripted boundary is not claimed.

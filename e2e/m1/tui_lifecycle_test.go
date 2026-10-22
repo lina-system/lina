@@ -4,12 +4,18 @@ package e2e_test
 
 import (
 	"bufio"
+	"context"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/lina/internal/design"
+	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 )
 
 func TestTUITerminalLifecycle(t *testing.T) {
@@ -24,7 +30,7 @@ func TestTUITerminalLifecycle(t *testing.T) {
 			{name: "SIGINT", signal: syscall.SIGINT},
 			{name: "SIGHUP", signal: syscall.SIGHUP},
 			{name: "Ctrl+D", keys: "\x04"},
-			{name: "Ctrl+C", keys: "\x03"},
+			{name: "Ctrl+C", keys: "\x03\x03"},
 		} {
 			t.Run(stage+"/"+action.name, func(t *testing.T) {
 				h := newHarness(t, binary)
@@ -88,5 +94,55 @@ func TestTUITerminalLifecycle(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestTUIControlCConfirmation(t *testing.T) {
+	binary := buildLina(t)
+	for _, expire := range []bool{false, true} {
+		t.Run(fmt.Sprintf("expired=%t", expire), func(t *testing.T) {
+			h := newHarness(t, binary)
+			core := h.startCore()
+			before := h.client(core)
+			term := h.startScreenTUI("TERM=xterm-256color", "COLORTERM=truecolor")
+			waitScreen(t, h, term, design.Text(design.English, "live"))
+			h.keys(term, "\x03")
+			// Synchronize on the actual rendered hint, never a sleep between keys.
+			hint := design.Text(design.English, "shell.quit_hint")
+			waitScreen(t, h, term, hint)
+			select {
+			case <-term.process.done:
+				t.Fatal("first empty Ctrl+C exited")
+			default:
+			}
+			if expire {
+				// Expiry must redraw without another input or server notification.
+				ctx, cancel := context.WithTimeout(h.ctx, operationTimeout)
+				defer cancel()
+				if _, err := term.screen.Wait(ctx, func(s tuiterm.Snapshot) bool {
+					return !strings.Contains(screenText(s), hint)
+				}); err != nil {
+					t.Fatalf("quit hint did not expire: %v", err)
+				}
+				h.keys(term, "\x03")
+				waitScreen(t, h, term, hint)
+				select {
+				case <-term.process.done:
+					t.Fatal("Ctrl+C after expiry exited instead of warning again")
+				default:
+				}
+			}
+			h.keys(term, "\x03")
+			term.process.wait(t, 0)
+			h.expectTerminalRestored(term)
+			<-term.done
+			if s := term.screen.Snapshot(); s.AltScreen || s.CursorHidden {
+				t.Fatal("quit did not restore terminal screen/cursor")
+			}
+			if after := h.client(core); after.welcome.Epoch != before.welcome.Epoch {
+				t.Fatal("TUI quit restarted Core")
+			}
+			h.stopCore(core)
+		})
 	}
 }

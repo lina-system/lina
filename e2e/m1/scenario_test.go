@@ -10,7 +10,7 @@ import (
 
 func TestHeadless(t *testing.T) {
 	binary := buildLina(t)
-	for _, quit := range []struct{ name, keys string }{{"quit", "\x04"}, {"interrupt", "\x03"}, {"terminal EOF", "\x04"}} {
+	for _, quit := range []struct{ name, keys string }{{"quit", "\x04"}, {"interrupt", "\x03\x03"}, {"terminal EOF", "\x04"}} {
 		t.Run(quit.name, func(t *testing.T) {
 			h := newHarness(t, binary)
 			core := h.startCore()
