@@ -15,6 +15,7 @@ import (
 type channelView struct {
 	open, busy                           bool
 	stage, input, code, pairing, expires string
+	platform                             string
 	selected, agent, bound, offset       int
 	rows                                 []protocol.ChannelConnection
 	binding                              protocol.ChannelRequest
@@ -95,7 +96,7 @@ func (m *shellModel) channelKey(msg tea.KeyMsg) tea.Cmd {
 					return nil
 				}
 				v.stage = ""
-				return m.channelRequest(protocol.ChannelRequest{Operation: stringPointer("connect"), Token: &input})
+				return m.channelRequest(protocol.ChannelRequest{Operation: stringPointer("connect"), Platform: stringPointer(v.platform), Token: &input})
 			case "chat":
 				if input != "" {
 					v.binding.Chat = &input
@@ -135,7 +136,7 @@ func (m *shellModel) channelKey(msg tea.KeyMsg) tea.Cmd {
 			binding := bindings[v.bound]
 			account := v.rows[v.selected].Account
 			v.stage = ""
-			return m.channelRequest(protocol.ChannelRequest{Operation: stringPointer("unbind"), Account: &account, Chat: &binding.Chat, Topic: &binding.Topic})
+			return m.channelRequest(protocol.ChannelRequest{Operation: stringPointer("unbind"), Platform: stringPointer(v.rows[v.selected].Platform), Account: &account, Chat: &binding.Chat, Topic: &binding.Topic})
 		}
 		return nil
 	}
@@ -184,8 +185,12 @@ func (m *shellModel) channelKey(msg tea.KeyMsg) tea.Cmd {
 	case "down":
 		v.pairing, v.expires = "", ""
 		v.selected = min(max(0, len(v.rows)-1), v.selected+1)
-	case "c":
+	case "c", "d":
 		v.stage, v.input = "token", ""
+		v.platform = "telegram"
+		if key.Name == "d" {
+			v.platform = "discord"
+		}
 	case "r":
 		return m.channelRequest(protocol.ChannelRequest{Operation: stringPointer("list")})
 	case "u":
@@ -198,14 +203,14 @@ func (m *shellModel) channelKey(msg tea.KeyMsg) tea.Cmd {
 			return nil
 		}
 		row := v.rows[v.selected]
-		p := protocol.ChannelRequest{Account: &row.Account}
+		p := protocol.ChannelRequest{Account: &row.Account, Platform: &row.Platform}
 		switch key.Name {
 		case "p":
 			p.Operation = stringPointer("pair")
 		case "x":
 			p.Operation = stringPointer("disconnect")
 		case "b":
-			v.binding = protocol.ChannelRequest{Operation: stringPointer("bind"), Account: &row.Account, Scope: &protocol.ChannelScope{Reads: "dm_only", Writes: "reply_only", Tools: true, Memory: true}}
+			v.binding = protocol.ChannelRequest{Operation: stringPointer("bind"), Platform: &row.Platform, Account: &row.Account, Scope: &protocol.ChannelScope{Reads: "dm_only", Writes: "reply_only", Tools: true, Memory: true}}
 			v.stage, v.input = "chat", ""
 			return nil
 		}

@@ -127,10 +127,14 @@ func TestM1TUIConversationResize(t *testing.T) {
 	// Sending after the resizes must still complete through Core and restore
 	// the empty composer. Activity completion metadata is checked separately.
 	waitResizeChrome(t, h, session, size.Height, "")
+	fresh := h.startTerminalSize(environment, false, true, size.Width, size.Height)
+	waitScreen(t, h, fresh, scenario.NextReply)
+	expected := waitResizeChrome(t, h, fresh, size.Height, "")
+	waitMatchingScreen(t, h, session, expected)
 	if calls.Load() != 2 {
 		t.Fatalf("resize sent the draft or repeated a request: calls=%d", calls.Load())
 	}
-	for _, term := range []*terminal{session} {
+	for _, term := range []*terminal{session, fresh} {
 		h.keys(term, "\x04")
 		term.process.wait(t, 0)
 		h.expectTerminalRestored(term)

@@ -15,6 +15,9 @@ import (
 // This runs inside its bounded collector and uses memory's retraction and model
 // endpoint scope filters. It cannot turn a missing view into invented intimacy.
 func (r *conversationRuntime) relationshipPacket(ctx context.Context, at time.Time) (assemble.ContextPacket, error) {
+	if r.channelBinding != nil && !r.channelBinding.Scope.Memory {
+		return nil, nil
+	}
 	hits, err := memory.New(r.db).CurrentRelationship(ctx, memory.RecallScope{Agent: r.agent, Person: r.person, ExternalModel: true}, at.Unix())
 	if err != nil {
 		return nil, err
