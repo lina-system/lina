@@ -11,6 +11,26 @@ type MethodRoute struct {
 	Skill string `json:"skill"`
 }
 
+// Index preserves the catalog-only response unless a caller requests the dev
+// methodology. Both conversation and background readers use this contract.
+func (s *Store) Index(ctx context.Context, methodology string) (any, error) {
+	if methodology != "" && methodology != "dev" {
+		return nil, ErrInvalid
+	}
+	catalog, err := s.Catalog(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if methodology == "" {
+		return catalog, nil
+	}
+	return struct {
+		Preset string        `json:"preset"`
+		Routes []MethodRoute `json:"routes"`
+		Skills []Version     `json:"skills"`
+	}{"dev", DevelopmentMethods(), catalog}, nil
+}
+
 // DevelopmentMethods is the dev preset's routing data, also exposed by
 // skill_index. It returns a fresh slice so callers cannot alter global routing.
 func DevelopmentMethods() []MethodRoute {

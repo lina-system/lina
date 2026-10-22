@@ -135,17 +135,10 @@ func RegisterSkills(registry *tools.Registry, store *skills.Store) ([]tools.Spec
 			var err error
 			switch name {
 			case "skill_index":
-				value, err = store.Catalog(ctx)
 				var a skillIndexArgs
+				err = decodeSkill(input.Arguments, &a)
 				if err == nil {
-					err = decodeSkill(input.Arguments, &a)
-				}
-				if err == nil && a.Methodology == "dev" {
-					value = struct {
-						Preset string               `json:"preset"`
-						Routes []skills.MethodRoute `json:"routes"`
-						Skills any                  `json:"skills"`
-					}{"dev", skills.DevelopmentMethods(), value}
+					value, err = store.Index(ctx, a.Methodology)
 				}
 			case "read_skill":
 				var v skills.Version

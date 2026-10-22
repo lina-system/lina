@@ -493,8 +493,10 @@ can select another catalog procedure; it does not widen the work's authority.
 
 The packet carries the resolved version handle and its instruction files inline,
 not a path the worker must read or a skill to install. Queued dispatch stores
-that snapshot with the work definition, so later catalog edits and process
-restarts cannot substitute another body. The Codex `worker_start` session path
+that snapshot with the work definition, so later catalog edits, removal and
+process restarts cannot substitute another body. Replayed admissions first
+match the persisted origin and complete definition, then reuse that snapshot;
+only new admissions resolve the current catalog. The Codex `worker_start` session path
 uses the same resolver and exposes the same packet through `read_projection`.
 The existing `dispatch_work` definition carries these fields for Antigravity.
 

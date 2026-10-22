@@ -177,7 +177,7 @@ func (s *Service) Tool(origin Origin) loop.Tool {
 	return loop.Tool{Validate: func(c provider.ToolCall) (string, error) {
 		d, err := decode(c)
 		if err == nil {
-			_, err = s.cfg.Skills.ResolveMethod(s.ctx, d.Kind, d.Skill)
+			_, err = s.methodForAdmission(s.ctx, origin, c.ID, d)
 		}
 		return d.Repository, err
 	}, Execute: func(ctx context.Context, c provider.ToolCall) loop.Result {
@@ -185,8 +185,11 @@ func (s *Service) Tool(origin Origin) loop.Tool {
 		if err != nil {
 			return loop.Result{ID: c.ID, Code: loop.Invalid}
 		}
-		method, err := s.cfg.Skills.ResolveMethod(ctx, d.Kind, d.Skill)
+		method, err := s.methodForAdmission(ctx, origin, c.ID, d)
 		if err != nil {
+			if errors.Is(err, work.ErrState) {
+				return loop.Result{ID: c.ID, Code: loop.Denied}
+			}
 			return loop.Result{ID: c.ID, Code: loop.Invalid}
 		}
 		if origin.Person == "" || origin.Agent == "" || origin.Conversation == "" || origin.Turn == "" {
@@ -197,7 +200,7 @@ func (s *Service) Tool(origin Origin) loop.Tool {
 			return loop.Result{ID: c.ID, Code: loop.Denied}
 		}
 		d.Repository = canonical
-		key := fmt.Sprintf("%x", sha256.Sum256([]byte(origin.Turn+"\x00"+c.ID)))
+		key := admissionID(origin, c.ID)
 		r := Record{ID: key, Origin: origin, Definition: d, Method: method, State: "queued"}
 		err = s.cfg.DB.Write(ctx, func(tx *canon.Tx) error {
 			var prior []byte
@@ -220,6 +223,36 @@ func (s *Service) Tool(origin Origin) loop.Tool {
 		}
 		return loop.Result{ID: c.ID, Code: loop.OK, Output: mustJSON(map[string]string{"id": r.ID, "state": "queued"})}
 	}}
+}
+func admissionID(origin Origin, callID string) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(origin.Turn+"\x00"+callID)))
+}
+
+func (s *Service) methodForAdmission(ctx context.Context, origin Origin, callID string, d Definition) (*skills.Body, error) {
+	var raw []byte
+	err := s.cfg.DB.Read(ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT record FROM worker_dispatch WHERE id=?", admissionID(origin, callID)).Scan(&raw)
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return s.cfg.Skills.ResolveMethod(ctx, d.Kind, d.Skill)
+	}
+	if err != nil {
+		return nil, err
+	}
+	var saved Record
+	if err := json.Unmarshal(raw, &saved); err != nil {
+		return nil, err
+	}
+	// A durable admission owns its snapshot even if the catalog entry was
+	// subsequently removed. Compare the complete request before replaying it.
+	d.Repository, err = filepath.EvalSymlinks(d.Repository)
+	if err != nil {
+		return nil, err
+	}
+	if saved.Origin != origin || !reflect.DeepEqual(saved.Definition, d) {
+		return nil, work.ErrState
+	}
+	return saved.Method, nil
 }
 func mustJSON(v any) []byte { b, _ := json.Marshal(v); return b }
 func (s *Service) save(ctx context.Context, r Record) error {

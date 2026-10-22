@@ -106,3 +106,44 @@ func TestDispatchMethodPacketAndUnknownReference(t *testing.T) {
 		t.Fatal("restart lost the queued snapshot", err)
 	}
 }
+
+func TestDispatchReplaysPinnedMethodAfterCatalogRemoval(t *testing.T) {
+	db := store(t)
+	catalog, err := skills.Open(t.TempDir(), db, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer catalog.Close()
+	created, err := catalog.Patch(t.Context(), skills.Patch{ID: "custom-method", Files: skills.Bundle{"SKILL.md": {Text: "---\nname: custom-method\ndescription: Synthetic procedure.\n---\nInspect the fixture.\n"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(t.Context(), Config{DB: db, Skills: catalog})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close(context.Background())
+	d := definition(t)
+	d.Skill = "custom-method"
+	raw, _ := json.Marshal(d)
+	call := provider.ToolCall{ID: "same-call", Name: "dispatch_work", Arguments: string(raw)}
+	tool := s.Tool(Origin{Person: "person", Agent: "agent", Conversation: "conversation", Turn: "turn:input"})
+	admitted := tool.Execute(t.Context(), call)
+	if admitted.Code != loop.OK {
+		t.Fatal(admitted)
+	}
+	if _, err = catalog.Undo(t.Context(), created.Undo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tool.Validate(call); err != nil {
+		t.Fatalf("persisted receipt rejected after removal: %v", err)
+	}
+	replay := tool.Execute(t.Context(), call)
+	if replay.Code != loop.OK || string(replay.Output) != string(admitted.Output) {
+		t.Fatalf("replay: %+v", replay)
+	}
+	call.ID = "new-call"
+	if _, err = tool.Validate(call); err == nil {
+		t.Fatal("new admission accepted removed skill")
+	}
+}

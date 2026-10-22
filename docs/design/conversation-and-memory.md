@@ -569,7 +569,8 @@ The dev preset agent owns coding work, from its work definition through issues, 
 Development methods are selected from Core data, not a persona routing prompt.
 `skill_index` with `methodology: "dev"` returns `{preset, routes, skills}`: the
 following kind-to-skill routes and the ordinary catalog's immutable handles.
-Without that argument, `skill_index` keeps its catalog-array response. The
+Conversation and background readers use the same response contract. Without
+that argument, `skill_index` keeps its catalog-array response. The
 manager classifies the work, reads the chosen skill through `read_skill`, and
 may include the kind or one skill ID in the work definition. The executable
 mapping is [DevelopmentMethods](../../internal/core/skills/methods.go).
