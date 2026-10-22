@@ -7,6 +7,7 @@ import (
 	"errors"
 	"math/big"
 	"strconv"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -286,6 +287,16 @@ func projectConversationBlock(block *state.Block, payload protocol.Payload) {
 		block.Title = p.Title
 		if p.Text != nil {
 			block.Body = *p.Text
+			// Core's reply-shape previews reuse the source conversation key
+			// and derive their result id from it. Explicit structured results
+			// have their own identity, even when their title is "Full reply".
+			block.InlineReply = p.Type == protocol.ResultTypeDocumentDraft && p.Status == protocol.ResultStatusPreview &&
+				p.RunID == nil && strings.HasPrefix(p.ResultID, "result:") &&
+				block.ID == streamKey("conversation:"+p.Provenance.ConversationID, strings.TrimPrefix(p.ResultID, "result:"))
+			if block.InlineReply {
+				block.Text = block.Body
+				block.Speaker = protocol.ConversationSpeakerAgent
+			}
 		}
 	}
 }
