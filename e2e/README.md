@@ -283,6 +283,13 @@ tool result. Start refusal rolls back, while provider failure and updater death
 after READY hold the new state. Package SIGKILL tests acknowledge each rename
 boundary without fixed startup delays.
 
+`go test ./e2e/m1 -run '^TestM2UpdateClaudeCredential$' -count=1` uses the same
+installed update harness with a synthetic Claude token and an empty login home.
+The production Claude adapter must complete smoke using that token; the missing
+token case must hold after READY. A bundled-worker probe checks its environment
+before running the real readiness check, and outputs and durable state are
+checked for credential disclosure.
+
 `m3/antigravity.json` dispatches through installed Core's conversation tool,
 starts its supervised headless worker in a new worktree, produces a real file
 and commit, and verifies a recorded PR at that head. Separate cases cover soft
