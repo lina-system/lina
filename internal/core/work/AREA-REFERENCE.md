@@ -33,3 +33,19 @@ This increment does not port CRW scheduling, restore lineages or review behavior
 The reference does not specify a task-branch ownership hook. #519's enforcement
 comes from LINA's Terms / Work area contract; the CRW allocation passage above
 was re-read at the same pinned commit before implementation.
+
+## Dispatch integration (#125)
+
+Seen: the same pinned journal passage makes the executor adopt the recorded
+detached allocation as its working directory; it does not allocate a second
+workspace or reset an earlier one. Read from the pinned upstream document when
+the local reference checkout was unavailable.
+
+Inferred: installed Core's dispatch must use its existing work-area allocator,
+persist the workspace on the task, and preserve the source clone. A GitHub
+worker needs the source repository's GitHub origin in its independent clone;
+the local allocation source must remain separately identifiable.
+
+Unknown: CRW does not define LINA's dispatch-tool branch naming, GitHub remote
+configuration or adapter observation storage. These follow LINA's work-area
+contract. This change runs no CRW executable or review workflow.
