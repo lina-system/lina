@@ -186,6 +186,7 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.refreshOpenCard()
+		m.refreshRunning()
 		m.refreshBlocks()
 		for _, block := range m.content.Blocks {
 			if block.Kind == protocol.KindTurnState && block.TurnKnown {

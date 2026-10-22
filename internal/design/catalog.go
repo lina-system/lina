@@ -44,8 +44,11 @@ type translation struct{ en, ko string }
 // Keys are wire codes or local presentation ids, never English source text.
 // Keep both languages together so a new entry cannot omit a translation.
 var catalog = map[string]translation{
+	"notice.run_effect_question": {"How should the remaining actions proceed? Reads and analysis can continue; further actions need a separate authorized decision, and any unknown earlier outcome must be checked first.", "남은 작업을 어떻게 진행할까요? 읽기와 분석은 계속할 수 있어요. 추가 실행에는 별도의 승인된 결정이 필요하며, 이전 실행의 결과가 불확실하다면 먼저 확인해야 해요."},
+	"notice.run_input_needed":    {"Your input is needed before this background work can continue.", "이 백그라운드 작업을 계속하려면 응답이 필요해요."},
+
 	"notice.none":            {"none", "없음"},
-	"notice.run_report":      {"Agent report: %s. Verified: %s. Unverified: %s. Result: %s (revision %d).", "작업 보고: %s. 검증됨: %s. 미검증: %s. 결과: %s (버전 %d)."},
+	"notice.run_report":      {"Agent report: %s. Verified: %s. Unverified: %s. Open the result card (Ctrl+O) or Running (Ctrl+R).", "작업 보고: %s. 검증됨: %s. 미검증: %s. 결과 카드(Ctrl+O)나 진행 중인 작업(Ctrl+R)을 열어 보세요."},
 	"notice.run_complete":    {"complete", "완료"},
 	"notice.run_partial":     {"partial", "일부 완료"},
 	"notice.run_failed":      {"failed", "실패"},
@@ -170,6 +173,10 @@ var catalog = map[string]translation{
 	"result_edit":                {"Edit result", "결과 수정"},
 	"result_save":                {"Save result", "결과 저장"},
 	"running_get":                {"Show running work", "진행 중인 작업 보기"},
+	"open":                       {"Open", "열기"},
+	"dismiss":                    {"Dismiss", "닫기"},
+	"running.keys":               {"Enter open · ↑/↓ select · d dismiss · Esc close", "Enter 열기 · ↑/↓ 선택 · d 닫기 · Esc 돌아가기"},
+	"running.next":               {"Ctrl+N: next page", "Ctrl+N: 다음 페이지"},
 	"running":                    {"Running", "진행 중"},
 	"running_update":             {"Work updated", "작업 업데이트"},
 	"stop":                       {"Stop", "멈추기"},

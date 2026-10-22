@@ -65,7 +65,7 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 	}()
 	events := make(chan programEvent, 64)
 	if terminal {
-		file := input.(*os.File)
+		file := input.(terminalInput)
 		inputDone := make(chan error, 1)
 		go func() {
 			err := readConversationInput(ctx, file, func(message tea.Msg) bool {
@@ -267,7 +267,7 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 			if client, ok := peer.(clientPeer); ok {
 				switch request := effect.Message.(type) {
 				case state.SendRequest:
-					if model.conversation.agentMissing || model.conversation.agentPending {
+					if model.conversation.id == "" || model.conversation.agentMissing || model.conversation.agentPending {
 						model.reduceInput(state.SendResult{Gen: request.Gen, Key: request.Key, Failed: true})
 						return nil
 					}
@@ -455,14 +455,14 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 		select {
 		case <-ctx.Done():
 			cause := context.Cause(ctx)
-			if errors.Is(cause, errQuit) || errors.Is(cause, context.Canceled) {
+			if errors.Is(cause, errQuit) {
 				return display.show(Quit)
 			}
 			return cause
 		case err := <-done:
 			joined = true
 			if ctx.Err() != nil {
-				if cause := context.Cause(ctx); errors.Is(cause, errQuit) || errors.Is(cause, context.Canceled) {
+				if cause := context.Cause(ctx); errors.Is(cause, errQuit) {
 					return display.show(Quit)
 				}
 				return context.Cause(ctx)

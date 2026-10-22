@@ -260,6 +260,13 @@ func projectConversationBlock(block *state.Block, payload protocol.Payload) {
 	switch p := payload.(type) {
 	case protocol.Connected:
 		block.ShellFileToolsAvailable = p.ShellFileToolsAvailable
+	case protocol.RunningUpdate:
+		if p.Removed != nil {
+			block.Removed = *p.Removed
+		}
+		if p.RunID != nil {
+			block.RunID = *p.RunID
+		}
 	case protocol.ItemDone:
 		if p.EchoKey != nil {
 			block.EchoKey = *p.EchoKey
@@ -273,6 +280,9 @@ func projectConversationBlock(block *state.Block, payload protocol.Payload) {
 			block.TurnActive = *p.Active
 		}
 	case protocol.Result:
+		if p.RunID != nil {
+			block.RunID = *p.RunID
+		}
 		block.Title = p.Title
 		if p.Text != nil {
 			block.Body = *p.Text

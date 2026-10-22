@@ -362,6 +362,34 @@ The run's request starts from its brief only. Trusted read/scratch adapters inte
 
 Landing uses a stable material identity, keeps verified checks separate from model claims, and publishes pending notice metadata without the artifact body. Citation resolution consumes the pinned revision through EOF and checks its full hash and half-open byte span; page/section and source URL/capture time remain display provenance. Pending notices recheck evidence before delivery. Question transfer metadata explicitly carries the `needs_input` outcome without making the run terminal. Boot uses the existing lane notice outbox for turn-boundary delivery/coalescing and restores delivered notices with conversation history. A run completing during an active turn publishes its landing only after that lane reaches its boundary. The shared canon catalog appends the run, running-list and lane-notice schemas at version 25, preserving all earlier migrations. The installed manifest adds `running` while preserving its previous capabilities and evidence; boot projects the authoritative running list to the existing topic and Ctrl+R view. Explicit starts release only after their tool receipt commits. Startup recovers the run service and committed starts without replaying the conversation. Installed-Core scenarios use a fixture provider and the real TUI; package scenarios additionally exercise canon/material stores and process death.
 
+The installed result read path uses `RunningList.Open`/`Dismiss`, the existing
+lane notice references and the conversation's result cards. A landing publishes
+a metadata-only agent-report card with its run reference; the material body is
+read only on an explicit open. The running row and the retained card both open
+the pinned material revision in the existing pager. Reads authenticate the
+person, verify the material through EOF and return UTF-8 pages bounded to 16 KiB.
+Opening or dismissing a landed row publishes a removal to live subscribers and
+removes it from fresh snapshots; its card remains readable from conversation
+history, including after restart. No separate result store is introduced.
+
+Startup reconciles a committed explicit `start_run` admission into its original
+successful turn receipt before turn recovery aborts unexecuted calls. Reconciliation
+reads the trusted origin and native call identity and dispatches no tool. An
+unreleased explicit admission consumes no execution retry. Recovery schedules a
+pending material landing without another model call or an execution retry. Effect
+questions transfer to the same durable lane outbox independently of terminal
+landings, so acknowledging a question cannot hide the later result or authorize
+further effects. Delivered effect questions use the existing authenticated question
+card handler. Accepted direction is durably recorded in the run and admitted to
+the originating conversation with a stable input key; recovery retries that
+delivery without admitting another input or clearing unknown effect receipts.
+Decline and cancel close only the question. A deleted recipient withdraws its
+question; a previously accepted direction remains durable, and a delivery failure
+for that recipient cannot block other runs, notices or Core startup. With no
+configured model route, startup retains the existing notice history without
+requiring a live run service. Ordinary first-error checkpoint retries are scheduled by the
+run supervisor after the failed execution leaves the live set.
+
 **C-51 Reply shape (new).** [conversation-and-memory.md](conversation-and-memory.md#reply-shape) sets the budgets. This decision fixes the engine.
 
 - `reply.Budget{Lines, Chars}` exists per reply type and surface, stored per person in canon as a setting.
@@ -1098,6 +1126,8 @@ local source identities, so an old export cannot resurrect forgotten content.
 **C-32 Backup and restore (kept).** The procedure and the restore rules are those of [filesystem.md](filesystem.md#backup-generations). The manifest adds the epoch record at capture. Restore runs with the main stopped and never lowers the epoch. It also rebuilds the records index if its head differs from the repository, marks non-terminal external-effect rows unknown, voids leases and claims, and shows each account as needing sign-in. Zero-exposure test: forget an item after generation G, wipe the state root, restore G with the removal list, search by id.
 
 Restore prepares a private copy before publishing any area. Removal replay and authority invalidation finish in that copy: pending effects become unknown, captured approvals and standing authority become unusable, durable claims are cleared, and account metadata requires sign-in. Terminal effect receipts survive unchanged. The restored canon epoch is the maximum of the captured epoch, the target canon epoch and its control-file epoch; an exhausted epoch is refused. The next Core start mints a greater epoch through the ordinary startup path. Restore does not replace the target identity, epoch or lifecycle records. It validates a halt marker before proceeding and durably clears that latch only after successful reconciliation, before reopening access. A corrupt target canon can be replaced using its independent, valid nonzero control epoch and the validated removal history; invalid epoch records fail closed.
+
+Pending effects include channel deliveries: captured `queued` and `sending` rows become `unknown` in the same invalidation transaction, before reads or adapters start. Restored messages cannot be claimed for delivery or settled by an old attempt. Their parts, partial-delivery receipts and retry metadata remain available; `sent`, `unknown`, `blocked` and `refused` rows retain their outcomes. This also applies when resuming an interrupted restore.
 
 A pending publication lives under `staging/restore.pending`. Core checks for it while holding its lock, before opening services or minting an epoch, and refuses startup until the restore is completed. Publication saves the replaced areas, installs the replayed removal list and all captured areas, and installs canon last. Each rename and its parent directories are synced. Repeating restore resumes an interrupted publication, reacquires the installed source's lock and reapplies its latest removal history before retiring the marker. Both Core and the backup command refuse a pending publication. The marker is retired only after the whole generation is durable.
 `lina backup --state-root <path>` requires Core to be stopped, holds the stable exclusive Core lock through publication, and refuses a running Core without writing state while explaining how to stop it (`systemctl --user stop lina-core.service`, or Ctrl+C for a foreground Core).
