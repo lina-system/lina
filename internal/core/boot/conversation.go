@@ -116,6 +116,7 @@ type conversationRuntime struct {
 	controls         *ctlfiles.Store
 	presets          *presetPublisher
 
+	skillMaintenance            *skillMaintenanceRuntime
 	growthMu                    sync.Mutex
 	growth                      *growthRuntime
 	lanes                       *lane.Manager
@@ -301,6 +302,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	for kind, op := range clientsrv.ManagementOperations(r) {
 		r.identity.Operations[kind] = op
 	}
+	if err = r.startSkillMaintenance(ctx); err != nil {
+		return nil, err
+	}
 	if err = r.startGrowth(ctx, controls); err != nil {
 		return nil, err
 	}
@@ -329,6 +333,15 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 		if err = r.workerGitHub.Close(ctx); err != nil {
 			return err
 		}
+	}
+	if m := r.skillMaintenance; m != nil && m.stop != nil {
+		m.stop()
+		select {
+		case <-m.done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		m.stop = nil
 	}
 	if r.waitingStop != nil {
 		r.waitingStop()

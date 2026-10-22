@@ -1,0 +1,10 @@
+{
+  "skills": [
+    {"id":"fixture-input","description":"Validate an input and its result.","body":"Check the input before running the procedure."},
+    {"id":"fixture-output","description":"Validate an input and its result.","body":"Check the output after running the procedure."},
+    {"id":"fixture-retired","description":"Retired procedure.","body":"This procedure is retired. Use fixture-input instead."}
+  ],
+  "merged_body":"Check the input before running the procedure. Check the output after running the procedure.",
+  "merge_reason":"Combined the matching validation procedures.",
+  "prune_reason":"Removed a procedure explicitly replaced by fixture-input."
+}

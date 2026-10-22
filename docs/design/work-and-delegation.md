@@ -1357,6 +1357,9 @@ new result, reject source-id lookup and retain the record after restart.
 
 ### Switch admission and recovery
 
+Migration 37 adds switch reservations and history after the published skill
+maintenance migration 36, preserving its operations, membership and notice data.
+
 The one-time operator command in `tools/crw-takeover/` connects to the running
 Core's owner-only `work` capability. It is excluded from release artifacts.
 Work tasks registered for external coordination carry `external_control: true`
