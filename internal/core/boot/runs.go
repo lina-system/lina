@@ -470,7 +470,13 @@ func (r *conversationRuntime) publishRunning(ctx context.Context) error {
 		if b.published[entry.Ref.ID] == text {
 			continue
 		}
-		data, err := json.Marshal(protocol.RunningUpdate{Text: &text, RunID: &entry.Ref.ID})
+		state := protocol.RunningState(entry.View.State)
+		update := protocol.RunningUpdate{Text: &text, RunID: &entry.Ref.ID, State: &state, Summary: &entry.View.Summary}
+		if entry.View.Reason != "" {
+			reason := protocol.RunningReason(entry.View.Reason)
+			update.Reason = &reason
+		}
+		data, err := json.Marshal(update)
 		if err != nil {
 			return err
 		}
