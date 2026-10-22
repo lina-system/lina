@@ -71,54 +71,96 @@ func (s *Service) ReserveWorker(ctx context.Context, id, dir string) error {
 	if err != nil {
 		return err
 	}
+	return s.ReserveWorkerDirectories(ctx, []WorkerDirectory{{ID: id, Path: dir}})
+}
+
+// WorkerDirectory identifies one directory reservation for an execution.
+type WorkerDirectory struct{ ID, Path string }
+
+// ReserveWorkerDirectories fences every directory of one execution atomically.
+// Missing directories are reserved before their creation. Multiple directories
+// belonging to the same external task retain one task binding and all paths.
+// Callers check and release the complete set of reservation IDs together.
+func (s *Service) ReserveWorkerDirectories(ctx context.Context, directories []WorkerDirectory) error {
+	if len(directories) == 0 {
+		return ErrInvalid
+	}
+	resolved := make([]WorkerDirectory, 0, len(directories))
+	ids := make(map[string]bool)
+	for _, directory := range directories {
+		if directory.ID == "" || ids[directory.ID] || !filepath.IsAbs(directory.Path) || filepath.Clean(directory.Path) != directory.Path {
+			return ErrInvalid
+		}
+		ids[directory.ID] = true
+		real, err := artifactDirectory(directory.Path)
+		if err != nil {
+			return err
+		}
+		resolved = append(resolved, WorkerDirectory{ID: directory.ID, Path: real})
+	}
 	return s.db.Write(ctx, func(tx *canon.Tx) error {
-		rows, err := tx.QueryContext(ctx, "SELECT record FROM work_cards")
-		if err != nil {
-			return err
-		}
-		var task string
-		for rows.Next() {
-			var raw []byte
-			var card Card
-			if err = rows.Scan(&raw); err != nil {
-				break
-			}
-			if err = json.Unmarshal(raw, &card); err != nil {
-				break
-			}
-			if !card.Task.ExternalControl {
-				continue
-			}
-			var match bool
-			match, err = taskDirectory(card.Task, dir)
-			if err != nil {
-				break
-			}
-			if !match {
-				continue
-			}
-			if task != "" {
-				err = ErrState
-				break
-			}
-			task = card.Task.ID
-			if card.Active {
-				err = ErrActiveRun
-				break
-			}
-		}
-		err = errors.Join(err, rows.Err(), rows.Close())
-		if err != nil {
-			return err
-		}
-		if task != "" {
-			if err = mayDirect(ctx, tx, task); err != nil {
+		bound := make(map[string]bool)
+		for _, directory := range resolved {
+			if err := reserveWorkerDirectory(ctx, tx, directory, bound); err != nil {
 				return err
 			}
 		}
-		_, err = tx.ExecContext(ctx, "INSERT INTO work_worker_reservations(worker_id,task_id,directory) VALUES(?,?,?)", id, task, dir)
-		return err
+		return nil
 	})
+}
+
+func reserveWorkerDirectory(ctx context.Context, tx *canon.Tx, directory WorkerDirectory, bound map[string]bool) error {
+	rows, err := tx.QueryContext(ctx, "SELECT record FROM work_cards")
+	if err != nil {
+		return err
+	}
+	var task string
+	for rows.Next() {
+		var raw []byte
+		var card Card
+		if err = rows.Scan(&raw); err != nil {
+			break
+		}
+		if err = json.Unmarshal(raw, &card); err != nil {
+			break
+		}
+		if !card.Task.ExternalControl {
+			continue
+		}
+		var match bool
+		match, err = taskDirectory(card.Task, directory.Path)
+		if err != nil {
+			break
+		}
+		if !match {
+			continue
+		}
+		if task != "" {
+			err = ErrState
+			break
+		}
+		task = card.Task.ID
+		if card.Active {
+			err = ErrActiveRun
+			break
+		}
+	}
+	err = errors.Join(err, rows.Err(), rows.Close())
+	if err != nil {
+		return err
+	}
+	if task != "" {
+		if err = mayDirect(ctx, tx, task); err != nil {
+			return err
+		}
+		if bound[task] {
+			task = ""
+		} else {
+			bound[task] = true
+		}
+	}
+	_, err = tx.ExecContext(ctx, "INSERT INTO work_worker_reservations(worker_id,task_id,directory) VALUES(?,?,?)", directory.ID, task, directory.Path)
+	return err
 }
 func (s *Service) CheckWorker(ctx context.Context, id string) error {
 	return s.db.Read(ctx, func(tx *canon.Tx) error {
@@ -135,10 +177,14 @@ func (s *Service) CheckWorker(ctx context.Context, id string) error {
 
 // ReleaseWorker requires an observed terminal turn (or proof no turn started).
 // Disconnection, timeout and Core recovery do not call this method.
-func (s *Service) ReleaseWorker(ctx context.Context, id string) error {
+func (s *Service) ReleaseWorker(ctx context.Context, ids ...string) error {
 	return s.db.Write(ctx, func(tx *canon.Tx) error {
-		_, err := tx.ExecContext(ctx, "DELETE FROM work_worker_reservations WHERE worker_id=?", id)
-		return err
+		for _, id := range ids {
+			if _, err := tx.ExecContext(ctx, "DELETE FROM work_worker_reservations WHERE worker_id=?", id); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
 func workerInDirectory(ctx context.Context, tx *canon.Tx, t Task) error {

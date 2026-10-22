@@ -736,6 +736,16 @@ creates a distinct branch and worktree. This single-worker increment reserves
 the repository while queued, running or uncertain. It preserves the worktree and
 branch after completion. It does not provide the parallel chooser or merge flow.
 
+Before creating a worktree or launching the worker, `dispatch_work` atomically
+reserves the source repository, shared Git metadata, prospective worktree and result directory through
+the operational switch's directory gate. Multiple paths for one external task
+share its task binding while retaining every path for later adoption checks.
+Rollback fences a dispatch even though its new task id differs from the imported
+task id. A refused preflight releases its reservations after process cleanup;
+an attempted start or missing terminal result retains them across restart. A
+confirmed terminal result releases them only after process cleanup and the
+durable task finish. Shutdown alone is not terminal evidence.
+
 After a successful result, Core compares protected refs and changed files with
 the definition, then reads the branch's PR through fixed `ghclient` calls. Delivery
 requires an open, non-draft PR on the requested base and branch, the actual local
@@ -1254,6 +1264,8 @@ release it, including a turn that became idle during steering. An unreadable
 resulting turn remains reserved as unknown. Steering checks the same gate,
 and an idle worker needs a new reservation before its next turn. Read-only
 snapshots and an explicit user interrupt remain available during rollback.
+The same gate covers `dispatch_work`'s repository, shared Git metadata, prospective worktree and result
+directory even when that dispatch creates a new task identity.
 
 The operator records the old service state, disables its launch intent, stops it
 and independently verifies disabled intent, no running service, a free lock and
