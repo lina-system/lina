@@ -17,6 +17,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	memoryexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/internal/core/memory"
+	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -172,6 +173,7 @@ func TestM1MemoryCorrectionForgetRestore(t *testing.T) {
 			core.command.Env = append(core.command.Env, "LINA_RESPONSES_BASE_URL="+provider.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
 			core.start(t)
 			h.connect(core).Close()
+			waitCoreReady(t, h)
 			command, closeTUI = correctionMemoryTUI(t, h)
 			assertList()
 			closeTUI()
@@ -204,9 +206,9 @@ func correctionMemoryTUI(t *testing.T, h *harness) (func(string) protocol.Memory
 				t.Fatalf("%s refused: %s", text, e.Error.Code)
 			}
 			if result, ok := e.Payload.(protocol.MemoryResult); ok {
-				marker := "/memory forget"
+				marker := design.Text(design.English, *result.Operation)
 				if result.ItemID != nil {
-					marker = *result.ItemID
+					marker += " " + *result.ItemID
 				}
 				waitScreen(t, h, terminal, marker)
 				opened = true
