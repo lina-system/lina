@@ -224,6 +224,18 @@ protected-ref changes prevent writes, the accepted head is pinned, confirmed
 results survive restart without a second merge, and external merges require
 commit/ref evidence and report failed checks. It uses no external credentials.
 
+`m2/codex-session.json` runs installed Core, its real conversation model loop,
+tool authority and stdio child ownership with a synthetic installed Codex. It
+asserts version reporting for an unverified version, active steering, confirmed
+interrupt, idle continuation, a file produced by the worker and terminal output
+in the originating conversation before and after Core restart. The worker checks
+that no sandbox, approval, model-provider or config override is sent and that
+Core's dedicated provider credential is absent. Run it with
+`go test -count=1 ./e2e -run '^TestM2InstalledCodexSession$'`.
+The opt-in `LINA_CODEX_LIVE=1 go test -count=1 -v ./internal/core/worker/codex -run '^TestInstalledCodex$'`
+uses the user's installed Codex and own configuration. It verifies control and a
+model-generated result without changing approval or sandbox settings.
+
 `m2/claude-adapter.json` starts installed Core with the external TypeScript adapter
 and a test-only vendor runtime. The runtime calls Core's real `skill_index` tool,
 checks its receipt, streams an assistant result, and the scenario reopens Core
@@ -236,3 +248,9 @@ and deleted agents in conversation and management requests, plus channel
 binding/scope replacement. A paired synthetic channel and an existing binding
 exercise the actual target-agent checks. Read-only canon snapshots prove that
 refused requests preserve agent revisions, actions, conversations and bindings.
+
+
+`LINA_CODEX_LIVE=1 go test -count=1 -v ./e2e -run '^TestM2InstalledCodexLive$'`
+also drives installed Core's normal tool path into the actual installed Codex,
+then waits on the worker's conversation result before reading its snapshot. Only
+Core's conversation provider is synthetic; the worker uses its own model setup.

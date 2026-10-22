@@ -345,7 +345,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 
 ### 2.B Delegation
 
-**G2-04 Worker adapter boundary and the Codex adapter.** `worker.Adapter`, generated types, dynamic tools, approvals, quota rows. It runs first and does not wait for the pin. Issue #131 supplies the common boundary, generated schema baseline and vendored-file integrity gate; #132 proves session execution, and #133 connects work tools, approvals and quota. A schema baseline alone does not satisfy the runtime done condition.
+**G2-04 Worker adapter boundary and the Codex adapter.** `worker.Adapter`, generated types, dynamic tools, approvals, quota rows. It runs first and does not wait for the pin. Issue #131 supplies the common boundary, generated schema baseline and vendored-file integrity gate; #132 proves session execution, and #133 connects work tools, approvals and quota. A schema baseline alone does not satisfy the runtime done condition. #132 adds the installed-Core session tools and `e2e/m2/codex-session.json`; its separate installed-Codex 0.163.0 round trip covers session control and model output, while approval/file execution through the real worker remains #133.
 - Done when: the round trip completes with the installed Codex and records its version; an unverified version is reported and still used; a worker approval reaches the originating conversation and the answer returns; no sandbox, credential or setting is imposed on the worker.
 - Depends on: G1-05, G1-18. Design refs: C-29; [work-and-delegation.md](work-and-delegation.md#codex-adapter).
 

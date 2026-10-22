@@ -9,6 +9,8 @@
   --lina-color-surface: #EEF0F6;
   --lina-color-text: #20232D;
   --lina-glyph-ascii-action: ">";
+  --lina-glyph-ascii-activity-frames: "|/-\\";
+  --lina-glyph-ascii-activity-separator: "-";
   --lina-glyph-ascii-connecting: "~";
   --lina-glyph-ascii-failed: "x";
   --lina-glyph-ascii-live: "*";
@@ -23,6 +25,8 @@
   --lina-glyph-ascii-unknown: "?";
   --lina-glyph-ascii-waiting: "?";
   --lina-glyph-unicode-action: "›";
+  --lina-glyph-unicode-activity-frames: "◐◓◑◒";
+  --lina-glyph-unicode-activity-separator: "·";
   --lina-glyph-unicode-connecting: "◌";
   --lina-glyph-unicode-failed: "×";
   --lina-glyph-unicode-live: "●";
@@ -37,6 +41,8 @@
   --lina-glyph-unicode-unknown: "?";
   --lina-glyph-unicode-waiting: "?";
   --lina-icon-size: 20px;
+  --lina-motion-activity-elapsed: 1000ms;
+  --lina-motion-activity-frame: 100ms;
   --lina-motion-reduced: 0ms;
   --lina-motion-settle: 160ms;
   --lina-radius-card: 12px;
@@ -60,6 +66,8 @@
   --lina-color-surface: #20232B;
   --lina-color-text: #F4F5F9;
   --lina-glyph-ascii-action: ">";
+  --lina-glyph-ascii-activity-frames: "|/-\\";
+  --lina-glyph-ascii-activity-separator: "-";
   --lina-glyph-ascii-connecting: "~";
   --lina-glyph-ascii-failed: "x";
   --lina-glyph-ascii-live: "*";
@@ -74,6 +82,8 @@
   --lina-glyph-ascii-unknown: "?";
   --lina-glyph-ascii-waiting: "?";
   --lina-glyph-unicode-action: "›";
+  --lina-glyph-unicode-activity-frames: "◐◓◑◒";
+  --lina-glyph-unicode-activity-separator: "·";
   --lina-glyph-unicode-connecting: "◌";
   --lina-glyph-unicode-failed: "×";
   --lina-glyph-unicode-live: "●";
@@ -88,6 +98,8 @@
   --lina-glyph-unicode-unknown: "?";
   --lina-glyph-unicode-waiting: "?";
   --lina-icon-size: 20px;
+  --lina-motion-activity-elapsed: 1000ms;
+  --lina-motion-activity-frame: 100ms;
   --lina-motion-reduced: 0ms;
   --lina-motion-settle: 160ms;
   --lina-radius-card: 12px;
@@ -111,6 +123,8 @@
   --lina-color-surface: #000000;
   --lina-color-text: #FFFFFF;
   --lina-glyph-ascii-action: ">";
+  --lina-glyph-ascii-activity-frames: "|/-\\";
+  --lina-glyph-ascii-activity-separator: "-";
   --lina-glyph-ascii-connecting: "~";
   --lina-glyph-ascii-failed: "x";
   --lina-glyph-ascii-live: "*";
@@ -125,6 +139,8 @@
   --lina-glyph-ascii-unknown: "?";
   --lina-glyph-ascii-waiting: "?";
   --lina-glyph-unicode-action: "›";
+  --lina-glyph-unicode-activity-frames: "◐◓◑◒";
+  --lina-glyph-unicode-activity-separator: "·";
   --lina-glyph-unicode-connecting: "◌";
   --lina-glyph-unicode-failed: "×";
   --lina-glyph-unicode-live: "●";
@@ -139,6 +155,8 @@
   --lina-glyph-unicode-unknown: "?";
   --lina-glyph-unicode-waiting: "?";
   --lina-icon-size: 20px;
+  --lina-motion-activity-elapsed: 1000ms;
+  --lina-motion-activity-frame: 100ms;
   --lina-motion-reduced: 0ms;
   --lina-motion-settle: 160ms;
   --lina-radius-card: 12px;
