@@ -49,14 +49,33 @@ func TestM1TUIConversationInstalledCore(t *testing.T) {
 	defer provider.Close()
 	h, start := installedConversationHarness(t, provider.URL)
 	core := start(true)
-	// Read-only history is available during recovery. Wait for input admission
-	// as well before exercising the configured conversation through the TUI.
-	client, conversation := conversationClient(t, h)
+	client, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "test", []protocol.Capability{{Name: "conversation", Version: "1.0"}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer client.Close()
 	if len(client.Welcome.Capabilities) == 0 {
 		t.Fatal("installed Core has no conversation service")
 	}
-	terminal := h.startScreenTUI("TERM=xterm-256color", "COLORTERM=truecolor")
+	if _, err = client.History(h.ctx, protocol.HistoryGet{}); err != nil {
+		t.Fatal(err)
+	}
+	discovery, err := client.Receive(h.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	history, ok := discovery.Payload.(protocol.History)
+	if !ok || history.ConversationID == nil {
+		t.Fatal("no conversation discovery")
+	}
+	topic := "conversation:" + *history.ConversationID
+	if _, err = client.Subscribe(h.ctx, protocol.Subscribe{Topic: &topic}); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot, err := client.Receive(h.ctx); err != nil || snapshot.Kind != protocol.KindSnapshot {
+		t.Fatal("no history snapshot")
+	}
+	terminal, _ := h.startConversationTUI(80, 24, "TERM=xterm-256color", "COLORTERM=truecolor")
 	fresh := waitComposerReady(t, h, terminal)
 	if text := screenText(fresh); strings.Contains(strings.ToLower(text), "unsupported") {
 		t.Fatalf("fresh install shows an unsupported placeholder: %s", text)
@@ -86,7 +105,7 @@ func TestM1TUIConversationInstalledCore(t *testing.T) {
 		t.Fatal("missing durable input echo")
 	}
 	changed := "MUST-NOT-REPLACE"
-	if _, err = client.Input(h.ctx, protocol.Input{ConversationID: &conversation, InputID: &echo, Text: &changed}); err != nil {
+	if _, err = client.Input(h.ctx, protocol.Input{ConversationID: history.ConversationID, InputID: &echo, Text: &changed}); err != nil {
 		t.Fatal(err)
 	}
 	duplicate, err := client.Receive(h.ctx)
@@ -172,10 +191,9 @@ func waitScreen(t *testing.T, h *harness, terminal *terminal, text string) tuite
 	if err != nil {
 		select {
 		case <-terminal.process.done:
-		case <-h.ctx.Done():
-			terminal.process.killAndWait()
+			t.Logf("TUI exited: %v; stderr=%s", terminal.process.err, &terminal.process.stderr)
+		default:
 		}
-		t.Logf("TUI exited: %v; stderr=%s", terminal.process.err, &terminal.process.stderr)
 		t.Fatalf("screen missing %q: %v; cells=%s", text, err, screenText(snapshot))
 	}
 	return snapshot
