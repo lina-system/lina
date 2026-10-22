@@ -17,7 +17,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
+	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/reactor"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker"
@@ -224,6 +226,32 @@ func (b *limitedOutput) Write(p []byte) (int, error) {
 	}
 	return b.Buffer.Write(p)
 }
+func (d *delegationRuntime) origin(ctx context.Context, task work.Task) (*conversationRuntime, ledger.Event, error) {
+	origin, err := d.root.router.view(ctx, clientsrv.Session{PersonID: task.PersonID}, task.AgentID)
+	if err != nil {
+		return nil, ledger.Event{}, err
+	}
+	input, err := origin.journal().Get(ctx, task.Schedule.InputID)
+	if err != nil {
+		return nil, ledger.Event{}, err
+	}
+	if input.ConversationID != task.ConversationID || input.AgentID != task.AgentID {
+		return nil, ledger.Event{}, work.ErrState
+	}
+	if origin.conversation != task.ConversationID {
+		// These identities come from the admitted task and its recorded input.
+		// A channel task's requests and evidence belong to that conversation.
+		origin, err = d.root.router.channelView(ctx, channels.Binding{Person: task.PersonID, Agent: task.AgentID, Conversation: task.ConversationID})
+		if err != nil {
+			return nil, ledger.Event{}, err
+		}
+	}
+	if origin.agent != task.AgentID || origin.person != task.PersonID || origin.conversation != task.ConversationID {
+		return nil, ledger.Event{}, work.ErrState
+	}
+	return origin, input, nil
+}
+
 func (d *delegationRuntime) start(ctx context.Context, c work.Card) (run work.Run, err error) {
 	sent := false
 	defer func() {
@@ -241,16 +269,9 @@ func (d *delegationRuntime) start(ctx context.Context, c work.Card) (run work.Ru
 	if !ok || p.Worker != "codex" || p.Host != "local" {
 		return work.Run{}, work.ErrInvalid
 	}
-	origin, err := d.root.router.view(ctx, clientsrv.Session{PersonID: c.Task.PersonID}, c.Task.AgentID)
+	origin, input, err := d.origin(ctx, c.Task)
 	if err != nil {
 		return work.Run{}, err
-	}
-	input, err := origin.journal().Get(ctx, p.InputID)
-	if err != nil {
-		return work.Run{}, err
-	}
-	if input.ConversationID != c.Task.ConversationID || input.AgentID != c.Task.AgentID {
-		return work.Run{}, work.ErrState
 	}
 	if err := os.MkdirAll(filepath.Dir(p.Workdir), 0700); err != nil {
 		return work.Run{}, err

@@ -6,10 +6,13 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
+	"github.com/thisisjun786/lina/internal/core/guard"
+	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/reactor"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/internal/core/work"
@@ -18,6 +21,36 @@ import (
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
+
+func TestDelegationKeepsRecordedConversation(t *testing.T) {
+	r, _, agent, other := managementFixture(t)
+	r.agent, r.conversation = agent, "main:"+agent
+	channel := &conversationRuntime{db: r.db, person: r.person, agent: agent, conversation: "channel-fixture"}
+	r.router = &conversationRouter{root: r, views: map[string]*conversationRuntime{agent: r, channel.conversation: channel}}
+	now := time.Now()
+	input, err := r.journal().Admit(t.Context(), guard.EntryOwner, ledger.Input{ID: "channel-task-input", PersonID: r.person, AgentID: agent, ConversationID: channel.conversation, Surface: ledger.Surface{Kind: "channel", Platform: "discord", ChatID: "fixture"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Run the scoped task."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &delegationRuntime{root: r}
+	task := work.Task{PersonID: r.person, AgentID: agent, ConversationID: channel.conversation, Schedule: &work.Schedule{InputID: input.ID}}
+	origin, recorded, err := d.origin(t.Context(), task)
+	if err != nil || origin != channel || recorded.ID != input.ID {
+		t.Fatalf("scheduled replies moved out of their conversation: origin=%+v err=%v", origin, err)
+	}
+	for _, foreign := range []work.Task{
+		{PersonID: "another", AgentID: agent, ConversationID: channel.conversation, Schedule: task.Schedule},
+		{PersonID: r.person, AgentID: agent, ConversationID: r.conversation, Schedule: task.Schedule},
+	} {
+		if _, _, err := d.origin(t.Context(), foreign); err == nil {
+			t.Fatal("foreign origin accepted")
+		}
+	}
+	channel.agent = other
+	if _, _, err := d.origin(t.Context(), task); err == nil {
+		t.Fatal("rebound conversation accepted old agent")
+	}
+}
 
 func TestDelegationDistinguishesTerminalConnectionFailure(t *testing.T) {
 	for _, code := range []string{"connection", "connection_lost"} {

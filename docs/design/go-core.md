@@ -1289,7 +1289,9 @@ type Definition struct {
   A conflict is returned to the same worker once, with the
   claim durable before input; a second conflicting head requires input.
 - Scheduled sessions register with the existing originating-conversation worker
-  question and approval bridge. Replies are bound to their worker thread/turn;
+  question and approval bridge. Channel tasks keep their recorded conversation
+  instead of moving replies or evidence into the agent's main conversation.
+  Replies are bound to their worker thread/turn;
   all pending requests must be answered before the task returns to working.
   Ordinary `worker_input` cannot start a scheduled session outside scheduler
   admission. Task ids are stable opaque identifiers that remain valid unmasked
