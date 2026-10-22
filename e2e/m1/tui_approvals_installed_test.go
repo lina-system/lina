@@ -9,12 +9,14 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/core/authority"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/design"
+	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -121,6 +123,7 @@ func TestM1TUIApprovalsInstalledCore(t *testing.T) {
 	// using negotiated event types instead of a timing delay between keys.
 	approval.ID += "-tui"
 	approval.EffectKey = approval.ID
+	approval.What = "TUI: " + fixture.Summary
 	data, err = json.Marshal(approval)
 	if err != nil {
 		t.Fatal(err)
@@ -129,7 +132,16 @@ func TestM1TUIApprovalsInstalledCore(t *testing.T) {
 		t.Fatal(err)
 	}
 	terminal := h.startScreenTUI("TERM=xterm-256color")
-	waitScreen(t, h, terminal, fixture.Summary)
+	// The first approval is already resolved and can arrive before the waiting
+	// snapshot. Its matching summary must not trigger F6 before the new card.
+	readyScreen, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
+		cells := screenText(s)
+		return s.AltScreen && !s.CursorHidden && strings.Contains(cells, approval.What) &&
+			strings.Contains(cells, design.Text(design.English, "live"))
+	})
+	if err != nil {
+		t.Fatalf("pending TUI approval not ready: %v; cells=%s", err, screenText(readyScreen))
+	}
 	h.keys(terminal, "\x1b[?3u\x1b[17~")
 	waitScreen(t, h, terminal, fixture.Target)
 	h.keys(terminal, "1")
