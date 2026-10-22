@@ -63,7 +63,7 @@ This contract does not cover, and links instead to:
 
 **Binding epoch.** The generation of LINA Core's binding to a worker thread. A new binding epoch starts when control returns after a handover and when a remote thread is bound again.
 
-**Protected ref.** A ref in the parent clone that a worker must never move: `dev`, `main` and the branches of other tasks.
+**Protected ref.** A ref in the parent clone that a worker must never create, move or delete: `dev`, `main`, `master`, remote-tracking and LINA base refs, and every branch other than its own assigned task branch. Branch ownership belongs to the allocated worktree and does not change when its worker checks out another branch or detaches HEAD.
 
 **Task packet.** The first input a worker receives: the work definition (see Development method), the LINA assignment id, and how to return the completion receipt. It also carries references (id and revision) to the materials and memory projections the task may read.
 
@@ -138,11 +138,23 @@ are refused. Non-Git tasks get a private directory. Missing Git disables Git
 allocation without blocking conversation or non-Git work.
 
 Ordinary Git reference transactions in the parent clone reject writes to
-`main`, `master`, `dev`, remote-tracking refs and `refs/lina/*`. Core alone uses
-its explicit administrative command path to maintain the base refs. This
+`main`, `master`, `dev`, remote-tracking refs and `refs/lina/*`. Before returning
+a Git allocation, Core records its exact assigned branch beside the linked
+worktree's Git HEAD. The shared guard allows branch creation, updates and
+deletion only for that worktree's assigned branch, even while detached or
+before the branch exists. An unbound worktree or the parent clone has no ordinary
+branch-write permission. A transaction mixing permitted and protected updates
+fails as a whole. Two allocations cannot reserve the same branch, and a retry
+cannot replace an existing binding. Retrying an older allocation without a
+binding installs it from the task definition without resetting worker work.
+Core alone uses its explicit administrative command path to maintain the base refs. This
 repository guard is not a worker plugin or OS confinement: workers use their
 own runtime setup, and a process running as the user can deliberately bypass a
 Git hook. Core never resets or cleans another task's checkout.
+The installed-Core [headless work-area scenario](../../e2e/m2/work-area.json)
+allocates two real linked worktrees, rejects cross-task branch updates and
+deletion, commits on each assigned branch, and retains the original task's
+exact bundle through restart, work-area loss and backup.
 
 `retain_work_result` handles an already completed no-PR receipt belonging to the
 requesting agent and conversation. It copies only that receipt's manifest files,
@@ -1162,6 +1174,51 @@ At the operational switch LINA takes over CRW's coordination functions and CRW r
 - Planning records that CRW keeps in an external tracker (plans, completion criteria, decisions, scope, project and parent bindings, titles and done state) are imported once, from one verified snapshot, by a one-time operator tool. That tool is not part of any LINA release. Every fetched record ends up imported, lost or unsupported and is reported record by record; silence never means imported. Each imported record is mapped to a LINA id exactly once and keeps its source id as provenance only, which no product path resolves. The records are mapped into the frame of Plans: an initiative becomes a 목표 draft that the person confirms, a project an 일, an issue a 할 일, and a milestone a 할 일 with a deadline whose completion conditions become its done condition. After the import nothing reads the tracker again.
 - The owner's existing intent card data is imported once by the same tool and under the same rules, into LINA's intent card model (see Intent cards). Only the data comes in; no code or database structure comes with it.
 - The product never depends on CRW's plugin, relay or state paths.
+
+### One-time import and report
+
+The operator tool lives in `tools/crw-takeover/`, outside product imports and
+binary and source release artifacts. It consumes a version 1 JSON export of CRW
+observation records, one frozen tracker snapshot and optional intent cards.
+An independently supplied SHA-256 verifies the exact export; source inventory
+counts must match its fetched rows before any destination writer opens. The
+export format and supported mapping are documented with the tool. Only synthetic
+fixtures are kept in the source repository.
+
+The installed Core must be stopped during publication. The tool holds Core's
+exclusive state-root lock and checks for an interrupted restore before inspecting
+canon or opening records; pending publication refuses the import. It checks the
+existing agent and person and writes through Core's versioned records repository.
+Planning records carry LINA kinds and bindings, including native `belongs_to`
+index edges: initiatives remain goal drafts, projects retain
+their done condition, issues become to-dos, and milestones become to-dos with a
+deadline and done condition. Intent cards retain their intent text. CRW records
+are historical observations in reference documents; importing an assignment,
+receipt, verdict, branch or worktree starts no work and grants no authority.
+Complete source records are preserved as data, including unknown fields.
+
+Every input position receives exactly one report row, including malformed rows
+without a usable source id. The outcomes are imported, lost or unsupported;
+non-imports state a reason. Loss, duplicate identities, missing/cyclic bindings,
+an incomplete report or a storage/report write failure makes the run fail.
+Unsupported kinds are accounted for without pretending they were imported.
+
+A private operator journal in the destination binds one snapshot and actor and
+reserves random LINA ids durably before publication. A retry reconciles those ids
+through the records API, recovering publication interrupted before acknowledgement.
+It reports existing imports as reused and writes no second record or commit; it
+preserves later LINA edits and fails if an imported record is unavailable. The
+journal stays with the destination backup, outside product schemas and APIs.
+Source ids exist only in provenance and observation text, never a product lookup.
+After import, Core uses the reported LINA ids through its ordinary record tools;
+the snapshot can be removed and Core never contacts the tracker.
+
+Imports commit record by record. A failed run keeps its report, originals and
+successful records so the same verified snapshot can resume. Undo is an explicit
+restore of the pre-import backup, not an automatic deletion. The import alone is
+not the owner-approved operational switch. The headless `e2e/m3/crw-takeover.json`
+scenario uses the real tool and installed Core to read imported evidence, save a
+new result, reject source-id lookup and retain the record after restart.
 
 ## Deferred
 
