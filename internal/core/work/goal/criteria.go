@@ -79,7 +79,7 @@ func criterionRevision(g Goal, c Criterion) string {
 	}
 	return g.TargetRevision
 }
-func validCriteria(g Goal) bool {
+func validCriteria(g Goal, pendingCorrection bool) bool {
 	if len(g.Criteria) == 0 || len(g.Scope.Repositories) == 0 || strings.TrimSpace(g.Scope.Includes) == "" {
 		return false
 	}
@@ -91,7 +91,7 @@ func validCriteria(g Goal) bool {
 		repositories[repo] = true
 	}
 	for _, t := range g.Tasks {
-		if !repositories[t.Repository] {
+		if !pendingCorrection && !repositories[t.Repository] {
 			return false
 		}
 	}

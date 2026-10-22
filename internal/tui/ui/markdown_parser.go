@@ -11,6 +11,7 @@ import (
 	"github.com/thisisjun786/lina/internal/tui/sanitize"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/text"
 	"github.com/yuin/goldmark/util"
 )
@@ -43,9 +44,26 @@ func allowedLink(raw []byte) string {
 	return target
 }
 
+// Goldmark also closes a fence node at EOF. Only Continue returning Close
+// proves a matching fence was consumed (including inside a list or quote).
+type closedFenceParser struct{ parser.BlockParser }
+
+func (p closedFenceParser) Continue(node ast.Node, reader text.Reader, context parser.Context) parser.State {
+	state := p.BlockParser.Continue(node, reader, context)
+	if state == parser.Close {
+		node.SetAttributeString("lina.closed", true)
+	}
+	return state
+}
+
+var markdownParser = goldmark.New(goldmark.WithParserOptions(parser.WithBlockParsers(
+	// The default fenced-code parser has priority 700.
+	util.Prioritized(closedFenceParser{parser.NewFencedCodeBlockParser()}, 699),
+))).Parser()
+
 func parseMarkdown(source, bullet string) []render.MarkdownBlock {
 	data := []byte(source)
-	doc := goldmark.DefaultParser().Parse(text.NewReader(data))
+	doc := markdownParser.Parse(text.NewReader(data))
 	var blocks []render.MarkdownBlock
 	var inline func(ast.Node, render.InlineStyle) []render.Span
 	inline = func(n ast.Node, style render.InlineStyle) []render.Span {
@@ -127,7 +145,14 @@ func parseMarkdown(source, bullet string) []render.MarkdownBlock {
 				line := n.Lines().At(i)
 				code.Write(line.Value(data))
 			}
-			blocks = append(blocks, render.MarkdownBlock{Spans: []render.Span{{Text: strings.TrimSuffix(code.String(), "\n"), Style: render.InlineStyle{Code: true}}}, Prefix: prefix, Indent: indent})
+			value := strings.TrimSuffix(code.String(), "\n")
+			spans := []render.Span{{Text: value, Style: render.InlineStyle{Code: true}}}
+			if fence, ok := node.(*ast.FencedCodeBlock); ok {
+				if closed, _ := fence.AttributeString("lina.closed"); closed == true {
+					spans = highlightCode(value, string(fence.Language(data)))
+				}
+			}
+			blocks = append(blocks, render.MarkdownBlock{Spans: spans, Prefix: prefix, Indent: indent, Code: true})
 		case *ast.Paragraph, *ast.TextBlock, *ast.Heading:
 			if n.FirstChild() == nil {
 				return

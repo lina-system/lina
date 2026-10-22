@@ -6,10 +6,20 @@ import (
 	"strings"
 )
 
+// SyntaxTone is a theme-independent code token role, never a terminal colour.
+type SyntaxTone uint8
+
+const (
+	SyntaxText SyntaxTone = iota
+	SyntaxAccent
+	SyntaxMuted
+)
+
 // InlineStyle is semantic data. Only the UI adapter produces terminal escapes.
 type InlineStyle struct {
 	Bold, Italic, Code, Link bool
 	URL                      string
+	Syntax                   SyntaxTone
 }
 type Span struct {
 	Text  string
@@ -25,6 +35,7 @@ type MarkdownBlock struct {
 	Spans  []Span
 	Prefix string
 	Indent int
+	Code   bool // Literal block origin, independent of syntax token count.
 }
 
 // MarkdownParser belongs to the UI adapter; render owns no parser dependency.
@@ -144,8 +155,8 @@ func wrapMarkdown(block MarkdownBlock, config Config) []StyledRow {
 		row := StyledRow{Clipped: line.clipped}
 		// A literal code line may have no text. Retain its semantic span so
 		// consumers can distinguish it from paragraph spacing when trimming.
-		if line.start == line.end && len(block.Spans) == 1 && block.Spans[0].Style.Code {
-			row.Spans = append(row.Spans, Span{Style: block.Spans[0].Style})
+		if line.start == line.end && block.Code {
+			row.Spans = append(row.Spans, Span{Style: InlineStyle{Code: true}})
 		}
 		if prefix != "" {
 			label := prefix

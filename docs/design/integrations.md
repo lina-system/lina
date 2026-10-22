@@ -136,11 +136,11 @@ The first-party plugins carry profiles. LINA also ships profiles for major messa
 
 ### Tool classification
 
-LINA Core marks a plugin tool or command as an outward or irreversible effect from one source: the plugin's service profile. A call to a marked tool asks every time, with the choices once and deny ([main-authority.md](main-authority.md#plugin-tools)). Every other tool of a plugin that is on is available to every agent, in the same way, and runs without asking. There are no tiers, no scopes and no per-tool settings.
+LINA Core marks a plugin tool or command as an outward or irreversible effect from one source: the plugin's service profile. A permitted call to a marked tool asks every time, with the choices once and deny ([main-authority.md](main-authority.md#plugin-tools)). Core first applies the [preset effect limits](main-authority.md#preset-effect-limits): profiles distinguish research and private drafts from investment orders and external or binding execution, and an unclassified operation cannot bypass advise-only or draft-only limits. Every other permitted tool of a plugin that is on is available to every agent, in the same way, and runs without asking. There are no tiers, plugin scopes or per-tool settings.
 
 - Annotations that a server sends are untrusted and never mark a tool. `destructiveHint` is a display hint only.
 - The shipped messaging profiles mark every send tool.
-- A plugin without a profile has no marked tool. The card says so, and the agent rules still make an agent ask before it sends, pays, publishes or permanently deletes ([work-and-delegation.md](work-and-delegation.md#default-posture)).
+- A plugin without a profile has no marked tool. The card says so; restricted presets cannot dispatch an operation whose permitted effect Core cannot establish. For other agents, the agent rules still make an agent ask before it sends, pays, publishes or permanently deletes ([work-and-delegation.md](work-and-delegation.md#default-posture)).
 - LINA Core stores a hash of each tool's definition: its name, description, input schema and annotations. When a server's tool list changes, or its cache lifetime ends and LINA Core reads the list again, a tool whose definition differs from the one stored when the person turned the plugin on is marked "changed since you turned it on" on the plugin card, which shows what changed. A tool the server adds is available like any other, and the profile still decides which tools are marked.
 
 ## Credentials and sign-in
@@ -326,7 +326,9 @@ restart. Adapter tests independently cover owner-only approval decisions,
 presentation matching, token-free inboxes and REST error classification.
 The separate `e2e/m2/discord-recovery.json` scenario injects both non-resumable
 close codes into the running Core, checks fresh Identify and duplicate receipt
-handling, then completes tool/background work and delivers its results.
+handling for both commands and approval buttons, then completes tool/background
+work and delivers its results. After restarting Core it requires Resume with
+the replacement session ID and its last committed sequence (#547).
 
 Telegram's initial adapter uses `github.com/PaulSonOfLars/gotgbot/v2` at
 `v2.0.0-rc.37`, with no transitive modules. It advertises text, edits,

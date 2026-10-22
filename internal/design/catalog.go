@@ -44,6 +44,23 @@ type translation struct{ en, ko string }
 // Keys are wire codes or local presentation ids, never English source text.
 // Keep both languages together so a new entry cannot omit a translation.
 var catalog = map[string]translation{
+	"running.state.in_progress":      {"In progress", "진행 중"},
+	"running.state.waiting":          {"Waiting", "대기 중"},
+	"running.state.needs_input":      {"Input needed", "응답 필요"},
+	"running.state.ready_for_review": {"Ready for review", "검토 준비됨"},
+	"running.state.failed":           {"Failed", "실패"},
+	"running.state.stopped":          {"Stopped", "중지됨"},
+	"running.state.done":             {"Done", "완료"},
+	"running.state.unknown":          {"Unknown", "알 수 없음"},
+	"running.reason.dependency":      {"Waiting for a dependency", "선행 작업 대기"},
+	"running.reason.area":            {"Waiting for the work area", "작업 공간 대기"},
+	"running.reason.quota":           {"Waiting for quota", "사용 한도 대기"},
+	"running.reason.host_capacity":   {"Waiting for host capacity", "기기 여유 자원 대기"},
+	"running.reason.ci_pending":      {"Waiting for CI", "CI 결과 대기"},
+	"running.reason.run_limit":       {"Waiting for a run slot", "실행 순서 대기"},
+	"running.reason.person":          {"Waiting for you", "내 응답 대기"},
+	"running.reason.budget":          {"Waiting for work allowance", "작업 한도 대기"},
+
 	"conversation.start.memory": {"What do you remember about me?", "나에 대해 무엇을 기억해?"},
 	"conversation.start.voice":  {"Please keep your replies brief.", "앞으로 짧게 답해 줘."},
 	"conversation.start.task":   {"Help me finish a task.", "이 일을 끝까지 맡아서 해 줘."},
@@ -85,6 +102,10 @@ var catalog = map[string]translation{
 	"success":                          {"Succeeded", "성공"},
 	"failure":                          {"Failed", "실패"},
 
+	"tool.running":               {"running", "실행 중"},
+	"tool.ok":                    {"ok", "성공"},
+	"tool.failed":                {"failed", "실패"},
+	"tool.more":                  {"+%d lines", "+%d줄"},
 	"notice.run_effect_question": {"How should the remaining actions proceed? Reads and analysis can continue; further actions need a separate authorized decision, and any unknown earlier outcome must be checked first.", "남은 작업을 어떻게 진행할까요? 읽기와 분석은 계속할 수 있어요. 추가 실행에는 별도의 승인된 결정이 필요하며, 이전 실행의 결과가 불확실하다면 먼저 확인해야 해요."},
 	"notice.run_input_needed":    {"Your input is needed before this background work can continue.", "이 백그라운드 작업을 계속하려면 응답이 필요해요."},
 
@@ -273,6 +294,7 @@ var catalog = map[string]translation{
 	"progress_digest":            {"Progress summary", "진척 요약"},
 	"waiting_get":                {"Show waiting decisions", "기다리는 결정 보기"},
 	"waiting":                    {"Waiting for me", "내 결정 대기"},
+	"waiting.empty":              {"nothing to decide now", "지금 결정할 일이 없어요"},
 	"waiting_update":             {"Waiting decisions updated", "대기 중인 결정 업데이트"},
 	"waiting_answer":             {"Decision", "결정"},
 	"details_get":                {"Open details", "자세히 보기"},
