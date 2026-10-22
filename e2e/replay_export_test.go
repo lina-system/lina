@@ -53,7 +53,7 @@ func TestM1ReplayExportInstalledCore(t *testing.T) {
 	core.command.Env = append(core.command.Env, "PATH="+os.Getenv("PATH"), "LINA_RESPONSES_BASE_URL="+provider.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
 	core.start(t)
 	h.connect(core).Close()
-	h.waitReady()
+	waitCoreReady(t, h)
 	terminal := h.startScreenTUI("TERM=xterm-256color")
 	waitScreen(t, h, terminal, design.Text(design.English, "live"))
 	h.keys(terminal, scenario.Input+"\r")
