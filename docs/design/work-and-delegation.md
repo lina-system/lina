@@ -1050,7 +1050,11 @@ The running worker tools reserve their canonical work directory before process
 launch. A directory overlapping an external task's artifact roots follows that
 task's switch gate, including symlink aliases. Existing workers prevent adoption
 of their directory. Reservations survive loss of observations and restart; a
-terminal worker turn releases its reservation. Steering checks the same gate,
+terminal worker turn releases its reservation. A synthesized connection-loss
+finish is not terminal evidence and retains the reservation. Every worker input
+rebinds its reservation to the resulting turn before an older completion can
+release it, including a turn that became idle during steering. An unreadable
+resulting turn remains reserved as unknown. Steering checks the same gate,
 and an idle worker needs a new reservation before its next turn. Read-only
 snapshots and an explicit user interrupt remain available during rollback.
 

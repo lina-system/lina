@@ -318,18 +318,26 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 	case "worker_interrupt":
 		err = entry.adapter.Interrupt(ctx, snap.Thread, worker.UserCancel)
 	}
-	if name == "worker_input" && snap.State == worker.Idle {
-		key := "unknown:" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	if name == "worker_input" {
+		// Input may observe an idle worker after our active snapshot and start
+		// another turn. Bind every accepted input before queued completions can
+		// acquire mu; ambiguity keeps a reservation that no old event can free.
+		key := "unknown:" + rand.Text()
 		if err == nil {
 			current, readErr := entry.adapter.Snapshot(ctx, snap.Thread)
-			if readErr == nil {
+			if readErr == nil && current.Thread.TurnID != "" && current.State != worker.Unknown && current.State != worker.Dead {
 				key = current.Thread.TurnID
-				entry.reservationTurn = key
-			} else {
+			} else if readErr != nil {
 				err = readErr
 			}
 		}
-		entry.active[key] = activity
+		entry.reservationTurn = key
+		if snap.State == worker.Idle {
+			entry.active[key] = activity
+		} else if key != snap.Thread.TurnID {
+			entry.active[key] = entry.active[snap.Thread.TurnID]
+			delete(entry.active, snap.Thread.TurnID)
+		}
 	}
 	entry.mu.Unlock()
 	if err != nil {
@@ -363,8 +371,10 @@ func (e *workerSession) observe() {
 			}
 		case worker.UsageEvent:
 		case worker.FinishEvent:
+			// A transport-loss event is synthesized by the adapter. It proves
+			// neither terminal execution nor completed process cleanup.
 			e.mu.Lock()
-			if e.origin.work != nil && e.reservationTurn == event.Thread.TurnID {
+			if e.origin.work != nil && e.reservationTurn == event.Thread.TurnID && event.Finish.Failure != worker.ConnectionFailure {
 				if err := e.origin.work.ReleaseWorker(context.WithoutCancel(e.origin.ctx), e.reservation); err == nil {
 					e.reservation = ""
 					e.reservationTurn = ""
