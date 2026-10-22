@@ -126,7 +126,9 @@ func (s *signInSession) response(e protocol.Envelope) (bool, error) {
 	delete(s.pending, *e.ReplyTo)
 	if e.Error != nil {
 		s.close()
-		s.model.accounts = accountView{open: true, code: string(e.Error.Code)}
+		// Startup also lists accounts in the background. A recovering Core may
+		// refuse that read; preserve focus instead of hiding the conversation.
+		s.model.accounts = accountView{open: s.model.accounts.open, code: string(e.Error.Code)}
 		return true, nil
 	}
 	switch p := e.Payload.(type) {
