@@ -23,7 +23,7 @@ Selection runs once and publishes a plan bound to the candidate head, tree and a
 
 A documentation-only plan invokes no Go work. Node comes from `.node-version` when present, otherwise Node 24. Selection uses the exact workspace Go toolchain when Go inventory is needed; Go jobs also install the `toolchain` named in `go.mod`. Missing or inconsistent toolchain declarations fail verification. Actions are pinned to commit SHAs. Only automation installs checksum-verified actionlint 1.7.12. CI has read-only repository permissions, writes no evidence note, and never publishes or integrates a change.
 
-Jobs that exercise Linux sandboxing install Ubuntu's Bubblewrap package and an executable-specific AppArmor profile permitting `/usr/bin/bwrap` to create user namespaces. A direct namespace launch probes the setup before running tests. These settings apply to disposable CI runners; missing sandbox support is a verification failure.
+Jobs that exercise Linux sandboxing install Ubuntu's Bubblewrap package and the [checked AppArmor profile](../../scripts/verify/bwrap.apparmor) permitting `/usr/bin/bwrap` to create user namespaces. The Linux automation tests compile that profile with `apparmor_parser --skip-kernel-load --skip-cache`; they do not load it into the developer's kernel. A direct namespace launch probes CI setup before running tests. These settings apply to disposable CI runners; missing sandbox support is a verification failure.
 
 ## Execution
 
