@@ -14,6 +14,21 @@ node scripts/foundation.mjs [--range <base>..<head>] [--full] [--no-note]
 
 The script clears `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and every other `GIT_*` environment variable on entry; it works on the repository it runs in and takes the range as an argument. A run that integration or a release relies on happens in a clean worktree of the exact commit, in an environment that holds no credentials.
 
+Acceptance packages are compiled once per candidate with `go test -c` into the
+check's disposable directory. The produced binary enumerates its tests and runs
+both disjoint batches in the package's directory with `-test.count=1` and
+`-test.timeout=6m`. Results are never cached. Verbose batch output identifies the
+active scenario if the shared components deadline expires. Packages without
+test files still receive their normal build, vet and analyzer checks.
+
+PR #559's [CI run 39825375534](https://github.com/thisisjun786/lina/actions/runs/39825375534)
+exhausted the 895-second components budget: the first acceptance batch passed
+in 240.206 seconds, and the second was terminated after its remaining 331.116
+seconds. Reusing the candidate's compiled test binary removes the repeated Go
+package loading and linking for enumeration and each batch. A real regression
+requires one compilation while executing every test, subtest, example and fuzz
+seed once. The component and per-batch deadlines remain unchanged.
+
 ## Pull request CI
 
 The [CI workflow](../../.github/workflows/ci.yml) runs on pull requests targeting `dev` and pushes to `dev`, with one job named `foundation` on `ubuntu-24.04`. It checks out the event's `github.sha` with full history and without persisting Git credentials: the pull request merge commit from `refs/pull/<number>/merge`, or the pushed commit. It runs `node scripts/foundation.mjs --range <base>..<head> --no-note`, using the pull request's base SHA and that merge commit SHA, or the push's before and after SHAs. This verifies the proposed merge result even when the pull request branch is behind `dev`. A new branch push without a previous commit uses `--full --no-note`.

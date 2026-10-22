@@ -19,6 +19,14 @@ function fixture(t) {
 }
 const kit = { name: 'kit', module: 'kit', packages: ['./...'] };
 
+// Feed both go-test and compiled-test invocations to the same simulated clock.
+function testingArgs(args) {
+  if (args.includes('-c')) return ['compile', ...args.slice(1)];
+  if (args.some(arg => arg.startsWith('-test.'))) return ['test', ...args.map(arg => arg.replace(/^-test\./, '-'))];
+  return args;
+}
+const acceptanceListing = sb => `example.invalid/e2e\t${join(sb.dir, 'e2e')}\ttests\n`;
+
 test('cold compilation leaves enough shared budget for the module test suite', t => {
   const sb = fixture(t);
   let elapsed = 0;
@@ -84,8 +92,9 @@ test('the growing e2e suite can finish beyond six minutes within the component d
   const ran = [];
   t.mock.method(performance, 'now', () => elapsed);
   const result = checkComponents({ cwd: sb.dir, components: [{ name: 'lina', module: '.', packages: ['./e2e/...'] }], execute(command, args, options) {
+    args = testingArgs(args);
     if (args[0] === 'build') elapsed += 200_000;
-    if (args[0] === 'list') return { status: 0, stdout: 'example.invalid/e2e\n', stderr: '' };
+    if (args[0] === 'list') return { status: 0, stdout: acceptanceListing(sb), stderr: '' };
     if (args[0] === 'test' && args.includes('-list')) return { status: 0, stdout: names.join('\n')+'\n', stderr: '' };
     if (args[0] === 'test') {
       const minutes = Number(args.find(arg => arg.startsWith('-timeout='))?.match(/^\-timeout=(\d+)m$/)?.[1]);
@@ -253,7 +262,8 @@ test('acceptance batches run every enumerated test once within the shared budget
   t.mock.method(performance, 'now', () => elapsed);
   const result = checkComponents({ cwd: sb.dir, components: [{ name: 'lina', module: '.', packages: ['.', './e2e/...'] }],
     execute(command, args, options) {
-      if (args[0] === 'list') return { status: 0, stdout: 'example.invalid/e2e\n', stderr: '' };
+      args = testingArgs(args);
+      if (args[0] === 'list') return { status: 0, stdout: acceptanceListing(sb), stderr: '' };
       if (args[0] === 'test' && args.includes('-list')) return { status: 0, stdout: `${names.join('\n')}\nok example.invalid/e2e 0.01s\n`, stderr: '' };
       if (args[0] === 'test') {
         assert.ok(args.includes('-count=1'));
@@ -283,7 +293,8 @@ test('an acceptance batch failure stops the gate without running later batches',
   let batches = 0;
   const result = checkComponents({ cwd: sb.dir, components: [{ name: 'lina', module: '.', packages: ['./e2e/...'] }],
     execute(command, args) {
-      if (args[0] === 'list') return { status: 0, stdout: 'example.invalid/e2e\n', stderr: '' };
+      args = testingArgs(args);
+      if (args[0] === 'list') return { status: 0, stdout: acceptanceListing(sb), stderr: '' };
       if (args[0] === 'test' && args.includes('-list')) return { status: 0, stdout: 'TestOne\nTestTwo\n', stderr: '' };
       if (args[0] === 'test' && args.includes('-run')) {
         batches++;
@@ -298,6 +309,7 @@ test('an acceptance batch failure stops the gate without running later batches',
 
 test('real acceptance batches preserve examples, fuzz seeds and ordinary tests', t => {
   const sb = fixture(t);
+  sb.write(sb.dir, 'e2e/support/doc.go', '// SPDX-License-Identifier: Apache-2.0\npackage support\n');
   sb.write(sb.dir, 'ordinary_test.go', `// SPDX-License-Identifier: Apache-2.0
 package lina
 import ("os"; "testing")
@@ -314,10 +326,30 @@ func Example() { mark("example");fmt.Println("ok")
 }
 func FuzzInput(f *testing.F) { f.Add("seed");f.Fuzz(func(t *testing.T,s string){mark("fuzz:"+s)}) }
 `);
-  const result = checkComponents({ cwd: sb.dir, components: [{ name: 'lina', module: '.', packages: ['.', './e2e/...'] }] });
+  const acceptanceBuilds = [];
+  const result = checkComponents({ cwd: sb.dir, components: [{ name: 'lina', module: '.', packages: ['.', './e2e/...'] }],
+    execute(command, args, options) {
+      if (command === 'go' && args[0] === 'test' && args.at(-1).endsWith('/e2e')) acceptanceBuilds.push(args);
+      return execute(command, args, options);
+    } });
   assert.equal(result.status, 0, result.output);
   assert.equal(readFileSync(join(sb.dir, 'ordinary-ran'), 'utf8'), 'yes');
   assert.deepEqual(readFileSync(join(sb.dir, 'e2e/ran'), 'utf8').trim().split('\n').sort(), ['child', 'example', 'fuzz:seed', 'one', 'two']);
+  assert.equal(acceptanceBuilds.length, 1, 'compile acceptance once for enumeration and both batches');
+  assert.ok(acceptanceBuilds[0].includes('-c'));
+});
+
+test('failed acceptance compilation stops before enumeration or execution', t => {
+  const sb = fixture(t);
+  const result = checkComponents({ cwd: sb.dir, components: [{ name: 'lina', module: '.', packages: ['./e2e/...'] }],
+    execute(command, args) {
+      assert.equal(command, 'go', 'a failed build cannot run a test binary');
+      if (args[0] === 'list') return { status: 0, stdout: acceptanceListing(sb), stderr: '' };
+      if (args.includes('-c')) return { status: 1, stdout: '', stderr: 'acceptance compilation failed\n' };
+      return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
+    } });
+  assert.equal(result.status, 1);
+  assert.match(result.output, /acceptance compilation failed/);
 });
 
 test('failed acceptance enumeration never becomes an empty successful suite', t => {
@@ -325,7 +357,8 @@ test('failed acceptance enumeration never becomes an empty successful suite', t 
   for (const failing of ['list', 'tests']) {
     const result = checkComponents({ cwd: sb.dir, components: [{ name: 'lina', module: '.', packages: ['./e2e/...'] }],
       execute(command, args) {
-        if (args[0] === 'list') return { status: failing === 'list' ? 1 : 0, stdout: 'example.invalid/e2e\n', stderr: failing === 'list' ? 'listing failed\n' : '' };
+        args = testingArgs(args);
+        if (args[0] === 'list') return { status: failing === 'list' ? 1 : 0, stdout: acceptanceListing(sb), stderr: failing === 'list' ? 'listing failed\n' : '' };
         if (args.includes('-list')) return { status: 1, stdout: 'TestOne\n', stderr: 'enumeration failed\n' };
         assert.ok(!args.includes('-run'));
         return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };

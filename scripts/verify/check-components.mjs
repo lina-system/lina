@@ -62,11 +62,11 @@ export function checkComponents({ cwd = process.cwd(), components, execute: run 
   const deadline = started + timeoutMs;
   const context = createGoContext(cwd, { timeoutMs: Math.min(30_000, timeoutMs) });
   let output = '';
-  const invoke = (command, args, directory) => {
+  const invoke = (command, args, directory, longRunning = false) => {
     const remaining = Math.floor(deadline - performance.now());
     // Package-wide work grows with the selected module. It can use the remaining
     // check budget; short setup and usage commands retain tighter limits.
-    const limit = command === 'go'
+    const limit = longRunning ? remaining : command === 'go'
       ? ({ env: 30_000, mod: 120_000, run: 120_000 }[args[0]] ?? remaining)
       : 30_000;
     const result = remaining > 0
@@ -118,21 +118,30 @@ export function checkComponents({ cwd = process.cwd(), components, execute: run 
         // package's actual tests, examples and fuzz seeds, then run disjoint
         // halves. No test is omitted or repeated; each half retains Go's
         // diagnostic timeout and consumes the same outer components budget.
-        const listed = invoke('go', ['list', '-mod=readonly', './e2e/...'], directory);
+        const listed = invoke('go', ['list', '-mod=readonly', '-f', '{{.ImportPath}}\t{{.Dir}}\t{{if or .TestGoFiles .XTestGoFiles}}tests{{end}}', './e2e/...'], directory);
         if (listed.status !== 0) return { status: 1, output };
         const acceptancePackages = listed.stdout.trim().split(/\r?\n/).filter(Boolean);
         if (!acceptancePackages.length) return { status: 1, output: `${output}No acceptance packages enumerated\n` };
-        for (const pkg of acceptancePackages) {
-          const listedTests = invoke('go', [...testArgs, '-list', '.', pkg], directory);
+        for (const [index, entry] of acceptancePackages.entries()) {
+          const [pkg, packageDirectory, hasTests] = entry.split('\t');
+          if (!pkg || !packageDirectory) return { status: 1, output: `${output}Invalid acceptance package metadata\n` };
+          // Packages without test files were already built and analyzed above.
+          if (!hasTests) continue;
+          // Compile and link once. Enumerating and executing disjoint batches
+          // from this candidate's binary avoids three Go package loads/links.
+          const binary = join(context.directory, `acceptance-${index}.test${process.platform === 'win32' ? '.exe' : ''}`);
+          if (invoke('go', ['test', '-c', '-mod=readonly', '-o', binary, pkg], directory).status !== 0) return { status: 1, output };
+          const binaryArgs = ['-test.count=1', '-test.timeout=6m'];
+          const listedTests = invoke(binary, [...binaryArgs, '-test.list', '.'], packageDirectory);
           if (listedTests.status !== 0) return { status: 1, output };
           const names = listedTests.stdout.split(/\r?\n/).filter(name => /^(Test|Example|Fuzz)[\p{L}\p{N}_]*$/u.test(name)).sort();
           if (!names.length) {
-            if (invoke('go', [...testArgs, pkg], directory).status !== 0) return { status: 1, output };
+            if (invoke(binary, binaryArgs, packageDirectory, true).status !== 0) return { status: 1, output };
             continue;
           }
           for (let batch = 0; batch < 2; batch++) {
             const tests = names.filter((_, index) => index % 2 === batch);
-            if (tests.length && invoke('go', [...testArgs, '-run', `^(${tests.join('|')})$`, pkg], directory).status !== 0) return { status: 1, output };
+            if (tests.length && invoke(binary, [...binaryArgs, '-test.v', '-test.run', `^(${tests.join('|')})$`], packageDirectory, true).status !== 0) return { status: 1, output };
           }
         }
       }
