@@ -104,115 +104,6 @@ Rules:
 - **Execution owner.** The work engine runs the code, work and skill creation that Klotho requests; Klotho's own limits are in [cognition-and-life.md](cognition-and-life.md).
 - **Memory.** Only a result with a `verified` verdict may enter LINA memory, under the writing rules of [conversation-and-memory.md](conversation-and-memory.md). A verified work result is common knowledge, known to every agent, unless the person says otherwise.
 
-### Run to done
-
-Once the person gives a goal, the work engine owns it until its done condition
-is proved. The conversation does not have to remind it of the next step. This
-is the work engine's normal behavior, not a new user-facing concept or a
-learning mechanism. The manager defines the goal, task graph, scope, checks
-and required evidence up front; Core rejects a missing done condition or a
-cyclic dependency graph. A code goal includes the whole applicable lifecycle:
-plan → assign → build → green CI and clean review → merge → QA on the merged
-result → deploy where there is a service → verify it actually runs.
-
-Opening a PR or merging it is not goal completion. Each task retains its
-worker attempt, current head, review and CI evidence, merge commit and QA
-result. A service goal additionally names its deployment target, deployment
-receipt and runtime verification evidence. Goals without a service record why
-deployment is inapplicable and still verify their declared outcome. The final
-short summary identifies the merged heads, QA results, deployment if applicable
-and verification evidence, including a capture where the done condition calls
-for one. Core closes only after all of these required evidence items exist,
-refer to the current targets and report success. Claims, missing observations,
-pending checks and unknown outcomes never substitute for evidence.
-
-After every committed task, merge, worker or Node event, Core derives work
-from the current ledger state. Event delivery does not tell it what to do and
-cannot nominate an arbitrary command. The same derivation runs once at startup
-and in the shared five-minute reconciliation sweep to recover lost wakes.
-
-| Event and current state | Derived next action |
-| --- | --- |
-| Goal admitted with a valid task graph | Reserve compatible capacity and assign every ready task. |
-| Dependency merged; a task has no other unmet dependency | Release its dependency wait immediately and fill a slot, independently of its predecessor's QA. |
-| Worker finishes the current attempt | Read its receipt and current PR state; keep a named CI/review wait or submit the delivered head to the manager's work-definition check. |
-| Current head has green required CI, a review with no open P0/P1 and a verified manager verdict | Merge that exact head through the merge slot. Re-read gates at dispatch if the head or observations changed. |
-| PR conflicts with the base | Return it once to the same worker/work area, preserve files and receipts, and require the repaired head's CI and review handling before merging. A second failure needs a decision. |
-| Worker process/session is confirmed dead or reports a recoverable failure | Reconcile outstanding effects, then resume once as a new attempt in the same work area. An observation timeout is not proof of death. |
-| Merge is observed | Record the merge commit, release dependents and start QA for that exact commit once. |
-| QA fails | Record the evidence and return repair work to the owner; its next merge needs fresh QA. Do not deploy the failing result. |
-| All tasks have successful QA on their merged commits | Deploy the scoped service if required and authorized, otherwise verify the goal's outcome. |
-| Deployment is observed successful | Verify the running target against the deployed revision, not just the command's exit code. |
-| Verification proves every done condition | Close the goal and deliver one short evidence summary. |
-| Node load/capacity changes or a slot is released | Recompute capacity and fill all compatible ready work, across Nodes. |
-| A named wait expires or startup finds an in-flight action | Read its authoritative handle/receipt; resume from observed state. Never infer failure from elapsed time alone. |
-| An effect needs the person or the goal is materially ambiguous | Retain one deduplicated decision with its wake condition; unrelated work continues. |
-
-Each task is progressing, waiting on a named condition with a deadline, or
-being recovered. A deadline triggers observation, not cancellation. Questions
-are reserved for money, accounts, publishing/deployment or other irreversible
-effects outside existing authority, missing information and real ambiguity in
-the goal. Existing permission persists; no repeated approval is needed for a
-previously authorized action. Exhausted recovery and failed evidence remain
-visible in the running list and cannot close a goal.
-
-A transition and its event commit together in the append-only work ledger.
-Task state is a rebuildable projection. Derived actions have durable identities
-bound to goal/task, attempt, stage and head or merge commit. Claiming an action
-and reserving a slot are transactional. Effects execute outside the canon
-transaction, with the existing grant/epoch fences and durable receipts. Event
-replay and concurrent reconciliation cannot dispatch twice. A crash after
-dispatch leaves an unknown outcome that must be observed before another action
-can start; a restart never treats an unanswered receipt as permission to retry.
-A later event remains eligible even if it arrived while an action was running.
-
-Capacity comes from each connected Node's observed CPU load, available memory,
-worker readiness/quota, resource caps and current reservations. Stale or unknown
-load is not spare capacity; a yielding or disconnected Node gets no new work.
-Core reserves resources before dispatch and considers all ready tasks in
-stable dependency order. An area lease or lack of a compatible worker gives a
-named wait. It does not withhold unrelated ready work, impose a fixed fleet
-slot count or wait for a fresh person message to refill a released slot.
-Capacity shrinkage stops new assignments without killing healthy work.
-
-The implementation ports behavior from
-[devflow](https://github.com/thisisjun786/devflow/tree/c78f378f652a985210e99228fa6467ea17f94c45):
-
-- **Event-triggered filling and admission** (`lib/bidding.sh`). **Seen:**
-  completion/failure/landing rebids queued work; admission reserves capacity and
-  rejects unavailable workers and low resources; an unknown startup receipt
-  prevents reassignment. **Inferred:** Core can derive the same actions from a
-  transactional ledger. **Unknown:** this revision uses cores/8 for its slot
-  ceiling and load in bidding scores; it does not prove fully load-sized slots.
-  LINA computes available slots from live load and resource requests instead.
-- **Post-merge QA** (`lib/qa.sh`). **Seen:** only an authorized landed job can
-  enqueue QA; the running request is immutable and an uncertain interrupted
-  effect is not blindly restarted. **Inferred:** merge evidence should key QA
-  and its receipt. **Unknown:** devflow coalesces pending heads, which does not
-  prove QA for every merge. LINA retains a QA obligation for each merge.
-- **Merge and conflict recovery** (`lib/delivery.sh`, `lib/stack.sh`).
-  **Seen:** landing is pinned to checked head/base and green checks; dependencies
-  must really be merged into the base; a conflict is sent to its existing
-  worker once. **Inferred:** recorded gates and attempt identities can drive
-  the same sequence without a conversation reminder. **Unknown:** the read
-  code does not establish an end-to-end deploy/runtime verification stage;
-  those require LINA's explicit evidence and authority boundaries.
-- [Kubernetes controllers](https://kubernetes.io/docs/concepts/architecture/controller/)
-  and [Hermes P9](hermes-patterns.md#p9-events-over-polling).
-  **Seen:** compare desired/current state; deterministic event identity,
-  hand-off receipts and level-triggered reconciliation recover missed wakes.
-  **Inferred:** event-driven next-action derivation can converge on the goal's
-  done condition. **Unknown:** these sources do not prove safe retries for
-  LINA's external effects. Its own receipts and grants remain authoritative.
-
-Headless acceptance gives one code goal with five dependent tasks to stub
-workers and sends no further person message. It kills one worker and introduces
-one merge conflict, verifies recovery and continued capacity filling, and
-requires merge, QA, deploy and runtime verification evidence before the goal
-closes. Additional acceptance covers non-service goals, missing or stale
-checks, restart, replay, unknown effects, capacity changes and a real decision
-wait. No test relies on elapsed-time luck.
-
 ### Default posture
 
 LINA acts and does not ask. When an agent knows what the person wants or what needs doing, it proceeds and shows the work as in progress, in the progress line and in the 할 일 row with its workers ([surfaces.md](surfaces.md#progress-at-a-glance)). The visible in-progress state is the confirmation. A question such as "should I start?" or "shall I run this in parallel?" is a defect.
@@ -234,6 +125,33 @@ The work area is `work/` under the state root ([filesystem.md](filesystem.md)). 
 - When a task without a pull request has a result ready, LINA Core keeps the output files as LINA materials of the task, so an unapplied result survives a lost disk. A code-change result with a GitHub remote needs no copy: its branch and pull request are on GitHub, which is canonical for code ([integrations.md](integrations.md)). For a repository without a remote, LINA Core keeps a Git bundle of the branch, made by LINA Core itself as a backup copy; it is never pushed or merged from. The result artifact of a background run is kept as LINA materials of the run when it lands, so a lost work area loses only a run's transcript and scratch files.
 - A worker writes only inside its own task directory and the git directories it needs to commit. It never writes a protected ref in a parent clone.
 - Task and run directories are removed only under the retention rules of this contract.
+
+The task ledger stores the requesting agent and conversation, the done condition,
+authorized artifact roots and the application requirement. Its events and their
+card and active-run indexes commit atomically in canon. Only one execution may
+be active for a task. Terminal worker observation releases that reservation; a
+receipt alone does not. Restart rebuilds the indexes from the append-only ledger
+and marks unobserved executions unknown without releasing their reservations.
+
+A completion receipt retains the pinned CRW base fields and adds LINA schema
+version 1 and artifact provenance. Core recomputes the manifest revision and
+receipt identity, binds the claim to the current generation, thread and turn,
+and requires provenance for every manifest entry. The artifact id, task, node,
+normalized path, content hash and nonzero observation time must be present; the
+path must be within the task's artifact roots and its hash must match the manifest.
+Provenance records an observation claim; receipt admission never proves the
+artifact bytes or a manager verdict. Missing or mismatched provenance rejects
+the entire receipt without changing the ledger. Identical current-generation
+retries are idempotent; superseded runs cannot submit into a later generation.
+
+Core constructs this store at startup, including without a model account. The
+existing running-list service includes delegated cards, and its open operation
+returns a bounded summary with stage sources. Task row ids use the `task:` prefix
+to distinguish them from background runs and include the execution generation,
+so a stale row cannot dismiss a later delivery; a dismissed landed card remains in
+the ledger. Worker dispatch and its per-thread receipt transport remain owned by
+the worker adapter; client management requests cannot write worker receipts or
+Core verdicts.
 
 ## Background runs
 
@@ -313,12 +231,24 @@ Implementation boundary: the run package supplies admission, release, steering, 
 
 ## Contract input from CRW
 
-CRW ([codex-relay-workflow](https://github.com/thisisjun786/codex-relay-workflow)) is the operator tool that coordinates Codex work until the operational switch. The work engine is LINA Core's management session, built anew in Go for LINA's system: it keeps how CRW works (the work ledger and its states, relay delivery and acknowledgement, and the supervisor, parent and child roles), with CRW's contract schemas (`contract/schema/`) and fixtures (`contract/fixtures/`) as fixed input. CRW code is never copied, vendored, translated or linked. The schemas and fixtures state the behavior that matters; CRW's own code and host paths stay with CRW.
+CRW ([codex-relay-workflow](https://github.com/thisisjun786/codex-relay-workflow)) is the operator tool that coordinates Codex work until the operational switch. The work engine is LINA Core's management session, built anew in Go for LINA's system: it keeps how CRW works (the work ledger and its states, relay delivery and acknowledgement, and the supervisor, parent and child roles), with CRW's contract schemas (`contract/schema/`) and the record fixtures named by the pin as fixed input. CRW code is never copied, vendored, translated or linked. The schemas and fixtures state the behavior that matters; CRW's own code and host paths stay with CRW.
 
 ### Start gate
 
 - The start gate for the work engine is a pinned CRW schema and fixture version.
 - The pin record names the CRW commit, the content hash of every adopted schema document and fixture file, and the adopted fixture domains. It lives in the LINA repository next to the work engine and is listed in the release manifest.
+- Hashes are SHA-256 of the exact upstream bytes, including compressed fixture
+  bytes. Every adopted file is checked before any fixture executes. A missing
+  file or changed hash fails the gate. The build manifest carries the full pin
+  in `crwPin`; readers preserve and validate it. Manifests predating this gate
+  remain readable without the field, but a new build must include it.
+- The initial pin adopts the five record schemas and 91 independent schema
+  judgments from CRW's `internal/relay/store/testdata/fixtures/`; its
+  `contract/fixtures/` cases exercise CRW-only surfaces and are excluded. A
+  separately hashed, source-backed input replay table restores upstream's
+  erased placeholders, including the invalid all-zero revision hash. Every
+  original judgment is retained. The runner verifies one-to-one input coverage,
+  preserves unmasked data and reads expected validity only from the fixture.
 - Work that needs the pinned schemas starts only after the pin: the work ledger and delivery records, delegation, orchestration, worker dispatch from the product, and the takeover of CRW records.
 - The pinned schemas fix only the records of the work ledger. The worker adapter round trip does not depend on the pin. It is an acceptance item of the first implementation issue and runs first.
 - Conversation, memory, persona, TUI, LINA APP screens, materials, cognition outside the work engine, LIFE and the OS base never wait for the pin.
@@ -537,7 +467,7 @@ The manager session splits work into tasks that one worker can finish as one pul
 - Every task whose dependencies are satisfied and whose area lease is free is handed off at once. It is limited only by the person's subscription quota for each worker and by the host's capacity. LINA Core never holds back a task to wait for another task that it does not depend on.
 - Quota is read per worker from the worker's adapter as quota rows in which unknown is a value ([runtime.md](runtime.md#usage-and-cost)). Where a worker reports none, LINA Core infers it from the worker's quota errors and its own usage records. A worker that stops on a quota or rate-limit error is parked until its window resets, and the task is not retried on it; the task goes to the next suitable worker (see Choosing the worker).
 - Host capacity is what the host can run beside the person's own work, within the install's declared resource caps ([non-competition.md](non-competition.md)). A device whose Node is disconnected or yielding receives no new hand-off.
-- Concurrency follows the load-sized Node capacity and transactional reservations of Run to done, further limited by quota, declared resource caps and write-area leases. There is no fixed fleet or per-repository slot count.
+- Concurrency starts at 4 tasks in flight per repository, with a lower cap for tasks that write the same kind of area, and is then limited by quota and host capacity. It is tuned by measurement.
 - One task, one worker, one worktree, one branch. LINA Core creates the worktree and the branch, named by task id, and starts the worker with that worktree as its working directory. A worker's own worktree option is never used, and two workers never share a worktree. Git refusing one branch in two worktrees is a second guard, not the first.
 - The manager session selects work and its order; the work engine reserves capacity, obtains Node bids and dispatches the recorded assignments. The one-coordinator rule of the Work engine holds: a worker is never used through its own team or coordinator feature.
 - When a task has landed, the work engine releases at once every task that was waiting only on it.
@@ -847,7 +777,7 @@ At the operational switch LINA takes over CRW's coordination functions and CRW r
 
 ## Deferred
 
-- The task state set of the ledger projection, and the list of adopted CRW schema documents and fixture domains: set by the pin record at the start gate.
+- The task state set of the ledger projection: set by the ledger implementation against the pinned record contracts. Adopted schema documents and fixture domains are fixed in the start-gate pin record.
 - The verified Codex versions and the judgments of the experimental fields LINA uses: set by the worker adapter round trip of the first implementation issue (V5) and recorded in the release manifest.
 - The completion receipt, question and finding schemas, their first version, and the written meaning of the review severities P0 to P3 that the worker reports: set by the worker adapter implementation issue. A receipt maps onto the pinned CRW shape by adding fields only.
 - What each worker profile (direct, single and complementary) means, and the values it records: set during work engine implementation acceptance.
