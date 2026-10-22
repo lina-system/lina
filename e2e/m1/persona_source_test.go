@@ -3,169 +3,258 @@
 package e2e_test
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/core/agents"
+	"github.com/thisisjun786/lina/internal/core/boot"
+	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/ctlfiles"
+	"github.com/thisisjun786/lina/kit/protocol"
+	"github.com/thisisjun786/lina/persona"
 )
-
-func personaFixture(t *testing.T, core, voice string) string {
-	t.Helper()
-	source := t.TempDir()
-	dir := filepath.Join(source, "characters/lina/persona")
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		t.Fatal(err)
-	}
-	for name, text := range map[string]string{"core-v1.md": core, "default-voice-v1.md": voice} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	return source
-}
 
 func setPersonaSource(t *testing.T, root, source string) {
 	t.Helper()
-	data := mustJSON(t, map[string]string{"persona_source": source})
-	if err := os.WriteFile(filepath.Join(root, "system/core/config.json"), data, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "system/core/config.json"), mustJSON(t, map[string]string{"persona_source": source}), 0600); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestM1PersonaSource(t *testing.T) {
-	t.Parallel()
+// Build a real Core with synthetic embedded assets. No runtime test override or
+// private-source hook is added to the product; Go's build overlay changes only
+// these disposable build inputs.
+func buildPersonaFixture(t *testing.T) string {
+	t.Helper()
+	directory := t.TempDir()
+	source, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	replace := map[string]string{}
+	for _, s := range persona.Starters() {
+		for _, layer := range []string{"core-v1.md", "default-voice-v1.md"} {
+			path := filepath.Join(directory, s.Key+"-"+layer)
+			text := s.Key + " fixture " + layer
+			if s.Key == "legal" && layer == "default-voice-v1.md" {
+				text = " "
+			}
+			if err := os.WriteFile(path, []byte(text), 0600); err != nil {
+				t.Fatal(err)
+			}
+			replace[filepath.Join(source, "persona", s.Key, layer)] = path
+		}
+	}
+	overlay := filepath.Join(directory, "overlay.json")
+	if err := os.WriteFile(overlay, mustJSON(t, map[string]any{"Replace": replace}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(directory, "lina")
+	command := exec.CommandContext(t.Context(), "go", "build", "-mod=readonly", "-overlay", overlay, "-o", binary, "./cmd/lina")
+	command.Dir = source
+	if out, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("build synthetic Core: %v\n%s", err, out)
+	}
+	return binary
+}
 
-	for _, mode := range []string{"configured", "unconfigured", "missing voice", "missing core", "oversize core", "oversize combined", "oversize encoded"} {
-		t.Run(mode, func(t *testing.T) {
-			requests := make(chan string, 8)
+// Seed existing agents while Core is stopped. Fresh starter creation belongs to
+// its own acceptance scenario; here every preset must migrate and prepare.
+func seedShippedPersonaAgents(t *testing.T, h *harness, person string) map[string]string {
+	t.Helper()
+	ctl, err := ctlfiles.Open(h.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ctl.Close()
+	if err := ctl.Acquire(); err != nil {
+		t.Fatal(err)
+	}
+	epoch, err := ctl.Epoch()
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := canon.Open(h.ctx, canon.Config{Path: filepath.Join(h.root, "canon/canon.sqlite"), Epoch: epoch, Controls: ctl, Migrations: boot.ApplicationMigrations()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close(context.Background())
+	store, err := agents.Open(h.root, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ids := map[string]string{}
+	for _, s := range persona.Starters() {
+		if err := store.UpdatePreset(h.ctx, agents.Preset{ID: s.Key, Core: "stale private fixture", DefaultVoice: "stale voice fixture"}, person); err != nil {
+			t.Fatal(err)
+		}
+		a, err := store.Create(h.ctx, agents.Create{Name: s.Name, PersonID: person, Preset: s.Key})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids[s.Key] = a.ID
+	}
+	return ids
+}
+
+func TestM1ShippedPersonaInstallAndTools(t *testing.T) {
+	t.Parallel()
+	for _, synthetic := range []bool{false, true} {
+		t.Run(fmt.Sprintf("synthetic=%t", synthetic), func(t *testing.T) {
+			calls := map[string]int{}
+			requests := make(chan string, 32)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				var body struct{ Instructions string }
+				var body struct {
+					Instructions string
+					Input        []json.RawMessage
+					Tools        []json.RawMessage
+				}
 				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 					t.Error(err)
 					return
 				}
-				requests <- body.Instructions
-				emitResponse(w, "fixture reply", true)
+				var identity struct {
+					AgentID string        `json:"agent_id"`
+					Name    string        `json:"name"`
+					Owner   string        `json:"owner_person_id"`
+					Layers  agents.Layers `json:"layers"`
+				}
+				if err := json.Unmarshal(instructionBlock(body.Instructions, "persona"), &identity); err != nil {
+					t.Error(err)
+				}
+				if identity.AgentID == "" || identity.Name == "" || identity.Owner == "" {
+					t.Error("identity lost")
+				}
+				var enabled []json.RawMessage
+				if err := json.Unmarshal(instructionBlock(body.Instructions, "enabled_tools"), &enabled); err != nil || len(enabled) != len(body.Tools) || len(enabled) == 0 {
+					t.Error("tool declarations lost")
+				}
+				for i := range enabled {
+					if i < len(body.Tools) && string(mustJSON(t, enabled[i])) != string(mustJSON(t, body.Tools[i])) {
+						t.Error("declared tools differ")
+					}
+				}
+				calls[identity.AgentID]++
+				if calls[identity.AgentID]%2 == 1 {
+					requests <- body.Instructions
+					emitPersonaCall(w, "index-"+identity.AgentID, "skill_index", map[string]any{})
+				} else {
+					var result struct{ Type, Output string }
+					if len(body.Input) == 0 {
+						t.Error("missing tool result")
+					} else {
+						json.Unmarshal(body.Input[len(body.Input)-1], &result)
+						if result.Type != "function_call_output" || !strings.Contains(result.Output, "persona-change") {
+							t.Errorf("skill tool did not return catalog: %s", result.Output)
+						}
+					}
+					emitResponse(w, "Fixture inventory checked.", true)
+				}
 			}))
 			defer server.Close()
-			coreText, voiceText := "fixture-core-A", "fixture-voice-A"
-			switch mode {
-			case "oversize core":
-				coreText = strings.Repeat("x", 129000)
-			case "oversize combined":
-				coreText, voiceText = strings.Repeat("x", 40000), strings.Repeat("y", 40000)
-			case "oversize encoded":
-				coreText = strings.Repeat("<", 25000)
+			binary := buildLina(t)
+			if synthetic {
+				binary = buildPersonaFixture(t)
 			}
-			source := personaFixture(t, coreText, voiceText)
-			if strings.HasPrefix(mode, "missing ") {
-				name := "default-voice-v1.md"
-				if mode == "missing core" {
-					name = "core-v1.md"
-				}
-				if err := os.Remove(filepath.Join(source, "characters/lina/persona", name)); err != nil {
-					t.Fatal(err)
-				}
-			}
-			var installArgs []string
-			if mode != "unconfigured" {
-				installArgs = []string{"--persona-source", source}
-			}
-			h, start := installedConversationHarness(t, server.URL, installArgs...)
-			if mode == "unconfigured" {
-				// Older installs have no Core config file at all.
-				if err := os.Remove(filepath.Join(h.root, "system/core/config.json")); err != nil {
-					t.Fatal(err)
-				}
-			}
-			core := start(true)
-			c, conversation := conversationClient(t, h)
-			request := func(key string) string {
-				admittedTurn(t, h, c, conversation, key, "who are you")
-				select {
-				case instructions := <-requests:
-					return instructions
-				case <-h.ctx.Done():
-					t.Fatal("no provider request")
-					return ""
-				}
-			}
-			check := func(instructions, wantCore, wantVoice string) {
-				t.Helper()
-				if !strings.Contains(instructions, c.Welcome.Agents[0].Name) || strings.Contains(strings.ToLower(instructions), "placeholder") {
-					t.Errorf("request lacks the agent name or includes a placeholder: %q", instructions)
-				}
-				var identity struct {
-					Name   string        `json:"name"`
-					Layers agents.Layers `json:"layers"`
-				}
-				if err := json.Unmarshal(instructionBlock(instructions, "persona"), &identity); err != nil {
-					t.Fatalf("missing prepared identity: %v", err)
-				}
-				if identity.Name != c.Welcome.Agents[0].Name || identity.Layers != (agents.Layers{Core: wantCore, DefaultVoice: wantVoice}) {
-					t.Errorf("unexpected persona identity or layers: %+v", identity)
-				}
-				if wantCore != "" && (strings.Count(instructions, wantCore) != 1 || strings.Count(instructions, wantVoice) != 1) {
-					t.Errorf("fixture layers missing or duplicated: %q", instructions)
-				}
-			}
-			for _, key := range []string{"first", "second"} {
-				wantCore, wantVoice := "", ""
-				if mode == "configured" {
-					wantCore, wantVoice = "fixture-core-A", "fixture-voice-A"
-				}
-				check(request(key), wantCore, wantVoice)
-			}
-			// The source is reread at the next turn, without restarting Core.
-			updatedSource := personaFixture(t, "fixture-core-B", "fixture-voice-B")
-			setPersonaSource(t, h.root, updatedSource)
-			updated := request("changed-source")
-			check(updated, "fixture-core-B", "fixture-voice-B")
-			if strings.Contains(updated, "fixture-core-A") || strings.Contains(updated, "fixture-voice-A") {
-				t.Error("old source survived a config change")
-			}
-			if err := os.WriteFile(filepath.Join(updatedSource, "characters/lina/persona/core-v1.md"), []byte("fixture-core-C"), 0600); err != nil {
+			h := newHarness(t, binary)
+			bundle := makeInstallBundle(t, h.root, h.binary, buildCommand(t, "lina-node"))
+			// The legacy checkout contains valid-looking private text. It must never
+			// replace shipped text, including when one shipped pair is invalid.
+			legacy := t.TempDir()
+			dir := filepath.Join(legacy, "characters/lina/persona")
+			if err := os.MkdirAll(dir, 0700); err != nil {
 				t.Fatal(err)
 			}
-			check(request("edited-source"), "fixture-core-C", "fixture-voice-B")
-			if mode != "configured" {
-				setPersonaSource(t, h.root, "")
-				check(request("removed-source"), "", "")
+			for _, name := range []string{"core-v1.md", "default-voice-v1.md"} {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte("legacy private fixture"), 0600); err != nil {
+					t.Fatal(err)
+				}
 			}
-			c.Close()
+			_, start := installConversationBundle(t, h, bundle, server.URL, "--persona-source", legacy)
+			core := start(true)
+			client, _ := conversationClient(t, h)
+			person := client.Welcome.PersonID
+			client.Close()
 			h.stopCore(core)
-			warnings := strings.Count(core.stderr.String(), "Lina persona")
-			if mode == "configured" && warnings != 0 || mode != "configured" && warnings != 1 {
-				t.Errorf("setup warnings = %d, stderr: %s", warnings, core.stderr.String())
+			ids := seedShippedPersonaAgents(t, h, person)
+			// An unavailable private checkout also cannot clear working layers.
+			if err := os.RemoveAll(legacy); err != nil {
+				t.Fatal(err)
+			}
+			core = start(true)
+			client, _ = conversationClient(t, h)
+			for _, s := range persona.Starters() {
+				conversation := "main:" + ids[s.Key]
+				topic := "conversation:" + conversation
+				if _, err := client.Subscribe(h.ctx, protocol.Subscribe{Topic: &topic}); err != nil {
+					t.Fatal(err)
+				}
+				if e, err := client.Receive(h.ctx); err != nil || e.Kind != protocol.KindSnapshot {
+					t.Fatal("no snapshot", err)
+				}
+				for turn := range 2 {
+					frames := admittedTurn(t, h, client, conversation, fmt.Sprintf("%s-%d", s.Key, turn), "List the available skills.")
+					got := false
+					for _, f := range frames {
+						if item, ok := f.Payload.(protocol.ItemDone); ok && item.Text != nil && *item.Text == "Fixture inventory checked." {
+							got = true
+						}
+					}
+					if !got {
+						t.Fatal("tool-backed answer did not return to conversation")
+					}
+					var instructions string
+					select {
+					case instructions = <-requests:
+					case <-h.ctx.Done():
+						t.Fatal("provider not called")
+					}
+					var p struct {
+						Name   string        `json:"name"`
+						Layers agents.Layers `json:"layers"`
+					}
+					if err := json.Unmarshal(instructionBlock(instructions, "persona"), &p); err != nil {
+						t.Fatal(err)
+					}
+					wantCore, wantVoice, err := persona.Load(persona.Shipped(), s.Key)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if synthetic {
+						wantCore = s.Key + " fixture core-v1.md"
+						wantVoice = s.Key + " fixture default-voice-v1.md"
+						if s.Key == "legal" {
+							wantCore, wantVoice = "", ""
+						}
+					}
+					if p.Name != s.Name || p.Layers != (agents.Layers{Core: wantCore, DefaultVoice: wantVoice}) {
+						t.Fatalf("wrong prepared pair for %s", s.Key)
+					}
+					if strings.Contains(instructions, "private fixture") || strings.Contains(instructions, "stale voice fixture") {
+						t.Fatal("legacy or stale material injected")
+					}
+					setPersonaSource(t, h.root, "")
+				}
+			}
+			client.Close()
+			h.stopCore(core)
+			warnings := strings.Count(core.stderr.String(), "Shipped persona ")
+			wantWarnings := 0
+			if synthetic {
+				wantWarnings = 1
+			}
+			if warnings != wantWarnings || strings.Contains(core.stderr.String(), legacy) {
+				t.Fatalf("warnings=%d want=%d", warnings, wantWarnings)
 			}
 		})
-	}
-}
-
-func TestM1InstallPersonaSource(t *testing.T) {
-	t.Parallel()
-
-	source := personaFixture(t, "fixture-install-core", "fixture-install-voice")
-	h := newHarness(t, buildLina(t))
-	bundle := makeInstallBundle(t, h.root, h.binary, buildCommand(t, "lina-node"))
-	installConversationBundle(t, h, bundle, "", "--persona-source", source)
-	data, err := os.ReadFile(filepath.Join(h.root, "system/core/config.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var config struct {
-		PersonaSource string `json:"persona_source"`
-	}
-	if err := json.Unmarshal(data, &config); err != nil || config.PersonaSource != source {
-		t.Fatalf("source not saved in Core config: %s, %v", data, err)
-	}
-	info, err := os.Stat(filepath.Join(h.root, "system/core/config.json"))
-	if err != nil || info.Mode().Perm() != 0600 {
-		t.Fatalf("config is not private: %v", err)
 	}
 }

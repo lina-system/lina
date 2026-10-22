@@ -179,3 +179,40 @@ func TestPlanningUpgradePreservesPublishedKoreanSearch(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPlanningUpgradePreservesPublishedWaitingDecisions(t *testing.T) {
+	cfg := storeConfig(t)
+	// Version 34 was published with waiting decisions before planning landed.
+	cfg.Migrations = append(append([]Migration{}, Migrations()[:33]...), Migration{Version: 34, SQL: WaitingDecisionsSchema})
+	db := openStore(t, cfg)
+	if err := db.Write(t.Context(), func(tx *Tx) error {
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO waiting_decisions(source,item_id,revision,person,agent,answer,answered_at) VALUES('approval','existing','r1','person','agent','approve','2026-10-22T00:00:00Z')`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Migrations = Migrations()
+	db = openStore(t, cfg)
+	if err := db.Read(t.Context(), func(tx *Tx) error {
+		var answer string
+		if err := tx.QueryRowContext(t.Context(), "SELECT answer FROM waiting_decisions WHERE item_id='existing'").Scan(&answer); err != nil {
+			return err
+		}
+		if answer != "approve" {
+			t.Fatalf("upgrade changed published decision: %q", answer)
+		}
+		var plans int
+		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM plan_drafts").Scan(&plans); err != nil {
+			return err
+		}
+		if plans != 0 {
+			t.Fatalf("migration created plan drafts: %d", plans)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}

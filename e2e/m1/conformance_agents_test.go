@@ -56,10 +56,12 @@ func TestM1AgentLifecycleConformance(t *testing.T) {
 			}
 			h, start := installConversationBundle(t, newHarness(t, binary), bundle, "http://127.0.0.1:1")
 			target := seedConformanceAgents(t, h, setup.Agent, setup.Bound)
-			before := readConformanceAgentState(t, h, target)
 			// A configured route installs conversation admission. No valid input may
 			// reach it: these cases must fail on agent identity before model execution.
 			core := start(true)
+			// Startup may migrate shipped personas, including trashed agents.
+			// Refused requests must preserve the state after that publication.
+			before := readConformanceAgentState(t, h, target)
 			conn := h.connect(core)
 			client := &client{conn: conn, reader: bufio.NewReaderSize(conn, 1<<20)}
 			hello := clientHello([]string{"1.0"})

@@ -1075,7 +1075,10 @@ records a SHA-256 fingerprint, and keeps independent material revisions in the
 same canon transaction as the receipt. These materials survive backup and loss
 of the work area. A worker-supplied hash alone is not a snapshot. A new done
 replaces the current snapshot and clears its earlier judgment; earlier material
-revisions remain retained.
+revisions remain retained. Adding, removing or renaming an empty directory also
+creates a new snapshot revision, even when the file-based receipt ID is unchanged.
+Repeating a done with the same receipt ID and the same full tree fingerprint
+reuses the current snapshot.
 
 The manager's judgment names that exact fingerprint. Before landing, Core reads
 the entire live output and report again. Missing or changed files, an added file

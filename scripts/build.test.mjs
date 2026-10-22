@@ -250,7 +250,7 @@ test('clean builds record hashes and the same commit and metadata as both versio
     assert.deepEqual(manifest.verifiedWorkerVersions, { codex: ['0.163.0'] });
     const platform = spawnSync('go', ['env', 'GOOS', 'GOARCH'], { cwd: f.cwd, env: f.env, encoding: 'utf8' }).stdout.trim().split(/\r?\n/).join('/');
     assert.deepEqual(manifest.supportedCombinations, [{ connection: 'client', peer: 'lina-tui', platform,
-      protocolVersion: '1.0', capabilities: [{ name: 'planning', version: '1.0' }, { name: 'worker_lanes', version: '1.0' }, { name: 'web', version: '1.0' }, { name: 'github_merge', version: '1.0' }, { name: 'github', version: '1.0' }, { name: 'agents', version: '1.0' }, { name: 'memory', version: '1.0' }, { name: 'exchanges', version: '1.0' }, { name: 'channels', version: '1.0' }, { name: 'accounts', version: '1.0' }, { name: 'sign_in_relay', version: '1.0' }, { name: 'lifecycle', version: '1.0' }, { name: 'conversation', version: '1.0' }, { name: 'turn_activity', version: '1.0' }, { name: 'replay', version: '1.0' }, { name: 'growth', version: '1.0' }, { name: 'waiting', version: '1.0' }, { name: 'running', version: '1.0' }], evidence: ['go test ./e2e/m1 -run TestM3PlanDrafting', 'go test ./e2e/m1 -run TestM3WorkerLanes', 'go test ./e2e/m1 -run TestM1Web', 'go test ./e2e/m1 -run TestM2GitHubMergeInstalledCore', 'go test ./e2e/m1 -run TestM2GitHubCIInstalledCore', 'go test ./kit/protocol/conformance', 'go test ./e2e/m1 -run TestPlannedRestart', 'go test ./e2e/m1 -run TestM1TUIConversationInstalledCore', 'go test ./e2e/m1 -run TestM1InstalledToolActivity', 'go test ./e2e/m1 -run TestM1TUIAccountsInstalledCore', 'go test ./e2e/m1 -run TestM1TUIChannel', 'go test ./e2e/m1 -run TestM1TUITalkLogInstalledCore', 'go test ./e2e/m1 -run TestM1TUIMemoryAgentsInstalledCore', 'go test ./e2e/m1 -run TestM1ReplayExportInstalledCore', 'go test ./e2e/m1 -run TestM2InstalledPersonaGrowth', 'go test ./e2e/m1 -run TestM1TUIApprovalsInstalledCore', 'go test ./e2e/m1 -run TestM1TurnBudgetHandoffInstalledCore'] }]);
+      protocolVersion: '1.0', capabilities: [{ name: 'planning', version: '1.0' }, { name: 'progress', version: '1.0' }, { name: 'worker_lanes', version: '1.0' }, { name: 'web', version: '1.0' }, { name: 'github_merge', version: '1.0' }, { name: 'github', version: '1.0' }, { name: 'agents', version: '1.0' }, { name: 'memory', version: '1.0' }, { name: 'exchanges', version: '1.0' }, { name: 'channels', version: '1.0' }, { name: 'accounts', version: '1.0' }, { name: 'sign_in_relay', version: '1.0' }, { name: 'lifecycle', version: '1.0' }, { name: 'conversation', version: '1.0' }, { name: 'turn_activity', version: '1.0' }, { name: 'replay', version: '1.0' }, { name: 'growth', version: '1.0' }, { name: 'waiting', version: '1.0' }, { name: 'running', version: '1.0' }], evidence: ['go test ./e2e/m1 -run TestM3PlanDrafting', 'go test ./e2e/m1 -run TestM2ProgressWaitingInstalledCore', 'go test ./e2e/m1 -run TestM3WorkerLanes', 'go test ./e2e/m1 -run TestM1Web', 'go test ./e2e/m1 -run TestM2GitHubMergeInstalledCore', 'go test ./e2e/m1 -run TestM2GitHubCIInstalledCore', 'go test ./kit/protocol/conformance', 'go test ./e2e/m1 -run TestPlannedRestart', 'go test ./e2e/m1 -run TestM1TUIConversationInstalledCore', 'go test ./e2e/m1 -run TestM1InstalledToolActivity', 'go test ./e2e/m1 -run TestM1TUIAccountsInstalledCore', 'go test ./e2e/m1 -run TestM1TUIChannel', 'go test ./e2e/m1 -run TestM1TUITalkLogInstalledCore', 'go test ./e2e/m1 -run TestM1TUIMemoryAgentsInstalledCore', 'go test ./e2e/m1 -run TestM1ReplayExportInstalledCore', 'go test ./e2e/m1 -run TestM2InstalledPersonaGrowth', 'go test ./e2e/m1 -run TestM1TUIApprovalsInstalledCore', 'go test ./e2e/m1 -run TestM1TurnBudgetHandoffInstalledCore'] }]);
     const module = JSON.parse(spawnSync('go', ['list', '-m', '-json', 'github.com/ncruces/go-sqlite3'], {
       cwd: f.cwd, env: f.env, encoding: 'utf8',
     }).stdout);
@@ -350,6 +350,7 @@ test('source edits or a new clean commit during a build suppress its manifest', 
       if (args[0] === 'env') return { status: 0, stdout: env.GOTOOLCHAIN, stderr: '' };
       if (args[0] === 'mod') return { status: 0, stdout: '', stderr: '' };
       assert.equal(command, 'go');
+      if (args.includes('./persona/validate')) return { status: 0, stdout: '', stderr: '' };
       assert.equal(args[0], 'build');
       const binary = args[args.indexOf('-o') + 1];
       f.write(dirname(binary), binary.split(/[\\/]/).at(-1), 'fixture executable');
@@ -433,4 +434,30 @@ test('dirty tracked, staged and untracked sources build without retaining a mani
     }
     f.commit(f.cwd, 'test: accept local change');
   }
+});
+
+test('build validates shipped persona pairs before producing release artifacts', t => {
+  const f = fixture(t);
+  let validated = false;
+  let reject = false;
+  const run = (command, args, options) => {
+    if (args[0] === 'env') return { status: 0, stdout: options.env.GOTOOLCHAIN, stderr: '' };
+    if (args.includes('./persona/validate')) {
+      validated = true;
+      if (reject) return { status: 1, stdout: '', stderr: 'persona validation failed' };
+    }
+    if (args[0] === 'build') {
+      assert.equal(validated, true);
+      const binary = args[args.indexOf('-o') + 1];
+      f.write(dirname(binary), binary.split(/[\\/]/).at(-1), 'fixture executable');
+    }
+    return { status: 0, stdout: args[0] === 'run' ? '{}' : '', stderr: '' };
+  };
+  assert.ok(build({ cwd: f.cwd, out: f.out, execute: run }));
+  assert.equal(validated, true);
+  reject = true;
+  validated = false;
+  assert.throws(() => build({ cwd: f.cwd, out: f.out, execute: run }), /persona validation failed/);
+  assert.equal(validated, true);
+  assert.equal(existsSync(join(f.out, 'manifest.json')), false);
 });
