@@ -3,5 +3,6 @@
   "account": "123456",
   "transport_failure": "unreachable",
   "core_state": "READY",
+  "channel_state": "unavailable",
   "request_result": "capability_not_negotiated"
 }
