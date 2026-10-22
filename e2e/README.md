@@ -264,6 +264,13 @@ replay count is consumed by the Bubble Tea recording-writer test.
 synthetic producer data, socket discovery/decisions, and a separate-key PTY approval.
 These scenarios create no second product decision store and use no timing sleeps.
 
+`m1/tui-syntax.json` runs `TestM1TUISyntaxInstalledCore`: an installed Core and
+fixture provider stream an open Go fence, then its closing fence and final reply
+into a 100×34 PTY. Parsed cells prove that open code remains unstyled and closed
+code gains theme colours in dark/light; high-contrast and `NO_COLOR` remain
+plain. The provider is released by a channel after the open screen is observed,
+without timing-based assertions.
+
 The M2 Discord scenario is `m2/discord.json`, executed by `TestM2DiscordCore`.
 It installs the test host with a matching build manifest, runs production Core
 boot in a separate process, and controls it through the generated socket
@@ -349,6 +356,12 @@ retain the failed attempt without its reservations or a duplicate dispatch.
 through a correction turn. Core returns it to the same worker exactly once,
 requires input for the remaining conflict, and retains the dependent's gate
 until the forge merge. Repeated observation and restart cannot resend work.
+
+Installed-Core fixtures wait for command admission after connecting the socket.
+An empty input must be refused as malformed (or capability-not-negotiated for an
+unconfigured Core), rather than unavailable during recovery, before the scenario
+continues. This probe cannot create a conversation event or model request.
+Restored-memory and replay startup paths use the same readiness check as installs.
 
 `go test ./e2e/m1 -run '^TestM2UpdateActivation$' -count=1` runs
 `m2/update-activation.json`, which drives `lina update --activate` against
