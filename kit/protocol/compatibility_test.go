@@ -11,8 +11,8 @@ import (
 	"testing"
 )
 
-func TestOlderSchemaClientReceivesActivityAdditions(t *testing.T) {
-	// Regenerate a client with the schema immediately before the activity
+func TestOlderSchemaClientReceivesPresentationAdditions(t *testing.T) {
+	// Regenerate a client without the activity and running-presentation
 	// additions. It gets today's receive boundary, not today's payload types.
 	// This cannot repair an already installed binary with a strict receiver.
 	data, err := os.ReadFile("../../protocol/schema/client/1.0/envelope.json")
@@ -62,8 +62,18 @@ func TestOlderSchemaClientReceivesActivityAdditions(t *testing.T) {
 	delete(fields, "tool_name")
 	turn["properties"], _ = json.Marshal(fields)
 	defs["turn_state"], _ = json.Marshal(turn)
+	var running map[string]json.RawMessage
+	_ = json.Unmarshal(defs["running_update"], &running)
+	var runningFields map[string]json.RawMessage
+	_ = json.Unmarshal(running["properties"], &runningFields)
+	for _, name := range []string{"state", "summary", "reason"} {
+		delete(runningFields, name)
+	}
+	running["properties"], _ = json.Marshal(runningFields)
+	delete(running, "allOf")
+	defs["running_update"], _ = json.Marshal(running)
 	defs["stream_item"] = removeKind(defs["stream_item"])
-	for _, name := range []string{"turn_phase", "tool_activity", "tool_activity_status", "tool_activity_outcome"} {
+	for _, name := range []string{"turn_phase", "tool_activity", "tool_activity_status", "tool_activity_outcome", "running_state", "running_reason"} {
 		delete(defs, name)
 	}
 	old["$defs"], _ = json.Marshal(defs)
@@ -112,9 +122,12 @@ import ("encoding/json"; "os"; "path/filepath"; "reflect"; "slices"; "testing")
 func TestOldClient(t *testing.T) {
  if _, present := reflect.TypeFor[TurnState]().FieldByName("Phase"); present { t.Fatal("test client knows phase") }
  if _, present := reflect.TypeFor[TurnState]().FieldByName("ToolName"); present { t.Fatal("test client knows tool_name") }
+ for _, name := range []string{"State", "Summary", "Reason"} {
+  if _, present := reflect.TypeFor[RunningUpdate]().FieldByName(name); present { t.Fatalf("test client knows running %s", name) }
+ }
  if slices.Contains(clientSchema.Properties["kind"].Enum, "tool_activity") { t.Fatal("test client knows tool_activity") }
  var client ClientDecoder
- for _, name := range []string{"phase_tool", "tool_started", "tool_finished_ok", "activity_snapshot", "phase_snapshot", "phase_streaming", "item_done"} {
+ for _, name := range []string{"phase_tool", "tool_started", "tool_finished_ok", "activity_snapshot", "phase_snapshot", "phase_streaming", "item_done", "running_localized", "running_snapshot"} {
   data, err := os.ReadFile(filepath.Join(os.Getenv("PROTOCOL_FIXTURES"), "conversation", name+".json")); if err != nil { t.Fatal(err) }
   got, err := client.Decode(data); if err != nil { t.Fatalf("%s: %v", name, err) }
   if name == "tool_started" || name == "tool_finished_ok" { if got != nil { t.Fatal("unknown tool activity was dispatched") }; continue }
@@ -133,8 +146,19 @@ func TestOldClient(t *testing.T) {
    var turn TurnState
    if err := json.Unmarshal(snapshot.Items[1].Payload, &turn); err != nil || turn.Active == nil || !*turn.Active { t.Fatalf("known snapshot state lost: %#v, %v", turn, err) }
   }
+  if name == "running_localized" || name == "running_snapshot" {
+   var row RunningUpdate
+   if name == "running_localized" { row = got.Payload.(RunningUpdate) } else {
+    snapshot := got.Payload.(Snapshot)
+    if len(snapshot.Items) != 1 { t.Fatal("running row lost") }
+    if err := json.Unmarshal(snapshot.Items[0].Payload, &row); err != nil { t.Fatal(err) }
+   }
+   if row.Text == nil || *row.Text != "waiting: Synthetic task (quota)" || row.RunID == nil || *row.RunID != "run-example" {
+    t.Fatalf("older client lost legacy running text or identity: %+v", row)
+   }
+  }
   if _, err := json.Marshal(got); err != nil { t.Fatalf("old decoded envelope cannot be encoded: %v", err) }
  }
- if client.Stats() != (DecodeStats{Accepted:5, UnknownKinds:2}) { t.Fatalf("stats: %+v", client.Stats()) }
+ if client.Stats() != (DecodeStats{Accepted:7, UnknownKinds:2}) { t.Fatalf("stats: %+v", client.Stats()) }
 }
 `

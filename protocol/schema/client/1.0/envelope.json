@@ -2301,10 +2301,48 @@
         },
         "removed": {
           "type": "boolean"
+        },
+        "state": {
+          "$ref": "#/$defs/running_state"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "reason": {
+          "$ref": "#/$defs/running_reason"
         }
       },
       "required": [],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "anyOf": [
+              {
+                "required": [
+                  "state"
+                ]
+              },
+              {
+                "required": [
+                  "summary"
+                ]
+              },
+              {
+                "required": [
+                  "reason"
+                ]
+              }
+            ]
+          },
+          "then": {
+            "required": [
+              "state",
+              "summary"
+            ]
+          }
+        }
+      ]
     },
     "stop": {
       "type": "object",
@@ -2341,6 +2379,13 @@
       "properties": {
         "after": {
           "type": "string"
+        },
+        "view": {
+          "type": "string",
+          "enum": [
+            "overview",
+            "lanes"
+          ]
         }
       },
       "required": [],
@@ -2357,6 +2402,22 @@
         },
         "next_cursor": {
           "type": "string"
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/progress_row"
+          }
+        },
+        "waiting": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/waiting_row"
+          }
+        },
+        "waiting_more": {
+          "type": "integer",
+          "minimum": 0
         }
       },
       "required": [],
@@ -2370,6 +2431,22 @@
         },
         "text": {
           "type": "string"
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/progress_row"
+          }
+        },
+        "waiting": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/waiting_row"
+          }
+        },
+        "waiting_more": {
+          "type": "integer",
+          "minimum": 0
         }
       },
       "required": [],
@@ -2390,16 +2467,41 @@
       "additionalProperties": false
     },
     "waiting_get": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "order": {
+          "type": "string",
+          "enum": [
+            "priority",
+            "lightest"
+          ]
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
     "waiting": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/waiting_row"
+          }
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "more": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
@@ -4934,6 +5036,175 @@
         "details"
       ],
       "additionalProperties": false
+    },
+    "progress_line": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "stage": {
+          "type": "string"
+        },
+        "percent": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "just_finished": {
+          "type": "string"
+        },
+        "next": {
+          "type": "string"
+        },
+        "waiting": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "depth": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "name",
+        "kind",
+        "stage",
+        "just_finished",
+        "next",
+        "waiting",
+        "depth"
+      ],
+      "additionalProperties": false
+    },
+    "progress_row": {
+      "type": "object",
+      "properties": {
+        "ref": {
+          "type": "string"
+        },
+        "line": {
+          "$ref": "#/$defs/progress_line"
+        }
+      },
+      "required": [
+        "ref",
+        "line"
+      ],
+      "additionalProperties": false
+    },
+    "waiting_ref": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "key",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    "waiting_line": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "sentence": {
+          "type": "string"
+        },
+        "context": {
+          "type": "string"
+        },
+        "recommendation": {
+          "type": "string"
+        },
+        "agent_name": {
+          "type": "string"
+        },
+        "answers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "free_text": {
+          "type": "boolean"
+        },
+        "effort": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "due": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "sentence",
+        "context",
+        "recommendation",
+        "agent_name",
+        "answers",
+        "free_text",
+        "effort",
+        "due"
+      ],
+      "additionalProperties": false
+    },
+    "waiting_row": {
+      "type": "object",
+      "properties": {
+        "ref": {
+          "$ref": "#/$defs/waiting_ref"
+        },
+        "line": {
+          "$ref": "#/$defs/waiting_line"
+        }
+      },
+      "required": [
+        "ref",
+        "line"
+      ],
+      "additionalProperties": false
+    },
+    "running_state": {
+      "type": "string",
+      "enum": [
+        "in_progress",
+        "waiting",
+        "needs_input",
+        "ready_for_review",
+        "failed",
+        "stopped",
+        "done",
+        "unknown"
+      ]
+    },
+    "running_reason": {
+      "type": "string",
+      "enum": [
+        "dependency",
+        "area",
+        "quota",
+        "host_capacity",
+        "ci_pending",
+        "run_limit",
+        "person",
+        "budget"
+      ]
     }
   }
 }

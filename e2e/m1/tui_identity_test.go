@@ -16,6 +16,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
+	"github.com/thisisjun786/lina/persona"
 )
 
 func TestM1TUIIdentityFromAgentStore(t *testing.T) {
@@ -127,6 +128,13 @@ func seedConversationPersona(t *testing.T, h *harness, defaultAgent bool) (agent
 	defer store.Close()
 	var agent agents.Agent
 	if defaultAgent {
+		core, voice, err := persona.Load(persona.Shipped(), "lina")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.UpdatePresetLayers(h.ctx, "lina", core, voice, owner); err != nil {
+			t.Fatal(err)
+		}
 		first, err := store.FirstRun(h.ctx, owner, true)
 		if err != nil {
 			t.Fatal(err)
