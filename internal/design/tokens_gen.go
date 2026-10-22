@@ -13,227 +13,251 @@ type Dimension struct {
 }
 
 type Tokens struct {
-	ColorAccent            Color
-	ColorCanvas            Color
-	ColorLine              Color
-	ColorMuted             Color
-	ColorSurface           Color
-	ColorText              Color
-	GlyphAsciiAction       string
-	GlyphAsciiAgent        string
-	GlyphAsciiConnecting   string
-	GlyphAsciiFailed       string
-	GlyphAsciiLive         string
-	GlyphAsciiMark         string
-	GlyphAsciiPerson       string
-	GlyphAsciiQuit         string
-	GlyphAsciiRecovering   string
-	GlyphAsciiRefused      string
-	GlyphAsciiResyncing    string
-	GlyphAsciiRetrying     string
-	GlyphAsciiRule         string
-	GlyphAsciiStopped      string
-	GlyphAsciiUnknown      string
-	GlyphAsciiWaiting      string
-	GlyphUnicodeAction     string
-	GlyphUnicodeAgent      string
-	GlyphUnicodeConnecting string
-	GlyphUnicodeFailed     string
-	GlyphUnicodeLive       string
-	GlyphUnicodeMark       string
-	GlyphUnicodePerson     string
-	GlyphUnicodeQuit       string
-	GlyphUnicodeRecovering string
-	GlyphUnicodeRefused    string
-	GlyphUnicodeResyncing  string
-	GlyphUnicodeRetrying   string
-	GlyphUnicodeRule       string
-	GlyphUnicodeStopped    string
-	GlyphUnicodeUnknown    string
-	GlyphUnicodeWaiting    string
-	IconSize               Dimension
-	MotionReduced          float64
-	MotionSettle           float64
-	RadiusCard             Dimension
-	SpaceGutter            Dimension
-	SpaceInline            Dimension
-	SpacePage              Dimension
-	SpaceSection           Dimension
-	TypeBody               string
-	TypeCode               string
-	TypeLineHeight         float64
-	TypeSize               Dimension
-	TypeTitleWeight        int
-	TypeWeight             int
+	ColorAccent                   Color
+	ColorCanvas                   Color
+	ColorLine                     Color
+	ColorMuted                    Color
+	ColorSurface                  Color
+	ColorText                     Color
+	GlyphAsciiAction              string
+	GlyphAsciiActivityFrames      string
+	GlyphAsciiActivitySeparator   string
+	GlyphAsciiAgent               string
+	GlyphAsciiConnecting          string
+	GlyphAsciiFailed              string
+	GlyphAsciiLive                string
+	GlyphAsciiMark                string
+	GlyphAsciiPerson              string
+	GlyphAsciiQuit                string
+	GlyphAsciiRecovering          string
+	GlyphAsciiRefused             string
+	GlyphAsciiResyncing           string
+	GlyphAsciiRetrying            string
+	GlyphAsciiRule                string
+	GlyphAsciiStopped             string
+	GlyphAsciiUnknown             string
+	GlyphAsciiWaiting             string
+	GlyphUnicodeAction            string
+	GlyphUnicodeActivityFrames    string
+	GlyphUnicodeActivitySeparator string
+	GlyphUnicodeAgent             string
+	GlyphUnicodeConnecting        string
+	GlyphUnicodeFailed            string
+	GlyphUnicodeLive              string
+	GlyphUnicodeMark              string
+	GlyphUnicodePerson            string
+	GlyphUnicodeQuit              string
+	GlyphUnicodeRecovering        string
+	GlyphUnicodeRefused           string
+	GlyphUnicodeResyncing         string
+	GlyphUnicodeRetrying          string
+	GlyphUnicodeRule              string
+	GlyphUnicodeStopped           string
+	GlyphUnicodeUnknown           string
+	GlyphUnicodeWaiting           string
+	IconSize                      Dimension
+	MotionActivityElapsed         float64
+	MotionActivityFrame           float64
+	MotionReduced                 float64
+	MotionSettle                  float64
+	RadiusCard                    Dimension
+	SpaceGutter                   Dimension
+	SpaceInline                   Dimension
+	SpacePage                     Dimension
+	SpaceSection                  Dimension
+	TypeBody                      string
+	TypeCode                      string
+	TypeLineHeight                float64
+	TypeSize                      Dimension
+	TypeTitleWeight               int
+	TypeWeight                    int
 }
 
 func Light() Tokens {
 	return Tokens{
-		ColorAccent:            Color{Hex: "#2F4BDB", ANSI256: 26, ANSI16: 4},
-		ColorCanvas:            Color{Hex: "#F8F9FC", ANSI256: 231, ANSI16: 15},
-		ColorLine:              Color{Hex: "#CFD3DE", ANSI256: 252, ANSI16: 7},
-		ColorMuted:             Color{Hex: "#626978", ANSI256: 241, ANSI16: 0},
-		ColorSurface:           Color{Hex: "#EEF0F6", ANSI256: 255, ANSI16: 7},
-		ColorText:              Color{Hex: "#20232D", ANSI256: 234, ANSI16: 0},
-		GlyphAsciiAction:       ">",
-		GlyphAsciiAgent:        "*",
-		GlyphAsciiConnecting:   "~",
-		GlyphAsciiFailed:       "x",
-		GlyphAsciiLive:         "*",
-		GlyphAsciiMark:         ".",
-		GlyphAsciiPerson:       ">",
-		GlyphAsciiQuit:         "+",
-		GlyphAsciiRecovering:   ":",
-		GlyphAsciiRefused:      "!",
-		GlyphAsciiResyncing:    "=",
-		GlyphAsciiRetrying:     ">",
-		GlyphAsciiRule:         "-",
-		GlyphAsciiStopped:      "o",
-		GlyphAsciiUnknown:      "?",
-		GlyphAsciiWaiting:      "?",
-		GlyphUnicodeAction:     "›",
-		GlyphUnicodeAgent:      "●",
-		GlyphUnicodeConnecting: "◌",
-		GlyphUnicodeFailed:     "×",
-		GlyphUnicodeLive:       "●",
-		GlyphUnicodeMark:       ".",
-		GlyphUnicodePerson:     "›",
-		GlyphUnicodeQuit:       "✓",
-		GlyphUnicodeRecovering: "◐",
-		GlyphUnicodeRefused:    "⊘",
-		GlyphUnicodeResyncing:  "↻",
-		GlyphUnicodeRetrying:   "↗",
-		GlyphUnicodeRule:       "─",
-		GlyphUnicodeStopped:    "○",
-		GlyphUnicodeUnknown:    "?",
-		GlyphUnicodeWaiting:    "?",
-		IconSize:               Dimension{PX: 20, Cells: 0},
-		MotionReduced:          0,
-		MotionSettle:           160,
-		RadiusCard:             Dimension{PX: 12, Cells: 0},
-		SpaceGutter:            Dimension{PX: 24, Cells: 3},
-		SpaceInline:            Dimension{PX: 8, Cells: 1},
-		SpacePage:              Dimension{PX: 32, Cells: 2},
-		SpaceSection:           Dimension{PX: 24, Cells: 1},
-		TypeBody:               "Pretendard, sans-serif",
-		TypeCode:               "ui-monospace, monospace",
-		TypeLineHeight:         1.5,
-		TypeSize:               Dimension{PX: 16, Cells: 0},
-		TypeTitleWeight:        700,
-		TypeWeight:             400,
+		ColorAccent:                   Color{Hex: "#2F4BDB", ANSI256: 26, ANSI16: 4},
+		ColorCanvas:                   Color{Hex: "#F8F9FC", ANSI256: 231, ANSI16: 15},
+		ColorLine:                     Color{Hex: "#CFD3DE", ANSI256: 252, ANSI16: 7},
+		ColorMuted:                    Color{Hex: "#626978", ANSI256: 241, ANSI16: 0},
+		ColorSurface:                  Color{Hex: "#EEF0F6", ANSI256: 255, ANSI16: 7},
+		ColorText:                     Color{Hex: "#20232D", ANSI256: 234, ANSI16: 0},
+		GlyphAsciiAction:              ">",
+		GlyphAsciiActivityFrames:      "|/-\\",
+		GlyphAsciiActivitySeparator:   "-",
+		GlyphAsciiAgent:               "*",
+		GlyphAsciiConnecting:          "~",
+		GlyphAsciiFailed:              "x",
+		GlyphAsciiLive:                "*",
+		GlyphAsciiMark:                ".",
+		GlyphAsciiPerson:              ">",
+		GlyphAsciiQuit:                "+",
+		GlyphAsciiRecovering:          ":",
+		GlyphAsciiRefused:             "!",
+		GlyphAsciiResyncing:           "=",
+		GlyphAsciiRetrying:            ">",
+		GlyphAsciiRule:                "-",
+		GlyphAsciiStopped:             "o",
+		GlyphAsciiUnknown:             "?",
+		GlyphAsciiWaiting:             "?",
+		GlyphUnicodeAction:            "›",
+		GlyphUnicodeActivityFrames:    "◐◓◑◒",
+		GlyphUnicodeActivitySeparator: "·",
+		GlyphUnicodeAgent:             "●",
+		GlyphUnicodeConnecting:        "◌",
+		GlyphUnicodeFailed:            "×",
+		GlyphUnicodeLive:              "●",
+		GlyphUnicodeMark:              ".",
+		GlyphUnicodePerson:            "›",
+		GlyphUnicodeQuit:              "✓",
+		GlyphUnicodeRecovering:        "◐",
+		GlyphUnicodeRefused:           "⊘",
+		GlyphUnicodeResyncing:         "↻",
+		GlyphUnicodeRetrying:          "↗",
+		GlyphUnicodeRule:              "─",
+		GlyphUnicodeStopped:           "○",
+		GlyphUnicodeUnknown:           "?",
+		GlyphUnicodeWaiting:           "?",
+		IconSize:                      Dimension{PX: 20, Cells: 0},
+		MotionActivityElapsed:         1000,
+		MotionActivityFrame:           100,
+		MotionReduced:                 0,
+		MotionSettle:                  160,
+		RadiusCard:                    Dimension{PX: 12, Cells: 0},
+		SpaceGutter:                   Dimension{PX: 24, Cells: 3},
+		SpaceInline:                   Dimension{PX: 8, Cells: 1},
+		SpacePage:                     Dimension{PX: 32, Cells: 2},
+		SpaceSection:                  Dimension{PX: 24, Cells: 1},
+		TypeBody:                      "Pretendard, sans-serif",
+		TypeCode:                      "ui-monospace, monospace",
+		TypeLineHeight:                1.5,
+		TypeSize:                      Dimension{PX: 16, Cells: 0},
+		TypeTitleWeight:               700,
+		TypeWeight:                    400,
 	}
 }
 
 func Dark() Tokens {
 	return Tokens{
-		ColorAccent:            Color{Hex: "#5685FF", ANSI256: 69, ANSI16: 15},
-		ColorCanvas:            Color{Hex: "#17191F", ANSI256: 234, ANSI16: 0},
-		ColorLine:              Color{Hex: "#383E4C", ANSI256: 238, ANSI16: 8},
-		ColorMuted:             Color{Hex: "#A6ADBD", ANSI256: 249, ANSI16: 7},
-		ColorSurface:           Color{Hex: "#20232B", ANSI256: 235, ANSI16: 0},
-		ColorText:              Color{Hex: "#F4F5F9", ANSI256: 255, ANSI16: 15},
-		GlyphAsciiAction:       ">",
-		GlyphAsciiAgent:        "*",
-		GlyphAsciiConnecting:   "~",
-		GlyphAsciiFailed:       "x",
-		GlyphAsciiLive:         "*",
-		GlyphAsciiMark:         ".",
-		GlyphAsciiPerson:       ">",
-		GlyphAsciiQuit:         "+",
-		GlyphAsciiRecovering:   ":",
-		GlyphAsciiRefused:      "!",
-		GlyphAsciiResyncing:    "=",
-		GlyphAsciiRetrying:     ">",
-		GlyphAsciiRule:         "-",
-		GlyphAsciiStopped:      "o",
-		GlyphAsciiUnknown:      "?",
-		GlyphAsciiWaiting:      "?",
-		GlyphUnicodeAction:     "›",
-		GlyphUnicodeAgent:      "●",
-		GlyphUnicodeConnecting: "◌",
-		GlyphUnicodeFailed:     "×",
-		GlyphUnicodeLive:       "●",
-		GlyphUnicodeMark:       ".",
-		GlyphUnicodePerson:     "›",
-		GlyphUnicodeQuit:       "✓",
-		GlyphUnicodeRecovering: "◐",
-		GlyphUnicodeRefused:    "⊘",
-		GlyphUnicodeResyncing:  "↻",
-		GlyphUnicodeRetrying:   "↗",
-		GlyphUnicodeRule:       "─",
-		GlyphUnicodeStopped:    "○",
-		GlyphUnicodeUnknown:    "?",
-		GlyphUnicodeWaiting:    "?",
-		IconSize:               Dimension{PX: 20, Cells: 0},
-		MotionReduced:          0,
-		MotionSettle:           160,
-		RadiusCard:             Dimension{PX: 12, Cells: 0},
-		SpaceGutter:            Dimension{PX: 24, Cells: 3},
-		SpaceInline:            Dimension{PX: 8, Cells: 1},
-		SpacePage:              Dimension{PX: 32, Cells: 2},
-		SpaceSection:           Dimension{PX: 24, Cells: 1},
-		TypeBody:               "Pretendard, sans-serif",
-		TypeCode:               "ui-monospace, monospace",
-		TypeLineHeight:         1.5,
-		TypeSize:               Dimension{PX: 16, Cells: 0},
-		TypeTitleWeight:        700,
-		TypeWeight:             400,
+		ColorAccent:                   Color{Hex: "#5685FF", ANSI256: 69, ANSI16: 15},
+		ColorCanvas:                   Color{Hex: "#17191F", ANSI256: 234, ANSI16: 0},
+		ColorLine:                     Color{Hex: "#383E4C", ANSI256: 238, ANSI16: 8},
+		ColorMuted:                    Color{Hex: "#A6ADBD", ANSI256: 249, ANSI16: 7},
+		ColorSurface:                  Color{Hex: "#20232B", ANSI256: 235, ANSI16: 0},
+		ColorText:                     Color{Hex: "#F4F5F9", ANSI256: 255, ANSI16: 15},
+		GlyphAsciiAction:              ">",
+		GlyphAsciiActivityFrames:      "|/-\\",
+		GlyphAsciiActivitySeparator:   "-",
+		GlyphAsciiAgent:               "*",
+		GlyphAsciiConnecting:          "~",
+		GlyphAsciiFailed:              "x",
+		GlyphAsciiLive:                "*",
+		GlyphAsciiMark:                ".",
+		GlyphAsciiPerson:              ">",
+		GlyphAsciiQuit:                "+",
+		GlyphAsciiRecovering:          ":",
+		GlyphAsciiRefused:             "!",
+		GlyphAsciiResyncing:           "=",
+		GlyphAsciiRetrying:            ">",
+		GlyphAsciiRule:                "-",
+		GlyphAsciiStopped:             "o",
+		GlyphAsciiUnknown:             "?",
+		GlyphAsciiWaiting:             "?",
+		GlyphUnicodeAction:            "›",
+		GlyphUnicodeActivityFrames:    "◐◓◑◒",
+		GlyphUnicodeActivitySeparator: "·",
+		GlyphUnicodeAgent:             "●",
+		GlyphUnicodeConnecting:        "◌",
+		GlyphUnicodeFailed:            "×",
+		GlyphUnicodeLive:              "●",
+		GlyphUnicodeMark:              ".",
+		GlyphUnicodePerson:            "›",
+		GlyphUnicodeQuit:              "✓",
+		GlyphUnicodeRecovering:        "◐",
+		GlyphUnicodeRefused:           "⊘",
+		GlyphUnicodeResyncing:         "↻",
+		GlyphUnicodeRetrying:          "↗",
+		GlyphUnicodeRule:              "─",
+		GlyphUnicodeStopped:           "○",
+		GlyphUnicodeUnknown:           "?",
+		GlyphUnicodeWaiting:           "?",
+		IconSize:                      Dimension{PX: 20, Cells: 0},
+		MotionActivityElapsed:         1000,
+		MotionActivityFrame:           100,
+		MotionReduced:                 0,
+		MotionSettle:                  160,
+		RadiusCard:                    Dimension{PX: 12, Cells: 0},
+		SpaceGutter:                   Dimension{PX: 24, Cells: 3},
+		SpaceInline:                   Dimension{PX: 8, Cells: 1},
+		SpacePage:                     Dimension{PX: 32, Cells: 2},
+		SpaceSection:                  Dimension{PX: 24, Cells: 1},
+		TypeBody:                      "Pretendard, sans-serif",
+		TypeCode:                      "ui-monospace, monospace",
+		TypeLineHeight:                1.5,
+		TypeSize:                      Dimension{PX: 16, Cells: 0},
+		TypeTitleWeight:               700,
+		TypeWeight:                    400,
 	}
 }
 
 func HighContrast() Tokens {
 	return Tokens{
-		ColorAccent:            Color{Hex: "#6795FF", ANSI256: 69, ANSI16: 15},
-		ColorCanvas:            Color{Hex: "#000000", ANSI256: 16, ANSI16: 0},
-		ColorLine:              Color{Hex: "#FFFFFF", ANSI256: 231, ANSI16: 15},
-		ColorMuted:             Color{Hex: "#DDDDDD", ANSI256: 253, ANSI16: 7},
-		ColorSurface:           Color{Hex: "#000000", ANSI256: 16, ANSI16: 0},
-		ColorText:              Color{Hex: "#FFFFFF", ANSI256: 231, ANSI16: 15},
-		GlyphAsciiAction:       ">",
-		GlyphAsciiAgent:        "*",
-		GlyphAsciiConnecting:   "~",
-		GlyphAsciiFailed:       "x",
-		GlyphAsciiLive:         "*",
-		GlyphAsciiMark:         ".",
-		GlyphAsciiPerson:       ">",
-		GlyphAsciiQuit:         "+",
-		GlyphAsciiRecovering:   ":",
-		GlyphAsciiRefused:      "!",
-		GlyphAsciiResyncing:    "=",
-		GlyphAsciiRetrying:     ">",
-		GlyphAsciiRule:         "-",
-		GlyphAsciiStopped:      "o",
-		GlyphAsciiUnknown:      "?",
-		GlyphAsciiWaiting:      "?",
-		GlyphUnicodeAction:     "›",
-		GlyphUnicodeAgent:      "●",
-		GlyphUnicodeConnecting: "◌",
-		GlyphUnicodeFailed:     "×",
-		GlyphUnicodeLive:       "●",
-		GlyphUnicodeMark:       ".",
-		GlyphUnicodePerson:     "›",
-		GlyphUnicodeQuit:       "✓",
-		GlyphUnicodeRecovering: "◐",
-		GlyphUnicodeRefused:    "⊘",
-		GlyphUnicodeResyncing:  "↻",
-		GlyphUnicodeRetrying:   "↗",
-		GlyphUnicodeRule:       "─",
-		GlyphUnicodeStopped:    "○",
-		GlyphUnicodeUnknown:    "?",
-		GlyphUnicodeWaiting:    "?",
-		IconSize:               Dimension{PX: 20, Cells: 0},
-		MotionReduced:          0,
-		MotionSettle:           160,
-		RadiusCard:             Dimension{PX: 12, Cells: 0},
-		SpaceGutter:            Dimension{PX: 24, Cells: 3},
-		SpaceInline:            Dimension{PX: 8, Cells: 1},
-		SpacePage:              Dimension{PX: 32, Cells: 2},
-		SpaceSection:           Dimension{PX: 24, Cells: 1},
-		TypeBody:               "Pretendard, sans-serif",
-		TypeCode:               "ui-monospace, monospace",
-		TypeLineHeight:         1.5,
-		TypeSize:               Dimension{PX: 16, Cells: 0},
-		TypeTitleWeight:        700,
-		TypeWeight:             400,
+		ColorAccent:                   Color{Hex: "#6795FF", ANSI256: 69, ANSI16: 15},
+		ColorCanvas:                   Color{Hex: "#000000", ANSI256: 16, ANSI16: 0},
+		ColorLine:                     Color{Hex: "#FFFFFF", ANSI256: 231, ANSI16: 15},
+		ColorMuted:                    Color{Hex: "#DDDDDD", ANSI256: 253, ANSI16: 7},
+		ColorSurface:                  Color{Hex: "#000000", ANSI256: 16, ANSI16: 0},
+		ColorText:                     Color{Hex: "#FFFFFF", ANSI256: 231, ANSI16: 15},
+		GlyphAsciiAction:              ">",
+		GlyphAsciiActivityFrames:      "|/-\\",
+		GlyphAsciiActivitySeparator:   "-",
+		GlyphAsciiAgent:               "*",
+		GlyphAsciiConnecting:          "~",
+		GlyphAsciiFailed:              "x",
+		GlyphAsciiLive:                "*",
+		GlyphAsciiMark:                ".",
+		GlyphAsciiPerson:              ">",
+		GlyphAsciiQuit:                "+",
+		GlyphAsciiRecovering:          ":",
+		GlyphAsciiRefused:             "!",
+		GlyphAsciiResyncing:           "=",
+		GlyphAsciiRetrying:            ">",
+		GlyphAsciiRule:                "-",
+		GlyphAsciiStopped:             "o",
+		GlyphAsciiUnknown:             "?",
+		GlyphAsciiWaiting:             "?",
+		GlyphUnicodeAction:            "›",
+		GlyphUnicodeActivityFrames:    "◐◓◑◒",
+		GlyphUnicodeActivitySeparator: "·",
+		GlyphUnicodeAgent:             "●",
+		GlyphUnicodeConnecting:        "◌",
+		GlyphUnicodeFailed:            "×",
+		GlyphUnicodeLive:              "●",
+		GlyphUnicodeMark:              ".",
+		GlyphUnicodePerson:            "›",
+		GlyphUnicodeQuit:              "✓",
+		GlyphUnicodeRecovering:        "◐",
+		GlyphUnicodeRefused:           "⊘",
+		GlyphUnicodeResyncing:         "↻",
+		GlyphUnicodeRetrying:          "↗",
+		GlyphUnicodeRule:              "─",
+		GlyphUnicodeStopped:           "○",
+		GlyphUnicodeUnknown:           "?",
+		GlyphUnicodeWaiting:           "?",
+		IconSize:                      Dimension{PX: 20, Cells: 0},
+		MotionActivityElapsed:         1000,
+		MotionActivityFrame:           100,
+		MotionReduced:                 0,
+		MotionSettle:                  160,
+		RadiusCard:                    Dimension{PX: 12, Cells: 0},
+		SpaceGutter:                   Dimension{PX: 24, Cells: 3},
+		SpaceInline:                   Dimension{PX: 8, Cells: 1},
+		SpacePage:                     Dimension{PX: 32, Cells: 2},
+		SpaceSection:                  Dimension{PX: 24, Cells: 1},
+		TypeBody:                      "Pretendard, sans-serif",
+		TypeCode:                      "ui-monospace, monospace",
+		TypeLineHeight:                1.5,
+		TypeSize:                      Dimension{PX: 16, Cells: 0},
+		TypeTitleWeight:               700,
+		TypeWeight:                    400,
 	}
 }

@@ -5,6 +5,7 @@ package ui
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"reflect"
 	"sync"
@@ -55,14 +56,27 @@ func (m renderedView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m renderedView) View() tea.View { return m.view }
 
 func startTerminalRenderer(ctx context.Context, output io.Writer, width, height int, profile Profile) *terminalRenderer {
+	rendererContext, cancel := context.WithCancel(ctx)
 	r := &terminalRenderer{done: make(chan struct{}), size: tea.WindowSizeMsg{Width: width, Height: height}}
 	initial := r.size
 	r.expectedSize.Store(&initial)
 	r.program = tea.NewProgram(renderedView{}, tea.WithFilter(func(model tea.Model, message tea.Msg) tea.Msg {
 		return r.filterSize(model, rendererMessages(model, message))
-	}), tea.WithContext(ctx), tea.WithInput(nil), tea.WithOutput(output), tea.WithColorProfile(profile.terminalProfile()), tea.WithWindowSize(width, height), tea.WithoutSignalHandler(), tea.WithoutCatchPanics())
+	}), tea.WithContext(rendererContext), tea.WithInput(nil), tea.WithOutput(output), tea.WithColorProfile(profile.terminalProfile()), tea.WithWindowSize(width, height), tea.WithoutSignalHandler(), tea.WithoutCatchPanics())
 	go func() {
 		defer close(r.done)
+		defer cancel()
+		// Bubble Tea's mouse modes request drag/all motion. Own DEC 1000
+		// (buttons and wheels) instead; the input adapter dispatches only wheels.
+		// Run and cleanup share this output owner, including cancellation/errors.
+		defer func() {
+			_, err := io.WriteString(output, ansi.ResetModeMouseNormal+ansi.ResetModeMouseExtSgr)
+			r.err = errors.Join(r.err, err)
+		}()
+		if _, err := io.WriteString(output, ansi.SetModeMouseNormal+ansi.SetModeMouseExtSgr); err != nil {
+			r.err = err
+			return
+		}
 		_, r.err = r.program.Run()
 		if ctx.Err() != nil {
 			r.err = nil

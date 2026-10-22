@@ -18,13 +18,16 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/authority"
 	"github.com/thisisjun786/lina/internal/core/backup"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
+	"github.com/thisisjun786/lina/internal/core/ghclient"
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/internal/core/manifest"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
+	"github.com/thisisjun786/lina/internal/core/recover"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/sandbox"
 )
@@ -108,14 +111,17 @@ type Config struct {
 	Conversation *modelpath.ResponsesConfig
 	// SignInTransport is an in-process test seam; production uses the fixed issuer.
 	SignInTransport http.RoundTripper
-	// ChannelTransport is an in-process platform test seam; production uses Telegram.
+	// ChannelTransport is an in-process platform test seam; production uses the fixed Telegram and Discord origins.
 	ChannelTransport http.RoundTripper
+	// WebTransport is an in-process test seam; production uses the fixed Firecrawl origin.
+	WebTransport http.RoundTripper
 	// ClientManifest selects the build manifest containing supportedCombinations.
 	// An explicit path must exist and contain a valid table, including an empty
 	// table when every client combination is intentionally unsupported.
 	ClientManifest string
 	StateRoot      string
 	Socket         string
+	Tailnet        *clientsrv.TailnetConfig
 	PeerSeenMax    uint64
 	Services       Services
 	Activities     *lifecycle.ActivityRegistry
@@ -202,6 +208,9 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		return err
 	}
 	if err := store.Acquire(); err != nil {
+		return err
+	}
+	if err := recover.UpdateStart(store, cfg.StateRoot, cfg.Socket); err != nil {
 		return err
 	}
 	if err := backup.CheckRestore(cfg.StateRoot); err != nil {
@@ -317,6 +326,8 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	if cfg.Services.Lifecycle != nil {
 		cfg.Services.Lifecycle(restarter)
 	}
+	var mergeAuthority *authority.Merges
+	var mergeAgentExists func(context.Context, string) bool
 	var canon Canon
 	if ownsConversation && len(recovery.Halt) == 0 {
 		runtime, openErr := startConversation(ctx, cfg.StateRoot, recovery.MainID, snapshot.Epoch, store, cfg.Conversation, activities, cfg.Client.PersonID, cfg.SignInTransport, cfg.ChannelTransport)
@@ -324,10 +335,13 @@ func Run(ctx context.Context, cfg Config) (result error) {
 			return openErr
 		}
 		runtime.replaySocket = cfg.Socket
+		runtime.webTransport = cfg.WebTransport
 		supported := cfg.Client.Supported
 		cfg.Client = runtime.identity
 		cfg.Client.Supported = supported
 		canon = runtime.db
+		mergeAuthority = authority.NewMerges(runtime.db, snapshot.Epoch)
+		mergeAgentExists = func(ctx context.Context, id string) bool { _, err := runtime.agents.Get(ctx, id); return err == nil }
 		stack = append(stack, runtime.Close)
 	} else if cfg.Services.OpenCanon != nil {
 		canon, err = cfg.Services.OpenCanon(ctx, snapshot.Epoch)
@@ -338,6 +352,17 @@ func Run(ctx context.Context, cfg Config) (result error) {
 			return errors.New("canon writer is nil")
 		}
 		stack = append(stack, canon.Close)
+	}
+	github, err := ghclient.New(ctx, ghclient.Config{Leaser: activities})
+	if err != nil {
+		return err
+	}
+	stack = append(stack, github.Close)
+	if cfg.Client.Operations == nil {
+		cfg.Client.Operations = make(map[protocol.Kind]clientsrv.Operation)
+	}
+	for kind, operation := range clientsrv.GitHubOperations(githubService{client: github, merges: mergeAuthority, agentExists: mergeAgentExists}) {
+		cfg.Client.Operations[kind] = operation
 	}
 	if err := boundary(CanonOpened); err != nil {
 		return err
@@ -426,6 +451,27 @@ func Run(ctx context.Context, cfg Config) (result error) {
 			return phase.Err()
 		}
 	})
+	var remoteDone chan error
+	if cfg.Tailnet != nil {
+		remote, err := clientsrv.ListenTailnet(serving, *cfg.Tailnet)
+		if err != nil {
+			return err
+		}
+		remoteDone = make(chan error, 1)
+		identity := cfg.Client
+		identity.MainID, identity.Epoch, identity.Recovering = recovery.MainID, strconv.FormatUint(snapshot.Epoch, 10), recovering.Load
+		identity.Restart = restarter
+		go func() { remoteDone <- clientsrv.Serve(serving, remote, identity) }()
+		stack = append(stack, func(phase context.Context) error {
+			cancelServe()
+			select {
+			case err := <-remoteDone:
+				return err
+			case <-phase.Done():
+				return phase.Err()
+			}
+		})
+	}
 	if err := boundary(SocketsBound); err != nil {
 		// Ownership is now durable and the listener is on the shutdown stack.
 		// A signal here is an orderly stop, even before the first handshake.
@@ -463,6 +509,9 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		cfg.Services.SandboxReady(box)
 	}
 	if len(recovery.Halt) == 0 && ctx.Err() == nil {
+		if err := recover.UpdateReady(store); err != nil {
+			return err
+		}
 		if err := restarter.Ready(); err != nil {
 			return err
 		}
@@ -489,6 +538,12 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		}
 		if errors.Is(err, context.Canceled) && ctx.Err() != nil {
 			return nil
+		}
+		return err
+	case err := <-remoteDone:
+		remoteDone <- err
+		if err == nil && ctx.Err() == nil {
+			return errors.New("tailnet client service stopped before shutdown")
 		}
 		return err
 	case err := <-done:

@@ -37,3 +37,46 @@ This is a behaviour reference; no upstream code is copied.
   in the reference survey. LINA verifies those behaviours with its own installed
   Core and real PTY acceptance test. Native terminal scrollback and mouse input
   are outside this change.
+
+## Conversation wheel and sticky viewport (#448)
+
+Reference: Hermes Agent, MIT, revision `e06df9c2`, read directly from the
+upstream source because the suggested local reference checkout was unavailable.
+No upstream code is copied.
+
+- **Seen:** `ui-tui/src/app/useInputHandlers.ts:593-635` dispatches wheel
+  directions, uses inter-event timing for acceleration and resets on direction
+  changes; Page Up/Down move half a viewport.
+  `ui-tui/packages/hermes-ink/src/ink/components/ScrollBox.tsx:174-235` breaks
+  bottom stickiness on manual scrolling and restores it on `scrollToBottom`.
+  `ui-tui/src/app/scroll.ts` clamps the accepted scroll target before rendering.
+- **Inferred:** LINA should retain the first visible block and its row while
+  new output arrives, follow new output at the bottom, and expose End to resume
+  following. Its own wheel policy starts at three rows, adds three for each
+  same-direction repeat within 120 ms, and caps at twelve; idle or a direction
+  change resets the step. These constants are LINA choices, not upstream code.
+- **Unknown:** the reference's native selection modifier, terminal mode cleanup
+  and installed-Core recovery were not exercised. LINA uses DEC 1000 plus SGR
+  1006, ignores button events and never enables motion modes 1002/1003. Native
+  selection uses the terminal's override (Shift+drag in xterm/GNOME Terminal;
+  Option+drag in iTerm2). LINA verifies its own modes, decoder and viewport with
+  synthetic input and an installed Core PTY test.
+
+## Ctrl+C confirmation (#452)
+
+Reference: [Hermes Agent](https://github.com/NousResearch/hermes-agent), MIT,
+revision `944c3a434071f43e64b443d033f3eba30c64434c`.
+Read before implementing #452; no upstream code is copied.
+
+- **Seen:** [`_tui_handle_ctrl_c` and `_tui_clear_or_exit`](https://github.com/NousResearch/hermes-agent/blob/944c3a434071f43e64b443d033f3eba30c64434c/hermes_cli/cli_tui_mixin.py)
+  clear text and attachments first. With a running agent and an empty draft,
+  the first press interrupts with a hint and a second within less than two
+  seconds exits. An idle empty draft exits immediately. The
+  [draft-priority tests](https://github.com/NousResearch/hermes-agent/blob/944c3a434071f43e64b443d033f3eba30c64434c/tests/hermes_cli/test_cli_ctrl_c_draft_priority.py)
+  check that clearing a draft does not interrupt the running turn.
+- **Inferred:** draft clearing and a bounded second-press confirmation can be
+  implemented independently for LINA's client-only exit. LINA #452 additionally
+  requires an idle-empty hint and automatic expiry; these are LINA requirements,
+  not claims of identical upstream behaviour. Esc retains LINA's turn interrupt.
+- **Unknown:** the issue author's reference revision, upstream terminal repeat
+  handling, restoration and hint expiry. Upstream was read, not executed.

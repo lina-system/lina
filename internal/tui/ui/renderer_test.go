@@ -84,3 +84,41 @@ func TestRendererPreservesDetectedColorProfile(t *testing.T) {
 		})
 	}
 }
+
+func TestRendererCancellationRestoresWheelModes(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	output, err := tuiterm.NewRecorder(80, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer output.Close()
+	renderer := startTerminalRenderer(ctx, rawTerminalWriter{output}, 80, 24, TrueColor)
+	defer renderer.close()
+	view := tea.NewView("mode-cleanup")
+	view.AltScreen = true
+	if err := renderer.show(view, tea.WindowSizeMsg{Width: 80, Height: 24}); err != nil {
+		t.Fatal(err)
+	}
+	wait, stop := context.WithTimeout(t.Context(), 2*time.Second)
+	defer stop()
+	if _, err := output.Wait(wait, func(s tuiterm.Snapshot) bool { return s.AltScreen }); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	if err := renderer.close(); err != nil {
+		t.Fatal(err)
+	}
+	raw := string(output.Bytes())
+	for _, mode := range []string{"1000", "1006"} {
+		enabled, disabled := strings.Index(raw, "\x1b[?"+mode+"h"), strings.LastIndex(raw, "\x1b[?"+mode+"l")
+		if enabled < 0 || disabled <= enabled {
+			t.Errorf("mode %s not restored on cancellation", mode)
+		}
+	}
+	for _, mode := range []string{"1002", "1003"} {
+		if strings.Contains(raw, "\x1b[?"+mode+"h") {
+			t.Errorf("motion mode %s enabled", mode)
+		}
+	}
+}

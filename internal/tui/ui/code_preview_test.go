@@ -7,8 +7,10 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/internal/tui/render"
 	"github.com/thisisjun786/lina/internal/tui/state"
 	"github.com/thisisjun786/lina/kit/protocol"
@@ -181,6 +183,48 @@ func TestStreamingCodePreviewInResultDetails(t *testing.T) {
 			if got := strings.Join(m.pagerLines(), "\n"); strings.Contains(got, "writing code") {
 				t.Fatal("next turn collapsed an earlier result")
 			}
+		})
+	}
+}
+
+func TestInlineReplyDecorationsDoNotMutateMarkdownCache(t *testing.T) {
+	for _, suffix := range []string{"\n", "\n\n"} {
+		t.Run(fmt.Sprintf("newlines-%d", len(suffix)), func(t *testing.T) {
+			m := conversationShell()
+			topic := "conversation:" + m.conversation.id
+			m.Update(shellData{Generation: 1, Message: state.Snapshot{Epoch: "1", Revocation: "1", Topic: topic}})
+			m.Update(shellData{Generation: 1, Message: state.Turn{Active: true}})
+			text := "**Settled**\n\nStreaming reply" + suffix
+			update := func(rev uint64) {
+				m.Update(shellData{Generation: 1, Message: state.ItemDone{Epoch: "1", Topic: topic, Cursor: rev, Block: state.Block{
+					ID: "reply", Kind: protocol.KindResult, Speaker: protocol.ConversationSpeakerAgent,
+					InlineReply: true, Body: text, Text: text, Revision: rev, Done: true,
+				}}})
+			}
+			update(1)
+			hint := design.Text(m.styles.options.Language, "reply.open_pager")
+			check := func() {
+				t.Helper()
+				for range 3 {
+					view := m.View().Content
+					if count := strings.Count(view, hint); count != 1 {
+						t.Fatalf("pager hints=%d, want one: %s", count, view)
+					}
+					prefix := m.styles.speakerPrefix(false, m.conversationName(), m.conversationPlan().Conversation.Width)
+					config := render.Config{Width: m.conversationPlan().Conversation.Width - (render.Unicode{}).Width(prefix), Theme: m.styles.options.Theme}
+					cached := m.resultStreams["reply"].stream.Markdown(config, m.styles.listBullet(), parseMarkdown)
+					if strings.Contains(styledText(cached), hint) {
+						t.Fatal("UI-only pager hint entered cached reply rows")
+					}
+				}
+			}
+			check()
+			text += "Next content\n"
+			update(2)
+			check()
+			m.Update(shellData{Generation: 1, Message: state.Turn{Active: false}})
+			m.content.Worked = map[string]time.Duration{"reply": 2 * time.Second}
+			check()
 		})
 	}
 }
