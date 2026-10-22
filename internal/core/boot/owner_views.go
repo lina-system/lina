@@ -117,6 +117,10 @@ func (r *conversationRuntime) startOwnerViews(ctx context.Context) error {
 	r.ownerViews.stop = cancel
 	go func() {
 		defer close(r.ownerViews.done)
+		// Outside record edits do not commit canon mutations. Recheck while
+		// idle too; publishOwnerViews suppresses unchanged snapshots.
+		refresh := time.NewTicker(time.Second)
+		defer refresh.Stop()
 		for {
 			changed := r.db.Changed()
 			_ = r.publishOwnerViews(watch)
@@ -125,6 +129,7 @@ func (r *conversationRuntime) startOwnerViews(ctx context.Context) error {
 				return
 			case <-changed:
 			case <-r.ownerViews.wake:
+			case <-refresh.C:
 			}
 			timer := time.NewTimer(250 * time.Millisecond)
 			select {
@@ -158,6 +163,7 @@ func (r *conversationRuntime) ownerWaiting(ctx context.Context, names map[string
 	}
 	if r.background != nil {
 		sources["run"] = &waiting.RunInputSource{DB: r.db, Owner: r.background.service, AgentName: name}
+		sources["run_effect"] = waiting.RunEffectSource{AgentName: name}
 	}
 	if _, err := r.records.Head(ctx); err != nil {
 		if !errors.Is(err, records.ErrRecordsChanged) {

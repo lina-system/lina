@@ -239,6 +239,14 @@ Core uses source identity only to break otherwise equal ranks, keeping refreshes
 
 Size. Home shows at most five rows and the count of the rest ("+7 more"); the whole list opens in the work panel. When the list is empty, this view says so in one line ("nothing to decide now"). No reply and no other view carries that line.
 
+Unanswered background effect questions enter this list after their conversation
+lane delivers them, independently of the run's state or landing. They use the
+existing authenticated question card for answers. An answer or a withdrawn
+request removes the row from Home and the full list, including after restart.
+Core also rechecks outside record changes once a second while idle, so an open
+progress or waiting view receives additions and resolutions without another
+action. Unchanged projections produce no update.
+
 Answering. A row is answered in one tap or one word. Core re-reads the source and its answer mapping, refuses an outdated row or a different person, and records the source change and the answer with the person and requesting agent in one transaction. Repeated answers cannot create a second decision. When several decisions wait, the person can ask LINA to go through them one at a time: LINA asks one decision, records the answer and asks the next. A change to the list after an agent's action shows as a quiet badge; it never interrupts a reply that is being written or read.
 
 ### Design at a glance
