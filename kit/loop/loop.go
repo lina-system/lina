@@ -54,8 +54,12 @@ type StreamFunc func(context.Context, provider.Request) (provider.Stream, error)
 // on completion, although model context is assembled in original call order.
 // Partial records aborted visible text outside model context.
 type Journal struct {
-	Item    func(context.Context, int, int64, provider.Item) error
-	Calls   func(context.Context, int, []provider.ToolCall) error
+	Item  func(context.Context, int, int64, provider.Item) error
+	Calls func(context.Context, int, []provider.ToolCall) error
+	// Start observes dispatch after Calls commits, queueing and final admission,
+	// immediately before Execute. An error prevents execution, records an aborted
+	// result and stops the run. Start and Result may run concurrently across calls.
+	Start   func(context.Context, int, int, provider.ToolCall) error
 	Result  func(context.Context, int, int, Result) error
 	Partial func(context.Context, int, int64, string) error
 }

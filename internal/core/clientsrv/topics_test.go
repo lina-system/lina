@@ -421,3 +421,24 @@ func TestTopicPublicationRejectsUnsendablePayloadBeforeCommit(t *testing.T) {
 		})
 	}
 }
+
+func TestToolActivityReplaysWithoutEvictingConversation(t *testing.T) {
+	h := topicHub(t, TopicOptions{SnapshotSize: 1})
+	publish(t, h, "conversation:test", TopicEvent{Kind: protocol.KindItemDone, Key: "reply", Data: []byte(`{"text":"keep this reply"}`)})
+	cursor := rpc.Cursor{Epoch: "10", Seq: 1}
+	for _, status := range []string{"started", "finished"} {
+		body := `{"call_id":"call","tool_name":"Reading skill","status":"started"}`
+		if status == "finished" {
+			body = `{"call_id":"call","tool_name":"Reading skill","status":"finished","outcome":"failed","duration_ms":12}`
+		}
+		publish(t, h, "conversation:test", TopicEvent{Kind: protocol.KindToolActivity, Key: "tool:call", Data: []byte(body)})
+	}
+	replay, _ := subscribe(t, h, "conversation:test", &cursor)
+	if len(replay.Replay) != 2 || replay.Replay[0].Event.Kind != protocol.KindToolActivity || replay.Replay[1].Cursor.Seq != 3 {
+		t.Fatalf("activity not replayable: %+v", replay)
+	}
+	start, _ := subscribe(t, h, "conversation:test", nil)
+	if len(start.Snapshot.Items) != 1 || start.Snapshot.Items[0].Key != "reply" || start.Snapshot.Cursor.Seq != 3 {
+		t.Fatalf("activity displaced history: %+v", start.Snapshot)
+	}
+}

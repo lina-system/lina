@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/thisisjun786/lina/internal/design"
@@ -169,6 +170,22 @@ func speakerGutterInstalledCore(t *testing.T, ascii, plain bool) {
 					t.Errorf("speaker/body foreground not distinct: %v / %v", glyph.Foreground, body.Foreground)
 				}
 				t.Logf("speaker row %d: mark foreground=%v body foreground=%v", found, glyph.Foreground, body.Foreground)
+				if i == 1 {
+					// Completion metadata belongs to the reply; the turn gap follows it.
+					worked := strings.Repeat(" ", utf8.RuneCountInString(prefix)) + strings.TrimSuffix(design.Text(design.English, "activity.worked_for"), "%s")
+					if found+1 >= len(rows) || !strings.HasPrefix(rows[found+1], worked) {
+						t.Fatal("reply lost its aligned completion duration")
+					}
+					duration := strings.TrimPrefix(rows[found+1], worked)
+					if elapsed, err := time.ParseDuration(strings.ReplaceAll(duration, " ", "")); err != nil || elapsed < 0 {
+						t.Fatalf("invalid completion duration %q", duration)
+					}
+					completion := snapshot.Cells[found+1][utf8.RuneCountInString(prefix)]
+					if completion.Foreground == nil || reflect.DeepEqual(completion.Foreground, body.Foreground) {
+						t.Error("completion duration lost its muted foreground")
+					}
+					previous = found + 1
+				}
 			}
 		}
 		if !snapshot.AltScreen || !snapshot.Cells[0][0].Bold {

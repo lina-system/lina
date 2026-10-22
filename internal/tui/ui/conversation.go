@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -129,7 +130,14 @@ func (m *shellModel) reduceInput(msg state.Msg) tea.Cmd {
 
 func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 	key := term.FromTea(msg, m.events)
+	// Enhanced keyboards can report Shift+/ with the produced text "?".
+	if msg.Key().Text == "?" && msg.Key().Mod & ^tea.ModShift == 0 {
+		key.Name = "?"
+	}
 	class := term.Edit
+	if key.Name == "?" && m.content.Draft.Text == "" && len(m.content.Draft.Attachments) == 0 {
+		class = term.Toggle
+	}
 	switch key.Name {
 	case "enter", "esc", "ctrl+c", "ctrl+d", "tab", "shift+tab", "ctrl+o", "ctrl+t", "ctrl+w", "ctrl+r", "ctrl+p":
 		class = term.Toggle
@@ -155,6 +163,12 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	}
 	switch key.Name {
+	case "?":
+		if m.content.Draft.Text == "" && len(m.content.Draft.Attachments) == 0 {
+			m.openPager(m.shortcutSheet())
+			return nil
+		}
+		return m.editComposer(msg)
 	case "ctrl+z":
 		if n := len(m.conversation.undo); n > 0 {
 			draft := m.conversation.undo[n-1]
@@ -214,17 +228,13 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 			m.openPager(m.cardText())
 			return nil
 		}
-		if !m.mutationsAllowed() {
-			return nil
-		}
 		text := strings.TrimSpace(m.content.Draft.Text)
 		if text == "/help" {
 			m.reduceInput(state.EditDraft{})
-			text := func(id string) string { return design.Text(m.styles.options.Language, id) }
-			m.openPager(strings.Join([]string{text("controls.help"),
-				"/accounts  " + text("account.heading"), "/signin  " + text("sign_in_open"),
-				"/memory  " + text("memory.heading"), "/agents  " + text("agents.heading"), "/channels  " + text("channel.heading"), "/talk  " + text("talk.heading"), "/stop  " + text("interrupt"),
-			}, "\n"))
+			m.openPager(m.shortcutSheet())
+			return nil
+		}
+		if !m.mutationsAllowed() {
 			return nil
 		}
 		if handled, command := m.talkCommand(text); handled {
@@ -280,7 +290,7 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 
 func (m *shellModel) conversationPlan() layout.Layout {
 	m.syncComposer()
-	return layout.Plan(m.size, layout.Caps{SidePane: true, Running: m.hasCapability("running"), Cards: m.hasCapability("waiting")}, layout.Shape{SidePane: m.conversation.pager.open, ComposerRows: m.conversation.composer.Height(), RunningCount: len(m.topicBlocks("running")), CardCount: len(m.topicBlocks("waiting")), CardRows: len(m.topicBlocks("waiting")), Attachments: len(m.content.Draft.Attachments) > 0})
+	return layout.Plan(m.size, layout.Caps{SidePane: true, Running: m.hasCapability("running"), Cards: m.hasCapability("waiting")}, layout.Shape{Activity: m.activityRequested(), SidePane: m.conversation.pager.open, ComposerRows: m.conversation.composer.Height(), RunningCount: len(m.topicBlocks("running")), CardCount: len(m.topicBlocks("waiting")), CardRows: len(m.topicBlocks("waiting")), Attachments: len(m.content.Draft.Attachments) > 0})
 }
 
 func (m *shellModel) topicBlocks(topic string) []state.Block {
@@ -356,7 +366,7 @@ func (m *shellModel) openPager(text string) {
 }
 
 func conversationBlock(b state.Block) bool {
-	return b.Topic != "core" && b.Topic != "running" && (b.Topic != "waiting" || b.Card != nil) && b.Topic != "progress" && b.Kind != protocol.KindTurnState
+	return b.Topic != "core" && b.Topic != "running" && (b.Topic != "waiting" || b.Card != nil) && b.Topic != "progress" && b.Kind != protocol.KindTurnState && b.Kind != protocol.KindToolActivity
 }
 
 func (m *shellModel) conversationName() string {
@@ -528,14 +538,7 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 	plan := m.conversationPlan()
 	rows := make([]string, m.size.Height)
 	clip := func(s string) string { return ansi.Truncate(s, m.size.Width, "") }
-	status := m.styles.presentation(m.status)
-	statusLine := status.Mark + " " + status.Label
-	if m.status.Cause != "" {
-		statusLine += " " + status.Detail
-	} else if notice := m.localNotice(); showNotice && notice != "" {
-		statusLine += "  " + notice
-	}
-	rows[plan.Status.Y] = clip(statusLine + "  /help  Enter  Ctrl+D  /memory  /agents  Ctrl+T")
+	rows[plan.Status.Y] = m.conversationFooter(showNotice)
 	if plan.Tier == layout.TooSmall {
 		if plan.Notice.Height > 0 {
 			rows[0] = clip(design.Text(m.styles.options.Language, "shell.too_small"))
@@ -549,7 +552,6 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		for y := 0; y < m.size.Height-1 && p.offset+y < len(lines); y++ {
 			rows[y] = clip(lines[p.offset+y])
 		}
-		rows[plan.Status.Y] = clip("Esc  /  n  " + p.query)
 		return strings.Join(rows, "\n")
 	}
 	name := m.conversationName()
@@ -558,6 +560,7 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		body   render.StyledRow
 		prefix string
 		person bool
+		muted  bool
 	}
 	var transcript []transcriptRow
 	plainRow := func(text string) render.StyledRow { return render.StyledRow{Spans: []render.Span{{Text: text}}} }
@@ -611,6 +614,11 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		if b.Kind == protocol.KindResult && !b.InlineReply {
 			body = append([]render.StyledRow{plainRow(design.Text(m.styles.options.Language, "result") + "  " + sanitize.Display(b.Title) + "  Ctrl+O")}, body...)
 		}
+		workedRow := -1
+		if elapsed, ok := m.content.Worked[b.ID]; ok {
+			workedRow = len(body)
+			body = append(body, plainRow(fmt.Sprintf(design.Text(m.styles.options.Language, "activity.worked_for"), formatElapsed(elapsed))))
+		}
 		if b.InlineReply {
 			body = append(body, plainRow(design.Text(m.styles.options.Language, "reply.open_pager")))
 		}
@@ -625,7 +633,7 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 			if i == 0 {
 				lead = prefix
 			}
-			transcript = append(transcript, transcriptRow{body: row, prefix: lead, person: person})
+			transcript = append(transcript, transcriptRow{body: row, prefix: lead, person: person, muted: i == workedRow})
 		}
 	}
 	m.conversation.scroll = min(m.conversation.scroll, max(0, len(transcript)-plan.Conversation.Height))
@@ -643,6 +651,10 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 			prefix = m.styles.Accent.Render(line.prefix)
 		}
 		rows[plan.Conversation.Y+y] = clip(prefix + styles.markdownRow(line.body))
+		if line.muted {
+			width := plan.Conversation.Width - (render.Unicode{}).Width(line.prefix)
+			rows[plan.Conversation.Y+y] = clip(prefix + m.styles.Muted.Render(render.Truncate(line.body.Spans[0].Text, width, render.Unicode{})))
+		}
 	}
 	drawTopic := func(topic string, region layout.Rect) {
 		if region.Height == 0 {
@@ -664,6 +676,9 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 	drawTopic("waiting", plan.Cards)
 	if plan.Attachments.Height > 0 {
 		rows[plan.Attachments.Y] = clip(strings.Join(m.content.Draft.Attachments, "  "))
+	}
+	if plan.Activity.Height > 0 {
+		rows[plan.Activity.Y] = m.styles.Muted.Render(m.activityText())
 	}
 	if plan.ComposerRule.Height > 0 {
 		rule := m.styles.tokens.GlyphUnicodeRule
@@ -703,7 +718,6 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 			}
 			rows[plan.SidePane.Y+y] = left + right
 		}
-		rows[plan.Status.Y] = clip("Esc  /  n  " + p.query)
 	}
 	return strings.Join(rows, "\n")
 }
