@@ -917,7 +917,7 @@ After every event Core commits for a goal, Core derives the goal's next actions 
 | Deploy observed | Code goal | Probe the running service at the deployed revision against the done condition; an exit code is not a probe. | Core |
 | Background run landed complete | Research or document task | Check citations, store the result, re-evaluate the criteria it serves. | Core, then manager |
 | Background run landed partial | Research or document task | Start one follow-up run on what is missing, or mark it open in the result when the sources cannot answer it. | Manager |
-| Draft or file result ready | Document or file task | Check it against the done condition. Land a new artifact at its destination without merging or overwriting existing files. When the goal updates an existing document, use the revision-checked [in-place edit](materials-and-knowledge.md#editing-a-persons-files-in-place), keeping the old version and rejecting a stale revision. | Manager, then Core |
+| Draft or file result ready | Document or file task | Check the fingerprinted done snapshot against the done condition and land a verified copy at its recorded destination. Changed output or report requires a new done; an interrupted copy is reported and retained. New artifacts never merge into or overwrite existing files. When the goal updates an existing document, use the revision-checked [in-place edit](materials-and-knowledge.md#editing-a-persons-files-in-place), keeping the old version and rejecting a stale revision. | Manager, then Core |
 | Effect performed through a plugin (calendar event, sent message, file move) | Effect task | Read back the external record; only the read sets the criterion. | Core |
 | Reply arrived in a waited thread, a record changed, or a date was reached | Wait open | Close the wait and re-evaluate the criteria behind it. | Core |
 | A wait's deadline passed | Wait open | Read the source once more; if still open, apply the wait's expiry action (see Waits on the outside). | Core |
@@ -998,6 +998,50 @@ A goal closes as `done` only when every criterion has evidence that Core collect
 - the manager's judgment against the criterion's written rubric, recorded with what it read.
 
 A worker's receipt, a model's sentence, a completed turn, a command's exit code alone, a pending check and an effect with an unknown outcome are never evidence. At `checking`, Core reads every piece of evidence again rather than trusting what it stored, so a document edited or an event moved after it was checked reopens its criterion. One check per criterion is enough; no panel of verifiers is used.
+
+For a non-code file task, its work definition records an absolute destination
+folder. The worker writes deliverables under `out/` and its report at
+`report.md`. At done, Core reads every file and directory name and the report,
+records a SHA-256 fingerprint, and keeps independent material revisions in the
+same canon transaction as the receipt. These materials survive backup and loss
+of the work area. A worker-supplied hash alone is not a snapshot. A new done
+replaces the current snapshot and clears its earlier judgment; earlier material
+revisions remain retained.
+
+The manager's judgment names that exact fingerprint. Before landing, Core reads
+the entire live output and report again. Missing or changed files, an added file
+or directory, or a changed report refuses landing and asks for a new done. Core
+copies only the retained snapshot into a newly claimed bundle named for the
+task; collisions, including symlinks, use `-v2`, `-v3`, and so on. It never merges
+into an existing bundle. Bundles preserve `out/` and `report.md`; symlinks and
+special files are refused. The destination must be outside Core's state and work
+area.
+
+Core records the copy intent and path before creating the bundle. It syncs the
+copy, rechecks the live result, and reads the destination back. Only matching
+readback hashes atomically record a landed result and satisfy the file criterion;
+the manager's content judgment alone cannot do so. A mismatch leaves the
+criterion open. An interrupted or failed copy has no landed evidence, retains
+its partial files, and appears with its path in the work result details. Startup
+reports interrupted intents without deleting or silently accepting their files.
+A retry uses a fresh bundle. Repeating a completed landing reads its evidence
+again and reuses the bundle only if it still matches.
+Before exposing work tools after restart, Core also reconciles the authority
+reservation of an interrupted local `land_work_result` invocation against that
+recovered work ledger. Only an invocation from an earlier Core epoch, bound to
+the same person and task agent, can be cancelled and have its reservation
+released. This cancels the invocation, not its files: it neither replays the old
+call nor asserts a successful or absent copy. The effect receipt and reservation
+update commit together with the recovered task revision. A fresh authorized call
+rechecks the current result, using a new bundle for a partial copy and the existing
+verified bundle for an already committed landing. Unrelated effects and calls
+from the current epoch keep their reservations.
+
+`prepare_work` binds the destination to the conversation-owned task.
+`report_work_result` admits the observed worker completion receipt and captures
+the snapshot; `land_work_result` binds the manager's judgment to its receipt and
+fingerprint and performs the copy and readback in Core. Worker dispatch and
+whole-goal scheduling are separate from these file-delivery operations.
 
 ### Stop and ask
 

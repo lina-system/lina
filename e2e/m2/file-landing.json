@@ -1,0 +1,9 @@
+{
+  "task_id": "file-landing-e2e",
+  "title": "Deliver a research document",
+  "done": "The document and report are in a fresh bundle at the destination with verified hashes",
+  "output": "A checked research result.\n",
+  "report": "The fixture question is answered.\n",
+  "tools": ["prepare_work", "report_work_result", "land_work_result"],
+  "cases": ["snapshot-at-done", "changed-output", "changed-report", "new-done", "name-collision", "interrupted-copy", "authority-reservation-recovery", "committed-copy-before-receipt", "readback-evidence", "restart-replay"]
+}
