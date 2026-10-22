@@ -265,7 +265,7 @@ func Sandboxed(ctx context.Context, cfg SandboxConfig, initial WorkerInput) (out
 }
 
 // InstructionBuilder is the existing pure assembly function supplied by boot.
-type InstructionBuilder func(agents.Preparation, []provider.ToolDecl) (string, error)
+type InstructionBuilder func(string, agents.Preparation, []provider.ToolDecl) (string, error)
 
 // Request applies candidate text to pinned layers and the recorded identity.
 func Request(ep Episode, candidates map[string]string, model, effort string, build InstructionBuilder) (provider.Request, error) {
@@ -287,13 +287,13 @@ func Request(ep Episode, candidates map[string]string, model, effort string, bui
 	instructions := strings.Join([]string{p.Core, p.DefaultVoice, p.UserVoice, p.GrowthSnapshot}, "\n")
 	switch ep.Evidence.Assembly.InstructionFormat {
 	case "": // Exact legacy layer assembly, still checked against its digest.
-	case "agent-v1":
+	case "agent-v1", "persona-v1":
 		a := ep.Evidence.Assembly
 		if build == nil || a.AgentName == "" || a.OwnerPersonID == "" {
 			return provider.Request{}, Exclusion("missing_assembly")
 		}
 		var err error
-		instructions, err = build(agents.Preparation{AgentID: a.AgentID, Name: a.AgentName, OwnerPersonID: a.OwnerPersonID, Layers: p}, ep.Evidence.Tools)
+		instructions, err = build(a.InstructionFormat, agents.Preparation{AgentID: a.AgentID, Name: a.AgentName, OwnerPersonID: a.OwnerPersonID, Layers: p}, ep.Evidence.Tools)
 		if err != nil {
 			return provider.Request{}, err
 		}

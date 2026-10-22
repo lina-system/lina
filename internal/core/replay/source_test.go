@@ -60,6 +60,10 @@ func fixture(t *testing.T) (*canon.Store, replay.Source, string) {
 }
 func seed(t *testing.T, db *canon.Store, id string, entry guard.Entry, material ...ledger.Materials) string {
 	t.Helper()
+	return seedWithEvidence(t, db, id, entry, nil, material...)
+}
+func seedWithEvidence(t *testing.T, db *canon.Store, id string, entry guard.Entry, modify func(*ledger.RequestEvidence), material ...ledger.Materials) string {
+	t.Helper()
 	ctx := t.Context()
 	clock := time.Date(2026, 1, 2, 3, 4, 5, 0, time.FixedZone("original", 3600))
 	in := ledger.Input{ID: id, ConversationID: "conversation", AgentID: "agent", PersonID: "person", Surface: ledger.Surface{Kind: "tui"}, OccurredAt: clock, RecordedAt: clock, TimeQuality: "observed", Body: "violet PRIVATE", SecretSpans: []secrets.Span{{Start: 7, End: 14, Sensitivity: "secret"}}}
@@ -91,6 +95,9 @@ func seed(t *testing.T, db *canon.Store, id string, entry guard.Entry, material 
 		t.Fatal(err)
 	}
 	evidence.Hash = assemble.Digest(provider.Request{Model: evidence.Model, Effort: evidence.Effort, Instructions: "original instructions\n\n\n", Items: items, Purpose: provider.Turn})
+	if modify != nil {
+		modify(&evidence)
+	}
 	writer := turn.EvidenceWriter{Ledger: ledger.New(db, materials), ConversationID: "conversation", ParentID: id, Surface: ledger.Surface{Kind: "tui"}, Now: func() time.Time { return clock }}
 	if err = writer.Acknowledge(ctx, turn.Acknowledgement{TurnID: tid, PolicyRevision: "policy", Assembly: evidence.Assembly}); err != nil {
 		t.Fatal(err)
@@ -349,5 +356,77 @@ func TestExportExcludesRetractedReplyEvenWhenInputRemainsVisible(t *testing.T) {
 	_, m, err := source.Episodes(t.Context(), replay.Scope{Person: "person", Agent: "agent"}, selection())
 	if err != nil || m.Exported != 0 || m.LeftOut != 1 {
 		t.Fatalf("retracted reply exported: %+v %v", m, err)
+	}
+}
+
+func TestPersonaContextExclusionReasons(t *testing.T) {
+	for _, tc := range []struct{ name, source, state, revision, reason string }{
+		{"missing memory", "relationship-v1", "", "", "forgotten"},
+		{"retracted memory", "relationship-v1", "retracted", "1", "forgotten"},
+		{"changed memory", "relationship-v1", "active", "2", "source_changed"},
+		{"unknown producer kind", "future-packet-v1", "", "", "missing_assembly"},
+		{"old producer", "legacy", "", "", "missing_assembly"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, source, _ := fixture(t)
+			seedWithEvidence(t, db, "input", guard.EntryOwner, func(evidence *ledger.RequestEvidence) {
+				a := &evidence.Assembly
+				a.InstructionFormat = "persona-v1"
+				a.PreparedAt = "2026-01-02T02:04:05Z"
+				a.OwnerPersonID = "person"
+				a.AgentName = "Fixture"
+				a.Items = []ledger.Reference{{ID: "memory:relationship", Revision: "1"}}
+				a.Context = []ledger.ContextSource{{Reference: a.Items[0], Source: tc.source}}
+				if tc.source == "legacy" {
+					a.InstructionFormat = "agent-v1"
+					a.Context = nil
+				}
+			})
+			err := db.Write(t.Context(), func(tx *canon.Tx) error {
+				if tc.state == "" {
+					return nil
+				}
+				record := `{"id":"relationship","kind":"relationship","revision":` + tc.revision + `,"state":"` + tc.state + `","scope":"local","evidence":[]}`
+				_, err := tx.ExecContext(t.Context(), `INSERT INTO memory_item(id,person,holder,subject_kind,subject_id,normalized,content,scope,state,valid_from,valid_until,supersedes,standing,record) VALUES('relationship','person','agent','person','person','synthetic','synthetic','local',?,0,0,'',0,?)`, tc.state, record)
+				return err
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, m, err := source.Episodes(t.Context(), replay.Scope{Person: "person", Agent: "agent"}, selection())
+			if err != nil || m.Exported != 0 || m.LeftOut != 1 || m.Reasons[tc.reason] != 1 {
+				t.Fatalf("manifest=%+v err=%v", m, err)
+			}
+		})
+	}
+}
+
+func TestOldProducerWithoutRequestEvidenceIsCounted(t *testing.T) {
+	db, source, _ := fixture(t)
+	ctx := t.Context()
+	at := time.Date(2026, 1, 2, 2, 4, 5, 0, time.UTC)
+	_, err := ledger.New(db, nil).Admit(ctx, guard.EntryOwner, ledger.Input{ID: "old-input", ConversationID: "conversation", AgentID: "agent", PersonID: "person", Surface: ledger.Surface{Kind: "tui"}, OccurredAt: at, RecordedAt: at, TimeQuality: "observed", Body: "synthetic old input"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := inbox.New(db).Admit(ctx, inbox.Input{Key: inbox.Key{Conversation: "conversation", Source: "test", NativeID: "old-input"}, Body: []byte("synthetic old input")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = turn.New(db).Claim(ctx, "old-turn", "conversation", receipt.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Write(ctx, func(tx *canon.Tx) error {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO turn_control(turn_id,input_event) VALUES('old-turn','old-input')"); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, "UPDATE turn_runs SET state='completed' WHERE id='old-turn'")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, m, err := source.Episodes(ctx, replay.Scope{Person: "person", Agent: "agent"}, selection())
+	if err != nil || m.LeftOut != 1 || m.Reasons["missing_assembly"] != 1 {
+		t.Fatalf("manifest=%+v err=%v", m, err)
 	}
 }

@@ -28,6 +28,7 @@ function fixture(t, { timeoutScale = 1, executeCommand = execute } = {}) {
   const sources = git(root, ['ls-files', '-z', '--cached', '--others', '--exclude-standard']);
   assert.equal(sources.status, 0, sources.stderr);
   for (const name of sources.stdout.split('\0').filter(Boolean)) {
+
     if (!existsSync(join(root, name))) continue;
     mkdirSync(dirname(join(cwd, name)), { recursive: true });
     cpSync(join(root, name), join(cwd, name), { recursive: true });

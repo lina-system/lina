@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package skills owns the common catalog and immutable Git skill versions.
-// Callers supply a fenced canon writer and install Schema in a numbered migration.
+// Callers supply a fenced canon writer opened with the shared migration catalog.
 package skills
 
 import (
@@ -25,17 +25,8 @@ var (
 	ErrCorrupt    = errors.New("skill_version_corrupt")
 )
 
-const Schema = `
-CREATE TABLE skill_versions (
- id TEXT NOT NULL, revision INTEGER NOT NULL, commit_id TEXT NOT NULL,
- name TEXT NOT NULL, description TEXT NOT NULL, content_hash TEXT NOT NULL,
- deleted INTEGER NOT NULL CHECK(deleted IN (0,1)),
- PRIMARY KEY(id,revision)
-);
-CREATE TABLE skill_heads (id TEXT PRIMARY KEY NOT NULL, revision INTEGER NOT NULL);
-CREATE TABLE skill_undone (id TEXT NOT NULL, content_hash TEXT NOT NULL, PRIMARY KEY(id,content_hash));
-CREATE TABLE skill_repo (singleton INTEGER PRIMARY KEY CHECK(singleton=1), commit_id TEXT NOT NULL);
-`
+// Schema is an alias for the catalog-owned schema.
+const Schema = canon.SkillsSchema
 
 type Canon interface {
 	Read(context.Context, func(*canon.Tx) error) error

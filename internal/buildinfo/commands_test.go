@@ -66,6 +66,7 @@ func TestVersionsOutsideRepository(t *testing.T) {
 	files, err := list.Output()
 	if err != nil {
 		t.Fatal(err)
+
 	}
 	for _, name := range strings.Split(string(files), "\x00") {
 		if name == "" {
