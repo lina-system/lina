@@ -276,7 +276,10 @@ It installs the test host with a matching build manifest, runs production Core
 boot in a separate process, and controls it through the generated socket
 protocol. Synthetic outbound Gateway/REST and Responses endpoints demonstrate
 channel input, read tools, background results, deduplication, shaping, blocked
-state and restart without live credentials.
+state and restart without live credentials. `m2/discord-recovery.json` repeats
+the journey across Gateway 4007/4009 closes, including command and approval-button
+deduplication and Resume with the exact replacement session and committed sequence
+after Core restart.
 
 `m2/work-area.json`, executed by `TestM2WorkArea`, drives `prepare_work` and
 `retain_work_result` through the installed Core's conversation tools. Two real

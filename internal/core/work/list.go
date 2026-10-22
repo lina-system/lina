@@ -94,6 +94,9 @@ func (s *Service) SummaryPage(ctx context.Context, id string, offset int64) (str
 	for _, stage := range c.Stages {
 		b.WriteString(stage.Name + " (" + stage.Source + "): " + stage.Summary + "\n")
 	}
+	for _, copy := range c.FileCopies {
+		b.WriteString("file copy (core): " + copy.Status + ": " + copy.Path + " " + copy.Problem + "\n")
+	}
 	chars := []rune(b.String())
 	if offset < 0 || offset > int64(len(chars)) {
 		return "", 0, ErrInvalid
