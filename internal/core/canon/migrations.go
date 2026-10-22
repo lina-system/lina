@@ -47,6 +47,7 @@ func Migrations() []Migration {
 		{Version: 33, SQL: recordsKoreanSearchSchema},
 		{Version: 34, SQL: WaitingDecisionsSchema},
 		{Version: 35, SQL: presetEffectsSchema},
+		{Version: 36, SQL: skillMaintenanceSchema},
 	}
 }
 
@@ -83,6 +84,7 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 		{31, "worker_dispatch"},
 		{34, "waiting_decisions"},
 		{28, "work_waiting_rounds"}, {28, "work_waiting_decisions"},
+		{36, "skill_maintenance"}, {36, "skill_maintenance_members"}, {36, "skill_maintenance_notices"},
 		{26, "work_ledger"}, {26, "work_cards"}, {26, "work_active_runs"},
 		{30, "authority_merges"},
 		{32, "discord_presentations"}, {32, "discord_buttons"}, {32, "channel_steering"},

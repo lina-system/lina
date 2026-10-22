@@ -612,14 +612,16 @@ account credential. It supplies the durable random main identity. The unit
 explicit root and socket arguments. A bundled `moirai-worker` receives its own
 `lina-moirai.service`, ordered after and dependent on Core, with
 `--canon <state-root>/canon/canon.sqlite` and
-`--socket <state-root>/system/run/moirai.sock`. No provider adapter receives
+`--socket <state-root>/run/jobs.sock`. No provider adapter receives
 a service unit.
 
-The current Core command does not connect canon or the job API. A bundled
-worker and its unit are installed but left disabled, and background memory
-and planning are reported unavailable with that cause. Enabling the worker
-requires the increment that connects those Core services; a copied executable
-or a successful systemd start job is not evidence of worker readiness.
+Core opens canon and serves the job API at that socket. Install enables the
+included worker after Core. The worker's service retries initial unavailability
+because Core may still be opening canon when systemd starts the worker. A
+missing model route makes model-based jobs unavailable without stopping Core
+or deterministic growth jobs. A copied executable or a successful systemd start
+job is not evidence of readiness; the installed skill maintenance scenario
+exercises the socket with the actual worker and verifies committed results.
 
 Preflight refuses an existing state root, socket, named service, service
 override or enablement link, and refuses linked destination ancestors. An
