@@ -61,6 +61,8 @@ func seedPersonaAgent(t *testing.T, h *harness, person string) string {
 }
 
 func TestPersonaBlankFilledFromConversationAndPreparedAfterRestart(t *testing.T) {
+	t.Parallel()
+
 	var calls atomic.Int32
 	var prefix string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

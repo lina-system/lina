@@ -736,6 +736,9 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		for len(body) > 0 && blank(body[len(body)-1]) {
 			body = body[:len(body)-1]
 		}
+		// Markdown owns these rows. Appending presentation metadata to a
+		// shortened slice must not overwrite the cache's trimmed boundary rows.
+		body = slices.Clone(body)
 		if b.Kind == protocol.KindResult && !b.InlineReply {
 			body = append([]render.StyledRow{plainRow(design.Text(m.styles.options.Language, "result") + "  " + sanitize.Display(b.Title) + "  Ctrl+O")}, body...)
 		}

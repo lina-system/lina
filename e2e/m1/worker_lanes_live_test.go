@@ -18,6 +18,8 @@ import (
 // The same m3 scenario also covers the live worker registry introduced by #133:
 // conversation tool -> installed stdio worker -> real artifact -> lane detail.
 func TestM3WorkerLanesLiveSession(t *testing.T) {
+	t.Parallel()
+
 	var scenario struct{ Command, LiveInput, LiveResult string }
 	raw, err := os.ReadFile("../m3/worker-lanes.json")
 	if err != nil {

@@ -18,6 +18,8 @@ import (
 // Use the real built Core and the shared process harness. Unsupported versions
 // must be constructed as JSON because the generated 1.0 encoder refuses them.
 func TestM1ClientListener(t *testing.T) {
+	t.Parallel()
+
 	data, err := os.ReadFile("client-listener.json")
 	if err != nil {
 		t.Fatal(err)

@@ -298,7 +298,7 @@ test('acceptance batches run every enumerated test once within the shared budget
     execute(command, args, options) {
       args = testingArgs(args);
       if (args[0] === 'list') return { status: 0, stdout: acceptanceListing(sb), stderr: '' };
-      if (args[0] === 'test' && args.includes('-list')) return { status: 0, stdout: `${names.join('\n')}\nok example.invalid/e2e 0.01s\n`, stderr: '' };
+      if (args[0] === 'test' && args.includes('-list')) return { status: 0, stdout: `${names.join('\n')}\nfixture enumeration banner\n`, stderr: '' };
       if (args[0] === 'test') {
         assert.ok(args.includes('-count=1'));
         assert.ok(args.includes('-timeout=6m'));
@@ -319,6 +319,29 @@ test('acceptance batches run every enumerated test once within the shared budget
   assert.equal(batches.length, 4);
   assert.ok(batches.every((batch, i) => i === 0 || batch.budget < batches[i - 1].budget));
   assert.ok(elapsed < componentsTimeoutMs);
+  const timings = [...result.output.matchAll(/^ok\s+example\.invalid\/e2e\s+(\d+\.\d+)s$/gm)].map(match => Number(match[1]));
+  assert.deepEqual(timings, [160, 80, 80, 80], 'publish measured batch durations, excluding enumeration');
+});
+
+test('acceptance concurrency is bounded independently of host CPU count', t => {
+  const sb = fixture(t);
+  const runs = [];
+  const result = checkComponents({ cwd: sb.dir, components: [{ name: 'lina', module: '.', packages: ['.', './e2e/...'] }],
+    execute(command, args) {
+      args = testingArgs(args);
+      if (args[0] === 'list') return { status: 0, stdout: acceptanceListing(sb)+`example.invalid/e2e/empty\t${join(sb.dir, 'e2e/empty')}\ttests\n`, stderr: '' };
+      if (args.includes('-list')) return { status: 0, stdout: command.includes('acceptance-1.test') ? '' : 'TestOne\nTestTwo\n', stderr: '' };
+      if (args[0] === 'test') runs.push(args);
+      return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
+    } });
+  assert.equal(result.status, 0, result.output);
+  assert.equal(runs.length, 4, 'ordinary packages, both acceptance batches and an empty package run');
+  assert.ok(!runs[0].some(arg => arg.startsWith('-parallel=')), 'ordinary package scheduling is unchanged');
+  for (const args of runs.slice(1)) {
+    assert.ok(args.includes('-parallel=4'), 'Core subprocess concurrency must not grow with host CPU count');
+    assert.ok(args.includes('-timeout=6m'), 'parallel acceptance retains the diagnostic deadline');
+    assert.ok(args.includes('-count=1'), 'parallel acceptance remains uncached');
+  }
 });
 
 test('an acceptance batch failure stops the gate without running later batches', t => {

@@ -112,6 +112,15 @@ async function runChecks(root, scope, log) {
       results[name] = { result: run.status === 0 ? 'success' : 'failure', seconds: run.seconds };
       if (name === 'components' || name === 'dependencies') results[name].toolchain = run.output.match(/^go1\.\d+\.\d+$/m)?.[0];
       if (run.status !== 0) log(`${name} failed:\n${run.output.trim()}`);
+      else if (name === 'components') {
+        // Keep measured acceptance-batch durations visible in successful
+        // CI logs too. Listing tests is not an executed acceptance batch.
+        let listing = false;
+        for (const line of run.output.split('\n')) {
+          if (line.startsWith('$ ')) listing = line.includes(' -list ') || line.includes(' -test.list ');
+          if (!listing && /^ok\s+\S+\/e2e(?:\/\S+)?\s+\d+\.\d+s$/.test(line)) log(line);
+        }
+      }
     }
   }
   return results;

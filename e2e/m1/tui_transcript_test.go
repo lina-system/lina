@@ -18,6 +18,8 @@ import (
 )
 
 func TestM1TUITranscriptInstalledCore(t *testing.T) {
+	t.Parallel()
+
 	var scenario struct {
 		Inputs, Replies []string
 		Draft, Search   string

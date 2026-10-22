@@ -15,6 +15,8 @@ import (
 )
 
 func TestPersonaEmotionIsPreparedOutsideCachedPrefix(t *testing.T) {
+	t.Parallel()
+
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
@@ -77,6 +79,8 @@ func emotionPacket(t *testing.T, items []json.RawMessage) agents.EmotionSnapshot
 }
 
 func TestPersonaEmotionConfirmedWriteSuppressionAndRestart(t *testing.T) {
+	t.Parallel()
+
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct{ Input []json.RawMessage }

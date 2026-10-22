@@ -18,6 +18,8 @@ import (
 )
 
 func TestM1TUIInterruptedReplySurvivesCoreRestart(t *testing.T) {
+	t.Parallel()
+
 	var scenario struct {
 		Input     string `json:"input"`
 		Partial   string `json:"partial"`

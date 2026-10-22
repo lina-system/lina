@@ -10,7 +10,7 @@ import (
 	"unicode"
 )
 
-var toolNames = []string{"codex", "claude", "antigravity", "devin", "gh", "grok", "node", "bwrap"}
+var toolNames = []string{"codex", "claude", "antigravity", "cursor-agent", "gh", "grok", "node", "bwrap"}
 
 func discover(ctx context.Context, cfg Config, host Host, verified map[string][]string) []Tool {
 	tools := make([]Tool, 0, len(toolNames))

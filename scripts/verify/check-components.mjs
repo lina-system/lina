@@ -131,18 +131,25 @@ export function checkComponents({ cwd = process.cwd(), components, execute: run 
           // from this candidate's binary avoids repeated Go package loads/links.
           const binary = join(context.directory, `acceptance-${index}.test${process.platform === 'win32' ? '.exe' : ''}`);
           if (invoke('go', ['test', '-c', '-mod=readonly', '-o', binary, pkg], directory).status !== 0) return { status: 1, output };
-          const binaryArgs = ['-test.count=1', '-test.timeout=6m', '-test.paniconexit0'];
+          // Retain dev's Core/PTY concurrency cap on the compiled test binary.
+          const binaryArgs = ['-test.count=1', '-test.timeout=6m', '-test.paniconexit0', '-test.parallel=4'];
           const listedTests = invoke(binary, [...binaryArgs, '-test.list', '.'], packageDirectory);
           if (listedTests.status !== 0) return { status: 1, output };
+          const runBatch = args => {
+            const batchStarted = performance.now();
+            const result = invoke(binary, args, packageDirectory, true);
+            if (result.status === 0) output += `ok\t${pkg}\t${((performance.now() - batchStarted) / 1000).toFixed(3)}s\n`;
+            return result;
+          };
           const names = listedTests.stdout.split(/\r?\n/).filter(name => /^(Test|Example|Fuzz)[\p{L}\p{N}_]*$/u.test(name)).sort();
           if (!names.length) {
-            if (invoke(binary, binaryArgs, packageDirectory, true).status !== 0) return { status: 1, output };
+            if (runBatch(binaryArgs).status !== 0) return { status: 1, output };
             continue;
           }
           const batchCount = 4;
           for (let batch = 0; batch < batchCount; batch++) {
             const tests = names.filter((_, index) => index % batchCount === batch);
-            if (tests.length && invoke(binary, [...binaryArgs, '-test.v', '-test.run', `^(${tests.join('|')})$`], packageDirectory, true).status !== 0) return { status: 1, output };
+            if (tests.length && runBatch([...binaryArgs, '-test.v', '-test.run', `^(${tests.join('|')})$`]).status !== 0) return { status: 1, output };
           }
         }
       }
