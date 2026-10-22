@@ -77,6 +77,8 @@ func (s *Service) ScheduleSnapshot(ctx context.Context, id string, input json.Ra
 	if !ok || !d.validPayload(input) {
 		return jobapi.ErrInvalid
 	}
+	s.auxMu.Lock()
+	defer s.auxMu.Unlock()
 	return s.apply(ctx, s.cfg.Epoch, func(tx *canon.Tx) error {
 		j, err := readJob(ctx, tx, id)
 		if err != nil {
@@ -92,8 +94,27 @@ func (s *Service) ScheduleSnapshot(ctx context.Context, id string, input json.Ra
 			return err
 		}
 		if seq > j.Watermark {
-			_, err := tx.ExecContext(ctx, "UPDATE moirai_tasks SET input=? WHERE job=? AND sequence=? AND NOT EXISTS (SELECT 1 FROM moirai_aux WHERE job=? AND sequence=?)", []byte(input), id, seq, id, seq)
-			return err
+			var reservation string
+			var output []byte
+			err := tx.QueryRowContext(ctx, "SELECT reservation,output FROM moirai_aux WHERE job=? AND sequence=?", id, seq).Scan(&reservation, &output)
+			if errors.Is(err, sql.ErrNoRows) {
+				_, err = tx.ExecContext(ctx, "UPDATE moirai_tasks SET input=? WHERE job=? AND sequence=?", []byte(input), id, seq)
+				return err
+			}
+			if err != nil {
+				return err
+			}
+			if output != nil || s.auxActive[reservation] {
+				return nil
+			}
+			// The call failed or Core stopped before caching its result. Consume
+			// the snapshot without effects, keeping its original input, unknown
+			// outcome and budget charge. Never replay that model call.
+			j.Watermark = seq
+			j.NextRun = s.cfg.Now().Add(j.Every)
+			if err := saveJob(ctx, tx, j); err != nil {
+				return err
+			}
 		}
 		if bytes.Equal(previous, input) {
 			return nil
