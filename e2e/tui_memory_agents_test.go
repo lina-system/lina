@@ -49,6 +49,7 @@ func TestM1TUIMemoryAgentsInstalledCore(t *testing.T) {
 			defer provider.Close()
 			h, start := installConversationBundle(t, newHarness(t, binary), bundle, provider.URL)
 			core := start(true)
+			waitCoreReady(t, h)
 			tap := newAccountTap(t, h, h.socket)
 			h.socket = tap.socket
 			terminal := h.startScreenTUI("TERM=xterm-256color")
@@ -109,6 +110,7 @@ func memoryAgentRoundTrip(t *testing.T, binary, bundle string) {
 	defer provider.Close()
 	h, start := installConversationBundle(t, newHarness(t, binary), bundle, provider.URL)
 	core := start(true)
+	waitCoreReady(t, h)
 	socket := h.socket
 	tap := newAccountTap(t, h, socket, true)
 	h.socket = tap.socket
@@ -319,6 +321,7 @@ func memoryAgentRoundTrip(t *testing.T, binary, bundle string) {
 func managementWithoutModelOrDefaultAgent(t *testing.T, binary, bundle string) {
 	h, start := installConversationBundle(t, newHarness(t, binary), bundle, "")
 	core := start(false)
+	waitCoreReady(t, h)
 	caps := []protocol.Capability{{Name: "agents", Version: "1.0"}, {Name: "memory", Version: "1.0"}}
 	client, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "test", caps)
 	if err != nil {
@@ -339,6 +342,7 @@ func managementWithoutModelOrDefaultAgent(t *testing.T, binary, bundle string) {
 	client.Close()
 	h.stopCore(core)
 	core = start(false)
+	waitCoreReady(t, h)
 	socket := h.socket
 	tap := newAccountTap(t, h, socket)
 	h.socket = tap.socket
@@ -384,6 +388,7 @@ func managementWithoutModelOrDefaultAgent(t *testing.T, binary, bundle string) {
 func memoryAgentPages(t *testing.T, binary, bundle string) {
 	h, start := installConversationBundle(t, newHarness(t, binary), bundle, "")
 	core := start(false)
+	waitCoreReady(t, h)
 	socket := h.socket
 	client, err := clientapi.DialWithCapabilities(h.ctx, socket, "test", []protocol.Capability{{Name: "memory", Version: "1.0"}})
 	if err != nil {
