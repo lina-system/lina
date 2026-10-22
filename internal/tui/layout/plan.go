@@ -16,16 +16,17 @@ const (
 
 type Caps struct{ SidePane, Running, Cards bool }
 type Shape struct {
+	ActivityRows                      int
 	ComposerRows                      int
 	Attachments, SidePane             bool
 	RunningCount, CardCount, CardRows int
 }
 type Layout struct {
-	Tier                                                                                                Tier
-	Header, Conversation, SidePane, Running, Cards, Attachments, ComposerRule, Composer, Status, Notice Rect
-	RunningCount, CardCount                                                                             int
-	RunningFolded, CardsFolded                                                                          bool
-	SideUnsupported, RunningUnsupported, CardsUnsupported                                               bool
+	Tier                                                                                                          Tier
+	Header, Conversation, SidePane, Running, Cards, Attachments, Activity, ComposerRule, Composer, Status, Notice Rect
+	RunningCount, CardCount                                                                                       int
+	RunningFolded, CardsFolded, CombinedWork                                                                      bool
+	SideUnsupported, RunningUnsupported, CardsUnsupported                                                         bool
 }
 
 // Plan keeps counts even when a region folds or is unsupported. At usable sizes
@@ -52,6 +53,7 @@ func Plan(size Size, caps Caps, st Shape) Layout {
 		p.Tier = Medium
 	}
 	composer := min(6, max(1, st.ComposerRows))
+	activity := min(2, max(0, st.ActivityRows))
 	attachment := 0
 	if st.Attachments {
 		attachment = 1
@@ -68,7 +70,7 @@ func Plan(size Size, caps Caps, st Shape) Layout {
 	}
 	side := st.SidePane && caps.SidePane && p.Tier == Wide
 	rule := 1
-	used := func() int { return 2 + 4 + composer + attachment + running + cards + rule }
+	used := func() int { return 2 + 4 + composer + attachment + running + cards + activity + rule }
 	if used() > h {
 		side = false
 	}
@@ -86,6 +88,16 @@ func Plan(size Size, caps Caps, st Shape) Layout {
 	if used() > h {
 		composer = max(1, composer-(used()-h))
 	}
+	if used() > h {
+		attachment = 0
+	}
+	if used() > h && running > 0 && cards > 0 {
+		// At the ten-row minimum a wrapped activity and the transcript floor
+		// leave one row for both lists. Preserve both counts in that summary.
+		cards = 0
+		p.CombinedWork, p.RunningFolded, p.CardsFolded = true, true, true
+	}
+
 	y := 0
 	take := func(rows int) Rect {
 		if rows == 0 {
@@ -96,7 +108,7 @@ func Plan(size Size, caps Caps, st Shape) Layout {
 		return r
 	}
 	p.Header = take(1)
-	p.Conversation = take(h - 2 - composer - attachment - running - cards - rule)
+	p.Conversation = take(h - 2 - composer - attachment - running - cards - activity - rule)
 	if side {
 		sideWidth := w / 3
 		p.Conversation.Width = w - sideWidth
@@ -105,6 +117,7 @@ func Plan(size Size, caps Caps, st Shape) Layout {
 	p.Running = take(running)
 	p.Cards = take(cards)
 	p.Attachments = take(attachment)
+	p.Activity = take(activity)
 	p.ComposerRule = take(rule)
 	p.Composer = take(composer)
 	return p

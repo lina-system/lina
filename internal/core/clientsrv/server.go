@@ -109,9 +109,19 @@ func validateSocketDirectory(info os.FileInfo) error {
 	return nil
 }
 
+func inspectClient(ctx context.Context, listener net.Listener, conn net.Conn) (peerIdentity, error) {
+	if tailnet, ok := listener.(*TailnetListener); ok {
+		return tailnet.inspect(ctx, conn)
+	}
+	if local, ok := conn.(*net.UnixConn); ok {
+		return inspectPeer(local)
+	}
+	return peerIdentity{}, errors.New("client transport has no identity authority")
+}
+
 // Serve owns the listener and all accepted connections. Cancellation closes
 // blocked reads and writes, waits for handlers, and removes the socket.
-func Serve(ctx context.Context, listener *net.UnixListener, identity Identity) error {
+func Serve(ctx context.Context, listener net.Listener, identity Identity) error {
 	ctx, cancel := context.WithCancel(ctx)
 	var mu sync.Mutex
 	connections := make(map[net.Conn]struct{})
@@ -138,7 +148,7 @@ func Serve(ctx context.Context, listener *net.UnixListener, identity Identity) e
 		}
 	}
 	for {
-		conn, err := listener.AcceptUnix()
+		conn, err := listener.Accept()
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
@@ -162,7 +172,7 @@ func Serve(ctx context.Context, listener *net.UnixListener, identity Identity) e
 				delete(connections, conn)
 				mu.Unlock()
 			}()
-			peer, err := inspectPeer(conn)
+			peer, err := inspectClient(ctx, listener, conn)
 			if err != nil {
 				return
 			}
@@ -185,6 +195,10 @@ type response struct {
 }
 
 func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerIdentity) {
+	serveClientTransport(ctx, conn, identity, peer)
+}
+
+func serveMessages(ctx context.Context, conn rpc.Transport, identity Identity, peer peerIdentity) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	connectionID := rand.Text()
@@ -204,7 +218,6 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 	if err != nil || epoch == 0 {
 		return
 	}
-	reader := rpc.NewReader(conn)
 	welcomed := false
 	clientID := ""
 	capabilities := []protocol.Capability{}
@@ -216,7 +229,7 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 		defer close(readDone)
 		defer close(frames)
 		for {
-			line, err := reader.Read()
+			line, err := conn.Read(ctx)
 			if err != nil {
 				cancel()
 				return
@@ -241,13 +254,16 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 			}
 		}
 	}()
-	writer := rpc.NewWriter(conn)
+	legacy := legacyActivity{}
 	topics := newTopicSession(ctx, identity, identity.Topics,
 		func(id json.RawMessage, envelope protocol.Envelope) error {
-			if id != nil {
-				return writer.Write(ctx, response{JSONRPC: "2.0", ID: id, Result: envelope})
+			if !slices.Contains(capabilities, TurnActivityCapability) {
+				envelope = legacy.project(envelope)
 			}
-			return writer.Write(ctx, struct {
+			if id != nil {
+				return conn.Write(ctx, response{JSONRPC: "2.0", ID: id, Result: envelope})
+			}
+			return conn.Write(ctx, struct {
 				JSONRPC string            `json:"jsonrpc"`
 				Method  protocol.Kind     `json:"method"`
 				Params  protocol.Envelope `json:"params"`
@@ -286,7 +302,7 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 			if messageID, unsupported := unsupportedHello(req.Method, req.Params); unsupported {
 				answer := reply(protocol.Envelope{MessageID: messageID}, identity)
 				refuse(&answer, protocol.ErrorUnsupportedCombination, "no supported client combination")
-				writer.Write(ctx, response{JSONRPC: "2.0", ID: req.ID, Result: answer})
+				conn.Write(ctx, response{JSONRPC: "2.0", ID: req.ID, Result: answer})
 				return
 			}
 		}
@@ -330,7 +346,7 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 			refuse(&answer, protocol.ErrorNotAuthorized, "client identity changed")
 		case welcomed && envelope.Epoch != identity.Epoch:
 			refuse(&answer, protocol.ErrorStaleEpoch, "request epoch differs from Core")
-		case welcomed && identity.Recovering != nil && identity.Recovering() && !readOnlyKinds[envelope.Kind]:
+		case welcomed && identity.Recovering != nil && identity.Recovering() && !readOnlyEnvelope(envelope):
 			refuse(&answer, protocol.ErrorUnavailable, "Core is recovering")
 		case welcomed && (envelope.Kind == protocol.KindApprovalAnswer || envelope.Kind == protocol.KindQuestionAnswer || envelope.Kind == protocol.KindWaitingAnswer) && !peer.canDecide():
 			refuse(&answer, protocol.ErrorNotAuthorized, "client is not an eligible decider")
@@ -390,7 +406,7 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 				identity.DecisionPresence(Session{ConnectionID: connectionID, PersonID: identity.PersonID, Epoch: epoch, ClientID: clientID, CanDecide: peer.canDecide(), Capabilities: capabilities}, true)
 			}
 		}
-		err = writer.Write(ctx, response{JSONRPC: "2.0", ID: req.ID, Result: answer})
+		err = conn.Write(ctx, response{JSONRPC: "2.0", ID: req.ID, Result: answer})
 		finishReply()
 		if err != nil || closeAfter {
 			return

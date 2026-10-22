@@ -1,5 +1,23 @@
 # Terminal UI behaviour references
 
+## Whole-conversation overlay (#458)
+
+Reference: [Codex CLI](https://github.com/openai/codex), Apache-2.0,
+revision `b337fe06b7d8d6e5b42295e04c5e92c2b9c46567`. Source read before implementation;
+no upstream code is copied.
+
+- **Seen:** `codex-rs/tui/src/pager_overlay.rs` constructs a transcript overlay
+  from retained history cells and restores default input when it closes.
+  `pager_overlay/transcript.rs` identifies the inline Ctrl+T view and delegates
+  scrolling, search and its live tail to the transcript viewport.
+- **Inferred:** LINA can expose the retained visible conversation through its
+  existing sanitized plain-text pager, preserving speaker words and composer
+  state. It should read current display state so replacements and revocations
+  also apply while the overlay is open.
+- **Unknown:** reference terminal selection, Korean input and clipboard effects
+  were not exercised. LINA retains terminal-owned copying without clipboard
+  writes and verifies its own installed Core, PTY, search and draft restoration.
+
 ## Complete assistant replies (#445)
 
 Reference: [Hermes Agent](https://github.com/NousResearch/hermes-agent), MIT,

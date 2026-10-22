@@ -1,0 +1,6 @@
+{
+  "inputs": ["FIRST-458 needle 첫 질문", "SECOND-458 다음 질문", "THIRD-458 마지막 질문"],
+  "replies": ["ANSWER-ONE-458 첫 답변", "ANSWER-TWO-458 둘째 답변", "ANSWER-THREE-458 마지막 답변"],
+  "draft": "DRAFT-458 보내지 않은 초안",
+  "search": "needle"
+}

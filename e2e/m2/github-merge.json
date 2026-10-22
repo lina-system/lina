@@ -1,0 +1,12 @@
+{
+  "scenario": "Head-pinned merges through the installed Core",
+  "repository": "fixture/repository",
+  "pr_number": "140",
+  "base": "dev",
+  "head": "0123456789012345678901234567890123456789",
+  "moved_head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "merge_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "moved_cause": "head_changed",
+  "protected_cause": "protected_ref_changed",
+  "observation_cause": "merged_without_green_checks"
+}

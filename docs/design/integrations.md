@@ -323,6 +323,9 @@ GitHub cannot call in to LINA, which has no inbound endpoint, so LINA Core reads
 
 - A worker's completion event starts the reads. The first is one view of the pull request: its state, head SHA, review threads and the check results at that head.
 - While the checks of a task's pull request are unfinished, LINA Core watches that pull request only: one watcher per pull request, never two at once, using conditional requests and the interval that GitHub's responses ask for. The watch starts with the completion event and ends with the checks' conclusion, or with the pull request closing or merging. A rate-limit response backs the watch off and shows as "CI pending" with its cause.
+- The read implementation uses fixed `gh api` arguments. One observation reads PR identity/state, paginated review threads and comments, and check runs plus legacy statuses pinned to that head. REST reads retain each response's ETag and send `If-None-Match`; a 304 reuses only that endpoint's cached body. Review threads use fixed GraphQL queries and are fetched once per observed head, or for an explicit fresh read. A changed head invalidates its checks and reviews. Unknown conclusions, missing checks, incomplete pages and malformed or oversized evidence stay pending with a cause; they never establish green.
+- The watcher uses `X-Poll-Interval`, `Retry-After` and exhausted-quota reset times, with a 30-second default poll interval and a one-minute fallback for a rate limit without a retry time. It shares one live watcher across callers, stops after all observed checks conclude or the PR closes/merges, and cancels and joins its children on Core shutdown. Terminal snapshots remain readable without another GitHub call; an explicit read starts a fresh observation need. The cache retains at most 256 PRs, evicting terminal entries first. Reads are observations only: success describes the fetched checks, not a merge authorization or verification verdict. Required-check policy and merge safety belong to the work engine's merge gate.
+- Core exposes these observations through the negotiated `github` client capability and the `github_read` / `github_watch` operations of `work_request`. A watch request returns its current snapshot, including CI pending and the rate-limit cause/deadline; repeated requests share that watcher. No model account is required. Work-ledger event/reconcile callers can use the same service; this increment does not create task records or dispatch workers.
 - LINA Core uses neither the repository events feed nor a webhook-forwarding tool. The feed's delay is too long, and a forwarder needs administrator rights on the repository and covers one repository at a time.
 - A notification feed is read only if the user's own `gh` credential can read it, and then as a hint under the plugin rules.
 - The periodic reconcile pass of the work engine re-reads every pull request of a task that is in progress or watched, and catches a signal that was lost.
@@ -364,6 +367,31 @@ The shared role rule is in [product-families.md](product-families.md). [work-and
 - Before LINA Core records a merge made by a person as an observed result ([main-authority.md](main-authority.md)), it checks on GitHub that the merge commit exists and that the target ref points to it. It also reads the check results on that commit.
 - A merge that went in without passing required checks is recorded as observed and reported to the user. LINA Core never reverts another actor's merge without a user decision.
 - A merge is not verification. It records that a draft was applied. LINA Core still judges the task's delivery from evidence ([work-and-delegation.md](work-and-delegation.md)).
+
+The Core implementation exposes merge control separately from read/watch as the
+`github_merge` protocol capability. Its connection captures named local
+`refs/heads/` in the parent clone (including the target branch) and verifies that
+`origin` identifies the connected GitHub repository. A later request cannot
+replace those hashes. Head acceptance and merge admission both compare the
+captured refs. Before writing, Core rereads PR identity after reading checks and
+reviews; a changed head/base blocks the call, and a changed head is read again.
+The fixed command is `gh pr merge <number> --repo github.com/<repository> --merge
+--match-head-commit <head>`; Core supplies neither admin bypass nor auto-merge.
+An unresolved P0/P1 marker blocks admission, including an outdated unresolved
+thread. Pending, missing or failed check evidence blocks admission. GitHub also
+enforces its protection rules at the pinned call. The explicit hostname keeps
+reads and writes on the same service even when the user configures `GH_HOST`.
+
+A durable intent reserves the repository/base before the call. A queued or
+uncertain outcome retains that reservation across restart and cannot dispatch
+again. Observation can settle it only with a merged PR, a matching existing merge
+commit, the exact target ref pointing to that commit, and readable check/status
+evidence on that commit. A target that has already advanced remains unconfirmed;
+Core does not infer ancestry or silently accept different evidence. Missing or
+failed checks on a confirmed person's merge are reported with
+`merged_without_green_checks`, without reverting anything. The stored result
+keeps checks, source and commit separately from any delivery judgment.
+
 
 ## Google
 
