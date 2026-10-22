@@ -164,7 +164,8 @@ func testReplyShapeLONGQA(t *testing.T, language design.Language) {
 			previous := strings.Join(conversationRows(page), "\n")
 			h.keys(terminal, "\x1b[5~")
 			page = wait(func(s tuiterm.Snapshot) bool {
-				return strings.Join(conversationRows(s), "\n") != previous
+				return s.AltScreen && !s.CursorHidden && s.CursorY == plan.Composer.Y &&
+					strings.Join(conversationRows(s), "\n") != previous
 			})
 			rows := conversationRows(page)
 			overlap := min(len(rows), len(transcript))
