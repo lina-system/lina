@@ -53,7 +53,7 @@ func TestM1TUIConversationResize(t *testing.T) {
 	defer provider.Close()
 	h, start := installedConversationHarness(t, provider.URL)
 	core := start(true)
-	observer, _ := conversationClient(t, h)
+	observer, conversation := conversationClient(t, h)
 	defer observer.Close()
 	waitTurn := func() {
 		for {
@@ -68,8 +68,20 @@ func TestM1TUIConversationResize(t *testing.T) {
 	}
 	environment := []string{"TERM=xterm-256color", "COLORTERM=truecolor"}
 	size := scenario.Sizes[0]
+	socket := h.socket
+	tap := newAccountTap(t, h, socket)
+	h.socket = tap.socket
 	session := h.startTerminalSize(environment, false, true, size.Width, size.Height)
+	h.socket = socket
 	waitScreen(t, h, session, design.Text(design.English, "live"))
+	// The connection screen can precede conversation discovery. As in the
+	// history-order scenario, wait for the TUI's subscription before typing.
+	for {
+		frame := tap.next(t, h)
+		if snapshot, ok := frame.Payload.(protocol.Snapshot); ok && snapshot.Topic == "conversation:"+conversation {
+			break
+		}
+	}
 	h.keys(session, scenario.Input+"\r")
 	waitTurn()
 	waitScreen(t, h, session, "REPLY-340")
