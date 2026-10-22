@@ -417,6 +417,19 @@ func Derive(state State, now time.Time) (Plan, error) {
 		for _, t := range g.Tasks {
 			tasks[t.ID] = t
 		}
+		depths := make(map[string]int, len(tasks))
+		var depth func(string) int
+		depth = func(id string) int {
+			if n, ok := depths[id]; ok {
+				return n
+			}
+			n := 0
+			for _, dep := range tasks[id].DependsOn {
+				n = max(n, 1+depth(dep))
+			}
+			depths[id] = n
+			return n
+		}
 		allDone := true
 		for _, t := range g.Tasks {
 			done := taskDone(t)
@@ -500,14 +513,6 @@ func Derive(state State, now time.Time) (Plan, error) {
 				continue
 			default:
 				return Plan{}, ErrInvalid
-			}
-			var depth func(string) int
-			depth = func(id string) int {
-				n := 0
-				for _, dep := range tasks[id].DependsOn {
-					n = max(n, 1+depth(dep))
-				}
-				return n
 			}
 			ready = append(ready, candidate{g, t, kind, depth(t.ID)})
 		}

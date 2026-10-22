@@ -11,6 +11,7 @@ import (
 )
 
 var ErrDefinitionMissing = errors.New("goal_definition_missing")
+var ErrStaleDefinition = errors.New("goal_stale_revision")
 
 type DefinitionRecord struct {
 	ID, Path string
@@ -34,6 +35,62 @@ type Definition struct {
 	Assumptions []string       `json:"assumptions,omitempty"`
 	Decisions   []GoalDecision `json:"decisions,omitempty"`
 	Criteria    []Criterion    `json:"criteria"`
+}
+
+type DefinitionReceipt struct {
+	GoalID   string `json:"goal_id"`
+	RecordID string `json:"record_id"`
+	Revision string `json:"revision"`
+}
+
+// Revise changes the canonical definition of an admitted goal. The caller
+// supplies its authenticated conversation identity, never model-provided actors.
+// Task/evidence state and recorded person decisions are not correction inputs.
+func (e *Engine) Revise(ctx context.Context, id, base, person, agent string, d Definition) (DefinitionReceipt, error) {
+	var receipt DefinitionReceipt
+	if id == "" || base == "" || strings.TrimSpace(d.Outcome) == "" || len(d.Decisions) != 0 {
+		return receipt, ErrInvalid
+	}
+	s, err := e.Snapshot(ctx)
+	if err != nil {
+		return receipt, err
+	}
+	for _, g := range s.Goals {
+		if g.ID != id {
+			continue
+		}
+		if g.Person != person || g.Agent != agent || g.State == GoalStopped {
+			return receipt, ErrInvalid
+		}
+		r, rev, err := e.cfg.Records.Read(ctx, g.RecordID)
+		if err != nil {
+			return receipt, err
+		}
+		if rev != base {
+			return receipt, ErrStaleDefinition
+		}
+		current, err := parseDefinition(r, person, agent)
+		if err != nil {
+			return receipt, err
+		}
+		g.Summary, g.Done, g.Scope = d.Outcome, d.Done, d.Scope
+		g.Assumptions, g.Criteria, g.Decisions = d.Assumptions, d.Criteria, current.Decisions
+		// Scope corrections retain old task projections until the manager
+		// interprets the new definition and their dispatched effects settle.
+		g.DefinitionPending = true
+		if err := validateGoal(g); err != nil {
+			return receipt, err
+		}
+		rev, err = e.cfg.Records.Commit(ctx, DefinitionChange{ID: r.ID, Base: base, Path: r.Path, Data: definitionBytes(g)}, person, agent)
+		if err != nil {
+			return receipt, err
+		}
+		receipt = DefinitionReceipt{GoalID: id, RecordID: r.ID, Revision: rev}
+		// Install the existing revision fence and wake the running engine now;
+		// restart also reloads a committed correction if this call is interrupted.
+		return receipt, e.RefreshDefinitions(ctx)
+	}
+	return receipt, ErrInvalid
 }
 
 // Definitions are immutable per record revision. In-flight journal transactions
