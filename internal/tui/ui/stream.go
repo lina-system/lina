@@ -141,7 +141,18 @@ func projectStream(envelope protocol.Envelope) (streamProjection, error) {
 		}
 		p.topic, p.cursor = metadata.Topic, metadata.Cursor
 		if envelope.Kind == protocol.KindToolActivity {
-			p.message = state.StreamAdvance{Epoch: metadata.Cursor.Epoch, Topic: metadata.Topic, Cursor: seq}
+			activity := envelope.Payload.(protocol.ToolActivity)
+			call := state.ToolCall{ID: activity.CallID, Name: activity.ToolName, Status: activity.Status}
+			if activity.Outcome != nil {
+				call.Outcome = *activity.Outcome
+			}
+			if activity.Target != nil {
+				call.Target = *activity.Target
+			}
+			if activity.Summary != nil {
+				call.Summary = *activity.Summary
+			}
+			p.message = state.ToolEvent{Epoch: metadata.Cursor.Epoch, Topic: metadata.Topic, Cursor: seq, Call: call}
 		} else if envelope.Kind == protocol.KindOutputDelta {
 			p.message = state.Delta{Epoch: metadata.Cursor.Epoch, Topic: metadata.Topic, ID: streamKey(metadata.Topic, metadata.Key), Cursor: seq, Revision: revision, Text: value}
 		} else {

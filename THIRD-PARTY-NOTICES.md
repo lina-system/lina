@@ -1328,6 +1328,11 @@ The seen/inferred/unknown specification is in
 Tool activity also follows Hermes Agent’s friendly catalog verbs and timed
 completion indication, observed at revision `944c3a434071f43e64b443d033f3eba30c64434c`
 in `agent/display.py`. LINA’s protocol and journal wiring are original.
+Tool rows additionally reference Hermes Agent's separation of catalog verbs and
+compact targets at revision `e06df9c2eae6901f4c88f464e0ae6e753c0428b8`,
+`agent/display.py:477-620`. No code is copied; the
+[tool row reference](internal/tui/TOOL-ROWS-REFERENCE.md) records seen, inferred
+and unknown behavior.
 ## codex-app-server
 
 Source: https://github.com/openai/codex. Generated protocol baseline: **0.163.0**

@@ -155,8 +155,8 @@ func TestToolActivityConsumesCursorWithoutTranscript(t *testing.T) {
 	if m.content.Topics[toolTopic].OutOfSync || m.content.Topics[toolTopic].Cursor != 4 {
 		t.Fatal("ignored tool event caused a stream gap")
 	}
-	if got := m.View().Content; !strings.Contains(got, "visible answer") || strings.Contains(got, "TOOL-EVENT-ONLY") {
-		t.Fatalf("transcript contamination: %q", got)
+	if got := m.View().Content; !strings.Contains(got, "visible answer") || !strings.Contains(got, "TOOL-EVENT-ONLY") {
+		t.Fatalf("missing reply or separate tool row: %q", got)
 	}
 }
 

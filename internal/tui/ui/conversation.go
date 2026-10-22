@@ -35,6 +35,7 @@ type conversationView struct {
 }
 
 type textPager struct {
+	tool      bool
 	running   bool
 	selected  int
 	runID     string
@@ -177,6 +178,11 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		m.conversation.scroll = max(0, m.conversation.scroll-max(1, m.size.Height/2))
 		return nil
 	case "ctrl+o":
+		if summary := m.toolSummary(); summary != "" {
+			m.openPager(summary)
+			m.conversation.pager.tool = true
+			return nil
+		}
 		if card, ok := m.selectedCard(); ok && card.RunID != "" {
 			return m.runningRequest(card.RunID, "open", nil)
 		}
@@ -348,6 +354,13 @@ func (m *shellModel) openPager(text string) {
 
 func (m *shellModel) refreshOpenCard() {
 	p := &m.conversation.pager
+	if p.open && p.tool {
+		p.text = m.toolSummary()
+		if p.text == "" {
+			*p = textPager{}
+		}
+		return
+	}
 	if !p.open || p.cardID == "" {
 		return
 	}
@@ -523,6 +536,19 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		}
 		transcript = append(transcript, plainRow(design.Text(m.styles.options.Language, code)+"  /accounts"))
 	}
+	groups := m.toolGroups()
+	appendTools := func(anchor string) {
+		for _, group := range groups {
+			if group.calls[0].Anchor != anchor {
+				continue
+			}
+			for _, row := range m.toolGroupRows(group, plan.Conversation.Width) {
+				mutedRows[len(transcript)] = true
+				transcript = append(transcript, plainRow(row))
+			}
+		}
+	}
+	appendTools("")
 	for _, b := range m.content.Blocks {
 		if b.Topic == "core" || b.Topic == "running" || (b.Topic == "waiting" && b.Card == nil) || b.Topic == "progress" || b.Kind == protocol.KindTurnState || b.Kind == protocol.KindToolActivity {
 			continue
@@ -540,6 +566,7 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 			transcript = append(transcript, plainRow(design.Text(m.styles.options.Language, "result")+"  "+sanitize.Display(b.Title)+"  Ctrl+O"))
 		}
 		transcript = append(transcript, cached.stream.Markdown(render.Config{Width: plan.Conversation.Width, Theme: m.styles.options.Theme}, m.styles.listBullet(), parseMarkdown)...)
+		appendTools(b.ID)
 		if elapsed, ok := m.content.Worked[b.ID]; ok {
 			mutedRows[len(transcript)] = true
 			transcript = append(transcript, plainRow(fmt.Sprintf(design.Text(m.styles.options.Language, "activity.worked_for"), formatElapsed(elapsed))))

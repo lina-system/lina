@@ -309,6 +309,18 @@
       "activitySeparator": {
         "$type": "string",
         "$value": "·"
+      },
+      "toolRunning": {
+        "$type": "string",
+        "$value": "◐"
+      },
+      "toolOk": {
+        "$type": "string",
+        "$value": "✓"
+      },
+      "toolFailed": {
+        "$type": "string",
+        "$value": "×"
       }
     },
     "ascii": {
@@ -375,6 +387,18 @@
       "activitySeparator": {
         "$type": "string",
         "$value": "-"
+      },
+      "toolRunning": {
+        "$type": "string",
+        "$value": "~"
+      },
+      "toolOk": {
+        "$type": "string",
+        "$value": "+"
+      },
+      "toolFailed": {
+        "$type": "string",
+        "$value": "x"
       }
     }
   }

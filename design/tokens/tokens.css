@@ -22,6 +22,9 @@
   --lina-glyph-ascii-retrying: ">";
   --lina-glyph-ascii-rule: "-";
   --lina-glyph-ascii-stopped: "o";
+  --lina-glyph-ascii-tool-failed: "x";
+  --lina-glyph-ascii-tool-ok: "+";
+  --lina-glyph-ascii-tool-running: "~";
   --lina-glyph-ascii-unknown: "?";
   --lina-glyph-ascii-waiting: "?";
   --lina-glyph-unicode-action: "›";
@@ -38,6 +41,9 @@
   --lina-glyph-unicode-retrying: "↗";
   --lina-glyph-unicode-rule: "─";
   --lina-glyph-unicode-stopped: "○";
+  --lina-glyph-unicode-tool-failed: "×";
+  --lina-glyph-unicode-tool-ok: "✓";
+  --lina-glyph-unicode-tool-running: "◐";
   --lina-glyph-unicode-unknown: "?";
   --lina-glyph-unicode-waiting: "?";
   --lina-icon-size: 20px;
@@ -79,6 +85,9 @@
   --lina-glyph-ascii-retrying: ">";
   --lina-glyph-ascii-rule: "-";
   --lina-glyph-ascii-stopped: "o";
+  --lina-glyph-ascii-tool-failed: "x";
+  --lina-glyph-ascii-tool-ok: "+";
+  --lina-glyph-ascii-tool-running: "~";
   --lina-glyph-ascii-unknown: "?";
   --lina-glyph-ascii-waiting: "?";
   --lina-glyph-unicode-action: "›";
@@ -95,6 +104,9 @@
   --lina-glyph-unicode-retrying: "↗";
   --lina-glyph-unicode-rule: "─";
   --lina-glyph-unicode-stopped: "○";
+  --lina-glyph-unicode-tool-failed: "×";
+  --lina-glyph-unicode-tool-ok: "✓";
+  --lina-glyph-unicode-tool-running: "◐";
   --lina-glyph-unicode-unknown: "?";
   --lina-glyph-unicode-waiting: "?";
   --lina-icon-size: 20px;
@@ -136,6 +148,9 @@
   --lina-glyph-ascii-retrying: ">";
   --lina-glyph-ascii-rule: "-";
   --lina-glyph-ascii-stopped: "o";
+  --lina-glyph-ascii-tool-failed: "x";
+  --lina-glyph-ascii-tool-ok: "+";
+  --lina-glyph-ascii-tool-running: "~";
   --lina-glyph-ascii-unknown: "?";
   --lina-glyph-ascii-waiting: "?";
   --lina-glyph-unicode-action: "›";
@@ -152,6 +167,9 @@
   --lina-glyph-unicode-retrying: "↗";
   --lina-glyph-unicode-rule: "─";
   --lina-glyph-unicode-stopped: "○";
+  --lina-glyph-unicode-tool-failed: "×";
+  --lina-glyph-unicode-tool-ok: "✓";
+  --lina-glyph-unicode-tool-running: "◐";
   --lina-glyph-unicode-unknown: "?";
   --lina-glyph-unicode-waiting: "?";
   --lina-icon-size: 20px;
