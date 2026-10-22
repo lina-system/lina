@@ -147,7 +147,8 @@ retries are idempotent; superseded runs cannot submit into a later generation.
 Core constructs this store at startup, including without a model account. The
 existing running-list service includes delegated cards, and its open operation
 returns a bounded summary with stage sources. Task row ids use the `task:` prefix
-to distinguish them from background runs; a dismissed landed card remains in
+to distinguish them from background runs and include the execution generation,
+so a stale row cannot dismiss a later delivery; a dismissed landed card remains in
 the ledger. Worker dispatch and its per-thread receipt transport remain owned by
 the worker adapter; client management requests cannot write worker receipts or
 Core verdicts.

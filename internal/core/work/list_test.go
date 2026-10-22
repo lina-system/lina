@@ -40,11 +40,30 @@ func TestLiveTaskList(t *testing.T) {
 	if err != nil || snapshot.Landed != 1 || snapshot.Entries[0].View.State != "done" {
 		t.Fatalf("done: %+v %v", snapshot, err)
 	}
-	if err = list.Dismiss(ctx, "person-1", snapshot.Entries[0].Ref); err != nil {
+	oldRef := snapshot.Entries[0].Ref
+	if err = list.Dismiss(ctx, "person-1", oldRef); err != nil {
 		t.Fatal(err)
 	}
 	snapshot, err = list.Build(ctx, "person-1")
 	if err != nil || len(snapshot.Entries) != 0 {
 		t.Fatalf("dismissed: %+v %v", snapshot, err)
+	}
+	// Keep the first-generation row identity rather than reconstructing it.
+	next := runFixture()
+	next.ID = "run-2"
+	next.Generation = 2
+	next.TurnID = "turn-2"
+	if err = s.Start(ctx, next); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Finish(ctx, "task-1", next.ID, "failed"); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err = list.Build(ctx, "person-1")
+	if err != nil || len(snapshot.Entries) != 1 || snapshot.Entries[0].View.State != "failed" {
+		t.Fatalf("previous dismissal hid a later result: %+v %v", snapshot, err)
+	}
+	if err = list.Dismiss(ctx, "person-1", oldRef); err == nil {
+		t.Fatal("stale row dismissed current generation")
 	}
 }

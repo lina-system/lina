@@ -229,7 +229,7 @@ One connection reaches every agent of the main. A conversation kind, and a quest
 | Agent exchanges | Read the agent talk log, expand one exchange, and subscribe to log entries and to the flag that an exchange needs the person |
 
 The running-list projection also carries delegated task cards. Their opaque row ids
-use a `task:` prefix; `running_get` with `open` returns a paged, source-labeled
+use a `task:` prefix and bind the execution generation; `running_get` with `open` returns a paged, source-labeled
 summary, and `dismiss` hides only landed cards. These read/open/dismiss operations
 do not submit worker receipts, start executions or write Core verdicts.
 
