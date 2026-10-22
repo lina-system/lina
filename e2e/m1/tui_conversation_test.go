@@ -171,11 +171,6 @@ func screenText(snapshot tuiterm.Snapshot) string {
 	}
 	return text.String()
 }
-func waitComposerReady(t *testing.T, h *harness, terminal *terminal) tuiterm.Snapshot {
-	t.Helper()
-	// waitScreen's composer barrier also requires the Connected status.
-	return waitScreen(t, h, terminal, "Ctrl+D")
-}
 
 func waitScreen(t *testing.T, h *harness, terminal *terminal, text string) tuiterm.Snapshot {
 	t.Helper()
@@ -196,6 +191,22 @@ func waitScreen(t *testing.T, h *harness, terminal *terminal, text string) tuite
 		default:
 		}
 		t.Fatalf("screen missing %q: %v; cells=%s", text, err, screenText(snapshot))
+	}
+	return snapshot
+}
+
+// waitComposerReady observes the connected input surface without relying on
+// an optional low-priority footer hint.
+func waitComposerReady(t *testing.T, h *harness, terminal *terminal) tuiterm.Snapshot {
+	t.Helper()
+	snapshot, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
+		rows := screenRows(s)
+		return s.AltScreen && !s.CursorHidden && len(rows) > 0 &&
+			strings.Contains(screenText(s), design.Text(design.English, "live")) &&
+			strings.Contains(rows[len(rows)-1], "? "+design.Text(design.English, "shortcuts.title"))
+	})
+	if err != nil {
+		t.Fatalf("composer missing: %v; cells=%s", err, screenText(snapshot))
 	}
 	return snapshot
 }

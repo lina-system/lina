@@ -85,7 +85,7 @@ func TestM1ReplyShapeLONGQA(t *testing.T) {
 	core := start(true)
 	c, conversation := conversationClient(t, h)
 	environment := []string{"TERM=xterm-256color"}
-	screenTUI := h.startTerminalSize(environment, false, true, 100, 34)
+	screenTUI, _ := h.startConversationTUI(100, 34, environment...)
 	waitScreen(t, h, screenTUI, design.Text(design.English, "live"))
 	h.keys(screenTUI, scenario.Input)
 	waitScreen(t, h, screenTUI, scenario.Input)
@@ -180,7 +180,8 @@ func TestM1ReplyShapeLONGQA(t *testing.T) {
 		}
 		h.keys(terminal, "\x0f")
 		wait(func(s tuiterm.Snapshot) bool {
-			return strings.Contains(screenText(s), scenario.First) && strings.Contains(screenRows(s)[33], "Esc  /  n")
+			return s.CursorHidden && strings.Contains(screenText(s), scenario.First) &&
+				strings.Contains(screenRows(s)[33], "Connected  Esc Close  / Search  n Next match")
 		})
 		h.keys(terminal, "\x1b[F")
 		waitScreen(t, h, terminal, scenario.End)

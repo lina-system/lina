@@ -214,6 +214,7 @@ The staged increment (#117) supplies registered SQLite mapping, per-conversation
 - Depends on: G1-12, G1-18, G1-19, G1-20, G1-35. Design refs: T-04, T-05, T-07, T-10, T-12, T-13, T-15.
 
 **G1-30 TUI memory, agent, account, channel and talk-log commands.** Memory, agent, account, import, channel and talk-log commands. The memory/agent increment provides explicit sourced remember, correct and forget plus agent list/create/choose/rename/delete by id; installed PTY acceptance is `e2e/m1/tui-memory-agents.json`.
+- [Acceptance evidence](../../evidence/tui-management.md) maps every #110 done condition to the existing implementation and passing focused tests; sub-issues #111, #112 and #113 are closed.
 - #113 owns `/channels` and `/talk`, their thin client-service adapters, and installed-Core PTY acceptance. The completion gate requires platform pairing, durable binding and a real exchange-ledger expansion; command interception alone is insufficient.
 - #112 connects installed Core's existing account service to the TUI. Synthetic PTY scenarios cover loopback and pasted redirects, account list and sign-out, and the no-account sign-in offer. Owner real-account validation remains #81.
 - Done when: a forget from the TUI gives zero hits in the next request; agent create, choose, rename and delete round-trip by id; a ChatGPT sign-in completes through the relay from the TUI, including a pasted URL; a channel connection is paired and bound from the TUI, and the agent talk log lists one line per exchange and expands it.

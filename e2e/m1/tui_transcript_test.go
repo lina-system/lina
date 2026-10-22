@@ -78,7 +78,9 @@ func TestM1TUITranscriptInstalledCore(t *testing.T) {
 		}
 		return snapshot
 	}
-	page := wait(func(s tuiterm.Snapshot) bool { return strings.Contains(screenText(s), "Esc  /  n") })
+	page := wait(func(s tuiterm.Snapshot) bool {
+		return s.CursorHidden && strings.Contains(screenRows(s)[33], "Connected  Esc Close  / Search  n Next match")
+	})
 	text := screenText(page)
 	position := 0
 	for i, input := range scenario.Inputs {
@@ -108,7 +110,7 @@ func TestM1TUITranscriptInstalledCore(t *testing.T) {
 	// to the first message. Success depends on rendered cells, never a sleep.
 	h.resizeTerminal(terminal, 100, 12)
 	wait(func(s tuiterm.Snapshot) bool {
-		return len(s.Cells) == 12 && strings.Contains(screenRows(s)[11], "Esc  /  n")
+		return len(s.Cells) == 12 && s.CursorHidden && strings.Contains(screenRows(s)[11], "Connected  Esc Close  / Search  n Next match")
 	})
 	h.keys(terminal, "\x1b[F")
 	wait(func(s tuiterm.Snapshot) bool {
@@ -117,13 +119,13 @@ func TestM1TUITranscriptInstalledCore(t *testing.T) {
 	})
 	h.keys(terminal, "/"+scenario.Search+"\r")
 	wait(func(s tuiterm.Snapshot) bool {
-		return strings.Contains(screenText(s), scenario.Inputs[0]) && strings.Contains(screenText(s), "Esc  /  n  "+scenario.Search)
+		return s.CursorHidden && strings.Contains(screenText(s), scenario.Inputs[0]) && strings.Contains(screenRows(s)[11], "Connected  Esc Close  / Search  n Next match  "+scenario.Search)
 	})
 	h.keys(terminal, "n")
 	h.keys(terminal, "\x1b")
 	wait(func(s tuiterm.Snapshot) bool {
 		text := screenText(s)
-		return strings.Contains(text, scenario.Draft) && !strings.Contains(text, "Esc  /  n")
+		return !s.CursorHidden && strings.Contains(text, scenario.Draft) && !strings.Contains(text, "Esc Close  / Search  n Next match")
 	})
 	h.keys(terminal, "\x04")
 	terminal.process.wait(t, 0)

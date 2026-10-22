@@ -63,6 +63,7 @@ func testTUIControlInstalledCore(t *testing.T, path string, kind protocol.Kind) 
 		core = start(true)
 	}
 	coreSocket := h.socket
+	waitCoreReady(t, h)
 	tap := newAccountTap(t, h, coreSocket)
 	h.socket = tap.socket
 	terminal := h.startScreenTUI("TERM=xterm-256color")
