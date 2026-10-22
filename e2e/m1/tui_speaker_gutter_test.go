@@ -121,7 +121,7 @@ func speakerGutterInstalledCore(t *testing.T, ascii, plain bool) {
 			t.Error("NO_COLOR emitted terminal escapes")
 		}
 		for _, exchange := range scenario.Exchanges {
-			for _, row := range []string{"> You: " + exchange.Input, "* LINA: " + exchange.Reply} {
+			for _, row := range []string{"> You: " + exchange.Input, "* Lina: " + exchange.Reply} {
 				if !strings.Contains(raw, row) {
 					t.Errorf("plain speaker missing: %q", row)
 				}
@@ -152,7 +152,7 @@ func speakerGutterInstalledCore(t *testing.T, ascii, plain bool) {
 				if ascii {
 					prefix = "> You: "
 					if i == 1 {
-						prefix = "* LINA: "
+						prefix = "* Lina: "
 					}
 				}
 				if rows[found] != prefix+text {
