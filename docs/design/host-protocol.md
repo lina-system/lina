@@ -252,6 +252,8 @@ Rules:
 - No `client` message ever carries a channel token back to a client. A client passes a token to LINA Core once, when the person adds a connection.
 - A background notice is sent to clients at the turn boundary at which LINA Core delivers it ([conversation-and-memory.md](conversation-and-memory.md#background-results)). A running-list update may arrive at any time and is display state only.
 
+The core topic carries a `connected` item with optional `shell_file_tools_available` (boolean), keyed once per boot. It represents the completed sandbox probe and is included in snapshots and live updates, including for a client connected during recovery. A false value produces one local setup notice in the TUI's language; it is not a conversation event or model input. The field carries no launcher paths or diagnostic cause.
+
 ### Conversation payloads
 
 The first conversation product defines these additive client 1.0 fields. They
