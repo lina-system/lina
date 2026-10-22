@@ -183,13 +183,13 @@ func correctionMemoryTUI(t *testing.T, h *harness) (func(string) protocol.Memory
 	tap := newAccountTap(t, h, socket, true)
 	h.socket = tap.socket
 	terminal := h.startScreenTUI("TERM=xterm-256color")
-	waitScreen(t, h, terminal, "Ctrl+D")
+	waitComposerReady(t, h, terminal)
 	opened := false
 	command := func(text string) protocol.MemoryResult {
 		t.Helper()
 		if opened {
 			h.keys(terminal, "\x1b")
-			waitScreen(t, h, terminal, "Ctrl+D")
+			waitComposerReady(t, h, terminal)
 		}
 		h.keys(terminal, text+"\r")
 		for {

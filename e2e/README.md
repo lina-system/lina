@@ -99,6 +99,8 @@ composition is used in that companion.
   product processes receive no inherited account, provider, display or user
   configuration environment. All fixtures are synthetic.
 - Readiness comes from socket connections and protocol/terminal observations.
+  Composer scenarios wait for both the composer controls and Connected status;
+  controls alone can appear while initial conversation discovery is pending.
   Socket startup retries are bounded; there are no fixed sleeps. A recovering
   Core may explicitly refuse an input probe as `unavailable`; only that refusal
   allows a fresh probe. Malformed frames, wrong identities or correlations, and

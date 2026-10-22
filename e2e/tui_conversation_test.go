@@ -15,6 +15,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/core/install"
+	"github.com/thisisjun786/lina/internal/design"
 	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
@@ -75,7 +76,7 @@ func TestM1TUIConversationInstalledCore(t *testing.T) {
 		t.Fatal("no history snapshot")
 	}
 	terminal := h.startScreenTUI("TERM=xterm-256color", "COLORTERM=truecolor")
-	fresh := waitScreen(t, h, terminal, "Ctrl+D")
+	fresh := waitComposerReady(t, h, terminal)
 	if text := screenText(fresh); strings.Contains(strings.ToLower(text), "unsupported") {
 		t.Fatalf("fresh install shows an unsupported placeholder: %s", text)
 	}
@@ -170,16 +171,31 @@ func screenText(snapshot tuiterm.Snapshot) string {
 	}
 	return text.String()
 }
-func waitScreen(t *testing.T, h *harness, terminal *terminal, text string) tuiterm.Snapshot {
+func waitComposerReady(t *testing.T, h *harness, terminal *terminal) tuiterm.Snapshot {
 	t.Helper()
-	snapshot, err := terminal.screen.Wait(h.ctx, func(snapshot tuiterm.Snapshot) bool { return strings.Contains(screenText(snapshot), text) })
+	// The composer also appears while Connecting/Resyncing. Its controls alone
+	// do not prove that Enter can send to the discovered conversation.
+	return waitScreen(t, h, terminal, "Ctrl+D", design.Text(design.English, "live"))
+}
+
+func waitScreen(t *testing.T, h *harness, terminal *terminal, texts ...string) tuiterm.Snapshot {
+	t.Helper()
+	snapshot, err := terminal.screen.Wait(h.ctx, func(snapshot tuiterm.Snapshot) bool {
+		content := screenText(snapshot)
+		for _, text := range texts {
+			if !strings.Contains(content, text) {
+				return false
+			}
+		}
+		return true
+	})
 	if err != nil {
 		select {
 		case <-terminal.process.done:
 			t.Logf("TUI exited: %v; stderr=%s", terminal.process.err, &terminal.process.stderr)
 		default:
 		}
-		t.Fatalf("screen missing %q: %v; cells=%s", text, err, screenText(snapshot))
+		t.Fatalf("screen missing %q: %v; cells=%s", texts, err, screenText(snapshot))
 	}
 	return snapshot
 }

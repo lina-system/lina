@@ -66,11 +66,11 @@ func TestM1TUIAgentReconnectInstalledCore(t *testing.T) {
 	agent := *created.AgentID
 	client.Close()
 	terminal := h.startTerminalSize([]string{"TERM=xterm-256color", "LC_ALL=C"}, false, true, 120, 35)
-	waitScreen(t, h, terminal, "Ctrl+D")
+	waitComposerReady(t, h, terminal)
 	h.keys(terminal, "/agents choose "+agent+"\r")
 	waitScreen(t, h, terminal, agent)
 	h.keys(terminal, "\x1b")
-	waitScreen(t, h, terminal, "Ctrl+D")
+	waitComposerReady(t, h, terminal)
 	assertRequest := func(input string) {
 		t.Helper()
 		select {
