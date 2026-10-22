@@ -74,7 +74,7 @@ func TestWorkUnitsDropsSeenCompletionAndRereadsGeneration(t *testing.T) {
 	if got := read(); len(got) != 1 || got[0].Line.Stage != "unknown" {
 		t.Fatalf("new execution hidden or falsely done: %+v", got)
 	}
-	for _, state := range []string{"failed", "stopped"} {
+	for _, state := range []string{"failed", "stopped", "ready_for_review"} {
 		card.State = state
 		card.Run.Generation = 1
 		save()
@@ -87,7 +87,32 @@ func TestWorkUnitsDropsSeenCompletionAndRereadsGeneration(t *testing.T) {
 			t.Fatalf("new %s result missing or plan invented: %+v", state, got)
 		}
 	}
+	card.State = "working"
+	card.Run.Generation = 1
+	save()
+	if got := read(); len(got) != 1 {
+		t.Fatalf("seen acknowledgement hid work needing changes: %+v", got)
+	}
 
+}
+
+func TestReadyForReviewIsNotACompletionVerdict(t *testing.T) {
+	for _, verdict := range []string{"", "verified"} {
+		units := UnplannedWork(map[string]work.Card{
+			"task": {Task: work.Task{ID: "task", Title: "Prepare materials", RequiresApply: true}, State: "ready_for_review", Verdict: verdict, Run: &work.Run{Generation: 1}},
+		})
+		if len(units) != 1 || units[0].Done != nil && *units[0].Done {
+			t.Fatalf("ready result became successful completion: %+v", units)
+		}
+		rows := Compute(units)
+		if len(rows) != 1 || rows[0].Line.Stage != "unknown" || rows[0].Line.Percent != nil {
+			t.Fatalf("unseen ready result missing or plan invented: %+v", rows)
+		}
+		units[0].Seen = true
+		if rows = Compute(units); len(rows) != 0 {
+			t.Fatalf("seen ready result retained (verdict %q): %+v", verdict, rows)
+		}
+	}
 }
 
 func TestUnplannedWorkDoesNotInventPlanValues(t *testing.T) {

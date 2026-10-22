@@ -368,7 +368,12 @@ clock offset (T-06 rule 4), formatted as `0s`, `59s`, `1m 00s`, `59m 59s`, or
 A phase transition or repeated active event never restarts elapsed time.
 A fresh snapshot restores the current phase and label but, without a start
 timestamp, shows unknown; later phases do not invent a start. A same-session
-resync retains an observed start. Completion adds one muted, localized `Worked for 12s`
+resync retains an observed start, reply identity and local stopping state only
+when the snapshot contains the same active `turn_state` key and nonzero revision
+as the last observed state. A changed or unidentifiable state may belong to a
+queued turn that started while disconnected: discard the previous activity,
+restore unknown timing and use the snapshot's authoritative stopping phase.
+Later phase events cannot supply the missed start time. Completion adds one muted, localized `Worked for 12s`
 line under the reply, using the inactive event's server timestamp. This is client
 display metadata: it survives same-session redraw and resync, is cleared with
 revoked or unfocused content, and is never stored or restored from history.
@@ -595,15 +600,21 @@ existing searchable pager, preserving the result-card action when a later card
 is selected. Assistant prose is never folded by this rule.
 
 These rows are ephemeral UI metadata anchored at first observation, separate
-from conversation blocks. Replay is idempotent; gaps wait for resync. Focus,
+from conversation blocks. An anchor with an empty or whitespace-only rendered
+body still displays its tool rows, before any later reply, without adding an
+empty speaker line. Replay is idempotent; gaps wait for resync. Focus,
 epoch and revocation changes discard the rows; an accepted snapshot discards
 that topic's transient rows rather than inventing history from snapshot data.
 An open tool pager clears when its underlying rows are invalidated. Rows never
 enter model history, stored conversation text or exported conversation text.
 The installed-Core PTY test `e2e/m1/tui_tool_rows_test.go` executes a successful and
 failed fixture tool and checks both glyph modes plus model/export exclusion.
+It also covers whitespace streamed before each call.
 Its socket gate holds delivery of the real finish event to make the running
 frame observable without relying on tool speed; it fabricates no tool events.
+`e2e/m1/tui_activity_reconnect_test.go` holds a same-Core reconnect across an
+interrupted turn and a queued turn that executes a real tool. The restored
+activity has unknown timing, and Esc can stop the new turn.
 
 **The pager** shows Details, the activity log and long results: scroll, search, quit. Copy is the person's act in their own terminal: the pager offers a sanitized-text overlay to select with the terminal's own copy. A write by OSC 52 waits for the open point on the clipboard rule below.
 

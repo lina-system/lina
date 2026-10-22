@@ -170,6 +170,9 @@ func TestToolActivitySnapshotRestoresPhaseAndSkipsOptionalEvents(t *testing.T) {
 		t.Run(phase, func(t *testing.T) {
 			m := toolShell(t)
 			applyToolProjection(t, m, toolTurn(t, 1, "waiting_model", ""))
+			// Retain timing only when the snapshot's latest turn revision was
+			// already observed; unseen revisions may cross a queued turn.
+			applyToolProjection(t, m, toolTurn(t, 2, phase, "Reading"))
 			body, _ := json.Marshal(map[string]any{"active": true, "phase": phase, "tool_name": "Reading"})
 			snapshot := protocol.Envelope{Kind: protocol.KindSnapshot, Epoch: "1", Payload: protocol.Snapshot{
 				Topic: toolTopic, Cursor: protocol.StreamCursor{Epoch: "1", Seq: "5"}, RevocationEpoch: "1",
