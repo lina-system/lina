@@ -973,6 +973,14 @@ derives work for the current definition; the late result neither clears a
 correction fence nor stops Core or unrelated goals. This does not settle an
 external effect whose outcome is still unknown.
 
+While a correction is pending, retained tasks may refer to repositories removed
+from the new scope. They do not prevent the manager assessment or unrelated
+goals from progressing. Undispatched reservations return to their runnable
+state without spending a recovery; dispatched effects are reconciled before
+applying the revised plan. That plan retires work outside the new scope and
+dependents whose inputs never landed, preserving the journal and result
+evidence. Unchanged work in the retained scope keeps its landed results.
+
 ### Next action
 
 After every event Core commits for a goal, Core derives the goal's next actions from the current ledger and the goal record. The event itself carries no instruction: it only says that something changed, and Core reads the current state before it acts (see Event-driven flow). The same derivation runs for every goal that is not final once at startup and in each reconcile sweep, so a lost event costs at most one sweep. Mechanics run in Core without a model call. A model turn happens only where judgment is needed: splitting work, writing a work definition or brief, checking a result against the done condition, or drafting text for the person or for someone else. The table lists who acts.
@@ -982,6 +990,7 @@ After every event Core commits for a goal, Core derives the goal's next actions 
 | Goal handed over | `defining`, done condition written | Split into tasks with dependencies and write areas, say the start line, move to `running` and fill capacity. | Manager, then Core |
 | Slot released, a host's load changed, or a task became ready | Any goal with ready tasks | Fill every compatible slot across the main host and Nodes with ready tasks (see Capacity). | Core |
 | Worker turn ended with a completion receipt | Task in progress | Read the receipt and, for code, the pull request once; continue as Judgment and delivery says. | Core, then manager |
+| Pull request changed | Code task delivered or waiting for a merge slot | Invalidate cached head, CI, review and manager proofs and read the pull request again before deriving a merge, even when no merge is queued. | Core |
 | File result reported before worker termination is observed | Task in progress or unknown after recovery | Refuse `report_work_result` without changing the receipt, snapshot or active-run reservation; admit a fresh report only after the matching terminal observation. | Core |
 | Worker turn ended without a receipt | Task in progress | One continuation that asks the worker to finish or report the blocker; a second ending without a receipt is a failure under Stall and failure. | Core |
 | Code task's head is green with no open P0 or P1, and the manager judged it `verified` | Task ready to merge | Merge that head through the merge slot. | Core |

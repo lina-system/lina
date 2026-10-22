@@ -382,6 +382,16 @@ func Derive(state State, now time.Time) (Plan, error) {
 				wait(g, Task{}, "person", "goal.record.changed")
 				continue
 			}
+			settling := false
+			for _, a := range state.Actions {
+				if a.GoalID == g.ID && a.TaskID != "" && a.State != "finished" {
+					wait(g, Task{ID: a.TaskID}, "unknown_effect", "effect.observed")
+					settling = true
+				}
+			}
+			if settling {
+				continue
+			}
 			if !pending(state.Actions, g.ID, "") {
 				add(g, Task{}, PlanGoal, g.RecordRevision, "")
 			}

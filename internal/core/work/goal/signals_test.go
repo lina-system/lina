@@ -97,3 +97,21 @@ func TestWorkerWithoutReceiptGetsOnlyOneContinuation(t *testing.T) {
 		t.Fatal("second empty ending kept looping")
 	}
 }
+
+func TestPRChangeSignalInvalidatesCachedMergeProofs(t *testing.T) {
+	e, worker := claimedAssignment(t)
+	if err := e.Report(t.Context(), worker.ID, 1, Observation{Status: OutcomeSucceeded, Head: "old-head", EffectsSettled: true}); err != nil {
+		t.Fatal(err)
+	}
+	inspection := claimOnlyAction(t, e, InspectPR)
+	proof := Proof{Revision: "old-head", Ref: "old-proof", Passed: true}
+	if err := e.Report(t.Context(), inspection.ID, 1, Observation{Status: OutcomeSucceeded, PR: PRState{Head: "old-head", Checks: proof, Review: proof, Verified: proof, Mergeable: true}}); err != nil {
+		t.Fatal(err)
+	}
+	// No merge has been queued yet. A change signal must still invalidate all
+	// cached authority for that head before the next derivation can merge it.
+	if err := e.Signal(t.Context(), Signal{ID: "head-changed", GoalID: worker.GoalID, TaskID: worker.TaskID}); err != nil {
+		t.Fatal(err)
+	}
+	claimOnlyAction(t, e, InspectPR)
+}

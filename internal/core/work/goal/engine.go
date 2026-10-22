@@ -209,7 +209,7 @@ func (e *Engine) Admit(ctx context.Context, g Goal) error {
 	if err := validateGoal(g); err != nil {
 		return err
 	}
-	if g.AssessedFailure != "" || g.CheckRound != 0 || len(g.Checks) > 0 || g.State != "" || g.Revision != 0 || g.ManagerTurns != 0 || g.AttentionID != "" || g.BlockedReason != "" || len(g.Waits) > 0 || len(g.Evidence) > 0 || g.TargetRevision != "" || g.Deployment != (Proof{}) || g.Verification != (Proof{}) {
+	if g.DefinitionPending || g.AssessedFailure != "" || g.CheckRound != 0 || len(g.Checks) > 0 || g.State != "" || g.Revision != 0 || g.ManagerTurns != 0 || g.AttentionID != "" || g.BlockedReason != "" || len(g.Waits) > 0 || len(g.Evidence) > 0 || g.TargetRevision != "" || g.Deployment != (Proof{}) || g.Verification != (Proof{}) {
 		return ErrInvalid
 	}
 	for _, t := range g.Tasks {
@@ -653,6 +653,7 @@ func applySuccess(g *Goal, t *Task, a Action, o Observation, now int64) error {
 				g.BlockedReason = "The corrected goal needs a revised work definition."
 				return nil
 			}
+			g.Tasks = retainScopedTasks(g.Scope.Repositories, g.Tasks)
 			g.DefinitionPending = false
 		}
 		if t != nil && (t.Stage != TaskQAFailed || t.RepairedBy != "") {

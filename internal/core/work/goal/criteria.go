@@ -91,7 +91,7 @@ func validCriteria(g Goal) bool {
 		repositories[repo] = true
 	}
 	for _, t := range g.Tasks {
-		if !repositories[t.Repository] {
+		if !g.DefinitionPending && !repositories[t.Repository] {
 			return false
 		}
 	}

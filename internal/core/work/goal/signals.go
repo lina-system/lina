@@ -50,7 +50,7 @@ func (e *Engine) Signal(ctx context.Context, s Signal) error {
 		if g.State == GoalDone || g.State == GoalStopped {
 			return nil
 		}
-		t.PR.ObservedAt = 0
+		t.PR = PRState{}
 		for _, r := range v.Records("action") {
 			var a Action
 			if err = json.Unmarshal(r.Body, &a); err != nil {
@@ -59,7 +59,6 @@ func (e *Engine) Signal(ctx context.Context, s Signal) error {
 			if a.GoalID == g.ID && a.TaskID == t.ID && a.State != "finished" {
 				if a.State == "queued" && a.Kind == Merge {
 					a.State = "finished"
-					t.PR = PRState{}
 				} else {
 					a.Signal = hex.EncodeToString(sum[:])
 					a.Deadline = e.cfg.Now().Unix()

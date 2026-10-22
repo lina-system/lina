@@ -184,6 +184,7 @@ func (e *Engine) RefreshDefinitions(ctx context.Context) error {
 					return err
 				}
 				if a.GoalID == g.ID && a.State == "queued" {
+					restoreUndispatchedTask(&current, a)
 					a.State = "finished"
 					if err = put(v, "action", a.ID, a); err != nil {
 						return err
@@ -197,4 +198,81 @@ func (e *Engine) RefreshDefinitions(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// A correction may retire an undispatched reservation, but it must not leave
+// the task waiting for a worker that never started or spend a recovery.
+func restoreUndispatchedTask(g *Goal, a Action) {
+	t := goalTask(g, a.TaskID)
+	if t == nil {
+		return
+	}
+	switch a.Kind {
+	case Assign:
+		t.Stage, t.NodeID = TaskReady, ""
+	case Resume:
+		t.Stage = TaskWorkerLost
+		t.Recoveries = max(0, t.Recoveries-1)
+	case RepairConflict:
+		t.Stage = TaskConflicted
+		t.Conflicts = max(0, t.Conflicts-1)
+	case RepairQA:
+		t.Stage = TaskQAFailed
+		t.QARepairs = max(0, t.QARepairs-1)
+	case ContinueWorker:
+		t.Stage = TaskNoReceipt
+		t.Continuations = max(0, t.Continuations-1)
+	case PlanGoal:
+		t.RepairAsked = false
+	case InspectPR, Merge, RunQA, Deploy, Verify, Observe, Decide, CheckCriterion:
+		return
+	default:
+		return
+	}
+	if reserves(a) {
+		t.Attempt = max(0, t.Attempt-1)
+		t.EffectsSettled = true
+	}
+}
+
+// Execution history and evidence stay in the journal. Only the current task
+// projection drops superseded work after its effects have settled. A landed
+// dependency remains satisfied; an unlanded one requires replanning dependents.
+func retainScopedTasks(repositories []string, tasks []Task) []Task {
+	removed := map[string]Task{}
+	for _, task := range tasks {
+		if !has(repositories, task.Repository) {
+			removed[task.ID] = task
+		}
+	}
+	for changed := true; changed; {
+		changed = false
+		for _, task := range tasks {
+			if _, ok := removed[task.ID]; ok {
+				continue
+			}
+			for _, id := range task.DependsOn {
+				if predecessor, ok := removed[id]; ok && !predecessor.Merge.proves(predecessor.Merge.Revision) {
+					removed[task.ID] = task
+					changed = true
+					break
+				}
+			}
+		}
+	}
+	kept := []Task{}
+	for _, task := range tasks {
+		if _, ok := removed[task.ID]; ok {
+			continue
+		}
+		dependencies := []string{}
+		for _, id := range task.DependsOn {
+			if _, ok := removed[id]; !ok {
+				dependencies = append(dependencies, id)
+			}
+		}
+		task.DependsOn = dependencies
+		kept = append(kept, task)
+	}
+	return kept
 }
