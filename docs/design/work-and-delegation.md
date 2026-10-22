@@ -16,6 +16,7 @@ This contract covers:
 - splitting work into tasks, area leases, parallel hand-off, completion events, stall handling and the running list
 - workers: the coding tools the user installed or signed in to (Codex, Claude Code, Antigravity and Devin), the adapter boundary, the Codex adapter, compatibility, readiness, assignment, control and approvals
 - the task packet (the work definition handed to the worker), LINA's work tools and the completion receipt of a worker, the worker's review and CI fixes, and the manager session's check of a delivery against the work definition before Core merges or closes
+- run to done: the goal above its tasks, its done condition and lifecycle, the next-action table, waits on the outside world, capacity from host load, recovery, evidence before close, the cases that stop and ask, and what the person sees, for code and non-code work alike
 - effects and unknown outcomes inside work
 - GitHub work on delegated tasks: what the worker writes, and LINA Core's merge or close
 - the progress display data (work cards, progress lines and the running list), observation, handover and discovery of work, and what the person is told of work: outcomes and decisions
@@ -315,7 +316,7 @@ Rules:
 - An 일 has a mandatory done condition. Its target date is optional and states its precision (day, month or quarter). Its stages are optional, ordered groups of its 할 일. There is no milestone object: a checkpoint that needs its own owner or blockers is a 할 일 with a deadline that other 할 일 depend on.
 - LINA promotes a 메모 to a 할 일 or an 일 when its kind is clear, says so in one line and offers one action to undo it. A 목표 exists only when the person accepts its draft. The 메모 inbox offers four actions: make it a 할 일, 보관, 나중에 (later) and merge into an existing item.
 - Finishing an 일 archives it with its 할 일 and materials, and LINA says so in one line with one action to restore it. 보관 is a state, not a deletion.
-- A plan is the confirmed structure of an 일: its stages and 할 일, with their order and dependencies. A plan drafted by LINA becomes a plan at exactly one point: the draft is saved and the user confirms it. A plan the user writes directly on the plan screen is a plan without further confirmation.
+- A plan is the confirmed structure of an 일: its stages and 할 일, with their order and dependencies. A plan drafted by LINA becomes a plan at exactly one point: the draft is saved and the user confirms it. A plan the user writes directly on the plan screen is a plan without further confirmation. Handing work over as a goal confirms its 일 and done condition as the start line states them, and the person corrects them by replying (see Run to done); the split into tasks is never a plan confirmation.
 - A plan that LINA drafts for the person to confirm is presented as a `plan_view` result ([host-protocol.md](host-protocol.md#typed-results)): the ordered entries with their kinds, titles and states, replaced completely on each update. Its confirm action is the plan confirmation point above, and no other path turns a `plan_view` into plan objects. A plan that already exists is shown in the same form when the person asks.
 - Decomposing a 목표 into 일, and an 일 into stages and 할 일, and where it starts, is Klotho's planning function ([cognition-and-life.md](cognition-and-life.md)).
 - Free text attached to a record is versioned text: every edit creates a saved version that can be compared and reverted.
@@ -495,7 +496,7 @@ The manager session splits work into tasks that one worker can finish as one pul
 - Every task whose dependencies are satisfied and whose area lease is free is handed off at once. It is limited only by the person's subscription quota for each worker and by the host's capacity. LINA Core never holds back a task to wait for another task that it does not depend on.
 - Quota is read per worker from the worker's adapter as quota rows in which unknown is a value ([runtime.md](runtime.md#usage-and-cost)). Where a worker reports none, LINA Core infers it from the worker's quota errors and its own usage records. A worker that stops on a quota or rate-limit error is parked until its window resets, and the task is not retried on it; the task goes to the next suitable worker (see Choosing the worker).
 - Host capacity is what the host can run beside the person's own work, within the install's declared resource caps ([non-competition.md](non-competition.md)). A device whose Node is disconnected or yielding receives no new hand-off.
-- Concurrency starts at 4 tasks in flight per repository, with a lower cap for tasks that write the same kind of area, and is then limited by quota and host capacity. It is tuned by measurement.
+- Concurrency is the free slots that the reported load and resources of the main host and each Node allow, as Run to done defines under Capacity, limited further by quota, the declared resource caps and area leases. There is no fixed count per repository or per fleet.
 - One task, one worker, one worktree, one branch. LINA Core creates the worktree and the branch, named by task id, and starts the worker with that worktree as its working directory. A worker's own worktree option is never used, and two workers never share a worktree. Git refusing one branch in two worktrees is a second guard, not the first.
 - The manager session selects work and its order; the work engine reserves capacity, obtains Node bids and dispatches the recorded assignments. The one-coordinator rule of the Work engine holds: a worker is never used through its own team or coordinator feature.
 - When a task has landed, the work engine releases at once every task that was waiting only on it.
@@ -701,6 +702,165 @@ Every message LINA Core sends to a work thread, and every result a work thread r
 - A question is shared between tasks only when decision owner, permissions, budget, goal and dependency revision are all identical. A task waiting for a decision never blocks unrelated tasks.
 - The questions and results of a background run return the same way, to the conversation that asked, through its background notice ([conversation-and-memory.md](conversation-and-memory.md#background-results)).
 
+## Run to done
+
+When the person hands LINA a goal, the work engine owns that goal until its done condition is proved or the person stops it. Nobody has to remember the next step: not the person, not the conversation and not a watcher outside LINA. This holds for code and for everything else LINA does as work: research, documents, schedules, messages and files. Run to done is how the work engine behaves. It adds no object, screen or word for the person: the goal is the 일 (or the 목표, or a single 할 일) the person already sees, and its progress is the progress line and the running list of Progress display.
+
+The section builds on the rest of this contract. Tasks, background runs, completion events, the reconcile sweep, the stall rule, the one recovery, the manager's check and the merge are defined above and are not repeated here. What this section adds is the goal above them: what done means for a goal, the one rule that keeps a goal moving, the table that derives its next action, the waits on the outside world, capacity, recovery at goal level, the evidence a goal needs before it closes, the few cases that stop and ask, and what the person sees.
+
+### Goal and done condition
+
+- **Handing over.** A goal starts when the person asks LINA to do something that takes more than one turn or ends in a result someone could check ("다음 주 출장 준비해 줘", "이 자료 조사해서 정리해 줘", "이 버그 고쳐서 배포까지"). The agent in the conversation writes the goal and starts it in the same turn. Handing a goal over is the confirmation of its 일 and its done condition as the start line states them (see What the person sees); LINA does not wait for a separate approval of the goal or of its tasks. The person can correct the goal at any time, and a correction is a new revision of the goal (see Revision).
+- **The goal record.** A goal records: the outcome in the person's words; its done condition as a short list of criteria; its scope and what is out of scope; the assumptions LINA made where the request left something open; the decisions the person made, each with the message that made it; its tasks; its waits; and its state. The record is canon in the work ledger and is shown to every turn of the manager session that owns the goal, so a compacted conversation cannot lose it.
+- **Criteria.** Every criterion carries exactly one check that says how it is established: an observation Core can read, a check Core can run, or a judgment against a written rubric. A criterion that cannot be written with a check is not yet a criterion: the manager rewrites it, or it is one of the ambiguities that the agent may ask about (see Stop and ask).
+- **Ambiguity before asking.** Before the goal starts, the agent goes through the parts of the request that can be open: the target, the scope boundary, the form of the result, the success criterion, the constraints, and any effect that leaves the person or cannot be undone. For each it first reads what LINA already has: the records, memory, the calendar and mail the person connected, earlier goals. Where two readings remain that would give materially different results, it asks one question (see Stop and ask). Otherwise it picks the most defensible reading, records it as an assumption and says it in the start line.
+
+Done is the end of the whole lifecycle of the work, never a stage of it:
+
+| Kind of goal | Done means | Typical criteria and their checks |
+| --- | --- | --- |
+| Code | The change runs where it is used | Each task's pull request merged (read of GitHub); QA passed on the merged commit (check run); deployed where the repository has a service (read of the deploy target at that revision); the service answers as the done condition says (runtime probe). A goal with no service records why deployment does not apply. |
+| Research and documents | The result is in the person's materials and answers what was asked | The document exists at its destination at a known revision (read); each question the done condition lists is answered or marked open with the reason (rubric judged by the manager); every cited passage resolves (citation check). |
+| Schedule | The calendar holds what the goal needs | Each event exists with the stated time, place and attendees (read back from the calendar); no clash with the person's other events in the window (read); invitations or changes that notify others went out only under approval. |
+| Messages | The message reached its recipient and, where the goal needs it, the answer came back | The sent message is in the account's sent items or the platform's record (read); the reply is in the thread (read), or the wait expired and the person decided what follows. |
+| Files | The files are where they belong and nothing else changed | Each file is at its destination with the expected content hash (read); no file outside the scope changed (comparison of the scope before and after). |
+| Composite | Every part is done | The union of the criteria of its parts. Most real goals are composite. |
+
+Two examples show the shape for non-code work.
+
+"다음 주 출장 준비해 줘" becomes one goal. LINA first reads the calendar and mail for the trip: dates, city, the meeting that is its reason, bookings already made. Its tasks are: a background run that gathers the facts and drafts the itinerary; calendar blocks on the person's own calendar for travel and meetings (no other attendees, so no approval); the bookings that are still missing, which need payment and become one decision row with a recommendation; a message to the host to confirm the meeting time, which goes out in the person's name and therefore needs approval; and the person's own 할 일 for what only they can do, such as packing or a document to sign, placed on `when` days before departure. The waits are the booking confirmation mail and the host's reply, each with a deadline set before departure. The goal is done when the itinerary is in the person's materials, the calendar blocks read back correctly, every booking is confirmed by a confirmation mail or has been declined by the person, the host's reply is in or the person decided what to do without it, and the person's own 할 일 exist.
+
+"이 자료 조사해서 정리해 줘" becomes one goal whose done condition lists the questions the person wants answered, inferred from the request and the materials named in it and stated in the start line. Its tasks are one or a few background runs with disjoint scopes and one drafting run that writes the summary document from their results. The goal is done when the document is in the person's materials, every citation resolves, and the manager has judged that each listed question is answered or honestly marked open. A run that lands partial does not close the goal: the next action is a follow-up run on what is missing, or an open question marked in the document when the sources do not have the answer.
+
+### Lifecycle
+
+A goal is in one of these states. The person sees them only through the progress line and the running list, in the words of Progress display.
+
+| State | Meaning |
+| --- | --- |
+| `defining` | The agent is writing the done condition. It lasts at most one turn, or until the answer to the one question of Stop and ask. |
+| `running` | At least one task or background run is in progress, or ready and about to be dispatched. |
+| `waiting` | Nothing runs, and every open criterion is behind a named wait (see Waits on the outside) or a row in "Waiting for me". |
+| `checking` | Every task has landed and Core is collecting the evidence of every criterion. |
+| `done` | Every criterion is met with current evidence. |
+| `stopped` | The person stopped the goal. What it produced is kept. |
+| `blocked` | Work cannot go on without the person, and a row says why: recovery is exhausted, or evidence failed with no repair inside the scope. |
+
+`done` and `stopped` are final. A `blocked` goal resumes when the person answers its row. Revision of the goal moves it back to `running` from any state but `stopped`.
+
+**The liveness rule.** A goal that is not final always has at least one of these: a task or background run in progress, a named wait with a wake condition and a deadline, a recovery in progress, or a row in "Waiting for me". Core checks the rule after every transition it commits for the goal. A goal that has none is orphaned. Core then runs the derivation of the next action at once. When the derivation finds nothing to do, Core gives the manager session one turn that names the gap: the open criteria and the fact that nothing will move them. When that turn records no task, wait or decision either, the goal becomes `blocked` with a row that says in plain words that LINA could not find a way to finish it and what is missing. A goal never ends silently and never sits idle with open criteria.
+
+**Revision.** A correction by the person, a decision, or a late answer to a question whose deadline passed, is a new revision of the goal. Tasks whose inputs did not change keep their results. Tasks whose inputs changed, and the tasks that depend on them, are derived again. A criterion that was met stays met only while its evidence still refers to the current target.
+
+### Next action
+
+After every event Core commits for a goal, Core derives the goal's next actions from the current ledger and the goal record. The event itself carries no instruction: it only says that something changed, and Core reads the current state before it acts (see Event-driven flow). The same derivation runs for every goal that is not final once at startup and in each reconcile sweep, so a lost event costs at most one sweep. Mechanics run in Core without a model call. A model turn happens only where judgment is needed: splitting work, writing a work definition or brief, checking a result against the done condition, or drafting text for the person or for someone else. The table lists who acts.
+
+| Event | Goal or task state | Next action | By |
+| --- | --- | --- | --- |
+| Goal handed over | `defining`, done condition written | Split into tasks with dependencies and write areas, say the start line, move to `running` and fill capacity. | Manager, then Core |
+| Slot released, a host's load changed, or a task became ready | Any goal with ready tasks | Fill every compatible slot across the main host and Nodes with ready tasks (see Capacity). | Core |
+| Worker turn ended with a completion receipt | Task in progress | Read the receipt and, for code, the pull request once; continue as Judgment and delivery says. | Core, then manager |
+| Worker turn ended without a receipt | Task in progress | One continuation that asks the worker to finish or report the blocker; a second ending without a receipt is a failure under Stall and failure. | Core |
+| Code task's head is green with no open P0 or P1, and the manager judged it `verified` | Task ready to merge | Merge that head through the merge slot. | Core |
+| Merge observed | Code task landed | Release its dependents, start QA on the merged commit once, and fill capacity. | Core |
+| QA failed on a merged commit | Code goal `running` | Record the evidence and file a repair task in the same goal; its own merge needs its own QA, and that QA passing supersedes the failure. Nothing is deployed from the failing commit. | Manager |
+| QA passed on the current merged result of every task (a repair's passing QA supersedes the failed QA of the commit it repaired) | Code goal with a service | Deploy that result to the service and probe it. A deploy inside the person's own devices runs under the existing grant; a deploy that is public or reaches other people is approved first (see Stop and ask). | Core |
+| Deploy observed | Code goal | Probe the running service at the deployed revision against the done condition; an exit code is not a probe. | Core |
+| Background run landed complete | Research or document task | Check citations, store the result, re-evaluate the criteria it serves. | Core, then manager |
+| Background run landed partial | Research or document task | Start one follow-up run on what is missing, or mark it open in the result when the sources cannot answer it. | Manager |
+| Draft or file result ready | Document or file task | Check it against the done condition and land it at its destination; a destination never has existing files merged or overwritten. | Manager, then Core |
+| Effect performed through a plugin (calendar event, sent message, file move) | Effect task | Read back the external record; only the read sets the criterion. | Core |
+| Reply arrived in a waited thread, a record changed, or a date was reached | Wait open | Close the wait and re-evaluate the criteria behind it. | Core |
+| A wait's deadline passed | Wait open | Read the source once more; if still open, apply the wait's expiry action (see Waits on the outside). | Core |
+| The person answered a row | Row open | Record the decision with its message, revise the goal if it changes it, continue. | Core |
+| A row's deadline passed unanswered | Row open | Apply the row's default; for an outward or irreversible effect the default is not to act, and the goal keeps waiting on that criterion while everything else continues. | Core |
+| Pull request conflicts with its base | Code task | Return it once to its own worker as a rebase; a second failure is a decision row. | Core |
+| Worker dead, stalled or failed | Task in progress | Reconcile unknown effects, then recover once, or hand over to the next worker on quota, as Stall and failure says. | Core |
+| A worker or model account hit its quota | Task or run in progress | Park the account until its stated reset and move the work to the next suitable account; waiting on quota spends no recovery. | Core |
+| Restart | Any goal not final | Reconcile unknown effects, then derive from the ledger as after any event. | Core |
+| All tasks landed | `running` | Move to `checking`, collect fresh evidence for every criterion. | Core |
+| Every criterion met with current evidence | `checking` | Close as `done` and give the summary. | Core |
+| A criterion's evidence failed | `checking` | File the repair task within scope and return to `running`; with no repair inside the scope, `blocked` with a row. | Manager |
+| A met criterion's target changed afterwards (the document was edited, the event moved) | Goal not final | Mark the criterion open again and derive. | Core |
+| No task, wait, recovery or row | Goal not final | The liveness rule. | Core, then manager |
+
+### Waits on the outside
+
+Much non-code work waits on things LINA does not control: a reply, a confirmation mail, a date, a review by someone else, a document another person is editing. A wait is a record, never a loop.
+
+- A wait records what it waits for (a reply in one thread, a record changing, a date, a check result, the person), the signal that wakes it (a change signal from the plugin of that service, a timer at a time), its deadline, and its expiry action.
+- Change signals are hints, as [integrations.md](integrations.md) says: a signal starts one read of the source, and only the read closes the wait. Core never reads a source on a short interval to see whether something happened. Besides signals, the only reads are the one at the deadline and the slow reconcile sweep.
+- The deadline comes from the goal: a reply needed before a trip waits until a day before the trip, not until an arbitrary hour. Without a date in the goal, Core uses a starting default per kind of wait (see Deferred).
+- At expiry, Core reads the source once more. If the wait is still open, the expiry action applies. The action never sends anything in the person's name by itself: a reminder to someone else is an outward message and needs approval. The usual expiry action is a row in "Waiting for me" with the recommendation first ("no reply from the host yet; I recommend a short follow-up, here is the draft"), and the goal goes on with everything that does not depend on the wait.
+- A wait on the person is a row in "Waiting for me". It carries a recommendation, a deadline and a default. Reversible choices are never rows: the agent decides them.
+- A dated wait uses Core's durable timers, which fire once per instant across restarts and do not call a model when nothing changed.
+- A wait that belongs to a 할 일 is that 할 일's `waiting_on`, with the deadline as its next-check date, so the to-do views and the goal show the same wait.
+- If the other side is waiting on the person, that is the person's own 할 일, as the to-do record says.
+
+### Capacity
+
+Every ready task starts at once, limited only by the person's quota and by what the Nodes can carry. Filling is driven by events: a goal admitted, a task landed, a slot released, a Node's load changing. It never waits for a timer or for a message from the person.
+
+- The main host and each connected Node report what they can take; on an installation without Node, the main host alone reports, through the same report that Core makes for itself. A report holds its cores, its load, its available memory and disk, its declared resource caps ([non-competition.md](non-competition.md)), the workers ready on it and their quota rows, and its current reservations. Core computes the free slots of each host from these, and does not use a fixed count per host, per repository or per fleet. A report that is stale or unknown counts as no free capacity, and a Node that is disconnected or yielding gets nothing new.
+- A slot is reserved in the same transaction that claims the task, so two derivations never place the same task or overfill a Node. An award to a Node carries a token and a deadline; an award whose outcome is unknown is resolved by reading that Node's receipt before the task can go anywhere else.
+- Ready tasks are placed in a stable order: tasks of goals with a person's deadline first, then by dependency depth, then by the age of the goal. Within that order, a task goes to the Node with the most headroom that has a suitable worker, and Nodes kept for the person's own use come last.
+- Background runs and plugin effects run in Core and use the person's model and service accounts. They follow the run limits of Background runs and the account's own rate limits, and they never take a Node slot.
+- When capacity shrinks, Core starts nothing new on that Node and does not stop healthy work.
+- A ready task that cannot start has one visible reason, as Parallel hand-off says.
+
+### Recovery
+
+- The goal record, its tasks, waits and evidence are canon in the work ledger. A restart loses no goal: Core reconciles effects whose outcome is unknown, then derives the next actions of every goal that is not final.
+- Every derived action has an identity bound to the goal, the task, its attempt, its stage and the head or revision it acts on. Replaying an event or running two derivations at once never dispatches the same action twice.
+- Task-level recovery is the one recovery of Stall and failure. A goal does not add attempts on top: when a task's recovery is exhausted, the goal is `blocked` on that task while its independent tasks continue.
+- A wait survives restart with its deadline. A timer that should have fired while Core was down fires once at startup.
+
+### Evidence before close
+
+A goal closes as `done` only when every criterion has evidence that Core collected and that refers to the current target. Evidence is one of:
+
+- a read of the external record: the pull request merged, the calendar event and its fields, the sent message, the reply in the thread, the file and its hash at the destination;
+- a check Core ran, with its output retained: QA, a test command, a runtime probe of a deployed service;
+- the citation check of a document's passages;
+- the manager's judgment against the criterion's written rubric, recorded with what it read.
+
+A worker's receipt, a model's sentence, a completed turn, a command's exit code alone, a pending check and an effect with an unknown outcome are never evidence. At `checking`, Core reads every piece of evidence again rather than trusting what it stored, so a document edited or an event moved after it was checked reopens its criterion. One check per criterion is enough; no panel of verifiers is used.
+
+### Stop and ask
+
+LINA asks the person only in these cases. Each is one row in "Waiting for me", in plain words with the recommendation first; independent questions of one goal are asked together.
+
+1. An effect that leaves the person or cannot be undone: sending in the person's name, paying, publishing or deploying to the public, deleting for good. Each such effect is approved for its own arguments, every time, as [main-authority.md](main-authority.md#approval) requires; handing over a goal never approves it in advance, and no standing grant covers an outward plugin action. Repeated approvals of one kind are grouped by scope as that contract allows.
+2. A request that two plausible readings would turn into materially different results, when nothing LINA can read settles it.
+3. Information that only the person has, such as a preference never stated or an account to sign in to.
+4. Something only the person can do: sign, attend, pay in person, decide between people.
+5. A task whose one recovery failed, or a criterion that failed with no repair inside the scope.
+
+Everything else is decided by LINA and shown as in progress: whether to start, in what order, how many at once, which worker, whether to retry, how to split, and every reversible edit. A question that is not on this list is a defect of the work engine, as Default posture says.
+
+### What the person sees
+
+- **At the start, one line.** What LINA will do, what done means, any assumption it made, and what it will need from the person if that is already known. For example: "출장 준비 시작할게요. 일정·숙소·이동을 캘린더에 넣고 일정표를 만들어 둘게요. 숙소 결제만 확인받을게요."
+- **While it runs, nothing new.** The goal is a progress line and its tasks are rows of the running list. A landing of one task is a row change, not a notice. Only a row of "Waiting for me" can notify, under the notification rules of [surfaces.md](surfaces.md).
+- **At the end, one summary.** It begins with the outcome word (done, or stopped, or blocked with the reason), says in a line what changed for the person, and gives one clause of evidence per criterion in the person's words ("일정표는 자료에 있고, 캘린더 세 건 확인했고, 호텔 확인 메일 받았어요"). It lists what was handed to the person as their own 할 일. It names no issue, pull request, branch, check, path or id; those are in the Details of the goal's card.
+
+### Acceptance
+
+Headless end-to-end scenarios with stub workers, stub plugins and Core's own timers prove this section; no scenario relies on timing luck:
+
+- A code goal of five dependent tasks runs to `done` with no message from the person after the first. One worker is killed and one merge conflict is injected on the way; both are recovered, capacity stays full, and the goal closes only with merge, QA, deploy and probe evidence.
+- A schedule-and-message goal (a trip) with a stub calendar and mail plugin: calendar blocks are read back, one reply arrives through a change signal before its deadline, one wait expires and becomes a row with a draft, a payment becomes a decision row whose default is not to act, and the goal closes after the person's answer with every criterion's evidence. A restart during a wait resumes it without sending anything twice.
+- A research goal: one run lands partial, a follow-up run completes it, an unresolved citation keeps the goal open until it is fixed, and a later edit of the document after `checking` reopens its criterion.
+- A goal whose derivation finds no next action triggers the liveness rule once and ends `blocked` with a plain row instead of sitting idle.
+
+### Sources
+
+Two permissively licensed sources shaped this section; LINA keeps none of their code.
+
+- Hermes Agent (MIT): events over polling with a level-triggered reconcile behind them ([hermes-patterns.md](hermes-patterns.md#p9-events-over-polling)).
+- [devflow](https://github.com/thisisjun786/devflow) (Apache-2.0), LINA's working prototype of this behaviour: load-scored bidding across hosts with award tokens and deadlines before failover; stall detection from protocol state with one recovery and then a block; one continuation for a worker that went idle without finishing; quota waits that spend no recovery; QA keyed to an authorized landed merge; stacked landing on merged dependencies; and non-code task jobs that work in an isolated directory, fingerprint their output at done, refuse a result that changed after done, and land a verified copy at their destination without touching existing files. What devflow does not show, LINA defines here: the goal record above tasks, waits on the outside world, evidence for non-code criteria, and capacity sized from load rather than a fixed ceiling.
+
 ## Effects and unknown outcomes
 
 Effect states and idempotency keys are defined in [host-protocol.md](host-protocol.md), the effect ledger in [runtime.md](runtime.md), and epochs, reconciliation and the task owner's disposition of irreversible effects in [main-authority.md](main-authority.md). Work applies them as follows:
@@ -809,7 +969,7 @@ At the operational switch LINA takes over CRW's coordination functions and CRW r
 - The verified Codex versions and the judgments of the experimental fields LINA uses: set by the worker adapter round trip of the first implementation issue (V5) and recorded in the release manifest.
 - The completion receipt, question and finding schemas, their first version, and the written meaning of the review severities P0 to P3 that the worker reports: set by the worker adapter implementation issue. A receipt maps onto the pinned CRW shape by adding fields only.
 - What each worker profile (direct, single and complementary) means, and the values it records: set during work engine implementation acceptance.
-- The heartbeat interval H, the concurrency limits per repository, per worker and per area class, the manager's busy wait limit before parallel fallback, the stall bounds per size class, the period of the reconcile pass, the soft size budget, the defaults for background runs (concurrency and the stall check-in) and the budget caps: set by measurement during work engine implementation acceptance and tuned from LINA's own merged pull requests.
+- The heartbeat interval H, the capacity formula that turns a Node's report into free slots, the per-worker and per-area-class limits, the default deadline per kind of wait in Run to done, the manager's busy wait limit before parallel fallback, the stall bounds per size class, the period of the reconcile pass, the soft size budget, the defaults for background runs (concurrency and the stall check-in) and the budget caps: set by measurement during work engine implementation acceptance and tuned from LINA's own merged pull requests.
 - Retention periods for closed workspaces: set during work engine implementation acceptance.
 - Whether Codex subagents inside a worker see the `lina` tools, and that a declined approval leaves the action unexecuted: confirmed by QA in the worker adapter implementation issue.
 - Remote-device worker hosting through Node and the worker's own pull-request path from the device: verified during Node implementation acceptance; unsupported until then.
