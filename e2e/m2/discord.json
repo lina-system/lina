@@ -1,0 +1,10 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "platform": "discord",
+  "account": "123456",
+  "owner": "200",
+  "chat": "100",
+  "input": "Return the synthetic channel result.",
+  "paragraphs": [1500, 900],
+  "blocked_code": 50007
+}

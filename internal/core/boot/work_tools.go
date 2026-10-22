@@ -44,7 +44,7 @@ func decodeWork(raw string) (workInput, error) {
 	}
 	return in, nil
 }
-func (r *conversationRuntime) prepareWorkTools(turnID string, bindings map[string]loop.Tool) ([]provider.ToolDecl, error) {
+func (r *conversationRuntime) prepareGoalWorkTools(turnID string, bindings map[string]loop.Tool) ([]provider.ToolDecl, error) {
 	runtime := r.workEngine
 	if runtime == nil && r.router != nil {
 		runtime = r.router.root.workEngine
@@ -52,7 +52,7 @@ func (r *conversationRuntime) prepareWorkTools(turnID string, bindings map[strin
 	if runtime == nil {
 		return nil, nil
 	}
-	bindings["dispatch_work"] = loop.Tool{
+	bindings["dispatch_code_goal"] = loop.Tool{
 		Validate: func(c provider.ToolCall) (string, error) {
 			_, err := decodeWork(c.Arguments)
 			return "work:" + r.agent, err
@@ -76,5 +76,5 @@ func (r *conversationRuntime) prepareWorkTools(turnID string, bindings map[strin
 			return loop.Result{ID: c.ID, Code: loop.OK, Output: body}
 		},
 	}
-	return []provider.ToolDecl{provider.ToolDecl(`{"type":"function","name":"dispatch_work","description":"Hand a code goal to the work engine through merge, QA, deployment if applicable and runtime verification. Define the complete outcome and checked criteria, scope, assumptions and dependency-ordered tasks; return immediately. Admission grants no external-effect authority.","parameters":{"type":"object","properties":{"outcome":{"type":"string"},"done":{"type":"string"},"scope":{"type":"object","properties":{"repositories":{"type":"array","items":{"type":"string"}},"includes":{"type":"string"},"excludes":{"type":"string"}},"required":["repositories","includes","excludes"],"additionalProperties":false},"assumptions":{"type":"array","items":{"type":"string"}},"criteria":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"statement":{"type":"string"},"check":{"type":"object","properties":{"kind":{"type":"string","enum":["read","check","judgment"]},"method":{"type":"string"},"target":{"type":"string"},"task_id":{"type":"string"},"rubric":{"type":"string"}},"required":["kind","method","target"],"additionalProperties":false}},"required":["id","statement","check"],"additionalProperties":false}},"service_target":{"type":"string"},"no_service_reason":{"type":"string"},"tasks":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"done":{"type":"string"},"repository":{"type":"string"},"base":{"type":"string"},"area":{"type":"string"},"worker":{"type":"string"},"resources":{"type":"object","properties":{"cpu":{"type":"number"},"memory_mb":{"type":"integer"},"disk_mb":{"type":"integer"}},"required":["cpu","memory_mb","disk_mb"],"additionalProperties":false},"depends_on":{"type":"array","items":{"type":"string"}}},"required":["id","done","repository","base","area","worker","resources"],"additionalProperties":false}}},"required":["outcome","done","scope","criteria","tasks"],"additionalProperties":false}}`)}, nil
+	return []provider.ToolDecl{provider.ToolDecl(`{"type":"function","name":"dispatch_code_goal","description":"Hand a code goal to the work engine through merge, QA, deployment if applicable and runtime verification. Define the complete outcome and checked criteria, scope, assumptions and dependency-ordered tasks; return immediately. Admission grants no external-effect authority.","parameters":{"type":"object","properties":{"outcome":{"type":"string"},"done":{"type":"string"},"scope":{"type":"object","properties":{"repositories":{"type":"array","items":{"type":"string"}},"includes":{"type":"string"},"excludes":{"type":"string"}},"required":["repositories","includes","excludes"],"additionalProperties":false},"assumptions":{"type":"array","items":{"type":"string"}},"criteria":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"statement":{"type":"string"},"check":{"type":"object","properties":{"kind":{"type":"string","enum":["read","check","judgment"]},"method":{"type":"string"},"target":{"type":"string"},"task_id":{"type":"string"},"rubric":{"type":"string"}},"required":["kind","method","target"],"additionalProperties":false}},"required":["id","statement","check"],"additionalProperties":false}},"service_target":{"type":"string"},"no_service_reason":{"type":"string"},"tasks":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"done":{"type":"string"},"repository":{"type":"string"},"base":{"type":"string"},"area":{"type":"string"},"worker":{"type":"string"},"resources":{"type":"object","properties":{"cpu":{"type":"number"},"memory_mb":{"type":"integer"},"disk_mb":{"type":"integer"}},"required":["cpu","memory_mb","disk_mb"],"additionalProperties":false},"depends_on":{"type":"array","items":{"type":"string"}}},"required":["id","done","repository","base","area","worker","resources"],"additionalProperties":false}}},"required":["outcome","done","scope","criteria","tasks"],"additionalProperties":false}}`)}, nil
 }

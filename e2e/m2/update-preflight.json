@@ -1,0 +1,5 @@
+{
+  "refusal_exit": 78,
+  "newer_schema": 9999,
+  "cases": ["compatible", "older", "newer", "newer WAL", "missing WAL index", "unsupported peers", "unimplemented peers", "missing table", "corrupt", "fresh"]
+}

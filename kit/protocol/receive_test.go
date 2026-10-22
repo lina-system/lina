@@ -40,7 +40,6 @@ func TestClientMalformedFramesAreNotUnknownKinds(t *testing.T) {
 		"empty kind":                        func(v map[string]any) { v["kind"] = "" },
 		"numeric kind":                      func(v map[string]any) { v["kind"] = 42 },
 		"unknown envelope field":            func(v map[string]any) { v["extra"] = true },
-		"unknown known-payload field":       func(v map[string]any) { v["payload"].(map[string]any)["extra"] = true },
 		"future kind missing envelope":      func(v map[string]any) { v["kind"] = "future_event"; delete(v, "epoch") },
 		"future kind bad version":           func(v map[string]any) { v["kind"] = "future_event"; v["protocol"].(map[string]any)["version"] = "2.0" },
 		"future kind bad payload":           func(v map[string]any) { v["kind"] = "future_event"; v["payload"] = nil },

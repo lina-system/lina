@@ -46,6 +46,7 @@ type shellBlock struct {
 }
 
 type shellModel struct {
+	activityFrame uint64
 	cardScroll    int
 	cardRequests  map[string]state.CardAnswerRequest
 	focused       bool
@@ -58,13 +59,16 @@ type shellModel struct {
 	size          layout.Size
 	gate          term.Gate
 	events        bool
+	disambiguated bool
 	now           func() time.Time
+	quitDeadline  time.Time
 	blocks        map[string]shellBlock
 	resyncPending map[string]protocol.StreamCursor
 	resyncSeen    map[resyncSignal]protocol.StreamCursor
 	conversation  conversationView
 	talk          talkView
 	channels      channelView
+	web           webView
 	accounts      accountView
 	accountRows   []protocol.AccountSummary
 	accountsKnown bool
@@ -91,11 +95,27 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch msg := message.(type) {
+	case quitHintExpired:
+		if !m.now().Before(m.quitDeadline) {
+			m.quitDeadline = time.Time{}
+		}
+	case activityTick:
+		if m.activityVisible() {
+			m.content, _ = state.Reduce(m.content, state.Tick{Now: time.Time(msg)})
+			if !m.staticActivity() {
+				m.activityFrame++
+			}
+		}
+
 	case shellBegin:
 		if msg.Generation > m.generation {
 			m.generation = msg.Generation
+			if m.conversation.pager.developer {
+				m.conversation.pager = textPager{}
+			}
 			m.talk = talkView{attempt: m.talk.attempt + 1}
 			m.channels = channelView{attempt: m.channels.attempt + 1}
+			m.web = webView{attempt: m.web.attempt + 1}
 			m.accounts = accountView{}
 			m.accountRows = nil
 			m.accountsKnown = false
@@ -191,11 +211,6 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshOpenCard()
 		m.refreshRunning()
 		m.refreshBlocks()
-		for _, block := range m.content.Blocks {
-			if block.Kind == protocol.KindTurnState && block.TurnKnown {
-				m.content, _ = state.Reduce(m.content, state.Turn{Active: block.TurnActive})
-			}
-		}
 		afterCard, _ := m.content.CurrentCard()
 		if beforeCard.ID != afterCard.ID || beforeCard.Revision != afterCard.Revision {
 			m.cardGate.CardChanged(m.now())
@@ -245,9 +260,17 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		options := m.styles.options
 		options.Width = max(1, msg.Width)
 		m.styles = NewStyles(options)
+		m.refreshDeveloper()
 	case tea.KeyboardEnhancementsMsg:
 		m.events = msg.SupportsEventTypes()
+		m.disambiguated = msg.SupportsKeyDisambiguation()
+	case tea.MouseWheelMsg:
+		m.conversationWheel(msg)
 	case tea.PasteMsg:
+		if m.web.open {
+			m.webPaste(msg.Content)
+			return m, nil
+		}
 		if m.content.CardView.ID != "" {
 			return m, m.cardPaste(msg.Content)
 		}
@@ -266,6 +289,9 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.editComposer(tea.PasteMsg{Content: sanitize.Display(msg.Content)})
 		}
 	case tea.KeyMsg:
+		if m.web.open {
+			return m, m.webKey(msg)
+		}
 		if m.talk.open {
 			return m, m.talkKey(msg)
 		}
@@ -295,11 +321,7 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch key.Name {
 		case "ctrl+c":
-			if m.content.Draft.Text != "" || len(m.content.Draft.Attachments) != 0 {
-				m.content, _ = state.Reduce(m.content, state.EditDraft{})
-				return m, nil
-			}
-			fallthrough
+			return m, m.controlC()
 		case "q", "ctrl+d":
 			m.status = ConnectionStatus{State: Quit}
 			return m, tea.Quit
@@ -324,6 +346,12 @@ func (m *shellModel) refreshBlocks() {
 			block.Text = m.cardSummary(card)
 		}
 		cached, ok := m.blocks[block.ID]
+		if m.conversation.scroll > 0 && conversationBlock(block) && (!ok || cached.text != block.Text) {
+			if m.conversation.viewport.changed == nil {
+				m.conversation.viewport.changed = make(map[string]bool)
+			}
+			m.conversation.viewport.changed[block.ID] = true
+		}
 		if !ok || cached.revision != block.Revision || cached.text != block.Text || cached.done != block.Done {
 			config := render.Config{Width: max(1, m.size.Width)}
 			stream := render.NewStream(block.ID, config, nil)
@@ -349,7 +377,7 @@ func (m *shellModel) View() tea.View {
 	view.KeyboardEnhancements.ReportEventTypes = true
 	if m.hasComposer() && m.status.State.active() {
 		plan := m.conversationPlan()
-		if plan.Tier != layout.TooSmall && !m.conversation.pager.open && !m.accounts.open && !m.channels.open && !m.talk.open && m.content.CardView.ID == "" {
+		if plan.Tier != layout.TooSmall && !m.conversation.pager.open && !m.accounts.open && !m.web.open && !m.channels.open && !m.talk.open && m.content.CardView.ID == "" {
 			view.Cursor = m.conversation.composer.Cursor()
 			if view.Cursor != nil {
 				view.Cursor.Position.X += m.styles.composerPromptWidth()
@@ -404,6 +432,9 @@ func (m *shellModel) viewContent(showNotice bool) string {
 	if m.size.Width <= 0 || m.size.Height <= 0 {
 		return ""
 	}
+	if m.web.open {
+		return m.webContent()
+	}
 	if m.talk.open {
 		return m.talkContent()
 	}
@@ -419,6 +450,9 @@ func (m *shellModel) viewContent(showNotice bool) string {
 	plan := layout.Plan(m.size, layout.Caps{}, layout.Shape{ComposerRows: 1})
 	status := m.styles.presentation(m.status)
 	statusLine := status.Mark + " " + status.Label
+	if hint := m.quitHint(); hint != "" {
+		statusLine += "  " + hint
+	}
 	if m.status.Cause != "" || m.status.State == Retrying {
 		statusLine += "  " + status.Detail
 	}
@@ -436,6 +470,9 @@ func (m *shellModel) viewContent(showNotice bool) string {
 	}
 	if len(m.content.Blocks) == 0 || !m.status.State.active() {
 		lines := strings.Split(strings.TrimSuffix(m.styles.ScreenStatus(m.status), "\n"), "\n")
+		if hint := m.quitHint(); hint != "" {
+			lines = append(lines, clip(hint))
+		}
 		if notice := m.localNotice(); showNotice && notice != "" {
 			lines = append(lines, clip(m.styles.Muted.Render(notice)))
 		}
