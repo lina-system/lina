@@ -199,6 +199,17 @@ leaves the preview and records unchanged and releases the next queued request.
 The originating conversation receives one retained outcome line, including when
 startup recovers a rejection committed before publication.
 
+A completed Klotho response with invalid JSON, an invalid plan (including a
+dependency cycle), or oversized output is a terminal rejection, not an unknown
+model call. Core normalizes it to the fixed `{"rejection":"invalid_plan"}` job
+result, caches it and settles reported usage through Aux. Moirai relays that
+closed result to Apply; Core verifies it against the retained response and
+records the rejection with the watermark. The originating conversation retains
+one outcome line. A restart between Aux and Apply reuses the cached rejection,
+and later queued requests can run without repeating the completed model call.
+No preview or plan record is created. A stream that never completes retains its
+unknown reservation and is not automatically retried or converted to rejection.
+
 The client `planning` capability provides the person-only acceptance and
 confirmation actions. Acceptance saves the goal or directly handed-over project
 and its done condition. Confirmation names the current preview id and revision;

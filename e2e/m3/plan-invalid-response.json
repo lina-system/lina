@@ -1,0 +1,11 @@
+{
+  "goal": "Deliver a community workshop",
+  "done": "Participants complete the workshop",
+  "oversized": 262145,
+  "invalid": [
+    "{\"title\":",
+    "{}",
+    "{\"title\":\"Cyclic plan\",\"summary\":\"Prepare workshop\",\"entries\":[{\"id\":\"a\",\"kind\":\"project\",\"title\":\"First\",\"parent\":\"\",\"done\":\"Ready\",\"depends_on\":[\"b\"]},{\"id\":\"b\",\"kind\":\"project\",\"title\":\"Second\",\"parent\":\"\",\"done\":\"Ready\",\"depends_on\":[\"a\"]}]}"
+  ],
+  "valid": {"title":"Workshop plan","summary":"Prepare a community workshop.","entries":[{"id":"project","kind":"project","title":"Run workshop","parent":"","done":"Workshop delivered"}]}
+}

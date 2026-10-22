@@ -177,3 +177,27 @@ func (a *routeAPI) Apply(_ context.Context, p jobapi.Proposal) (jobapi.Applied, 
 	return jobapi.Applied{Watermark: p.Through}, nil
 }
 func (*routeAPI) Report(context.Context, string, jobapi.JobState) error { return nil }
+
+type planningResultAPI struct {
+	routeAPI
+	output json.RawMessage
+}
+
+func (a *planningResultAPI) Aux(context.Context, jobapi.AuxRequest) (jobapi.AuxResult, error) {
+	return jobapi.AuxResult{Output: a.output}, nil
+}
+
+func TestStepRelaysOnlyClosedPlanningRejection(t *testing.T) {
+	for _, raw := range []string{jobapi.InvalidPlanResult, `{"rejection":"invalid_plan","other":true}`} {
+		api := &planningResultAPI{output: json.RawMessage(raw)}
+		work := jobapi.Work{Epoch: 1, Job: jobapi.Job{ID: "planning", Kind: jobapi.Planning, Adoption: "plan-draft-v1", Timeout: time.Second}, Task: jobapi.Task{Sequence: 1, Input: json.RawMessage(`{"kind":"goal"}`)}}
+		err := (Worker{Core: api}).Step(t.Context(), work)
+		if raw == jobapi.InvalidPlanResult {
+			if err != nil || len(api.applied) != 1 || string(api.applied[0].Output) != raw {
+				t.Fatalf("completed rejection did not reach Core: %+v %v", api.applied, err)
+			}
+		} else if !errors.Is(err, jobapi.ErrInvalid) || len(api.applied) != 0 {
+			t.Fatalf("malformed rejection reached Apply: %+v %v", api.applied, err)
+		}
+	}
+}

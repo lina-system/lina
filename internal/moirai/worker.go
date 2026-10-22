@@ -42,12 +42,14 @@ func (w Worker) Step(ctx context.Context, work jobapi.Work) error {
 		if json.Unmarshal(work.Task.Input, &input) != nil {
 			return jobapi.ErrInvalid
 		}
-		draft, err := jobapi.DecodePlan(output, input.Kind)
-		if err != nil {
-			return err
-		}
-		if err = planning.Validate(input.Kind, draft); err != nil {
-			return err
+		if !jobapi.IsInvalidPlanResult(output) {
+			draft, err := jobapi.DecodePlan(output, input.Kind)
+			if err != nil {
+				return err
+			}
+			if err = planning.Validate(input.Kind, draft); err != nil {
+				return err
+			}
 		}
 	}
 	applied, err := w.Core.Apply(ctx, jobapi.Proposal{Epoch: work.Epoch, JobID: work.Job.ID, From: work.Job.Watermark, Through: work.Task.Sequence, Output: output})

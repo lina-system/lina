@@ -104,6 +104,7 @@ func (r *conversationRuntime) planModel(ctx context.Context, c jobs.Call) (jobs.
 	}
 	defer stream.Close()
 	var text strings.Builder
+	invalid := false
 	for {
 		event, err := stream.Next(ctx)
 		if err != nil {
@@ -118,27 +119,32 @@ func (r *conversationRuntime) planModel(ctx context.Context, c jobs.Call) (jobs.
 				Content []struct{ Type, Text string }
 			}
 			if json.Unmarshal(event.Item, &item) != nil {
-				return jobs.Result{}, jobapi.ErrInvalid
+				invalid = true
+				continue
 			}
-			if item.Type == "message" && item.Role == "assistant" {
+			if !invalid && item.Type == "message" && item.Role == "assistant" {
 				for _, part := range item.Content {
 					if part.Type == "output_text" {
+						if len(part.Text) > (256<<10)-text.Len() {
+							invalid = true
+							text.Reset()
+							break
+						}
 						text.WriteString(part.Text)
 					}
 				}
 			}
-			if text.Len() > 256<<10 {
-				return jobs.Result{}, jobapi.ErrInvalid
-			}
 		case provider.ToolCallReady:
-			return jobs.Result{}, jobapi.ErrInvalid
+			invalid = true
 		case provider.Terminal:
 			var input jobapi.PlanInput
 			if json.Unmarshal(c.Input, &input) != nil {
 				return jobs.Result{}, jobapi.ErrInvalid
 			}
-			if _, err = jobapi.DecodePlan([]byte(text.String()), input.Kind); err != nil {
-				return jobs.Result{}, err
+			if _, err = jobapi.DecodePlan([]byte(text.String()), input.Kind); invalid || err != nil {
+				// Only a completed response becomes a terminal rejection. Returning
+				// a model error here would leave Aux's reservation unknown forever.
+				return jobs.Result{Output: json.RawMessage(jobapi.InvalidPlanResult), Usage: stream.Meta().Usage}, nil
 			}
 			return jobs.Result{Output: json.RawMessage(text.String()), Usage: stream.Meta().Usage}, nil
 		}
@@ -359,7 +365,11 @@ func (r *conversationRuntime) publishPlanRejections(ctx context.Context) error {
 			if e != nil {
 				language = design.English
 			}
-			text := design.Text(language, "plan_draft_obsolete")
+			code := "plan_draft_obsolete"
+			if rejected.Code == "invalid_plan" {
+				code = "plan_draft_invalid"
+			}
+			text := design.Text(language, code)
 			now := time.Now()
 			event, err = r.journal().Admit(ctx, guard.EntrySystem, ledger.Input{ID: id, ConversationID: r.conversation, AgentID: r.agent, Surface: ledger.Surface{Kind: "tui"}, ScaffoldKind: "plan_rejection", OccurredAt: now, RecordedAt: now, TimeQuality: "write_time_only", Body: text})
 		}

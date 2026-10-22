@@ -454,19 +454,25 @@ func (p *Planning) Index(ctx context.Context, s result.Scope) (PlanIndex, error)
 	return out, err
 }
 
-// ApplyDraftTx retires a valid but obsolete proposal in the same transaction as
-// the job watermark. Unexpected failures still roll back; workers cannot turn
-// a forged output or a storage failure into a successful terminal receipt.
+// ApplyDraftTx retires an obsolete draft or Core's completed-invalid result in
+// the same transaction as the job watermark. The caller verifies the cached
+// Core result first; unexpected storage failures still roll back.
 func (p *Planning) ApplyDraftTx(ctx context.Context, tx *canon.Tx, s result.Scope, job string, sequence int64, in jobapi.PlanInput, raw json.RawMessage) error {
-	_, err := p.DraftTx(ctx, tx, s, in, raw)
-	if err == nil {
-		return nil
+	if !validScope(s) || job == "" || sequence <= 0 || in.RootID == "" || in.RootRevision == "" || (in.Kind != "goal" && in.Kind != "project") {
+		return result.ErrMalformed
 	}
-	if !errors.Is(err, ErrStaleRevision) && !errors.Is(err, ErrOutOfScope) && !errors.Is(err, ErrUnavailable) {
-		return err
+	code := "invalid_plan"
+	if !jobapi.IsInvalidPlanResult(raw) {
+		_, err := p.DraftTx(ctx, tx, s, in, raw)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, ErrStaleRevision) && !errors.Is(err, ErrOutOfScope) && !errors.Is(err, ErrUnavailable) {
+			return err
+		}
+		code = err.Error()
 	}
-	code := err.Error()
-	_, err = tx.ExecContext(ctx, `INSERT INTO plan_rejections(job,sequence,person,agent,conversation,turn_id,result_id,code) VALUES(?,?,?,?,?,?,?,?)`, job, sequence, s.PersonID, s.AgentID, s.ConversationID, s.TurnID, in.ResultID, code)
+	_, err := tx.ExecContext(ctx, `INSERT INTO plan_rejections(job,sequence,person,agent,conversation,turn_id,result_id,code) VALUES(?,?,?,?,?,?,?,?)`, job, sequence, s.PersonID, s.AgentID, s.ConversationID, s.TurnID, in.ResultID, code)
 	return err
 }
 

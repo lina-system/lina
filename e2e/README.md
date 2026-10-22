@@ -288,6 +288,13 @@ creation, and idempotent confirmation across Core restarts. A loopback provider
 supplies only model output; all tool, job, result, protocol and records paths are
 production paths. No external credentials or services are used.
 
+`m3/plan-invalid-response.json` runs completed invalid JSON, invalid structure,
+cyclic dependencies and oversized output through installed Core and Moirai.
+Core restarts after each Aux result and before Apply. The scenario checks usage
+settlement, cached completion without model replay, duplicate Apply, durable
+rejection lines, refusal of a forged worker rejection, and the next valid plan.
+An incomplete stream remains unknown across restart. All output is synthetic.
+
 `go test ./e2e/m1 -run '^TestM2UpdateActivation$' -count=1` runs
 `m2/update-activation.json`, which drives `lina update --activate` against
 the installed Core. A test-owned service manager launches real service processes;

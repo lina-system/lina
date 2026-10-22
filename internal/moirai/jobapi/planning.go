@@ -36,6 +36,16 @@ type PlanEntry struct {
 	DependsOn []string `json:"depends_on,omitempty"`
 }
 
+// InvalidPlanResult is Core's bounded result for a completed, unusable model
+// response. It is cached and charged by Aux like a valid draft. Apply must still
+// compare the worker's proposal with that cache before recording a rejection.
+const InvalidPlanResult = `{"rejection":"invalid_plan"}`
+
+func IsInvalidPlanResult(raw []byte) bool {
+	var compact bytes.Buffer
+	return json.Compact(&compact, raw) == nil && compact.String() == InvalidPlanResult
+}
+
 func DecodePlan(raw []byte, kind string) (PlanDraft, error) {
 	var d PlanDraft
 	dec := json.NewDecoder(bytes.NewReader(raw))
