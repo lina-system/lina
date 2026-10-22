@@ -35,6 +35,7 @@ func TestM2ClaudeAdapterThroughInstalledCore(t *testing.T) {
 		core.command.Env = append(core.command.Env, "LINA_CLAUDE_NODE="+node, "LINA_CLAUDE_ADAPTER="+program, "LINA_CLAUDE_MODEL=fixture-model")
 		core.start(t)
 		h.connect(core).Close()
+		waitCoreReady(t, h)
 		return core
 	}
 	core := start()
