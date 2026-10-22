@@ -108,7 +108,12 @@ func RegisterRecords(registry *tools.Registry, repo records.Repo, actor records.
 	}
 	var specs []tools.Spec
 	for _, name := range []string{"read_record", "write_record", "query_records"} {
-		spec := tools.Spec{Name: name, Placement: tools.Core, Conc: 1, Deadline: 30 * time.Second, Schema: func(raw json.RawMessage) (tools.Input, error) { return recordInput(raw, name) }}
+		spec := tools.Spec{Classify: func(in tools.Input) tools.EffectClass {
+			if in.Write {
+				return tools.PrivateDraft
+			}
+			return tools.Research
+		}, Name: name, Placement: tools.Core, Conc: 1, Deadline: 30 * time.Second, Schema: func(raw json.RawMessage) (tools.Input, error) { return recordInput(raw, name) }}
 		handler := func(ctx context.Context, _ lease.Lease, in tools.Input) (tools.Result, error) {
 			if name == "query_records" {
 				var a RecordQuery

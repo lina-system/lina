@@ -145,7 +145,7 @@ func RegisterPersona(registry *tools.Registry, p *Persona, scope PersonaScope) (
 	}
 	var specs []tools.Spec
 	for _, name := range []string{"change_persona", "undo_persona"} {
-		spec := tools.Spec{Name: name, Placement: tools.Core, Conc: 1, Deadline: 10 * time.Second, Schema: func(raw json.RawMessage) (tools.Input, error) { return personaInput(raw, name, "persona:"+scope.Agent) }}
+		spec := tools.Spec{Classify: tools.Class(tools.PrivateDraft), Name: name, Placement: tools.Core, Conc: 1, Deadline: 10 * time.Second, Schema: func(raw json.RawMessage) (tools.Input, error) { return personaInput(raw, name, "persona:"+scope.Agent) }}
 		handler := func(ctx context.Context, _ lease.Lease, input tools.Input) (tools.Result, error) {
 			var receipt PersonaReceipt
 			var err error

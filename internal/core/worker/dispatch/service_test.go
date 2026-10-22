@@ -40,7 +40,7 @@ func definition(t *testing.T) Definition {
 }
 func TestDispatchWaitsForCommittedReceiptAndNeverReplaysUncertainWork(t *testing.T) {
 	db := store(t)
-	s, err := Open(t.Context(), Config{DB: db})
+	s, err := Open(t.Context(), Config{DB: db, Epoch: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestDispatchWaitsForCommittedReceiptAndNeverReplaysUncertainWork(t *testing
 	if err = s.save(t.Context(), r); err != nil {
 		t.Fatal(err)
 	}
-	restarted, err := Open(t.Context(), Config{DB: db})
+	restarted, err := Open(t.Context(), Config{DB: db, Epoch: 1})
 	if err != nil {
 		t.Fatal(err)
 	}

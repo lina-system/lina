@@ -2,9 +2,13 @@
 package e2e_test
 
 import (
+	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/kit/protocol"
@@ -12,6 +16,13 @@ import (
 
 func TestM2ProgressWaitingInstalledCore(t *testing.T) {
 	t.Parallel()
+	var fixture struct {
+		OutsideText string `json:"outside_text"`
+	}
+	data, err := os.ReadFile("../m2/progress-waiting.json")
+	if err != nil || json.Unmarshal(data, &fixture) != nil || fixture.OutsideText == "" {
+		t.Fatal("missing outside-change fixture", err)
+	}
 	runCodexWorkTools(t, "../m2/progress-waiting.json", "", func(h *harness, phase string, questions []protocol.Question) {
 		c, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "progress-reader", []protocol.Capability{{Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}})
 		if err != nil {
@@ -118,6 +129,50 @@ func TestM2ProgressWaitingInstalledCore(t *testing.T) {
 		snapshot, ok := frame.Payload.(protocol.Snapshot)
 		if !ok || len(snapshot.Items) != 1 {
 			t.Fatalf("progress subscription: %+v", frame.Payload)
+		}
+
+		if phase == "restarted" {
+			// Keep the existing subscription open. Filesystem-only changes must arrive
+			// without another query, conversation turn or canon mutation to wake Core.
+			path := filepath.Join(h.root, "versions", "records", "inbox", "progress-outside.md")
+			if err = os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+				t.Fatal(err)
+			}
+			defer os.Remove(path)
+			waitOutside := func(want bool) {
+				t.Helper()
+				ctx, cancel := context.WithTimeout(h.ctx, 15*time.Second)
+				defer cancel()
+				for {
+					e, err := c.Receive(ctx)
+					if err != nil || e.Error != nil {
+						t.Fatalf("outside change not published: %v %+v", err, e.Error)
+					}
+					update, ok := e.Payload.(protocol.ProgressUpdate)
+					if !ok || update.Waiting == nil {
+						continue
+					}
+					found := false
+					for _, row := range *update.Waiting {
+						found = found || row.Ref.Source == "outside"
+					}
+					raw, _ := json.Marshal(update)
+					if strings.Contains(string(raw), fixture.OutsideText) {
+						t.Fatal("unaccepted record contents reached the view")
+					}
+					if found == want {
+						return
+					}
+				}
+			}
+			if err = os.WriteFile(path, []byte(fixture.OutsideText), 0600); err != nil {
+				t.Fatal(err)
+			}
+			waitOutside(true)
+			if err = os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			waitOutside(false)
 		}
 	})
 }
