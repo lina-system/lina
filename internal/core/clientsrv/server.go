@@ -252,8 +252,12 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 		}
 	}()
 	writer := rpc.NewWriter(conn)
+	legacy := legacyActivity{}
 	topics := newTopicSession(ctx, identity, identity.Topics,
 		func(id json.RawMessage, envelope protocol.Envelope) error {
+			if !slices.Contains(capabilities, TurnActivityCapability) {
+				envelope = legacy.project(envelope)
+			}
 			if id != nil {
 				return writer.Write(ctx, response{JSONRPC: "2.0", ID: id, Result: envelope})
 			}

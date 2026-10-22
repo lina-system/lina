@@ -23,6 +23,7 @@
         "output_delta",
         "item_done",
         "turn_state",
+        "tool_activity",
         "approval_request",
         "approval_answer",
         "question",
@@ -364,6 +365,22 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/turn_state"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "tool_activity"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/tool_activity"
           }
         }
       }
@@ -1908,6 +1925,13 @@
         "agent_id": {
           "type": "string",
           "minLength": 1
+        },
+        "phase": {
+          "$ref": "#/$defs/turn_phase"
+        },
+        "tool_name": {
+          "type": "string",
+          "description": "Trusted tool display name from the registry display catalog; never arguments or output."
         }
       },
       "required": [],
@@ -3545,6 +3569,7 @@
             "output_delta",
             "item_done",
             "turn_state",
+            "tool_activity",
             "approval_request",
             "question",
             "result",
@@ -3627,6 +3652,22 @@
             "properties": {
               "payload": {
                 "$ref": "#/$defs/turn_state"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "tool_activity"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/tool_activity"
               }
             }
           }
@@ -4485,6 +4526,98 @@
         "stale_group",
         "refused",
         "stopped"
+      ]
+    },
+    "turn_phase": {
+      "type": "string",
+      "enum": [
+        "waiting_model",
+        "streaming",
+        "tool",
+        "stopping"
+      ]
+    },
+    "tool_activity_status": {
+      "type": "string",
+      "enum": [
+        "started",
+        "finished"
+      ]
+    },
+    "tool_activity_outcome": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "failed"
+      ]
+    },
+    "tool_activity": {
+      "type": "object",
+      "description": "Display-only tool lifecycle event. No arguments or output. Live/replay only; not retained in Topics snapshots or conversation/model history.",
+      "properties": {
+        "stream": {
+          "$ref": "#/$defs/stream_metadata"
+        },
+        "agent_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "call_id": {
+          "type": "string"
+        },
+        "tool_name": {
+          "type": "string",
+          "description": "Trusted display catalog label, not a model-provided tool identifier."
+        },
+        "status": {
+          "$ref": "#/$defs/tool_activity_status"
+        },
+        "outcome": {
+          "$ref": "#/$defs/tool_activity_outcome"
+        },
+        "duration_ms": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "call_id",
+        "tool_name",
+        "status"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "finished"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "outcome",
+              "duration_ms"
+            ]
+          },
+          "else": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "outcome"
+                  ]
+                },
+                {
+                  "required": [
+                    "duration_ms"
+                  ]
+                }
+              ]
+            }
+          }
+        }
       ]
     },
     "github_check": {
