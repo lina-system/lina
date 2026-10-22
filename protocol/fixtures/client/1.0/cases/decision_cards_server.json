@@ -1,0 +1,26 @@
+{
+  "side": "server",
+  "input": [
+    "values/approval_request_card.json",
+    "values/approval_answer_card.json",
+    "values/question_card.json",
+    "values/question_answer_card.json"
+  ],
+  "output": [
+    "values/approval_request_card.json",
+    "values/approval_answer_card.json",
+    "values/question_card.json",
+    "values/question_answer_card.json"
+  ],
+  "errors": [
+    "",
+    "",
+    "",
+    ""
+  ],
+  "outcome": {
+    "accepted": 4,
+    "malformed": 0,
+    "unknown_kinds": 0
+  }
+}

@@ -70,6 +70,10 @@ func readConversationInput(parent context.Context, input *os.File, visit func(te
 			msg = tea.KeyPressMsg(e)
 		case uv.KeyReleaseEvent:
 			msg = tea.KeyReleaseMsg(e)
+		case uv.FocusEvent:
+			msg = tea.FocusMsg{}
+		case uv.BlurEvent:
+			msg = tea.BlurMsg{}
 		case uv.PasteEvent:
 			msg = tea.PasteMsg{Content: e.Content}
 		case uv.KeyboardEnhancementsEvent:

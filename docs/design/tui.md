@@ -146,6 +146,12 @@ select a fallback; sending waits for an explicit `/agents choose <id>`.
 restarts, the provider request's persona identity and history, and a removed
 selection with a retained draft.
 
+Decision overlays retain their readable content while reconnecting or recovering.
+A lost connection clears the pending client request and selected approval choice;
+it never replays an answer. A new epoch stops pending approval cards. Sending
+requires Live again and a fresh selection and confirmation. A correlated refusal
+changes the card, without interpreting diagnostic text as a decision.
+
 ## Streams on the client (T-03)
 
 The server side is [go-core.md](go-core.md) (C-42): topics, cursors, rings, batching and heartbeat. This section is the client side.
@@ -232,6 +238,12 @@ Regions:
 - Status line: connection, agent, the running count ("2 running, 1 waiting for you"), restart pending, and Core messages.
 
 Overlays form a stack and the top one receives keys first: agent list, command palette, pager. The agent list is the agents screen of [surfaces.md](surfaces.md#agents) in text: mark, name, source and last conversation; Enter opens the agent's main conversation.
+
+The decision overlay occupies the conversation surface and keeps the connection
+status row. Its targets wrap at cell boundaries and can be read with Up/Down or
+Page Up/Page Down. Confirmation stays disabled unless the entire target area
+fits. A small terminal retains the size notice and status instead of an actionable
+card; enlarging it recomputes visibility.
 
 Width tiers (P):
 
@@ -332,6 +344,10 @@ List updates do not focus the pager or
 change the draft. Decision answering remains the typed approval/question flow
 of T-04; the composer never turns a list row into an approval.
 
+The waiting summary shows the number of unresolved decision cards and the first
+card in Core's publication order. F6 opens that card without changing the draft.
+New cards update the summary and conversation label without taking keyboard focus.
+
 ## Results, cards and the pager (T-13)
 
 Contract: [surfaces.md](surfaces.md#result-surfaces), [host-protocol.md](host-protocol.md#typed-results), [materials-and-knowledge.md](materials-and-knowledge.md#saving-a-result).
@@ -345,6 +361,11 @@ The TUI declares the result types it draws in `hello`. A type it did not declare
 - A `file` export writes through `staging/export/` ([filesystem.md](filesystem.md#import-and-export)). Images appear only where the terminal answers the graphics-protocol query; otherwise the export action is offered.
 
 Edit and save are requests. A direct edit of a `summary` or a `document_draft` sends `result_edit` with the base revision. `stale_revision` reloads the result and keeps the person's text in the edit view. A save names its destination and carries the key of the contract, so a repeated key never makes a second record. A saved result is edited as the saved material.
+
+An approval or form question keeps a short labeled line in the conversation.
+Its expanded view shows the requesting agent, recommendation when supplied,
+summary, targets and choices. Opaque card references and revision tokens are
+routing data and never appear in that line or the waiting summary.
 
 **The pager** shows Details, the activity log and long results: scroll, search, quit. Copy is the person's act in their own terminal: the pager offers a sanitized-text overlay to select with the terminal's own copy. A write by OSC 52 waits for the open point on the clipboard rule below.
 
@@ -380,6 +401,28 @@ never places the bot token in a conversation draft, undo entry, echo or history.
 Closing the form clears its input; reconnect clears both the input and pairing
 code. Responses are matched to their connection generation and view attempt,
 so a late reply cannot reopen a closed control view.
+
+The optional `card` field on `approval_request` and `question` carries a stable
+reference, an authoritative displayed revision and the presentation fields. The
+answer carries that reference and revision independently of the JSON-RPC request
+id. Existing payloads remain valid; a legacy payload without a complete card
+reference offers no confirmation. Correlated answer responses carry typed
+outcomes. Stream cursor/revision replay and repeated publication of the same
+approval do not create another notification.
+
+The listener registers decision handlers through the existing operation map.
+Approval decisions use Core's authority transaction and authenticated connection
+facts; question forms use the owning question source and cannot grant an approval.
+Installed Core registers approval operations against its already-open authority
+instance and advertises `waiting` alongside its other capabilities. Subscription
+admission refreshes that projection from canon; identical records do not advance
+the stream. A successful decision publishes the terminal card. No second authority
+instance or decision store is created. Question operations are installed only when
+the owning question source is supplied.
+
+There is no client decision store. Group membership and its displayed arguments
+must be revalidated in the same authority transaction as the decisions, so a
+changed group cannot partially approve.
 
 **Questions.** A form question renders its flat schema as prompts, and a URL question follows the contract, opening the URL only on an explicit key. Core refuses a form that asks for a secret, and the TUI shows the refusal. An unknown outcome of an effect is a question card with the dispositions of [main-authority.md](main-authority.md#command-outcomes). The TUI adds no option Core did not list.
 
@@ -463,6 +506,12 @@ Conversation, result and Home updates are quiet display changes. The
 conversation increment does not advertise notification delivery and emits no
 terminal bell or external notification. Duplicate stream cursors cannot append
 a second item or move focus. Notification modes remain capability-gated work.
+
+The card renderer offers ephemeral Terminal and Bell overrides through
+`LINA_NOTIFICATIONS=terminal|bell`; without an override it emits no notification.
+Focus events suppress notifications while the person is looking. A notification
+contains sanitized agent/summary text only, without an answer action, and it
+never changes the selected card. This override is not a persisted agent setting.
 
 ## Rendering, width and Korean (T-09)
 
@@ -560,6 +609,13 @@ response checks that restoration preserves its later first appearance too.
 - To-do capture takes the deterministic tokens of [work-and-delegation.md](work-and-delegation.md#the-to-do-record) (`#`, `%`, `!`, `{}`). Core parses the line and shows the chips before it saves. An ambiguous date is never saved silently.
 - A failed send restores text and attachments merged with new typing.
 
+**Decision keys.** F6 opens the first unresolved card. An approval selects one
+of Core's choices with 1–3 and sends only on a separate Enter press. Esc closes
+without deciding. The press-only gate and legacy card-change barrier apply to
+both steps. Form prompts use Tab/Shift+Tab to move, Enter to send validated values,
+Ctrl+D to decline and Ctrl+X to cancel; Esc only closes. Text, paste and slash
+commands never answer an approval. Number values retain their exact JSON value.
+
 **Slash commands** share one registry with channels: name, summary key, aliases, arguments, surfaces, busy policy and executor. Core owns it, so both surfaces list the same commands, and the TUI keeps a small client table only for commands whose executor is the client. The contracts define no capability for the registry and [go-core.md](go-core.md) does not design it, so how the listing travels is a schema matter of the client connection. A command never queues behind a running turn. Slash text never approves anything.
 
 ## Library choice, risks and spike gate (T-08)
@@ -649,6 +705,22 @@ closes on completion, cancellation or failure. The harness owns its listener and
 joins the peer. Clock gates and I/O observations, never sleep intervals, establish
 ordering. This scenario covers the current connection screen and wire behavior;
 rendering and application effects still require their own tests.
+`e2e/m1/tui-approvals-installed.json` installs the real binary, seeds synthetic
+producer data after boot recovery, and discovers/answers the card over Core's
+socket. A second approval is answered through the built TUI in a real PTY, with
+separate selection/confirmation presses, durable attribution and terminal cleanup.
+The test creates no additional authority service. `e2e/m1/tui-cards.json` races
+two socket clients, changes a group after display, and drives the recording-writer
+bell replay assertion.
+
+`e2e/m1/tui-questions.json` exercises a flat question through a separately
+running Core listener and the production client adapter. The question source
+checks exact typed values, including a large integer, and its accepted answer
+is republished so the subscribed card no longer waits. It uses the headless
+harness's private state root and process cleanup, with I/O gates instead of sleeps.
+The UI reducer also keeps a correlated `already_resolved` result visible when a
+resolved stream publication arrives first.
+
 `e2e/m1/tui-state.json` sends duplicate welcomes, reserved conversation frames
 and an epoch change over that harness's socket into `state.Reduce`. Package
 tests cover projected snapshots, replay, resync, revocation, local echoes,

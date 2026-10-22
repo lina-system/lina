@@ -1908,6 +1908,9 @@
         },
         "stream": {
           "$ref": "#/$defs/stream_metadata"
+        },
+        "card": {
+          "$ref": "#/$defs/decision_card"
         }
       },
       "required": [
@@ -1920,6 +1923,17 @@
       "properties": {
         "choice": {
           "$ref": "#/$defs/approval_choice"
+        },
+        "card_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "outcome": {
+          "$ref": "#/$defs/decision_outcome"
         }
       },
       "required": [
@@ -1938,6 +1952,9 @@
         },
         "stream": {
           "$ref": "#/$defs/stream_metadata"
+        },
+        "card": {
+          "$ref": "#/$defs/decision_card"
         }
       },
       "required": [
@@ -1953,6 +1970,17 @@
         },
         "values": {
           "$ref": "#/$defs/form_values"
+        },
+        "card_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "outcome": {
+          "$ref": "#/$defs/decision_outcome"
         }
       },
       "required": [
@@ -4269,6 +4297,75 @@
       },
       "required": [],
       "additionalProperties": false
+    },
+    "decision_card": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agent": {
+          "type": "string"
+        },
+        "recommendation": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/decision_target"
+          }
+        },
+        "outcome": {
+          "$ref": "#/$defs/decision_outcome"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "agent",
+        "summary",
+        "targets"
+      ],
+      "additionalProperties": false
+    },
+    "decision_target": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "decision_outcome": {
+      "type": "string",
+      "enum": [
+        "resolved",
+        "already_resolved",
+        "withdrawn",
+        "expired",
+        "stale_epoch",
+        "stale_group",
+        "refused",
+        "stopped"
+      ]
     }
   }
 }

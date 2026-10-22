@@ -31,6 +31,12 @@ func (p clientPeer) Welcome() protocol.Welcome { return p.client.Welcome }
 func (p clientPeer) Receive(ctx context.Context) (protocol.Envelope, error) {
 	return p.client.Receive(ctx)
 }
+func (p clientPeer) AnswerApproval(ctx context.Context, answer protocol.ApprovalAnswer) (string, error) {
+	return p.client.AnswerApproval(ctx, answer)
+}
+func (p clientPeer) AnswerQuestion(ctx context.Context, answer protocol.QuestionAnswer) (string, error) {
+	return p.client.AnswerQuestion(ctx, answer)
+}
 func (p clientPeer) Close() error { return p.client.Close() }
 func (p clientPeer) Subscribe(ctx context.Context, request protocol.Subscribe) (string, error) {
 	return p.client.Subscribe(ctx, request)
@@ -255,6 +261,9 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 			return display.showShell(model)
 		}
 		if effect, ok := message.(shellEffect); ok && effect.Generation == model.generation {
+			if bell, ok := effect.Message.(state.CardBell); ok {
+				return display.notifyCard(model, bell)
+			}
 			if client, ok := peer.(clientPeer); ok {
 				switch request := effect.Message.(type) {
 				case state.SendRequest:
@@ -399,6 +408,21 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 				_, err := client.Subscribe(ctx, request.Request)
 				return err
 			}
+			return nil
+		}
+		if answer, ok := message.(shellCardAnswer); ok {
+			if answer.Generation != model.generation || !model.mutationsAllowed() {
+				return nil
+			}
+			client, ok := peer.(cardPeer)
+			if !ok {
+				return clientapi.ErrUnavailable
+			}
+			id, err := sendCard(ctx, client, answer.Request)
+			if err != nil {
+				return err
+			}
+			model.cardRequests[id] = answer.Request
 			return nil
 		}
 		_, command := model.Update(message)

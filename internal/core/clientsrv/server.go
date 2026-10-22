@@ -28,13 +28,16 @@ const personID = "person-placeholder"
 
 // Identity is immutable for one boot; Recovering reports the admission state.
 type Identity struct {
-	PersonID   string
-	Agents     []protocol.Agent
-	Operations map[protocol.Kind]Operation
-	MainID     string
-	Epoch      string
-	Recovering func() bool
-	Restart    *lifecycle.Restarter
+	// RefreshTopic projects current authoritative records before a subscription.
+	// It is called only after topic admission and never for unsubscribe.
+	RefreshTopic func(context.Context, string) error
+	PersonID     string
+	Agents       []protocol.Agent
+	Operations   map[protocol.Kind]Operation
+	MainID       string
+	Epoch        string
+	Recovering   func() bool
+	Restart      *lifecycle.Restarter
 	// Supported is the build's complete table; a non-nil empty table denies all
 	// combinations. Peer and platform always come from hello.
 	Supported []Combination

@@ -73,6 +73,7 @@ func (r *conversationRuntime) startGrowth(ctx context.Context, main string, epoc
 	if err != nil {
 		return err
 	}
+	r.authority = gate
 	g.tools = tools.NewRegistry(gate, r.activities)
 	if _, err = coreexec.RegisterGrowth(g.tools, r.agents, r.agent, r.person); err != nil {
 		return err

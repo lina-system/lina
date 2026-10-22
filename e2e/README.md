@@ -173,3 +173,11 @@ compilation cache with its exec children. Canon still verifies the module bytes,
 and each child opens fresh database/runtime state. Only compiled code is reused;
 all tests still run uncached. The parent removes the cache after joining children.
 This test-only setup reduces repeated compiler work on small CI runners.
+
+`m1/tui-cards.json` exercises two clients racing one approval and stale group
+membership through the production listener/authority path. The same scenario's
+replay count is consumed by the Bubble Tea recording-writer test.
+`m1/tui-questions.json` checks exact typed form answers and terminal publication.
+`m1/tui-approvals-installed.json` uses the installed Core and TUI binaries, seeded
+synthetic producer data, socket discovery/decisions, and a separate-key PTY approval.
+These scenarios create no second product decision store and use no timing sleeps.

@@ -23,6 +23,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/assemble"
 	"github.com/thisisjun786/lina/internal/core/assets"
+	"github.com/thisisjun786/lina/internal/core/authority"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
@@ -52,6 +53,8 @@ type acceptedSteering struct {
 }
 
 type conversationRuntime struct {
+	authority    *authority.Service
+	decisions    *clientsrv.Decisions
 	replaySocket string
 	dispatchMu   *sync.RWMutex
 	removals     *retract.Store
@@ -191,6 +194,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 		}
 	}
 	if err = r.startGrowth(ctx, main, epoch, controls); err != nil {
+		return nil, err
+	}
+	if err = r.startDecisions(ctx); err != nil {
 		return nil, err
 	}
 	success = true
