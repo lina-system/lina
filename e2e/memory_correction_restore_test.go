@@ -196,7 +196,10 @@ func correctionMemoryTUI(t *testing.T, h *harness) (func(string) protocol.Memory
 		for {
 			e := tap.next(t, h)
 			if e.Error != nil {
-				t.Fatalf("%s refused: %s", text, e.Error.Code)
+				if kind := tap.requestKind(e); kind != "" && kind != protocol.KindMemoryRequest {
+					continue // Discovery replies are not this command's outcome.
+				}
+				t.Fatalf("%s refused: %s (request=%s)", text, e.Error.Code, tap.requestKind(e))
 			}
 			if result, ok := e.Payload.(protocol.MemoryResult); ok {
 				marker := "/memory forget"

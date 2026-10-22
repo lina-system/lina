@@ -263,6 +263,27 @@ func (tap *accountTap) bytes() []byte {
 	defer tap.mu.Unlock()
 	return bytes.Clone(tap.raw.Bytes())
 }
+
+// Correlate a refusal with the actual client request. The TUI also sends
+// discovery and subscription requests while a test opens a control view.
+func (tap *accountTap) requestKind(reply protocol.Envelope) protocol.Kind {
+	if reply.ReplyTo == nil {
+		return ""
+	}
+	for _, line := range bytes.Split(tap.bytes(), []byte{'\n'}) {
+		var frame struct {
+			Params struct {
+				MessageID string          `json:"message_id"`
+				Kind      protocol.Kind   `json:"kind"`
+				Sender    protocol.Sender `json:"sender"`
+			}
+		}
+		if json.Unmarshal(line, &frame) == nil && frame.Params.Sender.Party == protocol.PartyClient && frame.Params.MessageID == *reply.ReplyTo {
+			return frame.Params.Kind
+		}
+	}
+	return ""
+}
 func (tap *accountTap) next(t *testing.T, h *harness) protocol.Envelope {
 	t.Helper()
 	select {
