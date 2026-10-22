@@ -117,6 +117,19 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 - #58 implements pure deterministic assembly, bounded optional ContextPacket collection and the four-step preparation runner with commit-before-dispatch evidence callbacks. Package tests cover ordered layout, budget and scope exclusions, one-line failures with zero provider calls, follow-up reuse and absence of packet bodies after SQLite reopen. It adds no client-protocol or TUI conversation endpoint.
 - #57 implements the immutable ledger tables and native admission, using the fenced canon writer, entry-derived speaker kinds and masking before storage. SQLite and real material-store scenarios cover mutation refusal, atomic admission, restart readback and unavailable bytes. Preparation and request assembly remain with their own issues; no ledger operation is exposed through the TUI or Core protocol in this increment.
 
+Acceptance evidence for #56:
+
+| Done condition | Existing verification |
+| --- | --- |
+| Ledger updates are denied. | `TestLedgerFieldsAndImmutableRows` in [canon](../../internal/core/canon/schema_ledger_test.go) attempts updates, deletes and replacement inserts on all three ledger tables, then checks the original records after reopening SQLite. |
+| Identical input gives identical bytes. | `TestLayoutAndDeterministicBytes` in [assemble](../../internal/core/assemble/assemble_test.go) compares repeated requests and reports, preserves opaque history and current-input bytes, and checks input immutability. |
+| Layout follows the contract. | The same assembly test checks persona layers, catalog, summary and history, ordered context groups, current input and stable tool order. [Prepared-identity coverage](../../internal/core/assemble/persona_identity_test.go) also checks that persona instructions occur once and count toward the request budget. |
+| Every failing preparation step shows one plain line and sends no request. | `TestPreparationStopsAtEachFailedStep` in [turn](../../internal/core/turn/preparation_test.go) checks all four steps, their order, one public line and zero provider calls. `TestPreparationCommitFailureAndSignIn` covers acknowledgement and request-evidence failures and the sign-in offer. |
+| The ContextPacket is never stored. | `TestAssemblyThroughDurableTurnNeverStoresPacket` in [turn](../../internal/core/turn/assembly_test.go) exercises real ledger commits, provider dispatch, a later turn and SQLite reopen; it checks stored references, output-only turn records and absence of the packet body from database/WAL bytes. |
+| All sub-issues are closed. | [#57](https://github.com/thisisjun786/lina/issues/57) and [#58](https://github.com/thisisjun786/lina/issues/58) are closed. |
+
+Run the issue's package checks with `go test ./internal/core/ledger/... ./internal/core/canon/... ./internal/core/guard/... ./internal/core/assemble/... ./internal/core/turn/...`. These establish the package contracts above; they do not measure live-provider quality.
+
 **G1-11 Inbox, lanes, steering and deadlines.** Inbox, lanes, steering, stop, expiry timers.
 - Done when: a duplicate key inserts one row and preserves its original bytes across restart; the acknowledgement follows the commit and no failed commit is acknowledged; each conversation runs one turn at a time while other conversations can proceed; a message during a turn is applied as steering at the next round; stop ends open calls as aborted; after `kill -9` mid-turn the input is not replayed and the conversation shows one plain line.
 - Depends on: G1-03, G1-09, G1-10. Design refs: C-09; [runtime.md](runtime.md#conversation-loop).
