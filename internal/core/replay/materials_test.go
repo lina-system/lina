@@ -3,22 +3,102 @@ package replay_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/lina/internal/core/assemble"
 	"github.com/thisisjun786/lina/internal/core/assets"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/replay"
 	"github.com/thisisjun786/lina/internal/core/secrets"
+	"github.com/thisisjun786/lina/kit/provider"
 )
 
 type observedReader struct {
 	db     *canon.Store
 	active bool
+}
+
+func TestRequestAssemblyMaterialReleasesSnapshotAndRechecksRetraction(t *testing.T) {
+	for _, mode := range []string{"read", "retracted", "assembly retracted", "trashed"} {
+		t.Run(mode, func(t *testing.T) {
+			db, source, root := fixture(t)
+			store, err := assets.Open(t.Context(), root, db)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			writer, err := assets.OpenMaterialWriter(t.Context(), store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			reader := &observedReader{db: db}
+			materials := &materialBytes{store: store, writer: writer, reader: reader}
+			// A growing tool catalog can move request evidence over the ledger's
+			// inline boundary even though all conversation messages are valid.
+			id := seedWithEvidence(t, db, "input", guard.EntryOwner, func(e *ledger.RequestEvidence) {
+				tool, err := json.Marshal(map[string]string{"type": "function", "name": "fixture", "description": strings.Repeat("synthetic description ", ledger.InlineBytes/10)})
+				if err != nil {
+					t.Fatal(err)
+				}
+				e.Tools = []provider.Item{tool}
+				event, err := ledger.New(db, materials).Get(t.Context(), "input")
+				if err != nil {
+					t.Fatal(err)
+				}
+				items, err := assemble.History([]ledger.Event{event}, "conversation", "agent")
+				if err != nil {
+					t.Fatal(err)
+				}
+				e.Hash = assemble.Digest(provider.Request{Model: e.Model, Effort: e.Effort, Instructions: "original instructions\n\n\n", Items: items, Tools: e.Tools, Purpose: provider.Turn})
+			}, materials)
+			assembly, err := ledger.New(db, materials).Get(t.Context(), "request:"+id+":0")
+			if err != nil || assembly.Material.ID == "" {
+				t.Fatalf("request evidence was not stored as a material: %v", err)
+			}
+			source.DB, source.Materials = reader, materials
+			reads := 0
+			materials.afterRead = func(ref ledger.Material) {
+				reads++
+				if ref != assembly.Material {
+					t.Fatal("expected request evidence to be fetched first")
+				}
+				if mode == "read" {
+					return
+				}
+				if err := db.Write(t.Context(), func(tx *canon.Tx) error {
+					if mode == "trashed" {
+						_, err := tx.ExecContext(t.Context(), "UPDATE assets SET trashed_at=1 WHERE id=?", ref.ID)
+						return err
+					}
+					event := "input"
+					if mode == "assembly retracted" {
+						event = assembly.ID
+					}
+					_, err := tx.ExecContext(t.Context(), "INSERT INTO retract_block(item_id,person,holder,event_id,conversation_id) VALUES('forgotten','person','agent',?,'')", event)
+					return err
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ep, err := source.Load(t.Context(), replay.Scope{Person: "person", Agent: "agent"}, id)
+			if reads != 1 || materials.nested != 0 {
+				t.Fatalf("request material reads=%d nested=%d err=%v", reads, materials.nested, err)
+			}
+			if mode == "read" {
+				if err != nil || len(ep.Evidence.Tools) != 1 || len(ep.Evidence.Tools[0]) <= ledger.InlineBytes {
+					t.Fatalf("large request evidence was not reconstructed: %v", err)
+				}
+			} else if err == nil {
+				t.Fatal("revoked request evidence was accepted after its material read")
+			}
+		})
+	}
 }
 
 func (r *observedReader) Read(ctx context.Context, fn func(*canon.Tx) error) error {

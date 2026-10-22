@@ -351,6 +351,7 @@ func (e *workerSession) observe() {
 	defer func() {
 		close(e.done)
 		e.origin.notifyWorkerRunning()
+		e.origin.notifyOwnerViews()
 	}()
 	for event := range e.adapter.Events() {
 		switch event.Kind {
@@ -387,6 +388,7 @@ func (e *workerSession) observe() {
 		if event.Kind != worker.UsageEvent && (event.Kind != worker.ProgressEvent || event.Progress.Phase == "started" || event.Progress.Phase == "server_request_resolved") {
 			e.origin.notifyWorkerRunning()
 		}
+		e.origin.notifyOwnerViews()
 	}
 	e.stopRequests("")
 	e.close()

@@ -126,10 +126,7 @@ func (h *harness) startTerminalSize(environment []string, combined, screen bool,
 		defer close(term.done)
 		defer close(term.lines)
 		if term.screen != nil {
-			_, term.err = io.Copy(term.screen, master)
-			if errors.Is(term.err, syscall.EIO) || errors.Is(term.err, os.ErrClosed) {
-				term.err = nil
-			}
+			term.err = copyTerminalScreen(term.screen, master)
 			term.screen.Close()
 			return
 		}

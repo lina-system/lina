@@ -21,6 +21,7 @@ type Cmd func(context.Context) Msg
 type Block struct {
 	ShellFileToolsAvailable  *bool
 	Card                     *Card
+	Waiting                  *WaitingSummary
 	ID, Topic, EchoKey, Text string
 	Speaker                  protocol.ConversationSpeaker
 	Body, Title              string
@@ -38,6 +39,13 @@ type Block struct {
 	Removed                  bool
 	filter                   sanitize.Stream
 }
+
+// WaitingSummary is display-only. Answer identities remain on decision cards.
+type WaitingSummary struct {
+	Lines []string
+	More  int
+}
+
 type Topic struct {
 	Cursor    uint64
 	OutOfSync bool
@@ -434,6 +442,7 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 			}
 		}
 		appendThrough(len(order) - 1)
+		previous := s.Blocks
 		s.Blocks = kept
 		for id := range s.Worked {
 			if s.find(id) < 0 {
@@ -445,9 +454,7 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 			b := incoming[id]
 			if b.Kind == protocol.KindTurnState && b.TurnKnown {
 				turnKnown = true
-				// A snapshot can restore activity, but cannot create a completion notice.
-				b.TurnAt = time.Time{}
-				s.activityBlock(b)
+				s.snapshotActivity(b, previous)
 			}
 		}
 		if strings.HasPrefix(m.Topic, "conversation:") && !turnKnown {

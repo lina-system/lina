@@ -368,7 +368,12 @@ clock offset (T-06 rule 4), formatted as `0s`, `59s`, `1m 00s`, `59m 59s`, or
 A phase transition or repeated active event never restarts elapsed time.
 A fresh snapshot restores the current phase and label but, without a start
 timestamp, shows unknown; later phases do not invent a start. A same-session
-resync retains an observed start. Completion adds one muted, localized `Worked for 12s`
+resync retains an observed start, reply identity and local stopping state only
+when the snapshot contains the same active `turn_state` key and nonzero revision
+as the last observed state. A changed or unidentifiable state may belong to a
+queued turn that started while disconnected: discard the previous activity,
+restore unknown timing and use the snapshot's authoritative stopping phase.
+Later phase events cannot supply the missed start time. Completion adds one muted, localized `Worked for 12s`
 line under the reply, using the inactive event's server timestamp. This is client
 display metadata: it survives same-session redraw and resync, is cleared with
 revoked or unfocused content, and is never stored or restored from history.
@@ -542,9 +547,20 @@ worker becomes idle; that removal does not claim verified task completion.
 List updates do not focus the pager or change the draft. Decision answering remains the typed approval/question flow
 of T-04; the composer never turns a list row into an approval.
 
-The waiting summary shows the number of unresolved decision cards and the first
-card in Core's publication order. F6 opens that card without changing the draft.
-New cards update the summary and conversation label without taking keyboard focus.
+Home uses the accepted progress overview's waiting rows and remaining count in
+Core order. The summary includes requests from exchanges, blocked work and
+outside record changes as well as approvals and questions. It shows up to five
+rows; a shorter terminal folds rows into the localized "+N more" count. An empty
+overview hides the summary. Before an overview arrives, the waiting topic's
+decision cards provide the summary. Updates and replacement snapshots preserve
+the draft and focus, and stale stream frames cannot restore old rows.
+
+The overview is display-only. F6 still opens the first unresolved authenticated
+decision card; its revision, choices and two-step answer flow remain attached to
+the waiting topic. A decision appears once in the Home summary even when both
+topics carry it. `e2e/m2/tui-home-waiting.json` checks an outside-change request
+on Home while an installed Core runs a worker through approval, a question and
+an artifact result, then removes resolved requests without changing the draft.
 
 ## Results, cards and the pager (T-13)
 
@@ -587,15 +603,21 @@ existing searchable pager, preserving the result-card action when a later card
 is selected. Assistant prose is never folded by this rule.
 
 These rows are ephemeral UI metadata anchored at first observation, separate
-from conversation blocks. Replay is idempotent; gaps wait for resync. Focus,
+from conversation blocks. An anchor with an empty or whitespace-only rendered
+body still displays its tool rows, before any later reply, without adding an
+empty speaker line. Replay is idempotent; gaps wait for resync. Focus,
 epoch and revocation changes discard the rows; an accepted snapshot discards
 that topic's transient rows rather than inventing history from snapshot data.
 An open tool pager clears when its underlying rows are invalidated. Rows never
 enter model history, stored conversation text or exported conversation text.
 The installed-Core PTY test `e2e/m1/tui_tool_rows_test.go` executes a successful and
 failed fixture tool and checks both glyph modes plus model/export exclusion.
+It also covers whitespace streamed before each call.
 Its socket gate holds delivery of the real finish event to make the running
 frame observable without relying on tool speed; it fabricates no tool events.
+`e2e/m1/tui_activity_reconnect_test.go` holds a same-Core reconnect across an
+interrupted turn and a queued turn that executes a real tool. The restored
+activity has unknown timing, and Esc can stop the new turn.
 
 **The pager** shows Details, the activity log and long results: scroll, search, quit. Copy is the person's act in their own terminal: the pager offers a sanitized-text overlay to select with the terminal's own copy. A write by OSC 52 waits for the open point on the clipboard rule below.
 
@@ -1100,6 +1122,13 @@ complete LONG-QA body/scroll checks remain independent of those readiness waits.
 The first-run PTY scenario likewise waits for its draft, composer cursor and
 catalog suggestions in one parsed snapshot before checking presentation; separate
 observations across redraws do not establish that they were visible together.
+
+The LONG-QA transcript acceptance test starts PgUp stitching only after the
+result affordance occupies the bottom row of the inactive conversation viewport
+and the visible cursor is back in the composer. End-of-body text can arrive
+before the activity row disappears; that intermediate frame is not a settled
+scroll baseline. Subsequent pages likewise require the composer cursor before
+checking overlap, preserving the complete-body and no-duplication assertions.
 
 **Tests.** The fake Core, `internal/fakecore`, is built from the conformance fixtures ([host-protocol.md](host-protocol.md#conformance-fixtures)) with an injected clock and fault switches: drop, slow reader, epoch change, duplicate delivery, disconnect mid-batch, recovering and refusal.
 

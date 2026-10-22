@@ -3,6 +3,7 @@
 package state
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -113,5 +114,76 @@ func TestActivityRepeatedActiveRetainsStartAndStopping(t *testing.T) {
 	s, _ = Reduce(s, Turn{Active: true, Started: next})
 	if !s.Activity.Started.Equal(next) || s.Stopping {
 		t.Fatal("new turn did not get its own start")
+	}
+}
+
+func TestActivitySnapshotRequiresObservedTurnContinuity(t *testing.T) {
+	const topic = "conversation:fixture"
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, reconnect := range []bool{false, true} {
+		for _, sameRevision := range []bool{false, true} {
+			t.Run(fmt.Sprintf("reconnect=%v/same_revision=%v", reconnect, sameRevision), func(t *testing.T) {
+				s, _ := Reduce(State{}, Snapshot{Epoch: "1", Revocation: "1", Topic: topic})
+				s, _ = Reduce(s, ItemDone{Epoch: "1", Topic: topic, Cursor: 1, Block: Block{
+					ID: "turn", Revision: 1, Kind: protocol.KindTurnState, TurnKnown: true, TurnActive: true, TurnStarted: start,
+				}})
+				s, _ = Reduce(s, Delta{Epoch: "1", Topic: topic, Cursor: 2, Revision: 1, ID: "old-reply", Text: "old answer"})
+				s, _ = Reduce(s, Interrupt{})
+				if reconnect {
+					s, _ = Reduce(s, ConnectionLost{})
+				}
+				revision := uint64(1)
+				if !sameRevision {
+					revision = 4 // The end of this turn and a queued turn's start were missed.
+				}
+				snapshot := Snapshot{Epoch: "1", Revocation: "1", Topic: topic, Cursor: 6, Items: []Block{
+					{ID: "old-reply", Revision: 2, Kind: protocol.KindItemDone, Text: "old answer", Done: true},
+					{ID: "turn", Revision: revision, Kind: protocol.KindTurnState, TurnKnown: true, TurnActive: true, TurnPhase: protocol.TurnPhaseWaitingModel},
+				}}
+				s, _ = Reduce(s, snapshot)
+				if sameRevision {
+					if !s.Activity.Started.Equal(start) || s.Activity.ReplyID != "old-reply" || !s.Stopping {
+						t.Fatalf("unchanged turn lost observed activity: %+v stopping=%v", s.Activity, s.Stopping)
+					}
+					return
+				}
+				if !s.Activity.Started.IsZero() || s.Activity.ReplyID != "" || s.Activity.Replying || s.Stopping {
+					t.Errorf("new snapshot turn retained prior activity: %+v stopping=%v", s.Activity, s.Stopping)
+				}
+				before := s
+				s, _ = Reduce(s, snapshot)
+				if !reflect.DeepEqual(before, s) {
+					t.Error("snapshot replay changed activity")
+				}
+				s, _ = Reduce(s, Turn{Active: true, Started: start.Add(time.Minute), Phase: protocol.TurnPhaseTool})
+				if !s.Activity.Started.IsZero() {
+					t.Error("later phase invented the missed turn start")
+				}
+				var cmds []Cmd
+				s, cmds = Reduce(s, Interrupt{})
+				if len(cmds) != 1 {
+					t.Error("previous stopping flag suppressed the new turn's interrupt")
+				}
+				s, _ = Reduce(s, Turn{At: start.Add(time.Minute)})
+				if len(s.Worked) != 0 {
+					t.Errorf("missed turn boundary fabricated completion duration: %v", s.Worked)
+				}
+			})
+		}
+	}
+}
+
+func TestActivitySnapshotRestoresAuthoritativeStopping(t *testing.T) {
+	const topic = "conversation:fixture"
+	s, _ := Reduce(State{}, Snapshot{Epoch: "1", Revocation: "1", Topic: topic})
+	s, _ = Reduce(s, ItemDone{Epoch: "1", Topic: topic, Cursor: 1, Block: Block{
+		ID: "turn", Revision: 1, Kind: protocol.KindTurnState, TurnKnown: true, TurnActive: true,
+		TurnStarted: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	}})
+	s, _ = Reduce(s, Snapshot{Epoch: "1", Revocation: "1", Topic: topic, Cursor: 4, Items: []Block{{
+		ID: "turn", Revision: 4, Kind: protocol.KindTurnState, TurnKnown: true, TurnActive: true, TurnPhase: protocol.TurnPhaseStopping,
+	}}})
+	if !s.Activity.Started.IsZero() || !s.Stopping || s.Activity.Phase != protocol.TurnPhaseStopping {
+		t.Fatalf("snapshot did not restore authoritative stopping with unknown timing: %+v stopping=%v", s.Activity, s.Stopping)
 	}
 }

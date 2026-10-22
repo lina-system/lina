@@ -185,7 +185,15 @@ func testM2FileLanding(t *testing.T, committed bool) {
 		r.EventID = work.ReceiptID(r)
 		return r
 	}
-	invoke("report_work_result", coreexec.ReportWork{TaskID: scenario.TaskID, RunID: run.ID, Receipt: receipt()}, false)
+	pending := invoke("report_work_result", coreexec.ReportWork{TaskID: scenario.TaskID, RunID: run.ID, Receipt: receipt()}, false)
+	var refusal struct {
+		Code      string `json:"code"`
+		Retryable bool   `json:"retryable"`
+		Next      string `json:"next_action"`
+	}
+	if err = json.Unmarshal(pending, &refusal); err != nil || refusal.Code != "worker_termination_unobserved" || !refusal.Retryable || refusal.Next != "wait_for_worker_termination_then_report_again" {
+		t.Fatalf("unobserved report: %s", pending)
+	}
 	invoke("land_work_result", coreexec.LandWork{TaskID: scenario.TaskID, ReceiptID: receipt().EventID, Fingerprint: "unobserved", Judgment: "Completion claim is not an exit."}, false)
 	entries, err := os.ReadDir(destination)
 	if err != nil || len(entries) != 0 {
@@ -207,7 +215,7 @@ func testM2FileLanding(t *testing.T, committed bool) {
 	withFileCanon(t, h, func(db *canon.Store) {
 		service := work.New(db)
 		card, e := service.Get(h.ctx, run.TaskID)
-		if e != nil || !card.Active || card.TurnStatus != "" || card.Receipt != nil || card.FileSnapshot != nil {
+		if e != nil || !card.Active || card.State != "unknown" || card.TurnStatus != "" || card.Receipt != nil || card.FileSnapshot != nil {
 			t.Fatalf("report manufactured termination or snapshot: %+v %v", card, e)
 		}
 		next := run
@@ -259,6 +267,38 @@ func testM2FileLanding(t *testing.T, committed bool) {
 	write(filepath.Join(workspace.Path, "report.md"), scenario.Report+"Correction checked.\n")
 	land(false)
 	c = done()
+	// Directory-only changes keep the file receipt ID. Each new report must
+	// still replace the snapshot through the running Core's normal tool path.
+	empty := filepath.Join(workspace.Path, "out/empty")
+	renamed := filepath.Join(workspace.Path, "out/renamed")
+	for _, step := range []struct {
+		name   string
+		change func() error
+	}{
+		{"add", func() error { return os.Mkdir(empty, 0700) }},
+		{"remove", func() error { return os.Remove(empty) }},
+		{"restore", func() error { return os.Mkdir(empty, 0700) }},
+		{"rename", func() error { return os.Rename(empty, renamed) }},
+	} {
+		previous := c
+		if err = step.change(); err != nil {
+			t.Fatal(err)
+		}
+		changed = land(false)
+		if err = json.Unmarshal(changed, &instruction); err != nil || instruction.Next != "inspect_result_and_report_done_again" {
+			t.Fatalf("%s: no fresh-done instruction: %s", step.name, changed)
+		}
+		c = done()
+		if c.Receipt.EventID != previous.Receipt.EventID || c.FileSnapshot.Revision != previous.FileSnapshot.Revision+1 || c.FileSnapshot.Fingerprint == previous.FileSnapshot.Fingerprint || c.Verdict != "" {
+			t.Fatalf("%s: directory-only report did not replace snapshot: %+v", step.name, c)
+		}
+		invoke("land_work_result", coreexec.LandWork{TaskID: c.Task.ID, ReceiptID: previous.Receipt.EventID, Fingerprint: previous.FileSnapshot.Fingerprint, Judgment: "Stale tree."}, false)
+	}
+	previous := c
+	c = done()
+	if c.FileSnapshot.Revision != previous.FileSnapshot.Revision || c.FileSnapshot.Fingerprint != previous.FileSnapshot.Fingerprint {
+		t.Fatal("unchanged report created another snapshot")
+	}
 	// Interrupt the real work tool after copying the first material. The registry
 	// records an unknown authority effect and keeps its target reservation, just
 	// as an unacknowledged call does across process death. Restart the installed
@@ -311,6 +351,12 @@ func testM2FileLanding(t *testing.T, committed bool) {
 		if e != nil || fmt.Sprintf("%x", sha256.Sum256(b)) != f.SHA256 {
 			t.Fatal("destination evidence is not a readback")
 		}
+	}
+	if info, err := os.Stat(filepath.Join(evidence.Path, "out/renamed")); err != nil || !info.IsDir() {
+		t.Fatalf("renamed empty directory not delivered: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(evidence.Path, "out/empty")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("old empty directory delivered: %v", err)
 	}
 	b, err := os.ReadFile(filepath.Join(partial, "out/document.txt"))
 	if err != nil || string(b) != scenario.Output+"Correction.\n" {

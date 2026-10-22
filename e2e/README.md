@@ -13,6 +13,15 @@ native Linux and macOS pseudo-terminals; it needs no window, display server,
 provider account, external network service or human input. Conversation screens
 use the pinned terminal library and a VT emulator.
 
+For the colour TUI, the PTY recorder reassembles renderer writes using the
+existing cursor-preserving scroll-margin reset at the end of each write.
+A PTY read can split or combine writes; it is not a completed screen. Plain
+and connection-only output retain their streaming path. Deterministic recorder
+tests split ANSI, UTF-8 and the write trailer, combine writes in one read, and
+reject a truncated redraw. Screen predicates still wait for the relevant UI
+state: a completed turn on an observer socket does not prove the TUI has
+rendered it. LONG-QA waits for the idle viewport before stitching PgUp pages.
+
 The suite builds each command once per test run and removes the shared binaries
 after all scenarios finish. Foundation enumerates the acceptance tests and runs
 three disjoint batches under its shared components budget. This keeps a growing
@@ -410,3 +419,21 @@ Core's read path and TUI. `TestM3WorkerLanesLiveSession` additionally starts the
 installed stdio worker fixture through Core's conversation tools, makes it write
 a real artifact, and expands its runtime lane to show the worker output without
 calling the model. Vendor transport is synthetic; no personal account is used.
+
+`m2/progress-waiting.json` uses the installed Core and synthetic stdio worker
+journey to read the owner progress capability and full waiting list during an
+approval and a question. It checks unknown plan values, display lines without
+internal identities, removal after the original authenticated answers, a real
+worker-written artifact, and empty resolved sources after Core restart. The
+worker and provider are fixtures; Core, tools, protocol and persistence are real.
+
+`m2/progress-seen-review.json` checks the installed Core's progress and running
+views with work-service records and content-checked fixture artifacts. Opening
+or dismissing a ready-for-review result removes its progress line and publishes
+the change. Restart preserves the acknowledgement without changing the work
+card, marking it applied or deleting the artifact.
+
+`m2/tui-home-waiting.json` adds a 120x36 TUI to that worker journey. An outside
+record change appears on Home alongside the worker's authenticated decisions.
+Resolving the sources clears the summary and preserves the typed draft. The
+scenario checks parsed terminal cells, the worker-written artifact and cleanup.
