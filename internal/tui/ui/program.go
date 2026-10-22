@@ -198,7 +198,7 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 			}
 			if model.hasComposer() {
 				if terminal && display.interactive && display.styles.options.Profile != Monochrome && display.renderer == nil {
-					display.renderer = startTerminalRenderer(parent, rawTerminalWriter{display.output}, model.size.Width, model.size.Height)
+					display.renderer = startTerminalRenderer(parent, rawTerminalWriter{display.output}, model.size.Width, model.size.Height, display.styles.options.Profile)
 				}
 				// Nonterminal input only reads quit after the handshake; it has
 				// no draft destination to discover before reporting live.

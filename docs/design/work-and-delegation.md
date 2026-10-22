@@ -1174,6 +1174,51 @@ At the operational switch LINA takes over CRW's coordination functions and CRW r
 - The owner's existing intent card data is imported once by the same tool and under the same rules, into LINA's intent card model (see Intent cards). Only the data comes in; no code or database structure comes with it.
 - The product never depends on CRW's plugin, relay or state paths.
 
+### One-time import and report
+
+The operator tool lives in `tools/crw-takeover/`, outside product imports and
+binary and source release artifacts. It consumes a version 1 JSON export of CRW
+observation records, one frozen tracker snapshot and optional intent cards.
+An independently supplied SHA-256 verifies the exact export; source inventory
+counts must match its fetched rows before any destination writer opens. The
+export format and supported mapping are documented with the tool. Only synthetic
+fixtures are kept in the source repository.
+
+The installed Core must be stopped during publication. The tool holds Core's
+exclusive state-root lock and checks for an interrupted restore before inspecting
+canon or opening records; pending publication refuses the import. It checks the
+existing agent and person and writes through Core's versioned records repository.
+Planning records carry LINA kinds and bindings, including native `belongs_to`
+index edges: initiatives remain goal drafts, projects retain
+their done condition, issues become to-dos, and milestones become to-dos with a
+deadline and done condition. Intent cards retain their intent text. CRW records
+are historical observations in reference documents; importing an assignment,
+receipt, verdict, branch or worktree starts no work and grants no authority.
+Complete source records are preserved as data, including unknown fields.
+
+Every input position receives exactly one report row, including malformed rows
+without a usable source id. The outcomes are imported, lost or unsupported;
+non-imports state a reason. Loss, duplicate identities, missing/cyclic bindings,
+an incomplete report or a storage/report write failure makes the run fail.
+Unsupported kinds are accounted for without pretending they were imported.
+
+A private operator journal in the destination binds one snapshot and actor and
+reserves random LINA ids durably before publication. A retry reconciles those ids
+through the records API, recovering publication interrupted before acknowledgement.
+It reports existing imports as reused and writes no second record or commit; it
+preserves later LINA edits and fails if an imported record is unavailable. The
+journal stays with the destination backup, outside product schemas and APIs.
+Source ids exist only in provenance and observation text, never a product lookup.
+After import, Core uses the reported LINA ids through its ordinary record tools;
+the snapshot can be removed and Core never contacts the tracker.
+
+Imports commit record by record. A failed run keeps its report, originals and
+successful records so the same verified snapshot can resume. Undo is an explicit
+restore of the pre-import backup, not an automatic deletion. The import alone is
+not the owner-approved operational switch. The headless `e2e/m3/crw-takeover.json`
+scenario uses the real tool and installed Core to read imported evidence, save a
+new result, reject source-id lookup and retain the record after restart.
+
 ## Deferred
 
 - The task state set of the ledger projection: set by the ledger implementation against the pinned record contracts. Adopted schema documents and fixture domains are fixed in the start-gate pin record.
