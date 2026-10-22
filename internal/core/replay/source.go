@@ -217,6 +217,13 @@ func (s Source) loadSnapshot(ctx context.Context, scope Scope, id string) (Episo
 		}
 		evidence, err := journal.Get(ctx, "request:"+id+":0")
 		if err != nil {
+			// Growing tool declarations can move assembly evidence into a material.
+			// Let withMaterials release this snapshot, load the immutable bytes and
+			// recheck visibility; a cache miss is not missing assembly evidence.
+			var needed *materialNeeded
+			if errors.As(err, &needed) {
+				return err
+			}
 			var exclusion Exclusion
 			if errors.As(err, &exclusion) || errors.Is(err, sql.ErrNoRows) || errors.Is(err, ledger.ErrBytesUnavailable) {
 				return Exclusion("missing_assembly")

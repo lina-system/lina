@@ -3,22 +3,93 @@ package replay_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/lina/internal/core/assemble"
 	"github.com/thisisjun786/lina/internal/core/assets"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/replay"
 	"github.com/thisisjun786/lina/internal/core/secrets"
+	"github.com/thisisjun786/lina/kit/provider"
 )
 
 type observedReader struct {
 	db     *canon.Store
 	active bool
+}
+
+func TestLargeRequestAssemblyRehydratesOutsideSnapshot(t *testing.T) {
+	for _, revoke := range []bool{false, true} {
+		t.Run(map[bool]string{false: "available", true: "trashed during read"}[revoke], func(t *testing.T) {
+			db, source, root := fixture(t)
+			store, err := assets.Open(t.Context(), root, db)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			writer, err := assets.OpenMaterialWriter(t.Context(), store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			reader := &observedReader{db: db}
+			materials := &materialBytes{store: store, writer: writer, reader: reader}
+			declaration, _ := json.Marshal(map[string]any{"type": "function", "name": "synthetic_read", "description": strings.Repeat("Synthetic schema detail. ", 1000), "parameters": map[string]any{"type": "object"}})
+			id := seedWithEvidence(t, db, "large-assembly", guard.EntryOwner, func(e *ledger.RequestEvidence) {
+				e.Tools = []provider.ToolDecl{declaration}
+				input, err := ledger.New(db, materials).Get(t.Context(), "large-assembly")
+				if err != nil {
+					t.Fatal(err)
+				}
+				items, err := assemble.History([]ledger.Event{input}, "conversation", "agent")
+				if err != nil {
+					t.Fatal(err)
+				}
+				e.Hash = assemble.Digest(provider.Request{Model: e.Model, Effort: e.Effort, Instructions: "original instructions\n\n\n", Items: items, Tools: e.Tools, Purpose: provider.Turn})
+			}, materials)
+			assembly, err := ledger.New(db, materials).Get(t.Context(), "request:"+id+":0")
+			if err != nil || assembly.Material.ID == "" {
+				t.Fatal("assembly did not cross material boundary", err)
+			}
+			source.DB = reader
+			source.Materials = materials
+			if revoke {
+				materials.afterRead = func(ref ledger.Material) {
+					if ref != assembly.Material {
+						t.Error("expected assembly material first")
+					}
+					if err := db.Write(t.Context(), func(tx *canon.Tx) error {
+						_, err := tx.ExecContext(t.Context(), "UPDATE assets SET trashed_at=1 WHERE id=?", ref.ID)
+						return err
+					}); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			before := snapshot(t, db)
+			ep, err := source.Load(t.Context(), replay.Scope{Person: "person", Agent: "agent"}, id)
+			if materials.nested != 0 {
+				t.Fatal("material read held canon snapshot")
+			}
+			if revoke {
+				if err == nil {
+					t.Fatal("trashed assembly was exported")
+				}
+				return
+			}
+			if err != nil || len(ep.Evidence.Tools) != 1 || string(ep.Evidence.Tools[0]) != string(declaration) {
+				t.Fatalf("assembly rehydration failed: %v", err)
+			}
+			if snapshot(t, db) != before {
+				t.Fatal("replay mutated source")
+			}
+		})
+	}
 }
 
 func (r *observedReader) Read(ctx context.Context, fn func(*canon.Tx) error) error {
