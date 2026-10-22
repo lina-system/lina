@@ -38,6 +38,7 @@ func Migrations() []Migration {
 		{Version: 24, SQL: ImportSchema + importCompletionSchema},
 		{Version: 25, SQL: RunsSchema + RunningListSchema + LaneNoticeSchema},
 		{Version: 26, SQL: WorkSchema},
+		{Version: 27, SQL: RecordsSchema},
 	}
 }
 
