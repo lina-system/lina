@@ -44,6 +44,18 @@ type translation struct{ en, ko string }
 // Keys are wire codes or local presentation ids, never English source text.
 // Keep both languages together so a new entry cannot omit a translation.
 var catalog = map[string]translation{
+	"resolved":               {"Resolved", "처리됨"},
+	"already_resolved":       {"Already resolved elsewhere", "다른 곳에서 이미 처리됨"},
+	"withdrawn":              {"Withdrawn", "철회됨"},
+	"stale_group":            {"Changed; review and select again", "변경됨; 다시 확인하고 선택하세요"},
+	"card.stopped":           {"Stopped by Core restart", "Core 재시작으로 중지됨"},
+	"card.confirm":           {"Select a number, then Enter to confirm", "번호로 선택한 뒤 Enter로 확인"},
+	"card.targets_cut":       {"Targets do not fit; enlarge the terminal to confirm", "대상이 잘립니다; 터미널을 넓혀야 확인할 수 있습니다"},
+	"card.question_keys":     {"Tab: next field  Enter: send  Ctrl+D: decline  Ctrl+X: cancel", "Tab: 다음 항목  Enter: 전송  Ctrl+D: 거절  Ctrl+X: 취소"},
+	"card.escape":            {"Esc: close without deciding", "Esc: 결정하지 않고 닫기"},
+	"card.open":              {"F6: waiting for me", "F6: 내 결정 대기"},
+	"shell.running":          {"Running work: unsupported", "진행 중인 작업: 지원되지 않음"},
+	"shell.cards":            {"Waiting for me: unsupported", "내 결정 대기: 지원되지 않음"},
 	"agents.unavailable":     {"Selected agent unavailable", "선택한 에이전트 없음"},
 	"agents.choose_required": {"Selected agent is unavailable. Draft kept; use /agents choose <id> before sending.", "선택한 에이전트가 없습니다. 초안을 보관했습니다. /agents choose <id>로 선택 후 보내세요."},
 

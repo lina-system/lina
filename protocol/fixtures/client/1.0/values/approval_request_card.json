@@ -1,0 +1,41 @@
+{
+  "protocol": {
+    "name": "client",
+    "version": "1.0"
+  },
+  "kind": "approval_request",
+  "message_id": "approval_request-example",
+  "attempt_id": "approval_request-attempt-1",
+  "reply_to": null,
+  "sender": {
+    "party": "core",
+    "id": "main-example"
+  },
+  "epoch": "42",
+  "sent_at": "2026-01-01T00:00:01Z",
+  "idempotency_key": null,
+  "effect_state": "none",
+  "receipt_ref": null,
+  "source_refs": [],
+  "error": null,
+  "payload": {
+    "choices": [
+      "once",
+      "deny",
+      "always_allow"
+    ],
+    "card": {
+      "id": "decision-example",
+      "revision": "revision-example",
+      "agent": "Agent",
+      "summary": "Send the document",
+      "recommendation": "Send after checking the recipient",
+      "targets": [
+        {
+          "name": "recipient",
+          "value": "recipient@example.invalid"
+        }
+      ]
+    }
+  }
+}

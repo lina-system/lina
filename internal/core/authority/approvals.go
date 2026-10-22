@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -63,8 +64,11 @@ type AgentScope struct {
 	IDs []string
 }
 type Decision struct {
-	Choice Choice
-	Agents *AgentScope
+	// GroupRevision opts the existing Answer transaction into a displayed scope
+	// group. Empty preserves the single-record API used by other surfaces.
+	GroupRevision string
+	Choice        Choice
+	Agents        *AgentScope
 }
 type Approval struct {
 	ID, EffectKey, What, Where, ScopeKey, Target, Plugin, Tool string
@@ -292,7 +296,7 @@ func (s *Service) Answer(ctx context.Context, id string, d Decider, decision Dec
 	if err := s.validateDecider(d); err != nil {
 		return err
 	}
-	return s.store.Write(ctx, func(tx *canon.Tx) error {
+	err := s.store.Write(ctx, func(tx *canon.Tx) error {
 		if err := s.checkEpoch(ctx, tx); err != nil {
 			return err
 		}
@@ -303,59 +307,92 @@ func (s *Service) Answer(ctx context.Context, id string, d Decider, decision Dec
 		if err != nil {
 			return err
 		}
-		if a.State != Pending || a.Epoch != s.cfg.Epoch {
-			return ErrStale
+		if decision.GroupRevision == "" {
+			return s.answerApproval(ctx, tx, a, d, decision)
 		}
 		if a.Person != d.Person {
 			return ErrDecider
 		}
-		if !slices.Contains(a.Choices, decision.Choice) || decision.Choice == Always && d.Surface != App {
-			return ErrChoice
+		if a.State != Pending || a.Epoch != s.cfg.Epoch {
+			return ErrStale
 		}
-		if decision.Agents != nil && decision.Choice != Always {
-			return ErrChoice
+		all, err := allApprovals(ctx, tx)
+		if err != nil {
+			return err
 		}
-		a.State = Approved
-		a.Choice = decision.Choice
-		a.AnsweredBy = d.Person
-		a.ChatID = d.ChatID
-		a.MessageID = d.MessageID
-		a.AnsweredAt = time.Now().UTC()
-		switch decision.Choice {
-		case Deny:
-			a.State = Denied
-		case Once:
-		case Always:
-			if !a.Network || a.Plugin != "" || a.Outward {
-				return ErrChoice
-			}
-			scope := AgentScope{All: true}
-			if decision.Agents != nil {
-				scope = *decision.Agents
-			}
-			if scope.All && len(scope.IDs) > 0 {
-				return ErrChoice
-			}
-			for _, id := range scope.IDs {
-				if id == "" {
-					return ErrChoice
-				}
-			}
-			g := StandingGrant{ID: rand.Text(), Person: a.Person, ScopeKey: a.ScopeKey, Target: a.Target, AllAgents: scope.All, Agents: slices.Clone(scope.IDs), CreatedBy: d.Person, RequestingAgent: a.Agent, CreatedAt: a.AnsweredAt}
-			data, err := json.Marshal(g)
-			if err != nil {
+		group := approvalGroup(a, all)
+		if group.Revision != decision.GroupRevision {
+			return ErrStale
+		}
+		for _, member := range group.Members {
+			if err := s.answerApproval(ctx, tx, member, d, decision); err != nil {
 				return err
 			}
-			if _, err = tx.ExecContext(ctx, "INSERT INTO authority_standing(grant_id,person,record) VALUES(?,?,?)", g.ID, g.Person, data); err != nil {
-				return err
-			}
-			a.StandingID = g.ID
-		default:
-			return ErrChoice
 		}
-		return saveApproval(ctx, tx, a)
+		return nil
 	})
+	if err == nil && s.cfg.ApprovalsChanged != nil {
+		s.cfg.ApprovalsChanged(ctx)
+	}
+	return err
 }
+
+// Every member uses the original single-record checks and writes within the
+// same transaction. A refusal rolls back earlier members and standing grants.
+func (s *Service) answerApproval(ctx context.Context, tx *canon.Tx, a Approval, d Decider, decision Decision) error {
+	if a.State != Pending || a.Epoch != s.cfg.Epoch {
+		return ErrStale
+	}
+	if a.Person != d.Person {
+		return ErrDecider
+	}
+	if !slices.Contains(a.Choices, decision.Choice) || decision.Choice == Always && d.Surface != App {
+		return ErrChoice
+	}
+	if decision.Agents != nil && decision.Choice != Always {
+		return ErrChoice
+	}
+	a.State = Approved
+	a.Choice = decision.Choice
+	a.AnsweredBy = d.Person
+	a.ChatID = d.ChatID
+	a.MessageID = d.MessageID
+	a.AnsweredAt = time.Now().UTC()
+	switch decision.Choice {
+	case Deny:
+		a.State = Denied
+	case Once:
+	case Always:
+		if !a.Network || a.Plugin != "" || a.Outward {
+			return ErrChoice
+		}
+		scope := AgentScope{All: true}
+		if decision.Agents != nil {
+			scope = *decision.Agents
+		}
+		if scope.All && len(scope.IDs) > 0 {
+			return ErrChoice
+		}
+		for _, id := range scope.IDs {
+			if id == "" {
+				return ErrChoice
+			}
+		}
+		g := StandingGrant{ID: rand.Text(), Person: a.Person, ScopeKey: a.ScopeKey, Target: a.Target, AllAgents: scope.All, Agents: slices.Clone(scope.IDs), CreatedBy: d.Person, RequestingAgent: a.Agent, CreatedAt: a.AnsweredAt}
+		data, err := json.Marshal(g)
+		if err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, "INSERT INTO authority_standing(grant_id,person,record) VALUES(?,?,?)", g.ID, g.Person, data); err != nil {
+			return err
+		}
+		a.StandingID = g.ID
+	default:
+		return ErrChoice
+	}
+	return saveApproval(ctx, tx, a)
+}
+
 func (s *Service) RevokeStanding(ctx context.Context, id string, d Decider) error {
 	if err := s.validateDecider(d); err != nil {
 		return err
@@ -388,4 +425,52 @@ func (s *Service) RevokeStanding(ctx context.Context, id string, d Decider) erro
 		_, err = tx.ExecContext(ctx, "UPDATE authority_standing SET record=? WHERE grant_id=?", data, id)
 		return err
 	})
+}
+
+// Group is a read-only projection of the existing approval records. Its digest
+// binds membership and all displayed arguments; it is not another decision store.
+type Group struct {
+	ID, Revision string
+	Members      []Approval
+}
+
+func sameApprovalScope(a, b Approval) bool {
+	return a.Person == b.Person && a.Epoch == b.Epoch && ((a.ScopeKey != "" && a.ScopeKey == b.ScopeKey) || a.ID == b.ID)
+}
+func approvalGroup(anchor Approval, all []Approval) Group {
+	g := Group{}
+	for _, a := range all {
+		if a.State == Pending && sameApprovalScope(anchor, a) {
+			g.Members = append(g.Members, a)
+		}
+	}
+	slices.SortFunc(g.Members, func(a, b Approval) int { return strings.Compare(a.ID, b.ID) })
+	if len(g.Members) > 0 {
+		g.ID = g.Members[0].ID
+	}
+	data, _ := json.Marshal(g.Members)
+	g.Revision = digest(data)
+	return g
+}
+func (s *Service) Groups(ctx context.Context, person string) ([]Group, error) {
+	var groups []Group
+	err := s.store.Read(ctx, func(tx *canon.Tx) error {
+		all, err := allApprovals(ctx, tx)
+		if err != nil {
+			return err
+		}
+		seen := map[string]bool{}
+		for _, a := range all {
+			if a.State != Pending || a.Person != person || a.Epoch != s.cfg.Epoch || seen[a.ID] {
+				continue
+			}
+			g := approvalGroup(a, all)
+			for _, member := range g.Members {
+				seen[member.ID] = true
+			}
+			groups = append(groups, g)
+		}
+		return nil
+	})
+	return groups, err
 }

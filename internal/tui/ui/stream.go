@@ -106,6 +106,7 @@ func projectStream(envelope protocol.Envelope) (streamProjection, error) {
 			}
 			_, text := streamFields(body)
 			block := state.Block{ID: streamKey(payload.Topic, item.Key), Kind: item.Kind, Revision: revision, Done: item.Kind != protocol.KindOutputDelta}
+			block.Card = projectCard(body, envelope.Epoch, revision)
 			if text != nil {
 				block.Text = *text
 			}
@@ -141,6 +142,7 @@ func projectStream(envelope protocol.Envelope) (streamProjection, error) {
 		} else {
 			block := state.Block{ID: streamKey(metadata.Topic, metadata.Key), Kind: envelope.Kind, Revision: revision, Text: value}
 			projectConversationBlock(&block, envelope.Payload)
+			block.Card = projectCard(envelope.Payload, envelope.Epoch, revision)
 			p.message = state.ItemDone{Epoch: metadata.Cursor.Epoch, Topic: metadata.Topic, Cursor: seq, Block: block}
 		}
 	}
@@ -274,4 +276,40 @@ func projectConversationBlock(block *state.Block, payload protocol.Payload) {
 			block.Body = *p.Text
 		}
 	}
+}
+
+func projectCard(payload protocol.Payload, epoch string, revision uint64) *state.Card {
+	var wire *protocol.DecisionCard
+	var card state.Card
+	switch p := payload.(type) {
+	case protocol.ApprovalRequest:
+		wire = p.Card
+		card.Kind = protocol.KindApprovalRequest
+		card.Choices = p.Choices
+	case protocol.Question:
+		wire = p.Card
+		card.Kind = protocol.KindQuestion
+		card.Form = p.Form
+	default:
+		return nil
+	}
+	if wire == nil {
+		return nil
+	}
+	card.ID = wire.ID
+	card.Epoch = epoch
+	card.Revision = revision
+	card.Token = wire.Revision
+	card.Agent = wire.Agent
+	card.Summary = wire.Summary
+	if wire.Recommendation != nil {
+		card.Recommendation = *wire.Recommendation
+	}
+	if wire.Outcome != nil {
+		card.Outcome = state.CardOutcome(*wire.Outcome)
+	}
+	for _, field := range wire.Targets {
+		card.Targets = append(card.Targets, state.CardField{Name: field.Name, Value: field.Value})
+	}
+	return &card
 }

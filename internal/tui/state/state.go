@@ -19,6 +19,7 @@ type Msg interface{ isMsg() }
 type Cmd func(context.Context) Msg
 
 type Block struct {
+	Card                     *Card
 	ID, Topic, EchoKey, Text string
 	Speaker                  protocol.ConversationSpeaker
 	Body, Title              string
@@ -41,6 +42,9 @@ type Position struct {
 	Row int
 }
 type State struct {
+	CardSequence       uint64
+	Cards              []Card
+	CardView           CardView
 	Epoch, Revocation  string
 	Topics             map[string]Topic
 	Blocks             []Block
@@ -62,6 +66,7 @@ type State struct {
 }
 
 type Snapshot struct {
+	Notify                   bool
 	Epoch, Revocation, Topic string
 	Cursor                   uint64
 	Items                    []Block
@@ -72,6 +77,7 @@ type Delta struct {
 	Cursor, Revision       uint64
 }
 type ItemDone struct {
+	Notify       bool
 	Epoch, Topic string
 	Cursor       uint64
 	Block        Block
@@ -145,6 +151,7 @@ func (Tick) isMsg()             {}
 
 func cloneDraft(d Draft) Draft { d.Attachments = slices.Clone(d.Attachments); return d }
 func (s State) clone() State {
+	s.Cards = slices.Clone(s.Cards)
 	s.Blocks = slices.Clone(s.Blocks)
 	s.Topics = maps.Clone(s.Topics)
 	s.Folds = maps.Clone(s.Folds)
@@ -193,6 +200,13 @@ func (s *State) setEpoch(e string) []string {
 	if s.Epoch != "" {
 		s.notice(Notice{ID: "epoch:" + e, Code: "epoch_changed"})
 	}
+	for i := range s.Cards {
+		if s.Cards[i].Outcome == "" {
+			s.Cards[i].Outcome = CardStopped
+		}
+		s.Cards[i].pending = nil
+	}
+	s.CardView = CardView{}
 	s.Epoch = e
 	if s.pending != nil {
 		s.restoreDraft()
@@ -284,6 +298,8 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 			if s.pending != nil {
 				s.restoreDraft()
 			}
+			s.Cards = nil
+			s.CardView = CardView{}
 			s.Blocks = nil
 			s.Folds = nil
 			s.Selected = ""
@@ -313,6 +329,11 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 				order = append(order, b.ID)
 			}
 			b.Topic = m.Topic
+			if b.Card != nil {
+				card := cleanCard(*b.Card)
+				card.Topic = m.Topic
+				b.Card = &card
+			}
 			b.Local = false
 			b.Body = sanitize.Display(b.Body)
 			b.filter = sanitize.Stream{}
@@ -363,7 +384,34 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 			s.Offset = m.ServerTime.Sub(m.ClientTime)
 			s.ServerNow = m.ServerTime
 		}
-		return s, s.resyncTopics(invalidated, m.Topic)
+		for i := range s.Cards {
+			if s.Cards[i].Topic != m.Topic || s.Cards[i].Outcome != "" {
+				continue
+			}
+			found := false
+			for _, b := range s.Blocks {
+				if b.Topic == m.Topic && b.Card != nil && b.Card.ID == s.Cards[i].ID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				s.Cards[i].Outcome = CardWithdrawn
+				s.Cards[i].pending = nil
+				if s.CardView.ID == s.Cards[i].ID {
+					s.CardView = CardView{ID: s.CardView.ID}
+				}
+			}
+		}
+		cmds := s.resyncTopics(invalidated, m.Topic)
+		for _, b := range s.Blocks {
+			if b.Topic == m.Topic && b.Card != nil {
+				var emitted []Cmd
+				s, emitted = s.reduceCard(PutCard{Card: *b.Card, Notify: m.Notify})
+				cmds = append(cmds, emitted...)
+			}
+		}
+		return s, cmds
 	case Delta:
 		if !epoch(m.Epoch) || compare(m.Epoch, s.Epoch) < 0 || m.ID == "" || m.Topic == "" {
 			return s, nil
@@ -427,6 +475,11 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 			}
 		}
 		b.Topic = m.Topic
+		if b.Card != nil {
+			card := cleanCard(*b.Card)
+			card.Topic = m.Topic
+			b.Card = &card
+		}
 		b.Done = true
 		b.Local = false
 		b.Text = sanitize.Display(b.Text)
@@ -434,6 +487,9 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 		b.filter = sanitize.Stream{}
 		s.put(b)
 		s.Stopping = false
+		if b.Card != nil {
+			return s.reduceCard(PutCard{Card: *b.Card, Notify: m.Notify})
+		}
 	case Frame:
 		var decoder protocol.ClientDecoder
 		e, err := decoder.Decode(m.Data)
@@ -542,6 +598,8 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 		return s, []Cmd{func(context.Context) Msg { return req }}
 	case Tick:
 		s.ServerNow = m.Now.Add(s.Offset)
+	default:
+		return s.reduceCard(m)
 	}
 	return s, nil
 }

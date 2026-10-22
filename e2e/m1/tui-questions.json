@@ -1,0 +1,9 @@
+{
+  "question": {
+    "conversation_id": "conversation",
+    "card": {"id": "question", "revision": "1", "agent": "Agent", "summary": "Choose the document settings", "targets": []},
+    "form": {"plugin_name": "Example", "fields": [{"name": "note", "type": "text"}, {"name": "count", "type": "number"}, {"name": "enabled", "type": "boolean"}]}
+  },
+  "values": {"note": "한글 문서", "count": 9007199254740993, "enabled": true},
+  "outcome": "resolved"
+}

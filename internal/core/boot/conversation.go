@@ -59,6 +59,7 @@ type acceptedSteering struct {
 }
 
 type conversationRuntime struct {
+	decisions    *clientsrv.Decisions
 	replaySocket string
 	dispatchMu   *sync.RWMutex
 	removals     *retract.Store
@@ -155,7 +156,14 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 		return nil, err
 	}
 	r.persona = coreexec.NewPersona(db, r.agents, r.materials)
-	r.personaAuthority, err = authority.Open(ctx, db, authority.Config{Epoch: epoch, Resolve: r.resolvePersonaGrant})
+	r.personaAuthority, err = authority.Open(ctx, db, authority.Config{Epoch: epoch, Resolve: r.resolvePersonaGrant,
+		CanPresent: func() bool { return r.decisions != nil && r.decisions.CanPresent() },
+		ApprovalsChanged: func(ctx context.Context) {
+			if r.decisions != nil {
+				r.decisions.ApprovalsChanged(ctx)
+			}
+		},
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -216,6 +224,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 		}
 	}
 	if err = r.startGrowth(ctx, main, epoch, controls); err != nil {
+		return nil, err
+	}
+	if err = r.startDecisions(ctx); err != nil {
 		return nil, err
 	}
 	success = true

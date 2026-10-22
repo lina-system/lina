@@ -23,11 +23,12 @@ const (
 
 // Options are ephemeral display preferences. They never change Core state.
 type Options struct {
-	Theme    string
-	Profile  Profile
-	ASCII    bool
-	Width    int
-	Language design.Language
+	Notification string
+	Theme        string
+	Profile      Profile
+	ASCII        bool
+	Width        int
+	Language     design.Language
 }
 
 // Connection is a display state. Quit is a terminal transition, not a ninth
@@ -223,6 +224,10 @@ func environmentOptions(getenv func(string) string) Options {
 		locale = getenv("LANG")
 	}
 	opts.Language = design.LanguageFor(locale)
+	switch getenv("LINA_NOTIFICATIONS") {
+	case "bell", "terminal":
+		opts.Notification = getenv("LINA_NOTIFICATIONS")
+	}
 	background := strings.Split(getenv("COLORFGBG"), ";")
 	if last, err := strconv.Atoi(background[len(background)-1]); err == nil && (last == 7 || last == 15) {
 		opts.Theme = "light"

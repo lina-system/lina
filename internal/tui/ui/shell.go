@@ -46,6 +46,11 @@ type shellBlock struct {
 }
 
 type shellModel struct {
+	cardScroll    int
+	cardRequests  map[string]state.CardAnswerRequest
+	focused       bool
+	cardGate      term.Gate
+	cardField     int
 	generation    uint64
 	status        ConnectionStatus
 	content       state.State
@@ -71,7 +76,7 @@ func newShell(options Options, now func() time.Time) *shellModel {
 		now = time.Now
 	}
 	styles := NewStyles(options)
-	m := &shellModel{generation: 1, status: ConnectionStatus{State: Connecting}, styles: styles,
+	m := &shellModel{cardRequests: make(map[string]state.CardAnswerRequest), focused: true, generation: 1, status: ConnectionStatus{State: Connecting}, styles: styles,
 		size: layout.Size{Width: styles.options.Width, Height: 24}, now: now, blocks: make(map[string]shellBlock),
 		resyncPending: make(map[string]protocol.StreamCursor), resyncSeen: make(map[resyncSignal]protocol.StreamCursor)}
 	m.conversation = newConversationView(styles)
@@ -108,6 +113,8 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshBlocks()
 			m.status = ConnectionStatus{State: Retrying}
 			m.resyncSeen = make(map[resyncSignal]protocol.StreamCursor)
+			m.cardRequests = make(map[string]state.CardAnswerRequest)
+			m.content, _ = state.Reduce(m.content, state.ResetCardRequests{})
 		}
 	case shellConnection:
 		if msg.Generation == m.generation {
@@ -125,6 +132,9 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			var decoder protocol.ClientDecoder
 			envelope, err := decoder.Decode(frame.Data)
 			if err == nil && envelope != nil {
+				if m.cardReply(*envelope) {
+					return m, nil
+				}
 				if envelope.Error != nil {
 					status := Refused
 					if envelope.Error.Code == protocol.ErrorUnavailable {
@@ -159,6 +169,15 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
+		switch projectedMessage := msg.Message.(type) {
+		case state.Snapshot:
+			projectedMessage.Notify = !m.focused
+			msg.Message = projectedMessage
+		case state.ItemDone:
+			projectedMessage.Notify = !m.focused
+			msg.Message = projectedMessage
+		}
+		beforeCard, _ := m.content.CurrentCard()
 		var commands []state.Cmd
 		m.content, commands = state.Reduce(m.content, msg.Message)
 		m.refreshOpenCard()
@@ -167,6 +186,10 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if block.Kind == protocol.KindTurnState && block.TurnKnown {
 				m.content, _ = state.Reduce(m.content, state.Turn{Active: block.TurnActive})
 			}
+		}
+		afterCard, _ := m.content.CurrentCard()
+		if beforeCard.ID != afterCard.ID || beforeCard.Revision != afterCard.Revision {
+			m.cardGate.CardChanged(m.now())
 		}
 		if projected != nil && m.content.Topics[projected.topic].OutOfSync {
 			if floor, exists := m.resyncPending[projected.topic]; !exists || compareStreamCursor(projected.cursor, floor) > 0 {
@@ -198,9 +221,16 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Generation != m.generation {
 			return m, nil
 		}
+		if bell, ok := msg.Message.(state.CardBell); ok {
+			return m, m.cardNotification(bell)
+		}
 		if request, ok := msg.Message.(state.ResyncRequest); ok && request.Gen == m.content.Gen {
 			return m, m.subscribeSnapshot(request.Topic)
 		}
+	case tea.FocusMsg:
+		m.focused = true
+	case tea.BlurMsg:
+		m.focused = false
 	case tea.WindowSizeMsg:
 		m.size = layout.Size{Width: max(0, msg.Width), Height: max(0, msg.Height)}
 		options := m.styles.options
@@ -209,6 +239,9 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyboardEnhancementsMsg:
 		m.events = msg.SupportsEventTypes()
 	case tea.PasteMsg:
+		if m.content.CardView.ID != "" {
+			return m, m.cardPaste(msg.Content)
+		}
 		if m.talk.open {
 			return m, nil
 		}
@@ -233,10 +266,21 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.accounts.open {
 			return m, m.accountKey(msg)
 		}
+		key := term.FromTea(msg, m.events)
+		if card, open := m.content.CurrentCard(); open && card.Kind == protocol.KindQuestion && msg.Key().Text != "" && msg.Key().Mod & ^tea.ModShift == 0 {
+			if !m.cardGate.Admit(key, term.Edit, m.now()) {
+				return m, nil
+			}
+			return m, m.cardPaste(msg.Key().Text)
+		}
+		if !m.conversation.pager.open {
+			if cmd, handled := m.cardKey(key); handled {
+				return m, cmd
+			}
+		}
 		if m.hasComposer() {
 			return m, m.conversationKey(msg)
 		}
-		key := term.FromTea(msg, m.events)
 		if !m.gate.Admit(key, term.Toggle, m.now()) {
 			return m, nil
 		}
@@ -260,6 +304,16 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 func (m *shellModel) refreshBlocks() {
 	next := make(map[string]shellBlock, len(m.content.Blocks))
 	for _, block := range m.content.Blocks {
+		if block.Card != nil {
+			card := *block.Card
+			for _, current := range m.content.Cards {
+				if current.ID == card.ID {
+					card = current
+					break
+				}
+			}
+			block.Text = m.cardSummary(card)
+		}
 		cached, ok := m.blocks[block.ID]
 		if !ok || cached.revision != block.Revision || cached.text != block.Text || cached.done != block.Done {
 			config := render.Config{Width: max(1, m.size.Width)}
@@ -286,7 +340,7 @@ func (m *shellModel) View() tea.View {
 	view.KeyboardEnhancements.ReportEventTypes = true
 	if m.hasComposer() && m.status.State.active() {
 		plan := m.conversationPlan()
-		if plan.Tier != layout.TooSmall && !m.conversation.pager.open && !m.accounts.open && !m.channels.open && !m.talk.open {
+		if plan.Tier != layout.TooSmall && !m.conversation.pager.open && !m.accounts.open && !m.channels.open && !m.talk.open && m.content.CardView.ID == "" {
 			view.Cursor = m.conversation.composer.Cursor()
 			if view.Cursor != nil {
 				view.Cursor.Position.Y += plan.Composer.Y
@@ -324,6 +378,9 @@ func (m *shellModel) localNotice() string {
 }
 
 func (m *shellModel) viewContent(showNotice bool) string {
+	if c, ok := m.content.CurrentCard(); ok && m.size.Width >= 40 && m.size.Height >= 10 {
+		return m.cardContent(c)
+	}
 	if m.size.Width <= 0 || m.size.Height <= 0 {
 		return ""
 	}

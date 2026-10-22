@@ -1,0 +1,20 @@
+{
+  "race": {
+    "id": "race",
+    "scope": "race-scope",
+    "outcomes": [
+      "resolved",
+      "already_resolved"
+    ]
+  },
+  "changed_group": {
+    "id": "group-first",
+    "scope": "group-scope",
+    "added_id": "group-second",
+    "outcome": "stale_group"
+  },
+  "replay": {
+    "deliveries": 2,
+    "bells": 1
+  }
+}

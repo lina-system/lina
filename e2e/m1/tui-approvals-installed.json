@@ -1,0 +1,1 @@
+{"id":"installed-approval","scope":"send-document","summary":"Send the fixture document","target":"recipient@example.invalid","choice":"once","outcome":"resolved"}

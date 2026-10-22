@@ -22,8 +22,11 @@ import (
 // Core's trusted owner. It must not manufacture a grant from the tool request.
 type Resolve func(context.Context, string) (grant.Grant, grant.Environment, error)
 type Config struct {
-	Epoch   uint64
-	Resolve Resolve
+	// ApprovalsChanged observes committed approval changes, outside canon's write
+	// transaction. It updates display projections only; failures cannot replay effects.
+	ApprovalsChanged func(context.Context)
+	Epoch            uint64
+	Resolve          Resolve
 	// CanPresent reports whether a connected surface can show the whole request.
 	// A nil callback means no surface. It must only inspect local connection state.
 	CanPresent func() bool
@@ -268,6 +271,9 @@ func (s *Service) Begin(ctx context.Context, c tools.Call, spec tools.Spec, in t
 	})
 	if err != nil {
 		return tools.Ticket{}, err
+	}
+	if errors.Is(denied, tools.ErrApprovalRequired) && s.cfg.ApprovalsChanged != nil {
+		s.cfg.ApprovalsChanged(ctx)
 	}
 	return ticket, denied
 }

@@ -122,3 +122,16 @@ func (w rawTerminalWriter) Write(data []byte) (int, error) {
 	}
 	return len(data), nil
 }
+
+func (r *terminalRenderer) raw(text string) error {
+	select {
+	case <-r.done:
+		if r.err != nil {
+			return r.err
+		}
+		return io.ErrClosedPipe
+	default:
+	}
+	r.program.Send(tea.Raw(text)())
+	return nil
+}

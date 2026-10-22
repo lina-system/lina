@@ -148,6 +148,11 @@ func (s *topicSession) handle(id json.RawMessage, request protocol.Envelope) (bo
 		reply.ReplyTo = &request.MessageID
 		return true, s.send(id, reply, "", nil)
 	}
+	if s.identity.RefreshTopic != nil {
+		if err := s.identity.RefreshTopic(s.ctx, topic); err != nil {
+			return true, s.refuse(id, request, protocol.ErrorUnavailable)
+		}
+	}
 	start, sub, err := s.hub.Subscribe(topic, after)
 	if err != nil {
 		return true, s.refuse(id, request, protocol.ErrorUnavailable)

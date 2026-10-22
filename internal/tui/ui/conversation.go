@@ -259,6 +259,19 @@ func (m *shellModel) topicBlocks(topic string) []state.Block {
 	var blocks []state.Block
 	for _, b := range m.content.Blocks {
 		if b.Topic == topic {
+			if b.Card != nil {
+				card := *b.Card
+				for _, current := range m.content.Cards {
+					if current.ID == card.ID {
+						card = current
+						break
+					}
+				}
+				if card.Outcome != "" {
+					continue
+				}
+				b.Text = m.cardSummary(card)
+			}
 			blocks = append(blocks, b)
 		}
 	}
@@ -468,7 +481,7 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		transcript = append(transcript, plainRow(design.Text(m.styles.options.Language, code)+"  /accounts"))
 	}
 	for _, b := range m.content.Blocks {
-		if b.Topic == "core" || b.Topic == "running" || b.Topic == "waiting" || b.Topic == "progress" || b.Kind == protocol.KindTurnState {
+		if b.Topic == "core" || b.Topic == "running" || (b.Topic == "waiting" && b.Card == nil) || b.Topic == "progress" || b.Kind == protocol.KindTurnState {
 			continue
 		}
 		cached := m.blocks[b.ID]
@@ -499,6 +512,9 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		}
 		blocks := m.topicBlocks(topic)
 		label := design.Text(m.styles.options.Language, topic) + " " + strconv.Itoa(len(blocks))
+		if topic == "waiting" && len(m.content.Cards) > 0 {
+			label += "  F6"
+		}
 		for i := 0; i < region.Height && i < len(blocks); i++ {
 			rows[region.Y+i] = clip(label + "  " + blocks[i].Text)
 		}
