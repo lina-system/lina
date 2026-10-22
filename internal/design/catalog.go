@@ -139,6 +139,7 @@ var catalog = map[string]translation{
 	"question":                   {"Question", "질문"},
 	"question_answer":            {"Answer", "답변"},
 	"result":                     {"Result", "결과"},
+	"reply.open_pager":           {"Open in pager · Ctrl+O", "페이저로 열기 · Ctrl+O"},
 	"result_get":                 {"Open result", "결과 열기"},
 	"result_edit":                {"Edit result", "결과 수정"},
 	"result_save":                {"Save result", "결과 저장"},
