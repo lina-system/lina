@@ -21,6 +21,8 @@ import (
 )
 
 func TestM1ImportRehearsalPromotion(t *testing.T) {
+	t.Parallel()
+
 	var fixture struct {
 		Profile, Statement string
 		OwnerSession       string `json:"owner_session"`

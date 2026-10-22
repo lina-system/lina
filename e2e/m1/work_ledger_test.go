@@ -25,6 +25,8 @@ import (
 // The #34 harness runs the real Core binary. Task facts enter through the work
 // engine API, and boot must rebuild missing projections before serving clients.
 func TestM2WorkLedger(t *testing.T) {
+	t.Parallel()
+
 	var scenario struct {
 		TaskID              string `json:"task_id"`
 		AgentID             string `json:"agent_id"`

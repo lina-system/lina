@@ -16,6 +16,8 @@ import (
 )
 
 func TestM1SkillsInstalledCore(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile("skills.json")
 	if err != nil {
 		t.Fatal(err)

@@ -21,6 +21,8 @@ import (
 )
 
 func TestM1ReplayExportInstalledCore(t *testing.T) {
+	t.Parallel()
+
 	data, err := os.ReadFile("replay-export.json")
 	if err != nil {
 		t.Fatal(err)

@@ -26,6 +26,8 @@ import (
 )
 
 func TestM1MemoryCorrectionForgetRestore(t *testing.T) {
+	t.Parallel()
+
 	var scenario struct {
 		Facts            []string
 		Direct, Retained string

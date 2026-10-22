@@ -7,14 +7,23 @@ edit against an old revision while Core stays running. It is supporting
 protocol evidence; the [Linux non-competition ladder](../evidence/non-competition/README.md)
 still requires human concurrent-session measurements.
 
-Run `go test ./e2e/m1/...` (or `go test -count=1 -v ./e2e/...` for uncached scenario
+Run `go test -parallel=4 ./e2e/m1/...` (or `go test -count=1 -parallel=4 -v ./e2e/...` for uncached scenario
 output). Node.js and the workspace's Go toolchain are required. The harness uses
 native Linux and macOS pseudo-terminals; it needs no window, display server,
 provider account, external network service or human input. Conversation screens
 use the pinned terminal library and a VT emulator.
 
 The suite builds each command once per test run and removes the shared binaries
-after all scenarios finish. Foundation enumerates the acceptance tests and runs three disjoint batches under its shared components budget. This keeps a growing corpus from exhausting one package watchdog while preserving every scenario, assertion and operation deadline. A direct `go test ./e2e/...` still runs the complete suite in one process. Each scenario starts real Core with a synthetic
+after all scenarios finish. Foundation enumerates the acceptance tests and runs
+three disjoint batches under its shared components budget. This keeps a growing
+corpus from exhausting one package watchdog while preserving every scenario,
+assertion and operation deadline. Independent scenarios call `t.Parallel()` and
+foundation limits each batch to four concurrent tests, including parallel
+subtests. Each scenario owns its state, sockets, provider fixtures and cleanup;
+the shared command-build cache is locked and removed after `m.Run`.
+Same-bot Telegram scenarios, the Claude credential update scenario, environment-mutating tests, live-provider checks and subprocess entry points stay
+serial. A direct `go test -parallel=4 ./e2e/...` still runs the complete suite in
+one process. Each scenario starts real Core with a synthetic
 installed identity and a private temporary state root, and connects a generated-type JSON-RPC client
 to its Unix socket. A second process runs real `lina tui` with a controlling PTY
 at 80 by 24 cells. The script waits for the `live` connection-state code, sends an
