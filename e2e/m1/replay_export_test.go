@@ -53,6 +53,7 @@ func TestM1ReplayExportInstalledCore(t *testing.T) {
 	core.command.Env = append(core.command.Env, "PATH="+os.Getenv("PATH"), "LINA_RESPONSES_BASE_URL="+provider.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
 	core.start(t)
 	h.connect(core).Close()
+	waitCoreReady(t, h)
 	ready, conversation := conversationClient(t, h)
 	ready.Close()
 	socket := h.socket
@@ -69,6 +70,10 @@ func TestM1ReplayExportInstalledCore(t *testing.T) {
 		}
 	}
 	h.keys(terminal, scenario.Input+"\r")
+	// The long reply ends at the latest transcript position. Open its pager
+	// to read the first sentence before exercising export and replay below.
+	waitScreen(t, h, terminal, "Ctrl+O")
+	h.keys(terminal, "\x0f")
 	waitScreen(t, h, terminal, scenario.Reply)
 	h.keys(terminal, "\x04")
 	terminal.process.wait(t, 0)

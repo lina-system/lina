@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/design"
+	"github.com/thisisjun786/lina/internal/tui/render"
 	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
@@ -142,10 +143,15 @@ func waitResizeChrome(t *testing.T, h *harness, term *terminal, height int, draf
 	t.Helper()
 	ctx, cancel := context.WithTimeout(h.ctx, operationTimeout)
 	defer cancel()
+	content := draft
+	if content == "" {
+		content = design.Text(design.English, "composer.placeholder")
+	}
 	snapshot, err := term.screen.Wait(ctx, func(s tuiterm.Snapshot) bool {
 		rows := screenRows(s)
 		return len(rows) == height && s.AltScreen && !s.CursorHidden &&
-			s.CursorY == height-2 && strings.TrimSpace(rows[height-2]) == draft &&
+			s.CursorY == height-2 && strings.TrimSpace(rows[height-2]) == "› "+content &&
+			s.CursorX == (render.Unicode{}).Width("› "+draft) &&
 			strings.Contains(rows[height-1], design.Text(design.English, "live"))
 	})
 	if err != nil {

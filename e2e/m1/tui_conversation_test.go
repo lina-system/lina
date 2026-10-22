@@ -75,7 +75,7 @@ func TestM1TUIConversationInstalledCore(t *testing.T) {
 	if snapshot, err := client.Receive(h.ctx); err != nil || snapshot.Kind != protocol.KindSnapshot {
 		t.Fatal("no history snapshot")
 	}
-	terminal := h.startScreenTUI("TERM=xterm-256color", "COLORTERM=truecolor")
+	terminal, _ := h.startConversationTUI(80, 24, "TERM=xterm-256color", "COLORTERM=truecolor")
 	fresh := waitComposerReady(t, h, terminal)
 	if text := screenText(fresh); strings.Contains(strings.ToLower(text), "unsupported") {
 		t.Fatalf("fresh install shows an unsupported placeholder: %s", text)
@@ -183,7 +183,8 @@ func waitScreen(t *testing.T, h *harness, terminal *terminal, text string) tuite
 		content := screenText(snapshot)
 		// Callers use the composer hints as an input-readiness barrier. Those
 		// hints also render while initial history is still being discovered.
-		if text == "Ctrl+D" && !strings.Contains(content, design.Text(design.English, "live")+"  ") {
+		if (text == "Ctrl+D" || text == design.Text(design.English, "live")) &&
+			(!snapshot.AltScreen || !strings.Contains(content, design.Text(design.English, "live")+"  ")) {
 			return false
 		}
 		return strings.Contains(content, text)

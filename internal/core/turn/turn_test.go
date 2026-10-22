@@ -351,3 +351,23 @@ func TestResultCommitsOnCompletionBeforeEarlierCallFinishes(t *testing.T) {
 		t.Fatalf("%+v %v", row, err)
 	}
 }
+
+func TestRuntimeCallsAppendWithinOneRound(t *testing.T) {
+	db, _ := database(t)
+	s := turn.New(db)
+	if err := s.Claim(t.Context(), "runtime", "conversation", admit(t, db)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Prepared(t.Context(), "runtime"); err != nil {
+		t.Fatal(err)
+	}
+	j := s.Journal("runtime")
+	for i, id := range []string{"first", "second"} {
+		if err := j.Calls(t.Context(), 0, []provider.ToolCall{{ID: id, Name: "read", Arguments: `{}`}}); err != nil {
+			t.Fatal(err)
+		}
+		if err := j.Result(t.Context(), 0, i, loop.Result{ID: id, Code: loop.OK}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

@@ -86,6 +86,9 @@ func TestM1ConversationHistoryOrder(t *testing.T) {
 			// waiting for its response avoids submitting during discovery.
 			for {
 				frame := tap.next(t, h)
+				if frame.Error != nil {
+					t.Fatalf("TUI discovery refused: %s", frame.Error.Code)
+				}
 				if snapshot, ok := frame.Payload.(protocol.Snapshot); ok && snapshot.Topic == "conversation:"+conversation {
 					break
 				}

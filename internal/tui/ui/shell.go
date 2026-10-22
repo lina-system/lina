@@ -58,6 +58,7 @@ type shellModel struct {
 	size          layout.Size
 	gate          term.Gate
 	events        bool
+	disambiguated bool
 	now           func() time.Time
 	blocks        map[string]shellBlock
 	resyncPending map[string]protocol.StreamCursor
@@ -247,6 +248,7 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.styles = NewStyles(options)
 	case tea.KeyboardEnhancementsMsg:
 		m.events = msg.SupportsEventTypes()
+		m.disambiguated = msg.SupportsKeyDisambiguation()
 	case tea.PasteMsg:
 		if m.content.CardView.ID != "" {
 			return m, m.cardPaste(msg.Content)
@@ -352,6 +354,7 @@ func (m *shellModel) View() tea.View {
 		if plan.Tier != layout.TooSmall && !m.conversation.pager.open && !m.accounts.open && !m.channels.open && !m.talk.open && m.content.CardView.ID == "" {
 			view.Cursor = m.conversation.composer.Cursor()
 			if view.Cursor != nil {
+				view.Cursor.Position.X += m.styles.composerPromptWidth()
 				view.Cursor.Position.Y += plan.Composer.Y
 			}
 		}

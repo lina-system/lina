@@ -32,7 +32,7 @@ File tools use the explicit internal `lina file-tool --root <directory> --versio
 
 The control-file increment (#36) starts with `lina core --state-root <path> --socket <path>`. The state root must already exist, and installation supplies `system/core/main.json`; Core never invents a replacement identity. `lina install` verifies the build bundle, creates a random main id in a new private state root, and registers the `lina-core.service` user unit with explicit state-root and socket arguments. Existing state and services are refused, including an install's own previous identity; installation is not an update or implicit restart. The concrete layout and failure behavior are specified in [runtime.md](runtime.md#the-lina-command).
 
-**C-02 Binaries and modules (changed).** Subcommands of `lina`, proposed here because [runtime.md](runtime.md#the-lina-command) defers the names: `core`, `tui`, `install`, `backup`, `restore` (main stopped), `doctor`, `replay`, `export`, `about`, `version`. `version` prints the version, the commit and the build date that the build sets with `-ldflags` ([versioning.md](versioning.md)). Separate artifacts: `lina-node` and `moirai-worker`. Modules: the root module and `kit` (`github.com/thisisjun786/lina/kit`), joined by `go.work` and a `replace`.
+**C-02 Binaries and modules (changed).** Subcommands of `lina`, proposed here because [runtime.md](runtime.md#the-lina-command) defers the names: `core`, `tui`, `install`, `update` (prepare only), `backup`, `restore` (main stopped), `doctor`, `replay`, `export`, `about`, `version`. `version` prints the version, the commit and the build date that the build sets with `-ldflags` ([versioning.md](versioning.md)). Separate artifacts: `lina-node` and `moirai-worker`. Modules: the root module and `kit` (`github.com/thisisjun786/lina/kit`), joined by `go.work` and a `replace`.
 
 The command registers `core`, `tui`, `install`, `doctor` and `version` in `lina`, and `version` in `lina-node`. Both `version` commands print the shared `internal/buildinfo` version line on stdout and exit 0 ([versioning.md](versioning.md#what-a-binary-reports)). Missing or unknown subcommands print usage on stderr and exit 64. The install handler dispatches into `internal/core/install`; failed installation exits 78 and preserves existing files and services. Node depends on the permitted kit packages and the Go standard library; its command entry point may also import `internal/buildinfo`.
 
@@ -196,6 +196,40 @@ Boot constructs this controller under its existing lock, validates the restart r
 - Resume.
 
 The gate needs every cell: idle, candidate verified, schema relation, peer rows, free space, a recent verified generation. Rollback restores the kept binaries, is automatic only while the new binary never reached READY, and never runs over a migration that cannot be undone; afterwards the default is a forward fix. The Claude adapter, its lockfile and the SDK pin move only with a LINA update; tools the user installed are never touched. A store newer than the binary exits 78 without writing. Migrations are forward-only, numbered, one transaction each.
+
+The #149 preparation boundary is `lina update --prepare --state-root <path>
+--archive <tar.gz> --sha256 <digest>`. `internal/core/update` freezes and hashes
+the download before unpacking, checks every manifest artifact, then runs the
+candidate's `lina core --preflight` through `kit/proc`. Candidate versions live
+under `system/updates/<archive-sha256>`; creation is exclusive and never replaces
+another attempt. A successful candidate gets a durable `prepared.json` receipt.
+The active binaries, service, control records and canon remain unchanged.
+
+`core --preflight --state-root <path> [--manifest <path>]
+[--required-manifest <path>]` exits 0 with a JSON schema/peer result or 78 with a
+cause. It takes no Core lock, creates no authority or socket, loads no provider
+configuration and makes no installed-state writes. Canon inspection includes
+committed WAL through a private temporary WAL index, checks the numbered schema,
+published catalog and SQLite quick check, and discards a result if the database,
+WAL or rollback journal changed during inspection. A nonempty rollback journal
+requires recovery. Temporary inspection files are removed. Candidate rows must
+be implemented by this binary and cover every required peer protocol and
+capability. Product version does not decide compatibility. Preparation uses the
+installed manifest's rows when present; otherwise the local compiled TUI row is
+required. Explicit malformed or empty required tables are refused.
+
+Normal application Core startup also checks the schema before creating control
+directories or taking its lock, then checks again under the lock before minting
+an epoch. A newer schema is refused before interpreting its metadata tables.
+Both ordinary startup and preflight preserve a newer store and its sidecars
+byte for byte, including a schema version present only in committed WAL.
+
+The six gate cells are `pass`, `fail` or `unknown`; every cell must be `pass`.
+Preparation establishes candidate verification, schema relation, peer rows and
+staging space only. Idle and verified-generation remain `unknown` until the
+activation owner supplies a fenced idle observation and a recent verified
+backup. A prepared receipt is not activation authority or a READY receipt.
+The lifecycle swap, smoke and rollback orchestration belongs to #150.
 
 ## Client service
 
@@ -511,6 +545,21 @@ Scripted wires establish these adapter invariants, and clean-build tests establi
 - Core refuses the turn if `init` lists anything LINA did not put there.
 - First use installs the SDK from the release lockfile ([runtime.md](runtime.md#provider-adapters)); it is never shipped in LINA artifacts.
 
+#167 implements the external TypeScript program and the [version 1 JSON-line
+wire](../../adapters/claude/README.md#c-45-wire-version-1), including correlated
+MCP tool results, cancellation, ping/pong, init refusal and reported usage.
+The SDK is installed from the adapter lockfile with lifecycle scripts disabled;
+foundation verifies sources, integrity, exact pins, registry signatures and the
+stub suite in a disposable installation. An explicitly configured Core route
+starts the program through `kit/proc`, routes runtime tool calls through the
+existing admission and durable call/result journal, and joins it on stream close.
+The ledger records `AgentRuntime`; the ordered context travels as a JSON
+transcript in the SDK prompt, so native vendor request fidelity is not claimed.
+`e2e/m2/claude-adapter.json` exercises the installed Core, a real Core tool,
+streamed reply and restart persistence with a stub vendor runtime. Automatic
+account setup, first-use installation, quota projection and idle pooling remain
+#168; this increment's explicit route launches one process per request.
+
 **C-46 Grok adapter (new).** A Go Agent Client Protocol client over the `grok` command on stdio, best effort. The steps are `initialize`, session create with LINA tools handed as MCP servers, prompt, updates, permission requests routed to Core's approval path, and cancel. Telemetry and trace upload are switched off explicitly. Account state comes from a cheap authenticated call, not from the command's files.
 
 **C-47 Accounts, credentials and sign-in (new).**
@@ -689,6 +738,37 @@ type Repo interface {
 type Index interface{ Query(ctx context.Context, v View, p Params) ([]Row, error) } // today, upcoming, anytime, later, memos, board
 ```
 
+The installed write path uses `internal/core/records.Repo`, with go-git's pure-Go
+object/hash and index codecs behind a confined local filesystem adapter. Result
+saving uses the same repository implementation. Core opens the repository with
+the published canon migration catalog; `records_state` journals the pending
+publication and `records_index` holds disposable id/path/blob/revision locators.
+Backup reads the published records head from its canon snapshot. Before the first
+saved version (also after an interrupted first attempt), it copies the repository
+files and intent without inventing a commit entry in the generation manifest.
+The adapter writes loose objects and a linear local history; it has no Git
+subprocess, remote, transport or credential dependency.
+
+`Read` returns the record and the commit of its last content or path change.
+Unrelated record commits leave that revision valid. `Commit` requires an empty
+base only for a new Core-allocated id; edits and moves compare the supplied base
+under the shared writer lock. An identical-content write at the same path is a
+no-op after that comparison. A move removes the old path and keeps the front
+matter id. Every applied change has one commit naming the person and asking
+agent. A durable intent names immutable before/after objects; startup finishes
+only that publication and never re-dispatches its tool effect. An outside edit,
+commit, foreign lock or incompatible recovery state returns `records_changed`
+without overwriting it. Outside-change acceptance/presentation and the richer
+FTS/edge index are subsequent records-index work.
+
+Installed conversations register `read_record` and `write_record` through the
+ordinary authority, lease and effect-receipt registry. These tools capture and
+edit memos and knowledge documents; Core supplies the owner, asking agent, id
+and PARA path. Model arguments cannot supply identities or paths. Existing
+records keep their folder and structured fields when their title/note changes.
+The tools return committed id/revision/Markdown receipts through the existing
+conversation protocol; no new client endpoint or to-do view is introduced.
+
 - A write is: an intent row in canon; files written and committed with person and agent in the message; index rows updated with the new head; the intent closed.
 - At start and before each write, Core compares the index head with the repository head. A mismatch rebuilds from the files, because files are canon.
 - Core refuses a write to a record whose file changed under it, and shows an outside change as the contract says.
@@ -745,7 +825,7 @@ The memory store keeps the current item and immutable revision snapshots in cano
 
 **C-21 Person model (changed).** The views are those of [conversation-and-memory.md](conversation-and-memory.md#person-model). `recall_person` at depth 1 makes one auxiliary request over at most N items (P: 12), with citations checked against the retrieved set and capped at 10 s. Deeper work is a background run. The person brief and the maintenance pass are jobs for `moirai-worker` ([cognition-and-life.md](cognition-and-life.md#memory-jobs)). Duplicate clusters inside one subject use normalized equality, token overlap and, when available, embedding similarity; never across subjects.
 
-The `recall_person` tool requires a nonempty retrieval query alongside the question, so an omitted query cannot silently choose the most recent items. The initial executor uses a limit of 12 combined memory items and own-ledger hits, with depth 0 as the default. Depth 1 makes one cancellable auxiliary call with a 10-second deadline and no retries. Its structured sentences retain only citations to the retrieved id and revision; sentences left without citations are dropped. A depth above 1 returns the background-required outcome to the caller. The standing profile is an ephemeral view ordered by the latest committed revision, with line and tokenizer budgets supplied by assembly. These operations are callable Core/tool services; no memory operation is exposed by the current client protocol, so acceptance uses real canon and ledger package scenarios. The indexed memory matcher and the ledger search service are described in C-22.
+The `recall_person` tool requires a nonempty retrieval query alongside the question, so an omitted query cannot silently choose the most recent items. The initial executor uses a limit of 12 combined memory items and own-ledger hits, with depth 0 as the default. Depth 1 makes one cancellable auxiliary call with a 10-second deadline and no retries. Its structured sentences retain only citations to the retrieved id and revision; sentences left without citations are dropped. A depth above 1 returns the background-required outcome to the caller. The standing profile is an ephemeral view ordered by the latest committed revision, with line and tokenizer budgets supplied by assembly. These operations are callable Core/tool services, tested with real canon and ledger package scenarios. Explicit client memory actions also have installed-Core acceptance through the [TUI memory requests](tui.md#memory-and-agent-command-requests); the condition-by-condition evidence is listed under [G1-13](go-roadmap.md#1d-memory-context-and-skills). The indexed memory matcher and the ledger search service are described in C-22.
 
 The memory-job increment exposes Core-owned preparation, pre-dispatch checks and
 `ExtractionApply`, `MaintenanceApply` and `BriefApply` callbacks in
@@ -1020,6 +1100,7 @@ type Adapter interface {
 - Workers run with the user's own setup and get no LINA sandbox, credential, hook or skill ([work-and-delegation.md](work-and-delegation.md#workers)). Approvals go to the originating conversation. A worker on another device is started and relayed by that device's Node.
 - A process group kill is the stop. A cut turn's effects are unknown until `Snapshot` and a read of GitHub settle them.
 - Work tools: for Codex, `lina` dynamic tools (submit receipt, ask, coordinate, read projection). For the others, the receipt is built from the final result and the pull request and marked adapter-derived.
+- The delegated-task store records the requesting agent and conversation, done condition, artifact roots and whether application is required. A run binds its task, generation, worker, thread, turn and observing node. Admission appends an event and updates the active-run reservation in one fenced canon transaction; a task cannot admit a second active run. A terminal observation releases execution capacity but is not a delivery or acceptance.
 
 **C-57 Work definition, choice and splitting (new).**
 
@@ -1038,9 +1119,13 @@ type Definition struct {
 - The agent drafts a definition with the `dispatch_work` tool. Core validates required fields, glob syntax and that the design reference resolves in the repository at the base commit, and renders the task packet.
 - Core does not split work itself. The dev preset carries the splitting criteria as guidance ([work-and-delegation.md](work-and-delegation.md#splitting-into-tasks)). Core checks mechanically that each task has one done condition and a write area, that overlapping areas are ordered by a dependency, that dependencies have no cycle, and that hotspot files are taken whole or moved to one task.
 - `Chooser` ranks workers from situation tags, quota rows and host capacity, using an editable rule table marked provisional. A quota or login stop hands the same packet to the next worker.
-- `Scheduler.Release` runs on events (landed, new task, quota change, a parked worker's reset), not on a poll. It starts every task whose dependencies landed, whose area lease is free and whose worker has quota. Area leases live from hand-off to landed, closed or abandoned. Concurrency starts at 4 per repository (P). A task that cannot start shows exactly one reason.
+- `Scheduler.Release` runs on events (landed, new task, quota change, a parked worker's reset), not on a poll. It starts every task whose dependencies landed, whose area lease is free and whose worker has quota. Area leases live from hand-off to landed, closed or abandoned. Concurrency is the free slots that the reported load and resources of the main host and each Node allow, with no fixed count per repository ([work-and-delegation.md](work-and-delegation.md#capacity)). A task that cannot start shows exactly one reason.
 - One task, one worker, one worktree, one branch, created by Core with the Git command from a parent clone in `work/clones/`.
 - The CRW pin is the start gate for the work ledger records: a pin record and a LINA fixture runner whose expected values come from the fixture ([work-and-delegation.md](work-and-delegation.md#start-gate)).
+- `internal/core/work/pin` verifies SHA-256 over every adopted file before running
+  any case. The runner passes only inputs to the record validator; a validator
+  error is not a negative judgment. Build provenance carries the complete pin as
+  `crwPin`, validated by `internal/core/manifest` without a CRW installation.
 
 **C-58 Completion events, GitHub layer, review, merge (new).** Contract: [work-and-delegation.md](work-and-delegation.md#event-driven-flow), [work-and-delegation.md](work-and-delegation.md#judgment-and-delivery), [integrations.md](integrations.md#merges).
 
@@ -1050,7 +1135,7 @@ type Definition struct {
 - The return, the close on a residual finding and the merge steps are those of the contract. Core takes the merge slot, merges pinned to the head last read, and only one read after the merge lands the task.
 - Stall handling and the reconcile sweep (every 5 minutes (P), no model call) follow the contract.
 
-**C-30 Task states and stage sources (changed).** Card states, `done` and verdicts are those of [work-and-delegation.md](work-and-delegation.md#progress-display) and [work-and-delegation.md](work-and-delegation.md#judgment-and-delivery). `Project(ledger) Card` rebuilds from the ledger at any time. Each stage summary carries a source label: worker report, GitHub, Core's own review, or unknown. Only Core writes verdicts (`verified`, `needs_changes`).
+**C-30 Task states and stage sources (changed).** Card states, `done` and verdicts are those of [work-and-delegation.md](work-and-delegation.md#progress-display) and [work-and-delegation.md](work-and-delegation.md#judgment-and-delivery). `Project(ledger) Card` rebuilds from the ledger at any time. Each stage summary carries a source label: worker report, GitHub, Core's own review, or unknown. Only Core writes verdicts (`verified`, `needs_changes`). The append-only `work_ledger` is authoritative; `work_cards` and `work_active_runs` are disposable indexes rebuilt together from its ordered events. A receipt stays a worker claim, and is held until the matching terminal observation. A verified result without required application remains ready for review; only a matching apply record makes it done. New generations clear the prior receipt, verdict and application. Startup rebuilds the indexes and records unfinished executions as unknown while retaining their reservations until reconciliation observes an end.
 
 ## Timers, progress and waiting
 
@@ -1061,7 +1146,7 @@ type Definition struct {
 - `waiting.Build` collects rows from approvals, questions, `needs_input` runs, blocked work, 할 일 the person promised or that are overdue with a deadline, requests awaiting a reply, exchanges flagged for the person, and outside-change problems. Each producer returns a row with kind, effort hint and an answer mapping. Core re-reads the source before showing.
 - Order follows [surfaces.md](surfaces.md#waiting-for-me); lightest first is the alternative order. Home gets five rows and a count.
 - The waiting producer interface returns candidate keys and re-reads each source within one canon transaction. A completed source is marked handled and omitted; a missing source is omitted; other source errors refuse the snapshot. Sources supply only ask-only items addressed to this person. Source references and revisions remain outside the display-only `view.Waiting` type. An answer re-checks ownership, revision and the source's answer mapping, then commits the source change and one decision with the person, requesting agent and answer together. Existing approval records are read through `waiting.ApprovalSource`; their answers still pass through the authority service with its trusted decider, and its attributed record is the decision rather than a second approval log. `waiting.RunInputSource` reads `needs_input` generations and delegates the answer to the run owner, which records the person and agent with the follow-up before resuming. A repeated identical answer returns that same decision. A repeated answer cannot create a second decision.
-- `runs.RunningList` combines `runs.RunListSource` over canonical run records and delegated-task producers, re-reading their current records. Input-needed rows come first, then complete or partial results ready for review, then other in-progress, waiting and landed rows. Waiting rows carry one scheduler-owned reason; unknown states or unexplained waiting fail the snapshot. Opening or dismissing a landed row records its removal from the list in canon without deleting its source or result; opening live work keeps it visible.
+- `runs.RunningList` combines `runs.RunListSource` over canonical run records and delegated-task producers, re-reading their current records. Input-needed rows come first, then complete or partial results ready for review, then other in-progress, waiting and landed rows. Waiting rows carry one scheduler-owned reason; unrecognized state codes or unexplained waiting fail the snapshot. Delegated tasks contribute their durable cards through the same list; an unreconciled task uses the explicit `unknown` state and remains visible. Opening or dismissing a landed row records its removal from the list in canon without deleting its source or result; opening live work keeps it visible.
 - Run landings carry a durable generation key and landing instant; `runs.TransferNotices` acknowledges a generation only after the lane outbox accepts it durably. Question and landing generations remain distinct even at the same clock instant. The lane masks the summary before persistence and owns a durable notice outbox and serializes delivery with the whole conversation turn. Already queued person input precedes a notice. Pending landings in the same conversation and ownership scope, at most 10 seconds from the first landing (inclusive), form one event; an idle lane delivers immediately. A delivery commits its conversation event and outbox acknowledgement together before subscriber publication. A failed commit retains the pending notices for explicit recovery and never retries in a loop. The display rows and notices are Core APIs in this increment; client 1.0 waiting/running payloads remain reserved until their surface implementation.
 - `progress.Compute` builds one line per running 일 and 목표 per [work-and-delegation.md](work-and-delegation.md#progress-line): name, stage word and bar, just finished (the outcome line of the latest landing, built from structured fields and the title), next, and a waiting mark. Unobserved values are unknown, never zero. State words are codes; clients own the Korean and English catalogs.
 - Both are computed on change events, coalesced (P: 250 ms), and pushed as row diffs on the `waiting` and `progress` topics. `Digest` makes the channel form.
@@ -1124,7 +1209,7 @@ local source identities, so an old export cannot resurrect forgotten content.
 
 ## Storage, backup and diagnosis
 
-**C-39 Data placement (changed).** The areas are those of [filesystem.md](filesystem.md#state-root-and-layout). The Go owners: `canon` owns `canon/`; `ctlfiles` and `eventstore` own `system/`; `records`, `skills` and `agents` own `versions/`; `assets` owns `materials/` and `derived/`; `work` owns `work/`; `backup` owns `backups/`; `secrets` owns `secrets/`. Credentials are not backed up. Node execution state is outside the state root.
+**C-39 Data placement (changed).** The areas are those of [filesystem.md](filesystem.md#state-root-and-layout). The Go owners: `canon` owns `canon/`; `ctlfiles` and `eventstore` own `system/`; `records`, `skills` and `agents` own `versions/`; `assets` owns `materials/` and `derived/`; `work` owns `work/`; `backup` owns `backups/`; `secrets` owns `secrets/`. Credentials are not backed up. Node execution state is outside the state root. Delegated-task events, receipts, provenance and acceptance records live in canon, never only in `work/`. Provenance for every manifest entry includes artifact id, task, node, normalized observed path, content hash and observation time, and must match the current run and the declared manifest before the receipt is admitted.
 
 `assets` also owns import and export staging. Its materials implementation uses private directories and files, paths confined to an open state-root handle, random ids, increasing revision directories and SHA-256 hashes. Rename updates the observed path; edit preserves the id and older bytes. Its backup operation copies and verifies all recorded material revisions, including trash, into an unpublished generation supplied by the backup coordinator. The store has no TUI or protocol operation yet; package tests exercise real files and canon for identity, staging, export, trash and backup corruption. Version-space text, derived-data production, whole-generation backup, and coordinated permanent deletion retain their respective owners.
 
