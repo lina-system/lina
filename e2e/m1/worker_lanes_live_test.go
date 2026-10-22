@@ -37,6 +37,9 @@ func TestM3WorkerLanesLiveSession(t *testing.T) {
 			t.Error(err)
 			return
 		}
+		if scriptedCodingManager(t, w, req) {
+			return
+		}
 		n := calls.Add(1)
 		if n > 1 {
 			var item struct{ Output string }
@@ -76,7 +79,8 @@ func TestM3WorkerLanesLiveSession(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	h, _ := installedConversationHarness(t, server.URL)
+	h, bootstrap := installedConversationHarness(t, server.URL)
+	seedCodingFixture(t, h, bootstrap)
 	bin := t.TempDir()
 	exe, err := os.Executable()
 	if err != nil {

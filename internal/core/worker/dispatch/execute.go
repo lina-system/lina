@@ -12,12 +12,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/authority"
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/antigravity"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/proc"
+	"github.com/thisisjun786/lina/kit/tools"
 )
 
 func (s *Service) execute(r Record) {
@@ -35,6 +38,20 @@ func (s *Service) execute(r Record) {
 		}
 	}()
 	r.Code = "start_failed"
+	if r.Owner != "" {
+		var live int
+		err := s.cfg.DB.Read(ctx, func(tx *canon.Tx) error {
+			return tx.QueryRowContext(ctx, "SELECT count(*) FROM agents WHERE id=? AND preset='dev' AND trashed_at=0", r.Owner).Scan(&live)
+		})
+		if err != nil || live != 1 {
+			r.Code = "dev_agent_unavailable"
+			return
+		}
+		if err = authority.CheckPreset(ctx, s.cfg.DB, s.cfg.Epoch, authority.PolicyRequest{Key: "preset:worker:" + r.ID, Person: r.Origin.Person, Agent: r.Owner, TaskID: "coding:" + r.ID, Tool: "dispatch_work", Target: r.Definition.Repository, Class: tools.WorkerEffect, Arguments: mustJSON(r.Definition)}); err != nil {
+			r.Code = "preset_effect_limit"
+			return
+		}
+	}
 	l, err := s.cfg.Activities.Acquire(ctx, lease.Activity{Class: lease.Hard, Reason: "delegated worker task"})
 	if err != nil {
 		return
@@ -93,7 +110,12 @@ func (s *Service) execute(r Record) {
 		return
 	}
 	service := work.New(s.cfg.DB)
-	if err = service.Create(ctx, work.Task{ID: r.ID, PersonID: r.Origin.Person, AgentID: r.Origin.Agent, ConversationID: r.Origin.Conversation, Title: d.What, Done: d.Done, ArtifactRoots: []string{taskRoot}, RequiresApply: true}); err != nil {
+	ownerAgent, manager := r.Owner, r.Manager
+	if ownerAgent == "" {
+		ownerAgent = r.Origin.Agent
+		manager = r.Origin.Conversation
+	}
+	if err = service.Create(ctx, work.Task{ID: r.ID, PersonID: r.Origin.Person, AgentID: ownerAgent, ConversationID: manager, Title: d.What, Done: d.Done, ArtifactRoots: []string{taskRoot}, RequiresApply: true}); err != nil {
 		return
 	}
 	if _, err = git(repo, "worktree", "add", "-b", d.Branch, workdir, base); err != nil {

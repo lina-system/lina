@@ -37,7 +37,7 @@ func ExpandTool(agent string, read ExpandRead) (tools.Spec, tools.Handler) {
 		}
 		return a, nil
 	}
-	spec := tools.Spec{Name: "expand", Placement: tools.Core, Conc: 1, Deadline: 30 * time.Second, Schema: func(raw json.RawMessage) (tools.Input, error) {
+	spec := tools.Spec{Classify: tools.Class(tools.Research), Name: "expand", Placement: tools.Core, Conc: 1, Deadline: 30 * time.Second, Schema: func(raw json.RawMessage) (tools.Input, error) {
 		a, err := decode(raw)
 		if err != nil || agent == "" || read == nil {
 			return tools.Input{}, tools.ErrInvalid

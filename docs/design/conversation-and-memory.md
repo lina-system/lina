@@ -493,7 +493,7 @@ Core publishes the configured private Lina source before initialization, as defi
 - An agent created from a preset takes the preset's material as its core and default voice layers in its first persona revision. When a preset's material changes, every agent created from that preset receives the next revision of those two layers.
 - A preset can define blank settings that each agent fills over time. The filled values are that agent's persona record, and no preset update touches them.
 - World material in a preset that the core layer does not hold is LINA material. Atropos recalls it as material passages in the ContextPacket of a conversation with an agent created from that preset (see Request layout), so the persona itself is still projected only through its fixed layers.
-- A preset can carry a management methodology (see Preset methodologies). The LINA preset carries to-do management, the dev preset development management, the knowledge preset knowledge and people management, and the life preset life management.
+- Each of the eight starter presets resolves to the methodology below. Core reads the preset id from canon, independently of the agent's name and persona text. Methodology preparation never replaces character or voice layers; their source publication and starter creation remain separate operations.
 - A methodology changes with the preset: a preset update gives the next revision of the core and default voice layers, and the record sets an agent has created stay as they are.
 - A preset's default voice layer includes one line for how its agent writes to other agents (see Agent exchanges).
 
@@ -501,9 +501,22 @@ The conversation writer fills only keys copied from the preset when that agent w
 
 ### Preset methodologies
 
-A methodology is the judgment an agent applies to one kind of work. It comes from observed assistant practice, generalized. Four presets carry one: the LINA preset (to-do management), the dev preset (development management), the knowledge preset (knowledge and people management) and the life preset (life management). The life preset manages the person's own life and is unrelated to LIFE, the world engine of [cognition-and-life.md](cognition-and-life.md#life).
+A methodology is the judgment an agent applies to one kind of work. The eight starter identities and methodologies are:
 
-- A methodology is short judgment guidance and a few hard lines in the preset's core layer. The mechanical parts, such as ledgers, cursors, idempotency, routing and the checks named below, are LINA Core mechanisms in the contracts that own them. Persona text carries no procedures, state chains, approval checklists, report templates or routing tables.
+| Preset | Character | Methodology |
+| --- | --- | --- |
+| system | Selene | Self-maintenance |
+| lina | Lina | To-do management |
+| dev | Sion | Development management |
+| knowledge | Rumi | Knowledge and people management |
+| life | Arin | Life management |
+| creative | Cleo | Creative work |
+| investing | Kai | Advice only |
+| legal | Kanna | Drafts only |
+
+The life preset manages the person's own life and is unrelated to LIFE, the world engine of [cognition-and-life.md](cognition-and-life.md#life). Names identify characters; a rename changes neither methodology nor authority.
+
+- A methodology supplies short judgment guidance alongside the fixed persona layers. Core pins its catalog entry in the turn's ContextPacket and retains it with preparation evidence, so replay uses the guidance actually prepared. The mechanical parts, such as ledgers, cursors, idempotency, routing and the checks named below, are LINA Core mechanisms in the contracts that own them. Persona text carries no procedures, state chains, approval checklists, report templates or routing tables. Empty or edited persona layers do not disable a methodology or its effect ceiling.
 - A preset starts with the areas the person actually brings. It creates the record set for a new area on first use and keeps a visible list, "what I track for you", that grows. It does not infer interests from its own description.
 - A preset never widens a grant. What an agent may do alone and what it must ask comes from the effect classes and the approval policy of [main-authority.md](main-authority.md#approval).
 
@@ -536,6 +549,8 @@ Core mechanisms it relies on: the to-do record and the candidate objects of [wor
 12. Recurring items use the person's own wording. The first conversation asks once for family dates, recurring payments and tax or filing dates, and nothing more.
 
 #### Development management (dev preset)
+
+Coding raised with any starter is owned by the live dev persona, including its manager session, worker assignment and PR delivery. The asking agent keeps its conversation and the purpose that led to the coding request. System and creative hand off implementation without becoming coding managers. Missing or deleted dev ownership is an explicit `dev_agent_unavailable` result; this routing does not create or replace an agent. The [development method](work-and-delegation.md#development-method) defines the durable binding and return path.
 
 Core mechanisms it relies on: the work engine's records, manager session lifecycle, dispatch and Node bids, delivery receipts, completion events and claims, protocol session state and recovery, quota and capacity readers, write-area overlap, the spawn-time capability check, merge execution, QA after each merge, the source label on each stage summary and the running list. The check against the work definition is the owning persona's judgment in its manager session. These are defined in [work-and-delegation.md](work-and-delegation.md); the splitting and parallel-flow rules there are not repeated here.
 
@@ -583,6 +598,24 @@ This is the least tested methodology. Core mechanisms it relies on: structured r
 12. Every "I will come back to this" becomes an 일 or a 할 일 with a waiting state, who or what it waits for, and a next-check date. A reply or the passing date raises an event.
 13. Dates and registration belong to the LINA preset; the content of trips and hobbies belongs here; records about other people belong to the knowledge preset, which alone writes them. Relationship advice is handed there.
 14. Do not comment on, shorten or reorder the person's day because of unusual hours unless the person asks.
+
+#### Self-maintenance (system preset)
+
+Selene starts from observed health, with its source and observation time. A diagnosis distinguishes the affected component from overall system health. A repair keeps its before observation, declared target and effect receipt, then uses a fresh observation to verify the result. An attempted repair is not recovery evidence. Coding repairs go to dev with the health evidence and done condition.
+
+Core's `observe_health` currently observes records-index head and row-count consistency. `repair_records_index` requires that observation's revision, rebuilds only the disposable projection from canonical records, and returns its observed result. Source records and history remain intact; a later `observe_health` is independent verification. This is not a claim to diagnose every device or service. Other repairs use their existing tools and grants. System has no administrator authority.
+
+#### Creative work (creative preset)
+
+Cleo preserves the person's brief, constraints, medium and audience, and distinguishes proposed changes to that brief from artifact revisions. Private artifacts use versioned records; each revision retains the brief and source references it answers. Feedback produces a new inspectable revision. Publication and sharing use ordinary effect approval. Software implementation goes to dev while the creative brief stays with Cleo.
+
+#### Advice only (investing preset)
+
+Kai researches authorized sources, records source revisions or URLs with check dates, makes calculations with explicit assumptions, and returns private advice with uncertainty. Core's bounded `calculate` tool supplies an exact rational result and the expression without running a command. Versioned private drafts retain that evidence. Advice does not become an order after acceptance. Core refuses orders, unrestricted command/worker execution and external execution, including through another agent, under [preset effect limits](main-authority.md#preset-effect-limits).
+
+#### Drafts only (legal preset)
+
+Kanna prepares private legal, tax, accounting, contract and copyright drafts with evidence, jurisdiction, dates, assumptions and unresolved questions. Draft revisions preserve source references and distinguish accepted text from authorized execution. Research, calculations and private drafts are permitted within existing grants. Filing, signing, sending or otherwise executing the draft or advice is refused by Core, before an approval is raised. The restriction follows delegation and is independent of the persona's wording.
 
 ### Layers and revisions
 

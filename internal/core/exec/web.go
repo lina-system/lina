@@ -84,7 +84,7 @@ func RegisterWeb(registry *tools.Registry, p WebProvider) ([]tools.Spec, error) 
 	}
 	var specs []tools.Spec
 	for _, name := range []string{"web_search", "web_extract"} {
-		spec := tools.Spec{Name: name, Placement: tools.Core, Conc: 2, Deadline: 60 * time.Second}
+		spec := tools.Spec{Classify: tools.Class(tools.Research), Name: name, Placement: tools.Core, Conc: 2, Deadline: 60 * time.Second}
 		spec.Schema = func(raw json.RawMessage) (tools.Input, error) {
 			var a webArgs
 			target, what := "web:search", "Search the web"

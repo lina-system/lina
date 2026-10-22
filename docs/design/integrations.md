@@ -138,6 +138,8 @@ The first-party plugins carry profiles. LINA also ships profiles for major messa
 
 LINA Core marks a plugin tool or command as an outward or irreversible effect from one source: the plugin's service profile. A call to a marked tool asks every time, with the choices once and deny ([main-authority.md](main-authority.md#plugin-tools)). Every other tool of a plugin that is on is available to every agent, in the same way, and runs without asking. There are no tiers, no scopes and no per-tool settings.
 
+Before that approval policy, Core applies [preset effect limits](main-authority.md#preset-effect-limits). A trusted service profile supplies an operation classifier over already validated arguments: a multipurpose service tool can classify its quote operation as research and its order operation as an investment order. Core-owned tools supply the same classification in their registered definitions. Schema validation runs first. Caller-supplied effect labels, server descriptions and annotations are never classification authority. Newly added or unprofiled operations remain unclassified and fail closed for advice-only and draft-only origins. Their availability to ordinary agents keeps the existing policy.
+
 - Annotations that a server sends are untrusted and never mark a tool. `destructiveHint` is a display hint only.
 - The shipped messaging profiles mark every send tool.
 - A plugin without a profile has no marked tool. The card says so, and the agent rules still make an agent ask before it sends, pays, publishes or permanently deletes ([work-and-delegation.md](work-and-delegation.md#default-posture)).

@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/authority"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/internal/core/work"
@@ -27,6 +28,7 @@ import (
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/proc"
 	"github.com/thisisjun786/lina/kit/provider"
+	"github.com/thisisjun786/lina/kit/tools"
 )
 
 type Definition struct {
@@ -43,6 +45,8 @@ type Definition struct {
 }
 type Origin struct{ Person, Agent, Conversation, Turn string }
 type Record struct {
+	Owner      string                     `json:"owner,omitempty"`
+	Manager    string                     `json:"manager,omitempty"`
 	ID         string                     `json:"id"`
 	Origin     Origin                     `json:"origin"`
 	Definition Definition                 `json:"definition"`
@@ -54,6 +58,7 @@ type Record struct {
 	Announced  bool                       `json:"announced"`
 }
 type Config struct {
+	Manage      func(context.Context, Record) (Record, error)
 	DB          *canon.Store
 	Root, Main  string
 	Epoch       uint64
@@ -179,7 +184,17 @@ func (s *Service) Tool(origin Origin) loop.Tool {
 		}
 		d.Repository = canonical
 		key := fmt.Sprintf("%x", sha256.Sum256([]byte(origin.Turn+"\x00"+c.ID)))
+		if err := authority.CheckPreset(ctx, s.cfg.DB, s.cfg.Epoch, authority.PolicyRequest{Key: "preset:dispatch:" + key, Person: origin.Person, Agent: origin.Agent, TaskID: origin.Turn, Tool: "dispatch_work", Target: d.Repository, Class: tools.WorkerEffect, Arguments: mustJSON(d)}); err != nil {
+			body := mustJSON(map[string]string{"code": err.Error(), "boundary": "This preset supports advice or private drafts; unrestricted worker execution is unavailable."})
+			return loop.Result{ID: c.ID, Code: loop.Denied, Output: body}
+		}
 		r := Record{ID: key, Origin: origin, Definition: d, State: "queued"}
+		if s.cfg.Manage != nil {
+			r, err = s.cfg.Manage(ctx, r)
+			if err != nil {
+				return loop.Result{ID: c.ID, Code: loop.Denied, Output: mustJSON(map[string]string{"code": err.Error()})}
+			}
+		}
 		err = s.cfg.DB.Write(ctx, func(tx *canon.Tx) error {
 			var prior []byte
 			readErr := tx.QueryRowContext(ctx, "SELECT record FROM worker_dispatch WHERE id=?", r.ID).Scan(&prior)
@@ -199,7 +214,7 @@ func (s *Service) Tool(origin Origin) loop.Tool {
 		if err != nil {
 			return loop.Result{ID: c.ID, Code: loop.Denied}
 		}
-		return loop.Result{ID: c.ID, Code: loop.OK, Output: mustJSON(map[string]string{"id": r.ID, "state": "queued"})}
+		return loop.Result{ID: c.ID, Code: loop.OK, Output: mustJSON(map[string]string{"id": r.ID, "state": "queued", "owner": r.Owner, "manager": r.Manager})}
 	}}
 }
 func mustJSON(v any) []byte { b, _ := json.Marshal(v); return b }

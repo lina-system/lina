@@ -79,6 +79,9 @@ func TestM3AntigravityThroughInstalledCore(t *testing.T) {
 					t.Error(err)
 					return
 				}
+				if scriptedCodingManager(t, w, req) {
+					return
+				}
 				if calls.Add(1) == 1 {
 					for _, tool := range req.Tools {
 						if tool.Name == "dispatch_work" {
@@ -92,11 +95,13 @@ func TestM3AntigravityThroughInstalledCore(t *testing.T) {
 					}
 					emitPersonaCall(w, "worker-start", "dispatch_work", map[string]any{"repository": repo, "base": "dev", "branch": "task-branch", "what": scenario.What, "why": "Prove real worker execution", "scope": []string{"result.txt"}, "not_touch": []string{"design.md"}, "done": scenario.Done, "design_refs": []string{"design.md#result"}, "write_area": []string{"result.txt"}})
 				} else {
+					methodologyOutput(t, methodologyRequest{Input: req.Input}, "ok", nil)
 					emitResponse(w, "Task accepted.", true)
 				}
 			}))
 			defer server.Close()
-			h, _ := installedConversationHarness(t, server.URL)
+			h, bootstrap := installedConversationHarness(t, server.URL)
+			seedCodingFixture(t, h, bootstrap)
 			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 			t.Cleanup(cancel)
 			h.ctx = ctx
@@ -111,7 +116,7 @@ func TestM3AntigravityThroughInstalledCore(t *testing.T) {
 			core := start()
 			c, conversation := conversationClient(t, h)
 			events := admittedTurn(t, h, c, conversation, "delegate", "Create result.txt through the installed worker and submit its PR.")
-			if !offered.Load() {
+			if !offered.Load() || t.Failed() {
 				c.Close()
 				h.stopCore(core)
 				return

@@ -44,6 +44,9 @@ type translation struct{ en, ko string }
 // Keys are wire codes or local presentation ids, never English source text.
 // Keep both languages together so a new entry cannot omit a translation.
 var catalog = map[string]translation{
+	"agents.advice_only":        {"Advice only", "조언만"},
+	"agents.draft_only":         {"Drafts only", "초안만"},
+	"agents.development":        {"Development owner", "개발 담당"},
 	"conversation.start.memory": {"What do you remember about me?", "나에 대해 무엇을 기억해?"},
 	"conversation.start.voice":  {"Please keep your replies brief.", "앞으로 짧게 답해 줘."},
 	"conversation.start.task":   {"Help me finish a task.", "이 일을 끝까지 맡아서 해 줘."},

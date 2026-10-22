@@ -71,6 +71,7 @@ type Decision struct {
 	Agents        *AgentScope
 }
 type Approval struct {
+	TaskID                                                     string `json:",omitempty"`
 	ID, EffectKey, What, Where, ScopeKey, Target, Plugin, Tool string
 	Arguments                                                  json.RawMessage
 	Undoable, Network, Outward                                 bool
