@@ -78,7 +78,9 @@ func TestM1ReplyShapeLONGQA(t *testing.T) {
 	c, conversation := conversationClient(t, h)
 	screenTUI := h.startScreenTUI("TERM=xterm-256color")
 	waitScreen(t, h, screenTUI, design.Text(design.English, "live"))
-	h.keys(screenTUI, scenario.Input+"\r")
+	h.keys(screenTUI, scenario.Input)
+	waitScreen(t, h, screenTUI, scenario.Input)
+	h.keys(screenTUI, "\r")
 	var visible string
 	var card protocol.Result
 	for {
