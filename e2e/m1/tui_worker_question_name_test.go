@@ -18,7 +18,7 @@ import (
 
 func TestM2TUIWorkerQuestionNameInstalledCore(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"LINA", "Cedar 한글"} {
+	for _, name := range []string{"Sion", "Cedar 한글"} {
 		t.Run(name, func(t *testing.T) {
 			fixture := codexWorkScenario{
 				Input: "Ask the worker to prepare the artifact.", TaskPacket: "Write the assigned artifact after approval and an answer.",
@@ -38,6 +38,14 @@ func TestM2TUIWorkerQuestionNameInstalledCore(t *testing.T) {
 					w.WriteHeader(http.StatusNoContent)
 					return
 				}
+				var req struct{ Input, Tools []json.RawMessage }
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					t.Error(err)
+					return
+				}
+				if scriptedCodingManager(t, w, req) {
+					return
+				}
 				if calls.Add(1) == 1 {
 					emitPersonaCall(w, "start-worker", "worker_start", map[string]any{"workdir": workdir, "task_packet": fixture.TaskPacket})
 					return
@@ -45,7 +53,8 @@ func TestM2TUIWorkerQuestionNameInstalledCore(t *testing.T) {
 				emitResponse(w, "Worker started.", true)
 			}))
 			defer func() { server.CloseClientConnections(); server.Close() }()
-			h, _ := installedConversationHarness(t, server.URL)
+			h, bootstrap := installedConversationHarness(t, server.URL)
+			ids := seedCodingFixture(t, h, bootstrap)
 			bin := t.TempDir()
 			exe, err := os.Executable()
 			if err != nil {
@@ -64,10 +73,10 @@ func TestM2TUIWorkerQuestionNameInstalledCore(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer c.Close()
-			agent := c.Welcome.Agents[0].AgentID
-			if name != "LINA" {
-				op := "create"
-				if _, err := c.Agent(h.ctx, protocol.AgentRequest{Operation: &op, Name: &name}); err != nil {
+			agent := ids["dev"]
+			if name != "Sion" {
+				op := "rename"
+				if _, err := c.Agent(h.ctx, protocol.AgentRequest{Operation: &op, AgentID: &agent, Name: &name}); err != nil {
 					t.Fatal(err)
 				}
 				frame, err := c.Receive(h.ctx)
@@ -75,20 +84,13 @@ func TestM2TUIWorkerQuestionNameInstalledCore(t *testing.T) {
 					t.Fatal(err)
 				}
 				result, ok := frame.Payload.(protocol.AgentResult)
-				if !ok || result.AgentID == nil {
-					t.Fatalf("agent creation failed: %+v", frame)
+				if !ok || result.AgentID == nil || *result.AgentID != agent {
+					t.Fatalf("agent rename failed: %+v", frame)
 				}
-				agent = *result.AgentID
 			}
-			terminal, tap := h.startConversationTUI(120, 36, "TERM=xterm-256color", "LC_ALL=C")
+			terminal, _ := h.startConversationTUI(120, 36, "TERM=xterm-256color", "LC_ALL=C")
 			waitComposerReady(t, h, terminal)
-			if name != "LINA" {
-				h.keys(terminal, "/agents choose "+agent+"\r")
-				waitScreen(t, h, terminal, agent)
-				h.keys(terminal, "\x1b")
-				tap.waitConversation(h)
-				waitComposerReady(t, h, terminal)
-			}
+			// The person talks to LINA; the coding manager owns the worker.
 			h.keys(terminal, fixture.Input+"\r")
 			waitScreen(t, h, terminal, "Codex wants to run a command")
 			// Enhanced key events keep selection and confirmation separate without sleeps.
@@ -110,6 +112,7 @@ func TestM2TUIWorkerQuestionNameInstalledCore(t *testing.T) {
 			if !strings.Contains(screenText(home), name+" "+questionLabel) || strings.Contains(screenText(home), agent) {
 				t.Errorf("question row does not identify %q: %s", name, screenText(home))
 			}
+			waitScreen(t, h, terminal, name+": "+fixture.Question)
 			h.keys(terminal, "\x1b[17~")
 			question := waitScreen(t, h, terminal, "answer (text):")
 			if screenRows(question)[0] != name || strings.Contains(screenText(question), agent) {

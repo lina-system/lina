@@ -712,8 +712,9 @@ form header and the conversation card row, consistently with Home and approvals.
 Core resolves decision names from the agent store, including agents created or
 renamed since startup. Agent IDs remain routing data. The installed-Core test
 `TestM2TUIWorkerQuestionNameInstalledCore` types a worker request in the real TUI,
-accepts its approval, answers its question and checks the resulting artifact for
-both the default agent and a newly created agent.
+accepts its approval, answers its question and checks the resulting artifact.
+It distinguishes the worker's owning coding agent from the conversation agent
+and covers renaming that owner after Core starts.
 
 **Sign-in.** The TUI is the client side of one relay for plugin and model-provider sign-in. It opens a loopback listener and reports its port, opens the system browser when it runs locally, and relays `code`, `state` and `iss`, or the `error` fields, exactly as received. Over SSH it takes a pasted URL instead. A secret the person types, such as an API key, is a masked field with no undo and no history, and travels once to Core.
 
