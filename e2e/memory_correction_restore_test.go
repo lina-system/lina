@@ -17,6 +17,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	memoryexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/internal/core/memory"
+	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -179,6 +180,10 @@ func TestM1MemoryCorrectionForgetRestore(t *testing.T) {
 // closing its view. The tap observes the same committed result the TUI receives.
 func correctionMemoryTUI(t *testing.T, h *harness) (func(string) protocol.MemoryResult, func()) {
 	t.Helper()
+	// A socket handshake can precede recovery completion after restore.
+	// Probe admission before the TUI sends management requests.
+	ready, _ := conversationClient(t, h)
+	ready.Close()
 	socket := h.socket
 	tap := newAccountTap(t, h, socket, true)
 	h.socket = tap.socket
@@ -200,7 +205,8 @@ func correctionMemoryTUI(t *testing.T, h *harness) (func(string) protocol.Memory
 			if result, ok := e.Payload.(protocol.MemoryResult); ok {
 				marker := "/memory forget"
 				if result.ItemID != nil {
-					marker = *result.ItemID
+					// The id alone may still be visible in the submitted draft.
+					marker = design.Text(design.English, *result.Operation) + " " + *result.ItemID
 				}
 				waitScreen(t, h, terminal, marker)
 				opened = true

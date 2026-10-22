@@ -169,6 +169,9 @@ func TestM1TUIChannelPairing(t *testing.T) {
 	core.command.Env = append(core.command.Env, "LINA_TEST_CHANNEL_ROOT="+h.root, "LINA_TEST_CHANNEL_SOCKET="+socket, "LINA_TEST_CHANNEL_HTTP="+platform.URL)
 	core.start(t)
 	h.connect(core).Close()
+	// The handshake can complete while Core is still recovering.
+	ready, _ := conversationClient(t, h)
+	ready.Close()
 	tap := newAccountTap(t, h, socket)
 	h.socket = tap.socket
 	terminal := h.startScreenTUI("TERM=xterm-256color")

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"io"
 	"net"
+	"os"
 	"path/filepath"
 	"sync"
 
@@ -17,7 +18,7 @@ import (
 // startConversationTUI waits for the TUI's own conversation subscription. The
 // shortcut footer and live connection status can precede history discovery.
 // Observing this response proves the TUI has adopted the conversation id before
-// the scenario submits input. The transparent proxy also forwards reconnects.
+// the scenario submits input. Later connections go directly to Core.
 func (h *harness) startConversationTUI(environment []string, width, height int, conversation string) *terminal {
 	h.t.Helper()
 	target := h.socket
@@ -31,23 +32,22 @@ func (h *harness) startConversationTUI(environment []string, width, height int, 
 	var once sync.Once
 	go func() {
 		defer close(done)
-		for {
-			local, err := listener.Accept()
-			if err != nil {
-				return
-			}
-			remote, err := (&net.Dialer{}).DialContext(ctx, "unix", target)
-			if err != nil {
-				local.Close()
-				continue
-			}
-			forwardConversation(ctx, local, remote, conversation, func() { once.Do(func() { close(ready) }) })
+		local, err := listener.Accept()
+		if err != nil {
+			return
 		}
+		remote, err := (&net.Dialer{}).DialContext(ctx, "unix", target)
+		if err != nil {
+			local.Close()
+			return
+		}
+		forwardConversation(ctx, local, remote, conversation, func() { once.Do(func() { close(ready) }) })
 	}()
 	h.t.Cleanup(func() {
 		cancel()
 		listener.Close()
 		<-done
+		os.Remove(socket)
 	})
 	h.socket = socket
 	terminal := h.startTerminalSize(environment, false, true, width, height)
@@ -58,6 +58,15 @@ func (h *harness) startConversationTUI(environment []string, width, height int, 
 		h.t.Fatalf("TUI exited before conversation discovery: %s", terminal.process.stderr.String())
 	case <-h.ctx.Done():
 		h.t.Fatal("TUI did not subscribe to its conversation", h.ctx.Err())
+	}
+	// Preserve native socket errors during a Core restart. Leaving a proxy
+	// listener up would accept a reconnect while Core is down, then turn its
+	// missing socket into a fatal handshake EOF. The current stream stays open.
+	if err := listener.Close(); err != nil {
+		h.t.Fatal(err)
+	}
+	if err := os.Symlink(target, socket); err != nil {
+		h.t.Fatal(err)
 	}
 	return terminal
 }
