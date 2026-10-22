@@ -224,3 +224,11 @@ and deleted agents in conversation and management requests, plus channel
 binding/scope replacement. A paired synthetic channel and an existing binding
 exercise the actual target-agent checks. Read-only canon snapshots prove that
 refused requests preserve agent revisions, actions, conversations and bindings.
+
+`m3/worker-lanes.json` uses installed Core and a real headless TUI to show two
+sessions of the same worker as separate folded lanes. A fixture writes a real
+artifact and records its receipt, terminal observation and content verification
+through the work service before startup. The second unfinished execution becomes
+unknown during Core recovery. The scenario checks protocol identities, explicit
+expansion with stage provenance, refresh, folding and reopening. It exercises
+Core's read path and TUI; it does not claim live vendor worker dispatch.

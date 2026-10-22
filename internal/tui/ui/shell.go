@@ -95,6 +95,9 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case shellBegin:
 		if msg.Generation > m.generation {
 			m.generation = msg.Generation
+			if m.conversation.pager.developer {
+				m.conversation.pager = textPager{}
+			}
 			m.talk = talkView{attempt: m.talk.attempt + 1}
 			m.channels = channelView{attempt: m.channels.attempt + 1}
 			m.accounts = accountView{}
@@ -246,6 +249,7 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		options := m.styles.options
 		options.Width = max(1, msg.Width)
 		m.styles = NewStyles(options)
+		m.refreshDeveloper()
 	case tea.KeyboardEnhancementsMsg:
 		m.events = msg.SupportsEventTypes()
 		m.disambiguated = msg.SupportsKeyDisambiguation()

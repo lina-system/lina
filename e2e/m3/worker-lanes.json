@@ -1,0 +1,8 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "command": "/developer",
+  "tasks": ["Prepare report", "Check report"],
+  "workers": ["Codex", "Codex"],
+  "threads": ["thread-report", "thread-check"],
+  "output": "Synthetic report verified by content."
+}

@@ -44,8 +44,19 @@ type translation struct{ en, ko string }
 // Keys are wire codes or local presentation ids, never English source text.
 // Keep both languages together so a new entry cannot omit a translation.
 var catalog = map[string]translation{
-	"notice.run_effect_question": {"How should the remaining actions proceed? Reads and analysis can continue; further actions need a separate authorized decision, and any unknown earlier outcome must be checked first.", "남은 작업을 어떻게 진행할까요? 읽기와 분석은 계속할 수 있어요. 추가 실행에는 별도의 승인된 결정이 필요하며, 이전 실행의 결과가 불확실하다면 먼저 확인해야 해요."},
-	"notice.run_input_needed":    {"Your input is needed before this background work can continue.", "이 백그라운드 작업을 계속하려면 응답이 필요해요."},
+	"developer.state.working":          {"Working", "진행 중"},
+	"developer.state.input_needed":     {"Input needed", "응답 필요"},
+	"developer.state.ready_for_review": {"Ready for review", "검토 준비됨"},
+	"developer.state.done":             {"Done", "완료"},
+	"developer.state.failed":           {"Failed", "실패"},
+	"developer.state.stopped":          {"Stopped", "중지됨"},
+	"developer.state.unknown":          {"Unknown", "알 수 없음"},
+	"developer.heading":                {"Worker lanes", "작업자 lane"},
+	"developer.keys":                   {"↑/↓ Select · Enter Fold/unfold · r Refresh · n Next page · Esc Back", "↑/↓ 선택 · Enter 접기/펼치기 · r 새로고침 · n 다음 쪽 · Esc 돌아가기"},
+	"developer.empty":                  {"No recorded worker sessions", "기록된 작업자 세션이 없어요"},
+	"developer.more":                   {"n Next worker page", "n 다음 작업자 쪽"},
+	"notice.run_effect_question":       {"How should the remaining actions proceed? Reads and analysis can continue; further actions need a separate authorized decision, and any unknown earlier outcome must be checked first.", "남은 작업을 어떻게 진행할까요? 읽기와 분석은 계속할 수 있어요. 추가 실행에는 별도의 승인된 결정이 필요하며, 이전 실행의 결과가 불확실하다면 먼저 확인해야 해요."},
+	"notice.run_input_needed":          {"Your input is needed before this background work can continue.", "이 백그라운드 작업을 계속하려면 응답이 필요해요."},
 
 	"notice.none":            {"none", "없음"},
 	"notice.run_report":      {"Agent report: %s. Verified: %s. Unverified: %s. Open the result card (Ctrl+O) or Running (Ctrl+R).", "작업 보고: %s. 검증됨: %s. 미검증: %s. 결과 카드(Ctrl+O)나 진행 중인 작업(Ctrl+R)을 열어 보세요."},

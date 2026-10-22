@@ -34,18 +34,22 @@ type conversationView struct {
 }
 
 type textPager struct {
-	transcript bool
-	running    bool
-	selected   int
-	runID      string
-	next       *json.Number
-	open       bool
-	text       string
-	cardID     string
-	followEnd  bool
-	offset     int
-	query      string
-	searching  bool
+	developer, developerBusy bool
+	developerID              string
+	lanes                    state.WorkerLanes
+	laneNext                 *string
+	transcript               bool
+	running                  bool
+	selected                 int
+	runID                    string
+	next                     *json.Number
+	open                     bool
+	text                     string
+	cardID                   string
+	followEnd                bool
+	offset                   int
+	query                    string
+	searching                bool
 }
 
 func newConversationView(styles Styles) conversationView {
@@ -222,10 +226,15 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 			m.reduceInput(state.EditDraft{})
 			text := func(id string) string { return design.Text(m.styles.options.Language, id) }
 			m.openPager(strings.Join([]string{text("controls.help"),
-				"/accounts  " + text("account.heading"), "/signin  " + text("sign_in_open"),
+				"/developer  " + text("developer.heading"), "/accounts  " + text("account.heading"), "/signin  " + text("sign_in_open"),
 				"/memory  " + text("memory.heading"), "/agents  " + text("agents.heading"), "/channels  " + text("channel.heading"), "/talk  " + text("talk.heading"), "/stop  " + text("interrupt"),
 			}, "\n"))
 			return nil
+		}
+		if handled, command := m.developerCommand(text); handled {
+			m.reduceInput(state.EditDraft{})
+			m.conversation.undo = nil
+			return command
 		}
 		if handled, command := m.talkCommand(text); handled {
 			m.reduceInput(state.EditDraft{})
@@ -422,6 +431,11 @@ func (m *shellModel) refreshOpenCard() {
 
 func (m *shellModel) pagerKey(msg tea.KeyMsg, name string) tea.Cmd {
 	p := &m.conversation.pager
+	if p.developer && !p.searching {
+		if handled, cmd := m.developerKey(name); handled {
+			return cmd
+		}
+	}
 	if p.running && !p.searching {
 		rows := m.topicBlocks("running")
 		if len(rows) > 0 {

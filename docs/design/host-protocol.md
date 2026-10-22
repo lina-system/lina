@@ -427,3 +427,16 @@ Mutating management replies use `applied` only after the existing Core service
 commits. Listing and choosing use `none`. Every reply is correlated to its
 request; neither client reconnect nor navigation repeats a mutation. Management
 requests retain conservative mutation admission during Core recovery.
+
+### Developer worker lanes
+
+The optional `worker_lanes` capability (1.0) grants the read-only `progress_get`
+request and its `progress` response. An absent `after` starts at the first task;
+otherwise it is an opaque task-id cursor. `lanes` is a page of at most 32 current
+worker executions, with `next_cursor` when another visible row exists. Generated
+`WorkerLane` fields carry persona, task and execution identities, display names,
+state and source-labeled stage details. Core authorizes the connected person and
+filters deleted personas and foreign-person records before pagination. Each page
+is one canon snapshot; a refresh starts a new snapshot. This request adds no
+subscription or execution authority and does not change the existing `progress`
+status-topic capability. The TUI retains fold/selection state locally by lane id.
