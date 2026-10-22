@@ -23,7 +23,7 @@ import (
 
 // Offer only rendered families; the conversation discovers and maintains its
 // concrete conversation/results subscriptions after welcome.
-var shellCapabilities = []protocol.Capability{{Name: "agents", Version: "1.0"}, {Name: "memory", Version: "1.0"}, {Name: "exchanges", Version: "1.0"}, {Name: "channels", Version: "1.0"}, {Name: "accounts", Version: "1.0"}, {Name: "sign_in_relay", Version: "1.0"}, {Name: "conversation", Version: "1.0"}, {Name: "running", Version: "1.0"}, {Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}}
+var shellCapabilities = []protocol.Capability{{Name: "agents", Version: "1.0"}, {Name: "memory", Version: "1.0"}, {Name: "exchanges", Version: "1.0"}, {Name: "channels", Version: "1.0"}, {Name: "accounts", Version: "1.0"}, {Name: "sign_in_relay", Version: "1.0"}, {Name: "conversation", Version: "1.0"}, {Name: "turn_activity", Version: "1.0"}, {Name: "running", Version: "1.0"}, {Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}}
 
 type clientPeer struct{ client *clientapi.Client }
 
@@ -458,7 +458,12 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 	quitTimer := time.NewTimer(0)
 	quitTimer.Stop()
 	defer quitTimer.Stop()
+	var activity activityClock
+	defer activity.stop()
 	for {
+		if display.interactive {
+			activity.sync(model.activityInterval())
+		}
 		var quitExpiry <-chan time.Time
 		quitTimer.Stop()
 		if !model.quitDeadline.IsZero() {
@@ -470,6 +475,12 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 			if err := handle(quitHintExpired{}); err != nil {
 				return err
 			}
+		case now := <-activity.C:
+			model.Update(activityTick(now))
+			if err := display.showShell(model); err != nil {
+				return err
+			}
+			activity.next()
 		case <-ctx.Done():
 			cause := context.Cause(ctx)
 			if errors.Is(cause, errQuit) {

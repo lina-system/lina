@@ -46,6 +46,7 @@ type shellBlock struct {
 }
 
 type shellModel struct {
+	activityFrame uint64
 	cardScroll    int
 	cardRequests  map[string]state.CardAnswerRequest
 	focused       bool
@@ -97,6 +98,14 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.now().Before(m.quitDeadline) {
 			m.quitDeadline = time.Time{}
 		}
+	case activityTick:
+		if m.activityVisible() {
+			m.content, _ = state.Reduce(m.content, state.Tick{Now: time.Time(msg)})
+			if !m.staticActivity() {
+				m.activityFrame++
+			}
+		}
+
 	case shellBegin:
 		if msg.Generation > m.generation {
 			m.generation = msg.Generation
@@ -197,11 +206,6 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshOpenCard()
 		m.refreshRunning()
 		m.refreshBlocks()
-		for _, block := range m.content.Blocks {
-			if block.Kind == protocol.KindTurnState && block.TurnKnown {
-				m.content, _ = state.Reduce(m.content, state.Turn{Active: block.TurnActive})
-			}
-		}
 		afterCard, _ := m.content.CurrentCard()
 		if beforeCard.ID != afterCard.ID || beforeCard.Revision != afterCard.Revision {
 			m.cardGate.CardChanged(m.now())

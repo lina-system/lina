@@ -23,12 +23,13 @@ const (
 
 // Options are ephemeral display preferences. They never change Core state.
 type Options struct {
-	Notification string
-	Theme        string
-	Profile      Profile
-	ASCII        bool
-	Width        int
-	Language     design.Language
+	ReducedMotion bool
+	Notification  string
+	Theme         string
+	Profile       Profile
+	ASCII         bool
+	Width         int
+	Language      design.Language
 }
 
 // Connection is a display state. Quit is a terminal transition, not a ninth
@@ -218,6 +219,7 @@ func (s Styles) ScreenStatus(connection ConnectionStatus) string {
 func environmentOptions(getenv func(string) string) Options {
 	opts := Options{Theme: "dark", Profile: ANSI16, ASCII: getenv("LINA_GLYPHS") == "ascii", Width: 80}
 	opts.Language = design.EnvironmentLanguage(getenv)
+	opts.ReducedMotion = getenv("LINA_REDUCED_MOTION") == "1"
 	switch getenv("LINA_NOTIFICATIONS") {
 	case "bell", "terminal":
 		opts.Notification = getenv("LINA_NOTIFICATIONS")

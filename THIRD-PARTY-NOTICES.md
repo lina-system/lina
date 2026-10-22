@@ -1336,6 +1336,18 @@ SOFTWARE.
 
 ## Terminal UI behaviour references
 
+The activity row draws on behavioural observations of Codex CLI
+([openai/codex](https://github.com/openai/codex), Apache-2.0) and Hermes Agent
+([NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent), MIT):
+status above the composer, compact elapsed time, a completion duration, frame
+sets and pausing animation while hidden or idle. No source code is copied.
+The seen/inferred/unknown specification is in
+[the activity reference](internal/tui/ACTIVITY-REFERENCE.md).
+
+Tool activity also follows Hermes Agent’s friendly catalog verbs and timed
+completion indication, observed at revision `944c3a434071f43e64b443d033f3eba30c64434c`
+in `agent/display.py`. LINA’s protocol and journal wiring are original.
+
 [Codex CLI](https://github.com/openai/codex) (Apache-2.0, OpenAI) informs the
 whole-conversation transcript overlay opened with Ctrl+T. No upstream code is
 copied. Source observations and limits are recorded in

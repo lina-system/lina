@@ -49,5 +49,8 @@ func ConversationOperations(service ConversationService) map[protocol.Kind]Opera
 	for _, kind := range []protocol.Kind{protocol.KindConversationStart, protocol.KindInput, protocol.KindInterrupt, protocol.KindHistoryGet} {
 		operations[kind] = Operation{Capability: ConversationCapability, Handle: handle}
 	}
+	history := operations[protocol.KindHistoryGet]
+	history.AdditionalCapabilities = []protocol.Capability{TurnActivityCapability}
+	operations[protocol.KindHistoryGet] = history
 	return operations
 }
