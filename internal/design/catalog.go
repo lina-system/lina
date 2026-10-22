@@ -44,11 +44,16 @@ type translation struct{ en, ko string }
 // Keys are wire codes or local presentation ids, never English source text.
 // Keep both languages together so a new entry cannot omit a translation.
 var catalog = map[string]translation{
-	"activity.thinking":          {"Thinking", "생각하는 중"},
-	"activity.replying":          {"Replying", "답하는 중"},
-	"activity.stopping":          {"Stopping", "중지하는 중"},
-	"activity.stop":              {"Esc to stop", "Esc 중지"},
-	"activity.worked_for":        {"Worked for %s", "%s 동안 작업함"},
+	"activity.thinking":   {"Thinking", "생각하는 중"},
+	"activity.replying":   {"Replying", "답하는 중"},
+	"activity.stopping":   {"Stopping", "중지하는 중"},
+	"activity.stop":       {"Esc to stop", "Esc 중지"},
+	"activity.worked_for": {"Worked for %s", "%s 동안 작업함"},
+	"github_read":         {"Read pull request", "풀 리퀘스트 읽기"},
+	"github_watch":        {"Watch CI", "CI 상태 보기"},
+	"success":             {"Succeeded", "성공"},
+	"failure":             {"Failed", "실패"},
+
 	"notice.run_effect_question": {"How should the remaining actions proceed? Reads and analysis can continue; further actions need a separate authorized decision, and any unknown earlier outcome must be checked first.", "남은 작업을 어떻게 진행할까요? 읽기와 분석은 계속할 수 있어요. 추가 실행에는 별도의 승인된 결정이 필요하며, 이전 실행의 결과가 불확실하다면 먼저 확인해야 해요."},
 	"notice.run_input_needed":    {"Your input is needed before this background work can continue.", "이 백그라운드 작업을 계속하려면 응답이 필요해요."},
 
