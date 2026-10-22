@@ -2,6 +2,8 @@
   "connection_state": "live",
   "refusal_exit": 78,
   "tool_name": "codex",
-  "tool_version": "codex-cli 9.8.7",
-  "tool_status": "unverified"
+  "tools": [
+    { "version": "codex-cli 0.163.0", "status": "verified" },
+    { "version": "codex-cli 0.162.0", "status": "unverified" }
+  ]
 }

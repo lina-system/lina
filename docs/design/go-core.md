@@ -1334,10 +1334,7 @@ existing canon reader, ledger material reader, pinned persona reader and model
 adapter. `replay` is an L4 flow with a read-only database interface, not a second
 store. Material bytes are verified outside canon read snapshots, then read from
 a per-operation revision cache inside a fresh visibility snapshot. A retraction
-or material trash during that read prevents publication. Request-assembly
-evidence that exceeds the ledger's inline limit uses the same material-read
-retry and fresh visibility checks as conversation bodies; its storage location
-alone is not missing assembly evidence. The kit loop runs in a network-blocked subprocess with a fresh scratch
+or material trash during that read prevents publication. The kit loop runs in a network-blocked subprocess with a fresh scratch
 directory. Core brokers provider streams through pipes without sending a
 credential into the child. The journal is empty; the read registry has a
 discarding gate that refuses writes, outward calls and network tools. `expand`

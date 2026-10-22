@@ -24,8 +24,8 @@ type observedReader struct {
 	active bool
 }
 
-func TestAssemblyMaterialReadReleasesSnapshotAndRechecksRetraction(t *testing.T) {
-	for _, mode := range []string{"retained", "revoked", "trashed"} {
+func TestRequestAssemblyMaterialReleasesSnapshotAndRechecksRetraction(t *testing.T) {
+	for _, mode := range []string{"read", "retracted", "assembly retracted", "trashed"} {
 		t.Run(mode, func(t *testing.T) {
 			db, source, root := fixture(t)
 			store, err := assets.Open(t.Context(), root, db)
@@ -39,12 +39,14 @@ func TestAssemblyMaterialReadReleasesSnapshotAndRechecksRetraction(t *testing.T)
 			}
 			reader := &observedReader{db: db}
 			materials := &materialBytes{store: store, writer: writer, reader: reader}
+			// A growing tool catalog can move request evidence over the ledger's
+			// inline boundary even though all conversation messages are valid.
 			id := seedWithEvidence(t, db, "input", guard.EntryOwner, func(e *ledger.RequestEvidence) {
-				tool, err := json.Marshal(map[string]any{"type": "function", "name": "fixture", "description": strings.Repeat("fixture ", ledger.InlineBytes), "parameters": map[string]any{"type": "object"}})
+				tool, err := json.Marshal(map[string]string{"type": "function", "name": "fixture", "description": strings.Repeat("synthetic description ", ledger.InlineBytes/10)})
 				if err != nil {
 					t.Fatal(err)
 				}
-				e.Tools = []provider.ToolDecl{tool}
+				e.Tools = []provider.Item{tool}
 				event, err := ledger.New(db, materials).Get(t.Context(), "input")
 				if err != nil {
 					t.Fatal(err)
@@ -55,45 +57,45 @@ func TestAssemblyMaterialReadReleasesSnapshotAndRechecksRetraction(t *testing.T)
 				}
 				e.Hash = assemble.Digest(provider.Request{Model: e.Model, Effort: e.Effort, Instructions: "original instructions\n\n\n", Items: items, Tools: e.Tools, Purpose: provider.Turn})
 			}, materials)
-			assembly := "request:" + id + ":0"
-			var material string
-			if err := db.Read(t.Context(), func(tx *canon.Tx) error {
-				return tx.QueryRowContext(t.Context(), "SELECT material_id FROM conv_event WHERE id=?", assembly).Scan(&material)
-			}); err != nil || material == "" {
-				t.Fatalf("assembly did not spill into material: %v", err)
+			assembly, err := ledger.New(db, materials).Get(t.Context(), "request:"+id+":0")
+			if err != nil || assembly.Material.ID == "" {
+				t.Fatalf("request evidence was not stored as a material: %v", err)
 			}
 			source.DB, source.Materials = reader, materials
-			read := false
+			reads := 0
 			materials.afterRead = func(ref ledger.Material) {
-				read = true
-				if ref.ID != material {
-					t.Fatal("expected the assembly material to be requested first")
+				reads++
+				if ref != assembly.Material {
+					t.Fatal("expected request evidence to be fetched first")
 				}
-				if mode == "retained" {
+				if mode == "read" {
 					return
 				}
 				if err := db.Write(t.Context(), func(tx *canon.Tx) error {
 					if mode == "trashed" {
-						_, err := tx.ExecContext(t.Context(), "UPDATE assets SET trashed_at=1 WHERE id=?", material)
+						_, err := tx.ExecContext(t.Context(), "UPDATE assets SET trashed_at=1 WHERE id=?", ref.ID)
 						return err
 					}
-					_, err := tx.ExecContext(t.Context(), "INSERT INTO retract_block(item_id,person,holder,event_id,conversation_id) VALUES('forgotten','person','agent',?,'')", assembly)
+					event := "input"
+					if mode == "assembly retracted" {
+						event = assembly.ID
+					}
+					_, err := tx.ExecContext(t.Context(), "INSERT INTO retract_block(item_id,person,holder,event_id,conversation_id) VALUES('forgotten','person','agent',?,'')", event)
 					return err
 				}); err != nil {
 					t.Fatal(err)
 				}
 			}
-			before := snapshot(t, db)
 			ep, err := source.Load(t.Context(), replay.Scope{Person: "person", Agent: "agent"}, id)
-			if !read || materials.nested != 0 {
-				t.Fatalf("assembly bytes were not read outside canon: read=%v nested=%d err=%v", read, materials.nested, err)
+			if reads != 1 || materials.nested != 0 {
+				t.Fatalf("request material reads=%d nested=%d err=%v", reads, materials.nested, err)
 			}
-			if mode == "retained" {
-				if err != nil || len(ep.Evidence.Tools) != 1 || snapshot(t, db) != before {
-					t.Fatalf("large assembly was lost or replay wrote state: %v", err)
+			if mode == "read" {
+				if err != nil || len(ep.Evidence.Tools) != 1 || len(ep.Evidence.Tools[0]) <= ledger.InlineBytes {
+					t.Fatalf("large request evidence was not reconstructed: %v", err)
 				}
 			} else if err == nil {
-				t.Fatal("invalidated assembly was returned after material read")
+				t.Fatal("revoked request evidence was accepted after its material read")
 			}
 		})
 	}

@@ -41,6 +41,10 @@ func TestM1MemoryJobs(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := newHarness(t, buildCommand(t, "moirai-worker"))
+	// This scenario runs nine separate worker processes. Each process wait and
+	// job retains operationTimeout; the connection harness's shared 30-second
+	// lifetime must not cancel a later round after earlier rounds used it up.
+	h.ctx = t.Context()
 	state := filepath.Join(h.root, "memory-state")
 	if err = os.Mkdir(state, 0700); err != nil {
 		t.Fatal(err)
