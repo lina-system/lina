@@ -530,6 +530,13 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 			return err
 		case event := <-events:
 			err := handle(event.message)
+			// A request write can notice a disconnect before Receive does.
+			// clientapi has closed that peer; acknowledge this event so the
+			// connection owner can publish its retry generation and restore
+			// the view. Never replay the request or hide display/protocol errors.
+			if ctx.Err() == nil && errors.Is(err, clientapi.ErrDisconnected) {
+				err = nil
+			}
 			event.acknowledged <- err
 			if err != nil {
 				return err
