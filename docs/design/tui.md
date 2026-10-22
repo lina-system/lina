@@ -790,7 +790,7 @@ other toggles; repeats, releases and pasted control text cannot arm or confirm i
 A single cancellable timer in the client input loop expires and redraws the hint
 without blocking input, retries or shutdown.
 
-`e2e/tui_lifecycle_test.go` observes the real PTY hint and its disappearance
+`e2e/m1/tui_lifecycle_test.go` observes the real PTY hint and its disappearance
 before sending the next key, checks exit 0 and terminal restoration, and proves
 Core remains available. Exact timing boundaries use an injected clock in unit
 tests. The [behaviour reference](../../internal/tui/ui/REFERENCE.md) records what
