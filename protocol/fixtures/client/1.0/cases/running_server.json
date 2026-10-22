@@ -1,0 +1,20 @@
+{
+  "side": "server",
+  "input": [
+    "conversation/running_localized.json",
+    "conversation/running_snapshot.json"
+  ],
+  "output": [
+    "conversation/running_localized.json",
+    "conversation/running_snapshot.json"
+  ],
+  "errors": [
+    "",
+    ""
+  ],
+  "outcome": {
+    "accepted": 2,
+    "malformed": 0,
+    "unknown_kinds": 0
+  }
+}
