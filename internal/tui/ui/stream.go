@@ -288,6 +288,13 @@ func projectConversationBlock(block *state.Block, payload protocol.Payload) {
 	case protocol.Connected:
 		block.ShellFileToolsAvailable = p.ShellFileToolsAvailable
 	case protocol.RunningUpdate:
+		if p.State != nil && p.Summary != nil {
+			block.RunState = *p.State
+			block.Text = *p.Summary
+			if p.Reason != nil {
+				block.RunReason = *p.Reason
+			}
+		}
 		if p.Removed != nil {
 			block.Removed = *p.Removed
 		}
