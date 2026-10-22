@@ -19,6 +19,36 @@ import (
 
 func TestM2UpdatePrepare(t *testing.T) {
 	binary := buildLina(t)
+	// Build and compress all fixtures before timing Core and update operations.
+	bundle := makeInstallBundle(t, t.TempDir(), binary, buildCommand(t, "lina-node"))
+	archive, digest := packUpdate(t, bundle)
+	metadata := filepath.Join(bundle, "manifest.json")
+	original, err := os.ReadFile(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var unsupported map[string]any
+	if err := json.Unmarshal(original, &unsupported); err != nil {
+		t.Fatal(err)
+	}
+	unsupported["supportedCombinations"] = []any{}
+	data, err := json.Marshal(unsupported)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(metadata, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	refused, refusedDigest := packUpdate(t, bundle)
+	if err := os.WriteFile(metadata, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Retain the archive digest while invalidating a manifest's artifact digest.
+	if err := os.WriteFile(filepath.Join(bundle, "lina-node"), []byte("changed artifact"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	invalid, invalidDigest := packUpdate(t, bundle)
 	h := newHarness(t, binary)
 	core := h.startCore()
 	h.connect(core).Close()
@@ -30,10 +60,9 @@ func TestM2UpdatePrepare(t *testing.T) {
 	// lock would reject a second ordinary startup.
 	core = h.startCore()
 	live := restartClient(h, core)
-	bundle := makeInstallBundle(t, t.TempDir(), binary, buildCommand(t, "lina-node"))
-	archive, digest := packUpdate(t, bundle)
 	before := doctorState(t, h.root)
 	command := func(source, sha string, code int) *process {
+		t.Helper()
 		p := h.command("update", "--prepare", "--state-root", h.root, "--archive", source, "--sha256", sha)
 		p.start(t)
 		p.wait(t, code)
@@ -87,37 +116,10 @@ func TestM2UpdatePrepare(t *testing.T) {
 
 	// A digest-valid composition can still be refused by the separate Core's
 	// compatibility check. It must not be published as a prepared candidate.
-	metadata := filepath.Join(bundle, "manifest.json")
-	original, err := os.ReadFile(metadata)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var unsupported map[string]any
-	if err := json.Unmarshal(original, &unsupported); err != nil {
-		t.Fatal(err)
-	}
-	unsupported["supportedCombinations"] = []any{}
-	data, err := json.Marshal(unsupported)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(metadata, data, 0600); err != nil {
-		t.Fatal(err)
-	}
-	refused, refusedDigest := packUpdate(t, bundle)
 	command(refused, refusedDigest, 78)
 	if _, err := os.Lstat(filepath.Join(h.root, "system/updates", refusedDigest)); !os.IsNotExist(err) {
 		t.Fatal("preflight refusal retained a candidate", err)
 	}
-	if err := os.WriteFile(metadata, original, 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	// Retain the archive digest while invalidating a manifest's artifact digest.
-	if err := os.WriteFile(filepath.Join(bundle, "lina-node"), []byte("changed artifact"), 0700); err != nil {
-		t.Fatal(err)
-	}
-	invalid, invalidDigest := packUpdate(t, bundle)
 	command(invalid, invalidDigest, 78)
 	if _, err := os.Lstat(filepath.Join(h.root, "system/updates", invalidDigest)); !os.IsNotExist(err) {
 		t.Fatal("failed candidate retained", err)
