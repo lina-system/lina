@@ -140,13 +140,13 @@ func (r *conversationRuntime) planModel(ctx context.Context, c jobs.Call) (jobs.
 		}
 	}
 }
-func (r *conversationRuntime) queuePlan(ctx context.Context, turnID string, p coreexec.PlanDraftRequest) (string, error) {
+func (r *conversationRuntime) queuePlan(ctx context.Context, turnID string, p coreexec.PlanDraftRequest) (coreexec.QueuedPlan, error) {
 	if err := r.ensurePlanning(ctx); err != nil {
-		return "", err
+		return coreexec.QueuedPlan{}, err
 	}
 	input, err := r.plans.Input(ctx, r.planScope(turnID), p.RootID, p.ResultID, p.BaseRevision, p.Instruction)
 	if err != nil {
-		return "", err
+		return coreexec.QueuedPlan{}, err
 	}
 	raw, _ := json.Marshal(input)
 	g := r.planning
@@ -157,14 +157,14 @@ func (r *conversationRuntime) queuePlan(ctx context.Context, turnID string, p co
 		return tx.QueryRowContext(ctx, "SELECT coalesce(max(sequence),0) FROM moirai_tasks WHERE job=?", g.id).Scan(&last)
 	})
 	if err != nil {
-		return "", err
+		return coreexec.QueuedPlan{}, err
 	}
 	err = g.jobs.Enqueue(ctx, g.id, jobapi.Task{Sequence: last + 1, Input: raw})
-	return g.id, err
+	return coreexec.QueuedPlan{JobID: g.id, Sequence: last + 1}, err
 }
 func (r *conversationRuntime) preparePlanningTools(turnID string, bindings map[string]loop.Tool) error {
 	registry := tools.NewRegistry(r.personaAuthority, r.activities)
-	spec, err := coreexec.RegisterPlanning(registry, func(ctx context.Context, p coreexec.PlanDraftRequest) (string, error) {
+	spec, err := coreexec.RegisterPlanning(registry, func(ctx context.Context, p coreexec.PlanDraftRequest) (coreexec.QueuedPlan, error) {
 		return r.queuePlan(ctx, turnID, p)
 	})
 	if err != nil {

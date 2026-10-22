@@ -4,6 +4,7 @@ package exec
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"time"
 
 	"github.com/thisisjun786/lina/kit/lease"
@@ -17,7 +18,11 @@ type PlanDraftRequest struct {
 	BaseRevision int    `json:"base_revision"`
 	Instruction  string `json:"instruction"`
 }
-type PlanQueue func(context.Context, PlanDraftRequest) (string, error)
+type QueuedPlan struct {
+	JobID    string `json:"job_id"`
+	Sequence int64  `json:"sequence"`
+}
+type PlanQueue func(context.Context, PlanDraftRequest) (QueuedPlan, error)
 
 // RegisterPlanning can only queue a draft. Confirmation is deliberately absent
 // from the model's tools and is admitted through the authenticated client.
@@ -32,11 +37,14 @@ func RegisterPlanning(registry *tools.Registry, queue PlanQueue) (tools.Spec, er
 	err := registry.Register(spec, func(ctx context.Context, _ lease.Lease, in tools.Input) (tools.Result, error) {
 		var p PlanDraftRequest
 		_ = json.Unmarshal(in.Arguments, &p)
-		id, err := queue(ctx, p)
+		queued, err := queue(ctx, p)
 		if err != nil {
 			return tools.Result{State: tools.Failed, Body: refusal(err)}, nil
 		}
-		return tools.Result{State: tools.Applied, Body: output(map[string]string{"job_id": id, "state": "queued"})}, nil
+		return tools.Result{State: tools.Applied, Revision: strconv.FormatInt(queued.Sequence, 10), Body: output(struct {
+			QueuedPlan
+			State string `json:"state"`
+		}{queued, "queued"})}, nil
 	})
 	return spec, err
 }
