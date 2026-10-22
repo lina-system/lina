@@ -34,7 +34,7 @@ func admission(ctx context.Context, cfg Config, c provider.ToolCall) *Result {
 	return &result
 }
 
-func invoke(ctx context.Context, cfg Config, tool Tool, c provider.ToolCall) (r Result) {
+func invoke(ctx context.Context, cfg Config, tool Tool, round, index int, c provider.ToolCall) (r Result, err error) {
 	r = Result{ID: c.ID, Code: Unknown}
 	defer func() {
 		if recover() != nil {
@@ -44,6 +44,11 @@ func invoke(ctx context.Context, cfg Config, tool Tool, c provider.ToolCall) (r 
 	if denied := admission(ctx, cfg, c); denied != nil {
 		r = *denied
 	} else {
+		if cfg.Journal.Start != nil {
+			if err := cfg.Journal.Start(ctx, round, index, c); err != nil {
+				return Result{ID: c.ID, Code: Aborted}, err
+			}
+		}
 		r = tool.Execute(ctx, c)
 		if cfg.After != nil {
 			r = cfg.After(ctx, c, r)
@@ -51,14 +56,14 @@ func invoke(ctx context.Context, cfg Config, tool Tool, c provider.ToolCall) (r 
 	}
 	r.ID = c.ID
 	if len(r.Output) > 0 && !json.Valid(r.Output) {
-		return Result{ID: c.ID, Code: Unknown}
+		return Result{ID: c.ID, Code: Unknown}, nil
 	}
 	switch r.Code {
 	case OK, Invalid, Denied, Unavailable, Aborted, Incomplete, AwaitingPerson, Failed, Unknown, BudgetReached:
 	default:
 		r = Result{ID: c.ID, Code: Unknown}
 	}
-	return r
+	return r, nil
 }
 func execute(ctx context.Context, cfg Config, round int, calls []provider.ToolCall, offered map[string]bool) ([]Result, error) {
 	results := make([]Result, len(calls))
@@ -102,6 +107,12 @@ func execute(ctx context.Context, cfg Config, round int, calls []provider.ToolCa
 	var failure error
 	runCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
+	fail := func(err error) {
+		mu.Lock()
+		failure = errors.Join(failure, err)
+		mu.Unlock()
+		cancel(err)
+	}
 	for i, c := range calls {
 		done := make(chan struct{})
 		previous := last[targets[i]]
@@ -113,7 +124,7 @@ func execute(ctx context.Context, cfg Config, round int, calls []provider.ToolCa
 		wg.Go(func() {
 			defer close(done)
 			r := results[i]
-			// Only calls that never enter invoke receive a synthetic abort. Once
+			// Only calls that never reach Execute receive a synthetic abort. Once
 			// dispatched, its returned result describes the committed receipt.
 			if !blocked[i] {
 				r = Result{ID: c.ID, Code: Aborted}
@@ -127,7 +138,11 @@ func execute(ctx context.Context, cfg Config, round int, calls []provider.ToolCa
 					select {
 					case slots <- struct{}{}:
 						if runCtx.Err() == nil {
-							r = invoke(runCtx, cfg, cfg.Tools[c.Name], c)
+							var err error
+							r, err = invoke(runCtx, cfg, cfg.Tools[c.Name], round, i, c)
+							if err != nil {
+								fail(err)
+							}
 						}
 						<-slots
 					case <-runCtx.Done():
@@ -136,10 +151,7 @@ func execute(ctx context.Context, cfg Config, round int, calls []provider.ToolCa
 			}
 			results[i] = r
 			if err := saveResult(ctx, cfg.Journal, round, i, r); err != nil {
-				mu.Lock()
-				failure = errors.Join(failure, err)
-				mu.Unlock()
-				cancel(err)
+				fail(err)
 			}
 		})
 	}

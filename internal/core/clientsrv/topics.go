@@ -174,6 +174,16 @@ func mergeEvents(a, b TopicEvent) (TopicEvent, bool) {
 }
 
 func (h *Topics) Publish(name string, event TopicEvent) error {
+	return h.publishEvent(name, event, false)
+}
+
+// publishQuestion is for reconstructed question cards only. Ordinary protocol
+// events still use Publish and retain every non-associative event.
+func (h *Topics) publishQuestion(event TopicEvent) error {
+	return h.publishEvent("waiting", event, true)
+}
+
+func (h *Topics) publishEvent(name string, event TopicEvent, skipUnchanged bool) error {
 	if !validTopic(name) {
 		return ErrInvalidTopic
 	}
@@ -186,7 +196,18 @@ func (h *Topics) Publish(name string, event TopicEvent) error {
 	if h.closed {
 		return ErrTopicClosed
 	}
-	return h.publish(name, h.topic(name), event)
+	t := h.topic(name)
+	// Questions are form projections. Re-emitting an unchanged retained card
+	// resets client edits. Compare under the publication lock, using the bounded
+	// snapshot so an evicted card can still be restored by its source.
+	if skipUnchanged && (t.pending == nil || t.pending.Key != event.Key) {
+		for _, previous := range t.items {
+			if previous.Key == event.Key && previous.Kind == event.Kind && previous.AgentID == event.AgentID && bytes.Equal(previous.Data, event.Data) {
+				return nil
+			}
+		}
+	}
+	return h.publish(name, t, event)
 }
 
 func validateEvent(event TopicEvent) error {
@@ -334,38 +355,42 @@ func (h *Topics) emit(name string, t *topicState, event TopicEvent) {
 		t.ring[t.ringNext] = frame
 		t.ringNext = (t.ringNext + 1) % h.options.RingSize
 	}
-	// The snapshot is a bounded materialized window, not the delta ring.
-	index := -1
-	for i, old := range t.items {
-		if old.Key == event.Key {
-			index = i
-			break
+	// Activity transitions remain replayable, but never evict conversation rows.
+	if event.Kind != protocol.KindToolActivity {
+		// The snapshot is a bounded materialized window, not the delta ring.
+		index := -1
+		for i, old := range t.items {
+			if old.Key == event.Key {
+				index = i
+				break
+			}
 		}
-	}
-	removed := false
-	if event.Kind == protocol.KindRunningUpdate {
-		var update protocol.RunningUpdate
-		if json.Unmarshal(event.Data, &update) == nil && update.Removed != nil {
-			removed = *update.Removed
+		removed := false
+		if event.Kind == protocol.KindRunningUpdate {
+			var update protocol.RunningUpdate
+			if json.Unmarshal(event.Data, &update) == nil && update.Removed != nil {
+				removed = *update.Removed
+			}
 		}
-	}
-	if removed {
-		if index >= 0 {
-			t.items = append(t.items[:index], t.items[index+1:]...)
-		}
-	} else if index >= 0 {
-		if combined, ok := mergeEvents(t.items[index], event); ok {
-			t.items[index] = combined
+		if removed {
+			if index >= 0 {
+				t.items = append(t.items[:index], t.items[index+1:]...)
+			}
+		} else if index >= 0 {
+			if combined, ok := mergeEvents(t.items[index], event); ok {
+				t.items[index] = combined
+			} else {
+				t.items[index] = event
+			}
 		} else {
-			t.items[index] = event
+			if len(t.items) == h.options.SnapshotSize {
+				copy(t.items, t.items[1:])
+				t.items = t.items[:len(t.items)-1]
+			}
+			t.items = append(t.items, event)
 		}
-	} else {
-		if len(t.items) == h.options.SnapshotSize {
-			copy(t.items, t.items[1:])
-			t.items = t.items[:len(t.items)-1]
-		}
-		t.items = append(t.items, event)
 	}
+
 	for sub := range t.subs {
 		if len(sub.queue) == h.options.QueueSize {
 			sub.closeLocked(rpc.ErrResyncRequired)
