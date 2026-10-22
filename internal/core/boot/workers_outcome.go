@@ -41,7 +41,7 @@ type workerCompletion struct {
 
 func (e *workerSession) finish(ctx context.Context, event worker.Event) error {
 	completion := workerCompletion{
-		workerResult: workerResult{Session: event.Thread.ID, Turn: event.Thread.TurnID, Generation: event.Thread.ProcessGeneration, Binding: event.Thread.BindingEpoch, State: worker.Idle, Worker: "codex", Version: e.compatibility.Version, Verified: e.compatibility.Verified, VerifiedVersions: e.compatibility.VerifiedVersions, Output: e.output},
+		workerResult: workerResult{Owner: e.origin.agent, Manager: e.origin.conversation, Session: event.Thread.ID, Turn: event.Thread.TurnID, Generation: event.Thread.ProcessGeneration, Binding: event.Thread.BindingEpoch, State: worker.Idle, Worker: "codex", Version: e.compatibility.Version, Verified: e.compatibility.Verified, VerifiedVersions: e.compatibility.VerifiedVersions, Output: e.output},
 		Workdir:      e.workdir, TaskPacket: e.packet, Status: event.Finish.Status, Failure: event.Finish.Failure,
 	}
 	if completion.Failure == worker.ConnectionFailure {
@@ -55,7 +55,9 @@ func (e *workerSession) finish(ctx context.Context, event worker.Event) error {
 	// deduplication to this launch, including two launches from the same input.
 	digest := sha256.Sum256([]byte(e.input.ID + "\x00" + e.thread.AttemptID + "\x00" + event.Thread.ID + "\x00" + event.Thread.TurnID))
 	id := "worker-finish:" + hex.EncodeToString(digest[:])
-	r := e.origin
+	// Coding ownership stays with dev; the input and result belong to the
+	// requesting conversation, including its original channel restrictions.
+	r := e.origin.workerDelivery()
 	masked, err := secrets.Mask(string(raw))
 	if err != nil {
 		return err

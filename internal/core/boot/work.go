@@ -3,9 +3,11 @@ package boot
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -15,6 +17,7 @@ import (
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/internal/core/work"
+	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 	"github.com/thisisjun786/lina/kit/grant"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/provider"
@@ -81,6 +84,17 @@ func (r *conversationRuntime) prepareWorkTools(turnID string, bindings map[strin
 			if err != nil {
 				return loop.Result{ID: call.ID, Code: loop.Invalid}
 			}
+			owner, conversation, err := r.workOwner(ctx, turnID, spec.Name, in)
+			if err != nil {
+				return loop.Result{ID: call.ID, Code: loop.Denied, Output: workerError(err)}
+			}
+			selected := registry
+			if owner != r.agent || conversation != r.conversation {
+				selected = tools.NewRegistry(r.personaAuthority, r.activities)
+				if _, err = coreexec.RegisterWork(selected, r.work, owner, conversation); err != nil {
+					return loop.Result{ID: call.ID, Code: loop.Failed}
+				}
+			}
 			revision, err := r.work.Revision(ctx, strings.TrimPrefix(in.Target, "work:"))
 			if err != nil {
 				return loop.Result{ID: call.ID, Code: loop.Failed}
@@ -97,8 +111,42 @@ func (r *conversationRuntime) prepareWorkTools(turnID string, bindings map[strin
 			r.personaGrants[auth.GrantID] = g
 			r.personaMu.Unlock()
 			defer func() { r.personaMu.Lock(); delete(r.personaGrants, auth.GrantID); r.personaMu.Unlock() }()
-			return turn.Tool(registry, spec, tools.Call{Auth: auth}, turnID).Execute(ctx, call)
+			return turn.Tool(selected, spec, tools.Call{Auth: auth}, turnID).Execute(ctx, call)
 		}}
 	}
 	return nil
+}
+
+func (r *conversationRuntime) workOwner(ctx context.Context, turnID, name string, in tools.Input) (string, string, error) {
+	if name == "prepare_work" {
+		var request coreexec.PrepareWork
+		if err := json.Unmarshal(in.Arguments, &request); err != nil {
+			return "", "", err
+		}
+		if request.Workspace.RepositoryID == "" {
+			return r.agent, r.conversation, nil
+		}
+		if !filepath.IsAbs(request.Workspace.Source) {
+			return "", "", work.ErrInvalid
+		}
+		repository, err := filepath.EvalSymlinks(request.Workspace.Source)
+		if err != nil {
+			return "", "", err
+		}
+		a, err := r.assignCoding(ctx, dispatch.Origin{Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: turnID}, request.TaskID, name, repository, in.Arguments)
+		return a.Owner, a.Conversation, err
+	}
+	id := strings.TrimPrefix(in.Target, "work:")
+	var a codingAssignment
+	err := r.db.Read(ctx, func(tx *canon.Tx) error { var err error; a, err = readCoding(ctx, tx, id); return err })
+	if errors.Is(err, sql.ErrNoRows) {
+		return r.agent, r.conversation, nil
+	}
+	if err != nil {
+		return "", "", err
+	}
+	if a.Origin.Person != r.person || a.Origin.Agent != r.agent || a.Origin.Conversation != r.conversation {
+		return "", "", work.ErrInvalid
+	}
+	return a.Owner, a.Conversation, nil
 }

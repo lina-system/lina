@@ -302,6 +302,9 @@ func runCodexWorkTools(t *testing.T, scenario, kind string, observe func(*harnes
 			t.Error(err)
 			return
 		}
+		if scriptedCodingManager(t, w, req) {
+			return
+		}
 		for _, raw := range req.Tools {
 			var tool struct{ Name string }
 			if err := json.Unmarshal(raw, &tool); err != nil {
@@ -367,7 +370,8 @@ func runCodexWorkTools(t *testing.T, scenario, kind string, observe func(*harnes
 		emitResponse(w, "worker quota checked", true)
 	}))
 	defer func() { server.CloseClientConnections(); server.Close() }()
-	h, _ := installedConversationHarness(t, server.URL)
+	h, bootstrap := installedConversationHarness(t, server.URL)
+	seedCodingFixture(t, h, bootstrap)
 	bin := t.TempDir()
 	exe, err := os.Executable()
 	if err != nil {

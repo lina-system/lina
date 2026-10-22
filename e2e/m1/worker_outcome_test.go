@@ -48,9 +48,12 @@ func installedWorkerOutcome(t *testing.T, pendingAtRestart bool) {
 	var restarted, readBack atomic.Bool
 	var followups atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req struct{ Input []json.RawMessage }
+		var req struct{ Input, Tools []json.RawMessage }
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Error(err)
+			return
+		}
+		if scriptedCodingManager(t, w, req) {
 			return
 		}
 		raw := string(mustJSON(t, req.Input))
@@ -115,7 +118,8 @@ func installedWorkerOutcome(t *testing.T, pendingAtRestart bool) {
 		emitPersonaCall(w, "start-worker", "worker_start", map[string]any{"workdir": workdir, "task_packet": "Create result.txt with LINA_WORKER_RESULT; report its path."})
 	}))
 	defer server.Close()
-	h, _ := installedConversationHarness(t, server.URL)
+	h, bootstrap := installedConversationHarness(t, server.URL)
+	seedCodingFixture(t, h, bootstrap)
 	bin := t.TempDir()
 	exe, err := os.Executable()
 	if err != nil {

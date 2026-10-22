@@ -4,6 +4,7 @@ package boot
 import (
 	"context"
 	"encoding/json"
+	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/gateway"
@@ -113,6 +114,36 @@ func TestWorkerCompletionIsDurableScopedAndDeduplicated(t *testing.T) {
 	got, err = r.workerOperation(t.Context(), "worker_input", "read", input, in)
 	if err != nil || got.State != tools.Failed {
 		t.Fatalf("record authorized live control: %+v %v", got, err)
+	}
+}
+
+func TestWorkerCompletionFromCodingOwnerReturnsToOrigin(t *testing.T) {
+	r := controlRuntime(t)
+	now := time.Now()
+	input, err := r.journal().Admit(t.Context(), guard.EntryOwner, ledger.Input{ID: "coding-origin", ConversationID: r.conversation, AgentID: r.agent, PersonID: r.person, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Create a file and read it back"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev, err := r.agents.Create(t.Context(), agents.Create{PersonID: r.person, Name: "Developer", Preset: "dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := newConversationView(r, dev.ID, "manager:unit")
+	owner.codingDelivery = r
+	thread := worker.Thread{ID: "owned-session", TurnID: "turn", AttemptID: "attempt", ProcessGeneration: 1, BindingEpoch: 1}
+	entry := &workerSession{origin: owner, input: input, thread: thread, workdir: t.TempDir(), packet: "create result.txt", output: "created result.txt: outcome"}
+	if err := entry.finish(t.Context(), worker.Event{Kind: worker.FinishEvent, Thread: thread, Finish: &worker.Finish{Status: worker.Done}}); err != nil {
+		t.Fatalf("dev-owned completion could not reach original input: %v", err)
+	}
+	record, err := r.recordedWorker(t.Context(), thread.ID)
+	if err != nil || record.Output != entry.output || record.Owner != owner.agent || record.Manager != owner.conversation || record.Live {
+		t.Fatalf("origin lost dev-owned completion: %+v %v", record, err)
+	}
+	var conversation string
+	if err := r.db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT conversation FROM inbox WHERE source='worker-finish'").Scan(&conversation)
+	}); err != nil || conversation != r.conversation {
+		t.Fatalf("completion queued outside originating conversation: %q %v", conversation, err)
 	}
 }
 
