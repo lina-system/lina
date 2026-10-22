@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,10 +16,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/authority"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/skills"
 	"github.com/thisisjun786/lina/internal/core/turn"
+	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/codex"
 	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
@@ -175,6 +178,9 @@ func (r *conversationRuntime) prepareWorkerTools(turnID string, input ledger.Eve
 		}
 		validated := turn.Tool(registry, spec, tools.Call{}, turnID)
 		bindings[name] = loop.Tool{Validate: validated.Validate, Execute: func(ctx context.Context, call provider.ToolCall) loop.Result {
+			if _, err := validated.Validate(call); err != nil {
+				return loop.Result{ID: call.ID, Code: loop.Invalid}
+			}
 			in, err := spec.Schema(json.RawMessage(call.Arguments))
 			if err != nil {
 				return loop.Result{ID: call.ID, Code: loop.Invalid}
@@ -184,6 +190,58 @@ func (r *conversationRuntime) prepareWorkerTools(turnID string, input ledger.Eve
 				_ = json.Unmarshal(in.Arguments, &a)
 				if !strings.Contains(input.Body.Text(), a.Quote) {
 					return loop.Result{ID: call.ID, Code: loop.Denied}
+				}
+			}
+			if name == "worker_start" {
+				// Existing effects retain the registry's receipt/replay rules. Only
+				// a new execution needs manager admission and its temporary hold.
+				key := turn.EffectKey(turnID, name, in.Target, call.ID)
+				_, lookupErr := r.personaAuthority.Effect(ctx, key)
+				if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
+					result := loop.Result{ID: call.ID, Code: loop.Failed, Output: workerError(lookupErr)}
+					if ctx.Err() != nil {
+						result.Code = loop.Aborted
+					}
+					return result
+				}
+				if errors.Is(lookupErr, sql.ErrNoRows) {
+					// Admission uses the caller's lifecycle, outside the worker's
+					// execution deadline and short-lived grant. No worker can run
+					// in this phase, so cancellation releases its directory hold.
+					assignment, err := func() (assignment codingAssignment, err error) {
+						var request workerArgs
+						_ = json.Unmarshal(in.Arguments, &request)
+						assignment.ID = codingID(turnID, name, string(in.Arguments))
+						// Preserve preset refusal evidence before inspecting a path.
+						err = authority.CheckPreset(ctx, r.db, r.epoch, authority.PolicyRequest{Key: "preset:coding:" + assignment.ID, Person: r.person, Agent: r.agent, TaskID: turnID, Tool: name, Target: request.Workdir, Class: tools.WorkerEffect, Arguments: in.Arguments})
+						if err != nil {
+							return assignment, err
+						}
+						_, assignment, reservation, err := r.workerStartAssignment(ctx, turnID, in)
+						if err != nil {
+							return assignment, err
+						}
+						defer func() {
+							err = errors.Join(err, r.work.ReleaseWorker(context.WithoutCancel(ctx), reservation))
+						}()
+						err = r.runCodingManager(ctx, assignment, "assignment", nil)
+						if err == nil {
+							err = ctx.Err()
+						}
+						return assignment, err
+					}()
+					if err != nil {
+						result := loop.Result{ID: call.ID, Code: loop.Failed, Output: workerError(err)}
+						if errors.Is(err, authority.ErrPresetLimit) {
+							result.Code = loop.Denied
+							if effect, readErr := r.personaAuthority.Effect(ctx, "preset:coding:"+assignment.ID); readErr == nil {
+								result.Output = effect.Result.Body
+							}
+						} else if ctx.Err() != nil {
+							result.Code = loop.Aborted
+						}
+						return result
+					}
 				}
 			}
 			auth := grant.Request{GrantID: turn.EffectKey(turnID, name, in.Target, call.ID) + ":worker", MainID: r.main, Epoch: r.epoch, TaskID: turnID, Host: r.main, OSUser: "core", Person: r.person, Agent: r.agent, Profile: "worker-session", Revision: strconv.FormatUint(r.epoch, 10)}
@@ -198,46 +256,62 @@ func (r *conversationRuntime) prepareWorkerTools(turnID string, input ledger.Eve
 	return nil
 }
 
+func (r *conversationRuntime) workerStartAssignment(ctx context.Context, turnID string, in tools.Input) (workerArgs, codingAssignment, string, error) {
+	var a workerArgs
+	_ = json.Unmarshal(in.Arguments, &a)
+	method, err := r.skills.ResolveMethod(ctx, a.Kind, a.Skill)
+	if err != nil {
+		return a, codingAssignment{}, "", err
+	}
+	a.TaskPacket, err = skills.MethodPacket(a.TaskPacket, method)
+	if err != nil {
+		return a, codingAssignment{}, "", err
+	}
+	a.Workdir, err = filepath.EvalSymlinks(a.Workdir)
+	if err != nil {
+		return a, codingAssignment{}, "", err
+	}
+	if r.work == nil {
+		return a, codingAssignment{}, "", errors.New("work admission unavailable")
+	}
+	reservation := rand.Text()
+	if err = r.work.ReserveWorker(ctx, reservation, a.Workdir); err != nil {
+		return a, codingAssignment{}, "", err
+	}
+	origin := dispatch.Origin{Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: turnID}
+	assignment, err := r.assignCoding(ctx, origin, codingID(turnID, "worker_start", string(in.Arguments)), "worker_start", a.Workdir, in.Arguments)
+	if err != nil {
+		err = errors.Join(err, r.work.ReleaseWorker(context.WithoutCancel(ctx), reservation))
+		return a, assignment, "", err
+	}
+	return a, assignment, reservation, nil
+}
+
 func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID string, input ledger.Event, in tools.Input) (tools.Result, error) {
 	var a workerArgs
 	_ = json.Unmarshal(in.Arguments, &a)
 	var reservation string
 	release := false
 	if name == "worker_start" {
-		method, err := r.skills.ResolveMethod(ctx, a.Kind, a.Skill)
+		var assignment codingAssignment
+		var err error
+		a, assignment, reservation, err = r.workerStartAssignment(ctx, turnID, in)
 		if err != nil {
-			return tools.Result{State: tools.Failed}, err
-		}
-		a.TaskPacket, err = skills.MethodPacket(a.TaskPacket, method)
-		if err != nil {
-			return tools.Result{State: tools.Failed}, err
-		}
-		canonical, err := filepath.EvalSymlinks(a.Workdir)
-		if err != nil {
-			return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
-		}
-		a.Workdir = canonical
-		reservation = rand.Text()
-		admission := r.work
-		if admission == nil {
-			return tools.Result{State: tools.Failed}, errors.New("work admission unavailable")
-		}
-		if err := admission.ReserveWorker(ctx, reservation, a.Workdir); err != nil {
-			return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
+			result := tools.Result{State: tools.Failed, Body: workerError(err)}
+			if errors.Is(err, work.ErrControlHeld) {
+				return result, nil
+			}
+			return result, err
 		}
 		release = true
+		admission := r.work
 		defer func() {
 			if release {
 				_ = admission.ReleaseWorker(context.WithoutCancel(ctx), reservation)
 			}
 		}()
-		origin := dispatch.Origin{Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: turnID}
-		assignment, err := r.assignCoding(ctx, origin, codingID(turnID, name, string(in.Arguments)), name, a.Workdir, in.Arguments)
-		if err != nil {
-			return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
-		}
-		if err = r.runCodingManager(ctx, assignment, "assignment", nil); err != nil {
-			return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
+		if !assignment.Delegated {
+			return tools.Result{State: tools.Failed, Body: workerError(errors.New("coding_definition_not_delegated"))}, nil
 		}
 		owner := newConversationView(r.router.root, assignment.Owner, assignment.Conversation)
 		owner.codingDelivery = r

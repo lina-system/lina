@@ -275,6 +275,10 @@ The client computes no state of work. It shows the words and marks Core sends ([
 
 **Presentation kinds** are the kinds of version 1.0 of the client connection ([host-protocol.md](host-protocol.md#client-connection)): output delta, item done, turn state, approval request, question, result card, running-list update, background notice, progress view, waiting list, Details, readiness failure, and the results of agent, work-record, account, memory, channel and exchange requests, and error. An unknown kind is ignored and counted. The wire carries codes and parameters, and the TUI owns the Korean and English catalogs. Display strings travel only for text the person or an agent wrote. A secret placeholder from Core renders as a placeholder, and the TUI has no way to reveal one.
 
+Worker question-answer notices in conversation history carry a short, readable
+acknowledgement. Core keeps dynamic-tool response envelopes out of these display
+bodies, both during delivery and when restoring history.
+
 ## Layout, tiers and row budget (T-07)
 
 The screen is a pure function of State and terminal size. Core's validated welcome determines which regions are available ([host-protocol.md](host-protocol.md#versions-and-capabilities)). Running and waiting lists take no rows when empty or not granted. Missing list capabilities produce one localized, plain-language local notice outside conversation history, combining both missing lists into one explanation. Replayed welcomes and reconnects with the same capabilities do not add another notice; a later grant removes the obsolete explanation from the status line. No fallback string or peer diagnostic decides capability availability.
@@ -706,6 +710,15 @@ must be revalidated in the same authority transaction as the decisions, so a
 changed group cannot partially approve.
 
 **Questions.** A form question renders its flat schema as prompts, and a URL question follows the contract, opening the URL only on an explicit key. Core refuses a form that asks for a secret, and the TUI shows the refusal. An unknown outcome of an effect is a question card with the dispositions of [main-authority.md](main-authority.md#command-outcomes). The TUI adds no option Core did not list.
+
+Worker questions identify the originating agent by its display name in both the
+form header and the conversation card row, consistently with Home and approvals.
+Core resolves decision names from the agent store, including agents created or
+renamed since startup. Agent IDs remain routing data. The installed-Core test
+`TestM2TUIWorkerQuestionNameInstalledCore` types a worker request in the real TUI,
+accepts its approval, answers its question and checks the resulting artifact.
+It distinguishes the worker's owning coding agent from the conversation agent
+and covers renaming that owner after Core starts.
 
 **Sign-in.** The TUI is the client side of one relay for plugin and model-provider sign-in. It opens a loopback listener and reports its port, opens the system browser when it runs locally, and relays `code`, `state` and `iss`, or the `error` fields, exactly as received. Over SSH it takes a pasted URL instead. A secret the person types, such as an API key, is a masked field with no undo and no history, and travels once to Core.
 

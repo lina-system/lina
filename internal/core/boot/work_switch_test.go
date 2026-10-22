@@ -2,10 +2,16 @@
 package boot
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/kit/lease"
+	"github.com/thisisjun786/lina/kit/loop"
+	"github.com/thisisjun786/lina/kit/provider"
 	"github.com/thisisjun786/lina/kit/tools"
 	"strings"
 	"testing"
@@ -85,5 +91,46 @@ func TestSwitchBlocksLiveWorkerBeforeLaunchAndSteering(t *testing.T) {
 	result, err = r.workerOperation(t.Context(), "worker_input", "turn", ledger.Event{}, in)
 	if err != nil || result.State != tools.Failed || probe.inputs != 0 {
 		t.Fatal("steering bypassed rollback gate", result, err)
+	}
+}
+
+func TestSwitchBlocksWorkerBeforeManagerAdmission(t *testing.T) {
+	r := controlRuntime(t)
+	first, err := r.agents.FirstRun(t.Context(), r.person, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r = newConversationView(r, first.Agent.ID, "main:"+first.Agent.ID)
+	dir := t.TempDir()
+	task := work.Task{ID: "external", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Title: "Work", Done: "Result", ExternalControl: true, ArtifactRoots: []string{dir}}
+	if err := r.work.Create(t.Context(), task); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(workerArgs{Workdir: dir, TaskPacket: "do work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := provider.ToolCall{ID: "start", Name: "worker_start", Arguments: string(raw)}
+	bindings := map[string]loop.Tool{}
+	if err := r.prepareWorkerTools("turn", ledger.Event{}, bindings); err != nil {
+		t.Fatal(err)
+	}
+	result := bindings[call.Name].Execute(t.Context(), call)
+	if result.Code != loop.Failed || !strings.Contains(string(result.Output), work.ErrControlHeld.Error()) {
+		t.Fatalf("manager admission bypassed switch: %+v", result)
+	}
+	var assignments int
+	if err := r.db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM coding_assignments").Scan(&assignments)
+	}); err != nil || assignments != 0 {
+		t.Fatalf("held directory created manager assignments: %d %v", assignments, err)
+	}
+	in, err := workerSchema(call.Name, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := turn.EffectKey("turn", call.Name, in.Target, call.ID)
+	if _, err := r.personaAuthority.Effect(t.Context(), key); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("held directory created a worker effect: %v", err)
 	}
 }
