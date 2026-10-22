@@ -1015,6 +1015,7 @@ type Adapter interface {
 }
 ```
 
+- The common event kinds are progress, usage, finish, question, approval and work-tool call. Each event has one matching payload and a thread identity; malformed combinations are rejected. A finish distinguishes done, interrupted and typed failures (quota, rate limit, login expiry, connection and worker errors). Done ends a turn and is not a delivery verdict. Thread controls carry the turn id, process generation and binding epoch for reconciliation.
 - Adapters: Codex over `codex app-server` on stdio (Go types generated for each verified version; exhaustive switches). Claude Code and Antigravity as headless children with streaming output. Devin through its session API, read about every 10 seconds only while a task is in flight.
 - Workers run with the user's own setup and get no LINA sandbox, credential, hook or skill ([work-and-delegation.md](work-and-delegation.md#workers)). Approvals go to the originating conversation. A worker on another device is started and relayed by that device's Node.
 - A process group kill is the stop. A cut turn's effects are unknown until `Snapshot` and a read of GitHub settle them.

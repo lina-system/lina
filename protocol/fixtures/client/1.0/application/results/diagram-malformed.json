@@ -1,0 +1,56 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "service": "results",
+  "setup": {
+    "person_id": "person",
+    "agent_id": "agent",
+    "conversation_id": "conversation",
+    "turn_id": "turn",
+    "task_id": null
+  },
+  "input": {
+    "type": "diagram",
+    "title": "Fixture result",
+    "summary": "Synthetic result body.",
+    "body": {
+      "kind": "flow",
+      "direction": "right",
+      "nodes": [
+        {
+          "id": "a",
+          "label": "Start"
+        },
+        {
+          "id": "b",
+          "label": "End"
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "b",
+          "label": "Next"
+        }
+      ],
+      "groups": [
+        {
+          "label": "Both",
+          "nodes": [
+            "a",
+            "b"
+          ]
+        }
+      ],
+      "html": "<script>untrusted data</script>"
+    }
+  },
+  "output": {
+    "error": "malformed",
+    "result": null
+  },
+  "outcome": {
+    "events": 0,
+    "heads": 0,
+    "saves": 0
+  }
+}
