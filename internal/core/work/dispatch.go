@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -20,20 +21,44 @@ func overlaps(a, b string) bool {
 }
 func taskDirectory(t Task, dir string) (bool, error) {
 	for _, root := range t.ArtifactRoots {
-		real, err := filepath.EvalSymlinks(root)
+		real, err := artifactDirectory(root)
 		if err != nil {
-			// An unavailable root cannot hide a lexical overlap. Disjoint unavailable
-			// roots cannot currently contain this existing directory.
-			if overlaps(root, dir) {
-				return false, err
-			}
-			continue
+			return false, err
 		}
 		if overlaps(real, dir) {
 			return true, nil
 		}
 	}
 	return false, nil
+}
+
+// A worker can create missing artifact directories beneath its workdir. Resolve
+// the existing prefix before comparing paths, retaining every missing segment.
+func artifactDirectory(root string) (string, error) {
+	ancestor := root
+	for {
+		real, err := filepath.EvalSymlinks(ancestor)
+		if err == nil {
+			suffix, err := filepath.Rel(ancestor, root)
+			if err != nil {
+				return "", err
+			}
+			return filepath.Join(real, suffix), nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		// An existing dangling symlink is unresolved, not a missing name that
+		// can be appended lexically. Other inspection errors also hold admission.
+		if _, statErr := os.Lstat(ancestor); !errors.Is(statErr, os.ErrNotExist) {
+			return "", errors.Join(err, statErr)
+		}
+		parent := filepath.Dir(ancestor)
+		if parent == ancestor {
+			return "", err
+		}
+		ancestor = parent
+	}
 }
 
 // ReserveWorker runs before any worker process or turn starts. It records even

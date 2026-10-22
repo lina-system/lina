@@ -106,3 +106,73 @@ func TestExternalTaskImportRefusesAnExistingWorker(t *testing.T) {
 		t.Fatal("identical import retry after activation", err)
 	}
 }
+
+func missingAliasTask(t *testing.T, dir string) Task {
+	t.Helper()
+	link := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(dir, link); err != nil {
+		t.Fatal(err)
+	}
+	task := taskFixture()
+	task.PersonID = "person-1"
+	task.ExternalControl = true
+	task.ArtifactRoots = []string{filepath.Join(link, "future", "nested")}
+	return task
+}
+
+func TestWorkerDispatchMissingAliasRootUsesTransferGate(t *testing.T) {
+	s, _ := testStore(t)
+	dir := t.TempDir()
+	if err := s.Create(t.Context(), missingAliasTask(t, dir)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReserveWorker(t.Context(), "worker", dir); !errors.Is(err, ErrControlHeld) {
+		t.Fatal("missing alias root bypassed approval", err)
+	}
+	if err := s.ReserveWorker(t.Context(), "disjoint", t.TempDir()); err != nil {
+		t.Fatal("missing but disjoint root blocked unrelated work", err)
+	}
+	if err := s.ApproveSwitch(t.Context(), switchFixture()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ActivateSwitch(t.Context(), "switch-1", "person-1", "stopped"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReserveWorker(t.Context(), "worker", dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RequestRollback(t.Context(), "switch-1", "person-1", "rollback"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CompleteRollback(t.Context(), "switch-1", "person-1", "drained"); !errors.Is(err, ErrActiveRun) {
+		t.Fatal("missing alias root lost its execution reservation", err)
+	}
+	if err := s.ReleaseWorker(t.Context(), "worker"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CompleteRollback(t.Context(), "switch-1", "person-1", "drained"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWorkerDispatchMissingAliasRootCannotAdoptActiveWorker(t *testing.T) {
+	s, _ := testStore(t)
+	dir := t.TempDir()
+	if err := s.ReserveWorker(t.Context(), "worker", dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Create(t.Context(), missingAliasTask(t, dir)); !errors.Is(err, ErrActiveRun) {
+		t.Fatal("imported over a live worker through a missing alias root", err)
+	}
+}
+
+func TestWorkerDispatchMissingAliasRootRefusesDanglingLink(t *testing.T) {
+	s, _ := testStore(t)
+	dir := t.TempDir()
+	if err := s.Create(t.Context(), missingAliasTask(t, filepath.Join(dir, "absent"))); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReserveWorker(t.Context(), "worker", dir); err == nil {
+		t.Fatal("unresolved dangling alias admitted a worker")
+	}
+}

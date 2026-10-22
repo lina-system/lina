@@ -1178,7 +1178,9 @@ Core serializes one switch procedure, refuses overlapping task ownership and
 checks admission and each new run in the same canon write transaction.
 The running worker tools reserve their canonical work directory before process
 launch. A directory overlapping an external task's artifact roots follows that
-task's switch gate, including symlink aliases. Importing an externally controlled
+task's switch gate, including symlink aliases. Missing artifact directories retain
+their missing suffix after resolving the existing ancestor; unresolved ancestors
+hold admission. Importing an externally controlled
 task and approving its switch both refuse existing workers in an overlapping
 directory, including workers that started before the task was imported. Import
 admission and worker reservations serialize in the same canon transaction; an

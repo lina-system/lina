@@ -14,7 +14,14 @@ provider account, external network service or human input. Conversation screens
 use the pinned terminal library and a VT emulator.
 
 The suite builds each command once per test run and removes the shared binaries
-after all scenarios finish. Foundation enumerates the acceptance tests and runs two disjoint batches under its shared components budget. This keeps a growing corpus from exhausting one package watchdog while preserving every scenario, assertion and operation deadline. A direct `go test ./e2e/...` still runs the complete suite in one process. Each scenario starts real Core with a synthetic
+after all scenarios finish. These test binaries omit DWARF debugger data to reduce
+bundle copying and archiving. Test helper processes share a private SQLite Wasm
+compilation cache, with the default runtime limits and canon's digest verification.
+Only compiled code is shared; databases and results remain private to each scenario.
+The parent removes the cache after all helpers join. Installed command binaries
+and release builds retain their ordinary SQLite initialization.
+
+Foundation enumerates the acceptance tests and runs two disjoint batches under its shared components budget. This keeps a growing corpus from exhausting one package watchdog while preserving every scenario, assertion and operation deadline. A direct `go test ./e2e/...` still runs the complete suite in one process. Each scenario starts real Core with a synthetic
 installed identity and a private temporary state root, and connects a generated-type JSON-RPC client
 to its Unix socket. A second process runs real `lina tui` with a controlling PTY
 at 80 by 24 cells. The script waits for the `live` connection-state code, sends an
