@@ -3,7 +3,6 @@ package backup
 
 import (
 	"context"
-	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/skills"
 	"os"
 	"path/filepath"
@@ -85,9 +84,6 @@ func TestWorkspaceLinksCannotExposeExcludedState(t *testing.T) {
 
 func TestPublishedSkillCommitAndMissingObject(t *testing.T) {
 	cfg, _ := fixture(t)
-	if err := cfg.Canon.Write(t.Context(), func(tx *canon.Tx) error { _, err := tx.ExecContext(t.Context(), skills.Schema); return err }); err != nil {
-		t.Fatal(err)
-	}
 	store, err := skills.Open(cfg.Root, cfg.Canon, nil)
 	if err != nil {
 		t.Fatal(err)

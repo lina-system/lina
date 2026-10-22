@@ -305,10 +305,21 @@ func (s *Store) apply(ctx context.Context, tx *canon.Tx, e entry, sequence int, 
 		if err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO retract_target(kind,id,person,holder,agent,state,at,provenance,operation_id) VALUES(?,?,?,?,?,?,?,?,?)
-ON CONFLICT(kind,id) DO UPDATE SET person=excluded.person,holder=excluded.holder,agent=excluded.agent,state=excluded.state,at=excluded.at,provenance=excluded.provenance,operation_id=excluded.operation_id`, target.Kind, target.ID, e.Person, target.Holder, target.Agent, state, e.At, provenance, e.ID)
+		// DO UPDATE forces ABORT conflict handling inside its triggers, defeating
+		// the search projection's INSERT OR IGNORE when other visible rows already
+		// exist. Keep both operations in this same fenced writer transaction.
+		changed, err := tx.ExecContext(ctx, "UPDATE retract_target SET person=?,holder=?,agent=?,state=?,at=?,provenance=?,operation_id=? WHERE kind=? AND id=?", e.Person, target.Holder, target.Agent, state, e.At, provenance, e.ID, target.Kind, target.ID)
 		if err != nil {
 			return err
+		}
+		count, err := changed.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if count == 0 {
+			if _, err := tx.ExecContext(ctx, "INSERT INTO retract_target(kind,id,person,holder,agent,state,at,provenance,operation_id) VALUES(?,?,?,?,?,?,?,?,?)", target.Kind, target.ID, e.Person, target.Holder, target.Agent, state, e.At, provenance, e.ID); err != nil {
+				return err
+			}
 		}
 		if target.Kind == Memory {
 			if _, err := tx.ExecContext(ctx, "DELETE FROM retract_block WHERE item_id=?", target.ID); err != nil {

@@ -34,7 +34,6 @@ func fixture(t *testing.T, builtins fs.FS) (*Store, *canon.Store, string) {
 		t.Fatal(err)
 	}
 	migrations := canon.Migrations()
-	migrations = append(migrations, canon.Migration{Version: len(migrations) + 1, SQL: Schema})
 	db, err := canon.Open(t.Context(), canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: 1, Controls: ctl, Migrations: migrations})
 	if err != nil {
 		t.Fatal(err)
@@ -281,7 +280,6 @@ func TestCommittedVersionAndSuppressionSurviveDatabaseReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	migrations := canon.Migrations()
-	migrations = append(migrations, canon.Migration{Version: len(migrations) + 1, SQL: Schema})
 	cfg := canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: 1, Controls: ctl, Migrations: migrations}
 	db, err := canon.Open(t.Context(), cfg)
 	if err != nil {
@@ -414,5 +412,26 @@ func TestBuiltinNoOpCannotPoisonUndo(t *testing.T) {
 	body, err := s.Read(t.Context(), restored.Version)
 	if err != nil || body.Files["SKILL.md"].Text != document("Original.") {
 		t.Fatalf("undo: %+v %v", body, err)
+	}
+}
+
+func TestReadCommitKeepsHistoricalSkillBody(t *testing.T) {
+	s, _, _ := fixture(t, fstest.MapFS{"example/SKILL.md": {Data: []byte(document("builtin instruction"))}})
+	old, err := s.ReadCommit(t.Context(), "example", "builtin:fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := apply(t, s, 0, "first adopted instruction")
+	apply(t, s, 1, "latest instruction")
+	pinned, err := s.ReadCommit(t.Context(), "example", first.Version.Commit)
+	if err != nil || pinned.Version != first.Version || pinned.Files["SKILL.md"].Text != document("first adopted instruction") {
+		t.Fatalf("pinned=%+v err=%v", pinned, err)
+	}
+	builtin, err := s.ReadCommit(t.Context(), "example", "builtin:fixture")
+	if err != nil || builtin.Files["SKILL.md"].Text != old.Files["SKILL.md"].Text {
+		t.Fatalf("builtin=%+v err=%v", builtin, err)
+	}
+	if _, err = s.ReadCommit(t.Context(), "example", "unavailable-commit"); !errors.Is(err, ErrNotFound) {
+		t.Fatal(err)
 	}
 }

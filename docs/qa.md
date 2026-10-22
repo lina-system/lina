@@ -190,6 +190,20 @@ provider/API accounts, personal conversations, the owner's files or existing
 Core instances. Do not run real sign-in or contact Telegram. A cheap provider is
 still a real account and is outside this automated QA authorization.
 
+The skills portion is covered by [its fixture](../e2e/m1/skills.json) and:
+
+```sh
+go test -count=1 -v ./e2e -run '^TestM1SkillsInstalledCore$'
+```
+
+Installed Core offers all four skill tools to a synthetic Responses provider,
+commits an instruction-only write, shows its receipt notice in the real TUI,
+and returns the catalog handle and body through tools on the next turn. The
+same journey refuses an executable helper without a learning notice, undoes
+creation, restores the undo notice after restart, and rejects re-adopting the
+undone content. This proves the installed wiring with scripted model calls;
+real-model tool selection and the separate Hermes import journey are not covered.
+
 ## Findings and completion
 
 Search open issues by title and keywords before every finding. Comment on a

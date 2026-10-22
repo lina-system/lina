@@ -328,9 +328,9 @@ func readItem(ctx context.Context, tx *canon.Tx, id string) (Item, error) {
 // Recall returns current, scoped records through the trigram and Hangul bigram
 // indexes. The person/holder/validity set is materialized before text matching.
 func (s *Store) Recall(ctx context.Context, scope RecallScope, q Query) ([]Hit, error) {
-	return s.recall(ctx, scope, q, false)
+	return s.recall(ctx, scope, q, false, false)
 }
-func (s *Store) recall(ctx context.Context, scope RecallScope, q Query, standing bool) ([]Hit, error) {
+func (s *Store) recall(ctx context.Context, scope RecallScope, q Query, standing, relationship bool) ([]Hit, error) {
 	if s == nil || s.db == nil || !present(scope.Agent) || scope.Agent == string(All) || !present(scope.Person) || q.At < 0 || q.Limit < 0 {
 		return nil, ErrInvalid
 	}
@@ -348,7 +348,8 @@ func (s *Store) recall(ctx context.Context, scope RecallScope, q Query, standing
 		restrictedJSON, _ := json.Marshal(restricted)
 		text := normalize(q.Text)
 		match := "1"
-		args := []any{q.At, q.At, scope.Person, q.ID, q.ID, holders[0], holders[1], q.At, scope.Projection, scope.ExternalModel, standing, q.PersonOnly, string(restrictedJSON), q.History}
+		args := []any{q.At, q.At, scope.Person, q.ID, q.ID, holders[0], holders[1], q.At, scope.Projection, scope.ExternalModel, standing, q.PersonOnly, relationship, scope.Agent, scope.Person, string(restrictedJSON), q.History}
+
 		switch {
 		case utf8.RuneCountInString(text) >= 3:
 			match = "EXISTS(SELECT 1 FROM memory_search WHERE rowid=e.sequence AND memory_search MATCH ?)"
@@ -370,6 +371,7 @@ func (s *Store) recall(ctx context.Context, scope RecallScope, q Query, standing
    FROM retract_visible_memory m WHERE m.person=? AND (?='' OR m.id=?) AND m.holder IN (?,?) AND m.state='active' AND m.valid_from<=?
    AND (?=0 OR m.scope='local') AND (?=0 OR m.scope<>'never-leaves') AND (?=0 OR m.standing=1)
    AND (?=0 OR m.subject_kind='person')
+   AND (?=0 OR (m.holder=? AND m.subject_kind='person' AND m.subject_id=? AND json_extract(m.record,'$.kind')='relationship'))
    AND NOT EXISTS(SELECT 1 FROM json_each(m.record,'$.evidence') refs
     JOIN json_each(?) blocked ON blocked.key=json_extract(refs.value,'$.id')
     WHERE json_extract(refs.value,'$.kind')='event')
@@ -418,7 +420,7 @@ func (s *Store) Profile(ctx context.Context, scope RecallScope, at int64, lines,
 	if lines == 0 || tokens == 0 {
 		return nil, nil
 	}
-	hits, err := s.recall(ctx, scope, Query{At: at, Limit: lines, PersonOnly: true}, true)
+	hits, err := s.recall(ctx, scope, Query{At: at, Limit: lines, PersonOnly: true}, true, false)
 	if err != nil {
 		return nil, err
 	}
