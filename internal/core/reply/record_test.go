@@ -105,11 +105,11 @@ func TestRecordFullReplyAndPreviewSurviveRestart(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var result reply.Card
+			var result reply.CardReference
 			if err := json.Unmarshal([]byte(card.Body.Text()), &result); err != nil {
 				t.Fatal(err)
 			}
-			if result.Type != "document_draft" || result.Status != "preview" || result.Text != full || result.Body.Blocks[0].Text != full || result.ResultID != "result" || result.Revision != 1 || result.Provenance.TurnID != "turn" || card.ParentID != "reply" {
+			if result.Type != "document_draft" || result.Status != "preview" || result.SourceEvent != source.ID || card.SpeakerKind != guard.System || strings.Contains(card.Body.Text(), full) || result.ResultID != "result" || result.Revision != 1 || result.Provenance.TurnID != "turn" || card.ParentID != "reply" {
 				t.Fatalf("card=%+v event=%+v", result, card)
 			}
 		})
@@ -222,8 +222,8 @@ func TestLargeReplyAndMaskedCardSurviveRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if saved.Reply.Material.ID == "" || saved.Card == nil || saved.Card.Material.ID == "" {
-		t.Fatal("large bodies not in materials")
+	if saved.Reply.Material.ID == "" || saved.Card == nil || saved.Card.Material.ID != "" {
+		t.Fatal("source must use materials; reference card must remain inline")
 	}
 	if err := a.Close(); err != nil {
 		t.Fatal(err)
@@ -238,7 +238,7 @@ func TestLargeReplyAndMaskedCardSurviveRestart(t *testing.T) {
 	}
 	defer a.Close()
 	store := ledger.New(db, materials(t, a))
-	for _, id := range []string{"reply", "card-event"} {
+	for _, id := range []string{"reply"} {
 		event, err := store.Get(t.Context(), id)
 		if err != nil {
 			t.Fatal(err)
@@ -251,13 +251,12 @@ func TestLargeReplyAndMaskedCardSurviveRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var card reply.Card
+	var card reply.CardReference
 	if err := json.Unmarshal([]byte(event.Body.Text()), &card); err != nil {
 		t.Fatal(err)
 	}
-	want := strings.TrimSuffix(full, "private-value") + secret.Placeholder
-	if card.Text != want || card.Body.Blocks[0].Text != want {
-		t.Fatal("large card content changed")
+	if card.SourceEvent != "reply" || strings.Contains(event.Body.Text(), secret.Placeholder) {
+		t.Fatal("card must reference the masked source")
 	}
 }
 
@@ -308,15 +307,15 @@ func TestRecordedPreviewPreservesJSONMaskingAcrossRestart(t *testing.T) {
 						t.Fatalf("invalid or unmasked card JSON: %q", text)
 					}
 				}
-				var card reply.Card
+				var card reply.CardReference
 				if err := json.Unmarshal([]byte(event.Body.Text()), &card); err != nil {
 					t.Fatal(err)
 				}
-				if card.Text != want.Text() || len(card.Body.Blocks) != 1 || card.Body.Blocks[0].Text != want.Text() {
+				if card.SourceEvent != r.Source.ID || saved.Reply.Body.Text() != want.Text() {
 					t.Fatalf("card content changed: %+v", card)
 				}
-				if len(event.Spans) == 0 || strings.Contains(event.Body.DerivedText(), secret.Placeholder) {
-					t.Fatal("card lost secret flags or retained derived placeholders")
+				if len(event.Spans) != 0 || strings.Contains(event.Body.DerivedText(), secret.Placeholder) {
+					t.Fatal("reference card retained source secret spans")
 				}
 			}
 			check(*saved.Card)
@@ -397,7 +396,7 @@ func TestLargeReplyBatchRollbackRemovesBothMaterials(t *testing.T) {
 		t.Fatal(err)
 	}
 	manifest, err = a.Backup(t.Context(), t.TempDir())
-	if err != nil || len(manifest) != 2 {
-		t.Fatalf("expected paired materials: %v %v", manifest, err)
+	if err != nil || len(manifest) != 1 {
+		t.Fatalf("expected one source material: %v %v", manifest, err)
 	}
 }
