@@ -925,6 +925,12 @@ A goal is in one of these states. The person sees them only through the progress
 
 **Revision.** A correction by the person, a decision, or a late answer to a question whose deadline passed, is a new revision of the goal. Tasks whose inputs did not change keep their results. Tasks whose inputs changed, and the tasks that depend on them, are derived again. A criterion that was met stays met only while its evidence still refers to the current target.
 
+A late check or manager assessment for an older goal revision is retained as
+an observation and retired without applying its evidence or plan. Core then
+derives work for the current definition; the late result neither clears a
+correction fence nor stops Core or unrelated goals. This does not settle an
+external effect whose outcome is still unknown.
+
 ### Next action
 
 After every event Core commits for a goal, Core derives the goal's next actions from the current ledger and the goal record. The event itself carries no instruction: it only says that something changed, and Core reads the current state before it acts (see Event-driven flow). The same derivation runs for every goal that is not final once at startup and in each reconcile sweep, so a lost event costs at most one sweep. Mechanics run in Core without a model call. A model turn happens only where judgment is needed: splitting work, writing a work definition or brief, checking a result against the done condition, or drafting text for the person or for someone else. The table lists who acts.

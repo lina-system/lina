@@ -473,6 +473,20 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 		a.ObserverEpoch = e.cfg.Epoch
 		a.Receipt = encode(o)
 		a.Deadline = e.cfg.Now().Add(SafetySweep).Unix()
+		if staleAssessment(g, a) {
+			// Checks and manager judgments have no unresolved external effect.
+			// Retain the observation, but never apply it to the corrected goal.
+			// Finishing the old action lets derivation plan current work, including
+			// after restart, without making an expected late result fatal to Core.
+			a.State = "finished"
+			if t != nil && a.Kind == PlanGoal && t.RepairedBy == "" {
+				t.RepairAsked = false
+				if err = put(v, "goal", g.ID, g); err != nil {
+					return err
+				}
+			}
+			return put(v, "action", id, a)
+		}
 		switch o.Status {
 		case OutcomeQuota:
 			if t == nil || !reserves(a) || !o.EffectsSettled || o.QuotaReset <= e.cfg.Now().Unix() {
@@ -582,6 +596,31 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 		return put(v, "action", id, a)
 	})
 }
+
+func staleAssessment(g Goal, a Action) bool {
+	if a.Kind != CheckCriterion && a.Kind != Verify && a.Kind != PlanGoal {
+		return false
+	}
+	if a.GoalRevision != g.Revision {
+		return true
+	}
+	if a.Kind == Verify {
+		return a.Revision != g.TargetRevision
+	}
+	if a.Kind == CheckCriterion {
+		if a.CheckRound != g.CheckRound {
+			return true
+		}
+		for _, c := range goalCriteria(g) {
+			if c.ID == a.CriterionID {
+				return a.Revision != criterionRevision(g, c) || a.Check != nil && *a.Check != c.Check
+			}
+		}
+		return true
+	}
+	return false
+}
+
 func applySuccess(g *Goal, t *Task, a Action, o Observation, now int64) error {
 	switch a.Kind {
 	case CheckCriterion:
