@@ -3,6 +3,7 @@
 package e2e_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -19,6 +20,8 @@ import (
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/internal/design"
+	"github.com/thisisjun786/lina/internal/tui/layout"
+	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/rpc"
 	"github.com/thisisjun786/lina/kit/secret"
@@ -26,8 +29,8 @@ import (
 
 func TestM1ReplyShapeLONGQA(t *testing.T) {
 	var scenario struct {
-		Input, Line, End, Followup, Reply string
-		Lines                             int
+		Input, Line, First, End, Followup, Reply string
+		Lines                                    int
 	}
 	data, err := os.ReadFile("m1/reply-shape.json")
 	if err != nil {
@@ -40,7 +43,9 @@ func TestM1ReplyShapeLONGQA(t *testing.T) {
 	for i := 1; i <= scenario.Lines; i++ {
 		lines = append(lines, fmt.Sprintf(scenario.Line, i))
 	}
-	full := strings.Join(lines, "\n") + "\n" + scenario.End
+	lines[0] = scenario.First + " " + lines[0]
+	lines[len(lines)-1] += " " + scenario.End
+	full := strings.Join(lines, "\n")
 	want := strings.Join(lines[:5], "\n")
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -69,7 +74,7 @@ func TestM1ReplyShapeLONGQA(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
-		for _, delta := range append(lines, scenario.End) {
+		for _, delta := range lines {
 			fmt.Fprintf(w, "data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":%q}\n\n", delta+"\n")
 			w.(http.Flusher).Flush()
 		}
@@ -79,7 +84,8 @@ func TestM1ReplyShapeLONGQA(t *testing.T) {
 	h, start := installedConversationHarness(t, server.URL)
 	core := start(true)
 	c, conversation := conversationClient(t, h)
-	screenTUI, _ := h.startConversationTUI(80, 24, "TERM=xterm-256color")
+	environment := []string{"TERM=xterm-256color"}
+	screenTUI, _ := h.startConversationTUI(100, 34, environment...)
 	waitScreen(t, h, screenTUI, design.Text(design.English, "live"))
 	h.keys(screenTUI, scenario.Input)
 	waitScreen(t, h, screenTUI, scenario.Input)
@@ -114,16 +120,73 @@ func TestM1ReplyShapeLONGQA(t *testing.T) {
 		t.Fatalf("missing complete draft with sentence-bounded summary: type=%s status=%s text=%v summary=%q", card.Type, card.Status, card.Text, card.Summary)
 	}
 	checkScreen := func(terminal *terminal) {
-		screen := screenText(waitScreen(t, h, terminal, "Ctrl+O"))
-		if !strings.Contains(screen, lines[0]) || !strings.Contains(screen, lines[4]) || strings.Contains(screen, lines[5]) || strings.Contains(screen, scenario.End) {
-			t.Fatalf("LONG-QA inline card is not bounded: %s", screen)
+		// Inspect parsed cells from the installed TUI, never raw escape bytes.
+		region := layout.Plan(layout.Size{Width: 100, Height: 34}, layout.Caps{SidePane: true}, layout.Shape{ComposerRows: 1}).Conversation
+		conversationRows := func(snapshot tuiterm.Snapshot) []string {
+			return screenRows(snapshot)[region.Y : region.Y+region.Height]
+		}
+		wait := func(predicate func(tuiterm.Snapshot) bool) tuiterm.Snapshot {
+			t.Helper()
+			ctx, cancel := context.WithTimeout(h.ctx, operationTimeout)
+			defer cancel()
+			snapshot, err := terminal.screen.Wait(ctx, predicate)
+			if err != nil {
+				t.Fatalf("LONG-QA conversation assertion: %v\n%s", err, strings.Join(screenRows(snapshot), "\n"))
+			}
+			return snapshot
+		}
+		latest := wait(func(s tuiterm.Snapshot) bool {
+			return strings.Contains(strings.Join(conversationRows(s), "\n"), scenario.End) && strings.Contains(screenText(s), "Ctrl+O")
+		})
+		t.Logf("LONG-QA latest (100x34):\n%s", strings.Join(screenRows(latest), "\n"))
+		if !latest.AltScreen || !strings.Contains(screenRows(latest)[33], "Ctrl+D") {
+			t.Fatal("latest reply is outside the conversation")
+		}
+		// Stitch overlapping PgUp views into the complete transcript, so a
+		// repeated summary or body cannot hide outside the current viewport.
+		transcript := conversationRows(latest)
+		page := latest
+		for pages := 0; !strings.Contains(strings.Join(conversationRows(page), "\n"), scenario.Input); pages++ {
+			if pages >= scenario.Lines {
+				t.Fatal("PgUp never reached the first turn")
+			}
+			previous := strings.Join(conversationRows(page), "\n")
+			h.keys(terminal, "\x1b[5~")
+			page = wait(func(s tuiterm.Snapshot) bool {
+				return strings.Join(conversationRows(s), "\n") != previous
+			})
+			rows := conversationRows(page)
+			overlap := min(len(rows), len(transcript))
+			for overlap > 0 && strings.Join(rows[len(rows)-overlap:], "\n") != strings.Join(transcript[:overlap], "\n") {
+				overlap--
+			}
+			if overlap == 0 {
+				t.Fatal("PgUp skipped conversation rows")
+			}
+			transcript = append(append([]string{}, rows[:len(rows)-overlap]...), transcript...)
+		}
+		t.Logf("LONG-QA first page (100x34):\n%s", strings.Join(screenRows(page), "\n"))
+		if !strings.Contains(strings.Join(conversationRows(page), "\n"), scenario.First) || !strings.Contains(screenRows(page)[33], "Ctrl+D") {
+			t.Fatal("PgUp did not reach the first marker inside the conversation")
+		}
+		complete := strings.Join(transcript, "\n")
+		for _, line := range lines {
+			if copies := strings.Count(complete, line); copies != 1 {
+				t.Fatalf("reply line %q appears %d times, want exactly once", line, copies)
+			}
+		}
+		if strings.Count(complete, "Ctrl+O") != 1 || strings.Index(complete, scenario.End) > strings.Index(complete, "Ctrl+O") {
+			t.Fatal("expected one pager affordance after the complete reply")
 		}
 		h.keys(terminal, "\x0f")
-		waitScreen(t, h, terminal, lines[0])
+		wait(func(s tuiterm.Snapshot) bool {
+			return s.CursorHidden && strings.Contains(screenText(s), scenario.First) &&
+				strings.Contains(screenRows(s)[33], "Connected  Esc Close  / Search  n Next match")
+		})
 		h.keys(terminal, "\x1b[F")
 		waitScreen(t, h, terminal, scenario.End)
 		h.keys(terminal, "\x1b")
-		waitScreen(t, h, terminal, "Ctrl+O")
+		waitScreen(t, h, terminal, "Ctrl+D")
 		h.keys(terminal, "\x04")
 		terminal.process.wait(t, 0)
 		h.expectTerminalRestored(terminal)
@@ -193,7 +256,7 @@ func TestM1ReplyShapeLONGQA(t *testing.T) {
 	}()
 	core = start(true)
 	c, conversation = conversationClient(t, h)
-	again := h.startScreenTUI("TERM=xterm-256color")
+	again := h.startTerminalSize(environment, false, true, 100, 34)
 	checkScreen(again)
 	admittedTurn(t, h, c, conversation, "followup", scenario.Followup)
 	c.Close()

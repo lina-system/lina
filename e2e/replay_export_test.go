@@ -53,12 +53,14 @@ func TestM1ReplayExportInstalledCore(t *testing.T) {
 	core.command.Env = append(core.command.Env, "PATH="+os.Getenv("PATH"), "LINA_RESPONSES_BASE_URL="+provider.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
 	core.start(t)
 	h.connect(core).Close()
-	// A live socket and readable History precede mutation readiness.
-	ready, _ := conversationClient(t, h)
-	ready.Close()
+	waitCoreReady(t, h)
 	terminal, _ := h.startConversationTUI(80, 24, "TERM=xterm-256color")
 	waitScreen(t, h, terminal, design.Text(design.English, "live"))
 	h.keys(terminal, scenario.Input+"\r")
+	// The long reply ends at the latest transcript position. Open its pager
+	// to read the first sentence before exercising export and replay below.
+	waitScreen(t, h, terminal, "Ctrl+O")
+	h.keys(terminal, "\x0f")
 	waitScreen(t, h, terminal, scenario.Reply)
 	h.keys(terminal, "\x04")
 	terminal.process.wait(t, 0)
