@@ -46,6 +46,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/internal/core/skills"
 	"github.com/thisisjun786/lina/internal/core/turn"
+	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/internal/tui/render"
 	"github.com/thisisjun786/lina/kit/grant"
@@ -64,6 +65,7 @@ type acceptedSteering struct {
 }
 
 type conversationRuntime struct {
+	work            *work.Service
 	channelSurfaces atomic.Int64
 	background      *backgroundRuntime
 	router          *conversationRouter
@@ -218,6 +220,10 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 		r.identity.Operations[kind] = op
 	}
 	if err = r.startDecisions(ctx); err != nil {
+		return nil, err
+	}
+	r.work = work.New(r.db)
+	if err = r.work.Recover(ctx, strconv.FormatUint(r.epoch, 10)); err != nil {
 		return nil, err
 	}
 	if err = r.startRuns(ctx); err != nil {

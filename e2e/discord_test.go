@@ -270,7 +270,7 @@ func TestM2DiscordCore(t *testing.T) {
 		p.command.Env = append(p.command.Env, "LINA_TEST_DISCORD_ROOT="+h.root, "LINA_TEST_DISCORD_SOCKET="+h.socket, "LINA_TEST_DISCORD_HTTP="+platform.URL, "LINA_TEST_DISCORD_PROVIDER="+provider.URL)
 		p.start(t)
 		h.connect(p).Close()
-		waitChannelReady(t, h)
+		waitCoreReady(t, h)
 		return p
 	}
 	core := start()

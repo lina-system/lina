@@ -186,7 +186,7 @@ func seedConformanceAgents(t *testing.T, h *harness, state string, bound bool) s
 		t.Fatal(err)
 	}
 	if bound {
-		if err := channel.Bind(h.ctx, channels.Binding{Address: channels.Address{Bot: bot, Chat: "42"}, Agent: first.Agent.ID, Person: person, Conversation: "fixture-channel", Scope: channels.PrivateScope()}); err != nil {
+		if err := channel.Bind(h.ctx, channels.Binding{Address: channels.Address{Bot: bot, Chat: "42"}, Agent: first.Agent.ID, Person: person, Conversation: "main:" + first.Agent.ID, Scope: channels.PrivateScope()}); err != nil {
 			t.Fatal(err)
 		}
 	}
