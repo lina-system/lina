@@ -925,6 +925,31 @@ func (e *Engine) releaseDispatch(id string) {
 	e.journal.notify()
 }
 
+func (e *Engine) observationDue(a Action) bool {
+	return (a.State == "claimed" || a.State == "running" || a.State == "unknown") && (a.Epoch != e.cfg.Epoch && a.ObserverEpoch != e.cfg.Epoch || a.Deadline <= e.cfg.Now().Unix())
+}
+
+// The previous dispatch may have finished or parked after step's snapshot but
+// before it released the running reservation. Re-read after acquiring that
+// reservation so an authorization retry is never observed as an executed effect.
+func (e *Engine) readObservable(ctx context.Context, id string) (Action, error) {
+	var a Action
+	err := e.cfg.DB.Read(ctx, func(tx *canon.Tx) error {
+		var raw []byte
+		if err := tx.QueryRowContext(ctx, "SELECT body FROM work_records WHERE kind='action' AND id=?", id).Scan(&raw); err != nil {
+			return err
+		}
+		if err := json.Unmarshal(raw, &a); err != nil {
+			return err
+		}
+		if !e.observationDue(a) {
+			return ErrConflict
+		}
+		return nil
+	})
+	return a, err
+}
+
 func (e *Engine) step(ctx context.Context) error {
 	if err := e.Reconcile(ctx); err != nil {
 		return err
@@ -940,7 +965,7 @@ func (e *Engine) step(ctx context.Context) error {
 	}
 	for _, a := range s.Actions {
 		execute := a.State == "queued"
-		observe := (a.State == "claimed" || a.State == "running" || a.State == "unknown") && (a.Epoch != e.cfg.Epoch && a.ObserverEpoch != e.cfg.Epoch || a.Deadline <= e.cfg.Now().Unix())
+		observe := e.observationDue(a)
 		if !execute && !observe {
 			continue
 		}
@@ -951,19 +976,22 @@ func (e *Engine) step(ctx context.Context) error {
 		}
 		e.running[a.ID] = true
 		e.mu.Unlock()
+		var current Action
 		if execute {
-			claimed, err := e.Claim(ctx, a.ID)
-			if err != nil {
-				e.mu.Lock()
-				delete(e.running, a.ID)
-				e.mu.Unlock()
-				if errors.Is(err, ErrConflict) {
-					continue
-				}
-				return err
-			}
-			a = claimed
+			current, err = e.Claim(ctx, a.ID)
+		} else {
+			current, err = e.readObservable(ctx, a.ID)
 		}
+		if err != nil {
+			e.mu.Lock()
+			delete(e.running, a.ID)
+			e.mu.Unlock()
+			if errors.Is(err, ErrConflict) {
+				continue
+			}
+			return err
+		}
+		a = current
 		e.wg.Go(func() {
 			defer e.releaseDispatch(a.ID)
 			var o Observation

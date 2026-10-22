@@ -21,6 +21,43 @@ func authorizationStep(t *testing.T, e *Engine) State {
 	return revisionSnapshot(t, e)
 }
 
+func TestObservationDoesNotUseClaimSnapshotAfterAuthorizationRequeue(t *testing.T) {
+	e := revisionEngine(t, readyTask("a"))
+	queued := revisionAction(t, e, "a", Assign)
+	if err := e.Signal(t.Context(), Signal{ID: "first-approval-hint", ActionID: queued.ID}); err != nil {
+		t.Fatal(err)
+	}
+	a, err := e.Claim(t.Context(), queued.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observations := 0
+	e.cfg.Driver = &fixtureDriver{observe: func(Action) (Observation, error) {
+		observations++
+		return Observation{Status: OutcomeSucceeded, Head: "head", EffectsSettled: true}, nil
+	}}
+	// The snapshot still says claimed, but its dispatch unwinds and approval
+	// requeues it before the observer acquires the running reservation.
+	e.cfg.Changed = func(ctx context.Context, _ State) error {
+		if err := e.awaitAuthorization(ctx, a); err != nil {
+			return err
+		}
+		return e.Signal(ctx, Signal{ID: "next-approval-hint", ActionID: a.ID})
+	}
+	if err := e.step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	e.wg.Wait()
+	select {
+	case err := <-e.failures:
+		t.Fatalf("obsolete claim observation stopped engine: %v", err)
+	default:
+	}
+	if observations != 0 || revisionSnapshot(t, e).Actions[0].State != "queued" {
+		t.Fatalf("observed an undispatched authorization retry: calls=%d", observations)
+	}
+}
+
 func TestAuthorizationSignalRechecksGrantAndExecutesOnceAcrossRestart(t *testing.T) {
 	e := revisionEngine(t, readyTask("a"))
 	checks, effects := 0, 0

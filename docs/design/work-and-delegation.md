@@ -984,6 +984,11 @@ A completed criterion check for an obsolete goal revision, checking round or tar
 
 An action awaiting authorization before dispatch is recorded separately from an executed action whose outcome needs the person. A committed approval-change signal for that action requeues its authority check; the signal itself grants nothing. Core rechecks the exact action's current authority before executing it once, including after restart. A signal arriving during the authority check or while its dispatch is unwinding is retained as a wake, without waiting for a sweep. A revision retires an obsolete authorization wait like other undispatched work. An executed or uncertain effect is never requeued by an approval hint.
 
+Before observing an action from an earlier snapshot, Core reads its current
+state after reserving the observation. An action that has since finished,
+parked for authorization or requeued for an authority check is not observed as
+an executed effect.
+
 While a correction is pending, retained tasks may refer to repositories removed
 from the new scope. They do not prevent the manager assessment or unrelated
 goals from progressing. Undispatched reservations return to their runnable
