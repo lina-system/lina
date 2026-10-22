@@ -18,9 +18,9 @@ import (
 	"github.com/thisisjun786/lina/internal/core/update"
 )
 
+// Serial: copying and verifying both update bundles alongside other Core
+// scenarios can exhaust the unchanged activation process deadline.
 func TestM2UpdateClaudeCredential(t *testing.T) {
-	t.Parallel()
-
 	real := buildLina(t)
 	node := buildCommand(t, "lina-node")
 	worker := buildCommand(t, "moirai-worker")
