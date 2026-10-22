@@ -82,7 +82,7 @@ A run above its bound is investigated before the bound is changed. A bound chang
 
 The gate (`scripts/verify/gate.mjs`) evaluates the selection and the check results in process, after the selected checks finish. Selection must succeed, every selected check must report `success`, and an unselected check must report `skipped`. Missing, failed, cancelled, malformed, or unexpectedly skipped results fail the gate.
 
-The output names the candidate, the selection reason, and each check's result. A passing `foundation` means the registered checks passed, not that unimplemented product behavior or model quality was established.
+The output names the candidate, the selection reason, and each check's result. Successful runs also print Go's package timing for each acceptance batch; test enumeration timings are excluded. A passing `foundation` means the registered checks passed, not that unimplemented product behavior or model quality was established.
 
 ## Iteration and extension
 
