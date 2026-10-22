@@ -131,7 +131,7 @@ export function checkComponents({ cwd = process.cwd(), components, execute: run 
           // from this candidate's binary avoids three Go package loads/links.
           const binary = join(context.directory, `acceptance-${index}.test${process.platform === 'win32' ? '.exe' : ''}`);
           if (invoke('go', ['test', '-c', '-mod=readonly', '-o', binary, pkg], directory).status !== 0) return { status: 1, output };
-          const binaryArgs = ['-test.count=1', '-test.timeout=6m'];
+          const binaryArgs = ['-test.count=1', '-test.timeout=6m', '-test.paniconexit0'];
           const listedTests = invoke(binary, [...binaryArgs, '-test.list', '.'], packageDirectory);
           if (listedTests.status !== 0) return { status: 1, output };
           const names = listedTests.stdout.split(/\r?\n/).filter(name => /^(Test|Example|Fuzz)[\p{L}\p{N}_]*$/u.test(name)).sort();

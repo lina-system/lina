@@ -352,6 +352,17 @@ test('failed acceptance compilation stops before enumeration or execution', t =>
   assert.match(result.output, /acceptance compilation failed/);
 });
 
+test('an abrupt zero exit cannot hide unexecuted acceptance checks', t => {
+  const sb = fixture(t);
+  sb.write(sb.dir, 'e2e/exit_test.go', `// SPDX-License-Identifier: Apache-2.0
+package e2e
+import ("os"; "testing")
+func TestAbruptExit(t *testing.T) { os.Exit(0) }
+`);
+  const result = checkComponents({ cwd: sb.dir, components: [{ name: 'lina', module: '.', packages: ['./e2e/...'] }] });
+  assert.equal(result.status, 1, 'an abrupt exit must fail acceptance, as go test does');
+});
+
 test('failed acceptance enumeration never becomes an empty successful suite', t => {
   const sb = fixture(t);
   for (const failing of ['list', 'tests']) {

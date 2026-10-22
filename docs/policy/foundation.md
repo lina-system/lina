@@ -17,7 +17,8 @@ The script clears `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and every other `
 Acceptance packages are compiled once per candidate with `go test -c` into the
 check's disposable directory. The produced binary enumerates its tests and runs
 both disjoint batches in the package's directory with `-test.count=1` and
-`-test.timeout=6m`. Results are never cached. Verbose batch output identifies the
+`-test.timeout=6m` and Go's `-test.paniconexit0` guard against early successful
+process exit. Results are never cached. Verbose batch output identifies the
 active scenario if the shared components deadline expires. Packages without
 test files still receive their normal build, vet and analyzer checks.
 
