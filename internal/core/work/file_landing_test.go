@@ -194,6 +194,102 @@ func TestFileDoneRejectsChangesAndSpecialFiles(t *testing.T) {
 	}
 }
 
+func replaceRootWithSymlink(t *testing.T, root, name string) {
+	t.Helper()
+	target := ".saved-" + name
+	if name == "report.md" {
+		// Both files have identical bytes; the link adds no entry to the tree.
+		target = "out/result.txt"
+		if err := os.Remove(filepath.Join(root, name)); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		if err := os.Rename(filepath.Join(root, name), filepath.Join(root, target)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(target, filepath.Join(root, name)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFileDoneRejectsRootSymlinks(t *testing.T) {
+	for _, name := range []string{"out", "report.md"} {
+		t.Run(name, func(t *testing.T) {
+			s, w, r, _ := fileFixture(t)
+			writeFixture(t, filepath.Join(w.Path, "report.md"), "result")
+			r = fileReceipt(t, w)
+			// Keep the exact bytes and receipt; only the root entry becomes a link
+			// to a directory or regular file inside the task directory.
+			replaceRootWithSymlink(t, w.Path, name)
+			if err := s.Submit(t.Context(), "run-1", r); !errors.Is(err, ErrInvalid) {
+				t.Errorf("snapshot accepted %s root symlink: %v", name, err)
+			}
+			c, err := s.Get(t.Context(), "task-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.FileSnapshot != nil || c.Receipt != nil || len(c.Materials) != 0 {
+				t.Fatal("symlink snapshot published")
+			}
+		})
+	}
+}
+
+type closeHookReader struct {
+	io.ReadCloser
+	afterClose func()
+}
+
+func (r *closeHookReader) Close() error {
+	err := r.ReadCloser.Close()
+	r.afterClose()
+	return err
+}
+
+type readbackSymlinkReader struct {
+	*retentionWriter
+	afterCopy func()
+}
+
+func (r *readbackSymlinkReader) Open(ctx context.Context, m Material) (io.ReadCloser, error) {
+	input, err := r.retentionWriter.Open(ctx, m)
+	if err != nil || m.Path != "report.md" {
+		return input, err
+	}
+	return &closeHookReader{ReadCloser: input, afterClose: r.afterCopy}, nil
+}
+
+func TestFileLandingReadbackRejectsRootSymlinks(t *testing.T) {
+	for _, name := range []string{"out", "report.md"} {
+		t.Run(name, func(t *testing.T) {
+			s, w, r, writer := fileFixture(t)
+			writeFixture(t, filepath.Join(w.Path, "report.md"), "result")
+			r = fileReceipt(t, w)
+			c := submitFiles(t, s, r)
+			bundle := filepath.Join(c.Task.Destination, c.Task.ID)
+			// The final material closes after both output files have been written,
+			// but before destination readback. No timing-dependent mutation.
+			s.materials = &readbackSymlinkReader{retentionWriter: writer, afterCopy: func() {
+				replaceRootWithSymlink(t, bundle, name)
+			}}
+			if _, err := landFiles(t, s, c); !errors.Is(err, ErrInvalid) {
+				t.Errorf("readback accepted %s root symlink: %v", name, err)
+			}
+			if err := verifyBundle(t.Context(), bundle, c.FileSnapshot.Fingerprint); !errors.Is(err, ErrInvalid) {
+				t.Errorf("bundle verification did not reject %s root symlink: %v", name, err)
+			}
+			card, err := s.Get(t.Context(), c.Task.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if card.Applied || card.FileEvidence != nil || len(card.FileCopies) != 1 || card.FileCopies[0].Status != "partial" {
+				t.Fatal("symlink readback published landed evidence")
+			}
+		})
+	}
+}
+
 type faultMaterialReader struct {
 	*retentionWriter
 	onOpen func(Material)

@@ -52,6 +52,13 @@ func (r contextFileReader) Read(p []byte) (int, error) {
 
 func readTree(ctx context.Context, root *os.Root) (tree FileTree, err error) {
 	for _, name := range []string{"out", "report.md"} {
+		info, err := root.Lstat(name)
+		if err != nil {
+			return tree, err
+		}
+		if info.Mode()&os.ModeSymlink != 0 || (name == "out" && !info.IsDir()) || (name == "report.md" && !info.Mode().IsRegular()) {
+			return tree, ErrInvalid
+		}
 		err = fs.WalkDir(root.FS(), name, func(path string, entry fs.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				return walkErr
