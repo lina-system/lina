@@ -53,3 +53,26 @@ func TestCoreRejectsCorruptEngineBeforeBoot(t *testing.T) {
 		t.Fatalf("boot changed state before verifying the engine: %v %v", entries, err)
 	}
 }
+
+func TestCorePreflightDoesNotCreateStateOrLoadModelSettings(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "state")
+	controls := filepath.Join(root, "system/core")
+	if err := os.MkdirAll(controls, 0700); err != nil {
+		t.Fatal(err)
+	}
+	main := filepath.Join(controls, "main.json")
+	if err := os.WriteFile(main, []byte(`{"main_id":"preflight-fixture"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LINA_RESPONSES_BASE_URL", "invalid provider configuration")
+	if code := runCore([]string{"--state-root", root, "--preflight"}); code != 0 {
+		t.Fatalf("preflight exit %d", code)
+	}
+	entries, err := os.ReadDir(controls)
+	if err != nil || len(entries) != 1 || entries[0].Name() != "main.json" {
+		t.Fatal("preflight wrote controls", entries, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "canon")); !os.IsNotExist(err) {
+		t.Fatal("preflight created canon", err)
+	}
+}

@@ -114,6 +114,9 @@ func (s *Service) Ledger(ctx context.Context, id string) (events []Event, err er
 	return
 }
 func (s *Service) append(ctx context.Context, e Event) error {
+	return s.db.Write(ctx, func(tx *canon.Tx) error { return appendEvent(ctx, tx, e) })
+}
+func appendEvent(ctx context.Context, tx *canon.Tx, e Event) error {
 	// Compare the durable representation, excluding Go-only clock/location
 	// metadata and caller-owned pointers, on both initial admission and retry.
 	raw, err := json.Marshal(e)
@@ -123,9 +126,6 @@ func (s *Service) append(ctx context.Context, e Event) error {
 	if err = json.Unmarshal(raw, &e); err != nil {
 		return err
 	}
-	return s.db.Write(ctx, func(tx *canon.Tx) error { return appendWork(ctx, tx, e) })
-}
-func appendWork(ctx context.Context, tx *canon.Tx, e Event) error {
 	events, err := ledger(ctx, tx, e.TaskID)
 	if err != nil {
 		return err
@@ -169,7 +169,6 @@ func appendWork(ctx context.Context, tx *canon.Tx, e Event) error {
 	}
 	return saveCard(ctx, tx, c)
 }
-
 func saveCard(ctx context.Context, tx *canon.Tx, c Card) error {
 	b, err := json.Marshal(c)
 	if err != nil {
