@@ -20,3 +20,18 @@ LINA uses one row above the composer, wrapping details when necessary under the
 [narrow terminal rules](NARROW-REFERENCE.md), a 100 ms frame interval while visible,
 elapsed seconds, and no idle timer. Reduced motion and monochrome output keep
 the first frame. Completion durations are client display state, never history.
+
+## Tool activity
+
+- **Seen:** Hermes Agent (`NousResearch/hermes-agent`, MIT), revision
+  `944c3a434071f43e64b443d033f3eba30c64434c`,
+  `agent/display.py:531–620,1326–1349`, resolves friendly tool verbs from a
+  catalog for the status phrase and appends duration to completion rows.
+  The source was read through GitHub at that revision; no code is copied.
+- **Inferred:** LINA can project a trusted catalog label at actual tool start,
+  then a bounded success/failure indication after its durable result commits.
+  Its existing turn journal supplies ordering independently of the renderer.
+  The status needs no argument previews or output, so neither goes on this wire.
+- **Unknown:** This reference does not establish LINA protocol compatibility,
+  concurrent-call ordering, cancellation, model-history exclusion or recovery.
+  LINA conformance, journal and installed-Core tests must establish those.

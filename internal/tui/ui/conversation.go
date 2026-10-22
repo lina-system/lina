@@ -370,7 +370,7 @@ func (m *shellModel) openPager(text string) {
 }
 
 func conversationBlock(b state.Block) bool {
-	return b.Topic != "core" && b.Topic != "running" && (b.Topic != "waiting" || b.Card != nil) && b.Topic != "progress" && b.Kind != protocol.KindTurnState
+	return b.Topic != "core" && b.Topic != "running" && (b.Topic != "waiting" || b.Card != nil) && b.Topic != "progress" && b.Kind != protocol.KindTurnState && b.Kind != protocol.KindToolActivity
 }
 
 func (m *shellModel) conversationName() string {

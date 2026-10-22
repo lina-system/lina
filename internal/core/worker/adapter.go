@@ -117,6 +117,8 @@ const (
 )
 
 type ThreadSnapshot struct {
+	// Output is the latest completed assistant message in the current turn.
+	Output                     string
 	Thread                     Thread
 	State                      ThreadState
 	Worker, Version, Workdir   string

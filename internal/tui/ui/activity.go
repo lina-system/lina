@@ -8,6 +8,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/internal/tui/render"
+	"github.com/thisisjun786/lina/kit/protocol"
 )
 
 type activityTick time.Time
@@ -53,12 +54,25 @@ func (m *shellModel) activityInterval() time.Duration {
 
 func (m *shellModel) activityText() string {
 	text := func(id string) string { return design.Text(m.styles.options.Language, id) }
-	word := "activity.thinking"
-	if m.content.Activity.Replying {
-		word = "activity.replying"
+	word := text("activity.thinking")
+	activity := m.content.Activity
+	switch activity.Phase {
+	case protocol.TurnPhaseWaitingModel:
+	case protocol.TurnPhaseStreaming:
+		word = text("activity.replying")
+	case protocol.TurnPhaseTool:
+		if activity.ToolName != "" {
+			word = activity.ToolName
+		}
+	case protocol.TurnPhaseStopping:
+		word = text("activity.stopping")
+	default:
+		if activity.Replying {
+			word = text("activity.replying")
+		}
 	}
 	if m.content.Stopping {
-		word = "activity.stopping"
+		word = text("activity.stopping")
 	}
 	elapsed := "0s" // Pending admission has no server start yet.
 	if m.content.TurnActive {
@@ -76,7 +90,10 @@ func (m *shellModel) activityText() string {
 	if !m.staticActivity() {
 		frame = m.activityFrame % uint64(len(glyphs))
 	}
-	return formatActivity(m.size.Width, fmt.Sprintf("%c %s", glyphs[frame], text(word)), elapsed, separator, text("activity.stop"))
+	// Preserve the existing cell bound for unbounded peer-supplied tool names.
+	// Fixed catalog words fit; details retain their own complete row if needed.
+	label := render.Truncate(fmt.Sprintf("%c %s", glyphs[frame], word), m.size.Width, render.Unicode{})
+	return formatActivity(m.size.Width, label, elapsed, separator, text("activity.stop"))
 }
 
 // Measure complete segments before the planner reserves rows. The word and
@@ -90,7 +107,7 @@ func formatActivity(width int, label, elapsed, separator, hint string) string {
 	if width < 80 && (render.Unicode{}).Width(line) > width {
 		return label + "\n" + details
 	}
-	return line
+	return render.Truncate(line, width, render.Unicode{})
 }
 
 // The connection owner owns this timer. There is no goroutine or timer while

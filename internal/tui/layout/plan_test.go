@@ -125,3 +125,11 @@ func TestActivityPrecedesComposerRule(t *testing.T) {
 		}
 	}
 }
+
+func TestActivityAboveComposerRule(t *testing.T) {
+	idle := Plan(Size{100, 34}, Caps{}, Shape{})
+	busy := Plan(Size{100, 34}, Caps{}, Shape{ActivityRows: 1})
+	if idle.Activity.Height != 0 || busy.Activity.Height != 1 || busy.Activity.Y+1 != busy.ComposerRule.Y || busy.Conversation.Height != idle.Conversation.Height-1 {
+		t.Fatalf("activity row budget: idle=%+v busy=%+v", idle, busy)
+	}
+}

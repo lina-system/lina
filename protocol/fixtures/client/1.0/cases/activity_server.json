@@ -1,0 +1,41 @@
+{
+  "side": "server",
+  "input": [
+    "conversation/phase_waiting_model.json",
+    "conversation/phase_tool.json",
+    "conversation/tool_started.json",
+    "conversation/tool_finished_ok.json",
+    "conversation/tool_finished_failed.json",
+    "conversation/phase_streaming.json",
+    "conversation/phase_stopping.json",
+    "conversation/activity_snapshot.json",
+    "conversation/phase_snapshot.json"
+  ],
+  "output": [
+    "conversation/phase_waiting_model.json",
+    "conversation/phase_tool.json",
+    "conversation/tool_started.json",
+    "conversation/tool_finished_ok.json",
+    "conversation/tool_finished_failed.json",
+    "conversation/phase_streaming.json",
+    "conversation/phase_stopping.json",
+    "conversation/activity_snapshot.json",
+    "conversation/phase_snapshot.json"
+  ],
+  "errors": [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+  ],
+  "outcome": {
+    "accepted": 9,
+    "malformed": 0,
+    "unknown_kinds": 0
+  }
+}

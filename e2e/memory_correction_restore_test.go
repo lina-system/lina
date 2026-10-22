@@ -205,7 +205,7 @@ func correctionMemoryTUI(t *testing.T, h *harness) (func(string) protocol.Memory
 		for {
 			e := tap.next(t, h)
 			if e.Error != nil {
-				t.Fatalf("%s refused: %s", text, e.Error.Code)
+				t.Fatalf("%s refused: %s (%s)", text, e.Error.Code, e.Error.Detail)
 			}
 			if result, ok := e.Payload.(protocol.MemoryResult); ok {
 				if result.Operation == nil {

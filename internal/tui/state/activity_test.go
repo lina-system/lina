@@ -99,3 +99,19 @@ func TestAuthoritativeEmptyConversationStopsActivity(t *testing.T) {
 		t.Fatal("empty authoritative conversation retained activity")
 	}
 }
+
+func TestActivityRepeatedActiveRetainsStartAndStopping(t *testing.T) {
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	s, _ := Reduce(State{}, Turn{Active: true, Started: start})
+	s, _ = Reduce(s, Interrupt{})
+	s, _ = Reduce(s, Turn{Active: true, Started: start.Add(5 * time.Second)})
+	if !s.Activity.Started.Equal(start) || !s.Stopping {
+		t.Fatalf("active transition reset start or stopping: activity=%+v stopping=%v", s.Activity, s.Stopping)
+	}
+	s, _ = Reduce(s, Turn{})
+	next := start.Add(20 * time.Second)
+	s, _ = Reduce(s, Turn{Active: true, Started: next})
+	if !s.Activity.Started.Equal(next) || s.Stopping {
+		t.Fatal("new turn did not get its own start")
+	}
+}

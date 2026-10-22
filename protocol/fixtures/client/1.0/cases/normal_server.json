@@ -41,7 +41,8 @@
     "values/question_cancel.json",
     "values/exact_number.json",
     "normal/restart_request.json",
-    "normal/restart_get.json"
+    "normal/restart_get.json",
+    "values/legacy_hello.json"
   ],
   "output": [
     "hello.json",
@@ -84,9 +85,11 @@
     "values/question_cancel.json",
     "values/exact_number.json",
     "normal/restart_request.json",
-    "normal/restart_get.json"
+    "normal/restart_get.json",
+    "values/legacy_hello.json"
   ],
   "errors": [
+    "",
     "",
     "",
     "",
@@ -130,7 +133,7 @@
     ""
   ],
   "outcome": {
-    "accepted": 41,
+    "accepted": 42,
     "malformed": 0,
     "unknown_kinds": 0
   }
