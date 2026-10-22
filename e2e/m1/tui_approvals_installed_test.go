@@ -128,13 +128,14 @@ func TestM1TUIApprovalsInstalledCore(t *testing.T) {
 	if _, err = db.ExecContext(h.ctx, "INSERT INTO authority_approvals(approval_id,effect_key,fingerprint,record) VALUES(?,?,?,?)", approval.ID, approval.EffectKey, "fixture", data); err != nil {
 		t.Fatal(err)
 	}
-	terminal := h.startScreenTUI("TERM=xterm-256color")
+	terminal, _ := h.startConversationTUI(80, 24, "TERM=xterm-256color")
+	waitComposerReady(t, h, terminal)
 	waitScreen(t, h, terminal, fixture.Summary)
 	h.keys(terminal, "\x1b[?3u\x1b[17~")
 	waitScreen(t, h, terminal, fixture.Target)
-	h.keys(terminal, "1")
+	h.keys(terminal, "\x1b[?3u\x1b[49;1:1u")
 	waitScreen(t, h, terminal, "[1")
-	h.keys(terminal, "\r")
+	h.keys(terminal, "\x1b[13;1:1u")
 	waitScreen(t, h, terminal, design.Text(design.English, "resolved"))
 	if err = db.QueryRowContext(h.ctx, "SELECT record FROM authority_approvals WHERE approval_id=?", approval.ID).Scan(&saved); err != nil {
 		t.Fatal(err)
