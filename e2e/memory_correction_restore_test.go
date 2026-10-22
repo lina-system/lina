@@ -17,6 +17,8 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	memoryexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/internal/core/memory"
+	"github.com/thisisjun786/lina/internal/design"
+	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -202,7 +204,17 @@ func correctionMemoryTUI(t *testing.T, h *harness) (func(string) protocol.Memory
 				if result.ItemID != nil {
 					marker = *result.ItemID
 				}
-				waitScreen(t, h, terminal, marker)
+				if result.Operation == nil {
+					t.Fatal("memory response lost its operation")
+				}
+				// The command opens help before the response arrives. Its help
+				// text alone cannot prove the result was rendered before Esc.
+				if _, err := terminal.screen.Wait(h.ctx, func(snapshot tuiterm.Snapshot) bool {
+					text := screenText(snapshot)
+					return strings.HasPrefix(text, design.Text(design.English, *result.Operation)+" ") && strings.Contains(text, marker)
+				}); err != nil {
+					t.Fatal("memory result not rendered", err)
+				}
 				opened = true
 				return result
 			}

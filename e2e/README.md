@@ -65,6 +65,12 @@ entry, private-chat pairing, binding and disconnect through the real TUI and
 boot composition. A separate Core test process retains the production peer
 ancestry checks; only Telegram HTTP replies are scripted. Boot package tests
 also reopen the poller against durable connection and secret state.
+`m1/telegram.json` starts production boot in process against a saved channel and
+secret, without a model route. Only the platform HTTP transport is replaced:
+the restored bot's identity lookup stays blocked until shutdown. READY and a
+socket channel listing must succeed while it is blocked, the channel must show
+unavailable without exposing the token, and Core must cancel and join the
+request before stopping.
 `m1/tui-talk-log.json` seeds a durable exchange, restarts installed Core, and
 checks one summary row and its explicit ledger expansion without a model call.
 
