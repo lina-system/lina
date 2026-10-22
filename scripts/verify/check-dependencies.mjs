@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
-// Check Go pins, sums, vulnerabilities, licenses and notices. All Go calls are injectable.
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+// Check vendored trees, Go pins, sums, vulnerabilities, licenses and notices. All Go calls are injectable.
+import { existsSync, lstatSync, readdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { homedir, tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -146,6 +147,100 @@ function checkPins(data, file, root) {
   }
 }
 
+// Vendored inventories are checked offline before any Go command. A manifest is
+// data, never a program: recorded generation commands are not executed by CI.
+function checkVendoredTrees(cwd) {
+  const root = join(cwd, 'third_party');
+  if (!existsSync(root)) return 'vendored trees: 0 verified\n';
+  const hash = bytes => createHash('sha256').update(bytes).digest('hex');
+  const digest = value => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+  const text = value => typeof value === 'string' && value.trim().length > 0;
+  const safe = path => text(path) && !path.includes('\\') && !path.includes('\0')
+    && !isAbsolute(path) && path.split('/').every(part => part && part !== '.' && part !== '..');
+  const object = value => value && typeof value === 'object' && !Array.isArray(value);
+  const require = (ok, message) => { if (!ok) throw new Error(message); };
+  const walk = directory => {
+    require(lstatSync(directory).isDirectory(), `not a regular directory: ${relative(cwd, directory)}`);
+    return readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))
+      .flatMap(entry => {
+        require(entry.isDirectory() || entry.isFile(), `symlink or special file: ${entry.name}`);
+        return entry.isDirectory() ? walk(join(directory, entry.name)).map(path => `${entry.name}/${path}`) : [entry.name];
+      });
+  };
+  try {
+    require(lstatSync(root).isDirectory(), 'third_party must be a regular directory');
+    const notices = readFileSync(join(cwd, 'THIRD-PARTY-NOTICES.md'), 'utf8');
+    const sections = new Map([...notices.matchAll(/^## ([^\r\n]+)\r?\n([\s\S]*?)(?=^## |$(?![\s\S]))/gm)]
+      .map(match => [match[1].trim(), match[2]]));
+    let count = 0;
+    for (const name of readdirSync(root).sort()) {
+      const tree = join(root, name);
+      const all = walk(tree);
+      require(all.includes('vendor.json'), `${name}: missing vendor.json`);
+      const vendor = JSON.parse(readFileSync(join(tree, 'vendor.json'), 'utf8'));
+      require(vendor.name === name && /^https:\/\//.test(vendor.source) && allowedLicenses.has(vendor.license), `${name}: invalid identity, source or license`);
+      require(Array.isArray(vendor.scope) && vendor.scope.length && vendor.scope.every(safe)
+        && new Set(vendor.scope).size === vendor.scope.length, `${name}: invalid scope`);
+      require(object(vendor.files) && Object.keys(vendor.files).length > 0
+        && Object.keys(vendor.files).every(safe), `${name}: invalid file inventory`);
+      require(Array.isArray(vendor.patches), `${name}: missing patch inventory`);
+      const recorded = Object.keys(vendor.files).sort();
+      const actual = walk(join(tree, 'upstream')).sort();
+      require(JSON.stringify(recorded) === JSON.stringify(actual), `${name}: upstream file inventory differs from vendor.json`);
+      require(JSON.stringify([...vendor.scope].sort()) === JSON.stringify(recorded), `${name}: scope must enumerate the included upstream files`);
+      require(actual.some(path => /(^|\/)LICENSE(?:\.[^/]*)?$/.test(path)), `${name}: missing upstream license`);
+      const patched = new Set();
+      const patchPaths = new Set();
+      const patchIDs = new Set();
+      for (const patch of vendor.patches) {
+        require(object(patch) && text(patch.id) && !patchIDs.has(patch.id) && safe(patch.file)
+          && patch.file.startsWith('patches/') && !patchPaths.has(patch.file) && digest(patch.sha256)
+          && text(patch.reason) && text(patch.wrapperCannot) && Array.isArray(patch.files) && patch.files.length
+          && patch.files.every(path => safe(path) && Object.hasOwn(vendor.files, path))
+          && (patch.reference === undefined || /^https?:\/\//.test(patch.reference)), `${name}: incomplete patch record`);
+        require(all.includes(patch.file) && hash(readFileSync(join(tree, patch.file))) === patch.sha256, `${name}: patch digest mismatch`);
+        patchIDs.add(patch.id); patchPaths.add(patch.file);
+        patch.files.forEach(path => patched.add(path));
+      }
+      require(all.filter(path => path.startsWith('patches/')).every(path => patchPaths.has(path)), `${name}: unrecorded patch`);
+      for (const path of recorded) {
+        const entry = vendor.files[path];
+        require(object(entry) && digest(entry.upstream) && digest(entry.vendored), `${name}/${path}: invalid hashes`);
+        require(entry.upstream === entry.vendored || patched.has(path), `${name}/${path}: changed without a patch record`);
+        require(hash(readFileSync(join(tree, 'upstream', path))) === entry.vendored, `${name}/${path}: SHA-256 mismatch`);
+      }
+      let revision;
+      if (vendor.generation !== undefined) {
+        const generation = vendor.generation;
+        require(object(generation) && Array.isArray(generation.tools) && generation.tools.length > 0
+          && Array.isArray(generation.commands) && generation.commands.length > 0
+          && generation.commands.every(text), `${name}: incomplete generation provenance`);
+        const tools = new Set();
+        for (const tool of generation.tools) {
+          require(object(tool) && text(tool.name) && !tools.has(tool.name) && text(tool.version)
+            && digest(tool.sha256), `${name}: incomplete generator tool`);
+          tools.add(tool.name);
+          if (tool.path !== undefined) {
+            require(safe(tool.path) && all.includes(tool.path), `${name}: invalid generator path`);
+            require(hash(readFileSync(join(tree, tool.path))) === tool.sha256, `${name}: generator digest mismatch`);
+          }
+        }
+        revision = generation.tools[0].version;
+      } else {
+        require(typeof vendor.commit === 'string' && /^[0-9a-f]{40}$/.test(vendor.commit), `${name}: invalid upstream commit`);
+        revision = vendor.commit;
+      }
+      const notice = sections.get(name) ?? '';
+      require(notice.includes(vendor.source) && notice.includes(revision) && notice.includes(vendor.license)
+        && vendor.patches.every(patch => notice.includes(patch.id)), `${name}: missing or mismatched notice revision/license/patches`);
+      count++;
+    }
+    return `vendored trees: ${count} verified\n`;
+  } catch (error) {
+    throw new Error(`vendored trees: ${error.message}`);
+  }
+}
+
 export function checkDependencies({ cwd = process.cwd(), execute: run = execute } = {}) {
   let output = '';
   let temporary;
@@ -157,6 +252,7 @@ export function checkDependencies({ cwd = process.cwd(), execute: run = execute 
   };
   try {
     cwd = realpathSync(cwd);
+    output += checkVendoredTrees(cwd);
     const exceptions = readExceptions(cwd);
     // Reject drift before Go can select or download a different toolchain.
     const versions = manifests.map(file => {
