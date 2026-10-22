@@ -44,6 +44,9 @@ type translation struct{ en, ko string }
 // Keys are wire codes or local presentation ids, never English source text.
 // Keep both languages together so a new entry cannot omit a translation.
 var catalog = map[string]translation{
+	"control.stopped":                {"Stop requested.", "중단을 요청했습니다."},
+	"control.note":                   {"Note queued.", "추가 요청을 전달했습니다."},
+	"control.stopped_all":            {"Stopped %s runs.", "실행 %s개를 중단했습니다."},
 	"running.state.in_progress":      {"In progress", "진행 중"},
 	"running.state.waiting":          {"Waiting", "대기 중"},
 	"running.state.needs_input":      {"Input needed", "응답 필요"},
@@ -277,7 +280,7 @@ var catalog = map[string]translation{
 	"running_get":                {"Show running work", "진행 중인 작업 보기"},
 	"open":                       {"Open", "열기"},
 	"dismiss":                    {"Dismiss", "닫기"},
-	"running.keys":               {"Enter open · ↑/↓ select · d dismiss · Esc close", "Enter 열기 · ↑/↓ 선택 · d 닫기 · Esc 돌아가기"},
+	"running.keys":               {"Enter open · ↑/↓ select · s stop · d dismiss · Esc close", "Enter 열기 · ↑/↓ 선택 · s 중단 · d 닫기 · Esc 돌아가기"},
 	"running.next":               {"Ctrl+N: next page", "Ctrl+N: 다음 페이지"},
 	"running":                    {"Running", "진행 중"},
 	"running_update":             {"Work updated", "작업 업데이트"},

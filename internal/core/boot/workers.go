@@ -34,6 +34,8 @@ type workerRuntime struct {
 	sessions map[string]*workerSession
 }
 type workerSession struct {
+	ownerControl  sync.Mutex
+	ownerRequests map[string]string
 	adapter       worker.Adapter
 	close         func() error
 	compatibility codex.Compatibility

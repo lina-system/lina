@@ -351,6 +351,12 @@ func (s *Service) Close() error {
 	return s.root.Close()
 }
 func (s *Service) Follow(ctx context.Context, id, note string) error {
+	return s.FollowOnce(ctx, id, "", note)
+}
+
+// FollowOnce retains the request identity with the queued note, so reconnects
+// cannot apply the same steering twice. Empty keys preserve internal callers.
+func (s *Service) FollowOnce(ctx context.Context, id, key, note string) error {
 	if note == "" {
 		return ErrInvalid
 	}
@@ -363,8 +369,18 @@ func (s *Service) Follow(ctx context.Context, id, note string) error {
 	if err != nil {
 		return err
 	}
+	if key != "" {
+		for _, seen := range r.FollowKeys {
+			if seen == key {
+				return nil
+			}
+		}
+	}
 	if r.State == Landed {
 		return ErrState
+	}
+	if key != "" {
+		r.FollowKeys = append(r.FollowKeys, key)
 	}
 	r.FollowUps = append(r.FollowUps, note)
 	if r.State == NeedsInput {

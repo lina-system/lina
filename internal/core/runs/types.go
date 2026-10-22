@@ -114,6 +114,7 @@ type Record struct {
 	Retries                     int
 	Checkpoint                  []provider.Item
 	FollowUps                   []string
+	FollowKeys                  []string
 	Calls                       []string
 	Usage                       []provider.Usage // unknown remains unknown; rows are attributed by this run's Origin
 	Artifact                    Artifact

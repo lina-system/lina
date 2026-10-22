@@ -443,3 +443,9 @@ card, marking it applied or deleting the artifact.
 record change appears on Home alongside the worker's authenticated decisions.
 Resolving the sources clears the summary and preserves the typed draft. The
 scenario checks parsed terminal cells, the worker-written artifact and cleanup.
+
+`m2/progress-controls.json` is exercised by `TestM2ProgressControlsSurfaces` and
+`TestM2ProgressDigestWorker`. The built TUI and paired Telegram gateway send
+explicit controls to running Core and inspect the durable target runs; the worker
+scenario observes its approval, question and real artifact through the digest.
+Only external provider and platform wires are scripted.
