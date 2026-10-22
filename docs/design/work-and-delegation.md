@@ -673,6 +673,60 @@ Every message LINA Core sends to a work thread, and every result a work thread r
 - A question is shared between tasks only when decision owner, permissions, budget, goal and dependency revision are all identical. A task waiting for a decision never blocks unrelated tasks.
 - The questions and results of a background run return the same way, to the conversation that asked, through its background notice ([conversation-and-memory.md](conversation-and-memory.md#background-results)).
 
+## Run to done
+
+The work engine owns a goal's waits for the person for code and non-code work
+alike. This section fixes the person-row portion of run to done.
+
+### Waits on the outside
+
+A wait on the person is a row in "Waiting for me". Work admits the complete
+round with a goal, owner, requesting agent, conversation, deadline, and the
+questions and their dependent tasks. Each question has a recommendation,
+allowed answers and an explicit default. A missing deadline or default, or a
+default outside those answers, refuses the entire round. The deadline comes
+from the goal; a display due date alone is not an expiry policy.
+
+Core records the round and its dependency holds atomically. It schedules the
+nearest deadline and checks overdue rounds before admitting mutations after
+restart. At or after the deadline, the original defaults and the dependency
+changes commit together exactly once. Repeated timer delivery, concurrent
+answers and restarts cannot apply that default again. An answer received at
+the deadline first records expiry, then follows the late-answer rule below.
+There is no model call or read of an external service just to expire a person
+row. Other kinds of outside wait retain their service-specific readback rules.
+
+For an outside or irreversible effect the only admitted default is
+`do_not_act`. Its dependent tasks remain waiting; unrelated tasks and the
+questions with actionable defaults can proceed. A row answer records a
+decision, never an authority grant. Any later outward execution still needs
+the authorization of [main-authority.md](main-authority.md#approval).
+
+### Stop and ask
+
+LINA asks only for an outward or irreversible effect not covered by a grant,
+an ambiguity with materially different results that available evidence cannot
+settle, information only the person has, something only the person can do, or
+an exhausted recovery or failed criterion with no repair inside scope.
+Reversible choices are made by LINA. Recommendations come first.
+
+Independent questions known for one goal are submitted as one row round,
+with one deadline and a default for every question. A second open round for
+the same goal is refused; a retry of the identical round is idempotent.
+Answering the round supplies all its question values together. Each question
+holds only its named dependents, so one unanswered effect cannot stop the
+rest of the goal.
+
+A timely answer and its originating message are recorded with the person and
+agent from the durable round. A late answer remains available after expiry
+and appends a new decision with its message identity and body; it increments
+the goal revision and returns the goal to work. Retrying the same message
+cannot create another revision. The expired default stays in the ledger.
+The manager derives revised work from the new decision: Core never rewrites
+the inputs or results of old executions, releases an old effect merely due
+to a late answer, or undoes an effect already applied. Work projections can
+be rebuilt from those same recorded transitions.
+
 ## Effects and unknown outcomes
 
 Effect states and idempotency keys are defined in [host-protocol.md](host-protocol.md), the effect ledger in [runtime.md](runtime.md), and epochs, reconciliation and the task owner's disposition of irreversible effects in [main-authority.md](main-authority.md). Work applies them as follows:

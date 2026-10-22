@@ -10,11 +10,20 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/waiting"
 )
 
-type Service struct{ db *canon.Store }
+type Service struct {
+	db      *canon.Store
+	waiting *waiting.Rounds
+}
 
-func New(db *canon.Store) *Service { return &Service{db: db} }
+func New(db *canon.Store) *Service {
+	s := &Service{db: db}
+	s.waiting = waiting.NewRounds(db, waiting.RoundHooks{Opened: s.openRound, Decided: s.decideRound})
+	return s
+}
+func (s *Service) Waiting() *waiting.Rounds { return s.waiting }
 
 // Recover rebuilds before Core exposes work. An unobserved execution remains
 // reserved and becomes unknown; restart is never permission to run it again.
@@ -108,6 +117,9 @@ func (s *Service) Ledger(ctx context.Context, id string) (events []Event, err er
 	return
 }
 func (s *Service) append(ctx context.Context, e Event) error {
+	return s.db.Write(ctx, func(tx *canon.Tx) error { return appendEvent(ctx, tx, e) })
+}
+func appendEvent(ctx context.Context, tx *canon.Tx, e Event) error {
 	// Compare the durable representation, excluding Go-only clock/location
 	// metadata and caller-owned pointers, on both initial admission and retry.
 	raw, err := json.Marshal(e)
@@ -117,50 +129,48 @@ func (s *Service) append(ctx context.Context, e Event) error {
 	if err = json.Unmarshal(raw, &e); err != nil {
 		return err
 	}
-	return s.db.Write(ctx, func(tx *canon.Tx) error {
-		events, err := ledger(ctx, tx, e.TaskID)
+	events, err := ledger(ctx, tx, e.TaskID)
+	if err != nil {
+		return err
+	}
+	var c Card
+	if len(events) > 0 {
+		c, err = Project(events)
 		if err != nil {
 			return err
 		}
-		var c Card
-		if len(events) > 0 {
-			c, err = Project(events)
-			if err != nil {
-				return err
-			}
-		}
-		// Do not let retries from an old generation overwrite or acknowledge the
-		// current worker's delivery. Identical current-generation retries are safe.
-		if e.Kind == "receipt" && (c.Run == nil || c.Run.ID != e.RunID) {
-			return ErrState
-		}
-		var prior []byte
-		err = tx.QueryRowContext(ctx, "SELECT record FROM work_ledger WHERE event_key=?", e.Key).Scan(&prior)
-		if err == nil {
-			var old Event
-			if err = json.Unmarshal(prior, &old); err != nil {
-				return err
-			}
-			if reflect.DeepEqual(old, e) {
-				return nil
-			}
-			return ErrState
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
+	}
+	// Do not let retries from an old generation overwrite or acknowledge the
+	// current worker's delivery. Identical current-generation retries are safe.
+	if e.Kind == "receipt" && (c.Run == nil || c.Run.ID != e.RunID) {
+		return ErrState
+	}
+	var prior []byte
+	err = tx.QueryRowContext(ctx, "SELECT record FROM work_ledger WHERE event_key=?", e.Key).Scan(&prior)
+	if err == nil {
+		var old Event
+		if err = json.Unmarshal(prior, &old); err != nil {
 			return err
 		}
-		if err = advance(&c, e); err != nil {
-			return err
+		if reflect.DeepEqual(old, e) {
+			return nil
 		}
-		b, err := json.Marshal(e)
-		if err != nil {
-			return err
-		}
-		if _, err = tx.ExecContext(ctx, "INSERT INTO work_ledger(task_id,event_key,record) VALUES(?,?,?)", e.TaskID, e.Key, b); err != nil {
-			return err
-		}
-		return saveCard(ctx, tx, c)
-	})
+		return ErrState
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if err = advance(&c, e); err != nil {
+		return err
+	}
+	b, err := json.Marshal(e)
+	if err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, "INSERT INTO work_ledger(task_id,event_key,record) VALUES(?,?,?)", e.TaskID, e.Key, b); err != nil {
+		return err
+	}
+	return saveCard(ctx, tx, c)
 }
 func saveCard(ctx context.Context, tx *canon.Tx, c Card) error {
 	b, err := json.Marshal(c)

@@ -26,9 +26,42 @@ func advance(c *Card, e Event) error {
 			return ErrState
 		}
 		c.Task = *e.Task
+		c.Revision = 1
 		c.State = "unknown"
 		c.Stages = []Stage{{Name: "worker", Source: "unknown"}, {Name: "review", Source: "unknown"}, {Name: "apply", Source: "unknown"}}
+	case "waiting_opened":
+		if e.Wait == nil || c.Active || c.Run != nil || c.State == "done" || c.State == "stopped" {
+			return ErrState
+		}
+		if c.Waits == nil {
+			c.Waits = map[string]Wait{}
+		}
+		c.Waits[waitKey(*e.Wait)] = *e.Wait
+		c.State = "input_needed"
+	case "waiting_decided":
+		if e.Wait == nil || c.Waits == nil {
+			return ErrState
+		}
+		if _, ok := c.Waits[waitKey(*e.Wait)]; !ok {
+			return ErrState
+		}
+		c.Waits[waitKey(*e.Wait)] = *e.Wait
+		if !hasWait(*c) {
+			c.State = "working"
+		}
+	case "goal_decided":
+		if e.Decision == nil || c.State == "stopped" {
+			return ErrState
+		}
+		c.Decisions = append(c.Decisions, *e.Decision)
+		if e.Decision.Decision.Kind != "default" {
+			c.Revision++
+			c.State = "working"
+		}
 	case "started":
+		if hasWait(*c) {
+			return ErrState
+		}
 		if c.Active {
 			return ErrActiveRun
 		}

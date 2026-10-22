@@ -64,6 +64,8 @@ type acceptedSteering struct {
 
 type conversationRuntime struct {
 	work         *work.Service
+	waitingStop  context.CancelFunc
+	waitingDone  chan struct{}
 	background   *backgroundRuntime
 	router       *conversationRouter
 	decisions    *clientsrv.Decisions
@@ -221,6 +223,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err = r.work.Recover(ctx, strconv.FormatUint(r.epoch, 10)); err != nil {
 		return nil, err
 	}
+	if err = r.startWorkWaiting(ctx); err != nil {
+		return nil, err
+	}
 	if err = r.startRuns(ctx); err != nil {
 		return nil, err
 	}
@@ -250,6 +255,15 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 }
 func (r *conversationRuntime) Close(ctx context.Context) error {
 	var err error
+	if r.waitingStop != nil {
+		r.waitingStop()
+		select {
+		case <-r.waitingDone:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		r.waitingStop = nil
+	}
 	if r.growth != nil && r.growth.stop != nil {
 		r.growth.stop()
 		select {
