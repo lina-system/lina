@@ -1012,6 +1012,14 @@ Fallbacks, in order. F1: Bubble Tea with its own probe, a quiet spinner, a lower
 
 ## Tests, tokens and theme (T-11)
 
+The LONG-QA transcript acceptance test starts PgUp stitching only after the
+result affordance occupies the bottom row of the inactive conversation viewport
+and the visible cursor is back in the composer. End-of-body text can arrive
+before the activity row disappears; that intermediate frame is not a settled
+scroll baseline. Subsequent pages likewise require the composer cursor before
+checking overlap, preserving the complete-body and no-duplication assertions.
+
+
 **Tests.** The fake Core, `internal/fakecore`, is built from the conformance fixtures ([host-protocol.md](host-protocol.md#conformance-fixtures)) with an injected clock and fault switches: drop, slow reader, epoch change, duplicate delivery, disconnect mid-batch, recovering and refusal.
 
 Each script step optionally consumes a request and names fixture envelopes to
