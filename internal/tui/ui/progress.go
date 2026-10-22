@@ -107,8 +107,14 @@ func (m *shellModel) waitingRequest() tea.Cmd {
 	if !m.hasCapability("waiting") {
 		return nil
 	}
+	if m.waitingOrder == "" {
+		m.waitingOrder = "priority"
+	}
+	order := m.waitingOrder
 	generation := m.generation
-	return func() tea.Msg { return shellManagement{Generation: generation, Request: protocol.WaitingGet{}} }
+	return func() tea.Msg {
+		return shellManagement{Generation: generation, Request: protocol.WaitingGet{Order: &order}}
+	}
 }
 func (m *shellModel) waitingText(rows []protocol.WaitingRow) string {
 	if len(rows) == 0 {
@@ -127,4 +133,34 @@ func (m *shellModel) waitingText(rows []protocol.WaitingRow) string {
 		lines = append(lines, line)
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (m *shellModel) ownerCommand(text string) (bool, tea.Cmd) {
+	kind, request, ok := protocol.OwnerCommand(text, "")
+	if !ok || kind == protocol.KindInterrupt {
+		return false, nil
+	}
+	capability := "running"
+	if kind == protocol.KindProgressDigestGet {
+		capability = "progress"
+	}
+	if kind == protocol.KindWaitingGet {
+		capability = "waiting"
+	}
+	if !m.hasCapability(capability) {
+		m.openPager(design.Text(m.styles.options.Language, "capability_not_negotiated"))
+		return true, nil
+	}
+	if p, ok := request.(protocol.WaitingGet); ok {
+		if p.Order == nil {
+			order := "priority"
+			p.Order = &order
+		}
+		m.waitingOrder = *p.Order
+		m.openPager("")
+		m.conversation.pager.waiting = true
+		request = p
+	}
+	generation := m.generation
+	return true, func() tea.Msg { return shellManagement{Generation: generation, Request: request} }
 }
