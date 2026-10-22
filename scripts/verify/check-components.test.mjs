@@ -308,7 +308,7 @@ test('module tests retain a diagnostic deadline inside their process budget', t 
 test('acceptance batches run every enumerated test once within the shared budget', t => {
   const sb = fixture(t);
   sb.write(sb.dir, 'e2e/fixture_test.go', '// SPDX-License-Identifier: Apache-2.0\npackage e2e\n');
-  const names = ['TestOne', 'TestTwo', 'TestThree', 'ExampleFlow', 'FuzzInput'];
+  const names = ['TestOne', 'TestTwo', 'TestThree', 'TestFour', 'TestFive', 'TestSix', 'TestSeven', 'TestEight', 'ExampleFlow', 'FuzzInput'];
   const runs = [];
   let elapsed = 0;
   t.mock.method(performance, 'now', () => elapsed);
@@ -335,6 +335,7 @@ test('acceptance batches run every enumerated test once within the shared budget
   assert.deepEqual(runs.flatMap(run => run.selected).sort(), [...names].sort());
   const batches = runs.filter(run => run.selected.length > 0);
   assert.ok(batches.length > 1);
+  assert.ok(batches.every(batch => batch.selected.length * 80_000 < 360_000));
   assert.ok(batches.slice(1).every((batch, i) => batch.budget < batches[i].budget));
   assert.ok(elapsed < componentsTimeoutMs);
 });
