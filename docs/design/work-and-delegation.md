@@ -1018,6 +1018,16 @@ its partial files, and appears with its path in the work result details. Startup
 reports interrupted intents without deleting or silently accepting their files.
 A retry uses a fresh bundle. Repeating a completed landing reads its evidence
 again and reuses the bundle only if it still matches.
+Before exposing work tools after restart, Core also reconciles the authority
+reservation of an interrupted local `land_work_result` invocation against that
+recovered work ledger. Only an invocation from an earlier Core epoch, bound to
+the same person and task agent, can be cancelled and have its reservation
+released. This cancels the invocation, not its files: it neither replays the old
+call nor asserts a successful or absent copy. The effect receipt and reservation
+update commit together with the recovered task revision. A fresh authorized call
+rechecks the current result, using a new bundle for a partial copy and the existing
+verified bundle for an already committed landing. Unrelated effects and calls
+from the current epoch keep their reservations.
 
 `prepare_work` binds the destination to the conversation-owned task.
 `report_work_result` admits the observed worker completion receipt and captures

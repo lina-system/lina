@@ -3,6 +3,7 @@ package work
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -24,6 +25,26 @@ type FileEvidence struct {
 	Path        string   `json:"path"`
 	Fingerprint string   `json:"fingerprint"`
 	Tree        FileTree `json:"tree"`
+}
+
+// RecoveredFileResult reads the recovered ledger in authority's transaction.
+// An interrupted copy must already be reported before its invocation's target
+// reservation can be released. This does not claim fresh destination evidence.
+func RecoveredFileResult(ctx context.Context, tx *canon.Tx, id string) (Card, string, error) {
+	c, err := taskCard(ctx, tx, id)
+	if err != nil {
+		return Card{}, "", err
+	}
+	if c.Task.Destination == "" {
+		return Card{}, "", ErrInvalid
+	}
+	for _, copy := range c.FileCopies {
+		if copy.Status == "copying" {
+			return Card{}, "", ErrState
+		}
+	}
+	raw, err := json.Marshal(c)
+	return c, digest(string(raw)), err
 }
 
 func advanceFiles(c *Card, e Event) error {

@@ -5,7 +5,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,13 +17,23 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/assets"
+	"github.com/thisisjun786/lina/internal/core/authority"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
+	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/internal/core/work"
+	"github.com/thisisjun786/lina/kit/grant"
+	"github.com/thisisjun786/lina/kit/tools"
 )
 
 func TestM2FileLanding(t *testing.T) {
+	for _, committed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("committed=%t", committed), func(t *testing.T) { testM2FileLanding(t, committed) })
+	}
+}
+func testM2FileLanding(t *testing.T, committed bool) {
 	raw, err := os.ReadFile("m2/file-landing.json")
 	if err != nil {
 		t.Fatal(err)
@@ -184,29 +196,15 @@ func TestM2FileLanding(t *testing.T) {
 	write(filepath.Join(workspace.Path, "report.md"), scenario.Report+"Correction checked.\n")
 	land(false)
 	c = done()
-	// Install the exact durable prefix of an interrupted copy, while Core is
-	// stopped. Unit tests interrupt the real copy at the same material boundary;
-	// this fixture makes process recovery deterministic without timing a kill.
+	// Interrupt the real work tool after copying the first material. The registry
+	// records an unknown authority effect and keeps its target reservation, just
+	// as an unacknowledged call does across process death. Restart the installed
+	// Core to exercise both work-ledger and authority recovery before admission.
 	client.Close()
 	h.stopCore(core)
 	partial := filepath.Join(destination, scenario.TaskID)
-	if err = os.Mkdir(partial, 0700); err != nil {
-		t.Fatal(err)
-	}
-	write(filepath.Join(partial, "partial.txt"), "keep this interrupted copy")
 	withFileCanon(t, h, func(db *canon.Store) {
-		s := work.New(db)
-		if e := s.Judge(h.ctx, c.Task.ID, c.Receipt.EventID, "verified", "fixture manager checked snapshot"); e != nil {
-			t.Fatal(e)
-		}
-		event := work.Event{Key: "fixture-interrupted-copy", TaskID: c.Task.ID, Kind: "copy_started", FileCopy: &work.FileCopy{Path: partial, Fingerprint: c.FileSnapshot.Fingerprint, Status: "copying"}}
-		b, _ := json.Marshal(event)
-		if e := db.Write(h.ctx, func(tx *canon.Tx) error {
-			_, e := tx.ExecContext(h.ctx, "INSERT INTO work_ledger(task_id,event_key,record) VALUES(?,?,?)", c.Task.ID, event.Key, b)
-			return e
-		}); e != nil {
-			t.Fatal(e)
-		}
+		interruptFileLanding(t, h, db, c, committed)
 	})
 	core = start(true)
 	client, conversation = conversationClient(t, h)
@@ -224,14 +222,25 @@ func TestM2FileLanding(t *testing.T) {
 		return c
 	}
 	c = readCard()
-	if c.Applied || c.FileEvidence != nil || len(c.FileCopies) != 1 || c.FileCopies[0].Status != "partial" || !strings.Contains(c.FileCopies[0].Problem, "interrupted") {
+	if committed {
+		if !c.Applied || c.FileEvidence == nil || len(c.FileCopies) != 1 || c.FileCopies[0].Status != "landed" {
+			t.Fatalf("lost committed result: %+v", c)
+		}
+	} else if c.Applied || c.FileEvidence != nil || len(c.FileCopies) != 1 || c.FileCopies[0].Status != "partial" || !strings.Contains(c.FileCopies[0].Problem, "interrupted") {
 		t.Fatalf("recovery: %+v", c)
+	}
+	assertFileAuthorityRecovery(t, h, c.Task.ID)
+	wantPath := partial
+	wantBundles := 1
+	if !committed {
+		wantPath += "-v2"
+		wantBundles = 2
 	}
 	var evidence work.FileEvidence
 	if err = json.Unmarshal(land(true), &evidence); err != nil {
 		t.Fatal(err)
 	}
-	if evidence.Path != filepath.Join(destination, scenario.TaskID+"-v2") || evidence.Fingerprint != c.FileSnapshot.Fingerprint || evidence.Tree.Fingerprint() != evidence.Fingerprint {
+	if evidence.Path != wantPath || evidence.Fingerprint != c.FileSnapshot.Fingerprint || evidence.Tree.Fingerprint() != evidence.Fingerprint {
 		t.Fatalf("bad evidence: %+v", evidence)
 	}
 	for _, f := range evidence.Tree.Files {
@@ -240,8 +249,8 @@ func TestM2FileLanding(t *testing.T) {
 			t.Fatal("destination evidence is not a readback")
 		}
 	}
-	b, err := os.ReadFile(filepath.Join(partial, "partial.txt"))
-	if err != nil || string(b) != "keep this interrupted copy" {
+	b, err := os.ReadFile(filepath.Join(partial, "out/document.txt"))
+	if err != nil || string(b) != scenario.Output+"Correction.\n" {
 		t.Fatal("partial copy overwritten or removed")
 	}
 	client.Close()
@@ -254,7 +263,7 @@ func TestM2FileLanding(t *testing.T) {
 	}
 	land(true)
 	entries, err = os.ReadDir(destination)
-	if err != nil || len(entries) != 2 {
+	if err != nil || len(entries) != wantBundles {
 		t.Fatal("restart duplicated bundle")
 	}
 	client.Close()
@@ -282,4 +291,143 @@ func withFileCanon(t *testing.T, h *harness, fn func(*canon.Store)) {
 	}
 	defer db.Close(context.Background())
 	fn(db)
+}
+
+// No snapshot is written in this fixture. It reads the existing retained
+// materials, interrupting only the destination copy's second material.
+type interruptedFileMaterials struct {
+	store     *assets.Store
+	interrupt bool
+}
+
+func (m interruptedFileMaterials) Prepare(context.Context, io.Reader, string, string) (work.MaterialWrite, error) {
+	return nil, errors.New("unexpected snapshot write")
+}
+func (m interruptedFileMaterials) Open(ctx context.Context, material work.Material) (io.ReadCloser, error) {
+	if m.interrupt && material.Path == "report.md" {
+		panic("simulated loss during file copy")
+	}
+	return m.store.OpenRead(ctx, material.ID, material.Revision)
+}
+func interruptFileLanding(t *testing.T, h *harness, db *canon.Store, c work.Card, committed bool) {
+	t.Helper()
+	area, err := work.OpenArea(h.root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer area.Close(context.Background())
+	materialStore, err := assets.Open(h.ctx, h.root, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer materialStore.Close()
+	service := work.NewWithArea(db, area, interruptedFileMaterials{materialStore, !committed})
+	revision, err := service.Revision(h.ctx, c.Task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	epoch, err := canon.PeekEpoch(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var person string
+	if err = db.Read(h.ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(h.ctx, "SELECT person_id FROM assets WHERE id=?", c.FileSnapshot.Materials[0].ID).Scan(&person)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	target := "work:" + c.Task.ID
+	auth := grant.Request{GrantID: "crash-grant", MainID: "fixture", Epoch: epoch, TaskID: "crash-turn", Host: "fixture", OSUser: "core", Person: person, Agent: c.Task.AgentID, Profile: "work", Revision: revision}
+	gate, err := authority.Open(h.ctx, db, authority.Config{Epoch: epoch, Resolve: func(context.Context, string) (grant.Grant, grant.Environment, error) {
+		return grant.Grant{Identity: auth, Expires: time.Now().Add(time.Minute), Scope: []grant.Permission{{Tool: "land_work_result", Target: target, Write: true}, {Tool: "unrelated_effect", Target: "other", Write: true}}, Revisions: map[string]string{target: revision, "other": revision}}, grant.Environment{Epoch: epoch, Now: time.Now(), OSPermitted: true, Revision: revision}, nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dispatchGate tools.Gate = gate
+	if committed {
+		dispatchGate = lostFileReceipt{gate}
+	}
+	registry := tools.NewRegistry(dispatchGate, lifecycle.NewRegistry(nil))
+	if _, err = coreexec.RegisterWork(registry, service, c.Task.AgentID, c.Task.ConversationID); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(coreexec.LandWork{TaskID: c.Task.ID, ReceiptID: c.Receipt.EventID, Fingerprint: c.FileSnapshot.Fingerprint, Judgment: "fixture manager checked snapshot"})
+	result, err := registry.Dispatch(h.ctx, tools.Call{Key: "crashed-file-landing", Name: "land_work_result", Auth: auth, Args: raw})
+	if err == nil || result.State != tools.Unknown {
+		t.Fatalf("copy interruption: %+v %v", result, err)
+	}
+	effect, err := gate.Effect(h.ctx, "crashed-file-landing")
+	wantState := tools.Unknown
+	if committed {
+		wantState = tools.None
+	}
+	if err != nil || effect.State != wantState {
+		t.Fatalf("missing unfinished effect: %+v %v", effect, err)
+	}
+	var active string
+	if err = db.Read(h.ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(h.ctx, "SELECT active_key FROM authority_targets WHERE target=?", target).Scan(&active)
+	}); err != nil || active != effect.Key {
+		t.Fatalf("missing reservation: %q %v", active, err)
+	}
+	card, err := service.Get(h.ctx, c.Task.ID)
+	wantCopy := "copying"
+	if committed {
+		wantCopy = "landed"
+	}
+	if err != nil || card.Applied != committed || len(card.FileCopies) != 1 || card.FileCopies[0].Status != wantCopy {
+		t.Fatalf("wrong interruption boundary: %+v %v", card, err)
+	}
+	// An unrelated unknown effect must retain its reservation at restart.
+	extra := tools.Call{Key: "unrelated-call", Name: "unrelated_effect", Auth: auth, Args: json.RawMessage(`{}`)}
+	if _, err = gate.Begin(h.ctx, extra, tools.Spec{Name: extra.Name}, tools.Input{Arguments: extra.Args, Target: "other", Write: true}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// This gate loses only the final acknowledgement. The real handler has already
+// copied, read back and committed the file evidence; authority still owns a
+// running reservation, the second crash window in the same lifecycle.
+type lostFileReceipt struct{ *authority.Service }
+
+func (g lostFileReceipt) Finish(context.Context, tools.Ticket, tools.Result) error {
+	return errors.New("simulated loss before authority receipt")
+}
+func assertFileAuthorityRecovery(t *testing.T, h *harness, task string) {
+	t.Helper()
+	db, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close(context.Background())
+	err = db.Read(h.ctx, func(tx *canon.Tx) error {
+		for _, expected := range []struct {
+			key, target, active string
+			state               tools.State
+		}{
+			{"crashed-file-landing", "work:" + task, "", tools.Cancelled},
+			{"unrelated-call", "other", "unrelated-call", tools.Unknown},
+		} {
+			var raw []byte
+			var active string
+			if err := tx.QueryRowContext(h.ctx, "SELECT record FROM authority_effects WHERE effect_key=?", expected.key).Scan(&raw); err != nil {
+				return err
+			}
+			var effect authority.Effect
+			if err := json.Unmarshal(raw, &effect); err != nil {
+				return err
+			}
+			if err := tx.QueryRowContext(h.ctx, "SELECT active_key FROM authority_targets WHERE target=?", expected.target).Scan(&active); err != nil {
+				return err
+			}
+			if effect.State != expected.state || active != expected.active {
+				return fmt.Errorf("recovery %s: state %s active %q", expected.key, effect.State, active)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 }

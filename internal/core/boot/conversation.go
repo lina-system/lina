@@ -250,6 +250,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err = r.work.Recover(ctx, strconv.FormatUint(r.epoch, 10)); err != nil {
 		return nil, err
 	}
+	if err = r.recoverWorkAuthority(ctx); err != nil {
+		return nil, err
+	}
 	if err = r.startWorkWaiting(ctx); err != nil {
 		return nil, err
 	}
