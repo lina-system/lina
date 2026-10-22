@@ -18,6 +18,8 @@ import (
 )
 
 func TestM2UpdatePrepare(t *testing.T) {
+	t.Parallel()
+
 	binary := buildLina(t)
 	// Build immutable archive inputs before starting the timed Core scenario.
 	// Compression is fixture work, including under the race detector.

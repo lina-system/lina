@@ -21,6 +21,8 @@ import (
 )
 
 func TestM1TUIConversationInstalledCore(t *testing.T) {
+	t.Parallel()
+
 	data, err := os.ReadFile("tui-conversation.json")
 	if err != nil {
 		t.Fatal(err)

@@ -18,6 +18,8 @@ import (
 // This is protocol evidence for file safety in a running installed Core. It is
 // deliberately not a human concurrent-session measurement of the Linux ladder.
 func TestM3NonCompetitionInstalledCore(t *testing.T) {
+	t.Parallel()
+
 	data, err := os.ReadFile("../m3/non-competition.json")
 	if err != nil {
 		t.Fatal(err)

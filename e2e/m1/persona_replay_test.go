@@ -18,6 +18,8 @@ import (
 )
 
 func TestPersonaReplayExactSources(t *testing.T) {
+	t.Parallel()
+
 	type request struct {
 		Input, Tools []json.RawMessage
 		Instructions string

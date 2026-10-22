@@ -25,6 +25,8 @@ import (
 // Exercise the actual worker binary and Unix job protocol using #34's isolated
 // process harness, with deterministic model responses and canonical source data.
 func TestM1MemoryJobs(t *testing.T) {
+	t.Parallel()
+
 	var fixture struct {
 		Person                               string
 		Agents                               []string

@@ -20,8 +20,14 @@ import (
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
-func TestM1RunLandingNotice(t *testing.T)  { runNoticeScenario(t, "run-landing-notice.json") }
-func TestM1RunQuestionNotice(t *testing.T) { runNoticeScenario(t, "run-question-notice.json") }
+func TestM1RunLandingNotice(t *testing.T) {
+	t.Parallel()
+	runNoticeScenario(t, "run-landing-notice.json")
+}
+func TestM1RunQuestionNotice(t *testing.T) {
+	t.Parallel()
+	runNoticeScenario(t, "run-question-notice.json")
+}
 func runNoticeScenario(t *testing.T, filename string) {
 	data, err := os.ReadFile(filename)
 	if err != nil {
