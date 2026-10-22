@@ -112,6 +112,7 @@ var catalog = map[string]translation{
 	"card.open":              {"F6: waiting for me", "F6: 내 결정 대기"},
 	"shell.running":          {"Running work: unsupported", "진행 중인 작업: 지원되지 않음"},
 	"shell.cards":            {"Waiting for me: unsupported", "내 결정 대기: 지원되지 않음"},
+	"shell.quit_hint":        {"Ctrl+C again to quit", "Ctrl+C를 다시 누르면 종료"},
 	"agents.unavailable":     {"Selected agent unavailable", "선택한 에이전트 없음"},
 	"agents.choose_required": {"Selected agent is unavailable. Draft kept; use /agents choose <id> before sending.", "선택한 에이전트가 없습니다. 초안을 보관했습니다. /agents choose <id>로 선택 후 보내세요."},
 
@@ -171,6 +172,8 @@ var catalog = map[string]translation{
 	"checked":           {"Checked", "검증됨"},
 	"round_limit":       {"Round limit reached", "라운드 한도 도달"},
 
+	"telegram":           {"Telegram", "Telegram"},
+	"discord":            {"Discord", "Discord"},
 	"web_request":        {"Web settings request", "웹 설정 요청"},
 	"web_result":         {"Web settings", "웹 설정"},
 	"firecrawl":          {"Firecrawl", "Firecrawl"},
@@ -185,8 +188,8 @@ var catalog = map[string]translation{
 	"web.key":            {"Paste your Firecrawl API key; Enter saves. The key is hidden and is sent only to Firecrawl.", "Firecrawl API 키를 붙여넣고 Enter로 저장합니다. 키는 숨겨지며 Firecrawl에만 전송됩니다."},
 	"channel.heading":    {"Channels", "채널"},
 	"channel.empty":      {"No connections", "연결 없음"},
-	"channel.help":       {"c Connect \u00b7 p Pair \u00b7 b Bind / scope \u00b7 u Unbind \u00b7 r Refresh \u00b7 x Disconnect", "c 연결 · p 페어링 · b 바인딩 / 범위 · u 바인딩 해제 · r 새로고침 · x 연결 해제"},
-	"channel.token":      {"Paste the Telegram bot token; Enter connects. It is never shown.", "Telegram 봇 토큰을 붙여넣고 Enter로 연결합니다. 토큰은 표시되지 않습니다."},
+	"channel.help":       {"c Connect \u00b7 d Discord \u00b7 p Pair \u00b7 b Bind / scope \u00b7 u Unbind \u00b7 r Refresh \u00b7 x Disconnect", "c 연결 · d Discord · p 페어링 · b 바인딩 / 범위 · u 바인딩 해제 · r 새로고침 · x 연결 해제"},
+	"channel.token":      {"Paste the bot token; Enter connects. It is never shown.", "봇 토큰을 붙여넣고 Enter로 연결합니다. 토큰은 표시되지 않습니다."},
 	"channel.chat":       {"Chat: Enter uses the paired private chat.", "채팅: 비워 두고 Enter를 누르면 페어링한 개인 채팅을 사용합니다."},
 	"channel.topic":      {"Topic: leave empty for the whole chat.", "토픽: 채팅 전체에는 빈칸을 사용합니다."},
 	"channel.scope":      {"Up/Down agent \u00b7 r reads \u00b7 w writes \u00b7 t tools \u00b7 m memory \u00b7 Enter bind. Reading every message uses platform traffic.", "위/아래 에이전트 · r 읽기 · w 쓰기 · t 도구 · m 기억 · Enter 바인딩. 모든 메시지 읽기는 플랫폼 트래픽을 사용합니다."},
