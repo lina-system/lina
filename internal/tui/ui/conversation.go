@@ -222,11 +222,14 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 			m.conversation.undo = nil
 			return command
 		}
-		if m.conversation.id == "" || m.conversation.agentMissing || m.conversation.agentPending {
+		if m.conversation.agentMissing || m.conversation.agentPending {
 			return nil
 		}
 		if !m.hasCapability("conversation") {
 			m.accounts = accountView{open: true, code: "needs_sign_in"}
+			return nil
+		}
+		if m.conversation.id == "" {
 			return nil
 		}
 		if text == "/stop" {

@@ -31,6 +31,15 @@ func TestAccountSignInAvailableWithoutConversation(t *testing.T) {
 	}
 }
 
+func TestAccountInputWithoutConversationShowsSignIn(t *testing.T) {
+	m := accountShell()
+	m.Update(tea.PasteMsg{Content: "retained input"})
+	_, command := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if command != nil || !m.accounts.open || m.accounts.code != "needs_sign_in" || m.content.Draft.Text != "retained input" || len(m.content.Blocks) != 0 {
+		t.Fatal("account-only input must retain its draft and offer sign-in without sending")
+	}
+}
+
 func TestSignInPasteIsMaskedAndNeverBecomesDraft(t *testing.T) {
 	m := accountShell()
 	m.content.Draft.Text = "keep draft"
