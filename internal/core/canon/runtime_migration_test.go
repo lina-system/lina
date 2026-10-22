@@ -132,3 +132,50 @@ func TestFutureMigrationDoesNotRenumberRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPlanningUpgradePreservesPublishedKoreanSearch(t *testing.T) {
+	cfg := storeConfig(t)
+	// Reproduce the published dev catalog, independently of the pending plan
+	// migration. An existing installation at version 33 has no plan tables.
+	cfg.Migrations = append(append([]Migration{}, Migrations()[:32]...), Migration{Version: 33, SQL: recordsKoreanSearchSchema})
+	db := openStore(t, cfg)
+	if err := db.Write(t.Context(), func(tx *Tx) error {
+		_, err := tx.ExecContext(t.Context(), "INSERT INTO records_korean_fts(id,title,note) VALUES('existing','도서관에서','연필을 준비한다')")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Migrations = Migrations()
+	db = openStore(t, cfg)
+	if err := db.Read(t.Context(), func(tx *Tx) error {
+		var tokenizer, fallback string
+		if err := tx.QueryRowContext(t.Context(), "SELECT tokenizer,fallback FROM search_index_config WHERE name='records_korean'").Scan(&tokenizer, &fallback); err != nil {
+			return err
+		}
+		if tokenizer != "trigram" || fallback != "hangul_bigram" {
+			t.Fatalf("published search configuration changed: %s %s", tokenizer, fallback)
+		}
+		var matches int
+		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM records_korean_fts WHERE records_korean_fts MATCH ?", TrigramPhrase("도서관")).Scan(&matches); err != nil {
+			return err
+		}
+		if matches != 1 {
+			t.Fatalf("upgrade lost existing search data: %d", matches)
+		}
+		for _, table := range []string{"result_heads", "result_saves", "plan_drafts", "plan_confirmations", "plan_rejections"} {
+			var rows int
+			if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM "+table).Scan(&rows); err != nil {
+				return err
+			}
+			if rows != 0 {
+				t.Fatalf("migration created plan content in %s", table)
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}

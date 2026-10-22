@@ -162,9 +162,15 @@ func mobileHistoryRows(t *testing.T, history protocol.History) []partialHistoryR
 	return rows
 }
 
-func TestM3WebSocketInstalledCore(t *testing.T) { websocketConversation(t, false) }
+func TestM3WebSocketInstalledCore(t *testing.T) {
+	t.Parallel()
+	websocketConversation(t, false)
+}
 
-func TestM3WebSocketTailnetCore(t *testing.T) { websocketConversation(t, true) }
+func TestM3WebSocketTailnetCore(t *testing.T) {
+	t.Parallel()
+	websocketConversation(t, true)
+}
 
 func websocketConversation(t *testing.T, tailnet bool) {
 	var scenario struct {

@@ -13,6 +13,8 @@ import (
 )
 
 func TestM1TUIShell(t *testing.T) {
+	t.Parallel()
+
 	data, err := os.ReadFile("tui-shell.json")
 	if err != nil {
 		t.Fatal(err)
