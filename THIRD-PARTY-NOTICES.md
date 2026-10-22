@@ -27,6 +27,16 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ## Terminal UI behaviour references
 
+The streaming code preview also references Gemini CLI's
+[`MarkdownDisplay.tsx`](https://github.com/google-gemini/gemini-cli/blob/09d81bf116b6f0ef084731dc996aa9d56438bb70/packages/cli/src/ui/utils/MarkdownDisplay.tsx)
+(Apache-2.0): bounded pending code with a secondary-colour writing notice, and
+Hermes Agent's
+[`streamingMarkdown.tsx`](https://github.com/NousResearch/hermes-agent/blob/944c3a434071f43e64b443d033f3eba30c64434c/ui-tui/src/components/streamingMarkdown.tsx)
+(MIT): incremental scanning and cached settled blocks. LINA independently
+implements an eight-row threshold, six trailing rows and a source-line count;
+these exact limits are LINA policy, not claimed upstream behaviour. No code is
+copied. The Hermes MIT notice appears below.
+
 Fenced-code highlighting also references Hermes Agent's
 [`hermes_cli/cli_render.py`](https://github.com/NousResearch/hermes-agent/blob/944c3a434071f43e64b443d033f3eba30c64434c/hermes_cli/cli_render.py)
 at `944c3a434071f43e64b443d033f3eba30c64434c` (MIT): final assistant content is

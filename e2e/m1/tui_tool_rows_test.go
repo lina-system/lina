@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -119,6 +120,13 @@ func TestM1TUIToolRows(t *testing.T) {
 					}
 				}
 				n := requests.Add(1)
+				if n == 1 || n == 3 {
+					// A provider may stream a blank preamble before invoking a tool.
+					// It must not hide the subsequent real lifecycle rows.
+					w.Header().Set("Content-Type", "text/event-stream")
+					fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\" \\n  \"}\n\n")
+					w.(http.Flusher).Flush()
+				}
 				switch n {
 				case 1:
 					emitPersonaCall(w, "rows-ok", "skill_index", struct{}{})

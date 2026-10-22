@@ -63,6 +63,7 @@ type shellModel struct {
 	now           func() time.Time
 	quitDeadline  time.Time
 	blocks        map[string]shellBlock
+	resultStreams map[string]shellBlock
 	resyncPending map[string]protocol.StreamCursor
 	resyncSeen    map[resyncSignal]protocol.StreamCursor
 	conversation  conversationView
@@ -208,10 +209,11 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.content, _ = state.Reduce(m.content, state.Notice{ID: "sandbox.unavailable", Code: "sandbox.unavailable"})
 			}
 		}
-		m.refreshOpenCard()
 		m.refreshRunning()
 		m.refreshProgress()
 		m.refreshBlocks()
+		m.refreshResultStreams(msg.Message)
+		m.refreshOpenCard()
 		afterCard, _ := m.content.CurrentCard()
 		if beforeCard.ID != afterCard.ID || beforeCard.Revision != afterCard.Revision {
 			m.cardGate.CardChanged(m.now())
