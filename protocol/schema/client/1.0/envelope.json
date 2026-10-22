@@ -2624,6 +2624,118 @@
       "required": [],
       "additionalProperties": false
     },
+    "work_switch_request": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "approve_switch",
+            "activate_switch",
+            "rollback_switch",
+            "release_switch",
+            "switch_status"
+          ]
+        },
+        "switch_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "tasks": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "snapshot": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "evidence": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "operation",
+        "switch_id"
+      ],
+      "additionalProperties": false
+    },
+    "work_switch_result": {
+      "type": "object",
+      "properties": {
+        "switch_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "approved",
+            "active",
+            "rollback_pending",
+            "rolled_back"
+          ]
+        },
+        "approval": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "snapshot": {
+          "type": "string"
+        },
+        "tasks": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/work_switch_event"
+          }
+        }
+      },
+      "required": [
+        "switch_id",
+        "state",
+        "approval",
+        "snapshot",
+        "tasks",
+        "events"
+      ],
+      "additionalProperties": false
+    },
+    "work_switch_event": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "evidence": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "state",
+        "evidence"
+      ],
+      "additionalProperties": false
+    },
     "account_request": {
       "type": "object",
       "properties": {
@@ -4800,118 +4912,6 @@
         "partial",
         "failed"
       ]
-    },
-    "work_switch_request": {
-      "type": "object",
-      "properties": {
-        "operation": {
-          "type": "string",
-          "enum": [
-            "approve_switch",
-            "activate_switch",
-            "rollback_switch",
-            "release_switch",
-            "switch_status"
-          ]
-        },
-        "switch_id": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 256
-        },
-        "tasks": {
-          "type": "array",
-          "minItems": 1,
-          "maxItems": 256,
-          "items": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 256
-          }
-        },
-        "snapshot": {
-          "type": "string",
-          "pattern": "^[a-f0-9]{64}$"
-        },
-        "evidence": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 4096
-        }
-      },
-      "required": [
-        "operation",
-        "switch_id"
-      ],
-      "additionalProperties": false
-    },
-    "work_switch_result": {
-      "type": "object",
-      "properties": {
-        "switch_id": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 256
-        },
-        "state": {
-          "type": "string",
-          "enum": [
-            "approved",
-            "active",
-            "rollback_pending",
-            "rolled_back"
-          ]
-        },
-        "approval": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 256
-        },
-        "snapshot": {
-          "type": "string"
-        },
-        "tasks": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 256
-          }
-        },
-        "events": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/work_switch_event"
-          }
-        }
-      },
-      "required": [
-        "switch_id",
-        "state",
-        "approval",
-        "snapshot",
-        "tasks",
-        "events"
-      ],
-      "additionalProperties": false
-    },
-    "work_switch_event": {
-      "type": "object",
-      "properties": {
-        "state": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 256
-        },
-        "evidence": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "state",
-        "evidence"
-      ],
-      "additionalProperties": false
     }
   }
 }
