@@ -29,6 +29,12 @@ func (s *Session) notification(raw []byte) error {
 		if turn == "" {
 			return errors.New("Codex turn started without id")
 		}
+		if s.finished[turn] {
+			return nil
+		}
+		if s.snapshot.Thread.TurnID != turn {
+			s.clearRequests("")
+		}
 		s.snapshot.Thread.TurnID = turn
 		s.snapshot.State = worker.Active
 		event.Kind = worker.ProgressEvent
@@ -59,6 +65,7 @@ func (s *Session) notification(raw []byte) error {
 			return errors.New("unknown Codex turn completion status")
 		}
 		s.finished[turn] = true
+		s.clearRequests(turn)
 		if s.snapshot.Thread.TurnID == turn {
 			s.snapshot.State = worker.Idle
 		}
@@ -87,6 +94,10 @@ func (s *Session) notification(raw []byte) error {
 		u := p.TokenUsage.Last
 		event.Kind = worker.UsageEvent
 		event.Usage = &provider.Usage{Input: &u.InputTokens, Cached: &u.CachedInputTokens, Output: &u.OutputTokens, Reasoning: &u.ReasoningOutputTokens}
+	case n.AccountRateLimitsUpdated != nil:
+		return s.quotaUpdated(raw)
+	case n.ServerRequestResolved != nil:
+		return s.resolved(n.ServerRequestResolved.Params)
 	case n.ThreadStatusChanged != nil:
 		p := n.ThreadStatusChanged.Params
 		if p.ThreadId == s.snapshot.Thread.ID {
@@ -103,6 +114,11 @@ func (s *Session) notification(raw []byte) error {
 	s.revision++
 	event.Thread = s.snapshot.Thread
 	event.Thread.TurnID = turn
+	return s.publish(event)
+}
+
+// publish is called only by the reader with mu held.
+func (s *Session) publish(event worker.Event) error {
 	if err := event.Validate(); err != nil {
 		return err
 	}

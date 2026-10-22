@@ -1,0 +1,8 @@
+{
+  "input": "Please talk more casually",
+  "quote": "talk more casually",
+  "voice": "fixture mobile voice",
+  "reply": "The requested voice is saved.",
+  "follow_up": "Confirm the saved voice.",
+  "restored_reply": "The saved voice is active."
+}

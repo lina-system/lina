@@ -44,6 +44,11 @@ func invalidateAuthority(ctx context.Context, db *canon.Store) error {
 		if _, err := tx.ExecContext(ctx, "UPDATE authority_targets SET active_key=''"); err != nil {
 			return err
 		}
+		// Restoring a pre-dispatch permission cannot authorize a new write.
+		// Uncertain reservations and confirmed results remain evidence.
+		if _, err := tx.ExecContext(ctx, "UPDATE authority_merges SET state='restored',record=json_set(record,'$.State','restored') WHERE state IN ('bound','ready','blocked')"); err != nil {
+			return err
+		}
 		// A captured queue predates any delivery after the generation. Even an
 		// unclaimed or retryable send has an unknown outcome after restoration.
 		// Preserve parts and receipts, but neither dispatch nor settle old claims.

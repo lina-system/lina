@@ -76,7 +76,7 @@ type Approval struct {
 	Undoable, Network, Outward                                 bool
 	Choices                                                    []Choice
 	Epoch                                                      uint64
-	Person, Agent                                              string
+	Person, Agent, Conversation                                string
 	State                                                      ApprovalState
 	Choice                                                     Choice
 	AnsweredBy, ChatID, MessageID                              string

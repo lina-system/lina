@@ -274,9 +274,10 @@ Regions:
   uses text color. Continuation rows align under the message text. Exactly one
   empty row separates messages. ASCII and monochrome use `> You:` and
   `* <agent name>:` (the person word follows the UI language).
-- Activity: one row immediately above the composer hairline while a send is pending or a
-  turn is active, with a glyph, localized thinking/replying/stopping word, elapsed
-  duration and Esc hint. It consumes no rows when idle.
+- Activity: one or two measured rows above the composer's optional rule while a
+  send is pending or a turn is active, with a glyph, localized
+  thinking/replying/stopping word, elapsed duration and Esc hint. It consumes no
+  rows when idle.
 - Composer, with its attachment strip and a full-width hairline immediately above the input.
 - Card row above the composer, on Home (T-12).
 - Status line below the composer: connection mark and word first, agent, the running count ("2 running, 1 waiting for you"), restart pending, Core messages, then key hints.
@@ -340,12 +341,26 @@ line under the reply, using the inactive event's server timestamp. This is clien
 display metadata: it survives same-session redraw and resync, is cleared with
 revoked or unfocused content, and is never stored or restored from history.
 
-`e2e/tui_activity_test.go` uses an installed Core and a held fixture provider in
+`e2e/m1/tui_activity_test.go` uses an installed Core and a held fixture provider in
 a 100x34 PTY. It checks initial activity within one second, advancing elapsed
 time, replying after the first delta, stopping before interrupt delivery,
 completion and zero idle bytes. The recording harness separately checks idle
 output and the unit clock checks timer removal, hidden rows and static glyphs.
 
+Below 80 columns, if the complete activity line does not fit, its elapsed and
+interrupt details move together to a second row. Below 50 columns, the hint
+shortens to `Esc`; the glyph, localized word and complete elapsed value remain.
+The display measures those rows before planning the transcript and composer.
+The footer uses T-10's localized key-and-label priorities. It admits only whole
+hint segments, preserving the connection and highest-priority hint at supported
+widths; a hint that does not fit and the hints after it are omitted together.
+
+`e2e/m1/tui_resize_test.go` holds a real installed-Core turn behind a fixture
+provider gate, resizes the PTY through 79, 50 and 40 columns in English and
+Korean, and checks complete activity and footer segments plus four transcript
+rows with a growing composer. Releasing the gate produces a real result without
+repeating the input. Unit tests exercise wrapped activity, long elapsed values
+and the planner's two-row budget under pressure.
 
 **Row budget** is a pure function in `tui/layout`.
 
@@ -364,8 +379,12 @@ func Plan(size Size, caps Caps, st Shape) Layout // regions disjoint, sum fits, 
   when folded. Empty or ungranted lists reserve no rows, even under pressure.
   The attachment strip
   uses one row. After the stated shedding, composer growth yields as necessary
-  to preserve the transcript floor. Counts and unsupported flags remain typed
-  output even when their region folds.
+  to preserve the transcript floor. The active row reserves one or two measured
+  rows above the composer rule and input. At the ten-row minimum, if a two-row
+  activity still cannot fit after composer and attachment shedding, running and
+  waiting share one summary row containing both counts. Their full lists remain
+  available through the existing keys. Counts and unsupported flags remain
+  typed output even when their region folds.
 - Property tests enumerate widths 0–240 and heights 0–100 with empty and crowded
   shapes and granted and missing capabilities, and exercise threshold and
   integer-limit dimensions. The planner itself imposes no maximum size.
@@ -737,7 +756,7 @@ cell limits still apply. Pager overlays and side panes retain the connection wit
 whole pager hints (Esc, search, next match), rather than replacing it with controls.
 Both English and Korean labels come from the catalog.
 
-`e2e/tui_shortcuts_test.go` exercises the installed Core and a Responses fixture
+`e2e/m1/tui_shortcuts_test.go` exercises the installed Core and a Responses fixture
 through PTYs at 100, 60 and 40 columns, in English/Unicode and Korean/ASCII. It
 checks whole priority prefixes, both sheet entry paths, the connection inside
 the sheet, Esc returning to the conversation, and a drafted `why?` sent through
@@ -1082,7 +1101,7 @@ with the fixture Responses provider, types in the real TUI, checks reply cells,
 and reopens the conversation. It exercises the existing Core turn, lane and
 ledger composition; a direct provider call is not its acceptance proof. The
 real-model headless client journey is covered by
-`TestRealModelHeadlessConversation` in `e2e/real_model_test.go`, including streamed
+`TestRealModelHeadlessConversation` in `e2e/m1/real_model_test.go`, including streamed
 output and canon readback after Core restart. It requires explicit real-model
 opt-in and credentials; the physical terminal spike remains T-08.
 `e2e/m1/conversation-admission.json` verifies large Unicode inputs and replies
