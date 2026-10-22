@@ -16,9 +16,11 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/clientapi"
+	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/canon"
-	"github.com/thisisjun786/lina/internal/core/ctlfiles"
+	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/jobs"
+	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/skills"
 	"github.com/thisisjun786/lina/internal/moirai/jobapi"
 	"github.com/thisisjun786/lina/kit/protocol"
@@ -75,6 +77,10 @@ func TestM2InstalledSkillMaintenance(t *testing.T) {
 		}
 		if maintenance {
 			calls++
+			if calls == 1 {
+				emitResponse(w, "invalid maintenance result", true)
+				return
+			}
 			if len(request.Tools) != 0 || request.Instructions != "" {
 				t.Error("maintenance inherited conversation tools")
 			}
@@ -142,6 +148,13 @@ func TestM2InstalledSkillMaintenance(t *testing.T) {
 					}
 				}
 				emitResponse(w, "Seeded.", true)
+			}
+		case "refresh":
+			if step == 0 {
+				tool("write_skill", skills.Patch{ID: fixture.Skills[0].ID, Expected: 1, Files: document(0, fixture.Skills[0].Body)})
+			} else {
+				output(nil)
+				emitResponse(w, "Updated.", true)
 			}
 		case "inspect", "restored", "restart":
 			switch step {
@@ -289,16 +302,50 @@ func TestM2InstalledSkillMaintenance(t *testing.T) {
 		mu.Unlock()
 		return admittedTurn(t, h, client, conversation, "maintenance-"+next, next)
 	}
-	runWorker := func() {
+	runWorker := func(want int) {
 		t.Helper()
 		p := h.command("--canon", filepath.Join(h.root, "canon/canon.sqlite"), "--socket", filepath.Join(h.root, "run/jobs.sock"), "--once")
 		p.command.Path = filepath.Join(h.root, "system/bin/moirai-worker")
 		p.command.Args[0] = p.command.Path
 		p.start(t)
-		p.wait(t, 0)
+		p.wait(t, want)
 	}
 	runTurn("seed")
-	runWorker()
+	runWorker(69)
+	mu.Lock()
+	fixture.Skills[0].Body += " Check required fields."
+	mu.Unlock()
+	runTurn("refresh")
+	client.Close()
+	h.stopCore(core)
+	nextPhase()
+	var failedReservation string
+	withFileCanon(t, h, func(db *canon.Store) {
+		if err := db.Write(h.ctx, func(tx *canon.Tx) error {
+			var raw []byte
+			if err := tx.QueryRowContext(h.ctx, "SELECT record FROM moirai_jobs WHERE id=?", jobs.SkillMaintenanceJob).Scan(&raw); err != nil {
+				return err
+			}
+			var j jobapi.Job
+			if err := json.Unmarshal(raw, &j); err != nil {
+				return err
+			}
+			if j.Watermark != 1 {
+				t.Fatalf("failed pass still blocks installed worker: %+v", j)
+			}
+			j.NextRun = time.Time{}
+			raw, _ = json.Marshal(j)
+			if _, err := tx.ExecContext(h.ctx, "UPDATE moirai_jobs SET record=? WHERE id=?", raw, j.ID); err != nil {
+				return err
+			}
+			return tx.QueryRowContext(h.ctx, "SELECT reservation FROM moirai_aux WHERE job=? AND sequence=1", jobs.SkillMaintenanceJob).Scan(&failedReservation)
+		}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	core = start(true)
+	client, conversation = conversationClient(t, h)
+	runWorker(0)
 	frames := runTurn("inspect")
 	checkNotices := func(frames []protocol.Envelope, want int) {
 		t.Helper()
@@ -323,43 +370,27 @@ func TestM2InstalledSkillMaintenance(t *testing.T) {
 	nextPhase()
 	// Advance only the persisted due time in the stopped fixture. Real worker
 	// dispatch, provider calls, versions, undo and suppression remain production.
-	ctl, err := ctlfiles.Open(h.root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = ctl.Acquire(); err != nil {
-		t.Fatal(err)
-	}
-	db, err := canon.Open(h.ctx, canon.Config{Path: filepath.Join(h.root, "canon/canon.sqlite"), Epoch: 1, Controls: ctl, Migrations: canon.Migrations()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = db.Write(h.ctx, func(tx *canon.Tx) error {
-		var raw []byte
-		if err := tx.QueryRowContext(h.ctx, "SELECT record FROM moirai_jobs WHERE id=?", jobs.SkillMaintenanceJob).Scan(&raw); err != nil {
+	withFileCanon(t, h, func(db *canon.Store) {
+		if err := db.Write(h.ctx, func(tx *canon.Tx) error {
+			var raw []byte
+			if err := tx.QueryRowContext(h.ctx, "SELECT record FROM moirai_jobs WHERE id=?", jobs.SkillMaintenanceJob).Scan(&raw); err != nil {
+				return err
+			}
+			var j jobapi.Job
+			if err := json.Unmarshal(raw, &j); err != nil {
+				return err
+			}
+			j.NextRun = time.Time{}
+			raw, _ = json.Marshal(j)
+			_, err := tx.ExecContext(h.ctx, "UPDATE moirai_jobs SET record=? WHERE id=?", raw, j.ID)
 			return err
+		}); err != nil {
+			t.Fatal(err)
 		}
-		var j jobapi.Job
-		if err = json.Unmarshal(raw, &j); err != nil {
-			return err
-		}
-		j.NextRun = time.Time{}
-		raw, _ = json.Marshal(j)
-		_, err := tx.ExecContext(h.ctx, "UPDATE moirai_jobs SET record=? WHERE id=?", raw, j.ID)
-		return err
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = db.Close(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if err = ctl.Close(); err != nil {
-		t.Fatal(err)
-	}
 	core = start(true)
 	client, conversation = conversationClient(t, h)
-	runWorker()
+	runWorker(0)
 	checkNotices(runTurn("restart"), 0)
 	historyClient, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "test", []protocol.Capability{{Name: "conversation", Version: "1.0"}})
 	if err != nil {
@@ -388,13 +419,123 @@ func TestM2InstalledSkillMaintenance(t *testing.T) {
 	nextPhase()
 	core = start(true)
 	client, conversation = conversationClient(t, h)
-	runWorker()
+	runWorker(0)
 	runTurn("disabled-restart")
 	client.Close()
 	h.stopCore(core)
+	// Seed a long durable history while Core is stopped, and reorder agents.
+	// Recovery must neither revive old notices nor move them to the new first agent.
+	nextPhase()
+	var newFirst string
+	withFileCanon(t, h, func(db *canon.Store) {
+		if err := db.Read(h.ctx, func(tx *canon.Tx) error {
+			var id string
+			var output []byte
+			var charged int
+			if err := tx.QueryRowContext(h.ctx, "SELECT a.reservation,a.output,b.charged FROM moirai_aux a JOIN budget_usage b ON b.id=a.reservation WHERE a.job=? AND a.sequence=1", jobs.SkillMaintenanceJob).Scan(&id, &output, &charged); err != nil {
+				return err
+			}
+			if id != failedReservation || output != nil || charged != 8192 {
+				t.Fatalf("failed reservation changed: %s %s %d", id, output, charged)
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		store, err := agents.Open(h.root, db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer store.Close()
+		all, err := store.List(h.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, a := range all {
+			if "main:"+a.ID != conversation {
+				newFirst = a.ID
+				break
+			}
+		}
+		if newFirst == "" {
+			t.Fatal("missing second agent")
+		}
+		var person string
+		if err := db.Read(h.ctx, func(tx *canon.Tx) error {
+			return tx.QueryRowContext(h.ctx, "SELECT person_id FROM agent_revisions WHERE agent_id=? AND revision=1", newFirst).Scan(&person)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = store.Rename(h.ctx, newFirst, "AAA", person); err != nil {
+			t.Fatal(err)
+		}
+		journal := ledger.New(db, nil)
+		for i := range 205 {
+			id := fmt.Sprintf("after-maintenance:%03d", i)
+			now := time.Now()
+			if _, err := journal.Admit(h.ctx, guard.EntrySystem, ledger.Input{ID: id, ConversationID: conversation, AgentID: strings.TrimPrefix(conversation, "main:"), Surface: ledger.Surface{Kind: "tui"}, ScaffoldKind: "failure", OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Later history item."}); err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Write(h.ctx, func(tx *canon.Tx) error {
+				_, err := tx.ExecContext(h.ctx, "INSERT INTO conversation_order(conversation_id,item_key) VALUES(?,?)", conversation, id)
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+	core = start(true)
+	historyClient, err = clientapi.DialWithCapabilities(h.ctx, h.socket, "test", []protocol.Capability{{Name: "conversation", Version: "1.0"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{conversation, "main:" + newFirst} {
+		agent := strings.TrimPrefix(target, "main:")
+		if _, err = historyClient.History(h.ctx, protocol.HistoryGet{AgentID: &agent}); err != nil {
+			t.Fatal(err)
+		}
+		if reply, err := historyClient.Receive(h.ctx); err != nil || reply.Kind != protocol.KindHistory {
+			t.Fatalf("history reply: %+v %v", reply, err)
+		}
+		topic := "conversation:" + target
+		if _, err = historyClient.Subscribe(h.ctx, protocol.Subscribe{Topic: &topic}); err != nil {
+			t.Fatal(err)
+		}
+		frame, err := historyClient.Receive(h.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapshot, ok := frame.Payload.(protocol.Snapshot)
+		if !ok {
+			t.Fatalf("expected snapshot: %+v", frame)
+		}
+		var keys []string
+		for _, item := range snapshot.Items {
+			if strings.HasPrefix(item.Key, "skill-maintenance:") {
+				t.Fatalf("revived or rerouted old notice: %s in %s", item.Key, target)
+			}
+			if strings.HasPrefix(item.Key, "after-maintenance:") {
+				keys = append(keys, item.Key)
+			}
+		}
+		if target == conversation {
+			if len(keys) != 199 {
+				t.Fatalf("history items=%d", len(keys))
+			}
+			for i, key := range keys {
+				if want := fmt.Sprintf("after-maintenance:%03d", i+6); key != want {
+					t.Fatalf("history[%d]=%s want=%s", i, key, want)
+				}
+			}
+		} else if len(keys) != 0 {
+			t.Fatal("history crossed conversation")
+		}
+	}
+	historyClient.Close()
+	h.stopCore(core)
 	mu.Lock()
 	defer mu.Unlock()
-	if calls != 2 {
+	if calls != 3 {
 		t.Fatalf("background model calls=%d", calls)
 	}
 }

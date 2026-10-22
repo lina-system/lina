@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/jobs"
@@ -163,34 +164,65 @@ func (r *conversationRuntime) publishSkillMaintenance(ctx context.Context) error
 	if err != nil {
 		return err
 	}
-	agents, err := r.agents.List(ctx)
-	if err != nil {
-		return err
-	}
-	if len(agents) == 0 {
-		return nil
-	}
-	view, err := r.router.view(ctx, clientsrv.Session{PersonID: r.person}, agents[0].ID)
-	if err != nil {
-		return err
-	}
 	for _, n := range notices {
 		if m.delivered[n.Sequence] {
 			continue
 		}
 		id := fmt.Sprintf("skill-maintenance:%d", n.Sequence)
-		event, err := view.journal().Get(ctx, id)
+		event, err := r.journal().Get(ctx, id)
+		var view *conversationRuntime
+		existing := err == nil
 		if errors.Is(err, ledger.ErrNotFound) {
+			agents, listErr := r.agents.List(ctx)
+			if listErr != nil {
+				return listErr
+			}
+			if len(agents) == 0 {
+				return nil
+			}
+			view, err = r.router.view(ctx, clientsrv.Session{PersonID: r.person}, agents[0].ID)
+			if err != nil {
+				return err
+			}
 			now := time.Now()
 			event, err = view.journal().Admit(ctx, guard.EntrySystem, ledger.Input{ID: id, ConversationID: view.conversation, AgentID: view.agent, Surface: ledger.Surface{Kind: "tui"}, ScaffoldKind: "skill_change", OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: n.Notice})
 		}
 		if err != nil {
 			return err
 		}
-		// Admission may have committed before live publication failed. Retry the
-		// stable topic key even when the ledger row already exists; snapshots
-		// retain one item and delivered is set only after publication succeeds.
-
+		if existing {
+			// The ledger owns the destination even if agent ordering changed.
+			view, err = r.router.channelView(ctx, channels.Binding{Person: r.person, Agent: event.AgentID, Conversation: event.ConversationID})
+			if err != nil {
+				return err
+			}
+			view.publicationMu.Lock()
+			published := view.positioned[id]
+			view.publicationMu.Unlock()
+			if published {
+				// History seeding already delivered it, even if the topic's
+				// bounded window has since evicted it for newer state rows.
+				m.delivered[n.Sequence] = true
+				continue
+			}
+			items, err := view.historyItems(ctx)
+			if err != nil {
+				return err
+			}
+			visible := false
+			for _, item := range items {
+				if item.eventID == id {
+					visible = true
+					break
+				}
+			}
+			if !visible {
+				// Older outbox rows remain durable history, not new arrivals.
+				m.delivered[n.Sequence] = true
+				continue
+			}
+		}
+		// Retry a committed but unpublished item under its stable topic key.
 		text, speaker := event.Body.Text(), protocol.ConversationSpeakerSystem
 		if err = view.publish(ctx, protocol.KindItemDone, id, protocol.ItemDone{Text: &text, Speaker: &speaker}); err != nil {
 			return err
