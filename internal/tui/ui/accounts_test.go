@@ -19,6 +19,25 @@ func accountShell() *shellModel {
 	return m
 }
 
+func TestAccountDiscoveryRefusalPreservesFocus(t *testing.T) {
+	for _, open := range []bool{false, true} {
+		m := accountShell()
+		m.accounts.open = open
+		m.content.Draft.Text = "unsent input"
+		s := &signInSession{ctx: t.Context(), model: m, pending: map[string]protocol.Kind{"list": protocol.KindAccountRequest}}
+		consumed, err := s.response(protocol.Envelope{ReplyTo: stringPointer("list"), Error: &protocol.Error{Code: protocol.ErrorUnavailable}})
+		if err != nil || !consumed {
+			t.Fatalf("account refusal was not handled: %v", err)
+		}
+		if m.accounts.open != open || m.content.Draft.Text != "unsent input" {
+			t.Fatal("background account discovery changed focus or the unsent draft")
+		}
+		if m.accounts.code != "unavailable" || m.accounts.busy || len(s.pending) != 0 {
+			t.Fatal("account refusal did not settle its pending request")
+		}
+	}
+}
+
 func TestAccountSignInAvailableWithoutConversation(t *testing.T) {
 	m := accountShell()
 	m.Update(tea.PasteMsg{Content: "/signin"})
