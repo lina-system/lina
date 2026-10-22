@@ -98,7 +98,7 @@ func TestM1ConversationHistoryOrder(t *testing.T) {
 				for {
 					frame := tap.next(t, h)
 					if frame.Error != nil {
-						t.Fatalf("TUI input receipt refused: %+v; stderr=%s", frame.Error, &core.stderr)
+						t.Fatalf("TUI input receipt refused: %+v; reply_to=%v; kind=%s; stderr=%s; wire=%s", frame.Error, frame.ReplyTo, frame.Kind, &core.stderr, tap.bytes())
 					}
 					if item, ok := frame.Payload.(protocol.ItemDone); ok && item.Text != nil && *item.Text == text {
 						if frame.EffectState != protocol.EffectApplied || item.EchoKey == nil || *item.EchoKey == "" {
