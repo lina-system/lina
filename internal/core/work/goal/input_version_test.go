@@ -183,6 +183,31 @@ func TestInputVersionRetainsLateWorkerHandleAcrossRestart(t *testing.T) {
 	}
 }
 
+func TestInputVersionOriginalEffectSignalFencesItsReplacementRead(t *testing.T) {
+	e, original := claimedAssignment(t)
+	if err := e.Signal(t.Context(), Signal{ID: "first-change", ActionID: original.ID}); err != nil {
+		t.Fatal(err)
+	}
+	old := Observation{Status: OutcomeRunning, Handle: "worker"}
+	if err := e.Report(t.Context(), original.ID, e.cfg.Epoch, old); err != nil {
+		t.Fatal(err)
+	}
+	reviewReconcile(t, e)
+	read := claimReviewAction(t, e, "g", Assign)
+	// Integrations continue reporting the stable external effect id, even
+	// after its first result was retired and a new receipt read was claimed.
+	if err := e.Signal(t.Context(), Signal{ID: "second-change", ActionID: original.ID}); err != nil {
+		t.Fatal(err)
+	}
+	before := encode(reviewGoal(t, e, "g"))
+	if err := e.Report(t.Context(), read.ID, e.cfg.Epoch, Observation{Status: OutcomeSucceeded, Head: "old-head", EffectsSettled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, encode(reviewGoal(t, e, "g"))) {
+		t.Fatal("original effect's signal did not fence its active observation")
+	}
+}
+
 func TestInputVersionRetiresSettledEffectsForObsoleteTargets(t *testing.T) {
 	g := finishedGoal()
 	g.ServiceTarget, g.NoServiceReason = "private-service", ""

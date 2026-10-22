@@ -24,44 +24,32 @@ func (e *Engine) Signal(ctx context.Context, s Signal) error {
 	}
 	sum := sha256.Sum256(encode(s))
 	err := e.journal.Update(ctx, Transition{ID: "signal:" + s.ID, Kind: "integration.changed", At: 1, Data: encode(s)}, func(v *View) error {
+		goalID, taskID := s.GoalID, s.TaskID
 		if s.ActionID != "" {
 			a, err := loadAction(v, s.ActionID)
 			if err != nil {
 				return err
 			}
-			if a.State == "finished" {
-				return nil
+			if a.TaskID == "" {
+				if a.State == "finished" {
+					return nil
+				}
+				a.Signal = hex.EncodeToString(sum[:])
+				a.Deadline = e.cfg.Now().Unix()
+				return put(v, "action", a.ID, a)
 			}
-			if a.TaskID != "" {
-				g, err := loadGoal(v, a.GoalID)
-				if err != nil {
-					return err
-				}
-				if err = e.hydrate(&g); err != nil {
-					return err
-				}
-				t := goalTask(&g, a.TaskID)
-				if t == nil {
-					return ErrInvalid
-				}
-				t.PRGeneration++
-				t.PR = PRState{}
-				if err = put(v, "goal", g.ID, g); err != nil {
-					return err
-				}
-			}
-			a.Signal = hex.EncodeToString(sum[:])
-			a.Deadline = e.cfg.Now().Unix()
-			return put(v, "action", a.ID, a)
+			// Integrations retain the original effect key after a stale report
+			// is retired. Its signal also fences any replacement receipt read.
+			goalID, taskID = a.GoalID, a.TaskID
 		}
-		g, err := loadGoal(v, s.GoalID)
+		g, err := loadGoal(v, goalID)
 		if err != nil {
 			return err
 		}
 		if err = e.hydrate(&g); err != nil {
 			return err
 		}
-		t := goalTask(&g, s.TaskID)
+		t := goalTask(&g, taskID)
 		if t == nil {
 			return ErrInvalid
 		}
@@ -78,7 +66,7 @@ func (e *Engine) Signal(ctx context.Context, s Signal) error {
 				return err
 			}
 			if a.GoalID == g.ID && a.TaskID == t.ID && a.State != "finished" {
-				if a.State == "queued" && a.Kind == Merge {
+				if a.State == "queued" && a.Kind == Merge && a.ObserveActionID == "" {
 					a.State = "finished"
 				} else {
 					a.Signal = hex.EncodeToString(sum[:])
