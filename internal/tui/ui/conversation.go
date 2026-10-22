@@ -229,6 +229,9 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 			m.accounts = accountView{open: true, code: "needs_sign_in"}
 			return nil
 		}
+		if m.conversation.id == "" {
+			return nil
+		}
 		if text == "/stop" {
 			m.reduceInput(state.EditDraft{})
 			if m.content.TurnActive {
