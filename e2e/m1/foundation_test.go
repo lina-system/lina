@@ -12,6 +12,8 @@ import (
 // Exercise selection, not just the path map: subprocess acceptance tests must
 // be part of the packages foundation actually executes.
 func TestFoundationIncludesE2E(t *testing.T) {
+	t.Parallel()
+
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	command := exec.CommandContext(ctx, "node", "--input-type=module", "-e", `

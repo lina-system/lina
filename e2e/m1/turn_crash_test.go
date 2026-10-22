@@ -53,6 +53,8 @@ func (db turnCommitBoundary) Write(ctx context.Context, f func(*canon.Tx) error)
 }
 
 func TestM1TurnCrashBoundaries(t *testing.T) {
+	t.Parallel()
+
 	for _, phase := range []string{"claimed", "prepared", "model_item", "tool_intent", "tool_effect", "tool_result", "completed"} {
 		t.Run(phase, func(t *testing.T) {
 			h := newHarness(t, "")
