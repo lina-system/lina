@@ -65,6 +65,7 @@ type acceptedSteering struct {
 
 type conversationRuntime struct {
 	work         *work.Service
+	workEngine   *workRuntime
 	background   *backgroundRuntime
 	router       *conversationRouter
 	decisions    *clientsrv.Decisions
@@ -256,6 +257,11 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 }
 func (r *conversationRuntime) Close(ctx context.Context) error {
 	var err error
+	if r.workEngine != nil {
+		if err = r.workEngine.close(ctx); err != nil {
+			return err
+		}
+	}
 	if r.growth != nil && r.growth.stop != nil {
 		r.growth.stop()
 		select {
@@ -732,11 +738,16 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			if err := r.prepareRecordTools(turnID, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
+			workDeclarations, err := r.prepareWorkTools(turnID, bindings)
+			if err != nil {
+				return turn.PreparedRequest{}, err
+			}
 			declarations := append(coreexec.PersonaDeclarations(), coreexec.PersonaSettingDeclaration())
 			declarations = append(declarations, coreexec.EmotionDeclarations()...)
 			declarations = append(declarations, coreexec.RelationshipDeclaration())
 			declarations = append(declarations, coreexec.SkillDeclarations()...)
 			declarations = append(declarations, coreexec.RecordDeclarations()...)
+			declarations = append(declarations, workDeclarations...)
 			declarations = append(declarations, startRunDeclaration())
 			packet, _, err := atropos.Packet(ctx, minimum, 0, func(ctx context.Context) (assemble.ContextPacket, error) { return r.relationshipPacket(ctx, at) })
 			if err != nil {
