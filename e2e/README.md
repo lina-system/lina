@@ -236,8 +236,8 @@ The M2 Discord scenario is `m2/discord.json`, executed by `TestM2DiscordCore`.
 It installs the test host with a matching build manifest, runs production Core
 boot in a separate process, and controls it through the generated socket
 protocol. Synthetic outbound Gateway/REST and Responses endpoints demonstrate
-channel input, read tools, background results, deduplication, shaping, blocked
-state and restart without live credentials.
+channel input, read tools, background results, deduplication across Gateway
+4007/4009 session resets, shaping, blocked state and restart without live credentials.
 
 `m2/tui-composer-identity.json` installs Core/TUI into a temporary root and creates
 and chooses another agent through the real TUI. It checks that the empty composer,

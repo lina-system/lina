@@ -390,7 +390,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 - Depends on: G1-18, G1-21, G1-35, G2-02, G2-23. Design refs: C-55; [surfaces.md](surfaces.md#progress-at-a-glance).
 
 **G2-21 Discord adapter.** Gateway adapter with interactions and buttons.
-- Implemented by #147 through the shared gateway and running Core. `e2e/m2/discord.json` exercises pairing, duplicate interactions, real tool/background execution with synthetic endpoints, paragraph splits, unreachable bindings and restart; adapter tests cover owner-only buttons. Live Discord account validation remains separate.
+- Implemented by #147 through the shared gateway and running Core. #547 adds recovery from non-resumable Gateway closes without dropping native receipts. `e2e/m2/discord.json` exercises pairing, duplicate interactions, real tool/background execution across session recovery with synthetic endpoints, paragraph splits, unreachable bindings and restart; adapter tests cover owner-only buttons and close-code handling. Live Discord account validation remains separate.
 - Done when: a repeated interaction is handled once; a press by anyone but the paired owner changes nothing; text over 2,000 characters splits on paragraph boundaries; a blocked chat marks the binding unreachable.
 - Depends on: G1-25. Design refs: C-27; [integrations.md](integrations.md#channels).
 

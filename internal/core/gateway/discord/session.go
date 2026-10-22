@@ -120,9 +120,15 @@ func (a *Adapter) Run(ctx context.Context, in gateway.Admitter) error {
 	token = ""
 	for {
 		var f frame
-		if wsjson.Read(ctx, conn, &f) != nil {
+		if err := wsjson.Read(ctx, conn, &f); err != nil {
 			if parent.Err() != nil {
 				return parent.Err()
+			}
+			switch websocket.CloseStatus(err) {
+			case 4007, 4009: // Invalid sequence or expired session: Resume cannot succeed.
+				if err := a.resetSession(ctx); err != nil {
+					return err
+				}
 			}
 			return errUnavailable
 		}
@@ -136,16 +142,7 @@ func (a *Adapter) Run(ctx context.Context, in gateway.Admitter) error {
 		case 7:
 			return errUnavailable
 		case 9:
-			// An invalid session cannot resume. Keep all native receipts, reset only
-			// session identity, and let the supervisor reconnect with backoff.
-			err := a.db.Write(ctx, func(tx *canon.Tx) error {
-				_, err := tx.ExecContext(ctx, "UPDATE channel_connections SET cursor='' WHERE bot=?", a.bot.Key())
-				if err != nil {
-					return err
-				}
-				return nil
-			})
-			if err != nil {
+			if err := a.resetSession(ctx); err != nil {
 				return err
 			}
 			return errUnavailable
@@ -171,6 +168,15 @@ func (a *Adapter) Run(ctx context.Context, in gateway.Admitter) error {
 			seq.Store(*f.Seq)
 		}
 	}
+}
+
+// Keep native receipts while discarding the unusable session and sequence.
+// The supervisor reconnects with backoff and Run sends a fresh Identify.
+func (a *Adapter) resetSession(ctx context.Context) error {
+	return a.db.Write(ctx, func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(ctx, "UPDATE channel_connections SET cursor='' WHERE bot=?", a.bot.Key())
+		return err
+	})
 }
 
 // Message content is privileged on Discord. DMs and addressed guild messages

@@ -34,7 +34,8 @@ func TestM2DiscordCore(t *testing.T) {
 	var scenario struct {
 		Platform, Account, Owner, Chat, Input string
 		Paragraphs                            []int
-		Blocked                               int `json:"blocked_code"`
+		Blocked                               int   `json:"blocked_code"`
+		SessionCloseCodes                     []int `json:"session_close_codes"`
 	}
 	data, err := os.ReadFile("../m2/discord.json")
 	if err != nil {
@@ -137,7 +138,16 @@ func TestM2DiscordCore(t *testing.T) {
 	var buttonAnswers atomic.Int32
 	frames := make(chan any, 16)
 	sent := make(chan string, 16)
-	identified := make(chan struct{}, 4)
+	type gatewayAuth struct {
+		Op int `json:"op"`
+		D  struct {
+			Token   string `json:"token"`
+			Session string `json:"session_id"`
+			Seq     int64  `json:"seq"`
+		} `json:"d"`
+	}
+	identified := make(chan gatewayAuth, 4)
+	var sessions atomic.Int32
 	var blocked atomic.Bool
 	platform := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/gateway" {
@@ -151,12 +161,7 @@ func TestM2DiscordCore(t *testing.T) {
 			if wsjson.Write(ctx, conn, map[string]any{"op": 10, "d": map[string]any{"heartbeat_interval": 1000}}) != nil {
 				return
 			}
-			var identify struct {
-				Op int `json:"op"`
-				D  struct {
-					Token string `json:"token"`
-				} `json:"d"`
-			}
+			var identify gatewayAuth
 			if wsjson.Read(ctx, conn, &identify) != nil {
 				return
 			}
@@ -164,10 +169,15 @@ func TestM2DiscordCore(t *testing.T) {
 				t.Error("missing identify credential")
 				return
 			}
-			if wsjson.Write(ctx, conn, map[string]any{"op": 0, "t": "READY", "s": 1, "d": map[string]any{"session_id": "session-fixture", "user": map[string]any{"id": scenario.Account, "bot": true}}}) != nil {
+			n := sessions.Add(1)
+			ready := map[string]any{"op": 0, "t": "READY", "s": 1, "d": map[string]any{"session_id": fmt.Sprintf("session-%d", n), "user": map[string]any{"id": scenario.Account, "bot": true}}}
+			if identify.Op == 6 {
+				ready = map[string]any{"op": 0, "t": "RESUMED", "s": identify.D.Seq, "d": map[string]any{}}
+			}
+			if wsjson.Write(ctx, conn, ready) != nil {
 				return
 			}
-			identified <- struct{}{}
+			identified <- identify
 			joined := make(chan struct{})
 			go func() {
 				defer close(joined)
@@ -193,6 +203,10 @@ func TestM2DiscordCore(t *testing.T) {
 				case <-ctx.Done():
 					return
 				case frame := <-frames:
+					if code, ok := frame.(websocket.StatusCode); ok {
+						_ = conn.Close(code, "synthetic invalid session")
+						return
+					}
 					if wsjson.Write(ctx, conn, frame) != nil {
 						return
 					}
@@ -319,12 +333,19 @@ func TestM2DiscordCore(t *testing.T) {
 		return answer.Payload.(protocol.ChannelResult)
 	}
 	str := func(s string) *string { return &s }
-	control(protocol.ChannelRequest{Operation: str("connect"), Platform: &scenario.Platform, Token: str("synthetic.discord.token")})
-	select {
-	case <-identified:
-	case <-h.ctx.Done():
-		t.Fatal("Gateway not identified")
+	waitAuth := func(op int, session string, seq int64) {
+		t.Helper()
+		select {
+		case auth := <-identified:
+			if auth.Op != op || auth.D.Session != session || auth.D.Seq != seq {
+				t.Fatalf("Gateway auth: op=%d session=%q seq=%d, want %d %q %d", auth.Op, auth.D.Session, auth.D.Seq, op, session, seq)
+			}
+		case <-h.ctx.Done():
+			t.Fatal("Gateway not identified")
+		}
 	}
+	control(protocol.ChannelRequest{Operation: str("connect"), Platform: &scenario.Platform, Token: str("synthetic.discord.token")})
+	waitAuth(2, "", 0)
 	pair := control(protocol.ChannelRequest{Operation: str("pair"), Platform: &scenario.Platform, Account: &scenario.Account})
 	if pair.PairingCode == nil {
 		t.Fatal("no pairing code")
@@ -432,6 +453,20 @@ func TestM2DiscordCore(t *testing.T) {
 	case <-h.ctx.Done():
 		t.Fatal("initial channel turn did not start")
 	}
+	// Reject each established session while real Core work is pending. The
+	// supervisor must Identify again without replaying admitted interactions.
+	for i, code := range scenario.SessionCloseCodes {
+		barrier(fmt.Sprint(60 + i))
+		frames <- websocket.StatusCode(code)
+		waitAuth(2, "", 0)
+		seq = 1
+		interaction()
+		button("51", scenario.Owner)
+		barrier(fmt.Sprint(70 + i))
+		if approvalState().State != authority.Approved || len(edits) != 1 || buttonAnswers.Load() != 1 {
+			t.Fatal("session reset lost the native interaction receipt")
+		}
+	}
 	message("14", scenario.Owner, steeringText)
 	for {
 		var conversation string
@@ -513,6 +548,7 @@ func TestM2DiscordCore(t *testing.T) {
 		t.Fatalf("duplicate/external dispatch: model=%d sends=%d", modelCalls.Load(), sendCalls.Load())
 	}
 	core = start()
+	waitAuth(6, fmt.Sprintf("session-%d", len(scenario.SessionCloseCodes)+1), seq)
 	c = connect()
 	defer c.conn.Close()
 	waitConnection(func(row protocol.ChannelConnection) bool {
