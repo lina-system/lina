@@ -145,12 +145,9 @@ func TestSkillMaintenanceNoticeDeliveryRecoversAfterCommit(t *testing.T) {
 
 func maintenanceNoticeFixture(t *testing.T) (*conversationRuntime, string) {
 	t.Helper()
-	r, _, _, other := managementFixture(t)
-	agents, err := r.agents.List(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	r.agent, r.conversation = agents[0].ID, "main:"+agents[0].ID
+	r, _, agent, other := managementFixture(t)
+	r.agent, r.conversation = agent, "main:"+agent
+	var err error
 	r.topics, err = clientsrv.NewTopics("1", clientsrv.TopicOptions{})
 	if err != nil {
 		t.Fatal(err)

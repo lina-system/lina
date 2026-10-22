@@ -181,9 +181,9 @@ func (r *conversationRuntime) publishSkillMaintenance(ctx context.Context) error
 				return nil
 			}
 			session := clientsrv.Session{PersonID: r.person}
-			history, err := r.router.History(ctx, session, protocol.HistoryGet{})
-			if err != nil {
-				return err
+			history, discoveryErr := r.router.History(ctx, session, protocol.HistoryGet{})
+			if discoveryErr != nil {
+				return discoveryErr
 			}
 			view, err = r.router.view(ctx, session, *history.AgentID)
 			if err != nil {
