@@ -21,6 +21,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/manifest"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
 	"github.com/thisisjun786/lina/internal/design"
+	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -162,7 +163,17 @@ func TestM1SandboxUnavailable(t *testing.T) {
 				term := h.startScreenTUI("TERM=xterm-256color", "LC_ALL="+locale)
 				notice := design.Text(design.LanguageFor(locale), "sandbox.unavailable")
 				prefix := string([]rune(notice)[:min(18, len([]rune(notice)))])
-				screen := screenText(waitScreen(t, h, term, prefix))
+				// Welcome can expose the notice before history discovery finishes.
+				// Check the notice alongside the recovered exchange in a completed
+				// conversation frame before requesting a normal client shutdown.
+				frame, err := term.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
+					text := screenText(s)
+					return s.AltScreen && !s.CursorHidden && renderedFrame(term, s) && strings.Contains(text, prefix) && strings.Contains(text, scenario.Reply)
+				})
+				if err != nil {
+					t.Fatal("sandbox notice and recovered conversation did not render", err)
+				}
+				screen := screenText(frame)
 				if strings.Count(screen, prefix) != 1 {
 					t.Errorf("setup notice is duplicated: %s", screen)
 				}
