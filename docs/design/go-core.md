@@ -1266,6 +1266,11 @@ type Definition struct {
   An unavailable worker executable, failed handshake or initial quota observation
   disables these optional graph tools and closes partial worker resources; Core
   still starts conversation, channels and background runs.
+  Readiness completes before Core releases persisted queued tasks. An error
+  while releasing that work is logged without closing the ready runtime or
+  unrelated workers. Settled pre-dispatch failures free their reservations;
+  uncertain sends and failed settlements retain their ledger reservations for
+  reconciliation, without automatic replay.
 - `schedule_work` admits a graph of definitions (key, what, why, done, areas,
   dependencies and design sections) scoped to the authenticated conversation.
   Core resolves design references at the registered base, mints stable task ids

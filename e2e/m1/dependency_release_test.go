@@ -10,8 +10,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -28,10 +30,19 @@ func TestM3DependencyReleaseInstalledCore(t *testing.T) {
 type delegationStartFailure struct {
 	Command string `json:"command"`
 	Slots   int    `json:"slots"`
+	Startup bool   `json:"startup"`
 }
 
 func TestM3DelegationStartFailureReleasesCapacity(t *testing.T) {
-	raw, err := os.ReadFile("../m3/dependency-start-failure.json")
+	testM3DelegationFailure(t, "dependency-start-failure.json")
+}
+
+func TestM3DelegationStartupKeepsStartedWorker(t *testing.T) {
+	testM3DelegationFailure(t, "dependency-startup-failure.json")
+}
+
+func testM3DelegationFailure(t *testing.T, file string) {
+	raw, err := os.ReadFile(filepath.Join("../m3", file))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,6 +57,19 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure) {
 	raw, err := os.ReadFile("../m3/dependency-release.json")
 	if err != nil {
 		t.Fatal(err)
+	}
+	startup := fault != nil && fault.Startup
+	if startup {
+		var graph map[string]any
+		if err := json.Unmarshal(raw, &graph); err != nil {
+			t.Fatal(err)
+		}
+		tasks := graph["tasks"].([]any)
+		graph["tasks"] = []any{tasks[0], tasks[2]}
+		raw, err = json.Marshal(graph)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	var scenario any
 	if err = json.Unmarshal(raw, &scenario); err != nil {
@@ -67,7 +91,8 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure) {
 			var cycle map[string]any
 			_ = json.Unmarshal(raw, &cycle)
 			tasks := cycle["tasks"].([]any)
-			tasks[0].(map[string]any)["depends_on"] = []string{"b"}
+			tasks[0].(map[string]any)["depends_on"] = []string{tasks[1].(map[string]any)["key"].(string)}
+			tasks[1].(map[string]any)["depends_on"] = []string{"a"}
 			emitPersonaCall(w, "cycle", "schedule_work", cycle)
 		case 2:
 			var item struct{ Output string }
@@ -91,7 +116,7 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure) {
 				Output struct{ Result []string }
 			}
 			want := "ok"
-			if fault != nil {
+			if fault != nil && !startup {
 				want = "failed"
 			}
 			if err := json.Unmarshal([]byte(item.Output), &result); err != nil || result.Code != want {
@@ -100,6 +125,17 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure) {
 			taskIDs = result.Output.Result
 			emitResponse(w, "Work started.", true)
 		case 4:
+			if startup {
+				names := map[string]bool{}
+				for _, tool := range request.Tools {
+					names[tool.Name] = true
+				}
+				if !names["schedule_work"] || !names["refresh_work"] {
+					t.Error("recovered task failure disabled delegation graph tools")
+				}
+				emitResponse(w, "Delegation remains available.", true)
+				return
+			}
 			emitPersonaCall(w, "refresh", "refresh_work", map[string]any{"tasks": taskIDs})
 		default:
 			emitResponse(w, "Work refreshed.", true)
@@ -162,7 +198,7 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure) {
 			t.Fatal(err)
 		}
 	}
-	writeJSON(filepath.Join(h.root, "fixture.json"), map[string]any{"git": git, "clone": clone, "forge": forge, "requests": fault == nil})
+	writeJSON(filepath.Join(h.root, "fixture.json"), map[string]any{"git": git, "clone": clone, "forge": forge, "requests": fault == nil, "startup": startup})
 	gh := filepath.Join(h.root, "fixture-gh")
 	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
 	if err = os.WriteFile(gh, []byte(fmt.Sprintf("#!/bin/sh\nexec %s %s %s forge \"$@\"\n", quote(node), quote(program), quote(h.root))), 0700); err != nil {
@@ -181,6 +217,9 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure) {
 			t.Fatal(err)
 		}
 		config["git"], config["slots"] = failingGit, fault.Slots
+		if startup {
+			config["slots"] = 0
+		}
 	}
 	writeJSON(filepath.Join(h.root, "system", "core", "delegation.json"), config)
 	start := func() *process {
@@ -212,6 +251,53 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure) {
 		t.Fatal(err)
 	}
 	admittedTurn(t, h, client, conversation, "dispatch-input", "Complete the three related tasks.")
+	if startup {
+		client.Close()
+		waiting.Close()
+		h.stopCore(core)
+		config["slots"] = fault.Slots
+		writeJSON(filepath.Join(h.root, "system", "core", "delegation.json"), config)
+		core = start()
+		client, conversation = conversationClient(t, h)
+		admittedTurn(t, h, client, conversation, "startup-tools", "Check delegation after recovering queued work.")
+		if len(taskIDs) != 2 {
+			t.Fatalf("expected two persisted tasks, got %v", taskIDs)
+		}
+		reader, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon", "canon.sqlite"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer reader.Close(context.Background())
+		started, failed := 0, 0
+		for _, id := range taskIDs {
+			card, err := work.New(reader).Get(h.ctx, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if card.State == "failed" && card.Run == nil && !card.Scheduling.AreaHeld && !card.Scheduling.CapacityHeld {
+				failed++
+				continue
+			}
+			if card.Run == nil || !card.Active || !card.Scheduling.CapacityHeld || !card.Scheduling.AreaHeld {
+				t.Fatalf("unrelated recovered worker lost its live assignment: %+v", card)
+			}
+			pidRaw, err := os.ReadFile(filepath.Join(h.root, id+".pid"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			pid, err := strconv.Atoi(string(pidRaw))
+			if err != nil || syscall.Kill(pid, 0) != nil {
+				t.Fatalf("startup killed successfully started worker %s (pid %s)", id, pidRaw)
+			}
+			started++
+		}
+		if started != 1 || failed != 1 {
+			t.Fatalf("startup outcomes: started=%d failed=%d", started, failed)
+		}
+		if err := os.WriteFile(filepath.Join(h.root, "continue-recovered"), nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	answeredQuestions := map[string]bool{}
 	approvalAnswered := false
 	wantQuestions := 2
@@ -255,7 +341,11 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure) {
 			approvalAnswered = true
 		}
 	}
-	if len(taskIDs) != 3 {
+	wantTasks := 3
+	if startup {
+		wantTasks = 2
+	}
+	if len(taskIDs) != wantTasks {
 		t.Fatalf("no dispatched graph: %v", taskIDs)
 	}
 	db, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon", "canon.sqlite"))
@@ -284,7 +374,7 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure) {
 	}
 	if fault != nil {
 		failedID := ""
-		for _, id := range []string{taskIDs[0], taskIDs[2]} {
+		for _, id := range []string{taskIDs[0], taskIDs[len(taskIDs)-1]} {
 			card := await(id, func(c work.Card) bool {
 				return c.State == "failed" || c.Run != nil && !c.Active && c.TurnStatus == "completed"
 			})

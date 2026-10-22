@@ -106,9 +106,10 @@ func (r *conversationRuntime) startDelegation(ctx context.Context) error {
 	d.reactor = reactor.New(r.work, reactor.Hooks{Availability: d.availability, Start: d.start, ReadPR: d.readPR, Return: d.returnConflict, Changed: func(ctx context.Context) { _ = r.publishRunning(ctx) }})
 	r.delegation = d
 	go d.events(runctx)
-	// Recovery never repeats an armed dispatch. Queued tasks can run immediately;
-	// old active turns and uncertain sends retain their leases for reconciliation.
-	return d.reactor.Wake(ctx)
+	// Readiness is observed before any recovered work is dispatched. Its errors
+	// may close this runtime; later task-release errors must not close workers.
+	_, err = d.availability(ctx)
+	return err
 }
 func (d *delegationRuntime) close(ctx context.Context) error {
 	d.cancel()

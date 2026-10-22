@@ -2,7 +2,7 @@
 // Synthetic installed worker and forge; actual Core, Git and task worktrees run.
 import { createHash } from 'node:crypto';
 import { createInterface } from 'node:readline';
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, watch } from 'node:fs';
 import { join, basename } from 'node:path';
 import { execFileSync } from 'node:child_process';
 const [root, mode] = process.argv.slice(2);
@@ -47,7 +47,13 @@ if (mode === '--version') { process.stdout.write('codex-cli 99.0.0\n'); } else i
         if(kind==='read_projection') {
           if(result.assignment_id!==thread.id||!result.task_packet.includes('Work definition:'))throw new Error('foreign projection');
           thread.projection=result;
-          if(cfg.requests&&thread.definition.key==='a')callTool(thread,'ask',{question:'Confirm the work-tool result.'});
+          if(cfg.startup) {
+            // The test releases this worker only after observing its live PID
+            // and Core's graph tools. Check after arming to cover an early file.
+            let resumed=false;
+            const resume=()=>{if(resumed||!existsSync(join(root,'continue-recovered')))return;resumed=true;watcher.close();callTool(thread,'coordinate',{request:'Complete recovered work.'});};
+            const watcher=watch(root,resume);resume();
+          } else if(cfg.requests&&thread.definition.key==='a')callTool(thread,'ask',{question:'Confirm the work-tool result.'});
           else callTool(thread,'coordinate',{request:'Record this scheduled result.'});
         } else if(kind==='ask') {
           if(result.answer!=='confirmed')throw new Error('work-tool answer not delivered');
@@ -79,7 +85,7 @@ if (mode === '--version') { process.stdout.write('codex-cli 99.0.0\n'); } else i
       case 'thread/start': {
         const names=(p.dynamicTools||[]).flatMap(spec=>spec.name==='lina'?(spec.tools||[]).map(tool=>tool.name):[]);
         for(const name of ['read_projection','ask','coordinate','submit_receipt'])if(!names.includes(name))throw new Error(`missing work tool ${name}`);
-        const thread={id:basename(p.cwd),cwd:p.cwd,status:{type:'idle'},turns:[],count:0};threads.set(thread.id,thread);result={thread,cwd:p.cwd,model:'fixture-model'};break;
+        const thread={id:basename(p.cwd),cwd:p.cwd,status:{type:'idle'},turns:[],count:0};threads.set(thread.id,thread);writeFileSync(join(root,`${thread.id}.pid`),String(process.pid));result={thread,cwd:p.cwd,model:'fixture-model'};break;
       }
       case 'thread/read': result={thread:threads.get(p.threadId)};break;
       case 'turn/start': {

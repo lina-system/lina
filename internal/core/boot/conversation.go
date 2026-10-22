@@ -278,6 +278,12 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 			r.delegation = nil
 		}
 		fmt.Fprintln(os.Stderr, "Delegation is unavailable; other Core capabilities remain available.")
+	} else if r.delegation != nil {
+		// A recovered task can fail while another successfully starts. Keep the
+		// ready runtime and all uncertain reservations available for reconciliation.
+		if releaseErr := r.delegation.reactor.Wake(ctx); releaseErr != nil {
+			fmt.Fprintln(os.Stderr, "Delegation recovery could not release all queued work; keeping delegation available:", releaseErr)
+		}
 	}
 	if r.agent != "" {
 		if err = r.seedHistory(ctx); err != nil {

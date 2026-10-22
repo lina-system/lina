@@ -303,6 +303,10 @@ native question answers, and submits a receipt for its committed artifact.
 `m3/dependency-start-failure.json` injects a failed initial Git fetch with one
 host slot: another task must finish and submit its receipt, while restart must
 retain the failed attempt without its reservations or a duplicate dispatch.
+`m3/dependency-startup-failure.json` queues two tasks before restart, then fails
+one setup while the other starts. Graph tools and the actual surviving worker
+must remain available; explicitly releasing that live worker must still produce
+an artifact and an acknowledged receipt.
 
 `go test ./e2e/m1 -run '^TestM2UpdateActivation$' -count=1` runs
 `m2/update-activation.json`, which drives `lina update --activate` against
