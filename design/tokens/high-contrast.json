@@ -219,6 +219,20 @@
         "value": 0,
         "unit": "ms"
       }
+    },
+    "activityFrame": {
+      "$type": "duration",
+      "$value": {
+        "value": 100,
+        "unit": "ms"
+      }
+    },
+    "activityElapsed": {
+      "$type": "duration",
+      "$value": {
+        "value": 1000,
+        "unit": "ms"
+      }
     }
   },
   "icon": {
@@ -288,6 +302,14 @@
         "$type": "string",
         "$value": "?"
       },
+      "activityFrames": {
+        "$type": "string",
+        "$value": "◐◓◑◒"
+      },
+      "activitySeparator": {
+        "$type": "string",
+        "$value": "·"
+      },
       "person": {
         "$type": "string",
         "$value": "›"
@@ -353,6 +375,14 @@
       "unknown": {
         "$type": "string",
         "$value": "?"
+      },
+      "activityFrames": {
+        "$type": "string",
+        "$value": "|/-\\"
+      },
+      "activitySeparator": {
+        "$type": "string",
+        "$value": "-"
       },
       "person": {
         "$type": "string",

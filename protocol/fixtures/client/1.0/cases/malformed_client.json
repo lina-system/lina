@@ -15,11 +15,12 @@
     "welcome.json"
   ],
   "output": [
+    "values/legacy_hello.json",
     "welcome.json"
   ],
   "errors": [
     "malformed",
-    "malformed",
+    "",
     "malformed",
     "malformed",
     "malformed",
@@ -32,8 +33,8 @@
     ""
   ],
   "outcome": {
-    "accepted": 1,
-    "malformed": 11,
+    "accepted": 2,
+    "malformed": 10,
     "unknown_kinds": 0
   }
 }
