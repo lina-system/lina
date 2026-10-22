@@ -9,6 +9,8 @@ Start the installed Core once, obtain the person's and agent's LINA ids from its
 welcome, then stop Core for the import. The same Core lock fences the importer;
 a running Core or another importer prevents writes. Keep the original snapshot
 and a backup of the destination before the owner-approved operational switch.
+An interrupted restore must be completed first: under the lock, the importer
+checks the restore publication marker before inspecting canon or opening records.
 
 ```sh
 go build -o /tmp/crw-takeover ./tools/crw-takeover

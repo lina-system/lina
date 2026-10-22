@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 
+	"github.com/thisisjun786/lina/internal/core/backup"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"github.com/thisisjun786/lina/internal/core/records"
@@ -68,6 +69,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	defer ctl.Close()
 	if err = ctl.Acquire(); err != nil {
+		return fail(err)
+	}
+	if err = backup.CheckRestore(*root); err != nil {
 		return fail(err)
 	}
 	path := filepath.Join(*root, "canon/canon.sqlite")
