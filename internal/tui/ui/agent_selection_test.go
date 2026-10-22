@@ -36,6 +36,28 @@ func TestReconnectHistoryRetainsChosenAgentAndUnacknowledgedDraft(t *testing.T) 
 	}
 }
 
+func TestInitialHistoryDiscoveryKeepsDraftUntilDestinationKnown(t *testing.T) {
+	m := conversationShell()
+	m.content.Agents = []protocol.Agent{{AgentID: "default"}}
+	m.Update(tea.PasteMsg{Content: "early input"})
+	request := m.discoveryHistory()
+	if request == nil || request.AgentID != nil {
+		t.Fatal("initial connection did not discover the default conversation")
+	}
+	m.Update(shellConnection{Generation: 1, Status: ConnectionStatus{State: Live}})
+	if _, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}); cmd != nil || m.content.Draft.Text != "early input" || m.content.Busy {
+		t.Fatal("initial input was sent before its conversation was known")
+	}
+	m.conversation.id = "main:default"
+	m.agentDiscoveryDone()
+	if m.content.Draft.Text != "early input" || m.content.Busy {
+		t.Fatal("discovery automatically sent or lost the early draft")
+	}
+	if _, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}); cmd == nil {
+		t.Fatal("ready conversation did not allow explicitly sending the draft")
+	}
+}
+
 func TestReconnectMissingAgentKeepsDraftUntilExplicitChoice(t *testing.T) {
 	for _, language := range []design.Language{design.English, design.Korean} {
 		t.Run(string(language), func(t *testing.T) {

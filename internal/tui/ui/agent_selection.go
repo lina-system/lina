@@ -23,6 +23,9 @@ func (m *shellModel) discoveryHistory() *protocol.HistoryGet {
 	if len(m.content.Agents) == 0 {
 		return nil
 	}
+	// Initial discovery needs the same draft protection as reconnect: welcome
+	// alone does not identify the destination for a conversation input.
+	m.conversation.agentPending = true
 	return &protocol.HistoryGet{}
 }
 
