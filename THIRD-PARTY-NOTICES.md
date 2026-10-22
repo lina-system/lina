@@ -1304,3 +1304,10 @@ spacing between turns. No implementation code is copied.
   `09d81bf1`: distinct speaker marks and accented assistant identity.
 - [Hermes Agent](https://github.com/NousResearch/hermes-agent), MIT, revision
   `e06df9c2`: person prompt and assistant gutter. Its MIT notice appears above.
+
+Fenced-code highlighting also references Hermes Agent's
+[`hermes_cli/cli_render.py`](https://github.com/NousResearch/hermes-agent/blob/944c3a434071f43e64b443d033f3eba30c64434c/hermes_cli/cli_render.py)
+at `944c3a434071f43e64b443d033f3eba30c64434c` (MIT): final assistant content is
+rendered through Rich Markdown, with separate raw and stripped-text modes.
+LINA independently uses its pinned Chroma lexer and theme tokens; its streaming
+closure, cache and accessibility behaviour follow T-09. No upstream code is copied.

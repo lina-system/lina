@@ -6,10 +6,20 @@ import (
 	"strings"
 )
 
+// SyntaxTone is a theme-independent code token role, never a terminal colour.
+type SyntaxTone uint8
+
+const (
+	SyntaxText SyntaxTone = iota
+	SyntaxAccent
+	SyntaxMuted
+)
+
 // InlineStyle is semantic data. Only the UI adapter produces terminal escapes.
 type InlineStyle struct {
 	Bold, Italic, Code, Link bool
 	URL                      string
+	Syntax                   SyntaxTone
 }
 type Span struct {
 	Text  string

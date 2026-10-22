@@ -585,6 +585,16 @@ type Stream interface {
   `Stream.Markdown` caches closed semantic rows by width, theme and width mode,
   incrementally projects the open tail, and replaces the projection at `Seal`.
   Only visible conversation rows receive terminal styles.
+- Language-tagged fenced code receives syntax highlighting only after its
+  matching closing fence. The pinned Chroma lexer produces semantic spans:
+  keywords, strings, numbers, built-ins, functions and class names use accent;
+  comments use muted; other tokens keep text, all on the code surface. Unknown
+  or absent languages, indented code and unterminated fences keep plain code.
+  High-contrast suppresses syntax colours; `NO_COLOR` emits plain text without
+  escapes. Highlight spans share the existing block/revision, width, theme and
+  width-mode cache; resizing or changing theme does not re-lex closed source.
+  `e2e/m1/tui-syntax.json` checks open streamed code and the closed result through
+  the installed Core, a fixture provider and parsed PTY cells.
 - One width function serves all layout: wcwidth by default, grapheme clusters once mode 2027 is confirmed, ambiguous East Asian width narrow, Hangul syllables two cells. The mode is part of the cache key. The Charm-free `Measurer` uses pinned Unicode 17 data and UAX #29 segmentation for wrapping and clipping in both modes. A cluster wider than the entire row is omitted with a typed clipped flag, never split. Cursor offsets inside a cluster clamp to its start.
 - The hardware cursor is placed on every frame at the display width of the text before it on the wrapped row, so IME composition appears in place. The TUI never requests all-keys-as-escape-codes. Committed IME text arrives as UTF-8, one grapheme cluster at a time ([surfaces.md](surfaces.md#korean-input)).
 - Only the viewport plus overscan (P) is laid out, so cost follows viewport rows and not history. `Stream` indexes new text as it arrives. `Window` takes a retained byte anchor within a block and stops reflow at the requested row count, including after a width change. `Renderer.Draw` reads and paints only those indexed rows, retains only the current viewport cache, and returns changed-row patches; an empty patch list causes no writes. A trusted UI painter styles only closed rows after sanitizing and clipping.
