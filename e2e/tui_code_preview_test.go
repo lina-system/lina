@@ -79,8 +79,12 @@ func TestM1TUIStreamingCodeInstalledCore(t *testing.T) {
 			break
 		}
 	}
-	waitScreen(t, h, terminal, "Ctrl+O")
+	inline := waitScreen(t, h, terminal, "CODE-200")
+	if text := screenText(inline); strings.Count(text, "CODE-") != 6 || !strings.Contains(text, "writing code… (200 lines)") {
+		t.Fatalf("inline reply lost the streaming code bound: %d code rows", strings.Count(text, "CODE-"))
+	}
 	h.keys(terminal, "\x0f")
+	waitScreen(t, h, terminal, "Esc  /  n")
 	snapshot := waitScreen(t, h, terminal, "CODE-200")
 	text := screenText(snapshot)
 	if strings.Count(text, "CODE-") != 6 || !strings.Contains(text, "writing code… (200 lines)") || !strings.Contains(text, "Before the code") {

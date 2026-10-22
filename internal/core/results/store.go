@@ -27,11 +27,6 @@ var (
 // Schema is installed by Core in a numbered migration after the ledger. Heads
 // contain only locators; the ledger is the sole store of preview content.
 const Schema = `
-CREATE TABLE result_records_state (
- singleton INTEGER PRIMARY KEY CHECK(singleton=1), head TEXT NOT NULL,
- lock_token TEXT NOT NULL DEFAULT '', pending BLOB
-);
-INSERT INTO result_records_state(singleton,head) VALUES(1,'');
 CREATE TABLE result_heads (
  id TEXT PRIMARY KEY NOT NULL, person TEXT NOT NULL, agent TEXT NOT NULL,
  conversation TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision>0),

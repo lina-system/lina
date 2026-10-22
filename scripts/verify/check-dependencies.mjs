@@ -7,6 +7,7 @@ import { homedir, tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { execute } from './check-components.mjs';
+import { checkNpm } from './check-npm.mjs';
 
 const manifests = ['go.mod', 'kit/go.mod', 'go.work'];
 const scannerTools = [
@@ -254,6 +255,9 @@ export function checkDependencies({ cwd = process.cwd(), execute: run = execute 
     cwd = realpathSync(cwd);
     output += checkVendoredTrees(cwd);
     const exceptions = readExceptions(cwd);
+    const npm = checkNpm({ cwd, execute: run, exceptions });
+    output += npm.output;
+    if (npm.status !== 0) throw new Error('npm verification failed');
     // Reject drift before Go can select or download a different toolchain.
     const versions = manifests.map(file => {
       const source = readFileSync(join(cwd, file), 'utf8');

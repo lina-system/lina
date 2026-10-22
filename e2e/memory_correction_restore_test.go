@@ -17,6 +17,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	memoryexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/internal/core/memory"
+	"github.com/thisisjun786/lina/internal/design"
 	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
@@ -49,7 +50,13 @@ func TestM1MemoryCorrectionForgetRestore(t *testing.T) {
 				emitResponse(w, "Synthetic fixture reply", true)
 			}))
 			defer provider.Close()
-			h, start := installConversationBundle(t, newHarness(t, binary), bundle, provider.URL)
+			h := newHarness(t, binary)
+			// Multiple Core restarts, backup/restore and terminal sessions share
+			// this scenario; the default three-operation harness budget is too short.
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+			t.Cleanup(cancel)
+			h.ctx = ctx
+			h, start := installConversationBundle(t, h, bundle, provider.URL)
 			core := start(true)
 			command, closeTUI := correctionMemoryTUI(t, h)
 			first := command("/memory remember --holder=all --scope=local " + scenario.Facts[0])
@@ -203,7 +210,13 @@ func correctionMemoryTUI(t *testing.T, h *harness) (func(string) protocol.Memory
 				t.Fatalf("%s refused: %s (request=%s)", text, e.Error.Code, tap.requestKind(e))
 			}
 			if result, ok := e.Payload.(protocol.MemoryResult); ok {
-				marker := "/memory forget"
+				if result.Operation == nil {
+					t.Fatal("memory reply has no operation")
+				}
+				// The shared help text can still belong to the previous reply.
+				// Observe this result's heading before closing its view, otherwise
+				// its delayed render can reopen over the next command's composer.
+				marker := design.Text(design.English, *result.Operation)
 				if result.ItemID != nil {
 					marker = *result.ItemID
 				}

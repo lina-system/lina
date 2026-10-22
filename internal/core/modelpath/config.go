@@ -11,16 +11,18 @@ import (
 	"github.com/thisisjun786/lina/kit/provider/responses"
 )
 
-// ResponsesConfig is an explicit API-key route, independent of subscription
+// Config is an explicit model route, independent of stored account
 // credentials. The caller constructs it once per route; it is never written to canon.
-type ResponsesConfig struct {
-	Adapter    *responses.Adapter
+type Config struct {
+	Adapter    provider.Adapter
 	Model      provider.ModelRef
 	credential provider.Credential
 }
 
-func (*ResponsesConfig) String() string   { return "[Responses configuration]" }
-func (*ResponsesConfig) GoString() string { return "[Responses configuration]" }
+type ResponsesConfig = Config
+
+func (*Config) String() string   { return "[model configuration]" }
+func (*Config) GoString() string { return "[model configuration]" }
 
 // ResponsesFromEnv returns nil when the route is unconfigured. Partial settings
 // fail closed, with no credential discovery or fallback to a different model.
@@ -48,6 +50,6 @@ func ResponsesFromEnv(getenv func(string) string) (*ResponsesConfig, error) {
 	return &ResponsesConfig{Adapter: adapter, Model: provider.ModelRef(model), credential: provider.NewCredential("configured-responses", provider.APIKey, key)}, nil
 }
 
-func (c *ResponsesConfig) Request(items []provider.Item) provider.Request {
+func (c *Config) Request(items []provider.Item) provider.Request {
 	return provider.Request{Credential: c.credential, Model: c.Model, Purpose: provider.Turn, Items: items}
 }

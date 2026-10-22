@@ -69,8 +69,9 @@ func TestM1TUIAgentReconnectInstalledCore(t *testing.T) {
 	terminal, tap := h.startConversationTUI(120, 35, "TERM=xterm-256color", "LC_ALL=C")
 	waitComposerReady(t, h, terminal)
 	h.keys(terminal, "/agents choose "+agent+"\r")
-	// The typed command already contains the ID. Wait for the result word,
-	// which appears only after the management response opens its pager.
+	// The draft contains the ID before the choose response. Wait for both
+	// the selected agent's name and the result word in its management pager.
+	waitScreen(t, h, terminal, scenario.Agent)
 	waitScreen(t, h, terminal, design.Text(design.English, "choose"))
 	h.keys(terminal, "\x1b")
 	if _, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
