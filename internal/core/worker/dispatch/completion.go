@@ -63,7 +63,13 @@ func (s *Service) React(ctx context.Context, event work.Completion, card work.Ca
 			return true, s.cfg.Work.ObserveHead(ctx, event.TaskID, event.Attempt, current.Head)
 		}
 		if err != nil {
-			return true, err
+			// A confirmed negative observation is evidence for the manager,
+			// not a transport failure to hide until checks become green again.
+			if !errors.Is(err, antigravity.ErrPullRequestNotReady) || current.Number != r.PR.Number || current.URL != r.PR.URL || current.Branch != r.TaskDefinition().Branch || current.Base != r.Definition.Base || current.Head != event.Head {
+				return true, err
+			}
+			r.Code = "pr_unverified"
+			r.ChangeEvidence = ""
 		}
 		for i := range current.Reviews {
 			current.Reviews[i].Body = ""
