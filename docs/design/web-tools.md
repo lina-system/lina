@@ -62,6 +62,8 @@ refreshes configuration status. Esc and reconnect discard the form. It never
 uses the composer, undo history or conversation ledger. Saving reports that a
 key is configured, not that an upstream account was validated. The settings
 operation itself makes no provider call.
+While a settings request is pending, the screen shows that it is checking and
+withholds the status and editing controls until Core's response arrives.
 
 Core stores the key under the authenticated owner's `firecrawl/api_key` entry in
 the existing secret store. Credentials are pinned for the duration of a turn;

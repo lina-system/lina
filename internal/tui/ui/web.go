@@ -100,6 +100,9 @@ func (m *shellModel) webKey(msg tea.KeyMsg) tea.Cmd {
 }
 func (m *shellModel) webContent() string {
 	text := func(id string) string { return design.Text(m.styles.options.Language, id) }
+	if m.web.busy {
+		return ansi.Wrap(strings.Join([]string{text("web.heading"), text("web.loading"), "Esc  Ctrl+D"}, "\n"), max(1, m.size.Width), "")
+	}
 	status := "web.unconfigured"
 	if m.web.configured {
 		status = "web.configured"

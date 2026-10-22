@@ -263,6 +263,10 @@ func TestM1WebSearchExtractAndCitation(t *testing.T) {
 	core.command.Env = append(core.command.Env, "LINA_TEST_WEB_ROOT="+h.root, "LINA_TEST_WEB_SOCKET="+h.socket, "LINA_TEST_WEB_HTTP="+server.URL)
 	core.start(t)
 	h.connect(core).Close()
+	// A bound socket still serves reads during recovery. Match the installed
+	// harness's mutation-admission barrier before opening the settings form.
+	ready, _ := conversationClient(t, h)
+	ready.Close()
 	c, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "test", []protocol.Capability{{Name: "conversation", Version: "1.0"}, {Name: "waiting", Version: "1.0"}, {Name: "running", Version: "1.0"}})
 	if err != nil {
 		t.Fatal(err)
