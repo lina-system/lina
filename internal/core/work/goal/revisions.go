@@ -5,19 +5,6 @@ import "encoding/json"
 
 func revisionJudgment(a Action) bool { return a.Kind == PlanGoal || a.Kind == CheckCriterion }
 
-func staleJudgment(g Goal, a Action) bool {
-	if !revisionJudgment(a) {
-		return false
-	}
-	if a.GoalRevision != g.Revision {
-		return true
-	}
-	if a.Kind == PlanGoal {
-		return g.DefinitionPending && a.TaskID == "" && a.Revision != g.RecordRevision
-	}
-	return a.CheckRound != g.CheckRound || a.Check != nil && a.Revision != criterionRevision(g, Criterion{Check: *a.Check})
-}
-
 func blockCorrection(g *Goal, reason string) {
 	g.State = GoalBlocked
 	g.AttentionID = "goal:" + g.ID + ":definition"
