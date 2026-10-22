@@ -136,6 +136,11 @@ status writes nothing. The key gate also covers the legacy quit input. Connectio
 including one in the same epoch, restores an unacknowledged input into the draft
 with newer typing after it. The client never automatically resends that input.
 
+On the first connection, conversation input stays in the editable draft until
+the initial history reply supplies its destination. The welcome's live transport
+status does not admit Enter while that discovery is pending; completion restores
+the live state and the person can send the retained draft explicitly.
+
 Reconnect also retains the selected agent identity. History discovery and the
 preserved draft use that agent, regardless of the welcome's agent order. A fresh
 agent list validates the selection because welcome may name only the default.

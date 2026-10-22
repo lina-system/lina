@@ -12,6 +12,9 @@ import (
 )
 
 func (m *shellModel) discoveryHistory() *protocol.HistoryGet {
+	if !m.hasCapability("conversation") {
+		return nil
+	}
 	if m.conversation.agentMissing {
 		m.agentDiscoveryDone()
 		return nil
@@ -23,6 +26,9 @@ func (m *shellModel) discoveryHistory() *protocol.HistoryGet {
 	if len(m.content.Agents) == 0 {
 		return nil
 	}
+	// Welcome can mark the transport live before this first history reply.
+	// Keep input in the draft until Core supplies its conversation identity.
+	m.conversation.agentPending = true
 	return &protocol.HistoryGet{}
 }
 
