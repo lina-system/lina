@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -96,7 +97,46 @@ func (r *conversationRuntime) startRuns(ctx context.Context) error {
 		if err := r.authorize(s, nil); err != nil {
 			return clientsrv.Result{}, err
 		}
-		return clientsrv.Result{Kind: protocol.KindRunning, Payload: protocol.Running{}}, r.publishRunning(ctx)
+		request := e.Payload.(protocol.RunningGet)
+		response := protocol.Running{RunID: request.RunID}
+		if request.RunID != nil {
+			if request.Action == nil {
+				return clientsrv.Result{}, runs.ErrInvalid
+			}
+			ref := runs.ListRef{Source: "run", ID: *request.RunID}
+			switch string(*request.Action) {
+			case "open":
+				var offset int64
+				var err error
+				if request.Offset != nil {
+					offset, err = request.Offset.Int64()
+				}
+				if err != nil {
+					return clientsrv.Result{}, runs.ErrInvalid
+				}
+				text, next, err := b.service.ResultPage(ctx, s.PersonID, ref.ID, offset)
+				if err != nil {
+					return clientsrv.Result{}, err
+				}
+				response.Text = &text
+				if next > 0 {
+					n := json.Number(strconv.FormatInt(next, 10))
+					response.Next = &n
+				}
+				if err = b.list.Open(ctx, s.PersonID, ref); err != nil {
+					return clientsrv.Result{}, err
+				}
+			case "dismiss":
+				if err := b.list.Dismiss(ctx, s.PersonID, ref); err != nil {
+					return clientsrv.Result{}, err
+				}
+			default:
+				return clientsrv.Result{}, runs.ErrInvalid
+			}
+		} else if request.Action != nil || request.Offset != nil {
+			return clientsrv.Result{}, runs.ErrInvalid
+		}
+		return clientsrv.Result{Kind: protocol.KindRunning, Payload: response}, r.publishRunning(ctx)
 	}}
 	refresh := r.identity.RefreshTopic
 	r.identity.RefreshTopic = func(ctx context.Context, topic string) error {
@@ -112,13 +152,14 @@ func (r *conversationRuntime) startRuns(ctx context.Context) error {
 		return err
 	}
 	// Resume the existing service's one checkpoint retry, including queued starts
-	// whose receipt committed just before shutdown. Never re-run a conversation.
+	// whose receipt committed just before shutdown. Explicit starts must still
+	// pass syncRuns' committed-receipt check. Never re-run a conversation.
 	records, err := r.runRecords(ctx)
 	if err != nil {
 		return err
 	}
 	for _, record := range records {
-		if record.State == runs.Waiting && record.Retries == 1 && record.Reason == "" {
+		if record.State == runs.Waiting && record.Retries == 1 && record.Reason == "" && record.StartKey == "" {
 			if err = b.service.Release(ctx, record.ID); err != nil {
 				return err
 			}
@@ -285,6 +326,12 @@ func (r *conversationRuntime) syncRuns(ctx context.Context) error {
 			continue
 		}
 		conversations[record.Origin.Conversation] = true
+		// Answer delivery is a per-recipient outbox. An unavailable/deleted
+		// agent must not block unrelated runs or Core startup. Keep the answer
+		// pending for a later pass (including restoration of that agent).
+		if err = r.deliverEffectAnswer(ctx, record); err != nil && ctx.Err() != nil {
+			return ctx.Err()
+		}
 		if !record.Released && record.Promotion == nil && (record.State == runs.Working || record.State == runs.Waiting && record.Reason == "") {
 			var committed int
 			err = r.db.Read(ctx, func(tx *canon.Tx) error {
@@ -312,6 +359,12 @@ func (r *conversationRuntime) syncRuns(ctx context.Context) error {
 	return r.publishRunning(ctx)
 }
 func runSummary(n runs.Notice) string {
+	if n.EffectQuestion {
+		return "How should the remaining actions proceed? Reads and analysis can continue; further actions need a separate authorized decision, and any unknown earlier outcome must be checked first."
+	}
+	if n.Outcome == runs.InputNeeded {
+		return "Your input is needed before this background work can continue."
+	}
 	var verified, unverified []string
 	for _, check := range n.Checks {
 		if check.Passed && check.Verified {
@@ -326,7 +379,7 @@ func runSummary(n runs.Notice) string {
 	if len(unverified) == 0 {
 		unverified = []string{"none"}
 	}
-	return fmt.Sprintf("Agent report: %s. Verified: %s. Unverified: %s. Result: %s (revision %d).", n.Outcome, strings.Join(verified, ", "), strings.Join(unverified, ", "), n.Material.ID, n.Material.Revision)
+	return fmt.Sprintf("Agent report: %s. Verified: %s. Unverified: %s. Open the result card (Ctrl+O) or Running (Ctrl+R).", n.Outcome, strings.Join(verified, ", "), strings.Join(unverified, ", "))
 }
 func (r *conversationRuntime) publishRunning(ctx context.Context) error {
 	b := r.background
@@ -336,7 +389,9 @@ func (r *conversationRuntime) publishRunning(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	current := map[string]bool{}
 	for _, entry := range snapshot.Entries {
+		current[entry.Ref.ID] = true
 		text := entry.View.State + ": " + entry.View.Summary
 		if entry.View.Reason != "" {
 			text += " (" + entry.View.Reason + ")"
@@ -344,7 +399,7 @@ func (r *conversationRuntime) publishRunning(ctx context.Context) error {
 		if b.published[entry.Ref.ID] == text {
 			continue
 		}
-		data, err := json.Marshal(protocol.RunningUpdate{Text: &text})
+		data, err := json.Marshal(protocol.RunningUpdate{Text: &text, RunID: &entry.Ref.ID})
 		if err != nil {
 			return err
 		}
@@ -353,6 +408,21 @@ func (r *conversationRuntime) publishRunning(ctx context.Context) error {
 		}
 		b.published[entry.Ref.ID] = text
 	}
+	for id := range b.published {
+		if current[id] {
+			continue
+		}
+		removed := true
+		data, err := json.Marshal(protocol.RunningUpdate{RunID: &id, Removed: &removed})
+		if err != nil {
+			return err
+		}
+		if err = r.topics.Publish("running", clientsrv.TopicEvent{Kind: protocol.KindRunningUpdate, Key: id, Data: data}); err != nil {
+			return err
+		}
+		delete(b.published, id)
+	}
+
 	return nil
 }
 func (r *conversationRuntime) publishRunNotice(ctx context.Context, notices []lane.Notice) error {
@@ -384,11 +454,48 @@ func (r *conversationRuntime) publishNoticeText(ctx context.Context, key string,
 	for _, notice := range notices {
 		summaries = append(summaries, notice.Summary)
 	}
+	if r.background != nil {
+		if err := r.publishRunQuestions(ctx, notices); err != nil {
+			return err
+		}
+	}
 	text := strings.Join(summaries, "\n")
-	return r.publish(ctx, protocol.KindBackgroundNotice, key, protocol.BackgroundNotice{Text: &text})
+	if err := r.publish(ctx, protocol.KindBackgroundNotice, key, protocol.BackgroundNotice{Text: &text}); err != nil {
+		return err
+	}
+	// Unconfigured Core retains its existing history-only view; no running
+	// service or result-read capability has been admitted.
+	if r.background == nil {
+		return nil
+	}
+	for _, notice := range notices {
+		if notice.Result == "" {
+			continue
+		}
+		record, err := r.background.service.Get(ctx, notice.Run)
+		if err != nil {
+			return err
+		}
+		if record.Origin.Person != r.person || record.Origin.Conversation != r.conversation {
+			return runs.ErrScope
+		}
+		// A metadata-only card keeps the result reachable in conversation
+		// history after its running row has been opened or dismissed.
+		card := protocol.Result{ResultID: notice.Result, Revision: json.Number(strconv.FormatInt(notice.ResultRevision, 10)), Type: protocol.ResultTypeSummary, Status: protocol.ResultStatusPreview,
+			Title: "Agent report", Summary: record.Brief.Goal, RunID: &record.ID, RevisedBy: record.Origin.Agent,
+			Provenance: protocol.ResultProvenance{AgentID: record.Origin.Agent, ConversationID: record.Origin.Conversation, TurnID: record.Origin.Turn}}
+		if err = r.publish(ctx, protocol.KindResult, key+":result:"+record.ID, card); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Use the existing Brief wire names so StartTool remains the sole decoder.
 func startRunDeclaration() provider.ToolDecl {
 	return provider.ToolDecl(`{"type":"function","name":"start_run","description":"Move research, reading or analysis to a background run. Preserve the whole goal, done condition and checks. Returns immediately; never wait for completion. Allowed read tools: skill_index, read_skill.","parameters":{"type":"object","properties":{"Goal":{"type":"string"},"Scope":{"type":"string"},"NotTouch":{"type":"string"},"Done":{"type":"string"},"Checks":{"type":"array","minItems":1,"items":{"type":"object","properties":{"Name":{"type":"string"},"Kind":{"type":"string","enum":["claimed","tool_called","citations_resolve"]}},"required":["Name","Kind"],"additionalProperties":false}},"Result":{"type":"string"},"Allow":{"type":"array","items":{"type":"string","enum":["skill_index","read_skill"]}}},"required":["Goal","Scope","NotTouch","Done","Checks","Result","Allow"],"additionalProperties":false}}`)
+}
+
+func recoverConversationTurns(ctx context.Context, db *canon.Store) error {
+	return turn.New(db).RecoverWithReceipts(ctx, runs.RecoverStartReceipt)
 }
