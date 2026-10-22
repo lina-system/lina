@@ -138,7 +138,10 @@ func TestM1ReplyShapeLONGQA(t *testing.T) {
 			return snapshot
 		}
 		latest := wait(func(s tuiterm.Snapshot) bool {
-			return strings.Contains(strings.Join(conversationRows(s), "\n"), scenario.End) && strings.Contains(screenText(s), "Ctrl+O")
+			rows := conversationRows(s)
+			text := strings.Join(rows, "\n")
+			return replyRowsPainted(rows, lines, scenario.Input) &&
+				strings.Contains(text, scenario.End) && strings.Contains(text, "Ctrl+O")
 		})
 		t.Logf("LONG-QA latest (100x34):\n%s", strings.Join(screenRows(latest), "\n"))
 		if !latest.AltScreen || !strings.Contains(screenRows(latest)[33], "Ctrl+D") {
@@ -152,10 +155,10 @@ func TestM1ReplyShapeLONGQA(t *testing.T) {
 			if pages >= scenario.Lines {
 				t.Fatal("PgUp never reached the first turn")
 			}
-			previous := strings.Join(conversationRows(page), "\n")
+			previous := conversationRows(page)
 			h.keys(terminal, "\x1b[5~")
 			page = wait(func(s tuiterm.Snapshot) bool {
-				return strings.Join(conversationRows(s), "\n") != previous
+				return replyPageReady(conversationRows(s), previous, lines, scenario.Input)
 			})
 			rows := conversationRows(page)
 			overlap := min(len(rows), len(transcript))
