@@ -264,18 +264,17 @@ func codexWorkToolsFixture() {
 
 func TestM2CodexWorkTools(t *testing.T) {
 	t.Parallel()
-	runCodexWorkTools(t, "")
+	runCodexWorkTools(t, "../m2/codex-work-tools.json", "", nil)
 }
 
 func TestM2CodexDevelopmentMethod(t *testing.T) {
 	t.Parallel()
-	runCodexWorkTools(t, "bug_unknown_cause")
+	runCodexWorkTools(t, "../m2/codex-work-tools.json", "bug_unknown_cause", nil)
 }
 
-func runCodexWorkTools(t *testing.T, kind string) {
+func runCodexWorkTools(t *testing.T, scenario, kind string, observe func(*harness, string)) {
 	t.Helper()
-
-	data, err := os.ReadFile("../m2/codex-work-tools.json")
+	data, err := os.ReadFile(scenario)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -364,7 +363,7 @@ func runCodexWorkTools(t *testing.T, kind string) {
 		}
 		emitResponse(w, "worker quota checked", true)
 	}))
-	defer server.Close()
+	defer func() { server.CloseClientConnections(); server.Close() }()
 	h, _ := installedConversationHarness(t, server.URL)
 	bin := t.TempDir()
 	exe, err := os.Executable()
@@ -434,6 +433,9 @@ func runCodexWorkTools(t *testing.T, kind string) {
 			if answerID != "" {
 				continue // A waiting snapshot may repeat the same pending card.
 			}
+			if observe != nil {
+				observe(h, "approval")
+			}
 			answerID, err = c.AnswerApproval(h.ctx, protocol.ApprovalAnswer{CardID: &payload.Card.ID, Revision: &payload.Card.Revision, Choice: protocol.ApprovalChoiceOnce})
 			if err != nil {
 				t.Fatal(err)
@@ -451,6 +453,9 @@ func runCodexWorkTools(t *testing.T, kind string) {
 			}
 			if questionAnswerID != "" {
 				continue
+			}
+			if observe != nil {
+				observe(h, "question")
 			}
 			values := protocol.FormValues{"answer": protocol.FormValue{String: &fixture.Answer}}
 			questionAnswerID, err = c.AnswerQuestion(h.ctx, protocol.QuestionAnswer{CardID: &payload.Card.ID, Revision: &payload.Card.Revision, Answer: protocol.QuestionAnswerActionAccept, Values: &values})
@@ -482,9 +487,15 @@ func runCodexWorkTools(t *testing.T, kind string) {
 	if err != nil || string(artifact) != fixture.Result {
 		t.Fatalf("real worker artifact=%q: %v", artifact, err)
 	}
+	if observe != nil {
+		observe(h, "completed")
+	}
 	c.Close()
 	h.stopCore(core)
 	core = start()
+	if observe != nil {
+		observe(h, "restarted")
+	}
 	c, restored := conversationClient(t, h)
 	if restored != conversation {
 		t.Fatal("Core restart lost originating conversation")
