@@ -71,6 +71,7 @@ type acceptedSteering struct {
 }
 
 type conversationRuntime struct {
+	workEngine      *workRuntime
 	coding          *codingTurn
 	codingDelivery  *conversationRuntime
 	workerDispatch  *dispatch.Service
@@ -319,6 +320,11 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 		case <-r.ownerViews.done:
 		case <-ctx.Done():
 			return ctx.Err()
+		}
+	}
+	if r.workEngine != nil {
+		if err = r.workEngine.close(ctx); err != nil {
+			return err
 		}
 	}
 	if r.workerDispatch != nil {
@@ -870,6 +876,10 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			if err := r.prepareRecordTools(turnID, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
+			workDeclarations, err := r.prepareGoalWorkTools(turnID, bindings)
+			if err != nil {
+				return turn.PreparedRequest{}, err
+			}
 			if err := r.prepareMethodologyTools(turnID, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
@@ -878,6 +888,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			declarations = append(declarations, coreexec.RelationshipDeclaration())
 			declarations = append(declarations, coreexec.SkillDeclarations()...)
 			declarations = append(declarations, coreexec.RecordDeclarations()...)
+			declarations = append(declarations, workDeclarations...)
 			declarations = append(declarations, methodologyDeclarations()...)
 			declarations = append(declarations, startRunDeclaration())
 			webProvider, err := r.selectedWebProvider()
