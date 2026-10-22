@@ -53,6 +53,9 @@ func TestM1ReplayExportInstalledCore(t *testing.T) {
 	core.command.Env = append(core.command.Env, "PATH="+os.Getenv("PATH"), "LINA_RESPONSES_BASE_URL="+provider.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
 	core.start(t)
 	h.connect(core).Close()
+	// A live socket and readable History precede mutation readiness.
+	ready, _ := conversationClient(t, h)
+	ready.Close()
 	terminal, _ := h.startConversationTUI(80, 24, "TERM=xterm-256color")
 	waitScreen(t, h, terminal, design.Text(design.English, "live"))
 	h.keys(terminal, scenario.Input+"\r")

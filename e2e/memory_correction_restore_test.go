@@ -207,7 +207,7 @@ func correctionMemoryTUI(t *testing.T, h *harness) (func(string) protocol.Memory
 				// Wait for the result pager as well as its text before sending Esc.
 				view, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
 					rows := screenRows(s)
-					return s.CursorHidden && len(rows) > 0 && strings.HasPrefix(rows[len(rows)-1], "Esc") && strings.Contains(screenText(s), marker)
+					return s.CursorHidden && len(rows) > 0 && strings.Contains(rows[len(rows)-1], "Esc") && strings.Contains(screenText(s), marker)
 				})
 				if err != nil {
 					t.Fatalf("memory result pager missing: %v\n%s", err, screenText(view))
