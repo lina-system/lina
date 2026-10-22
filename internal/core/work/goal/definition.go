@@ -74,6 +74,9 @@ func (e *Engine) Revise(ctx context.Context, id, base, person, agent string, d D
 		if err != nil {
 			return receipt, err
 		}
+		// The accepted record revision may be ahead of the execution ledger.
+		// Preserve omitted fields from that canonical basis, not its old cache.
+		g.ServiceRepository = serviceRepository(Goal{ServiceTarget: g.ServiceTarget, ServiceRepository: current.ServiceRepository, Scope: current.Scope})
 		g.Summary, g.Done, g.Scope = d.Outcome, d.Done, d.Scope
 		g.Assumptions, g.Criteria, g.Decisions = d.Assumptions, d.Criteria, current.Decisions
 		if d.ServiceRepository != "" {
