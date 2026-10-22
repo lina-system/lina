@@ -248,7 +248,7 @@ test('module tests retain a diagnostic deadline inside their process budget', t 
 test('acceptance batches run every enumerated test once within the shared budget', t => {
   const sb = fixture(t);
   sb.write(sb.dir, 'e2e/fixture_test.go', '// SPDX-License-Identifier: Apache-2.0\npackage e2e\n');
-  const names = ['TestOne', 'TestTwo', 'TestThree', 'ExampleFlow', 'FuzzInput'];
+  const names = ['TestOne', 'TestTwo', 'TestThree', 'TestFour', 'ExampleFlow', 'FuzzInput'];
   const runs = [];
   let elapsed = 0;
   t.mock.method(performance, 'now', () => elapsed);
@@ -262,9 +262,9 @@ test('acceptance batches run every enumerated test once within the shared budget
         const index = args.indexOf('-run');
         const selected = index < 0 ? (args.includes('./e2e/...') ? names : []) : names.filter(name => new RegExp(args[index + 1]).test(name));
         runs.push({ selected, budget: options.timeoutMs });
-        // The growing package exceeds six minutes; either half finishes well
-        // inside that bound and both still share the outer components deadline.
-        const duration = selected.length * 80_000;
+        // Two groups of this growing corpus exceed the package deadline even
+        // though every individual scenario is progressing within its deadline.
+        const duration = selected.length * 130_000;
         elapsed += duration;
         return { status: duration >= 360_000 || duration >= options.timeoutMs ? 1 : 0, stdout: '', stderr: '' };
       }
@@ -273,7 +273,7 @@ test('acceptance batches run every enumerated test once within the shared budget
   assert.equal(result.status, 0, result.output);
   assert.deepEqual(runs.flatMap(run => run.selected).sort(), [...names].sort());
   const batches = runs.filter(run => run.selected.length > 0);
-  assert.equal(batches.length, 2);
+  assert.equal(batches.length, 3);
   assert.ok(batches[1].budget < batches[0].budget);
   assert.ok(elapsed < componentsTimeoutMs);
 });

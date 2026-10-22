@@ -817,6 +817,12 @@ committed fence and exit before taking a verified snapshot. Candidate preflight
 is repeated against the stopped store. The binary, manifest and pinned adapter
 composition is kept for rollback; no user-installed worker or tool is changed.
 
+Activation backup and rollback restore run with the updater caller's cancellation
+and deadline, without the installer's 30-second command timeout. Their duration
+depends on the installed data size. The same rule applies to restore during
+`update --resume`; owned child cleanup, environment filtering and output bounds
+remain in force. Service-manager commands retain their short timeout.
+
 The candidate runs first on the private `run/update.sock`. Core writes a durable
 READY receipt before admitting the smoke conversation. Smoke requires a real
 completed conversation result and, when installed, the bundled Moirai worker's

@@ -1,12 +1,12 @@
 {
   "evidence_type": "headless_protocol",
-  "recorded_at": "2026-10-22T12:50:11Z",
-  "product_source_commit": "bf2de16ee55bff364e139604675d4ee3bf5150b5",
+  "recorded_at": "2026-10-22T17:36:39Z",
+  "product_source_commit": "ccefbddef33169cc2718c03b34399ecde07d7401",
   "scenario_sources": {
     "e2e/m3/non-competition.json": "1410adab84b5bcf365f55c3fd932f272c7389407a6d5d358d47b9c09dfddef2e",
-    "e2e/non_competition_test.go": "0c8d90f43a13b145f8c3212b6a1a023bf4289f2d26154e95a49985ba46139e0a"
+    "e2e/m1/non_competition_test.go": "03a468b373328b3219c17fde990426575b56af7f4a8b467a100b4be52bcc695d"
   },
-  "command": "go test -count=1 -v ./e2e -run '^TestM3NonCompetitionInstalledCore$'",
+  "command": "dv heavy -- go test -count=1 -v ./e2e/m1 -run '^TestM3NonCompetitionInstalledCore$'",
   "result": "pass",
   "observed": [
     "Installed Core executed write_record and saved the receipted bytes with a Git revision.",

@@ -30,7 +30,7 @@ selection ----+---- docs --------+---- gate
               +---- components --+
 ```
 
-Everything runs in one process. `selection` records the exact base and candidate commits, the changed paths, the selected checks and the selection reason. It also checks Git whitespace errors: `git diff --check` over the range, or `git show --check` on the `HEAD` commit with `--full`. The selected checks run in parallel after selection. The gate only evaluates their results; it never reruns their commands. Each check has a bounded timeout. Go build, vet, analyzer and whole-module test commands share the remaining components budget described below; `go test -timeout=6m` also bounds package execution and emits stuck-test stack traces when that deadline is reached. This accommodates subprocess acceptance builds under concurrent cold-cache CI verification without changing individual test operation deadlines. The enclosing components check remains bounded at twenty minutes. The growing headless acceptance corpus is enumerated per package and executed in two disjoint batches of top-level tests, examples and fuzz seed tests. Both batches run uncached with the same six-minute diagnostic timeout and share the twenty-minute components budget; individual operation and scenario deadlines are unchanged. Each enumerated test runs exactly once, with its subtests. An enumeration or batch failure fails the gate immediately.
+Everything runs in one process. `selection` records the exact base and candidate commits, the changed paths, the selected checks and the selection reason. It also checks Git whitespace errors: `git diff --check` over the range, or `git show --check` on the `HEAD` commit with `--full`. The selected checks run in parallel after selection. The gate only evaluates their results; it never reruns their commands. Each check has a bounded timeout. Go build, vet, analyzer and whole-module test commands share the remaining components budget described below; `go test -timeout=6m` also bounds package execution and emits stuck-test stack traces when that deadline is reached. This accommodates subprocess acceptance builds under concurrent cold-cache CI verification without changing individual test operation deadlines. The enclosing components check remains bounded at twenty minutes. The growing headless acceptance corpus is enumerated per package and executed in three disjoint batches of top-level tests, examples and fuzz seed tests. All batches run uncached with the same six-minute diagnostic timeout and share the twenty-minute components budget; individual operation and scenario deadlines are unchanged. Each enumerated test runs exactly once, with its subtests. An enumeration or batch failure fails the gate immediately.
 
 ## Evidence
 
@@ -216,6 +216,16 @@ regression reproduces 342 seconds of cold setup followed by two progressing
 and retains the six-minute package deadline and decreasing shared budget.
 Individual operation deadlines, build-only limits, and automation limits are
 unchanged; a hung command or failed assertion still fails verification.
+
+The subsequent local full run of `a487e850` reached the six-minute package
+watchdog in the second batch after 688.7 seconds of total verification. Its
+current update-activation scenario had run for 37 seconds and its current
+subtest for seven seconds; no assertion had failed. CI passed the merge tree in
+931.8 seconds, but that does not waive the local package deadline. Acceptance
+now uses three disjoint groups while retaining the same six-minute package and
+twenty-minute aggregate limits. A deterministic regression models six
+130-second scenarios: two groups fail at 390 seconds each; three groups finish
+in 260 seconds each, with every test, example and fuzz seed still run once.
 
 ### External Claude program
 

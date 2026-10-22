@@ -103,7 +103,7 @@ func activateUpdate(ctx context.Context, root, candidate string, resume bool) (c
 			return service(ctx, "stop")
 		},
 		Snapshot: func(ctx context.Context) (string, error) {
-			output, err := host.Run(ctx, filepath.Join(root, "system/bin/lina"), "backup", "--state-root", root)
+			output, err := host.RunWithContext(ctx, filepath.Join(root, "system/bin/lina"), "backup", "--state-root", root)
 			if err != nil {
 				return "", err
 			}
@@ -315,7 +315,7 @@ func rollbackUpdate(ctx context.Context, r ctlfiles.UpdateRecord) error {
 	}()
 	// The kept binary owns its own schema catalog. Never let a newer updater
 	// migrate the snapshot while attempting to restore an older composition.
-	_, err = host.Run(ctx, filepath.Join(r.Root, "system/bin/lina"), "restore", "--state-root", r.Root, "--generation", r.Generation)
+	_, err = host.RunWithContext(ctx, filepath.Join(r.Root, "system/bin/lina"), "restore", "--state-root", r.Root, "--generation", r.Generation)
 	return err
 }
 func resumeUpdate(ctx context.Context, s *ctlfiles.Store, r ctlfiles.UpdateRecord, service func(context.Context, string) error) (ctlfiles.UpdateRecord, error) {

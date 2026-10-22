@@ -116,7 +116,7 @@ export function checkComponents({ cwd = process.cwd(), components, execute: run 
       if (acceptance) {
         // The acceptance corpus grows across milestones. Enumerate each
         // package's actual tests, examples and fuzz seeds, then run disjoint
-        // halves. No test is omitted or repeated; each half retains Go's
+        // thirds. No test is omitted or repeated; each batch retains Go's
         // diagnostic timeout and consumes the same outer components budget.
         const listed = invoke('go', ['list', '-mod=readonly', './e2e/...'], directory);
         if (listed.status !== 0) return { status: 1, output };
@@ -130,8 +130,8 @@ export function checkComponents({ cwd = process.cwd(), components, execute: run 
             if (invoke('go', [...testArgs, pkg], directory).status !== 0) return { status: 1, output };
             continue;
           }
-          for (let batch = 0; batch < 2; batch++) {
-            const tests = names.filter((_, index) => index % 2 === batch);
+          for (let batch = 0; batch < 3; batch++) {
+            const tests = names.filter((_, index) => index % 3 === batch);
             if (tests.length && invoke('go', [...testArgs, '-run', `^(${tests.join('|')})$`, pkg], directory).status !== 0) return { status: 1, output };
           }
         }
