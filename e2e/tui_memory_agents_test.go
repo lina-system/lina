@@ -49,11 +49,11 @@ func TestM1TUIMemoryAgentsInstalledCore(t *testing.T) {
 			defer provider.Close()
 			h, start := installConversationBundle(t, newHarness(t, binary), bundle, provider.URL)
 			core := start(true)
-			h.waitCoreAdmission()
+			waitCoreReady(t, h)
 			tap := newAccountTap(t, h, h.socket)
 			h.socket = tap.socket
 			terminal := h.startScreenTUI("TERM=xterm-256color")
-			waitComposer(t, h, terminal)
+			waitComposerReady(t, h, terminal)
 			h.keys(terminal, command+"\r")
 			wanted := protocol.KindMemoryResult
 			if command == "/agents" {
@@ -110,18 +110,18 @@ func memoryAgentRoundTrip(t *testing.T, binary, bundle string) {
 	defer provider.Close()
 	h, start := installConversationBundle(t, newHarness(t, binary), bundle, provider.URL)
 	core := start(true)
-	h.waitCoreAdmission()
+	waitCoreReady(t, h)
 	socket := h.socket
 	tap := newAccountTap(t, h, socket, true)
 	h.socket = tap.socket
 	terminal := h.startScreenTUI("TERM=xterm-256color")
-	waitComposer(t, h, terminal)
+	waitComposerReady(t, h, terminal)
 	opened := false
 	command := func(text string, kind protocol.Kind) protocol.Envelope {
 		t.Helper()
 		if opened {
 			h.keys(terminal, "\x1b")
-			waitComposer(t, h, terminal)
+			waitComposerReady(t, h, terminal)
 		}
 		h.keys(terminal, text+"\r")
 		for {
@@ -171,7 +171,7 @@ func memoryAgentRoundTrip(t *testing.T, binary, bundle string) {
 		t.Helper()
 		if opened {
 			h.keys(terminal, "\x1b")
-			waitComposer(t, h, terminal)
+			waitComposerReady(t, h, terminal)
 			opened = false
 		}
 		h.keys(terminal, prompt+"\r")
@@ -253,7 +253,7 @@ func memoryAgentRoundTrip(t *testing.T, binary, bundle string) {
 		t.Fatal("rename changed identity")
 	}
 	h.keys(terminal, "\x1b")
-	waitComposer(t, h, terminal)
+	waitComposerReady(t, h, terminal)
 	waitScreen(t, h, terminal, "Fixture renamed")
 	opened = false
 	chat("second agent fixture", "", "Synthetic private orchard")
@@ -321,7 +321,7 @@ func memoryAgentRoundTrip(t *testing.T, binary, bundle string) {
 func managementWithoutModelOrDefaultAgent(t *testing.T, binary, bundle string) {
 	h, start := installConversationBundle(t, newHarness(t, binary), bundle, "")
 	core := start(false)
-	h.waitCoreAdmission()
+	waitCoreReady(t, h)
 	caps := []protocol.Capability{{Name: "agents", Version: "1.0"}, {Name: "memory", Version: "1.0"}}
 	client, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "test", caps)
 	if err != nil {
@@ -342,12 +342,12 @@ func managementWithoutModelOrDefaultAgent(t *testing.T, binary, bundle string) {
 	client.Close()
 	h.stopCore(core)
 	core = start(false)
-	h.waitCoreAdmission()
+	waitCoreReady(t, h)
 	socket := h.socket
 	tap := newAccountTap(t, h, socket)
 	h.socket = tap.socket
 	terminal := h.startScreenTUI("TERM=xterm-256color")
-	waitComposer(t, h, terminal)
+	waitComposerReady(t, h, terminal)
 	h.keys(terminal, "/agents create Fixture replacement\r")
 	for {
 		e := tap.next(t, h)
@@ -363,7 +363,7 @@ func managementWithoutModelOrDefaultAgent(t *testing.T, binary, bundle string) {
 		}
 	}
 	h.keys(terminal, "\x1b")
-	waitComposer(t, h, terminal)
+	waitComposerReady(t, h, terminal)
 	h.keys(terminal, "/memory remember Fixture offline statement\r")
 	for {
 		e := tap.next(t, h)
@@ -388,7 +388,7 @@ func managementWithoutModelOrDefaultAgent(t *testing.T, binary, bundle string) {
 func memoryAgentPages(t *testing.T, binary, bundle string) {
 	h, start := installConversationBundle(t, newHarness(t, binary), bundle, "")
 	core := start(false)
-	h.waitCoreAdmission()
+	waitCoreReady(t, h)
 	socket := h.socket
 	client, err := clientapi.DialWithCapabilities(h.ctx, socket, "test", []protocol.Capability{{Name: "memory", Version: "1.0"}})
 	if err != nil {
@@ -419,7 +419,7 @@ func memoryAgentPages(t *testing.T, binary, bundle string) {
 	tap := newAccountTap(t, h, socket)
 	h.socket = tap.socket
 	terminal := h.startScreenTUI("TERM=xterm-256color")
-	waitComposer(t, h, terminal)
+	waitComposerReady(t, h, terminal)
 	h.keys(terminal, "/memory list paged\r")
 	seen := map[string]bool{}
 	for page := 0; page < scenario.PageItems; page++ {
@@ -448,7 +448,7 @@ func memoryAgentPages(t *testing.T, binary, bundle string) {
 			break
 		}
 		h.keys(terminal, "\x1b")
-		waitComposer(t, h, terminal)
+		waitComposerReady(t, h, terminal)
 		h.keys(terminal, "/memory next\r")
 	}
 	if len(seen) != scenario.PageItems {
