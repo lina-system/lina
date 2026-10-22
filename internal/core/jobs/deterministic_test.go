@@ -37,9 +37,15 @@ func TestDeterministicIngressCommitsWithReceiptAndRecoversDelivery(t *testing.T)
 	if _, err := s.Apply(ctx, proposal); err != nil {
 		t.Fatal(err)
 	}
+	deliveryCalls := 0
+	s.cfg.AfterApply = func(context.Context) error { deliveryCalls++; return delivery }
 	if err := s.SubmitDeterministic(ctx, "memory", json.RawMessage(`{"fixture":2}`)); err != nil {
 		t.Fatal(err)
 	}
+	if deliveryCalls != 1 {
+		t.Fatalf("delivery attempts=%d", deliveryCalls)
+	}
+	s.cfg.AfterApply = nil
 	if err := s.SetEnabled(ctx, "memory", false); err != nil {
 		t.Fatal(err)
 	}

@@ -1,0 +1,69 @@
+{
+  "name": "codex-app-server",
+  "source": "https://github.com/openai/codex",
+  "license": "Apache-2.0",
+  "release": "rust-v0.163.0",
+  "licenseCommit": "83086188ae0614bd882818ff1aa23f3194962012",
+  "scope": [
+    "LICENSE",
+    "NOTICE",
+    "codex_app_server_protocol.schemas.json",
+    "types.go"
+  ],
+  "generation": {
+    "tools": [
+      {
+        "name": "codex",
+        "version": "0.163.0",
+        "sha256": "399ff69c431c066e40de318fba45c2b07f45a76b19939d247ee4828fc70c4215",
+        "platform": "linux-x86_64"
+      },
+      {
+        "name": "lina-schema-go",
+        "version": "1",
+        "path": "generate.mjs",
+        "sha256": "2b1badd0b26115dff3a930d1b8f92b1e54770c264e33f75e9c9d7e35d802aa82"
+      },
+      {
+        "name": "node",
+        "version": "v24.20.0",
+        "sha256": "89af8424dd53e560b1933f87ba650d8bf57c83ca5a04600eefb31f416aabbae7"
+      },
+      {
+        "name": "gofmt",
+        "version": "go1.27.3",
+        "sha256": "fd464d1c9098a6714d06bd3fcd2a1fedcdd291e710241160ebb663bf99adf2f8"
+      }
+    ],
+    "commands": [
+      "schema_dir=$(mktemp -d)",
+      "codex app-server generate-json-schema --experimental --out \"$schema_dir\"",
+      "cp \"$schema_dir/codex_app_server_protocol.schemas.json\" third_party/codex-app-server/upstream/",
+      "rm -r \"$schema_dir\"",
+      "node third_party/codex-app-server/generate.mjs"
+    ],
+    "licenseCommands": [
+      "gh api 'repos/openai/codex/contents/LICENSE?ref=rust-v0.163.0' --jq '.content' | base64 -d > third_party/codex-app-server/upstream/LICENSE",
+      "gh api 'repos/openai/codex/contents/NOTICE?ref=rust-v0.163.0' --jq '.content' | base64 -d > third_party/codex-app-server/upstream/NOTICE"
+    ]
+  },
+  "files": {
+    "LICENSE": {
+      "upstream": "d17f227e4df5da1600391338865ce0f3055211760a36688f816941d58232d8dc",
+      "vendored": "d17f227e4df5da1600391338865ce0f3055211760a36688f816941d58232d8dc"
+    },
+    "NOTICE": {
+      "upstream": "9d71575ecfd9a843fc1677b0efb08053c6ba9fd686a0de1a6f5382fd3c220915",
+      "vendored": "9d71575ecfd9a843fc1677b0efb08053c6ba9fd686a0de1a6f5382fd3c220915"
+    },
+    "codex_app_server_protocol.schemas.json": {
+      "upstream": "43e8c1495557ca91e33a63bbfae36c311c206253afae2974c979dbdf5d940c71",
+      "vendored": "43e8c1495557ca91e33a63bbfae36c311c206253afae2974c979dbdf5d940c71"
+    },
+    "types.go": {
+      "upstream": "1a18503e0d6c9167c37a55b893a19368b523a1e054638f1f043bf136b511e231",
+      "vendored": "1a18503e0d6c9167c37a55b893a19368b523a1e054638f1f043bf136b511e231"
+    }
+  },
+  "patches": []
+}
