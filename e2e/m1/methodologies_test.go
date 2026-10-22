@@ -4,7 +4,6 @@ package e2e_test
 import (
 	"context"
 	"encoding/json"
-	"github.com/ncruces/go-sqlite3/driver"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -316,7 +315,7 @@ func TestStarterMethodologiesThroughInstalledCore(t *testing.T) {
 			admittedTurn(t, h, client, conversation, "methodology", brief+" Use the supplied hypothetical rate and jurisdiction for a private draft, retain its source, and revise it.")
 			client.Close()
 			h.stopCore(core)
-			db, err := driver.Open(filepath.Join(h.root, "canon/canon.sqlite"))
+			db, err := canon.OpenSQLite(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -395,7 +394,7 @@ func TestSystemObservesRepairsAndVerifiesThroughInstalledCore(t *testing.T) {
 	seedMethodologyAgents(t, h, person, "system")
 	core = start(true)
 	c, conversation := conversationClient(t, h)
-	db, err := driver.Open(filepath.Join(h.root, "canon/canon.sqlite"))
+	db, err := canon.OpenSQLite(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}

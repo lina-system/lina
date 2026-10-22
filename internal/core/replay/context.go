@@ -136,7 +136,7 @@ func (s Source) contextSnapshot(ctx context.Context, tx *canon.Tx, scope Scope, 
 			}
 		case "persona-state-v1":
 			switch source.ID {
-			case "persona:" + scope.Agent + ":revision", "persona-expression:" + scope.Agent, "persona-settings:" + scope.Agent, "persona-emotion:" + scope.Agent + ":" + ep.Conversation:
+			case "persona:" + scope.Agent + ":revision", "persona-expression:" + scope.Agent, "persona-settings:" + scope.Agent, "persona-methodology:" + scope.Agent, "persona-emotion:" + scope.Agent + ":" + ep.Conversation:
 			default:
 				return fail()
 			}
