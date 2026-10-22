@@ -79,7 +79,7 @@ func TestM1ReplyShapeLONGQA(t *testing.T) {
 	h, start := installedConversationHarness(t, server.URL)
 	core := start(true)
 	c, conversation := conversationClient(t, h)
-	screenTUI := startReadyScreenTUI(t, h, []string{"TERM=xterm-256color"}, 80, 24, nil)
+	screenTUI := h.startScreenTUI("TERM=xterm-256color")
 	waitScreen(t, h, screenTUI, design.Text(design.English, "live"))
 	h.keys(screenTUI, scenario.Input)
 	waitScreen(t, h, screenTUI, scenario.Input)

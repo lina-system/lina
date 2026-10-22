@@ -185,15 +185,15 @@ func TestM1TUIConversationStream(t *testing.T) {
 		listener.Close()
 		err := <-done
 		// A verified quit may close with unread duplicate/idle notifications.
-		// Unix sockets can report that close as reset instead of EOF.
-		if quitVerified && errors.Is(err, syscall.ECONNRESET) {
+		// Unix sockets can report that close as reset or broken pipe instead of EOF.
+		if quitVerified && (errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE)) {
 			return
 		}
 		if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) {
 			t.Errorf("scripted conversation: %v", err)
 		}
 	})
-	terminal := startReadyScreenTUI(t, h, []string{"TERM=xterm-256color"}, 80, 24, nil)
+	terminal := h.startScreenTUI("TERM=xterm-256color")
 	waitComposerReady(t, h, terminal)
 	h.keys(terminal, script.Input+"\r")
 	waitScreen(t, h, terminal, script.Partial)

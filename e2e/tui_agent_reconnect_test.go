@@ -66,12 +66,13 @@ func TestM1TUIAgentReconnectInstalledCore(t *testing.T) {
 	}
 	agent := *created.AgentID
 	client.Close()
-	terminal := h.startTerminalSize([]string{"TERM=xterm-256color", "LC_ALL=C"}, false, true, 120, 35)
+	terminal, tap := h.startConversationTUI(120, 35, "TERM=xterm-256color", "LC_ALL=C")
 	waitComposerReady(t, h, terminal)
 	h.keys(terminal, "/agents choose "+agent+"\r")
 	// The id also appears in the draft before the choose response. The agent
 	// name is displayed only after that response has updated the selection.
 	waitScreen(t, h, terminal, scenario.Agent)
+	waitScreen(t, h, terminal, design.Text(design.English, "choose"))
 	h.keys(terminal, "\x1b")
 	if _, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
 		return !strings.Contains(screenText(s), "/agents choose <id>")
@@ -100,6 +101,7 @@ func TestM1TUIAgentReconnectInstalledCore(t *testing.T) {
 			t.Fatal("provider request missing")
 		}
 	}
+	tap.waitConversation(h)
 	h.keys(terminal, scenario.Input+"\r")
 	waitScreen(t, h, terminal, scenario.Reply+"-1")
 	assertRequest(scenario.Input)

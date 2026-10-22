@@ -17,7 +17,6 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	memoryexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/internal/core/memory"
-	"github.com/thisisjun786/lina/internal/design"
 	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
@@ -182,23 +181,11 @@ func TestM1MemoryCorrectionForgetRestore(t *testing.T) {
 // closing its view. The tap observes the same committed result the TUI receives.
 func correctionMemoryTUI(t *testing.T, h *harness) (func(string) protocol.MemoryResult, func()) {
 	t.Helper()
-	// History snapshots are readable during recovery. Probe admission before
-	// sending management operations, including after a generation restore.
-	ready, _ := conversationClient(t, h)
-	ready.Close()
 	socket := h.socket
 	tap := newAccountTap(t, h, socket, true)
 	h.socket = tap.socket
 	terminal := h.startScreenTUI("TERM=xterm-256color")
 	waitComposerReady(t, h, terminal)
-	// The initial footer can precede history discovery. The tapped conversation
-	// snapshot proves that discovery has admitted this client's subscription.
-	for {
-		frame := tap.next(t, h)
-		if snapshot, ok := frame.Payload.(protocol.Snapshot); ok && strings.HasPrefix(snapshot.Topic, "conversation:") {
-			break
-		}
-	}
 	opened := false
 	command := func(text string) protocol.MemoryResult {
 		t.Helper()
@@ -213,16 +200,18 @@ func correctionMemoryTUI(t *testing.T, h *harness) (func(string) protocol.Memory
 				t.Fatalf("%s refused: %s (%s)", text, e.Error.Code, e.Error.Detail)
 			}
 			if result, ok := e.Payload.(protocol.MemoryResult); ok {
-				// The in-flight help already contains the command examples.
-				// Wait for the response-only heading before closing its pager.
-				if result.Operation == nil {
-					t.Fatal("memory result has no operation")
+				marker := "/memory forget"
+				if result.ItemID != nil {
+					marker = *result.ItemID
 				}
-				heading := design.Text(design.English, *result.Operation)
-				if _, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
-					return strings.TrimSpace(screenRows(s)[0]) == heading
-				}); err != nil {
-					t.Fatalf("memory result was not rendered: %v", err)
+				// A returned item id can already appear in the command draft.
+				// Wait for the result pager as well as its text before sending Esc.
+				view, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
+					rows := screenRows(s)
+					return s.CursorHidden && len(rows) > 0 && strings.HasPrefix(rows[len(rows)-1], "Esc") && strings.Contains(screenText(s), marker)
+				})
+				if err != nil {
+					t.Fatalf("memory result pager missing: %v\n%s", err, screenText(view))
 				}
 				opened = true
 				return result
