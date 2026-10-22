@@ -612,14 +612,16 @@ account credential. It supplies the durable random main identity. The unit
 explicit root and socket arguments. A bundled `moirai-worker` receives its own
 `lina-moirai.service`, ordered after and dependent on Core, with
 `--canon <state-root>/canon/canon.sqlite` and
-`--socket <state-root>/system/run/moirai.sock`. No provider adapter receives
+`--socket <state-root>/run/jobs.sock`. No provider adapter receives
 a service unit.
 
-The current Core command does not connect canon or the job API. A bundled
-worker and its unit are installed but left disabled, and background memory
-and planning are reported unavailable with that cause. Enabling the worker
-requires the increment that connects those Core services; a copied executable
-or a successful systemd start job is not evidence of worker readiness.
+Core opens canon and serves the job API at that socket. Install enables the
+included worker after Core. The worker's service retries initial unavailability
+because Core may still be opening canon when systemd starts the worker. A
+missing model route makes model-based jobs unavailable without stopping Core
+or deterministic growth jobs. A copied executable or a successful systemd start
+job is not evidence of readiness; the installed skill maintenance scenario
+exercises the socket with the actual worker and verifies committed results.
 
 Preflight refuses an existing state root, socket, named service, service
 override or enablement link, and refuses linked destination ancestors. An
@@ -845,6 +847,11 @@ opening canon or minting an epoch. `lina update --resume --state-root <path>`
 recovers an interrupted attempt using its recorded paths, composition and
 generation, or retains a hold with a closed cause. Changed installation/data
 paths and foreign services are refused before controlling another service.
+If the resumed service fails to start or pass readiness, recovery records
+`held` with `update_resume_failed`, including when the interrupted attempt had
+already recorded `complete` or `rolled_back`. A failed readiness check stops the
+service with a bounded cleanup context even if the updater was cancelled.
+The READY receipt stays sticky, and normal Core startup remains blocked.
 
 An explicitly configured Claude OAuth token also reaches the trusted smoke Core
 and its model adapter, so smoke does not require a cached vendor login. Core
@@ -888,6 +895,9 @@ and SIGKILL acknowledged at each binary/adapter rename. Failure evidence uses
 closed causes and durable receipts; it does not infer success from a running
 service or from elapsed time. Existing runtime-specific injections below remain
 with their owning components and are included in full foundation verification.
+`e2e/m2/update-resume-failure.json` kills the updater after smoke completes but
+before the ordinary service starts, then refuses the recovery start. It checks
+the durable hold, blocked Core startup and unchanged data and composition.
 
 These runtime failures must end as their rules require:
 

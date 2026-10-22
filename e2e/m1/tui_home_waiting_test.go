@@ -17,7 +17,7 @@ func TestM2TUIHomeWaitingInstalledCore(t *testing.T) {
 	t.Parallel()
 	var terminal *terminal
 	var outside, request string
-	runCodexWorkTools(t, "../m2/tui-home-waiting.json", "", func(h *harness, phase string) {
+	runCodexWorkTools(t, "../m2/tui-home-waiting.json", "", func(h *harness, phase string, _ []protocol.Question) {
 		switch phase {
 		case "approval":
 			// Only synthetic records in this harness are changed. Core detects the

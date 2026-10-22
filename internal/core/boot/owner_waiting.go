@@ -31,7 +31,7 @@ func (s workerWaitingSource) Snapshot(_ context.Context, person string) ([]waiti
 				session.mu.Unlock()
 				return nil, err
 			}
-			items = append(items, waiting.LiveItem{ID: id, Item: waiting.Item{Person: person, Agent: session.origin.agent, Revision: revision, Reason: waiting.MissingInformation, Blocking: true, Finished: card.Outcome != nil, View: view.Waiting{Kind: view.Reply, Sentence: card.Summary, AgentName: name, FreeText: true, Effort: view.FiveMinutes}}})
+			items = append(items, waiting.LiveItem{ID: id, Item: waiting.Item{Person: person, Agent: session.origin.agent, Revision: revision, Reason: waiting.MissingInformation, Blocking: true, Finished: card.Outcome != nil, Requested: q.requested, View: view.Waiting{Kind: view.Reply, Sentence: card.Summary, AgentName: name, FreeText: true, Effort: view.FiveMinutes}}})
 		}
 		session.mu.Unlock()
 	}

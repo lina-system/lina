@@ -45,7 +45,7 @@ func TestSkillToolsCommitNoticeReadUndoAndRefuseCode(t *testing.T) {
 	defer store.Close()
 	auth := grant.Request{GrantID: "grant", MainID: "main", Epoch: 1, TaskID: "task", Host: "synthetic", OSUser: "synthetic", Person: "person", Agent: "agent", Revision: "0"}
 	service, err := authority.Open(t.Context(), db, authority.Config{Epoch: 1, Resolve: func(context.Context, string) (grant.Grant, grant.Environment, error) {
-		return grant.Grant{Identity: auth, Expires: time.Now().Add(time.Hour), Scope: []grant.Permission{{Tool: "write_skill", Target: "skill:example", Write: true}, {Tool: "undo_skill", Target: "skill:example", Write: true}, {Tool: "read_skill", Target: "skill:example"}, {Tool: "skill_index", Target: "skills"}}, Revisions: map[string]string{"skill:example": auth.Revision}}, grant.Environment{Epoch: 1, Now: time.Now(), OSPermitted: true, Revision: auth.Revision}, nil
+		return grant.Grant{Identity: auth, Expires: time.Now().Add(time.Hour), Scope: []grant.Permission{{Tool: "write_skill", Target: "skill:example", Write: true}, {Tool: "undo_skill", Target: "skill:example", Write: true}, {Tool: "read_skill", Target: "skill:example"}, {Tool: "skill_index", Target: "skills"}, {Tool: "skill_notices", Target: "skills"}, {Tool: "skill_maintenance", Target: "skill-maintenance", Write: true}}, Revisions: map[string]string{"skill:example": auth.Revision, "skill-maintenance": auth.Revision}}, grant.Environment{Epoch: 1, Now: time.Now(), OSPermitted: true, Revision: auth.Revision}, nil
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -122,5 +122,41 @@ func TestSkillToolsCommitNoticeReadUndoAndRefuseCode(t *testing.T) {
 	entries, err = store.Catalog(t.Context())
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("undo: %+v %v", entries, err)
+	}
+	// Restricted personas may still read local maintenance state and change
+	// its local switch with a grant. Unclassified tools are refused by policy.
+	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO agents(id,name,preset,revision,state) VALUES('agent','Fixture','legal',1,'{}')`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	enabled := true
+	if _, err := coreexec.RegisterSkillMaintenanceControl(registry, func(_ context.Context, value *bool) (any, string, error) {
+		if value != nil {
+			enabled = *value
+		}
+		return map[string]bool{"enabled": enabled}, auth.Revision, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"notices", "status", "disable"} {
+		name, args, class := "skill_maintenance", any(struct{}{}), tools.Research
+		if key == "notices" {
+			name = "skill_notices"
+		}
+		if key == "disable" {
+			args, class = map[string]bool{"enabled": false}, tools.LocalWrite
+		}
+		if result := call(key, name, args); result.State != tools.Applied {
+			t.Fatalf("local maintenance operation refused: %+v", result)
+		}
+		effect, err := service.Effect(t.Context(), key)
+		if err != nil || effect.Class != class {
+			t.Fatalf("maintenance provenance: %+v %v", effect, err)
+		}
+	}
+	if enabled {
+		t.Fatal("authorized maintenance switch did not change")
 	}
 }
