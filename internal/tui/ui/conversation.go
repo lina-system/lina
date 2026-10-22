@@ -268,6 +268,11 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 			m.conversation.undo = nil
 			return command
 		}
+		if handled, command := m.webCommand(text); handled {
+			m.reduceInput(state.EditDraft{})
+			m.conversation.undo = nil
+			return command
+		}
 		if handled, command := m.channelCommand(text); handled {
 			m.reduceInput(state.EditDraft{})
 			m.conversation.undo = nil
