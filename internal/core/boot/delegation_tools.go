@@ -174,7 +174,7 @@ func (d *delegationRuntime) tasks(ctx context.Context, r *conversationRuntime, t
 		var packet bytes.Buffer
 		fmt.Fprintf(&packet, "Complete this delegated work in the current worktree and branch. Do not merge or write the base branch. Deliver your changes in one pull request into %s and report its result. Keep to the declared write areas.\nWork definition:\n%s\n", repo.Base, raw)
 		dir := filepath.Join(d.root.root, "work", "tasks", id)
-		tasks = append(tasks, work.Task{ID: id, PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Title: definition.What, Done: definition.Done, ArtifactRoots: []string{dir}, RequiresApply: true, Schedule: &work.Schedule{Group: delegatedID(turn, call, "graph"), Repository: in.Repository, Areas: definition.Areas, DependsOn: deps, Worker: "codex", Host: "local", Workdir: dir, Packet: packet.String()}})
+		tasks = append(tasks, work.Task{ID: id, PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Title: definition.What, Done: definition.Done, ArtifactRoots: []string{dir}, RequiresApply: true, Schedule: &work.Schedule{InputID: strings.TrimPrefix(turn, "turn:"), Group: delegatedID(turn, call, "graph"), Repository: in.Repository, Areas: definition.Areas, DependsOn: deps, Worker: "codex", Host: "local", Workdir: dir, Packet: packet.String()}})
 	}
 	return tasks, nil
 }

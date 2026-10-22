@@ -1174,6 +1174,9 @@ type Definition struct {
   paths are installation inputs, never model arguments. Without that file the
   graph tools are not advertised. The existing single-worker `dispatch_work`
   tool retains its input and behavior. Remote Node admission remains separate.
+  An unavailable worker executable, failed handshake or initial quota observation
+  disables these optional graph tools and closes partial worker resources; Core
+  still starts conversation, channels and background runs.
 - `schedule_work` admits a graph of definitions (key, what, why, done, areas,
   dependencies and design sections) scoped to the authenticated conversation.
   Core resolves design references at the registered base, mints stable task ids
@@ -1193,6 +1196,12 @@ type Definition struct {
   capacity; only a lost App Server observation leaves the execution unknown.
   A conflict is returned to the same worker once, with the
   claim durable before input; a second conflicting head requires input.
+- Scheduled sessions register with the existing originating-conversation worker
+  question and approval bridge. Replies are bound to their worker thread/turn;
+  all pending requests must be answered before the task returns to working.
+  Ordinary `worker_input` cannot start a scheduled session outside scheduler
+  admission. Task ids are stable opaque identifiers that remain valid unmasked
+  metadata; their spelling carries no authority.
 - One task, one worker, one worktree, one branch, created by Core with the Git command from a parent clone in `work/clones/`. #127 wires `prepare_work` and `retain_work_result` into the running conversation tool registry. `work.Area` owns leased Git subprocesses through `kit/proc`, detached allocation at the pinned base, protected refs and branch bundles. Core closes its process owner during shutdown.
 - The CRW pin is the start gate for the work ledger records: a pin record and a LINA fixture runner whose expected values come from the fixture ([work-and-delegation.md](work-and-delegation.md#start-gate)).
 - `internal/core/work/pin` verifies SHA-256 over every adopted file before running

@@ -163,3 +163,30 @@ func (r *Reactor) Unknown(ctx context.Context, id, thread, turn string) error {
 	}
 	return err
 }
+
+func (r *Reactor) InputNeeded(ctx context.Context, id, thread, turn string) error {
+	return r.inputState(ctx, id, thread, turn, false)
+}
+func (r *Reactor) Answered(ctx context.Context, id, thread, turn string) error {
+	return r.inputState(ctx, id, thread, turn, true)
+}
+func (r *Reactor) inputState(ctx context.Context, id, thread, turn string, answered bool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	c, err := r.store.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if c.Run == nil || c.Run.ThreadID != thread || c.Run.TurnID != turn {
+		return work.ErrState
+	}
+	if answered {
+		err = r.store.WorkerInputAnswered(ctx, id, c.Run.ID)
+	} else {
+		err = r.store.WorkerInputNeeded(ctx, id, c.Run.ID)
+	}
+	if r.hooks.Changed != nil {
+		r.hooks.Changed(ctx)
+	}
+	return err
+}

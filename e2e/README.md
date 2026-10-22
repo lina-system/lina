@@ -270,7 +270,8 @@ refused requests preserve agent revisions, actions, conversations and bindings.
 
 `m3/dependency-release.json` runs the installed Core with a synthetic App Server
 and forge. Conversation tools admit a graph, Core creates actual Git worktrees,
-and worker processes write and commit results. Independent work starts while a
+and worker processes write and commit results after a real client answers a
+worker question and approval. Independent work starts while a
 dependent waits; only a merge in a separate forge clone followed by Core's
 observation releases the dependent onto the fetched remote base. The parent
 clone's checked-out base branch stays unchanged. Restart retains the merge without
@@ -295,3 +296,8 @@ work tools, authenticated owner approval and question answers, worker-written
 artifact contents, reported quota windows, and restored completion history.
 Worker settings remain omitted. This scenario uses no real account or provider
 credentials and does not measure live Codex quota.
+
+`m3/delegation-readiness.json` exercises absent executables, failed worker
+handshakes and unavailable quota observations. Installed Core keeps conversation
+available, omits unavailable graph tools and reaps partial worker processes.
+The scenario uses the shared acceptance harness in `e2e/m1/`.

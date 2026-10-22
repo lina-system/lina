@@ -260,8 +260,13 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err = r.startRuns(ctx); err != nil {
 		return nil, err
 	}
-	if err = r.startDelegation(ctx); err != nil {
-		return nil, err
+	if delegationErr := r.startDelegation(ctx); delegationErr != nil {
+		// Optional worker readiness cannot take down conversation or channels.
+		if r.delegation != nil {
+			_ = r.delegation.close(ctx)
+			r.delegation = nil
+		}
+		fmt.Fprintln(os.Stderr, "Delegation is unavailable; other Core capabilities remain available.")
 	}
 	r.channels, err = startChannels(r, epoch, channelTransport)
 	if err != nil {

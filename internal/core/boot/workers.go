@@ -33,6 +33,8 @@ type workerRuntime struct {
 	sessions map[string]*workerSession
 }
 type workerSession struct {
+	scheduled     bool
+	answered      func(context.Context, worker.Thread)
 	adapter       worker.Adapter
 	close         func() error
 	compatibility codex.Compatibility
@@ -247,6 +249,9 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 		}
 		body, err := json.Marshal(map[string]any{"rows": rows})
 		return tools.Result{State: tools.Applied, Body: body}, err
+	}
+	if entry.scheduled && name == "worker_input" {
+		return tools.Result{State: tools.Failed, Body: workerError(errors.New("scheduled work is controlled by the scheduler"))}, nil
 	}
 	// Read the authoritative snapshot immediately before any control. The model's
 	// handle is compared to it; a thread id alone never authorizes input.

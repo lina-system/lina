@@ -15,8 +15,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/work"
+	"github.com/thisisjun786/lina/kit/protocol"
 )
 
 func TestM3DependencyReleaseInstalledCore(t *testing.T) {
@@ -135,7 +137,7 @@ func TestM3DependencyReleaseInstalledCore(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	writeJSON(filepath.Join(h.root, "fixture.json"), map[string]string{"git": git, "clone": clone, "forge": forge})
+	writeJSON(filepath.Join(h.root, "fixture.json"), map[string]any{"git": git, "clone": clone, "forge": forge, "requests": true})
 	gh := filepath.Join(h.root, "fixture-gh")
 	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
 	if err = os.WriteFile(gh, []byte(fmt.Sprintf("#!/bin/sh\nexec %s %s %s forge \"$@\"\n", quote(node), quote(program), quote(h.root))), 0700); err != nil {
@@ -163,7 +165,57 @@ func TestM3DependencyReleaseInstalledCore(t *testing.T) {
 	}
 	core := start()
 	client, conversation := conversationClient(t, h)
+	waiting, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "test", []protocol.Capability{{Name: "waiting", Version: "1.0"}, {Name: "conversation", Version: "1.0"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer waiting.Close()
+	topic := "waiting"
+	if _, err = waiting.Subscribe(h.ctx, protocol.Subscribe{Topic: &topic}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = waiting.Receive(h.ctx); err != nil {
+		t.Fatal(err)
+	}
 	admittedTurn(t, h, client, conversation, "dispatch-input", "Complete the three related tasks.")
+	questionAnswered, approvalAnswered := false, false
+	answerCtx, stopAnswers := context.WithTimeout(h.ctx, operationTimeout)
+	defer stopAnswers()
+	for !questionAnswered || !approvalAnswered {
+		frame, err := waiting.Receive(answerCtx)
+		if err != nil {
+			t.Fatalf("scheduled requests not delivered: question=%v approval=%v: %v", questionAnswered, approvalAnswered, err)
+		}
+		if frame.Error != nil {
+			t.Fatal(frame.Error)
+		}
+		switch card := frame.Payload.(type) {
+		case protocol.Question:
+			if questionAnswered {
+				continue
+			}
+			if card.Card == nil || card.ConversationID != conversation {
+				t.Fatal("question origin lost")
+			}
+			answer := "confirmed"
+			values := protocol.FormValues{"answer": protocol.FormValue{String: &answer}}
+			if _, err = waiting.AnswerQuestion(answerCtx, protocol.QuestionAnswer{CardID: &card.Card.ID, Revision: &card.Card.Revision, Answer: protocol.QuestionAnswerActionAccept, Values: &values}); err != nil {
+				t.Fatal(err)
+			}
+			questionAnswered = true
+		case protocol.ApprovalRequest:
+			if approvalAnswered {
+				continue
+			}
+			if card.Card == nil || card.ConversationID == nil || *card.ConversationID != conversation {
+				t.Fatal("approval origin lost")
+			}
+			if _, err = waiting.AnswerApproval(answerCtx, protocol.ApprovalAnswer{CardID: &card.Card.ID, Revision: &card.Card.Revision, Choice: protocol.ApprovalChoiceOnce}); err != nil {
+				t.Fatal(err)
+			}
+			approvalAnswered = true
+		}
+	}
 	if len(taskIDs) != 3 {
 		t.Fatalf("no dispatched graph: %v", taskIDs)
 	}

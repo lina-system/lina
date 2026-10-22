@@ -8,12 +8,15 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"github.com/thisisjun786/lina/internal/core/reactor"
+	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/codex"
 	"github.com/thisisjun786/lina/kit/lease"
+	"github.com/thisisjun786/lina/kit/protocol"
 )
 
 func TestDelegationDistinguishesTerminalConnectionFailure(t *testing.T) {
@@ -51,6 +54,10 @@ func TestDelegationDistinguishesTerminalConnectionFailure(t *testing.T) {
 			activity := lease.New(func() {})
 			ctx, cancel := context.WithCancel(t.Context())
 			d := &delegationRuntime{root: &conversationRuntime{work: service}, reactor: reaction, adapter: &codex.Session{}, done: make(chan struct{}), workerEvents: make(chan worker.Event, 1), leases: map[string]lease.Lease{"thread:turn": activity}}
+			origin := &conversationRuntime{ctx: ctx, decisions: &clientsrv.Decisions{}}
+			origin.router = &conversationRouter{root: origin}
+			entry := &workerSession{origin: origin, questions: map[string]*workerQuestion{"question": {card: protocol.Question{Card: &protocol.DecisionCard{}}, event: worker.Event{Thread: worker.Thread{TurnID: "turn"}}}}}
+			d.root.workers = &workerRuntime{sessions: map[string]*workerSession{"thread": entry}}
 			go d.events(ctx)
 			t.Cleanup(func() { cancel(); <-d.done; activity.Release() })
 			d.workerEvents <- worker.Event{Thread: worker.Thread{ID: "thread", TurnID: "turn", TaskID: "task"}, Kind: worker.FinishEvent, Finish: &worker.Finish{Status: worker.Failed, Failure: worker.ConnectionFailure, Code: code}}
@@ -58,6 +65,11 @@ func TestDelegationDistinguishesTerminalConnectionFailure(t *testing.T) {
 			case <-changed:
 			case <-t.Context().Done():
 				t.Fatal("completion not observed")
+			}
+			cancel()
+			<-d.done
+			if stopped := entry.questions["question"].card.Card.Outcome != nil; stopped != (code != "connection_lost") {
+				t.Fatalf("terminal request withdrawal=%v for %s", stopped, code)
 			}
 			card, err := service.Get(t.Context(), "task")
 			if err != nil {
@@ -68,5 +80,16 @@ func TestDelegationDistinguishesTerminalConnectionFailure(t *testing.T) {
 				t.Fatalf("%s: active=%v capacity=%v area=%v", code, card.Active, card.Scheduling.CapacityHeld, card.Scheduling.AreaHeld)
 			}
 		})
+	}
+}
+
+func TestDelegatedIdentityIsStableAndSafeMetadata(t *testing.T) {
+	id := delegatedID("turn", "call", "key")
+	masked, err := secrets.Mask(id)
+	if err != nil || masked.Text() != id {
+		t.Fatalf("generated task identity is secret-shaped: %q %v", id, err)
+	}
+	if delegatedID("turn", "call", "key") != id || delegatedID("turn", "call", "other") == id {
+		t.Fatal("unstable or colliding task identity")
 	}
 }

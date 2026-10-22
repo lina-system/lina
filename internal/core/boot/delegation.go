@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/reactor"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker"
@@ -229,6 +230,17 @@ func (d *delegationRuntime) start(ctx context.Context, c work.Card) (work.Run, e
 	if !ok || p.Worker != "codex" || p.Host != "local" {
 		return work.Run{}, work.ErrInvalid
 	}
+	origin, err := d.root.router.view(ctx, clientsrv.Session{PersonID: c.Task.PersonID}, c.Task.AgentID)
+	if err != nil {
+		return work.Run{}, err
+	}
+	input, err := origin.journal().Get(ctx, p.InputID)
+	if err != nil {
+		return work.Run{}, err
+	}
+	if input.ConversationID != c.Task.ConversationID || input.AgentID != c.Task.AgentID {
+		return work.Run{}, work.ErrState
+	}
 	if err := os.MkdirAll(filepath.Dir(p.Workdir), 0700); err != nil {
 		return work.Run{}, err
 	}
@@ -283,10 +295,33 @@ func (d *delegationRuntime) start(ctx context.Context, c work.Card) (work.Run, e
 	d.adapters[c.Task.ID] = adapter
 	d.processLeases = append(d.processLeases, process)
 	d.mu.Unlock()
+
+	thread, err := adapter.Start(ctx, l, worker.StartSpec{TaskID: c.Task.ID, AttemptID: c.Task.ID + ":1", Workdir: p.Workdir, TaskPacket: p.Packet, Required: worker.CapabilitySet{worker.SignalCompletion}})
+	if err != nil {
+		return work.Run{}, err
+	}
+	d.mu.Lock()
+	d.threads[c.Task.ID] = thread
+	delete(d.leases, "pending:"+c.Task.ID)
+	d.leases[thread.ID+":"+thread.TurnID] = l
+	d.mu.Unlock()
+	entry := &workerSession{scheduled: true, adapter: adapter, close: adapter.Close, compatibility: adapter.Compatibility(), origin: origin, input: input, thread: thread, packet: p.Packet, workdir: p.Workdir, approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}, active: map[string]lease.Lease{}, done: make(chan struct{}), process: process}
+	entry.answered = func(answerCtx context.Context, t worker.Thread) {
+		_ = d.reactor.Answered(answerCtx, t.TaskID, t.ID, t.TurnID)
+	}
+	d.root.workers.mu.Lock()
+	if d.root.workers.closed || d.root.workers.sessions[thread.ID] != nil {
+		d.root.workers.mu.Unlock()
+		return work.Run{}, work.ErrState
+	}
+	d.root.workers.sessions[thread.ID] = entry
+	d.root.workers.mu.Unlock()
 	// Events stay buffered until Start binds the returned thread and turn.
 	d.wg.Add(1)
 	go func() {
 		defer d.wg.Done()
+		defer close(entry.done)
+		defer entry.stopRequests("")
 		for {
 			select {
 			case e, ok := <-adapter.Events():
@@ -309,15 +344,6 @@ func (d *delegationRuntime) start(ctx context.Context, c work.Card) (work.Run, e
 		}
 	}()
 
-	thread, err := adapter.Start(ctx, l, worker.StartSpec{TaskID: c.Task.ID, AttemptID: c.Task.ID + ":1", Workdir: p.Workdir, TaskPacket: p.Packet, Required: worker.CapabilitySet{worker.SignalCompletion}})
-	if err != nil {
-		return work.Run{}, err
-	}
-	d.mu.Lock()
-	d.threads[c.Task.ID] = thread
-	delete(d.leases, "pending:"+c.Task.ID)
-	d.leases[thread.ID+":"+thread.TurnID] = l
-	d.mu.Unlock()
 	return work.Run{ID: c.Task.ID + ":1", TaskID: c.Task.ID, Generation: 1, Worker: "codex", ThreadID: thread.ID, TurnID: thread.TurnID, NodeID: "local"}, nil
 }
 func (d *delegationRuntime) returnConflict(ctx context.Context, c work.Card) (work.Run, error) {
@@ -435,9 +461,28 @@ func (d *delegationRuntime) events(ctx context.Context) {
 				delete(d.leases, key)
 				d.mu.Unlock()
 				activity.Release()
+				if d.root.workers != nil {
+					d.root.workers.mu.Lock()
+					entry := d.root.workers.sessions[event.Thread.ID]
+					d.root.workers.mu.Unlock()
+					if entry != nil {
+						entry.stopRequests(event.Thread.TurnID)
+					}
+				}
 			case worker.QuestionEvent, worker.ApprovalEvent:
-				_ = d.root.work.WorkerInputNeeded(ctx, event.Thread.TaskID, event.Thread.AttemptID)
-				_ = d.root.publishRunning(ctx)
+				if err := d.reactor.InputNeeded(ctx, event.Thread.TaskID, event.Thread.ID, event.Thread.TurnID); err != nil {
+					continue
+				}
+				d.root.workers.mu.Lock()
+				entry := d.root.workers.sessions[event.Thread.ID]
+				d.root.workers.mu.Unlock()
+				if entry != nil {
+					if event.Kind == worker.QuestionEvent {
+						entry.requestQuestion(event)
+					} else {
+						entry.requestApproval(event)
+					}
+				}
 			case worker.ProgressEvent, worker.UsageEvent, worker.ToolCallEvent:
 			}
 		case <-d.resetChanged:
@@ -462,5 +507,5 @@ func (d *delegationRuntime) events(ctx context.Context) {
 }
 func delegatedID(turn, call, key string) string {
 	sum := sha256.Sum256([]byte(turn + "\x00" + call + "\x00" + key))
-	return "task-" + hex.EncodeToString(sum[:12])
+	return "task_" + hex.EncodeToString(sum[:12])
 }

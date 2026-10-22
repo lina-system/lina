@@ -15,6 +15,7 @@ import (
 // Schedule fixes the dispatch graph. Repository is a canonical repository
 // identity shared by all clones; areas are repository-relative globs.
 type Schedule struct {
+	InputID    string   `json:"input_id,omitempty"`
 	Group      string   `json:"group"`
 	Repository string   `json:"repository"`
 	Areas      []string `json:"areas"`
@@ -453,5 +454,22 @@ func (s *Service) UnknownExecution(ctx context.Context, id, run string) error {
 			return ErrState
 		}
 		return appendEvent(ctx, tx, Event{Key: "worker-unknown:" + run, TaskID: id, Kind: "unknown"})
+	})
+}
+
+func (s *Service) WorkerInputAnswered(ctx context.Context, id, run string) error {
+	return s.db.Write(ctx, func(tx *canon.Tx) error {
+		events, err := ledger(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		c, err := Project(events)
+		if err != nil {
+			return err
+		}
+		if c.Run == nil || c.Run.ID != run || !c.Active {
+			return ErrState
+		}
+		return schedulingEvent(ctx, tx, c, "schedule_answered", c.Scheduling, nil)
 	})
 }
