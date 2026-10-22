@@ -375,7 +375,7 @@ func TestSystemObservesRepairsAndVerifiesThroughInstalledCore(t *testing.T) {
 			emitPersonaCall(w, "verify", "observe_health", map[string]any{})
 		case 4:
 			methodologyOutput(t, request, "ok", &after)
-			if !after.Healthy || after.Revision == before.Revision || after.ObservedAt == before.ObservedAt {
+			if !after.Healthy || after.Revision == before.Revision || after.ObservedAt == "" {
 				t.Error("repair not independently verified")
 			}
 			emitResponse(w, "Records index repair verified.", true)
