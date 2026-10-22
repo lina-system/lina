@@ -57,8 +57,20 @@ func TestM1TUIInterruptedReplySurvivesCoreRestart(t *testing.T) {
 	h, start := installedConversationHarness(t, provider.URL)
 	core := start(true)
 	c, conversation := conversationClient(t, h)
+	socket := h.socket
+	tap := newAccountTap(t, h, socket)
+	h.socket = tap.socket
 	terminal := h.startScreenTUI("TERM=xterm-256color")
+	h.socket = socket
 	waitScreen(t, h, terminal, "Ctrl+D")
+	// The initial-history guard keeps early input in the draft. Wait for the
+	// TUI's subscription before starting the response this scenario interrupts.
+	for {
+		frame := tap.next(t, h)
+		if snapshot, ok := frame.Payload.(protocol.Snapshot); ok && snapshot.Topic == "conversation:"+conversation {
+			break
+		}
+	}
 	h.keys(terminal, scenario.Input+"\r")
 	waitScreen(t, h, terminal, scenario.Partial)
 	h.keys(terminal, "\x1b")

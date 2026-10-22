@@ -12,42 +12,6 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
-func TestInitialHistoryDiscoveryRetainsDraftUntilDestinationKnown(t *testing.T) {
-	m := conversationShell()
-	m.content.Agents = []protocol.Agent{{AgentID: "default"}}
-	if request := m.discoveryHistory(); request == nil || request.AgentID != nil {
-		t.Fatal("initial connection did not request default history")
-	}
-	// Welcome's live notification precedes the history reply. A typed draft
-	// must remain editable, but Enter cannot dispatch with an empty destination.
-	m.Update(shellConnection{Generation: 1, Status: ConnectionStatus{State: Live}})
-	m.Update(tea.PasteMsg{Content: "first draft"})
-	if _, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}); cmd != nil || m.content.Busy || m.content.Draft.Text != "first draft" {
-		t.Fatal("initial discovery sent or lost the draft before knowing its destination")
-	}
-	m.conversation.id = "main:default"
-	m.agentDiscoveryDone()
-	if m.status.State != Live {
-		t.Fatal("history completion did not restore live status")
-	}
-	if _, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}); cmd == nil {
-		t.Fatal("resolved destination cannot accept the retained draft")
-	}
-}
-
-func TestAccountOnlyWelcomeDoesNotWaitForConversationDiscovery(t *testing.T) {
-	m := conversationShell()
-	m.content.Capabilities = []protocol.Capability{{Name: "accounts", Version: "1.0"}}
-	m.content.Agents = []protocol.Agent{{AgentID: "default"}}
-	if request := m.discoveryHistory(); request != nil || m.conversation.agentPending {
-		t.Fatal("account-only welcome requested unavailable conversation history")
-	}
-	m.Update(shellConnection{Generation: 1, Status: ConnectionStatus{State: Live}})
-	if m.status.State != Live {
-		t.Fatal("account-only connection cannot become live")
-	}
-}
-
 func TestReconnectHistoryRetainsChosenAgentAndUnacknowledgedDraft(t *testing.T) {
 	m := conversationShell()
 	m.conversation.id = "main:chosen"

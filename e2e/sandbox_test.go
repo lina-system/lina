@@ -74,9 +74,21 @@ func TestM1SandboxUnavailable(t *testing.T) {
 			}
 			core.start(t)
 			h.connect(core).Close()
-			client, _ := conversationClient(t, h)
+			client, conversation := conversationClient(t, h)
+			socket := h.socket
+			tap := newAccountTap(t, h, socket)
+			h.socket = tap.socket
 			term := h.startScreenTUI("TERM=xterm-256color")
+			h.socket = socket
 			waitScreen(t, h, term, "Ctrl+D")
+			// Live transport alone does not mean History has supplied the TUI's
+			// destination. Observe its conversation subscription before typing.
+			for {
+				frame := tap.next(t, h)
+				if snapshot, ok := frame.Payload.(protocol.Snapshot); ok && snapshot.Topic == "conversation:"+conversation {
+					break
+				}
+			}
 			h.keys(term, scenario.Input+"\r")
 			waitScreen(t, h, term, scenario.Reply)
 			for {
