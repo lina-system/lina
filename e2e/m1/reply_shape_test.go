@@ -131,14 +131,18 @@ func TestM1ReplyShapeLONGQA(t *testing.T) {
 			t.Helper()
 			ctx, cancel := context.WithTimeout(h.ctx, operationTimeout)
 			defer cancel()
-			snapshot, err := terminal.screen.Wait(ctx, predicate)
+			snapshot, err := terminal.screen.Wait(ctx, func(frame tuiterm.Snapshot) bool {
+				return renderedFrame(terminal, frame) && predicate(frame)
+			})
 			if err != nil {
 				t.Fatalf("LONG-QA conversation assertion: %v\n%s", err, strings.Join(screenRows(snapshot), "\n"))
 			}
 			return snapshot
 		}
 		latest := wait(func(s tuiterm.Snapshot) bool {
-			return strings.Contains(strings.Join(conversationRows(s), "\n"), scenario.End) && strings.Contains(screenText(s), "Ctrl+O")
+			// The active-turn row temporarily reduces the transcript viewport;
+			// wait for completion before stitching fixed-height PgUp pages.
+			return !strings.Contains(screenText(s), design.Text(design.English, "activity.stop")) && strings.Contains(strings.Join(conversationRows(s), "\n"), scenario.End) && strings.Contains(screenText(s), "Ctrl+O")
 		})
 		t.Logf("LONG-QA latest (100x34):\n%s", strings.Join(screenRows(latest), "\n"))
 		if !latest.AltScreen || !strings.Contains(screenRows(latest)[33], "Ctrl+D") {
