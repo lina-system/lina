@@ -42,6 +42,9 @@ func startChannels(r *conversationRuntime, epoch uint64, transport http.RoundTri
 	if err != nil {
 		return nil, err
 	}
+	if err = c.normalizePrivate(r.ctx); err != nil {
+		return nil, err
+	}
 	if err = c.store.Recover(r.ctx); err != nil {
 		return nil, err
 	}
@@ -164,6 +167,13 @@ func (c *channelRuntime) Channel(ctx context.Context, s clientsrv.Session, p pro
 		b.Account = *p.Account
 	}
 	var err error
+	oldContent := false
+	if b.Platform == "discord" && (*p.Operation == "bind" || *p.Operation == "unbind") {
+		oldContent, err = discord.MessageContent(ctx, c.r.db, b)
+		if err != nil {
+			return result, channelError(err)
+		}
+	}
 	switch *p.Operation {
 	case "list":
 	case "connect":
@@ -232,7 +242,13 @@ func (c *channelRuntime) Channel(ctx context.Context, s clientsrv.Session, p pro
 		}
 		address := channels.Address{Bot: b, Chat: chat, Topic: topic}
 		scope := channels.Scope{Reads: channels.Reads(p.Scope.Reads), Writes: channels.Writes(p.Scope.Writes), Tools: p.Scope.Tools, Memory: p.Scope.Memory}
-		err = c.store.Bind(ctx, channels.Binding{Address: address, Agent: *p.AgentID, Person: c.r.person, Conversation: "channel:" + address.Key(), Scope: scope})
+		conversation := "channel:" + address.Key()
+		for _, row := range rows {
+			if row.Bot == b && chat == row.PrivateChat && topic == "" {
+				conversation = "main:" + *p.AgentID
+			}
+		}
+		err = c.store.Bind(ctx, channels.Binding{Address: address, Agent: *p.AgentID, Person: c.r.person, Conversation: conversation, Scope: scope})
 	case "unbind":
 		if p.Chat == nil {
 			return result, &clientsrv.OperationError{Code: protocol.ErrorMalformed}
@@ -255,6 +271,18 @@ func (c *channelRuntime) Channel(ctx context.Context, s clientsrv.Session, p pro
 	}
 	if err != nil {
 		return result, channelError(err)
+	}
+	if b.Platform == "discord" && (*p.Operation == "bind" || *p.Operation == "unbind") {
+		content, e := discord.MessageContent(ctx, c.r.db, b)
+		if e != nil {
+			return result, channelError(e)
+		}
+		if oldContent != content {
+			c.stop(b)
+			if e = c.start(b); e != nil {
+				return result, channelError(e)
+			}
+		}
 	}
 	rows, err := c.store.Connections(ctx, c.r.person)
 	if err != nil {

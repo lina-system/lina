@@ -115,8 +115,9 @@ func TestShape(t *testing.T) {
 			t.Fatal("paragraph was split")
 		}
 	}
-	if _, err := Shape(strings.Repeat("x", 6001), "", ""); err == nil {
-		t.Fatal("silent truncation")
+	large := strings.Repeat("x", 6001)
+	if parts, err := Shape(large, "", ""); err != nil || len(parts) != 1 || parts[0] != large {
+		t.Fatal("full file payload not retained")
 	}
 }
 func TestDuplicateInteractionAndOwnerButtons(t *testing.T) {
@@ -281,5 +282,36 @@ func TestInboundDedupAndBotTokenMask(t *testing.T) {
 		return err
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestLongReplySendsOneCompleteFile(t *testing.T) {
+	text := strings.Repeat("한글 paragraph\n\n", 700)
+	calls := 0
+	f := setup(t, transportFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Fatal(err)
+		}
+		file, header, err := r.FormFile("files[0]")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer file.Close()
+		data, err := io.ReadAll(file)
+		if err != nil || string(data) != text || header.Filename != "reply.txt" {
+			t.Fatal("attachment lost content")
+		}
+		return response(r, 200, `{"id":"301"}`), nil
+	}))
+	parts, err := Shape(text, "", "")
+	if err != nil || len(parts) != 1 {
+		t.Fatal("file shape", err)
+	}
+	l := lease.New(func() {})
+	defer l.Release()
+	result, err := f.a.Send(t.Context(), l, gateway.Outbound{Address: f.address, Text: parts[0]})
+	if err != nil || result.Outcome != gateway.Delivered || calls != 1 {
+		t.Fatalf("file send %+v %v calls=%d", result, err, calls)
 	}
 }

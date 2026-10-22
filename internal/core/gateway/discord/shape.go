@@ -16,7 +16,8 @@ func units(s string) int {
 }
 
 // Shape retains paragraph separators and Unicode verbatim. Oversized individual
-// paragraphs split only at a rune boundary. The queue receives at most three parts.
+// paragraphs split only at a rune boundary. The queue receives at most three
+// text parts, or one complete file payload for Send when no result link is supplied.
 func Shape(text, summary, link string) ([]string, error) {
 	if text == "" || !utf8.ValidString(text) {
 		return nil, errTooLong
@@ -39,6 +40,9 @@ func Shape(text, summary, link string) ([]string, error) {
 		parts = append(parts, remaining[:end])
 		remaining = remaining[end:]
 		if len(parts) > 3 {
+			if summary == "" && link == "" {
+				return []string{text}, nil
+			}
 			if strings.TrimSpace(summary) == "" || strings.TrimSpace(link) == "" || units(summary+"\n"+link) > 2000 {
 				return nil, errTooLong
 			}

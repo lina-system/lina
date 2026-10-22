@@ -125,6 +125,8 @@ var catalog = map[string]translation{
 	"checked":           {"Checked", "검증됨"},
 	"round_limit":       {"Round limit reached", "라운드 한도 도달"},
 
+	"telegram":           {"Telegram", "Telegram"},
+	"discord":            {"Discord", "Discord"},
 	"channel.heading":    {"Channels", "채널"},
 	"channel.empty":      {"No connections", "연결 없음"},
 	"channel.help":       {"c Connect \u00b7 d Discord \u00b7 p Pair \u00b7 b Bind / scope \u00b7 u Unbind \u00b7 r Refresh \u00b7 x Disconnect", "c 연결 · d Discord · p 페어링 · b 바인딩 / 범위 · u 바인딩 해제 · r 새로고침 · x 연결 해제"},

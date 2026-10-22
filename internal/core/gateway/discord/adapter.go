@@ -62,7 +62,7 @@ func New(c Config) (*Adapter, error) {
 }
 func (a *Adapter) Close() { a.http.CloseIdleConnections() }
 func (a *Adapter) Caps() gateway.Capabilities {
-	return gateway.Capabilities{TextLength: 2000, Edit: true, Buttons: true, Threads: true, ResultTypes: []string{"text"}}
+	return gateway.Capabilities{TextLength: 2000, Edit: true, Buttons: true, Files: true, Threads: true, ResultTypes: []string{"text"}}
 }
 func (a *Adapter) Identify(ctx context.Context) error {
 	var user struct {
@@ -117,7 +117,7 @@ func (a *Adapter) Send(ctx context.Context, l lease.Lease, o gateway.Outbound) (
 	if err != nil {
 		return result, err
 	}
-	if o.Text == "" || units(o.Text) > 2000 {
+	if o.Text == "" || len(o.Text) > 8<<20 {
 		return gateway.SendResult{Outcome: gateway.TooLong}, nil
 	}
 	err = lease.Do(ctx, l, func(ctx context.Context) error { var e error; result, e = a.send(ctx, channel, o.Text, nil); return e })
@@ -131,7 +131,11 @@ func (a *Adapter) send(ctx context.Context, channel, text string, components any
 	var message struct {
 		ID string `json:"id"`
 	}
-	r, err := a.request(ctx, http.MethodPost, "/channels/"+channel+"/messages", body, &message)
+	var payload any = body
+	if units(text) > 2000 {
+		payload = fileMessage{Text: text}
+	}
+	r, err := a.request(ctx, http.MethodPost, "/channels/"+channel+"/messages", payload, &message)
 	if r.Outcome == gateway.Delivered {
 		if !snowflake.MatchString(message.ID) {
 			return gateway.SendResult{Outcome: gateway.Uncertain}, errResponse

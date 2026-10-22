@@ -73,6 +73,7 @@ type conversationRuntime struct {
 	removals        *retract.Store
 	channels        *channelRuntime
 	channelBinding  *channels.Binding
+	coordinator     *conversationRuntime
 
 	materials        *conversationMaterials
 	assets           *assets.Store
@@ -222,6 +223,11 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err = r.startRuns(ctx); err != nil {
 		return nil, err
 	}
+	if r.agent != "" {
+		if err = r.seedHistory(ctx); err != nil {
+			return nil, err
+		}
+	}
 	r.channels, err = startChannels(r, epoch, channelTransport)
 	if err != nil {
 		return nil, err
@@ -234,11 +240,6 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	}
 	for kind, op := range clientsrv.ManagementOperations(r) {
 		r.identity.Operations[kind] = op
-	}
-	if r.agent != "" {
-		if err = r.seedHistory(ctx); err != nil {
-			return nil, err
-		}
 	}
 	if err = r.startGrowth(ctx, controls); err != nil {
 		return nil, err
@@ -365,14 +366,22 @@ func (r *conversationRuntime) Input(ctx context.Context, s clientsrv.Session, p 
 	if err = r.publish(ctx, protocol.KindItemDone, eventID, answer); err != nil {
 		return protocol.ItemDone{}, err
 	}
-	body, _ := json.Marshal(map[string]string{"role": "user", "content": event.Body.DerivedText()})
-	if (p.Mode == nil || *p.Mode == protocol.InputModeSteer) && r.lanes.Steer(r.conversation, body) {
-		r.steering[string(body)] = append(r.steering[string(body)], acceptedSteering{event, receipt.ID})
-		return answer, nil
-	}
-	_, err = r.lanes.SubmitLoop(r.ctx, r.conversation, func(ctx context.Context, inputs *loop.Inputs) error { return r.run(ctx, inputs, event, receipt.ID) })
+	err = r.submitInput(event, receipt.ID, p.Mode == nil || *p.Mode == protocol.InputModeSteer, r)
 	return answer, err
 }
+
+// submitInput runs under the shared conversation's admission mutex. Channel
+// adapters reuse this coordinator, including steering during a live turn.
+func (r *conversationRuntime) submitInput(event ledger.Event, inboxID int64, steer bool, runner *conversationRuntime) error {
+	body, _ := json.Marshal(map[string]string{"role": "user", "content": event.Body.DerivedText()})
+	if steer && r.lanes.Steer(r.conversation, body) {
+		r.steering[string(body)] = append(r.steering[string(body)], acceptedSteering{event, inboxID})
+		return nil
+	}
+	_, err := r.lanes.SubmitLoop(r.ctx, r.conversation, func(ctx context.Context, inputs *loop.Inputs) error { return runner.run(ctx, inputs, event, inboxID) })
+	return err
+}
+
 func (r *conversationRuntime) Interrupt(ctx context.Context, s clientsrv.Session, p protocol.Interrupt) error {
 	if err := r.authorize(s, p.ConversationID); err != nil {
 		return err
@@ -381,8 +390,8 @@ func (r *conversationRuntime) Interrupt(ctx context.Context, s clientsrv.Session
 	return nil
 }
 func (r *conversationRuntime) publish(ctx context.Context, kind protocol.Kind, key string, payload any) error {
-	if r.channelBinding != nil {
-		return nil
+	if r.coordinator != nil {
+		return r.coordinator.publish(ctx, kind, key, payload)
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -846,6 +855,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		saved, err = ledger.New(db, r.materials).AdmitBatch(ctx, batch)
 		return err
 	}
+	inputQueue := &conversationInputs{runtime: r, inputs: inputs}
 	out, err := turn.New(r.db).Run(ctx, turn.Options{ID: turnID, Conversation: r.conversation, InboxID: inboxID, InputEvent: input.ID, Preparation: prep, Complete: complete,
 		StartFromTurn: func(ctx context.Context, h budget.Handoff) (budget.Handle, error) {
 			var err error
@@ -857,8 +867,11 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			After: func(ctx context.Context, call provider.ToolCall, result loop.Result) loop.Result {
 				return r.skillNotice(ctx, input, call, r.personaNotice(ctx, input, call, result))
 			},
-			Inputs: &conversationInputs{runtime: r, inputs: inputs},
+			Inputs: inputQueue,
 			Stream: func(ctx context.Context, request provider.Request) (provider.Stream, error) {
+				if inputQueue.failure != nil {
+					return nil, inputQueue.failure
+				}
 				round++
 				r.dispatchMu.RLock()
 				defer r.dispatchMu.RUnlock()
@@ -1007,17 +1020,28 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 type conversationInputs struct {
 	runtime *conversationRuntime
 	inputs  *loop.Inputs
+	failure error
 }
 
 func (q *conversationInputs) Drain() []provider.Item {
 	items := q.inputs.Drain()
 	for _, body := range items {
-		q.runtime.takeSteering(body)
+		if accepted, ok := q.runtime.takeSteering(body); ok && accepted.event.Surface.Kind == "channel" {
+			if err := q.runtime.db.Write(q.runtime.ctx, func(tx *canon.Tx) error {
+				_, err := tx.ExecContext(q.runtime.ctx, "INSERT INTO channel_steering(inbox_id) VALUES(?) ON CONFLICT DO NOTHING", accepted.inboxID)
+				return err
+			}); err != nil {
+				q.failure = err
+			}
+		}
 	}
 	return items
 }
 func (q *conversationInputs) Close() []provider.Item { return q.inputs.Close() }
 func (r *conversationRuntime) takeSteering(body provider.Item) (acceptedSteering, bool) {
+	if r.coordinator != nil {
+		return r.coordinator.takeSteering(body)
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	pending := r.steering[string(body)]

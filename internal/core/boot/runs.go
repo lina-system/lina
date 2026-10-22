@@ -17,6 +17,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
+	"github.com/thisisjun786/lina/internal/core/gateway"
 	"github.com/thisisjun786/lina/internal/core/lane"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/runs"
@@ -210,7 +211,32 @@ func (r *conversationRuntime) authorizeRun(ctx context.Context, o runs.Origin, b
 	if o.Person != r.person || o.Epoch != r.epoch || o.Job != "" || r.route == nil {
 		return runs.ErrScope
 	}
-	if o.Conversation != "main:"+o.Agent {
+	if strings.HasPrefix(o.Turn, "turn:channel-input:") {
+		id, err := strconv.ParseInt(strings.TrimPrefix(o.Turn, "turn:channel-input:"), 10, 64)
+		if err != nil {
+			return runs.ErrScope
+		}
+		if err = r.db.Read(ctx, func(tx *canon.Tx) error {
+			var raw []byte
+			if err := tx.QueryRowContext(ctx, "SELECT body FROM inbox WHERE id=?", id).Scan(&raw); err != nil {
+				return err
+			}
+			var e gateway.Inbound
+			if json.Unmarshal(raw, &e) != nil {
+				return runs.ErrScope
+			}
+			binding, err := channels.AdmitScope(ctx, tx, e.Address, e.Sender, e.Direct, e.Addressed)
+			if err != nil {
+				return err
+			}
+			if binding.Agent != o.Agent || binding.Conversation != o.Conversation || !binding.Scope.Tools || binding.Unreachable {
+				return runs.ErrScope
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+	} else if o.Conversation != "main:"+o.Agent {
 		binding, err := r.channelBindingFor(ctx, o.Conversation, o.Agent)
 		if err != nil || !binding.Scope.Tools || binding.Unreachable {
 			return runs.ErrScope

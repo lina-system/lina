@@ -267,15 +267,18 @@ after durable admission while Core finishes the turn. Interaction tokens remain 
 The Discord adapter uses `github.com/coder/websocket` v1.8.15 for framing and
 standard-library HTTPS for individual REST calls. Core owns heartbeat,
 identify/resume, reconnect backoff and the durable session/sequence cursor.
+The privileged message-content intent is requested only for an explicit
+`all_messages` binding; changing that requirement reconnects the session.
 Native message and interaction IDs remain deduplicated across sessions and
 restarts. Bot-authored input cannot begin a conversation. Guild thread ancestry
 comes from channel metadata, so the most specific thread binding wins.
 
 Discord text is shaped into at most three parts of 2,000 UTF-16 units. A
 paragraph separator is retained at the split; an oversized individual paragraph
-splits at a Unicode rune boundary without losing text. Longer replies use Core's
-summary and result link. Automatic mentions are disabled. Streaming stays off;
-this increment advertises text, edits, buttons and threads, not attachments.
+splits at a Unicode rune boundary without losing text. Longer replies send one `reply.txt` attachment containing the complete text
+(up to 8 MiB). Automatic mentions are disabled. Streaming stays off; this
+increment supports outbound text files; inbound attachment import remains
+unavailable.
 A 429 keeps the full retry-after; ambiguous responses and transport failures
 remain unknown. A permanent refusal marks the chat unreachable through the
 shared queue and appears in channel controls.
@@ -289,7 +292,12 @@ platform edit. The pending-button inbox contains no interaction token.
 
 Both adapters are attached to Core's existing turn lanes and outbound queue.
 Committed owner input starts the existing model/tool flow with its channel
-conversation and scope. Memory-disabled bindings omit personal memory and
+conversation and scope. The paired owner's private chat shares `main:<agent>`
+and its live app/TUI history; shared chats keep separate conversations. Admission
+continues during an active turn and uses the same steering coordinator. A
+durable consumed-steering marker prevents replay after restart. Unclaimed
+private inbox rows from the earlier gateway are moved to the main conversation
+without dropping their native receipts. Memory-disabled bindings omit personal memory and
 relationship context; tools-disabled bindings offer no tools. Binding changes
 are checked again before model dispatch and tool execution. A channel with tools
 may start the existing read-only background run; its verified landing returns

@@ -101,7 +101,15 @@ func (a *Adapter) Run(ctx context.Context, in gateway.Admitter) error {
 		return errUnavailable
 	}
 	token := headers.Get("Authorization")
-	var identify any = map[string]any{"op": 2, "d": map[string]any{"token": token, "intents": 1 | 512 | 4096 | 32768, "properties": map[string]string{"os": "linux", "browser": "LINA", "device": "LINA"}}}
+	content, err := MessageContent(ctx, a.db, a.bot)
+	if err != nil {
+		return err
+	}
+	intents := 1 | 512 | 4096
+	if content {
+		intents |= 32768
+	}
+	var identify any = map[string]any{"op": 2, "d": map[string]any{"token": token, "intents": intents, "properties": map[string]string{"os": "linux", "browser": "LINA", "device": "LINA"}}}
 	if position.Session != "" {
 		identify = map[string]any{"op": 6, "d": map[string]any{"token": token, "session_id": position.Session, "seq": position.Seq}}
 	}
@@ -163,4 +171,30 @@ func (a *Adapter) Run(ctx context.Context, in gateway.Admitter) error {
 			seq.Store(*f.Seq)
 		}
 	}
+}
+
+// Message content is privileged on Discord. DMs and addressed guild messages
+// work without that intent; request it only for an explicit all-messages binding.
+func MessageContent(ctx context.Context, db channels.Canon, bot channels.Bot) (bool, error) {
+	required := false
+	err := db.Read(ctx, func(tx *canon.Tx) error {
+		rows, err := tx.QueryContext(ctx, "SELECT scope FROM channel_bindings WHERE bot=?", bot.Key())
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var data []byte
+			var scope channels.Scope
+			if err := rows.Scan(&data); err != nil {
+				return err
+			}
+			if err := json.Unmarshal(data, &scope); err != nil {
+				return err
+			}
+			required = required || scope.Reads == channels.AllMessages
+		}
+		return rows.Err()
+	})
+	return required, err
 }

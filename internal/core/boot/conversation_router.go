@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/kit/protocol"
@@ -91,4 +92,21 @@ func newConversationView(source *conversationRuntime, agent, conversation string
 	materials.actor.AgentID = agent
 	view := &conversationRuntime{background: r.background, router: r.router, skills: r.skills, persona: coreexec.NewPersona(r.db, r.agents, &materials), personaAuthority: r.personaAuthority, personaGrants: r.personaGrants, personaMu: r.personaMu, main: r.main, epoch: r.epoch, dispatchMu: r.dispatchMu, controls: r.controls, materials: &materials, assets: r.assets, root: r.root, steering: map[string][]acceptedSteering{}, ctx: r.ctx, db: r.db, accounts: r.accounts, vault: r.vault, agents: r.agents, lanes: r.lanes, topics: r.topics, route: r.route, activities: r.activities, person: r.person, agent: agent, conversation: conversation, removals: r.removals}
 	return view
+}
+
+func (s *conversationRouter) channelView(ctx context.Context, b channels.Binding) (*conversationRuntime, error) {
+	if b.Conversation == "main:"+b.Agent {
+		return s.view(ctx, clientsrv.Session{PersonID: b.Person}, b.Agent)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if view := s.views[b.Conversation]; view != nil {
+		return view, nil
+	}
+	view := newConversationView(s.root, b.Agent, b.Conversation)
+	if err := view.seedHistory(ctx); err != nil {
+		return nil, err
+	}
+	s.views[b.Conversation] = view
+	return view, nil
 }

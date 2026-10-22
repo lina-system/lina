@@ -924,12 +924,16 @@ them through the existing turn execution and outbound queue.
 outbound Gateway session per saved Discord bot. Its `coder/websocket` transport
 is pinned at v1.8.15; REST calls use the fixed Discord v10 origin without redirects
 or automatic effect retries. The shared catalog appends Discord presentations
-and pending buttons at migration 26, leaving migrations 1–25 unchanged.
+and pending buttons plus consumed channel steering at migration 26, leaving migrations 1–25 unchanged.
 The optional channel control `platform` field defaults to Telegram. Discord
 connection verifies the bot identity before replacing its credential or worker.
 
 The channel worker now drains committed owner inbox rows into the existing turn
-lanes. Channel ledger events retain platform/chat provenance and binding scope;
+lanes. Private owner inputs use the shared main conversation and admission/steering
+coordinator; shared chats retain their separate conversation. Admission never
+waits for a running turn or outbound HTTP call. Consumed channel steering is
+marked durably before the next model request so restart cannot turn it into
+another turn. Channel ledger events retain platform/chat provenance and binding scope;
 the same model, tool and background-run services execute the work. A completed
 reply and a landed background artifact are projected once into the channel
 ledger and shaped for the existing durable outbound queue. Restart finds the

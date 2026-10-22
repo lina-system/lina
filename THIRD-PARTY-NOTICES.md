@@ -1292,7 +1292,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## coder/websocket
+## github.com/coder/websocket
 
 Source: https://github.com/coder/websocket, `v1.8.15`. License: ISC.
 Used without modifications for the Discord Gateway WebSocket transport.

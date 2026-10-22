@@ -33,6 +33,7 @@ func TestSessionResumesCommittedCursorAndDeduplicates(t *testing.T) {
 			D  struct {
 				Session string `json:"session_id"`
 				Seq     int64  `json:"seq"`
+				Intents int    `json:"intents"`
 			} `json:"d"`
 		}
 		if wsjson.Read(ctx, conn, &auth) != nil {
@@ -40,6 +41,9 @@ func TestSessionResumesCommittedCursorAndDeduplicates(t *testing.T) {
 		}
 		n := connects.Add(1)
 		if n == 1 {
+			if auth.D.Intents&32768 != 0 {
+				t.Error("private binding requested privileged message content")
+			}
 			if auth.Op != 2 {
 				t.Error("first session did not identify")
 			}

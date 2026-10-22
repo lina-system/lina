@@ -9,9 +9,12 @@ import (
 	"github.com/thisisjun786/lina/kit/secret"
 	"io"
 	"math"
+	"mime/multipart"
 	"net/http"
 	"time"
 )
+
+type fileMessage struct{ Text string }
 
 // No automatic write retry. In particular, network errors and 5xx replies may
 // follow an applied effect. Return only typed, token-free outcomes to Core.
@@ -21,7 +24,27 @@ func (a *Adapter) request(ctx context.Context, method, path string, body, out an
 	defer cancel()
 	var data []byte
 	var err error
-	if body != nil {
+	contentType := "application/json"
+	if file, ok := body.(fileMessage); ok {
+		var buffer bytes.Buffer
+		writer := multipart.NewWriter(&buffer)
+		meta, _ := json.Marshal(map[string]any{"content": "Full reply attached.", "allowed_mentions": map[string]any{"parse": []string{}}, "attachments": []any{map[string]any{"id": 0, "filename": "reply.txt"}}})
+		if err = writer.WriteField("payload_json", string(meta)); err != nil {
+			return unknown, errResponse
+		}
+		part, e := writer.CreateFormFile("files[0]", "reply.txt")
+		if e != nil {
+			return unknown, errResponse
+		}
+		if _, err = io.WriteString(part, file.Text); err != nil {
+			return unknown, errResponse
+		}
+		if err = writer.Close(); err != nil {
+			return unknown, errResponse
+		}
+		data = buffer.Bytes()
+		contentType = writer.FormDataContentType()
+	} else if body != nil {
 		data, err = json.Marshal(body)
 		if err != nil {
 			return unknown, errResponse
@@ -34,7 +57,7 @@ func (a *Adapter) request(ctx context.Context, method, path string, body, out an
 	if err = secret.InjectHeader(req.Header, "Authorization", "Bot ", a.token); err != nil {
 		return unknown, errUnavailable
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("User-Agent", "LINA (https://github.com/thisisjun786/lina)")
 	resp, err := a.http.Do(req)
 	if err != nil {

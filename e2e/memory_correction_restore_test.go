@@ -180,6 +180,7 @@ func TestM1MemoryCorrectionForgetRestore(t *testing.T) {
 // Drive the actual TUI and wait for each management result to render before
 // closing its view. The tap observes the same committed result the TUI receives.
 func correctionMemoryTUI(t *testing.T, h *harness) (func(string) protocol.MemoryResult, func()) {
+	waitChannelReady(t, h)
 	t.Helper()
 	socket := h.socket
 	tap := newAccountTap(t, h, socket, true)
