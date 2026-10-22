@@ -188,6 +188,7 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 		ApprovalsChanged: func(ctx context.Context) {
 			if r.decisions != nil {
 				r.decisions.ApprovalsChanged(ctx)
+				r.workers.deliverAnswers(ctx)
 			}
 		},
 	})

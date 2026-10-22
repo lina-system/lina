@@ -582,8 +582,8 @@ reconciliation; they cannot become successful completion.
 session round trip (initialize, start, interrupt, idle input, model output and
 snapshot). The installed-Core opt-in headless journey also drives its normal model tool path into the installed worker and returns the worker's model output to the conversation. This does not verify approval or dynamic-tool support. Unlisted
 versions still run and report both their version and the verified list. The
-adapter currently declares progress, usage, completion and steering; questions,
-approvals, work tools and quota remain #133 and are not declared capabilities.
+adapter declares progress, usage, completion, steering, questions, approvals,
+work tools and quota. The #133 bridge below supplies the request/answer path.
 Thread recovery and automatic retry remain G2-08; a session handle from a prior
 Core process is unavailable, and its existing launch/result records remain.
 
@@ -594,6 +594,54 @@ worker, an actual fixture-worker file result, and conversation history after
 restart. The separately opted-in installed-Codex test preserves the user's setup;
 its file-tool probe encountered a worker approval, so live approval/file execution
 is not counted as session acceptance evidence.
+
+#### Work tools, approvals and quota (#133)
+
+At thread start Core declares four `lina` tools: `read_projection`, `ask`,
+`coordinate` and `submit_receipt`. The adapter accepts only declared names and
+binds each request to its thread, turn, process generation and binding epoch.
+An opaque request id retains the original JSON-RPC string/integer identity;
+the worker's tool call id is retained separately. A response consumes that request
+once. Pending requests block ordinary input, and completion or
+`serverRequest/resolved` withdraws them. Unknown requests fail visibly.
+
+The session projection contains only the explicit task packet, its digest,
+assignment identity and work directory. Its material and memory scopes are
+empty; a caller cannot enlarge them by passing another task id. Coordination
+requests are retained in the originating conversation as requests to Core.
+Questions use the authenticated waiting-card answer path and return the person's
+answer to the same worker call. Secret input is unsupported. The pinned MCP
+elicitation request has no form; that case offers only decline or cancel.
+
+`submit_receipt` accepts the existing version-1 work receipt shape, checked
+against the session assignment, generation, thread, turn and artifact root. It
+records a durable worker claim in conversation history and returns its event id;
+it does not create a verified verdict, merge, or mark a task delivered. The
+session bridge has one assignment generation; scheduler-owned task admission
+and receipt promotion remain with delegation. Repeated receipt identities
+cannot replace the recorded claim.
+
+Worker command, file and permission requests become authority records with the
+originating person, agent and conversation. The existing approval card carries
+that conversation id and offers once or deny. Only an authenticated owner answer
+can authorize the response; there is no model-facing approval-answer tool.
+A permission grant returns exactly the requested permission profile for the
+turn, and no arguments or worker settings are rewritten. Display copies are
+secret-masked. Claiming an answer durably precedes its single send; an uncertain
+send is reported, never automatically replayed. Request withdrawal, completion
+and Core restart stop unused answers.
+
+`worker_quota` exposes `Adapter.Quota` through the running Core conversation tool
+registry. It reads `account/rateLimits/read` and merges subsequent sparse
+`account/rateLimits/updated` observations without clearing absent values.
+Distinct reported limit ids/windows remain separate. Unknown usage and reset
+times stay unknown; Core never invents a reset.
+
+[`e2e/m2/codex-work-tools.json`](../../e2e/m2/codex-work-tools.json) drives the
+built Core over its Unix protocol and a separate synthetic stdio worker. It
+proves an owner approval returning to the worker, dynamic tool result delivery,
+quota rows and an actual worker-written artifact. This is protocol integration
+evidence; it does not measure live account quota or certify new Codex versions.
 
 ### Readiness
 
