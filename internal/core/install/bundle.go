@@ -56,7 +56,11 @@ func readBundle(dir string) (bundle, error) {
 	if err = json.Unmarshal(raw, &extra); err != nil {
 		return b, err
 	}
-	b.verified = extra.VerifiedTools
+	b.verified = m.VerifiedWorkerVersions
+	if b.verified == nil {
+		// Older installers documented this name before using the build field.
+		b.verified = extra.VerifiedTools
+	}
 	b.files["manifest.json"] = raw
 	for _, binary := range m.Binaries {
 		if binary.Name != "lina" && binary.Name != "moirai-worker" {

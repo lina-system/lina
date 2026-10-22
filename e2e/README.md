@@ -15,7 +15,7 @@ use the pinned terminal library and a VT emulator.
 
 The suite builds each command once per test run and removes the shared binaries
 after all scenarios finish. Foundation enumerates the acceptance tests and runs
-two disjoint batches under its shared components budget. This keeps a growing
+three disjoint batches under its shared components budget. This keeps a growing
 corpus from exhausting one package watchdog while preserving every scenario,
 assertion and operation deadline. Independent scenarios call `t.Parallel()` and
 foundation limits each batch to four concurrent tests, including parallel
@@ -58,6 +58,8 @@ header bold and exactly one empty row between messages. ASCII runs retain words;
 through the real TUI, then requests a fenced Korean reply from installed Core
 in a 40x34 ASCII PTY. It checks provider routing, usable reply width, literal
 empty code boundary rows, and stable completion metadata across draft redraws.
+Both untagged and Go-tagged fences run through the same path, so syntax
+highlighting must retain the code's leading and trailing empty rows.
 
 `TestM1TUIIdentityFromAgentStore` installs a synthetic named agent with four
 distinct persona layers, types "who are you" through the real TUI, and checks
@@ -264,12 +266,22 @@ replay count is consumed by the Bubble Tea recording-writer test.
 synthetic producer data, socket discovery/decisions, and a separate-key PTY approval.
 These scenarios create no second product decision store and use no timing sleeps.
 
+`m1/tui-syntax.json` runs `TestM1TUISyntaxInstalledCore`: an installed Core and
+fixture provider stream an open Go fence, then its closing fence and final reply
+into a 100×34 PTY. Parsed cells prove that open code remains unstyled and closed
+code gains theme colours in dark/light; high-contrast and `NO_COLOR` remain
+plain. The provider is released by a channel after the open screen is observed,
+without timing-based assertions.
+
 The M2 Discord scenario is `m2/discord.json`, executed by `TestM2DiscordCore`.
 It installs the test host with a matching build manifest, runs production Core
 boot in a separate process, and controls it through the generated socket
 protocol. Synthetic outbound Gateway/REST and Responses endpoints demonstrate
 channel input, read tools, background results, deduplication, shaping, blocked
-state and restart without live credentials.
+state and restart without live credentials. `m2/discord-recovery.json` repeats
+the journey across Gateway 4007/4009 closes, including command and approval-button
+deduplication and Resume with the exact replacement session and committed sequence
+after Core restart.
 
 `m2/work-area.json`, executed by `TestM2WorkArea`, drives `prepare_work` and
 `retain_work_result` through the installed Core's conversation tools. Two real
@@ -329,6 +341,12 @@ and deleted agents in conversation and management requests, plus channel
 binding/scope replacement. A paired synthetic channel and an existing binding
 exercise the actual target-agent checks. Read-only canon snapshots prove that
 refused requests preserve agent revisions, actions, conversations and bindings.
+
+Installed-Core fixtures wait for command admission after connecting the socket.
+An empty input must be refused as malformed (or capability-not-negotiated for an
+unconfigured Core), rather than unavailable during recovery, before the scenario
+continues. This probe cannot create a conversation event or model request.
+Restored-memory and replay startup paths use the same readiness check as installs.
 
 `go test ./e2e/m1 -run '^TestM2UpdateActivation$' -count=1` runs
 `m2/update-activation.json`, which drives `lina update --activate` against
