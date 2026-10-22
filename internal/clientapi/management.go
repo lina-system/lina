@@ -27,3 +27,7 @@ func (c *Client) Work(ctx context.Context, request protocol.WorkSwitchRequest) (
 func (c *Client) Progress(ctx context.Context, request protocol.ProgressGet) (string, error) {
 	return c.request(ctx, protocol.KindProgressGet, request)
 }
+
+func (c *Client) Waiting(ctx context.Context, request protocol.WaitingGet) (string, error) {
+	return c.request(ctx, protocol.KindWaitingGet, request)
+}

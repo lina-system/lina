@@ -63,6 +63,7 @@ type shellModel struct {
 	now           func() time.Time
 	quitDeadline  time.Time
 	blocks        map[string]shellBlock
+	resultStreams map[string]shellBlock
 	resyncPending map[string]protocol.StreamCursor
 	resyncSeen    map[resyncSignal]protocol.StreamCursor
 	conversation  conversationView
@@ -168,7 +169,7 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					m.status = ConnectionStatus{State: status, Cause: envelope.Error.Code}
 				}
-				projection, err := projectStream(*envelope)
+				projection, err := projectStream(*envelope, m.styles.options.Language)
 				if err != nil {
 					m.status = ConnectionStatus{State: Failed, Cause: protocol.ErrorMalformed}
 					return m, nil
@@ -208,9 +209,11 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.content, _ = state.Reduce(m.content, state.Notice{ID: "sandbox.unavailable", Code: "sandbox.unavailable"})
 			}
 		}
-		m.refreshOpenCard()
 		m.refreshRunning()
+		m.refreshProgress()
 		m.refreshBlocks()
+		m.refreshResultStreams(msg.Message)
+		m.refreshOpenCard()
 		afterCard, _ := m.content.CurrentCard()
 		if beforeCard.ID != afterCard.ID || beforeCard.Revision != afterCard.Revision {
 			m.cardGate.CardChanged(m.now())
@@ -234,6 +237,9 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = ConnectionStatus{State: Resyncing}
 		}
 		var effects []tea.Cmd
+		if projected != nil && projected.topic == "progress" && m.conversation.pager.open && m.conversation.pager.waiting {
+			effects = append(effects, m.waitingRequest())
+		}
 		for _, command := range commands {
 			generation := m.generation
 			effects = append(effects, func() tea.Msg {

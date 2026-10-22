@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -90,7 +91,13 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 	} else {
 		cfg.Env = proc.Environment(cfg.Env, "LINA_RESPONSES_API_KEY")
 	}
-	cfg.Env = append(cfg.Env, "GH_PROMPT_DISABLED=1", "GH_PAGER=cat", "GH_DEBUG=", "GH_FORCE_TTY=0")
+	// Any nonempty GH_FORCE_TTY, including "0", enables terminal formatting.
+	// Keep machine-readable responses plain without changing the user's setup.
+	cfg.Env = slices.DeleteFunc(cfg.Env, func(entry string) bool {
+		name, _, _ := strings.Cut(entry, "=")
+		return name == "GH_FORCE_TTY" || name == "CLICOLOR_FORCE" || name == "FORCE_COLOR"
+	})
+	cfg.Env = append(cfg.Env, "GH_PROMPT_DISABLED=1", "GH_PAGER=cat", "GH_DEBUG=", "NO_COLOR=1", "CLICOLOR=0")
 	if cfg.Path == "" {
 		for _, entry := range cfg.Env {
 			if path, ok := strings.CutPrefix(entry, "PATH="); ok {

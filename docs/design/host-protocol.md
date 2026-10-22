@@ -577,3 +577,29 @@ filters deleted personas and foreign-person records before pagination. Each page
 is one canon snapshot; a refresh starts a new snapshot. This request adds no
 subscription or execution authority and does not change the existing `progress`
 status-topic capability. The TUI retains fold/selection state locally by lane id.
+
+### Owner progress and waiting reads
+
+The `progress` capability (1.0) grants `progress_get` with `view: overview`
+and the `progress` topic. An omitted view retains the `worker_lanes` request;
+`view: lanes` is equivalent. Each request is gated by its selected capability.
+Overview reads reject lane pagination. The overview has `rows`, at most five
+`waiting` rows and `waiting_more`. A progress row separates its opaque `ref`
+from its display-only `line`: name, kind, stage, optional percent, just_finished,
+next, waiting count and hierarchy depth. An absent percent means unknown; it
+never means zero. Stage and unknown are codes localized by the client.
+
+A `progress_update` replaces the overview atomically, retaining the normal topic
+cursor and snapshot/replay behavior. A changed full waiting list advances this
+cursor even when the five Home rows and remaining count are unchanged; a client
+showing the full list rereads `waiting_get`. `text` is a plain fallback; typed clients
+render the rows. An empty rows list removes previous work. Reading progress is
+not a completion verdict or an acknowledgement that the person has seen it.
+
+The existing `waiting` capability grants `waiting_get` with optional `order`
+(priority or lightest) and `limit` (zero means the full list). The response has
+`rows`, `total` before limiting and `more`. Each row separates its source/key/
+revision reference from display data: kind, sentence, context, recommendation,
+agent name, choices, free-text flag, effort and due instant. References are not
+rendered. Answers to existing approvals and questions continue through their
+original authenticated protocols; reading a waiting row grants no authority.
