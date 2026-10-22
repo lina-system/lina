@@ -499,8 +499,10 @@ adapter model selection is checked against the returned model. Per-task effort
 selection is refused until assignment verification supports it.
 
 Version notices and terminal worker output enter the originating conversation's
-canon history and restore after Core restart. Snapshot includes the latest
-completed assistant message, not a delivery verdict. A reported activity owns
+canon history and restore after Core restart. Snapshot reads thread summary state and includes the latest
+completed assistant message observed on the owned session, not a delivery verdict.
+It does not request paginated turn history. An idle summary cannot reopen a
+just-accepted turn before its start/completion is observed; that state is unknown. A reported activity owns
 the idle process, while hard activities follow individual active turns. Closing
 Core closes stdin, then joins or terminates the owned process and descendants.
 A canceled RPC wait does not interrupt a turn. Event overflow, malformed frames,
@@ -510,7 +512,7 @@ reconciliation; they cannot become successful completion.
 `versions.json` in the Codex adapter is shared with the build manifest's
 `verifiedWorkerVersions.codex` list. Version 0.163.0 has an installed-worker
 session round trip (initialize, start, interrupt, idle input, model output and
-snapshot). This does not verify approval or dynamic-tool support. Unlisted
+snapshot). The installed-Core opt-in headless journey also drives its normal model tool path into the installed worker and returns the worker's model output to the conversation. This does not verify approval or dynamic-tool support. Unlisted
 versions still run and report both their version and the verified list. The
 adapter currently declares progress, usage, completion and steering; questions,
 approvals, work tools and quota remain #133 and are not declared capabilities.

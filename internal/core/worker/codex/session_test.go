@@ -91,7 +91,11 @@ func fixture() {
 			n++
 			turn = fmt.Sprintf("turn-%d", n)
 			status = "active"
-			notify("turn/started", map[string]any{"threadId": "thread-1", "turn": map[string]any{"id": turn, "status": "inProgress"}})
+			if os.Getenv("LINA_CODEX_FIXTURE") != "pending-start" {
+				notify("turn/started", map[string]any{"threadId": "thread-1", "turn": map[string]any{"id": turn, "status": "inProgress"}})
+			} else {
+				status = "idle"
+			}
 			if n == 2 {
 				notify("item/agentMessage/delta", map[string]any{"threadId": "thread-1", "turnId": turn, "itemId": "message", "delta": "result"})
 				status = "idle"
@@ -115,6 +119,9 @@ func fixture() {
 			notify("turn/completed", map[string]any{"threadId": "thread-1", "turn": map[string]any{"id": turn, "status": "interrupted"}})
 			reply(map[string]any{})
 		case "thread/read":
+			if _, present := r.Params["includeTurns"]; present {
+				os.Exit(91)
+			}
 			switch os.Getenv("LINA_CODEX_FIXTURE") {
 			case "cancel-read":
 				notify("item/agentMessage/delta", map[string]any{"threadId": "thread-1", "turnId": turn, "itemId": "message", "delta": "read_pending"})
@@ -136,7 +143,7 @@ func fixture() {
 				return
 			}
 			turns := []any{}
-			if turn != "" {
+			if turn != "" && os.Getenv("LINA_CODEX_FIXTURE") != "pending-start" {
 				s := "completed"
 				if status == "active" {
 					s = "inProgress"
@@ -415,5 +422,23 @@ func TestUnknownRequiredCapabilityAndWorkerSettingsAreRefusedBeforeAssignment(t 
 	}
 	if _, err := s.Start(ctx, l, base); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSummarySnapshotDoesNotReopenAcceptedPendingTurn(t *testing.T) {
+	s, ctx, l := openFixture(t, "pending-start")
+	th, err := s.Start(ctx, l, worker.StartSpec{TaskID: "task", AttemptID: "attempt", Workdir: t.TempDir(), TaskPacket: "hold"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, err := s.Snapshot(ctx, th)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.State != worker.Unknown {
+		t.Fatalf("accepted turn with idle summary must await reconciliation, got %s", snap.State)
+	}
+	if err := s.Input(ctx, snap.Thread, worker.Input{Text: "must not open another turn"}); err == nil {
+		t.Fatal("pending accepted turn was restarted")
 	}
 }

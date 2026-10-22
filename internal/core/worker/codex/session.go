@@ -170,9 +170,8 @@ func (s *Session) Snapshot(ctx context.Context, t worker.Thread) (worker.ThreadS
 	if err != nil {
 		return worker.ThreadSnapshot{}, err
 	}
-	yes := true
 	var response wire.V2ThreadReadResponse
-	if err = s.call(ctx, string(wire.ClientRequestThreadReadMethodThreadRead), wire.V2ThreadReadParams{ThreadId: t.ID, IncludeTurns: &yes}, &response); err != nil {
+	if err = s.call(ctx, string(wire.ClientRequestThreadReadMethodThreadRead), wire.V2ThreadReadParams{ThreadId: t.ID}, &response); err != nil {
 		return worker.ThreadSnapshot{}, err
 	}
 	if response.Thread.ID != t.ID {
@@ -182,6 +181,11 @@ func (s *Session) Snapshot(ctx context.Context, t worker.Thread) (worker.ThreadS
 	defer s.mu.Unlock()
 	if revision == s.revision {
 		s.snapshot.State = threadState(response.Thread.Status)
+		// A summary can briefly remain idle after turn/start was accepted. It
+		// must not authorize a second turn before the accepted one is observed.
+		if s.snapshot.State == worker.Idle && s.snapshot.Thread.TurnID != "" && !s.finished[s.snapshot.Thread.TurnID] {
+			s.snapshot.State = worker.Unknown
+		}
 		for _, turn := range response.Thread.Turns {
 			s.snapshot.Thread.TurnID = turn.ID
 		}
