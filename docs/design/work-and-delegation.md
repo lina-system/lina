@@ -16,7 +16,7 @@ This contract covers:
 - splitting work into tasks, area leases, parallel hand-off, completion events, stall handling and the running list
 - workers: the coding tools the user installed or signed in to (Codex, Claude Code, Antigravity and Devin), the adapter boundary, the Codex adapter, compatibility, readiness, assignment, control and approvals
 - the task packet (the work definition handed to the worker), LINA's work tools and the completion receipt of a worker, the worker's review and CI fixes, and the manager session's check of a delivery against the work definition before Core merges or closes
-- run to done: the goal above its tasks, its done condition and lifecycle, the next-action table, waits on the outside world, capacity from Node load, recovery, evidence before close, the cases that stop and ask, and what the person sees, for code and non-code work alike
+- run to done: the goal above its tasks, its done condition and lifecycle, the next-action table, waits on the outside world, capacity from host load, recovery, evidence before close, the cases that stop and ask, and what the person sees, for code and non-code work alike
 - effects and unknown outcomes inside work
 - GitHub work on delegated tasks: what the worker writes, and LINA Core's merge or close
 - the progress display data (work cards, progress lines and the running list), observation, handover and discovery of work, and what the person is told of work: outcomes and decisions
@@ -468,7 +468,7 @@ The manager session splits work into tasks that one worker can finish as one pul
 - Every task whose dependencies are satisfied and whose area lease is free is handed off at once. It is limited only by the person's subscription quota for each worker and by the host's capacity. LINA Core never holds back a task to wait for another task that it does not depend on.
 - Quota is read per worker from the worker's adapter as quota rows in which unknown is a value ([runtime.md](runtime.md#usage-and-cost)). Where a worker reports none, LINA Core infers it from the worker's quota errors and its own usage records. A worker that stops on a quota or rate-limit error is parked until its window resets, and the task is not retried on it; the task goes to the next suitable worker (see Choosing the worker).
 - Host capacity is what the host can run beside the person's own work, within the install's declared resource caps ([non-competition.md](non-competition.md)). A device whose Node is disconnected or yielding receives no new hand-off.
-- Concurrency is the free slots that each Node's reported load and resources allow, as Run to done defines under Capacity, limited further by quota, the declared resource caps and area leases. There is no fixed count per repository or per fleet.
+- Concurrency is the free slots that the reported load and resources of the main host and each Node allow, as Run to done defines under Capacity, limited further by quota, the declared resource caps and area leases. There is no fixed count per repository or per fleet.
 - One task, one worker, one worktree, one branch. LINA Core creates the worktree and the branch, named by task id, and starts the worker with that worktree as its working directory. A worker's own worktree option is never used, and two workers never share a worktree. Git refusing one branch in two worktrees is a second guard, not the first.
 - The manager session selects work and its order; the work engine reserves capacity, obtains Node bids and dispatches the recorded assignments. The one-coordinator rule of the Work engine holds: a worker is never used through its own team or coordinator feature.
 - When a task has landed, the work engine releases at once every task that was waiting only on it.
@@ -731,13 +731,13 @@ After every event Core commits for a goal, Core derives the goal's next actions 
 | Event | Goal or task state | Next action | By |
 | --- | --- | --- | --- |
 | Goal handed over | `defining`, done condition written | Split into tasks with dependencies and write areas, say the start line, move to `running` and fill capacity. | Manager, then Core |
-| Slot released, Node load changed, or a task became ready | Any goal with ready tasks | Fill every compatible slot across Nodes with ready tasks (see Capacity). | Core |
+| Slot released, a host's load changed, or a task became ready | Any goal with ready tasks | Fill every compatible slot across the main host and Nodes with ready tasks (see Capacity). | Core |
 | Worker turn ended with a completion receipt | Task in progress | Read the receipt and, for code, the pull request once; continue as Judgment and delivery says. | Core, then manager |
 | Worker turn ended without a receipt | Task in progress | One continuation that asks the worker to finish or report the blocker; a second ending without a receipt is a failure under Stall and failure. | Core |
 | Code task's head is green with no open P0 or P1, and the manager judged it `verified` | Task ready to merge | Merge that head through the merge slot. | Core |
 | Merge observed | Code task landed | Release its dependents, start QA on the merged commit once, and fill capacity. | Core |
-| QA failed on a merged commit | Code goal `running` | Record the evidence and file a repair task in the same goal; its own merge needs its own QA. Nothing is deployed from the failing commit. | Manager |
-| QA passed on every merged commit of the goal | Code goal with a service | Deploy the goal's merged result to the service when a grant covers that deploy, then probe it; without one, a decision row (see Stop and ask). | Core |
+| QA failed on a merged commit | Code goal `running` | Record the evidence and file a repair task in the same goal; its own merge needs its own QA, and that QA passing supersedes the failure. Nothing is deployed from the failing commit. | Manager |
+| QA passed on the current merged result of every task (a repair's passing QA supersedes the failed QA of the commit it repaired) | Code goal with a service | Deploy that result to the service and probe it. A deploy inside the person's own devices runs under the existing grant; a deploy that is public or reaches other people is approved first (see Stop and ask). | Core |
 | Deploy observed | Code goal | Probe the running service at the deployed revision against the done condition; an exit code is not a probe. | Core |
 | Background run landed complete | Research or document task | Check citations, store the result, re-evaluate the criteria it serves. | Core, then manager |
 | Background run landed partial | Research or document task | Start one follow-up run on what is missing, or mark it open in the result when the sources cannot answer it. | Manager |
@@ -774,7 +774,7 @@ Much non-code work waits on things LINA does not control: a reply, a confirmatio
 
 Every ready task starts at once, limited only by the person's quota and by what the Nodes can carry. Filling is driven by events: a goal admitted, a task landed, a slot released, a Node's load changing. It never waits for a timer or for a message from the person.
 
-- Each connected Node reports what it can take: its cores, its load, its available memory and disk, its declared resource caps ([non-competition.md](non-competition.md)), the workers ready on it and their quota rows, and its current reservations. Core computes the free slots of each Node from these, and does not use a fixed count per Node, per repository or per fleet. A report that is stale or unknown counts as no free capacity, and a Node that is disconnected or yielding gets nothing new.
+- The main host and each connected Node report what they can take; on an installation without Node, the main host alone reports, through the same report that Core makes for itself. A report holds its cores, its load, its available memory and disk, its declared resource caps ([non-competition.md](non-competition.md)), the workers ready on it and their quota rows, and its current reservations. Core computes the free slots of each host from these, and does not use a fixed count per host, per repository or per fleet. A report that is stale or unknown counts as no free capacity, and a Node that is disconnected or yielding gets nothing new.
 - A slot is reserved in the same transaction that claims the task, so two derivations never place the same task or overfill a Node. An award to a Node carries a token and a deadline; an award whose outcome is unknown is resolved by reading that Node's receipt before the task can go anywhere else.
 - Ready tasks are placed in a stable order: tasks of goals with a person's deadline first, then by dependency depth, then by the age of the goal. Within that order, a task goes to the Node with the most headroom that has a suitable worker, and Nodes kept for the person's own use come last.
 - Background runs and plugin effects run in Core and use the person's model and service accounts. They follow the run limits of Background runs and the account's own rate limits, and they never take a Node slot.
@@ -803,7 +803,7 @@ A worker's receipt, a model's sentence, a completed turn, a command's exit code 
 
 LINA asks the person only in these cases. Each is one row in "Waiting for me", in plain words with the recommendation first; independent questions of one goal are asked together.
 
-1. An effect that leaves the person or cannot be undone and that no existing grant covers: sending in the person's name, paying, publishing or deploying to the public, deleting for good ([main-authority.md](main-authority.md#approval)).
+1. An effect that leaves the person or cannot be undone: sending in the person's name, paying, publishing or deploying to the public, deleting for good. Each such effect is approved for its own arguments, every time, as [main-authority.md](main-authority.md#approval) requires; handing over a goal never approves it in advance, and no standing grant covers an outward plugin action. Repeated approvals of one kind are grouped by scope as that contract allows.
 2. A request that two plausible readings would turn into materially different results, when nothing LINA can read settles it.
 3. Information that only the person has, such as a preference never stated or an account to sign in to.
 4. Something only the person can do: sign, attend, pay in person, decide between people.
