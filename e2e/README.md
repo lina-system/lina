@@ -415,3 +415,8 @@ approval and a question. It checks unknown plan values, display lines without
 internal identities, removal after the original authenticated answers, a real
 worker-written artifact, and empty resolved sources after Core restart. The
 worker and provider are fixtures; Core, tools, protocol and persistence are real.
+
+`m2/tui-home-waiting.json` adds a 120x36 TUI to that worker journey. An outside
+record change appears on Home alongside the worker's authenticated decisions.
+Resolving the sources clears the summary and preserves the typed draft. The
+scenario checks parsed terminal cells, the worker-written artifact and cleanup.

@@ -3,13 +3,51 @@ package ui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/thisisjun786/lina/internal/design"
+	"github.com/thisisjun786/lina/internal/tui/sanitize"
+	"github.com/thisisjun786/lina/internal/tui/state"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
+
+func projectWaiting(payload protocol.Payload) *state.WaitingSummary {
+	p, ok := payload.(protocol.ProgressUpdate)
+	if !ok || p.Waiting == nil {
+		return nil
+	}
+	summary := &state.WaitingSummary{}
+	for _, row := range *p.Waiting {
+		line := row.Line.Sentence
+		if row.Line.AgentName != "" {
+			line = row.Line.AgentName + ": " + line
+		}
+		// Each Core row occupies one terminal line. References and answer
+		// mappings never enter this display projection.
+		summary.Lines = append(summary.Lines, strings.Join(strings.Fields(sanitize.Display(line)), " "))
+	}
+	if p.WaitingMore != nil {
+		more, err := strconv.Atoi(string(*p.WaitingMore))
+		if err == nil {
+			summary.More = max(0, more)
+		}
+	}
+	return summary
+}
+
+func (m *shellModel) homeWaiting() *state.WaitingSummary {
+	if m.hasCapability("waiting") && m.hasCapability("progress") {
+		for _, block := range m.content.Blocks {
+			if block.Topic == "progress" && block.Waiting != nil {
+				return block.Waiting
+			}
+		}
+	}
+	return nil
+}
 
 func progressText(payload protocol.Payload, language design.Language, fallback *string) *string {
 	p, ok := payload.(protocol.ProgressUpdate)
