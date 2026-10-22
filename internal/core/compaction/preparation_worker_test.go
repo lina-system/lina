@@ -203,7 +203,11 @@ func TestWorkerPreparedReceiptRejectsChangedSourcesEpochAndConfiguration(t *test
 				write(t, db, "UPDATE sum_node SET revision=revision+1")
 			}
 			_, ready, err := b.Prepared(t.Context(), segment)
-			if err != nil || ready {
+			var want error
+			if kind == "source selection" {
+				want = ErrCoverage // The changed selection is no longer a prefix.
+			}
+			if !errors.Is(err, want) || ready {
 				t.Fatalf("stale preparation ready=%v err=%v", ready, err)
 			}
 		})

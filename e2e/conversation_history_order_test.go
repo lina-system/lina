@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -72,11 +73,29 @@ func TestM1ConversationHistoryOrder(t *testing.T) {
 			h, start := installedConversationHarness(t, server.URL)
 			core := start(true)
 			observer, conversation := conversationClient(t, h)
-			// The shared helper waits for this TUI's conversation snapshot and
-			// Live status, retaining dev's History-readiness barrier.
-			terminal := startConversationScreen(t, h, []string{"TERM=xterm-256color"}, scenario.Width, scenario.Height, conversation)
+			socket := h.socket
+			tap := newAccountTap(t, h, socket)
+			h.socket = tap.socket
+			terminal := h.startTerminalSize([]string{"TERM=xterm-256color"}, false, true, scenario.Width, scenario.Height)
+			h.socket = socket
 			waitScreen(t, h, terminal, "Ctrl+D")
-			h.keys(terminal, scenario.FirstInput+"\r")
+			// Controls can appear before negotiation permits input. Wait for Live.
+			waitScreen(t, h, terminal, design.Text(design.English, "live"))
+			// The composer is visible before History resolves its destination.
+			// A conversation subscription proves that the TUI consumed History;
+			// waiting for its response avoids submitting during discovery.
+			for {
+				frame := tap.next(t, h)
+				if frame.Error != nil {
+					t.Fatalf("TUI discovery refused: %s", frame.Error.Code)
+				}
+				if snapshot, ok := frame.Payload.(protocol.Snapshot); ok && snapshot.Topic == "conversation:"+conversation {
+					break
+				}
+			}
+			h.keys(terminal, scenario.FirstInput)
+			waitScreen(t, h, terminal, scenario.FirstInput)
+			h.keys(terminal, "\r")
 			select {
 			case <-started:
 			case <-h.ctx.Done():

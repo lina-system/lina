@@ -21,13 +21,13 @@ import (
 )
 
 func TestUnavailableNeverExecutes(t *testing.T) {
-	t.Setenv("PATH", t.TempDir())
+	missingLauncher := filepath.Join(t.TempDir(), "missing-launcher")
 	owner := proc.NewOwner()
 	defer owner.Close(t.Context())
 	l := lease.New(func() {})
 	defer l.Release()
 	root := t.TempDir()
-	box := sandbox.New(owner, sandbox.Config{WorkDir: root})
+	box := sandbox.New(owner, sandbox.Config{WorkDir: root, Launcher: missingLauncher})
 	status := box.Probe(t.Context(), l)
 	if status.Available || status.Cause == "" {
 		t.Fatalf("status=%+v", status)
@@ -113,7 +113,8 @@ func TestFirstCallReprobes(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("Linux launcher")
 	}
-	if _, err := exec.LookPath("bwrap"); err != nil {
+	systemLauncher, err := exec.LookPath("bwrap")
+	if err != nil {
 		t.Skip("OS launcher absent")
 	}
 	owner := proc.NewOwner()
@@ -121,11 +122,17 @@ func TestFirstCallReprobes(t *testing.T) {
 	l := lease.New(func() {})
 	defer l.Release()
 	root := t.TempDir()
-	box := sandbox.New(owner, sandbox.Config{WorkDir: root})
+	launcher := filepath.Join(root, "launcher")
+	if err := os.Symlink(systemLauncher, launcher); err != nil {
+		t.Fatal(err)
+	}
+	box := sandbox.New(owner, sandbox.Config{WorkDir: root, Launcher: launcher})
 	if status := box.Probe(t.Context(), l); !status.Available {
 		t.Fatalf("probe=%+v", status)
 	}
-	t.Setenv("PATH", t.TempDir())
+	if err := os.Remove(launcher); err != nil {
+		t.Fatal(err)
+	}
 	var output bytes.Buffer
 	if err := box.Run(t.Context(), l, sandbox.Command{Path: "/bin/echo", Args: []string{"should not execute"}, Stdout: &output}); !errors.Is(err, sandbox.ErrUnavailable) {
 		t.Fatalf("run=%v", err)
