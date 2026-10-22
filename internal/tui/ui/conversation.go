@@ -44,6 +44,7 @@ type inputHistory struct {
 }
 
 type textPager struct {
+	tool                     bool
 	developer, developerBusy bool
 	developerID              string
 	lanes                    state.WorkerLanes
@@ -225,6 +226,11 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		m.conversation.pager.transcript = true
 		return nil
 	case "ctrl+o":
+		if summary := m.toolSummary(); summary != "" {
+			m.openPager(summary)
+			m.conversation.pager.tool = true
+			return nil
+		}
 		if card, ok := m.selectedCard(); ok && card.RunID != "" {
 			return m.runningRequest(card.RunID, "open", nil)
 		}
@@ -440,6 +446,9 @@ func (m *shellModel) topicText(topic string) string {
 	for _, b := range m.topicBlocks(topic) {
 		lines = append(lines, b.Text)
 	}
+	if topic == "waiting" && len(lines) == 0 {
+		return design.Text(m.styles.options.Language, "waiting.empty")
+	}
 	return strings.Join(lines, "\n")
 }
 func (m *shellModel) resultCards() []state.Block {
@@ -537,6 +546,13 @@ func (m *shellModel) pagerText() string {
 
 func (m *shellModel) refreshOpenCard() {
 	p := &m.conversation.pager
+	if p.open && p.tool {
+		p.text = m.toolSummary()
+		if p.text == "" {
+			*p = textPager{}
+		}
+		return
+	}
 	if !p.open || p.cardID == "" {
 		return
 	}
@@ -755,6 +771,18 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		}
 		transcript = append(transcript, transcriptRow{body: plainRow(design.Text(m.styles.options.Language, code) + "  /accounts")})
 	}
+	groups := m.toolGroups()
+	appendTools := func(anchor string) {
+		for _, group := range groups {
+			if group.calls[0].Anchor != anchor {
+				continue
+			}
+			for _, row := range m.toolGroupRows(group, plan.Conversation.Width) {
+				transcript = append(transcript, transcriptRow{body: plainRow(row), muted: true})
+			}
+		}
+	}
+	appendTools("")
 	hasItems := false
 	for _, b := range m.content.Blocks {
 		if !conversationBlock(b) {
@@ -798,6 +826,7 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		if b.Kind == protocol.KindResult && !b.InlineReply {
 			body = append([]render.StyledRow{plainRow(design.Text(m.styles.options.Language, "result") + "  " + sanitize.Display(b.Title) + "  Ctrl+O")}, body...)
 		}
+		toolRowsAt := len(body)
 		workedRow := -1
 		if elapsed, ok := m.content.Worked[b.ID]; ok {
 			workedRow = len(body)
@@ -822,6 +851,9 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 			}
 		}
 		blockStart := len(transcript)
+		if toolRowsAt == 0 {
+			appendTools(b.ID)
+		}
 		for i, row := range body {
 			lead := indent
 			if i == 0 {
@@ -831,6 +863,9 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 				lead = ""
 			}
 			transcript = append(transcript, transcriptRow{body: row, prefix: lead, person: person, muted: i == workedRow})
+			if i+1 == toolRowsAt {
+				appendTools(b.ID)
+			}
 		}
 		for row := 0; row < len(transcript)-blockStart; row++ {
 			anchors = append(anchors, conversationAnchor{block: b.ID, row: row})

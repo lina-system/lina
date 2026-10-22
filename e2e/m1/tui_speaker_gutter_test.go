@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -15,7 +16,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/thisisjun786/lina/internal/design"
-	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -81,16 +81,9 @@ func speakerGutterInstalledCore(t *testing.T, ascii, plain bool) {
 	terminal := h.startTerminalSize(environment, false, true, scenario.Width, scenario.Height)
 	h.socket = socket
 	if plain {
-		// NO_COLOR never enters the alternate screen required by waitScreen's
-		// color-mode readiness check. Still require the connected composer.
-		if snapshot, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
-			content := screenText(s)
-			return !s.AltScreen && strings.Contains(content, design.Text(design.English, "live")+"  ") && strings.Contains(content, "Ctrl+D")
-		}); err != nil {
-			t.Fatalf("plain composer not ready: %v; cells=%s", err, screenText(snapshot))
-		}
+		waitPlainComposerReady(t, h, terminal)
 	} else {
-		waitScreen(t, h, terminal, "Ctrl+D")
+		waitComposerReady(t, h, terminal)
 	}
 	// The composer is visible before its conversation destination is known.
 	// The subscription proves History was consumed; do not race initial discovery.
@@ -169,6 +162,15 @@ func speakerGutterInstalledCore(t *testing.T, ascii, plain bool) {
 					t.Errorf("turn rows %d -> %d do not have exactly one empty separator", previous, found)
 				}
 				previous = found
+				if i == 1 {
+					// The completion duration belongs to this turn. Preserve the single
+					// empty separator after its last row, and require the new row itself.
+					duration := strings.ReplaceAll(regexp.QuoteMeta(design.Text(design.English, "activity.worked_for")), "%s", `[0-9]+(?:s|m [0-9]{2}s|h [0-9]{2}m [0-9]{2}s)`)
+					if found+1 >= len(rows) || !regexp.MustCompile("^"+duration+"$").MatchString(rows[found+1]) {
+						t.Fatalf("assistant turn has no valid completion duration after row %d", found)
+					}
+					previous++
+				}
 				glyph, body := snapshot.Cells[found][0], snapshot.Cells[found][utf8.RuneCountInString(prefix)]
 				if glyph.Foreground == nil || body.Foreground == nil || reflect.DeepEqual(glyph.Foreground, body.Foreground) {
 					t.Errorf("speaker/body foreground not distinct: %v / %v", glyph.Foreground, body.Foreground)

@@ -391,7 +391,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 
 **G2-21 Discord adapter.** Gateway adapter with interactions and buttons.
 - Implemented by #147 through the shared gateway and running Core. `e2e/m2/discord.json` exercises pairing, duplicate interactions, real tool/background execution with synthetic endpoints, paragraph splits, unreachable bindings and restart; adapter tests cover owner-only buttons. Live Discord account validation remains separate.
-- #548 adds fresh-session recovery for Gateway close 4007/4009; `e2e/m2/discord-recovery.json` verifies Identify, duplicate suppression and continued tool/background results in running Core.
+- #548 adds fresh-session recovery for Gateway close 4007/4009; `e2e/m2/discord-recovery.json` verifies Identify, duplicate suppression and continued tool/background results in running Core. #547 extends that evidence to approval-button receipts and exact replacement-session Resume after Core restart.
 - Done when: a repeated interaction is handled once; a press by anyone but the paired owner changes nothing; text over 2,000 characters splits on paragraph boundaries; a blocked chat marks the binding unreachable.
 - Depends on: G1-25. Design refs: C-27; [integrations.md](integrations.md#channels).
 
@@ -513,8 +513,8 @@ This epic also folds in the owner's Node direction, which is not yet in the cont
 - Done when: overlapping areas are never in flight together; a dependent is released only after the predecessor is confirmed merged; a task nothing depends on never waits; a waiting task shows exactly one reason; an unmergeable pull request goes back once to its worker; the developer view shows one lane for each worker, folded to one line by default.
 - Depends on: G2-02, G2-07, G2-18. Design refs: C-57, T-14; [work-and-delegation.md](work-and-delegation.md#parallel-hand-off).
 
-**G3-10 Devin adapter.** Hosted session API; polling only in flight.
-- Done when: polling starts at dispatch and ends at a terminal state; a waiting-for-user state is blocked; a suspended state with a quota reason parks the worker; the adapter is an opt-in account of the person.
+**G3-10 Cursor adapter.** The user's installed `cursor-agent`, running headless with `stream-json`; implementation and installed-version confirmation belong to [#210](https://github.com/thisisjun786/lina/issues/210).
+- Done when: readiness records the installed version and sign-in state, with not signed in reported as unsupported delegation; one headless run per task streams progress from its worktree; process exit plus the final stream event ends the run, while exit 0 without a final event is unknown; interrupt stops the run and once-only recovery resumes the same chat id in the same work area; quota or rate-limit replies park the worker until reset without spending a retry; the adapter is an opt-in account of the person. Exact flags, stream events and control behavior are to be confirmed by #210.
 - Depends on: G2-04. Design refs: C-29; [work-and-delegation.md](work-and-delegation.md#completion-signals).
 
 **G3-16 Antigravity adapter.** Headless child; success from the pull request.
@@ -567,7 +567,7 @@ A given-back slice moves to the start of the next phase and is listed as not del
 | --- | --- | --- |
 | LINA 1 | Telegram (G1-25) and exchanges (G1-26), which then start LINA 2; the Hermes import (G1-27); prepared summaries (G1-38) | Epoch and recovery (G1-02), approvals (G1-05), ledger (G1-10), retraction (G1-14), the turn budget and background runs (G1-32, G1-33), restart fence (G1-24) |
 | LINA 2 | Discord (G2-21), Gemini and Grok adapters (G2-27, G2-28), skill pruning (G2-12), persona growth (G2-20), the progress digest for channels (part of G2-13) | The delegation core (G2-01, G2-02, G2-04, G2-07, G2-08, G2-18, G2-19), records (G2-22, G2-23), update (G2-14) |
-| LINA 3 | Antigravity and Devin (G3-16, G3-10), the macOS seat lease (G3-07), plan drafting (G3-17), the CRW takeover (G3-18), mobile transport (part of G3-06) | Node gate and reconcile (G3-03, G3-04), outward-effect marks (G3-02), splitting and parallel hand-off (G3-09) |
+| LINA 3 | Antigravity and Cursor (G3-16, G3-10), the macOS seat lease (G3-07), plan drafting (G3-17), the CRW takeover (G3-18), mobile transport (part of G3-06) | Node gate and reconcile (G3-03, G3-04), outward-effect marks (G3-02), splitting and parallel hand-off (G3-09) |
 
 ## Numbers to set by measurement
 

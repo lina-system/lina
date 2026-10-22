@@ -27,6 +27,15 @@ func (s Styles) markdownRow(row render.StyledRow) string {
 		}
 		if span.Style.Code {
 			style = s.Code
+			if s.options.Profile != Monochrome && s.options.Theme != "high-contrast" {
+				switch span.Style.Syntax {
+				case render.SyntaxText:
+				case render.SyntaxAccent:
+					style = style.Foreground(s.Accent.GetForeground())
+				case render.SyntaxMuted:
+					style = style.Foreground(s.Muted.GetForeground())
+				}
+			}
 		}
 		if span.Style.Link {
 			style = s.Accent

@@ -85,6 +85,8 @@ type State struct {
 	TurnActive         bool
 	Activity           Activity
 	Worked             map[string]time.Duration
+	ToolCalls          []ToolCall
+	ToolTurn           uint64
 	Gen                uint64
 	pending            *SendRequest
 	Offset             time.Duration
@@ -199,6 +201,7 @@ func (s State) clone() State {
 	s.Folds = maps.Clone(s.Folds)
 	s.Notices = slices.Clone(s.Notices)
 	s.Worked = maps.Clone(s.Worked)
+	s.ToolCalls = slices.Clone(s.ToolCalls)
 	return s
 }
 
@@ -257,6 +260,7 @@ func (s *State) setEpoch(e string) []string {
 	s.Stopping = false
 	s.TurnActive = false
 	s.Activity = Activity{}
+	s.ToolCalls = nil
 	s.Gen++
 	topics := slices.Sorted(maps.Keys(s.Topics))
 	for _, name := range topics {
@@ -350,6 +354,7 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 			s.CardView = CardView{}
 			s.Blocks = nil
 			s.Worked = nil
+			s.ToolCalls = nil
 			s.Activity = Activity{}
 			s.TurnActive = false
 			s.Folds = nil
@@ -362,6 +367,7 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 			s.Gen++
 		}
 		s.Revocation = m.Revocation
+		s.ToolCalls = slices.DeleteFunc(s.ToolCalls, func(call ToolCall) bool { return call.Topic == m.Topic })
 		// Replace only this topic in snapshot order. Existing blocks and local
 		// echoes anchor the merge, but cannot override the authoritative order.
 		incoming := make(map[string]Block, len(m.Items))
@@ -487,6 +493,14 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 				s, emitted = s.reduceCard(PutCard{Card: *b.Card, Notify: m.Notify})
 				cmds = append(cmds, emitted...)
 			}
+		}
+		return s, cmds
+	case ToolEvent:
+		before := s.Topics[m.Topic].Cursor
+		var cmds []Cmd
+		s, cmds = Reduce(s, StreamAdvance{Epoch: m.Epoch, Topic: m.Topic, Cursor: m.Cursor})
+		if s.Topics[m.Topic].Cursor != before && s.Topics[m.Topic].Cursor == m.Cursor {
+			s.toolEvent(m)
 		}
 		return s, cmds
 	case StreamAdvance:

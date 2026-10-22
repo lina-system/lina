@@ -37,6 +37,13 @@ implements an eight-row threshold, six trailing rows and a source-line count;
 these exact limits are LINA policy, not claimed upstream behaviour. No code is
 copied. The Hermes MIT notice appears below.
 
+Fenced-code highlighting also references Hermes Agent's
+[`hermes_cli/cli_render.py`](https://github.com/NousResearch/hermes-agent/blob/944c3a434071f43e64b443d033f3eba30c64434c/hermes_cli/cli_render.py)
+at `944c3a434071f43e64b443d033f3eba30c64434c` (MIT): final assistant content is
+rendered through Rich Markdown, with separate raw and stripped-text modes.
+LINA independently uses its pinned Chroma lexer and theme tokens; its streaming
+closure, cache and accessibility behaviour follow T-09. No upstream code is copied.
+
 The empty-conversation wordmark and input hints draw on Hermes Agent's
 startup banner and command hint (`hermes_cli/banner.py`, revision
 `944c3a434071f43e64b443d033f3eba30c64434c`, MIT). LINA's three localized
@@ -130,6 +137,12 @@ See the [narrow terminal reference](internal/tui/NARROW-REFERENCE.md).
 Tool activity also follows Hermes Agent’s friendly catalog verbs and timed
 completion indication, observed at revision `944c3a434071f43e64b443d033f3eba30c64434c`
 in `agent/display.py`. LINA’s protocol and journal wiring are original.
+
+Tool rows additionally reference Hermes Agent's separation of catalog verbs and
+compact targets at revision `e06df9c2eae6901f4c88f464e0ae6e753c0428b8`,
+`agent/display.py:477-620`. No code is copied; the
+[tool row reference](internal/tui/TOOL-ROWS-REFERENCE.md) records seen, inferred
+and unknown behavior.
 
 ## Memory design references
 
