@@ -98,7 +98,7 @@ func TestM1TUIEpochNoticeInstalledCore(t *testing.T) {
 	}
 	mainID, previous := welcome()
 	environment := []string{"TERM=xterm-256color", "COLORTERM=truecolor", "LC_ALL=C"}
-	terminal := h.startTerminalSize(environment, false, true, scenario.Width, scenario.Height)
+	terminal := startReadyScreenTUI(t, h, environment, scenario.Width, scenario.Height, nil)
 	live := design.Text(design.English, "live")
 	notice := design.Text(design.English, "epoch_changed")
 	initial := waitScreen(t, h, terminal, live)
