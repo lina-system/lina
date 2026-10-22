@@ -231,3 +231,9 @@ source snapshot, then exercises the running Core's record tools. Imported eviden
 is read by LINA id, source-id lookup fails, a new result is saved, and restart keeps
 the imported identity. This operator-only test and fixture are excluded from
 release archives together with the takeover tool.
+
+`m2/github-ci.json` starts the real Core binary with a synthetic `gh` executable
+in its isolated PATH. It negotiates the GitHub capability, refuses an unnegotiated
+read, observes rate-limited CI pending and its retry deadline, then observes head,
+review threads and successful checks. It verifies conditional headers and one
+review read per head, with no network credentials or GitHub service dependency.

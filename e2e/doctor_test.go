@@ -31,13 +31,14 @@ func TestM1Doctor(t *testing.T) {
 	healthy := newHarness(t, binary)
 	defaultRoot := healthy.root
 	healthy.root = filepath.Join(defaultRoot, "lina")
-	// Installation supplies canon/. A stop immediately after bind can precede
-	// Core's sandbox setup, so the fixture must not rely on that later phase.
+	// Installation supplies canon/. Complete startup before copying the fixture
+	// so a recovering Core does not create sandbox directories during doctor.
 	if err := os.MkdirAll(filepath.Join(healthy.root, "canon"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	core := healthy.startCore()
 	healthy.connect(core).Close()
+	waitCoreReady(t, healthy)
 	healthy.stopCore(core)
 	// Core now initializes its account-capable application schema itself. Do not
 	// reopen that database with an older subset of the migrations.

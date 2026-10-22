@@ -53,3 +53,16 @@ var readOnlyKinds = map[protocol.Kind]bool{
 	protocol.KindWaitingGet: true, protocol.KindDetailsGet: true,
 	protocol.KindAgentTalkGet: true, protocol.KindAgentTalkExpand: true, protocol.KindAgentTalkSubscribe: true,
 }
+
+// Work requests retain mutation admission for future work-record operations.
+// Only the implemented GitHub observation operations are reads during recovery.
+func readOnlyEnvelope(e protocol.Envelope) bool {
+	if readOnlyKinds[e.Kind] {
+		return true
+	}
+	if e.Kind != protocol.KindWorkRequest {
+		return false
+	}
+	p, ok := e.Payload.(protocol.WorkRequest)
+	return ok && p.Operation != nil && (*p.Operation == "github_read" || *p.Operation == "github_watch")
+}

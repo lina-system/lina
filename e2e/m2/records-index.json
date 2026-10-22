@@ -1,0 +1,7 @@
+{
+  "title": "Prototype calibration",
+  "note": "Synthetic measurements for the next workshop.",
+  "search": "measurements",
+  "outside": "Outside text must not become a saved version.",
+  "tools": ["write_record", "read_record", "query_records"]
+}
