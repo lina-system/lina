@@ -40,7 +40,7 @@ does not implement automatic reconnect, request deduplication or capability
 authorization. Reserved payload fixtures still prove only their current shape.
 
 The runnable example is [the M1 scenario](../../e2e/m1/fakecore.json), driven by
-[the headless harness](../../e2e/fakecore_test.go). Run:
+[the headless harness](../../e2e/m1/fakecore_test.go). Run:
 
 ```sh
 go test ./internal/fakecore/...
