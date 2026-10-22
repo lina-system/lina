@@ -987,6 +987,7 @@ Every ready task starts at once, limited only by the person's quota and by what 
 - Every derived action has an identity bound to the goal, the task, its attempt, its stage and the head or revision it acts on. Replaying an event or running two derivations at once never dispatches the same action twice.
 - Task-level recovery is the one recovery of Stall and failure. A goal does not add attempts on top: when a task's recovery is exhausted, the goal is `blocked` on that task while its independent tasks continue.
 - A wait survives restart with its deadline. A timer that should have fired while Core was down fires once at startup.
+- File delivery recovery runs before work tools admit new calls: first report interrupted copy intents in the work ledger, then reconcile their authority reservations as described under Evidence before close. An unrecovered copy keeps its reservation. A cancelled invocation is never replayed; a fresh authorized call preserves partial bundles or reuses a committed landing after readback.
 
 ### Evidence before close
 

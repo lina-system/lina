@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/kit/lease"
 )
 
@@ -346,6 +347,20 @@ func TestFileLandingCrashRecoveryRetainsAndReportsPartial(t *testing.T) {
 	if before.Applied || before.FileCopies[0].Status != "copying" {
 		t.Fatal("crash published landed or failure")
 	}
+	readRecovered := func() (Card, string, error) {
+		t.Helper()
+		var card Card
+		var revision string
+		err := s.db.Read(t.Context(), func(tx *canon.Tx) error {
+			var err error
+			card, revision, err = RecoveredFileResult(t.Context(), tx, c.Task.ID)
+			return err
+		})
+		return card, revision, err
+	}
+	if _, _, err := readRecovered(); !errors.Is(err, ErrState) {
+		t.Fatalf("authority could release an unrecovered copy: %v", err)
+	}
 	s = NewWithArea(s.db, s.area, writer)
 	if err := s.Recover(t.Context(), "restart"); err != nil {
 		t.Fatal(err)
@@ -353,6 +368,11 @@ func TestFileLandingCrashRecoveryRetainsAndReportsPartial(t *testing.T) {
 	card, _ := s.Get(t.Context(), c.Task.ID)
 	if card.Applied || card.FileEvidence != nil || card.FileCopies[0].Status != "partial" {
 		t.Fatal("recovery invented evidence")
+	}
+	recovered, revision, err := readRecovered()
+	wantRevision, revisionErr := s.Revision(t.Context(), c.Task.ID)
+	if err != nil || revisionErr != nil || revision != wantRevision || recovered.Applied || recovered.FileEvidence != nil || recovered.FileCopies[0].Status != "partial" {
+		t.Fatalf("wrong authority recovery evidence: %+v revision=%s errors=%v/%v", recovered, revision, err, revisionErr)
 	}
 	page, _, err := s.SummaryPage(t.Context(), "task-1:1", 0)
 	if err != nil || !strings.Contains(page, card.FileCopies[0].Path) || !strings.Contains(page, "interrupted") {
