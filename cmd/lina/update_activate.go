@@ -144,14 +144,7 @@ func activateUpdate(ctx context.Context, root, candidate string, resume bool) (c
 			return rollbackUpdate(ctx, *current)
 		},
 		Resume: func(ctx context.Context) error {
-			if err := service(ctx, "start"); err != nil {
-				return err
-			}
-			if err := waitUpdateClient(ctx, installed.Socket); err != nil {
-				_ = service(ctx, "stop")
-				return err
-			}
-			return nil
+			return startUpdatedService(ctx, installed.Socket, service)
 		},
 	}
 	return update.Activate(ctx, store, r, ops)
@@ -348,8 +341,23 @@ func resumeUpdate(ctx context.Context, s *ctlfiles.Store, r ctlfiles.UpdateRecor
 			return r, err
 		}
 	}
-	if err := service(ctx, "start"); err != nil {
-		return r, err
+	if err := startUpdatedService(ctx, r.Socket, service); err != nil {
+		r.Phase = "held"
+		r.Cause = "update_resume_failed"
+		return r, errors.Join(fmt.Errorf("update_resume_failed: %w", err), s.WriteUpdate(r))
 	}
-	return r, waitUpdateClient(ctx, r.Socket)
+	return r, nil
+}
+
+func startUpdatedService(ctx context.Context, socket string, service func(context.Context, string) error) error {
+	if err := service(ctx, "start"); err != nil {
+		return err
+	}
+	if err := waitUpdateClient(ctx, socket); err != nil {
+		// A cancelled updater must still stop the service it just started.
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		return errors.Join(err, service(cleanup, "stop"))
+	}
+	return nil
 }

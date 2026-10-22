@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/authority"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/skills"
@@ -174,6 +175,9 @@ func (r *conversationRuntime) prepareWorkerTools(turnID string, input ledger.Eve
 		}
 		validated := turn.Tool(registry, spec, tools.Call{}, turnID)
 		bindings[name] = loop.Tool{Validate: validated.Validate, Execute: func(ctx context.Context, call provider.ToolCall) loop.Result {
+			if _, err := validated.Validate(call); err != nil {
+				return loop.Result{ID: call.ID, Code: loop.Invalid}
+			}
 			in, err := spec.Schema(json.RawMessage(call.Arguments))
 			if err != nil {
 				return loop.Result{ID: call.ID, Code: loop.Invalid}
@@ -183,6 +187,30 @@ func (r *conversationRuntime) prepareWorkerTools(turnID string, input ledger.Eve
 				_ = json.Unmarshal(in.Arguments, &a)
 				if !strings.Contains(input.Body.Text(), a.Quote) {
 					return loop.Result{ID: call.ID, Code: loop.Denied}
+				}
+			}
+			if name == "worker_start" {
+				// Admission has the caller's lifecycle, not the worker execution
+				// deadline. No start effect or short-lived grant exists while the
+				// manager lane/model is busy.
+				_, assignment, err := r.workerStartAssignment(ctx, turnID, in)
+				if err == nil {
+					err = r.runCodingManager(ctx, assignment, "assignment", nil)
+				}
+				if err == nil {
+					err = ctx.Err()
+				}
+				if err != nil {
+					result := loop.Result{ID: call.ID, Code: loop.Failed, Output: workerError(err)}
+					if errors.Is(err, authority.ErrPresetLimit) {
+						result.Code = loop.Denied
+						if effect, readErr := r.personaAuthority.Effect(ctx, "preset:coding:"+assignment.ID); readErr == nil {
+							result.Output = effect.Result.Body
+						}
+					} else if ctx.Err() != nil {
+						result.Code = loop.Aborted
+					}
+					return result
 				}
 			}
 			auth := grant.Request{GrantID: turn.EffectKey(turnID, name, in.Target, call.ID) + ":worker", MainID: r.main, Epoch: r.epoch, TaskID: turnID, Host: r.main, OSUser: "core", Person: r.person, Agent: r.agent, Profile: "worker-session", Revision: strconv.FormatUint(r.epoch, 10)}
@@ -197,25 +225,34 @@ func (r *conversationRuntime) prepareWorkerTools(turnID string, input ledger.Eve
 	return nil
 }
 
+func (r *conversationRuntime) workerStartAssignment(ctx context.Context, turnID string, in tools.Input) (workerArgs, codingAssignment, error) {
+	var a workerArgs
+	_ = json.Unmarshal(in.Arguments, &a)
+	method, err := r.skills.ResolveMethod(ctx, a.Kind, a.Skill)
+	if err != nil {
+		return a, codingAssignment{}, err
+	}
+	a.TaskPacket, err = skills.MethodPacket(a.TaskPacket, method)
+	if err != nil {
+		return a, codingAssignment{}, err
+	}
+	origin := dispatch.Origin{Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: turnID}
+	assignment, err := r.assignCoding(ctx, origin, codingID(turnID, "worker_start", string(in.Arguments)), "worker_start", a.Workdir, in.Arguments)
+	return a, assignment, err
+}
+
 func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID string, input ledger.Event, in tools.Input) (tools.Result, error) {
 	var a workerArgs
 	_ = json.Unmarshal(in.Arguments, &a)
 	if name == "worker_start" {
-		method, err := r.skills.ResolveMethod(ctx, a.Kind, a.Skill)
+		var assignment codingAssignment
+		var err error
+		a, assignment, err = r.workerStartAssignment(ctx, turnID, in)
 		if err != nil {
-			return tools.Result{State: tools.Failed}, err
+			return tools.Result{State: tools.Failed, Body: workerError(err)}, err
 		}
-		a.TaskPacket, err = skills.MethodPacket(a.TaskPacket, method)
-		if err != nil {
-			return tools.Result{State: tools.Failed}, err
-		}
-		origin := dispatch.Origin{Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: turnID}
-		assignment, err := r.assignCoding(ctx, origin, codingID(turnID, name, string(in.Arguments)), name, a.Workdir, in.Arguments)
-		if err != nil {
-			return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
-		}
-		if err = r.runCodingManager(ctx, assignment, "assignment", nil); err != nil {
-			return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
+		if !assignment.Delegated {
+			return tools.Result{State: tools.Failed, Body: workerError(errors.New("coding_definition_not_delegated"))}, nil
 		}
 		owner := newConversationView(r.router.root, assignment.Owner, assignment.Conversation)
 		owner.codingDelivery = r

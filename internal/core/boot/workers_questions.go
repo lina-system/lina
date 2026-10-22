@@ -21,6 +21,7 @@ type workerQuestion struct {
 	event     worker.Event
 	requestID string
 	kind      string
+	requested time.Time
 }
 type workerQuestions struct{ runtime *conversationRuntime }
 
@@ -62,6 +63,7 @@ func (e *workerSession) requestQuestion(event worker.Event) {
 	}
 }
 func (e *workerSession) presentQuestion(event worker.Event, requestID, kind, text string, fields []protocol.FormField, targets []protocol.DecisionTarget) {
+	requested := time.Now()
 	defer e.origin.notifyOwnerViews()
 	id := e.requestKey(requestID)
 	if len(fields) == 0 {
@@ -71,7 +73,8 @@ func (e *workerSession) presentQuestion(event worker.Event, requestID, kind, tex
 	if targets == nil {
 		targets = []protocol.DecisionTarget{}
 	}
-	raw, err := json.Marshal(protocol.Question{ConversationID: e.origin.workerDelivery().conversation, Card: &protocol.DecisionCard{ID: id, Revision: "1", Agent: e.origin.agent, Summary: text, Targets: targets}, Form: &protocol.QuestionForm{PluginName: "Codex", Fields: fields}})
+	name := e.origin.router.root.decisions.AgentName(e.origin.agent)
+	raw, err := json.Marshal(protocol.Question{ConversationID: e.origin.workerDelivery().conversation, Card: &protocol.DecisionCard{ID: id, Revision: "1", Agent: name, Summary: text, Targets: targets}, Form: &protocol.QuestionForm{PluginName: "Codex", Fields: fields}})
 	if err != nil {
 		e.bridgeFailure(err)
 		return
@@ -91,7 +94,7 @@ func (e *workerSession) presentQuestion(event worker.Event, requestID, kind, tex
 		return
 	}
 	e.mu.Lock()
-	e.questions[id] = &workerQuestion{card: card, event: event, requestID: requestID, kind: kind}
+	e.questions[id] = &workerQuestion{card: card, event: event, requestID: requestID, kind: kind, requested: requested}
 	e.mu.Unlock()
 	if err := e.origin.router.root.decisions.PublishQuestion(e.origin.ctx, id); err != nil {
 		e.bridgeFailure(err)
@@ -198,7 +201,7 @@ func (q workerQuestions) AnswerQuestion(ctx context.Context, person string, answ
 		raw, err = json.Marshal(wire.McpServerElicitationRequestResponse{Action: action})
 	}
 	if err == nil {
-		err = e.origin.workerNotice(ctx, e.input, *answer.CardID+":answer", "Worker question answered by the originating person: "+string(raw))
+		err = e.origin.workerNotice(ctx, e.input, *answer.CardID+":answer", "Your response to the worker was recorded.")
 	}
 	if err == nil {
 		sendCtx, cancel := context.WithTimeout(e.origin.ctx, 10*time.Second)

@@ -70,9 +70,10 @@ type Undo struct {
 	Revision int64  `json:"revision"`
 }
 type Applied struct {
-	Version Version `json:"version"`
-	Notice  string  `json:"notice"`
-	Undo    Undo    `json:"undo"`
+	Maintenance bool    `json:"maintenance,omitempty"`
+	Version     Version `json:"version"`
+	Notice      string  `json:"notice"`
+	Undo        Undo    `json:"undo"`
 }
 
 func validID(s string) bool {

@@ -332,6 +332,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 - Depends on: G1-01. Design refs: C-57; [work-and-delegation.md](work-and-delegation.md#start-gate).
 
 **G2-01 Task records and work area.** Work ledger, card projection, `work/` directories, protected refs. #127 adds installed-Core allocation and result-retention tools, pinned task worktrees and no-PR material/bundle recovery, exercised by `e2e/m2/work-area.json`.
+- #125 connects installed worker dispatch to the same allocator and ledger. `e2e/m2/work-dispatch.json` exercises the conversation tool, detached base, protected refs, worker commit, PR observation and replayable receipt through running Core.
 - The ledger increment (#126) keeps task/run/receipt facts in canon, reserves at most one active run per task, rebuilds card and reservation indexes from events, and rejects missing or mismatched artifact provenance. Core startup rebuilds these indexes and retains unfinished reservations as unknown. Workspace creation and protected-ref enforcement remain the separate work-area increment.
 - Done when: a second active run on a task is refused; a task worktree is created from the base commit under `work/tasks`; the projection rebuilt from the ledger equals the live one; a result without a pull request is copied into the generation; a receipt for a changed artifact without provenance is rejected.
 - Depends on: G1-05, G1-11, G1-12, G2-17. Design refs: C-29, C-30, C-39; [work-and-delegation.md](work-and-delegation.md#work-area).
@@ -376,6 +377,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 
 **G2-12 Skill pruning and merging job.** Prune and merge stale or duplicate skills.
 - Done when: each prune or merge is a versioned skill write with a one-line notice and one-action undo; built-in skills are untouched; a merge the person undid is not made again.
+- Implementation: the main's installed Moirai job queues user skill snapshots, validates Core-generated maintenance decisions, and commits grouped reversible writes with its watermark and notice outbox. `e2e/m2/skill-maintenance.json` drives installed Core and the real worker to prove prune, merge, built-in exclusion, one-action group undo, restart suppression and the durable switch.
 - Depends on: G1-16, G1-36. Design refs: C-23; [cognition-and-life.md](cognition-and-life.md#skill-suggestions).
 
 **G2-20 Persona growth step with undo.** Adopted at once into the growth snapshot layer; undo.
@@ -408,6 +410,11 @@ Update backup and rollback restore, including resumed rollback, follow the
 caller's context without the installer command timeout. The M2 data-operation
 scenario verifies backup and restore exceeding that timeout through the installed
 Core's activation and recovery paths.
+The parent #148 adds recovery failure coverage: an updater killed before service
+resume followed by a refused start leaves a durable hold, preserves data and
+composition, and blocks normal Core startup. Its headless scenario is
+`e2e/m2/update-resume-failure.json`; command tests also cover cancelled readiness
+from completed, rolled-back and pre-swap attempts.
 
 **G2-15 Phase 2 acceptance run.** Run script and evidence record for LINA 2.
 - Done when: one record holds every field of the phase rules and a result per check; the interruption injection now stops a running task and its citations pass; Codex and Claude Code versions are recorded.
@@ -416,7 +423,7 @@ Core's activation and recovery paths.
 ### 2.F Records and to-dos
 
 **G2-22 Records repository and index.** Git repository, index, rebuild, outside-change detection.
-- #152 implements the shared Git repository and revision-checked write/move path, including the installed conversation tools and result-save adapter. [The headless records scenario](../../e2e/m2/records.json) runs the installed Core through creation, restart, editing and stale-write refusal; repository tests cover stable ids on moves and interrupted publication recovery. Outside-change presentation, the full query index and thousands-of-files acceptance remain the records-index increment.
+- #152 implements the shared Git repository and revision-checked write/move path, including the installed conversation tools and result-save adapter. [The headless records scenario](../../e2e/m2/records.json) runs the installed Core through creation, restart, editing and stale-write refusal; repository tests cover stable ids on moves and interrupted publication recovery.
 - Done when: an index rebuilt from the files equals the live index; an outside change is detected and shown and not merged; a write on a stale revision is refused; moving a record keeps its id; behavior with thousands of files is recorded.
 - Depends on: G1-03, G1-05, G1-29. Design refs: C-53; [filesystem.md](filesystem.md#records-repository).
 
@@ -424,6 +431,8 @@ Core's activation and recovery paths.
 reports through installed record tools, and the `records-index` M2 scenario.
 The scale fixture measures thousands of records without a timing pass threshold;
 the [measurements and limits](../../internal/core/records/MEASUREMENTS.md) are recorded with the records implementation.
+The [parent acceptance record](../../evidence/records-acceptance.md) maps all five
+completion conditions to repository tests and installed Core scenarios.
 
 **G2-23 To-do record, views, recurrence and candidates.** Fields, today rule, views, recurrence, candidates, memo promotion.
 - Done when: the today rule passes its fixture; a recurring item advances only to a future occurrence; a dependency cycle is rejected; an ambiguous date is never saved silently; a candidate is added on its own only when the deterministic test passes.
