@@ -31,13 +31,17 @@ type mobileClient struct {
 	seq     int
 }
 
-func mobileDial(t *testing.T, h *harness) *mobileClient {
+func mobileDial(t *testing.T, h *harness, endpoint string) *mobileClient {
 	t.Helper()
-	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, "unix", h.socket)
-	}}
+	transport := &http.Transport{}
+	if endpoint == "" {
+		endpoint = "ws://core/client"
+		transport.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", h.socket)
+		}
+	}
 	t.Cleanup(transport.CloseIdleConnections)
-	conn, _, err := websocket.Dial(h.ctx, "ws://core/client", &websocket.DialOptions{HTTPClient: &http.Client{Transport: transport}})
+	conn, _, err := websocket.Dial(h.ctx, endpoint, &websocket.DialOptions{HTTPClient: &http.Client{Transport: transport}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +162,11 @@ func mobileHistoryRows(t *testing.T, history protocol.History) []partialHistoryR
 	return rows
 }
 
-func TestM3WebSocketInstalledCore(t *testing.T) {
+func TestM3WebSocketInstalledCore(t *testing.T) { websocketConversation(t, false) }
+
+func TestM3WebSocketTailnetCore(t *testing.T) { websocketConversation(t, true) }
+
+func websocketConversation(t *testing.T, tailnet bool) {
 	var scenario struct {
 		Input, Quote, Voice, Reply string
 		FollowUp                   string `json:"follow_up"`
@@ -234,8 +242,16 @@ func TestM3WebSocketInstalledCore(t *testing.T) {
 	}))
 	t.Cleanup(provider.Close)
 	h, start := installedConversationHarness(t, provider.URL)
-	core := start(true)
-	c := mobileDial(t, h)
+	endpoint := ""
+	launch := func() func() {
+		core := start(true)
+		return func() { h.stopCore(core) }
+	}
+	if tailnet {
+		launch = mobileTailnetLauncher(t, h, provider.URL, &endpoint)
+	}
+	stopCore := launch()
+	c := mobileDial(t, h, endpoint)
 	history := c.history(t, h)
 	conversation := *history.ConversationID
 	turn := func(input, reply string, onDelta func()) {
@@ -266,18 +282,32 @@ func TestM3WebSocketInstalledCore(t *testing.T) {
 	}
 	turn(scenario.Input, scenario.Reply, func() { once.Do(func() { close(deltaSeen) }) })
 	before := c.history(t, h)
+	rows := mobileHistoryRows(t, before)
+	seen := map[string]bool{}
+	inputSaved, replySaved := false, false
+	for _, row := range rows {
+		if row.Key == "" || seen[row.Key] {
+			t.Fatal("history has missing or duplicate identities")
+		}
+		seen[row.Key] = true
+		inputSaved = inputSaved || row.Text == scenario.Input && row.Speaker == protocol.ConversationSpeakerPerson
+		replySaved = replySaved || row.Text == scenario.Reply && row.Speaker == protocol.ConversationSpeakerAgent
+	}
+	if !inputSaved || !replySaved {
+		t.Fatal("committed input and result missing from history")
+	}
 	epoch := c.welcome.Epoch
 	c.wire.Close()
-	h.stopCore(core)
-	core = start(true)
-	c = mobileDial(t, h)
+	stopCore()
+	stopCore = launch()
+	c = mobileDial(t, h, endpoint)
 	after := c.history(t, h)
 	if *after.ConversationID != conversation || c.welcome.Epoch == epoch || !reflect.DeepEqual(mobileHistoryRows(t, before), mobileHistoryRows(t, after)) {
 		t.Fatal("restart lost conversation results")
 	}
 	turn(scenario.FollowUp, scenario.RestoredReply, nil)
 	c.wire.Close()
-	h.stopCore(core)
+	stopCore()
 	if calls.Load() != 3 {
 		t.Fatalf("provider requests=%d", calls.Load())
 	}
