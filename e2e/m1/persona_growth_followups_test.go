@@ -23,7 +23,7 @@ func TestM2InstalledGrowthFollowups(t *testing.T) {
 		Snapshots          []struct{ Name, Unit string } `json:"snapshots"`
 		Notice             string                        `json:"notice"`
 	}
-	data, err := os.ReadFile("m2/persona-growth-followups.json")
+	data, err := os.ReadFile("../m2/persona-growth-followups.json")
 	if err != nil {
 		t.Fatal(err)
 	}

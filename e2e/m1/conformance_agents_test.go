@@ -24,7 +24,7 @@ import (
 )
 
 func TestM1AgentLifecycleConformance(t *testing.T) {
-	raw, err := os.ReadFile("m1/conformance-agents.json")
+	raw, err := os.ReadFile("conformance-agents.json")
 	if err != nil {
 		t.Fatal(err)
 	}
