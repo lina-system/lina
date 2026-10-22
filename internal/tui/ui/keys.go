@@ -50,6 +50,7 @@ var keyBindings = []keyBinding{
 	{"talk.heading", []string{"/talk"}, 6, "", "commands"},
 	{"interrupt", []string{"/stop"}, 7, "", "commands"},
 	{"shortcuts.queue", []string{"/queue <text>"}, 8, "", "commands"},
+	{"web.heading", []string{"/web"}, 9, "", "commands"},
 }
 
 func bindingsFor(section string) []keyBinding {

@@ -23,7 +23,7 @@ import (
 
 // Offer only rendered families; the conversation discovers and maintains its
 // concrete conversation/results subscriptions after welcome.
-var shellCapabilities = []protocol.Capability{{Name: "worker_lanes", Version: "1.0"}, {Name: "agents", Version: "1.0"}, {Name: "memory", Version: "1.0"}, {Name: "exchanges", Version: "1.0"}, {Name: "channels", Version: "1.0"}, {Name: "accounts", Version: "1.0"}, {Name: "sign_in_relay", Version: "1.0"}, {Name: "conversation", Version: "1.0"}, {Name: "turn_activity", Version: "1.0"}, {Name: "running", Version: "1.0"}, {Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}}
+var shellCapabilities = []protocol.Capability{{Name: "worker_lanes", Version: "1.0"}, {Name: "web", Version: "1.0"}, {Name: "agents", Version: "1.0"}, {Name: "memory", Version: "1.0"}, {Name: "exchanges", Version: "1.0"}, {Name: "channels", Version: "1.0"}, {Name: "accounts", Version: "1.0"}, {Name: "sign_in_relay", Version: "1.0"}, {Name: "conversation", Version: "1.0"}, {Name: "turn_activity", Version: "1.0"}, {Name: "running", Version: "1.0"}, {Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}}
 
 type clientPeer struct{ client *clientapi.Client }
 
@@ -131,6 +131,7 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 	var peer connectionPeer
 	pending := make(map[string]state.SendRequest)
 	channelPending := make(map[string]uint64)
+	webPending := make(map[string]uint64)
 	talkPending := make(map[string]uint64)
 	var agentListID, reconnectAgent, historyID string
 	var stopInput func() error
@@ -148,6 +149,7 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 			clear(management.pending)
 			model.conversation.pager = textPager{}
 			clear(channelPending)
+			clear(webPending)
 			clear(talkPending)
 			agentListID, reconnectAgent, historyID = "", "", ""
 		}
@@ -240,6 +242,19 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 					return err
 				}
 				talkPending[id] = request.Attempt
+			}
+			return display.showShell(model)
+		}
+		if request, ok := message.(shellWebRequest); ok {
+			if request.Generation != model.generation || request.Attempt != model.web.attempt {
+				return nil
+			}
+			if client, ok := peer.(clientPeer); ok {
+				id, err := client.client.Web(ctx, request.Request)
+				if err != nil {
+					return err
+				}
+				webPending[id] = request.Attempt
 			}
 			return display.showShell(model)
 		}
@@ -350,6 +365,20 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 									model.talk.code = string(e.Error.Code)
 								} else if p, ok := e.Payload.(protocol.AgentTalk); ok {
 									model.talkResponse(p)
+								}
+							}
+							return display.showShell(model)
+						}
+					}
+					if e.ReplyTo != nil {
+						if attempt, ok := webPending[*e.ReplyTo]; ok {
+							delete(webPending, *e.ReplyTo)
+							if model.web.open && attempt == model.web.attempt {
+								model.web.busy = false
+								if e.Error != nil {
+									model.web.code = string(e.Error.Code)
+								} else if p, ok := e.Payload.(protocol.WebResult); ok {
+									model.web.configured = p.Configured
 								}
 							}
 							return display.showShell(model)

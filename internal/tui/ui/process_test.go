@@ -46,7 +46,10 @@ func TestTUIProcess(t *testing.T) {
 		done := make(chan struct{})
 		go func() { core.Wait(); close(done) }()
 		t.Cleanup(func() { core.Process.Kill(); <-done })
-		deadline := time.NewTimer(5 * time.Second)
+		// Core boot includes the SQLite WASM runtime and migrations. Give that
+		// startup its own bound; success still requires an observed live socket
+		// and the TUI handshake below, not elapsed time.
+		deadline := time.NewTimer(30 * time.Second)
 		defer deadline.Stop()
 		retry := time.NewTicker(5 * time.Millisecond)
 		defer retry.Stop()

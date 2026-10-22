@@ -65,6 +65,12 @@ entry, private-chat pairing, binding and disconnect through the real TUI and
 boot composition. A separate Core test process retains the production peer
 ancestry checks; only Telegram HTTP replies are scripted. Boot package tests
 also reopen the poller against durable connection and secret state.
+`m1/telegram.json` starts production boot in process against a saved channel and
+secret, without a model route. Only the platform HTTP transport is replaced:
+the restored bot's identity lookup stays blocked until shutdown. READY and a
+socket channel listing must succeed while it is blocked, the channel must show
+unavailable without exposing the token, and Core must cancel and join the
+request before stopping.
 `m1/tui-talk-log.json` seeds a durable exchange, restarts installed Core, and
 checks one summary row and its explicit ledger expansion without a model call.
 
@@ -287,6 +293,8 @@ work tools, authenticated owner approval and question answers, worker-written
 artifact contents, reported quota windows, and restored completion history.
 Worker settings remain omitted. This scenario uses no real account or provider
 credentials and does not measure live Codex quota.
+
+`TestM1WebUnconfigured` checks installed Core's explicit missing-provider status, absence of web declarations and one-round notice. `TestM1WebSearchExtractAndCitation` runs the production Core composition in a separate test helper with a synthetic manifest recording that executable, and injects only the Firecrawl HTTP transport. The real TUI saves a hidden key; the protocol client approves each network request; the real provider adapter searches and extracts against stub responses; TUI cells show both running activities; the scripted model cites the source URL. No real provider account is used, and model compliance beyond the scripted boundary is not claimed.
 
 `m3/worker-lanes.json` uses installed Core and a real headless TUI to show two
 sessions of the same worker as separate folded lanes. A fixture writes a real

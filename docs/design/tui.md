@@ -1160,3 +1160,7 @@ Their transient blocks and command drafts are not persisted by the TUI.
 `e2e/m1/tui-memory-agents.json` exercises the installed Core, generated client
 protocol and real PTY TUI against a loopback Responses fixture, including scoped
 recall, correction, forget, agent identities, conversation selection and restart.
+
+### Web access setup
+
+`/web` opens the [web provider settings](web-tools.md#provider-setup), also discoverable through `/help`. The Firecrawl key is masked in a transient form and cleared on submission, exit or reconnect. Saving or removing a key reports configuration status without echoing it. Search and extraction appear in the existing running list after network admission, and settle on success, failure or cancellation.
