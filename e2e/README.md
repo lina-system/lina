@@ -224,3 +224,10 @@ and deleted agents in conversation and management requests, plus channel
 binding/scope replacement. A paired synthetic channel and an existing binding
 exercise the actual target-agent checks. Read-only canon snapshots prove that
 refused requests preserve agent revisions, actions, conversations and bindings.
+
+`m3/crw-takeover.json` runs the operator import binary against an installed Core's
+stopped state root, checks exclusive ownership and idempotent retry, removes the
+source snapshot, then exercises the running Core's record tools. Imported evidence
+is read by LINA id, source-id lookup fails, a new result is saved, and restart keeps
+the imported identity. This operator-only test and fixture are excluded from
+release archives together with the takeover tool.
