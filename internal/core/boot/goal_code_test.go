@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	goal "github.com/thisisjun786/lina/internal/core/work/goal"
 	"github.com/thisisjun786/lina/internal/core/worker/antigravity"
@@ -193,5 +194,29 @@ func TestCodeGoalRoutesTasksAndChecksWithinServiceScope(t *testing.T) {
 	}
 	if _, _, _, _, err := d.inputs(t.Context(), goal.Action{GoalID: g.ID, Kind: goal.CheckCriterion, Check: &goal.CriterionCheck{Target: "outside"}}); err == nil {
 		t.Fatal("registered but out-of-scope target accepted")
+	}
+}
+
+func TestCodeHostReportCannotSupplyIdentityReadinessOrLimits(t *testing.T) {
+	now := time.Now()
+	raw := []byte(`{"cpu_cores":1,"load_cpu":0,"available_memory_mb":512,"available_disk_mb":2048}`)
+	limits := goal.Resources{CPU: 1, MemoryMB: 256, DiskMB: 1024}
+	node, err := decodeCodeHost(raw, "installed-main", limits, map[string]bool{"antigravity": false}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node.ID != "installed-main" || node.Workers["antigravity"] || node.CPULimit != 1 || node.MemoryLimitMB != 256 || node.DiskLimitMB != 1024 || node.ObservedAt != now.Unix() {
+		t.Fatalf("report replaced Core facts: %+v", node)
+	}
+	for _, extra := range []string{`,"id":"foreign"`, `,"workers":{"antigravity":true}`, `,"cpu_limit":100`, `,"observed_at":99999999999`} {
+		forged := append(append([]byte{}, raw[:len(raw)-1]...), []byte(extra+"}")...)
+		if _, err := decodeCodeHost(forged, "installed-main", limits, nil, now); err == nil {
+			t.Fatalf("report replaced installed field: %s", extra)
+		}
+	}
+	for _, raw := range []string{`{"cpu_cores":0,"load_cpu":0,"available_memory_mb":512,"available_disk_mb":2048}`, `{"cpu_cores":1,"load_cpu":-1,"available_memory_mb":512,"available_disk_mb":2048}`, `{"cpu_cores":1,"load_cpu":0}`, `{} {}`} {
+		if _, err := decodeCodeHost([]byte(raw), "installed-main", limits, nil, now); err == nil {
+			t.Fatal("invalid resource observation accepted")
+		}
 	}
 }

@@ -49,7 +49,7 @@ func TestM2InstalledCodeGoalTool(t *testing.T) {
 
 func TestM2InstalledCodeGoalDriver(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"private", "public"} {
+	for _, mode := range []string{"private", "public", "failed-deploy"} {
 		t.Run(mode, func(t *testing.T) { t.Parallel(); installedCodeGoal(t, mode) })
 	}
 }
@@ -92,7 +92,7 @@ func installedCodeGoal(t *testing.T, mode string) {
 	if err = os.WriteFile(filepath.Join(bin, "agy"), worker, 0700); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"gh", "qa", "acceptance", "deploy", "probe"} {
+	for _, name := range []string{"gh", "qa", "acceptance", "deploy", "probe", "host-report"} {
 		if err = os.WriteFile(filepath.Join(bin, name), services, 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -142,7 +142,7 @@ func installedCodeGoal(t *testing.T, mode string) {
 	h, bootstrap := installedConversationHarness(t, model.URL)
 	seedCodingFixture(t, h, bootstrap)
 	command := func(name string) map[string]any { return map[string]any{"path": filepath.Join(bin, name)} }
-	config := map[string]any{"limits": map[string]any{"cpu": 1, "memory_mb": 4096, "disk_mb": 16384}, "repositories": map[string]any{"fixture/project": map[string]any{"clone": repo, "base": "dev", "design_refs": []string{"design.md#result"}, "qa": command("qa"), "checks": map[string]any{"acceptance": command("acceptance")}, "service": map[string]any{"target": "fixture-service", "public": mode == "public", "deploy": command("deploy"), "probe": command("probe")}}}}
+	config := map[string]any{"host_report": command("host-report"), "limits": map[string]any{"cpu": 1, "memory_mb": 4096, "disk_mb": 16384}, "repositories": map[string]any{"fixture/project": map[string]any{"clone": repo, "base": "dev", "design_refs": []string{"design.md#result"}, "qa": command("qa"), "checks": map[string]any{"acceptance": command("acceptance")}, "service": map[string]any{"target": "fixture-service", "public": mode == "public", "deploy": command("deploy"), "probe": command("probe")}}}}
 	raw, _ := json.Marshal(config)
 	if err = os.WriteFile(filepath.Join(h.root, "system", "code-work.json"), raw, 0600); err != nil {
 		t.Fatal(err)
@@ -151,8 +151,11 @@ func installedCodeGoal(t *testing.T, mode string) {
 	defer cancel()
 	h.ctx = ctx
 	start := func() *process {
+		operation := h.ctx
+		h.ctx = t.Context()
 		p := h.command("core", "--state-root", h.root, "--socket", h.socket)
-		p.command.Env = append(p.command.Env, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "LINA_WORKER_FIXTURE="+fixture, "LINA_WORKER_CASE=success", "LINA_GOAL_FIXTURE_URL="+service.URL, "LINA_RESPONSES_BASE_URL="+model.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
+		h.ctx = operation
+		p.command.Env = append(p.command.Env, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "LINA_WORKER_FIXTURE="+fixture, "LINA_WORKER_CASE=success", "LINA_GOAL_FIXTURE_URL="+service.URL, "LINA_GOAL_MODE="+mode, "LINA_RESPONSES_BASE_URL="+model.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
 		p.start(t)
 		h.connectWithin(p, time.Minute).Close()
 		waitCoreReady(t, h)
@@ -166,7 +169,7 @@ func installedCodeGoal(t *testing.T, mode string) {
 		if item, ok := e.Payload.(protocol.ItemDone); ok && item.Text != nil {
 			done = done || strings.HasPrefix(*item.Text, "Done.")
 			if strings.HasPrefix(*item.Text, "This work needs attention.") {
-				if mode != "public" {
+				if mode != "public" && mode != "failed-deploy" {
 					t.Error("goal blocked: " + *item.Text)
 				}
 				done = true
@@ -185,6 +188,7 @@ func installedCodeGoal(t *testing.T, mode string) {
 		inspect(e)
 	}
 	c.Close()
+	h.ctx = t.Context()
 	h.stopCore(core)
 	db, closeDB := installedAcceptanceStore(t, h)
 	var g goal.Goal
@@ -197,6 +201,20 @@ func installedCodeGoal(t *testing.T, mode string) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if mode == "failed-deploy" {
+		closeDB()
+		if g.State != goal.GoalBlocked || g.Deployment.Passed || g.Verification.Passed {
+			t.Fatalf("failed deployment completed the goal: %+v", g)
+		}
+		events, err := os.ReadFile(filepath.Join(fixture, "events"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Count(string(events), "deploy\n") != 1 || strings.Contains(string(events), "probe\n") {
+			t.Fatalf("failed deployment retried or accepted a probe: %s", events)
+		}
+		return
 	}
 	if mode == "public" {
 		closeDB()
@@ -218,7 +236,7 @@ func installedCodeGoal(t *testing.T, mode string) {
 	if g.State != goal.GoalDone || len(g.Checks) != 5 || !g.Deployment.Passed || !g.Verification.Passed {
 		var debug []string
 		_ = db.Read(t.Context(), func(tx *canon.Tx) error {
-			rows, e := tx.QueryContext(t.Context(), "SELECT body FROM work_records WHERE kind='action'")
+			rows, e := tx.QueryContext(t.Context(), "SELECT body FROM work_records WHERE kind IN ('action','node')")
 			if e != nil {
 				return e
 			}

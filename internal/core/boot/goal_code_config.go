@@ -34,6 +34,7 @@ type codeRepository struct {
 	Service    *codeService           `json:"service,omitempty"`
 }
 type codeConnections struct {
+	HostReport   *codeCommand              `json:"host_report,omitempty"`
 	Repositories map[string]codeRepository `json:"repositories"`
 	Limits       goal.Resources            `json:"limits"`
 }
@@ -65,6 +66,9 @@ func readCodeConnections(root string) (codeConnections, error) {
 	}
 	if cfg.Limits.CPU <= 0 || cfg.Limits.MemoryMB <= 0 || cfg.Limits.DiskMB <= 0 {
 		return cfg, errors.New("invalid code-work capacity")
+	}
+	if cfg.HostReport != nil && !validCodeCommand(*cfg.HostReport) {
+		return cfg, errors.New("invalid code-work host report")
 	}
 	for name, repo := range cfg.Repositories {
 		if strings.Count(name, "/") != 1 || !filepath.IsAbs(repo.Clone) || repo.Base == "" || len(repo.DesignRefs) == 0 || !validCodeCommand(repo.QA) {

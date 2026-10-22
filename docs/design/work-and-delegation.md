@@ -1302,6 +1302,14 @@ or an executable. The file contains:
 
 - `limits`: positive `cpu`, `memory_mb` and `disk_mb` capacity ceilings, combined
   with the main host's measured load and installed worker availability.
+- Optional `host_report`: a registered read-only monitor command for environments
+  where Core cannot read the host's counters directly. Without it, Core reads
+  the OS counters. The monitor emits `cpu_cores`, `load_cpu`,
+  `available_memory_mb` and `available_disk_mb`; Core supplies the identity,
+  observation time, installed worker readiness and capacity ceilings. Reported
+  cores are capped by Core's available CPUs. Invalid or failed reports supply no
+  capacity. The installed acceptance uses a fixture monitor so an unrelated CI
+  workload cannot determine whether its fixture worker starts.
 - `repositories`: a map from GitHub `owner/repository` names to `clone` (an
   absolute local clone), `base`, `design_refs`, `qa` and `checks`. Each command
   has an absolute `path` and optional literal `args`. `checks` maps criterion
@@ -1319,7 +1327,8 @@ Deploy uses that same pinned revision. Core passes `LINA_GOAL_REVISION`,
 contains `revision`, `target`, `passed` (boolean) and a nonempty `evidence` string
 describing the observation. Core requires matching revision and target, retains
 the output and command identity, and treats a nonzero exit as failure. An exit
-code without this evidence cannot complete a stage. A deployment also requires
+code without this evidence cannot complete a stage. An explicit deployment failure remains failed even if that revision is serving;
+it is not retried automatically. A deployment also requires
 an independent probe of the running service; the deploy command's output alone
 does not prove it is running.
 

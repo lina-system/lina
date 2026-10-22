@@ -248,12 +248,18 @@ func (d *codeGoalDriver) deploy(ctx context.Context, g goal.Goal, a goal.Action,
 		return goal.Observation{}, err
 	}
 	if ticket.Replay {
+		if ticket.Result.State != tools.Applied {
+			return goal.Observation{Status: goal.OutcomeNeedsPerson, EffectsSettled: true, Code: "deployment_failed"}, nil
+		}
 		return d.runCheck(ctx, g, a, repo, service.Probe, service.Target, false)
 	}
-	_, err = d.runCheck(ctx, g, a, repo, service.Deploy, service.Target, true)
+	deployment, err := d.runCheck(ctx, g, a, repo, service.Deploy, service.Target, true)
 	result := tools.Result{State: tools.Unknown}
 	var observation goal.Observation
-	if err == nil {
+	if err == nil && (deployment.Status != goal.OutcomeSucceeded || !deployment.Proof.Passed) {
+		result.State = tools.Failed
+		result.Body, _ = json.Marshal(deployment.Proof)
+	} else if err == nil {
 		observation, err = d.runCheck(ctx, g, a, repo, service.Probe, service.Target, false)
 		if err == nil && observation.Proof.Passed {
 			result.State = tools.Applied
@@ -262,6 +268,9 @@ func (d *codeGoalDriver) deploy(ctx context.Context, g goal.Goal, a goal.Action,
 	}
 	if finishErr := r.personaAuthority.Finish(ctx, ticket, result); finishErr != nil {
 		return goal.Observation{}, errors.Join(err, finishErr)
+	}
+	if result.State == tools.Failed {
+		return goal.Observation{Status: goal.OutcomeNeedsPerson, Proof: deployment.Proof, EffectsSettled: true, Code: "deployment_failed"}, nil
 	}
 	if result.State != tools.Applied {
 		return goal.Observation{Status: goal.OutcomeUnknown}, nil

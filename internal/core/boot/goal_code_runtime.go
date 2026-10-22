@@ -25,7 +25,7 @@ func (r *conversationRuntime) installedCodeWork() (*WorkConfig, error) {
 		},
 		MainHost: func(ctx context.Context) (goal.Node, error) {
 			workers := map[string]bool{"antigravity": r.workerDispatch != nil && len(connections.Repositories) > 0}
-			sample, err := goal.MainHost(ctx, r.main, r.root, connections.Limits, workers)
+			sample, err := r.codeHost(ctx, connections, workers)
 			if err != nil {
 				return goal.Node{ID: r.main, ObservedAt: time.Now().Unix()}, nil
 			}

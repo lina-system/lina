@@ -12,7 +12,9 @@ const read=()=>JSON.parse(fs.readFileSync(path.join(root,'pr.json'),'utf8'));
 const mergedFile=path.join(root,'merged');
 const merged=()=>fs.existsSync(mergedFile)?fs.readFileSync(mergedFile,'utf8'):'';
 const event=(s)=>fs.appendFileSync(path.join(root,'events'),s+'\n');
-if(name==='gh') {
+if(name==='host-report') {
+ console.log(JSON.stringify({cpu_cores:1,load_cpu:0,available_memory_mb:1024,available_disk_mb:1024}));
+} else if(name==='gh') {
  if(args[0]==='pr' && args[1]==='create') { event('worker-pr'); console.log('https://github.com/fixture/project/pull/17'); }
  else if(args[0]==='pr' && args[1]==='view') console.log(JSON.stringify(read()));
  else if(args[0]==='pr' && args[1]==='merge') {
@@ -51,7 +53,7 @@ if(name==='gh') {
  } else if(name==='deploy') {
   if(git('rev-parse','HEAD')!==revision || revision!==merged()) throw Error('wrong deploy checkout');
   const response=await fetch(process.env.LINA_GOAL_FIXTURE_URL,{method:'POST',body:JSON.stringify({revision,body:fs.readFileSync('result.txt','utf8')})});
-  passed=response.ok;evidence='Service accepted the merged artifact';
+  passed=response.ok && process.env.LINA_GOAL_MODE!=='failed-deploy';evidence='Service accepted the merged artifact';
  } else if(name==='probe') {
   const response=await fetch(process.env.LINA_GOAL_FIXTURE_URL);
   const result=await response.json();
