@@ -8,6 +8,17 @@ Add an entry when third-party code or other material is included in LINA. Record
 
 ## Terminal UI behaviour references
 
+The conversation speaker gutter adapts behaviour described in these permissive
+projects: distinct first-line speaker marks, indented continuation text and
+spacing between turns. No implementation code is copied.
+
+- [Codex CLI](https://github.com/openai/codex), Apache-2.0, revision
+  `86e17e98`: person/assistant marks, two-cell continuation indent and empty rows.
+- [Gemini CLI](https://github.com/google-gemini/gemini-cli), Apache-2.0, revision
+  `09d81bf1`: distinct speaker marks and accented assistant identity.
+- [Hermes Agent](https://github.com/NousResearch/hermes-agent), MIT, revision
+  `e06df9c2`: person prompt and assistant gutter. Its MIT notice appears below.
+
 The composer separation and newline keys in LINA's terminal UI independently adapt behaviour
 from these permissive projects. No upstream implementation code is copied or
 bundled by this change:
@@ -31,6 +42,13 @@ bundled by this change:
 LINA uses its own semantic tokens, localized catalog, row-budget planner and
 hardware cursor placement. It uses a hairline instead of a surrounding box.
 
+Input recall also independently adapts Hermes Agent's first/last-line Up/Down
+behaviour and separation of secret forms (`hermes_cli/cli_tui_mixin.py`, revision
+`e06df9c2`, MIT, Nous Research and contributors). No implementation code is
+copied. LINA derives in-memory history from Core's current conversation instead
+of using the reference's file history. Observations and limits are recorded in
+[`INPUT-HISTORY-REFERENCE.md`](internal/tui/ui/INPUT-HISTORY-REFERENCE.md).
+
 The shortcut sheet and adaptive footer also follow the behaviour requested from
 Codex CLI (`?` discovery and priority hints) and Gemini CLI (a shared key table).
 The progressive disclosure reference was read directly in Hermes Agent revision
@@ -39,6 +57,29 @@ The progressive disclosure reference was read directly in Hermes Agent revision
 LINA independently implements whole-hint fitting and a persistent connection
 label in Go. No upstream code is copied. See the
 [observations and limits](docs/design/tui-shortcuts-reference.md).
+
+The activity row draws on behavioural observations of Codex CLI
+([openai/codex](https://github.com/openai/codex), Apache-2.0) and Hermes Agent
+([NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent), MIT):
+status above the composer, compact elapsed time, a completion duration, frame
+sets and pausing animation while hidden or idle. No source code is copied.
+The seen/inferred/unknown specification is in
+[the activity reference](internal/tui/ACTIVITY-REFERENCE.md).
+
+Tool activity also follows Hermes Agent’s friendly catalog verbs and timed
+completion indication, observed at revision `944c3a434071f43e64b443d033f3eba30c64434c`
+in `agent/display.py`. LINA’s protocol and journal wiring are original.
+
+[Codex CLI](https://github.com/openai/codex) (Apache-2.0, OpenAI) informs the
+whole-conversation transcript overlay opened with Ctrl+T. No upstream code is
+copied. Source observations and limits are recorded in
+[the TUI reference specification](internal/tui/ui/REFERENCE.md).
+
+[Hermes Agent](https://github.com/NousResearch/hermes-agent) (MIT, copyright
+2025 Nous Research) informs the TUI's complete inline assistant replies and
+paged transcript reading. No upstream code is copied. The source-survey
+observations and limits are recorded in [the TUI reference specification](internal/tui/ui/REFERENCE.md).
+The Hermes Agent license text is included in its notice below.
 
 ## Memory design references
 
@@ -1325,42 +1366,6 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
-
-## Terminal UI behaviour references
-
-The conversation speaker gutter adapts behaviour described in these permissive
-projects: distinct first-line speaker marks, indented continuation text and
-spacing between turns. No implementation code is copied.
-
-- [Codex CLI](https://github.com/openai/codex), Apache-2.0, revision
-  `86e17e98`: person/assistant marks, two-cell continuation indent and empty rows.
-- [Gemini CLI](https://github.com/google-gemini/gemini-cli), Apache-2.0, revision
-  `09d81bf1`: distinct speaker marks and accented assistant identity.
-- [Hermes Agent](https://github.com/NousResearch/hermes-agent), MIT, revision
-  `e06df9c2`: person prompt and assistant gutter. Its MIT notice appears above.
-
-The activity row draws on behavioural observations of Codex CLI
-([openai/codex](https://github.com/openai/codex), Apache-2.0) and Hermes Agent
-([NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent), MIT):
-status above the composer, compact elapsed time, a completion duration, frame
-sets and pausing animation while hidden or idle. No source code is copied.
-The seen/inferred/unknown specification is in
-[the activity reference](internal/tui/ACTIVITY-REFERENCE.md).
-
-Tool activity also follows Hermes Agent’s friendly catalog verbs and timed
-completion indication, observed at revision `944c3a434071f43e64b443d033f3eba30c64434c`
-in `agent/display.py`. LINA’s protocol and journal wiring are original.
-
-[Codex CLI](https://github.com/openai/codex) (Apache-2.0, OpenAI) informs the
-whole-conversation transcript overlay opened with Ctrl+T. No upstream code is
-copied. Source observations and limits are recorded in
-[the TUI reference specification](internal/tui/ui/REFERENCE.md).
-
-[Hermes Agent](https://github.com/NousResearch/hermes-agent) (MIT, copyright
-2025 Nous Research) informs the TUI's complete inline assistant replies and
-paged transcript reading. No upstream code is copied. The source-survey
-observations and limits are recorded in [the TUI reference specification](internal/tui/ui/REFERENCE.md).
-The Hermes Agent license text is included above.
 
 ## codex-app-server
 

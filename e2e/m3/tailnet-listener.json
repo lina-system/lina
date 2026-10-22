@@ -1,0 +1,10 @@
+{
+  "address": "100.100.0.1:9000",
+  "remote": "100.100.0.2:1234",
+  "input": "Collect the synthetic background report.",
+  "outcome": "cancelled",
+  "capabilities": [
+    {"name": "conversation", "version": "1.0"},
+    {"name": "running", "version": "1.0"}
+  ]
+}
