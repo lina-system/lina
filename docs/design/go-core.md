@@ -32,7 +32,7 @@ File tools use the explicit internal `lina file-tool --root <directory> --versio
 
 The control-file increment (#36) starts with `lina core --state-root <path> --socket <path>`. The state root must already exist, and installation supplies `system/core/main.json`; Core never invents a replacement identity. `lina install` verifies the build bundle, creates a random main id in a new private state root, and registers the `lina-core.service` user unit with explicit state-root and socket arguments. Existing state and services are refused, including an install's own previous identity; installation is not an update or implicit restart. The concrete layout and failure behavior are specified in [runtime.md](runtime.md#the-lina-command).
 
-**C-02 Binaries and modules (changed).** Subcommands of `lina`, proposed here because [runtime.md](runtime.md#the-lina-command) defers the names: `core`, `tui`, `install`, `backup`, `restore` (main stopped), `doctor`, `replay`, `export`, `about`, `version`. `version` prints the version, the commit and the build date that the build sets with `-ldflags` ([versioning.md](versioning.md)). Separate artifacts: `lina-node` and `moirai-worker`. Modules: the root module and `kit` (`github.com/thisisjun786/lina/kit`), joined by `go.work` and a `replace`.
+**C-02 Binaries and modules (changed).** Subcommands of `lina`, proposed here because [runtime.md](runtime.md#the-lina-command) defers the names: `core`, `tui`, `install`, `update` (prepare only), `backup`, `restore` (main stopped), `doctor`, `replay`, `export`, `about`, `version`. `version` prints the version, the commit and the build date that the build sets with `-ldflags` ([versioning.md](versioning.md)). Separate artifacts: `lina-node` and `moirai-worker`. Modules: the root module and `kit` (`github.com/thisisjun786/lina/kit`), joined by `go.work` and a `replace`.
 
 The command registers `core`, `tui`, `install`, `doctor` and `version` in `lina`, and `version` in `lina-node`. Both `version` commands print the shared `internal/buildinfo` version line on stdout and exit 0 ([versioning.md](versioning.md#what-a-binary-reports)). Missing or unknown subcommands print usage on stderr and exit 64. The install handler dispatches into `internal/core/install`; failed installation exits 78 and preserves existing files and services. Node depends on the permitted kit packages and the Go standard library; its command entry point may also import `internal/buildinfo`.
 
@@ -196,6 +196,40 @@ Boot constructs this controller under its existing lock, validates the restart r
 - Resume.
 
 The gate needs every cell: idle, candidate verified, schema relation, peer rows, free space, a recent verified generation. Rollback restores the kept binaries, is automatic only while the new binary never reached READY, and never runs over a migration that cannot be undone; afterwards the default is a forward fix. The Claude adapter, its lockfile and the SDK pin move only with a LINA update; tools the user installed are never touched. A store newer than the binary exits 78 without writing. Migrations are forward-only, numbered, one transaction each.
+
+The #149 preparation boundary is `lina update --prepare --state-root <path>
+--archive <tar.gz> --sha256 <digest>`. `internal/core/update` freezes and hashes
+the download before unpacking, checks every manifest artifact, then runs the
+candidate's `lina core --preflight` through `kit/proc`. Candidate versions live
+under `system/updates/<archive-sha256>`; creation is exclusive and never replaces
+another attempt. A successful candidate gets a durable `prepared.json` receipt.
+The active binaries, service, control records and canon remain unchanged.
+
+`core --preflight --state-root <path> [--manifest <path>]
+[--required-manifest <path>]` exits 0 with a JSON schema/peer result or 78 with a
+cause. It takes no Core lock, creates no authority or socket, loads no provider
+configuration and makes no installed-state writes. Canon inspection includes
+committed WAL through a private temporary WAL index, checks the numbered schema,
+published catalog and SQLite quick check, and discards a result if the database,
+WAL or rollback journal changed during inspection. A nonempty rollback journal
+requires recovery. Temporary inspection files are removed. Candidate rows must
+be implemented by this binary and cover every required peer protocol and
+capability. Product version does not decide compatibility. Preparation uses the
+installed manifest's rows when present; otherwise the local compiled TUI row is
+required. Explicit malformed or empty required tables are refused.
+
+Normal application Core startup also checks the schema before creating control
+directories or taking its lock, then checks again under the lock before minting
+an epoch. A newer schema is refused before interpreting its metadata tables.
+Both ordinary startup and preflight preserve a newer store and its sidecars
+byte for byte, including a schema version present only in committed WAL.
+
+The six gate cells are `pass`, `fail` or `unknown`; every cell must be `pass`.
+Preparation establishes candidate verification, schema relation, peer rows and
+staging space only. Idle and verified-generation remain `unknown` until the
+activation owner supplies a fenced idle observation and a recent verified
+backup. A prepared receipt is not activation authority or a READY receipt.
+The lifecycle swap, smoke and rollback orchestration belongs to #150.
 
 ## Client service
 
@@ -724,10 +758,25 @@ matter id. Every applied change has one commit naming the person and asking
 agent. A durable intent names immutable before/after objects; startup finishes
 only that publication and never re-dispatches its tool effect. An outside edit,
 commit, foreign lock or incompatible recovery state returns `records_changed`
-without overwriting it. Outside-change acceptance/presentation and the richer
-FTS/edge index are subsequent records-index work.
+without overwriting it. The derived index includes title/note FTS and belongs-to
+and blocked-by edges. Its own head is separate from the last Core-published
+head. Startup and every read/write repair a missing or stale index only after
+checking the published files. Rebuild reads those files, validates unique ids,
+and derives record revisions from their history; it never adopts an outside
+commit as a new Core publication.
 
-Installed conversations register `read_record` and `write_record` through the
+`query_records` searches or lists the authenticated person's records, optionally
+filtering kind, with deterministic id ordering and a bounded page. Person and
+filesystem paths are not model arguments. A changed, added, deleted, invalid or
+non-regular file, or a changed repository head, refuses reads, queries, writes
+and rebuild with `records_changed`. Tool results show a bounded list of change
+kinds and validation outcomes without outside bytes or filesystem paths. Startup
+keeps ordinary conversations available when an outside change is present; the
+next record operation shows the refusal. Only Core-journaled recovery may finish
+an interrupted publication. Outside-change acceptance is not automatic and no
+accept/merge operation is supplied by this increment.
+
+Installed conversations register `read_record`, `write_record` and `query_records` through the
 ordinary authority, lease and effect-receipt registry. These tools capture and
 edit memos and knowledge documents; Core supplies the owner, asking agent, id
 and PARA path. Model arguments cannot supply identities or paths. Existing
@@ -866,7 +915,7 @@ Persona growth uses `agents.AdoptGrowthTx` inside the Core job service's fenced 
 
 The main's `skill-maintenance` planning job snapshots user-created skill bundles and asks Core's auxiliary model path for pruning and near-duplicate merging decisions, without persona or tools. A stale procedure needs content evidence of retirement or replacement; age or non-use alone is insufficient. Core checks the exact cached model result against the queued IDs and revisions before adoption. Changed inputs and undone operations are consumed without another write or notice. Unchanged snapshots are not scheduled again; an unstarted pending snapshot may be refreshed, but a reserved model call is never replaced or replayed. Initial policy (P) is hourly, with a one-minute timeout, 8,192 tokens reserved per call and a 131,072-token allowance; unknown usage retains its reservation. Ordinary job payload limits apply. An oversized catalog cannot dispatch and does not block conversation.
 
-A prune archives its active entry. A merge writes the target and archives every source in one fenced transaction with the job watermark and receipt, using the ordinary immutable Git version writer. All affected revisions must still match. A single existing `undo_skill` handle restores every member atomically as new revisions, refusing if any member has changed. The store remembers the rejected operation by kind, member IDs and input content hashes, so changing the merge destination, generated wording or reason cannot repeat an undone merge. Rejected merged output hashes also use ordinary skill suppression. Built-in IDs are excluded even when locally patched. Migration 29 adds operation membership and a durable notice outbox, preserving the published work-waiting schema at version 28 and all earlier migrations.
+A prune archives its active entry. A merge writes the target and archives every source in one fenced transaction with the job watermark and receipt, using the ordinary immutable Git version writer. All affected revisions must still match. A single existing `undo_skill` handle restores every member atomically as new revisions, refusing if any member has changed. The store remembers the rejected operation by kind, member IDs and input content hashes, so changing the merge destination, generated wording or reason cannot repeat an undone merge. Rejected merged output hashes also use ordinary skill suppression. Built-in IDs are excluded even when locally patched. Migration 30 adds operation membership and a durable notice outbox, preserving the published work-waiting schema at version 28, records search at version 29 and all earlier migrations.
 
 Installed Core registers this job on its shared `run/jobs.sock`, queues changes on skill writes and restart, and retries notice delivery and scheduling each minute. `skill_notices` returns the committed one-line notices and undo handles; Core also projects the notices into conversation history independently of a model reply. `skill_maintenance` reads the policy or changes its durable enablement when the person asks. Disabling skill suggestions stops background adoption and automatic conversation skill writes; undo remains available. An included worker is enabled by install and uses that same socket. `e2e/m2/skill-maintenance.json` exercises the installed Core, actual worker process and synthetic provider through pruning, merging, notices, grouped undo and restart suppression.
 
@@ -1103,6 +1152,7 @@ type Definition struct {
 
 - A completion event is a row keyed by task, attempt and head SHA, and its claim is idempotent. Chat input and events share one reaction path.
 - `Reactor.On` does, in order: one read of the pull request through `ghclient` (a `gh` child with fixed arguments); one design-conformance review; return of P0 and P1 findings once; merge or close; then `Scheduler.Release`. The CI watcher follows [completion signals](integrations.md#completion-signals).
+- `ghclient` is owned by boot for one Core epoch. Each fixed-argument `gh` child runs through `kit/proc` with a live activity lease, the user's GitHub login and no model-provider credentials. The client serializes observation in one watcher per normalized repository/PR, bounds response bytes and pagination, retains conditional REST validators, and exposes pending causes and retry times through the `github` client capability. No shell, events feed, webhook, merge or external write is part of this read service. Boot cancels and joins it before releasing its resources. The installed-Core scenario in `e2e/m2/github-ci.json` covers the socket-to-child-to-result path.
 - The review is Core's own call on the `background` role. The diff, the design reference text at the base commit and the work definition go in as an enveloped data block. Findings come back as schema-validated records `{id, severity P0..P3, file, claim}`. A failing required check and a change outside the write area are P1 findings computed by Core. A prose-only reply stores none. A large diff is reviewed by file group and merged into one finding set.
 - The return, the close on a residual finding and the merge steps are those of the contract. Core takes the merge slot, merges pinned to the head last read, and only one read after the merge lands the task.
 - Stall handling and the reconcile sweep (every 5 minutes (P), no model call) follow the contract.

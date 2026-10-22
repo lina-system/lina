@@ -97,6 +97,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-07 Sandbox, tool executor and trash.** Sandbox wrapper, network ask, file tools, recoverable deletion.
 - Done when: the start probe passes or shell and file tools turn off with a cause while conversation continues; a canary cannot read canon, secrets or the client socket; network waits for once, always allow or deny; a patch with stale context fails; a trash delete restores identical bytes.
 - Depends on: G1-02, G1-05, G1-06. Design refs: C-14; [runtime.md](runtime.md#sandbox).
+- #50 and #51 supply the wrapper and executor. Acceptance uses `kit/sandbox` and `internal/core/boot` for startup and protected-path canaries, `internal/core/exec` for real sandboxed network approvals and patch/trash execution, and `kit/tools` for stale-context refusal and byte-identical recovery after reopening the version store. The strengthened `e2e/m1/sandbox.json` scenario proves a completed installed-Core/TUI exchange and recovered history with either a missing launcher or a failed probe.
 
 ### 1.C Model path, accounts and loop
 
@@ -364,6 +365,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 - Depends on: G2-01, G2-04. Design refs: C-57; [work-and-delegation.md](work-and-delegation.md#work-definition).
 
 **G2-19 GitHub reads, CI watch and merge.** `gh` as Core's child, check watcher, head-pinned merge, observed merges.
+- Read/watch increment (#140): Core owns the fixed-argument gh client and one conditional CI watcher per PR; the negotiated GitHub observation capability reports head, reviews, checks and pending causes. `e2e/m2/github-ci.json` covers the running Core path. Merge and observed-merge safety remain separate work.
 - Done when: no webhook or events feed is used; one watcher per pull request ends at the conclusion; a rate limit shows CI pending with its cause; a moved head is read again and not merged; a protected-ref mismatch blocks the merge; a person's merge is observed only after the merge commit and target ref are checked.
 - Depends on: G1-05, G1-07. Design refs: C-58; [integrations.md](integrations.md#github).
 
@@ -393,6 +395,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 
 **G2-14 Update flow with rollback.** Digest, preflight, gate cells, lifecycle record, swap, rollback.
 - Done when: each failure injection of runtime.md leaves the previous composition running or the install held with a closed cause; an old binary against a newer store leaves the store byte-identical.
+- Preparation (#149) verifies a frozen release archive, stages an exclusive version directory and runs the candidate Core's lock-free, non-mutating schema/peer preflight. Six explicit gate cells fail closed on missing evidence; idle and a verified generation are supplied by the activation owner. Headless M2 tests exercise the live Core, candidate process, digest/peer refusals and a newer schema in both database and WAL. Lifecycle swap, smoke and rollback remain #150.
 - Depends on: G1-22, G1-23, G1-24. Design refs: C-38; [runtime.md](runtime.md#updates).
 
 **G2-15 Phase 2 acceptance run.** Run script and evidence record for LINA 2.
@@ -405,6 +408,11 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 - #152 implements the shared Git repository and revision-checked write/move path, including the installed conversation tools and result-save adapter. [The headless records scenario](../../e2e/m2/records.json) runs the installed Core through creation, restart, editing and stale-write refusal; repository tests cover stable ids on moves and interrupted publication recovery. Outside-change presentation, the full query index and thousands-of-files acceptance remain the records-index increment.
 - Done when: an index rebuilt from the files equals the live index; an outside change is detected and shown and not merged; a write on a stale revision is refused; moving a record keeps its id; behavior with thousands of files is recorded.
 - Depends on: G1-03, G1-05, G1-29. Design refs: C-53; [filesystem.md](filesystem.md#records-repository).
+
+#153 adds the derived search/edge index and startup repair, bounded outside-change
+reports through installed record tools, and the `records-index` M2 scenario.
+The scale fixture measures thousands of records without a timing pass threshold;
+the [measurements and limits](../../internal/core/records/MEASUREMENTS.md) are recorded with the records implementation.
 
 **G2-23 To-do record, views, recurrence and candidates.** Fields, today rule, views, recurrence, candidates, memo promotion.
 - Done when: the today rule passes its fixture; a recurring item advances only to a future occurrence; a dependency cycle is rejected; an ambiguous date is never saved silently; a candidate is added on its own only when the deterministic test passes.
@@ -564,7 +572,7 @@ A number marked (P) is a starting value of this design. The others come from the
 | Stall cap; reconcile sweep | 3 hours; 5 minutes, from [work-and-delegation.md](work-and-delegation.md#stall-and-failure) | G2-02 |
 | TUI bounds | S1 to S11 (P) | G1-20 |
 | Claude adapter idle stop; concurrent turns per account | 10 minutes; 2 (P) | G2-26 |
-| Records repository with thousands of files | none yet | G2-22 |
+| Records repository with thousands of files | [3,000-file index and outside-change measurement](../../internal/core/records/MEASUREMENTS.md) | G2-22 |
 | Non-competition bounds | none yet; declared per test | G3-12 |
 
 ## Not scheduled here

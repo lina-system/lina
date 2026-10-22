@@ -8,13 +8,15 @@ Add an entry when third-party code or other material is included in LINA. Record
 
 ## Terminal UI behaviour references
 
-The composer separation in LINA's terminal UI independently adapts behaviour
+The composer separation and newline keys in LINA's terminal UI independently adapt behaviour
 from these permissive projects. No upstream implementation code is copied or
 bundled by this change:
 
 - [Codex CLI](https://github.com/openai/codex), OpenAI and contributors,
   Apache-2.0, reference revision `86e17e98`: prompt glyph, dim placeholder,
-  growing composer and footer hints below it.
+  growing composer and footer hints below it; Shift+Enter, Ctrl+J and Alt+Enter
+  newline bindings and the capability-dependent Shift+Enter hint
+  (`codex-rs/tui/src/keymap.rs` and `bottom_pane/chat_composer.rs`).
 - [opencode](https://github.com/sst/opencode), opencode contributors, MIT,
   reference revision `c93aaae3`: input edge, placeholder and separate hint row.
 - [Gemini CLI](https://github.com/google-gemini/gemini-cli), Google and
@@ -1471,3 +1473,37 @@ THE SOFTWARE.
 Source: https://github.com/pjbgf/sha1cd. Version: `v0.7.0`. License: Apache-2.0. Unmodified upstream dependency used by the local records Git adapter.
 
 The Apache License, Version 2.0 is reproduced in [LICENSE](LICENSE).
+
+## Codex Relay Workflow GitHub observation reference
+
+Source: https://github.com/thisisjun786/codex-relay-workflow, commit
+`7e65fcb82d426d228e18958d728fe63a0991ddd0`. License: MIT.
+
+The tracker and its tests informed rate-limit classification and bounded reads
+in LINA's independent GitHub observation implementation. The seen/inferred/unknown
+record is `internal/core/ghclient/REFERENCE.md`. No CRW source is copied,
+translated, vendored or linked; no relay or operational state is consumed.
+
+```text
+MIT License
+
+Copyright (c) 2026 thisisjun786 and contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
