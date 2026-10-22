@@ -190,7 +190,11 @@ func testInstalledCodexSession(t *testing.T, slowManager bool) {
 			}
 		}
 		n := calls.Add(1)
-		if n > 1 {
+		resuming := slowManager && n == 3
+		if slowManager && n > 2 {
+			n--
+		}
+		if n > 1 && !resuming {
 			var item struct{ Output string }
 			json.Unmarshal(req.Input[len(req.Input)-1], &item)
 			var output struct {
@@ -219,6 +223,12 @@ func testInstalledCodexSession(t *testing.T, slowManager bool) {
 			if n == 7 && (result["state"] != "idle" || result["output"] != fixture.Result) {
 				t.Errorf("worker result missing: %+v", result)
 			}
+		}
+		if slowManager && n == 2 && !resuming {
+			// Admission used this conversation turn's time budget. Continue
+			// control in the next person turn without widening that budget.
+			emitResponse(w, "Worker session started.", true)
+			return
 		}
 		emit := func(name string, args map[string]any) {
 			emitPersonaCall(w, fmt.Sprintf("worker-call-%d", n), name, args)
@@ -269,10 +279,15 @@ func testInstalledCodexSession(t *testing.T, slowManager bool) {
 	core := start()
 	c, conversation := conversationClient(t, h)
 	frames := admittedTurn(t, h, c, conversation, "worker-journey", fixture.Input)
+	wantCalls := int32(7)
+	if slowManager {
+		frames = append(frames, admittedTurn(t, h, c, conversation, "worker-followup", fixture.Input)...)
+		wantCalls++
+	}
 	if slowManager && !delayed.Load() {
 		t.Fatal("manager response was not held")
 	}
-	if calls.Load() != 7 {
+	if calls.Load() != wantCalls {
 		t.Fatalf("provider steps=%d", calls.Load())
 	}
 	foundVersion, foundResult := false, false
