@@ -52,7 +52,7 @@ func TestRunTerminalLifecycle(t *testing.T) {
 					if mode.Lflag&(unix.ICANON|unix.ECHO) != 0 {
 						t.Fatal("terminal remains in canonical/echo mode during negotiation")
 					}
-					keys := map[string]string{"q": "q", "ctrl+c": "\x03", "ctrl+d": "\x04"}
+					keys := map[string]string{"q": "q", "ctrl+c": "\x03\x03", "ctrl+d": "\x04"}
 					if _, err := io.WriteString(master, keys[action]); err != nil {
 						t.Fatal(err)
 					}

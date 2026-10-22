@@ -17,6 +17,7 @@ import (
 )
 
 type PreflightResult struct {
+	UpdateProtocol int    `json:"update_protocol"`
 	StoreSchema    int    `json:"store_schema"`
 	BinarySchema   int    `json:"binary_schema"`
 	SchemaRelation string `json:"schema_relation"`
@@ -27,7 +28,7 @@ type PreflightResult struct {
 // Required rows describe the installed peers; omitted rows use this build's
 // local TUI requirements. A candidate must retain their protocol/capabilities.
 func Preflight(ctx context.Context, root, manifestPath, requiredPath string) (PreflightResult, error) {
-	result := PreflightResult{BinarySchema: len(canon.Migrations())}
+	result := PreflightResult{UpdateProtocol: 1, BinarySchema: len(canon.Migrations())}
 	for _, name := range []string{".", "system", "system/core"} {
 		info, err := os.Lstat(filepath.Join(root, name))
 		if err != nil {

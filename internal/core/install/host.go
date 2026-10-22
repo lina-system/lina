@@ -25,7 +25,7 @@ type ProcessHost struct {
 }
 
 func NewProcessHost() *ProcessHost {
-	return &ProcessHost{owner: proc.NewOwner(), env: proc.InheritedEnvironment(), activity: lifecycle.NewRegistry(nil)}
+	return &ProcessHost{owner: proc.NewOwner(), env: proc.InheritedEnvironment("LINA_RESPONSES_API_KEY"), activity: lifecycle.NewRegistry(nil)}
 }
 func (h *ProcessHost) Close(ctx context.Context) error { return h.owner.Close(ctx) }
 func (h *ProcessHost) LookPath(name string) (string, error) {
