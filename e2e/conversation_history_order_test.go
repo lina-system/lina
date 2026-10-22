@@ -72,7 +72,10 @@ func TestM1ConversationHistoryOrder(t *testing.T) {
 			h, start := installedConversationHarness(t, server.URL)
 			core := start(true)
 			observer, conversation := conversationClient(t, h)
+			// The shared helper waits for this TUI's conversation snapshot and
+			// Live status, retaining dev's History-readiness barrier.
 			terminal := startConversationScreen(t, h, []string{"TERM=xterm-256color"}, scenario.Width, scenario.Height, conversation)
+			waitScreen(t, h, terminal, "Ctrl+D")
 			h.keys(terminal, scenario.FirstInput+"\r")
 			select {
 			case <-started:

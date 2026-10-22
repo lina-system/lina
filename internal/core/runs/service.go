@@ -160,6 +160,11 @@ func (s *Service) startWithCall(ctx context.Context, o Origin, b Brief, promotio
 			return id, state, err
 		}
 	}
+	if promotion != nil {
+		if id, state, err := s.replayPromotion(ctx, o, b, promotion); err != nil || id != "" {
+			return id, state, err
+		}
+	}
 	if err := s.cfg.Authorize(ctx, o, b); err != nil {
 		return "", "", err
 	}
@@ -185,13 +190,8 @@ func (s *Service) startWithCall(ctx context.Context, o Origin, b Brief, promotio
 		}
 	}
 	if promotion != nil {
-		for _, r := range rows {
-			if samePromotion(r, o) {
-				if !sameGathered(r, b, promotion) {
-					return "", "", ErrInvalid
-				}
-				return r.ID, r.State, nil
-			}
+		if id, state, err := findPromotion(rows, o, b, promotion); err != nil || id != "" {
+			return id, state, err
 		}
 	}
 	id := make([]byte, 16)
@@ -277,7 +277,7 @@ func (s *Service) schedule(ctx context.Context) error {
 		if _, ok := s.live[r.ID]; ok {
 			continue
 		}
-		if r.State == Waiting {
+		if r.State == Waiting && r.PendingOutcome == "" {
 			if !capacity(rows, r.Origin) {
 				continue
 			}
@@ -430,7 +430,16 @@ func (s *Service) Recover(ctx context.Context) error {
 		}
 		if r.PendingOutcome != "" {
 			r.State = Waiting
-			r.Released = false
+			r.Released = true
+			r.Reason = ""
+			if err := s.save(ctx, r, false); err != nil {
+				return err
+			}
+			continue
+		}
+		// An explicit admission still awaiting its caller receipt has never
+		// executed. Core reconciles that receipt before releasing it.
+		if r.StartKey != "" && r.Promotion == nil && !r.Released && r.Retries == 0 {
 			if err := s.save(ctx, r, false); err != nil {
 				return err
 			}

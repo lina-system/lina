@@ -95,6 +95,9 @@ func (s *Service) Notices(ctx context.Context, conversation string) ([]Notice, e
 	}
 	var out []Notice
 	for _, r := range rows {
+		if r.Origin.Conversation == conversation && r.EffectsQuestion != nil && !r.EffectsQuestion.Noticed {
+			out = append(out, Notice{Key: r.ID + ":effects", ID: r.ID, Origin: r.Origin, State: r.State, Outcome: InputNeeded, Landed: time.Unix(0, r.Created).UTC(), EffectQuestion: true})
+		}
 		if (r.State == Landed || r.State == NeedsInput) && !r.Noticed && r.Origin.Conversation == conversation {
 			citations, err := materials.Check(ctx, s.cfg.Assets, r.Artifact.Citations)
 			if err != nil {

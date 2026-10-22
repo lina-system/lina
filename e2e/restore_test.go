@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/thisisjun786/lina/internal/clientapi"
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"net/http"
 	"net/http/httptest"
@@ -19,6 +20,10 @@ import (
 type restoreScenario struct {
 	Targets          []string   `json:"targets"`
 	InvalidArguments [][]string `json:"invalid_arguments"`
+	Deliveries       []struct {
+		Before string `json:"before"`
+		After  string `json:"after"`
+	} `json:"deliveries"`
 }
 
 func readRestoreScenario(t *testing.T) restoreScenario {
@@ -79,6 +84,23 @@ func TestM1RestoreInstalledConversation(t *testing.T) {
 			admittedTurn(t, h, c, conversation, "before-backup", "synthetic before backup")
 			c.Close()
 			h.stopCore(core)
+			// Capture pending channel sends alongside a real committed reply.
+			db, err := canon.OpenSQLite(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, delivery := range scenario.Deliveries {
+				_, err := db.ExecContext(h.ctx, `INSERT INTO channel_outbound(id,address,bot,chat,topic,agent,ledger_ref,reply_to,parts,state)
+ SELECT ?, '["telegram","fixture","123",""]', '["telegram","fixture"]', '123', '', agent_id, id, '', '["synthetic reply"]', ?
+ FROM conv_event WHERE speaker_kind='agent' LIMIT 1`, delivery.Before, delivery.Before)
+				if err != nil {
+					db.Close()
+					t.Fatal(err)
+				}
+			}
+			if err := db.Close(); err != nil {
+				t.Fatal(err)
+			}
 			p := h.command("backup", "--state-root", h.root)
 			p.start(t)
 			p.wait(t, 0)
@@ -131,6 +153,24 @@ func TestM1RestoreInstalledConversation(t *testing.T) {
 			restore := h.command("restore", "--state-root", h.root, "--generation", generation)
 			restore.start(t)
 			restore.wait(t, 0)
+			// Check before Core recovery can alter the restored delivery states.
+			db, err = canon.OpenSQLiteReader(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, delivery := range scenario.Deliveries {
+				var state string
+				if err := db.QueryRowContext(h.ctx, "SELECT state FROM channel_outbound WHERE id=?", delivery.Before).Scan(&state); err != nil {
+					db.Close()
+					t.Fatal(err)
+				}
+				if state != delivery.After {
+					t.Errorf("restored %s delivery is %s, want %s", delivery.Before, state, delivery.After)
+				}
+			}
+			if err := db.Close(); err != nil {
+				t.Fatal(err)
+			}
 			if _, err := os.Stat(filepath.Join(h.root, "system/core/halt.json")); !errors.Is(err, os.ErrNotExist) {
 				t.Fatal("verified restore retained halt latch")
 			}
