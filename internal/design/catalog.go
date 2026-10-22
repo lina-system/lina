@@ -88,6 +88,10 @@ var catalog = map[string]translation{
 	"success":                          {"Succeeded", "성공"},
 	"failure":                          {"Failed", "실패"},
 
+	"tool.running":               {"running", "실행 중"},
+	"tool.ok":                    {"ok", "성공"},
+	"tool.failed":                {"failed", "실패"},
+	"tool.more":                  {"+%d lines", "+%d줄"},
 	"notice.run_effect_question": {"How should the remaining actions proceed? Reads and analysis can continue; further actions need a separate authorized decision, and any unknown earlier outcome must be checked first.", "남은 작업을 어떻게 진행할까요? 읽기와 분석은 계속할 수 있어요. 추가 실행에는 별도의 승인된 결정이 필요하며, 이전 실행의 결과가 불확실하다면 먼저 확인해야 해요."},
 	"notice.run_input_needed":    {"Your input is needed before this background work can continue.", "이 백그라운드 작업을 계속하려면 응답이 필요해요."},
 

@@ -44,6 +44,9 @@ func (s *Service) Prepare(ctx context.Context, l lease.Lease, t Task, spec Works
 		return Workspace{}, ErrInvalid
 	}
 	w := Workspace{TaskID: t.ID, Path: filepath.Join(s.area.path, "tasks", t.ID), Spec: spec}
+	if t.Destination != "" {
+		t.RequiresApply = true
+	}
 	t.Workspace = &w
 	t.ArtifactRoots = []string{w.Path}
 	if err := s.Create(ctx, t); err != nil {

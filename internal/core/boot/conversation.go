@@ -261,8 +261,11 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err != nil {
 		return nil, err
 	}
-	r.work = work.NewWithArea(r.db, r.workArea, workMaterials{writer: writer, person: r.person})
+	r.work = work.NewWithArea(r.db, r.workArea, workMaterials{writer: writer, store: r.assets, person: r.person})
 	if err = r.work.Recover(ctx, strconv.FormatUint(r.epoch, 10)); err != nil {
+		return nil, err
+	}
+	if err = r.recoverWorkAuthority(ctx); err != nil {
 		return nil, err
 	}
 	r.startWorkerLanes()

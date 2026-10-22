@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/assets"
+	"github.com/thisisjun786/lina/internal/core/authority"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/internal/core/turn"
@@ -25,6 +26,7 @@ import (
 
 type workMaterials struct {
 	writer *assets.MaterialWriter
+	store  *assets.Store
 	person string
 }
 type workMaterial struct {
@@ -32,6 +34,9 @@ type workMaterial struct {
 	path string
 }
 
+func (m workMaterials) Open(ctx context.Context, material work.Material) (io.ReadCloser, error) {
+	return m.store.OpenRead(ctx, material.ID, material.Revision)
+}
 func (m workMaterials) Prepare(ctx context.Context, r io.Reader, path, agent string) (work.MaterialWrite, error) {
 	p, err := m.writer.Prepare(ctx, r, "work-result:"+path, assets.Actor{PersonID: m.person, AgentID: agent})
 	if err != nil {
@@ -42,6 +47,29 @@ func (m workMaterials) Prepare(ctx context.Context, r io.Reader, path, agent str
 func (m workMaterial) Insert(ctx context.Context, tx *canon.Tx) (work.Material, error) {
 	a, err := m.PreparedMaterial.Insert(ctx, tx)
 	return work.Material{ID: a.ID, Revision: a.Revision, Path: m.path, SHA256: a.Hash}, err
+}
+
+func (r *conversationRuntime) recoverWorkAuthority(ctx context.Context) error {
+	return r.personaAuthority.CancelInterrupted(ctx, func(ctx context.Context, tx *canon.Tx, e authority.Effect) (tools.Result, bool, error) {
+		if e.Tool != "land_work_result" || e.Plugin != "" || e.Account != "" || e.Outward || !e.Write || e.Person != r.person || !strings.HasPrefix(e.Target, "work:") {
+			return tools.Result{}, false, nil
+		}
+		c, revision, err := work.RecoveredFileResult(ctx, tx, strings.TrimPrefix(e.Target, "work:"))
+		if errors.Is(err, work.ErrNotFound) || errors.Is(err, work.ErrInvalid) {
+			return tools.Result{}, false, nil
+		}
+		if err != nil {
+			return tools.Result{}, false, err
+		}
+		if c.Task.AgentID != e.Agent || (c.Task.PersonID != "" && c.Task.PersonID != e.Person) {
+			return tools.Result{}, false, nil
+		}
+		body, err := json.Marshal(map[string]string{
+			"error":   "file landing call interrupted; inspect the recovered work result before retrying",
+			"task_id": c.Task.ID, "next_action": "retry_land_work_result",
+		})
+		return tools.Result{State: tools.Cancelled, Body: body, Revision: revision}, true, err
+	})
 }
 func (r *conversationRuntime) prepareWorkTools(turnID string, bindings map[string]loop.Tool) error {
 	registry := tools.NewRegistry(r.personaAuthority, r.activities)
