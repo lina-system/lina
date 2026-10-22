@@ -18,5 +18,7 @@
   "receipt_ref": null,
   "source_refs": [],
   "error": null,
-  "payload": {}
+  "payload": {
+    "action": "stop_all"
+  }
 }
