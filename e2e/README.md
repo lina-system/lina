@@ -215,6 +215,12 @@ code gains theme colours in dark/light; high-contrast and `NO_COLOR` remain
 plain. The provider is released by a channel after the open screen is observed,
 without timing-based assertions.
 
+`m2/claude-adapter.json` starts installed Core with the external TypeScript adapter
+and a test-only vendor runtime. The runtime calls Core's real `skill_index` tool,
+checks its receipt, streams an assistant result, and the scenario reopens Core
+to verify durable history. It uses Node but no SDK installation, external service
+or personal credential; the SDK boundary has its own npm suite.
+
 `m1/conformance-agents.json` runs every shared `application/agents/` fixture
 against installed Core over its public socket. It checks refusals for missing
 and deleted agents in conversation and management requests, plus channel
