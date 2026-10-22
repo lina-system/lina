@@ -73,6 +73,20 @@ process creation in test files follows the architecture rule for command
 acceptance harnesses. Future milestones can add scenario files here; new
 subpackages under `e2e/` are also covered by the registered package pattern.
 
+`m3/websocket.json` runs installed Core through an HTTP upgrade on its authenticated
+Unix client socket. A headless WebSocket client discovers and subscribes to the
+conversation, submits an input, and receives the committed acknowledgement, a
+live delta and the completed result. The fixture provider requests the real
+`change_persona` tool and checks its execution result. Core restart must restore
+the conversation rows and apply the saved tool effect to the next turn without
+replaying the provider request. Its companion runs the same journey through production Core boot and the
+Tailscale-authenticated listener over TCP, substituting only LocalAPI responses
+and physical addresses. That companion installs the executable hosting boot so
+normal build-digest checks remain enabled. Both compare stored input/result
+identities and contents across restart. Neither claims a physical mobile device
+or two-host tailnet test. All identities, model responses and stored values are
+synthetic.
+
 `m2/update-preflight.json` checks separate `core --preflight` processes against
 compatible, older, newer, corrupt and WAL-backed stores while another owner holds
 the Core lock. It compares every installed file's bytes and metadata, including
