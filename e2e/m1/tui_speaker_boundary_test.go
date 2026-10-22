@@ -105,12 +105,14 @@ func TestM1TUISpeakerBoundariesInstalledCore(t *testing.T) {
 	case <-h.ctx.Done():
 		t.Fatal("missing provider request")
 	}
-	// An edited draft is a visible redraw barrier after Core's completed turn.
+	// The tap sees Core's event before the TUI consumes it. Observe the
+	// rendered completion before using draft edits as redraw barriers.
+	worked := strings.TrimSuffix(design.Text(design.English, "activity.worked_for"), "%s")
+	waitScreen(t, h, terminal, worked)
 	h.keys(terminal, "capture-one")
 	first := waitScreen(t, h, terminal, "capture-one")
 	rows := screenRows(first)
 	t.Logf("40x34 parsed cells:\n%s", strings.Join(rows, "\n"))
-	worked := strings.TrimSuffix(design.Text(design.English, "activity.worked_for"), "%s")
 	codeRow, workedRow := -1, -1
 	for i, row := range rows {
 		if strings.Contains(row, code) {
