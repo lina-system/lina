@@ -58,6 +58,7 @@ type shellModel struct {
 	size          layout.Size
 	gate          term.Gate
 	events        bool
+	disambiguated bool
 	now           func() time.Time
 	blocks        map[string]shellBlock
 	resyncPending map[string]protocol.StreamCursor
@@ -239,6 +240,7 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.styles = NewStyles(options)
 	case tea.KeyboardEnhancementsMsg:
 		m.events = msg.SupportsEventTypes()
+		m.disambiguated = msg.SupportsKeyDisambiguation()
 	case tea.PasteMsg:
 		if m.content.CardView.ID != "" {
 			return m, m.cardPaste(msg.Content)
