@@ -15,6 +15,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/secrets"
+	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/provider"
 	"github.com/thisisjun786/lina/kit/tools"
@@ -79,7 +80,8 @@ func (p *Persona) confirmed(ctx context.Context, scope PersonaScope, quote strin
 }
 
 func (p *Persona) Change(ctx context.Context, scope PersonaScope, in VoiceChange) (PersonaReceipt, error) {
-	if err := p.confirm(ctx, scope, in.Quote); err != nil {
+	event, err := p.confirmed(ctx, scope, in.Quote)
+	if err != nil {
 		return PersonaReceipt{}, err
 	}
 	masked, err := secrets.Mask(in.UserVoice)
@@ -92,14 +94,15 @@ func (p *Persona) Change(ctx context.Context, scope PersonaScope, in VoiceChange
 	}
 	r := PersonaReceipt{Revision: a.Revision}
 	if a.Revision != scope.Revision {
-		r.Notice = "Your speaking-style change is saved for the next reply. Say undo to restore it."
+		r.Notice = design.Text(design.ConversationLanguage(event.Body.Text(), design.Language(event.Surface.Language)), "notice.persona_changed")
 		r.Undo = &PersonaUndo{Revision: a.Revision}
 	}
 	return r, nil
 }
 
 func (p *Persona) Undo(ctx context.Context, scope PersonaScope, in VoiceUndo) (PersonaReceipt, error) {
-	if err := p.confirm(ctx, scope, in.Quote); err != nil {
+	event, err := p.confirmed(ctx, scope, in.Quote)
+	if err != nil {
 		return PersonaReceipt{}, err
 	}
 	if in.Revision != scope.Revision {
@@ -109,7 +112,7 @@ func (p *Persona) Undo(ctx context.Context, scope PersonaScope, in VoiceUndo) (P
 	if err != nil {
 		return PersonaReceipt{}, err
 	}
-	return PersonaReceipt{Revision: a.Revision, Notice: "Your previous speaking style is restored for the next reply."}, nil
+	return PersonaReceipt{Revision: a.Revision, Notice: design.Text(design.ConversationLanguage(event.Body.Text(), design.Language(event.Surface.Language)), "notice.persona_undone")}, nil
 }
 
 func personaInput(raw json.RawMessage, name, target string) (tools.Input, error) {

@@ -1,0 +1,98 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "service": "results",
+  "setup": {
+    "person_id": "person",
+    "agent_id": "agent",
+    "conversation_id": "conversation",
+    "turn_id": "turn",
+    "task_id": null
+  },
+  "input": {
+    "type": "summary",
+    "title": "Fixture result",
+    "summary": "Synthetic result body.",
+    "body": {
+      "outline": [
+        {
+          "heading": "First",
+          "notes": "Context"
+        }
+      ],
+      "key_points": [
+        "Point"
+      ],
+      "decisions": [
+        "Choice"
+      ],
+      "open_questions": [
+        {
+          "question": "Why?",
+          "answer": ""
+        }
+      ],
+      "scope": {
+        "includes": [
+          "Inside"
+        ],
+        "excludes": [
+          "Outside"
+        ]
+      },
+      "length": 2
+    }
+  },
+  "output": {
+    "error": "",
+    "result": {
+      "type": "summary",
+      "body": {
+        "outline": [
+          {
+            "heading": "First",
+            "notes": "Context"
+          }
+        ],
+        "key_points": [
+          "Point"
+        ],
+        "decisions": [
+          "Choice"
+        ],
+        "open_questions": [
+          {
+            "question": "Why?",
+            "answer": ""
+          }
+        ],
+        "scope": {
+          "includes": [
+            "Inside"
+          ],
+          "excludes": [
+            "Outside"
+          ]
+        },
+        "length": 2
+      }
+    }
+  },
+  "outcome": {
+    "events": 1,
+    "heads": 1,
+    "saves": 0,
+    "revision": 1,
+    "status": "preview",
+    "title": "Fixture result",
+    "summary": "Synthetic result body.",
+    "saved_as": null,
+    "revised_by": "agent",
+    "provenance": {
+      "agent_id": "agent",
+      "conversation_id": "conversation",
+      "turn_id": "turn",
+      "task_id": null
+    },
+    "text_complete": true
+  }
+}

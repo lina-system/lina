@@ -1,0 +1,58 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "service": "results",
+  "setup": {
+    "person_id": "person",
+    "agent_id": "agent",
+    "conversation_id": "conversation",
+    "turn_id": "turn",
+    "task_id": null
+  },
+  "input": {
+    "type": "file",
+    "title": "Fixture result",
+    "summary": "Synthetic result body.",
+    "body": {
+      "asset": {
+        "asset_id": "file",
+        "revision": 1
+      },
+      "name": "Report.pdf",
+      "media_type": "application/pdf",
+      "size": 42
+    }
+  },
+  "output": {
+    "error": "",
+    "result": {
+      "type": "file",
+      "body": {
+        "asset": {
+          "asset_id": "file",
+          "revision": 1
+        },
+        "name": "Report.pdf",
+        "media_type": "application/pdf",
+        "size": 42
+      }
+    }
+  },
+  "outcome": {
+    "events": 1,
+    "heads": 1,
+    "saves": 0,
+    "revision": 1,
+    "status": "preview",
+    "title": "Fixture result",
+    "summary": "Synthetic result body.",
+    "saved_as": null,
+    "revised_by": "agent",
+    "provenance": {
+      "agent_id": "agent",
+      "conversation_id": "conversation",
+      "turn_id": "turn",
+      "task_id": null
+    },
+    "text_complete": true
+  }
+}

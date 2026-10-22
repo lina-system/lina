@@ -222,3 +222,38 @@ func TestGrowthUndoCanRestoreBaselineAfterUndoingClearStep(t *testing.T) {
 		t.Fatalf("proposal suppression lost: %v", err)
 	}
 }
+
+func TestGrowthRepeatedUndoReturnsCurrentAgent(t *testing.T) {
+	s, db, _ := setup(t)
+	a := create(t, s, "")
+	ctx := t.Context()
+	step, err := s.AdoptGrowth(ctx, a.ID, "person", agents.GrowthCandidate{ID: "first", Expected: 1, Snapshot: "first", Notice: "learned first"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	undone, err := s.UndoGrowth(ctx, a.ID, "person", step.Undo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.AdoptGrowth(ctx, a.ID, "person", agents.GrowthCandidate{ID: "second", Expected: undone.Revision, Snapshot: "second", Notice: "learned second"}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := s.Get(ctx, a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, err := s.UndoGrowth(ctx, a.ID, "person", step.Undo)
+	if err != nil || replay != current {
+		t.Fatalf("repeated undo=%+v current=%+v error=%v", replay, current, err)
+	}
+	prepared, err := s.Prepare(ctx, "after-replay", a.ID)
+	if err != nil || prepared.Revision != current.Revision || prepared.Layers.GrowthSnapshot != "second" {
+		t.Fatalf("replay changed persona: %+v %v", prepared, err)
+	}
+	var recorded int64
+	if err := db.Read(ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT undone_revision FROM agent_growth_steps WHERE agent_id=? AND revision=?", a.ID, step.Revision).Scan(&recorded)
+	}); err != nil || recorded != undone.Revision {
+		t.Fatalf("original undo record=%d %v", recorded, err)
+	}
+}

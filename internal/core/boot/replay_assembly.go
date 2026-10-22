@@ -21,6 +21,8 @@ func replayInstructions(format string, p agents.Preparation, tools []provider.To
 	switch format {
 	case "agent-v1":
 		return text, nil
+	case "persona-tui-v1":
+		return assemble.PersonaCoreV1 + "\n" + assemble.TUIFormatting + "\n\n" + text, nil
 	case "persona-v1":
 		return assemble.PersonaCoreV1 + "\n\n" + text, nil
 	default:
@@ -79,8 +81,12 @@ func rebuildPersonaItems(ep replay.Episode, sources []replay.Context, profile []
 		packet = append(packet, item)
 	}
 	history := append(append([]provider.Item(nil), profile...), ep.Items[:len(ep.Items)-1]...)
+	core := assemble.PersonaCoreV1
+	if a.InstructionFormat == "persona-tui-v1" {
+		core += "\n" + assemble.TUIFormatting
+	}
 	request, report := assemble.Assemble(assemble.Input{
-		Core: assemble.PersonaCoreV1, AgentID: a.AgentID, PersonaRevision: a.PersonaRevision,
+		Core: core, AgentID: a.AgentID, PersonaRevision: a.PersonaRevision,
 		AgentName: a.AgentName, OwnerPersonID: a.OwnerPersonID, Persona: ep.Persona,
 		Catalog: catalog, AlwaysTools: ep.Evidence.Tools, History: history, Current: ep.Items[len(ep.Items)-1], Packet: packet,
 		Model: ep.Evidence.Model, Effort: ep.Evidence.Effort, Fields: ep.Evidence.Fields, MaxTokens: 128000,

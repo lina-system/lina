@@ -33,7 +33,9 @@ func GrowthDefinition(store *agents.Store, agent, person string) (Definition, er
 		}
 		return c, nil
 	}
-	return Definition{Agent: agent, Apply: func(ctx context.Context, tx *canon.Tx, task jobapi.Task, output json.RawMessage) error {
+	// A client frame is at most 1 MiB. JSON re-encoding can expand one
+	// decoded byte into six (for example '<' into a Unicode escape).
+	return Definition{Agent: agent, MaxPayloadBytes: maxPayloadBytes, Apply: func(ctx context.Context, tx *canon.Tx, task jobapi.Task, output json.RawMessage) error {
 		queued, err := decode(task.Input)
 		if err != nil {
 			return err

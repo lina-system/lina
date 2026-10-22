@@ -113,7 +113,11 @@ func TestM1PreparedSummaries(t *testing.T) {
 	v = fitted.View
 	for level := 0; level < scenario.Levels; level++ {
 		if level > 0 {
+			// Advance to a new turn: new history cannot precede an input that
+			// was already appended earlier in the canonical ledger.
+			v.History = append(v.History, v.Input)
 			v.History = append(v.History, admit(fmt.Sprintf("history-%d", level), strings.Repeat("context ", scenario.Padding)))
+			v.Input = admit(fmt.Sprintf("input-%d", level), "continue again")
 			fitted, err = p.Fit(h.ctx, v, false)
 			if err != nil {
 				t.Fatal(err)
