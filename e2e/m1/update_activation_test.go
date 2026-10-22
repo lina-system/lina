@@ -89,9 +89,11 @@ func updateManagerWithStartHook(t *testing.T, h *harness, start func(bool) *proc
 					p := current
 					mu.Unlock()
 					if p != nil {
+						// Core releases its lock before process exit is observed.
+						// Like the service manager, join that exit instead of racing it.
 						select {
 						case <-p.done:
-						default:
+						case <-h.ctx.Done():
 							reply.Code = 98
 						}
 					}
