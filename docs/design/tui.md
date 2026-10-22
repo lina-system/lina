@@ -503,6 +503,9 @@ An open running pager applies accepted `running` topic updates and replacement
 snapshots immediately, including completed and removed rows, without polling or
 requiring the person to close and reopen it. Refreshing its text preserves the
 pager's reading offset (clamped to the remaining content) and active search.
+Conversation-started workers use this same Ctrl+R list, with the owner agent's
+name before the worker's tool name. Their rows leave the open pager when the
+worker becomes idle; that removal does not claim verified task completion.
 List updates do not focus the pager or change the draft. Decision answering remains the typed approval/question flow
 of T-04; the composer never turns a list row into an approval.
 

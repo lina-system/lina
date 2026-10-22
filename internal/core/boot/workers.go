@@ -41,6 +41,7 @@ type workerSession struct {
 	thread        worker.Thread
 	packet        string
 	workdir       string
+	started       time.Time
 	approvals     map[string]worker.Event
 	questions     map[string]*workerQuestion
 	output        string
@@ -180,6 +181,9 @@ func (r *conversationRuntime) prepareWorkerTools(turnID string, input ledger.Eve
 }
 
 func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID string, input ledger.Event, in tools.Input) (tools.Result, error) {
+	if name == "worker_start" || name == "worker_input" || name == "worker_interrupt" {
+		defer r.notifyWorkerRunning()
+	}
 	var a workerArgs
 	_ = json.Unmarshal(in.Arguments, &a)
 	b := r.workers
@@ -198,7 +202,7 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 			process.Release()
 			return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
 		}
-		entry := &workerSession{adapter: adapter, close: adapter.Close, compatibility: adapter.Compatibility(), origin: r, input: input, process: process, done: make(chan struct{}), active: map[string]lease.Lease{}, packet: a.TaskPacket, workdir: a.Workdir, approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}}
+		entry := &workerSession{adapter: adapter, close: adapter.Close, compatibility: adapter.Compatibility(), origin: r, input: input, process: process, done: make(chan struct{}), active: map[string]lease.Lease{}, packet: a.TaskPacket, workdir: a.Workdir, started: time.Now(), approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}}
 		activity, err := r.activities.Acquire(r.ctx, lease.Activity{Class: lease.Hard, Reason: "Codex turn"})
 		if err != nil {
 			adapter.Close()
@@ -314,7 +318,10 @@ func (e *workerSession) encode(s worker.ThreadSnapshot) tools.Result {
 	return tools.Result{State: tools.Applied, Body: raw, Revision: s.Thread.ID + ":" + s.Thread.TurnID}
 }
 func (e *workerSession) observe() {
-	defer close(e.done)
+	defer func() {
+		close(e.done)
+		e.origin.notifyWorkerRunning()
+	}()
 	for event := range e.adapter.Events() {
 		switch event.Kind {
 		case worker.ProgressEvent:
@@ -346,6 +353,9 @@ func (e *workerSession) observe() {
 			e.requestQuestion(event)
 		case worker.ToolCallEvent:
 			e.workTool(event)
+		}
+		if event.Kind != worker.UsageEvent && (event.Kind != worker.ProgressEvent || event.Progress.Phase == "started" || event.Progress.Phase == "server_request_resolved") {
+			e.origin.notifyWorkerRunning()
 		}
 	}
 	e.stopRequests("")

@@ -81,7 +81,10 @@ func (r *conversationRuntime) startRuns(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	b.list = runs.NewRunningList(r.db, map[string]runs.ListSource{"run": runs.RunListSource{}, "work": runs.WorkListSource{Person: r.person}})
+	b.list = runs.NewRunningList(r.db, map[string]runs.ListSource{
+		"run": runs.RunListSource{}, "work": runs.WorkListSource{Person: r.person},
+		"session": workerListSource{workers: r.workers},
+	})
 	b.notices = lane.NewNotices(r.db, nil)
 	b.notices.OnDelivered = func(d lane.Delivery) {
 		if d.Conversation != "main:"+d.Agent {
@@ -113,6 +116,8 @@ func (r *conversationRuntime) startRuns(ctx context.Context) error {
 			ref := runs.ListRef{Source: "run", ID: *request.RunID}
 			if id, ok := strings.CutPrefix(ref.ID, "task:"); ok {
 				ref.Source, ref.ID = "work", id
+			} else if id, ok := strings.CutPrefix(ref.ID, "session:"); ok {
+				ref.Source, ref.ID = "session", id
 			}
 			switch string(*request.Action) {
 			case "open":
@@ -128,6 +133,8 @@ func (r *conversationRuntime) startRuns(ctx context.Context) error {
 				var next int64
 				if ref.Source == "work" {
 					text, next, err = r.work.SummaryPage(ctx, ref.ID, offset)
+				} else if ref.Source == "session" {
+					text, err = r.workerRunningSummary(ctx, s.PersonID, ref.ID, offset)
 				} else {
 					text, next, err = b.service.ResultPage(ctx, s.PersonID, ref.ID, offset)
 				}
@@ -446,6 +453,8 @@ func (r *conversationRuntime) publishRunning(ctx context.Context) error {
 	for _, entry := range snapshot.Entries {
 		if entry.Ref.Source == "work" {
 			entry.Ref.ID = "task:" + entry.Ref.ID
+		} else if entry.Ref.Source == "session" {
+			entry.Ref.ID = "session:" + entry.Ref.ID
 		}
 		current[entry.Ref.ID] = true
 		text := entry.View.State + ": " + entry.View.Summary

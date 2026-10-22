@@ -91,6 +91,10 @@ func codexSessionFixture() {
 				os.Exit(98)
 			}
 			reply(map[string]any{"turnId": turn})
+			if strings.Contains(string(r.Params["input"]), "finish running-list fixture") {
+				state = "idle"
+				notify("turn/completed", map[string]any{"threadId": "fixture-thread", "turn": map[string]any{"id": turn, "status": "completed"}})
+			}
 		case "turn/interrupt":
 			var expected string
 			json.Unmarshal(r.Params["turnId"], &expected)
