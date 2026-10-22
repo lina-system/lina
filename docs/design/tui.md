@@ -497,8 +497,14 @@ The conversation screen projects granted waiting/running topic rows in Core
 order and keeps their counts when folded. Ctrl+W and Ctrl+R open their complete
 retained text in the pager; Ctrl+P opens the granted progress topic. Missing
 capabilities use the single local explanation of T-07 and leave no placeholder
-rows. Granted empty lists are hidden without an unavailable notice. Rows appear
-when Core sends items and disappear on a removal update or when its snapshot clears the list.
+rows. Granted empty lists are hidden on Home without an unavailable notice.
+Opening an empty granted Waiting for me list with Ctrl+W shows the localized
+"nothing to decide now" line in the pager. Closing and reopening it preserves
+the draft; the line never enters conversation history or other list views.
+`TestM1TUIWaitingEmptyInstalledCore` checks this through a 100x32 PTY against
+installed Core, then submits the retained draft and renders the fixture reply.
+Rows appear when Core sends items and disappear on a removal update or when
+its snapshot clears the list.
 An open running pager applies accepted `running` topic updates and replacement
 snapshots immediately, including completed and removed rows, without polling or
 requiring the person to close and reopen it. Refreshing its text preserves the
