@@ -1196,7 +1196,7 @@ Every ready task starts at once, limited only by the person's quota and by what 
 - Ready tasks are placed in a stable order: tasks of goals with a person's deadline first, then by dependency depth, then by the age of the goal. Within that order, a task goes to the Node with the most headroom that has a suitable worker, and Nodes kept for the person's own use come last.
 - Dependency depth visits each task and its edges at most once per goal during a derivation, reusing shared ancestors across ready tasks. Depths are recomputed from each new snapshot and are never shared between goals.
 - Background runs and plugin effects run in Core and use the person's model and service accounts. They follow the run limits of Background runs and the account's own rate limits, and they never take a Node slot.
-- When capacity shrinks, Core starts nothing new on that Node and does not stop healthy work.
+- When capacity shrinks, Core starts nothing new on that Node and does not stop healthy work. Before claiming a queued worker action, including after restart or an authorization wait, Core rechecks the current host report, worker availability, quota and capacity against the other reservations. An ineligible unstarted award is retired and its task returns to its runnable stage in the same transaction, without spending an attempt or recovery. Derivation places it again or records a host-capacity wait; claimed effects keep their reservations until observed.
 - A ready task that cannot start has one visible reason, as Parallel hand-off says.
 
 ### Recovery
