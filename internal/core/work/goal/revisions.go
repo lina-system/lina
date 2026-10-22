@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package goal
 
+import "encoding/json"
+
 func revisionJudgment(a Action) bool { return a.Kind == PlanGoal || a.Kind == CheckCriterion }
 
 func staleJudgment(g Goal, a Action) bool {
@@ -54,7 +56,12 @@ func applyCorrectionPlan(g *Goal, o Observation) error {
 	return nil
 }
 
-// A needs_person action is a refused operation, not an unknown external effect.
+func settledRefusal(a Action) bool {
+	var receipt Observation
+	return json.Unmarshal(a.Receipt, &receipt) == nil && receipt.Status == OutcomeNeedsPerson && receipt.EffectsSettled
+}
+
+// Only a refusal with proof of no outstanding effect can release its award.
 // Return a denied worker award to its prior stage so the new revision asks the
 // driver to authorize a new action; do not spend another recovery on a refusal.
 func restoreDeniedAssignment(t *Task, a Action) {

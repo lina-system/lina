@@ -2,6 +2,8 @@
 package goal
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -277,7 +279,7 @@ func TestReviewRevisionReopensBlockedGoalWithoutAuthorizingEffects(t *testing.T)
 			}
 			reviewReconcile(t, e)
 			a := claimReviewAction(t, e, "g", kind)
-			if err := e.Report(t.Context(), a.ID, 1, Observation{Status: OutcomeNeedsPerson}); err != nil {
+			if err := e.Report(t.Context(), a.ID, 1, Observation{Status: OutcomeNeedsPerson, EffectsSettled: true}); err != nil {
 				t.Fatal(err)
 			}
 			reviewReconcile(t, e)
@@ -312,6 +314,96 @@ func TestReviewRevisionReopensBlockedGoalWithoutAuthorizingEffects(t *testing.T)
 				if !resumed {
 					t.Error("denied worker assignment did not return to authorization")
 				}
+			}
+		})
+	}
+}
+
+type reviewRefusingDriver struct{ *fixtureDriver }
+
+func (d reviewRefusingDriver) Authorize(context.Context, Action) error { return ErrNeedsPerson }
+
+func TestReviewAuthorizationRefusalProvesNoExecution(t *testing.T) {
+	e := reviewEngine(t, oneGoal(readyTask("a")))
+	if err := e.NodeChanged(t.Context(), readyNode("n")); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	e.cfg.Driver = reviewRefusingDriver{&fixtureDriver{run: func(Action) (Observation, error) { calls++; return Observation{}, nil }}}
+	if err := e.step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	e.wg.Wait()
+	s, err := e.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 0 || len(s.Actions) != 1 {
+		t.Fatalf("refusal executed work: %d %+v", calls, s.Actions)
+	}
+	var receipt Observation
+	if err = json.Unmarshal(s.Actions[0].Receipt, &receipt); err != nil {
+		t.Fatal(err)
+	}
+	if !receipt.EffectsSettled || receipt.Status != OutcomeNeedsPerson {
+		t.Fatalf("authorization refusal lost no-execution proof: %+v", receipt)
+	}
+}
+
+func TestReviewRevisionPreservesUnsettledEffects(t *testing.T) {
+	for _, kind := range []ActionKind{Assign, Deploy} {
+		t.Run(string(kind), func(t *testing.T) {
+			g := oneGoal(readyTask("a"))
+			if kind == Deploy {
+				g = finishedGoal()
+				g.ServiceTarget = "private-service"
+				g.NoServiceReason = ""
+			}
+			e := reviewEngine(t, g)
+			if err := e.NodeChanged(t.Context(), readyNode("n")); err != nil {
+				t.Fatal(err)
+			}
+			reviewReconcile(t, e)
+			a := claimReviewAction(t, e, "g", kind)
+			if err := e.Report(t.Context(), a.ID, 1, Observation{Status: OutcomeNeedsPerson, Handle: "existing-effect", EffectsSettled: false}); err != nil {
+				t.Fatal(err)
+			}
+			reviewReconcile(t, e)
+			reviseReviewGoal(t, e, "g", func(g *Goal) { g.Done = "corrected outcome while the prior effect remains uncertain" })
+			cfg := e.cfg
+			cfg.Epoch++
+			e, _ = NewEngine(cfg)
+			reviewReconcile(t, e)
+			s, err := e.Snapshot(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, action := range s.Actions {
+				if action.ID == a.ID && (action.State != "unknown" || action.Deadline > 100) {
+					t.Errorf("uncertain effect lost its immediate receipt read: %+v", action)
+				}
+				if action.Kind == kind && action.State == "queued" {
+					t.Error("uncertain effect was redispatched")
+				}
+			}
+			observed, started := 0, 0
+			e.cfg.Driver = &fixtureDriver{observe: func(action Action) (Observation, error) {
+				if action.ID == a.ID {
+					observed++
+				}
+				return Observation{Status: OutcomeRunning, Handle: "existing-effect"}, nil
+			}, run: func(action Action) (Observation, error) {
+				if action.Kind == kind {
+					started++
+				}
+				return Observation{Status: OutcomeRunning, Handle: "manager"}, nil
+			}}
+			if err = e.step(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			e.wg.Wait()
+			if observed != 1 || started != 0 {
+				t.Fatalf("restart repeated or lost effect: observed=%d dispatched=%d", observed, started)
 			}
 		})
 	}

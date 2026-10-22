@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/thisisjun786/lina/internal/design"
+	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 

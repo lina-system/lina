@@ -187,14 +187,26 @@ func (e *Engine) RefreshDefinitions(ctx context.Context) error {
 				if err = json.Unmarshal(r.Body, &a); err != nil {
 					return err
 				}
-				if a.GoalID == g.ID && a.State != "finished" && (a.State == "queued" || a.State == "needs_person" || revisionJudgment(a)) {
-					if a.State == "needs_person" {
+				if a.GoalID != g.ID || a.State == "finished" {
+					continue
+				}
+				retire := a.State == "queued" || revisionJudgment(a)
+				if a.State == "needs_person" {
+					if revisionJudgment(a) || settledRefusal(a) {
 						restoreDeniedAssignment(goalTask(&current, a.TaskID), a)
+						retire = true
+					} else {
+						// An operation may already have started before asking for
+						// help. Revision cannot release that lease or repeat it.
+						a.State = "unknown"
+						a.Deadline = e.cfg.Now().Unix()
 					}
+				}
+				if retire {
 					a.State = "finished"
-					if err = put(v, "action", a.ID, a); err != nil {
-						return err
-					}
+				}
+				if err = put(v, "action", a.ID, a); err != nil {
+					return err
 				}
 			}
 			return put(v, "goal", g.ID, current)

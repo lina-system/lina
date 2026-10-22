@@ -370,6 +370,8 @@ func (e *Engine) Reconcile(ctx context.Context) error {
 					g.State = GoalBlocked
 					g.AttentionID = fmt.Sprintf("goal:%s:%d:attention", g.ID, g.Revision)
 					g.BlockedReason = "LINA could not find a way to finish the remaining done condition; a decision is needed."
+				case g.DefinitionPending:
+					g.State = GoalRunning
 				case allLanded:
 					g.State = GoalChecking
 				case active:
@@ -532,6 +534,12 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 			a.State = "unknown"
 		case OutcomeNeedsPerson:
 			a.State = "needs_person"
+			if o.Handle != "" {
+				a.Handle = o.Handle
+			}
+			if t != nil && reserves(a) {
+				t.EffectsSettled = o.EffectsSettled
+			}
 		case OutcomeConflict:
 			if t == nil || a.Kind != Merge {
 				return ErrInvalid
@@ -782,13 +790,15 @@ func (e *Engine) step(ctx context.Context) error {
 			defer func() { e.mu.Lock(); delete(e.running, a.ID); e.mu.Unlock() }()
 			var o Observation
 			var err error
+			effectMayHaveStarted := observe
 			if observe {
 				o, err = e.cfg.Driver.Observe(ctx, a)
 			} else if err = e.cfg.Driver.Authorize(ctx, a); err == nil {
+				effectMayHaveStarted = true
 				o, err = e.cfg.Driver.Execute(ctx, a)
 			}
 			if errors.Is(err, ErrNeedsPerson) {
-				o = Observation{Status: OutcomeNeedsPerson}
+				o = Observation{Status: OutcomeNeedsPerson, EffectsSettled: !effectMayHaveStarted}
 			} else if err != nil {
 				o = Observation{Status: OutcomeUnknown}
 			}
