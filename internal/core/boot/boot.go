@@ -119,6 +119,7 @@ type Config struct {
 	ClientManifest string
 	StateRoot      string
 	Socket         string
+	Tailnet        *clientsrv.TailnetConfig
 	PeerSeenMax    uint64
 	Services       Services
 	Activities     *lifecycle.ActivityRegistry
@@ -441,6 +442,27 @@ func Run(ctx context.Context, cfg Config) (result error) {
 			return phase.Err()
 		}
 	})
+	var remoteDone chan error
+	if cfg.Tailnet != nil {
+		remote, err := clientsrv.ListenTailnet(serving, *cfg.Tailnet)
+		if err != nil {
+			return err
+		}
+		remoteDone = make(chan error, 1)
+		identity := cfg.Client
+		identity.MainID, identity.Epoch, identity.Recovering = recovery.MainID, strconv.FormatUint(snapshot.Epoch, 10), recovering.Load
+		identity.Restart = restarter
+		go func() { remoteDone <- clientsrv.Serve(serving, remote, identity) }()
+		stack = append(stack, func(phase context.Context) error {
+			cancelServe()
+			select {
+			case err := <-remoteDone:
+				return err
+			case <-phase.Done():
+				return phase.Err()
+			}
+		})
+	}
 	if err := boundary(SocketsBound); err != nil {
 		// Ownership is now durable and the listener is on the shutdown stack.
 		// A signal here is an orderly stop, even before the first handshake.
@@ -504,6 +526,12 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		}
 		if errors.Is(err, context.Canceled) && ctx.Err() != nil {
 			return nil
+		}
+		return err
+	case err := <-remoteDone:
+		remoteDone <- err
+		if err == nil && ctx.Err() == nil {
+			return errors.New("tailnet client service stopped before shutdown")
 		}
 		return err
 	case err := <-done:
