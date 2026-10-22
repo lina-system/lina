@@ -75,6 +75,12 @@ func reclaimSocket(path string) error {
 // abandon an admitted Aux call: Core persists its bounded result for replay.
 // Cancellation by Core stops calls, closes connections and joins all handlers.
 func (s *Service) Serve(ctx context.Context, l *net.UnixListener) error {
+	return Serve(ctx, l, s)
+}
+
+// Serve routes the private worker socket to Core's installed job API. Core may
+// resolve agent-bound services dynamically as agents are created or deleted.
+func Serve(ctx context.Context, l *net.UnixListener, api jobapi.API) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var connections sync.WaitGroup
@@ -90,7 +96,7 @@ func (s *Service) Serve(ctx context.Context, l *net.UnixListener) error {
 			}
 		},
 	}
-	server.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.handle(ctx, w, r) })
+	server.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { handle(api, ctx, w, r) })
 	stopped := make(chan struct{})
 	go func() { defer close(stopped); <-ctx.Done(); server.Close() }()
 	err := server.Serve(l)
@@ -103,11 +109,11 @@ func (s *Service) Serve(ctx context.Context, l *net.UnixListener) error {
 	return err
 
 }
-func (s *Service) handle(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+func handle(s jobapi.API, ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	var out any
 	err := jobapi.ErrInvalid
 	decode := func(v any) error {
-		d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+		d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<20))
 		d.DisallowUnknownFields()
 		if e := d.Decode(v); e != nil {
 			return jobapi.ErrInvalid
