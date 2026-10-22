@@ -756,13 +756,13 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 			anchors = append(anchors, conversationAnchor{})
 		}
 		if len(transcript) > 0 {
-			for i := range m.styles.tokens.SpaceSection.Cells {
-				transcript = append(transcript, transcriptRow{})
-				anchors = append(anchors, conversationAnchor{block: b.ID, row: i - m.styles.tokens.SpaceSection.Cells})
+			transcript = append(transcript, make([]transcriptRow, m.styles.tokens.SpaceSection.Cells)...)
+			// Anchor separator rows to the following block without shifting
+			// its body row identities when older messages are inserted above it.
+			for row := -m.styles.tokens.SpaceSection.Cells; row < 0; row++ {
+				anchors = append(anchors, conversationAnchor{block: b.ID, row: row})
 			}
 		}
-		// Separators have their own anchors, so inserting an earlier message
-		// cannot shift the retained row number within this message's content.
 		blockStart := len(transcript)
 		for i, row := range body {
 			lead := indent
