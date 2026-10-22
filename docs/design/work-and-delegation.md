@@ -395,6 +395,45 @@ A 할 일 is one record with two views. The personal view follows fast-capture l
 - **Priority and tags.** Everyone has an `important` flag. An optional four-level priority (none, normal, high, urgent) is a power setting. Tags are free-form with no hierarchy, and the agent suggests an existing tag before it creates a new one. Estimates are opt-in.
 - **Code work.** A 할 일 in a connected repository maps to one pull request: opening the pull request moves it to `started`, and it completes under Judgment and delivery, never by a merge or a model's sentence alone.
 
+The installed record tools accept `kind: todo`. Capture needs only a title;
+its planning state starts at `open`. `write_record` optionally takes a `todo`
+object with the fields above. On an edit, omitting that object preserves the
+planning fields; supplying it replaces them as a whole. The title and note
+remain Markdown, and the typed fields remain in the same versioned front matter.
+A deadline also requires `deadline_source`. `waiting_on` carries `who`, `since`
+and `next_check`; an assignee carries `kind` and `id`. Checklist items carry only
+`text` and `checked`. A repeat retains `rule`, the original `text`,
+`from_completion` and its current `next` occurrence; advancing it is #156.
+The record tool cannot write execution observations or complete delegated work.
+
+The current conversation path accepts exact ISO dates and offset-bearing
+RFC 3339 times. Natural-language dates, ambiguous numeric dates, nonexistent
+calendar dates and times without an offset return `ambiguous_date` before any
+saved version. The agent asks the person to resolve the date and then supplies
+the exact value; it must not invent a resolution. Natural-language parsing and
+date chips are not supplied by this record API. The quick-add chip surface is
+owned by G2-24.
+
+`query_records` accepts `view: today|upcoming|anytime|later|memos|board|list|week`.
+Dated lenses require an explicit civil `day` and IANA `zone`. Timed values are
+compared with that day's local midnight boundaries, including daylight saving
+changes. Today returns active tasks under the rule above and marks overdue
+starts with `overdue` for their separate block. Completed and canceled tasks are
+excluded from personal active lenses. Upcoming selects any future start,
+deadline or current recurrence; anytime retains all undated active tasks,
+including backlog; later selects backlog. The week lens covers seven calendar
+days beginning at `day`. Board and list include all five planning states and
+return the fields needed to group by project, assignee, priority or tag. Pages
+remain ordered by id with an exclusive `after` cursor, matching record search.
+
+Core checks dependency targets and cycles under the same writer lock as
+publication. Targets must be the person's existing to-dos; belonging targets
+must be that person's projects or areas. A self-edge or transitive cycle returns
+`dependency_cycle` without changing the file, index or saved revision. The
+`blocked` overlay is queried from direct nonterminal blockers, never stored;
+completed or canceled predecessors no longer block. Human completion remains a
+soft dependency signal. Releasing delegated work remains the work engine's gate.
+
 How an agent manages 할 일 (capture, briefing, review) is the methodology of the LINA preset ([conversation-and-memory.md](conversation-and-memory.md#preset-methodologies)).
 
 ### Development mode
@@ -1122,6 +1161,7 @@ Every ready task starts at once, limited only by the person's quota and by what 
 - The main host and each connected Node report what they can take; on an installation without Node, the main host alone reports, through the same report that Core makes for itself. A report holds its cores, its load, its available memory and disk, its declared resource caps ([non-competition.md](non-competition.md)), the workers ready on it and their quota rows, and its current reservations. Core computes the free slots of each host from these, and does not use a fixed count per host, per repository or per fleet. A report that is stale or unknown counts as no free capacity, and a Node that is disconnected or yielding gets nothing new.
 - A slot is reserved in the same transaction that claims the task, so two derivations never place the same task or overfill a Node. An award to a Node carries a token and a deadline; an award whose outcome is unknown is resolved by reading that Node's receipt before the task can go anywhere else.
 - Ready tasks are placed in a stable order: tasks of goals with a person's deadline first, then by dependency depth, then by the age of the goal. Within that order, a task goes to the Node with the most headroom that has a suitable worker, and Nodes kept for the person's own use come last.
+- Dependency depth visits each task and its edges at most once per goal during a derivation, reusing shared ancestors across ready tasks. Depths are recomputed from each new snapshot and are never shared between goals.
 - Background runs and plugin effects run in Core and use the person's model and service accounts. They follow the run limits of Background runs and the account's own rate limits, and they never take a Node slot.
 - When capacity shrinks, Core starts nothing new on that Node and does not stop healthy work.
 - A ready task that cannot start has one visible reason, as Parallel hand-off says.
@@ -1439,7 +1479,10 @@ existing agent and person and writes through Core's versioned records repository
 Planning records carry LINA kinds and bindings, including native `belongs_to`
 index edges: initiatives remain goal drafts, projects retain
 their done condition, issues become to-dos, and milestones become to-dos with a
-deadline and done condition. Intent cards retain their intent text. CRW records
+deadline and done condition. Imported to-dos use `open` or `completed`; their
+verified snapshot provenance supplies `deadline_source`. Existing imports with
+`active`/`done` and that provenance project to the same planning fields on
+upgrade, preserving their files and saved revisions. Intent cards retain their intent text. CRW records
 are historical observations in reference documents; importing an assignment,
 receipt, verdict, branch or worktree starts no work and grants no authority.
 Complete source records are preserved as data, including unknown fields.

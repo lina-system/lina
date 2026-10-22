@@ -102,28 +102,16 @@ func TestKoreanRecordSearchExistingInstallation(t *testing.T) {
 			db.Close(context.Background())
 		}
 	}()
-	// Represent an initialized empty index from the old installation. Seeding
-	// its first record then uses only the old projection tables and triggers.
-	if err = db.Write(t.Context(), func(tx *canon.Tx) error {
-		_, err := tx.ExecContext(t.Context(), "UPDATE records_index_state SET head=''")
-		return err
-	}); err != nil {
-		t.Fatal(err)
-	}
-	s, err := Open(root, db)
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Seed the old publication directly: current Store requires the current
+	// catalog and must not be used as a historical application binary.
+	c := Change{ID: "existing", Path: "inbox/existing.md", Data: []byte("---\nid: \"existing\"\nperson_id: \"person\"\nkind: memo\nstate: active\n---\n\n# 도서관에서\n\n연필을 챙긴다.\n")}
+	rev := seedLegacyRecord(t, root, db, c)
+	var s *Store
 	defer func() {
 		if s != nil {
 			s.Close()
 		}
 	}()
-	c := Change{ID: "existing", Path: "inbox/existing.md", Data: []byte("---\nid: \"existing\"\nperson_id: \"person\"\nkind: memo\nstate: active\n---\n\n# 도서관에서\n\n연필을 챙긴다.\n")}
-	rev := commit(t, s, c)
-	if err = s.Close(); err != nil {
-		t.Fatal(err)
-	}
 	if err = db.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +125,7 @@ func TestKoreanRecordSearchExistingInstallation(t *testing.T) {
 	if err = db.Read(t.Context(), func(tx *canon.Tx) error {
 		var head, tokenizer, fallback string
 		var trigrams, bigrams int
-		if err := tx.QueryRowContext(t.Context(), "SELECT head FROM records_index_state").Scan(&head); err != nil {
+		if err := tx.QueryRowContext(t.Context(), "SELECT head FROM records_state").Scan(&head); err != nil {
 			return err
 		}
 		if err := tx.QueryRowContext(t.Context(), "SELECT tokenizer,fallback FROM search_index_config WHERE name='records_korean'").Scan(&tokenizer, &fallback); err != nil {
