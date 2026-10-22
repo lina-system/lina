@@ -103,7 +103,10 @@ after reconnect and terminal resize.
 Quit (Ctrl+C with an empty draft or Ctrl+D), input EOF and termination signals close only this
 client and exit 0, including during handshake or retry. The raw terminal reader
 ignores releases, toggle repeats and pasted quit text. Nonterminal input keeps
-the handshake-then-read behavior. No failure path starts Core or creates state.
+the handshake-then-read behavior: it does not discover a conversation destination,
+and reports Live (`live` on plain output) after the validated welcome even when no
+destination is available. Destination discovery gates the terminal composer's input only.
+No failure path starts Core or creates state.
 
 | State | Screen |
 | --- | --- |
@@ -135,6 +138,18 @@ status writes nothing. The key gate also covers the legacy quit input. Connectio
 `q` as quit; a conversation composer treats it as ordinary text. A reconnect,
 including one in the same epoch, restores an unacknowledged input into the draft
 with newer typing after it. The client never automatically resends that input.
+
+When conversation is granted, initial history discovery leaves the destination
+unknown until History supplies its id; the composer gates conversation submission
+on that id (T-10). Reconnect also uses the pending-agent guard to validate the
+retained destination. Without the conversation capability, discovery requests no
+history, so account and management commands remain available.
+Until the history response identifies the destination conversation, the composer
+retains typed text and Enter sends nothing. Completing discovery makes the
+conversation ready; it does not submit the retained draft automatically. The
+person explicitly sends it when ready. Installed conversation scenarios wait
+for the ready connection status and the discovered conversation's subscription
+snapshot before submitting input, not just the presence of the composer's key hints.
 
 Reconnect also retains the selected agent identity. History discovery and the
 preserved draft use that agent, regardless of the welcome's agent order. A fresh
@@ -862,6 +877,13 @@ a separate count. The server adapter checks typed `malformed` refusals for unkno
 request fields. These checks establish the boundary behavior used by T-06; they
 do not establish rendering, live Core behavior or the end-to-end scenarios that
 depend on the headless harness.
+
+The companion application runner executes the shared agent lifecycle cases
+against installed Core's socket through `e2e/m1/conformance-agents.json`, checking
+refusals and unchanged canon for missing/deleted agents and channel targets.
+Native result-body cases run against Core's result store and ledger; client
+result-type negotiation and full wire bodies remain tracked in
+[#419](https://github.com/thisisjun786/lina/issues/419).
 
 | Layer | Runs | Asserts |
 | --- | --- | --- |
