@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/design"
+	"github.com/thisisjun786/lina/internal/tui/render"
 	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
@@ -53,7 +54,7 @@ func TestM1TUIConversationResize(t *testing.T) {
 	defer provider.Close()
 	h, start := installedConversationHarness(t, provider.URL)
 	core := start(true)
-	observer, conversation := conversationClient(t, h)
+	observer, _ := conversationClient(t, h)
 	defer observer.Close()
 	waitTurn := func() {
 		for {
@@ -68,7 +69,7 @@ func TestM1TUIConversationResize(t *testing.T) {
 	}
 	environment := []string{"TERM=xterm-256color", "COLORTERM=truecolor"}
 	size := scenario.Sizes[0]
-	session := h.startConversationTUI(environment, size.Width, size.Height, conversation)
+	session, _ := h.startConversationTUI(size.Width, size.Height, environment...)
 	waitScreen(t, h, session, design.Text(design.English, "live"))
 	h.keys(session, scenario.Input+"\r")
 	waitTurn()
@@ -130,10 +131,15 @@ func waitResizeChrome(t *testing.T, h *harness, term *terminal, height int, draf
 	t.Helper()
 	ctx, cancel := context.WithTimeout(h.ctx, operationTimeout)
 	defer cancel()
+	content := draft
+	if content == "" {
+		content = design.Text(design.English, "composer.placeholder")
+	}
 	snapshot, err := term.screen.Wait(ctx, func(s tuiterm.Snapshot) bool {
 		rows := screenRows(s)
 		return len(rows) == height && s.AltScreen && !s.CursorHidden &&
-			s.CursorY == height-2 && strings.TrimSpace(rows[height-2]) == draft &&
+			s.CursorY == height-2 && strings.TrimSpace(rows[height-2]) == "› "+content &&
+			s.CursorX == (render.Unicode{}).Width("› "+draft) &&
 			strings.Contains(rows[height-1], design.Text(design.English, "live"))
 	})
 	if err != nil {

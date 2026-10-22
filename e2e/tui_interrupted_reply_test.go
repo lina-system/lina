@@ -57,7 +57,7 @@ func TestM1TUIInterruptedReplySurvivesCoreRestart(t *testing.T) {
 	h, start := installedConversationHarness(t, provider.URL)
 	core := start(true)
 	c, conversation := conversationClient(t, h)
-	terminal := h.startConversationTUI([]string{"TERM=xterm-256color"}, 80, 24, conversation)
+	terminal, _ := h.startConversationTUI(80, 24, "TERM=xterm-256color")
 	waitComposerReady(t, h, terminal)
 	h.keys(terminal, scenario.Input+"\r")
 	waitScreen(t, h, terminal, scenario.Partial)
