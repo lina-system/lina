@@ -408,6 +408,11 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 - Done when: an index rebuilt from the files equals the live index; an outside change is detected and shown and not merged; a write on a stale revision is refused; moving a record keeps its id; behavior with thousands of files is recorded.
 - Depends on: G1-03, G1-05, G1-29. Design refs: C-53; [filesystem.md](filesystem.md#records-repository).
 
+#153 adds the derived search/edge index and startup repair, bounded outside-change
+reports through installed record tools, and the `records-index` M2 scenario.
+The scale fixture measures thousands of records without a timing pass threshold;
+the [measurements and limits](../../internal/core/records/MEASUREMENTS.md) are recorded with the records implementation.
+
 **G2-23 To-do record, views, recurrence and candidates.** Fields, today rule, views, recurrence, candidates, memo promotion.
 - Done when: the today rule passes its fixture; a recurring item advances only to a future occurrence; a dependency cycle is rejected; an ambiguous date is never saved silently; a candidate is added on its own only when the deterministic test passes.
 - Depends on: G2-22, G2-03. Design refs: C-54; [work-and-delegation.md](work-and-delegation.md#the-to-do-record).
@@ -566,7 +571,7 @@ A number marked (P) is a starting value of this design. The others come from the
 | Stall cap; reconcile sweep | 3 hours; 5 minutes, from [work-and-delegation.md](work-and-delegation.md#stall-and-failure) | G2-02 |
 | TUI bounds | S1 to S11 (P) | G1-20 |
 | Claude adapter idle stop; concurrent turns per account | 10 minutes; 2 (P) | G2-26 |
-| Records repository with thousands of files | none yet | G2-22 |
+| Records repository with thousands of files | [3,000-file index and outside-change measurement](../../internal/core/records/MEASUREMENTS.md) | G2-22 |
 | Non-competition bounds | none yet; declared per test | G3-12 |
 
 ## Not scheduled here
