@@ -30,7 +30,7 @@ type Firecrawl struct {
 func NewFirecrawl(key secret.Secret, transport http.RoundTripper) *Firecrawl {
 	return &Firecrawl{key: key, client: &http.Client{Transport: transport, Timeout: 55 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, lookup: net.DefaultResolver.LookupNetIP}
 }
-func (p *Firecrawl) request(ctx context.Context, path string, input, out any) error {
+func (p *Firecrawl) request(ctx context.Context, path string, input any, out interface{ redact(string) }) error {
 	body, err := json.Marshal(input)
 	if err != nil {
 		return ErrWebUnavailable
@@ -64,24 +64,36 @@ func (p *Firecrawl) request(ctx context.Context, path string, input, out any) er
 	if len(raw) > 2<<20 {
 		return ErrWebUnavailable
 	}
-	// Even a provider that reflects an authorization value cannot return our key
-	// to the model or journal. Plaintext exists only at this HTTP boundary.
-	key := strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")
-	if key != "" {
-		raw = bytes.ReplaceAll(raw, []byte(key), []byte(secret.Placeholder))
-	}
 	if json.Unmarshal(raw, out) != nil {
 		return ErrWebUnavailable
 	}
+	// Scrub decoded values so JSON escapes cannot hide a reflected credential.
+	// Keep plaintext at this HTTP boundary and leave JSON field names intact.
+	key := strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")
+	if key != "" {
+		out.redact(key)
+	}
 	return nil
 }
-func (p *Firecrawl) Search(ctx context.Context, query string, limit int) ([]WebHit, error) {
-	var response struct {
-		Success bool `json:"success"`
-		Data    struct {
-			Web []struct{ Title, URL, Description string } `json:"web"`
-		} `json:"data"`
+
+type firecrawlSearchResponse struct {
+	Success bool `json:"success"`
+	Data    struct {
+		Web []struct{ Title, URL, Description string } `json:"web"`
+	} `json:"data"`
+}
+
+func (r *firecrawlSearchResponse) redact(key string) {
+	for i := range r.Data.Web {
+		hit := &r.Data.Web[i]
+		hit.Title = strings.ReplaceAll(hit.Title, key, secret.Placeholder)
+		hit.URL = strings.ReplaceAll(hit.URL, key, secret.Placeholder)
+		hit.Description = strings.ReplaceAll(hit.Description, key, secret.Placeholder)
 	}
+}
+
+func (p *Firecrawl) Search(ctx context.Context, query string, limit int) ([]WebHit, error) {
+	var response firecrawlSearchResponse
 	if err := p.request(ctx, "search", struct {
 		Query string `json:"query"`
 		Limit int    `json:"limit"`
@@ -119,6 +131,22 @@ func (p *Firecrawl) publicURL(ctx context.Context, raw string) bool {
 	}
 	return true
 }
+
+type firecrawlExtractResponse struct {
+	Success bool `json:"success"`
+	Data    struct {
+		Markdown string `json:"markdown"`
+		Metadata struct {
+			SourceURL string `json:"sourceURL"`
+		} `json:"metadata"`
+	} `json:"data"`
+}
+
+func (r *firecrawlExtractResponse) redact(key string) {
+	r.Data.Markdown = strings.ReplaceAll(r.Data.Markdown, key, secret.Placeholder)
+	r.Data.Metadata.SourceURL = strings.ReplaceAll(r.Data.Metadata.SourceURL, key, secret.Placeholder)
+}
+
 func (p *Firecrawl) Extract(ctx context.Context, url string) (string, error) {
 	if !p.publicURL(ctx, url) {
 		if ctx.Err() != nil {
@@ -126,15 +154,7 @@ func (p *Firecrawl) Extract(ctx context.Context, url string) (string, error) {
 		}
 		return "", ErrWebUnavailable
 	}
-	var response struct {
-		Success bool `json:"success"`
-		Data    struct {
-			Markdown string `json:"markdown"`
-			Metadata struct {
-				SourceURL string `json:"sourceURL"`
-			} `json:"metadata"`
-		} `json:"data"`
-	}
+	var response firecrawlExtractResponse
 	input := struct {
 		URL             string   `json:"url"`
 		Formats         []string `json:"formats"`

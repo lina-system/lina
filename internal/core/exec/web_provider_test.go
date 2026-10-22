@@ -4,6 +4,7 @@ package exec
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/netip"
@@ -96,5 +97,50 @@ func TestFirecrawlBoundsAndSanitizesFailures(t *testing.T) {
 	}))
 	if _, err := p.Search(t.Context(), "x", 1); err == nil {
 		t.Fatal("provider redirect followed")
+	}
+}
+
+func TestFirecrawlRedactsDecodedResponseStrings(t *testing.T) {
+	for _, tc := range []struct{ name, key, wire string }{
+		{"literal", "fc-synthetic-key", "fc-synthetic-key"},
+		{"escaped_prefix", "fc-synthetic-key", `\u0066c-synthetic-key`},
+		{"escaped_entire_key", "fc-synthetic-key", `\u0066\u0063\u002d\u0073\u0079\u006e\u0074\u0068\u0065\u0074\u0069\u0063\u002d\u006b\u0065\u0079`},
+		{"json_syntax", `fc-"quoted\key`, `fc-\"quoted\\key`},
+		{"schema_word", "success", `\u0073uccess`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := NewFirecrawl(secret.New(tc.key), webTransport(func(r *http.Request) (*http.Response, error) {
+				if r.Header.Get("Authorization") != "Bearer "+tc.key {
+					t.Error("credential changed before HTTP injection")
+				}
+				switch r.URL.Path {
+				case "/v2/search":
+					return webResponse(200, fmt.Sprintf(`{"success":true,"data":{"web":[{"title":"Title %s / %s","url":"https://93.184.216.34/%s","description":"본문 %s"},{"title":"Unchanged","url":"https://example.com/","description":"Safe text"}]}}`, tc.wire, tc.wire, tc.wire, tc.wire)), nil
+				case "/v2/scrape":
+					return webResponse(200, fmt.Sprintf(`{"success":true,"data":{"markdown":"본문 %s / %s","metadata":{"sourceURL":"https://93.184.216.34/%s"}}}`, tc.wire, tc.wire, tc.wire)), nil
+				}
+				t.Error("unexpected endpoint")
+				return nil, errors.New("unexpected endpoint")
+			}))
+			t.Run("search", func(t *testing.T) {
+				hits, err := p.Search(t.Context(), "latest X", 2)
+				if err != nil || len(hits) != 2 {
+					t.Fatalf("search failed: hits=%d err=%v", len(hits), err)
+				}
+				want := WebHit{Title: "Title [REDACTED] / [REDACTED]", URL: "https://93.184.216.34/[REDACTED]", Snippet: "본문 [REDACTED]"}
+				if hits[0] != want {
+					t.Error("decoded search fields were not redacted")
+				}
+				if hits[1] != (WebHit{Title: "Unchanged", URL: "https://example.com/", Snippet: "Safe text"}) {
+					t.Error("unrelated search fields changed")
+				}
+			})
+			t.Run("extract", func(t *testing.T) {
+				text, err := p.Extract(t.Context(), "https://93.184.216.34/x")
+				if err != nil || text != "본문 [REDACTED] / [REDACTED]" {
+					t.Errorf("decoded extraction was not redacted: err=%v", err)
+				}
+			})
+		})
 	}
 }

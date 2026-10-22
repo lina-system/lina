@@ -1,6 +1,6 @@
 # Web search and page reading
 
-This contract implements issue #440 alongside [runtime tools](runtime.md#tools)
+This contract implements issues #440 and #534 alongside [runtime tools](runtime.md#tools)
 and [credentials](integrations.md#credentials-and-sign-in).
 
 ## Reference observations before implementation
@@ -25,6 +25,16 @@ Reference: Hermes Agent, MIT, commit
   extraction quality on arbitrary live sites are not established by stub tests.
   LINA does not port Hermes' provider fallback ladder, local full-text cache,
   multi-URL extraction or image handling in this issue.
+
+Response-redaction follow-up (#534), from the same pinned Firecrawl reference:
+
+- **Seen:** search normalizes decoded provider objects; extraction reads decoded
+  Markdown and metadata. The provider module does not scrub reflected API keys
+  from those successful response fields.
+- **Inferred:** LINA's credential boundary must redact exact key values in decoded
+  strings, before results reach the tool registry, model or durable receipts.
+- **Unknown:** whether a live provider reflects credentials or which JSON escape
+  spelling it uses; synthetic responses establish the local boundary.
 
 ## Conversation tools
 
@@ -52,7 +62,11 @@ fallback or configurable credential destination. The API client refuses redirect
 limits the response to 2 MiB and its request to 55 seconds, within the tool's
 60-second deadline. Extraction validates public DNS answers before submission
 and validates any returned final URL. Provider errors do not expose response
-bodies or transport diagnostics. Arbitrary remote redirect chains and upstream
+bodies or transport diagnostics. Successful responses redact the exact configured
+key from decoded search titles, URLs and descriptions, extracted Markdown and
+final-URL metadata, replacing each occurrence with `[REDACTED]`. JSON escapes
+cannot bypass this boundary; unrelated text and JSON structure stay intact.
+Arbitrary remote redirect chains and upstream
 DNS behavior remain the provider's responsibility; Core never fetches page URLs
 directly. Actual paid-provider quality and availability remain unverified by stubs.
 
