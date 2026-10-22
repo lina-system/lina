@@ -64,9 +64,10 @@ func TestM1TUIShortcuts(t *testing.T) {
 				term := h.startTerminalSize([]string{"TERM=xterm-256color", "LC_ALL=" + variant.locale, "LINA_GLYPHS=" + variant.glyphs}, false, true, width, 34)
 				snapshot := waitScreen(t, h, term, "SHORTCUT-READY")
 				footer := screenRows(snapshot)[33]
-				// These are complete semantic hint units, not a snapshot of footer prose.
+				// This short transcript does not need a scroll hint. The remaining
+				// complete semantic hint units retain their priority order.
 				var expected []string
-				for _, hint := range [][2]string{{"?", "shortcuts.title"}, {"Esc", "shortcuts.stop"}, {"Enter", "shortcuts.send"}, {"Ctrl+D", "action.quit"}, {"Alt+Enter", "shortcuts.newline"}, {"PgUp/PgDn", "shortcuts.scroll"}, {"Ctrl+O", "shortcuts.open_hint"}, {"F6", "shortcuts.decisions"}} {
+				for _, hint := range [][2]string{{"?", "shortcuts.title"}, {"Esc", "shortcuts.stop"}, {"Enter", "shortcuts.send"}, {"Ctrl+D", "action.quit"}, {"Alt+Enter", "shortcuts.newline"}, {"Ctrl+O", "shortcuts.open_hint"}, {"F6", "shortcuts.decisions"}} {
 					expected = append(expected, hint[0]+" "+design.Text(variant.language, hint[1]))
 				}
 				prefix := variant.mark + " " + design.Text(variant.language, "live")
