@@ -30,7 +30,7 @@ selection ----+---- docs --------+---- gate
               +---- components --+
 ```
 
-Everything runs in one process. `selection` records the exact base and candidate commits, the changed paths, the selected checks and the selection reason. It also checks Git whitespace errors: `git diff --check` over the range, or `git show --check` on the `HEAD` commit with `--full`. The selected checks run in parallel after selection. The gate only evaluates their results; it never reruns their commands. Each check has a bounded timeout. Go build, vet, analyzer and whole-module test commands share the remaining components budget described below; `go test -timeout=6m` also bounds package execution and emits stuck-test stack traces when that deadline is reached. This accommodates subprocess acceptance builds under concurrent cold-cache CI verification without changing individual test operation deadlines. The enclosing components check remains bounded at fifteen minutes.
+Everything runs in one process. `selection` records the exact base and candidate commits, the changed paths, the selected checks and the selection reason. It also checks Git whitespace errors: `git diff --check` over the range, or `git show --check` on the `HEAD` commit with `--full`. The selected checks run in parallel after selection. The gate only evaluates their results; it never reruns their commands. Each check has a bounded timeout. Go build, vet, analyzer and whole-module test commands share the remaining components budget described below; `go test -timeout=6m` (ten minutes for a root-module invocation containing the e2e package) also bounds package execution and emits stuck-test stack traces when that deadline is reached. This accommodates subprocess acceptance builds under concurrent cold-cache CI verification without changing individual test operation deadlines. The enclosing components check remains bounded at fifteen minutes.
 
 ## Evidence
 
@@ -167,6 +167,15 @@ The component check shares an 895-second command budget, leaving five seconds fo
 On PR #298, [CI run 39659531710](https://github.com/thisisjun786/lina/actions/runs/39659531710) exhausted the former 595-second components budget after about 200 seconds of setup, builds and analysis and 395 seconds of module compilation and tests. Completed packages passed, including exchanges; end-to-end verification was still unfinished. The 895-second budget accommodates that cold-run workload while retaining the four-minute Go package timeout and individual operation deadlines. Build-only and automation budgets remain unchanged.
 
 On PR #398, [CI run 39682857682](https://github.com/thisisjun786/lina/actions/runs/39682857682) reached the four-minute end-to-end package limit while an installed-Core scenario had run for nine seconds and its current subtest for one second. The package-wide diagnostic deadline is now six minutes for the accumulated acceptance workload; individual operation deadlines and the fifteen-minute components guard are unchanged. A controlled-clock test verifies that a progressing five-minute package fits after compilation, while the existing hung-command tests retain the shared guard.
+
+On PR #504, [CI run 39784631672](https://github.com/thisisjun786/lina/actions/runs/39784631672)
+reached the six-minute e2e package limit while `TestM1TUIShortcuts` had run for
+two seconds and its current subtest for less than one second. The cumulative
+e2e workload now receives a ten-minute diagnostic deadline when its package is
+selected. Other invocations retain six minutes. Individual operation deadlines,
+all assertions, uncached execution and the shared 895-second/900-second guards
+remain unchanged. A controlled-clock regression covers seven minutes of e2e
+progress after preparation without resetting the shared budget.
 
 Build regression fixtures also share a 595-second allowance across their build CLI calls, including both cross-build targets, under automation's 600-second watchdog. They pass the remaining budget to `scripts/build.mjs --timeout-ms <milliseconds>`, reserving one second for the CLI to report failures before its wrapper expires. The build script defaults to 595 seconds when invoked directly. Its inner Go builds share the remaining deadline, with environment queries capped at 30 seconds and module verification and metadata generation at 120 seconds. Inner commands and the fixture wrapper use the same timeout diagnostics.
 

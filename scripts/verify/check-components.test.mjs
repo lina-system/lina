@@ -213,3 +213,29 @@ test('module tests retain a diagnostic deadline inside their process budget', t 
   assert.ok(suite.timeoutMs <= 895_000, 'the test command retains the shared components deadline');
   assert.ok(calls.every(call => call.timeoutMs > 0 && call.timeoutMs <= componentsTimeoutMs));
 });
+
+test('the growing e2e package progresses past six minutes within the shared guard', t => {
+  const sb = fixture(t);
+  let elapsed = 0;
+  t.mock.method(performance, 'now', () => elapsed);
+  const result = checkComponents({ cwd: sb.dir,
+    components: [{ name: 'lina', module: '.', packages: ['.', './e2e/...'] }],
+    execute(command, args, options) {
+      if (args[0] === 'build') elapsed += 250_000;
+      if (args[0] === 'test') {
+        const minutes = Number(args.find(arg => arg.startsWith('-timeout='))?.match(/^\-timeout=(\d+)m$/)?.[1]);
+        const duration = 420_000;
+        if (!Number.isFinite(minutes) || minutes * 60_000 <= duration || options.timeoutMs <= duration) {
+          return { status: 1, stdout: 'e2e scenarios progressing\n', stderr: 'e2e package deadline expired\n' };
+        }
+        assert.ok(options.timeoutMs <= 895_000 - elapsed, 'preparation and tests share one budget');
+        assert.ok(minutes * 60_000 < options.timeoutMs, 'Go retains a diagnostic timeout before the process guard');
+        elapsed += duration;
+        return { status: 0, stdout: 'e2e scenarios finished\n', stderr: '' };
+      }
+      return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
+    } });
+  assert.equal(result.status, 0, result.output);
+  assert.match(result.output, /e2e scenarios finished/);
+  assert.ok(elapsed < componentsTimeoutMs);
+});

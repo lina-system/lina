@@ -102,11 +102,14 @@ export function checkComponents({ cwd = process.cwd(), components, execute: run 
       const binaries = join(context.directory, module === '.' ? 'root-bin' : 'kit-bin');
       mkdirSync(binaries);
       const outputArgs = selected.some(component => component.binary) ? ['-o', `${binaries}/`] : [];
+      // The growing acceptance package needs its own cumulative deadline;
+      // individual scenario operations and the shared process guard stay bounded.
+      const testTimeout = module === '.' && packages.some(pkg => pkg === './e2e' || pkg === './e2e/...') ? '10m' : '6m';
       for (const args of [
         ['build', '-mod=readonly', ...outputArgs, ...packages],
         ['vet', '-mod=readonly', ...packages],
         ['tool', 'exhaustive', ...packages],
-        ['test', '-count=1', '-timeout=6m', '-mod=readonly', ...packages],
+        ['test', '-count=1', `-timeout=${testTimeout}`, '-mod=readonly', ...packages],
       ]) {
         if (invoke('go', args, directory).status !== 0) return { status: 1, output };
       }
