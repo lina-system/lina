@@ -71,7 +71,8 @@ func (e *workerSession) presentQuestion(event worker.Event, requestID, kind, tex
 	if targets == nil {
 		targets = []protocol.DecisionTarget{}
 	}
-	raw, err := json.Marshal(protocol.Question{ConversationID: e.origin.workerDelivery().conversation, Card: &protocol.DecisionCard{ID: id, Revision: "1", Agent: e.origin.agent, Summary: text, Targets: targets}, Form: &protocol.QuestionForm{PluginName: "Codex", Fields: fields}})
+	name := e.origin.router.root.decisions.AgentName(e.origin.agent)
+	raw, err := json.Marshal(protocol.Question{ConversationID: e.origin.workerDelivery().conversation, Card: &protocol.DecisionCard{ID: id, Revision: "1", Agent: name, Summary: text, Targets: targets}, Form: &protocol.QuestionForm{PluginName: "Codex", Fields: fields}})
 	if err != nil {
 		e.bridgeFailure(err)
 		return
