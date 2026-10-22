@@ -52,6 +52,8 @@ type Session struct {
 	stdin                   *os.File
 	processDone, readerDone chan struct{}
 	events                  chan worker.Event
+	quotaUpdates            chan struct{}
+	lastQuota               json.RawMessage
 	control                 sync.Mutex
 	writeMu                 sync.Mutex
 	mu                      sync.Mutex
@@ -123,7 +125,7 @@ func Open(ctx context.Context, l lease.Lease, cfg Config) (*Session, error) {
 		return nil, err
 	}
 	life, cancel := context.WithCancel(ctx)
-	s := &Session{owner: owner, cancel: cancel, stdin: inW, processDone: make(chan struct{}), readerDone: make(chan struct{}), events: make(chan worker.Event, 257), pending: map[string]chan frame{}, finished: map[string]bool{}, version: v, generation: generations.Add(1)}
+	s := &Session{owner: owner, cancel: cancel, stdin: inW, processDone: make(chan struct{}), readerDone: make(chan struct{}), events: make(chan worker.Event, 257), quotaUpdates: make(chan struct{}, 1), pending: map[string]chan frame{}, finished: map[string]bool{}, version: v, generation: generations.Add(1)}
 	go func() {
 		defer close(s.processDone)
 		err := owner.Run(life, l, proc.Command{Path: path, Args: []string{"app-server", "--listen", "stdio://"}, Env: env, Stdin: inR, Stdout: outW, Stderr: io.Discard})
@@ -162,7 +164,7 @@ func (s *Session) Compatibility() Compatibility {
 	return c
 }
 func (s *Session) Capabilities() worker.CapabilitySet {
-	return worker.CapabilitySet{worker.StreamProgress, worker.ReportUsage, worker.SignalCompletion, worker.SteerTurn}
+	return worker.CapabilitySet{worker.StreamProgress, worker.ReportUsage, worker.SignalCompletion, worker.SteerTurn, worker.ReportQuota}
 }
 func (s *Session) Events() <-chan worker.Event { return s.events }
 

@@ -20,6 +20,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/reactor"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker"
+	"github.com/thisisjun786/lina/internal/core/worker/codex"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/proc"
 )
@@ -28,7 +29,6 @@ import (
 // executable, environment, repository path or capacity assertion.
 type delegationConfig struct {
 	Codex        string                          `json:"codex"`
-	CodexArgs    []string                        `json:"codex_args,omitempty"`
 	Git          string                          `json:"git"`
 	GH           string                          `json:"gh"`
 	Slots        int                             `json:"slots"`
@@ -39,19 +39,24 @@ type delegationRepository struct {
 	Base  string `json:"base"`
 }
 type delegationRuntime struct {
-	root         *conversationRuntime
-	config       delegationConfig
-	reactor      *reactor.Reactor
-	adapter      *worker.Codex
-	processes    *proc.Owner
-	cancel       context.CancelFunc
-	done         chan struct{}
-	mu           sync.Mutex
-	threads      map[string]worker.Thread
-	leases       map[string]lease.Lease
-	connection   lease.Lease
-	reset        time.Time
-	resetChanged chan struct{}
+	root          *conversationRuntime
+	config        delegationConfig
+	reactor       *reactor.Reactor
+	adapter       *codex.Session
+	processes     *proc.Owner
+	cancel        context.CancelFunc
+	done          chan struct{}
+	mu            sync.Mutex
+	threads       map[string]worker.Thread
+	leases        map[string]lease.Lease
+	connection    lease.Lease
+	reset         time.Time
+	resetChanged  chan struct{}
+	adapters      map[string]*codex.Session
+	processLeases []lease.Lease
+	workerEvents  chan worker.Event
+	wg            sync.WaitGroup
+	ctx           context.Context
 }
 
 var repositoryName = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
@@ -75,18 +80,18 @@ func (r *conversationRuntime) startDelegation(ctx context.Context) error {
 		return errors.New("invalid delegation installation")
 	}
 	for name, repo := range cfg.Repositories {
-		if !repositoryName.MatchString(name) || !filepath.IsAbs(repo.Clone) || repo.Base == "" || strings.HasPrefix(repo.Base, "-") {
+		if !repositoryName.MatchString(name) || name != strings.ToLower(name) || !filepath.IsAbs(repo.Clone) || repo.Base == "" || strings.HasPrefix(repo.Base, "-") {
 			return errors.New("invalid delegated repository")
 		}
 	}
 	runctx, cancel := context.WithCancel(ctx)
-	d := &delegationRuntime{root: r, config: cfg, processes: proc.NewOwner(), cancel: cancel, done: make(chan struct{}), threads: map[string]worker.Thread{}, leases: map[string]lease.Lease{}, resetChanged: make(chan struct{}, 1)}
+	d := &delegationRuntime{root: r, config: cfg, processes: proc.NewOwner(), cancel: cancel, done: make(chan struct{}), threads: map[string]worker.Thread{}, leases: map[string]lease.Lease{}, resetChanged: make(chan struct{}, 1), adapters: map[string]*codex.Session{}, workerEvents: make(chan worker.Event, 256), ctx: runctx}
 	d.connection, err = r.activities.Acquire(runctx, lease.Activity{Class: lease.Reported, Reason: "delegated worker connection"})
 	if err != nil {
 		cancel()
 		return err
 	}
-	d.adapter, err = worker.OpenCodex(runctx, d.connection, proc.Command{Path: cfg.Codex, Args: cfg.CodexArgs, Env: proc.InheritedEnvironment("LINA_RESPONSES_API_KEY")})
+	d.adapter, err = codex.Open(runctx, d.connection, codex.Config{Executable: cfg.Codex})
 	if err != nil {
 		cancel()
 		d.connection.Release()
@@ -101,7 +106,17 @@ func (r *conversationRuntime) startDelegation(ctx context.Context) error {
 }
 func (d *delegationRuntime) close(ctx context.Context) error {
 	d.cancel()
-	err := d.adapter.Close(ctx)
+	err := d.adapter.Close()
+	d.mu.Lock()
+	adapters := make([]*codex.Session, 0, len(d.adapters))
+	for _, a := range d.adapters {
+		adapters = append(adapters, a)
+	}
+	d.mu.Unlock()
+	for _, a := range adapters {
+		err = errors.Join(err, a.Close())
+	}
+	d.wg.Wait()
 	err = errors.Join(err, d.processes.Close(ctx))
 	select {
 	case <-d.done:
@@ -109,6 +124,9 @@ func (d *delegationRuntime) close(ctx context.Context) error {
 		return errors.Join(err, ctx.Err())
 	}
 	d.mu.Lock()
+	for _, l := range d.processLeases {
+		l.Release()
+	}
 	for _, l := range d.leases {
 		l.Release()
 	}
@@ -195,7 +213,32 @@ func (d *delegationRuntime) start(ctx context.Context, c work.Card) (work.Run, e
 	d.mu.Lock()
 	d.leases[c.Task.ID] = l
 	d.mu.Unlock()
-	thread, err := d.adapter.Start(ctx, l, worker.StartSpec{TaskID: c.Task.ID, AttemptID: c.Task.ID + ":1", Workdir: p.Workdir, TaskPacket: p.Packet, Required: worker.CapabilitySet{worker.SignalCompletion}})
+	process, err := d.root.activities.Acquire(d.ctx, lease.Activity{Class: lease.Reported, Reason: "delegated Codex session"})
+	if err != nil {
+		return work.Run{}, err
+	}
+	adapter, err := codex.Open(d.ctx, process, codex.Config{Executable: d.config.Codex})
+	if err != nil {
+		process.Release()
+		return work.Run{}, err
+	}
+	d.mu.Lock()
+	d.adapters[c.Task.ID] = adapter
+	d.processLeases = append(d.processLeases, process)
+	d.mu.Unlock()
+	// Events stay buffered until Start binds the returned thread and turn.
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		for e := range adapter.Events() {
+			select {
+			case d.workerEvents <- e:
+			case <-d.ctx.Done():
+				return
+			}
+		}
+	}()
+	thread, err := adapter.Start(ctx, l, worker.StartSpec{TaskID: c.Task.ID, AttemptID: c.Task.ID + ":1", Workdir: p.Workdir, TaskPacket: p.Packet, Required: worker.CapabilitySet{worker.SignalCompletion}})
 	if err != nil {
 		return work.Run{}, err
 	}
@@ -207,6 +250,7 @@ func (d *delegationRuntime) start(ctx context.Context, c work.Card) (work.Run, e
 func (d *delegationRuntime) returnConflict(ctx context.Context, c work.Card) (work.Run, error) {
 	d.mu.Lock()
 	thread, ok := d.threads[c.Task.ID]
+	adapter := d.adapters[c.Task.ID]
 	d.mu.Unlock()
 	if !ok {
 		return work.Run{}, errors.New("worker requires reconciliation")
@@ -218,10 +262,10 @@ func (d *delegationRuntime) returnConflict(ctx context.Context, c work.Card) (wo
 	d.mu.Lock()
 	d.leases[c.Task.ID] = l
 	d.mu.Unlock()
-	if err = d.adapter.Input(ctx, thread, worker.Input{Text: "Your pull request is unmergeable after another landing. Resolve the conflict on your existing branch, run the relevant checks, and update the same pull request. This is the single automatic conflict return; do not merge it."}); err != nil {
+	if err = adapter.Input(ctx, thread, worker.Input{Text: "Your pull request is unmergeable after another landing. Resolve the conflict on your existing branch, run the relevant checks, and update the same pull request. This is the single automatic conflict return; do not merge it."}); err != nil {
 		return work.Run{}, err
 	}
-	snapshot, err := d.adapter.Snapshot(ctx, thread)
+	snapshot, err := adapter.Snapshot(ctx, thread)
 	if err != nil {
 		return work.Run{}, err
 	}
@@ -290,16 +334,16 @@ func (d *delegationRuntime) events(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-d.adapter.Done():
-			_ = d.root.work.Recover(ctx, "worker-lost-"+strconv.FormatUint(d.root.epoch, 10))
-			_ = d.root.publishRunning(ctx)
-			return
-		case event := <-d.adapter.Events():
+		case event := <-d.workerEvents:
 			if event.Validate() != nil {
 				continue
 			}
 			switch event.Kind {
 			case worker.FinishEvent:
+				if event.Finish.Failure == worker.ConnectionFailure {
+					_ = d.reactor.Unknown(ctx, event.Thread.TaskID, event.Thread.ID, event.Thread.TurnID)
+					continue
+				}
 				status := "failed"
 				switch event.Finish.Status {
 				case worker.Done:
@@ -320,7 +364,7 @@ func (d *delegationRuntime) events(ctx context.Context) {
 			}
 		case <-d.resetChanged:
 			continue
-		case <-d.adapter.Updates():
+		case <-d.adapter.QuotaUpdates():
 			_ = d.reactor.Wake(ctx)
 		case <-resetWake:
 			_ = d.reactor.Wake(ctx)

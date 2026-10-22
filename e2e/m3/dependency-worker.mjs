@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 const [root, mode] = process.argv.slice(2);
 const cfg = JSON.parse(readFileSync(join(root, 'fixture.json')));
 const git = (cwd, ...args) => execFileSync(cfg.git, ['-C', cwd, ...args], {encoding:'utf8'}).trim();
-if (mode === 'forge') {
+if (mode === '--version') { process.stdout.write('codex-cli 99.0.0\n'); } else if (mode === 'forge') {
   const branch = process.argv[6]; // root forge pr view <branch>
   const task = branch.slice('lina/'.length);
   const head = git(cfg.clone, 'rev-parse', branch);
@@ -25,7 +25,7 @@ if (mode === 'forge') {
       case 'initialize': result={userAgent:'synthetic-codex',codexHome:root,platformFamily:'unix',platformOs:'linux'};break;
       case 'account/rateLimits/read':result={rateLimits:{}};break;
       case 'thread/start': {
-        const thread={id:basename(p.cwd),cwd:p.cwd,status:{type:'idle'},turns:[],count:0};threads.set(thread.id,thread);result={thread};break;
+        const thread={id:basename(p.cwd),cwd:p.cwd,status:{type:'idle'},turns:[],count:0};threads.set(thread.id,thread);result={thread,cwd:p.cwd,model:'fixture-model'};break;
       }
       case 'thread/read': result={thread:threads.get(p.threadId)};break;
       case 'turn/start': {
@@ -37,6 +37,7 @@ if (mode === 'forge') {
         git(thread.cwd,'add','.');git(thread.cwd,'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m',`fixture ${definition.key}`);
         writeFileSync(join(root,`${thread.id}.started`),String(thread.count));
         const turn={id:`turn-${thread.count}`,status:'completed',items:[]};thread.turns.push(turn);
+        send({method:'turn/started',params:{threadId:thread.id,turn:{...turn,status:'inProgress'}}});
         send({id,result:{turn:{...turn,status:'inProgress'}}});
         send({method:'turn/completed',params:{threadId:thread.id,turn}});return;
       }

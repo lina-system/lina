@@ -78,6 +78,10 @@ func fixture() {
 			reply(map[string]any{"userAgent": "fixture/99.0.0", "codexHome": os.Getenv("CODEX_HOME"), "platformFamily": "unix", "platformOs": "linux"})
 		case "initialized":
 			initialized = true
+		case "account/rateLimits/read":
+			rate := map[string]any{"primary": map[string]any{"usedPercent": 100, "resetsAt": time.Now().Add(time.Hour).Unix()}}
+			reply(map[string]any{"rateLimits": rate})
+			notify("account/rateLimits/updated", map[string]any{"rateLimits": rate})
 		case "thread/start":
 			if !initialized || len(r.Params) != 1 {
 				os.Exit(86)
@@ -410,7 +414,7 @@ func TestEventOverflowAndOversizedFrameAreObservable(t *testing.T) {
 func TestUnknownRequiredCapabilityAndWorkerSettingsAreRefusedBeforeAssignment(t *testing.T) {
 	s, ctx, l := openFixture(t, "normal")
 	base := worker.StartSpec{TaskID: "task", AttemptID: "attempt", Workdir: t.TempDir(), TaskPacket: "hold"}
-	for _, capability := range []worker.Capability{worker.RequestApprovals, worker.AskQuestions, worker.WorkTools, worker.ReportQuota} {
+	for _, capability := range []worker.Capability{worker.RequestApprovals, worker.AskQuestions, worker.WorkTools} {
 		spec := base
 		spec.Required = worker.CapabilitySet{capability}
 		if _, err := s.Start(ctx, l, spec); err == nil {

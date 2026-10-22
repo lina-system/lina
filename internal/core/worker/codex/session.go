@@ -212,4 +212,3 @@ func threadState(s wire.V2ThreadStatus) worker.ThreadState {
 	return worker.Unknown
 }
 func (s *Session) Answer(context.Context, worker.Thread, worker.Answer) error { return ErrUnsupported }
-func (s *Session) Quota(context.Context) ([]provider.QuotaRow, error)         { return nil, ErrUnsupported }

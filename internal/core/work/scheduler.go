@@ -101,7 +101,7 @@ func validateGraph(cards []Card) error {
 		if err := validateTask(t); err != nil {
 			return err
 		}
-		if p.Group == "" || p.Repository == "" || p.Worker == "" || p.Host == "" || len(p.Areas) > 64 || len(p.DependsOn) > 256 {
+		if p.Group == "" || p.Repository == "" || p.Repository != strings.ToLower(p.Repository) || p.Worker == "" || p.Host == "" || len(p.Areas) > 64 || len(p.DependsOn) > 256 {
 			return ErrInvalid
 		}
 		if _, err := AreasOverlap(p.Areas, p.Areas); err != nil {
@@ -435,5 +435,23 @@ func (s *Service) WorkerInputNeeded(ctx context.Context, id, run string) error {
 			return ErrState
 		}
 		return schedulingEvent(ctx, tx, c, "schedule_input", c.Scheduling, nil)
+	})
+}
+
+// UnknownExecution is an observation gap, not a terminal worker result.
+func (s *Service) UnknownExecution(ctx context.Context, id, run string) error {
+	return s.db.Write(ctx, func(tx *canon.Tx) error {
+		events, err := ledger(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		c, err := Project(events)
+		if err != nil {
+			return err
+		}
+		if c.Run == nil || c.Run.ID != run || !c.Active {
+			return ErrState
+		}
+		return appendEvent(ctx, tx, Event{Key: "worker-unknown:" + run, TaskID: id, Kind: "unknown"})
 	})
 }

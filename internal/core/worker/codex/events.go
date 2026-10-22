@@ -2,6 +2,7 @@
 package codex
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 
@@ -20,6 +21,17 @@ func (s *Session) notification(raw []byte) error {
 	event := worker.Event{Thread: s.snapshot.Thread}
 	var thread, turn string
 	switch {
+	case n.AccountRateLimitsUpdated != nil:
+		raw, _ := json.Marshal(n.AccountRateLimitsUpdated.Params.RateLimits)
+		if bytes.Equal(raw, s.lastQuota) {
+			return nil
+		}
+		s.lastQuota = raw
+		select {
+		case s.quotaUpdates <- struct{}{}:
+		default:
+		}
+		return nil
 	case n.TurnStarted != nil:
 		p := n.TurnStarted.Params
 		thread, turn = p.ThreadId, p.Turn.ID

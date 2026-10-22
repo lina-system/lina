@@ -17,7 +17,13 @@ schema; design authority is C-29 and the Codex adapter contract.
 - **Unknown:** the supplied Hermes/plugin paths were unavailable. No Hermes or
   Honcho/LCM behavior is ported. CRW observations do not verify this Codex version;
   actual round-trip evidence must be recorded separately. Approvals, dynamic work
-  tools and quota integration remain #133, and this adapter must not claim those
+  tools remain #133, and this adapter must not claim those
   capabilities before they are implemented.
 
 No reference implementation code is copied or executed.
+
+For #208, the same official documentation and vendored schema establish
+`account/rateLimits/read` and `account/rateLimits/updated`. Quota reads now
+return observed windows, including reset times; absent windows remain unknown.
+Updates coalesce into scheduler wake hints. Synthetic protocol tests establish
+blocked quota and its wake, without a provider credential or a live quota claim.

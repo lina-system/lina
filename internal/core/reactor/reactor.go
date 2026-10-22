@@ -146,3 +146,20 @@ func (r *Reactor) observe(ctx context.Context, id string) error {
 	_, err = r.store.ObservePullRequest(ctx, id, c.Run.ID, pr)
 	return err
 }
+
+func (r *Reactor) Unknown(ctx context.Context, id, thread, turn string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	c, err := r.store.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if c.Run == nil || c.Run.ThreadID != thread || c.Run.TurnID != turn {
+		return work.ErrState
+	}
+	err = r.store.UnknownExecution(ctx, id, c.Run.ID)
+	if r.hooks.Changed != nil {
+		r.hooks.Changed(ctx)
+	}
+	return err
+}

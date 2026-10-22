@@ -1145,15 +1145,17 @@ type Definition struct {
 - One task, one worker, one worktree, one branch, created by Core with the Git command from a parent clone in `work/clones/`.
 - The first local scheduler connection is enabled by the installation's private
   `system/core/delegation.json`: absolute `codex`, `git` and `gh` executable paths,
-  optional `codex_args`, a reported local `slots` capacity, and a `repositories`
-  map from canonical `owner/repo` to its `clone` and `base`. Executables and clone
+  a reported local `slots` capacity (re-read on each wake), and a `repositories`
+  map from canonical lowercase `owner/repo` to its `clone` and `base`. Executables
+  and clone
   paths are installation inputs, never model arguments. Without that file the
   delegation tools are not advertised. Remote Node admission remains separate.
 - `dispatch_work` admits a graph of definitions (key, what, why, done, areas,
   dependencies and design sections) scoped to the authenticated conversation.
   Core resolves design references at the registered base, mints stable task ids
   from the turn/call/key, creates `lina/<task-id>` branches and separate worktrees,
-  and starts the installed Codex App Server through `worker.Adapter`. No model,
+  and starts the installed Codex App Server through the existing
+  `worker.Adapter` session implementation. No model,
   sandbox or approval setting is overridden. `refresh_work` reads the asking
   conversation's task cards and their current forge observations; it cannot
   assert merged state or request a merge.

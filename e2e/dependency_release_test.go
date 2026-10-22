@@ -41,8 +41,21 @@ func TestM3DependencyReleaseInstalledCore(t *testing.T) {
 		}
 		switch n := calls.Add(1); n {
 		case 1:
-			emitPersonaCall(w, "dispatch", "dispatch_work", scenario)
+			var cycle map[string]any
+			_ = json.Unmarshal(raw, &cycle)
+			tasks := cycle["tasks"].([]any)
+			tasks[0].(map[string]any)["depends_on"] = []string{"b"}
+			emitPersonaCall(w, "cycle", "dispatch_work", cycle)
 		case 2:
+			var item struct{ Output string }
+			_ = json.Unmarshal(request.Input[len(request.Input)-1], &item)
+			var result struct{ Code string }
+			_ = json.Unmarshal([]byte(item.Output), &result)
+			if result.Code != "invalid_arguments" {
+				t.Errorf("Core accepted dependency cycle: %s", item.Output)
+			}
+			emitPersonaCall(w, "dispatch", "dispatch_work", scenario)
+		case 3:
 			var item struct{ Output string }
 			if len(request.Input) == 0 {
 				t.Error("no tool result")
@@ -59,7 +72,7 @@ func TestM3DependencyReleaseInstalledCore(t *testing.T) {
 			}
 			taskIDs = result.Output.Result
 			emitResponse(w, "Work started.", true)
-		case 3:
+		case 4:
 			emitPersonaCall(w, "refresh", "refresh_work", map[string]any{"tasks": taskIDs})
 		default:
 			emitResponse(w, "Work refreshed.", true)
@@ -120,7 +133,11 @@ func TestM3DependencyReleaseInstalledCore(t *testing.T) {
 	if err = os.WriteFile(gh, []byte(fmt.Sprintf("#!/bin/sh\nexec %s %s %s forge \"$@\"\n", quote(node), quote(program), quote(h.root))), 0700); err != nil {
 		t.Fatal(err)
 	}
-	config := map[string]any{"codex": node, "codex_args": []string{program, h.root}, "git": git, "gh": gh, "slots": 4, "repositories": map[string]any{"fixture/repo": map[string]string{"clone": clone, "base": "dev"}}}
+	codex := filepath.Join(h.root, "fixture-codex")
+	if err = os.WriteFile(codex, []byte(fmt.Sprintf("#!/bin/sh\nexec %s %s %s \"$@\"\n", quote(node), quote(program), quote(h.root))), 0700); err != nil {
+		t.Fatal(err)
+	}
+	config := map[string]any{"codex": codex, "git": git, "gh": gh, "slots": 4, "repositories": map[string]any{"fixture/repo": map[string]string{"clone": clone, "base": "dev"}}}
 	writeJSON(filepath.Join(h.root, "system", "core", "delegation.json"), config)
 	start := func() *process {
 		p := h.command("core", "--state-root", h.root, "--socket", h.socket)
