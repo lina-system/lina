@@ -197,10 +197,7 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		}
 		return nil
 	case "ctrl+c":
-		if m.content.Draft.Text != "" || len(m.content.Draft.Attachments) != 0 {
-			return m.reduceInput(state.EditDraft{})
-		}
-		fallthrough
+		return m.controlC()
 	case "ctrl+d":
 		m.status = ConnectionStatus{State: Quit}
 		return tea.Quit
