@@ -525,6 +525,18 @@ the draft; the line never enters conversation history or other list views.
 installed Core, then submits the retained draft and renders the fixture reply.
 Rows appear when Core sends items and disappear on a removal update or when
 its snapshot clears the list.
+
+Both the conversation's running strip and Ctrl+R's list localize the typed
+`running_update.state` and optional `reason` through the selected Korean or
+English catalog, followed by the sanitized authored `summary`. They share the
+same row presentation on live updates and restored snapshots. For example,
+`ready_for_review` appears as "Ready for review" or "검토 준비됨". The client
+does not compute a state or translate the summary. When typed fields are absent,
+it displays the sanitized legacy `text` without interpreting a status prefix.
+`TestM1RunResultOpenInstalledCore` checks both languages through installed Core,
+ten foreground tool calls, a completed background run, Core restart, the real
+TUI's 100×32 PTY strip/list, and opening the retained result.
+
 An open running pager applies accepted `running` topic updates and replacement
 snapshots immediately, including completed and removed rows, without polling or
 requiring the person to close and reopen it. Refreshing its text preserves the
@@ -816,8 +828,9 @@ type Stream interface {
   the UI adds terminal styles. List continuations align under their content;
   code retains literal text and whitespace, including empty first and last
   lines and blocks containing only empty lines. Empty code rows retain their
-  semantic identity through wrapping; message-boundary trimming removes only
-  paragraph spacing. Escaped syntax remains literal.
+  block's code identity through wrapping, including language-tagged fences
+  with multiple syntax spans or no tokens; message-boundary trimming removes
+  only paragraph spacing. Escaped syntax remains literal.
   Unsupported HTML blocks and inline HTML display their literal source text.
   Tables use our own renderer.
 - Conversation spans use theme text, accent and surface tokens: bold and italic

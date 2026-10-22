@@ -26,6 +26,8 @@ type Block struct {
 	Body, Title              string
 	InlineReply              bool
 	RunID                    string
+	RunState                 protocol.RunningState
+	RunReason                protocol.RunningReason
 	TurnKnown, TurnActive    bool
 	TurnStarted, TurnAt      time.Time
 	TurnPhase                protocol.TurnPhase
