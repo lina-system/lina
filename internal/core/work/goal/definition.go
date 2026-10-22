@@ -178,17 +178,8 @@ func (e *Engine) RefreshDefinitions(ctx context.Context) error {
 			current.State = GoalRunning
 			current.Checks = nil
 			current.CheckRound++
-			for _, r := range v.Records("action") {
-				var a Action
-				if err = json.Unmarshal(r.Body, &a); err != nil {
-					return err
-				}
-				if a.GoalID == g.ID && a.State == "queued" {
-					a.State = "finished"
-					if err = put(v, "action", a.ID, a); err != nil {
-						return err
-					}
-				}
+			if err = retireQueuedActions(v, &current); err != nil {
+				return err
 			}
 			return put(v, "goal", g.ID, current)
 		})

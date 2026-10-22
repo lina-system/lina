@@ -912,9 +912,13 @@ A goal is in one of these states. The person sees them only through the progress
 
 **Revision.** A correction by the person, a decision, or a late answer to a question whose deadline passed, is a new revision of the goal. Tasks whose inputs did not change keep their results. Tasks whose inputs changed, and the tasks that depend on them, are derived again. A criterion that was met stays met only while its evidence still refers to the current target.
 
+When a revision invalidates queued actions, Core retires them and releases their reservations in the same ledger transaction. A worker action that was never dispatched restores its task's runnable stage and does not spend an attempt, continuation or recovery. A cancelled manager action likewise does not consume the task's repair turn. Adding a repair task also revises the goal: obsolete queued sibling actions are retired and derived again, so independent work remains runnable. Actions already claimed keep their reservations until Core reads their outcome; revision never dispatches their effects again.
+
 ### Next action
 
 After every event Core commits for a goal, Core derives the goal's next actions from the current ledger and the goal record. The event itself carries no instruction: it only says that something changed, and Core reads the current state before it acts (see Event-driven flow). The same derivation runs for every goal that is not final once at startup and in each reconcile sweep, so a lost event costs at most one sweep. Mechanics run in Core without a model call. A model turn happens only where judgment is needed: splitting work, writing a work definition or brief, checking a result against the done condition, or drafting text for the person or for someone else. The table lists who acts.
+
+A task's pull-request change signal invalidates its cached head, check, review and manager proofs, including while it waits for another task's merge slot. Core reads the pull request again before deriving a merge from those proofs.
 
 | Event | Goal or task state | Next action | By |
 | --- | --- | --- | --- |

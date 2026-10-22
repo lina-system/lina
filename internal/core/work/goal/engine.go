@@ -197,6 +197,53 @@ func goalTask(g *Goal, id string) *Task {
 	return nil
 }
 
+// A goal revision invalidates queued actions, including their reservations and
+// one-shot planning/recovery counters. They have never been dispatched. Claimed
+// actions retain their receipts and reservations until their effects settle.
+func retireQueuedActions(v *View, g *Goal) error {
+	for _, r := range v.Records("action") {
+		var a Action
+		if err := json.Unmarshal(r.Body, &a); err != nil {
+			return err
+		}
+		if a.GoalID != g.ID || a.State != "queued" || a.GoalRevision == g.Revision {
+			continue
+		}
+		t := goalTask(g, a.TaskID)
+		if t != nil {
+			switch a.Kind {
+			case Assign:
+				t.Stage = TaskReady
+				t.NodeID = ""
+			case Resume:
+				t.Stage = TaskWorkerLost
+				t.Recoveries--
+			case RepairConflict:
+				t.Stage = TaskConflicted
+				t.Conflicts--
+			case ContinueWorker:
+				t.Stage = TaskNoReceipt
+				t.Continuations--
+			case RepairQA:
+				t.Stage = TaskQAFailed
+				t.QARepairs--
+			case PlanGoal:
+				t.RepairAsked = false
+			case InspectPR, Merge, RunQA, Deploy, Verify, Observe, Decide, CheckCriterion:
+			}
+			if reserves(a) {
+				t.Attempt--
+				t.EffectsSettled = true
+			}
+		}
+		a.State = "finished"
+		if err := put(v, "action", a.ID, a); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (e *Engine) Admit(ctx context.Context, g Goal) error {
 	if e.cfg.AuthorizeGoal != nil {
 		if err := e.cfg.AuthorizeGoal(ctx, g); err != nil {
@@ -469,6 +516,7 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 			return err
 		}
 		t := goalTask(&g, a.TaskID)
+		previousRevision := g.Revision
 		a.ObservedAt = e.cfg.Now().Unix()
 		a.ObserverEpoch = e.cfg.Epoch
 		a.Receipt = encode(o)
@@ -563,6 +611,11 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 			}
 		default:
 			return ErrInvalid
+		}
+		if g.Revision != previousRevision {
+			if err = retireQueuedActions(v, &g); err != nil {
+				return err
+			}
 		}
 		if err = put(v, "goal", g.ID, g); err != nil {
 			return err
