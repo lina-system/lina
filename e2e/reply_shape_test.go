@@ -174,6 +174,8 @@ func TestM1ReplyShapeFinalItemCeilings(t *testing.T) {
 		{"over-chars", "OK! " + strings.Repeat("x", 298), "OK!", true},
 		{"wrapped-korean", "끝. " + strings.Repeat("가", 198), "끝.", true},
 		{"no-sentence", strings.Repeat("가", 301), "", true},
+		{"danda-sentence", "यह पूरा है। " + strings.Repeat("क", 301), "यह पूरा है।", true},
+		{"urdu-sentence", "یہ مکمل ہے۔ " + strings.Repeat("ک", 301), "یہ مکمل ہے۔", true},
 	}
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

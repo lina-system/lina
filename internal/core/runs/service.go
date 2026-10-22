@@ -160,6 +160,11 @@ func (s *Service) startWithCall(ctx context.Context, o Origin, b Brief, promotio
 			return id, state, err
 		}
 	}
+	if promotion != nil {
+		if id, state, err := s.replayPromotion(ctx, o, b, promotion); err != nil || id != "" {
+			return id, state, err
+		}
+	}
 	if err := s.cfg.Authorize(ctx, o, b); err != nil {
 		return "", "", err
 	}
@@ -185,13 +190,8 @@ func (s *Service) startWithCall(ctx context.Context, o Origin, b Brief, promotio
 		}
 	}
 	if promotion != nil {
-		for _, r := range rows {
-			if samePromotion(r, o) {
-				if !sameGathered(r, b, promotion) {
-					return "", "", ErrInvalid
-				}
-				return r.ID, r.State, nil
-			}
+		if id, state, err := findPromotion(rows, o, b, promotion); err != nil || id != "" {
+			return id, state, err
 		}
 	}
 	id := make([]byte, 16)
