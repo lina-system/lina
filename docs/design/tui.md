@@ -307,6 +307,14 @@ For the colour conversation screen, each new size reaches the cell renderer
 before its reflowed view, even if the view text is unchanged. The connection owner's latest dimensions remain authoritative: late renderer startup size messages are discarded before they can resize the cell buffer. Resizing keeps the
 draft and redraws header, status and composer within the current row budget;
 cells from the previous dimensions must not survive as stale transcript rows.
+The terminal output boundary restores full-height scrolling margins after each
+write while preserving the hardware cursor. A frame queued at a smaller size
+may arrive after the physical terminal has grown; its cached height must not
+leave later frames scrolling inside the old region. The real-model recording
+regression holds this ordering across 40x12 → 120x40, starts a streamed reply,
+and compares every cell row and cursor with a fresh client during streaming,
+after interruption and after a same-epoch reconnect. Writes and cursor updates
+establish settlement without sleeps or assertions on UI wording.
 Only dimensions forwarded by the owning input decoder may resize the renderer.
 The renderer filters the library's asynchronous initial size notification so a
 late startup value cannot undo a newer size and clip the composer or status.
@@ -445,6 +453,10 @@ and `x` signs out the selected account. List and completion refresh the displaye
 account status; ids remain internal request targets. An account-only connection retains a composer and displays the missing
 account cause with `/signin`; entering conversation text makes no model request.
 The conversation draft survives opening and closing the account block.
+An automatic account-list refusal at connection startup retains focus and the
+unsent draft. Its typed error stays in account display state; it does not open
+the account block over the conversation. A refusal in a block the person opened
+keeps that block visible.
 
 The client reports an ephemeral IPv4 loopback port for `/auth/callback`, or
 `cannot_listen` over SSH or when binding fails. It opens only an HTTPS
