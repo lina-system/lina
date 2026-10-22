@@ -71,6 +71,7 @@ type Tx struct {
 	readOnly bool
 	ctx      context.Context
 	cleanups []func()
+	changed  bool
 }
 
 func (t *Tx) operationContext(ctx context.Context) context.Context {
@@ -95,7 +96,13 @@ func (t *Tx) ExecContext(ctx context.Context, query string, args ...any) (sql.Re
 	if t.readOnly {
 		return nil, ErrReadOnly
 	}
-	return t.tx.ExecContext(t.operationContext(ctx), query, args...)
+	result, err := t.tx.ExecContext(t.operationContext(ctx), query, args...)
+	if err == nil {
+		if n, e := result.RowsAffected(); e == nil && n > 0 {
+			t.changed = true
+		}
+	}
+	return result, err
 }
 func (t *Tx) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
 	return t.tx.QueryContext(t.operationContext(ctx), query, args...)
@@ -127,6 +134,8 @@ type Store struct {
 	lifetime         context.Context
 	cancel           context.CancelFunc
 	closeOnce        sync.Once
+	changeMu         sync.Mutex
+	changed          chan struct{}
 	readGate         sync.RWMutex
 	readFailure      error // guarded by readGate
 }
@@ -375,7 +384,13 @@ func (s *Store) transaction(ctx context.Context, fn func(*Tx) error, version int
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if view.changed {
+		s.notifyChanged()
+	}
+	return nil
 }
 
 // Only the writer may end a transaction or alter its fence/schema metadata.
