@@ -503,6 +503,8 @@ Coding belongs to the dev preset, Sion, regardless of which persona received the
 
 The manager is a prepared dev turn in the existing conversation engine. It receives the scoped definition and source identity, with its own persona and methodology, and records its assignment judgment before dispatch. The original persona's private conversation is not copied. Core carries the original effect ceiling into the manager and worker scope. A role grants no extra access. System and creative retain their health question or creative brief while handing off coding ownership.
 
+For `worker_start`, manager admission runs before the worker execution registry, under the calling turn's cancellation lifecycle. Waiting for the shared manager lane and completing the manager turn do not consume the worker's 30-second start deadline. Core issues the start grant and records the worker effect only after admission succeeds, then rechecks the durable delegation before launch. Admission failure or cancellation creates no worker-start effect, so it cannot leave an unlaunched worker with an unknown outcome that blocks an identical retry. Once worker execution begins, the existing receipt and unknown-outcome rules still apply.
+
 `dispatch_work` retains the asking conversation as the delivery destination and records dev as the work owner with the manager conversation. The installed worker owns code and its PR; Core observes the current PR head, checks, review and produced artifact receipts. The same manager conversation judges delivery against its retained definition. A manager's verified verdict is separate from merge or deployment. Missing evidence stays unverified. `worker_start` sessions also run under dev ownership and return questions, approvals and results through the originating conversation; their completion alone remains an unverified claim.
 
 Git work allocated with `prepare_work` has the same dev owner and manager binding; non-coding work keeps its original owner. The requesting conversation can retain its own delegated result through that recorded binding. For PR delivery, Core retains the exact observed base/head, sanitized change evidence and review metadata. A bounded or unavailable change observation cannot become a verified manager verdict. The return notice distinguishes the worker/PR observation from the manager's verdict and from a merge.
@@ -735,6 +737,9 @@ requests are retained in the originating conversation as requests to Core.
 Questions use the authenticated waiting-card answer path and return the person's
 answer to the same worker call. Secret input is unsupported. The pinned MCP
 elicitation request has no form; that case offers only decline or cancel.
+The conversation records a short acknowledgement of the person's response;
+serialized worker response envelopes remain on the adapter transport. The same
+acknowledgement restores from conversation history after Core restarts.
 
 `submit_receipt` accepts the existing version-1 work receipt shape, checked
 against the session assignment, generation, thread, turn and artifact root. It
@@ -763,7 +768,8 @@ times stay unknown; Core never invents a reset.
 [`e2e/m2/codex-work-tools.json`](../../e2e/m2/codex-work-tools.json) drives the
 built Core over its Unix protocol and a separate synthetic stdio worker. It
 proves an owner approval returning to the worker, dynamic tool result delivery,
-quota rows and an actual worker-written artifact. This is protocol integration
+quota rows and an actual worker-written artifact. It also checks that the live
+and restored question-answer notices contain no transport fields. This is protocol integration
 evidence; it does not measure live account quota or certify new Codex versions.
 
 ### Readiness

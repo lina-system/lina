@@ -417,8 +417,9 @@ func runCodexWorkTools(t *testing.T, scenario, kind string, observe func(*harnes
 		t.Fatal(err)
 	}
 	ack, done, notice, resolved, questionResolved := false, false, false, false, false
+	answerNotice, answerNoticeKey := "", ""
 	answerID, questionAnswerID := "", ""
-	for !ack || !done || !notice || !resolved || !questionResolved {
+	for !ack || !done || !notice || !resolved || !questionResolved || answerNotice == "" {
 		frame, err := c.Receive(h.ctx)
 		if err != nil {
 			t.Fatalf("worker journey ack=%t done=%t notice=%t resolved=%t questionResolved=%t: %v", ack, done, notice, resolved, questionResolved, err)
@@ -462,6 +463,7 @@ func runCodexWorkTools(t *testing.T, scenario, kind string, observe func(*harnes
 				observe(h, "question")
 			}
 			values := protocol.FormValues{"answer": protocol.FormValue{String: &fixture.Answer}}
+			answerNoticeKey = payload.Card.ID + ":answer"
 			questionAnswerID, err = c.AnswerQuestion(h.ctx, protocol.QuestionAnswer{CardID: &payload.Card.ID, Revision: &payload.Card.Revision, Answer: protocol.QuestionAnswerActionAccept, Values: &values})
 			if err != nil {
 				t.Fatal(err)
@@ -474,6 +476,10 @@ func runCodexWorkTools(t *testing.T, scenario, kind string, observe func(*harnes
 				questionResolved = true
 			}
 		case protocol.ItemDone:
+			if payload.Stream != nil && payload.Stream.Key == answerNoticeKey {
+				assertWorkerAnswerNotice(t, payload)
+				answerNotice = *payload.Text
+			}
 			notice = notice || payload.Text != nil && strings.Contains(*payload.Text, fixture.Result)
 		case protocol.TurnState:
 			if payload.Active != nil && !*payload.Active {
@@ -516,6 +522,41 @@ func runCodexWorkTools(t *testing.T, scenario, kind string, observe func(*harnes
 	if err != nil || !strings.Contains(string(raw), fixture.Result) {
 		t.Fatalf("worker finish notice not durable: %s: %v", raw, err)
 	}
+	snapshot, ok := frame.Payload.(protocol.Snapshot)
+	if !ok {
+		t.Fatalf("expected restored conversation snapshot, got %T", frame.Payload)
+	}
+	restoredAnswer := false
+	for _, item := range snapshot.Items {
+		if item.Key != answerNoticeKey {
+			continue
+		}
+		var payload protocol.ItemDone
+		if err := json.Unmarshal(item.Payload, &payload); err != nil {
+			t.Fatal(err)
+		}
+		assertWorkerAnswerNotice(t, payload)
+		if *payload.Text != answerNotice {
+			t.Fatalf("answer notice changed after restart: %q -> %q", answerNotice, *payload.Text)
+		}
+		restoredAnswer = true
+	}
+	if !restoredAnswer {
+		t.Fatal("worker answer acknowledgement missing after Core restart")
+	}
 	c.Close()
 	h.stopCore(core)
+}
+
+func assertWorkerAnswerNotice(t *testing.T, notice protocol.ItemDone) {
+	t.Helper()
+	if notice.Speaker == nil || *notice.Speaker != protocol.ConversationSpeakerSystem || notice.Text == nil || strings.TrimSpace(*notice.Text) == "" {
+		t.Fatalf("missing worker answer acknowledgement: %+v", notice)
+	}
+	// Check the display boundary, not the wording of the acknowledgement.
+	for _, internal := range []string{"contentItems", "inputText", `"success":`, `"action":`, `"answer":`} {
+		if strings.Contains(*notice.Text, internal) {
+			t.Errorf("worker answer notice exposes transport field %q: %s", internal, *notice.Text)
+		}
+	}
 }
