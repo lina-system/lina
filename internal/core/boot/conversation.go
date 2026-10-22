@@ -179,6 +179,11 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err != nil {
 		return nil, err
 	}
+	if selected, e := r.agents.Selected(ctx, r.person); e == nil {
+		first.Agent = selected
+	} else if !errors.Is(e, agents.ErrNotFound) {
+		return nil, e
+	}
 	r.removals, err = retract.Open(ctx, retract.Config{Canon: db, Root: root})
 	if err != nil {
 		return nil, err
@@ -458,7 +463,7 @@ func (r *conversationRuntime) Input(ctx context.Context, s clientsrv.Session, p 
 	}
 	digest := sha256.Sum256([]byte(r.person + "\x00" + r.conversation + "\x00" + *p.InputID))
 	eventID := "input:" + hex.EncodeToString(digest[:])
-	admission := &conversationAdmission{db: r.db, input: inbox.Input{Key: inbox.Key{Conversation: r.conversation, Source: "client", NativeID: *p.InputID}, Body: []byte(masked.Text())}}
+	admission := &conversationAdmission{db: r.db, person: r.person, agent: r.agent, input: inbox.Input{Key: inbox.Key{Conversation: r.conversation, Source: "client", NativeID: *p.InputID}, Body: []byte(masked.Text())}}
 	language, err := r.inputLanguage(ctx, *p.Text)
 	if err != nil {
 		return protocol.ItemDone{}, err

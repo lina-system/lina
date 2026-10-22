@@ -80,6 +80,7 @@ func (r *conversationRuntime) Agent(ctx context.Context, s clientsrv.Session, p 
 			if p.Name != nil {
 				return result, malformedManagement()
 			}
+			err = r.agents.Select(ctx, *p.AgentID, s.PersonID)
 		case "rename":
 			if p.Name == nil {
 				return result, malformedManagement()

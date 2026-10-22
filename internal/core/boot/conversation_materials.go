@@ -51,9 +51,10 @@ var errAdmittedInput = errors.New("input already admitted")
 // handles after Write returns. This adapter adds inbox admission to that same
 // transaction without moving filesystem preparation or cleanup under its lock.
 type conversationAdmission struct {
-	db      *canon.Store
-	input   inbox.Input
-	receipt inbox.Receipt
+	db            *canon.Store
+	input         inbox.Input
+	receipt       inbox.Receipt
+	person, agent string
 }
 
 func (a *conversationAdmission) Read(ctx context.Context, fn func(*canon.Tx) error) error {
@@ -69,7 +70,16 @@ func (a *conversationAdmission) Write(ctx context.Context, fn func(*canon.Tx) er
 		if !a.receipt.Inserted {
 			return errAdmittedInput
 		}
-		return fn(tx)
+		if err := fn(tx); err != nil {
+			return err
+		}
+		// Only a newly admitted client input changes startup focus. Channel
+		// traffic and replayed input receipts must not steal that selection.
+		if a.person != "" && a.agent != "" {
+			_, err = tx.ExecContext(ctx, `INSERT INTO agent_selection VALUES(?,?)
+ON CONFLICT(person_id) DO UPDATE SET agent_id=excluded.agent_id`, a.person, a.agent)
+		}
+		return err
 	})
 }
 func (r *conversationRuntime) journal() *ledger.Store { return ledger.New(r.db, r.materials) }
