@@ -149,12 +149,8 @@ func testReplyShapeLONGQA(t *testing.T, language design.Language) {
 			return snapshot
 		}
 		latest := wait(func(s tuiterm.Snapshot) bool {
-			// Core's observer has finished, but the TUI may still show the
-			// streamed card. Its idle redraw changes transcript rows and must
-			// not be mistaken for the first PgUp response below.
-			return s.AltScreen && !s.CursorHidden && s.CursorY == plan.Composer.Y &&
-				!strings.Contains(screenRows(s)[activePlan.Activity.Y], design.Text(language, "activity.stop")) &&
-				strings.Contains(strings.Join(conversationRows(s), "\n"), scenario.End) && strings.Contains(screenText(s), affordance)
+			return longReplyReady(s, plan, scenario.End, affordance) &&
+				!strings.Contains(screenRows(s)[activePlan.Activity.Y], design.Text(language, "activity.stop"))
 		})
 		t.Logf("LONG-QA latest (100x34):\n%s", strings.Join(screenRows(latest), "\n"))
 		if !latest.AltScreen || latest.CursorHidden || latest.CursorY != plan.Composer.Y {
@@ -489,4 +485,17 @@ func TestM1ReplyShapeLargeFrames(t *testing.T) {
 			h.stopCore(core)
 		})
 	}
+}
+
+// longReplyReady selects the viewport from which PgUp stitching begins.
+func longReplyReady(s tuiterm.Snapshot, plan layout.Layout, end, affordance string) bool {
+	rows := screenRows(s)
+	region := plan.Conversation
+	if !s.AltScreen || s.CursorHidden || s.CursorY != plan.Composer.Y || region.Height < 1 || region.Y+region.Height > len(rows) {
+		return false
+	}
+	// The result affordance must occupy the bottom conversation row. While the
+	// activity row still exists, inactive layout would otherwise include it and
+	// an activity update could be mistaken for the first PgUp response.
+	return strings.Contains(strings.Join(rows[region.Y:region.Y+region.Height], "\n"), end) && strings.Contains(rows[region.Y+region.Height-1], affordance)
 }

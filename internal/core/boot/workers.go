@@ -330,6 +330,7 @@ func (e *workerSession) encode(s worker.ThreadSnapshot) tools.Result {
 	return tools.Result{State: tools.Applied, Body: raw, Revision: s.Thread.ID + ":" + s.Thread.TurnID}
 }
 func (e *workerSession) observe() {
+	defer e.origin.notifyOwnerViews()
 	defer close(e.done)
 	for event := range e.adapter.Events() {
 		switch event.Kind {
@@ -363,6 +364,7 @@ func (e *workerSession) observe() {
 		case worker.ToolCallEvent:
 			e.workTool(event)
 		}
+		e.origin.notifyOwnerViews()
 	}
 	e.stopRequests("")
 	e.close()
