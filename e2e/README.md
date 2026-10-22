@@ -1,5 +1,12 @@
 # Headless acceptance harness
 
+`m3/non-competition.json` runs installed Core's record tools through a local
+fixture provider and its public client socket. It checks a real saved record,
+refusal of an out-of-scope path used as an id, and preservation of an external
+edit against an old revision while Core stays running. It is supporting
+protocol evidence; the [Linux non-competition ladder](../evidence/non-competition/README.md)
+still requires human concurrent-session measurements.
+
 Run `go test ./e2e/m1/...` (or `go test -count=1 -v ./e2e/...` for uncached scenario
 output). Node.js and the workspace's Go toolchain are required. The harness uses
 native Linux and macOS pseudo-terminals; it needs no window, display server,
