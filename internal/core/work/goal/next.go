@@ -139,9 +139,11 @@ type Goal struct {
 	Summary           string              `json:"-"`
 	Done              string              `json:"-"`
 	ServiceTarget     string              `json:"service_target"`
+	ServiceRepository string              `json:"service_repository,omitempty"`
 	NoServiceReason   string              `json:"no_service_reason"`
 	Tasks             []Task              `json:"tasks"`
 	TargetRevision    string              `json:"target_revision"`
+	MergedRevisions   map[string]string   `json:"merged_revisions,omitempty"`
 	Deployment        Proof               `json:"deployment"`
 	Verification      Proof               `json:"verification"`
 	Waits             []Wait              `json:"waits,omitempty"`
@@ -268,6 +270,9 @@ func validateGoal(g Goal) error {
 	if !validCriteria(g) || g.ID == "" || g.Person == "" || g.Agent == "" || strings.TrimSpace(g.Done) == "" || (g.ServiceTarget == "") == (g.NoServiceReason == "") {
 		return ErrInvalid
 	}
+	if !g.DefinitionPending && !validServiceRepository(g) {
+		return ErrInvalid
+	}
 	tasks := map[string]Task{}
 	for _, t := range g.Tasks {
 		if t.ID == "" || strings.TrimSpace(t.Done) == "" || t.Repository == "" || t.Base == "" || t.Area == "" || t.Worker == "" || !validResources(t.Resources) {
@@ -328,6 +333,9 @@ func Derive(state State, now time.Time) (Plan, error) {
 	plan := Plan{}
 	reservations := append([]Action(nil), state.Actions...)
 	goals := append([]Goal(nil), state.Goals...)
+	for i := range goals {
+		goals[i].TargetRevision = targetRevision(goals[i])
+	}
 	sort.Slice(goals, func(i, j int) bool { return goals[i].ID < goals[j].ID })
 	nodes := append([]Node(nil), state.Nodes...)
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
