@@ -240,7 +240,7 @@ func codexWorkToolsFixture() {
 }
 
 func TestM2CodexWorkTools(t *testing.T) {
-	data, err := os.ReadFile("m2/codex-work-tools.json")
+	data, err := os.ReadFile("../m2/codex-work-tools.json")
 	if err != nil {
 		t.Fatal(err)
 	}
