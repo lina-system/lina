@@ -1,0 +1,7 @@
+{
+  "task_id": "task-area-e2e",
+  "title": "Produce a local document result",
+  "done": "The result contains the fixture bytes",
+  "output": "A durable unapplied task result.\n",
+  "tools": ["prepare_work", "retain_work_result"]
+}

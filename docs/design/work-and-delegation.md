@@ -127,6 +127,34 @@ The work area is `work/` under the state root ([filesystem.md](filesystem.md)). 
 - A worker writes only inside its own task directory and the git directories it needs to commit. It never writes a protected ref in a parent clone.
 - Task and run directories are removed only under the retention rules of this contract.
 
+#127 implements Core-owned allocation through `prepare_work`: the authenticated
+agent and conversation own the task, its artifact root is `work/tasks/<task-id>`,
+and repository work requires an absolute local source, a repository id, a full
+base commit SHA and an unprotected task branch containing the task id. Core
+makes an independent parent clone, pins `refs/lina/base/<task-id>`, and creates
+a detached worktree at that commit. The worker creates the named branch. A
+repeated identical allocation preserves worker changes; conflicting definitions
+are refused. Non-Git tasks get a private directory. Missing Git disables Git
+allocation without blocking conversation or non-Git work.
+
+Ordinary Git reference transactions in the parent clone reject writes to
+`main`, `master`, `dev`, remote-tracking refs and `refs/lina/*`. Core alone uses
+its explicit administrative command path to maintain the base refs. This
+repository guard is not a worker plugin or OS confinement: workers use their
+own runtime setup, and a process running as the user can deliberately bypass a
+Git hook. Core never resets or cleans another task's checkout.
+
+`retain_work_result` handles an already completed no-PR receipt belonging to the
+requesting agent and conversation. It copies only that receipt's manifest files,
+confines reads to the allocated directory and verifies their hashes. For a Git
+result it also creates a self-contained bundle of the exact named branch head.
+It publishes material references and the retained-result ledger event in one
+canon transaction. Retrying the same receipt and head returns the saved references,
+even after the work area is lost. Retention does not issue a verdict, apply the
+result or make the card done. Worker dispatch, receipt observation and acceptance
+remain their separate work-engine flows; these tools do not start a worker.
+
+
 The task ledger stores the requesting agent and conversation, the done condition,
 authorized artifact roots and the application requirement. Its events and their
 card and active-run indexes commit atomically in canon. Only one execution may
