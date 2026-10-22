@@ -136,3 +136,26 @@ func TestCodeGoalDeployObservationRetainsOriginalConnection(t *testing.T) {
 		t.Fatal("changed configuration replaced the original intent")
 	}
 }
+
+func TestCodeGoalLibraryProofNamesCurrentMerge(t *testing.T) {
+	command := codeCommand{Path: "/check"}
+	d := &codeGoalDriver{runtime: &conversationRuntime{root: t.TempDir()}, connections: codeConnections{Repositories: map[string]codeRepository{"repo": {QA: command}}}}
+	g := goal.Goal{}
+	passed := true
+	for _, revision := range []string{"current", "earlier"} {
+		a := goal.Action{ID: revision, Revision: revision}
+		path := d.evidencePath(a, command)
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := json.Marshal(codeCheckRecord{Command: commandKey(command), ExitOK: true, Output: codeCheckOutput{Revision: revision, Target: "repo", Passed: &passed, Evidence: "Observed files"}})
+		if err := os.WriteFile(path, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+		g.Tasks = append(g.Tasks, goal.Task{Repository: "repo", QA: goal.Proof{Revision: revision, Ref: path, Passed: true}})
+	}
+	result, err := d.libraryProof(t.Context(), goal.State{}, g, goal.Action{Revision: "current"})
+	if err != nil || result.Proof.Ref != g.Tasks[0].QA.Ref {
+		t.Fatalf("current revision names another merge's evidence: %+v %v", result, err)
+	}
+}

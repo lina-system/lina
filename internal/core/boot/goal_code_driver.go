@@ -186,6 +186,7 @@ func (d *codeGoalDriver) Observe(ctx context.Context, a goal.Action) (goal.Obser
 	return goal.Observation{}, goal.ErrInvalid
 }
 func (d *codeGoalDriver) libraryProof(ctx context.Context, s goal.State, g goal.Goal, a goal.Action) (goal.Observation, error) {
+	var current goal.Proof
 	for _, t := range g.Tasks {
 		repo, ok := d.connections.Repositories[t.Repository]
 		if !ok || !t.QA.Passed {
@@ -195,11 +196,14 @@ func (d *codeGoalDriver) libraryProof(ctx context.Context, s goal.State, g goal.
 		if err != nil || !check.Passed {
 			return goal.Observation{}, goal.ErrNeedsPerson
 		}
+		if check.Revision == a.Revision {
+			current = check
+		}
 	}
-	if len(g.Tasks) == 0 {
+	if current.Ref == "" {
 		return goal.Observation{}, goal.ErrNeedsPerson
 	}
-	return goal.Observation{Status: goal.OutcomeSucceeded, Proof: goal.Proof{Revision: a.Revision, Ref: g.Tasks[len(g.Tasks)-1].QA.Ref, Passed: true}}, nil
+	return goal.Observation{Status: goal.OutcomeSucceeded, Proof: current}, nil
 }
 func (d *codeGoalDriver) checkCriterion(ctx context.Context, s goal.State, g goal.Goal, t goal.Task, a goal.Action, repo codeRepository) (goal.Observation, error) {
 	if a.Check == nil {
