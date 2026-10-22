@@ -288,3 +288,39 @@ func TestPlanningUpgradePreservesPublishedSkillMaintenance(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPlanningUpgradePreservesPublishedWorkEvents(t *testing.T) {
+	cfg := storeConfig(t)
+	cfg.Migrations = append(append([]Migration{}, Migrations()[:36]...), Migration{Version: 37, SQL: workEngineSchema})
+	db := openStore(t, cfg)
+	if err := db.Write(t.Context(), func(tx *Tx) error {
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO work_events(id,kind,at,body) VALUES('existing','fixture',1,'{"state":"accepted"}')`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Migrations = Migrations()
+	db = openStore(t, cfg)
+	if err := db.Read(t.Context(), func(tx *Tx) error {
+		var body string
+		if err := tx.QueryRowContext(t.Context(), "SELECT body FROM work_events WHERE id='existing'").Scan(&body); err != nil {
+			return err
+		}
+		if body != `{"state":"accepted"}` {
+			t.Fatalf("upgrade changed published work event: %q", body)
+		}
+		var plans int
+		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM plan_drafts").Scan(&plans); err != nil {
+			return err
+		}
+		if plans != 0 {
+			t.Fatalf("migration created plan drafts: %d", plans)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}

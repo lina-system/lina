@@ -8,6 +8,7 @@ type Reference struct{ ID, Revision string }
 
 type Assembly struct {
 	AgentID, PersonaRevision string
+	WorkMethodRevision       string `json:",omitempty"`
 	InstructionFormat        string `json:",omitempty"`
 	AgentName                string `json:",omitempty"`
 	OwnerPersonID            string `json:",omitempty"`
