@@ -395,6 +395,10 @@ and `x` signs out the selected account. List and completion refresh the displaye
 account status; ids remain internal request targets. An account-only connection retains a composer and displays the missing
 account cause with `/signin`; entering conversation text makes no model request.
 The conversation draft survives opening and closing the account block.
+An automatic account-list refusal at connection startup retains focus and the
+unsent draft. Its typed error stays in account display state; it does not open
+the account block over the conversation. A refusal in a block the person opened
+keeps that block visible.
 
 The client reports an ephemeral IPv4 loopback port for `/auth/callback`, or
 `cannot_listen` over SSH or when binding fails. It opens only an HTTPS
