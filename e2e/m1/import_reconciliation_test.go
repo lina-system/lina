@@ -25,6 +25,8 @@ import (
 // Exercise the installed command, with expectations read directly from synthetic
 // sources rather than Plan.Keys, the import report, or stored legacy_ref fields.
 func TestM1ImportReconciliation(t *testing.T) {
+	t.Parallel()
+
 	var fixture struct {
 		Profile            string
 		OwnerSession       string `json:"owner_session"`

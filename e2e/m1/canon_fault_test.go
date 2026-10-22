@@ -26,6 +26,8 @@ func (db acceptanceWriteFault) Write(ctx context.Context, f func(*canon.Tx) erro
 }
 
 func TestM1CanonFaultAdmissionAndDoctor(t *testing.T) {
+	t.Parallel()
+
 	binary := buildLina(t)
 	for _, fault := range []struct {
 		name    string
