@@ -46,6 +46,7 @@ function registryFor(cwd) {
     'internal/core/lifecycle/',
     'internal/core/memory/',
     'internal/core/modelpath/',
+    'internal/core/progress/',
     'internal/core/reactor/',
     'internal/core/records/',
     'internal/core/replay/',

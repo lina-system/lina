@@ -98,6 +98,7 @@ func switchConversation(ctx context.Context, c *clientapi.Client, m *shellModel,
 	m.conversation.agentMissing = false
 	m.agentDiscoveryDone()
 	m.conversation.scroll = 0
+	m.conversation.viewport = conversationViewport{}
 	m.conversation.undo = nil
 	if agent == "" {
 		return nil

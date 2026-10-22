@@ -38,6 +38,30 @@ This is a behaviour reference; no upstream code is copied.
   Core and real PTY acceptance test. Native terminal scrollback and mouse input
   are outside this change.
 
+## Conversation wheel and sticky viewport (#448)
+
+Reference: Hermes Agent, MIT, revision `e06df9c2`, read directly from the
+upstream source because the suggested local reference checkout was unavailable.
+No upstream code is copied.
+
+- **Seen:** `ui-tui/src/app/useInputHandlers.ts:593-635` dispatches wheel
+  directions, uses inter-event timing for acceleration and resets on direction
+  changes; Page Up/Down move half a viewport.
+  `ui-tui/packages/hermes-ink/src/ink/components/ScrollBox.tsx:174-235` breaks
+  bottom stickiness on manual scrolling and restores it on `scrollToBottom`.
+  `ui-tui/src/app/scroll.ts` clamps the accepted scroll target before rendering.
+- **Inferred:** LINA should retain the first visible block and its row while
+  new output arrives, follow new output at the bottom, and expose End to resume
+  following. Its own wheel policy starts at three rows, adds three for each
+  same-direction repeat within 120 ms, and caps at twelve; idle or a direction
+  change resets the step. These constants are LINA choices, not upstream code.
+- **Unknown:** the reference's native selection modifier, terminal mode cleanup
+  and installed-Core recovery were not exercised. LINA uses DEC 1000 plus SGR
+  1006, ignores button events and never enables motion modes 1002/1003. Native
+  selection uses the terminal's override (Shift+drag in xterm/GNOME Terminal;
+  Option+drag in iTerm2). LINA verifies its own modes, decoder and viewport with
+  synthetic input and an installed Core PTY test.
+
 ## Ctrl+C confirmation (#452)
 
 Reference: [Hermes Agent](https://github.com/NousResearch/hermes-agent), MIT,
