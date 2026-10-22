@@ -76,7 +76,7 @@ func TestM1TUIConversationInstalledCore(t *testing.T) {
 		t.Fatal("no history snapshot")
 	}
 	terminal := h.startScreenTUI("TERM=xterm-256color", "COLORTERM=truecolor")
-	fresh := waitScreen(t, h, terminal, "Ctrl+D")
+	fresh := waitComposerReady(t, h, terminal)
 	if text := screenText(fresh); strings.Contains(strings.ToLower(text), "unsupported") {
 		t.Fatalf("fresh install shows an unsupported placeholder: %s", text)
 	}
@@ -171,6 +171,12 @@ func screenText(snapshot tuiterm.Snapshot) string {
 	}
 	return text.String()
 }
+func waitComposerReady(t *testing.T, h *harness, terminal *terminal) tuiterm.Snapshot {
+	t.Helper()
+	// waitScreen's composer barrier also requires the Connected status.
+	return waitScreen(t, h, terminal, "Ctrl+D")
+}
+
 func waitScreen(t *testing.T, h *harness, terminal *terminal, text string) tuiterm.Snapshot {
 	t.Helper()
 	snapshot, err := terminal.screen.Wait(h.ctx, func(snapshot tuiterm.Snapshot) bool {
@@ -233,35 +239,41 @@ func installConversationBundle(t *testing.T, h *harness, bundle, providerURL str
 		}
 		core.start(t)
 		h.connect(core).Close()
-		// A bound socket accepts reads while Core is still reconciling/probing.
-		// Wait for mutation admission via an empty, always-refused input; no
-		// conversation event or model request can result from this probe.
-		ready, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "test", []protocol.Capability{{Name: "conversation", Version: "1.0"}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer ready.Close()
-		for {
-			if _, err := ready.Input(h.ctx, protocol.Input{}); err != nil {
-				t.Fatal(err)
-			}
-			frame, err := ready.Receive(h.ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if frame.Error == nil {
-				t.Fatal("empty input accepted")
-			}
-			if frame.Error.Code == protocol.ErrorUnavailable {
-				continue
-			}
-			if frame.Error.Code != protocol.ErrorMalformed && frame.Error.Code != protocol.ErrorCapabilityNotNegotiated {
-				t.Fatalf("unexpected readiness code: %s", frame.Error.Code)
-			}
-			break
-		}
+		waitCoreReady(t, h)
 		return core
 	}
 
 	return h, start
+}
+
+// Share the installed harness readiness barrier with custom Core launch paths.
+func waitCoreReady(t *testing.T, h *harness) {
+	t.Helper()
+	// A bound socket accepts reads while Core is still reconciling/probing.
+	// Wait for mutation admission via an empty, always-refused input; no
+	// conversation event or model request can result from this probe.
+	ready, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "test", []protocol.Capability{{Name: "conversation", Version: "1.0"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ready.Close()
+	for {
+		if _, err := ready.Input(h.ctx, protocol.Input{}); err != nil {
+			t.Fatal(err)
+		}
+		frame, err := ready.Receive(h.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if frame.Error == nil {
+			t.Fatal("empty input accepted")
+		}
+		if frame.Error.Code == protocol.ErrorUnavailable {
+			continue
+		}
+		if frame.Error.Code != protocol.ErrorMalformed && frame.Error.Code != protocol.ErrorCapabilityNotNegotiated {
+			t.Fatalf("unexpected readiness code: %s", frame.Error.Code)
+		}
+		break
+	}
 }

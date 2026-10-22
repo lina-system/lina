@@ -71,7 +71,7 @@ func TestM1ProviderFailureHistory(t *testing.T) {
 			h.socket = tap.socket
 			terminal := h.startTerminalSize([]string{"TERM=xterm-256color"}, false, true, 120, 60)
 			h.socket = socket
-			waitScreen(t, h, terminal, "Ctrl+D")
+			waitComposerReady(t, h, terminal)
 			for {
 				frame := tap.next(t, h)
 				if snapshot, ok := frame.Payload.(protocol.Snapshot); ok && snapshot.Topic == "conversation:"+conversation {
