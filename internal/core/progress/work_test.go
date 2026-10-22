@@ -74,6 +74,20 @@ func TestWorkUnitsDropsSeenCompletionAndRereadsGeneration(t *testing.T) {
 	if got := read(); len(got) != 1 || got[0].Line.Stage != "unknown" {
 		t.Fatalf("new execution hidden or falsely done: %+v", got)
 	}
+	for _, state := range []string{"failed", "stopped"} {
+		card.State = state
+		card.Run.Generation = 1
+		save()
+		if got := read(); len(got) != 0 {
+			t.Fatalf("acknowledged %s result retained: %+v", state, got)
+		}
+		card.Run.Generation = 2
+		save()
+		if got := read(); len(got) != 1 || got[0].Line.Stage != "unknown" {
+			t.Fatalf("new %s result missing or plan invented: %+v", state, got)
+		}
+	}
+
 }
 
 func TestUnplannedWorkDoesNotInventPlanValues(t *testing.T) {

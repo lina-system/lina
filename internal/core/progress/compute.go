@@ -25,7 +25,7 @@ type Entry struct {
 type Unit struct {
 	ID, Parent, Kind, Name string
 	Done                   *bool
-	Active, Seen           bool
+	Active, Seen, Terminal bool
 	JustFinished           string
 	Waiting                int
 	Updated                int64
@@ -43,7 +43,7 @@ func Compute(units []Unit) []Entry {
 		if u.JustFinished != "" {
 			line.JustFinished = u.JustFinished
 		}
-		complete := u.Done != nil && *u.Done
+		complete := u.Terminal || u.Done != nil && *u.Done
 		rows[u.ID] = &row{u, line, (u.Active || u.Waiting > 0 || complete && !u.Seen) && !(complete && u.Seen)}
 	}
 	// A goal is visible only through live children or a pending decision. Plan

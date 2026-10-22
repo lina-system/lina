@@ -16,7 +16,6 @@ import (
 	"github.com/thisisjun786/lina/internal/core/records"
 	"github.com/thisisjun786/lina/internal/core/waiting"
 	"github.com/thisisjun786/lina/internal/core/waiting/view"
-	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -187,7 +186,7 @@ func (r *conversationRuntime) ownerSnapshot(ctx context.Context) (protocol.Progr
 	if err != nil {
 		return protocol.Progress{}, err
 	}
-	list, err := r.ownerWaiting(ctx, names, waiting.Options{Now: time.Now(), Limit: 5})
+	list, err := r.ownerWaiting(ctx, names, waiting.Options{Now: time.Now()})
 	if err != nil {
 		return protocol.Progress{}, err
 	}
@@ -200,7 +199,15 @@ func (r *conversationRuntime) ownerSnapshot(ctx context.Context) (protocol.Progr
 	if err != nil {
 		return protocol.Progress{}, err
 	}
-	units = append(units, r.liveProgress(ctx, names)...)
+	present := map[string]bool{}
+	for _, u := range units {
+		present[u.ID] = true
+	}
+	for _, u := range r.liveProgress(names, list) {
+		if !present[u.ID] {
+			units = append(units, u)
+		}
+	}
 	entries := progress.Compute(units)
 	rows := []protocol.ProgressRow{}
 	for _, entry := range entries {
@@ -212,6 +219,9 @@ func (r *conversationRuntime) ownerSnapshot(ctx context.Context) (protocol.Progr
 		}
 		rows = append(rows, protocol.ProgressRow{Ref: entry.Ref, Line: line})
 	}
+	count := min(5, len(list.Entries))
+	list.More = list.Total - count
+	list.Entries = list.Entries[:count]
 	waiting := waitingRows(list)
 	more := number(list.More)
 	return protocol.Progress{Rows: &rows, Waiting: &waiting, WaitingMore: &more}, nil
@@ -281,25 +291,47 @@ func (outsideWaitingSource) Done(context.Context, *canon.Tx, string) error { ret
 // A directly started worker has no plan inventory yet. Its originating request
 // supplies the human name; session ids and output stay behind Details. Finishing
 // a worker turn does not prove the handed-off work's done condition.
-func (r *conversationRuntime) liveProgress(ctx context.Context, names map[string]string) []progress.Unit {
-	units := []progress.Unit{}
+func (r *conversationRuntime) liveProgress(names map[string]string, list waiting.List) []progress.Unit {
+	pending := map[string]bool{}
+	for _, entry := range list.Entries {
+		if entry.Ref.Source == "worker" || entry.Ref.Source == "approval" {
+			pending[entry.Ref.ID] = true
+		}
+	}
+	grouped := map[string]progress.Unit{}
 	for _, session := range r.workers.entries() {
 		if _, ok := names[session.origin.agent]; !ok || session.origin.person != r.person {
 			continue
 		}
-		snapshot, err := session.adapter.Snapshot(ctx, session.thread)
-		title := strings.TrimSpace(session.input.Body.Text())
-		title, _, _ = strings.Cut(title, "\n")
-		if title == "" {
-			title = "Delegated work"
+		id := session.thread.TaskID
+		if id == "" {
+			id = "session:" + session.thread.ID
 		}
-		u := progress.Unit{ID: "session:" + session.thread.ID, Kind: "project", Name: laneText(title), Active: true, Updated: session.input.RecordedAt.UnixNano()}
-		if err == nil {
-			u.Waiting = len(snapshot.Pending)
-			if snapshot.State == worker.Idle && snapshot.Output != "" {
-				u.JustFinished = laneText(title)
+		u, exists := grouped[id]
+		if !exists {
+			title := strings.TrimSpace(session.input.Body.Text())
+			title, _, _ = strings.Cut(title, "\n")
+			if title == "" {
+				title = "Delegated work"
+			}
+			u = progress.Unit{ID: id, Kind: "project", Name: laneText(title), Active: true, Updated: session.input.RecordedAt.UnixNano()}
+		}
+		session.mu.Lock()
+		for id := range session.questions {
+			if pending[id] {
+				u.Waiting++
 			}
 		}
+		for id := range session.approvals {
+			if pending[id] {
+				u.Waiting++
+			}
+		}
+		session.mu.Unlock()
+		grouped[id] = u
+	}
+	units := make([]progress.Unit, 0, len(grouped))
+	for _, u := range grouped {
 		units = append(units, u)
 	}
 	return units

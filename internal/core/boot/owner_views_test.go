@@ -4,6 +4,7 @@ package boot
 import (
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/work"
+	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"testing"
 )
@@ -31,5 +32,27 @@ func TestProgressOverviewWiredToCore(t *testing.T) {
 	}
 	if _, err = r.identity.Operations[protocol.KindProgressGet].Handle(t.Context(), clientsrv.Session{PersonID: "stranger"}, protocol.Envelope{Payload: protocol.ProgressGet{View: &mode}}); err == nil {
 		t.Fatal("unauthorized progress")
+	}
+}
+
+func TestProgressGroupsLiveSessionsAndKeepsTaskOutcomeUnknown(t *testing.T) {
+	r := controlRuntime(t)
+	r.ownerViews.stop()
+	<-r.ownerViews.done
+	r.workers = &workerRuntime{sessions: map[string]*workerSession{}}
+	t.Cleanup(func() { r.workers = nil })
+	for _, id := range []string{"one", "two"} {
+		snap := worker.ThreadSnapshot{Thread: worker.Thread{ID: id, TaskID: "same-request"}, State: worker.Idle, Output: "unverified worker output"}
+		r.workers.sessions[id] = &workerSession{adapter: &workerProbe{snapshot: snap}, origin: r, thread: snap.Thread}
+	}
+	p, err := r.ownerSnapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Rows == nil || len(*p.Rows) != 1 {
+		t.Fatalf("worker sessions became duplicate work lines: %+v", p)
+	}
+	if v := (*p.Rows)[0].Line; v.JustFinished != "unknown" || v.Stage != "unknown" || v.Percent != nil {
+		t.Fatalf("worker idle became plan outcome: %+v", v)
 	}
 }
