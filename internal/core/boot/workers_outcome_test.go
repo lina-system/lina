@@ -219,3 +219,75 @@ func TestWorkerCompletionReachesOriginatingChannelOnce(t *testing.T) {
 		})
 	}
 }
+
+func TestWorkerCompletionRecoversOriginalChannelScope(t *testing.T) {
+	for _, threaded := range []bool{false, true} {
+		name := "shared-main"
+		if threaded {
+			name = "thread-scope"
+		}
+		t.Run(name, func(t *testing.T) {
+			r := controlRuntime(t)
+			ctx, now := t.Context(), time.Now()
+			store := r.channels.store
+			connect := func(platform string) channels.Binding {
+				t.Helper()
+				bot := channels.Bot{Platform: platform, Account: "fixture"}
+				if err := store.Connect(ctx, bot, r.person); err != nil {
+					t.Fatal(err)
+				}
+				code, err := store.PairingCode(ctx, bot, r.person, now)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := store.Pair(ctx, bot, code, "42", "100", now); err != nil {
+					t.Fatal(err)
+				}
+				binding := channels.Binding{Address: channels.Address{Bot: bot, Chat: "100"}, Person: r.person, Agent: r.agent, Conversation: r.conversation, Scope: channels.Scope{Reads: channels.DMOnly, Writes: channels.ReplyOnly, Tools: true, Memory: true}}
+				if err := store.Bind(ctx, binding); err != nil {
+					t.Fatal(err)
+				}
+				return binding
+			}
+			discord, telegram := connect("discord"), connect("telegram")
+			source := telegram
+			if threaded {
+				source = discord
+				source.Chat = "group"
+				source.Scope.Reads = channels.Addressed
+				if err := store.Bind(ctx, source); err != nil {
+					t.Fatal(err)
+				}
+				source.Topic = "thread"
+			}
+			source.Scope.Memory, source.Scope.Tools = false, false
+			if err := store.Bind(ctx, source); err != nil {
+				t.Fatal(err)
+			}
+			var delivery gateway.Delivery
+			inbound := gateway.Inbound{Address: source.Address, NativeID: "source", Sender: "42", Cursor: "1", Direct: !threaded, Addressed: true, Body: []byte(`{"Text":"work request"}`)}
+			if err := gateway.New(r.db, func(_ context.Context, d gateway.Delivery) error { delivery = d; return nil }).Admit(ctx, inbound); err != nil {
+				t.Fatal(err)
+			}
+			completion := ledger.Event{ParentID: "channel-input:" + strconv.FormatInt(delivery.InboxID, 10), ConversationID: r.conversation, AgentID: r.agent, Surface: ledger.Surface{Kind: "channel"}}
+			view, err := r.workerCompletionView(ctx, completion)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if view.channelAddress != source.Address || view.channelBinding == nil || *view.channelBinding != source {
+				t.Fatalf("completion recovered another channel's scope: address=%+v binding=%+v, want %+v", view.channelAddress, view.channelBinding, source)
+			}
+			if err := view.validateChannel(ctx); err != nil {
+				t.Fatal(err)
+			}
+			// A revoked original route cannot fall back to the same persona on another
+			// platform, even though that other binding still has tools and memory.
+			if err := store.Disconnect(ctx, source.Bot, r.person); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := r.workerCompletionView(ctx, completion); err == nil {
+				t.Fatal("completion fell back to an unrelated channel after revocation")
+			}
+		})
+	}
+}

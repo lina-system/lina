@@ -621,6 +621,9 @@ worker control. Unstarted completion follow-ups resume from canon after restart;
 a claimed turn is never replayed and a committed reply is not duplicated.
 Channel replies follow the completion back to its original input, retaining that
 input's address and the existing outbound delivery identity across restart.
+Recovery resolves the retained channel inbox address and its current most-specific
+binding, including thread permissions; sharing a persona or main conversation
+never substitutes another channel's memory or tool scope.
 
 Snapshot reads thread summary state and includes the latest
 completed assistant message observed on the owned session, not a delivery verdict.

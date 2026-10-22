@@ -4,15 +4,19 @@ package boot
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/internal/core/guard"
@@ -139,29 +143,58 @@ func (r *conversationRuntime) resumeWorkerCompletions(ctx context.Context) error
 		if _, err := r.agents.Get(ctx, event.AgentID); err != nil {
 			continue
 		}
-		var view *conversationRuntime
-		if event.Surface.Kind == "channel" {
-			binding, err := r.channelBindingFor(ctx, event.ConversationID, event.AgentID)
-			if err != nil {
-				continue
-			}
-			shared, err := r.router.channelView(ctx, binding)
-			if err != nil {
-				return err
-			}
-			view = newConversationView(r, binding.Agent, binding.Conversation)
-			view.coordinator, view.channelBinding, view.channelAddress = shared, &binding, binding.Address
-		} else {
-			view, err = r.router.view(ctx, clientsrv.Session{PersonID: r.person}, event.AgentID)
-			if err != nil {
-				return err
-			}
+		view, err := r.workerCompletionView(ctx, event)
+		if errors.Is(err, channels.ErrDenied) {
+			continue
+		}
+		if err != nil {
+			return err
 		}
 		if err := view.submitWorkerCompletion(event, item.inbox); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (r *conversationRuntime) workerCompletionView(ctx context.Context, event ledger.Event) (*conversationRuntime, error) {
+	if event.Surface.Kind != "channel" {
+		return r.router.view(ctx, clientsrv.Session{PersonID: r.person}, event.AgentID)
+	}
+	// A persona's main conversation can be shared by several channels. Resolve
+	// the retained originating inbox input, never another binding with the
+	// same persona/conversation or just the parent chat of a restricted thread.
+	parent, ok := strings.CutPrefix(event.ParentID, "channel-input:")
+	id, err := strconv.ParseInt(parent, 10, 64)
+	if !ok || err != nil || id <= 0 {
+		return nil, channels.ErrDenied
+	}
+	var input channelInput
+	err = r.db.Read(ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(ctx, `SELECT i.id,r.native_id,r.agent,i.conversation,i.body
+            FROM channel_receipts r JOIN inbox i ON i.id=r.inbox_id
+            WHERE i.id=? AND r.agent=? AND i.conversation=?`, id, event.AgentID, event.ConversationID).Scan(&input.id, &input.native, &input.agent, &input.conversation, &input.body)
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, channels.ErrDenied
+	}
+	if err != nil {
+		return nil, err
+	}
+	original, binding, err := r.channels.channelBinding(ctx, input)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, channels.ErrDenied
+	}
+	if err != nil {
+		return nil, err
+	}
+	shared, err := r.router.channelView(ctx, binding)
+	if err != nil {
+		return nil, err
+	}
+	view := newConversationView(r, binding.Agent, binding.Conversation)
+	view.coordinator, view.channelBinding, view.channelAddress = shared, &binding, original.Address
+	return view, nil
 }
 
 // Only this conversation's worker directory is selectable. The existing file
