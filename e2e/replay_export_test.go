@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"github.com/thisisjun786/lina/internal/core/replay"
-	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"io"
 	"net/http"
@@ -53,8 +52,9 @@ func TestM1ReplayExportInstalledCore(t *testing.T) {
 	core.command.Env = append(core.command.Env, "PATH="+os.Getenv("PATH"), "LINA_RESPONSES_BASE_URL="+provider.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
 	core.start(t)
 	h.connect(core).Close()
+	waitCoreReady(t, h)
 	terminal, _ := h.startConversationTUI(80, 24, "TERM=xterm-256color")
-	waitScreen(t, h, terminal, design.Text(design.English, "live"))
+	waitComposerReady(t, h, terminal)
 	h.keys(terminal, scenario.Input+"\r")
 	waitScreen(t, h, terminal, scenario.Reply)
 	h.keys(terminal, "\x04")
