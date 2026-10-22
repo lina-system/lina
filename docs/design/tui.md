@@ -4,7 +4,7 @@ This document fixes how the LINA terminal UI is built in Go on Bubble Tea where 
 
 ## North star
 
-Short replies, waiting for me first, progress as lines, detail in a pager. The TUI follows [product-families.md](product-families.md#north-star) and [surfaces.md](surfaces.md#default-view): the person sees the design at a glance with how far each piece of work has come, and the list of what they must do or decide. The TUI never prints a long form into the scrollback. A card line stays there, and a key opens the rest.
+Short replies, waiting for me first, progress as lines, detail in a pager. The TUI follows [product-families.md](product-families.md#north-star) and [surfaces.md](surfaces.md#default-view): the person sees the design at a glance with how far each piece of work has come, and the list of what they must do or decide. Complete assistant replies stay inline in the scrollable conversation, even when they exceed the reply budget. A one-line `Open in pager · Ctrl+O` affordance follows a long reply. Structured results keep their summary cards and open their detail on request.
 
 Numbers marked (P) are starting values to measure. A number without (P) comes from a contract or a protocol.
 
@@ -80,7 +80,11 @@ remains the T-08 spike gate.
 
 `lina tui` never starts a main. The connection is in one of eight states. Each is a screen state, never an empty conversation and never a conversation item.
 
-A validated welcome enters Live. Initial absence shows the Core-absent screen
+A validated welcome enters Live. When conversation is granted, the initial
+connection stays Connecting until history discovery supplies its conversation
+id. Early typing remains in the draft and Enter causes no input effect until
+that destination is known; discovery does not automatically send the draft.
+Initial absence shows the Core-absent screen
 and exits 69; initial `unsupported_combination` shows Refused and exits 78. Bad
 arguments exit 64; malformed handshakes, invalid session frames and other terminal
 failures exit 70. Connection and handshake share a five-second timeout. The
@@ -99,6 +103,11 @@ text or a claim that reads prove Core mutation readiness. Resync and its fresh
 snapshot restore the subscribed view in Core's history order. A durable stopped
 outcome stays with its interrupted turn before later inputs and replies, including
 after reconnect and terminal resize.
+
+Initial conversation discovery also stays Resyncing until History supplies the
+destination. The connected conversation state is a usable input boundary, not
+just a successful socket handshake. Input typed during discovery remains a
+draft; discovery never sends it automatically.
 
 Quit (Ctrl+C with an empty draft or Ctrl+D), input EOF and termination signals close only this
 client and exit 0, including during handshake or retry. The raw terminal reader
@@ -252,9 +261,9 @@ Regions:
 
 - Header: the focused agent's name and mark, and the connection word.
 - Conversation.
-- Composer, with its attachment strip.
+- Composer, with its attachment strip and a full-width hairline immediately above the input.
 - Card row above the composer, on Home (T-12).
-- Status line: connection, agent, the running count ("2 running, 1 waiting for you"), restart pending, and Core messages.
+- Status line below the composer: connection mark and word first, agent, the running count ("2 running, 1 waiting for you"), restart pending, Core messages, then key hints.
 
 Overlays form a stack and the top one receives keys first: agent list, command palette, pager. The agent list is the agents screen of [surfaces.md](surfaces.md#agents) in text: mark, name, source and last conversation; Enter opens the agent's main conversation.
 
@@ -284,10 +293,10 @@ Width tiers (P):
 +--------------------------------------------+---------------------------------------+
 | WAITING FOR ME  1   Send the signed form to the supplier?  Recommended: send      |
 | AT A GLANCE         Move  [###--]  building  just done: ...  next: ...  !         |
-+-----------------------------------------------------------------------------------+
-| > composer                                                                        |
-+-----------------------------------------------------------------------------------+
- live  Lina  2 running, 1 waiting for you
+─────────────────────────────────────────────────────────────────────────────────────
+ › composer
+   continuation aligned under the draft
+ live  Lina  2 running, 1 waiting for you  /help  Enter  Ctrl+D
 ```
 
 The diagram is schematic: it fixes the regions and their order, not glyphs or widths.
@@ -300,7 +309,8 @@ func Plan(size Size, caps Caps, st Shape) Layout // regions disjoint, sum fits, 
 
 - The header, the status line, one composer row and a transcript floor of four rows (P) always survive.
 - The composer grows with the draft to six rows (P), then scrolls inside itself.
-- What remains is shared in a stated order of shedding: the side pane closes first, then the running strip folds to a count, then the card row folds to one summary line. A folded part keeps its count, so a count on screen always equals the list.
+- The composer rule consumes one row, using `glyph.rule` and `color.line` across the full terminal width. It is a hairline, not a box.
+- What remains is shared in a stated order of shedding: the side pane closes first, then the running strip folds to a count, then the card row folds to one summary line, then the composer rule disappears. A folded part keeps its count, so a count on screen always equals the list.
 - `Plan` treats negative dimensions as zero. At too-small sizes it reserves one
   status row when a cell exists and uses the remaining rows for the size notice.
   At usable sizes a granted, populated running strip starts at one to three rows
@@ -343,6 +353,19 @@ does not rely on scheduler timing or sleeps.
 `e2e/m1/tui-resize.json` exercises 80x24 → 40x12 → 120x35 through a real PTY,
 compares every row and the cursor with a fresh client at the same size, then
 clears the retained draft and completes another exchange.
+
+The first visible composer row starts with the accent `glyph.action` (`›`, or
+`>` in ASCII) and one space. Continuations align under the draft, including when
+the textarea scrolls. An empty draft shows the muted `composer.placeholder`
+catalog entry in Korean or English; it is display text and is never submitted.
+When the keyboard enhancement reply reports key disambiguation, the placeholder
+uses `composer.shift_enter` to advertise Shift+Enter. Until then it
+advertises Alt+Enter. This terminal-local change preserves the draft and cursor.
+The prompt reserves its display width in both wrapping and hardware cursor
+placement, so Korean IME composition remains at the draft insertion point.
+`e2e/m1/tui-composer.json` checks a 100x34 installed-Core PTY with a fixture
+provider: rule cells, localized placeholder, prompt, Korean draft cursor and
+the status/hints below the input in Unicode and ASCII modes.
 
 ## Home, waiting for me and progress (T-12)
 
@@ -399,13 +422,30 @@ routing data and never appear in that line or the waiting summary.
 
 **The pager** shows Details, the activity log and long results: scroll, search, quit. Copy is the person's act in their own terminal: the pager offers a sanitized-text overlay to select with the terminal's own copy. A write by OSC 52 waits for the open point on the clipboard rule below.
 
-Text result cards retain the summary in the conversation and the sanitized
-`text` fallback separately for the pager. Ctrl+O opens the selected card (the
-latest by default); on wide terminals it occupies the side pane and otherwise
+Structured text result cards retain the summary in the conversation and the
+sanitized `text` fallback separately for the pager. Core-generated reply-shape
+previews instead display that complete masked text once as assistant prose,
+followed by `Open in pager · Ctrl+O`. No summary is repeated above it. The latest
+position shows the end of the reply, and Page Up reaches its beginning without
+opening the pager. Live updates and restored history use the same projection.
+Ctrl+O opens the selected card (the latest by default); on wide terminals it occupies the side pane and otherwise
 the full screen. The pager supports arrows, Page Up/Down, Home/End, `/` search,
 `n` for the next match, and Esc or `q` to return. Its text can be selected with
 the terminal's own copy. No host clipboard read or write is installed by the
 composer or pager.
+
+Ctrl+T opens the entire retained visible conversation in the same pager, in
+message order, with the person's word and the agent's name as speaker labels.
+The sanitized plain text includes complete inline replies once; structured
+results retain their visible summary and title. It excludes the unsent draft,
+separate waiting/running/progress lists and internal turn-state records.
+The open transcript reads the current display state, including replacements
+and revocations. It uses the pager's existing scrolling, `/` search, `n` and
+Esc controls; closing it preserves the draft and does not interrupt the turn.
+It neither requests older history outside the retained window nor writes the
+clipboard. `e2e/m1/tui-transcript.json` proves three exchanges through installed
+Core and a real PTY, six ordered messages with speaker words, search back to
+the first message from a later page, and draft preservation after Esc.
 
 For a completed background run, Ctrl+R selects a running row with the arrows;
 Enter reads its result, and `d` dismisses a landed row. The landing's agent-report
@@ -486,7 +526,11 @@ The conversation draft survives opening and closing the account block.
 An automatic account-list refusal at connection startup retains focus and the
 unsent draft. Its typed error stays in account display state; it does not open
 the account block over the conversation. A refusal in a block the person opened
-keeps that block visible.
+keeps that block visible. On an account-only connection, the conversation status
+shows that typed refusal instead of continuing to show account discovery in
+progress. A refusal does not establish a known empty account list. A successful
+list response establishes account status and clears the refusal.
+Reconnection resets discovery for the new connection.
 
 The client reports an ephemeral IPv4 loopback port for `/auth/callback`, or
 `cannot_listen` over SSH or when binding fails. It opens only an HTTPS
@@ -511,6 +555,11 @@ installed Core composition with the synthetic issuer through sign-in, list and
 sign-out. Captured client traffic, terminal output and state outside the secret
 store contain no provider tokens. Model routing and live provider acceptance
 remain their own contracts.
+`TestM1TUIAccountDiscoveryRefusalInstalledCore` holds the installed Core
+composition at recovery, observes its real startup account-list refusal, and
+checks the built TUI in a headless PTY. The refusal leaves the composer usable;
+an explicit account-list retry after recovery replaces it with the successful
+empty-list status.
 
 ## Agent surfaces and settings as text (T-14)
 
@@ -614,11 +663,12 @@ Keys are a proposal and data in `tui/ui`. No contract fixes them.
 | Key | Action |
 | --- | --- |
 | Enter | Send the draft |
-| Alt+Enter, Ctrl+J | Newline (Ctrl+J because Alt may not reach the application) |
+| Shift+Enter (when distinguished by the terminal), Alt+Enter, Ctrl+J | Newline (Ctrl+J because Alt may not reach the application) |
 | Esc | Close the top overlay; with none, interrupt the turn |
 | Ctrl+C | Clear the draft; with an empty draft, quit the TUI only, never Core |
 | Tab, Shift+Tab | Move focus |
 | Ctrl+K | Command palette |
+| Ctrl+T | Open the retained conversation transcript in the pager |
 | Keys for Waiting for me, progress, running list and Open on a card | Open those views |
 
 Key classes are Toggle, Edit and Approve. Every key event passes one `Admit` gate: releases are ignored, repeats are dropped for Toggle and Approve, and Edit keys may repeat. Without key events from the terminal every key counts as a press, and approval cards add a dead time after any change of card (P).
@@ -636,7 +686,7 @@ cancellation resources before the caller restores terminal mode.
 **Mid-turn input** is steering by default and applies at the next round boundary ([runtime.md](runtime.md#conversation-loop)). `/queue` makes the input a follow-up. `/stop` cancels.
 
 **The composer** is the Bubbles `textarea`; `textinput` is not used. The
-conversation increment sends Enter as one input request, Ctrl+J or Alt+Enter
+conversation increment sends Enter as one input request, Shift+Enter, Ctrl+J or Alt+Enter
 as a newline, and Esc or `/stop` as an interrupt of the active turn. Ordinary
 input uses `mode: steer`; Core decides whether it belongs to a running turn.
 `/queue <text>` explicitly uses `mode: queue`. The request carries a fresh
@@ -650,6 +700,18 @@ or input request. Discovery does not send it automatically; a fresh Enter sends
 the retained draft to the discovered conversation. Management commands remain
 available during discovery.
 Resizing preserves the draft and its cursor without submitting it.
+
+Explicitly decoded Shift+Enter is an Edit key even before a capability reply;
+its releases are ignored and repeats insert newlines through the same key gate.
+Terminals that report Shift+Enter as plain Enter cannot distinguish these actions;
+their placeholder keeps the Alt+Enter hint. Key disambiguation support and event
+type support are tracked separately, so a disambiguation-only reply is enough to
+show the Shift+Enter hint. Alt+Enter and Ctrl+J remain available in either mode.
+`e2e/m1/tui-newline.json` sends kitty/CSI-u bytes through a real PTY to the installed
+TUI and Core, checks separate composer rows without submission, then uses plain
+Enter to admit one complete multiline input and obtain the fixture provider's
+reply. It checks durable input history, provider call count, localized enhanced
+hints, the legacy hint, and terminal restoration.
 
 `e2e/m1/conversation-history-order.json` exercises queue and ordinary steering
 input during a held provider stream through an installed Core and a 100x30 TUI.
@@ -910,7 +972,10 @@ authoritative completion, duplicate completion, and terminal restoration.
 with the fixture Responses provider, types in the real TUI, checks reply cells,
 and reopens the conversation. It exercises the existing Core turn, lane and
 ledger composition; a direct provider call is not its acceptance proof. The
-real-model journey remains #312 and the physical terminal spike remains T-08.
+real-model headless client journey is covered by
+`TestRealModelHeadlessConversation` in `e2e/real_model_test.go`, including streamed
+output and canon readback after Core restart. It requires explicit real-model
+opt-in and credentials; the physical terminal spike remains T-08.
 `e2e/m1/conversation-admission.json` verifies large Unicode inputs and replies
 through durable materials, secret removal before model input, and restart
 readback. `e2e/m1/conversation-failure.json` verifies that a provider item followed

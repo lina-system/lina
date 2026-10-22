@@ -6,6 +6,31 @@ This file collects the notices of every included component: the `NOTICE` file of
 
 Add an entry when third-party code or other material is included in LINA. Record its source, version or commit, license, original notices, and any modifications. Include the required license texts and notices with the distribution.
 
+## Terminal UI behaviour references
+
+The composer separation and newline keys in LINA's terminal UI independently adapt behaviour
+from these permissive projects. No upstream implementation code is copied or
+bundled by this change:
+
+- [Codex CLI](https://github.com/openai/codex), OpenAI and contributors,
+  Apache-2.0, reference revision `86e17e98`: prompt glyph, dim placeholder,
+  growing composer and footer hints below it; Shift+Enter, Ctrl+J and Alt+Enter
+  newline bindings and the capability-dependent Shift+Enter hint
+  (`codex-rs/tui/src/keymap.rs` and `bottom_pane/chat_composer.rs`).
+- [opencode](https://github.com/sst/opencode), opencode contributors, MIT,
+  reference revision `c93aaae3`: input edge, placeholder and separate hint row.
+- [Gemini CLI](https://github.com/google-gemini/gemini-cli), Google and
+  contributors, Apache-2.0, reference revision `09d81bf1`: prompt, placeholder,
+  input boundary and footer.
+- [aider](https://github.com/Aider-AI/aider), Paul Gauthier and contributors,
+  Apache-2.0, reference revision `5dc9490b`: full-width rule before the prompt.
+- [Hermes Agent](https://github.com/NousResearch/hermes-agent), Nous Research
+  and contributors, MIT, reference revision `e06df9c2`: distinct input band,
+  prompt, placeholder and footer.
+
+LINA uses its own semantic tokens, localized catalog, row-budget planner and
+hardware cursor placement. It uses a hairline instead of a surrounding box.
+
 ## Memory design references
 
 The memory and compaction behavior in [Conversation and memory](docs/design/conversation-and-memory.md) is derived from the designs of Honcho and LCM-X. This attribution covers behavioral reference and an independent Go implementation under LINA's contracts. No upstream implementation code, prompts, runtime dependency or user data is included by this design change.
@@ -1292,6 +1317,19 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+## Terminal UI behaviour references
+
+[Codex CLI](https://github.com/openai/codex) (Apache-2.0, OpenAI) informs the
+whole-conversation transcript overlay opened with Ctrl+T. No upstream code is
+copied. Source observations and limits are recorded in
+[the TUI reference specification](internal/tui/ui/REFERENCE.md).
+
+[Hermes Agent](https://github.com/NousResearch/hermes-agent) (MIT, copyright
+2025 Nous Research) informs the TUI's complete inline assistant replies and
+paged transcript reading. No upstream code is copied. The source-survey
+observations and limits are recorded in [the TUI reference specification](internal/tui/ui/REFERENCE.md).
+The Hermes Agent license text is included above.
+
 ## codex-app-server
 
 Source: https://github.com/openai/codex. Generated protocol baseline: **0.163.0**
@@ -1346,3 +1384,92 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+
+## CRW contract schemas and fixtures
+
+Source: https://github.com/thisisjun786/codex-relay-workflow.
+Commit: `7e65fcb82d426d228e18958d728fe63a0991ddd0`. License: MIT.
+
+The work-ledger start gate adopts CRW record schemas and contract test data,
+with upstream paths and file hashes recorded by the pin. No CRW implementation
+is copied, translated, linked or executed. Reference observations are recorded
+in `internal/core/work/pin/REFERENCE.md`.
+
+```text
+MIT License
+
+Copyright (c) 2026 thisisjun786 and contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## github.com/santhosh-tekuri/jsonschema/v6
+
+Source: https://github.com/santhosh-tekuri/jsonschema. Version: `v6.0.3`.
+License: Apache-2.0. Used without modifications to validate the pinned CRW
+Draft 7 record schemas; unpinned schema resources cannot be loaded.
+Copyright 2017 Santhosh Kumar Tekuri. The upstream release has no NOTICE file.
+The license text is the Apache License, Version 2.0, reproduced in [LICENSE](LICENSE).
+
+## github.com/go-git/go-billy/v5
+
+Source: https://github.com/go-git/go-billy/v5. Version: `v5.9.2`. License: Apache-2.0. Unmodified upstream dependency used by the local records Git adapter.
+
+The Apache License, Version 2.0 is reproduced in [LICENSE](LICENSE).
+
+## github.com/go-git/go-git/v5
+
+Source: https://github.com/go-git/go-git/v5. Version: `v5.19.3`. License: Apache-2.0. Unmodified upstream dependency used by the local records Git adapter.
+
+The Apache License, Version 2.0 is reproduced in [LICENSE](LICENSE).
+
+## github.com/jbenet/go-context
+
+Source: https://github.com/jbenet/go-context. Version: `v0.0.0-20150711004518-d14ea06fba99`. License: MIT. Unmodified upstream dependency used by the local records Git adapter.
+
+```text
+The MIT License (MIT)
+
+Copyright (c) 2014 Juan Batiz-Benet
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
+
+## github.com/pjbgf/sha1cd
+
+Source: https://github.com/pjbgf/sha1cd. Version: `v0.7.0`. License: Apache-2.0. Unmodified upstream dependency used by the local records Git adapter.
+
+The Apache License, Version 2.0 is reproduced in [LICENSE](LICENSE).

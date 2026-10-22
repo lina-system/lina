@@ -1,0 +1,8 @@
+{
+  "width": 100,
+  "height": 34,
+  "seed": "NEWLINE-457-READY",
+  "ready": "Ready for multiline input.",
+  "lines": ["FIRST-457", "한글 SECOND-457", "ALT-457", "CTRL-J-457"],
+  "reply": "Received one complete multiline message."
+}

@@ -34,22 +34,24 @@ type conversationView struct {
 }
 
 type textPager struct {
-	running   bool
-	selected  int
-	runID     string
-	next      *json.Number
-	open      bool
-	text      string
-	cardID    string
-	followEnd bool
-	offset    int
-	query     string
-	searching bool
+	transcript bool
+	running    bool
+	selected   int
+	runID      string
+	next       *json.Number
+	open       bool
+	text       string
+	cardID     string
+	followEnd  bool
+	offset     int
+	query      string
+	searching  bool
 }
 
 func newConversationView(styles Styles) conversationView {
 	c := textarea.New()
 	c.Prompt = ""
+	c.Placeholder = design.Text(styles.options.Language, "composer.placeholder")
 	c.ShowLineNumbers = false
 	c.CharLimit = 16384
 	c.MaxWidth, c.MaxHeight = 0, 6
@@ -58,7 +60,7 @@ func newConversationView(styles Styles) conversationView {
 	c.MaxContentHeight = 16384
 	c.SetStyles(textarea.Styles{Focused: textarea.StyleState{Text: styles.Text, Placeholder: styles.Muted}, Blurred: textarea.StyleState{Text: styles.Muted}})
 	c.SetVirtualCursor(false)
-	c.SetWidth(max(1, styles.options.Width))
+	c.SetWidth(max(1, styles.options.Width-styles.composerPromptWidth()))
 	c.SetHeight(1)
 	c.Focus()
 	// Clipboard reads are never an application action; terminal PasteMsg owns paste.
@@ -78,12 +80,20 @@ func (m *shellModel) hasCapability(name string) bool {
 
 func (m *shellModel) syncComposer() {
 	c := &m.conversation.composer
+	placeholder := "composer.placeholder"
+	if m.disambiguated {
+		placeholder = "composer.shift_enter"
+	}
+	c.Placeholder = design.Text(m.styles.options.Language, placeholder)
 	if c.Value() != m.content.Draft.Text {
 		c.SetValue(m.content.Draft.Text)
 	}
-	c.SetWidth(max(1, m.size.Width))
-
+	c.SetWidth(max(1, m.size.Width-m.styles.composerPromptWidth()))
 }
+
+func (s Styles) composerPrompt() string { return s.listBullet() + " " }
+
+func (s Styles) composerPromptWidth() int { return (render.Unicode{}).Width(s.composerPrompt()) }
 
 func (m *shellModel) editComposer(msg tea.Msg) tea.Cmd {
 	if m.conversation.pager.open {
@@ -121,7 +131,7 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 	key := term.FromTea(msg, m.events)
 	class := term.Edit
 	switch key.Name {
-	case "enter", "esc", "ctrl+c", "ctrl+d", "tab", "shift+tab", "ctrl+o", "ctrl+w", "ctrl+r", "ctrl+p":
+	case "enter", "esc", "ctrl+c", "ctrl+d", "tab", "shift+tab", "ctrl+o", "ctrl+t", "ctrl+w", "ctrl+r", "ctrl+p":
 		class = term.Toggle
 	}
 	if !m.gate.Admit(key, class, m.now()) {
@@ -170,6 +180,10 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	case "pgdown":
 		m.conversation.scroll = max(0, m.conversation.scroll-max(1, m.size.Height/2))
+		return nil
+	case "ctrl+t":
+		m.openPager("")
+		m.conversation.pager.transcript = true
 		return nil
 	case "ctrl+o":
 		if card, ok := m.selectedCard(); ok && card.RunID != "" {
@@ -258,7 +272,7 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		}
 		m.conversation.undo = nil
 		return m.reduceInput(state.Send{Key: rand.Text(), Queue: queue})
-	case "alt+enter", "ctrl+j":
+	case "shift+enter", "alt+enter", "ctrl+j":
 		return m.editComposer(tea.PasteMsg{Content: "\n"})
 	}
 	return m.editComposer(msg)
@@ -339,6 +353,55 @@ func (m *shellModel) cardText() string {
 }
 func (m *shellModel) openPager(text string) {
 	m.conversation.pager = textPager{open: true, text: sanitize.Display(text)}
+}
+
+func conversationBlock(b state.Block) bool {
+	return b.Topic != "core" && b.Topic != "running" && (b.Topic != "waiting" || b.Card != nil) && b.Topic != "progress" && b.Kind != protocol.KindTurnState
+}
+
+func (m *shellModel) conversationName() string {
+	if m.conversation.agentMissing {
+		return design.Text(m.styles.options.Language, "agents.unavailable")
+	}
+	for _, a := range m.content.Agents {
+		if a.AgentID == m.activeAgent() {
+			return sanitize.Display(a.Name)
+		}
+	}
+	return "LINA"
+}
+
+func (m *shellModel) speakerName(b state.Block) string {
+	if b.Local || b.Speaker == protocol.ConversationSpeakerPerson {
+		return design.Text(m.styles.options.Language, "person")
+	}
+	if b.Speaker == protocol.ConversationSpeakerAgent || b.Kind == protocol.KindOutputDelta {
+		return m.conversationName()
+	}
+	return ""
+}
+
+func (m *shellModel) pagerText() string {
+	if !m.conversation.pager.transcript {
+		return m.conversation.pager.text
+	}
+	// Read the current projection, without retaining another history copy that
+	// could outlive authoritative replacements, revocation or a focus change.
+	var messages []string
+	for _, b := range m.content.Blocks {
+		if !conversationBlock(b) {
+			continue
+		}
+		text := b.Text
+		if b.Kind == protocol.KindResult && !b.InlineReply {
+			text = design.Text(m.styles.options.Language, "result") + "  " + b.Title + "\n" + text
+		}
+		if speaker := m.speakerName(b); speaker != "" {
+			text = speaker + "\n" + text
+		}
+		messages = append(messages, text)
+	}
+	return sanitize.Display(strings.Join(messages, "\n\n"))
 }
 
 func (m *shellModel) refreshOpenCard() {
@@ -439,7 +502,7 @@ func (m *shellModel) pagerLines() []string {
 		width = plan.SidePane.Width
 	}
 	stream := render.NewStream("pager", render.Config{Width: max(1, width)}, nil)
-	stream.Seal(1, m.conversation.pager.text)
+	stream.Seal(1, m.pagerText())
 	var lines []string
 	for _, row := range stream.Window(0, stream.Len(), render.Config{Width: max(1, width)}, nil) {
 		lines = append(lines, row.Text)
@@ -472,7 +535,7 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 	} else if notice := m.localNotice(); showNotice && notice != "" {
 		statusLine += "  " + notice
 	}
-	rows[plan.Status.Y] = clip(statusLine + "  /help  Enter  Ctrl+D  /memory  /agents")
+	rows[plan.Status.Y] = clip(statusLine + "  /help  Enter  Ctrl+D  /memory  /agents  Ctrl+T")
 	if plan.Tier == layout.TooSmall {
 		if plan.Notice.Height > 0 {
 			rows[0] = clip(design.Text(m.styles.options.Language, "shell.too_small"))
@@ -489,18 +552,7 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		rows[plan.Status.Y] = clip("Esc  /  n  " + p.query)
 		return strings.Join(rows, "\n")
 	}
-	name := "LINA"
-	if m.conversation.agentMissing {
-		name = design.Text(m.styles.options.Language, "agents.unavailable")
-	}
-	if !m.conversation.agentMissing {
-		for _, a := range m.content.Agents {
-			if a.AgentID == m.activeAgent() {
-				name = a.Name
-				break
-			}
-		}
-	}
+	name := m.conversationName()
 	rows[plan.Header.Y] = clip(m.styles.Title.Render(name))
 	var transcript []render.StyledRow
 	plainRow := func(text string) render.StyledRow { return render.StyledRow{Spans: []render.Span{{Text: text}}} }
@@ -508,6 +560,9 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		code := "account.empty"
 		if !m.accountsKnown {
 			code = "account.loading"
+			if m.accounts.code != "" {
+				code = m.accounts.code
+			}
 		}
 		for _, row := range m.accountRows {
 			if row.Status == "ok" {
@@ -518,22 +573,23 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		transcript = append(transcript, plainRow(design.Text(m.styles.options.Language, code)+"  /accounts"))
 	}
 	for _, b := range m.content.Blocks {
-		if b.Topic == "core" || b.Topic == "running" || (b.Topic == "waiting" && b.Card == nil) || b.Topic == "progress" || b.Kind == protocol.KindTurnState {
+		if !conversationBlock(b) {
 			continue
 		}
 		cached := m.blocks[b.ID]
 		if cached.stream == nil {
 			continue
 		}
-		if b.Local || b.Speaker == protocol.ConversationSpeakerPerson {
-			transcript = append(transcript, plainRow(design.Text(m.styles.options.Language, "person")))
-		} else if b.Speaker == protocol.ConversationSpeakerAgent || b.Kind == protocol.KindOutputDelta {
-			transcript = append(transcript, plainRow(name))
+		if speaker := m.speakerName(b); speaker != "" {
+			transcript = append(transcript, plainRow(speaker))
 		}
-		if b.Kind == protocol.KindResult {
+		if b.Kind == protocol.KindResult && !b.InlineReply {
 			transcript = append(transcript, plainRow(design.Text(m.styles.options.Language, "result")+"  "+sanitize.Display(b.Title)+"  Ctrl+O"))
 		}
 		transcript = append(transcript, cached.stream.Markdown(render.Config{Width: plan.Conversation.Width, Theme: m.styles.options.Theme}, m.styles.listBullet(), parseMarkdown)...)
+		if b.InlineReply {
+			transcript = append(transcript, plainRow(design.Text(m.styles.options.Language, "reply.open_pager")))
+		}
 	}
 	m.conversation.scroll = min(m.conversation.scroll, max(0, len(transcript)-plan.Conversation.Height))
 	start := max(0, len(transcript)-plan.Conversation.Height-m.conversation.scroll)
@@ -564,17 +620,29 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 	if plan.Attachments.Height > 0 {
 		rows[plan.Attachments.Y] = clip(strings.Join(m.content.Draft.Attachments, "  "))
 	}
+	if plan.ComposerRule.Height > 0 {
+		rule := m.styles.tokens.GlyphUnicodeRule
+		if m.styles.options.ASCII {
+			rule = m.styles.tokens.GlyphAsciiRule
+		}
+		rows[plan.ComposerRule.Y] = m.styles.Line.Render(strings.Repeat(rule, plan.ComposerRule.Width))
+	}
 	m.conversation.composer.SetHeight(plan.Composer.Height)
 	for i, line := range strings.Split(m.conversation.composer.View(), "\n") {
 		if i >= plan.Composer.Height {
 			break
 		}
-		rows[plan.Composer.Y+i] = clip(line)
+		// Keep the prompt on the first visible row even when the draft scrolls.
+		prefix := strings.Repeat(" ", m.styles.composerPromptWidth())
+		if i == 0 {
+			prefix = m.styles.Accent.Render(m.styles.composerPrompt())
+		}
+		rows[plan.Composer.Y+i] = clip(prefix + line)
 	}
 	if plan.SidePane.Height > 0 {
 		p := &m.conversation.pager
 		stream := render.NewStream("pager", render.Config{Width: plan.SidePane.Width}, nil)
-		stream.Seal(1, p.text)
+		stream.Seal(1, m.pagerText())
 		p.offset = min(p.offset, max(0, stream.Len()-plan.SidePane.Height))
 		anchor := 0
 		if stream.Len() > 0 {

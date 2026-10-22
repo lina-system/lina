@@ -13,6 +13,33 @@ import { build, buildTimeoutMs } from './build.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 
+test('build records the verified CRW pin and refuses a failed corpus gate', t => {
+  const f = fixture(t);
+  const pin = { version: 1, repository: 'https://github.com/thisisjun786/codex-relay-workflow', commit: 'a'.repeat(40),
+    domains: ['record-schema'], schemas: [{ path: 'schema/relationship.json', source: 'contract/schema/relationship.json', sha256: 'b'.repeat(64) }],
+    fixtures: [{ path: 'fixtures/records.json.gz', source: 'contract/fixtures/records.json.gz', sha256: 'c'.repeat(64), domain: 'record-schema' }] };
+  let failPin = false;
+  const run = (command, args, options) => {
+    if (args[0] === 'env') return { status: 0, stdout: options.env.GOTOOLCHAIN, stderr: '' };
+    if (args[0] === 'build') {
+      const binary = args[args.indexOf('-o') + 1];
+      f.write(dirname(binary), binary.split(/[\\/]/).at(-1), 'fixture executable');
+    }
+    if (args.includes('./internal/core/work/pin/crwinfo')) {
+      return failPin ? { status: 1, stderr: 'CRW pin: changed fixture hash' }
+        : { status: 0, stdout: JSON.stringify(pin), stderr: '' };
+    }
+    return { status: 0, stdout: args[0] === 'run'
+      ? (args.includes('./internal/core/manifest/clientinfo') ? '[]' : '{}') : '', stderr: '' };
+  };
+  const result = build({ cwd: f.cwd, out: f.out, execute: run });
+  assert.deepEqual(result.crwPin, pin);
+  assert.deepEqual(JSON.parse(readFileSync(join(f.out, 'manifest.json'), 'utf8')).crwPin, pin);
+  failPin = true;
+  assert.throws(() => build({ cwd: f.cwd, out: f.out, execute: run }), /changed fixture hash/);
+  assert.equal(existsSync(join(f.out, 'manifest.json')), false);
+});
+
 test('the pinned SQLite rebuild script has valid shell syntax', () => {
   const result = spawnSync('bash', ['-n', join(root, 'packaging/sqlite-vec/build.sh')], { encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
@@ -238,6 +265,7 @@ test('clean builds record hashes and the same commit and metadata as both versio
     assert.deepEqual(manifest.providers, providerConfig);
     assert.equal(manifest.providers.chatgpt.adapter, 'responses');
     assert.equal(manifest.providers.chatgpt.retryCount, 0);
+    assert.deepEqual(manifest.crwPin, JSON.parse(readFileSync(join(f.cwd, 'internal/core/work/pin/pin.json'), 'utf8')));
     assert.deepEqual(manifest.binaries.map(binary => binary.name), ['lina', 'lina-node'].map(name => name + (process.platform === 'win32' ? '.exe' : '')));
     for (const binary of manifest.binaries) {
       const path = join(f.out, binary.name);

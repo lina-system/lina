@@ -101,6 +101,7 @@ export function build({ cwd = root, out, target, version: requestedVersion, exec
     });
     const sqlite = JSON.parse(invoke(['run', '-mod=readonly', './internal/core/manifest/sqliteinfo']));
     const supportedCombinations = JSON.parse(invoke(['run', '-mod=readonly', './internal/core/manifest/clientinfo', target]));
+    const crwPin = JSON.parse(invoke(['run', '-mod=readonly', './internal/core/work/pin/crwinfo']));
     if (!clean() || gitOut(cwd, ['rev-parse', 'HEAD']) !== commit) return null;
     const providers = JSON.parse(readFileSync(join(cwd, 'kit/provider/responses/manifest.json'), 'utf8'));
     if (providers.chatgpt.adapter !== 'responses' || providers.chatgpt.retryCount !== 0) {
@@ -108,7 +109,7 @@ export function build({ cwd = root, out, target, version: requestedVersion, exec
     }
     if (!clean() || gitOut(cwd, ['rev-parse', 'HEAD']) !== commit) return null;
     const verifiedWorkerVersions = { codex: JSON.parse(readFileSync(join(cwd, 'internal/core/worker/codex/versions.json'), 'utf8')) };
-    const manifest = { version, commit, date, target, goToolchain, kitVersion, binaries, sqlite, providers, supportedCombinations, verifiedWorkerVersions };
+    const manifest = { version, commit, date, target, goToolchain, kitVersion, binaries, sqlite, providers, supportedCombinations, crwPin, verifiedWorkerVersions };
     const staging = mkdtempSync(join(out, '.manifest-'));
     try {
       const temporary = join(staging, 'manifest.json');

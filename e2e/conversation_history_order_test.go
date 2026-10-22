@@ -78,7 +78,7 @@ func TestM1ConversationHistoryOrder(t *testing.T) {
 			h.socket = tap.socket
 			terminal := h.startTerminalSize([]string{"TERM=xterm-256color"}, false, true, scenario.Width, scenario.Height)
 			h.socket = socket
-			waitScreen(t, h, terminal, "Ctrl+D")
+			waitComposerReady(t, h, terminal)
 			// Controls can appear before negotiation permits input. Wait for Live.
 			waitScreen(t, h, terminal, design.Text(design.English, "live"))
 			// The composer is visible before History resolves its destination.
@@ -86,6 +86,9 @@ func TestM1ConversationHistoryOrder(t *testing.T) {
 			// waiting for its response avoids submitting during discovery.
 			for {
 				frame := tap.next(t, h)
+				if frame.Error != nil {
+					t.Fatalf("TUI discovery refused: %s", frame.Error.Code)
+				}
 				if snapshot, ok := frame.Payload.(protocol.Snapshot); ok && snapshot.Topic == "conversation:"+conversation {
 					break
 				}
