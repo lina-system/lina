@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/assemble"
 	"github.com/thisisjun786/lina/internal/core/assets"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
@@ -273,6 +274,98 @@ func TestRecordEmptySlicesAreStable(t *testing.T) {
 	}
 	if _, err := f.Record(t.Context(), store, r); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRecordedPreviewPreservesJSONMaskingAcrossRestart(t *testing.T) {
+	for _, tail := range []string{
+		"Enter the password: ",
+		`The password="synthetic-private" is set.`,
+		`{"password":"synthetic-private"}`,
+	} {
+		t.Run(tail, func(t *testing.T) {
+			db, cfg := database(t)
+			f := filter(t, config())
+			full := "Done. " + strings.Repeat("가", 301) + " private-value " + tail
+			if _, err := f.Push(full); err != nil {
+				t.Fatal(err)
+			}
+			r := recording()
+			start := strings.Index(full, "private-value")
+			r.Source.SecretSpans = []secrets.Span{{Start: start, End: start + len("private-value")}}
+			want, err := secrets.Mask(full, r.Source.SecretSpans...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			saved, err := f.Record(t.Context(), ledger.New(db, nil), r)
+			if err != nil || saved.Card == nil {
+				t.Fatalf("recorded card: %+v %v", saved, err)
+			}
+			check := func(event ledger.Event) {
+				t.Helper()
+				for _, text := range []string{event.Body.Text(), event.Body.DerivedText()} {
+					if !json.Valid([]byte(text)) || strings.Contains(text, "private-value") || strings.Contains(text, "synthetic-private") {
+						t.Fatalf("invalid or unmasked card JSON: %q", text)
+					}
+				}
+				var card reply.Card
+				if err := json.Unmarshal([]byte(event.Body.Text()), &card); err != nil {
+					t.Fatal(err)
+				}
+				if card.Text != want.Text() || len(card.Body.Blocks) != 1 || card.Body.Blocks[0].Text != want.Text() {
+					t.Fatalf("card content changed: %+v", card)
+				}
+				if len(event.Spans) == 0 || strings.Contains(event.Body.DerivedText(), secret.Placeholder) {
+					t.Fatal("card lost secret flags or retained derived placeholders")
+				}
+			}
+			check(*saved.Card)
+			if err := db.Close(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			card, err := ledger.New(openDB(t, cfg), nil).Get(t.Context(), r.CardEventID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			check(card)
+		})
+	}
+}
+
+func TestRecordedPreviewDoesNotDuplicateModelHistory(t *testing.T) {
+	db, cfg := database(t)
+	f := filter(t, config())
+	full := "Done. " + strings.Repeat("가", 301)
+	if _, err := f.Push(full); err != nil {
+		t.Fatal(err)
+	}
+	r := recording()
+	saved, err := f.Record(t.Context(), ledger.New(db, nil), r)
+	if err != nil || saved.Card == nil {
+		t.Fatalf("recorded card: %+v %v", saved, err)
+	}
+	if err := db.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	store := ledger.New(openDB(t, cfg), nil)
+	var events []ledger.Event
+	for _, id := range []string{r.Source.ID, r.CardEventID} {
+		event, err := store.Get(t.Context(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		events = append(events, event)
+	}
+	items, err := assemble.History(events, r.Source.ConversationID, r.Source.AgentID)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("model history contains %d items, want one full reply: %v", len(items), err)
+	}
+	var item struct{ Role, Content string }
+	if err := json.Unmarshal(items[0], &item); err != nil {
+		t.Fatal(err)
+	}
+	if item.Role != "assistant" || item.Content != full {
+		t.Fatalf("model history lost the original full reply: %+v", item)
 	}
 }
 
