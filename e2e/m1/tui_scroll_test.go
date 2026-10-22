@@ -61,7 +61,7 @@ func TestM1TUIWheelStickyConversation(t *testing.T) {
 		return s
 	}
 	latest := wait("latest reply", func(s tuiterm.Snapshot) bool {
-		return idle(s) && strings.Contains(strings.Join(region(s), "\n"), lines[79]) && strings.Contains(screenText(s), "Ctrl+O")
+		return idle(s) && scrollViewportReady(region(s), lines) && strings.Contains(strings.Join(region(s), "\n"), lines[79]) && strings.Contains(screenText(s), "Ctrl+O")
 	})
 	first := region(latest)[0]
 	var index int
@@ -76,7 +76,7 @@ func TestM1TUIWheelStickyConversation(t *testing.T) {
 		})
 		h.keys(terminal, wheel+"\x1b")
 		return wait("conversation after closing web settings", func(s tuiterm.Snapshot) bool {
-			return !s.CursorHidden && strings.Contains(screenText(s), "SCROLL-")
+			return !s.CursorHidden && scrollViewportReady(region(s), lines)
 		})
 	}
 	if got := strings.Join(region(webWheel("\x1b[<64;10;10M")), "\n"); got != strings.Join(region(latest), "\n") {
@@ -84,7 +84,7 @@ func TestM1TUIWheelStickyConversation(t *testing.T) {
 	}
 	h.keys(terminal, "\x1b[<64;10;10M")
 	scrolled := wait("wheel up by three rows", func(s tuiterm.Snapshot) bool {
-		return strings.Contains(region(s)[0], fmt.Sprintf("SCROLL-%03d", index-3))
+		return strings.Contains(region(s)[0], fmt.Sprintf("SCROLL-%03d", index-3)) && scrollViewportReady(region(s), lines)
 	})
 	frozen := strings.Join(region(scrolled), "\n")
 	t.Logf("wheel-up viewport:\n%s", frozen)
@@ -94,7 +94,7 @@ func TestM1TUIWheelStickyConversation(t *testing.T) {
 	marker := design.Text(design.English, "conversation.new_messages")
 	admittedTurn(t, h, client, conversation, "scroll-next", "Send another reply.")
 	arrived := wait("new messages marker", func(s tuiterm.Snapshot) bool {
-		return idle(s) && strings.Contains(screenRows(s)[plan.Status.Y], marker)
+		return idle(s) && scrollViewportReady(region(s), lines) && strings.Contains(screenRows(s)[plan.Status.Y], marker)
 	})
 	if got := strings.Join(region(arrived), "\n"); got != frozen {
 		t.Fatalf("new output moved viewport:\nBEFORE\n%s\nAFTER\n%s", frozen, got)
@@ -130,5 +130,46 @@ func TestM1TUIWheelStickyConversation(t *testing.T) {
 	}
 	if calls.Load() != 2 {
 		t.Fatalf("provider calls = %d", calls.Load())
+	}
+}
+
+// PTY reads can split one repaint after its first row. A viewport used as an
+// exact comparison baseline must contain every expected synthetic row, not
+// just the first marker. This accepts any complete offset so the caller still
+// detects an incorrectly displaced viewport instead of waiting it away.
+func scrollViewportReady(rows, fixture []string) bool {
+	if len(rows) == 0 {
+		return false
+	}
+	var first int
+	if _, err := fmt.Sscanf(strings.TrimSpace(rows[0]), "SCROLL-%03d", &first); err != nil || first < 1 || first > len(fixture) {
+		return false
+	}
+	for i := 0; i < min(len(rows), len(fixture)-first+1); i++ {
+		if strings.TrimSpace(rows[i]) != fixture[first-1+i] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestScrollViewportRejectsPartialPaint(t *testing.T) {
+	fixture := []string{"SCROLL-001 first", "SCROLL-002 middle", "SCROLL-003 last"}
+	for _, tc := range []struct {
+		name string
+		rows []string
+		want bool
+	}{
+		{"complete", fixture, true},
+		{"another complete offset", fixture[1:], true},
+		{"missing middle row", []string{fixture[0], "", fixture[2]}, false},
+		{"old rows after new first", []string{fixture[0], fixture[2], fixture[1]}, false},
+		{"empty", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := scrollViewportReady(tc.rows, fixture); got != tc.want {
+				t.Fatalf("viewport ready=%t, want %t: %q", got, tc.want, tc.rows)
+			}
+		})
 	}
 }

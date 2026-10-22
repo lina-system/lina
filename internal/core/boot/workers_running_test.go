@@ -5,6 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -155,5 +158,72 @@ func TestConversationWorkerRunningPublicationAndActions(t *testing.T) {
 	snapshot, err = r.background.list.Build(t.Context(), r.person)
 	if err != nil || len(snapshot.Entries) != 0 {
 		t.Fatalf("closed runtime retained: %+v %v", snapshot, err)
+	}
+}
+
+// Hold a real worker launch at an explicit fixture barrier. Opening an already
+// active row must still finish; it must not wait for another worker's startup
+// while occupying the canonical writer.
+func TestConversationWorkerRunningOpenDuringStart(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell worker fixture")
+	}
+	r, _ := runningWorkerFixture(t)
+	bin := t.TempDir()
+	executable := filepath.Join(bin, "codex")
+	script := "#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\n: > \"$0.started\"\nwhile [ ! -f \"$0.release\" ]; do sleep 0.01; done\nexit 1\n"
+	if err := os.WriteFile(executable, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	raw, _ := json.Marshal(workerArgs{Workdir: t.TempDir(), TaskPacket: "hold at startup"})
+	in, err := workerSchema("worker_start", raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	startedDone := make(chan struct{})
+	var openedDone chan struct{}
+	defer func() {
+		if err := os.WriteFile(executable+".release", nil, 0600); err != nil {
+			t.Error(err)
+		}
+		<-startedDone
+		if openedDone != nil {
+			<-openedDone
+		}
+	}()
+	go func() {
+		defer close(startedDone)
+		if _, err := r.workerOperation(t.Context(), "worker_start", "other-turn", ledger.Event{}, in); err != nil {
+			t.Error(err)
+		}
+	}()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if _, err := os.Stat(executable + ".started"); err == nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("worker did not reach startup barrier")
+		case <-ticker.C:
+		}
+	}
+	openedDone = make(chan struct{})
+	opened := make(chan error, 1)
+	go func() {
+		defer close(openedDone)
+		opened <- r.background.list.Open(ctx, r.person, runs.ListRef{Source: "session", ID: "fixture"})
+	}()
+	select {
+	case err := <-opened:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal("opening a running row blocked the canonical writer behind worker startup")
 	}
 }

@@ -189,8 +189,9 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 	b := r.workers
 	if name == "worker_start" {
 		b.mu.Lock()
-		defer b.mu.Unlock()
-		if b.closed {
+		closed := b.closed
+		b.mu.Unlock()
+		if closed {
 			return tools.Result{State: tools.Failed}, errors.New("worker runtime closed")
 		}
 		process, err := r.activities.Acquire(r.ctx, lease.Activity{Class: lease.Reported, Reason: "Codex session"})
@@ -218,13 +219,23 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 		}
 		entry.thread = thread
 		entry.active[thread.TurnID] = activity
-		if b.sessions[thread.ID] != nil {
+		// Registry access is brief and never encloses adapter I/O or canon
+		// writes: running-list actions also read it from the canon writer.
+		b.mu.Lock()
+		if b.closed {
+			err = errors.New("worker runtime closed")
+		} else if b.sessions[thread.ID] != nil {
+			err = errors.New("duplicate worker session identity")
+		} else {
+			b.sessions[thread.ID] = entry
+		}
+		b.mu.Unlock()
+		if err != nil {
 			activity.Release()
 			adapter.Close()
 			process.Release()
-			return tools.Result{State: tools.Unknown}, errors.New("duplicate worker session identity")
+			return tools.Result{State: tools.Unknown}, err
 		}
-		b.sessions[thread.ID] = entry
 		// This notice commits the installed version independently of a model summary.
 		notice := fmt.Sprintf("Codex %s session started.", entry.compatibility.Version)
 		if !entry.compatibility.Verified {
