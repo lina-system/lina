@@ -1040,6 +1040,10 @@ type Definition struct {
 - `Scheduler.Release` runs on events (landed, new task, quota change, a parked worker's reset), not on a poll. It starts every task whose dependencies landed, whose area lease is free and whose worker has quota. Area leases live from hand-off to landed, closed or abandoned. Concurrency starts at 4 per repository (P). A task that cannot start shows exactly one reason.
 - One task, one worker, one worktree, one branch, created by Core with the Git command from a parent clone in `work/clones/`.
 - The CRW pin is the start gate for the work ledger records: a pin record and a LINA fixture runner whose expected values come from the fixture ([work-and-delegation.md](work-and-delegation.md#start-gate)).
+- `internal/core/work/pin` verifies SHA-256 over every adopted file before running
+  any case. The runner passes only inputs to the record validator; a validator
+  error is not a negative judgment. Build provenance carries the complete pin as
+  `crwPin`, validated by `internal/core/manifest` without a CRW installation.
 
 **C-58 Completion events, GitHub layer, review, merge (new).** Contract: [work-and-delegation.md](work-and-delegation.md#event-driven-flow), [work-and-delegation.md](work-and-delegation.md#judgment-and-delivery), [integrations.md](integrations.md#merges).
 

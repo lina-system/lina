@@ -204,12 +204,24 @@ Implementation boundary: the run package supplies admission, release, steering, 
 
 ## Contract input from CRW
 
-CRW ([codex-relay-workflow](https://github.com/thisisjun786/codex-relay-workflow)) is the operator tool that coordinates Codex work until the operational switch. The work engine is LINA Core's management session, built anew in Go for LINA's system: it keeps how CRW works (the work ledger and its states, relay delivery and acknowledgement, and the supervisor, parent and child roles), with CRW's contract schemas (`contract/schema/`) and fixtures (`contract/fixtures/`) as fixed input. CRW code is never copied, vendored, translated or linked. The schemas and fixtures state the behavior that matters; CRW's own code and host paths stay with CRW.
+CRW ([codex-relay-workflow](https://github.com/thisisjun786/codex-relay-workflow)) is the operator tool that coordinates Codex work until the operational switch. The work engine is LINA Core's management session, built anew in Go for LINA's system: it keeps how CRW works (the work ledger and its states, relay delivery and acknowledgement, and the supervisor, parent and child roles), with CRW's contract schemas (`contract/schema/`) and the record fixtures named by the pin as fixed input. CRW code is never copied, vendored, translated or linked. The schemas and fixtures state the behavior that matters; CRW's own code and host paths stay with CRW.
 
 ### Start gate
 
 - The start gate for the work engine is a pinned CRW schema and fixture version.
 - The pin record names the CRW commit, the content hash of every adopted schema document and fixture file, and the adopted fixture domains. It lives in the LINA repository next to the work engine and is listed in the release manifest.
+- Hashes are SHA-256 of the exact upstream bytes, including compressed fixture
+  bytes. Every adopted file is checked before any fixture executes. A missing
+  file or changed hash fails the gate. The build manifest carries the full pin
+  in `crwPin`; readers preserve and validate it. Manifests predating this gate
+  remain readable without the field, but a new build must include it.
+- The initial pin adopts the five record schemas and 91 independent schema
+  judgments from CRW's `internal/relay/store/testdata/fixtures/`; its
+  `contract/fixtures/` cases exercise CRW-only surfaces and are excluded. A
+  separately hashed, source-backed input replay table restores upstream's
+  erased placeholders, including the invalid all-zero revision hash. Every
+  original judgment is retained. The runner verifies one-to-one input coverage,
+  preserves unmasked data and reads expected validity only from the fixture.
 - Work that needs the pinned schemas starts only after the pin: the work ledger and delivery records, delegation, orchestration, worker dispatch from the product, and the takeover of CRW records.
 - The pinned schemas fix only the records of the work ledger. The worker adapter round trip does not depend on the pin. It is an acceptance item of the first implementation issue and runs first.
 - Conversation, memory, persona, TUI, LINA APP screens, materials, cognition outside the work engine, LIFE and the OS base never wait for the pin.
@@ -737,7 +749,7 @@ At the operational switch LINA takes over CRW's coordination functions and CRW r
 
 ## Deferred
 
-- The task state set of the ledger projection, and the list of adopted CRW schema documents and fixture domains: set by the pin record at the start gate.
+- The task state set of the ledger projection: set by the ledger implementation against the pinned record contracts. Adopted schema documents and fixture domains are fixed in the start-gate pin record.
 - The verified Codex versions and the judgments of the experimental fields LINA uses: set by the worker adapter round trip of the first implementation issue (V5) and recorded in the release manifest.
 - The completion receipt, question and finding schemas, their first version, and the written meaning of the review severities P0 to P3 that the worker reports: set by the worker adapter implementation issue. A receipt maps onto the pinned CRW shape by adding fields only.
 - What each worker profile (direct, single and complementary) means, and the values it records: set during work engine implementation acceptance.
