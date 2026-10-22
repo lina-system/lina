@@ -65,7 +65,9 @@ func TestCommandResults(t *testing.T) {
 		t.Fatalf("working directory = %q, want %q", lines[1], dir)
 	}
 	err = owner.Run(t.Context(), l, proc.Command{Path: filepath.Join(dir, "missing")})
-	if !errors.Is(err, os.ErrNotExist) {
+	// Windows resolves executable extensions before CreateProcess and can
+	// report exec.ErrNotFound; Unix exec reports os.ErrNotExist instead.
+	if !errors.Is(err, os.ErrNotExist) && !errors.Is(err, exec.ErrNotFound) {
 		t.Fatalf("start failure = %v", err)
 	}
 }
