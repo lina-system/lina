@@ -2,9 +2,10 @@
 package ui
 
 import (
-	tea "charm.land/bubbletea/v2"
 	"fmt"
 	"strings"
+
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/protocol"
@@ -28,10 +29,7 @@ func progressText(payload protocol.Payload, language design.Language, fallback *
 		v := row.Line
 		bar := design.Text(language, "progress.unknown")
 		if v.Percent != nil {
-			percent, err := v.Percent.Int64()
-			if err == nil && percent >= 0 && percent <= 100 {
-				bar = "[" + strings.Repeat("█", int(percent)/10) + strings.Repeat("░", 10-int(percent)/10) + "] " + string(*v.Percent) + "%"
-			}
+			bar = string(*v.Percent) + "%"
 		}
 		stage := design.Text(language, "progress."+v.Stage)
 		if v.Stage != "design" && v.Stage != "building" && v.Stage != "checking" && v.Stage != "done" {
@@ -50,9 +48,9 @@ func progressText(payload protocol.Payload, language design.Language, fallback *
 		}
 		waiting := ""
 		if v.Waiting != "0" {
-			waiting = " · " + fmt.Sprintf(design.Text(language, "progress.waiting"), v.Waiting)
+			waiting = " / " + fmt.Sprintf(design.Text(language, "progress.waiting"), v.Waiting)
 		}
-		lines = append(lines, indent+v.Name+" · "+stage+" · "+bar+" · "+before+" → "+next+waiting)
+		lines = append(lines, fmt.Sprintf(design.Text(language, "progress.line"), indent, v.Name, stage, bar, before, next, waiting))
 	}
 	if len(lines) == 0 {
 		lines = append(lines, design.Text(language, "progress.empty"))
@@ -86,7 +84,7 @@ func (m *shellModel) waitingText(rows []protocol.WaitingRow) string {
 			line = v.AgentName + ": " + line
 		}
 		if v.Recommendation != "" {
-			line += " · " + v.Recommendation
+			line += " / " + v.Recommendation
 		}
 		lines = append(lines, line)
 	}

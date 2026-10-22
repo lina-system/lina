@@ -413,4 +413,5 @@ var catalog = map[string]translation{
 	"progress.more":              {"+%s more", "+%s개 더"},
 	"progress.waiting":           {"%s waiting for you", "%s개 답변 기다리는 중"},
 	"waiting.empty":              {"Nothing to decide now", "지금 결정할 것이 없어요"},
+	"progress.line":              {"%s%s / %s / %s / latest: %s / next: %s%s", "%s%s / %s / %s / 최근: %s / 다음: %s%s"},
 }
