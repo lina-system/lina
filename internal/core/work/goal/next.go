@@ -425,6 +425,8 @@ func Derive(state State, now time.Time) (Plan, error) {
 		for _, t := range g.Tasks {
 			tasks[t.ID] = t
 		}
+		// Share depths across candidates in this goal and snapshot. Traversing
+		// every path through shared ancestors would make derivation exponential.
 		depths := make(map[string]int, len(tasks))
 		var depth func(string) int
 		depth = func(id string) int {
