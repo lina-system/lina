@@ -166,28 +166,31 @@ const CheckCriterion ActionKind = "check_criterion"
 const ContinueWorker ActionKind = "continue_worker"
 
 type Action struct {
-	Signal        string          `json:"signal,omitempty"`
-	FailureKey    string          `json:"failure_key,omitempty"`
-	CriterionID   string          `json:"criterion_id,omitempty"`
-	Check         *CriterionCheck `json:"check,omitempty"`
-	GoalRevision  int64           `json:"goal_revision"`
-	CheckRound    int64           `json:"check_round"`
-	ID            string          `json:"id"`
-	GoalID        string          `json:"goal_id"`
-	TaskID        string          `json:"task_id"`
-	Kind          ActionKind      `json:"kind"`
-	Attempt       int             `json:"attempt"`
-	NodeID        string          `json:"node_id"`
-	Revision      string          `json:"revision"`
-	Resources     Resources       `json:"resources"`
-	State         string          `json:"state"`
-	Epoch         uint64          `json:"epoch"`
-	Handle        string          `json:"handle"`
-	Deadline      int64           `json:"deadline"`
-	Sequence      int             `json:"sequence"`
-	ObservedAt    int64           `json:"observed_at"`
-	ObserverEpoch uint64          `json:"observer_epoch"`
-	Receipt       json.RawMessage `json:"receipt,omitempty"`
+	// Manager plans are bound to the canonical definition independently of
+	// execution revisions added by concurrent sibling repairs.
+	RecordRevision string          `json:"record_revision,omitempty"`
+	Signal         string          `json:"signal,omitempty"`
+	FailureKey     string          `json:"failure_key,omitempty"`
+	CriterionID    string          `json:"criterion_id,omitempty"`
+	Check          *CriterionCheck `json:"check,omitempty"`
+	GoalRevision   int64           `json:"goal_revision"`
+	CheckRound     int64           `json:"check_round"`
+	ID             string          `json:"id"`
+	GoalID         string          `json:"goal_id"`
+	TaskID         string          `json:"task_id"`
+	Kind           ActionKind      `json:"kind"`
+	Attempt        int             `json:"attempt"`
+	NodeID         string          `json:"node_id"`
+	Revision       string          `json:"revision"`
+	Resources      Resources       `json:"resources"`
+	State          string          `json:"state"`
+	Epoch          uint64          `json:"epoch"`
+	Handle         string          `json:"handle"`
+	Deadline       int64           `json:"deadline"`
+	Sequence       int             `json:"sequence"`
+	ObservedAt     int64           `json:"observed_at"`
+	ObserverEpoch  uint64          `json:"observer_epoch"`
+	Receipt        json.RawMessage `json:"receipt,omitempty"`
 }
 type State struct {
 	Goals   []Goal   `json:"goals"`
@@ -362,6 +365,9 @@ func Derive(state State, now time.Time) (Plan, error) {
 			a.Handle = t.ThreadHandle
 		}
 		a.GoalRevision = g.Revision
+		if kind == PlanGoal {
+			a.RecordRevision = g.RecordRevision
+		}
 		a.ID = actionID(a)
 		plan.Actions = append(plan.Actions, a)
 		reservations = append(reservations, a)
@@ -522,7 +528,7 @@ func Derive(state State, now time.Time) (Plan, error) {
 			if g.AssessedFailure == failure {
 				plan.Block = append(plan.Block, g.ID)
 			} else {
-				a := Action{GoalID: g.ID, Kind: PlanGoal, GoalRevision: g.Revision, FailureKey: failure, State: "queued", Deadline: now.Add(SafetySweep).Unix()}
+				a := Action{GoalID: g.ID, Kind: PlanGoal, GoalRevision: g.Revision, RecordRevision: g.RecordRevision, FailureKey: failure, State: "queued", Deadline: now.Add(SafetySweep).Unix()}
 				a.ID = actionID(a)
 				plan.Actions = append(plan.Actions, a)
 			}

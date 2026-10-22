@@ -2,10 +2,167 @@
 package goal
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
 )
+
+func TestObsoleteCriterionReportDoesNotStopEngine(t *testing.T) {
+	e := revisionEngine(t, readyTask("a"))
+	revisionReport(t, e, "a", Assign, Observation{Status: OutcomeSucceeded, Head: "head-a", EffectsSettled: true})
+	revisionReport(t, e, "a", InspectPR, revisionPR("head-a"))
+	revisionReport(t, e, "a", Merge, Observation{Status: OutcomeSucceeded, Head: "head-a", Proof: Proof{Revision: "merge-a", Ref: "merge", Passed: true}})
+	revisionReport(t, e, "a", RunQA, Observation{Status: OutcomeSucceeded, Proof: Proof{Revision: "merge-a", Ref: "qa", Passed: true}})
+	revisionReport(t, e, "", Verify, Observation{Status: OutcomeSucceeded, Proof: Proof{Revision: "merge-a", Ref: "probe", Passed: true}})
+	stale, err := e.Claim(t.Context(), revisionAction(t, e, "", CheckCriterion).ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revisionEdit(t, e)
+	// A new epoch observes the old read receipt. A stale result must be retired
+	// without recording evidence or terminating the running engine.
+	cfg := e.cfg
+	cfg.Epoch++
+	assessed := make(chan struct{}, 1)
+	cfg.Driver = &fixtureDriver{
+		observe: func(a Action) (Observation, error) {
+			if a.ID != stale.ID {
+				return Observation{}, ErrInvalid
+			}
+			return Observation{Status: OutcomeSucceeded, Criterion: &CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: a.Revision, Kind: a.Check.Kind, Ref: "old-read", Passed: true}}, nil
+		},
+		run: func(a Action) (Observation, error) {
+			if a.Kind != PlanGoal {
+				return Observation{}, ErrInvalid
+			}
+			return Observation{Status: OutcomeSucceeded}, nil
+		},
+	}
+	cfg.Changed = func(_ context.Context, s State) error {
+		if s.Goals[0].State == GoalBlocked {
+			select {
+			case assessed <- struct{}{}:
+			default:
+			}
+		}
+		return nil
+	}
+	e, err = NewEngine(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- e.Run(ctx) }()
+	select {
+	case <-assessed:
+		cancel()
+		if err = <-done; err != nil {
+			t.Fatal(err)
+		}
+	case err = <-done:
+		cancel()
+		t.Fatalf("obsolete criterion stopped engine: %v", err)
+	case <-time.After(10 * time.Second):
+		cancel()
+		<-done
+		t.Fatal("obsolete criterion blocked the corrected definition")
+	}
+	s := revisionSnapshot(t, e)
+	if len(s.Goals[0].Checks) != 0 {
+		t.Fatal("obsolete evidence applied to revised goal")
+	}
+	for _, a := range s.Actions {
+		if a.ID == stale.ID && a.State != "finished" {
+			t.Fatal("obsolete criterion still active")
+		}
+	}
+}
+
+func TestOldManagerCannotAssessCorrectedDefinition(t *testing.T) {
+	for _, withTask := range []bool{false, true} {
+		t.Run(map[bool]string{false: "empty", true: "old-plan"}[withTask], func(t *testing.T) {
+			e := revisionEngine(t)
+			a, err := e.Claim(t.Context(), revisionAction(t, e, "", PlanGoal).ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			revisionEdit(t, e)
+			o := Observation{Status: OutcomeSucceeded}
+			if withTask {
+				o.Tasks = []Task{readyTask("stale")}
+			}
+			if err = e.Report(t.Context(), a.ID, a.Epoch, o); err != nil {
+				t.Fatal(err)
+			}
+			g := revisionSnapshot(t, e).Goals[0]
+			if !g.DefinitionPending || g.AssessedFailure != "" || g.State == GoalBlocked || len(g.Tasks) != 0 {
+				t.Fatalf("old manager assessed the corrected definition: %+v", g)
+			}
+			revisionReport(t, e, "", PlanGoal, Observation{Status: OutcomeSucceeded, Tasks: []Task{readyTask("current")}})
+			g = revisionSnapshot(t, e).Goals[0]
+			if g.DefinitionPending || len(g.Tasks) != 1 || g.Tasks[0].ID != "current" {
+				t.Fatal("current definition was not replanned")
+			}
+		})
+	}
+}
+
+func TestClaimedSiblingRepairsSurviveExecutionRevision(t *testing.T) {
+	e := revisionEngine(t, readyTask("a"), readyTask("b"))
+	var actions []Action
+	for _, id := range []string{"a", "b"} {
+		revisionReport(t, e, id, Assign, Observation{Status: OutcomeSucceeded, Head: "head-" + id, EffectsSettled: true})
+		revisionReport(t, e, id, InspectPR, revisionPR("head-"+id))
+		revisionReport(t, e, id, Merge, Observation{Status: OutcomeSucceeded, Head: "head-" + id, Proof: Proof{Revision: "merge-" + id, Ref: "merge", Passed: true}})
+		revisionReport(t, e, id, RunQA, Observation{Status: OutcomeFailed, Proof: Proof{Revision: "merge-" + id, Ref: "failed-qa"}})
+		a, err := e.Claim(t.Context(), revisionAction(t, e, id, PlanGoal).ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		actions = append(actions, a)
+	}
+	for _, a := range actions {
+		repair := readyTask("repair-" + a.TaskID)
+		repair.Repairs, repair.DependsOn = a.TaskID, []string{a.TaskID}
+		if err := e.Report(t.Context(), a.ID, a.Epoch, Observation{Status: OutcomeSucceeded, Tasks: []Task{repair}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	g := revisionSnapshot(t, e).Goals[0]
+	if len(g.Tasks) != 4 || g.Tasks[0].RepairedBy != "repair-a" || g.Tasks[1].RepairedBy != "repair-b" {
+		t.Fatal("independent sibling repair was discarded")
+	}
+}
+
+func TestOldRepairPlanCannotReenterAfterDefinitionAssessment(t *testing.T) {
+	e := revisionEngine(t, readyTask("a"))
+	revisionReport(t, e, "a", Assign, Observation{Status: OutcomeSucceeded, Head: "head-a", EffectsSettled: true})
+	revisionReport(t, e, "a", InspectPR, revisionPR("head-a"))
+	revisionReport(t, e, "a", Merge, Observation{Status: OutcomeSucceeded, Head: "head-a", Proof: Proof{Revision: "merge-a", Ref: "merge", Passed: true}})
+	revisionReport(t, e, "a", RunQA, Observation{Status: OutcomeFailed, Proof: Proof{Revision: "merge-a", Ref: "failed-qa"}})
+	a, err := e.Claim(t.Context(), revisionAction(t, e, "a", PlanGoal).ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revisionEdit(t, e)
+	revisionReport(t, e, "", PlanGoal, Observation{Status: OutcomeSucceeded, Tasks: []Task{readyTask("current")}})
+	repair := readyTask("stale-repair")
+	repair.Repairs, repair.DependsOn = "a", []string{"a"}
+	if err = e.Report(t.Context(), a.ID, a.Epoch, Observation{Status: OutcomeSucceeded, Tasks: []Task{repair}}); err != nil {
+		t.Fatal(err)
+	}
+	g := revisionSnapshot(t, e).Goals[0]
+	if g.DefinitionPending || len(g.Tasks) != 2 || g.Tasks[0].RepairAsked || g.Tasks[0].RepairedBy != "" {
+		t.Fatalf("obsolete repair changed the assessed definition: %+v", g)
+	}
+	repair.ID = "current-repair"
+	revisionReport(t, e, "a", PlanGoal, Observation{Status: OutcomeSucceeded, Tasks: []Task{repair}})
+	if revisionSnapshot(t, e).Goals[0].Tasks[0].RepairedBy != repair.ID {
+		t.Fatal("discarded plan prevented a current repair")
+	}
+}
 
 func revisionEngine(t *testing.T, tasks ...Task) *Engine {
 	t.Helper()

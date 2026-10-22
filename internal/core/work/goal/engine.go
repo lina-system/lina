@@ -636,7 +636,13 @@ func applySuccess(g *Goal, t *Task, a Action, o Observation, now int64) error {
 				break
 			}
 		}
-		if g.Revision != a.GoalRevision || g.CheckRound != a.CheckRound || !currentEvidence(*g, criterion, *o.Criterion) || o.Criterion.Revision != a.Revision {
+		if g.Revision != a.GoalRevision || g.CheckRound != a.CheckRound || criterionRevision(*g, criterion) != a.Revision {
+			// This read completed for an obsolete target. Keep its receipt, but
+			// neither apply its evidence nor turn a normal revision into a fatal
+			// engine error. The current definition can now be assessed.
+			return nil
+		}
+		if !currentEvidence(*g, criterion, *o.Criterion) || o.Criterion.Revision != a.Revision {
 			return ErrConflict
 		}
 		for i, old := range g.Checks {
@@ -647,6 +653,15 @@ func applySuccess(g *Goal, t *Task, a Action, o Observation, now int64) error {
 		}
 		g.Checks = append(g.Checks, *o.Criterion)
 	case PlanGoal:
+		if a.RecordRevision != g.RecordRevision {
+			// An old plan cannot assess a newer definition, even if a newer
+			// manager has already cleared its fence. Execution-only revisions
+			// keep the record revision and allow independent repairs to settle.
+			if t != nil {
+				t.RepairAsked = false
+			}
+			return nil
+		}
 		if g.DefinitionPending {
 			g.AssessedFailure = "definition:" + g.RecordRevision
 			if len(o.Tasks) == 0 {
