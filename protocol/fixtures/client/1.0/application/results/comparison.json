@@ -1,0 +1,76 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "service": "results",
+  "setup": {
+    "person_id": "person",
+    "agent_id": "agent",
+    "conversation_id": "conversation",
+    "turn_id": "turn",
+    "task_id": null
+  },
+  "input": {
+    "type": "comparison",
+    "title": "Fixture result",
+    "summary": "Synthetic result body.",
+    "body": {
+      "targets": [
+        {
+          "label": "Document",
+          "old": "Before",
+          "new": "After",
+          "hunks": [
+            {
+              "old_start": 0,
+              "old_count": 1,
+              "new_start": 0,
+              "new_count": 1
+            }
+          ]
+        }
+      ],
+      "apply": null
+    }
+  },
+  "output": {
+    "error": "",
+    "result": {
+      "type": "comparison",
+      "body": {
+        "targets": [
+          {
+            "label": "Document",
+            "old": "Before",
+            "new": "After",
+            "hunks": [
+              {
+                "old_start": 0,
+                "old_count": 1,
+                "new_start": 0,
+                "new_count": 1
+              }
+            ]
+          }
+        ],
+        "apply": null
+      }
+    }
+  },
+  "outcome": {
+    "events": 1,
+    "heads": 1,
+    "saves": 0,
+    "revision": 1,
+    "status": "preview",
+    "title": "Fixture result",
+    "summary": "Synthetic result body.",
+    "saved_as": null,
+    "revised_by": "agent",
+    "provenance": {
+      "agent_id": "agent",
+      "conversation_id": "conversation",
+      "turn_id": "turn",
+      "task_id": null
+    },
+    "text_complete": true
+  }
+}

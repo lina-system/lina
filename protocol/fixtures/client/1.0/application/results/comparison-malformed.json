@@ -1,0 +1,44 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "service": "results",
+  "setup": {
+    "person_id": "person",
+    "agent_id": "agent",
+    "conversation_id": "conversation",
+    "turn_id": "turn",
+    "task_id": null
+  },
+  "input": {
+    "type": "comparison",
+    "title": "Fixture result",
+    "summary": "Synthetic result body.",
+    "body": {
+      "targets": [
+        {
+          "label": "Document",
+          "old": "Before",
+          "new": "After",
+          "hunks": [
+            {
+              "old_start": 0,
+              "old_count": 1,
+              "new_start": 0,
+              "new_count": 1
+            }
+          ]
+        }
+      ],
+      "apply": null,
+      "html": "<script>untrusted data</script>"
+    }
+  },
+  "output": {
+    "error": "malformed",
+    "result": null
+  },
+  "outcome": {
+    "events": 0,
+    "heads": 0,
+    "saves": 0
+  }
+}
