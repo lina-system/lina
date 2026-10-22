@@ -52,6 +52,7 @@ type delegationRuntime struct {
 	connection    lease.Lease
 	reset         time.Time
 	resetChanged  chan struct{}
+	quotaChanged  chan struct{}
 	adapters      map[string]*codex.Session
 	processLeases []lease.Lease
 	workerEvents  chan worker.Event
@@ -85,7 +86,7 @@ func (r *conversationRuntime) startDelegation(ctx context.Context) error {
 		}
 	}
 	runctx, cancel := context.WithCancel(ctx)
-	d := &delegationRuntime{root: r, config: cfg, processes: proc.NewOwner(), cancel: cancel, done: make(chan struct{}), threads: map[string]worker.Thread{}, leases: map[string]lease.Lease{}, resetChanged: make(chan struct{}, 1), adapters: map[string]*codex.Session{}, workerEvents: make(chan worker.Event, 256), ctx: runctx}
+	d := &delegationRuntime{root: r, config: cfg, processes: proc.NewOwner(), cancel: cancel, done: make(chan struct{}), threads: map[string]worker.Thread{}, leases: map[string]lease.Lease{}, resetChanged: make(chan struct{}, 1), quotaChanged: make(chan struct{}, 1), adapters: map[string]*codex.Session{}, workerEvents: make(chan worker.Event, 256), ctx: runctx}
 	d.connection, err = r.activities.Acquire(runctx, lease.Activity{Class: lease.Reported, Reason: "delegated worker connection"})
 	if err != nil {
 		cancel()
@@ -211,7 +212,7 @@ func (d *delegationRuntime) start(ctx context.Context, c work.Card) (work.Run, e
 		return work.Run{}, err
 	}
 	d.mu.Lock()
-	d.leases[c.Task.ID] = l
+	d.leases["pending:"+c.Task.ID] = l
 	d.mu.Unlock()
 	process, err := d.root.activities.Acquire(d.ctx, lease.Activity{Class: lease.Reported, Reason: "delegated Codex session"})
 	if err != nil {
@@ -230,20 +231,36 @@ func (d *delegationRuntime) start(ctx context.Context, c work.Card) (work.Run, e
 	d.wg.Add(1)
 	go func() {
 		defer d.wg.Done()
-		for e := range adapter.Events() {
+		for {
 			select {
-			case d.workerEvents <- e:
+			case e, ok := <-adapter.Events():
+				if !ok {
+					return
+				}
+				select {
+				case d.workerEvents <- e:
+				case <-d.ctx.Done():
+					return
+				}
+			case <-adapter.QuotaUpdates():
+				select {
+				case d.quotaChanged <- struct{}{}:
+				default:
+				}
 			case <-d.ctx.Done():
 				return
 			}
 		}
 	}()
+
 	thread, err := adapter.Start(ctx, l, worker.StartSpec{TaskID: c.Task.ID, AttemptID: c.Task.ID + ":1", Workdir: p.Workdir, TaskPacket: p.Packet, Required: worker.CapabilitySet{worker.SignalCompletion}})
 	if err != nil {
 		return work.Run{}, err
 	}
 	d.mu.Lock()
 	d.threads[c.Task.ID] = thread
+	delete(d.leases, "pending:"+c.Task.ID)
+	d.leases[thread.ID+":"+thread.TurnID] = l
 	d.mu.Unlock()
 	return work.Run{ID: c.Task.ID + ":1", TaskID: c.Task.ID, Generation: 1, Worker: "codex", ThreadID: thread.ID, TurnID: thread.TurnID, NodeID: "local"}, nil
 }
@@ -260,7 +277,7 @@ func (d *delegationRuntime) returnConflict(ctx context.Context, c work.Card) (wo
 		return work.Run{}, err
 	}
 	d.mu.Lock()
-	d.leases[c.Task.ID] = l
+	d.leases["pending:"+c.Task.ID] = l
 	d.mu.Unlock()
 	if err = adapter.Input(ctx, thread, worker.Input{Text: "Your pull request is unmergeable after another landing. Resolve the conflict on your existing branch, run the relevant checks, and update the same pull request. This is the single automatic conflict return; do not merge it."}); err != nil {
 		return work.Run{}, err
@@ -272,6 +289,8 @@ func (d *delegationRuntime) returnConflict(ctx context.Context, c work.Card) (wo
 	thread = snapshot.Thread
 	d.mu.Lock()
 	d.threads[c.Task.ID] = thread
+	delete(d.leases, "pending:"+c.Task.ID)
+	d.leases[thread.ID+":"+thread.TurnID] = l
 	d.mu.Unlock()
 	run := *c.Run
 	run.Generation++
@@ -352,11 +371,14 @@ func (d *delegationRuntime) events(ctx context.Context) {
 					status = "interrupted"
 				case worker.Failed:
 				}
-				d.mu.Lock()
-				old := d.leases[event.Thread.TaskID]
-				d.mu.Unlock()
 				_ = d.reactor.Completed(ctx, event.Thread.TaskID, event.Thread.ID, event.Thread.TurnID, status)
-				old.Release()
+				// Late duplicates can release only their own turn's activity.
+				key := event.Thread.ID + ":" + event.Thread.TurnID
+				d.mu.Lock()
+				activity := d.leases[key]
+				delete(d.leases, key)
+				d.mu.Unlock()
+				activity.Release()
 			case worker.QuestionEvent, worker.ApprovalEvent:
 				_ = d.root.work.WorkerInputNeeded(ctx, event.Thread.TaskID, event.Thread.AttemptID)
 				_ = d.root.publishRunning(ctx)
@@ -364,6 +386,8 @@ func (d *delegationRuntime) events(ctx context.Context) {
 			}
 		case <-d.resetChanged:
 			continue
+		case <-d.quotaChanged:
+			_ = d.reactor.Wake(ctx)
 		case <-d.adapter.QuotaUpdates():
 			_ = d.reactor.Wake(ctx)
 		case <-resetWake:
