@@ -15,6 +15,8 @@ import (
 )
 
 func TestM1BackupInstalledConversation(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS != "linux" {
 		t.Skip("Linux installation")
 	}

@@ -22,6 +22,8 @@ import (
 // #34's harness starts the real Core; only work executors and the outward
 // plugin are stubs. A past, fixed deadline makes recovery deterministic.
 func TestM2WorkWaitingDeadlines(t *testing.T) {
+	t.Parallel()
+
 	var script struct {
 		Deadline    time.Time
 		Goals       []string

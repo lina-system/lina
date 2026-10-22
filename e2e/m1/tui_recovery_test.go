@@ -41,6 +41,8 @@ func (c observedWelcome) Write(data []byte) (int, error) {
 }
 
 func TestM1TUIRecovery(t *testing.T) {
+	t.Parallel()
+
 	data, err := os.ReadFile("tui-recovery.json")
 	if err != nil {
 		t.Fatal(err)

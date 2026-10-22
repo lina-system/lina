@@ -16,6 +16,8 @@ import (
 // The only injected seam is an acknowledged boot boundary. Recovery uses the
 // installed CLI and its real client socket, not a replacement boot service.
 func TestM1StartupCrashRecovery(t *testing.T) {
+	t.Parallel()
+
 	binary := buildLina(t)
 	bundle := makeInstallBundle(t, t.TempDir(), binary, buildCommand(t, "lina-node"))
 	for step := boot.RootValidated; step <= boot.Ready; step++ {

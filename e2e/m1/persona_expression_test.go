@@ -13,6 +13,8 @@ import (
 )
 
 func TestPersonaExpressionSamePromptSameFactsDifferentShape(t *testing.T) {
+	t.Parallel()
+
 	var calls atomic.Int32
 	var firstTools, firstInstructions string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
