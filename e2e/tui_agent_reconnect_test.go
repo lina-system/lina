@@ -72,6 +72,7 @@ func TestM1TUIAgentReconnectInstalledCore(t *testing.T) {
 	// The id also appears in the draft before the choose response. The agent
 	// name is displayed only after that response has updated the selection.
 	waitScreen(t, h, terminal, scenario.Agent)
+	waitScreen(t, h, terminal, design.Text(design.English, "choose"))
 	h.keys(terminal, "\x1b")
 	if _, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
 		return !strings.Contains(screenText(s), "/agents choose <id>")
