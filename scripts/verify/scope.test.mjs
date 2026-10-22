@@ -575,6 +575,17 @@ test('a design document added directly under docs/design excludes automation', t
   assert.deepEqual(scope.changed, ['docs/design/example.md']);
 });
 
+test('a research report added directly under docs/research excludes automation', t => {
+  const r = repository(t);
+  mkdirSync(join(r.cwd, 'docs/research'), { recursive: true });
+  writeFileSync(join(r.cwd, 'docs/research/example.md'), '# Research\n');
+  const scope = r.classify(r.commit());
+  assert.equal(scope.mode, 'docs');
+  assert.equal(scope.automation, false);
+  assert.deepEqual(scope.unmapped, []);
+  assert.deepEqual(scope.changed, ['docs/research/example.md']);
+});
+
 test('modifying, renaming, and deleting a design document stay documentation-only', t => {
   const r = repository(t);
   mkdirSync(join(r.cwd, 'docs/design'), { recursive: true });

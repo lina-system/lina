@@ -9,7 +9,8 @@
     "conversation/phase_streaming.json",
     "conversation/phase_stopping.json",
     "conversation/activity_snapshot.json",
-    "conversation/phase_snapshot.json"
+    "conversation/phase_snapshot.json",
+    "conversation/tool_finished_summary.json"
   ],
   "output": [
     "conversation/phase_waiting_model.json",
@@ -20,9 +21,11 @@
     "conversation/phase_streaming.json",
     "conversation/phase_stopping.json",
     "conversation/activity_snapshot.json",
-    "conversation/phase_snapshot.json"
+    "conversation/phase_snapshot.json",
+    "conversation/tool_finished_summary.json"
   ],
   "errors": [
+    "",
     "",
     "",
     "",
@@ -34,7 +37,7 @@
     ""
   ],
   "outcome": {
-    "accepted": 9,
+    "accepted": 10,
     "malformed": 0,
     "unknown_kinds": 0
   }

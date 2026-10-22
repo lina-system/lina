@@ -4808,7 +4808,7 @@
     },
     "tool_activity": {
       "type": "object",
-      "description": "Display-only tool lifecycle event. No arguments or output. Live/replay only; not retained in Topics snapshots or conversation/model history.",
+      "description": "Display-only tool lifecycle event. Arguments and raw output excluded. Optional Core-approved display target and summary. Live/replay only; not conversation/model history.",
       "properties": {
         "stream": {
           "$ref": "#/$defs/stream_metadata"
@@ -4833,6 +4833,16 @@
         "duration_ms": {
           "type": "number",
           "minimum": 0
+        },
+        "target": {
+          "type": "string",
+          "maxLength": 160,
+          "description": "Optional Core-approved display target. Never inferred from raw arguments by clients."
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 8192,
+          "description": "Optional sanitized display summary explicitly supplied by Core, never raw tool output."
         }
       },
       "required": [
