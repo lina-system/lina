@@ -69,7 +69,7 @@ func TestM1TUIIdentityFromAgentStore(t *testing.T) {
 			want, owner = seedConversationPersona(t, h, defaultAgent)
 			core := start(true)
 			terminal := startReadyScreenTUI(t, h, []string{"TERM=xterm-256color"}, 80, 24, nil)
-			waitScreen(t, h, terminal, "Ctrl+D")
+			waitComposerReady(t, h, terminal)
 			h.keys(terminal, "who are you\r")
 			waitScreen(t, h, terminal, "Identity fixture received.")
 			select {

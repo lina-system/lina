@@ -122,6 +122,7 @@ func TestM1InterruptedPartialHistory(t *testing.T) {
 			client, conversation := conversationClient(t, h)
 			terminal := startReadyScreenTUI(t, h, []string{"TERM=xterm-256color"}, 120, 60, nil)
 			waitScreen(t, h, terminal, design.Text(design.English, "live"))
+			waitComposerReady(t, h, terminal)
 			h.keys(terminal, scenario.Input+"\r")
 			for _, partial := range scenario.Partials {
 				waitScreen(t, h, terminal, partial)
