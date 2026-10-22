@@ -124,8 +124,21 @@ func TestM1ReplyShapeLONGQA(t *testing.T) {
 	checkScreen := func(terminal *terminal) {
 		// Inspect parsed cells from the installed TUI, never raw escape bytes.
 		region := layout.Plan(layout.Size{Width: 100, Height: 34}, layout.Caps{SidePane: true}, layout.Shape{ComposerRows: 1}).Conversation
+		activity := layout.Plan(layout.Size{Width: 100, Height: 34}, layout.Caps{SidePane: true}, layout.Shape{ComposerRows: 1, ActivityRows: 1}).Activity
+		idle := func(snapshot tuiterm.Snapshot) bool {
+			// This client can observe completion before the TUI does. Activity
+			// borrows a transcript row, so paging needs the settled viewport.
+			return !strings.Contains(screenRows(snapshot)[activity.Y], design.Text(design.English, "activity.stop"))
+		}
 		conversationRows := func(snapshot tuiterm.Snapshot) []string {
 			return screenRows(snapshot)[region.Y : region.Y+region.Height]
+		}
+		pageOverlap := func(rows, transcript []string) int {
+			overlap := min(len(rows), len(transcript))
+			for overlap > 0 && strings.Join(rows[len(rows)-overlap:], "\n") != strings.Join(transcript[:overlap], "\n") {
+				overlap--
+			}
+			return overlap
 		}
 		wait := func(predicate func(tuiterm.Snapshot) bool) tuiterm.Snapshot {
 			t.Helper()
@@ -138,7 +151,7 @@ func TestM1ReplyShapeLONGQA(t *testing.T) {
 			return snapshot
 		}
 		latest := wait(func(s tuiterm.Snapshot) bool {
-			return strings.Contains(strings.Join(conversationRows(s), "\n"), scenario.End) && strings.Contains(screenText(s), "Ctrl+O")
+			return idle(s) && strings.Contains(strings.Join(conversationRows(s), "\n"), scenario.End) && strings.Contains(screenText(s), "Ctrl+O")
 		})
 		t.Logf("LONG-QA latest (100x34):\n%s", strings.Join(screenRows(latest), "\n"))
 		if !latest.AltScreen || !strings.Contains(screenRows(latest)[33], "Ctrl+D") {
@@ -155,13 +168,13 @@ func TestM1ReplyShapeLONGQA(t *testing.T) {
 			previous := strings.Join(conversationRows(page), "\n")
 			h.keys(terminal, "\x1b[5~")
 			page = wait(func(s tuiterm.Snapshot) bool {
-				return strings.Join(conversationRows(s), "\n") != previous
+				// A PTY read may contain only part of a redraw. A changed row
+				// alone is not a completed page; require the shared boundary.
+				rows := conversationRows(s)
+				return idle(s) && strings.Join(rows, "\n") != previous && pageOverlap(rows, transcript) > 0
 			})
 			rows := conversationRows(page)
-			overlap := min(len(rows), len(transcript))
-			for overlap > 0 && strings.Join(rows[len(rows)-overlap:], "\n") != strings.Join(transcript[:overlap], "\n") {
-				overlap--
-			}
+			overlap := pageOverlap(rows, transcript)
 			if overlap == 0 {
 				t.Fatal("PgUp skipped conversation rows")
 			}
