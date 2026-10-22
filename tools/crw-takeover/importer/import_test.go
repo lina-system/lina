@@ -304,3 +304,26 @@ func TestBindingsEnterNativeCoreIndex(t *testing.T) {
 		t.Fatal(hits, err)
 	}
 }
+
+func TestImportedTodoPlanningViews(t *testing.T) {
+	repo, journal := setup(t)
+	data, hash := input(t,
+		`{"source":"tracker","kind":"issue","id":"task-old","title":"Write report"}`,
+		`{"source":"tracker","kind":"milestone","id":"checkpoint-old","title":"Checkpoint","deadline":"2026-12-01","done_condition":"Evidence checked","done":true}`)
+	report, err := Import(t.Context(), repo, actor, data, hash, journal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := repo.Query(t.Context(), records.Params{Person: actor.Person, View: "board"})
+	if err != nil || len(rows) != 2 {
+		t.Fatal(rows, err)
+	}
+	for _, row := range rows {
+		if row.ID == report.Rows[0].LINAID && row.State != "open" {
+			t.Fatal(row)
+		}
+		if row.ID == report.Rows[1].LINAID && (row.State != "completed" || row.Todo == nil || row.Todo.DeadlineSource == "") {
+			t.Fatal(row)
+		}
+	}
+}

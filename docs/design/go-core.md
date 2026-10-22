@@ -873,7 +873,8 @@ edit memos and knowledge documents; Core supplies the owner, asking agent, id
 and PARA path. Model arguments cannot supply identities or paths. Existing
 records keep their folder and structured fields when their title/note changes.
 The tools return committed id/revision/Markdown receipts through the existing
-conversation protocol; no new client endpoint or to-do view is introduced.
+conversation protocol. C-54 extends these tools with to-do fields and views;
+there is no separate client endpoint.
 
 - A write is: an intent row in canon; files written and committed with person and agent in the message; index rows updated with the new head; the intent closed.
 - At start and before each write, Core compares the index head with the repository head. A mismatch rebuilds from the files, because files are canon.
@@ -882,7 +883,27 @@ conversation protocol; no new client endpoint or to-do view is introduced.
 
 **C-54 To-do engine (new).** Fields, views and rules are in [work-and-delegation.md](work-and-delegation.md#the-to-do-record). Design:
 
-- Views are SQL queries over the index, run by Core.
+- Views are SQL queries over the index, run by Core. `query_records` carries the
+  view, civil day, IANA zone and existing id cursor. `records_todo` is a disposable
+  projection of typed front matter, appended at migration 38. Migration marks
+  the index stale; startup rebuilds it from published files. Missing to-do rows
+  also trigger repair even when the saved index head matches. No canonical
+  record is moved or deleted by the migration. Legacy tracker imports with
+  verified-snapshot provenance project `active`/`done` to `open`/`completed`
+  and derive a missing deadline source from that provenance, without rewriting
+  the published files.
+- `write_record(kind: todo)` accepts sentence-only capture and complete optional
+  planning fields. It preserves them on text-only edits. Exact dates are checked
+  before publication; unresolved input returns `ambiguous_date`. Dependency
+  targets are owner-scoped and a recursive index query rejects cycles under the
+  repository writer lock. The existing revision CAS and durable tool receipts
+  apply unchanged. The tool cannot set work execution state or complete a
+  delegated task.
+- The today fixture includes overdue starts, deadlines, current recurring
+  occurrences, undated tasks, terminal states and zone boundaries. The installed
+  Core scenario `e2e/m2/todos.json` exercises saves, date and cycle refusals,
+  today/upcoming/anytime queries, rescheduling and restart after index loss.
+  Recurrence advancement, candidates and memo promotion remain #156.
 - Recurrence is Core's own parser for the subset (daily, weekly, monthly, yearly; interval; by-day; by-month-day; count; until) plus the from-completion flag. `Next(rule, from, zone)` advances only to a future occurrence. A table-driven corpus covers month ends and zone gaps.
 - Reminders and pre-warnings are timer rows (C-26).
 - Candidates are rows with a source, confidence and numbered handle. An automatic addition writes an undo handle to the undo log.
