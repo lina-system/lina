@@ -13,7 +13,10 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/thisisjun786/lina/internal/core/boot"
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/ctlfiles"
+	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/protocol"
@@ -142,6 +145,20 @@ func TestM1ReplyShapeLONGQA(t *testing.T) {
 	if source != full {
 		t.Fatal("ledger did not retain the complete source")
 	}
+	var agentEvents int
+	if err = db.QueryRow(`SELECT count(*) FROM conv_event WHERE speaker_kind='agent'`).Scan(&agentEvents); err != nil {
+		t.Fatal(err)
+	}
+	if agentEvents != 1 {
+		t.Errorf("long reply recorded %d agent events; want exactly one", agentEvents)
+	}
+	var cardBody string
+	if err = db.QueryRow(`SELECT body FROM conv_event WHERE scaffold_kind='result'`).Scan(&cardBody); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(cardBody, scenario.End) {
+		t.Error("full-reply card duplicates the source body instead of referencing it")
+	}
 	var cards int
 	if err = db.QueryRow(`SELECT count(*) FROM conv_event c JOIN ev_rel r ON r.event_id=c.id WHERE c.scaffold_kind='result' AND r.kind='view_of'`).Scan(&cards); err != nil {
 		t.Fatal(err)
@@ -150,6 +167,30 @@ func TestM1ReplyShapeLONGQA(t *testing.T) {
 	if cards != 1 {
 		t.Fatalf("durable linked cards = %d, want 1", cards)
 	}
+	// Recall reads the installed ledger, including its search indexes.
+	func() {
+		ctl, err := ctlfiles.Open(h.root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ctl.Close()
+		if err := ctl.Acquire(); err != nil {
+			t.Fatal(err)
+		}
+		epoch, err := ctl.Epoch()
+		if err != nil {
+			t.Fatal(err)
+		}
+		canonDB, err := canon.Open(h.ctx, canon.Config{Path: filepath.Join(h.root, "canon/canon.sqlite"), Epoch: epoch, Controls: ctl, Migrations: boot.ApplicationMigrations()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer canonDB.Close(h.ctx)
+		hits, err := ledger.New(canonDB, nil).Search(h.ctx, ledger.SearchQuery{AgentID: c.Welcome.Agents[0].AgentID, PersonID: c.Welcome.PersonID, Text: scenario.End})
+		if err != nil || len(hits) != 1 || hits[0].Body != full {
+			t.Fatalf("installed recall lost or duplicated full reply: %d hits, %v", len(hits), err)
+		}
+	}()
 	core = start(true)
 	c, conversation = conversationClient(t, h)
 	again := h.startScreenTUI("TERM=xterm-256color")

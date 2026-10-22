@@ -43,7 +43,11 @@ func (q runQuestions) Question(ctx context.Context, person, id string) (protocol
 	if !found {
 		return protocol.Question{}, runs.ErrState
 	}
-	card := &protocol.DecisionCard{ID: id, Revision: "1", Agent: r.decisions.AgentName(record.Origin.Agent), Summary: runSummary(runs.Notice{EffectQuestion: true}), Targets: []protocol.DecisionTarget{{Name: "Goal", Value: record.Brief.Goal}}}
+	language, err := r.turnLanguage(ctx, record.Origin.Turn)
+	if err != nil {
+		return protocol.Question{}, err
+	}
+	card := &protocol.DecisionCard{ID: id, Revision: "1", Agent: r.decisions.AgentName(record.Origin.Agent), Summary: runSummary(runs.Notice{EffectQuestion: true}, language), Targets: []protocol.DecisionTarget{{Name: "Goal", Value: record.Brief.Goal}}}
 	if record.EffectsQuestion.Answer != nil {
 		outcome := protocol.DecisionOutcomeResolved
 		card.Outcome = &outcome

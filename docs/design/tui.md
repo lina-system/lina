@@ -870,6 +870,10 @@ rendering checks; they do not replace the physical terminal and IME spike.
 - On LINA OS the complete TUI follows the active Omarchy theme file ([surfaces.md](surfaces.md#platform-adaptation)); theme-file discovery remains part of platform preferences work.
 - Every code in the closed lists has an entry in both the Korean and English catalogs, checked by id and never by wording.
 
+Core's TUI turn instructions describe the surface's rendered Markdown: paragraphs, headings, bold, italic, inline code, links, ordered and unordered lists, block quotes and fenced code. They request simple formatting, short lists, prose or code for wide tables, and no HTML or terminal escapes. The `persona-tui-v1` instruction format records this prefix for exact replay; older `persona-v1` turns retain their original prefix.
+
+The core topic's sandbox availability item produces one local setup notice when file and shell tools are unavailable. Snapshots, repeated publications and reconnects do not duplicate the notice; a subsequent available status clears it from the visible shell. It uses the same Korean/English catalog as other shell labels and never exposes private launcher diagnostics.
+
 The connection shell resolves labels and next actions through
 `internal/design` catalog ids. `LC_ALL`, then `LC_MESSAGES`, then `LANG` selects
 Korean for `ko` locales; other or missing locales use English. Unsupported ids
