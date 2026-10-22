@@ -847,6 +847,13 @@ request fields. These checks establish the boundary behavior used by T-06; they
 do not establish rendering, live Core behavior or the end-to-end scenarios that
 depend on the headless harness.
 
+The companion application runner executes the shared agent lifecycle cases
+against installed Core's socket through `e2e/m1/conformance-agents.json`, checking
+refusals and unchanged canon for missing/deleted agents and channel targets.
+Native result-body cases run against Core's result store and ledger; client
+result-type negotiation and full wire bodies remain tracked in
+[#419](https://github.com/thisisjun786/lina/issues/419).
+
 | Layer | Runs | Asserts |
 | --- | --- | --- |
 | Reducer | Fixtures replayed through `Reduce` | Unique block ids; duplicates change nothing; a resumed state equals a run that never disconnected |
