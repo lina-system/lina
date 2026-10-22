@@ -348,8 +348,11 @@ retained text in the pager; Ctrl+P opens the granted progress topic. Missing
 capabilities use the single local explanation of T-07 and leave no placeholder
 rows. Granted empty lists are hidden without an unavailable notice. Rows appear
 when Core sends items and disappear on a removal update or when its snapshot clears the list.
-List updates do not focus the pager or
-change the draft. Decision answering remains the typed approval/question flow
+An open running pager applies accepted `running` topic updates and replacement
+snapshots immediately, including completed and removed rows, without polling or
+requiring the person to close and reopen it. Refreshing its text preserves the
+pager's reading offset (clamped to the remaining content) and active search.
+List updates do not focus the pager or change the draft. Decision answering remains the typed approval/question flow
 of T-04; the composer never turns a list row into an approval.
 
 The waiting summary shows the number of unresolved decision cards and the first
