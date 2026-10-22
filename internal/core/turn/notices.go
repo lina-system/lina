@@ -12,6 +12,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/internal/design"
 )
 
 // ControlSchema is a separate numbered migration after Schema and the ledger
@@ -43,11 +44,11 @@ func claimContext(ctx context.Context, tx *canon.Tx, id, conversation, eventID s
 }
 
 func interruptNotice(ctx context.Context, tx *canon.Tx, id string, cause Interrupt) error {
-	return terminalNotice(ctx, tx, id, &cause.Issuer, "interruption", cause.Text())
+	return terminalNotice(ctx, tx, id, &cause.Issuer, "interruption", "notice."+string(cause.Issuer))
 }
 
 func failureNotice(ctx context.Context, tx *canon.Tx, id string) error {
-	return terminalNotice(ctx, tx, id, nil, "failure", "The reply could not be completed. Send a new message to continue.")
+	return terminalNotice(ctx, tx, id, nil, "failure", "notice.failed")
 }
 
 func terminalNotice(ctx context.Context, tx *canon.Tx, id string, issuer *Issuer, kind, text string) error {
@@ -65,6 +66,14 @@ func terminalNotice(ctx context.Context, tx *canon.Tx, id string, issuer *Issuer
 	if err != nil && !errors.Is(err, ledger.ErrBytesUnavailable) {
 		return err
 	}
+	if _, ok := design.Lookup(design.English, text); !ok {
+		text = "notice.interrupted"
+	}
+	language := design.Language(source.Surface.Language)
+	if language == "" {
+		language = design.ConversationLanguage(source.Body.Text(), design.English)
+	}
+	text = design.Text(language, text)
 	digest := sha256.Sum256([]byte(id))
 	noticeID := "turn-" + kind + "-" + hex.EncodeToString(digest[:])
 	now := time.Now().UTC()

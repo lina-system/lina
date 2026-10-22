@@ -506,6 +506,7 @@ Every worker adapter offers the work engine the same operations:
 ### Codex adapter
 
 - The adapter is a stdio JSON-RPC client written over Go types generated from the JSON Schema that `codex app-server generate-json-schema --experimental` produces. The types are generated for each verified Codex version and committed with the list of verified versions, as generated upstream code under the vendoring rules of [dependencies.md](../policy/dependencies.md): never edited by hand, and regenerated on sync. With an unverified version, the adapter uses the types of the newest verified version.
+- The schema baseline is recorded separately from runtime verification: extracting a schema and compiling its Go types does not add a worker version to the verified-version list. The committed generator reproduces the types offline from the unmodified schema. Optional settings remain omitted, request ids preserve string/integer identity, and unknown tagged variants retain their wire JSON for the adapter to classify.
 - The app-server is experimental and is not a production-supported interface. The list of verified versions and a round trip on each listed version absorb that risk. A new experimental field is used only after LINA records a judgment for it.
 - Closed sets of variants are switched on exhaustively, and the `exhaustive` analyzer in `foundation` fails a switch that misses a variant.
 - Wire values come from the generated types, never from documentation examples.
