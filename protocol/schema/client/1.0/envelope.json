@@ -2335,10 +2335,48 @@
         },
         "removed": {
           "type": "boolean"
+        },
+        "state": {
+          "$ref": "#/$defs/running_state"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "reason": {
+          "$ref": "#/$defs/running_reason"
         }
       },
       "required": [],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "anyOf": [
+              {
+                "required": [
+                  "state"
+                ]
+              },
+              {
+                "required": [
+                  "summary"
+                ]
+              },
+              {
+                "required": [
+                  "reason"
+                ]
+              }
+            ]
+          },
+          "then": {
+            "required": [
+              "state",
+              "summary"
+            ]
+          }
+        }
+      ]
     },
     "stop": {
       "type": "object",
@@ -5180,6 +5218,32 @@
         "details"
       ],
       "additionalProperties": false
+    },
+    "running_state": {
+      "type": "string",
+      "enum": [
+        "in_progress",
+        "waiting",
+        "needs_input",
+        "ready_for_review",
+        "failed",
+        "stopped",
+        "done",
+        "unknown"
+      ]
+    },
+    "running_reason": {
+      "type": "string",
+      "enum": [
+        "dependency",
+        "area",
+        "quota",
+        "host_capacity",
+        "ci_pending",
+        "run_limit",
+        "person",
+        "budget"
+      ]
     }
   }
 }

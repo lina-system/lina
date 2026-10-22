@@ -1,0 +1,37 @@
+{
+  "protocol": {
+    "name": "client",
+    "version": "1.0"
+  },
+  "kind": "running_update",
+  "message_id": "running-localized",
+  "attempt_id": "running-localized-attempt",
+  "reply_to": null,
+  "sender": {
+    "party": "core",
+    "id": "main-example"
+  },
+  "epoch": "42",
+  "sent_at": "2026-01-01T00:00:01Z",
+  "idempotency_key": null,
+  "effect_state": "none",
+  "receipt_ref": null,
+  "source_refs": [],
+  "error": null,
+  "payload": {
+    "run_id": "run-example",
+    "state": "waiting",
+    "summary": "Synthetic task",
+    "reason": "quota",
+    "text": "waiting: Synthetic task (quota)",
+    "stream": {
+      "topic": "running",
+      "key": "run-example",
+      "cursor": {
+        "epoch": "42",
+        "seq": 2
+      },
+      "revision": 2
+    }
+  }
+}
