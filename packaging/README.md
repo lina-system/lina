@@ -44,7 +44,7 @@ The build manifest may also carry:
   report the Claude component unavailable.
 
 `--tool name=/absolute/path` can be repeated for `codex`, `claude`, `antigravity`,
-`devin`, `gh`, `grok`, `node` and `bwrap`. Other tools are found on `PATH`.
+`cursor-agent`, `gh`, `grok`, `node` and `bwrap`. Other tools are found on `PATH`.
 Missing or failed probes are recorded; discovered versions outside the verified
 list remain usable and are printed as unverified together with that list.
 
