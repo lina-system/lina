@@ -63,7 +63,7 @@ This contract does not cover, and links instead to:
 
 **Binding epoch.** The generation of LINA Core's binding to a worker thread. A new binding epoch starts when control returns after a handover and when a remote thread is bound again.
 
-**Protected ref.** A ref in the parent clone that a worker must never move: `dev`, `main` and the branches of other tasks.
+**Protected ref.** A ref in the parent clone that a worker must never create, move or delete: `dev`, `main`, `master`, remote-tracking and LINA base refs, and every branch other than its own assigned task branch. Branch ownership belongs to the allocated worktree and does not change when its worker checks out another branch or detaches HEAD.
 
 **Task packet.** The first input a worker receives: the work definition (see Development method), the LINA assignment id, and how to return the completion receipt. It also carries references (id and revision) to the materials and memory projections the task may read.
 
@@ -138,11 +138,23 @@ are refused. Non-Git tasks get a private directory. Missing Git disables Git
 allocation without blocking conversation or non-Git work.
 
 Ordinary Git reference transactions in the parent clone reject writes to
-`main`, `master`, `dev`, remote-tracking refs and `refs/lina/*`. Core alone uses
-its explicit administrative command path to maintain the base refs. This
+`main`, `master`, `dev`, remote-tracking refs and `refs/lina/*`. Before returning
+a Git allocation, Core records its exact assigned branch beside the linked
+worktree's Git HEAD. The shared guard allows branch creation, updates and
+deletion only for that worktree's assigned branch, even while detached or
+before the branch exists. An unbound worktree or the parent clone has no ordinary
+branch-write permission. A transaction mixing permitted and protected updates
+fails as a whole. Two allocations cannot reserve the same branch, and a retry
+cannot replace an existing binding. Retrying an older allocation without a
+binding installs it from the task definition without resetting worker work.
+Core alone uses its explicit administrative command path to maintain the base refs. This
 repository guard is not a worker plugin or OS confinement: workers use their
 own runtime setup, and a process running as the user can deliberately bypass a
 Git hook. Core never resets or cleans another task's checkout.
+The installed-Core [headless work-area scenario](../../e2e/m2/work-area.json)
+allocates two real linked worktrees, rejects cross-task branch updates and
+deletion, commits on each assigned branch, and retains the original task's
+exact bundle through restart, work-area loss and backup.
 
 `retain_work_result` handles an already completed no-PR receipt belonging to the
 requesting agent and conversation. It copies only that receipt's manifest files,
