@@ -174,6 +174,16 @@ func mergeEvents(a, b TopicEvent) (TopicEvent, bool) {
 }
 
 func (h *Topics) Publish(name string, event TopicEvent) error {
+	return h.publishEvent(name, event, false)
+}
+
+// publishQuestion is for reconstructed question cards only. Ordinary protocol
+// events still use Publish and retain every non-associative event.
+func (h *Topics) publishQuestion(event TopicEvent) error {
+	return h.publishEvent("waiting", event, true)
+}
+
+func (h *Topics) publishEvent(name string, event TopicEvent, skipUnchanged bool) error {
 	if !validTopic(name) {
 		return ErrInvalidTopic
 	}
@@ -186,7 +196,18 @@ func (h *Topics) Publish(name string, event TopicEvent) error {
 	if h.closed {
 		return ErrTopicClosed
 	}
-	return h.publish(name, h.topic(name), event)
+	t := h.topic(name)
+	// Questions are form projections. Re-emitting an unchanged retained card
+	// resets client edits. Compare under the publication lock, using the bounded
+	// snapshot so an evicted card can still be restored by its source.
+	if skipUnchanged && (t.pending == nil || t.pending.Key != event.Key) {
+		for _, previous := range t.items {
+			if previous.Key == event.Key && previous.Kind == event.Kind && previous.AgentID == event.AgentID && bytes.Equal(previous.Data, event.Data) {
+				return nil
+			}
+		}
+	}
+	return h.publish(name, t, event)
 }
 
 func validateEvent(event TopicEvent) error {

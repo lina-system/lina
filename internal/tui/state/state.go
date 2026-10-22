@@ -24,6 +24,7 @@ type Block struct {
 	ID, Topic, EchoKey, Text string
 	Speaker                  protocol.ConversationSpeaker
 	Body, Title              string
+	InlineReply              bool
 	RunID                    string
 	TurnKnown, TurnActive    bool
 	TurnStarted, TurnAt      time.Time
@@ -43,6 +44,27 @@ type Draft struct {
 	Text        string
 	Attachments []string
 }
+
+type InputHistoryEntry struct{ ID, Text string }
+
+// InputHistory derives recall from the current authoritative conversation.
+// Pending echoes and form fields are not accepted person inputs. Keeping no
+// second text store also lets snapshots and revocations remove history entries.
+func (s State) InputHistory(conversation string) []InputHistoryEntry {
+	var entries []InputHistoryEntry
+	if conversation == "" {
+		return entries
+	}
+	for i := len(s.Blocks) - 1; i >= 0; i-- {
+		b := s.Blocks[i]
+		if b.Topic == "conversation:"+conversation && b.Speaker == protocol.ConversationSpeakerPerson &&
+			b.Done && !b.Local && !b.Removed && b.Text != "" {
+			entries = append(entries, InputHistoryEntry{ID: b.ID, Text: b.Text})
+		}
+	}
+	return entries
+}
+
 type Position struct {
 	ID  string
 	Row int

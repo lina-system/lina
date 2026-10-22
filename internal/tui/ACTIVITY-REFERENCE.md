@@ -16,7 +16,8 @@ This is a behavioural port; no reference implementation is copied.
   snapshot restoration or protocol ordering. LINA's reducer and installed-Core
   tests establish those separately. Tool phases cannot be inferred from text.
 
-LINA uses one row above the composer, a 100 ms frame interval while visible,
+LINA uses one row above the composer, wrapping details when necessary under the
+[narrow terminal rules](NARROW-REFERENCE.md), a 100 ms frame interval while visible,
 elapsed seconds, and no idle timer. Reduced motion and monochrome output keep
 the first frame. Completion durations are client display state, never history.
 

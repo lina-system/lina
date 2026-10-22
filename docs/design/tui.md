@@ -4,7 +4,7 @@ This document fixes how the LINA terminal UI is built in Go on Bubble Tea where 
 
 ## North star
 
-Short replies, waiting for me first, progress as lines, detail in a pager. The TUI follows [product-families.md](product-families.md#north-star) and [surfaces.md](surfaces.md#default-view): the person sees the design at a glance with how far each piece of work has come, and the list of what they must do or decide. The TUI never prints a long form into the scrollback. A card line stays there, and a key opens the rest.
+Short replies, waiting for me first, progress as lines, detail in a pager. The TUI follows [product-families.md](product-families.md#north-star) and [surfaces.md](surfaces.md#default-view): the person sees the design at a glance with how far each piece of work has come, and the list of what they must do or decide. Complete assistant replies stay inline in the scrollable conversation, even when they exceed the reply budget. A one-line `Open in pager · Ctrl+O` affordance follows a long reply. Structured results keep their summary cards and open their detail on request.
 
 Numbers marked (P) are starting values to measure. A number without (P) comes from a contract or a protocol.
 
@@ -105,6 +105,11 @@ text or a claim that reads prove Core mutation readiness. Resync and its fresh
 snapshot restore the subscribed view in Core's history order. A durable stopped
 outcome stays with its interrupted turn before later inputs and replies, including
 after reconnect and terminal resize.
+
+Initial conversation discovery also stays Resyncing until History supplies the
+destination. The connected conversation state is a usable input boundary, not
+just a successful socket handshake. Input typed during discovery remains a
+draft; discovery never sends it automatically.
 
 Quit (Ctrl+C with an empty draft or Ctrl+D), input EOF and termination signals close only this
 client and exit 0, including during handshake or retry. The raw terminal reader
@@ -265,9 +270,10 @@ Regions:
 
 - Header: the focused agent's name and mark, and the connection word.
 - Conversation.
-- Activity: one row immediately above the composer while a send is pending or a
-  turn is active, with a glyph, localized thinking/replying/stopping word, elapsed
-  duration and Esc hint. It consumes no rows when idle.
+- Activity: one or two measured rows above the composer's optional rule while a
+  send is pending or a turn is active, with a glyph, localized
+  thinking/replying/stopping word, elapsed duration and Esc hint. It consumes no
+  rows when idle.
 - Composer, with its attachment strip and a full-width hairline immediately above the input.
 - Card row above the composer, on Home (T-12).
 - Status line below the composer: connection mark and word first, agent, the running count ("2 running, 1 waiting for you"), restart pending, Core messages, then key hints.
@@ -331,12 +337,26 @@ line under the reply, using the inactive event's server timestamp. This is clien
 display metadata: it survives same-session redraw and resync, is cleared with
 revoked or unfocused content, and is never stored or restored from history.
 
-`e2e/tui_activity_test.go` uses an installed Core and a held fixture provider in
+`e2e/m1/tui_activity_test.go` uses an installed Core and a held fixture provider in
 a 100x34 PTY. It checks initial activity within one second, advancing elapsed
 time, replying after the first delta, stopping before interrupt delivery,
 completion and zero idle bytes. The recording harness separately checks idle
 output and the unit clock checks timer removal, hidden rows and static glyphs.
 
+Below 80 columns, if the complete activity line does not fit, its elapsed and
+interrupt details move together to a second row. Below 50 columns, the hint
+shortens to `Esc`; the glyph, localized word and complete elapsed value remain.
+The display measures those rows before planning the transcript and composer.
+The footer uses T-10's localized key-and-label priorities. It admits only whole
+hint segments, preserving the connection and highest-priority hint at supported
+widths; a hint that does not fit and the hints after it are omitted together.
+
+`e2e/m1/tui_resize_test.go` holds a real installed-Core turn behind a fixture
+provider gate, resizes the PTY through 79, 50 and 40 columns in English and
+Korean, and checks complete activity and footer segments plus four transcript
+rows with a growing composer. Releasing the gate produces a real result without
+repeating the input. Unit tests exercise wrapped activity, long elapsed values
+and the planner's two-row budget under pressure.
 
 **Row budget** is a pure function in `tui/layout`.
 
@@ -355,8 +375,12 @@ func Plan(size Size, caps Caps, st Shape) Layout // regions disjoint, sum fits, 
   when folded. Empty or ungranted lists reserve no rows, even under pressure.
   The attachment strip
   uses one row. After the stated shedding, composer growth yields as necessary
-  to preserve the transcript floor. Counts and unsupported flags remain typed
-  output even when their region folds.
+  to preserve the transcript floor. The active row reserves one or two measured
+  rows above the composer rule and input. At the ten-row minimum, if a two-row
+  activity still cannot fit after composer and attachment shedding, running and
+  waiting share one summary row containing both counts. Their full lists remain
+  available through the existing keys. Counts and unsupported flags remain
+  typed output even when their region folds.
 - Property tests enumerate widths 0–240 and heights 0–100 with empty and crowded
   shapes and granted and missing capabilities, and exercise threshold and
   integer-limit dimensions. The planner itself imposes no maximum size.
@@ -394,7 +418,13 @@ clears the retained draft and completes another exchange.
 The first visible composer row starts with the accent `glyph.action` (`›`, or
 `>` in ASCII) and one space. Continuations align under the draft, including when
 the textarea scrolls. An empty draft shows the muted `composer.placeholder`
-catalog entry in Korean or English; it is display text and is never submitted.
+catalog entry in Korean or English, formatted with the same sanitized agent
+display name as the conversation header and reply speaker. The name is refreshed
+from client focus on redraw, including after selection, rename and reconnect;
+it is display text and is never submitted.
+When the keyboard enhancement reply reports key disambiguation, the placeholder
+uses `composer.shift_enter` to advertise Shift+Enter. Until then it
+advertises Alt+Enter. This terminal-local change preserves the draft and cursor.
 The prompt reserves its display width in both wrapping and hardware cursor
 placement, so Korean IME composition remains at the draft insertion point.
 `e2e/m1/tui-composer.json` checks a 100x34 installed-Core PTY with a fixture
@@ -481,20 +511,37 @@ epoch and revocation changes discard the rows; an accepted snapshot discards
 that topic's transient rows rather than inventing history from snapshot data.
 An open tool pager clears when its underlying rows are invalidated. Rows never
 enter model history, stored conversation text or exported conversation text.
-The installed-Core PTY test `e2e/tui_tool_rows_test.go` executes a successful and
+The installed-Core PTY test `e2e/m1/tui_tool_rows_test.go` executes a successful and
 failed fixture tool and checks both glyph modes plus model/export exclusion.
 Its socket gate holds delivery of the real finish event to make the running
 frame observable without relying on tool speed; it fabricates no tool events.
 
 **The pager** shows Details, the activity log and long results: scroll, search, quit. Copy is the person's act in their own terminal: the pager offers a sanitized-text overlay to select with the terminal's own copy. A write by OSC 52 waits for the open point on the clipboard rule below.
 
-Text result cards retain the summary in the conversation and the sanitized
-`text` fallback separately for the pager. Ctrl+O opens the selected card (the
-latest by default); on wide terminals it occupies the side pane and otherwise
+Structured text result cards retain the summary in the conversation and the
+sanitized `text` fallback separately for the pager. Core-generated reply-shape
+previews instead display that complete masked text once as assistant prose,
+followed by `Open in pager · Ctrl+O`. No summary is repeated above it. The latest
+position shows the end of the reply, and Page Up reaches its beginning without
+opening the pager. Live updates and restored history use the same projection.
+Ctrl+O opens the selected card (the latest by default); on wide terminals it occupies the side pane and otherwise
 the full screen. The pager supports arrows, Page Up/Down, Home/End, `/` search,
 `n` for the next match, and Esc or `q` to return. Its text can be selected with
 the terminal's own copy. No host clipboard read or write is installed by the
 composer or pager.
+
+Ctrl+T opens the entire retained visible conversation in the same pager, in
+message order, with the person's word and the agent's name as speaker labels.
+The sanitized plain text includes complete inline replies once; structured
+results retain their visible summary and title. It excludes the unsent draft,
+separate waiting/running/progress lists and internal turn-state records.
+The open transcript reads the current display state, including replacements
+and revocations. It uses the pager's existing scrolling, `/` search, `n` and
+Esc controls; closing it preserves the draft and does not interrupt the turn.
+It neither requests older history outside the retained window nor writes the
+clipboard. `e2e/m1/tui-transcript.json` proves three exchanges through installed
+Core and a real PTY, six ordered messages with speaker words, search back to
+the first message from a later page, and draft preservation after Esc.
 
 For a completed background run, Ctrl+R selects a running row with the arrows;
 Enter reads its result, and `d` dismisses a landed row. The landing's agent-report
@@ -575,7 +622,11 @@ The conversation draft survives opening and closing the account block.
 An automatic account-list refusal at connection startup retains focus and the
 unsent draft. Its typed error stays in account display state; it does not open
 the account block over the conversation. A refusal in a block the person opened
-keeps that block visible.
+keeps that block visible. On an account-only connection, the conversation status
+shows that typed refusal instead of continuing to show account discovery in
+progress. A refusal does not establish a known empty account list. A successful
+list response establishes account status and clears the refusal.
+Reconnection resets discovery for the new connection.
 
 The client reports an ephemeral IPv4 loopback port for `/auth/callback`, or
 `cannot_listen` over SSH or when binding fails. It opens only an HTTPS
@@ -600,6 +651,11 @@ installed Core composition with the synthetic issuer through sign-in, list and
 sign-out. Captured client traffic, terminal output and state outside the secret
 store contain no provider tokens. Model routing and live provider acceptance
 remain their own contracts.
+`TestM1TUIAccountDiscoveryRefusalInstalledCore` holds the installed Core
+composition at recovery, observes its real startup account-list refusal, and
+checks the built TUI in a headless PTY. The refusal leaves the composer usable;
+an explicit account-list retry after recovery replaces it with the successful
+empty-list status.
 
 ## Agent surfaces and settings as text (T-14)
 
@@ -625,6 +681,10 @@ Settings are commands and labeled blocks, all requests to Core:
 Agent choice is client focus and survives reconnect (T-05). A missing selection
 requires an explicit new choice before conversation input can be sent; listing,
 creating or deleting another agent does not redirect the retained draft.
+The empty composer names the focused agent, consistently with the header and
+reply speaker; LINA is not a fixed recipient label. The installed Core/TUI
+scenario `e2e/m2/tui-composer-identity.json` covers creation and selection through
+the TUI, a synthetic reply, and the empty composer after Core reconnect.
 
 `/help` opens the local command reference, including `/channels` and `/talk`.
 These commands are consumed locally even when Core has not granted their
@@ -704,17 +764,49 @@ type Stream interface {
 
 ## Input and commands (T-10)
 
-Keys are a proposal and data in `tui/ui`. No contract fixes them.
+Keys are data in `internal/tui/ui/keys.go`: action catalog id, key spellings,
+footer priority and optional compact label. `/help` and `?` on a completely empty
+draft (no text or attachments) open the same local shortcut sheet in the existing
+pager overlay. The sheet lists implemented conversation keys, pager keys and
+local command references; it remains available during reconnect. Esc closes it
+without interrupting a turn. `?` in a nonempty draft, including whitespace, and
+pasted `?` remain ordinary input. Toggle repeats and releases never open it.
+
+The conversation footer keeps the connection mark and localized word first.
+It adds whole key-and-label hints in ascending priority, dropping the lowest
+priorities first when their display-cell width does not fit. The highest priority
+is `? Shortcuts`, followed by Esc, Enter, Ctrl+D, Alt+Enter, PgUp/PgDn, Ctrl+O and
+F6, with Ctrl+T for the retained transcript following those hints. Notices and cause details may be shortened to leave space for the connection
+and the first hint. At every supported width (40 columns and above), neither the
+connection nor the first hint is dropped. Below the supported minimum, physical
+cell limits still apply. Pager overlays and side panes retain the connection with
+whole pager hints (Esc, search, next match), rather than replacing it with controls.
+Both English and Korean labels come from the catalog.
+
+`e2e/m1/tui_shortcuts_test.go` exercises the installed Core and a Responses fixture
+through PTYs at 100, 60 and 40 columns, in English/Unicode and Korean/ASCII. It
+checks whole priority prefixes, both sheet entry paths, the connection inside
+the sheet, Esc returning to the conversation, and a drafted `why?` sent through
+Core to the provider and returned as a completed reply. Reference observations
+and limits are recorded in [the shortcut reference](tui-shortcuts-reference.md).
 
 | Key | Action |
 | --- | --- |
 | Enter | Send the draft |
-| Alt+Enter, Ctrl+J | Newline (Ctrl+J because Alt may not reach the application) |
+| Shift+Enter (when distinguished by the terminal), Alt+Enter, Ctrl+J | Newline (Ctrl+J because Alt may not reach the application) |
+| Up on the first composer line | Recall an older sent input; otherwise move the cursor up |
+| Down on the last composer line | Recall a newer input, then restore the unsent draft; otherwise move the cursor down |
 | Esc | Close the top overlay; with none, interrupt the turn |
 | Ctrl+C | Clear the draft; with an empty draft, quit the TUI only, never Core |
 | Tab, Shift+Tab | Move focus |
-| Ctrl+K | Command palette |
-| Keys for Waiting for me, progress, running list and Open on a card | Open those views |
+| ?, /help | Open the shortcut sheet (`?` requires an empty draft) |
+| Ctrl+D | Quit this TUI |
+| Ctrl+Z | Undo draft editing |
+| PgUp/PgDn | Scroll the conversation |
+| Ctrl+W, Ctrl+P, Ctrl+R | Waiting for me, progress, running list |
+| Ctrl+O | Open the selected result |
+| F6 | Open the first unresolved decision |
+| Ctrl+T | Open the retained conversation transcript in the pager |
 
 Key classes are Toggle, Edit and Approve. Every key event passes one `Admit` gate: releases are ignored, repeats are dropped for Toggle and Approve, and Edit keys may repeat. Without key events from the terminal every key counts as a press, and approval cards add a dead time after any change of card (P).
 
@@ -731,7 +823,7 @@ cancellation resources before the caller restores terminal mode.
 **Mid-turn input** is steering by default and applies at the next round boundary ([runtime.md](runtime.md#conversation-loop)). `/queue` makes the input a follow-up. `/stop` cancels.
 
 **The composer** is the Bubbles `textarea`; `textinput` is not used. The
-conversation increment sends Enter as one input request, Ctrl+J or Alt+Enter
+conversation increment sends Enter as one input request, Shift+Enter, Ctrl+J or Alt+Enter
 as a newline, and Esc or `/stop` as an interrupt of the active turn. Ordinary
 input uses `mode: steer`; Core decides whether it belongs to a running turn.
 `/queue <text>` explicitly uses `mode: queue`. The request carries a fresh
@@ -745,6 +837,36 @@ or input request. Discovery does not send it automatically; a fresh Enter sends
 the retained draft to the discovered conversation. Management commands remain
 available during discovery.
 Resizing preserves the draft and its cursor without submitting it.
+
+Input recall is session display state in memory, derived newest first from the
+current conversation's accepted person inputs. Pending local echoes, other
+conversations, agent output and masked fields (including channel tokens and
+sign-in callbacks) never enter it. Up/Down use visual line boundaries, including
+soft wrapping. Browsing preserves the unsent draft's text, attachments and cursor;
+Down past the newest entry restores them. Editing a recalled input starts a new
+draft, and sending or clearing resets navigation. Recall issues no request.
+Snapshot replacement and focus changes invalidate removed recall identities and
+restore the unsent draft. A new TUI derives history from Core's current snapshot,
+but restores no unsent draft from disk (T-01).
+
+`e2e/m1/tui-input-history.json` sends two inputs through an installed Core and
+fixture provider in a 100x34 PTY, checks recall and draft restoration on parsed
+composer cells, excludes a masked channel-token form, and checks multiline
+cursor movement and history in a fresh TUI. The behaviour reference and its
+limits are recorded in
+[`INPUT-HISTORY-REFERENCE.md`](../../internal/tui/ui/INPUT-HISTORY-REFERENCE.md).
+
+Explicitly decoded Shift+Enter is an Edit key even before a capability reply;
+its releases are ignored and repeats insert newlines through the same key gate.
+Terminals that report Shift+Enter as plain Enter cannot distinguish these actions;
+their placeholder keeps the Alt+Enter hint. Key disambiguation support and event
+type support are tracked separately, so a disambiguation-only reply is enough to
+show the Shift+Enter hint. Alt+Enter and Ctrl+J remain available in either mode.
+`e2e/m1/tui-newline.json` sends kitty/CSI-u bytes through a real PTY to the installed
+TUI and Core, checks separate composer rows without submission, then uses plain
+Enter to admit one complete multiline input and obtain the fixture provider's
+reply. It checks durable input history, provider call count, localized enhanced
+hints, the legacy hint, and terminal restoration.
 
 `e2e/m1/conversation-history-order.json` exercises queue and ordinary steering
 input during a held provider stream through an installed Core and a 100x30 TUI.
@@ -1006,7 +1128,7 @@ with the fixture Responses provider, types in the real TUI, checks reply cells,
 and reopens the conversation. It exercises the existing Core turn, lane and
 ledger composition; a direct provider call is not its acceptance proof. The
 real-model headless client journey is covered by
-`TestRealModelHeadlessConversation` in `e2e/real_model_test.go`, including streamed
+`TestRealModelHeadlessConversation` in `e2e/m1/real_model_test.go`, including streamed
 output and canon readback after Core restart. It requires explicit real-model
 opt-in and credentials; the physical terminal spike remains T-08.
 `e2e/m1/conversation-admission.json` verifies large Unicode inputs and replies

@@ -36,6 +36,7 @@
         "running",
         "running_update",
         "stop",
+        "stop_result",
         "follow_up",
         "background_notice",
         "progress_get",
@@ -1453,6 +1454,22 @@
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "stop_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/stop_result"
+          }
+        }
+      }
     }
   ],
   "$defs": {
@@ -1923,6 +1940,10 @@
     "approval_request": {
       "type": "object",
       "properties": {
+        "conversation_id": {
+          "type": "string",
+          "minLength": 1
+        },
         "choices": {
           "type": "array",
           "items": {
@@ -2252,9 +2273,12 @@
       "additionalProperties": false
     },
     "stop": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "run_id": {
+          "type": "string"
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
@@ -2446,16 +2470,127 @@
       "required": []
     },
     "work_request": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "github_read",
+            "github_watch",
+            "github_bind",
+            "github_accept",
+            "github_merge",
+            "github_observe_merge",
+            "github_merge_status"
+          ]
+        },
+        "repository": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "pr_number": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$",
+          "maxLength": 10
+        },
+        "binding_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "agent_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "clone": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "base": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "head": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "protected_refs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "type": "string",
+            "maxLength": 256
+          }
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
     "work_result": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "repository": {
+          "type": "string"
+        },
+        "pr_number": {
+          "type": "string"
+        },
+        "head": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "ci": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "success",
+            "failure"
+          ]
+        },
+        "cause": {
+          "type": "string"
+        },
+        "retry_at": {
+          "type": "string"
+        },
+        "done": {
+          "type": "boolean"
+        },
+        "revision": {
+          "type": "string"
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/github_check"
+          }
+        },
+        "reviews": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/github_review"
+          }
+        },
+        "binding_id": {
+          "type": "string"
+        },
+        "base": {
+          "type": "string"
+        },
+        "merge_commit": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
@@ -4548,6 +4683,102 @@
             }
           }
         }
+      ]
+    },
+    "github_check": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "conclusion": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "state",
+        "conclusion"
+      ],
+      "additionalProperties": false
+    },
+    "github_comment": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "body",
+        "path",
+        "url"
+      ],
+      "additionalProperties": false
+    },
+    "github_review": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "resolved": {
+          "type": "boolean"
+        },
+        "outdated": {
+          "type": "boolean"
+        },
+        "comments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/github_comment"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "resolved",
+        "outdated",
+        "comments"
+      ],
+      "additionalProperties": false
+    },
+    "stop_result": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/stop_outcome"
+        }
+      },
+      "required": [
+        "run_id",
+        "outcome"
+      ],
+      "additionalProperties": false
+    },
+    "stop_outcome": {
+      "type": "string",
+      "enum": [
+        "cancelled",
+        "complete",
+        "partial",
+        "failed"
       ]
     }
   }

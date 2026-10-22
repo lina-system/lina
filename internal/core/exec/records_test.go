@@ -110,7 +110,24 @@ func TestRecordToolsScopeAndDurableReplay(t *testing.T) {
 	if err != nil || refused.State != tools.Failed || strings.Contains(string(refused.Body), "First") {
 		t.Fatalf("foreign read: %+v %v", refused, err)
 	}
+	name = "query_records"
+	target = "records:query"
+	query := json.RawMessage(`{"search":"First","kind":"memo","after":"","limit":10}`)
+	listed := call("query", query)
+	if listed.State != tools.Applied || !strings.Contains(string(listed.Body), receipt.ID) {
+		t.Fatalf("query tool did not return saved record: %+v", listed)
+	}
+	foreignList, err := foreign.Dispatch(t.Context(), tools.Call{Key: "foreign-query", Name: name, Auth: auth, Args: query})
+	if err != nil || foreignList.State != tools.Applied || strings.Contains(string(foreignList.Body), receipt.ID) {
+		t.Fatalf("query leaked foreign record: %+v %v", foreignList, err)
+	}
+	for _, field := range []string{"person", "person_id", "path"} {
+		if _, err := specs[2].Schema(json.RawMessage(`{"` + field + `":"injected"}`)); err == nil {
+			t.Fatal("query accepted authority", field)
+		}
+	}
 	name = "write_record"
+	target = "record:" + receipt.ID
 	auth.Revision = receipt.Revision
 	request.ID = receipt.ID
 	request.Revision = receipt.Revision

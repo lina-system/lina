@@ -28,6 +28,12 @@ type QuestionSource interface {
 	AnswerQuestion(context.Context, string, protocol.QuestionAnswer) (protocol.DecisionOutcome, error)
 }
 
+// AttributedQuestionSource retains the authenticated transport message identity
+// with decisions whose owning ledger needs replay-safe goal revisions.
+type AttributedQuestionSource interface {
+	AnswerQuestionMessage(context.Context, string, protocol.QuestionAnswer, string) (protocol.DecisionOutcome, error)
+}
+
 type Decisions struct {
 	presenceMu sync.Mutex
 	present    map[string]bool
@@ -88,6 +94,9 @@ func (d *Decisions) ApprovalCards(ctx context.Context) ([]protocol.ApprovalReque
 		c.Agent = strings.Join(names, ", ")
 		c.Summary = strings.Join(summaries, "; ")
 		request := protocol.ApprovalRequest{Card: &c, Choices: []protocol.ApprovalChoice{}}
+		if conversation := g.Members[0].Conversation; conversation != "" {
+			request.ConversationID = &conversation
+		}
 		for _, choice := range choices {
 			switch choice {
 			case authority.Once:
@@ -160,6 +169,10 @@ func (d *Decisions) approvalAnswer(ctx context.Context, session Session, envelop
 }
 
 func (d *Decisions) PublishQuestion(ctx context.Context, id string) error {
+	// Serialize source reads with publication so a concurrent refresh cannot
+	// overwrite a newly resolved card with an older, still-open projection.
+	d.publishMu.Lock()
+	defer d.publishMu.Unlock()
 	if d.Questions == nil || d.Topics == nil {
 		return &OperationError{Code: protocol.ErrorUnavailable}
 	}
@@ -181,7 +194,7 @@ func (d *Decisions) PublishQuestion(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	return d.Topics.Publish("waiting", TopicEvent{Kind: protocol.KindQuestion, Key: id, Data: data})
+	return d.Topics.publishQuestion(TopicEvent{Kind: protocol.KindQuestion, Key: id, Data: data})
 }
 func (d *Decisions) questionAnswer(ctx context.Context, session Session, envelope protocol.Envelope) (Result, error) {
 	if !d.eligible(session) {
@@ -207,7 +220,11 @@ func (d *Decisions) questionAnswer(ctx context.Context, session Session, envelop
 	case !validQuestionAnswer(question.Form, answer):
 		return Result{}, &OperationError{Code: protocol.ErrorMalformed}
 	default:
-		outcome, err = d.Questions.AnswerQuestion(ctx, session.PersonID, answer)
+		if source, ok := d.Questions.(AttributedQuestionSource); ok {
+			outcome, err = source.AnswerQuestionMessage(ctx, session.PersonID, answer, envelope.MessageID)
+		} else {
+			outcome, err = d.Questions.AnswerQuestion(ctx, session.PersonID, answer)
+		}
 		if err != nil {
 			return Result{}, err
 		}
