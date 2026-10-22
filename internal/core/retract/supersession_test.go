@@ -178,3 +178,85 @@ func TestSupersessionRecoveryAndOverlappingTargets(t *testing.T) {
 		})
 	}
 }
+
+func TestSupersessionExpiryPreservesRecoveredPredecessorDeadline(t *testing.T) {
+	for _, retrash := range []bool{false, true} {
+		t.Run(fmt.Sprintf("retrashed-%t", retrash), func(t *testing.T) {
+			db, original, flow, root, _ := memoryFixture(t)
+			first := seedMemory(t, db, flow, "first", "first", "synthetic first preference")
+			seedMemory(t, db, flow, "second", "second", "synthetic second evidence")
+			in := memoryWrite("second", "synthetic second preference")
+			in.Item.Supersedes = first.ID
+			second, err := flow.Remember(t.Context(), in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := original.Close(); err != nil {
+				t.Fatal(err)
+			}
+			now := time.Unix(100, 0)
+			start := now
+			s, err := retract.Open(t.Context(), retract.Config{Canon: db, Root: root, Now: func() time.Time { return now }})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			ancestor := retract.Request{Person: "person-1", Targets: []retract.Ref{{Kind: retract.Memory, ID: first.ID}}}
+			replacement := retract.Request{Person: "person-1", Targets: []retract.Ref{{Kind: retract.Memory, ID: second.ID}}}
+			if err := s.Forget(t.Context(), replacement); err != nil {
+				t.Fatal(err)
+			}
+			now = start.Add(24 * time.Hour)
+			if err := s.Restore(t.Context(), ancestor); err != nil {
+				t.Fatal(err)
+			}
+			if retrash {
+				now = start.Add(48 * time.Hour)
+				if err := s.Forget(t.Context(), ancestor); err != nil {
+					t.Fatal(err)
+				}
+			}
+			now = start.Add(retract.TrashRetention)
+			if err := s.Expire(t.Context(), "person-1"); err != nil {
+				t.Fatal(err)
+			}
+			assertState := func(id, want string) {
+				t.Helper()
+				err := db.Read(t.Context(), func(tx *canon.Tx) error {
+					var state string
+					if err := tx.QueryRowContext(t.Context(), "SELECT state FROM retract_target WHERE id=?", id).Scan(&state); err != nil {
+						return err
+					}
+					if state != want {
+						t.Errorf("target %s state=%s, want %s", id, state, want)
+					}
+					var count int
+					if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM memory_item WHERE id=?", id).Scan(&count); err != nil {
+						return err
+					}
+					if (count == 0) != (want == "erased") {
+						t.Errorf("target %s retained rows=%d, state should be %s", id, count, want)
+					}
+					return nil
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			assertState(second.ID, "erased")
+			want := "active"
+			if retrash {
+				want = "trashed"
+			}
+			assertState(first.ID, want)
+			now = now.Add(48 * time.Hour)
+			if err := s.Expire(t.Context(), "person-1"); err != nil {
+				t.Fatal(err)
+			}
+			if retrash {
+				want = "erased"
+			}
+			assertState(first.ID, want)
+		})
+	}
+}

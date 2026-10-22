@@ -233,7 +233,10 @@ func (s *Store) changeMode(ctx context.Context, r Request, a action, expiry bool
 				}
 				e.Targets = append(e.Targets, target)
 			}
-			if s.projection.expand != nil {
+			// Automatic expiry already selected every independently due target.
+			// Expanding again could erase a recovered predecessor or shorten its
+			// renewed trash deadline. Explicit removals still cover the full chain.
+			if !expiry && s.projection.expand != nil {
 				var err error
 				e.Targets, err = s.projection.expand(ctx, tx, e)
 				if err != nil {
