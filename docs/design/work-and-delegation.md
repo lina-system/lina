@@ -1242,7 +1242,9 @@ The running list is the person's view of the flow: a short list of what is in pr
 
 Conversation-started worker sessions without a durable task card contribute
 their own rows from the live worker registry and the owning adapter's observed
-state. Rows are scoped to the requesting person and name the owner agent before
+state. Core gathers adapter observations outside canon transactions; list
+transactions read those copied observations and the canonical owner names.
+Rows are scoped to the requesting person and name the owner agent before
 the worker. An idle session leaves the list without asserting that the task is
 verified; a new active turn makes it visible again. Unknown observations stay
 unknown. These rows do not alter the task or background-run state mappings.

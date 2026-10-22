@@ -37,6 +37,7 @@ var runningCapability = protocol.Capability{Name: "running", Version: "1.0"}
 type backgroundRuntime struct {
 	service   *runs.Service
 	list      *runs.RunningList
+	sessions  *workerListSource
 	notices   *lane.Notices
 	wake      chan struct{}
 	stop      context.CancelFunc
@@ -81,9 +82,10 @@ func (r *conversationRuntime) startRuns(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	b.sessions = &workerListSource{workers: r.workers, person: r.person}
 	b.list = runs.NewRunningList(r.db, map[string]runs.ListSource{
 		"run": runs.RunListSource{}, "work": runs.WorkListSource{Person: r.person},
-		"session": workerListSource{workers: r.workers},
+		"session": b.sessions,
 	})
 	b.notices = lane.NewNotices(r.db, nil)
 	b.notices.OnDelivered = func(d lane.Delivery) {
@@ -150,6 +152,11 @@ func (r *conversationRuntime) startRuns(ctx context.Context) error {
 					return clientsrv.Result{}, err
 				}
 			case "dismiss":
+				if ref.Source == "session" {
+					if err := b.sessions.refresh(ctx); err != nil {
+						return clientsrv.Result{}, err
+					}
+				}
 				if err := b.list.Dismiss(ctx, s.PersonID, ref); err != nil {
 					return clientsrv.Result{}, err
 				}
@@ -451,6 +458,11 @@ func (r *conversationRuntime) publishRunning(ctx context.Context) error {
 	b := r.background
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.sessions != nil {
+		if err := b.sessions.refresh(ctx); err != nil {
+			return err
+		}
+	}
 	snapshot, err := b.list.Build(ctx, r.person)
 	if err != nil {
 		return err

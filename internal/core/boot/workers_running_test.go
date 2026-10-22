@@ -9,9 +9,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/runs"
 	"github.com/thisisjun786/lina/internal/core/secrets"
@@ -21,12 +23,55 @@ import (
 
 type runningWorkerProbe struct {
 	worker.Adapter
-	snapshot worker.ThreadSnapshot
-	err      error
+	snapshot       worker.ThreadSnapshot
+	err            error
+	beforeSnapshot func()
 }
 
 func (p *runningWorkerProbe) Snapshot(context.Context, worker.Thread) (worker.ThreadSnapshot, error) {
+	if p.beforeSnapshot != nil {
+		p.beforeSnapshot()
+	}
 	return p.snapshot, p.err
+}
+
+type runningTransactionProbe struct {
+	runs.ListCanon
+	inside atomic.Bool
+}
+
+func (p *runningTransactionProbe) Read(ctx context.Context, f func(*canon.Tx) error) error {
+	p.inside.Store(true)
+	defer p.inside.Store(false)
+	return p.ListCanon.Read(ctx, f)
+}
+
+func (p *runningTransactionProbe) Write(ctx context.Context, f func(*canon.Tx) error) error {
+	p.inside.Store(true)
+	defer p.inside.Store(false)
+	return p.ListCanon.Write(ctx, f)
+}
+
+func TestConversationWorkerRunningObservesOutsideCanon(t *testing.T) {
+	r, probe := runningWorkerFixture(t)
+	db := &runningTransactionProbe{ListCanon: r.db}
+	r.background.list = runs.NewRunningList(db, map[string]runs.ListSource{"session": r.background.sessions})
+	var observed atomic.Int32
+	probe.beforeSnapshot = func() {
+		observed.Add(1)
+		if db.inside.Load() {
+			t.Error("worker RPC executed inside a canonical transaction")
+		}
+	}
+	if err := r.publishRunning(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.background.list.Open(t.Context(), r.person, runs.ListRef{Source: "session", ID: "fixture"}); err != nil {
+		t.Fatal(err)
+	}
+	if observed.Load() == 0 {
+		t.Fatal("running publication never observed the worker")
+	}
 }
 
 func runningWorkerFixture(t *testing.T) (*conversationRuntime, *runningWorkerProbe) {
@@ -44,7 +89,11 @@ func runningWorkerFixture(t *testing.T) (*conversationRuntime, *runningWorkerPro
 		"foreign": {origin: &conversationRuntime{person: "someone-else"}},
 	}}
 	t.Cleanup(func() { r.workers = nil })
-	r.background.list = runs.NewRunningList(r.db, map[string]runs.ListSource{"session": workerListSource{workers: r.workers}})
+	r.background.sessions = &workerListSource{workers: r.workers, person: r.person}
+	r.background.list = runs.NewRunningList(r.db, map[string]runs.ListSource{"session": r.background.sessions})
+	if err := r.background.sessions.refresh(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	return r, probe
 }
 
@@ -69,6 +118,9 @@ func TestConversationWorkerRunningStates(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			probe.snapshot.State, probe.snapshot.Pending, probe.err = tc.state, tc.pending, tc.err
+			if err := r.background.sessions.refresh(t.Context()); err != nil {
+				t.Fatal(err)
+			}
 			snapshot, err := r.background.list.Build(t.Context(), r.person)
 			if err != nil {
 				t.Fatal(err)
@@ -147,6 +199,9 @@ func TestConversationWorkerRunningPublicationAndActions(t *testing.T) {
 		t.Fatalf("idle worker retained on reconnect: %+v", retained)
 	}
 	probe.snapshot.State = worker.Dead
+	if err = r.background.sessions.refresh(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	if err = r.background.list.Dismiss(t.Context(), r.person, ref); err != nil {
 		t.Fatal(err)
 	}
@@ -155,6 +210,9 @@ func TestConversationWorkerRunningPublicationAndActions(t *testing.T) {
 		t.Fatalf("dismissed failed worker retained: %+v %v", snapshot, err)
 	}
 	r.workers.closed = true
+	if err = r.background.sessions.refresh(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	snapshot, err = r.background.list.Build(t.Context(), r.person)
 	if err != nil || len(snapshot.Entries) != 0 {
 		t.Fatalf("closed runtime retained: %+v %v", snapshot, err)
