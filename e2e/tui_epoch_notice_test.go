@@ -21,6 +21,7 @@ import (
 	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/design"
 	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
+	"github.com/thisisjun786/lina/kit/protocol"
 )
 
 func TestM1TUIEpochNoticeInstalledCore(t *testing.T) {
@@ -97,13 +98,26 @@ func TestM1TUIEpochNoticeInstalledCore(t *testing.T) {
 		return client.Welcome.MainID, epoch
 	}
 	mainID, previous := welcome()
+	observer, conversation := conversationClient(t, h)
+	observer.Close()
 	environment := []string{"TERM=xterm-256color", "COLORTERM=truecolor", "LC_ALL=C"}
+	socket := h.socket
+	tap := newAccountTap(t, h, socket)
+	h.socket = tap.socket
 	terminal := h.startTerminalSize(environment, false, true, scenario.Width, scenario.Height)
+	h.socket = socket
 	live := design.Text(design.English, "live")
 	notice := design.Text(design.English, "epoch_changed")
 	initial := waitScreen(t, h, terminal, live)
 	if strings.Contains(screenText(initial), notice) {
 		t.Fatal("initial connection announced a restart")
+	}
+	// Welcome's live transport precedes the initial conversation discovery.
+	for {
+		frame := tap.next(t, h)
+		if snapshot, ok := frame.Payload.(protocol.Snapshot); ok && snapshot.Topic == "conversation:"+conversation {
+			break
+		}
 	}
 	h.keys(terminal, scenario.Input+"\r")
 	waitScreen(t, h, terminal, scenario.Reply+"-1")

@@ -175,13 +175,7 @@ func newAccountTap(t *testing.T, h *harness, target string, notifications ...boo
 	if err != nil {
 		t.Fatal(err)
 	}
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		local, err := listener.Accept()
-		if err != nil {
-			return
-		}
+	serve := func(local net.Conn) {
 		defer local.Close()
 		remote, err := net.Dial("unix", target)
 		if err != nil {
@@ -233,6 +227,19 @@ func newAccountTap(t *testing.T, h *harness, target string, notifications ...boo
 		go pump(remote, local, false)
 		go pump(local, remote, true)
 		wg.Wait()
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		// A single TUI can reconnect after Core restarts. Join both pumps for
+		// its old connection before serving the next one through the same tap.
+		for {
+			local, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			serve(local)
+		}
 	}()
 	var once sync.Once
 	tap.close = func() { once.Do(func() { listener.Close(); <-done }) }
