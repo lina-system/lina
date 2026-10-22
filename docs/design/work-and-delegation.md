@@ -126,6 +126,33 @@ The work area is `work/` under the state root ([filesystem.md](filesystem.md)). 
 - A worker writes only inside its own task directory and the git directories it needs to commit. It never writes a protected ref in a parent clone.
 - Task and run directories are removed only under the retention rules of this contract.
 
+The task ledger stores the requesting agent and conversation, the done condition,
+authorized artifact roots and the application requirement. Its events and their
+card and active-run indexes commit atomically in canon. Only one execution may
+be active for a task. Terminal worker observation releases that reservation; a
+receipt alone does not. Restart rebuilds the indexes from the append-only ledger
+and marks unobserved executions unknown without releasing their reservations.
+
+A completion receipt retains the pinned CRW base fields and adds LINA schema
+version 1 and artifact provenance. Core recomputes the manifest revision and
+receipt identity, binds the claim to the current generation, thread and turn,
+and requires provenance for every manifest entry. The artifact id, task, node,
+normalized path, content hash and nonzero observation time must be present; the
+path must be within the task's artifact roots and its hash must match the manifest.
+Provenance records an observation claim; receipt admission never proves the
+artifact bytes or a manager verdict. Missing or mismatched provenance rejects
+the entire receipt without changing the ledger. Identical current-generation
+retries are idempotent; superseded runs cannot submit into a later generation.
+
+Core constructs this store at startup, including without a model account. The
+existing running-list service includes delegated cards, and its open operation
+returns a bounded summary with stage sources. Task row ids use the `task:` prefix
+to distinguish them from background runs and include the execution generation,
+so a stale row cannot dismiss a later delivery; a dismissed landed card remains in
+the ledger. Worker dispatch and its per-thread receipt transport remain owned by
+the worker adapter; client management requests cannot write worker receipts or
+Core verdicts.
+
 ## Background runs
 
 A background run is the execution of one of LINA's own sub-agents. It keeps the conversation free: research, analysis, multi-file reading, drafting and read-only checks that are too long or too heavy for a turn run in the background, inside LINA Core, on the person's own model accounts, and the result returns to the conversation as a short notice. A sub-agent is a bounded model loop on the loop core of the LINA kit with a different tool set. It is not a second conversation engine and not a coding harness: it writes no code into a repository, opens no pull request and judges no delivery. Coding work goes to a worker (see Workers). Moving work to the background changes where it runs and nothing else: a run holds the same done condition and the same checks that the work would have had in the turn ([runtime.md](runtime.md#turn-budget)).

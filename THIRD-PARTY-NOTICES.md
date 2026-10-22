@@ -6,6 +6,29 @@ This file collects the notices of every included component: the `NOTICE` file of
 
 Add an entry when third-party code or other material is included in LINA. Record its source, version or commit, license, original notices, and any modifications. Include the required license texts and notices with the distribution.
 
+## Terminal UI behaviour references
+
+The composer separation in LINA's terminal UI independently adapts behaviour
+from these permissive projects. No upstream implementation code is copied or
+bundled by this change:
+
+- [Codex CLI](https://github.com/openai/codex), OpenAI and contributors,
+  Apache-2.0, reference revision `86e17e98`: prompt glyph, dim placeholder,
+  growing composer and footer hints below it.
+- [opencode](https://github.com/sst/opencode), opencode contributors, MIT,
+  reference revision `c93aaae3`: input edge, placeholder and separate hint row.
+- [Gemini CLI](https://github.com/google-gemini/gemini-cli), Google and
+  contributors, Apache-2.0, reference revision `09d81bf1`: prompt, placeholder,
+  input boundary and footer.
+- [aider](https://github.com/Aider-AI/aider), Paul Gauthier and contributors,
+  Apache-2.0, reference revision `5dc9490b`: full-width rule before the prompt.
+- [Hermes Agent](https://github.com/NousResearch/hermes-agent), Nous Research
+  and contributors, MIT, reference revision `e06df9c2`: distinct input band,
+  prompt, placeholder and footer.
+
+LINA uses its own semantic tokens, localized catalog, row-budget planner and
+hardware cursor placement. It uses a hairline instead of a surrounding box.
+
 ## Memory design references
 
 The memory and compaction behavior in [Conversation and memory](docs/design/conversation-and-memory.md) is derived from the designs of Honcho and LCM-X. This attribution covers behavioral reference and an independent Go implementation under LINA's contracts. No upstream implementation code, prompts, runtime dependency or user data is included by this design change.
@@ -1347,7 +1370,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-## codex-relay-workflow
+## CRW contract schemas and fixtures
 
 Source: https://github.com/thisisjun786/codex-relay-workflow.
 Commit: `7e65fcb82d426d228e18958d728fe63a0991ddd0`. License: MIT.

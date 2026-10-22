@@ -54,7 +54,7 @@ func TestM1ReplayExportInstalledCore(t *testing.T) {
 	core.start(t)
 	h.connect(core).Close()
 	waitCoreReady(t, h)
-	terminal := h.startScreenTUI("TERM=xterm-256color")
+	terminal, _ := h.startConversationTUI(80, 24, "TERM=xterm-256color")
 	waitScreen(t, h, terminal, design.Text(design.English, "live"))
 	h.keys(terminal, scenario.Input+"\r")
 	waitScreen(t, h, terminal, scenario.Reply)
