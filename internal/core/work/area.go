@@ -145,7 +145,14 @@ while read -r old new ref; do
   if [ "$ref" != "$assigned" ]; then
    echo 'LINA protected ref: branch belongs to another task' >&2
    exit 1
-  fi;;
+  fi
+  # Git's files backend can rename a branch without checking the destination
+  # through this hook. Reject the source deletion to preserve the assigned ref.
+  case "$new" in
+   *[!0]*) ;;
+   *) echo 'LINA protected ref: only Core may delete an assigned branch' >&2
+      exit 1;;
+  esac;;
  esac
 done
 `
