@@ -93,9 +93,27 @@ func TestM1ConversationHistoryOrder(t *testing.T) {
 					break
 				}
 			}
+			inputReceipt := func(text string) {
+				t.Helper()
+				for {
+					frame := tap.next(t, h)
+					if frame.Error != nil {
+						t.Fatalf("TUI input receipt refused: %+v; stderr=%s", frame.Error, &core.stderr)
+					}
+					if item, ok := frame.Payload.(protocol.ItemDone); ok && item.Text != nil && *item.Text == text {
+						if frame.EffectState != protocol.EffectApplied || item.EchoKey == nil || *item.EchoKey == "" {
+							t.Fatal("input receipt missing applied effect or echo identity")
+						}
+						return
+					}
+				}
+			}
 			h.keys(terminal, scenario.FirstInput)
 			waitScreen(t, h, terminal, scenario.FirstInput)
 			h.keys(terminal, "\r")
+			// A provider stream can start before the input RPC response arrives.
+			// Complete the first send before submitting the next draft.
+			inputReceipt(scenario.FirstInput)
 			select {
 			case <-started:
 			case <-h.ctx.Done():
@@ -104,7 +122,12 @@ func TestM1ConversationHistoryOrder(t *testing.T) {
 			if tc.stream {
 				waitScreen(t, h, terminal, scenario.Partial)
 			}
-			h.keys(terminal, tc.command+scenario.SecondInput+"\r")
+			h.keys(terminal, tc.command+scenario.SecondInput)
+			waitScreen(t, h, terminal, tc.command+scenario.SecondInput)
+			h.keys(terminal, "\r")
+			// Surface a refusal directly instead of waiting for an event that a
+			// refused input cannot publish. Keep the independent durable check.
+			inputReceipt(scenario.SecondInput)
 			// Wait for durable admission, not just the TUI's local echo.
 			for {
 				frame, err := observer.Receive(h.ctx)

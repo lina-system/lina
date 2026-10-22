@@ -112,6 +112,8 @@ type Config struct {
 	SignInTransport http.RoundTripper
 	// ChannelTransport is an in-process platform test seam; production uses Telegram.
 	ChannelTransport http.RoundTripper
+	// WebTransport is an in-process test seam; production uses the fixed Firecrawl origin.
+	WebTransport http.RoundTripper
 	// ClientManifest selects the build manifest containing supportedCombinations.
 	// An explicit path must exist and contain a valid table, including an empty
 	// table when every client combination is intentionally unsupported.
@@ -329,6 +331,7 @@ func Run(ctx context.Context, cfg Config) (result error) {
 			return openErr
 		}
 		runtime.replaySocket = cfg.Socket
+		runtime.webTransport = cfg.WebTransport
 		supported := cfg.Client.Supported
 		cfg.Client = runtime.identity
 		cfg.Client.Supported = supported

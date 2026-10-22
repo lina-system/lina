@@ -25,7 +25,7 @@ func TestShortcutSheetEmptyDraftAndHelp(t *testing.T) {
 			if !m.conversation.pager.open || m.content.Draft.Text != "" {
 				t.Fatalf("shortcut sheet not opened: open=%v draft=%q", m.conversation.pager.open, m.content.Draft.Text)
 			}
-			for _, key := range []string{"Esc", "Alt+Enter", "Shift+Enter", "PgUp/PgDn", "Ctrl+O", "Ctrl+T", "F6", "/channels", "/talk"} {
+			for _, key := range []string{"Esc", "Alt+Enter", "Shift+Enter", "PgUp/PgDn", "Ctrl+O", "Ctrl+T", "F6", "/channels", "/talk", "/web"} {
 				if !strings.Contains(m.conversation.pager.text, key) {
 					t.Errorf("shortcut sheet missing %s", key)
 				}
