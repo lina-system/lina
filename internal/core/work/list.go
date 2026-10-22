@@ -9,12 +9,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
-	"github.com/thisisjun786/lina/internal/core/runs"
 )
-
-// ListSource serves the installation's owner. Its person is supplied by Core,
-// not by a task packet, receipt or client payload.
-type ListSource struct{ Person string }
 
 func generation(c Card) int {
 	if c.Run == nil {
@@ -35,10 +30,8 @@ func splitListID(id string) (string, int, error) {
 	return id[:i], n, nil
 }
 
-func (s ListSource) Candidates(ctx context.Context, tx *canon.Tx, person string) ([]string, error) {
-	if person == "" || person != s.Person {
-		return nil, nil
-	}
+// ListReferences reads generation-bound row identities in the caller's snapshot.
+func ListReferences(ctx context.Context, tx *canon.Tx) ([]string, error) {
 	rows, err := tx.QueryContext(ctx, "SELECT record FROM work_cards ORDER BY task_id")
 	if err != nil {
 		return nil, err
@@ -58,27 +51,25 @@ func (s ListSource) Candidates(ctx context.Context, tx *canon.Tx, person string)
 	}
 	return ids, rows.Err()
 }
-func (s ListSource) Read(ctx context.Context, tx *canon.Tx, id string) (runs.ListItem, error) {
+
+// ReadReference refuses a row from a superseded execution generation.
+func ReadReference(ctx context.Context, tx *canon.Tx, id string) (Card, error) {
 	task, expected, err := splitListID(id)
 	if err != nil {
-		return runs.ListItem{}, err
+		return Card{}, err
 	}
 	var data []byte
 	var c Card
 	if err := tx.QueryRowContext(ctx, "SELECT record FROM work_cards WHERE task_id=?", task).Scan(&data); err != nil {
-		return runs.ListItem{}, err
+		return Card{}, err
 	}
 	if err := json.Unmarshal(data, &c); err != nil {
-		return runs.ListItem{}, err
+		return Card{}, err
 	}
 	if generation(c) != expected {
-		return runs.ListItem{}, sql.ErrNoRows
+		return Card{}, sql.ErrNoRows
 	}
-	state := c.State
-	if state == "input_needed" {
-		state = "needs_input"
-	}
-	return runs.ListItem{Person: s.Person, Agent: c.Task.AgentID, Summary: c.Task.Title, State: state}, nil
+	return c, nil
 }
 
 // SummaryPage gives the existing running-result surface bounded, source-labeled

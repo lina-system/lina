@@ -21,7 +21,6 @@ import (
 	"github.com/thisisjun786/lina/internal/core/runs"
 	"github.com/thisisjun786/lina/internal/core/skills"
 	"github.com/thisisjun786/lina/internal/core/turn"
-	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/loop"
@@ -80,7 +79,7 @@ func (r *conversationRuntime) startRuns(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	b.list = runs.NewRunningList(r.db, map[string]runs.ListSource{"run": runs.RunListSource{}, "work": work.ListSource{Person: r.person}})
+	b.list = runs.NewRunningList(r.db, map[string]runs.ListSource{"run": runs.RunListSource{}, "work": runs.WorkListSource{Person: r.person}})
 	b.notices = lane.NewNotices(r.db, nil)
 	b.notices.OnDelivered = func(d lane.Delivery) {
 		// Delivery has committed and the lane is at its boundary. Publication is
