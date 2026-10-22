@@ -170,7 +170,12 @@ func (r *conversationRuntime) publishSkillMaintenance(ctx context.Context) error
 	if len(agents) == 0 {
 		return nil
 	}
-	view, err := r.router.view(ctx, clientsrv.Session{PersonID: r.person}, agents[0].ID)
+	session := clientsrv.Session{PersonID: r.person}
+	history, err := r.router.History(ctx, session, protocol.HistoryGet{})
+	if err != nil {
+		return err
+	}
+	view, err := r.router.view(ctx, session, *history.AgentID)
 	if err != nil {
 		return err
 	}
@@ -187,12 +192,18 @@ func (r *conversationRuntime) publishSkillMaintenance(ctx context.Context) error
 		if err != nil {
 			return err
 		}
+		// A committed receipt keeps its original conversation even if the
+		// person selects another agent before delivery is retried.
+		destination, err := r.router.view(ctx, session, event.AgentID)
+		if err != nil {
+			return err
+		}
 		// Admission may have committed before live publication failed. Retry the
 		// stable topic key even when the ledger row already exists; snapshots
 		// retain one item and delivered is set only after publication succeeds.
 
 		text, speaker := event.Body.Text(), protocol.ConversationSpeakerSystem
-		if err = view.publish(ctx, protocol.KindItemDone, id, protocol.ItemDone{Text: &text, Speaker: &speaker}); err != nil {
+		if err = destination.publish(ctx, protocol.KindItemDone, id, protocol.ItemDone{Text: &text, Speaker: &speaker}); err != nil {
 			return err
 		}
 		m.delivered[n.Sequence] = true
