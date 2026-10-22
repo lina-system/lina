@@ -22,8 +22,8 @@ require (
 	github.com/go-git/go-git/v5 v5.19.3
 	github.com/muesli/cancelreader v0.2.2
 	github.com/ncruces/go-sqlite3 v0.30.5
-	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/rivo/uniseg v0.4.7
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/tetratelabs/wazero v1.11.0
 	github.com/thisisjun786/lina/kit v0.0.0
 	github.com/yuin/goldmark v1.7.17
