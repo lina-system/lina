@@ -3,12 +3,28 @@
 package state
 
 import (
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/tui/sanitize"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
+
+// A snapshot omits turn boundaries. Only an unchanged active state proves
+// continuity; a later revision could already belong to a queued turn.
+func (s *State) snapshotActivity(b Block, previous []Block) {
+	same := b.Revision != 0 && slices.ContainsFunc(previous, func(old Block) bool {
+		return old.ID == b.ID && old.Topic == b.Topic && old.Revision == b.Revision &&
+			old.Kind == protocol.KindTurnState && old.TurnKnown && old.TurnActive
+	})
+	if !same {
+		s.turn(Turn{})
+	}
+	// A snapshot can restore activity, but cannot create a completion notice.
+	b.TurnAt = time.Time{}
+	s.activityBlock(b)
+}
 
 // Activity and Worked are ephemeral display state, never conversation items.
 type Activity struct {
@@ -22,6 +38,7 @@ type Activity struct {
 func (s *State) turn(m Turn) {
 	if m.Active {
 		if !s.TurnActive {
+			s.ToolTurn++
 			s.Activity = Activity{Started: m.Started}
 			s.Stopping = false
 		}

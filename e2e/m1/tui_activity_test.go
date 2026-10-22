@@ -125,6 +125,11 @@ func TestM1TUIActivity(t *testing.T) {
 // holding interrupt delivery makes the stopping frame observable without sleeps.
 func startReadyScreenTUI(t *testing.T, h *harness, environment []string, width, height int, releaseInterrupt <-chan struct{}) *terminal {
 	t.Helper()
+	waitCoreReady(t, h)
+	if releaseInterrupt == nil {
+		terminal, _ := h.startConversationTUI(width, height, environment...)
+		return terminal
+	}
 	socket := h.socket
 	proxy := socket + ".activity"
 	listener, err := net.Listen("unix", proxy)

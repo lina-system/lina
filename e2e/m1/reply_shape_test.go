@@ -132,6 +132,7 @@ func testReplyShapeLONGQA(t *testing.T, language design.Language) {
 	checkScreen := func(terminal *terminal) {
 		// Inspect parsed cells from the installed TUI, never raw escape bytes.
 		plan := layout.Plan(layout.Size{Width: 100, Height: 34}, layout.Caps{SidePane: true}, layout.Shape{ComposerRows: 1})
+		activePlan := layout.Plan(layout.Size{Width: 100, Height: 34}, layout.Caps{SidePane: true}, layout.Shape{ComposerRows: 1, ActivityRows: 1})
 		region := plan.Conversation
 		affordance := design.Text(language, "reply.open_pager")
 		conversationRows := func(snapshot tuiterm.Snapshot) []string {
@@ -148,8 +149,8 @@ func testReplyShapeLONGQA(t *testing.T, language design.Language) {
 			return snapshot
 		}
 		latest := wait(func(s tuiterm.Snapshot) bool {
-			return s.AltScreen && !s.CursorHidden && s.CursorY == plan.Composer.Y &&
-				strings.Contains(strings.Join(conversationRows(s), "\n"), scenario.End) && strings.Contains(screenText(s), affordance)
+			return longReplyReady(s, plan, scenario.End, affordance) &&
+				!strings.Contains(screenRows(s)[activePlan.Activity.Y], design.Text(language, "activity.stop"))
 		})
 		t.Logf("LONG-QA latest (100x34):\n%s", strings.Join(screenRows(latest), "\n"))
 		if !latest.AltScreen || latest.CursorHidden || latest.CursorY != plan.Composer.Y {
@@ -158,6 +159,13 @@ func testReplyShapeLONGQA(t *testing.T, language design.Language) {
 		// Stitch overlapping PgUp views into the complete transcript, so a
 		// repeated summary or body cannot hide outside the current viewport.
 		transcript := conversationRows(latest)
+		overlapWithTranscript := func(rows []string) int {
+			overlap := min(len(rows), len(transcript))
+			for overlap > 0 && strings.Join(rows[len(rows)-overlap:], "\n") != strings.Join(transcript[:overlap], "\n") {
+				overlap--
+			}
+			return overlap
+		}
 		page := latest
 		for pages := 0; !strings.Contains(strings.Join(conversationRows(page), "\n"), scenario.Input); pages++ {
 			if pages >= scenario.Lines {
@@ -166,17 +174,15 @@ func testReplyShapeLONGQA(t *testing.T, language design.Language) {
 			previous := strings.Join(conversationRows(page), "\n")
 			h.keys(terminal, "\x1b[5~")
 			page = wait(func(s tuiterm.Snapshot) bool {
+				rows := conversationRows(s)
+				// A PTY read may end mid-paint with old rows below new ones.
+				// Require the composer's restored cursor and the overlapping
+				// page before inspecting it; skipped pages still time out.
 				return s.AltScreen && !s.CursorHidden && s.CursorY == plan.Composer.Y &&
-					strings.Join(conversationRows(s), "\n") != previous
+					strings.Join(rows, "\n") != previous && overlapWithTranscript(rows) > 0
 			})
 			rows := conversationRows(page)
-			overlap := min(len(rows), len(transcript))
-			for overlap > 0 && strings.Join(rows[len(rows)-overlap:], "\n") != strings.Join(transcript[:overlap], "\n") {
-				overlap--
-			}
-			if overlap == 0 {
-				t.Fatal("PgUp skipped conversation rows")
-			}
+			overlap := overlapWithTranscript(rows)
 			transcript = append(append([]string{}, rows[:len(rows)-overlap]...), transcript...)
 		}
 		t.Logf("LONG-QA first page (100x34):\n%s", strings.Join(screenRows(page), "\n"))
@@ -479,4 +485,17 @@ func TestM1ReplyShapeLargeFrames(t *testing.T) {
 			h.stopCore(core)
 		})
 	}
+}
+
+// longReplyReady selects the viewport from which PgUp stitching begins.
+func longReplyReady(s tuiterm.Snapshot, plan layout.Layout, end, affordance string) bool {
+	rows := screenRows(s)
+	region := plan.Conversation
+	if !s.AltScreen || s.CursorHidden || s.CursorY != plan.Composer.Y || region.Height < 1 || region.Y+region.Height > len(rows) {
+		return false
+	}
+	// The result affordance must occupy the bottom conversation row. While the
+	// activity row still exists, inactive layout would otherwise include it and
+	// an activity update could be mistaken for the first PgUp response.
+	return strings.Contains(strings.Join(rows[region.Y:region.Y+region.Height], "\n"), end) && strings.Contains(rows[region.Y+region.Height-1], affordance)
 }

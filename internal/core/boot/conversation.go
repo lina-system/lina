@@ -76,6 +76,7 @@ type conversationRuntime struct {
 	waitingStop     context.CancelFunc
 	waitingDone     chan struct{}
 	workWaiting     *waiting.Rounds
+	ownerViews      *ownerViews
 	background      *backgroundRuntime
 	workers         *workerRuntime
 	router          *conversationRouter
@@ -110,7 +111,7 @@ type conversationRuntime struct {
 	main             string
 	epoch            uint64
 	controls         *ctlfiles.Store
-	personaWarned    bool
+	presets          *presetPublisher
 
 	skillMaintenance            *skillMaintenanceRuntime
 	growthMu                    sync.Mutex
@@ -257,8 +258,11 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err != nil {
 		return nil, err
 	}
-	r.work = work.NewWithArea(r.db, r.workArea, workMaterials{writer: writer, person: r.person})
+	r.work = work.NewWithArea(r.db, r.workArea, workMaterials{writer: writer, store: r.assets, person: r.person})
 	if err = r.work.Recover(ctx, strconv.FormatUint(r.epoch, 10)); err != nil {
+		return nil, err
+	}
+	if err = r.recoverWorkAuthority(ctx); err != nil {
 		return nil, err
 	}
 	r.startWorkerLanes()
@@ -295,11 +299,22 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err = r.startGrowth(ctx, controls); err != nil {
 		return nil, err
 	}
+	if err = r.startOwnerViews(ctx); err != nil {
+		return nil, err
+	}
 	success = true
 	return r, nil
 }
 func (r *conversationRuntime) Close(ctx context.Context) error {
 	var err error
+	if r.ownerViews != nil && r.ownerViews.stop != nil {
+		r.ownerViews.stop()
+		select {
+		case <-r.ownerViews.done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	if r.workerDispatch != nil {
 		if err = r.workerDispatch.Close(ctx); err != nil {
 			return err

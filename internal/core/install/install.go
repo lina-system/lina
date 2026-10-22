@@ -160,8 +160,10 @@ func Run(ctx context.Context, cfg Config, host Host) (result Result, resultErr e
 	}
 	result.MainID = "main-" + hex.EncodeToString(id[:])
 	result.Socket = cfg.Socket
-	if _, _, err := persona.LoadLina(cfg.PersonaSource); err != nil {
-		result.Unavailable = append(result.Unavailable, persona.SetupWarning)
+	for _, starter := range persona.Starters() {
+		if _, _, err := persona.Load(persona.Shipped(), starter.Key); err != nil {
+			result.Unavailable = append(result.Unavailable, persona.SetupWarning(starter.Key))
+		}
 	}
 	if b.files["adapters/claude/package-lock.json"] == nil {
 		result.Unavailable = append(result.Unavailable, "Claude adapter files are not included in this build")

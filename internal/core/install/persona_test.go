@@ -6,13 +6,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"slices"
+	"strings"
 	"testing"
-
-	"github.com/thisisjun786/lina/persona"
 )
 
-func TestInstallReadsPersonaSourceWithoutCopyingMaterial(t *testing.T) {
+func TestInstallUsesShippedPersonasIgnoringLegacySource(t *testing.T) {
 	for _, available := range []bool{false, true} {
 		cfg, host := fixture(t)
 		cfg.PersonaSource = t.TempDir()
@@ -25,8 +23,10 @@ func TestInstallReadsPersonaSourceWithoutCopyingMaterial(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if slices.Contains(result.Unavailable, persona.SetupWarning) == available {
-			t.Fatal("install did not check both source files")
+		for _, warning := range result.Unavailable {
+			if strings.Contains(warning, "persona") {
+				t.Fatalf("shipped persona unavailable: %s", warning)
+			}
 		}
 		data, err := os.ReadFile(filepath.Join(cfg.StateRoot, "system/core/config.json"))
 		if err != nil {

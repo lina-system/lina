@@ -13,9 +13,18 @@ native Linux and macOS pseudo-terminals; it needs no window, display server,
 provider account, external network service or human input. Conversation screens
 use the pinned terminal library and a VT emulator.
 
+For the colour TUI, the PTY recorder reassembles renderer writes using the
+existing cursor-preserving scroll-margin reset at the end of each write.
+A PTY read can split or combine writes; it is not a completed screen. Plain
+and connection-only output retain their streaming path. Deterministic recorder
+tests split ANSI, UTF-8 and the write trailer, combine writes in one read, and
+reject a truncated redraw. Screen predicates still wait for the relevant UI
+state: a completed turn on an observer socket does not prove the TUI has
+rendered it. LONG-QA waits for the idle viewport before stitching PgUp pages.
+
 The suite builds each command once per test run and removes the shared binaries
 after all scenarios finish. Foundation enumerates the acceptance tests and runs
-two disjoint batches under its shared components budget. This keeps a growing
+three disjoint batches under its shared components budget. This keeps a growing
 corpus from exhausting one package watchdog while preserving every scenario,
 assertion and operation deadline. Independent scenarios call `t.Parallel()` and
 foundation limits each batch to four concurrent tests, including parallel
@@ -58,6 +67,8 @@ header bold and exactly one empty row between messages. ASCII runs retain words;
 through the real TUI, then requests a fenced Korean reply from installed Core
 in a 40x34 ASCII PTY. It checks provider routing, usable reply width, literal
 empty code boundary rows, and stable completion metadata across draft redraws.
+Both untagged and Go-tagged fences run through the same path, so syntax
+highlighting must retain the code's leading and trailing empty rows.
 
 `TestM1TUIIdentityFromAgentStore` installs a synthetic named agent with four
 distinct persona layers, types "who are you" through the real TUI, and checks
@@ -264,12 +275,22 @@ replay count is consumed by the Bubble Tea recording-writer test.
 synthetic producer data, socket discovery/decisions, and a separate-key PTY approval.
 These scenarios create no second product decision store and use no timing sleeps.
 
+`m1/tui-syntax.json` runs `TestM1TUISyntaxInstalledCore`: an installed Core and
+fixture provider stream an open Go fence, then its closing fence and final reply
+into a 100×34 PTY. Parsed cells prove that open code remains unstyled and closed
+code gains theme colours in dark/light; high-contrast and `NO_COLOR` remain
+plain. The provider is released by a channel after the open screen is observed,
+without timing-based assertions.
+
 The M2 Discord scenario is `m2/discord.json`, executed by `TestM2DiscordCore`.
 It installs the test host with a matching build manifest, runs production Core
 boot in a separate process, and controls it through the generated socket
 protocol. Synthetic outbound Gateway/REST and Responses endpoints demonstrate
 channel input, read tools, background results, deduplication, shaping, blocked
-state and restart without live credentials.
+state and restart without live credentials. `m2/discord-recovery.json` repeats
+the journey across Gateway 4007/4009 closes, including command and approval-button
+deduplication and Resume with the exact replacement session and committed sequence
+after Core restart.
 
 `m2/work-area.json`, executed by `TestM2WorkArea`, drives `prepare_work` and
 `retain_work_result` through the installed Core's conversation tools. Two real
@@ -329,6 +350,12 @@ and deleted agents in conversation and management requests, plus channel
 binding/scope replacement. A paired synthetic channel and an existing binding
 exercise the actual target-agent checks. Read-only canon snapshots prove that
 refused requests preserve agent revisions, actions, conversations and bindings.
+
+Installed-Core fixtures wait for command admission after connecting the socket.
+An empty input must be refused as malformed (or capability-not-negotiated for an
+unconfigured Core), rather than unavailable during recovery, before the scenario
+continues. This probe cannot create a conversation event or model request.
+Restored-memory and replay startup paths use the same readiness check as installs.
 
 `go test ./e2e/m1 -run '^TestM2UpdateActivation$' -count=1` runs
 `m2/update-activation.json`, which drives `lina update --activate` against
@@ -392,3 +419,21 @@ Core's read path and TUI. `TestM3WorkerLanesLiveSession` additionally starts the
 installed stdio worker fixture through Core's conversation tools, makes it write
 a real artifact, and expands its runtime lane to show the worker output without
 calling the model. Vendor transport is synthetic; no personal account is used.
+
+`m2/progress-waiting.json` uses the installed Core and synthetic stdio worker
+journey to read the owner progress capability and full waiting list during an
+approval and a question. It checks unknown plan values, display lines without
+internal identities, removal after the original authenticated answers, a real
+worker-written artifact, and empty resolved sources after Core restart. The
+worker and provider are fixtures; Core, tools, protocol and persistence are real.
+
+`m2/progress-seen-review.json` checks the installed Core's progress and running
+views with work-service records and content-checked fixture artifacts. Opening
+or dismissing a ready-for-review result removes its progress line and publishes
+the change. Restart preserves the acknowledgement without changing the work
+card, marking it applied or deleting the artifact.
+
+`m2/tui-home-waiting.json` adds a 120x36 TUI to that worker journey. An outside
+record change appears on Home alongside the worker's authenticated decisions.
+Resolving the sources clears the summary and preserves the typed draft. The
+scenario checks parsed terminal cells, the worker-written artifact and cleanup.

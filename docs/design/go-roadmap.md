@@ -387,12 +387,13 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 ### 2.D Owner views
 
 **G2-13 Progress view, full waiting list and digest.** Progress lines, digest, full waiting list.
+- #158 connects the Core overview and full waiting query to current work, approval, question, run, exchange and outside-change sources. `e2e/m2/progress-waiting.json` drives installed Core through worker approval, a question, a real artifact and source removal. The to-do waiting producer and plan-based stage/bar are left to the to-do record work (issue 154); the channel digest and shared controls belong to #159.
 - Done when: a progress line holds no id or pull request and reads unknown for an unobserved value; the digest has at most five lines and a count; a waiting row whose source shows it done is dropped; the order switch is asked of Core; stop, stop all and a follow-up have the same effect from the TUI and from a channel.
 - Depends on: G1-18, G1-21, G1-35, G2-02, G2-23. Design refs: C-55; [surfaces.md](surfaces.md#progress-at-a-glance).
 
 **G2-21 Discord adapter.** Gateway adapter with interactions and buttons.
 - Implemented by #147 through the shared gateway and running Core. `e2e/m2/discord.json` exercises pairing, duplicate interactions, real tool/background execution with synthetic endpoints, paragraph splits, unreachable bindings and restart; adapter tests cover owner-only buttons. Live Discord account validation remains separate.
-- #548 adds fresh-session recovery for Gateway close 4007/4009; `e2e/m2/discord-recovery.json` verifies Identify, duplicate suppression and continued tool/background results in running Core.
+- #548 adds fresh-session recovery for Gateway close 4007/4009; `e2e/m2/discord-recovery.json` verifies Identify, duplicate suppression and continued tool/background results in running Core. #547 extends that evidence to approval-button receipts and exact replacement-session Resume after Core restart.
 - Done when: a repeated interaction is handled once; a press by anyone but the paired owner changes nothing; text over 2,000 characters splits on paragraph boundaries; a blocked chat marks the binding unreachable.
 - Depends on: G1-25. Design refs: C-27; [integrations.md](integrations.md#channels).
 

@@ -37,7 +37,9 @@ func discover(ctx context.Context, cfg Config, host Host, verified map[string][]
 				if line != "" && strings.IndexFunc(line, unicode.IsControl) < 0 {
 					tool.Version = line
 					tool.Status = "unverified"
-					if slices.Contains(tool.VerifiedVersions, line) {
+					if slices.ContainsFunc(tool.VerifiedVersions, func(version string) bool {
+						return versionForComparison(name, version) == versionForComparison(name, line)
+					}) {
 						tool.Status = "verified"
 					}
 				}
@@ -46,4 +48,13 @@ func discover(ctx context.Context, cfg Config, host Host, verified map[string][]
 		tools = append(tools, tool)
 	}
 	return tools
+}
+
+// Codex prints a label before its version; the build records bare versions.
+// Keep the original output in the inventory and normalize only for comparison.
+func versionForComparison(name, version string) string {
+	if name == "codex" {
+		return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(version), "codex-cli "))
+	}
+	return version
 }
