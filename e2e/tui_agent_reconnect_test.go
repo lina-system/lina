@@ -68,6 +68,9 @@ func TestM1TUIAgentReconnectInstalledCore(t *testing.T) {
 	terminal := h.startTerminalSize([]string{"TERM=xterm-256color", "LC_ALL=C"}, false, true, 120, 35)
 	waitScreen(t, h, terminal, "Ctrl+D")
 	h.keys(terminal, "/agents choose "+agent+"\r")
+	// The typed command already contains the id. Wait for the completed choice
+	// before closing its result, otherwise a late reply can reopen the pager.
+	waitScreen(t, h, terminal, design.Text(design.English, "choose"))
 	waitScreen(t, h, terminal, agent)
 	h.keys(terminal, "\x1b")
 	waitScreen(t, h, terminal, "Ctrl+D")
