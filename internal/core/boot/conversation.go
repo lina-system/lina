@@ -3,6 +3,7 @@
 package boot
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -22,11 +23,13 @@ import (
 	"github.com/thisisjun786/lina/internal/core/accounts"
 	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/assemble"
+	"github.com/thisisjun786/lina/internal/core/assemble/atropos"
 	"github.com/thisisjun786/lina/internal/core/assets"
 	"github.com/thisisjun786/lina/internal/core/authority"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
+	coreexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/inbox"
 	"github.com/thisisjun786/lina/internal/core/lane"
@@ -37,12 +40,15 @@ import (
 	"github.com/thisisjun786/lina/internal/core/reply"
 	"github.com/thisisjun786/lina/internal/core/retract"
 	"github.com/thisisjun786/lina/internal/core/secrets"
+	"github.com/thisisjun786/lina/internal/core/skills"
 	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/internal/tui/render"
+	"github.com/thisisjun786/lina/kit/grant"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/provider"
+	builtin "github.com/thisisjun786/lina/skills"
 )
 
 // conversationRuntime is boot's composition of existing stores and flows. The
@@ -60,19 +66,27 @@ type conversationRuntime struct {
 	removals     *retract.Store
 	channels     *channelRuntime
 
-	materials                   *conversationMaterials
-	assets                      *assets.Store
-	root                        string
-	steering                    map[string][]acceptedSteering
-	ctx                         context.Context
-	db                          *canon.Store
-	accounts                    *accounts.Store
-	vault                       *secrets.Store
-	signin                      *accounts.SignIn
-	agents                      *agents.Store
+	materials        *conversationMaterials
+	assets           *assets.Store
+	root             string
+	steering         map[string][]acceptedSteering
+	ctx              context.Context
+	db               *canon.Store
+	accounts         *accounts.Store
+	vault            *secrets.Store
+	signin           *accounts.SignIn
+	agents           *agents.Store
+	skills           *skills.Store
+	persona          *coreexec.Persona
+	personaAuthority *authority.Service
+	personaGrants    map[string]grant.Grant
+	personaMu        *sync.Mutex
+	main             string
+	epoch            uint64
+	controls         *ctlfiles.Store
+	personaWarned    bool
+
 	growth                      *growthRuntime
-	controls                    *ctlfiles.Store
-	personaWarned               bool
 	lanes                       *lane.Manager
 	topics                      *clientsrv.Topics
 	route                       *modelpath.ResponsesConfig
@@ -94,7 +108,8 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err != nil {
 		return nil, err
 	}
-	r := &conversationRuntime{dispatchMu: &sync.RWMutex{}, root: root, controls: controls, steering: map[string][]acceptedSteering{}, ctx: ctx, db: db, route: route, activities: activities, lanes: lane.New(), person: "person:" + main}
+	r := &conversationRuntime{dispatchMu: &sync.RWMutex{}, root: root, controls: controls, steering: map[string][]acceptedSteering{}, ctx: ctx, db: db, route: route, activities: activities, lanes: lane.New(), person: "person:" + main, main: main, epoch: epoch, personaGrants: map[string]grant.Grant{}, personaMu: &sync.Mutex{}}
+
 	if person != "" {
 		r.person = person
 	}
@@ -137,6 +152,15 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 		return nil, err
 	}
 	r.materials = &conversationMaterials{store: r.assets, writer: writer, actor: assets.Actor{PersonID: r.person, AgentID: r.agent}}
+	r.skills, err = skills.Open(root, db, builtin.Builtins())
+	if err != nil {
+		return nil, err
+	}
+	r.persona = coreexec.NewPersona(db, r.agents, r.materials)
+	r.personaAuthority, err = authority.Open(ctx, db, authority.Config{Epoch: epoch, Resolve: r.resolvePersonaGrant})
+	if err != nil {
+		return nil, err
+	}
 
 	if err = turn.New(db).Recover(ctx); err != nil {
 		return nil, err
@@ -240,6 +264,9 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 	}
 	if r.agents != nil {
 		err = errors.Join(err, r.agents.Close())
+	}
+	if r.skills != nil {
+		err = errors.Join(err, r.skills.Close())
 	}
 	if r.assets != nil {
 		err = errors.Join(err, r.assets.Close())
@@ -460,7 +487,7 @@ func (r *conversationRuntime) setActive(ctx context.Context, active bool) error 
 func (r *conversationRuntime) events(ctx context.Context, through string) ([]ledger.Event, error) {
 	var ids []string
 	err := r.db.Read(ctx, func(tx *canon.Tx) error {
-		query := `SELECT id FROM conv_event WHERE conversation_id=? AND (speaker_kind IN ('person','agent') OR scaffold_kind IN ('interruption','failure'))`
+		query := `SELECT id FROM conv_event WHERE conversation_id=? AND (speaker_kind IN ('person','agent') OR scaffold_kind IN ('interruption','failure','persona_change'))`
 		args := []any{r.conversation}
 		if through != "" {
 			query += ` AND (speaker_kind<>'person' OR rowid <= (SELECT rowid FROM conv_event WHERE id=?))`
@@ -580,10 +607,21 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		return err
 	}
 	defer activity.Release()
+	bindings := map[string]loop.Tool{}
+	defer func() {
+		r.personaMu.Lock()
+		delete(r.personaGrants, turnID)
+		delete(r.personaGrants, turnID+":state")
+		delete(r.personaGrants, turnID+":expression")
+		delete(r.personaGrants, turnID+":relationship")
+		r.personaMu.Unlock()
+
+	}()
 	var items []provider.Item
 	var events []ledger.Event
 	var memoryEpoch uint64
 	var memoryRefs []turn.Reference
+
 	evidence := turn.EvidenceWriter{Ledger: r.journal(), ConversationID: r.conversation, ParentID: input.ID, Surface: ledger.Surface{Kind: "tui"}, Now: time.Now}
 	prep := &turn.Preparation{
 		VerifyBuild: r.verifyBuild,
@@ -591,24 +629,73 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		Resolve: func(context.Context) (turn.ModelPolicy, error) {
 			return turn.ModelPolicy{Model: r.route.Model, Revision: "configured", Class: provider.ModelAPI}, nil
 		},
-		Context: func(ctx context.Context, _ turn.ModelPolicy) (turn.PreparedRequest, error) {
+		Context: func(ctx context.Context, policy turn.ModelPolicy) (turn.PreparedRequest, error) {
 			if err := r.refreshPersona(ctx); err != nil {
 				return turn.PreparedRequest{}, err
 			}
+
 			persona, err := r.agents.Prepare(ctx, turnID, r.agent)
 			if err != nil {
 				return turn.PreparedRequest{}, err
 			}
 			items, memoryRefs, memoryEpoch, events, err = r.modelContext(ctx, input.ID)
+
 			if err != nil {
 				return turn.PreparedRequest{}, err
 			}
-			request := r.route.Request(items)
-			request.Instructions, err = assemble.Instructions(persona, request.Tools)
+			current, err := assemble.History([]ledger.Event{input}, r.conversation, r.agent)
+			if err != nil || len(current) != 1 {
+				return turn.PreparedRequest{}, assemble.ErrHistory
+			}
+			// modelContext includes the current event after its filtered history.
+			// Keep the assembly's dedicated current-input slot exactly once, and fail
+			// closed if retraction removed it between admission and preparation.
+			if len(items) == 0 || !bytes.Equal(items[len(items)-1], current[0]) {
+				return turn.PreparedRequest{}, assemble.ErrHistory
+			}
+			items = items[:len(items)-1]
+			at := time.Now().UTC()
+			minimum := assemble.ContextPacket{{ID: "clock:" + turnID, Kind: assemble.Clock, Text: at.Format(time.RFC3339Nano)}}
+			catalog, personaPacket, err := r.preparePersonaTools(ctx, turnID, input, persona, at, bindings)
+
 			if err != nil {
 				return turn.PreparedRequest{}, err
 			}
-			assembly := turn.Assembly{AgentID: r.agent, PersonaRevision: persona.Commit, InstructionFormat: "agent-v1", AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID, Items: memoryRefs}
+			minimum = append(minimum, personaPacket...)
+			if err := r.prepareSkillTools(turnID, bindings); err != nil {
+				return turn.PreparedRequest{}, err
+			}
+			declarations := append(coreexec.PersonaDeclarations(), coreexec.PersonaSettingDeclaration())
+			declarations = append(declarations, coreexec.EmotionDeclarations()...)
+			declarations = append(declarations, coreexec.RelationshipDeclaration())
+			declarations = append(declarations, coreexec.SkillDeclarations()...)
+			packet, _, err := atropos.Packet(ctx, minimum, 0, func(ctx context.Context) (assemble.ContextPacket, error) { return r.relationshipPacket(ctx, at) })
+			if err != nil {
+				return turn.PreparedRequest{}, err
+			}
+			if err := pinPersonaState(packet, r.agent, r.conversation); err != nil {
+				return turn.PreparedRequest{}, err
+			}
+			request, report := assemble.Assemble(assemble.Input{
+				Core:    assemble.PersonaCoreV1,
+				AgentID: r.agent, PersonaRevision: persona.Commit, Persona: persona.Layers,
+				AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID,
+				Catalog: catalog, AlwaysTools: declarations,
+				History: items, Current: current[0], Packet: packet,
+				Model: policy.Model, Effort: policy.Effort, MaxTokens: 128000,
+			}, conversationRequestSize)
+			if report.Failure != "" {
+				if report.Failure == assemble.TooLarge {
+					return turn.PreparedRequest{}, turn.ErrRequestTooLarge
+
+				}
+				return turn.PreparedRequest{}, turn.ErrInvalid
+			}
+			assembly := turn.Assembly{AgentID: r.agent, PersonaRevision: persona.Commit, InstructionFormat: "persona-v1", PreparedAt: at.Format(time.RFC3339Nano), Profile: append([]turn.Reference(nil), memoryRefs...), AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID, Items: append([]turn.Reference(nil), memoryRefs...)}
+			assembly.Context, err = r.recordContextSources(ctx, packet, report)
+			if err != nil {
+				return turn.PreparedRequest{}, err
+			}
 			for _, event := range events {
 				projected, err := assemble.History([]ledger.Event{event}, r.conversation, r.agent)
 				if err != nil {
@@ -620,16 +707,13 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				digest := sha256.Sum256([]byte(event.Body.Text()))
 				assembly.History = append(assembly.History, turn.Reference{ID: event.ID, Revision: hex.EncodeToString(digest[:])})
 			}
-			return turn.PreparedRequest{Request: request, Assembly: assembly, Counter: func(request provider.Request) int {
-				n := len(request.Instructions)
-				for _, item := range request.Items {
-					n += len(item)
-				}
-				for _, tool := range request.Tools {
-					n += len(tool)
-				}
-				return n
-			}, MaxTokens: 128000}, nil
+			for _, ref := range report.Items {
+				assembly.Items = append(assembly.Items, turn.Reference{ID: ref.ID, Revision: ref.Revision})
+			}
+			for _, ref := range report.Skills {
+				assembly.Skills = append(assembly.Skills, turn.Reference{ID: ref.ID, Revision: ref.Revision})
+			}
+			return turn.PreparedRequest{Request: request, Assembly: assembly, Counter: conversationRequestSize, MaxTokens: 128000}, nil
 		},
 		Acknowledge: evidence.Acknowledge, RecordRequest: evidence.RecordRequest,
 		Digest: assemble.Digest,
@@ -679,6 +763,10 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		return err
 	}
 	out, err := turn.New(r.db).Run(ctx, turn.Options{ID: turnID, Conversation: r.conversation, InboxID: inboxID, InputEvent: input.ID, Preparation: prep, Complete: complete, Loop: loop.Config{
+		Tools: bindings,
+		After: func(ctx context.Context, call provider.ToolCall, result loop.Result) loop.Result {
+			return r.skillNotice(ctx, input, call, r.personaNotice(ctx, input, call, result))
+		},
 		Inputs: &conversationInputs{runtime: r, inputs: inputs},
 		Stream: func(ctx context.Context, request provider.Request) (provider.Stream, error) {
 			round++

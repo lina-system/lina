@@ -21,8 +21,18 @@ func TestGrowthNextTurnUndoAndSuppression(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state := agents.State{Emotion: "fixture-emotion", Settings: map[string]string{"fixture": "value"}}
+	state := agents.State{Settings: map[string]string{"fixture": "value"}}
 	if err := s.SetState(ctx, a.ID, state, "person"); err != nil {
+		t.Fatal(err)
+	}
+	// Seed nonempty emotion through the confirmed-event path introduced by
+	// the persona engine; the full state-preservation assertion below stays.
+	event := agents.EmotionEvent{ConversationID: "fixture-conversation", EventID: "fixture-event", Affect: agents.Affect{Valence: 0.4, Arousal: 0.2}, At: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)}
+	if result, err := s.RecordEmotion(ctx, a.ID, agents.StateRevision(state), event, "person", agents.DefaultEmotionPolicy()); err != nil || !result.Recorded {
+		t.Fatalf("emotion fixture: %+v %v", result, err)
+	}
+	state, err = s.State(ctx, a.ID)
+	if err != nil {
 		t.Fatal(err)
 	}
 	c := agents.GrowthCandidate{ID: "fixture-step", Expected: a.Revision, Snapshot: "fixture-growth-1", Notice: "fixture-learning-1"}

@@ -48,6 +48,7 @@ type ContextItem struct {
 type ContextPacket []ContextItem
 type Input struct {
 	Core, AgentID, PersonaRevision string
+	AgentName, OwnerPersonID       string // Prepared identity; when present, the persona is projected once in Instructions.
 	Persona                        agents.Layers
 	Catalog                        []Skill
 	AlwaysTools, LoadedTools       []provider.ToolDecl // Already in stable declaration order.
@@ -211,12 +212,23 @@ func Assemble(in Input, counter Counter) (provider.Request, Report) {
 		}
 	}
 	r := provider.Request{Model: in.Model, Effort: in.Effort, Purpose: provider.Turn, Fields: append(provider.FieldList(nil), in.Fields...)}
-	for _, text := range []string{in.Core, in.Persona.Core, in.Persona.DefaultVoice, in.Persona.UserVoice, in.Persona.GrowthSnapshot} {
-		r.Items = append(r.Items, message("developer", text))
+	r.Tools = append(clone(in.AlwaysTools), clone(in.LoadedTools)...)
+	if in.AgentName != "" || in.OwnerPersonID != "" {
+		if in.AgentName == "" || in.OwnerPersonID == "" {
+			return fail(Invalid)
+		}
+		instructions, err := Instructions(agents.Preparation{AgentID: in.AgentID, Name: in.AgentName, OwnerPersonID: in.OwnerPersonID, Layers: in.Persona}, r.Tools)
+		if err != nil {
+			return fail(Invalid)
+		}
+		r.Instructions = in.Core + "\n\n" + instructions
+	} else {
+		for _, text := range []string{in.Core, in.Persona.Core, in.Persona.DefaultVoice, in.Persona.UserVoice, in.Persona.GrowthSnapshot} {
+			r.Items = append(r.Items, message("developer", text))
+		}
 	}
 	catalog, _ := json.Marshal(in.Catalog)
 	r.Items = append(r.Items, message("developer", string(catalog)))
-	r.Tools = append(clone(in.AlwaysTools), clone(in.LoadedTools)...)
 	if len(in.Summary) > 0 {
 		r.Items = append(r.Items, append(provider.Item(nil), in.Summary...))
 	}

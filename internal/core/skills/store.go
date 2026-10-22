@@ -419,3 +419,21 @@ func (s *Store) change(ctx context.Context, id string, expected int64, build fun
 	}
 	return out, nil
 }
+
+// ReadCommit resolves an immutable source, never the current skill head.
+func (s *Store) ReadCommit(ctx context.Context, id, commit string) (Body, error) {
+	if v, ok := s.index[id]; ok && v.Commit == commit {
+		return s.Read(ctx, v)
+	}
+	var v Version
+	err := s.db.Read(ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT id,revision,commit_id,name,description FROM skill_versions WHERE id=? AND commit_id=? AND deleted=0", id, commit).Scan(&v.ID, &v.Revision, &v.Commit, &v.Name, &v.Description)
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		err = ErrNotFound
+	}
+	if err != nil {
+		return Body{}, err
+	}
+	return s.Read(ctx, v)
+}
