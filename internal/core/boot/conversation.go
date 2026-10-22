@@ -59,7 +59,6 @@ type acceptedSteering struct {
 }
 
 type conversationRuntime struct {
-	authority    *authority.Service
 	decisions    *clientsrv.Decisions
 	replaySocket string
 	dispatchMu   *sync.RWMutex

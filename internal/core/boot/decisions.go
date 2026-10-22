@@ -10,10 +10,10 @@ import (
 // Share the already-open authority used by the boot's tools. Opening a second
 // authority would recover (stop) its pending approvals in the same epoch.
 func (r *conversationRuntime) startDecisions(ctx context.Context) error {
-	if r.authority == nil {
+	if r.personaAuthority == nil {
 		return nil
 	}
-	d := &clientsrv.Decisions{Authority: r.authority, Topics: r.topics, Person: r.person, AgentName: func(id string) string {
+	d := &clientsrv.Decisions{Authority: r.personaAuthority, Topics: r.topics, Person: r.person, AgentName: func(id string) string {
 		for _, agent := range r.identity.Agents {
 			if agent.AgentID == id {
 				return agent.Name
