@@ -42,7 +42,8 @@
     "values/exact_number.json",
     "normal/restart_request.json",
     "normal/restart_get.json",
-    "values/legacy_hello.json"
+    "values/legacy_hello.json",
+    "values/stop_run.json"
   ],
   "output": [
     "hello.json",
@@ -86,9 +87,11 @@
     "values/exact_number.json",
     "normal/restart_request.json",
     "normal/restart_get.json",
-    "values/legacy_hello.json"
+    "values/legacy_hello.json",
+    "values/stop_run.json"
   ],
   "errors": [
+    "",
     "",
     "",
     "",
@@ -133,7 +136,7 @@
     ""
   ],
   "outcome": {
-    "accepted": 42,
+    "accepted": 43,
     "malformed": 0,
     "unknown_kinds": 0
   }
