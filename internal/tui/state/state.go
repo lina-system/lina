@@ -23,10 +23,12 @@ type Block struct {
 	ID, Topic, EchoKey, Text string
 	Speaker                  protocol.ConversationSpeaker
 	Body, Title              string
+	RunID                    string
 	TurnKnown, TurnActive    bool
 	Revision                 uint64
 	Kind                     protocol.Kind
 	Done, Local              bool
+	Removed                  bool
 	filter                   sanitize.Stream
 }
 type Topic struct {
@@ -473,6 +475,10 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 			if old.Revision > b.Revision || (old.Revision == b.Revision && old.Done) {
 				return s, nil
 			}
+		}
+		if b.Removed && m.Topic == "running" {
+			s.Blocks = slices.DeleteFunc(s.Blocks, func(old Block) bool { return old.ID == b.ID && old.Topic == m.Topic })
+			return s, nil
 		}
 		b.Topic = m.Topic
 		if b.Card != nil {

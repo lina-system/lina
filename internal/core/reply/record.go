@@ -86,7 +86,7 @@ func (f *Filter) Record(ctx context.Context, journal *ledger.Store, r Recording)
 			}
 			in := ledger.Input{ID: r.CardEventID, ConversationID: source.ConversationID, ParentID: source.ID, AgentID: source.AgentID,
 				Surface: source.Surface, OccurredAt: source.OccurredAt, RecordedAt: source.RecordedAt, TimeQuality: source.TimeQuality,
-				Body: string(body), Relations: []ledger.Relation{{TargetID: source.ID, Kind: "view_of", Ordinal: 0}}}
+				ScaffoldKind: "result", Body: string(body), Relations: []ledger.Relation{{TargetID: source.ID, Kind: "view_of", Ordinal: 0}}}
 			// JSON repeats the original text in its body and derived text. Keep the
 			// secret flags on every placeholder, without retaining any original offsets.
 			for offset := 0; offset < len(in.Body); {
