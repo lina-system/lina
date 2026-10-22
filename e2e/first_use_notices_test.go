@@ -33,6 +33,10 @@ func TestM1FirstUseKoreanNotices(t *testing.T) {
 		case 5, 7:
 			emitPersonaCall(w, "emotion", "set_emotion_expression", map[string]any{"quote": "감정 표현을 바꿔 줘", "enabled": n == 7})
 		case 9:
+			emitPersonaCall(w, "skill", "write_skill", map[string]any{"id": "notice-fixture", "expected": 0, "files": map[string]any{"SKILL.md": map[string]any{"text": "---\nname: notice-fixture\ndescription: A synthetic procedure.\n---\n확인한 사실을 먼저 알려 주세요.\n"}}})
+		case 11:
+			emitPersonaCall(w, "undo-skill", "undo_skill", map[string]any{"id": "notice-fixture", "revision": 1})
+		case 13:
 			http.Error(w, "synthetic failure", http.StatusBadRequest)
 		default:
 			emitResponse(w, "알겠어요.", true)
@@ -44,7 +48,7 @@ func TestM1FirstUseKoreanNotices(t *testing.T) {
 	c, conversation := conversationClient(t, h)
 	terminal := h.startScreenTUI("TERM=xterm-256color", "LC_ALL=ko_KR.UTF-8")
 	var notices []string
-	for i, input := range []string{"편하게 말해 줘", "말투 변경을 취소해 줘", "감정 표현을 바꿔 줘", "감정 표현을 바꿔 줘", "..."} {
+	for i, input := range []string{"편하게 말해 줘", "말투 변경을 취소해 줘", "감정 표현을 바꿔 줘", "감정 표현을 바꿔 줘", "이 절차를 익혀 줘", "방금 익힌 절차를 취소해 줘", "..."} {
 		frames := admittedTurn(t, h, c, conversation, fmt.Sprintf("korean-%d", i), input)
 		count := 0
 		for _, frame := range frames {

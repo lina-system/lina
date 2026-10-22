@@ -103,7 +103,11 @@ func (r *conversationRuntime) skillNotice(ctx context.Context, input ledger.Even
 	if call.Name == "undo_skill" {
 		code = "notice.skill_undone"
 	}
-	receipt.Notice = fmt.Sprintf(design.Text(eventLanguage(input), code), receipt.Version.Name)
+	name := receipt.Version.Name
+	if name == "" {
+		name = receipt.Version.ID
+	}
+	receipt.Notice = fmt.Sprintf(design.Text(eventLanguage(input), code), name)
 	now := time.Now()
 	event, err := r.journal().Admit(ctx, guard.EntrySystem, ledger.Input{ID: "skill-notice:" + input.ID + ":" + call.ID, ConversationID: r.conversation, ParentID: input.ID, AgentID: r.agent, Surface: input.Surface, ScaffoldKind: "skill_change", OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: receipt.Notice})
 	if err == nil {

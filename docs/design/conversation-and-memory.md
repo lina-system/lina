@@ -243,7 +243,7 @@ cover input, persona and recorded tool/provider output. Missing source evidence,
 incomplete/non-person turns, restricted content and unrecorded effect results
 are counted by reason; storage failures fail the operation.
 
-New persona turns record `persona-v1` assembly evidence: the preparation clock,
+New TUI persona turns record `persona-tui-v1` assembly evidence (earlier `persona-v1` evidence remains replayable): the preparation clock,
 ordered history, profile references and typed packet source locators. Replay and
 export rebuild the exact selected items, catalog and fixed instruction format,
 then require the original request digest before accepting an episode. Skills

@@ -224,6 +224,33 @@ func installConversationBundle(t *testing.T, h *harness, bundle, providerURL str
 		}
 		core.start(t)
 		h.connect(core).Close()
+		// A bound socket accepts reads while Core is still reconciling/probing.
+		// Wait for mutation admission via an empty, always-refused input; no
+		// conversation event or model request can result from this probe.
+		ready, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "test", []protocol.Capability{{Name: "conversation", Version: "1.0"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ready.Close()
+		for {
+			if _, err := ready.Input(h.ctx, protocol.Input{}); err != nil {
+				t.Fatal(err)
+			}
+			frame, err := ready.Receive(h.ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if frame.Error == nil {
+				t.Fatal("empty input accepted")
+			}
+			if frame.Error.Code == protocol.ErrorUnavailable {
+				continue
+			}
+			if frame.Error.Code != protocol.ErrorMalformed && frame.Error.Code != protocol.ErrorCapabilityNotNegotiated {
+				t.Fatalf("unexpected readiness code: %s", frame.Error.Code)
+			}
+			break
+		}
 		return core
 	}
 
