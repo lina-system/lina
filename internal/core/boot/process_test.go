@@ -269,7 +269,9 @@ func startCore(t *testing.T, binary, root, socket string) *coreChild {
 
 func (child *coreChild) connect(t *testing.T, socket string) net.Conn {
 	t.Helper()
-	deadline := time.NewTimer(5 * time.Second)
+	// Startup is fixture preparation, not the five-second shutdown contract.
+	// Full verification can contend with parallel builds before the socket binds.
+	deadline := time.NewTimer(30 * time.Second)
 	defer deadline.Stop()
 	retry := time.NewTicker(5 * time.Millisecond)
 	defer retry.Stop()

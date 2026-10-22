@@ -28,6 +28,12 @@ type QuestionSource interface {
 	AnswerQuestion(context.Context, string, protocol.QuestionAnswer) (protocol.DecisionOutcome, error)
 }
 
+// AttributedQuestionSource retains the authenticated transport message identity
+// with decisions whose owning ledger needs replay-safe goal revisions.
+type AttributedQuestionSource interface {
+	AnswerQuestionMessage(context.Context, string, protocol.QuestionAnswer, string) (protocol.DecisionOutcome, error)
+}
+
 type Decisions struct {
 	presenceMu sync.Mutex
 	present    map[string]bool
@@ -207,7 +213,11 @@ func (d *Decisions) questionAnswer(ctx context.Context, session Session, envelop
 	case !validQuestionAnswer(question.Form, answer):
 		return Result{}, &OperationError{Code: protocol.ErrorMalformed}
 	default:
-		outcome, err = d.Questions.AnswerQuestion(ctx, session.PersonID, answer)
+		if source, ok := d.Questions.(AttributedQuestionSource); ok {
+			outcome, err = source.AnswerQuestionMessage(ctx, session.PersonID, answer, envelope.MessageID)
+		} else {
+			outcome, err = d.Questions.AnswerQuestion(ctx, session.PersonID, answer)
+		}
 		if err != nil {
 			return Result{}, err
 		}
