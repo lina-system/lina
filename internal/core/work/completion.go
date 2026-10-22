@@ -59,6 +59,15 @@ func (s *Service) ObserveHead(ctx context.Context, taskID, runID, head string) e
 	})
 }
 
+// RestoreCompletionHead upgrades a pre-outbox terminal observation using the
+// dispatcher's already persisted PR evidence. It cannot replace a known head.
+func (s *Service) RestoreCompletionHead(ctx context.Context, taskID, runID, head string) error {
+	if !gitHead.MatchString(head) {
+		return ErrInvalid
+	}
+	return s.append(ctx, Event{Key: "completion-head:" + runID, TaskID: taskID, Kind: "completion_head", RunID: runID, Head: head})
+}
+
 func completionFor(c Card) (Completion, bool) {
 	if c.Run == nil || c.Active || c.TurnStatus == "" || c.Receipt == nil {
 		return Completion{}, false

@@ -193,7 +193,7 @@ func appendEvent(ctx context.Context, tx *canon.Tx, e Event) error {
 	if err = saveCard(ctx, tx, c); err != nil {
 		return err
 	}
-	if e.Kind == "finished" || e.Kind == "receipt" || e.Kind == "file_receipt" {
+	if e.Kind == "finished" || e.Kind == "receipt" || e.Kind == "file_receipt" || e.Kind == "completion_head" {
 		return insertCompletion(ctx, tx, c)
 	}
 	return nil

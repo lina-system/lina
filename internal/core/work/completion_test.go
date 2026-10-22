@@ -191,3 +191,40 @@ func TestCompletionReceiptAfterTermination(t *testing.T) {
 		t.Fatal("late receipt lost", pending, err)
 	}
 }
+
+func TestCompletionLegacyHeadAndMovedHeadCycles(t *testing.T) {
+	s, _ := testStore(t)
+	startFixture(t, s)
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx := t.Context()
+	must(s.Submit(ctx, "run-1", receiptFixture()))
+	must(s.Finish(ctx, "task-1", "run-1", "completed"))
+	a, b := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	must(s.RestoreCompletionHead(ctx, "task-1", "run-1", a))
+	must(s.RestoreCompletionHead(ctx, "task-1", "run-1", a))
+	if err := s.RestoreCompletionHead(ctx, "task-1", "run-1", b); err == nil {
+		t.Fatal("legacy recovery replaced a known head")
+	}
+	for _, head := range []string{b, a, b} {
+		must(s.ObserveHead(ctx, "task-1", "run-1", head))
+		card, err := s.Get(ctx, "task-1")
+		must(err)
+		if card.Head != head {
+			t.Fatal("repeated head observation lost")
+		}
+	}
+	pending, err := s.PendingCompletions(ctx, "1")
+	must(err)
+	for _, e := range pending {
+		_, _, claimed, err := s.ClaimCompletion(ctx, e.ID, "1")
+		must(err)
+		if claimed {
+			t.Fatal("restored or old head reacted after head moved")
+		}
+	}
+}

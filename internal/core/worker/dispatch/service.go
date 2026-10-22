@@ -115,6 +115,19 @@ func Open(ctx context.Context, cfg Config) (*Service, error) {
 		return nil, err
 	}
 	for _, r := range records {
+		if cfg.Work != nil && r.State == "finished" && r.PR != nil {
+			card, err := cfg.Work.Get(ctx, r.ID)
+			if err != nil {
+				s.cancel()
+				return nil, err
+			}
+			if card.Run != nil && !card.Active && card.Receipt != nil && card.Head == "" && card.CompletionHead == "" {
+				if err = cfg.Work.RestoreCompletionHead(ctx, r.ID, card.Run.ID, r.PR.Head); err != nil {
+					s.cancel()
+					return nil, err
+				}
+			}
+		}
 		if r.State == "running" {
 			r.State = "unknown"
 			r.Code = "interrupted_execution"
