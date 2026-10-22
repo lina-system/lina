@@ -208,13 +208,15 @@ func correctionMemoryTUI(t *testing.T, h *harness) (func(string) protocol.Memory
 				if result.Operation == nil {
 					t.Fatal("memory response lost its operation")
 				}
-				// The command opens help before the response arrives. Its help
-				// text alone cannot prove the result was rendered before Esc.
-				if _, err := terminal.screen.Wait(h.ctx, func(snapshot tuiterm.Snapshot) bool {
-					text := screenText(snapshot)
-					return strings.HasPrefix(text, design.Text(design.English, *result.Operation)+" ") && strings.Contains(text, marker)
-				}); err != nil {
-					t.Fatal("memory result not rendered", err)
+				// A returned item id can already appear in the command draft.
+				// Wait for the result pager as well as its text before sending Esc.
+				view, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
+					rows := screenRows(s)
+					text := screenText(s)
+					return s.CursorHidden && len(rows) > 0 && strings.HasPrefix(rows[len(rows)-1], "Esc") && strings.Contains(text, marker) && strings.HasPrefix(text, design.Text(design.English, *result.Operation)+" ")
+				})
+				if err != nil {
+					t.Fatalf("memory result pager missing: %v\n%s", err, screenText(view))
 				}
 				opened = true
 				return result

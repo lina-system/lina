@@ -120,7 +120,7 @@ func TestM1InterruptedPartialHistory(t *testing.T) {
 			h, start := installedConversationHarness(t, server.URL)
 			core := start(true)
 			client, conversation := conversationClient(t, h)
-			terminal := startDiscoveredConversationTUI(t, h, []string{"TERM=xterm-256color"}, 120, 60)
+			terminal, _ := h.startConversationTUI(120, 60, "TERM=xterm-256color")
 			// Controls can appear before negotiation permits input. Wait for Live.
 			waitScreen(t, h, terminal, design.Text(design.English, "live"))
 			waitComposerReady(t, h, terminal)

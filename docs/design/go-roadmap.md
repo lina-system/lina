@@ -153,7 +153,18 @@ Run the issue's package checks with `go test ./internal/core/ledger/... ./intern
 The Korean acceptance corpus is `testdata/korean/search.json`: both stores assert returned source ids for attached particles, two-syllable words, imported text and literal queries. Store tests also check index maintenance and recall scope.
 - Done when: fixtures find a particle-attached three-syllable word and a two-syllable word in ledger and memory; recall for agent A returns no id held by B; a person-subject item exists only from person events; "remembered" is said only after the commit.
 - Depends on: G1-03, G1-05, G1-10, G1-12. Design refs: C-20 to C-22; [conversation-and-memory.md](conversation-and-memory.md#memory).
-- #64 implements the memory table and revision snapshots, holder/person scope checks, native person-event provenance, committed memory tool receipts, ephemeral standing profiles and bounded `recall_person`. Acceptance uses real SQLite and ledger admission; there is no client memory endpoint yet. #65 supplies the Korean indexes and fixtures.
+- #64 implements the memory table and revision snapshots, holder/person scope checks, native person-event provenance, committed memory tool receipts, ephemeral standing profiles and bounded `recall_person`. #65 supplies the Korean indexes and fixtures. Both implementation issues are closed.
+
+The completion evidence for #63 is exercised against real SQLite and ledger admission:
+
+| Done condition | Executable evidence |
+| --- | --- |
+| Particle-attached three-syllable and two-syllable queries return the expected ledger and memory ids | `TestKoreanSearch` in [ledger/search_test.go](../../internal/core/ledger/search_test.go) and `TestKoreanIndexedRecall` in [memory/search_test.go](../../internal/core/memory/search_test.go) consume the same [Korean corpus](../../testdata/korean/search.json). Ledger coverage includes imported events and reopening canon; memory coverage also checks trigram and bigram postings. |
+| Agent A cannot recall B's personal item | `TestRecallFiltersBeforeLimitAndHidesForeignEvidence` in [memory/store_test.go](../../internal/core/memory/store_test.go) and `TestKoreanRecallKeepsScopeValidityAndHistory` in [memory/search_test.go](../../internal/core/memory/search_test.go) check holder filtering before the result limit. |
+| Native person-subject writes require person events | `TestLedgerMemoryChecksRealAdmissionProvenance` in [exec/memory_ledger_test.go](../../internal/core/exec/memory_ledger_test.go) admits every native speaker kind and rejects non-person evidence even when its text claims to be the person. |
+| A remembered receipt follows a successful commit | `TestRememberReceiptRequiresCommit` in [exec/memory_test.go](../../internal/core/exec/memory_test.go) checks uncommitted invisibility and rollback; `TestRememberToolRefusesCommitFailure` in [exec/memory_tools_test.go](../../internal/core/exec/memory_tools_test.go) forces a deferred SQLite constraint failure at COMMIT and checks that no success receipt or item survives. |
+
+The client memory endpoint is now exercised by `TestM1TUIMemoryAgentsInstalledCore` with [tui-memory-agents.json](../../e2e/m1/tui-memory-agents.json): explicit remember/list actions return a committed identity and evidence, the next turn receives the memory, and choosing another agent hides personal memory from both listing and model context. The package checks above cover the Korean queries and commit-failure boundary directly.
 
 **G1-14 Retraction, trash and the removal list.** Revocation epoch, trash, tombstones, removal list.
 - Done when: after a forget, search, summaries, the ContextPacket and answers give zero hits in the next request, also after restoring an older generation; a fault leaves no half state; a tombstone never exists without its removal-list line; a forgotten item is not extracted again.
@@ -313,9 +324,13 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 
 **G2-17 CRW schema pin and fixture runner.** Pin record and fixture runner.
 - Done when: the pin record names the CRW commit, a hash for each adopted schema document and fixture file, and the adopted fixture domains; the runner takes expected values from the fixture; a changed hash fails; the pin appears in the build manifest.
+- Gate evidence: exact-byte SHA-256 verification precedes fixture execution;
+  input-only execution is checked against fixture judgments, and `crwPin`
+  retains the complete provenance in the build manifest.
 - Depends on: G1-01. Design refs: C-57; [work-and-delegation.md](work-and-delegation.md#start-gate).
 
 **G2-01 Task records and work area.** Work ledger, card projection, `work/` directories, protected refs.
+- The ledger increment (#126) keeps task/run/receipt facts in canon, reserves at most one active run per task, rebuilds card and reservation indexes from events, and rejects missing or mismatched artifact provenance. Core startup rebuilds these indexes and retains unfinished reservations as unknown. Workspace creation and protected-ref enforcement remain the separate work-area increment.
 - Done when: a second active run on a task is refused; a task worktree is created from the base commit under `work/tasks`; the projection rebuilt from the ledger equals the live one; a result without a pull request is copied into the generation; a receipt for a changed artifact without provenance is rejected.
 - Depends on: G1-05, G1-11, G1-12, G2-17. Design refs: C-29, C-30, C-39; [work-and-delegation.md](work-and-delegation.md#work-area).
 
@@ -387,6 +402,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 ### 2.F Records and to-dos
 
 **G2-22 Records repository and index.** Git repository, index, rebuild, outside-change detection.
+- #152 implements the shared Git repository and revision-checked write/move path, including the installed conversation tools and result-save adapter. [The headless records scenario](../../e2e/m2/records.json) runs the installed Core through creation, restart, editing and stale-write refusal; repository tests cover stable ids on moves and interrupted publication recovery. Outside-change presentation, the full query index and thousands-of-files acceptance remain the records-index increment.
 - Done when: an index rebuilt from the files equals the live index; an outside change is detected and shown and not merged; a write on a stale revision is refused; moving a record keeps its id; behavior with thousands of files is recorded.
 - Depends on: G1-03, G1-05, G1-29. Design refs: C-53; [filesystem.md](filesystem.md#records-repository).
 
@@ -407,6 +423,11 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 **G2-26 Claude adapter.** External Node.js adapter, isolation checks, idle stop.
 - Done when: a turn runs with built-in tools off and LINA tools over MCP; a runtime that loaded anything unlisted is refused; competing credential variables are absent; quota from rate-limit events is recorded; the SDK is in no LINA artifact.
 - Depends on: G1-05, G1-08, G1-31. Design refs: C-45; [runtime.md](runtime.md#claude).
+
+#167 supplies the external program, pinned lockfile, npm dependency gate and
+an explicit Core route with a headless tool/result and restart scenario. Its
+stub evidence does not close the parent: #168 still owns account setup,
+first-use installation, quota projection and idle process management.
 
 **G2-27 Gemini adapter.** `genai` client, key header, stateless requests.
 - Done when: a turn returns provider state items as received; a missing key is needs sign-in with no fallback; quota comes from error codes and LINA's own count.
