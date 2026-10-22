@@ -77,6 +77,28 @@ test('a progressing acceptance package can finish beyond four minutes', t => {
   assert.ok(elapsed < componentsTimeoutMs, 'the suite stays inside the shared components guard');
 });
 
+test('the growing e2e suite can finish beyond six minutes within the component deadline', t => {
+  const sb = fixture(t);
+  let elapsed = 0;
+  t.mock.method(performance, 'now', () => elapsed);
+  const result = checkComponents({ cwd: sb.dir, components: [{ name: 'lina', module: '.', packages: ['./e2e/...'] }], execute(command, args, options) {
+    if (args[0] === 'build') elapsed += 200_000;
+    if (args[0] === 'test') {
+      const minutes = Number(args.find(arg => arg.startsWith('-timeout='))?.match(/^\-timeout=(\d+)m$/)?.[1]);
+      const duration = 390_000;
+      if (!Number.isFinite(minutes) || minutes * 60_000 <= duration || options.timeoutMs <= duration) {
+        return { status: 1, stdout: 'e2e scenarios progressing\n', stderr: 'e2e package deadline expired\n' };
+      }
+      elapsed += duration;
+      return { status: 0, stdout: 'complete e2e suite finished\n', stderr: '' };
+    }
+    return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
+  } });
+  assert.equal(result.status, 0, result.output);
+  assert.match(result.output, /complete e2e suite finished/);
+  assert.ok(elapsed < componentsTimeoutMs, 'e2e remains within the shared component guard');
+});
+
 test('commands across modules share a deadline instead of resetting the budget', t => {
   const sb = fixture(t);
   let elapsed = 0;

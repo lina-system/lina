@@ -102,11 +102,15 @@ export function checkComponents({ cwd = process.cwd(), components, execute: run 
       const binaries = join(context.directory, module === '.' ? 'root-bin' : 'kit-bin');
       mkdirSync(binaries);
       const outputArgs = selected.some(component => component.binary) ? ['-o', `${binaries}/`] : [];
+      // The installed-Core suite has its own short operation deadlines; its
+      // growing set of scenarios needs more than six minutes in cold CI runs.
+      // Keep the enclosing component deadline and other package limits intact.
+      const testTimeout = packages.some(pkg => pkg === './e2e' || pkg.startsWith('./e2e/')) ? '8m' : '6m';
       for (const args of [
         ['build', '-mod=readonly', ...outputArgs, ...packages],
         ['vet', '-mod=readonly', ...packages],
         ['tool', 'exhaustive', ...packages],
-        ['test', '-count=1', '-timeout=6m', '-mod=readonly', ...packages],
+        ['test', '-count=1', `-timeout=${testTimeout}`, '-mod=readonly', ...packages],
       ]) {
         if (invoke('go', args, directory).status !== 0) return { status: 1, output };
       }
