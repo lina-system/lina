@@ -1301,3 +1301,9 @@ status above the composer, compact elapsed time, a completion duration, frame
 sets and pausing animation while hidden or idle. No source code is copied.
 The seen/inferred/unknown specification is in
 [the activity reference](internal/tui/ACTIVITY-REFERENCE.md).
+
+Narrow activity and footer layout also reference Hermes Agent's measured
+essential widths and priority-based omission of whole status segments
+(`ui-tui/src/components/appChrome.tsx`, revision `e06df9c2`). The adaptation
+uses LINA's width thresholds and row planner; no upstream source is copied.
+See the [narrow terminal reference](internal/tui/NARROW-REFERENCE.md).

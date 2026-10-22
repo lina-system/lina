@@ -76,8 +76,21 @@ func (m *shellModel) activityText() string {
 	if !m.staticActivity() {
 		frame = m.activityFrame % uint64(len(glyphs))
 	}
-	line := fmt.Sprintf("%c %s (%s %s %s)", glyphs[frame], text(word), elapsed, separator, text("activity.stop"))
-	return render.Truncate(line, m.size.Width, render.Unicode{})
+	return formatActivity(m.size.Width, fmt.Sprintf("%c %s", glyphs[frame], text(word)), elapsed, separator, text("activity.stop"))
+}
+
+// Measure complete segments before the planner reserves rows. The word and
+// elapsed value are never clipped to make room for optional hint prose.
+func formatActivity(width int, label, elapsed, separator, hint string) string {
+	if width < 50 {
+		hint = "Esc"
+	}
+	details := fmt.Sprintf("(%s %s %s)", elapsed, separator, hint)
+	line := label + " " + details
+	if width < 80 && (render.Unicode{}).Width(line) > width {
+		return label + "\n" + details
+	}
+	return line
 }
 
 // The connection owner owns this timer. There is no goroutine or timer while

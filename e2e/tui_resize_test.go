@@ -6,9 +6,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -192,4 +194,104 @@ func resizeComparableRows(s tuiterm.Snapshot, reserve int) []string {
 	}
 	result := append([]string{rows[0]}, transcript...)
 	return append(result, rows[len(rows)-2:]...)
+}
+
+// Exercise the production Core and TUI while a provider response is held by an
+// explicit gate. Resize and rendered cells, not sleeps, establish each frame.
+func TestM1TUINarrowActivityResize(t *testing.T) {
+	for _, locale := range []struct {
+		name     string
+		language design.Language
+	}{{"en_US.UTF-8", design.English}, {"ko_KR.UTF-8", design.Korean}} {
+		t.Run(locale.name, func(t *testing.T) {
+			release, received := make(chan struct{}), make(chan struct{}, 2)
+			stop := make(chan struct{})
+			defer close(stop)
+			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				io.Copy(io.Discard, r.Body)
+				received <- struct{}{}
+				select {
+				case <-release:
+					emitResponse(w, "NARROW-RESULT", true)
+				case <-stop:
+				case <-r.Context().Done():
+				}
+			}))
+			t.Cleanup(provider.Close)
+			h, start := installedConversationHarness(t, provider.URL)
+			core := start(true)
+			term := startReadyScreenTUI(t, h, []string{"TERM=xterm-256color", "COLORTERM=truecolor", "LC_ALL=" + locale.name}, 79, 12, nil)
+			waitScreen(t, h, term, design.Text(locale.language, "live"))
+			h.keys(term, "\x1b[200~NARROW-01\nNARROW-02\nNARROW-03\nNARROW-04\x1b[201~\r")
+			select {
+			case <-received:
+			case <-h.ctx.Done():
+				t.Fatal("input did not reach Core's provider")
+			}
+			// A full composer forces the planner to preserve the transcript floor.
+			h.keys(term, "\x1b[200~draft-1\ndraft-2\ndraft-3\ndraft-4\ndraft-5\ndraft-6\x1b[201~")
+			for _, size := range []struct{ width, height int }{{79, 12}, {50, 10}, {40, 10}, {79, 12}} {
+				hint := design.Text(locale.language, "activity.stop")
+				if size.width < 50 {
+					hint = "Esc"
+				}
+				activity := regexp.MustCompile(`\([0-9]+s · ` + regexp.QuoteMeta(hint) + `\)`)
+				h.resizeTerminal(term, size.width, size.height)
+				ctx, cancel := context.WithTimeout(h.ctx, operationTimeout)
+				snapshot, err := term.screen.Wait(ctx, func(s tuiterm.Snapshot) bool {
+					text := screenText(s)
+					rows := screenRows(s)
+					if len(rows) != size.height || !activity.MatchString(text) {
+						return false
+					}
+					// The emulator can resize before SIGWINCH reaches the TUI.
+					// Wait for complete chrome, not the clipped previous frame.
+					for _, segment := range strings.Split(rows[size.height-1], "  ")[1:] {
+						switch segment {
+						case "/help", "Enter", "Ctrl+D", "/memory", "/agents":
+						default:
+							return false
+						}
+					}
+					return strings.Contains(rows[size.height-1], design.Text(locale.language, "live")) &&
+						strings.Contains(rows[size.height-2], "draft-6") &&
+						strings.Contains(text, design.Text(locale.language, "activity.thinking")) &&
+						strings.Contains(text, "NARROW-01") && strings.Contains(text, "NARROW-04")
+				})
+				cancel()
+				t.Logf("held turn %dx%d:\n%s", size.width, size.height, strings.Join(screenRows(snapshot), "\n"))
+				if err != nil {
+					t.Fatalf("activity/composer/transcript floor: %v", err)
+				}
+				rows := screenRows(snapshot)
+				for _, marker := range []string{"NARROW-01", "NARROW-02", "NARROW-03", "NARROW-04"} {
+					if !strings.Contains(screenText(snapshot), marker) {
+						t.Errorf("four-row transcript floor lost %s", marker)
+					}
+				}
+
+				if !activity.MatchString(screenText(snapshot)) {
+					t.Errorf("complete elapsed and interrupt hint missing (want %s)", activity)
+				}
+				for _, segment := range strings.Split(rows[size.height-1], "  ")[1:] {
+					switch segment {
+					case "/help", "Enter", "Ctrl+D", "/memory", "/agents":
+					default:
+						t.Errorf("footer cut hint %q", segment)
+					}
+				}
+			}
+			close(release)
+			waitScreen(t, h, term, "NARROW-RESULT")
+			select {
+			case <-received:
+				t.Error("resize repeated provider request")
+			default:
+			}
+			h.keys(term, "\x04")
+			term.process.wait(t, 0)
+			h.expectTerminalRestored(term)
+			h.stopCore(core)
+		})
+	}
 }

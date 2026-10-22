@@ -267,7 +267,11 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 
 func (m *shellModel) conversationPlan() layout.Layout {
 	m.syncComposer()
-	return layout.Plan(m.size, layout.Caps{SidePane: true, Running: m.hasCapability("running"), Cards: m.hasCapability("waiting")}, layout.Shape{Activity: m.activityRequested(), SidePane: m.conversation.pager.open, ComposerRows: m.conversation.composer.Height(), RunningCount: len(m.topicBlocks("running")), CardCount: len(m.topicBlocks("waiting")), CardRows: len(m.topicBlocks("waiting")), Attachments: len(m.content.Draft.Attachments) > 0})
+	activityRows := 0
+	if m.activityRequested() {
+		activityRows = len(strings.Split(m.activityText(), "\n"))
+	}
+	return layout.Plan(m.size, layout.Caps{SidePane: true, Running: m.hasCapability("running"), Cards: m.hasCapability("waiting")}, layout.Shape{ActivityRows: activityRows, SidePane: m.conversation.pager.open, ComposerRows: m.conversation.composer.Height(), RunningCount: len(m.topicBlocks("running")), CardCount: len(m.topicBlocks("waiting")), CardRows: len(m.topicBlocks("waiting")), Attachments: len(m.content.Draft.Attachments) > 0})
 }
 
 func (m *shellModel) topicBlocks(topic string) []state.Block {
@@ -473,7 +477,7 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 	} else if notice := m.localNotice(); showNotice && notice != "" {
 		statusLine += "  " + notice
 	}
-	rows[plan.Status.Y] = clip(statusLine + "  /help  Enter  Ctrl+D  /memory  /agents")
+	rows[plan.Status.Y] = conversationFooter(statusLine, m.size.Width)
 	if plan.Tier == layout.TooSmall {
 		if plan.Notice.Height > 0 {
 			rows[0] = clip(design.Text(m.styles.options.Language, "shell.too_small"))
@@ -568,13 +572,19 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 			rows[region.Y+region.Height-1] = clip(label + "  +" + strconv.Itoa(len(blocks)-region.Height+1))
 		}
 	}
-	drawTopic("running", plan.Running)
-	drawTopic("waiting", plan.Cards)
+	if plan.CombinedWork {
+		rows[plan.Running.Y] = fmt.Sprintf("%s %d  %s %d", design.Text(m.styles.options.Language, "running"), plan.RunningCount, design.Text(m.styles.options.Language, "waiting"), plan.CardCount)
+	} else {
+		drawTopic("running", plan.Running)
+		drawTopic("waiting", plan.Cards)
+	}
 	if plan.Attachments.Height > 0 {
 		rows[plan.Attachments.Y] = clip(strings.Join(m.content.Draft.Attachments, "  "))
 	}
 	if plan.Activity.Height > 0 {
-		rows[plan.Activity.Y] = m.styles.Muted.Render(m.activityText())
+		for i, line := range strings.Split(m.activityText(), "\n") {
+			rows[plan.Activity.Y+i] = m.styles.Muted.Render(line)
+		}
 	}
 	m.conversation.composer.SetHeight(plan.Composer.Height)
 	for i, line := range strings.Split(m.conversation.composer.View(), "\n") {
@@ -605,4 +615,18 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		rows[plan.Status.Y] = clip("Esc  /  n  " + p.query)
 	}
 	return strings.Join(rows, "\n")
+}
+
+// Retain the status/notice first, then admit complete hint segments in the
+// existing priority order. A narrow footer never shows half of a command.
+func conversationFooter(status string, width int) string {
+	line := render.Truncate(status, width, render.Unicode{})
+	for _, hint := range []string{"/help", "Enter", "Ctrl+D", "/memory", "/agents"} {
+		candidate := line + "  " + hint
+		if (render.Unicode{}).Width(candidate) > width {
+			break
+		}
+		line = candidate
+	}
+	return line
 }

@@ -299,6 +299,21 @@ time, replying after the first delta, stopping before interrupt delivery,
 completion and zero idle bytes. The recording harness separately checks idle
 output and the unit clock checks timer removal, hidden rows and static glyphs.
 
+Below 80 columns, if the complete activity line does not fit, its elapsed and
+interrupt details move together to a second row. Below 50 columns, the hint
+shortens to `Esc`; the glyph, localized word and complete elapsed value remain.
+The display measures those rows before planning the transcript and composer.
+The footer keeps the connection status and local notice first, then admits
+whole hint segments in their existing order: `/help`, `Enter`, `Ctrl+D`,
+`/memory`, `/agents`. A hint that does not fit, and the hints after it, are
+omitted rather than cut in the middle of a command.
+
+`e2e/tui_resize_test.go` holds a real installed-Core turn behind a fixture
+provider gate, resizes the PTY through 79, 50 and 40 columns in English and
+Korean, and checks complete activity and footer segments plus four transcript
+rows with a growing composer. Releasing the gate produces a real result without
+repeating the input. Unit tests exercise wrapped activity, long elapsed values
+and the planner's two-row budget under pressure.
 
 **Row budget** is a pure function in `tui/layout`.
 
@@ -316,8 +331,12 @@ func Plan(size Size, caps Caps, st Shape) Layout // regions disjoint, sum fits, 
   when folded. Empty or ungranted lists reserve no rows, even under pressure.
   The attachment strip
   uses one row. After the stated shedding, composer growth yields as necessary
-  to preserve the transcript floor. Counts and unsupported flags remain typed
-  output even when their region folds.
+  to preserve the transcript floor. The active row reserves one or two measured
+  rows immediately above the composer. At the ten-row minimum, if a two-row
+  activity still cannot fit after composer and attachment shedding, running and
+  waiting share one summary row containing both counts. Their full lists remain
+  available through the existing keys. Counts and unsupported flags remain
+  typed output even when their region folds.
 - Property tests enumerate widths 0–240 and heights 0–100 with empty and crowded
   shapes and granted and missing capabilities, and exercise threshold and
   integer-limit dimensions. The planner itself imposes no maximum size.
