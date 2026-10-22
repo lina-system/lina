@@ -12,12 +12,16 @@ import (
 	"github.com/ncruces/go-sqlite3"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
+	"github.com/thisisjun786/lina/kit/proc"
 )
 
 // Crash tests repeatedly exec this test binary. Share only compiled SQLite
 // code with those children, never connections, database files or test results.
 // The parent's private directory is removed after all tests join their children.
 func TestMain(m *testing.M) {
+	if len(os.Args) > 1 && os.Args[1] == "proc-supervise" {
+		os.Exit(proc.SuperviseMain(os.Args[2:], os.Stderr))
+	}
 	const key = "LINA_BOOT_TEST_SQLITE_CACHE"
 	directory := os.Getenv(key)
 	owner := directory == ""

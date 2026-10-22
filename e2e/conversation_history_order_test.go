@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -77,6 +78,8 @@ func TestM1ConversationHistoryOrder(t *testing.T) {
 			// proving that the TUI consumed History before input is submitted.
 			terminal := h.startConversationTUI([]string{"TERM=xterm-256color"}, scenario.Width, scenario.Height, conversation)
 			waitScreen(t, h, terminal, "Ctrl+D")
+			// Controls can appear before negotiation permits input. Wait for Live.
+			waitScreen(t, h, terminal, design.Text(design.English, "live"))
 			h.keys(terminal, scenario.FirstInput+"\r")
 			select {
 			case <-started:

@@ -1,0 +1,10 @@
+{
+  "agent_name": "Fixture replacement",
+  "snapshot_characters": 262144,
+  "snapshots": [
+    {"name": "ascii", "unit": "a"},
+    {"name": "unicode", "unit": "가"},
+    {"name": "escaped", "unit": "\""}
+  ],
+  "notice": "Fixture growth learned"
+}

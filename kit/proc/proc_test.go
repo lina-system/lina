@@ -4,11 +4,16 @@ package proc_test
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,7 +29,65 @@ func TestEnvironment(t *testing.T) {
 	}
 }
 
+func TestCommandResults(t *testing.T) {
+	owner := proc.NewOwner()
+	defer owner.Close(t.Context())
+	l := lease.New(func() {})
+	defer l.Release()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	var output bytes.Buffer
+	err = owner.Run(t.Context(), l, proc.Command{
+		Path: exe, Args: []string{"-test.run=^TestCommandResultProcess$"}, Dir: dir,
+		Env: []string{"LINA_PROC_RESULT_TEST=1", "LINA_PROC_VALUE=child-value"}, Stdout: &output,
+	})
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 47 {
+		t.Fatalf("exit status = %v", err)
+	}
+	lines := strings.Split(strings.TrimSuffix(output.String(), "\n"), "\n")
+	if len(lines) != 2 || lines[0] != "child-value" {
+		t.Fatalf("output = %q", output.String())
+	}
+	wantDir, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotDir, err := os.Stat(lines[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Windows can report an 8.3 path while TempDir uses the long spelling.
+	if !os.SameFile(wantDir, gotDir) {
+		t.Fatalf("working directory = %q, want %q", lines[1], dir)
+	}
+	err = owner.Run(t.Context(), l, proc.Command{Path: filepath.Join(dir, "missing")})
+	// Windows resolves executable extensions before CreateProcess and can
+	// report exec.ErrNotFound; Unix exec reports os.ErrNotExist instead.
+	if !errors.Is(err, os.ErrNotExist) && !errors.Is(err, exec.ErrNotFound) {
+		t.Fatalf("start failure = %v", err)
+	}
+}
+
+func TestCommandResultProcess(t *testing.T) {
+	if os.Getenv("LINA_PROC_RESULT_TEST") != "1" {
+		return
+	}
+	dir, err := os.Getwd()
+	if err != nil {
+		os.Exit(48)
+	}
+	_, _ = io.WriteString(os.Stdout, os.Getenv("LINA_PROC_VALUE")+"\n"+dir+"\n")
+	os.Exit(47)
+}
+
 func TestOwnerCancelsWholeGroup(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix shell; Windows descendants are covered by TestOwnerReapsEscapedDescendants")
+	}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	owner := proc.NewOwner()
