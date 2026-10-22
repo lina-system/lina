@@ -4,6 +4,7 @@ package goal
 import (
 	"context"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -94,5 +95,169 @@ func TestRecordEditFencesGoalUntilManagerInterpretsRevision(t *testing.T) {
 	}
 	if len(after.Actions) != 1 || after.Actions[0].Kind != PlanGoal {
 		t.Fatalf("stale goal dispatched: %+v", after.Actions)
+	}
+}
+
+// pausedDefinitionCommit holds only the first write before the canon transaction,
+// allowing an adapter report to commit while a record refresh is in flight.
+type pausedDefinitionCommit struct {
+	Canon
+	armed            atomic.Bool
+	entered, release chan struct{}
+}
+
+func (p *pausedDefinitionCommit) Write(ctx context.Context, f func(*canon.Tx) error) error {
+	if p.armed.CompareAndSwap(true, false) {
+		close(p.entered)
+		select {
+		case <-p.release:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return p.Canon.Write(ctx, f)
+}
+
+func TestRecordRefreshKeepsInflightReportDefinition(t *testing.T) {
+	_, db := testJournal(t)
+	e, _ := NewEngine(Config{DB: db, Records: db.Definitions, Epoch: 1, Now: func() time.Time { return time.Unix(100, 0) }})
+	g := oneGoal(readyTask("a"))
+	if err := e.Admit(t.Context(), g); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.NodeChanged(t.Context(), readyNode("n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	s, err := e.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := e.Claim(t.Context(), s.Actions[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, rev, err := db.Definitions.Read(t.Context(), s.Goals[0].RecordID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Definitions.Commit(t.Context(), DefinitionChange{ID: r.ID, Base: rev, Path: r.Path, Data: append(r.Data, []byte("\nA corrected scope.\n")...)}, g.Person, g.Agent); err != nil {
+		t.Fatal(err)
+	}
+	paused := &pausedDefinitionCommit{Canon: db, entered: make(chan struct{}), release: make(chan struct{})}
+	paused.armed.Store(true)
+	e.journal.db = paused
+	finished := make(chan error, 1)
+	go func() { finished <- e.RefreshDefinitions(t.Context()) }()
+	<-paused.entered
+	// These must keep using the committed revision, even after the new record
+	// has been read. No timing-based scheduling is needed to reproduce the race.
+	if err = e.Report(t.Context(), a.ID, 1, Observation{Status: OutcomeSucceeded, Head: "built-head", EffectsSettled: true}); err != nil {
+		t.Errorf("in-flight report lost its definition: %v", err)
+	}
+	if _, err = e.Snapshot(t.Context()); err != nil {
+		t.Errorf("snapshot lost committed definition: %v", err)
+	}
+	close(paused.release)
+	if err = <-finished; err != nil {
+		t.Fatal(err)
+	}
+	s, err = e.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Goals[0].Tasks[0].Head != "built-head" {
+		t.Fatal("record correction lost the completed worker result")
+	}
+}
+
+func TestUnplannedRecordCorrectionStaysBlockedAcrossRestart(t *testing.T) {
+	_, db := testJournal(t)
+	cfg := Config{DB: db, Records: db.Definitions, Epoch: 1, Now: func() time.Time { return time.Unix(100, 0) }}
+	e, _ := NewEngine(cfg)
+	g := oneGoal(readyTask("a"))
+	if err := e.Admit(t.Context(), g); err != nil {
+		t.Fatal(err)
+	}
+	s, err := e.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, rev, err := db.Definitions.Read(t.Context(), s.Goals[0].RecordID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Definitions.Commit(t.Context(), DefinitionChange{ID: r.ID, Base: rev, Path: r.Path, Data: append(r.Data, []byte("\nThe scope has changed.\n")...)}, g.Person, g.Agent); err != nil {
+		t.Fatal(err)
+	}
+	if err = e.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	s, err = e.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Actions) != 1 || s.Actions[0].Kind != PlanGoal {
+		t.Fatalf("expected one correction plan: %+v", s.Actions)
+	}
+	a, err := e.Claim(t.Context(), s.Actions[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = e.Report(t.Context(), a.ID, 1, Observation{Status: OutcomeSucceeded}); err != nil {
+		t.Fatal(err)
+	}
+	if err = e.NodeChanged(t.Context(), readyNode("n")); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		if i == 1 {
+			cfg.Epoch++
+			e, err = NewEngine(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err = e.Reconcile(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		s, err = e.Snapshot(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.Goals[0].State != GoalBlocked || s.Goals[0].AttentionID == "" {
+			t.Errorf("unplanned correction did not stay blocked: %+v", s.Goals[0])
+		}
+		for _, action := range s.Actions {
+			if action.State != "finished" {
+				t.Errorf("stale work resumed without a corrected plan: %+v", action)
+			}
+		}
+	}
+	// A later person correction can open a fresh manager turn.
+	r, rev, err = db.Definitions.Read(t.Context(), s.Goals[0].RecordID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Definitions.Commit(t.Context(), DefinitionChange{ID: r.ID, Base: rev, Path: r.Path, Data: append(r.Data, []byte("\nHere is the missing decision.\n")...)}, g.Person, g.Agent); err != nil {
+		t.Fatal(err)
+	}
+	if err = e.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	s, err = e.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	plans := 0
+	for _, action := range s.Actions {
+		if action.Kind == PlanGoal && action.State == "queued" {
+			plans++
+		}
+	}
+	if plans != 1 {
+		t.Fatalf("new correction did not reopen one manager turn: %+v", s.Actions)
 	}
 }

@@ -371,6 +371,10 @@ func Derive(state State, now time.Time) (Plan, error) {
 			continue
 		}
 		if g.DefinitionPending {
+			if g.AssessedFailure == "definition:"+g.RecordRevision {
+				wait(g, Task{}, "person", "goal.record.changed")
+				continue
+			}
 			if !pending(state.Actions, g.ID, "") {
 				add(g, Task{}, PlanGoal, g.RecordRevision, "")
 			}
