@@ -22,6 +22,9 @@ func (s Styles) markdownRow(row render.StyledRow) string {
 	var out strings.Builder
 	for _, span := range row.Spans {
 		style := s.Text
+		if span.Style.Muted {
+			style = s.Muted
+		}
 		if span.Style.Code {
 			style = s.Code
 			if s.options.Profile != Monochrome && s.options.Theme != "high-contrast" {
