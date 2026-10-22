@@ -5,12 +5,52 @@ package ui
 import (
 	"context"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/internal/tui/state"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
+
+func TestInitialConversationDiscoveryRetainsDraftUntilDestinationKnown(t *testing.T) {
+	m := newShell(Options{Width: 80, Profile: Monochrome}, time.Now)
+	m.content.Capabilities = []protocol.Capability{{Name: "conversation", Version: "1.0"}}
+	m.content.Agents = []protocol.Agent{{AgentID: "default"}}
+	if m.discoveryHistory() == nil {
+		t.Fatal("initial connection did not request conversation discovery")
+	}
+	// Welcome can arrive before history. Hold history until after an early Enter.
+	m.Update(shellConnection{Generation: 1, Status: ConnectionStatus{State: Live}})
+	m.Update(tea.PasteMsg{Content: "preserved initial draft"})
+	if _, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}); cmd != nil || m.content.Draft.Text != "preserved initial draft" || len(m.content.Blocks) != 0 {
+		t.Fatal("initial input was sent before conversation discovery")
+	}
+	if m.status.State != Connecting {
+		t.Fatal("initial connection advertised readiness before discovery")
+	}
+	m.conversation.id = "main:default"
+	m.agentDiscoveryDone()
+	if m.status.State != Live || m.content.Draft.Text != "preserved initial draft" {
+		t.Fatal("discovery did not make the preserved draft ready")
+	}
+	if _, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}); cmd == nil || m.content.Draft.Text != "" || len(m.content.Blocks) != 1 {
+		t.Fatal("explicit Enter after discovery did not send exactly once")
+	}
+}
+
+func TestConnectionOnlyWelcomeDoesNotWaitForConversationDiscovery(t *testing.T) {
+	m := newShell(Options{Width: 80, Profile: Monochrome}, time.Now)
+	m.content.Capabilities = []protocol.Capability{{Name: "agents", Version: "1.0"}}
+	m.content.Agents = []protocol.Agent{{AgentID: "default"}}
+	if m.discoveryHistory() != nil {
+		t.Fatal("unconfigured connection requested conversation history")
+	}
+	m.Update(shellConnection{Generation: 1, Status: ConnectionStatus{State: Live}})
+	if m.status.State != Live || m.conversation.agentPending {
+		t.Fatal("connection-only welcome waited for unavailable conversation")
+	}
+}
 
 func TestReconnectHistoryRetainsChosenAgentAndUnacknowledgedDraft(t *testing.T) {
 	m := conversationShell()
@@ -151,25 +191,5 @@ func TestReconnectDiscoveryUnavailableRemainsRetryable(t *testing.T) {
 	}
 	if retry := m.discoveryFailed(protocol.ErrorOutOfScope); retry || !m.conversation.agentMissing || m.localNotice() == "" {
 		t.Fatal("authoritative refusal must require an explicit selection")
-	}
-}
-
-func TestInitialDiscoveryHoldsLiveUntilHistory(t *testing.T) {
-	m := conversationShell()
-	m.conversation.id = ""
-	m.content.Agents = []protocol.Agent{{AgentID: "default"}}
-	if request := m.discoveryHistory(); request == nil {
-		t.Fatal("initial history was not requested")
-	}
-	m.Update(shellConnection{Generation: 1, Status: ConnectionStatus{State: Live}})
-	m.Update(tea.PasteMsg{Content: "early input"})
-	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if cmd != nil || m.content.Draft.Text != "early input" || m.status.State == Live {
-		t.Fatalf("initial discovery advertised readiness: pending=%v state=%v", m.conversation.agentPending, m.status.State)
-	}
-	m.conversation.id = "main:default"
-	m.agentDiscoveryDone()
-	if _, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}); cmd == nil || m.status.State != Live {
-		t.Fatal("matching history did not admit explicit send")
 	}
 }

@@ -27,8 +27,6 @@ func (m *shellModel) discoveryHistory() *protocol.HistoryGet {
 	if len(m.content.Agents) == 0 {
 		return nil
 	}
-	// Welcome precedes the History reply that supplies the destination.
-	// Keep the visible connection recovering until that discovery completes.
 	m.conversation.agentPending = true
 	return &protocol.HistoryGet{}
 }
@@ -79,8 +77,9 @@ func (m *shellModel) reconnectHistory(agents []protocol.Agent) *protocol.History
 }
 
 func (m *shellModel) agentDiscoveryDone() {
+	pending := m.conversation.agentPending
 	m.conversation.agentPending = false
-	if m.status.State == Resyncing && !m.hasGap() && len(m.resyncPending) == 0 {
+	if (m.status.State == Resyncing || pending && m.status.State == Connecting) && !m.hasGap() && len(m.resyncPending) == 0 {
 		m.status = ConnectionStatus{State: Live}
 	}
 }
