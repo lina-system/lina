@@ -1,6 +1,6 @@
 # Headless acceptance harness
 
-Run `go test ./e2e/...` (or `go test -count=1 -v ./e2e/...` for uncached scenario
+Run `go test ./e2e/m1/...` (or `go test -count=1 -v ./e2e/...` for uncached scenario
 output). Node.js and the workspace's Go toolchain are required. The harness uses
 native Linux and macOS pseudo-terminals; it needs no window, display server,
 provider account, external network service or human input. Conversation screens
@@ -68,9 +68,9 @@ also reopen the poller against durable connection and secret state.
 `m1/tui-talk-log.json` seeds a durable exchange, restarts installed Core, and
 checks one summary row and its explicit ledger expansion without a model call.
 
-Helpers are test-only Go files in this package, shared by scenario tests. Keeping
+The M1 acceptance map is [m1/README.md](m1/README.md). Helpers are test-only Go files in `m1/`, shared by scenario tests. Keeping
 process creation in test files follows the architecture rule for command
-acceptance harnesses. Future milestones can add scenario files here; new
+acceptance harnesses. Existing persona-growth extensions retain the same harness and their `m2/` fixture; future milestones can add scenario files here; new
 subpackages under `e2e/` are also covered by the registered package pattern.
 
 `m3/websocket.json` runs installed Core through an HTTP upgrade on its authenticated
@@ -161,7 +161,7 @@ After setting the endpoint, model and key privately, run:
 ```sh
 export LINA_QA_REAL_MODEL=1
 export LINA_RESPONSES_BASE_URL LINA_RESPONSES_MODEL LINA_RESPONSES_API_KEY
-go test -count=1 -v ./e2e -run 'TestResponsesRoundTrip|TestRealModelHeadlessConversation'
+go test -count=1 -v ./e2e/m1 -run 'TestResponsesRoundTrip|TestRealModelHeadlessConversation'
 ```
 
 Keep endpoint values and credentials out of shell tracing, logs, reports and
@@ -226,6 +226,11 @@ replay count is consumed by the Bubble Tea recording-writer test.
 synthetic producer data, socket discovery/decisions, and a separate-key PTY approval.
 These scenarios create no second product decision store and use no timing sleeps.
 
+`m2/tui-composer-identity.json` installs Core/TUI into a temporary root and creates
+and chooses another agent through the real TUI. It checks that the empty composer,
+header and reply speaker name that agent before and after Core reconnect, using
+a loopback Responses fixture and a real PTY.
+
 `m2/github-ci.json` starts the real Core binary with a synthetic `gh` executable
 in its isolated PATH. It negotiates the GitHub capability, refuses an unnegotiated
 read, observes rate-limited CI pending and its retry deadline, then observes head,
@@ -245,7 +250,7 @@ interrupt, idle continuation, a file produced by the worker and terminal output
 in the originating conversation before and after Core restart. The worker checks
 that no sandbox, approval, model-provider or config override is sent and that
 Core's dedicated provider credential is absent. Run it with
-`go test -count=1 ./e2e -run '^TestM2InstalledCodexSession$'`.
+`go test -count=1 ./e2e/m1 -run '^TestM2InstalledCodexSession$'`.
 The opt-in `LINA_CODEX_LIVE=1 go test -count=1 -v ./internal/core/worker/codex -run '^TestInstalledCodex$'`
 uses the user's installed Codex and own configuration. It verifies control and a
 model-generated result without changing approval or sandbox settings.
@@ -277,12 +282,12 @@ denial despite SUCCESS, exit zero without result, pending checks, and durable
 conversation results without execution replay on restart. No personal worker
 account or GitHub write is used.
 
-`LINA_CODEX_LIVE=1 go test -count=1 -v ./e2e -run '^TestM2InstalledCodexLive$'`
+`LINA_CODEX_LIVE=1 go test -count=1 -v ./e2e/m1 -run '^TestM2InstalledCodexLive$'`
 also drives installed Core's normal tool path into the actual installed Codex,
 then waits on the worker's conversation result before reading its snapshot. Only
 Core's conversation provider is synthetic; the worker uses its own model setup.
 
-`go test ./e2e -run '^TestM2CodexWorkTools$' -count=1` runs
+`go test ./e2e/m1 -run '^TestM2CodexWorkTools$' -count=1` runs
 `m2/codex-work-tools.json` through the built Core, its Unix client protocol and a
 separate synthetic installed worker on stdio. It checks all four declared LINA
 work tools, authenticated owner approval and question answers, worker-written
