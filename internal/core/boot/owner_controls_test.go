@@ -17,7 +17,8 @@ import (
 )
 
 func TestOwnerDigestAndControlsRegistered(t *testing.T) {
-	r := controlRuntime(t)
+	r := runRuntime(t)
+	r.startOwnerControls()
 	for _, kind := range []protocol.Kind{protocol.KindProgressDigestGet, protocol.KindFollowUp, protocol.KindMultiTaskControl} {
 		if _, ok := r.identity.Operations[kind]; !ok {
 			t.Errorf("Core operation %s missing", kind)
@@ -142,5 +143,17 @@ func TestForwardedOwnerCommandRemainsEvidence(t *testing.T) {
 	handled, err := c.channelControl(t.Context(), nil, gateway.Inbound{Body: []byte(`{"text":"/stop all","forwarded":true}`)}, channels.Binding{}, channelInput{})
 	if err != nil || handled {
 		t.Fatalf("forwarded text became control: %t %v", handled, err)
+	}
+}
+
+func TestOwnerControlsWithoutRunServiceDoNotAdvertiseRunning(t *testing.T) {
+	r := controlRuntime(t)
+	for _, op := range r.identity.Operations {
+		if op.Capability.Name == "running" {
+			t.Fatal("running advertised without its service/topic")
+		}
+	}
+	if _, ok := r.identity.Operations[protocol.KindProgressDigestGet]; !ok {
+		t.Fatal("read-only digest needs no model")
 	}
 }

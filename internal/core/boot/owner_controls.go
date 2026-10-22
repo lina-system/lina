@@ -16,6 +16,9 @@ import (
 
 func (r *conversationRuntime) startOwnerControls() {
 	r.identity.Operations[protocol.KindProgressDigestGet] = clientsrv.Operation{Capability: progressCapability, Handle: r.progressDigest}
+	if r.background == nil {
+		return
+	}
 	r.identity.Operations[protocol.KindFollowUp] = clientsrv.Operation{Capability: runningCapability, Handle: r.followRun}
 	r.identity.Operations[protocol.KindMultiTaskControl] = clientsrv.Operation{Capability: runningCapability, Handle: r.stopAllRuns}
 }
