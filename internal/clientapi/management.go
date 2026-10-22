@@ -14,3 +14,7 @@ func (c *Client) Agent(ctx context.Context, request protocol.AgentRequest) (stri
 func (c *Client) Memory(ctx context.Context, request protocol.MemoryRequest) (string, error) {
 	return c.request(ctx, protocol.KindMemoryRequest, request)
 }
+
+func (c *Client) Running(ctx context.Context, request protocol.RunningGet) (string, error) {
+	return c.request(ctx, protocol.KindRunningGet, request)
+}

@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // terminalRenderer lets the existing connection owner keep bounded, ordered
@@ -115,7 +116,17 @@ func (r *terminalRenderer) close() error {
 type rawTerminalWriter struct{ output io.Writer }
 
 func (w rawTerminalWriter) Write(data []byte) (int, error) {
+	if len(data) == 0 {
+		return 0, nil
+	}
 	translated := bytes.ReplaceAll(data, []byte{'\n'}, []byte{'\r', '\n'})
+	// A queued frame may flush after the physical terminal has already grown.
+	// The cell renderer's scroll optimization restores margins to its cached
+	// height, which can leave the terminal confined to the old, shorter screen.
+	// Finish each write with the terminal's own full-height margins. Preserve
+	// the hardware cursor because DECSTBM homes it; the next diff still relies
+	// on the renderer's cursor position. This emits nothing on unchanged frames.
+	translated = append(translated, ansi.SaveCursor+ansi.SetTopBottomMargins(0, 0)+ansi.RestoreCursor...)
 	_, err := w.output.Write(translated)
 	if err != nil {
 		return 0, err

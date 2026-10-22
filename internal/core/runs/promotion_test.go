@@ -223,6 +223,78 @@ func TestStartFromTurnRejectsMismatchedIdentityAndChangedReplay(t *testing.T) {
 	}
 }
 
+func TestCommittedPromotionSurvivesLaterBudgetHold(t *testing.T) {
+	for _, restart := range []bool{false, true} {
+		t.Run(map[bool]string{false: "live", true: "restart"}[restart], func(t *testing.T) {
+			var held atomic.Bool
+			var authorizations, publications atomic.Int64
+			var cfg runs.Config
+			s, db, _ := setupWith(t, func(context.Context, provider.Request) (provider.Stream, error) {
+				t.Error("receipt replay started execution")
+				return nil, nil
+			}, func(c *runs.Config) {
+				c.Authorize = func(context.Context, runs.Origin, runs.Brief) error {
+					authorizations.Add(1)
+					if held.Load() {
+						return runs.ErrBudget
+					}
+					return nil
+				}
+				c.PublishPromotion = func(context.Context, *canon.Tx, string, budget.Handle, budget.Handoff) error {
+					publications.Add(1)
+					return nil
+				}
+				cfg = *c
+			})
+			h := gathered()
+			first, err := s.StartFromTurn(t.Context(), origin(), brief(), h)
+			if err != nil {
+				t.Fatal(err)
+			}
+			held.Store(true)
+			if restart {
+				if err := s.Close(); err != nil {
+					t.Fatal(err)
+				}
+				s, err = runs.New(cfg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { s.Close() })
+			}
+			again, err := s.StartFromTurn(t.Context(), origin(), brief(), h)
+			if err != nil || again != first {
+				t.Errorf("committed promotion blocked by later budget: first=%+v replay=%+v err=%v", first, again, err)
+			}
+			changed := h
+			changed.Results = nil
+			if _, err := s.StartFromTurn(t.Context(), origin(), brief(), changed); !errors.Is(err, runs.ErrInvalid) {
+				t.Errorf("changed gathered state: %v", err)
+			}
+			changedBrief := brief()
+			changedBrief.Done = "different completion condition"
+			if _, err := s.StartFromTurn(t.Context(), origin(), changedBrief, h); !errors.Is(err, runs.ErrInvalid) {
+				t.Errorf("changed brief: %v", err)
+			}
+			if got := authorizations.Load(); got != 1 {
+				t.Errorf("receipt replay authorized new work: calls=%d", got)
+			}
+			other := origin()
+			other.Turn = "new-turn"
+			h.Turn = other.Turn
+			if _, err := s.StartFromTurn(t.Context(), other, brief(), h); !errors.Is(err, runs.ErrBudget) {
+				t.Errorf("new promotion bypassed hold: %v", err)
+			}
+			var count int
+			if err := db.Read(t.Context(), func(tx *canon.Tx) error {
+				return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM background_runs").Scan(&count)
+			}); err != nil || count != 1 || publications.Load() != 1 || authorizations.Load() != 2 {
+				t.Fatalf("runs=%d publications=%d authorizations=%d err=%v", count, publications.Load(), authorizations.Load(), err)
+			}
+		})
+	}
+}
+
 func TestPromotionReplaySurvivesPersistenceMasking(t *testing.T) {
 	var cfg runs.Config
 	s, _, _ := setupWith(t, func(context.Context, provider.Request) (provider.Stream, error) {
