@@ -69,6 +69,10 @@ func validateCoverage(ctx context.Context, tx *canon.Tx, p Proposal) (Node, erro
 	if err != nil {
 		return Node{}, err
 	}
+	byID := make(map[string]event, len(all))
+	for _, e := range all {
+		byID[e.id] = e
+	}
 	covered := map[string]bool{}
 	add := func(c Coverage) error {
 		// Children, then direct coverage, then the verbatim tail must consume
@@ -80,8 +84,19 @@ func validateCoverage(ctx context.Context, tx *canon.Tx, p Proposal) (Node, erro
 		covered[c.EventID] = true
 		return nil
 	}
+	// Older builders assigned every excluded event to the root, including
+	// exclusions beyond retained messages. Preserve that provenance, but consume
+	// inherited exclusions at their ledger position instead of their tree
+	// position. Actual child inputs and every new proposal remain ordered.
+	var inherited []Coverage
+	inheritedSkips := map[string]bool{}
+	seenNodes, seenEvents := map[string]bool{}, map[string]bool{}
 	var walk func(string) error
 	walk = func(id string) error {
+		if seenNodes[id] {
+			return ErrCoverage
+		}
+		seenNodes[id] = true
 		child, err := readNode(ctx, tx, id)
 		if err != nil {
 			return err
@@ -95,8 +110,14 @@ func validateCoverage(ctx context.Context, tx *canon.Tx, p Proposal) (Node, erro
 			}
 		}
 		for _, c := range child.Cover {
-			if err := add(c); err != nil {
-				return err
+			e, exists := byID[c.EventID]
+			if !exists || seenEvents[c.EventID] || !validReason(c, e) {
+				return ErrCoverage
+			}
+			seenEvents[c.EventID] = true
+			inherited = append(inherited, c)
+			if c.Reason != "" && skipReason(e) != "" {
+				inheritedSkips[c.EventID] = true
 			}
 		}
 		return nil
@@ -111,11 +132,27 @@ func validateCoverage(ctx context.Context, tx *canon.Tx, p Proposal) (Node, erro
 			return Node{}, err
 		}
 	}
-	for _, c := range p.Cover {
+	consumeInheritedSkips := func() {
+		for len(covered) < len(all) && inheritedSkips[all[len(covered)].id] {
+			covered[all[len(covered)].id] = true
+		}
+	}
+	for _, c := range inherited {
+		if inheritedSkips[c.EventID] {
+			continue
+		}
+		consumeInheritedSkips()
 		if err := add(c); err != nil {
 			return Node{}, err
 		}
 	}
+	for _, c := range p.Cover {
+		consumeInheritedSkips()
+		if err := add(c); err != nil {
+			return Node{}, err
+		}
+	}
+	consumeInheritedSkips()
 	if len(covered) == 0 {
 		return Node{}, ErrCoverage
 	}
@@ -130,12 +167,16 @@ func validateCoverage(ctx context.Context, tx *canon.Tx, p Proposal) (Node, erro
 		}
 	}
 	// The remaining ledger suffix may contain excluded control/replay events
-	// between retained messages. These are not owned by the summary, and cannot
-	// be used to smuggle ordinary input past the prefix boundary.
+	// between retained messages. New exclusions stay outside the summary. Legacy
+	// exclusions retain their stored ownership without extending the prefix or
+	// allowing ordinary input to cross a retained message.
 	verbatim, skipped := 0, 0
 	for _, e := range all[len(covered):] {
 		c := Coverage{EventID: e.id}
-		if skipped < len(p.TailSkips) && p.TailSkips[skipped].EventID == e.id {
+		if inheritedSkips[e.id] {
+			// Its stored reason was checked above; it is not new summary input.
+			c.Reason = skipReason(e)
+		} else if skipped < len(p.TailSkips) && p.TailSkips[skipped].EventID == e.id {
 			c = p.TailSkips[skipped]
 			if c.Reason == "" || skipReason(e) == "" {
 				return Node{}, ErrCoverage

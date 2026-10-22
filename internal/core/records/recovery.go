@@ -121,13 +121,19 @@ func (r *Store) remember(ctx context.Context, token string, p publication) error
 	})
 }
 func (r *Store) checkpoint(ctx context.Context, p publication) error {
-	ids := make([]string, len(p.edits()))
-	for i, c := range p.edits() {
+	edits := p.edits()
+	docs := make([]document, len(edits))
+	ids := make([]string, len(edits))
+	for i, c := range edits {
 		data, err := r.readObject(c.Blob, "blob")
 		if err != nil {
 			return err
 		}
 		ids[i], err = recordID(data)
+		if err != nil {
+			return err
+		}
+		docs[i], err = parseDocument(data)
 		if err != nil {
 			return err
 		}
@@ -145,12 +151,16 @@ func (r *Store) checkpoint(ctx context.Context, p publication) error {
 		if n != 1 {
 			return ErrRecordsChanged
 		}
-		for i, c := range p.edits() {
+		for i, c := range edits {
 			if _, err = tx.ExecContext(ctx, "INSERT INTO records_index(id,path,blob,revision) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET path=excluded.path,blob=excluded.blob,revision=excluded.revision", ids[i], c.Path, c.Blob, p.Commit); err != nil {
 				return err
 			}
+			if err = putProjection(ctx, tx, indexRow{id: ids[i], path: c.Path, blob: c.Blob, revision: p.Commit, doc: docs[i]}); err != nil {
+				return err
+			}
 		}
-		return nil
+		_, err = tx.ExecContext(ctx, "UPDATE records_index_state SET head=? WHERE singleton=1", p.Commit)
+		return err
 	})
 }
 

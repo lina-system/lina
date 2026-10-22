@@ -1,0 +1,31 @@
+{
+  "side": "client",
+  "input": [
+    "invalid/tool_finished_missing_outcome.json",
+    "invalid/tool_finished_missing_duration.json",
+    "invalid/tool_negative_duration.json",
+    "invalid/tool_unknown_outcome.json",
+    "invalid/tool_started_with_completion.json",
+    "invalid/tool_missing_call_id.json",
+    "invalid/tool_missing_display_name.json",
+    "conversation/tool_started.json"
+  ],
+  "output": [
+    "conversation/tool_started.json"
+  ],
+  "errors": [
+    "malformed",
+    "malformed",
+    "malformed",
+    "malformed",
+    "malformed",
+    "malformed",
+    "malformed",
+    ""
+  ],
+  "outcome": {
+    "accepted": 1,
+    "malformed": 7,
+    "unknown_kinds": 0
+  }
+}

@@ -23,6 +23,7 @@
         "output_delta",
         "item_done",
         "turn_state",
+        "tool_activity",
         "approval_request",
         "approval_answer",
         "question",
@@ -365,6 +366,22 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/turn_state"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "tool_activity"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/tool_activity"
           }
         }
       }
@@ -1925,6 +1942,13 @@
         "agent_id": {
           "type": "string",
           "minLength": 1
+        },
+        "phase": {
+          "$ref": "#/$defs/turn_phase"
+        },
+        "tool_name": {
+          "type": "string",
+          "description": "Trusted tool display name from the registry display catalog; never arguments or output."
         }
       },
       "required": [],
@@ -2456,16 +2480,76 @@
       "required": []
     },
     "work_request": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "github_read",
+            "github_watch"
+          ]
+        },
+        "repository": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "pr_number": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$",
+          "maxLength": 10
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
     "work_result": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "repository": {
+          "type": "string"
+        },
+        "pr_number": {
+          "type": "string"
+        },
+        "head": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "ci": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "success",
+            "failure"
+          ]
+        },
+        "cause": {
+          "type": "string"
+        },
+        "retry_at": {
+          "type": "string"
+        },
+        "done": {
+          "type": "boolean"
+        },
+        "revision": {
+          "type": "string"
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/github_check"
+          }
+        },
+        "reviews": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/github_review"
+          }
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
@@ -3505,6 +3589,7 @@
             "output_delta",
             "item_done",
             "turn_state",
+            "tool_activity",
             "approval_request",
             "question",
             "result",
@@ -3587,6 +3672,22 @@
             "properties": {
               "payload": {
                 "$ref": "#/$defs/turn_state"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "tool_activity"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/tool_activity"
               }
             }
           }
@@ -4446,6 +4547,169 @@
         "refused",
         "stopped"
       ]
+    },
+    "turn_phase": {
+      "type": "string",
+      "enum": [
+        "waiting_model",
+        "streaming",
+        "tool",
+        "stopping"
+      ]
+    },
+    "tool_activity_status": {
+      "type": "string",
+      "enum": [
+        "started",
+        "finished"
+      ]
+    },
+    "tool_activity_outcome": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "failed"
+      ]
+    },
+    "tool_activity": {
+      "type": "object",
+      "description": "Display-only tool lifecycle event. No arguments or output. Live/replay only; not retained in Topics snapshots or conversation/model history.",
+      "properties": {
+        "stream": {
+          "$ref": "#/$defs/stream_metadata"
+        },
+        "agent_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "call_id": {
+          "type": "string"
+        },
+        "tool_name": {
+          "type": "string",
+          "description": "Trusted display catalog label, not a model-provided tool identifier."
+        },
+        "status": {
+          "$ref": "#/$defs/tool_activity_status"
+        },
+        "outcome": {
+          "$ref": "#/$defs/tool_activity_outcome"
+        },
+        "duration_ms": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "call_id",
+        "tool_name",
+        "status"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "finished"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "outcome",
+              "duration_ms"
+            ]
+          },
+          "else": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "outcome"
+                  ]
+                },
+                {
+                  "required": [
+                    "duration_ms"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "github_check": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "conclusion": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "state",
+        "conclusion"
+      ],
+      "additionalProperties": false
+    },
+    "github_comment": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "body",
+        "path",
+        "url"
+      ],
+      "additionalProperties": false
+    },
+    "github_review": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "resolved": {
+          "type": "boolean"
+        },
+        "outdated": {
+          "type": "boolean"
+        },
+        "comments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/github_comment"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "resolved",
+        "outdated",
+        "comments"
+      ],
+      "additionalProperties": false
     },
     "plan_request": {
       "type": "object",

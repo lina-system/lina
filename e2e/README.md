@@ -212,6 +212,18 @@ replay count is consumed by the Bubble Tea recording-writer test.
 synthetic producer data, socket discovery/decisions, and a separate-key PTY approval.
 These scenarios create no second product decision store and use no timing sleeps.
 
+`m2/codex-session.json` runs installed Core, its real conversation model loop,
+tool authority and stdio child ownership with a synthetic installed Codex. It
+asserts version reporting for an unverified version, active steering, confirmed
+interrupt, idle continuation, a file produced by the worker and terminal output
+in the originating conversation before and after Core restart. The worker checks
+that no sandbox, approval, model-provider or config override is sent and that
+Core's dedicated provider credential is absent. Run it with
+`go test -count=1 ./e2e -run '^TestM2InstalledCodexSession$'`.
+The opt-in `LINA_CODEX_LIVE=1 go test -count=1 -v ./internal/core/worker/codex -run '^TestInstalledCodex$'`
+uses the user's installed Codex and own configuration. It verifies control and a
+model-generated result without changing approval or sandbox settings.
+
 `m2/claude-adapter.json` starts installed Core with the external TypeScript adapter
 and a test-only vendor runtime. The runtime calls Core's real `skill_index` tool,
 checks its receipt, streams an assistant result, and the scenario reopens Core
@@ -231,3 +243,13 @@ complete preview replacement, stale confirmation refusal, one-version record
 creation, and idempotent confirmation across Core restarts. A loopback provider
 supplies only model output; all tool, job, result, protocol and records paths are
 production paths. No external credentials or services are used.
+`LINA_CODEX_LIVE=1 go test -count=1 -v ./e2e -run '^TestM2InstalledCodexLive$'`
+also drives installed Core's normal tool path into the actual installed Codex,
+then waits on the worker's conversation result before reading its snapshot. Only
+Core's conversation provider is synthetic; the worker uses its own model setup.
+
+`m2/github-ci.json` starts the real Core binary with a synthetic `gh` executable
+in its isolated PATH. It negotiates the GitHub capability, refuses an unnegotiated
+read, observes rate-limited CI pending and its retry deadline, then observes head,
+review threads and successful checks. It verifies conditional headers and one
+review read per head, with no network credentials or GitHub service dependency.

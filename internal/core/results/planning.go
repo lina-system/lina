@@ -39,11 +39,16 @@ func NewPlanning(s *Store, repo *records.Store) *Planning { return &Planning{res
 func quoted(s string) string                              { b, _ := json.Marshal(s); return string(b) }
 func planRecord(id, kind, title, done, parent, stage string, deps []string, order int, scope result.Scope) []byte {
 	dep, _ := json.Marshal(deps)
+	parents := []string{}
+	if parent != "" {
+		parents = append(parents, parent)
+	}
+	belongs, _ := json.Marshal(parents)
 	state := "active"
 	if kind == "todo" {
 		state = "open"
 	}
-	return []byte(fmt.Sprintf("---\nid: %s\nkind: %s\nstate: %s\norder: %d\nperson_id: %s\nagent_id: %s\nparent: %s\ndone: %s\nstage: %s\nblocked_by: %s\n---\n\n# %s\n\n%s\n", quoted(id), kind, state, order, quoted(scope.PersonID), quoted(scope.AgentID), quoted(parent), quoted(done), quoted(stage), dep, title, done))
+	return []byte(fmt.Sprintf("---\nid: %s\nkind: %s\nstate: %s\norder: %d\nperson_id: %s\nagent_id: %s\nbelongs_to: %s\ndone: %s\nstage: %s\nblocked_by: %s\n---\n\n# %s\n\n%s\n", quoted(id), kind, state, order, quoted(scope.PersonID), quoted(scope.AgentID), belongs, quoted(done), quoted(stage), dep, title, done))
 }
 func frontField(data []byte, key string) string {
 	front, _, ok := strings.Cut(string(data), "\n---\n")

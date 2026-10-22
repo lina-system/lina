@@ -26,6 +26,8 @@ func focusConversation(s State) State {
 	s.Topics = topics
 	s.Busy, s.Stopping, s.TurnActive = false, false, false
 	s.pending = nil
+	s.Activity = Activity{}
+	s.Worked = nil
 	s.Gen++
 	return s
 }
