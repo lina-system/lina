@@ -105,7 +105,7 @@ func TestActivityIdleRecordingWritesZeroBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer output.Close()
-	renderer := startTerminalRenderer(ctx, rawTerminalWriter{output}, 100, 34)
+	renderer := startTerminalRenderer(ctx, rawTerminalWriter{output}, 100, 34, m.styles.options.Profile)
 	defer renderer.close()
 	show := func() {
 		t.Helper()

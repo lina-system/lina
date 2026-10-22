@@ -165,6 +165,126 @@ func TestAreaNewBaseDoesNotResetOtherTask(t *testing.T) {
 	}
 }
 
+func TestAreaTaskBranchOwnership(t *testing.T) {
+	a, spec, _ := areaFixture(t)
+	l := lease.New(func() {})
+	defer l.Release()
+	first, err := a.Prepare(t.Context(), l, "task-1", spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.Branch = "task/task-2"
+	second, err := a.Prepare(t.Context(), l, "task-2", spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Both allocations are detached; protection must precede branch creation.
+	reject := func(dir string, args ...string) {
+		t.Helper()
+		c := exec.Command("git", args...)
+		c.Dir = dir
+		c.Env = []string{"PATH=" + os.Getenv("PATH"), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null"}
+		out, err := c.CombinedOutput()
+		if err == nil || !strings.Contains(string(out), "LINA protected ref") {
+			t.Errorf("git %v did not reject protected ref: %v %s", args, err, out)
+		}
+	}
+	firstRef := "refs/heads/" + first.Spec.Branch
+	secondRef := "refs/heads/" + second.Spec.Branch
+	reject(second.Path, "update-ref", firstRef, spec.Base)
+	// Restore the fixture even on the unfixed implementation, so all ordinary
+	// update/delete paths produce independent regression evidence.
+	if _, err = a.command(t.Context(), l, first.Path, "update-ref", "-d", firstRef); err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range []Workspace{first, second} {
+		areaGit(t, w.Path, "switch", "-c", w.Spec.Branch)
+		areaGit(t, w.Path, "commit", "--allow-empty", "-m", w.TaskID)
+	}
+	firstHead := areaGit(t, first.Path, "rev-parse", "HEAD")
+	secondHead := areaGit(t, second.Path, "rev-parse", "HEAD")
+	for _, args := range [][]string{
+		{"update-ref", firstRef, secondHead},
+		{"update-ref", "-d", firstRef},
+		{"branch", "--force", first.Spec.Branch, secondHead},
+	} {
+		// branch --force normally checks checked-out branches; detach the owner
+		// to prove the ownership guard, rather than Git's checkout check.
+		areaGit(t, first.Path, "switch", "--detach", firstHead)
+		reject(second.Path, args...)
+		if got := areaGit(t, first.Path, "show-ref", "--verify", "--hash", firstRef); got != firstHead {
+			t.Errorf("other task branch moved: %s", got)
+		}
+		if _, err = a.command(t.Context(), l, first.Path, "update-ref", firstRef, firstHead); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reject(first.Path, "update-ref", secondRef, firstHead)
+	c := exec.Command("git", "update-ref", "--stdin")
+	c.Dir = second.Path
+	c.Stdin = strings.NewReader("start\nupdate " + secondRef + " " + firstHead + "\nupdate " + firstRef + " " + secondHead + "\nprepare\ncommit\n")
+	if out, err := c.CombinedOutput(); err == nil || !strings.Contains(string(out), "LINA protected ref") {
+		t.Fatalf("mixed transaction was not rejected: %v %s", err, out)
+	}
+	if areaGit(t, first.Path, "rev-parse", firstRef) != firstHead || areaGit(t, second.Path, "rev-parse", secondRef) != secondHead {
+		t.Fatal("rejected transaction partially changed task branches")
+	}
+	// Assignment is independent of HEAD and survives reopening Core's area.
+	reopened, err := OpenArea(filepath.Dir(a.path), a.git)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close(context.Background())
+	a = reopened
+	areaGit(t, first.Path, "switch", first.Spec.Branch)
+	areaGit(t, first.Path, "commit", "--allow-empty", "-m", "owner continues")
+	if _, err = a.Prepare(t.Context(), l, first.TaskID, first.Spec); err != nil {
+		t.Fatal(err)
+	}
+	head := areaGit(t, first.Path, "rev-parse", "HEAD")
+	bundle, err := a.Bundle(t.Context(), l, first, head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(bundle)
+	if got := areaGit(t, first.Path, "bundle", "list-heads", bundle); got != head+" "+firstRef {
+		t.Fatalf("retained wrong branch: %s", got)
+	}
+	for _, w := range []Workspace{first, second} {
+		if got := areaGit(t, w.Path, "rev-parse", "refs/lina/base/"+w.TaskID); got != w.Spec.Base {
+			t.Fatalf("lost pinned base: %s", got)
+		}
+	}
+}
+
+func TestAreaRefusesConflictingBranchOwnership(t *testing.T) {
+	a, spec, _ := areaFixture(t)
+	l := lease.New(func() {})
+	defer l.Release()
+	spec.Branch = "task/task-1-task-2"
+	first, err := a.Prepare(t.Context(), l, "task-1", spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = a.Prepare(t.Context(), l, "task-2", spec); err == nil {
+		t.Fatal("two tasks reserved the same uncreated branch")
+	}
+	spec.Branch = "task/other-task-1"
+	if _, err = a.Prepare(t.Context(), l, "task-1", spec); err == nil {
+		t.Fatal("retry reassigned an existing worktree's branch")
+	}
+	areaGit(t, first.Path, "switch", "-c", first.Spec.Branch)
+	areaGit(t, first.Path, "commit", "--allow-empty", "-m", "original owner")
+	// A failed allocation can retry its own non-conflicting branch.
+	spec.Branch = "task/task-2"
+	second, err := a.Prepare(t.Context(), l, "task-2", spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	areaGit(t, second.Path, "switch", "-c", spec.Branch)
+	areaGit(t, second.Path, "commit", "--allow-empty", "-m", "second owner")
+}
+
 func TestAreaRefusesReplacedHookWithoutOverwritingTarget(t *testing.T) {
 	a, s, _ := areaFixture(t)
 	l := lease.New(func() {})
