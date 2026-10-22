@@ -1039,7 +1039,12 @@ from the current epoch keep their reservations.
 
 `prepare_work` binds the destination to the conversation-owned task.
 `report_work_result` admits the observed worker completion receipt and captures
-the snapshot; `land_work_result` binds the manager's judgment to its receipt and
+the snapshot. While the execution is active or unknown after restart, it returns
+the retryable `worker_termination_unobserved` error without writing a receipt or
+snapshot. Only the worker adapter's terminal observation releases the active-run
+reservation; the receipt's claimed turn status cannot do so. The caller waits for
+that observation and retries with a fresh tool call.
+`land_work_result` binds the manager's judgment to its receipt and
 fingerprint and performs the copy and readback in Core. Worker dispatch and
 whole-goal scheduling are separate from these file-delivery operations.
 

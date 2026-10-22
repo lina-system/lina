@@ -158,6 +158,45 @@ func testM2FileLanding(t *testing.T, committed bool) {
 		r.EventID = work.ReceiptID(r)
 		return r
 	}
+	readCard := func() work.Card {
+		t.Helper()
+		db, e := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
+		if e != nil {
+			t.Fatal(e)
+		}
+		defer db.Close(context.Background())
+		c, e := work.New(db).Get(h.ctx, scenario.TaskID)
+		if e != nil {
+			t.Fatal(e)
+		}
+		return c
+	}
+	// Restart retained the run as unknown: the stub's successful process exit
+	// has not yet been admitted by the observation path. A model receipt cannot
+	// supply that missing fact or make the result landable.
+	pending := invoke("report_work_result", coreexec.ReportWork{TaskID: run.TaskID, RunID: run.ID, Receipt: receipt()}, false)
+	var refusal struct {
+		Code      string `json:"code"`
+		Retryable bool   `json:"retryable"`
+	}
+	if err = json.Unmarshal(pending, &refusal); err != nil || refusal.Code != "worker_termination_unobserved" || !refusal.Retryable {
+		t.Fatalf("unobserved report: %s", pending)
+	}
+	if c := readCard(); !c.Active || c.State != "unknown" || c.TurnStatus != "" || c.Receipt != nil || c.FileSnapshot != nil {
+		t.Fatalf("report released unknown execution: %+v", c)
+	}
+	invoke("land_work_result", coreexec.LandWork{TaskID: run.TaskID, ReceiptID: receipt().EventID, Fingerprint: strings.Repeat("0", 64), Judgment: "fixture judgment"}, false)
+	client.Close()
+	h.stopCore(core)
+	withFileCanon(t, h, func(db *canon.Store) {
+		// The adapter fixture observed CombinedOutput return successfully above.
+		// Persist that observation independently of the model-supplied receipt.
+		if e := work.New(db).Finish(h.ctx, run.TaskID, run.ID, "completed"); e != nil {
+			t.Fatal(e)
+		}
+	})
+	core = start(true)
+	client, conversation = conversationClient(t, h)
 	done := func() work.Card {
 		t.Helper()
 		raw := invoke("report_work_result", coreexec.ReportWork{TaskID: scenario.TaskID, RunID: run.ID, Receipt: receipt()}, true)
@@ -208,19 +247,6 @@ func testM2FileLanding(t *testing.T, committed bool) {
 	})
 	core = start(true)
 	client, conversation = conversationClient(t, h)
-	readCard := func() work.Card {
-		t.Helper()
-		db, e := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
-		if e != nil {
-			t.Fatal(e)
-		}
-		defer db.Close(context.Background())
-		c, e := work.New(db).Get(h.ctx, scenario.TaskID)
-		if e != nil {
-			t.Fatal(e)
-		}
-		return c
-	}
 	c = readCard()
 	if committed {
 		if !c.Applied || c.FileEvidence == nil || len(c.FileCopies) != 1 || c.FileCopies[0].Status != "landed" {
