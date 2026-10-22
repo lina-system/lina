@@ -49,7 +49,8 @@ Ids are stable. Section headings carry the ids they specify. T-02 is withdrawn: 
 owns the Unix socket, the generated client 1.0 handshake and the validated
 receive/subscription API. The TUI offers the conversation and
 status-stream capabilities it renders (`conversation`, `running`, `progress`,
-`waiting`); Core grants only installed capabilities. With conversation granted,
+`waiting`), plus `turn_activity` 1.0 for typed phases and tool events; Core grants
+only installed capabilities. With conversation granted,
 it discovers the default agent's main conversation through `history_get`, then
 holds `core`, `conversation:<id>` and `results:<id>` plus granted status topics.
 Requests, responses and notifications share `clientapi`'s validated correlation
@@ -166,6 +167,12 @@ The server side is [go-core.md](go-core.md) (C-42): topics, cursors, rings, batc
 - Epochs compare numerically, the form of CP-02 ([host-protocol.md](host-protocol.md#envelope)), without a machine-integer limit. A gap or a newer epoch requests one resync per out-of-sync topic. Duplicate cursors and revisions and older epochs are ignored; a repeated delivery never changes the display. A resync snapshot cannot roll back the accepted cursor within the same epoch and revocation epoch.
 - A different revocation epoch ([conversation-and-memory.md](conversation-and-memory.md#terms)) makes the TUI drop cached items before the snapshot applies, so a forgotten item cannot survive a reconnect.
 - Replaying a stream or a snapshot twice leaves state unchanged.
+- `tool_activity` start/finish events consume their stream cursor without
+  creating conversation blocks, completion durations or activity words. Core
+  excludes them from snapshots; a client receiving an optional activity item
+  there skips it while accepting the snapshot cursor. Unknown optional snapshot
+  items likewise contribute no conversation content and cannot prevent the
+  next stream event from applying.
 - Completed conversation history preserves the live projection's message order
   and content after Core restart. A reply keeps its first streamed position when
   later queue or steering input arrives; a reply with no visible delta first
@@ -281,14 +288,25 @@ Width tiers (P):
 
 The diagram is schematic: it fixes the regions and their order, not glyphs or widths.
 
-The activity word is thinking until an accepted output delta, replying after that
-first delta, and stopping from an interrupt until the authoritative inactive
-turn. Other item completions do not clear stopping. No tool phase is inferred.
-Elapsed time uses the active event's server timestamp and the last snapshot's
+An active `turn_state.phase` is authoritative: `waiting_model` shows thinking,
+`streaming` shows replying, `tool` shows Core's supplied `tool_name` display
+label, and `stopping` shows stopping. The tool label passes terminal sanitization
+and whitespace folding before it enters the single activity row; it is never
+inferred from tool arguments, results or conversation text. An absent or empty
+tool label uses thinking. Without a phase, the legacy fallback is thinking until
+an accepted output delta, then replying. Output deltas cannot override an
+explicit phase. A local interrupt or authoritative stopping phase keeps stopping
+visible until the inactive turn, including across subsequent phase updates and
+item completions. Core selects the remaining active tool's label when parallel
+calls finish; the TUI does not infer that selection from `tool_activity` events.
+
+Elapsed time uses the first observed active event's server timestamp and the last snapshot's
 clock offset (T-06 rule 4), formatted as `0s`, `59s`, `1m 00s`, `59m 59s`, or
 `1h 00m 00s`. Pending admission shows `0s` until the server starts the turn.
-A fresh snapshot without a start timestamp shows unknown; a same-session resync
-retains an observed start. Completion adds one muted, localized `Worked for 12s`
+A phase transition or repeated active event never restarts elapsed time.
+A fresh snapshot restores the current phase and label but, without a start
+timestamp, shows unknown; later phases do not invent a start. A same-session
+resync retains an observed start. Completion adds one muted, localized `Worked for 12s`
 line under the reply, using the inactive event's server timestamp. This is client
 display metadata: it survives same-session redraw and resync, is cleared with
 revoked or unfocused content, and is never stored or restored from history.

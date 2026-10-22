@@ -34,10 +34,28 @@ Each `cases/*.json` describes a fresh receive boundary:
 `output` is decoder output, not an application reply. No rejected or ignored
 input may produce an admitted envelope. Every envelope is used by a case.
 `invalid/` contains syntactically valid JSON that fails the canonical schema:
-the strict server refuses each with `malformed`; the client ignores and counts
-only unknown kinds whose common envelope is otherwise valid. Recovery cases end
+the strict server refuses each with `malformed`; the client discards unknown
+payload fields for known kinds and ignores and counts unknown kinds whose common
+envelope is otherwise valid. Common envelope fields remain strict. Recovery cases end
 with a valid envelope. An unknown kind is repeated to check that counts represent
 frames, without claiming application deduplication.
+
+The activity cases cover all turn phases, tool start and finish (both outcomes,
+zero and fractional duration), optional stream metadata, and invalid lifecycle
+fields followed by a valid event. `conversation/phase_snapshot.json` carries the
+retained turn phase. `conversation/activity_snapshot.json` exercises the schema's
+tool stream-item shape and the older receiver's unknown-item handling; Core does
+not retain tool activities in Topics snapshots. They are live/replay display
+events, outside conversation messages and model history.
+
+`TestOlderSchemaClientReceivesActivityAdditions` in `kit/protocol` generates and
+compiles a separate client without the activity fields or kind. With the updated
+receive boundary it accepts extended turn states, skips tool activity and unknown
+snapshot items, and continues receiving known events. It also verifies that its
+strict codec rejects the extended turn state. This proves the updated receiver
+works with the earlier schema; it does not claim that an already installed strict
+binary supports the additions. Negotiation and subscription behavior are outside
+this decoder proof.
 
 The stream cases add `snapshot`, `resync` and `resync_required`, optional
 metadata for existing event kinds, subscribe/unsubscribe requests and the

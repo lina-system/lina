@@ -8,6 +8,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/internal/tui/render"
+	"github.com/thisisjun786/lina/kit/protocol"
 )
 
 type activityTick time.Time
@@ -53,12 +54,25 @@ func (m *shellModel) activityInterval() time.Duration {
 
 func (m *shellModel) activityText() string {
 	text := func(id string) string { return design.Text(m.styles.options.Language, id) }
-	word := "activity.thinking"
-	if m.content.Activity.Replying {
-		word = "activity.replying"
+	word := text("activity.thinking")
+	activity := m.content.Activity
+	switch activity.Phase {
+	case protocol.TurnPhaseWaitingModel:
+	case protocol.TurnPhaseStreaming:
+		word = text("activity.replying")
+	case protocol.TurnPhaseTool:
+		if activity.ToolName != "" {
+			word = activity.ToolName
+		}
+	case protocol.TurnPhaseStopping:
+		word = text("activity.stopping")
+	default:
+		if activity.Replying {
+			word = text("activity.replying")
+		}
 	}
 	if m.content.Stopping {
-		word = "activity.stopping"
+		word = text("activity.stopping")
 	}
 	elapsed := "0s" // Pending admission has no server start yet.
 	if m.content.TurnActive {
@@ -76,7 +90,7 @@ func (m *shellModel) activityText() string {
 	if !m.staticActivity() {
 		frame = m.activityFrame % uint64(len(glyphs))
 	}
-	line := fmt.Sprintf("%c %s (%s %s %s)", glyphs[frame], text(word), elapsed, separator, text("activity.stop"))
+	line := fmt.Sprintf("%c %s (%s %s %s)", glyphs[frame], word, elapsed, separator, text("activity.stop"))
 	return render.Truncate(line, m.size.Width, render.Unicode{})
 }
 

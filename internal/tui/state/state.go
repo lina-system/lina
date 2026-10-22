@@ -26,6 +26,8 @@ type Block struct {
 	RunID                    string
 	TurnKnown, TurnActive    bool
 	TurnStarted, TurnAt      time.Time
+	TurnPhase                protocol.TurnPhase
+	ToolName                 string
 	Revision                 uint64
 	Kind                     protocol.Kind
 	Done, Local              bool
@@ -87,6 +89,12 @@ type ItemDone struct {
 	Cursor       uint64
 	Block        Block
 }
+
+// StreamAdvance consumes a display-only event without creating a block.
+type StreamAdvance struct {
+	Epoch, Topic string
+	Cursor       uint64
+}
 type Frame struct{ Data []byte }
 type Select struct{ ID string }
 type Fold struct {
@@ -114,6 +122,8 @@ type Send struct {
 type Turn struct {
 	Active      bool
 	Started, At time.Time
+	Phase       protocol.TurnPhase
+	ToolName    string
 }
 type ConnectionLost struct{}
 
@@ -143,6 +153,7 @@ type Tick struct{ Now time.Time }
 func (Snapshot) isMsg()         {}
 func (Delta) isMsg()            {}
 func (ItemDone) isMsg()         {}
+func (StreamAdvance) isMsg()    {}
 func (Frame) isMsg()            {}
 func (Select) isMsg()           {}
 func (Fold) isMsg()             {}
@@ -399,7 +410,8 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 			}
 		}
 		turnKnown := false
-		for _, b := range m.Items {
+		for _, id := range order {
+			b := incoming[id]
 			if b.Kind == protocol.KindTurnState && b.TurnKnown {
 				turnKnown = true
 				// A snapshot can restore activity, but cannot create a completion notice.
@@ -411,7 +423,8 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 			s.turn(Turn{})
 		}
 		if s.TurnActive {
-			for _, b := range m.Items {
+			for _, id := range order {
+				b := incoming[id]
 				if !b.Done && b.Kind == protocol.KindOutputDelta {
 					s.activityBlock(b)
 				}
@@ -453,6 +466,21 @@ func Reduce(s State, m Msg) (State, []Cmd) {
 			}
 		}
 		return s, cmds
+	case StreamAdvance:
+		if !epoch(m.Epoch) || compare(m.Epoch, s.Epoch) < 0 || m.Topic == "" {
+			return s, nil
+		}
+		t := s.Topics[m.Topic]
+		if t.OutOfSync || m.Epoch == s.Epoch && m.Cursor <= t.Cursor {
+			return s, nil
+		}
+		if m.Epoch != s.Epoch || m.Cursor != t.Cursor+1 {
+			return s, s.resync(m.Topic)
+		}
+		if s.Topics == nil {
+			s.Topics = map[string]Topic{}
+		}
+		s.Topics[m.Topic] = Topic{Cursor: m.Cursor}
 	case Delta:
 		if !epoch(m.Epoch) || compare(m.Epoch, s.Epoch) < 0 || m.ID == "" || m.Topic == "" {
 			return s, nil
