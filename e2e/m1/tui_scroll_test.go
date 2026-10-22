@@ -66,12 +66,29 @@ func TestM1TUIWheelStickyConversation(t *testing.T) {
 	if _, err := fmt.Sscanf(strings.TrimSpace(first), "SCROLL-%03d", &index); err != nil {
 		t.Fatalf("unexpected first row %q: %v", first, err)
 	}
+	webWheel := func(wheel string) tuiterm.Snapshot {
+		t.Helper()
+		h.keys(terminal, "/web\r")
+		wait("web settings from Core", func(s tuiterm.Snapshot) bool {
+			return s.CursorHidden && strings.Contains(screenText(s), design.Text(design.English, "web.unconfigured"))
+		})
+		h.keys(terminal, wheel+"\x1b")
+		return wait("conversation after closing web settings", func(s tuiterm.Snapshot) bool {
+			return !s.CursorHidden && strings.Contains(screenText(s), "SCROLL-")
+		})
+	}
+	if got := strings.Join(region(webWheel("\x1b[<64;10;10M")), "\n"); got != strings.Join(region(latest), "\n") {
+		t.Fatalf("wheel under web settings displaced latest viewport:\n%s", got)
+	}
 	h.keys(terminal, "\x1b[<64;10;10M")
 	scrolled := wait("wheel up by three rows", func(s tuiterm.Snapshot) bool {
 		return strings.Contains(region(s)[0], fmt.Sprintf("SCROLL-%03d", index-3))
 	})
 	frozen := strings.Join(region(scrolled), "\n")
 	t.Logf("wheel-up viewport:\n%s", frozen)
+	if got := strings.Join(region(webWheel("\x1b[<65;10;10M")), "\n"); got != frozen {
+		t.Fatalf("wheel under web settings displaced retained viewport:\nBEFORE\n%s\nAFTER\n%s", frozen, got)
+	}
 	marker := design.Text(design.English, "conversation.new_messages")
 	admittedTurn(t, h, client, conversation, "scroll-next", "Send another reply.")
 	arrived := wait("new messages marker", func(s tuiterm.Snapshot) bool {
