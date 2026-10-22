@@ -156,7 +156,14 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 		return nil, err
 	}
 	r.persona = coreexec.NewPersona(db, r.agents, r.materials)
-	r.personaAuthority, err = authority.Open(ctx, db, authority.Config{Epoch: epoch, Resolve: r.resolvePersonaGrant})
+	r.personaAuthority, err = authority.Open(ctx, db, authority.Config{Epoch: epoch, Resolve: r.resolvePersonaGrant,
+		CanPresent: func() bool { return r.decisions != nil && r.decisions.CanPresent() },
+		ApprovalsChanged: func(ctx context.Context) {
+			if r.decisions != nil {
+				_ = r.decisions.PublishApprovals(ctx)
+			}
+		},
+	})
 	if err != nil {
 		return nil, err
 	}

@@ -28,6 +28,8 @@ type QuestionSource interface {
 }
 
 type Decisions struct {
+	presenceMu sync.Mutex
+	present    map[string]bool
 	// This cache is the last published projection only; authority owns decisions.
 	publishMu sync.Mutex
 	published map[string]protocol.ApprovalRequest
@@ -345,4 +347,27 @@ func (d *Decisions) PublishApprovals(ctx context.Context) error {
 	}
 	d.published = next
 	return nil
+}
+
+// Presence tracks only the lifetime of admitted waiting-capable owner clients.
+// Approval ownership, epochs and choice validation remain in authority.Answer.
+func (d *Decisions) Presence(session Session, connected bool) {
+	d.presenceMu.Lock()
+	defer d.presenceMu.Unlock()
+	if !connected {
+		delete(d.present, session.ConnectionID)
+		return
+	}
+	if session.ConnectionID == "" || !d.eligible(session) {
+		return
+	}
+	if d.present == nil {
+		d.present = map[string]bool{}
+	}
+	d.present[session.ConnectionID] = true
+}
+func (d *Decisions) CanPresent() bool {
+	d.presenceMu.Lock()
+	defer d.presenceMu.Unlock()
+	return len(d.present) > 0
 }

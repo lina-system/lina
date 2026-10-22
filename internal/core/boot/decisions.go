@@ -22,6 +22,7 @@ func (r *conversationRuntime) startDecisions(ctx context.Context) error {
 		return ""
 	}}
 	r.decisions = d
+	r.identity.DecisionPresence = d.Presence
 	for kind, operation := range d.Operations() {
 		r.identity.Operations[kind] = operation
 	}

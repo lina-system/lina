@@ -416,7 +416,11 @@ facts; question forms use the owning question source and cannot grant an approva
 Installed Core registers approval operations against its already-open authority
 instance and advertises `waiting` alongside its other capabilities. Subscription
 admission refreshes that projection from canon; identical records do not advance
-the stream. A successful decision publishes the terminal card. No second authority
+the stream. The listener tracks eligible owner connections that negotiated waiting. The
+same authority consults that presence before creating a new approval; after a
+pending approval or decision commits, its callback publishes to existing
+subscriptions outside the canon transaction. A successful decision publishes
+the terminal card. No second authority
 instance or decision store is created. Question operations are installed only when
 the owning question source is supplied.
 

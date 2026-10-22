@@ -28,6 +28,8 @@ const personID = "person-placeholder"
 
 // Identity is immutable for one boot; Recovering reports the admission state.
 type Identity struct {
+	// DecisionPresence receives authenticated connection facts, never payload claims.
+	DecisionPresence func(Session, bool)
 	// RefreshTopic projects current authoritative records before a subscription.
 	// It is called only after topic admission and never for unsubscribe.
 	RefreshTopic func(context.Context, string) error
@@ -230,6 +232,9 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 	defer func() {
 		cancel()
 		session := Session{ConnectionID: connectionID, PersonID: identity.PersonID, Epoch: epoch, ClientID: clientID, Capabilities: capabilities}
+		if identity.DecisionPresence != nil {
+			identity.DecisionPresence(session, false)
+		}
 		for _, operation := range identity.Operations {
 			if operation.Disconnect != nil {
 				operation.Disconnect(session)
@@ -381,6 +386,9 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 			welcomed = true
 			clientID = hello.ID
 			capabilities = granted
+			if identity.DecisionPresence != nil {
+				identity.DecisionPresence(Session{ConnectionID: connectionID, PersonID: identity.PersonID, Epoch: epoch, ClientID: clientID, CanDecide: peer.canDecide(), Capabilities: capabilities}, true)
+			}
 		}
 		err = writer.Write(ctx, response{JSONRPC: "2.0", ID: req.ID, Result: answer})
 		finishReply()

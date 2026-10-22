@@ -251,3 +251,25 @@ func TestDecisionChangedArgumentsInvalidateDisplayedRevision(t *testing.T) {
 		t.Fatal("changed target approved")
 	}
 }
+
+func TestDecisionPresentationTracksOnlyEligibleOwnerConnections(t *testing.T) {
+	d, _ := decisionFixture(t)
+	for _, session := range []Session{{ConnectionID: "child", PersonID: "person", CanDecide: false, Capabilities: []protocol.Capability{DecisionsCapability}}, {ConnectionID: "other", PersonID: "other", CanDecide: true, Capabilities: []protocol.Capability{DecisionsCapability}}, {ConnectionID: "unsupported", PersonID: "person", CanDecide: true}} {
+		d.Presence(session, true)
+	}
+	if d.CanPresent() {
+		t.Fatal("ineligible client became approval surface")
+	}
+	first, second := decisionSession("first"), decisionSession("second")
+	d.Presence(first, true)
+	d.Presence(first, true)
+	d.Presence(second, true)
+	d.Presence(Session{ConnectionID: first.ConnectionID}, false)
+	if !d.CanPresent() {
+		t.Fatal("other live surface lost")
+	}
+	d.Presence(Session{ConnectionID: second.ConnectionID}, false)
+	if d.CanPresent() {
+		t.Fatal("disconnected surface remained")
+	}
+}

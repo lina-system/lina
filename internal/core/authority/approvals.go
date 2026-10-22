@@ -296,7 +296,7 @@ func (s *Service) Answer(ctx context.Context, id string, d Decider, decision Dec
 	if err := s.validateDecider(d); err != nil {
 		return err
 	}
-	return s.store.Write(ctx, func(tx *canon.Tx) error {
+	err := s.store.Write(ctx, func(tx *canon.Tx) error {
 		if err := s.checkEpoch(ctx, tx); err != nil {
 			return err
 		}
@@ -331,6 +331,10 @@ func (s *Service) Answer(ctx context.Context, id string, d Decider, decision Dec
 		}
 		return nil
 	})
+	if err == nil && s.cfg.ApprovalsChanged != nil {
+		s.cfg.ApprovalsChanged(ctx)
+	}
+	return err
 }
 
 // Every member uses the original single-record checks and writes within the
