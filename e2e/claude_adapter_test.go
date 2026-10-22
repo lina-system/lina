@@ -56,7 +56,8 @@ func TestM2ClaudeAdapterThroughInstalledCore(t *testing.T) {
 	h.stopCore(core)
 	core = start()
 	again, _ := conversationClient(t, h)
-	if _, err := again.History(h.ctx, protocol.HistoryGet{ConversationID: &conversation}); err != nil {
+	topic := "conversation:" + conversation
+	if _, err := again.Subscribe(h.ctx, protocol.Subscribe{Topic: &topic}); err != nil {
 		t.Fatal(err)
 	}
 	event, err := again.Receive(h.ctx)
