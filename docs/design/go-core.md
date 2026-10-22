@@ -1127,7 +1127,10 @@ ledger and shaped for the existing durable outbound queue. Restart finds the
 same inbox/turn/queue identities. It cannot repeat a started model turn or an
 uncertain send. Scoped runners retain the original inbound address and resolve
 its current effective binding before model dispatch and tool execution, including
-new thread overrides of a parent fallback. Background delivery projections keep
+new thread overrides of a parent fallback. Accepted steering retains that runner
+alongside its event and inbox identity; deferred follow-ups use the input's runner
+even when the preceding turn used the app or another channel scope (#506).
+Background delivery projections keep
 `EntryBackgroundNotice` and `background_notice` provenance; queue validation
 recognizes those committed events without promoting them to agent history.
 No channel stream publishes provisional deltas. Controls expose

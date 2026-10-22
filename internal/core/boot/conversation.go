@@ -67,6 +67,7 @@ import (
 type acceptedSteering struct {
 	event   ledger.Event
 	inboxID int64
+	runner  *conversationRuntime
 }
 
 type conversationRuntime struct {
@@ -472,7 +473,7 @@ func (r *conversationRuntime) submitInput(event ledger.Event, inboxID int64, ste
 	}
 	body := items[0]
 	if steer && r.lanes.Steer(r.conversation, body) {
-		r.steering[string(body)] = append(r.steering[string(body)], acceptedSteering{event, inboxID})
+		r.steering[string(body)] = append(r.steering[string(body)], acceptedSteering{event: event, inboxID: inboxID, runner: runner})
 		return nil
 	}
 	_, err = r.lanes.SubmitLoop(r.ctx, r.conversation, func(ctx context.Context, inputs *loop.Inputs) error { return runner.run(ctx, inputs, event, inboxID) })
@@ -1119,11 +1120,12 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		}
 	}
 	// Late steering remains durable. A follow-up starts through the same lane and
-	// turn store, never by retrying a completed model request.
+	// turn store with the originating input's runner, retaining its channel scope
+	// and binding checks even when the preceding turn began in the app.
 	for _, body := range out.FollowUps {
 		if pending, ok := r.takeSteering(body); ok {
 			_, submitErr := r.lanes.SubmitLoop(r.ctx, r.conversation, func(ctx context.Context, inputs *loop.Inputs) error {
-				return r.run(ctx, inputs, pending.event, pending.inboxID)
+				return pending.runner.run(ctx, inputs, pending.event, pending.inboxID)
 			})
 			err = errors.Join(err, submitErr)
 		}
