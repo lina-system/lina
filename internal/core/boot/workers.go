@@ -199,6 +199,14 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 	var a workerArgs
 	_ = json.Unmarshal(in.Arguments, &a)
 	if name == "worker_start" {
+		method, err := r.skills.ResolveMethod(ctx, a.Kind, a.Skill)
+		if err != nil {
+			return tools.Result{State: tools.Failed}, err
+		}
+		a.TaskPacket, err = skills.MethodPacket(a.TaskPacket, method)
+		if err != nil {
+			return tools.Result{State: tools.Failed}, err
+		}
 		origin := dispatch.Origin{Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: turnID}
 		assignment, err := r.assignCoding(ctx, origin, codingID(turnID, name, string(in.Arguments)), name, a.Workdir, in.Arguments)
 		if err != nil {
@@ -214,14 +222,6 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 	}
 	b := r.workers
 	if name == "worker_start" {
-		method, err := r.skills.ResolveMethod(ctx, a.Kind, a.Skill)
-		if err != nil {
-			return tools.Result{State: tools.Failed}, err
-		}
-		a.TaskPacket, err = skills.MethodPacket(a.TaskPacket, method)
-		if err != nil {
-			return tools.Result{State: tools.Failed}, err
-		}
 		b.mu.Lock()
 		defer b.mu.Unlock()
 		if b.closed {
