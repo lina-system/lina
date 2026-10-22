@@ -422,7 +422,10 @@ clears the retained draft and completes another exchange.
 The first visible composer row starts with the accent `glyph.action` (`›`, or
 `>` in ASCII) and one space. Continuations align under the draft, including when
 the textarea scrolls. An empty draft shows the muted `composer.placeholder`
-catalog entry in Korean or English; it is display text and is never submitted.
+catalog entry in Korean or English, formatted with the same sanitized agent
+display name as the conversation header and reply speaker. The name is refreshed
+from client focus on redraw, including after selection, rename and reconnect;
+it is display text and is never submitted.
 When the keyboard enhancement reply reports key disambiguation, the placeholder
 uses `composer.shift_enter` to advertise Shift+Enter. Until then it
 advertises Alt+Enter. This terminal-local change preserves the draft and cursor.
@@ -650,6 +653,10 @@ Settings are commands and labeled blocks, all requests to Core:
 Agent choice is client focus and survives reconnect (T-05). A missing selection
 requires an explicit new choice before conversation input can be sent; listing,
 creating or deleting another agent does not redirect the retained draft.
+The empty composer names the focused agent, consistently with the header and
+reply speaker; LINA is not a fixed recipient label. The installed Core/TUI
+scenario `e2e/m2/tui-composer-identity.json` covers creation and selection through
+the TUI, a synthetic reply, and the empty composer after Core reconnect.
 
 `/help` opens the local command reference, including `/channels` and `/talk`.
 These commands are consumed locally even when Core has not granted their
@@ -1166,3 +1173,7 @@ Their transient blocks and command drafts are not persisted by the TUI.
 `e2e/m1/tui-memory-agents.json` exercises the installed Core, generated client
 protocol and real PTY TUI against a loopback Responses fixture, including scoped
 recall, correction, forget, agent identities, conversation selection and restart.
+
+### Web access setup
+
+`/web` opens the [web provider settings](web-tools.md#provider-setup), also discoverable through `/help`. The Firecrawl key is masked in a transient form and cleared on submission, exit or reconnect. Saving or removing a key reports configuration status without echoing it. Search and extraction appear in the existing running list after network admission, and settle on success, failure or cancellation.
