@@ -19,6 +19,8 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+const ownerViewRefreshInterval = 5 * time.Second
+
 var progressCapability = protocol.Capability{Name: "progress", Version: "1.0"}
 
 type ownerViews struct {
@@ -117,26 +119,42 @@ func (r *conversationRuntime) startOwnerViews(ctx context.Context) error {
 	r.ownerViews.stop = cancel
 	go func() {
 		defer close(r.ownerViews.done)
-		for {
-			changed := r.db.Changed()
-			_ = r.publishOwnerViews(watch)
+		timer := time.NewTicker(ownerViewRefreshInterval)
+		defer timer.Stop()
+		r.runOwnerViews(watch, timer.C)
+	}()
+	return nil
+}
+
+func (r *conversationRuntime) runOwnerViews(watch context.Context, refresh <-chan time.Time) {
+	for {
+		changed := r.db.Changed()
+		_ = r.publishOwnerViews(watch)
+		pending := false
+		for !pending {
 			select {
 			case <-watch.Done():
 				return
 			case <-changed:
+				pending = true
 			case <-r.ownerViews.wake:
-			}
-			timer := time.NewTimer(250 * time.Millisecond)
-			select {
-			case <-watch.Done():
-				timer.Stop()
-				return
-			case <-timer.C:
+				pending = true
+			case <-refresh:
+				// External edits have no canon event. Reconcile only while an overview
+				// observer is connected; unchanged data still publishes no frame.
+				pending = r.topics.HasSubscribers("progress")
 			}
 		}
-	}()
-	return nil
+		timer := time.NewTimer(250 * time.Millisecond)
+		select {
+		case <-watch.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+	}
 }
+
 func (r *conversationRuntime) ownerAgentNames(ctx context.Context) (map[string]string, error) {
 	agents, err := r.agents.List(ctx)
 	if err != nil {

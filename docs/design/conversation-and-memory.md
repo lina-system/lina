@@ -187,6 +187,7 @@ An agent dispatched to an external channel ([integrations.md](integrations.md#ch
 
 - The owner's own chat with an agent's bot is that agent's main conversation with the owner. A message the owner writes there is a turn like any other. Its events carry the channel as their surface, and the app and the TUI show the same history. A message that arrives while a turn runs is steering input ([runtime.md](runtime.md#conversation-loop)).
 - The installed gateway now admits private Discord and Telegram input through that shared coordinator. Channel receipts preserve native identities; consumed steering has a durable marker, and a send worker independently delivers committed replies and background results. Group bindings keep separate scoped lanes.
+- Undrained channel steering keeps its own scoped runner for a deferred follow-up. Sharing the main conversation does not widen that input's tools or personal-memory access; a changed binding is checked again before model and tool dispatch.
 - A paired owner's forwarded message retains the adapter's forwarded entry, channel surface and native source locator, with no person id. Initial requests, live steering and history after restart project it through the same untrusted external-evidence boundary. The forwarding owner's authentication does not make the forwarded body an owner instruction. Ordinary owner text keeps its person entry, even when its body claims another role or says it is forwarded.
 - A chat shared with other people is a channel conversation: a separate conversation of the bound agent with its own ledger, one per chat or topic. The agent reads it with its persona and the knowledge layers it reads anywhere, except where the binding's scope narrows them: the scope's memory field decides whether the person's memory may be used in that chat, and by default it may not be. The app shows such a conversation read-only, and the person writes in the platform.
 - A message from someone other than the paired owner is an event with the speaker kind external participant. It carries the platform's user id and no person id. It is external evidence: never the person's words, an instruction or an approval ([main-authority.md](main-authority.md#authorization)). By default the agent does not answer it. No memory item and no person model is written from it.
@@ -526,7 +527,7 @@ The conversation writer fills only keys copied from the preset when that agent w
 
 A methodology is the judgment an agent applies to one kind of work. It comes from observed assistant practice, generalized. Each of the eight starters carries the methodology named in [Presets](#presets); the sections below define them. The life preset manages the person's own life and is unrelated to LIFE, the world engine of [cognition-and-life.md](cognition-and-life.md#life).
 
-- A methodology is short judgment guidance and a few hard lines in the preset's core layer. The mechanical parts, such as ledgers, cursors, idempotency, routing and the checks named below, are LINA Core mechanisms in the contracts that own them. Persona text carries no procedures, state chains, approval checklists, report templates or routing tables.
+- A methodology supplies short judgment guidance alongside the fixed persona layers. Core pins its catalog entry in the turn's ContextPacket and retains it with preparation evidence, so replay uses the guidance actually prepared. Empty or edited persona layers do not disable a methodology or its effect ceiling. The mechanical parts, such as ledgers, cursors, idempotency, routing and the checks named below, are LINA Core mechanisms in the contracts that own them. Persona text carries no procedures, state chains, approval checklists, report templates or routing tables.
 - A preset starts with the areas the person actually brings. It creates the record set for a new area on first use and keeps a visible list, "what I track for you", that grows. It does not infer interests from its own description.
 - A preset never widens a grant. What an agent may do alone and what it must ask comes from the effect classes and the approval policy of [main-authority.md](main-authority.md#approval).
 
@@ -552,6 +553,8 @@ Core mechanisms it relies on: device and account status, installation and recove
 3. Keep credentials and private configuration out of reports. A setup role grants no administrator, account or device authority; Core applies the same effect and approval checks as for other agents.
 4. Hand a code change to dev with the observed fault and a done condition. System owns diagnosis and operational health, while dev owns the coding work.
 
+Core's `observe_health` currently observes records-index head and row-count consistency, with source and time. `repair_records_index` requires that observation's revision and rebuilds only the disposable projection from canonical records. A fresh observation verifies the affected component; this does not claim to diagnose every device or service. Source records and history stay intact.
+
 #### To-do management (LINA preset)
 
 Core mechanisms it relies on: the to-do record and the candidate objects of [work-and-delegation.md](work-and-delegation.md#the-to-do-record), the undo log, reconciliation of the 오늘 (today) view against linked threads, a cross-channel thread ledger, a decision store and per-class rejection counters.
@@ -570,6 +573,8 @@ Core mechanisms it relies on: the to-do record and the candidate objects of [wor
 12. Recurring items use the person's own wording. The first conversation asks once for family dates, recurring payments and tax or filing dates, and nothing more.
 
 #### Development management (dev preset)
+
+Core binds coding work to a live dev identity without changing the asking conversation. A missing or deleted dev owner produces `dev_agent_unavailable` before worker execution. This routing never creates or replaces an agent; starter creation remains separate.
 
 The dev preset agent owns coding work, from its work definition through issues, workers, pull requests and merge decisions. Another starter may bring the request or receive its result; it does not become the coding manager by opening that conversation.
 
@@ -654,6 +659,8 @@ Core mechanisms it relies on: materials and versioned artifacts in [materials-an
 3. Deliver the artifact and a short account of what changed. Accepting a draft does not authorize publication, sharing or a purchase; Core checks those effects separately.
 4. Hand copyright and contract questions to legal and coding work to dev; creative retains ownership of the creative brief.
 
+Private creative artifacts use versioned records. Their revisions retain the brief and source references they answer; a new artifact revision does not silently replace the brief.
+
 #### Advise-only (investing preset)
 
 Core mechanisms it relies on: evidence-bearing materials and read-only research, and the investing effect limit in [main-authority.md](main-authority.md#preset-effect-limits).
@@ -662,6 +669,8 @@ Core mechanisms it relies on: evidence-bearing materials and read-only research,
 2. Use the person's stated objectives and constraints. Advice and comparisons leave the decision with the person; no outcome is described as guaranteed.
 3. Produce analysis and private advice only. Investment orders are outside this preset's authority, including through a worker, another agent or a plugin; Core enforces that boundary independently of persona text and approvals.
 
+Core's bounded `calculate` tool returns the expression and exact rational value without a command or network call. Private advice records retain that calculation and the source document revision or URL used in the judgment.
+
 #### Draft-only (legal preset)
 
 Core mechanisms it relies on: evidence-bearing materials, versioned drafts and read-only research, and the legal effect limit in [main-authority.md](main-authority.md#preset-effect-limits).
@@ -669,6 +678,8 @@ Core mechanisms it relies on: evidence-bearing materials, versioned drafts and r
 1. Cover legal, tax, accounting, contracts and copyright as research, explanation and drafts. State the applicable jurisdiction, dates and source evidence; ask when a missing fact changes the draft.
 2. Mark assumptions and unresolved points. Keep draft revisions and source references so the person can inspect what changed and obtain professional review where needed.
 3. Deliver drafts for the person's review. A draft's acceptance is not signing, filing, sending, payment or another binding act; those effects are outside this preset's authority and Core enforces the limit even when its persona layers are empty.
+
+Private legal drafts use the same versioned records and source references. Core applies the draft-only ceiling before approval or dispatch, independently of draft acceptance and persona preparation.
 
 ### Layers and revisions
 
