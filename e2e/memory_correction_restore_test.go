@@ -179,6 +179,9 @@ func TestM1MemoryCorrectionForgetRestore(t *testing.T) {
 // closing its view. The tap observes the same committed result the TUI receives.
 func correctionMemoryTUI(t *testing.T, h *harness) (func(string) protocol.MemoryResult, func()) {
 	t.Helper()
+	// Restored Core serves reads before recovery admits management mutations.
+	ready, _ := conversationClient(t, h)
+	ready.Close()
 	socket := h.socket
 	tap := newAccountTap(t, h, socket, true)
 	h.socket = tap.socket

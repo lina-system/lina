@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -178,61 +179,83 @@ func newAccountTap(t *testing.T, h *harness, target string, notifications ...boo
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		local, err := listener.Accept()
-		if err != nil {
-			return
-		}
-		defer local.Close()
-		remote, err := net.Dial("unix", target)
-		if err != nil {
-			return
-		}
-		defer remote.Close()
-		stop := context.AfterFunc(h.ctx, func() { local.Close(); remote.Close() })
-		defer stop()
-		var wg sync.WaitGroup
-		pump := func(dst, src net.Conn, reply bool) {
-			defer wg.Done()
-			defer dst.Close()
-			scanner := bufio.NewScanner(src)
-			scanner.Buffer(make([]byte, 4096), 1<<20)
-			for scanner.Scan() {
-				line := append(bytes.Clone(scanner.Bytes()), '\n')
-				tap.mu.Lock()
-				tap.raw.Write(line)
-				tap.mu.Unlock()
-				if reply {
-					var rpc struct{ Result, Params json.RawMessage }
-					if json.Unmarshal(line, &rpc) == nil {
-						if len(rpc.Result) == 0 && len(notifications) > 0 && notifications[0] {
-							rpc.Result = rpc.Params
-						}
-						if len(rpc.Result) == 0 {
-							if _, err := dst.Write(line); err != nil {
-								return
+		for {
+			local, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			func() {
+				defer local.Close()
+				// Core may still be restarting when the TUI reconnects. Wait
+				// for its socket rather than turning absence into handshake EOF.
+				ctx, cancel := context.WithTimeout(h.ctx, operationTimeout)
+				defer cancel()
+				retry := time.NewTicker(5 * time.Millisecond)
+				defer retry.Stop()
+				var remote net.Conn
+				for {
+					var err error
+					remote, err = (&net.Dialer{}).DialContext(ctx, "unix", target)
+					if err == nil {
+						break
+					}
+					if !errors.Is(err, os.ErrNotExist) && !errors.Is(err, syscall.ECONNREFUSED) {
+						return
+					}
+					select {
+					case <-ctx.Done():
+						return
+					case <-retry.C:
+					}
+				}
+				defer remote.Close()
+				stop := context.AfterFunc(h.ctx, func() { local.Close(); remote.Close() })
+				defer stop()
+				var wg sync.WaitGroup
+				pump := func(dst, src net.Conn, reply bool) {
+					defer wg.Done()
+					defer dst.Close()
+					scanner := bufio.NewScanner(src)
+					scanner.Buffer(make([]byte, 4096), 1<<20)
+					for scanner.Scan() {
+						line := append(bytes.Clone(scanner.Bytes()), '\n')
+						tap.mu.Lock()
+						tap.raw.Write(line)
+						tap.mu.Unlock()
+						if reply {
+							var rpc struct{ Result, Params json.RawMessage }
+							if json.Unmarshal(line, &rpc) == nil {
+								if len(rpc.Result) == 0 && len(notifications) > 0 && notifications[0] {
+									rpc.Result = rpc.Params
+								}
+								if len(rpc.Result) == 0 {
+									if _, err := dst.Write(line); err != nil {
+										return
+									}
+									continue
+								}
+								var decoder protocol.ClientDecoder
+								e, err := decoder.Decode(rpc.Result)
+								if err == nil && e != nil {
+									select {
+									case tap.replies <- *e:
+									case <-h.ctx.Done():
+										return
+									}
+								}
 							}
-							continue
 						}
-						var decoder protocol.ClientDecoder
-						e, err := decoder.Decode(rpc.Result)
-						if err == nil && e != nil {
-							select {
-							case tap.replies <- *e:
-							case <-h.ctx.Done():
-								return
-							}
+						if _, err := dst.Write(line); err != nil {
+							return
 						}
 					}
 				}
-				if _, err := dst.Write(line); err != nil {
-					return
-				}
-			}
+				wg.Add(2)
+				go pump(remote, local, false)
+				go pump(local, remote, true)
+				wg.Wait()
+			}()
 		}
-		wg.Add(2)
-		go pump(remote, local, false)
-		go pump(local, remote, true)
-		wg.Wait()
 	}()
 	var once sync.Once
 	tap.close = func() { once.Do(func() { listener.Close(); <-done }) }
