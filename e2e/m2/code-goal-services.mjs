@@ -21,8 +21,11 @@ if(name==='gh') {
   if(merged()) throw Error('merge repeated');
   const wd=fs.readFileSync(path.join(root,'workdir'),'utf8');
   const head=pr.headRefOid, tree=git('-C',wd,'rev-parse',head+'^{tree}');
-  const base=git('-C',wd,'rev-parse','dev');
+  const base=JSON.parse(fs.readFileSync(path.join(root,'allocation.json'),'utf8')).Base;
   const sha=git('-C',wd,'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit-tree',tree,'-p',base,'-p',head,'-m','Merge fixture work');
+  // Publish the fixture merge object as a real remote would. The source clone's
+  // protected branch stays unchanged; QA later checks out this exact object.
+  git('-C',path.join(root,'repo'),'fetch','--no-tags',wd,sha);
   fs.writeFileSync(mergedFile,sha);event('merge');
  } else if(args[0]==='api' && args.includes('--slurp')) console.log('[[]]');
  else if(args[0]==='api') {

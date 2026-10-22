@@ -89,7 +89,7 @@ func (r *conversationRuntime) inspectGoalPR(ctx context.Context, record dispatch
 	if r.workerGitHub == nil || record.PR == nil {
 		return goal.Observation{}, goal.ErrNeedsPerson
 	}
-	p, err := antigravity.ReadPullRequest(ctx, r.workerGitHub, repository, record.Definition.Branch, record.Definition.Base, record.PR.Head)
+	p, err := antigravity.ReadPullRequest(ctx, r.workerGitHub, repository, record.TaskDefinition().Branch, record.Definition.Base, record.PR.Head)
 	if err != nil {
 		return goal.Observation{}, err
 	}
