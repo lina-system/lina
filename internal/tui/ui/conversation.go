@@ -633,6 +633,9 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 			if i == 0 {
 				lead = prefix
 			}
+			if i == workedRow {
+				lead = ""
+			}
 			transcript = append(transcript, transcriptRow{body: row, prefix: lead, person: person, muted: i == workedRow})
 		}
 	}
