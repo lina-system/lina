@@ -89,6 +89,7 @@ type conversationRuntime struct {
 	controls         *ctlfiles.Store
 	personaWarned    bool
 
+	growthMu                    sync.Mutex
 	growth                      *growthRuntime
 	lanes                       *lane.Manager
 	topics                      *clientsrv.Topics
@@ -234,7 +235,7 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 			return nil, err
 		}
 	}
-	if err = r.startGrowth(ctx, main, epoch, controls); err != nil {
+	if err = r.startGrowth(ctx, controls); err != nil {
 		return nil, err
 	}
 	success = true
