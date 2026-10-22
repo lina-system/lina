@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -78,6 +79,8 @@ func TestM1ConversationHistoryOrder(t *testing.T) {
 			terminal := h.startTerminalSize([]string{"TERM=xterm-256color"}, false, true, scenario.Width, scenario.Height)
 			h.socket = socket
 			waitScreen(t, h, terminal, "Ctrl+D")
+			// Controls can appear before negotiation permits input. Wait for Live.
+			waitScreen(t, h, terminal, design.Text(design.English, "live"))
 			// The composer is visible before History resolves its destination.
 			// A conversation subscription proves that the TUI consumed History;
 			// waiting for its response avoids submitting during discovery.
