@@ -37,6 +37,12 @@ implements an eight-row threshold, six trailing rows and a source-line count;
 these exact limits are LINA policy, not claimed upstream behaviour. No code is
 copied. The Hermes MIT notice appears below.
 
+The empty-conversation wordmark and input hints draw on Hermes Agent's
+startup banner and command hint (`hermes_cli/banner.py`, revision
+`944c3a434071f43e64b443d033f3eba30c64434c`, MIT). LINA's three localized
+suggestions and their removal on first input follow its own conversation
+contract; no reference implementation code is copied.
+
 The conversation speaker gutter adapts behaviour described in these permissive
 projects: distinct first-line speaker marks, indented continuation text and
 spacing between turns. No implementation code is copied.

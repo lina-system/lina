@@ -217,6 +217,11 @@ func wrapMarkdown(block MarkdownBlock, config Config) []StyledRow {
 	spanIndex := 0
 	for i, line := range lines {
 		row := StyledRow{Clipped: line.clipped}
+		// A literal code line may have no text. Retain its semantic span so
+		// consumers can distinguish it from paragraph spacing when trimming.
+		if line.start == line.end && len(block.Spans) == 1 && block.Spans[0].Style.Code {
+			row.Spans = append(row.Spans, Span{Style: block.Spans[0].Style})
+		}
 		if prefix != "" {
 			label := prefix
 			if i > 0 {

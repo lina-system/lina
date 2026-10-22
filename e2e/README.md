@@ -34,6 +34,12 @@ streaming completion and steering sequence through the same PTY lifecycle.
 They require no personal credentials. The physical terminal spike and real-model
 acceptance remain separate.
 
+`TestM1TUIFirstRunInstalledCore` uses a fresh installed Core and a 100x34 PTY
+in Korean and English. It checks the wordmark and three catalog suggestions,
+their removal on the first input while the fixture reply is held, and their
+absence from Core snapshots and a reopened TUI after Core restart. The typed
+input reaches the provider exactly once; no sleeps establish display state.
+
 `m1/tui-speaker-gutter.json` runs two exchanges against installed Core and a
 fixture provider in a 100x34 PTY. Parsed cells check speaker marks, foregrounds,
 header bold and exactly one empty row between messages. ASCII runs retain words;
@@ -44,6 +50,11 @@ header bold and exactly one empty row between messages. ASCII runs retain words;
 Core and a real PTY. Result Details shows one muted notice plus six trailing
 rows while open and all 200 rows on close, before completion. The test checks
 the retained result text and restores the terminal without timed sleeps.
+
+`TestM1TUISpeakerBoundariesInstalledCore` creates and selects a long-named agent
+through the real TUI, then requests a fenced Korean reply from installed Core
+in a 40x34 ASCII PTY. It checks provider routing, usable reply width, literal
+empty code boundary rows, and stable completion metadata across draft redraws.
 
 `TestM1TUIIdentityFromAgentStore` installs a synthetic named agent with four
 distinct persona layers, types "who are you" through the real TUI, and checks

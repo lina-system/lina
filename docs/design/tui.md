@@ -277,7 +277,10 @@ Regions:
   header. Person prose uses muted text, both marks use accent, and agent prose
   uses text color. Continuation rows align under the message text. Exactly one
   empty row separates messages. ASCII and monochrome use `> You:` and
-  `* <agent name>:` (the person word follows the UI language).
+  `* <agent name>:` (the person word follows the UI language). The gutter is
+  capped at 20 cells (P) and half the conversation width, whichever is smaller.
+  Truncate only the name at grapheme boundaries, retaining the mark, colon and
+  separating space so long names leave usable reply width, including Hangul.
 - Activity: one or two measured rows above the composer's optional rule while a
   send is pending or a turn is active, with a glyph, localized
   thinking/replying/stopping word, elapsed duration and Esc hint. It consumes no
@@ -285,6 +288,21 @@ Regions:
 - Composer, with its attachment strip and a full-width hairline immediately above the input.
 - Card row above the composer, on Home (T-12).
 - Status line below the composer: connection mark and word first, agent, the running count ("2 running, 1 waiting for you"), restart pending, Core messages, then key hints.
+
+Once the focused conversation's snapshot is known to have no items, its header
+shows the token-based `lina.` wordmark, the agent name and the connection word.
+Three muted Korean/English catalog suggestions invite the person to ask what
+the agent remembers, set its speaking style or hand over a task. They are
+ordinary text examples: the person types into the existing composer, with no
+new selection key. Unsent drafts and non-conversation status updates do not
+hide them. The first conversation item, including a local input echo, removes
+the wordmark and suggestions. These are display-only rows, never history or
+snapshot items. A restored nonempty conversation never shows them. Account
+setup may show the same hints alongside the existing sign-in action before
+conversation is negotiated; no extra onboarding step is introduced.
+The hints fit the existing row budget and use the current text clipping rules.
+`TestM1TUIFirstRunInstalledCore` verifies both languages in a 100x34 PTY against
+installed Core, a held first reply, snapshots and a Core restart.
 
 Overlays form a stack and the top one receives keys first: agent list, command palette, pager. The agent list is the agents screen of [surfaces.md](surfaces.md#agents) in text: mark, name, source and last conversation; Enter opens the agent's main conversation.
 
@@ -748,7 +766,10 @@ type Stream interface {
   to produce semantic spans for closed blocks; `render` receives a parser
   callback and remains free of external dependencies. The shared `Measurer` wraps the visible text before
   the UI adds terminal styles. List continuations align under their content;
-  code retains literal text and whitespace. Escaped syntax remains literal.
+  code retains literal text and whitespace, including empty first and last
+  lines and blocks containing only empty lines. Empty code rows retain their
+  semantic identity through wrapping; message-boundary trimming removes only
+  paragraph spacing. Escaped syntax remains literal.
   Unsupported HTML blocks and inline HTML display their literal source text.
   Tables use our own renderer.
 - Conversation spans use theme text, accent and surface tokens: bold and italic
@@ -757,6 +778,9 @@ type Stream interface {
   ASCII fallback). `NO_COLOR` keeps readable content without terminal escapes.
   `Stream.Markdown` caches closed semantic rows by width, theme and width mode,
   incrementally projects the open tail, and replaces the projection at `Seal`.
+  Consumers treat cached rows as read-only. Conversation rendering copies
+  trimmed rows before adding completion durations or pager affordances, so
+  identical redraws cannot accumulate metadata in message content.
   Only visible conversation rows receive terminal styles.
 - One width function serves all layout: wcwidth by default, grapheme clusters once mode 2027 is confirmed, ambiguous East Asian width narrow, Hangul syllables two cells. The mode is part of the cache key. The Charm-free `Measurer` uses pinned Unicode 17 data and UAX #29 segmentation for wrapping and clipping in both modes. A cluster wider than the entire row is omitted with a typed clipped flag, never split. Cursor offsets inside a cluster clamp to its start.
 - The hardware cursor is placed on every frame at the display width of the text before it on the wrapped row, so IME composition appears in place. The TUI never requests all-keys-as-escape-codes. Committed IME text arrives as UTF-8, one grapheme cluster at a time ([surfaces.md](surfaces.md#korean-input)).
