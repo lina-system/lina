@@ -41,7 +41,10 @@ func escapedGone(pid int) error {
 		return err
 	}
 	defer syscall.CloseHandle(handle)
-	state, err := syscall.WaitForSingleObject(handle, 0)
+	// TerminateJobObject and an empty job establish that execution has ended,
+	// but Windows can finish process-object teardown asynchronously. Wait on
+	// that actual completion event; a zero-time probe can see WAIT_TIMEOUT.
+	state, err := syscall.WaitForSingleObject(handle, 2000)
 	if err != nil {
 		return err
 	}

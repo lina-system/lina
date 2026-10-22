@@ -225,24 +225,45 @@ func SuperviseMain(args []string, diagnostic io.Writer) int {
 }
 
 func supervisorChildren() ([]int, error) {
-	tasks, err := os.ReadDir("/proc/self/task")
+	return childrenIn("/proc", os.Getpid())
+}
+
+func childrenIn(root string, parent int) ([]int, error) {
+	// The per-thread children interface depends on CONFIG_CHECKPOINT_RESTORE.
+	// Ordinary stat records do not. Adoption is maintained by the kernel's
+	// subreaper; scanning here only discovers its immediate children.
+	entries, err := os.ReadDir(root)
 	if err != nil {
 		return nil, err
 	}
 	var children []int
-	for _, task := range tasks {
-		data, err := os.ReadFile("/proc/self/task/" + task.Name() + "/children")
-		if errors.Is(err, os.ErrNotExist) {
+	for _, entry := range entries {
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil || pid <= 0 {
 			continue
-		} // A runtime thread exited.
+		}
+		data, err := os.ReadFile(filepath.Join(root, entry.Name(), "stat"))
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH) || errors.Is(err, os.ErrPermission) {
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
-		for _, value := range strings.Fields(string(data)) {
-			pid, err := strconv.Atoi(value)
-			if err != nil || pid <= 0 {
-				return nil, errors.New("invalid child PID")
-			}
+		// comm may itself contain spaces or parentheses. The final ')' ends
+		// it, followed by state and PPID. Ignore every non-child process.
+		end := strings.LastIndexByte(string(data), ')')
+		if end < 0 {
+			return nil, errors.New("invalid process stat")
+		}
+		fields := strings.Fields(string(data[end+1:]))
+		if len(fields) < 2 {
+			return nil, errors.New("missing process parent")
+		}
+		ppid, err := strconv.Atoi(fields[1])
+		if err != nil {
+			return nil, err
+		}
+		if ppid == parent {
 			children = append(children, pid)
 		}
 	}

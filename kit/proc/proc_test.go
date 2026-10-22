@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -47,12 +48,21 @@ func TestCommandResults(t *testing.T) {
 	if !errors.As(err, &exit) || exit.ExitCode() != 47 {
 		t.Fatalf("exit status = %v", err)
 	}
-	resolved, err := filepath.EvalSymlinks(dir)
+	lines := strings.Split(strings.TrimSuffix(output.String(), "\n"), "\n")
+	if len(lines) != 2 || lines[0] != "child-value" {
+		t.Fatalf("output = %q", output.String())
+	}
+	wantDir, err := os.Stat(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "child-value\n" + resolved + "\n"; output.String() != want {
-		t.Fatalf("output = %q, want %q", output.String(), want)
+	gotDir, err := os.Stat(lines[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Windows can report an 8.3 path while TempDir uses the long spelling.
+	if !os.SameFile(wantDir, gotDir) {
+		t.Fatalf("working directory = %q, want %q", lines[1], dir)
 	}
 	err = owner.Run(t.Context(), l, proc.Command{Path: filepath.Join(dir, "missing")})
 	if !errors.Is(err, os.ErrNotExist) {
