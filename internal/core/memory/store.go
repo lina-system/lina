@@ -214,6 +214,11 @@ func Insert(ctx context.Context, tx *canon.Tx, in Write, resolve ResolveEvidence
 		if successors != 0 {
 			return Item{}, ErrSupersedes
 		}
+		if item.Kind == Relationship {
+			if err := endRelationshipPredecessor(ctx, tx, item); err != nil {
+				return Item{}, err
+			}
+		}
 	}
 	// Equality is inside one subject and scope; it never joins different people,
 	// private holders, or statements whose validity intervals differ.
