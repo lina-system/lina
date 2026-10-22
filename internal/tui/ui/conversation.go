@@ -222,7 +222,7 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 			m.conversation.undo = nil
 			return command
 		}
-		if m.conversation.agentMissing || m.conversation.agentPending {
+		if m.conversation.id == "" || m.conversation.agentMissing || m.conversation.agentPending {
 			return nil
 		}
 		if !m.hasCapability("conversation") {

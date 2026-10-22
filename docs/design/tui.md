@@ -601,7 +601,12 @@ input uses `mode: steer`; Core decides whether it belongs to a running turn.
 input id for local-echo reconciliation. The acknowledgement means durable
 admission, not turn completion; further typing can be sent while the turn runs.
 A refused send restores the draft. Connection states other than Live disable
-submission without discarding edits.
+submission without discarding edits. Even in Live, conversation submission waits
+until the initial History response supplies the conversation id. Enter during
+discovery retains the whole draft, including `/queue`, and creates no local echo
+or input request. Discovery does not send it automatically; a fresh Enter sends
+the retained draft to the discovered conversation. Management commands remain
+available during discovery.
 Resizing preserves the draft and its cursor without submitting it.
 
 `e2e/m1/conversation-history-order.json` exercises queue and ordinary steering
