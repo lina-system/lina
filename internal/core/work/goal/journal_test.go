@@ -14,9 +14,15 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
+	"github.com/thisisjun786/lina/internal/core/records"
 )
 
-func testJournal(t *testing.T) (*Journal, *canon.Store) {
+type testStore struct {
+	*canon.Store
+	Definitions testDefinitions
+}
+
+func testJournal(t *testing.T) (*Journal, *testStore) {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "state")
 	if err := os.Mkdir(root, 0700); err != nil {
@@ -35,7 +41,13 @@ func testJournal(t *testing.T) (*Journal, *canon.Store) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close(context.Background()) })
-	return NewJournal(db), db
+	repo, err := records.Open(root, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { repo.Close() })
+	wrapped := &testStore{db, testDefinitions{repo}}
+	return NewJournal(wrapped), wrapped
 }
 
 func TestJournalConcurrentTransitionsLoseNoReservations(t *testing.T) {
@@ -155,4 +167,17 @@ func TestReconcilerStartupCommitAndSafetySweep(t *testing.T) {
 	// derive from persisted state, not from a remembered action queue.
 	ticks <- time.Unix(300, 0)
 	expect(1)
+}
+
+type testDefinitions struct{ repo *records.Store }
+
+func (s testDefinitions) Read(ctx context.Context, id string) (DefinitionRecord, string, error) {
+	r, rev, err := s.repo.Read(ctx, id)
+	if errors.Is(err, records.ErrNotFound) {
+		err = ErrDefinitionMissing
+	}
+	return DefinitionRecord{ID: r.ID, Path: r.Path, Data: r.Data}, rev, err
+}
+func (s testDefinitions) Commit(ctx context.Context, c DefinitionChange, person, agent string) (string, error) {
+	return s.repo.Commit(ctx, records.Change{ID: c.ID, Base: c.Base, Path: c.Path, Data: c.Data}, records.Actor{Person: person, Agent: agent})
 }
