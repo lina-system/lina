@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -48,6 +49,10 @@ func updateManagerHelper() bool {
 	return true
 }
 func updateManager(t *testing.T, h *harness, start func(bool) *process, initial *process) (string, string, func() *process) {
+	return updateManagerWithStartHook(t, h, start, initial, nil)
+}
+
+func updateManagerWithStartHook(t *testing.T, h *harness, start func(bool) *process, initial *process, beforeStart func() bool) (string, string, func() *process) {
 	t.Helper()
 	base := filepath.Dir(h.root)
 	socket := filepath.Join(base, "manager.sock")
@@ -84,13 +89,19 @@ func updateManager(t *testing.T, h *harness, start func(bool) *process, initial 
 					p := current
 					mu.Unlock()
 					if p != nil {
+						// Core releases its lock before process exit is observed.
+						// Like the service manager, join that exit instead of racing it.
 						select {
 						case <-p.done:
-						default:
+						case <-h.ctx.Done():
 							reply.Code = 98
 						}
 					}
 				case "start":
+					if beforeStart != nil && !beforeStart() {
+						reply.Code = 98
+						break
+					}
 					p := start(true)
 					mu.Lock()
 					current = p
@@ -160,6 +171,11 @@ func TestM2UpdateDataOperations(t *testing.T) {
 	t.Parallel()
 
 	testUpdateActivation(t, "../m2/update-data-operations.json")
+}
+
+func TestM2UpdateResumeFailure(t *testing.T) {
+	t.Parallel()
+	testUpdateActivation(t, "../m2/update-resume-failure.json")
 }
 
 func testUpdateActivation(t *testing.T, scenarioPath string) {
@@ -258,7 +274,25 @@ func testUpdateActivation(t *testing.T, scenarioPath string) {
 			h.ctx = ctx
 			h, start := installConversationBundle(t, h, installedBundle, provider.URL)
 			core := start(true)
-			tools, manager, current := updateManager(t, h, start, core)
+			resumeReached := make(chan struct{})
+			releaseResume := make(chan struct{})
+			var releaseOnce sync.Once
+			release := func() { releaseOnce.Do(func() { close(releaseResume) }) }
+			defer release()
+			var starts atomic.Int32
+			tools, manager, current := updateManagerWithStartHook(t, h, start, core, func() bool {
+				if failure != "killed-before-resume" {
+					return true
+				}
+				if starts.Add(1) == 1 {
+					close(resumeReached)
+					select {
+					case <-releaseResume:
+					case <-ctx.Done():
+					}
+				}
+				return false
+			})
 			source, sha := archive, digest
 			if failure == "before-ready" {
 				source, sha = brokenArchive, brokenDigest
@@ -280,6 +314,19 @@ func testUpdateActivation(t *testing.T, scenarioPath string) {
 			code := 0
 			if failure != "success" {
 				code = 78
+			}
+			var beforeResume map[string]doctorFile
+			if failure == "killed-before-resume" {
+				select {
+				case <-resumeReached:
+				case <-ctx.Done():
+					t.Fatal("updater never reached ordinary service resume")
+				}
+				activate.killAndWait()
+				release()
+				beforeResume = doctorState(t, h.root)
+				activate = command("update", "--resume", "--state-root", h.root)
+				activate.start(t)
 			}
 			if failure == "killed-after-ready" {
 				select {
@@ -342,9 +389,22 @@ func testUpdateActivation(t *testing.T, scenarioPath string) {
 				admittedTurn(t, h, c, conversation, "after-rollback", "Confirm the restored Core can answer.")
 				c.Close()
 				h.stopCore(current())
-			case "after-ready", "killed-after-ready":
+			case "after-ready", "killed-after-ready", "killed-before-resume":
 				if receipt.Phase != "held" || !receipt.ReachedReady || receipt.Cause == "" {
 					t.Fatalf("post-ready failure rolled back: %+v stderr=%s", receipt, &activate.stderr)
+				}
+				if failure == "killed-before-resume" {
+					if receipt.Cause != "update_resume_failed" || starts.Load() != 2 {
+						t.Fatalf("resume failure missing: cause=%s starts=%d", receipt.Cause, starts.Load())
+					}
+					after := doctorState(t, h.root)
+					for _, name := range []string{"system/core", "system/core/update.json"} {
+						delete(beforeResume, name)
+						delete(after, name)
+					}
+					if !reflect.DeepEqual(beforeResume, after) {
+						t.Fatal("failed resume changed installed data or composition")
+					}
 				}
 				refused := h.command("core", "--state-root", h.root, "--socket", h.socket)
 				refused.start(t)

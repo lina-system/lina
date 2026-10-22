@@ -337,6 +337,26 @@ func (s *Store) Undo(ctx context.Context, u Undo) (Applied, error) {
 func (s *Store) change(ctx context.Context, id string, expected int64, build func(*canon.Tx, record) (Bundle, error), undo bool) (Applied, error) {
 	var out Applied
 	err := s.db.Write(ctx, func(tx *canon.Tx) error {
+		var err error
+		if undo {
+			var grouped bool
+			out, grouped, err = s.undoMaintenanceTx(ctx, tx, Undo{ID: id, Revision: expected})
+			if grouped || err != nil {
+				return err
+			}
+		}
+		out, err = s.changeTx(ctx, tx, id, expected, build, undo, false)
+		return err
+	})
+	if err != nil {
+		return Applied{}, err
+	}
+	return out, nil
+}
+
+func (s *Store) changeTx(ctx context.Context, tx *canon.Tx, id string, expected int64, build func(*canon.Tx, record) (Bundle, error), undo, allowSame bool) (Applied, error) {
+	var out Applied
+	err := func() error {
 		old, err := s.current(ctx, tx, id)
 		if err != nil {
 			return err
@@ -356,7 +376,7 @@ func (s *Store) change(ctx context.Context, id string, expected int64, build fun
 			return err
 		}
 		hash := digest(files)
-		if !undo && !old.deleted && hash == old.hash {
+		if !undo && !allowSame && !old.deleted && hash == old.hash {
 			return ErrConflict
 		}
 		var parent string
@@ -412,8 +432,8 @@ func (s *Store) change(ctx context.Context, id string, expected int64, build fun
 		}
 		out = Applied{Version: current.Version, Notice: notice, Undo: Undo{ID: id, Revision: current.Revision}}
 		return nil
-	})
-	// Never return a receipt (including a notice or undo handle) before commit.
+	}()
+	// The caller publishes this tentative receipt only after its transaction commits.
 	if err != nil {
 		return Applied{}, err
 	}
