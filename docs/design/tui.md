@@ -539,9 +539,20 @@ pager's reading offset (clamped to the remaining content) and active search.
 List updates do not focus the pager or change the draft. Decision answering remains the typed approval/question flow
 of T-04; the composer never turns a list row into an approval.
 
-The waiting summary shows the number of unresolved decision cards and the first
-card in Core's publication order. F6 opens that card without changing the draft.
-New cards update the summary and conversation label without taking keyboard focus.
+Home uses the accepted progress overview's waiting rows and remaining count in
+Core order. The summary includes requests from exchanges, blocked work and
+outside record changes as well as approvals and questions. It shows up to five
+rows; a shorter terminal folds rows into the localized "+N more" count. An empty
+overview hides the summary. Before an overview arrives, the waiting topic's
+decision cards provide the summary. Updates and replacement snapshots preserve
+the draft and focus, and stale stream frames cannot restore old rows.
+
+The overview is display-only. F6 still opens the first unresolved authenticated
+decision card; its revision, choices and two-step answer flow remain attached to
+the waiting topic. A decision appears once in the Home summary even when both
+topics carry it. `e2e/m2/tui-home-waiting.json` checks an outside-change request
+on Home while an installed Core runs a worker through approval, a question and
+an artifact result, then removes resolved requests without changing the draft.
 
 ## Results, cards and the pager (T-13)
 
@@ -1097,6 +1108,13 @@ complete LONG-QA body/scroll checks remain independent of those readiness waits.
 The first-run PTY scenario likewise waits for its draft, composer cursor and
 catalog suggestions in one parsed snapshot before checking presentation; separate
 observations across redraws do not establish that they were visible together.
+
+The LONG-QA transcript acceptance test starts PgUp stitching only after the
+result affordance occupies the bottom row of the inactive conversation viewport
+and the visible cursor is back in the composer. End-of-body text can arrive
+before the activity row disappears; that intermediate frame is not a settled
+scroll baseline. Subsequent pages likewise require the composer cursor before
+checking overlap, preserving the complete-body and no-duplication assertions.
 
 **Tests.** The fake Core, `internal/fakecore`, is built from the conformance fixtures ([host-protocol.md](host-protocol.md#conformance-fixtures)) with an injected clock and fault switches: drop, slow reader, epoch change, duplicate delivery, disconnect mid-batch, recovering and refusal.
 

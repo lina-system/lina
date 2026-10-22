@@ -87,6 +87,7 @@ export function build({ cwd = root, out, target, version: requestedVersion, exec
     const goToolchain = invoke(['env', 'GOVERSION']);
     if (goToolchain !== context.toolchain) throw new Error(`Expected Go toolchain ${context.toolchain}, got ${goToolchain}`);
     for (const directory of [cwd, join(cwd, 'kit')]) invoke(['mod', 'verify'], context.env, directory);
+    invoke(['run', '-mod=readonly', './persona/validate']);
     const prefix = 'github.com/thisisjun786/lina/internal/buildinfo';
     const ldflags = Object.entries({ Version: version, Commit: commit, Date: date })
       .map(([key, value]) => `-X ${prefix}.${key}=${value}`).join(' ');
