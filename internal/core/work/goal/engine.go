@@ -217,21 +217,18 @@ func retireQueuedActions(v *View, g *Goal) error {
 				t.NodeID = ""
 			case Resume:
 				t.Stage = TaskWorkerLost
-				t.Recoveries--
 			case RepairConflict:
 				t.Stage = TaskConflicted
-				t.Conflicts--
 			case ContinueWorker:
 				t.Stage = TaskNoReceipt
-				t.Continuations--
 			case RepairQA:
 				t.Stage = TaskQAFailed
-				t.QARepairs--
 			case PlanGoal:
 				t.RepairAsked = false
 			case InspectPR, Merge, RunQA, Deploy, Verify, Observe, Decide, CheckCriterion:
 			}
 			if reserves(a) {
+				refundRecovery(t, a.Kind)
 				t.Attempt--
 				t.EffectsSettled = true
 			}
@@ -242,6 +239,22 @@ func retireQueuedActions(v *View, g *Goal) error {
 		}
 	}
 	return nil
+}
+
+// Cancellation before dispatch and a settled quota interruption both leave the
+// task's one recovery available. A quota attempt still retains its attempt id.
+func refundRecovery(t *Task, kind ActionKind) {
+	switch kind {
+	case Resume:
+		t.Recoveries--
+	case ContinueWorker:
+		t.Continuations--
+	case RepairConflict:
+		t.Conflicts--
+	case RepairQA:
+		t.QARepairs--
+	case Assign, InspectPR, Merge, RunQA, Deploy, Verify, Observe, Decide, PlanGoal, CheckCriterion:
+	}
 }
 
 func (e *Engine) Admit(ctx context.Context, g Goal) error {
@@ -542,6 +555,7 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 				return err
 			}
 			a.State = "finished"
+			refundRecovery(t, a.Kind)
 			t.Stage = TaskReady
 			t.NodeID = ""
 			t.EffectsSettled = true

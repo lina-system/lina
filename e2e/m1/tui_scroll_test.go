@@ -42,10 +42,15 @@ func TestM1TUIWheelStickyConversation(t *testing.T) {
 	admittedTurn(t, h, client, conversation, "scroll-first", "Show the synthetic rows.")
 	plan := layout.Plan(layout.Size{Width: 100, Height: 34}, layout.Caps{SidePane: true}, layout.Shape{ComposerRows: 1})
 	activePlan := layout.Plan(layout.Size{Width: 100, Height: 34}, layout.Caps{SidePane: true}, layout.Shape{ComposerRows: 1, ActivityRows: 1})
+	conversationReady := func(s tuiterm.Snapshot) bool {
+		// PTY reads can split a redraw between transcript rows. The renderer
+		// returns its hardware cursor to the composer after painting the view.
+		return s.AltScreen && !s.CursorHidden && s.CursorY == plan.Composer.Y && s.CursorX == 2
+	}
 	idle := func(s tuiterm.Snapshot) bool {
 		// Turn activity temporarily borrows one transcript row. Compare the
 		// full idle viewport only after the TUI consumes the completed turn.
-		return !strings.Contains(screenRows(s)[activePlan.Activity.Y], design.Text(design.English, "activity.stop"))
+		return conversationReady(s) && !strings.Contains(screenRows(s)[activePlan.Activity.Y], design.Text(design.English, "activity.stop"))
 	}
 	region := func(s tuiterm.Snapshot) []string {
 		return screenRows(s)[plan.Conversation.Y : plan.Conversation.Y+plan.Conversation.Height]
@@ -76,7 +81,7 @@ func TestM1TUIWheelStickyConversation(t *testing.T) {
 		})
 		h.keys(terminal, wheel+"\x1b")
 		return wait("conversation after closing web settings", func(s tuiterm.Snapshot) bool {
-			return !s.CursorHidden && strings.Contains(screenText(s), "SCROLL-")
+			return conversationReady(s) && strings.Contains(screenText(s), "SCROLL-")
 		})
 	}
 	if got := strings.Join(region(webWheel("\x1b[<64;10;10M")), "\n"); got != strings.Join(region(latest), "\n") {
@@ -84,7 +89,7 @@ func TestM1TUIWheelStickyConversation(t *testing.T) {
 	}
 	h.keys(terminal, "\x1b[<64;10;10M")
 	scrolled := wait("wheel up by three rows", func(s tuiterm.Snapshot) bool {
-		return strings.Contains(region(s)[0], fmt.Sprintf("SCROLL-%03d", index-3))
+		return conversationReady(s) && strings.Contains(region(s)[0], fmt.Sprintf("SCROLL-%03d", index-3))
 	})
 	frozen := strings.Join(region(scrolled), "\n")
 	t.Logf("wheel-up viewport:\n%s", frozen)
@@ -101,7 +106,7 @@ func TestM1TUIWheelStickyConversation(t *testing.T) {
 	}
 	h.keys(terminal, "\x1b[F")
 	end := wait("End returns to latest", func(s tuiterm.Snapshot) bool {
-		return strings.Contains(strings.Join(region(s), "\n"), "SCROLL-NEW") && !strings.Contains(screenRows(s)[plan.Status.Y], marker)
+		return conversationReady(s) && strings.Contains(strings.Join(region(s), "\n"), "SCROLL-NEW") && !strings.Contains(screenRows(s)[plan.Status.Y], marker)
 	})
 	t.Logf("End viewport:\n%s", screenText(end))
 	h.keys(terminal, "\x04")
