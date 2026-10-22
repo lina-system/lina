@@ -511,6 +511,21 @@ Scripted wires establish these adapter invariants, and clean-build tests establi
 - Core refuses the turn if `init` lists anything LINA did not put there.
 - First use installs the SDK from the release lockfile ([runtime.md](runtime.md#provider-adapters)); it is never shipped in LINA artifacts.
 
+#167 implements the external TypeScript program and the [version 1 JSON-line
+wire](../../adapters/claude/README.md#c-45-wire-version-1), including correlated
+MCP tool results, cancellation, ping/pong, init refusal and reported usage.
+The SDK is installed from the adapter lockfile with lifecycle scripts disabled;
+foundation verifies sources, integrity, exact pins, registry signatures and the
+stub suite in a disposable installation. An explicitly configured Core route
+starts the program through `kit/proc`, routes runtime tool calls through the
+existing admission and durable call/result journal, and joins it on stream close.
+The ledger records `AgentRuntime`; the ordered context travels as a JSON
+transcript in the SDK prompt, so native vendor request fidelity is not claimed.
+`e2e/m2/claude-adapter.json` exercises the installed Core, a real Core tool,
+streamed reply and restart persistence with a stub vendor runtime. Automatic
+account setup, first-use installation, quota projection and idle pooling remain
+#168; this increment's explicit route launches one process per request.
+
 **C-46 Grok adapter (new).** A Go Agent Client Protocol client over the `grok` command on stdio, best effort. The steps are `initialize`, session create with LINA tools handed as MCP servers, prompt, updates, permission requests routed to Core's approval path, and cancel. Telemetry and trace upload are switched off explicitly. Account state comes from a cheap authenticated call, not from the command's files.
 
 **C-47 Accounts, credentials and sign-in (new).**
@@ -689,6 +704,37 @@ type Repo interface {
 type Index interface{ Query(ctx context.Context, v View, p Params) ([]Row, error) } // today, upcoming, anytime, later, memos, board
 ```
 
+The installed write path uses `internal/core/records.Repo`, with go-git's pure-Go
+object/hash and index codecs behind a confined local filesystem adapter. Result
+saving uses the same repository implementation. Core opens the repository with
+the published canon migration catalog; `records_state` journals the pending
+publication and `records_index` holds disposable id/path/blob/revision locators.
+Backup reads the published records head from its canon snapshot. Before the first
+saved version (also after an interrupted first attempt), it copies the repository
+files and intent without inventing a commit entry in the generation manifest.
+The adapter writes loose objects and a linear local history; it has no Git
+subprocess, remote, transport or credential dependency.
+
+`Read` returns the record and the commit of its last content or path change.
+Unrelated record commits leave that revision valid. `Commit` requires an empty
+base only for a new Core-allocated id; edits and moves compare the supplied base
+under the shared writer lock. An identical-content write at the same path is a
+no-op after that comparison. A move removes the old path and keeps the front
+matter id. Every applied change has one commit naming the person and asking
+agent. A durable intent names immutable before/after objects; startup finishes
+only that publication and never re-dispatches its tool effect. An outside edit,
+commit, foreign lock or incompatible recovery state returns `records_changed`
+without overwriting it. Outside-change acceptance/presentation and the richer
+FTS/edge index are subsequent records-index work.
+
+Installed conversations register `read_record` and `write_record` through the
+ordinary authority, lease and effect-receipt registry. These tools capture and
+edit memos and knowledge documents; Core supplies the owner, asking agent, id
+and PARA path. Model arguments cannot supply identities or paths. Existing
+records keep their folder and structured fields when their title/note changes.
+The tools return committed id/revision/Markdown receipts through the existing
+conversation protocol; no new client endpoint or to-do view is introduced.
+
 - A write is: an intent row in canon; files written and committed with person and agent in the message; index rows updated with the new head; the intent closed.
 - At start and before each write, Core compares the index head with the repository head. A mismatch rebuilds from the files, because files are canon.
 - Core refuses a write to a record whose file changed under it, and shows an outside change as the contract says.
@@ -745,7 +791,7 @@ The memory store keeps the current item and immutable revision snapshots in cano
 
 **C-21 Person model (changed).** The views are those of [conversation-and-memory.md](conversation-and-memory.md#person-model). `recall_person` at depth 1 makes one auxiliary request over at most N items (P: 12), with citations checked against the retrieved set and capped at 10 s. Deeper work is a background run. The person brief and the maintenance pass are jobs for `moirai-worker` ([cognition-and-life.md](cognition-and-life.md#memory-jobs)). Duplicate clusters inside one subject use normalized equality, token overlap and, when available, embedding similarity; never across subjects.
 
-The `recall_person` tool requires a nonempty retrieval query alongside the question, so an omitted query cannot silently choose the most recent items. The initial executor uses a limit of 12 combined memory items and own-ledger hits, with depth 0 as the default. Depth 1 makes one cancellable auxiliary call with a 10-second deadline and no retries. Its structured sentences retain only citations to the retrieved id and revision; sentences left without citations are dropped. A depth above 1 returns the background-required outcome to the caller. The standing profile is an ephemeral view ordered by the latest committed revision, with line and tokenizer budgets supplied by assembly. These operations are callable Core/tool services; no memory operation is exposed by the current client protocol, so acceptance uses real canon and ledger package scenarios. The indexed memory matcher and the ledger search service are described in C-22.
+The `recall_person` tool requires a nonempty retrieval query alongside the question, so an omitted query cannot silently choose the most recent items. The initial executor uses a limit of 12 combined memory items and own-ledger hits, with depth 0 as the default. Depth 1 makes one cancellable auxiliary call with a 10-second deadline and no retries. Its structured sentences retain only citations to the retrieved id and revision; sentences left without citations are dropped. A depth above 1 returns the background-required outcome to the caller. The standing profile is an ephemeral view ordered by the latest committed revision, with line and tokenizer budgets supplied by assembly. These operations are callable Core/tool services, tested with real canon and ledger package scenarios. Explicit client memory actions also have installed-Core acceptance through the [TUI memory requests](tui.md#memory-and-agent-command-requests); the condition-by-condition evidence is listed under [G1-13](go-roadmap.md#1d-memory-context-and-skills). The indexed memory matcher and the ledger search service are described in C-22.
 
 The memory-job increment exposes Core-owned preparation, pre-dispatch checks and
 `ExtractionApply`, `MaintenanceApply` and `BriefApply` callbacks in
@@ -820,7 +866,7 @@ Persona growth uses `agents.AdoptGrowthTx` inside the Core job service's fenced 
 
 The main's `skill-maintenance` planning job snapshots user-created skill bundles and asks Core's auxiliary model path for pruning and near-duplicate merging decisions, without persona or tools. A stale procedure needs content evidence of retirement or replacement; age or non-use alone is insufficient. Core checks the exact cached model result against the queued IDs and revisions before adoption. Changed inputs and undone operations are consumed without another write or notice. Unchanged snapshots are not scheduled again; an unstarted pending snapshot may be refreshed, but a reserved model call is never replaced or replayed. Initial policy (P) is hourly, with a one-minute timeout, 8,192 tokens reserved per call and a 131,072-token allowance; unknown usage retains its reservation. Ordinary job payload limits apply. An oversized catalog cannot dispatch and does not block conversation.
 
-A prune archives its active entry. A merge writes the target and archives every source in one fenced transaction with the job watermark and receipt, using the ordinary immutable Git version writer. All affected revisions must still match. A single existing `undo_skill` handle restores every member atomically as new revisions, refusing if any member has changed. The store remembers the rejected operation by kind, member IDs and input content hashes, so changing the merge destination, generated wording or reason cannot repeat an undone merge. Rejected merged output hashes also use ordinary skill suppression. Built-in IDs are excluded even when locally patched. Migration 27 adds operation membership and a durable notice outbox without rewriting earlier migrations.
+A prune archives its active entry. A merge writes the target and archives every source in one fenced transaction with the job watermark and receipt, using the ordinary immutable Git version writer. All affected revisions must still match. A single existing `undo_skill` handle restores every member atomically as new revisions, refusing if any member has changed. The store remembers the rejected operation by kind, member IDs and input content hashes, so changing the merge destination, generated wording or reason cannot repeat an undone merge. Rejected merged output hashes also use ordinary skill suppression. Built-in IDs are excluded even when locally patched. Migration 28 adds operation membership and a durable notice outbox without rewriting earlier migrations.
 
 Installed Core registers this job on its shared `run/jobs.sock`, queues changes on skill writes and restart, and retries notice delivery and scheduling each minute. `skill_notices` returns the committed one-line notices and undo handles; Core also projects the notices into conversation history independently of a model reply. `skill_maintenance` reads the policy or changes its durable enablement when the person asks. Disabling skill suggestions stops background adoption and automatic conversation skill writes; undo remains available. An included worker is enabled by install and uses that same socket. `e2e/m2/skill-maintenance.json` exercises the installed Core, actual worker process and synthetic provider through pruning, merging, notices, grouped undo and restart suppression.
 
@@ -1045,7 +1091,7 @@ type Definition struct {
 - The agent drafts a definition with the `dispatch_work` tool. Core validates required fields, glob syntax and that the design reference resolves in the repository at the base commit, and renders the task packet.
 - Core does not split work itself. The dev preset carries the splitting criteria as guidance ([work-and-delegation.md](work-and-delegation.md#splitting-into-tasks)). Core checks mechanically that each task has one done condition and a write area, that overlapping areas are ordered by a dependency, that dependencies have no cycle, and that hotspot files are taken whole or moved to one task.
 - `Chooser` ranks workers from situation tags, quota rows and host capacity, using an editable rule table marked provisional. A quota or login stop hands the same packet to the next worker.
-- `Scheduler.Release` runs on events (landed, new task, quota change, a parked worker's reset), not on a poll. It starts every task whose dependencies landed, whose area lease is free and whose worker has quota. Area leases live from hand-off to landed, closed or abandoned. Concurrency starts at 4 per repository (P). A task that cannot start shows exactly one reason.
+- `Scheduler.Release` runs on events (landed, new task, quota change, a parked worker's reset), not on a poll. It starts every task whose dependencies landed, whose area lease is free and whose worker has quota. Area leases live from hand-off to landed, closed or abandoned. Concurrency is the free slots that the reported load and resources of the main host and each Node allow, with no fixed count per repository ([work-and-delegation.md](work-and-delegation.md#capacity)). A task that cannot start shows exactly one reason.
 - One task, one worker, one worktree, one branch, created by Core with the Git command from a parent clone in `work/clones/`.
 - The CRW pin is the start gate for the work ledger records: a pin record and a LINA fixture runner whose expected values come from the fixture ([work-and-delegation.md](work-and-delegation.md#start-gate)).
 - `internal/core/work/pin` verifies SHA-256 over every adopted file before running
