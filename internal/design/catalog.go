@@ -403,4 +403,13 @@ var catalog = map[string]translation{
 	"shell.composer":             {"Conversation input: unsupported", "대화 입력: 지원되지 않음"},
 	"composer.placeholder":       {"Talk to %s · Enter to send · Alt+Enter for a new line", "%s에게 말하기 · Enter 보내기 · Alt+Enter 줄바꿈"},
 	"composer.shift_enter":       {"Talk to %s · Enter to send · Shift+Enter for a new line", "%s에게 말하기 · Enter 보내기 · Shift+Enter 줄바꿈"},
+	"progress.unknown":           {"unknown", "알 수 없음"},
+	"progress.design":            {"design", "설계"},
+	"progress.building":          {"building", "만드는 중"},
+	"progress.checking":          {"checking", "확인"},
+	"progress.done":              {"done", "끝"},
+	"progress.empty":             {"No work in progress", "진행 중인 일이 없어요"},
+	"progress.more":              {"+%s more", "+%s개 더"},
+	"progress.waiting":           {"%s waiting for you", "%s개 답변 기다리는 중"},
+	"waiting.empty":              {"Nothing to decide now", "지금 결정할 것이 없어요"},
 }

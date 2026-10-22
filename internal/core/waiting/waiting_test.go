@@ -69,7 +69,7 @@ func database(t *testing.T) (*canon.Store, canon.Config) {
 	}
 	t.Cleanup(func() { controls.Close() })
 	ms := canon.Migrations()
-	ms = append(ms, canon.Migration{Version: len(ms) + 1, SQL: waiting.Schema + `CREATE TABLE fixture(id TEXT PRIMARY KEY, record BLOB, handled INTEGER DEFAULT 0);`})
+	ms = append(ms, canon.Migration{Version: len(ms) + 1, SQL: `CREATE TABLE fixture(id TEXT PRIMARY KEY, record BLOB, handled INTEGER DEFAULT 0);`})
 	cfg := canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: 1, Controls: controls, Migrations: ms}
 	return open(t, cfg), cfg
 }

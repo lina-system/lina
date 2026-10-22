@@ -343,3 +343,10 @@ Core's read path and TUI. `TestM3WorkerLanesLiveSession` additionally starts the
 installed stdio worker fixture through Core's conversation tools, makes it write
 a real artifact, and expands its runtime lane to show the worker output without
 calling the model. Vendor transport is synthetic; no personal account is used.
+
+`m2/progress-waiting.json` uses the installed Core and synthetic stdio worker
+journey to read the owner progress capability and full waiting list during an
+approval and a question. It checks unknown plan values, display lines without
+internal identities, removal after the original authenticated answers, a real
+worker-written artifact, and empty resolved sources after Core restart. The
+worker and provider are fixtures; Core, tools, protocol and persistence are real.
