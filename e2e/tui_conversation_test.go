@@ -175,9 +175,15 @@ func waitScreen(t *testing.T, h *harness, terminal *terminal, text string) tuite
 	t.Helper()
 	snapshot, err := terminal.screen.Wait(h.ctx, func(snapshot tuiterm.Snapshot) bool {
 		cells := screenText(snapshot)
+		if text == "Ctrl+D" {
+			// Callers use this as a composer/overlay barrier. Notices can crowd
+			// the key hint off the status row; readiness is the live composer
+			// and its hardware cursor, not whether optional hints fit.
+			return snapshot.AltScreen && !snapshot.CursorHidden && strings.Contains(cells, design.Text(design.English, "live"))
+		}
 		// Startup waits must observe the usable conversation, not the connection
 		// screen or composer chrome drawn while History is still being fetched.
-		if text == "Ctrl+D" || text == design.Text(design.English, "live") {
+		if text == design.Text(design.English, "live") {
 			if !snapshot.AltScreen || !strings.Contains(cells, design.Text(design.English, "live")) {
 				return false
 			}
@@ -235,35 +241,40 @@ func installConversationBundle(t *testing.T, h *harness, bundle, providerURL str
 		}
 		core.start(t)
 		h.connect(core).Close()
-		// A bound socket accepts reads while Core is still reconciling/probing.
-		// Wait for mutation admission via an empty, always-refused input; no
-		// conversation event or model request can result from this probe.
-		ready, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "test", []protocol.Capability{{Name: "conversation", Version: "1.0"}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer ready.Close()
-		for {
-			if _, err := ready.Input(h.ctx, protocol.Input{}); err != nil {
-				t.Fatal(err)
-			}
-			frame, err := ready.Receive(h.ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if frame.Error == nil {
-				t.Fatal("empty input accepted")
-			}
-			if frame.Error.Code == protocol.ErrorUnavailable {
-				continue
-			}
-			if frame.Error.Code != protocol.ErrorMalformed && frame.Error.Code != protocol.ErrorCapabilityNotNegotiated {
-				t.Fatalf("unexpected readiness code: %s", frame.Error.Code)
-			}
-			break
-		}
+		waitCoreAdmission(t, h)
 		return core
 	}
 
 	return h, start
+}
+
+func waitCoreAdmission(t *testing.T, h *harness) {
+	t.Helper()
+	// A bound socket accepts reads while Core is still reconciling/probing.
+	// Wait for mutation admission via an empty, always-refused input; no
+	// conversation event or model request can result from this probe.
+	ready, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "test", []protocol.Capability{{Name: "conversation", Version: "1.0"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ready.Close()
+	for {
+		if _, err := ready.Input(h.ctx, protocol.Input{}); err != nil {
+			t.Fatal(err)
+		}
+		frame, err := ready.Receive(h.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if frame.Error == nil {
+			t.Fatal("empty input accepted")
+		}
+		if frame.Error.Code == protocol.ErrorUnavailable {
+			continue
+		}
+		if frame.Error.Code != protocol.ErrorMalformed && frame.Error.Code != protocol.ErrorCapabilityNotNegotiated {
+			t.Fatalf("unexpected readiness code: %s", frame.Error.Code)
+		}
+		break
+	}
 }
