@@ -97,6 +97,7 @@ Failure injections: `kill -9` at each start step and turn phase; corrupt canon; 
 **G1-07 Sandbox, tool executor and trash.** Sandbox wrapper, network ask, file tools, recoverable deletion.
 - Done when: the start probe passes or shell and file tools turn off with a cause while conversation continues; a canary cannot read canon, secrets or the client socket; network waits for once, always allow or deny; a patch with stale context fails; a trash delete restores identical bytes.
 - Depends on: G1-02, G1-05, G1-06. Design refs: C-14; [runtime.md](runtime.md#sandbox).
+- #50 and #51 supply the wrapper and executor. Acceptance uses `kit/sandbox` and `internal/core/boot` for startup and protected-path canaries, `internal/core/exec` for real sandboxed network approvals and patch/trash execution, and `kit/tools` for stale-context refusal and byte-identical recovery after reopening the version store. The strengthened `e2e/m1/sandbox.json` scenario proves a completed installed-Core/TUI exchange and recovered history with either a missing launcher or a failed probe.
 
 ### 1.C Model path, accounts and loop
 

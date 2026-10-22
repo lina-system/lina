@@ -15,6 +15,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/core/install"
+	"github.com/thisisjun786/lina/internal/design"
 	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
@@ -48,31 +49,12 @@ func TestM1TUIConversationInstalledCore(t *testing.T) {
 	defer provider.Close()
 	h, start := installedConversationHarness(t, provider.URL)
 	core := start(true)
-	client, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "test", []protocol.Capability{{Name: "conversation", Version: "1.0"}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Read-only history is available during recovery. Wait for input admission
+	// as well before exercising the configured conversation through the TUI.
+	client, conversation := conversationClient(t, h)
 	defer client.Close()
 	if len(client.Welcome.Capabilities) == 0 {
 		t.Fatal("installed Core has no conversation service")
-	}
-	if _, err = client.History(h.ctx, protocol.HistoryGet{}); err != nil {
-		t.Fatal(err)
-	}
-	discovery, err := client.Receive(h.ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	history, ok := discovery.Payload.(protocol.History)
-	if !ok || history.ConversationID == nil {
-		t.Fatal("no conversation discovery")
-	}
-	topic := "conversation:" + *history.ConversationID
-	if _, err = client.Subscribe(h.ctx, protocol.Subscribe{Topic: &topic}); err != nil {
-		t.Fatal(err)
-	}
-	if snapshot, err := client.Receive(h.ctx); err != nil || snapshot.Kind != protocol.KindSnapshot {
-		t.Fatal("no history snapshot")
 	}
 	terminal := h.startScreenTUI("TERM=xterm-256color", "COLORTERM=truecolor")
 	fresh := waitScreen(t, h, terminal, "Ctrl+D")
@@ -104,7 +86,7 @@ func TestM1TUIConversationInstalledCore(t *testing.T) {
 		t.Fatal("missing durable input echo")
 	}
 	changed := "MUST-NOT-REPLACE"
-	if _, err = client.Input(h.ctx, protocol.Input{ConversationID: history.ConversationID, InputID: &echo, Text: &changed}); err != nil {
+	if _, err = client.Input(h.ctx, protocol.Input{ConversationID: &conversation, InputID: &echo, Text: &changed}); err != nil {
 		t.Fatal(err)
 	}
 	duplicate, err := client.Receive(h.ctx)
@@ -172,13 +154,27 @@ func screenText(snapshot tuiterm.Snapshot) string {
 }
 func waitScreen(t *testing.T, h *harness, terminal *terminal, text string) tuiterm.Snapshot {
 	t.Helper()
-	snapshot, err := terminal.screen.Wait(h.ctx, func(snapshot tuiterm.Snapshot) bool { return strings.Contains(screenText(snapshot), text) })
+	snapshot, err := terminal.screen.Wait(h.ctx, func(snapshot tuiterm.Snapshot) bool {
+		view := screenText(snapshot)
+		if text == "Ctrl+D" {
+			// The composer shortcut is visible while connecting, but Enter is
+			// admitted only when live. Readiness must observe both in one row.
+			for _, row := range strings.Split(view, "\n") {
+				if strings.Contains(row, text) && strings.Contains(row, design.Text(design.English, "live")) {
+					return true
+				}
+			}
+			return false
+		}
+		return strings.Contains(view, text)
+	})
 	if err != nil {
 		select {
 		case <-terminal.process.done:
-			t.Logf("TUI exited: %v; stderr=%s", terminal.process.err, &terminal.process.stderr)
-		default:
+		case <-h.ctx.Done():
+			terminal.process.killAndWait()
 		}
+		t.Logf("TUI exited: %v; stderr=%s", terminal.process.err, &terminal.process.stderr)
 		t.Fatalf("screen missing %q: %v; cells=%s", text, err, screenText(snapshot))
 	}
 	return snapshot
