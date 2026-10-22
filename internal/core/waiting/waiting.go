@@ -15,6 +15,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/waiting/view"
+	"github.com/thisisjun786/lina/internal/core/work"
 )
 
 var (
@@ -24,7 +25,7 @@ var (
 	ErrAnswered = errors.New("waiting_already_answered")
 )
 
-type Reason string
+type Reason = work.WaitReason
 
 const (
 	OutsideEffect      Reason = "outside_effect"

@@ -26,6 +26,8 @@ func main() {
 			os.Exit(runCore(os.Args[2:]))
 		case "install":
 			os.Exit(runInstall(os.Args[2:]))
+		case "update":
+			os.Exit(runUpdate(os.Args[2:]))
 		case "doctor":
 			os.Exit(runDoctor(os.Args[2:]))
 		case "replay":
@@ -46,6 +48,6 @@ func main() {
 			os.Exit(tools.Main(context.Background(), os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 		}
 	}
-	fmt.Fprintln(os.Stderr, "usage: lina <core|tui|install|backup|restore|import-hermes|doctor|replay|export|version|file-tool|proc-supervise>")
+	fmt.Fprintln(os.Stderr, "usage: lina <core|tui|install|update|backup|restore|import-hermes|doctor|replay|export|version|file-tool|proc-supervise>")
 	os.Exit(64)
 }

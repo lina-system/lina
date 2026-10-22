@@ -170,6 +170,7 @@ var catalog = map[string]translation{
 	"question":                   {"Question", "질문"},
 	"question_answer":            {"Answer", "답변"},
 	"result":                     {"Result", "결과"},
+	"reply.open_pager":           {"Open in pager · Ctrl+O", "페이저로 열기 · Ctrl+O"},
 	"result_get":                 {"Open result", "결과 열기"},
 	"result_edit":                {"Edit result", "결과 수정"},
 	"result_save":                {"Save result", "결과 저장"},
@@ -324,4 +325,5 @@ var catalog = map[string]translation{
 	"shell.waiting_unavailable":  {"This Core cannot show waiting decisions.", "이 Core는 대기 중인 결정 목록을 제공하지 않습니다."},
 	"shell.composer":             {"Conversation input: unsupported", "대화 입력: 지원되지 않음"},
 	"composer.placeholder":       {"Talk to LINA · Enter to send · Alt+Enter for a new line", "리나에게 말하기 · Enter 보내기 · Alt+Enter 줄바꿈"},
+	"composer.shift_enter":       {"Talk to LINA · Enter to send · Shift+Enter for a new line", "리나에게 말하기 · Enter 보내기 · Shift+Enter 줄바꿈"},
 }
