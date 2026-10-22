@@ -4,6 +4,7 @@ package e2e_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -61,7 +62,7 @@ func TestM1TUIWheelStickyConversation(t *testing.T) {
 		return s
 	}
 	latest := wait("latest reply", func(s tuiterm.Snapshot) bool {
-		return idle(s) && strings.Contains(strings.Join(region(s), "\n"), lines[79]) && strings.Contains(screenText(s), "Ctrl+O")
+		return !s.CursorHidden && idle(s) && strings.Contains(strings.Join(region(s), "\n"), lines[79]) && strings.Contains(screenText(s), "Ctrl+O")
 	})
 	first := region(latest)[0]
 	var index int
@@ -84,7 +85,7 @@ func TestM1TUIWheelStickyConversation(t *testing.T) {
 	}
 	h.keys(terminal, "\x1b[<64;10;10M")
 	scrolled := wait("wheel up by three rows", func(s tuiterm.Snapshot) bool {
-		return strings.Contains(region(s)[0], fmt.Sprintf("SCROLL-%03d", index-3))
+		return wheelViewportReached(s, plan.Conversation.Y, index-3)
 	})
 	frozen := strings.Join(region(scrolled), "\n")
 	t.Logf("wheel-up viewport:\n%s", frozen)
@@ -94,14 +95,14 @@ func TestM1TUIWheelStickyConversation(t *testing.T) {
 	marker := design.Text(design.English, "conversation.new_messages")
 	admittedTurn(t, h, client, conversation, "scroll-next", "Send another reply.")
 	arrived := wait("new messages marker", func(s tuiterm.Snapshot) bool {
-		return idle(s) && strings.Contains(screenRows(s)[plan.Status.Y], marker)
+		return !s.CursorHidden && idle(s) && strings.Contains(screenRows(s)[plan.Status.Y], marker)
 	})
 	if got := strings.Join(region(arrived), "\n"); got != frozen {
 		t.Fatalf("new output moved viewport:\nBEFORE\n%s\nAFTER\n%s", frozen, got)
 	}
 	h.keys(terminal, "\x1b[F")
 	end := wait("End returns to latest", func(s tuiterm.Snapshot) bool {
-		return strings.Contains(strings.Join(region(s), "\n"), "SCROLL-NEW") && !strings.Contains(screenRows(s)[plan.Status.Y], marker)
+		return !s.CursorHidden && strings.Contains(strings.Join(region(s), "\n"), "SCROLL-NEW") && !strings.Contains(screenRows(s)[plan.Status.Y], marker)
 	})
 	t.Logf("End viewport:\n%s", screenText(end))
 	h.keys(terminal, "\x04")
@@ -130,5 +131,54 @@ func TestM1TUIWheelStickyConversation(t *testing.T) {
 	}
 	if calls.Load() != 2 {
 		t.Fatalf("provider calls = %d", calls.Load())
+	}
+}
+
+func wheelViewportReached(s tuiterm.Snapshot, top, index int) bool {
+	// This PTY does not negotiate synchronized output. Bubble Tea hides the
+	// cursor around each conversation diff; a matching first row alone can
+	// still be a partial frame when the PTY splits the renderer's write.
+	return !s.CursorHidden && strings.Contains(screenRows(s)[top], fmt.Sprintf("SCROLL-%03d", index))
+}
+
+func TestTUIWheelViewportWaitsForCompleteFrame(t *testing.T) {
+	screen, err := tuiterm.NewRecorder(40, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer screen.Close()
+	write := func(data string) {
+		t.Helper()
+		if _, err := screen.Write([]byte(data)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The PTY may split one renderer write after the scroll optimization has
+	// moved the first row, but before it fills a cleared row. Bubble Tea hides
+	// the cursor during the diff and shows it after completing the frame.
+	write("\x1b[?1049h\x1b[?25l\x1b[HSCROLL-050\x1b[3;1HSCROLL-052")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel() // Bound a rejected snapshot without any sleep or scheduler race.
+	ready := func(s tuiterm.Snapshot) bool { return wheelViewportReached(s, 0, 50) }
+	assertPending := func() {
+		t.Helper()
+		if s, err := screen.Wait(ctx, ready); !errors.Is(err, context.Canceled) {
+			t.Fatalf("accepted an incomplete wheel frame: hidden=%v, err=%v\n%s", s.CursorHidden, err, screenText(s))
+		}
+	}
+	assertPending()
+	write("\x1b[2;1HSCROLL-051\x1b[4;3H")
+	// Also split the cursor-show sequence itself across PTY reads.
+	for _, b := range []byte("\x1b[?25") {
+		write(string(b))
+		assertPending()
+	}
+	write("h")
+	s, err := screen.Wait(ctx, ready)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(screenRows(s)[:3], "\n"); got != "SCROLL-050\nSCROLL-051\nSCROLL-052" {
+		t.Fatalf("completed viewport: %q", got)
 	}
 }

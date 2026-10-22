@@ -217,9 +217,8 @@ func (s Source) loadSnapshot(ctx context.Context, scope Scope, id string) (Episo
 		}
 		evidence, err := journal.Get(ctx, "request:"+id+":0")
 		if err != nil {
-			// Growing tool declarations can move assembly evidence into a material.
-			// Let withMaterials release this snapshot, load the immutable bytes and
-			// recheck visibility; a cache miss is not missing assembly evidence.
+			// Large request evidence is a material too. Let withMaterials fetch
+			// it outside this snapshot before classifying unavailable bytes.
 			var needed *materialNeeded
 			if errors.As(err, &needed) {
 				return err

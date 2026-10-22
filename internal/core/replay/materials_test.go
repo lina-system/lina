@@ -24,9 +24,9 @@ type observedReader struct {
 	active bool
 }
 
-func TestLargeRequestAssemblyRehydratesOutsideSnapshot(t *testing.T) {
-	for _, revoke := range []bool{false, true} {
-		t.Run(map[bool]string{false: "available", true: "trashed during read"}[revoke], func(t *testing.T) {
+func TestRequestAssemblyMaterialReleasesSnapshotAndRechecksRetraction(t *testing.T) {
+	for _, mode := range []string{"read", "retracted", "trashed"} {
+		t.Run(mode, func(t *testing.T) {
 			db, source, root := fixture(t)
 			store, err := assets.Open(t.Context(), root, db)
 			if err != nil {
@@ -39,14 +39,19 @@ func TestLargeRequestAssemblyRehydratesOutsideSnapshot(t *testing.T) {
 			}
 			reader := &observedReader{db: db}
 			materials := &materialBytes{store: store, writer: writer, reader: reader}
-			declaration, _ := json.Marshal(map[string]any{"type": "function", "name": "synthetic_read", "description": strings.Repeat("Synthetic schema detail. ", 1000), "parameters": map[string]any{"type": "object"}})
-			id := seedWithEvidence(t, db, "large-assembly", guard.EntryOwner, func(e *ledger.RequestEvidence) {
-				e.Tools = []provider.ToolDecl{declaration}
-				input, err := ledger.New(db, materials).Get(t.Context(), "large-assembly")
+			// A growing tool catalog can move request evidence over the ledger's
+			// inline boundary even though all conversation messages are valid.
+			id := seedWithEvidence(t, db, "input", guard.EntryOwner, func(e *ledger.RequestEvidence) {
+				tool, err := json.Marshal(map[string]string{"type": "function", "name": "fixture", "description": strings.Repeat("synthetic description ", ledger.InlineBytes/10)})
 				if err != nil {
 					t.Fatal(err)
 				}
-				items, err := assemble.History([]ledger.Event{input}, "conversation", "agent")
+				e.Tools = []provider.Item{tool}
+				event, err := ledger.New(db, materials).Get(t.Context(), "input")
+				if err != nil {
+					t.Fatal(err)
+				}
+				items, err := assemble.History([]ledger.Event{event}, "conversation", "agent")
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -54,39 +59,39 @@ func TestLargeRequestAssemblyRehydratesOutsideSnapshot(t *testing.T) {
 			}, materials)
 			assembly, err := ledger.New(db, materials).Get(t.Context(), "request:"+id+":0")
 			if err != nil || assembly.Material.ID == "" {
-				t.Fatal("assembly did not cross material boundary", err)
+				t.Fatalf("request evidence was not stored as a material: %v", err)
 			}
-			source.DB = reader
-			source.Materials = materials
-			if revoke {
-				materials.afterRead = func(ref ledger.Material) {
-					if ref != assembly.Material {
-						t.Error("expected assembly material first")
-					}
-					if err := db.Write(t.Context(), func(tx *canon.Tx) error {
+			source.DB, source.Materials = reader, materials
+			reads := 0
+			materials.afterRead = func(ref ledger.Material) {
+				reads++
+				if ref != assembly.Material {
+					t.Fatal("expected request evidence to be fetched first")
+				}
+				if mode == "read" {
+					return
+				}
+				if err := db.Write(t.Context(), func(tx *canon.Tx) error {
+					if mode == "trashed" {
 						_, err := tx.ExecContext(t.Context(), "UPDATE assets SET trashed_at=1 WHERE id=?", ref.ID)
 						return err
-					}); err != nil {
-						t.Fatal(err)
 					}
+					_, err := tx.ExecContext(t.Context(), "INSERT INTO retract_block(item_id,person,holder,event_id,conversation_id) VALUES('forgotten','person','agent','input','')")
+					return err
+				}); err != nil {
+					t.Fatal(err)
 				}
 			}
-			before := snapshot(t, db)
 			ep, err := source.Load(t.Context(), replay.Scope{Person: "person", Agent: "agent"}, id)
-			if materials.nested != 0 {
-				t.Fatal("material read held canon snapshot")
+			if reads != 1 || materials.nested != 0 {
+				t.Fatalf("request material reads=%d nested=%d err=%v", reads, materials.nested, err)
 			}
-			if revoke {
-				if err == nil {
-					t.Fatal("trashed assembly was exported")
+			if mode == "read" {
+				if err != nil || len(ep.Evidence.Tools) != 1 || len(ep.Evidence.Tools[0]) <= ledger.InlineBytes {
+					t.Fatalf("large request evidence was not reconstructed: %v", err)
 				}
-				return
-			}
-			if err != nil || len(ep.Evidence.Tools) != 1 || string(ep.Evidence.Tools[0]) != string(declaration) {
-				t.Fatalf("assembly rehydration failed: %v", err)
-			}
-			if snapshot(t, db) != before {
-				t.Fatal("replay mutated source")
+			} else if err == nil {
+				t.Fatal("revoked request evidence was accepted after its material read")
 			}
 		})
 	}

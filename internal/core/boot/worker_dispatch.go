@@ -39,7 +39,7 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	r.workerDispatch, err = dispatch.Open(ctx, dispatch.Config{DB: r.db, Root: r.root, Main: r.main, Epoch: r.epoch, Binary: binary, Git: git, PR: r.workerGitHub, Environment: proc.WorkerEnvironment(), Activities: r.activities, Manage: func(ctx context.Context, record dispatch.Record) (dispatch.Record, error) {
+	r.workerDispatch, err = dispatch.Open(ctx, dispatch.Config{DB: r.db, Skills: r.skills, Root: r.root, Main: r.main, Epoch: r.epoch, Binary: binary, Git: git, PR: r.workerGitHub, Environment: proc.WorkerEnvironment(), Activities: r.activities, Manage: func(ctx context.Context, record dispatch.Record) (dispatch.Record, error) {
 		raw, _ := json.Marshal(record.Definition)
 		a, err := r.assignCoding(ctx, record.Origin, record.ID, "dispatch_work", record.Definition.Repository, raw)
 		if err != nil {

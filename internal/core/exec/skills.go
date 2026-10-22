@@ -28,6 +28,9 @@ type SkillFailure struct {
 	Code     string         `json:"code"`
 	Proposal *SkillProposal `json:"proposal,omitempty"`
 }
+type skillIndexArgs struct {
+	Methodology string `json:"methodology,omitempty"`
+}
 
 func decodeSkill(raw json.RawMessage, out any) error {
 	if len(raw) > 2<<20 {
@@ -48,9 +51,9 @@ func skillInput(raw json.RawMessage, name string) (tools.Input, error) {
 	var args any
 	switch name {
 	case "skill_index":
-		var a struct{}
-		if err := decodeSkill(raw, &a); err != nil {
-			return tools.Input{}, err
+		var a skillIndexArgs
+		if err := decodeSkill(raw, &a); err != nil || a.Methodology != "" && a.Methodology != "dev" {
+			return tools.Input{}, tools.ErrInvalid
 		}
 		args = a
 	case "read_skill":
@@ -137,7 +140,11 @@ func RegisterSkills(registry *tools.Registry, store *skills.Store) ([]tools.Spec
 			var err error
 			switch name {
 			case "skill_index":
-				value, err = store.Catalog(ctx)
+				var a skillIndexArgs
+				err = decodeSkill(input.Arguments, &a)
+				if err == nil {
+					value, err = store.Index(ctx, a.Methodology)
+				}
 			case "read_skill":
 				var v skills.Version
 				err = decodeSkill(input.Arguments, &v)
