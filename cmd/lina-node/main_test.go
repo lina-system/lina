@@ -25,6 +25,7 @@ func TestCommand(t *testing.T) {
 	}{
 		{name: "missing", code: 64},
 		{name: "unknown", args: []string{"unknown"}, code: 64},
+		{name: "supervisor missing descriptors", args: []string{"proc-supervise"}, code: 64},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			command := exec.Command(binary, tc.args...)

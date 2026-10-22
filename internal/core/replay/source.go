@@ -235,7 +235,7 @@ func (s Source) loadSnapshot(ctx context.Context, scope Scope, id string) (Episo
 		}
 		// Older producers did not record reconstructible context source kinds. Do
 		// not replace those packets with today's memory or silently drop them.
-		if a.InstructionFormat == "persona-v1" {
+		if a.InstructionFormat == "persona-v1" || a.InstructionFormat == "persona-tui-v1" {
 			if a.OwnerPersonID != scope.Person {
 				return Exclusion("missing_assembly")
 			}
@@ -447,7 +447,7 @@ func (s Source) loadSnapshot(ctx context.Context, scope Scope, id string) (Episo
 		return Episode{}, err
 	}
 	ep.Items, err = s.Project(history, ep.Conversation, scope.Agent)
-	if err == nil && ep.Evidence.Assembly.InstructionFormat == "persona-v1" {
+	if err == nil && (ep.Evidence.Assembly.InstructionFormat == "persona-v1" || ep.Evidence.Assembly.InstructionFormat == "persona-tui-v1") {
 		if s.Rebuild == nil || s.Skill == nil {
 			return Episode{}, Exclusion("missing_assembly")
 		}

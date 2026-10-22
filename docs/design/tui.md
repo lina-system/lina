@@ -352,8 +352,11 @@ retained text in the pager; Ctrl+P opens the granted progress topic. Missing
 capabilities use the single local explanation of T-07 and leave no placeholder
 rows. Granted empty lists are hidden without an unavailable notice. Rows appear
 when Core sends items and disappear on a removal update or when its snapshot clears the list.
-List updates do not focus the pager or
-change the draft. Decision answering remains the typed approval/question flow
+An open running pager applies accepted `running` topic updates and replacement
+snapshots immediately, including completed and removed rows, without polling or
+requiring the person to close and reopen it. Refreshing its text preserves the
+pager's reading offset (clamped to the remaining content) and active search.
+List updates do not focus the pager or change the draft. Decision answering remains the typed approval/question flow
 of T-04; the composer never turns a list row into an approval.
 
 The waiting summary shows the number of unresolved decision cards and the first
@@ -866,6 +869,10 @@ rendering checks; they do not replace the physical terminal and IME spike.
 - Connection-screen display overrides are `LINA_THEME=light|dark|high-contrast` and `LINA_GLYPHS=ascii`. Otherwise `COLORFGBG` selects a light or dark background (dark by default); terminal capability selects RGB, 256 or 16 colours. Nonempty `NO_COLOR` preserves the layout, marks, labels and actions without escapes; subsequent states append compact lines. These overrides persist no preferences.
 - On LINA OS the complete TUI follows the active Omarchy theme file ([surfaces.md](surfaces.md#platform-adaptation)); theme-file discovery remains part of platform preferences work.
 - Every code in the closed lists has an entry in both the Korean and English catalogs, checked by id and never by wording.
+
+Core's TUI turn instructions describe the surface's rendered Markdown: paragraphs, headings, bold, italic, inline code, links, ordered and unordered lists, block quotes and fenced code. They request simple formatting, short lists, prose or code for wide tables, and no HTML or terminal escapes. The `persona-tui-v1` instruction format records this prefix for exact replay; older `persona-v1` turns retain their original prefix.
+
+The core topic's sandbox availability item produces one local setup notice when file and shell tools are unavailable. Snapshots, repeated publications and reconnects do not duplicate the notice; a subsequent available status clears it from the visible shell. It uses the same Korean/English catalog as other shell labels and never exposes private launcher diagnostics.
 
 The connection shell resolves labels and next actions through
 `internal/design` catalog ids. `LC_ALL`, then `LC_MESSAGES`, then `LANG` selects
