@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/internal/tui/state"
 	"github.com/thisisjun786/lina/kit/protocol"
@@ -130,6 +131,37 @@ func TestControlCAdmission(t *testing.T) {
 			_, cmd := m.Update(tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl})
 			if cmd == nil || m.status.State != Quit {
 				t.Fatal("Ctrl+D did not quit immediately")
+			}
+		}
+	}
+}
+
+func TestControlCFooterPreservesConnectionAndShortcut(t *testing.T) {
+	for _, language := range []design.Language{design.English, design.Korean} {
+		for _, width := range []int{40, 80} {
+			for _, showNotice := range []bool{false, true} {
+				m := conversationShell()
+				now := time.Unix(100, 0)
+				m.now = func() time.Time { return now }
+				m.styles = NewStyles(Options{Language: language, Width: width})
+				m.size.Width = width
+				m.status = ConnectionStatus{State: Recovering, Cause: protocol.ErrorUnavailable}
+				before := m.conversationFooter(showNotice)
+				m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+				footer := m.conversationFooter(showNotice)
+				status := m.styles.presentation(m.status)
+				if ansi.StringWidth(footer) > width || !strings.HasPrefix(footer, status.Mark+" "+status.Label) ||
+					!strings.Contains(footer, "? "+design.Text(language, "shortcuts.title")) || !strings.Contains(footer, "Ctrl+C") {
+					t.Fatalf("quit confirmation displaced connection or shortcut at %s/%d: %q", language, width, footer)
+				}
+				if width == 80 && !strings.Contains(footer, design.Text(language, "shell.quit_hint")) {
+					t.Fatalf("full confirmation hint missing at %s/%d: %q", language, width, footer)
+				}
+				now = now.Add(2 * time.Second)
+				m.Update(quitHintExpired{})
+				if got := m.conversationFooter(showNotice); got != before {
+					t.Fatalf("expiry did not restore the original footer: got %q, want %q", got, before)
+				}
 			}
 		}
 	}

@@ -39,6 +39,15 @@ bundled by this change:
 LINA uses its own semantic tokens, localized catalog, row-budget planner and
 hardware cursor placement. It uses a hairline instead of a surrounding box.
 
+The shortcut sheet and adaptive footer also follow the behaviour requested from
+Codex CLI (`?` discovery and priority hints) and Gemini CLI (a shared key table).
+The progressive disclosure reference was read directly in Hermes Agent revision
+`944c3a434071f43e64b443d033f3eba30c64434c`,
+`hermes_cli/cli_status_bar_mixin.py`: shared ordered segments and width tiers.
+LINA independently implements whole-hint fitting and a persistent connection
+label in Go. No upstream code is copied. See the
+[observations and limits](docs/design/tui-shortcuts-reference.md).
+
 ## Memory design references
 
 The memory and compaction behavior in [Conversation and memory](docs/design/conversation-and-memory.md) is derived from the designs of Honcho and LCM-X. This attribution covers behavioral reference and an independent Go implementation under LINA's contracts. No upstream implementation code, prompts, runtime dependency or user data is included by this design change.
@@ -1481,3 +1490,37 @@ THE SOFTWARE.
 Source: https://github.com/pjbgf/sha1cd. Version: `v0.7.0`. License: Apache-2.0. Unmodified upstream dependency used by the local records Git adapter.
 
 The Apache License, Version 2.0 is reproduced in [LICENSE](LICENSE).
+
+## Codex Relay Workflow GitHub observation reference
+
+Source: https://github.com/thisisjun786/codex-relay-workflow, commit
+`7e65fcb82d426d228e18958d728fe63a0991ddd0`. License: MIT.
+
+The tracker and its tests informed rate-limit classification and bounded reads
+in LINA's independent GitHub observation implementation. The seen/inferred/unknown
+record is `internal/core/ghclient/REFERENCE.md`. No CRW source is copied,
+translated, vendored or linked; no relay or operational state is consumed.
+
+```text
+MIT License
+
+Copyright (c) 2026 thisisjun786 and contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
