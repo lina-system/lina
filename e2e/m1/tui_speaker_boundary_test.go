@@ -84,7 +84,16 @@ func testTUISpeakerBoundariesInstalledCore(t *testing.T, language string) {
 			if result.Operation == nil || *result.Operation != operation || result.AgentID == nil {
 				t.Fatalf("unexpected agent response: %+v", result)
 			}
-			waitScreen(t, h, terminal, *result.AgentID)
+			// The tap observes the reply before the TUI renders it. The same ID
+			// is already in the typed command (and the previous create result),
+			// so wait for this operation's pager before sending Escape.
+			if _, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
+				rows := screenRows(s)
+				return strings.Contains(screenText(s), design.Text(design.English, operation)+" "+*result.AgentID) &&
+					strings.Contains(rows[len(rows)-1], "Esc "+design.Text(design.English, "shortcuts.close"))
+			}); err != nil {
+				t.Fatalf("agent %s result not rendered: %v", operation, err)
+			}
 			h.keys(terminal, "\x1b")
 			waitComposerReady(t, h, terminal)
 			return *result.AgentID
@@ -95,13 +104,18 @@ func testTUISpeakerBoundariesInstalledCore(t *testing.T, language string) {
 	tap.waitConversation(h)
 	h.resizeTerminal(terminal, 40, 34)
 	if _, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
-		return len(s.Cells) == 34 && len(s.Cells[0]) == 40 && strings.Contains(screenRows(s)[33], "? "+design.Text(design.English, "shortcuts.title"))
+		return len(s.Cells) == 34 && len(s.Cells[0]) == 40 && !s.CursorHidden &&
+			strings.Contains(screenRows(s)[33], design.Text(design.English, "live")) &&
+			strings.Contains(screenRows(s)[33], "? "+design.Text(design.English, "shortcuts.title"))
 	}); err != nil {
 		t.Fatal("narrow composer not ready", err)
 	}
 	h.keys(terminal, input+"\r")
 	for {
 		frame := tap.next(t, h)
+		if frame.Error != nil {
+			t.Fatalf("Core refused %s: %+v", tap.requestKind(frame), frame.Error)
+		}
 		if state, ok := frame.Payload.(protocol.TurnState); ok && state.Active != nil && !*state.Active {
 			break
 		}
