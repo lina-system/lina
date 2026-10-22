@@ -2,6 +2,7 @@
   "input": "LONG-QA",
   "line": "긴 답변의 문장 %03d입니다.",
   "lines": 80,
+  "first": "LONG-FIRST-QA",
   "end": "LONG-END-QA",
   "followup": "NEXT-QA",
   "reply": "다음 답변입니다."
