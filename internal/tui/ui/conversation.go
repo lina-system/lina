@@ -5,6 +5,7 @@ package ui
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"strconv"
 	"strings"
 
@@ -33,6 +34,10 @@ type conversationView struct {
 }
 
 type textPager struct {
+	running   bool
+	selected  int
+	runID     string
+	next      *json.Number
 	open      bool
 	text      string
 	cardID    string
@@ -167,6 +172,9 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		m.conversation.scroll = max(0, m.conversation.scroll-max(1, m.size.Height/2))
 		return nil
 	case "ctrl+o":
+		if card, ok := m.selectedCard(); ok && card.RunID != "" {
+			return m.runningRequest(card.RunID, "open", nil)
+		}
 		m.openPager(m.cardText())
 		if card, ok := m.selectedCard(); ok {
 			m.conversation.pager.cardID = card.ID
@@ -176,7 +184,7 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		m.openPager(m.topicText("waiting"))
 		return nil
 	case "ctrl+r":
-		m.openPager(m.topicText("running"))
+		m.openRunning()
 		return nil
 	case "ctrl+p":
 		m.openPager(m.topicText("progress"))
@@ -186,6 +194,9 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	case "enter":
 		if m.conversation.cardsFocused {
+			if card, ok := m.selectedCard(); ok && card.RunID != "" {
+				return m.runningRequest(card.RunID, "open", nil)
+			}
 			m.openPager(m.cardText())
 			return nil
 		}
@@ -348,6 +359,29 @@ func (m *shellModel) refreshOpenCard() {
 
 func (m *shellModel) pagerKey(msg tea.KeyMsg, name string) tea.Cmd {
 	p := &m.conversation.pager
+	if p.running && !p.searching {
+		rows := m.topicBlocks("running")
+		if len(rows) > 0 {
+			p.selected = min(p.selected, len(rows)-1)
+			switch name {
+			case "up", "k":
+				p.selected = max(0, p.selected-1)
+				m.refreshRunning()
+				return nil
+			case "down", "j":
+				p.selected = min(len(rows)-1, p.selected+1)
+				m.refreshRunning()
+				return nil
+			case "enter":
+				return m.runningRequest(rows[p.selected].RunID, "open", nil)
+			case "d":
+				return m.runningRequest(rows[p.selected].RunID, "dismiss", nil)
+			}
+		}
+	}
+	if name == "ctrl+n" && p.next != nil && !p.searching {
+		return m.runningRequest(p.runID, "open", p.next)
+	}
 	if name == "ctrl+d" {
 		return tea.Quit
 	}
