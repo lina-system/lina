@@ -176,6 +176,10 @@ func (e *Engine) RefreshDefinitions(ctx context.Context) error {
 			current.Revision++
 			current.DefinitionPending = true
 			current.State = GoalRunning
+			current.AttentionID = ""
+			current.BlockedReason = ""
+			current.AssessedFailure = ""
+			current.Waits = nil
 			current.Checks = nil
 			current.CheckRound++
 			for _, r := range v.Records("action") {
@@ -183,7 +187,10 @@ func (e *Engine) RefreshDefinitions(ctx context.Context) error {
 				if err = json.Unmarshal(r.Body, &a); err != nil {
 					return err
 				}
-				if a.GoalID == g.ID && a.State == "queued" {
+				if a.GoalID == g.ID && a.State != "finished" && (a.State == "queued" || a.State == "needs_person" || revisionJudgment(a)) {
+					if a.State == "needs_person" {
+						restoreDeniedAssignment(goalTask(&current, a.TaskID), a)
+					}
 					a.State = "finished"
 					if err = put(v, "action", a.ID, a); err != nil {
 						return err

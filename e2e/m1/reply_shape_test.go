@@ -150,7 +150,9 @@ func testReplyShapeLONGQA(t *testing.T, language design.Language) {
 			return snapshot
 		}
 		latest := wait(func(s tuiterm.Snapshot) bool {
+			// PgUp stitching assumes the full idle transcript height.
 			return s.AltScreen && !s.CursorHidden && s.CursorY == plan.Composer.Y &&
+				!strings.Contains(screenText(s), design.Text(language, "activity.stop")) &&
 				strings.Contains(strings.Join(conversationRows(s), "\n"), scenario.End) && strings.Contains(screenText(s), affordance)
 		})
 		t.Logf("LONG-QA latest (100x34):\n%s", strings.Join(screenRows(latest), "\n"))

@@ -458,7 +458,7 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 		if a.State == "finished" && bytes.Equal(a.Receipt, encode(o)) {
 			return errNoChange
 		}
-		if a.State == "finished" || a.State == "queued" {
+		if a.State == "queued" {
 			return ErrConflict
 		}
 		g, err := loadGoal(v, a.GoalID)
@@ -473,6 +473,15 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 		a.ObserverEpoch = e.cfg.Epoch
 		a.Receipt = encode(o)
 		a.Deadline = e.cfg.Now().Add(SafetySweep).Unix()
+		if staleJudgment(g, a) {
+			// Retain the obsolete response as history, never as current evidence
+			// or a plan for this revision. A late result is not a Core failure.
+			a.State = "finished"
+			return put(v, "action", id, a)
+		}
+		if a.State == "finished" {
+			return ErrConflict
+		}
 		switch o.Status {
 		case OutcomeQuota:
 			if t == nil || !reserves(a) || !o.EffectsSettled || o.QuotaReset <= e.cfg.Now().Unix() {
@@ -595,14 +604,7 @@ func applySuccess(g *Goal, t *Task, a Action, o Observation, now int64) error {
 		g.Checks = append(g.Checks, *o.Criterion)
 	case PlanGoal:
 		if g.DefinitionPending {
-			g.AssessedFailure = "definition:" + g.RecordRevision
-			if len(o.Tasks) == 0 {
-				g.State = GoalBlocked
-				g.AttentionID = "goal:" + g.ID + ":definition"
-				g.BlockedReason = "The corrected goal needs a revised work definition."
-				return nil
-			}
-			g.DefinitionPending = false
+			return applyCorrectionPlan(g, o)
 		}
 		if t != nil && (t.Stage != TaskQAFailed || t.RepairedBy != "") {
 			return ErrInvalid
