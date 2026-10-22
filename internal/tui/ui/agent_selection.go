@@ -12,17 +12,24 @@ import (
 )
 
 func (m *shellModel) discoveryHistory() *protocol.HistoryGet {
+	if !m.hasCapability("conversation") {
+		return nil
+	}
 	if m.conversation.agentMissing {
 		m.agentDiscoveryDone()
 		return nil
 	}
 	if m.conversation.id != "" {
+		m.conversation.agentPending = true
 		agent := m.activeAgent()
 		return &protocol.HistoryGet{AgentID: &agent}
 	}
 	if len(m.content.Agents) == 0 {
 		return nil
 	}
+	// Welcome grants capabilities before history supplies the destination.
+	// Hold sends just as on reconnect until that matching history arrives.
+	m.conversation.agentPending = true
 	return &protocol.HistoryGet{}
 }
 

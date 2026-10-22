@@ -15,6 +15,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/core/install"
+	"github.com/thisisjun786/lina/internal/design"
 	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
@@ -172,7 +173,15 @@ func screenText(snapshot tuiterm.Snapshot) string {
 }
 func waitScreen(t *testing.T, h *harness, terminal *terminal, text string) tuiterm.Snapshot {
 	t.Helper()
-	snapshot, err := terminal.screen.Wait(h.ctx, func(snapshot tuiterm.Snapshot) bool { return strings.Contains(screenText(snapshot), text) })
+	snapshot, err := terminal.screen.Wait(h.ctx, func(snapshot tuiterm.Snapshot) bool {
+		content := screenText(snapshot)
+		// Callers use the composer hints as an input-readiness barrier. Those
+		// hints also render while initial history is still being discovered.
+		if text == "Ctrl+D" && !strings.Contains(content, design.Text(design.English, "live")+"  /help") {
+			return false
+		}
+		return strings.Contains(content, text)
+	})
 	if err != nil {
 		select {
 		case <-terminal.process.done:
