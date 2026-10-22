@@ -97,6 +97,12 @@ func testM2FileLanding(t *testing.T, committed bool) {
 	}))
 	defer server.Close()
 	h, start := installedConversationHarness(t, server.URL)
+	// This journey starts a worker, publishes files and restarts Core across
+	// interrupted publication. Installation must not consume those phases'
+	// budget; each process and connection keeps its operationTimeout bound.
+	scenarioContext, cancel := context.WithTimeout(t.Context(), 12*operationTimeout)
+	t.Cleanup(cancel)
+	h.ctx = scenarioContext
 	core := start(true)
 	client, conversation := conversationClient(t, h)
 	sequence := 0
