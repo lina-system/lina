@@ -183,8 +183,6 @@ A background run of a sub-agent ([work-and-delegation.md](work-and-delegation.md
 
 Core validates a tool's arguments before checking authority or claiming its effect key. A durable effect claim precedes execution, and its result is recorded separately: no storage transaction spans a tool call. A repeated key returns the first recorded result or unknown, including after restart; it never executes again. A stale write is refused before the handler and records the observed revision and, when Core knows it, the previous writing agent. An unresolved effect reserves its target until reconciliation so another call cannot silently overwrite it.
 
-Preset effect limits are ceilings applied before approval creation and dispatch. An approval can authorize an otherwise permitted effect; it cannot remove a preset ceiling.
-
 - The default inside a device LINA uses is no approval. Reading, writing and executing there proceed inside the grant without asking.
 - LINA asks every time only for effects that reach outside the user and are hard to reverse: sending mail or messages (including an agent's post into a chat that other people can read, but not a reply that a channel binding covers, see Channels), payments and purchases, public posting or publication, and unrecoverable deletion.
 - Every other effect inside the grant is done by the agent and reported in one line, with one action to undo it where it can be undone ([work-and-delegation.md](work-and-delegation.md#default-posture)).
@@ -197,25 +195,36 @@ Preset effect limits are ceilings applied before approval creation and dispatch.
 - Accepting a draft (applying an edit) is acceptance of the edit. It is a separate state from a grant for an external effect and never authorizes one.
 - When no surface can present an approval request, LINA Core refuses every effect outside the grant, records the refusal and reports it in the conversation that asked for the work. A channel is a surface that can present a request only when the whole request fits in one message (see Channels).
 
-### Preset effect limits
-
-Canon's immutable agent preset id is authoritative. Investing is advice only; legal is drafts only. Both permit authorized research, calculations and private drafts. They refuse investment orders, external effects, binding execution and unclassified operations. Arbitrary commands and installed workers cannot be treated as research merely because their requested task says "read only". Core refuses those execution capabilities for a restricted origin. System and dev gain no new grants from their roles.
-
-Core operation definitions and trusted plugin profiles classify the validated, normalized arguments. The classes are research, calculation, private draft, local write, external effect, investment order, binding execution, command, worker, relay and unclassified. A research/calculation definition that writes is unclassified; an outward operation cannot claim the private-draft boundary. Generic private records and result presentation are private drafts; arbitrary file destinations, executable skills and shell commands are not.
-
-The restriction is checked at the common tool gate and at worker admission. Restricted refusals record the person, acting agent, task, target, argument hash and effect class with the advice/draft explanation, without creating an approval or calling an executor. Nodes use the same admission. Worker approval relays cannot turn a refused execution into a request for more access.
-
-Core binds delegation ceilings to the receiving task before scheduling it. A receiver uses its own grants intersected with the original restriction; further relays only add ceilings. The inherited snapshot survives restart and deletion of the origin. A task cannot be rebound to a less restricted origin. A relay classification applies only to a Core handler that performs this binding, never to arbitrary server text. The initial agent-exchange reader offers no execution tools.
-
-Accepted drafts, approval answers, standing grants, channel bindings, renames and empty/edited persona layers cannot widen this boundary. Ordinary permitted operations continue to use the approval rules above, including network approval for research. A refusal explains what private work remains possible; it never presents an approval button that promises to override the role.
+Preset effect ceilings apply before approval creation and dispatch. An approval can authorize an otherwise permitted effect; it cannot remove a preset ceiling.
 
 ### Plugin tools
 
-Every plugin that is on exposes its full tool set. There are no permission tiers or per-tool user settings. Dispatch remains subject to preset effect ceilings as well as grants and approval. Persona guidance cannot override the Core decision ([work-and-delegation.md](work-and-delegation.md#default-posture)).
+Every plugin that is on exposes its full tool set to every agent, in the same way. There are no permission scopes for a plugin or an MCP server, no read-only start and no tiers of tools. Tool visibility is not permission to execute: Core checks the preset effect limits below before applying the ordinary approval policy. Within those limits, when an agent reads and when it writes is its judgment ([work-and-delegation.md](work-and-delegation.md#default-posture)).
 
-- The one approval a plugin tool can need is the one of Approval: an outward or irreversible effect (sending, payment, public posting, unrecoverable deletion) asks every time, with the choices once and deny. [integrations.md](integrations.md#tool-classification) defines how LINA Core knows which tools those are. Every other plugin tool runs without asking, and the effect ledger records it.
+- The one approval a plugin tool can need is the one of Approval: an outward or irreversible effect (sending, payment, public posting, unrecoverable deletion) asks every time, with the choices once and deny. [integrations.md](integrations.md#tool-classification) defines how LINA Core knows which tools those are. Every other permitted plugin tool runs without asking, and the effect ledger records it.
 - LINA Core makes every such decision. Prompt wording, tool descriptions and content read through a plugin never change it.
-- There is no standing grant for a plugin tool. A tool whose definition changed since the person turned the plugin on is marked as changed on the plugin card, with what changed. Nothing is suspended, and an outward or irreversible tool still asks every time.
+- There is no standing grant for a plugin tool. A tool whose definition changed since the person turned the plugin on is marked as changed on the plugin card, with what changed. A changed definition alone suspends nothing; preset effect limits still apply, and a permitted outward or irreversible tool asks every time.
+
+### Preset effect limits
+
+The starter roles in [Presets](conversation-and-memory.md#presets) do not grant authority. Core enforces the investing preset's advise-only limit and the legal preset's draft-only limit as effect policy, before dispatch or an approval request. The restriction follows the agent's preset identity in canon, not its display name, persona wording, voice revision or the presence of shipped persona files.
+
+| Effect class | Investing preset | Legal preset |
+| --- | --- | --- |
+| Read, research, calculation, private analysis or a private draft | Allowed inside the existing grant | Allowed inside the existing grant |
+| Investment order execution: placing, modifying or cancelling an order, or committing funds to a trade | Refused | Refused |
+| External or binding execution of the advice or draft: sending to a third party, publishing, signing, filing/submitting, payment or purchase | Refused | Refused |
+| Other effects | Ordinary grant and approval policy applies; it cannot authorize execution of investment advice | Ordinary grant and approval policy applies; it cannot authorize execution of legal, tax, accounting, contract or copyright drafts |
+
+Refused effects never become an "approve once" request. A standing grant, an accepted draft, a channel binding or an approval answer cannot override these limits. Core records the refusal with the agent, person, target and effect class and explains that the agent can provide advice or a draft. The person executes the resulting investment decision or binding document outside that preset's work. A rename or persona update cannot turn advice into execution.
+
+Classification comes from Core's operation definitions and a plugin's service profile ([integrations.md](integrations.md#tool-classification)), using the validated operation and arguments, never a model's claim or text in a document. Profiles distinguish research and private draft operations from order execution and external or binding acts. If Core cannot establish that an operation falls within the restricted preset's permitted effects, it refuses dispatch. A generic command or an unclassified plugin is not an escape from that check.
+
+These limits apply on every execution path, including tools, commands, Node work, workers and requests relayed to another agent. Delegation retains the originating preset's restriction and intersects it with the receiver's authority; a hand-off cannot execute a refused effect. The system preset receives no special administrator authority, and dev's ownership of coding does not widen a grant. Other effects of all eight starters retain the ordinary approval policy above.
+
+Core records the class supplied by its trusted definition after argument validation: research, calculation, private draft, local write, external effect, investment order, binding execution, command, worker, relay or unclassified. Known bounded local writes retain ordinary grant policy; generic commands and installed workers are not assumed safe from their task description. Research/calculation definitions that write are unclassified, and an outward operation cannot claim the private-draft boundary. Classified external effects retain ordinary outward approval for unrestricted presets.
+
+Delegation ceilings are immutable task bindings. Their intersection survives restart and origin deletion, and a task cannot be rebound to a less restricted origin. A relay classification applies only to a Core handler that binds these limits before scheduling the receiver. The initial exchange reader offers no execution tools. Worker approval relays and merge admission check the same ceiling; a refusal records its person, agent, target and class without claiming an external operation.
 
 ### Channels
 

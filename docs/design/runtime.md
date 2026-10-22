@@ -39,7 +39,7 @@ External components (document parsers, OCR, the local transcription component, t
 
 ## Installed tools
 
-LINA uses some tools that the user installs and that LINA neither ships nor pins: coding tools such as Codex, Claude Code, Antigravity or Devin, which LINA runs as workers ([work-and-delegation.md](work-and-delegation.md)), the command-line tools that plugins rely on, such as `gh`, the local server commands of third-party plugins ([integrations.md](integrations.md)), the official `grok` command that the Grok adapter drives, and the Node.js that the Claude adapter runs on. Each is a separate project with its own releases and repository.
+LINA uses some tools that the user installs and that LINA neither ships nor pins: coding tools such as Codex, Claude Code, Antigravity or Cursor, which LINA runs as workers ([work-and-delegation.md](work-and-delegation.md)), the command-line tools that plugins rely on, such as `gh`, the local server commands of third-party plugins ([integrations.md](integrations.md)), the official `grok` command that the Grok adapter drives, and the Node.js that the Claude adapter runs on. Each is a separate project with its own releases and repository.
 
 - LINA uses the installed tool found on `PATH` or at a path the user configured, and records the version it observed.
 - LINA lists the versions of each such tool that it has verified. A version not on the list is reported to the user as unverified, with the version found and the verified versions, and LINA still uses the tool. A function becomes unsupported only when its tool is missing, can't be started or connected to, or fails its protocol handshake, and LINA says why.
@@ -56,7 +56,7 @@ LINA uses some tools that the user installs and that LINA neither ships nor pins
 | `lina` TUI | Go on Bubble Tea, a static binary | A user process connected to LINA Core over its local socket or the tailnet | The terminal surface ([surfaces.md](surfaces.md)) |
 | LINA app | TypeScript on React, in a bundled shell: Wails v3 (Go) on macOS, Windows and Linux, a WebView host on mobile, Capacitor by default | A user process on the person's device, connected to LINA Core over its local socket or the tailnet | The app surface ([surfaces.md](surfaces.md)) |
 | Node | Go, a static binary | A service on each device | Device execution under grants |
-| Worker | The coding tool the user installed or signed in to, with the user's own configuration; Codex runs as `codex app-server`, Claude Code and Antigravity as headless child processes, and Devin is a hosted session reached through its API | A stdio child of LINA Core, or of Node on a remote device; a hosted worker has no process | Workers, one child or session per task in flight |
+| Worker | The coding tool the user installed or signed in to, with the user's own configuration; Codex runs as `codex app-server`; Claude Code, Antigravity and Cursor (`cursor-agent`) run as headless child processes; the Cursor adapter is deferred to [#210](https://github.com/thisisjun786/lina/issues/210) | A stdio child of LINA Core, or of Node on a remote device | Workers, one child per task in flight |
 | Claude adapter | LINA's own TypeScript on Node.js, an external component pinned by the release, with the Claude Agent SDK installed on the person's machine (see Provider adapters) | A stdio child of LINA Core, started on first use of a Claude account and stopped after an idle period | Model calls through a Claude account |
 | Grok command | The official `grok` command the user installed | A stdio child of LINA Core, started for a turn and driven by the Go Grok adapter | Model calls through a Grok account |
 | Sandboxed commands | Whatever a tool call runs | Children of LINA Core inside the OS sandbox | Shell and file tools |
@@ -588,14 +588,17 @@ default state root is `$XDG_STATE_HOME/lina`, falling back to
 defaults to the directory of the executing binary. Installation validates its
 manifest, requires its target to match the host OS and architecture, and verifies
 the size and SHA-256 of the exact artifact bytes copied.
-`--persona-source <dir>` selects an absolute local checkout root containing
-`characters/lina/persona/core-v1.md` and `default-voice-v1.md`. Install checks both
-files, reports a setup warning when unavailable, and stores the path (never the
-text) in private `system/core/config.json` as `persona_source`. Missing material
-does not block installation or Core startup. To change the source in an existing
-install, edit that field in the 0600 config file; Core rereads it at the next turn.
-Older installs without the file use an unconfigured source. See
-[Presets](conversation-and-memory.md#presets) for fallback and revision behavior.
+The install includes the eight working personas from public
+`persona/<preset>/core-v1.md` and `default-voice-v1.md`, using the keys and names in
+[Presets](conversation-and-memory.md#presets). Release validation checks all eight
+pairs. Core loads them without a private checkout or persona-source setup;
+the legacy `--persona-source` / `persona_source` path does not override shipped
+starter layers. Migration publishes normal preset revisions while preserving
+prepared turns and agent-owned layers. Only backstory and world material stay
+in the private world repository and enter through material recall; their absence
+does not clear a working persona or block installation and first conversation.
+See [Presets](conversation-and-memory.md#presets) for validation, per-preset
+unavailable-pair fallback and revision behavior.
 The executable and its manifest are placed in `system/bin/`. The default client
 socket is `system/run/client.sock` under the state root; `--socket` can choose a
 shorter absolute path where the Unix socket path limit requires it.
