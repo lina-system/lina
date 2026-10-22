@@ -17,6 +17,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/internal/core/skills"
 	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/codex"
@@ -53,6 +54,8 @@ type workerSession struct {
 }
 
 type workerArgs struct {
+	Kind       string `json:"kind,omitempty"`
+	Skill      string `json:"skill,omitempty"`
 	Session    string `json:"session,omitempty"`
 	Path       string `json:"path,omitempty"`
 	Turn       string `json:"turn,omitempty"`
@@ -88,11 +91,16 @@ func workerSchema(name string, raw json.RawMessage) (tools.Input, error) {
 	target := a.Session
 	switch name {
 	case "worker_start":
-		allowed = map[string]bool{"workdir": true, "task_packet": true}
+		allowed = map[string]bool{"workdir": true, "task_packet": true, "kind": true, "skill": true}
 		if !filepath.IsAbs(a.Workdir) || strings.TrimSpace(a.TaskPacket) == "" {
 			return tools.Input{}, tools.ErrInvalid
 		}
 		a.Workdir = filepath.Clean(a.Workdir)
+		id, err := skills.MethodID(a.Kind, a.Skill)
+		if err != nil {
+			return tools.Input{}, tools.ErrInvalid
+		}
+		a.Skill = id
 		target = a.Workdir
 	case "worker_input", "worker_interrupt":
 		allowed = map[string]bool{"session": true, "turn": true, "generation": true, "binding": true}
@@ -141,7 +149,7 @@ func workerDeclarations() []provider.ToolDecl {
 		return json.RawMessage(`{"type":"function","name":"` + name + `","description":` + string(raw) + `,"parameters":{"type":"object","properties":{` + properties + `},"required":[` + required + `],"additionalProperties":false}}`)
 	}
 	return []provider.ToolDecl{
-		declaration("worker_start", "Start the installed Codex on an explicit task in an existing absolute work directory, using its own settings. Returns a session handle and version compatibility. This is a worker session, not verified task delivery. Worker requests return to this conversation; automatic recovery and scheduling are separate.", `"workdir":{"type":"string"},"task_packet":{"type":"string"}`, `"workdir","task_packet"`),
+		declaration("worker_start", "Start the installed Codex on an explicit task in an existing absolute work directory, using its own settings. Returns a session handle and version compatibility. This is a worker session, not verified task delivery. Optional kind selects a method from skill_index methodology=dev, or skill names one catalog ID; Core includes its immutable body in the task packet. Worker requests return to this conversation; automatic recovery and scheduling are separate.", `"workdir":{"type":"string"},"task_packet":{"type":"string"},"kind":{"type":"string"},"skill":{"type":"string"}`, `"workdir","task_packet"`),
 		declaration("worker_input", "Continue an idle worker or steer an active turn. Use the current handle from worker_snapshot; stale handles are refused.", control+`,"text":{"type":"string"}`, `"session","turn","generation","binding","text"`),
 		declaration("worker_interrupt", "Request cancellation only when the user asks to stop this worker. Quote the current user request exactly. An acknowledgement is not cancellation completion; inspect worker_snapshot.", control+`,"quote":{"type":"string"}`, `"session","turn","generation","binding","quote"`),
 		declaration("worker_quota", "Read the installed worker account quota rows, retaining unknown windows and reset times.", `"session":{"type":"string"}`, `"session"`),
@@ -157,8 +165,8 @@ func (r *conversationRuntime) prepareWorkerTools(turnID string, input ledger.Eve
 	registry := tools.NewRegistry(r.personaAuthority, r.activities)
 	for _, name := range []string{"worker_start", "worker_input", "worker_interrupt", "worker_snapshot", "worker_quota", "worker_read_file"} {
 		spec := tools.Spec{Name: name, Schema: func(raw json.RawMessage) (tools.Input, error) { return workerSchema(name, raw) }, Conc: 1, Deadline: 30 * time.Second, Placement: tools.Core}
-		err := registry.Register(spec, func(ctx context.Context, activity lease.Lease, in tools.Input) (tools.Result, error) {
-			return r.workerOperation(ctx, name, turnID, input, in, activity)
+		err := registry.Register(spec, func(ctx context.Context, _ lease.Lease, in tools.Input) (tools.Result, error) {
+			return r.workerOperation(ctx, name, turnID, input, in)
 		})
 		if err != nil {
 			return err
@@ -188,11 +196,19 @@ func (r *conversationRuntime) prepareWorkerTools(turnID string, input ledger.Eve
 	return nil
 }
 
-func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID string, input ledger.Event, in tools.Input, toolActivity lease.Lease) (tools.Result, error) {
+func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID string, input ledger.Event, in tools.Input) (tools.Result, error) {
 	var a workerArgs
 	_ = json.Unmarshal(in.Arguments, &a)
 	b := r.workers
 	if name == "worker_start" {
+		method, err := r.skills.ResolveMethod(ctx, a.Kind, a.Skill)
+		if err != nil {
+			return tools.Result{State: tools.Failed}, err
+		}
+		a.TaskPacket, err = skills.MethodPacket(a.TaskPacket, method)
+		if err != nil {
+			return tools.Result{State: tools.Failed}, err
+		}
 		b.mu.Lock()
 		defer b.mu.Unlock()
 		if b.closed {
@@ -252,7 +268,7 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 			return tools.Result{State: tools.Failed, Body: workerError(errors.New("worker outcome unavailable in this conversation"))}, nil
 		}
 		if name == "worker_read_file" {
-			return r.readWorkerFile(ctx, toolActivity, record.Workdir, a.Path)
+			return r.readWorkerFile(ctx, record.Workdir, a.Path)
 		}
 		raw, err := json.Marshal(record)
 		return tools.Result{State: tools.Applied, Body: raw}, err
@@ -261,7 +277,7 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 		return tools.Result{State: tools.Failed, Body: workerError(errors.New("worker session unavailable in this conversation"))}, nil
 	}
 	if name == "worker_read_file" {
-		return r.readWorkerFile(ctx, toolActivity, entry.workdir, a.Path)
+		return r.readWorkerFile(ctx, entry.workdir, a.Path)
 	}
 	if name == "worker_quota" {
 		rows, err := entry.adapter.Quota(ctx)

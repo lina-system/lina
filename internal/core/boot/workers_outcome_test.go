@@ -64,7 +64,7 @@ func TestWorkerCompletionIsDurableScopedAndDeduplicated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := r.workerOperation(t.Context(), "worker_snapshot", "read", input, in, lease.Lease{})
+	got, err := r.workerOperation(t.Context(), "worker_snapshot", "read", input, in)
 	var recorded workerCompletion
 	if err != nil || got.State != tools.Applied || json.Unmarshal(got.Body, &recorded) != nil || recorded.Live || recorded.Output != entry.output || recorded.Status != worker.Done || recorded.Workdir != entry.workdir {
 		t.Fatalf("recorded result: %s %v", got.Body, err)
@@ -102,7 +102,7 @@ func TestWorkerCompletionIsDurableScopedAndDeduplicated(t *testing.T) {
 		t.Fatalf("follow-up inbox count=%d err=%v", admitted, err)
 	}
 	foreign := newConversationView(r, "other", "main:other")
-	got, err = foreign.workerOperation(t.Context(), "worker_snapshot", "read", input, in, lease.Lease{})
+	got, err = foreign.workerOperation(t.Context(), "worker_snapshot", "read", input, in)
 	if err != nil || got.State != tools.Failed {
 		t.Fatalf("foreign outcome disclosed: %+v %v", got, err)
 	}
@@ -110,7 +110,7 @@ func TestWorkerCompletionIsDurableScopedAndDeduplicated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err = r.workerOperation(t.Context(), "worker_input", "read", input, in, lease.Lease{})
+	got, err = r.workerOperation(t.Context(), "worker_input", "read", input, in)
 	if err != nil || got.State != tools.Failed {
 		t.Fatalf("record authorized live control: %+v %v", got, err)
 	}

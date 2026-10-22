@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,13 +17,16 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/clientapi"
+	"github.com/thisisjun786/lina/internal/core/skills"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/provider"
+	builtin "github.com/thisisjun786/lina/skills"
 	wire "github.com/thisisjun786/lina/third_party/codex-app-server/upstream"
 )
 
 type codexWorkScenario struct {
+	Kind                           string `json:"kind,omitempty"`
 	Input, Result, Artifact        string
 	Question, Answer, Coordination string
 	TaskPacket                     string  `json:"task_packet"`
@@ -70,7 +74,7 @@ func codexWorkToolsFixture() {
 	const approvalID, projectionID = "71", `"projection-rpc"`
 	const askID, coordinateID, receiptID = `"ask-rpc"`, `"coordinate-rpc"`, `"receipt-rpc"`
 	initialized, approved, completed := false, false, false
-	cwd, assignment, pendingTool := "", "", ""
+	cwd, assignment, pendingTool, receivedPacket := "", "", "", ""
 	callTool := func(id, name string, args any) {
 		pendingTool = id
 		send(map[string]any{"id": json.RawMessage(id), "method": "item/tool/call", "params": map[string]any{
@@ -132,8 +136,27 @@ func codexWorkToolsFixture() {
 		case "turn/start":
 			var params wire.V2TurnStartParams
 			raw, _ := json.Marshal(r.Params)
-			if json.Unmarshal(raw, &params) != nil || len(r.Params) != 2 || params.ThreadId != thread || len(params.Input) != 1 || params.Input[0].Text == nil || params.Input[0].Text.Text != fixture.TaskPacket {
+			if json.Unmarshal(raw, &params) != nil || len(r.Params) != 2 || params.ThreadId != thread || len(params.Input) != 1 || params.Input[0].Text == nil {
 				fail("turn/start must contain only bound thread and task packet")
+			}
+			receivedPacket = params.Input[0].Text.Text
+			if fixture.Kind == "" {
+				if receivedPacket != fixture.TaskPacket {
+					fail("task packet changed")
+				}
+			} else {
+				var packet struct {
+					Task   string      `json:"task_packet"`
+					Method skills.Body `json:"method"`
+				}
+				body, err := fs.ReadFile(builtin.Builtins(), "app-debugging/SKILL.md")
+				if err != nil || json.Unmarshal([]byte(receivedPacket), &packet) != nil || packet.Task != fixture.TaskPacket || packet.Method.Version.ID != "app-debugging" || packet.Method.Version.Commit != "builtin:"+builtin.Builtins().SkillRevision() || packet.Method.Files["SKILL.md"].Text != string(body) {
+					fail("worker did not receive the selected immutable skill body")
+				}
+				entries, err := os.ReadDir(cwd)
+				if err != nil || len(entries) != 0 {
+					fail("method installed files into the worker workdir")
+				}
 			}
 			notify("turn/started", map[string]any{"threadId": thread, "turn": map[string]any{"id": turn, "status": "inProgress"}})
 			reply(map[string]any{"turn": map[string]any{"id": turn, "status": "inProgress"}})
@@ -161,7 +184,7 @@ func codexWorkToolsFixture() {
 					TaskPacket   string `json:"task_packet"`
 					AssignmentID string `json:"assignment_id"`
 				}
-				if !approved || codexWorkToolResult(r.Result, &projection) != nil || projection.TaskPacket != fixture.TaskPacket || projection.AssignmentID == "" {
+				if !approved || codexWorkToolResult(r.Result, &projection) != nil || projection.TaskPacket != receivedPacket || projection.AssignmentID == "" {
 					fail("projection lacks assigned task_packet and assignment_id after approval")
 				}
 				assignment = projection.AssignmentID
@@ -241,6 +264,16 @@ func codexWorkToolsFixture() {
 
 func TestM2CodexWorkTools(t *testing.T) {
 	t.Parallel()
+	runCodexWorkTools(t, "")
+}
+
+func TestM2CodexDevelopmentMethod(t *testing.T) {
+	t.Parallel()
+	runCodexWorkTools(t, "bug_unknown_cause")
+}
+
+func runCodexWorkTools(t *testing.T, kind string) {
+	t.Helper()
 
 	data, err := os.ReadFile("../m2/codex-work-tools.json")
 	if err != nil {
@@ -248,6 +281,11 @@ func TestM2CodexWorkTools(t *testing.T) {
 	}
 	var fixture codexWorkScenario
 	if err = json.Unmarshal(data, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	fixture.Kind = kind
+	data, err = json.Marshal(fixture)
+	if err != nil {
 		t.Fatal(err)
 	}
 	workdir := t.TempDir()
@@ -280,7 +318,7 @@ func TestM2CodexWorkTools(t *testing.T) {
 		}
 		n := calls.Add(1)
 		if n == 1 {
-			emitPersonaCall(w, "start-worker", "worker_start", map[string]any{"workdir": workdir, "task_packet": fixture.TaskPacket})
+			emitPersonaCall(w, "start-worker", "worker_start", map[string]any{"workdir": workdir, "task_packet": fixture.TaskPacket, "kind": kind})
 			return
 		}
 		var item struct{ Output string }

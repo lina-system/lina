@@ -462,6 +462,11 @@ Rules:
 
 LINA ships no coding harness. It runs no review loop of its own around a worker, installs no hook, skill or plugin into one, and keeps no stage workflow. Codex, Claude Code, Antigravity and Cursor are used as the user installed them. LINA's development role is a method, which the dev preset carries ([conversation-and-memory.md](conversation-and-memory.md#preset-methodologies)). Its work settings, such as worker dispatch, the evidence required before a delivery is reported done and the shape of status reports, are data in the dev preset's work-method record ([preset-work-methods.md](preset-work-methods.md)), not a harness around a worker. The dev preset agent owns coding work and its manager sessions, including requests handed over by Lina or another starter. How to implement, split, join or interpret work is the judgment of the worker and that owning persona. The worker writes the code, the branch and the pull request body, opens the pull request and owns it to green. The manager checks the work definition and decides merge or close. LINA Core keeps the flow moving: start, reliable delivery with receipts, true state, recovery, merge on green, QA after each merge and report.
 
+The development methods are ordinary built-in catalog skills, adapted from
+MIT-licensed oh-my-hermes methods ([credits](../../skills/NOTICE.md)). The manager
+reads a method with the existing skill tools and can name it for a task. They
+add no worker installation, review coordinator or stage machine.
+
 ### Work definition
 
 Before it hands a task off, the manager session writes the work definition. It states:
@@ -473,10 +478,47 @@ Before it hands a task off, the manager session writes the work definition. It s
 - the done condition: one condition that CI or a reviewer can establish, such as named checks passing and the behavior the design describes
 - the design reference: the contract and section the work must conform to
 - the write area: the path globs the task may change (see Splitting and parallel hand-off)
+- optionally, `kind`: a development work kind from the dev methodology table
+- optionally, `skill`: one catalog ID; it overrides the kind's default method
 
 Two things are part of every done condition for code-change work. First, a change that alters behavior updates the sections of its design reference in the same pull request, so the design and the code stay in step. That update is part of done, not a later task. Second, automated checks prove the behavior. These are unit tests, plus headless end-to-end tests where the change can be seen from outside the program. Such a test drives the project's interfaces by script and needs no window and no person. The checks run in CI. The person checks only the user interface and the experience. The design reference is written before the code, and the person's language applies to the summaries they see ([conversation-and-memory.md](conversation-and-memory.md)). LINA's own development applies this rule in the [roadmap](go-roadmap.md#phase-rules).
 
 The work definition contains no review procedure and no request for a verification report. The task packet is the work definition with the assignment id, the way to return the completion receipt (the submit tool of LINA's work tools), the branch name to use, and the references to the projections the task may read. The worker writes the commits and the body of the pull request, and opens it. LINA writes none of them.
+
+Core resolves the optional method from the current catalog before admitting a
+worker. Unknown kinds, unknown skill IDs and multiple references are refused.
+With neither field, the existing task packet stays unchanged. A kind without a
+skill selects the default from Core's dev methodology data. An explicit skill
+can select another catalog procedure; it does not widen the work's authority.
+
+The packet carries the resolved version handle and its instruction files inline,
+not a path the worker must read or a skill to install. Queued dispatch stores
+that snapshot with the work definition, so later catalog edits, removal and
+process restarts cannot substitute another body. Replayed admissions first
+match the persisted origin and complete definition, then reuse that snapshot;
+only new admissions resolve the current catalog. The Codex `worker_start` session path
+uses the same resolver and exposes the same packet through `read_projection`.
+The existing `dispatch_work` definition carries these fields for Antigravity.
+
+Mechanical checks stay in Core, rather than becoming instructions in a skill:
+
+- Work-definition completeness, protected branches, design references and write
+  areas remain dispatch checks. Method selection, single-reference validation
+  and immutable catalog resolution are also Core checks.
+- Observed PR head and check status, missing or incomplete checks, stale reviews
+  and blocking review findings remain the existing PR observation checks. A
+  skill cannot waive them or make a failed check green.
+- Worker completion is an unverified claim. Receipt identity, outcome, artifact
+  hashes and provenance remain work-ledger checks; a completed turn or a method
+  report cannot produce a verified verdict. Background run checks that require
+  a tool call use recorded calls, not a model's assertion that it ran one.
+- Authority, leases, cancellation, recovery and merge execution remain their
+  existing Core mechanisms. No method grants those operations.
+
+The skills retain judgments that these checks cannot make: whether evidence
+covers the requirement, which rival cause to investigate, which workload is
+representative and which failure scenario matters. No prose keyword scanner
+turns words such as “verified” into acceptance evidence.
 
 ### Choosing the worker
 
@@ -561,7 +603,7 @@ Every worker adapter offers the work engine the same operations:
 ### Compatibility
 
 - The adapter records the installed worker's version with every attempt.
-- LINA lists the worker versions each adapter has verified in the release manifest ([runtime.md](runtime.md)). When the installed version is not on the list, LINA tells the user that the version is unverified, with the version it found and the verified ones, and still delegates.
+- LINA lists the worker versions each adapter has verified in the release manifest's `verifiedWorkerVersions` field ([runtime.md](runtime.md)). Installation compares Codex's bare version with that list, accepting the `codex-cli ` prefix in probe output and legacy lists. When the installed version is not on the list, LINA tells the user that the version is unverified, with the version it found and the verified ones, and still delegates.
 - LINA refuses delegation to the worker only when the adapter can't connect to it or the protocol handshake fails (for Codex, `initialize`), and names the cause.
 - LINA never installs, updates or pins the worker.
 

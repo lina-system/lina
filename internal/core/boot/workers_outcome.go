@@ -200,7 +200,12 @@ func (r *conversationRuntime) workerCompletionView(ctx context.Context, event le
 // Only this conversation's worker directory is selectable. The existing file
 // worker supplies scope, symlink, file-type, size and sandbox checks; there is no
 // unsandboxed read fallback and no model-selected host root or write operation.
-func (r *conversationRuntime) readWorkerFile(ctx context.Context, activity lease.Lease, workdir, name string) (tools.Result, error) {
+func (r *conversationRuntime) readWorkerFile(ctx context.Context, workdir, name string) (tools.Result, error) {
+	activity, err := r.activities.Acquire(ctx, lease.Activity{Class: lease.Live, Reason: "worker file read"})
+	if err != nil {
+		return tools.Result{State: tools.Failed}, err
+	}
+	defer activity.Release()
 	versions, err := os.MkdirTemp("", "lina-worker-read-")
 	if err != nil {
 		return tools.Result{State: tools.Failed}, err

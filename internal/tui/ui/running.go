@@ -7,8 +7,18 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/thisisjun786/lina/internal/design"
+	"github.com/thisisjun786/lina/internal/tui/state"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
+
+func (m *shellModel) runningRowText(row state.Block) string {
+	language := m.styles.options.Language
+	text := design.Text(language, "running.state."+string(row.RunState)) + ": " + row.Text
+	if row.RunReason != "" {
+		text += " (" + design.Text(language, "running.reason."+string(row.RunReason)) + ")"
+	}
+	return text
+}
 
 func (m *shellModel) openRunning() {
 	m.openPager(m.topicText("running"))
