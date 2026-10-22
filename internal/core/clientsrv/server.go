@@ -109,9 +109,19 @@ func validateSocketDirectory(info os.FileInfo) error {
 	return nil
 }
 
+func inspectClient(ctx context.Context, listener net.Listener, conn net.Conn) (peerIdentity, error) {
+	if tailnet, ok := listener.(*TailnetListener); ok {
+		return tailnet.inspect(ctx, conn)
+	}
+	if local, ok := conn.(*net.UnixConn); ok {
+		return inspectPeer(local)
+	}
+	return peerIdentity{}, errors.New("client transport has no identity authority")
+}
+
 // Serve owns the listener and all accepted connections. Cancellation closes
 // blocked reads and writes, waits for handlers, and removes the socket.
-func Serve(ctx context.Context, listener *net.UnixListener, identity Identity) error {
+func Serve(ctx context.Context, listener net.Listener, identity Identity) error {
 	ctx, cancel := context.WithCancel(ctx)
 	var mu sync.Mutex
 	connections := make(map[net.Conn]struct{})
@@ -138,7 +148,7 @@ func Serve(ctx context.Context, listener *net.UnixListener, identity Identity) e
 		}
 	}
 	for {
-		conn, err := listener.AcceptUnix()
+		conn, err := listener.Accept()
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
@@ -162,7 +172,7 @@ func Serve(ctx context.Context, listener *net.UnixListener, identity Identity) e
 				delete(connections, conn)
 				mu.Unlock()
 			}()
-			peer, err := inspectPeer(conn)
+			peer, err := inspectClient(ctx, listener, conn)
 			if err != nil {
 				return
 			}

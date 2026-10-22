@@ -15,7 +15,7 @@ var clientKinds = []string{
 	"history_get", "history", "subscribe", "output_delta", "item_done", "turn_state",
 	"approval_request", "approval_answer", "question", "question_answer",
 	"result", "result_get", "result_edit", "result_save",
-	"running_get", "running", "running_update", "stop", "follow_up", "background_notice",
+	"running_get", "running", "running_update", "stop", "stop_result", "follow_up", "background_notice",
 	"progress_get", "progress", "progress_update", "progress_digest_get", "progress_digest",
 	"waiting_get", "waiting", "waiting_update", "waiting_answer", "details_get", "details",
 	"readiness_failure", "agent_request", "agent_result", "work_request", "work_result",
@@ -58,6 +58,7 @@ func roundTrip(t *testing.T, value map[string]any) Envelope {
 
 func concretePayloads() map[string]any {
 	return map[string]any{
+		"stop_result":        map[string]any{"run_id": "run-1", "outcome": "cancelled"},
 		"restart_status":     map[string]any{"owed": false},
 		"export_result":      map[string]any{"directory": "staging/export/synthetic", "manifest": "{}"},
 		"conversation_start": map[string]any{"agent_id": "agent-example"},

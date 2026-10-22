@@ -35,6 +35,7 @@
         "running",
         "running_update",
         "stop",
+        "stop_result",
         "follow_up",
         "background_notice",
         "progress_get",
@@ -1436,6 +1437,22 @@
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "stop_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/stop_result"
+          }
+        }
+      }
     }
   ],
   "$defs": {
@@ -2228,9 +2245,12 @@
       "additionalProperties": false
     },
     "stop": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "run_id": {
+          "type": "string"
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
@@ -4406,6 +4426,31 @@
         "refused",
         "stopped"
       ]
+    },
+    "stop_outcome": {
+      "type": "string",
+      "enum": [
+        "cancelled",
+        "complete",
+        "partial",
+        "failed"
+      ]
+    },
+    "stop_result": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/stop_outcome"
+        }
+      },
+      "required": [
+        "run_id",
+        "outcome"
+      ],
+      "additionalProperties": false
     }
   }
 }
