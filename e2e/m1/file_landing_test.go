@@ -34,7 +34,7 @@ func TestM2FileLanding(t *testing.T) {
 	}
 }
 func testM2FileLanding(t *testing.T, committed bool) {
-	raw, err := os.ReadFile("m2/file-landing.json")
+	raw, err := os.ReadFile("../m2/file-landing.json")
 	if err != nil {
 		t.Fatal(err)
 	}
