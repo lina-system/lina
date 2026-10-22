@@ -18,6 +18,8 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
+	"github.com/thisisjun786/lina/internal/core/work"
+	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 	"github.com/thisisjun786/lina/kit/tools"
 )
 
@@ -85,14 +87,18 @@ type methodologyRequest struct {
 	Input        []json.RawMessage
 }
 
-func seedCodingFixture(t *testing.T, h *harness, start func(bool) *process) map[string]string {
+func seedCodingFixture(t *testing.T, h *harness, start func(bool) *process, preset ...string) map[string]string {
 	t.Helper()
 	core := start(true)
 	c, _ := conversationClient(t, h)
 	person := c.Welcome.PersonID
 	c.Close()
 	h.stopCore(core)
-	return seedMethodologyAgents(t, h, person, "")
+	selected := ""
+	if len(preset) > 0 {
+		selected = preset[0]
+	}
+	return seedMethodologyAgents(t, h, person, selected)
 }
 
 // Synthetic manager judgments drive the real dev preparation, loop, durable
@@ -153,6 +159,50 @@ func scriptedCodingManager(t *testing.T, w http.ResponseWriter, request any) boo
 	}
 	emitPersonaCall(w, "coding-decision", "coding_decision", map[string]string{"decision": decision, "evidence": "Synthetic manager checked the retained definition and source-labeled artifact/PR observations."})
 	return true
+}
+
+func assertCodingOwnership(t *testing.T, h *harness, owner, origin string, verified bool) {
+	t.Helper()
+	db, close, err := canon.OpenSQLiteInspection(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer close()
+	var raw []byte
+	if err = db.QueryRow("SELECT record FROM worker_dispatch").Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	var dispatched dispatch.Record
+	if err = json.Unmarshal(raw, &dispatched); err != nil {
+		t.Fatal(err)
+	}
+	if dispatched.Owner != owner || dispatched.Origin.Conversation != origin || dispatched.Origin.Agent == owner || !strings.HasPrefix(dispatched.Manager, "manager:") {
+		t.Fatalf("coding ownership/return route: %+v", dispatched)
+	}
+	var managerOwner string
+	if err = db.QueryRow("SELECT owner FROM coding_managers WHERE conversation=?", dispatched.Manager).Scan(&managerOwner); err != nil || managerOwner != owner {
+		t.Fatal("manager not owned by dev", err)
+	}
+	var personTurns int
+	if err = db.QueryRow("SELECT count(*) FROM conv_event WHERE conversation_id=? AND speaker_kind='person'", dispatched.Manager).Scan(&personTurns); err != nil || personTurns != 0 {
+		t.Fatal("handoff fabricated person input", err)
+	}
+	if verified {
+		if err = db.QueryRow("SELECT record FROM work_cards WHERE task_id=?", dispatched.ID).Scan(&raw); err != nil {
+			t.Fatal(err)
+		}
+		var card work.Card
+		if err = json.Unmarshal(raw, &card); err != nil {
+			t.Fatal(err)
+		}
+		if card.Task.AgentID != owner || card.Task.ConversationID != dispatched.Manager || card.Receipt == nil || card.Verdict != "verified" || card.Applied {
+			t.Fatalf("coding work lacks dev judgment or falsely merged: %+v", card)
+		}
+		var completed int
+		if err = db.QueryRow("SELECT count(*) FROM turn_runs WHERE conversation=? AND state='completed'", dispatched.Manager).Scan(&completed); err != nil || completed != 2 {
+			t.Fatalf("manager assignment/delivery turns=%d %v", completed, err)
+		}
+	}
 }
 
 func methodologyOutput(t *testing.T, request methodologyRequest, code string, out any) {

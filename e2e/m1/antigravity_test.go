@@ -25,15 +25,29 @@ func TestM3AntigravityThroughInstalledCore(t *testing.T) {
 		t.Fatal(err)
 	}
 	var scenario struct {
-		Cases      []struct{ Name, Expected string }
+		Cases      []struct{ Name, Expected, Preset string }
 		What, Done string
 	}
 	if err = json.Unmarshal(raw, &scenario); err != nil {
 		t.Fatal(err)
 	}
+	for _, preset := range []string{"system", "creative"} {
+		for _, test := range scenario.Cases {
+			if test.Name == "success" {
+				test.Name += "-" + preset
+				test.Preset = preset
+				scenario.Cases = append(scenario.Cases, test)
+				break
+			}
+		}
+	}
 	for _, test := range scenario.Cases {
 		t.Run(test.Name, func(t *testing.T) {
 			t.Parallel()
+			workerCase := test.Name
+			if test.Preset != "" {
+				workerCase = "success"
+			}
 			var err error
 			fixture := t.TempDir()
 			repo := filepath.Join(fixture, "repo")
@@ -101,13 +115,13 @@ func TestM3AntigravityThroughInstalledCore(t *testing.T) {
 			}))
 			defer server.Close()
 			h, bootstrap := installedConversationHarness(t, server.URL)
-			seedCodingFixture(t, h, bootstrap)
+			ids := seedCodingFixture(t, h, bootstrap, test.Preset)
 			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 			t.Cleanup(cancel)
 			h.ctx = ctx
 			start := func() *process {
 				p := h.command("core", "--state-root", h.root, "--socket", h.socket)
-				p.command.Env = append(p.command.Env, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "LINA_WORKER_FIXTURE="+fixture, "LINA_WORKER_CASE="+test.Name, "LINA_RESPONSES_BASE_URL="+server.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
+				p.command.Env = append(p.command.Env, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "LINA_WORKER_FIXTURE="+fixture, "LINA_WORKER_CASE="+workerCase, "LINA_RESPONSES_BASE_URL="+server.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
 				p.start(t)
 				h.connectWithin(p, time.Minute).Close()
 				waitCoreReady(t, h)
@@ -142,10 +156,11 @@ func TestM3AntigravityThroughInstalledCore(t *testing.T) {
 			}
 			c.Close()
 			h.stopCore(core)
+			assertCodingOwnership(t, h, ids["dev"], conversation, workerCase == "success")
 			if git("rev-parse", "dev") != base {
 				t.Fatal("worker changed protected base")
 			}
-			if test.Name == "success" || test.Name == "pending" {
+			if workerCase == "success" || workerCase == "pending" {
 				wd, err := os.ReadFile(filepath.Join(fixture, "workdir"))
 				if err != nil {
 					t.Fatal(err)

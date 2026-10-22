@@ -72,7 +72,11 @@ func saveCoding(ctx context.Context, tx *canon.Tx, a codingAssignment) error {
 // work unit. A renamed/deleted manager is never silently replaced.
 func (r *conversationRuntime) assignCoding(ctx context.Context, origin dispatch.Origin, id, tool, target string, args json.RawMessage) (codingAssignment, error) {
 	a := codingAssignment{ID: id, Manager: codingID(origin.Person, target), Origin: origin, Tool: tool, Target: target, Arguments: args}
-	err := authority.CheckPreset(ctx, r.db, r.epoch, authority.PolicyRequest{Key: "preset:coding:" + id, Person: origin.Person, Agent: origin.Agent, TaskID: origin.Turn, Tool: tool, Target: target, Class: tools.WorkerEffect, Arguments: args})
+	class := tools.WorkerEffect
+	if tool == "prepare_work" {
+		class = tools.LocalWrite
+	}
+	err := authority.CheckPreset(ctx, r.db, r.epoch, authority.PolicyRequest{Key: "preset:coding:" + id, Person: origin.Person, Agent: origin.Agent, TaskID: origin.Turn, Tool: tool, Target: target, Class: class, Arguments: args})
 	if err != nil {
 		return a, err
 	}
@@ -202,7 +206,7 @@ func (r *conversationRuntime) prepareCodingDecision(turnID string, bindings map[
 		if c.Phase == "delivery" && a.Decision != "verified" && a.Decision != "needs_changes" && a.Decision != "unverified" {
 			return tools.Input{}, tools.ErrInvalid
 		}
-		if c.Phase == "delivery" && a.Decision == "verified" && (c.Result == nil || c.Result.PR == nil || c.Result.Code != "ready_for_review") {
+		if c.Phase == "delivery" && a.Decision == "verified" && (c.Result == nil || c.Result.PR == nil || c.Result.Code != "ready_for_review" || c.Result.ChangeEvidence == "" || c.Result.BaseCommit == "") {
 			return tools.Input{}, tools.ErrInvalid
 		}
 		return tools.Input{Arguments: raw, Target: "coding:" + c.Assignment.ID + ":" + c.Phase, What: "Record dev manager decision", Where: c.Assignment.Conversation, ScopeKey: "coding-manager", Write: true, Undoable: true}, nil

@@ -45,17 +45,19 @@ type Definition struct {
 }
 type Origin struct{ Person, Agent, Conversation, Turn string }
 type Record struct {
-	Owner      string                     `json:"owner,omitempty"`
-	Manager    string                     `json:"manager,omitempty"`
-	ID         string                     `json:"id"`
-	Origin     Origin                     `json:"origin"`
-	Definition Definition                 `json:"definition"`
-	State      string                     `json:"state"`
-	Code       string                     `json:"code,omitempty"`
-	Version    string                     `json:"version,omitempty"`
-	PR         *antigravity.PullRequest   `json:"pull_request,omitempty"`
-	Denied     []antigravity.DeniedAction `json:"denied_actions,omitempty"`
-	Announced  bool                       `json:"announced"`
+	BaseCommit     string                     `json:"base_commit,omitempty"`
+	ChangeEvidence string                     `json:"change_evidence,omitempty"`
+	Owner          string                     `json:"owner,omitempty"`
+	Manager        string                     `json:"manager,omitempty"`
+	ID             string                     `json:"id"`
+	Origin         Origin                     `json:"origin"`
+	Definition     Definition                 `json:"definition"`
+	State          string                     `json:"state"`
+	Code           string                     `json:"code,omitempty"`
+	Version        string                     `json:"version,omitempty"`
+	PR             *antigravity.PullRequest   `json:"pull_request,omitempty"`
+	Denied         []antigravity.DeniedAction `json:"denied_actions,omitempty"`
+	Announced      bool                       `json:"announced"`
 }
 type Config struct {
 	Manage      func(context.Context, Record) (Record, error)
@@ -288,7 +290,7 @@ func (s *Service) sync() {
 	}
 }
 func Declaration() provider.ToolDecl {
-	return provider.ToolDecl(`{"type":"function","name":"dispatch_work","description":"Delegate a code change to the person's installed Antigravity worker. Core creates its own worktree from a local GitHub repository clone. Supply the complete authorized task, design sections, done condition and write area. Returns a task receipt immediately; completion returns to this conversation. The worker uses its own permissions and login.","parameters":{"type":"object","properties":{"repository":{"type":"string"},"base":{"type":"string"},"branch":{"type":"string"},"what":{"type":"string"},"why":{"type":"string"},"scope":{"type":"array","items":{"type":"string"}},"not_touch":{"type":"array","items":{"type":"string"}},"done":{"type":"string"},"design_refs":{"type":"array","items":{"type":"string"}},"write_area":{"type":"array","items":{"type":"string"}}},"required":["repository","base","branch","what","why","scope","not_touch","done","design_refs","write_area"],"additionalProperties":false}}`)
+	return provider.ToolDecl(`{"type":"function","name":"dispatch_work","description":"Delegate a code change to the person's installed Antigravity worker. Core creates its own worktree from a local GitHub repository clone. Supply the complete authorized task, design sections, done condition and write area. The dev manager checks the definition before Core returns a task receipt; completion returns to this conversation. The worker uses its own permissions and login.","parameters":{"type":"object","properties":{"repository":{"type":"string"},"base":{"type":"string"},"branch":{"type":"string"},"what":{"type":"string"},"why":{"type":"string"},"scope":{"type":"array","items":{"type":"string"}},"not_touch":{"type":"array","items":{"type":"string"}},"done":{"type":"string"},"design_refs":{"type":"array","items":{"type":"string"}},"write_area":{"type":"array","items":{"type":"string"}}},"required":["repository","base","branch","what","why","scope","not_touch","done","design_refs","write_area"],"additionalProperties":false}}`)
 }
 
 type output struct{ bytes.Buffer }

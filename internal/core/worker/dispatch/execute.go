@@ -88,6 +88,7 @@ func (s *Service) execute(r Record) {
 	if err != nil {
 		return
 	}
+	r.BaseCommit = base
 	protectedArgs := []string{"for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/main", "refs/heads/dev", "refs/remotes/origin/main", "refs/remotes/origin/dev"}
 	protected, err := git(repo, protectedArgs...)
 	if err != nil {
@@ -179,7 +180,16 @@ func (s *Service) execute(r Record) {
 			pr, prErr := antigravity.ReadPullRequest(ctx, s.cfg.PR, repository, d.Branch, d.Base, head)
 			if prErr == nil {
 				r.PR = &pr
-				r.Code = "ready_for_review"
+				r.Code = "change_evidence_unavailable"
+				patch, patchErr := git(workdir, "diff", "--no-ext-diff", "--no-textconv", base, head, "--")
+				if patchErr == nil && len(patch) <= 64<<10 {
+					masked, maskErr := secrets.Mask(patch)
+					if maskErr == nil && strings.TrimSpace(masked.Text()) != "" {
+						r.PR = &pr
+						r.Code = "ready_for_review"
+						r.ChangeEvidence = masked.Text()
+					}
+				}
 			}
 		}
 		if r.PR == nil {
@@ -189,7 +199,9 @@ func (s *Service) execute(r Record) {
 	// The artifact contains source-labeled observations, never an acceptance or
 	// merge verdict. Strip remote prose before persisting; it is untrusted input.
 	if r.PR != nil {
-		r.PR.Reviews = nil
+		for i := range r.PR.Reviews {
+			r.PR.Reviews[i].Body = ""
+		}
 		r.PR.Comments = nil
 	}
 	evidence := mustJSON(r)

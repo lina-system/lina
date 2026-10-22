@@ -229,6 +229,7 @@ func TestApprovalAndStandingGrantCannotLiftPresetCeiling(t *testing.T) {
 		f := setup(t)
 		setPreset(t, f, "agent", "legal")
 		s := spec(false)
+		s.Plugin = ""
 		schema := s.Schema
 		s.Schema = func(raw json.RawMessage) (tools.Input, error) {
 			in, err := schema(raw)

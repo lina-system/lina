@@ -51,6 +51,7 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 		record.Owner, record.Manager = a.Owner, a.Conversation
 		return record, nil
 	}, Publish: func(ctx context.Context, record dispatch.Record) error {
+		managerVerdict := "unverified"
 		if record.Owner != "" {
 			var a codingAssignment
 			if err := r.db.Read(ctx, func(tx *canon.Tx) error { var err error; a, err = readCoding(ctx, tx, record.ID); return err }); err != nil {
@@ -58,7 +59,12 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 			}
 			// No receipt means the worker never delivered a judgeable result.
 			if card, err := r.work.Get(ctx, record.ID); err == nil && card.Receipt != nil {
-				_ = r.runCodingManager(ctx, a, "delivery", &record)
+				if err = r.runCodingManager(ctx, a, "delivery", &record); err == nil {
+					if err = r.db.Read(ctx, func(tx *canon.Tx) error { var err error; a, err = readCoding(ctx, tx, record.ID); return err }); err != nil {
+						return err
+					}
+					managerVerdict = a.Verdict
+				}
 			}
 		}
 		view, err := r.router.view(ctx, clientsrv.Session{PersonID: record.Origin.Person}, record.Origin.Agent)
@@ -73,7 +79,7 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 			text += "; denied: " + denial.DisplayName
 		}
 		if record.PR != nil {
-			text += fmt.Sprintf("; %s @ %s; adapter-derived receipt; awaiting design acceptance and merge", record.PR.URL, record.PR.Head)
+			text += fmt.Sprintf("; %s @ %s; adapter-derived receipt; dev manager: %s; not merged", record.PR.URL, record.PR.Head, managerVerdict)
 		}
 		parent, err := view.journal().Get(ctx, strings.TrimPrefix(record.Origin.Turn, "turn:"))
 		if err != nil {
