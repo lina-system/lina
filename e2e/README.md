@@ -225,4 +225,10 @@ binding/scope replacement. A paired synthetic channel and an existing binding
 exercise the actual target-agent checks. Read-only canon snapshots prove that
 refused requests preserve agent revisions, actions, conversations and bindings.
 
+`m2/github-ci.json` starts the real Core binary with a synthetic `gh` executable
+in its isolated PATH. It negotiates the GitHub capability, refuses an unnegotiated
+read, observes rate-limited CI pending and its retry deadline, then observes head,
+review threads and successful checks. It verifies conditional headers and one
+review read per head, with no network credentials or GitHub service dependency.
+
 `TestM1WebUnconfigured` checks installed Core's explicit missing-provider status, absence of web declarations and one-round notice. `TestM1WebSearchExtractAndCitation` runs the production Core composition in a separate test helper with a synthetic manifest recording that executable, and injects only the Firecrawl HTTP transport. The real TUI saves a hidden key; the protocol client approves each network request; the real provider adapter searches and extracts against stub responses; TUI cells show both running activities; the scripted model cites the source URL. No real provider account is used, and model compliance beyond the scripted boundary is not claimed.

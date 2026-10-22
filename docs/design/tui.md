@@ -658,7 +658,31 @@ type Stream interface {
 
 ## Input and commands (T-10)
 
-Keys are a proposal and data in `tui/ui`. No contract fixes them.
+Keys are data in `internal/tui/ui/keys.go`: action catalog id, key spellings,
+footer priority and optional compact label. `/help` and `?` on a completely empty
+draft (no text or attachments) open the same local shortcut sheet in the existing
+pager overlay. The sheet lists implemented conversation keys, pager keys and
+local command references; it remains available during reconnect. Esc closes it
+without interrupting a turn. `?` in a nonempty draft, including whitespace, and
+pasted `?` remain ordinary input. Toggle repeats and releases never open it.
+
+The conversation footer keeps the connection mark and localized word first.
+It adds whole key-and-label hints in ascending priority, dropping the lowest
+priorities first when their display-cell width does not fit. The highest priority
+is `? Shortcuts`, followed by Esc, Enter, Ctrl+D, Alt+Enter, PgUp/PgDn, Ctrl+O and
+F6, with Ctrl+T for the retained transcript following those hints. Notices and cause details may be shortened to leave space for the connection
+and the first hint. At every supported width (40 columns and above), neither the
+connection nor the first hint is dropped. Below the supported minimum, physical
+cell limits still apply. Pager overlays and side panes retain the connection with
+whole pager hints (Esc, search, next match), rather than replacing it with controls.
+Both English and Korean labels come from the catalog.
+
+`e2e/tui_shortcuts_test.go` exercises the installed Core and a Responses fixture
+through PTYs at 100, 60 and 40 columns, in English/Unicode and Korean/ASCII. It
+checks whole priority prefixes, both sheet entry paths, the connection inside
+the sheet, Esc returning to the conversation, and a drafted `why?` sent through
+Core to the provider and returned as a completed reply. Reference observations
+and limits are recorded in [the shortcut reference](tui-shortcuts-reference.md).
 
 | Key | Action |
 | --- | --- |
@@ -667,9 +691,14 @@ Keys are a proposal and data in `tui/ui`. No contract fixes them.
 | Esc | Close the top overlay; with none, interrupt the turn |
 | Ctrl+C | Clear the draft; with an empty draft, quit the TUI only, never Core |
 | Tab, Shift+Tab | Move focus |
-| Ctrl+K | Command palette |
+| ?, /help | Open the shortcut sheet (`?` requires an empty draft) |
+| Ctrl+D | Quit this TUI |
+| Ctrl+Z | Undo draft editing |
+| PgUp/PgDn | Scroll the conversation |
+| Ctrl+W, Ctrl+P, Ctrl+R | Waiting for me, progress, running list |
+| Ctrl+O | Open the selected result |
+| F6 | Open the first unresolved decision |
 | Ctrl+T | Open the retained conversation transcript in the pager |
-| Keys for Waiting for me, progress, running list and Open on a card | Open those views |
 
 Key classes are Toggle, Edit and Approve. Every key event passes one `Admit` gate: releases are ignored, repeats are dropped for Toggle and Approve, and Edit keys may repeat. Without key events from the terminal every key counts as a press, and approval cards add a dead time after any change of card (P).
 

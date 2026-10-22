@@ -88,6 +88,13 @@ func Open(stateRoot string, db Canon) (*Store, error) {
 	if err == nil {
 		err = s.cleanStages()
 	}
+	if err == nil {
+		_, _, err = s.snapshot(context.Background())
+		// Outside edits must not prevent Core from serving their notice.
+		if errors.Is(err, ErrRecordsChanged) {
+			err = nil
+		}
+	}
 	if err != nil {
 		repo.Close()
 		return nil, err
@@ -151,19 +158,26 @@ func (s *Store) snapshot(ctx context.Context) (string, map[string]string, error)
 	if err := s.recover(ctx); err != nil {
 		return "", nil, err
 	}
-	head, files, err := s.head()
-	if err != nil {
-		return "", nil, err
-	}
 	state, err := s.state(ctx)
 	if err != nil {
 		return "", nil, err
 	}
-	// Outside commits require explicit reconciliation; no silent merge.
-	if head != state.head {
-		return "", nil, ErrRecordsChanged
+	head, files, err := s.head()
+	if err != nil || head != state.head {
+		// Compare against the last published version, never the outside commit.
+		files = map[string]string{}
+		if state.head != "" {
+			_, files, err = s.commitFiles(state.head)
+			if err != nil {
+				return "", nil, ErrRecordsChanged
+			}
+		}
+		return "", nil, s.outside(ctx, files, true)
 	}
-	if err = s.unchanged(files); err != nil {
+	if err = s.outside(ctx, files, false); err != nil {
+		return "", nil, err
+	}
+	if err = s.ensureIndex(ctx, head, files); err != nil {
 		return "", nil, err
 	}
 	return head, files, nil
@@ -228,6 +242,9 @@ func (s *Store) Commit(ctx context.Context, c Change, a Actor) (rev Rev, err err
 	id, err := recordID(c.Data)
 	if err != nil || id != c.ID {
 		return "", ErrInvalid
+	}
+	if _, err := parseDocument(c.Data); err != nil {
+		return "", err
 	}
 	parent, files, err := s.snapshot(ctx)
 	if err != nil {
