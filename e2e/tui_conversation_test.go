@@ -15,6 +15,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/core/install"
+	"github.com/thisisjun786/lina/internal/design"
 	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
@@ -172,7 +173,20 @@ func screenText(snapshot tuiterm.Snapshot) string {
 }
 func waitScreen(t *testing.T, h *harness, terminal *terminal, text string) tuiterm.Snapshot {
 	t.Helper()
-	snapshot, err := terminal.screen.Wait(h.ctx, func(snapshot tuiterm.Snapshot) bool { return strings.Contains(screenText(snapshot), text) })
+	snapshot, err := terminal.screen.Wait(h.ctx, func(snapshot tuiterm.Snapshot) bool {
+		view := screenText(snapshot)
+		if text == "Ctrl+D" {
+			// The composer shortcut is visible while connecting, but Enter is
+			// admitted only when live. Readiness must observe both in one row.
+			for _, row := range strings.Split(view, "\n") {
+				if strings.Contains(row, text) && strings.Contains(row, design.Text(design.English, "live")) {
+					return true
+				}
+			}
+			return false
+		}
+		return strings.Contains(view, text)
+	})
 	if err != nil {
 		select {
 		case <-terminal.process.done:
