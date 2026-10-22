@@ -60,7 +60,7 @@ type textPager struct {
 func newConversationView(styles Styles) conversationView {
 	c := textarea.New()
 	c.Prompt = ""
-	c.Placeholder = design.Text(styles.options.Language, "composer.placeholder")
+	c.Placeholder = fmt.Sprintf(design.Text(styles.options.Language, "composer.placeholder"), "LINA")
 	c.ShowLineNumbers = false
 	c.CharLimit = 16384
 	c.MaxWidth, c.MaxHeight = 0, 6
@@ -94,7 +94,7 @@ func (m *shellModel) syncComposer() {
 	if m.disambiguated {
 		placeholder = "composer.shift_enter"
 	}
-	c.Placeholder = design.Text(m.styles.options.Language, placeholder)
+	c.Placeholder = fmt.Sprintf(design.Text(m.styles.options.Language, placeholder), m.conversationName())
 	if c.Value() != m.content.Draft.Text {
 		c.SetValue(m.content.Draft.Text)
 	}
