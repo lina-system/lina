@@ -209,7 +209,12 @@ func (h *harness) startCore() *process {
 
 func (h *harness) connect(core *process) net.Conn {
 	h.t.Helper()
-	ctx, cancel := context.WithTimeout(h.ctx, operationTimeout)
+	return h.connectWithin(core, operationTimeout)
+}
+
+func (h *harness) connectWithin(core *process, timeout time.Duration) net.Conn {
+	h.t.Helper()
+	ctx, cancel := context.WithTimeout(h.ctx, timeout)
 	defer cancel()
 	retry := time.NewTicker(5 * time.Millisecond)
 	defer retry.Stop()

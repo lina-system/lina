@@ -41,6 +41,7 @@ func Migrations() []Migration {
 		{Version: 27, SQL: RecordsSchema},
 		{Version: 28, SQL: WorkWaitingSchema},
 		{Version: 29, SQL: RecordsSearchSchema},
+		{Version: 30, SQL: mergesSchema},
 	}
 }
 
@@ -76,6 +77,7 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 		{23, "skill_versions"}, {23, "skill_heads"}, {23, "skill_undone"}, {23, "skill_repo"},
 		{28, "work_waiting_rounds"}, {28, "work_waiting_decisions"},
 		{26, "work_ledger"}, {26, "work_cards"}, {26, "work_active_runs"},
+		{30, "authority_merges"},
 	} {
 		var count int
 		if err = db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name=?", entry.table).Scan(&count); err != nil {

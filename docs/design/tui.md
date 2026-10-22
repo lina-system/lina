@@ -269,9 +269,10 @@ Regions:
 
 - Header: the focused agent's name and mark, and the connection word.
 - Conversation.
-- Activity: one row immediately above the composer hairline while a send is pending or a
-  turn is active, with a glyph, localized thinking/replying/stopping word, elapsed
-  duration and Esc hint. It consumes no rows when idle.
+- Activity: one or two measured rows above the composer's optional rule while a
+  send is pending or a turn is active, with a glyph, localized
+  thinking/replying/stopping word, elapsed duration and Esc hint. It consumes no
+  rows when idle.
 - Composer, with its attachment strip and a full-width hairline immediately above the input.
 - Card row above the composer, on Home (T-12).
 - Status line below the composer: connection mark and word first, agent, the running count ("2 running, 1 waiting for you"), restart pending, Core messages, then key hints.
@@ -341,6 +342,20 @@ time, replying after the first delta, stopping before interrupt delivery,
 completion and zero idle bytes. The recording harness separately checks idle
 output and the unit clock checks timer removal, hidden rows and static glyphs.
 
+Below 80 columns, if the complete activity line does not fit, its elapsed and
+interrupt details move together to a second row. Below 50 columns, the hint
+shortens to `Esc`; the glyph, localized word and complete elapsed value remain.
+The display measures those rows before planning the transcript and composer.
+The footer uses T-10's localized key-and-label priorities. It admits only whole
+hint segments, preserving the connection and highest-priority hint at supported
+widths; a hint that does not fit and the hints after it are omitted together.
+
+`e2e/m1/tui_resize_test.go` holds a real installed-Core turn behind a fixture
+provider gate, resizes the PTY through 79, 50 and 40 columns in English and
+Korean, and checks complete activity and footer segments plus four transcript
+rows with a growing composer. Releasing the gate produces a real result without
+repeating the input. Unit tests exercise wrapped activity, long elapsed values
+and the planner's two-row budget under pressure.
 
 **Row budget** is a pure function in `tui/layout`.
 
@@ -359,8 +374,12 @@ func Plan(size Size, caps Caps, st Shape) Layout // regions disjoint, sum fits, 
   when folded. Empty or ungranted lists reserve no rows, even under pressure.
   The attachment strip
   uses one row. After the stated shedding, composer growth yields as necessary
-  to preserve the transcript floor. Counts and unsupported flags remain typed
-  output even when their region folds.
+  to preserve the transcript floor. The active row reserves one or two measured
+  rows above the composer rule and input. At the ten-row minimum, if a two-row
+  activity still cannot fit after composer and attachment shedding, running and
+  waiting share one summary row containing both counts. Their full lists remain
+  available through the existing keys. Counts and unsupported flags remain
+  typed output even when their region folds.
 - Property tests enumerate widths 0–240 and heights 0–100 with empty and crowded
   shapes and granted and missing capabilities, and exercise threshold and
   integer-limit dimensions. The planner itself imposes no maximum size.

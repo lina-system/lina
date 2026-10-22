@@ -42,6 +42,11 @@ func (h *harness) client(core *process) *client {
 
 func (c *client) call(t *testing.T, kind protocol.Kind, payload protocol.Payload) protocol.Envelope {
 	t.Helper()
+	return c.callWithin(t, kind, payload, operationTimeout)
+}
+
+func (c *client) callWithin(t *testing.T, kind protocol.Kind, payload protocol.Payload, timeout time.Duration) protocol.Envelope {
+	t.Helper()
 	c.seq++
 	epoch := c.welcome.Epoch
 	if epoch == "" {
@@ -61,7 +66,7 @@ func (c *client) call(t *testing.T, kind protocol.Kind, payload protocol.Payload
 		Method  protocol.Kind     `json:"method"`
 		Params  protocol.Envelope `json:"params"`
 	}{"2.0", id, kind, envelope}
-	if err := c.conn.SetDeadline(time.Now().Add(operationTimeout)); err != nil {
+	if err := c.conn.SetDeadline(time.Now().Add(timeout)); err != nil {
 		t.Fatal(err)
 	}
 	if err := json.NewEncoder(c.conn).Encode(request); err != nil {
@@ -102,7 +107,12 @@ func decodeReply(line []byte, requestID string) (protocol.Envelope, error) {
 
 func (h *harness) inputRefused(c *client) {
 	h.t.Helper()
-	deadline := time.NewTimer(operationTimeout)
+	h.inputRefusedWithin(c, operationTimeout)
+}
+
+func (h *harness) inputRefusedWithin(c *client, timeout time.Duration) {
+	h.t.Helper()
+	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
 	for {
 		answer := c.call(h.t, protocol.KindInput, protocol.Input{})
