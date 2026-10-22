@@ -22,12 +22,12 @@ func TestProcedureRefusesWithoutApprovalAndRollsBackFailure(t *testing.T) {
 			manifest := Manifest{SwitchID: "switch", Tasks: []string{"task"}, Coverage: "all parent sessions and flow engines stopped", StateDirectory: "/fixture/state", Executable: "/fixture/relay"}
 			digest := manifest.Digest()
 			external := Observation{Enabled: boolp(true), Running: boolp(true), Lock: "held", StateDirectory: manifest.StateDirectory, ScopeAuthority: "production", Conflicts: []any{}}
-			core := func(_ context.Context, p protocol.WorkRequest) (protocol.WorkResult, error) {
+			core := func(_ context.Context, p protocol.WorkSwitchRequest) (protocol.WorkSwitchResult, error) {
 				calls = append(calls, p.Operation)
 				switch p.Operation {
 				case "activate_switch":
 					if failure == "activation" {
-						return protocol.WorkResult{}, errors.New("lost activation")
+						return protocol.WorkSwitchResult{}, errors.New("lost activation")
 					}
 					state = "active"
 				case "rollback_switch":
@@ -35,7 +35,7 @@ func TestProcedureRefusesWithoutApprovalAndRollsBackFailure(t *testing.T) {
 				case "release_switch":
 					state = "rolled_back"
 				}
-				return protocol.WorkResult{SwitchID: "switch", State: state, Approval: "owner-input", Snapshot: digest, Tasks: manifest.Tasks}, nil
+				return protocol.WorkSwitchResult{SwitchID: "switch", State: state, Approval: "owner-input", Snapshot: digest, Tasks: manifest.Tasks}, nil
 			}
 			command := func(_ context.Context, action string) ([]byte, error) {
 				calls = append(calls, action)
@@ -128,11 +128,11 @@ func TestOperatorLockAndUnknownExecutionHoldRecovery(t *testing.T) {
 	}
 	calls := 0
 	p.Command = func(context.Context, string) ([]byte, error) { calls++; return nil, nil }
-	p.Core = func(_ context.Context, q protocol.WorkRequest) (protocol.WorkResult, error) {
+	p.Core = func(_ context.Context, q protocol.WorkSwitchRequest) (protocol.WorkSwitchResult, error) {
 		if q.Operation == "release_switch" {
-			return protocol.WorkResult{}, errors.New("execution unknown")
+			return protocol.WorkSwitchResult{}, errors.New("execution unknown")
 		}
-		return protocol.WorkResult{State: "rollback_pending", Snapshot: manifest.Digest()}, nil
+		return protocol.WorkSwitchResult{State: "rollback_pending", Snapshot: manifest.Digest()}, nil
 	}
 	if err = p.Rollback(t.Context()); err == nil {
 		t.Fatal("unknown execution released")

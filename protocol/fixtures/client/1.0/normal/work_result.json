@@ -18,19 +18,5 @@
   "receipt_ref": null,
   "source_refs": [],
   "error": null,
-  "payload": {
-    "switch_id": "switch-1",
-    "state": "approved",
-    "approval": "owner-input-1",
-    "snapshot": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "tasks": [
-      "task-1"
-    ],
-    "events": [
-      {
-        "state": "approved",
-        "evidence": "owner-input-1"
-      }
-    ]
-  }
+  "payload": {}
 }

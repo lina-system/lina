@@ -64,29 +64,29 @@ func CLI(ctx context.Context, args []string, out io.Writer) error {
 		return err
 	}
 	defer client.Close()
-	call := func(ctx context.Context, q protocol.WorkRequest) (protocol.WorkResult, error) {
+	call := func(ctx context.Context, q protocol.WorkSwitchRequest) (protocol.WorkSwitchResult, error) {
 		id, err := client.Work(ctx, q)
 		if err != nil {
-			return protocol.WorkResult{}, err
+			return protocol.WorkSwitchResult{}, err
 		}
 		e, err := client.Receive(ctx)
 		if err != nil {
-			return protocol.WorkResult{}, err
+			return protocol.WorkSwitchResult{}, err
 		}
 		if e.ReplyTo == nil || *e.ReplyTo != id {
-			return protocol.WorkResult{}, errors.New("uncorrelated Core reply")
+			return protocol.WorkSwitchResult{}, errors.New("uncorrelated Core reply")
 		}
 		if e.Error != nil {
-			return protocol.WorkResult{}, &clientapi.Refusal{Cause: *e.Error}
+			return protocol.WorkSwitchResult{}, &clientapi.Refusal{Cause: *e.Error}
 		}
-		v, ok := e.Payload.(protocol.WorkResult)
+		v, ok := e.Payload.(protocol.WorkSwitchResult)
 		if !ok {
 			return v, errors.New("unexpected Core reply")
 		}
 		return v, nil
 	}
 	if action == "approve" || action == "status" {
-		q := protocol.WorkRequest{Operation: "switch_status", SwitchID: m.SwitchID}
+		q := protocol.WorkSwitchRequest{Operation: "switch_status", SwitchID: m.SwitchID}
 		if action == "approve" {
 			digest := m.Digest()
 			q.Operation = "approve_switch"
@@ -127,7 +127,7 @@ func CLI(ctx context.Context, args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	v, err := call(ctx, protocol.WorkRequest{Operation: "switch_status", SwitchID: m.SwitchID})
+	v, err := call(ctx, protocol.WorkSwitchRequest{Operation: "switch_status", SwitchID: m.SwitchID})
 	if err != nil {
 		return err
 	}

@@ -18,7 +18,7 @@ func TestSwitchOwnerAdmission(t *testing.T) {
 	}
 	tasks := []string{task.ID}
 	snapshot := strings.Repeat("a", 64)
-	request := protocol.WorkRequest{Operation: "approve_switch", SwitchID: "switch", Tasks: &tasks, Snapshot: &snapshot}
+	request := protocol.WorkSwitchRequest{Operation: "approve_switch", SwitchID: "switch", Tasks: &tasks, Snapshot: &snapshot}
 	if _, err := r.Work(t.Context(), session, request, "approval"); err == nil {
 		t.Fatal("worker approved switch")
 	}

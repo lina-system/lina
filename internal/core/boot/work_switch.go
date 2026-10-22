@@ -10,7 +10,7 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
-func (r *conversationRuntime) Work(ctx context.Context, s clientsrv.Session, p protocol.WorkRequest, messageID string) (result protocol.WorkResult, err error) {
+func (r *conversationRuntime) Work(ctx context.Context, s clientsrv.Session, p protocol.WorkSwitchRequest, messageID string) (result protocol.WorkSwitchResult, err error) {
 	if !s.CanDecide || s.PersonID != r.person {
 		return result, &clientsrv.OperationError{Code: protocol.ErrorNotAuthorized}
 	}
@@ -53,7 +53,7 @@ func (r *conversationRuntime) Work(ctx context.Context, s clientsrv.Session, p p
 	if v.Owner != s.PersonID {
 		return result, &clientsrv.OperationError{Code: protocol.ErrorNotAuthorized}
 	}
-	result = protocol.WorkResult{SwitchID: v.ID, State: v.State, Approval: v.Approval, Snapshot: v.Snapshot, Tasks: v.Tasks, Events: []protocol.WorkSwitchEvent{}}
+	result = protocol.WorkSwitchResult{SwitchID: v.ID, State: v.State, Approval: v.Approval, Snapshot: v.Snapshot, Tasks: v.Tasks, Events: []protocol.WorkSwitchEvent{}}
 	for _, e := range v.Events {
 		result.Events = append(result.Events, protocol.WorkSwitchEvent{State: e.State, Evidence: e.Evidence})
 	}

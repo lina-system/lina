@@ -18,8 +18,5 @@
   "receipt_ref": null,
   "source_refs": [],
   "error": null,
-  "payload": {
-    "operation": "switch_status",
-    "switch_id": "switch-1"
-  }
+  "payload": {}
 }

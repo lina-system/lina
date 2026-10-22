@@ -101,22 +101,22 @@ func TestM3OperationalSwitch(t *testing.T) {
 		}
 	}
 	stop := func() { c.Close(); h.stopCore(core) }
-	call := func(ctx context.Context, q protocol.WorkRequest) (protocol.WorkResult, error) {
+	call := func(ctx context.Context, q protocol.WorkSwitchRequest) (protocol.WorkSwitchResult, error) {
 		id, e := c.Work(ctx, q)
 		if e != nil {
-			return protocol.WorkResult{}, e
+			return protocol.WorkSwitchResult{}, e
 		}
 		frame, e := c.Receive(ctx)
 		if e != nil {
-			return protocol.WorkResult{}, e
+			return protocol.WorkSwitchResult{}, e
 		}
 		if frame.ReplyTo == nil || *frame.ReplyTo != id {
 			t.Fatal("uncorrelated switch result")
 		}
 		if frame.Error != nil {
-			return protocol.WorkResult{}, &clientapi.Refusal{Cause: *frame.Error}
+			return protocol.WorkSwitchResult{}, &clientapi.Refusal{Cause: *frame.Error}
 		}
-		v, ok := frame.Payload.(protocol.WorkResult)
+		v, ok := frame.Payload.(protocol.WorkSwitchResult)
 		if !ok {
 			t.Fatalf("switch reply: %T", frame.Payload)
 		}
@@ -148,7 +148,7 @@ func TestM3OperationalSwitch(t *testing.T) {
 		t.Fatal("external effects without owner approval", err, externalCalls)
 	}
 	digest := manifest.Digest()
-	approval, err := call(h.ctx, protocol.WorkRequest{Operation: "approve_switch", SwitchID: scenario.SwitchID, Tasks: &manifest.Tasks, Snapshot: &digest})
+	approval, err := call(h.ctx, protocol.WorkSwitchRequest{Operation: "approve_switch", SwitchID: scenario.SwitchID, Tasks: &manifest.Tasks, Snapshot: &digest})
 	if err != nil || approval.Approval == "" {
 		t.Fatal("approval", err)
 	}
@@ -199,7 +199,7 @@ func TestM3OperationalSwitch(t *testing.T) {
 	if enabled || running {
 		t.Fatal("rollback restored external owner before drain")
 	}
-	status, err := call(h.ctx, protocol.WorkRequest{Operation: "switch_status", SwitchID: scenario.SwitchID})
+	status, err := call(h.ctx, protocol.WorkSwitchRequest{Operation: "switch_status", SwitchID: scenario.SwitchID})
 	if err != nil || status.State != "rollback_pending" {
 		t.Fatal(status, err)
 	}
@@ -216,7 +216,7 @@ func TestM3OperationalSwitch(t *testing.T) {
 	if !enabled || !running {
 		t.Fatal("previous coordinator not restored")
 	}
-	final, err := call(h.ctx, protocol.WorkRequest{Operation: "switch_status", SwitchID: scenario.SwitchID})
+	final, err := call(h.ctx, protocol.WorkSwitchRequest{Operation: "switch_status", SwitchID: scenario.SwitchID})
 	if err != nil || final.State != "rolled_back" || len(final.Events) != 4 || final.Approval != approval.Approval {
 		t.Fatalf("rollback audit: %+v %v", final, err)
 	}

@@ -57,7 +57,7 @@ type Journal struct {
 type Procedure struct {
 	Manifest Manifest
 	Journal  string
-	Core     func(context.Context, protocol.WorkRequest) (protocol.WorkResult, error)
+	Core     func(context.Context, protocol.WorkSwitchRequest) (protocol.WorkSwitchResult, error)
 	Command  func(context.Context, string) ([]byte, error)
 }
 
@@ -102,8 +102,8 @@ func (p Procedure) step(j *Journal, step string) error {
 	j.Steps = append(j.Steps, step)
 	return p.save(*j)
 }
-func (p Procedure) request(ctx context.Context, operation, evidence string) (protocol.WorkResult, error) {
-	q := protocol.WorkRequest{Operation: operation, SwitchID: p.Manifest.SwitchID}
+func (p Procedure) request(ctx context.Context, operation, evidence string) (protocol.WorkSwitchResult, error) {
+	q := protocol.WorkSwitchRequest{Operation: operation, SwitchID: p.Manifest.SwitchID}
 	if evidence != "" {
 		q.Evidence = &evidence
 	}

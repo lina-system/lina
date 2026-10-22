@@ -18,6 +18,7 @@ import (
 // Manifest identifies a clean source commit and the binaries produced from it.
 // Additional JSON fields are allowed as later components add their metadata.
 type Manifest struct {
+	VerifiedWorkerVersions map[string][]string `json:"verifiedWorkerVersions,omitempty"`
 	// CRWPin is absent only in artifacts built before the work-ledger start gate.
 	CRWPin                *crwpin.Record                   `json:"crwPin,omitempty"`
 	SupportedCombinations []Combination                    `json:"supportedCombinations"`
