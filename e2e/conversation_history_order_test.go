@@ -74,7 +74,9 @@ func TestM1ConversationHistoryOrder(t *testing.T) {
 			observer, conversation := conversationClient(t, h)
 			terminal := h.startTerminalSize([]string{"TERM=xterm-256color"}, false, true, scenario.Width, scenario.Height)
 			waitScreen(t, h, terminal, "Ctrl+D")
-			h.keys(terminal, scenario.FirstInput+"\r")
+			h.keys(terminal, scenario.FirstInput)
+			waitScreen(t, h, terminal, scenario.FirstInput)
+			h.keys(terminal, "\r")
 			select {
 			case <-started:
 			case <-h.ctx.Done():
