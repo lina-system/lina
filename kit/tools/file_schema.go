@@ -15,7 +15,12 @@ func FileSpec(name, scope string) (Spec, error) {
 	if operation == "" || scope == "" {
 		return Spec{}, ErrInvalid
 	}
-	return Spec{Name: name, Conc: 1, Deadline: 15 * time.Second, Placement: Core, Schema: func(raw json.RawMessage) (Input, error) {
+	return Spec{Classify: func(in Input) EffectClass {
+		if in.Write {
+			return LocalWrite
+		}
+		return Research
+	}, Name: name, Conc: 1, Deadline: 15 * time.Second, Placement: Core, Schema: func(raw json.RawMessage) (Input, error) {
 		var req FileRequest
 		if operation == "patch" && strings.HasPrefix(string(raw), "*** Begin Patch\n") {
 			req.Patch = string(raw)

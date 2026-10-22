@@ -13,7 +13,12 @@ import (
 // RegisterSkillMaintenanceControl binds the main's existing job switch. A read
 // has no enabled field; a write explicitly sets it. Undo is always available.
 func RegisterSkillMaintenanceControl(registry *tools.Registry, control func(context.Context, *bool) (any, string, error)) (tools.Spec, error) {
-	spec := tools.Spec{Name: "skill_maintenance", Placement: tools.Core, Conc: 1, Deadline: 10 * time.Second, Schema: func(raw json.RawMessage) (tools.Input, error) {
+	spec := tools.Spec{Classify: func(in tools.Input) tools.EffectClass {
+		if in.Write {
+			return tools.LocalWrite
+		}
+		return tools.Research
+	}, Name: "skill_maintenance", Placement: tools.Core, Conc: 1, Deadline: 10 * time.Second, Schema: func(raw json.RawMessage) (tools.Input, error) {
 		var p struct {
 			Enabled *bool `json:"enabled,omitempty"`
 		}

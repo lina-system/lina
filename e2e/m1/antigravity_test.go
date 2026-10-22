@@ -25,15 +25,29 @@ func TestM3AntigravityThroughInstalledCore(t *testing.T) {
 		t.Fatal(err)
 	}
 	var scenario struct {
-		Cases      []struct{ Name, Expected string }
+		Cases      []struct{ Name, Expected, Preset string }
 		What, Done string
 	}
 	if err = json.Unmarshal(raw, &scenario); err != nil {
 		t.Fatal(err)
 	}
+	for _, preset := range []string{"system", "creative"} {
+		for _, test := range scenario.Cases {
+			if test.Name == "success" {
+				test.Name += "-" + preset
+				test.Preset = preset
+				scenario.Cases = append(scenario.Cases, test)
+				break
+			}
+		}
+	}
 	for _, test := range scenario.Cases {
 		t.Run(test.Name, func(t *testing.T) {
 			t.Parallel()
+			workerCase := test.Name
+			if test.Preset != "" {
+				workerCase = "success"
+			}
 			var err error
 			fixture := t.TempDir()
 			repo := filepath.Join(fixture, "repo")
@@ -79,6 +93,9 @@ func TestM3AntigravityThroughInstalledCore(t *testing.T) {
 					t.Error(err)
 					return
 				}
+				if scriptedCodingManager(t, w, req) {
+					return
+				}
 				if calls.Add(1) == 1 {
 					for _, tool := range req.Tools {
 						if tool.Name == "dispatch_work" {
@@ -92,17 +109,19 @@ func TestM3AntigravityThroughInstalledCore(t *testing.T) {
 					}
 					emitPersonaCall(w, "worker-start", "dispatch_work", map[string]any{"repository": repo, "base": "dev", "branch": "task-branch", "what": scenario.What, "why": "Prove real worker execution", "scope": []string{"result.txt"}, "not_touch": []string{"design.md"}, "done": scenario.Done, "design_refs": []string{"design.md#result"}, "write_area": []string{"result.txt"}})
 				} else {
+					methodologyOutput(t, methodologyRequest{Input: req.Input}, "ok", nil)
 					emitResponse(w, "Task accepted.", true)
 				}
 			}))
 			defer server.Close()
-			h, _ := installedConversationHarness(t, server.URL)
+			h, bootstrap := installedConversationHarness(t, server.URL)
+			ids := seedCodingFixture(t, h, bootstrap, test.Preset)
 			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 			t.Cleanup(cancel)
 			h.ctx = ctx
 			start := func() *process {
 				p := h.command("core", "--state-root", h.root, "--socket", h.socket)
-				p.command.Env = append(p.command.Env, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "LINA_WORKER_FIXTURE="+fixture, "LINA_WORKER_CASE="+test.Name, "LINA_RESPONSES_BASE_URL="+server.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
+				p.command.Env = append(p.command.Env, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "LINA_WORKER_FIXTURE="+fixture, "LINA_WORKER_CASE="+workerCase, "LINA_RESPONSES_BASE_URL="+server.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
 				p.start(t)
 				h.connectWithin(p, time.Minute).Close()
 				waitCoreReady(t, h)
@@ -111,7 +130,7 @@ func TestM3AntigravityThroughInstalledCore(t *testing.T) {
 			core := start()
 			c, conversation := conversationClient(t, h)
 			events := admittedTurn(t, h, c, conversation, "delegate", "Create result.txt through the installed worker and submit its PR.")
-			if !offered.Load() {
+			if !offered.Load() || t.Failed() {
 				c.Close()
 				h.stopCore(core)
 				return
@@ -137,10 +156,11 @@ func TestM3AntigravityThroughInstalledCore(t *testing.T) {
 			}
 			c.Close()
 			h.stopCore(core)
+			assertCodingOwnership(t, h, ids["dev"], conversation, workerCase == "success")
 			if git("rev-parse", "dev") != base {
 				t.Fatal("worker changed protected base")
 			}
-			if test.Name == "success" || test.Name == "pending" {
+			if workerCase == "success" || workerCase == "pending" {
 				wd, err := os.ReadFile(filepath.Join(fixture, "workdir"))
 				if err != nil {
 					t.Fatal(err)
