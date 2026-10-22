@@ -20,7 +20,7 @@ import (
 )
 
 func TestM1TUIInputHistory(t *testing.T) {
-	data, err := os.ReadFile("m1/tui-input-history.json")
+	data, err := os.ReadFile("tui-input-history.json")
 	if err != nil {
 		t.Fatal(err)
 	}
