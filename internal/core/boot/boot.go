@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/authority"
 	"github.com/thisisjun786/lina/internal/core/backup"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
@@ -321,6 +322,8 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	if cfg.Services.Lifecycle != nil {
 		cfg.Services.Lifecycle(restarter)
 	}
+	var mergeAuthority *authority.Merges
+	var mergeAgentExists func(context.Context, string) bool
 	var canon Canon
 	if ownsConversation && len(recovery.Halt) == 0 {
 		runtime, openErr := startConversation(ctx, cfg.StateRoot, recovery.MainID, snapshot.Epoch, store, cfg.Conversation, activities, cfg.Client.PersonID, cfg.SignInTransport, cfg.ChannelTransport)
@@ -333,6 +336,8 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		cfg.Client = runtime.identity
 		cfg.Client.Supported = supported
 		canon = runtime.db
+		mergeAuthority = authority.NewMerges(runtime.db, snapshot.Epoch)
+		mergeAgentExists = func(ctx context.Context, id string) bool { _, err := runtime.agents.Get(ctx, id); return err == nil }
 		stack = append(stack, runtime.Close)
 	} else if cfg.Services.OpenCanon != nil {
 		canon, err = cfg.Services.OpenCanon(ctx, snapshot.Epoch)
@@ -352,7 +357,7 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	if cfg.Client.Operations == nil {
 		cfg.Client.Operations = make(map[protocol.Kind]clientsrv.Operation)
 	}
-	for kind, operation := range clientsrv.GitHubOperations(githubService{client: github}) {
+	for kind, operation := range clientsrv.GitHubOperations(githubService{client: github, merges: mergeAuthority, agentExists: mergeAgentExists}) {
 		cfg.Client.Operations[kind] = operation
 	}
 	if err := boundary(CanonOpened); err != nil {

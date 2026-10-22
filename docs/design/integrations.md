@@ -368,6 +368,31 @@ The shared role rule is in [product-families.md](product-families.md). [work-and
 - A merge that went in without passing required checks is recorded as observed and reported to the user. LINA Core never reverts another actor's merge without a user decision.
 - A merge is not verification. It records that a draft was applied. LINA Core still judges the task's delivery from evidence ([work-and-delegation.md](work-and-delegation.md)).
 
+The Core implementation exposes merge control separately from read/watch as the
+`github_merge` protocol capability. Its connection captures named local
+`refs/heads/` in the parent clone (including the target branch) and verifies that
+`origin` identifies the connected GitHub repository. A later request cannot
+replace those hashes. Head acceptance and merge admission both compare the
+captured refs. Before writing, Core rereads PR identity after reading checks and
+reviews; a changed head/base blocks the call, and a changed head is read again.
+The fixed command is `gh pr merge <number> --repo github.com/<repository> --merge
+--match-head-commit <head>`; Core supplies neither admin bypass nor auto-merge.
+An unresolved P0/P1 marker blocks admission, including an outdated unresolved
+thread. Pending, missing or failed check evidence blocks admission. GitHub also
+enforces its protection rules at the pinned call. The explicit hostname keeps
+reads and writes on the same service even when the user configures `GH_HOST`.
+
+A durable intent reserves the repository/base before the call. A queued or
+uncertain outcome retains that reservation across restart and cannot dispatch
+again. Observation can settle it only with a merged PR, a matching existing merge
+commit, the exact target ref pointing to that commit, and readable check/status
+evidence on that commit. A target that has already advanced remains unconfirmed;
+Core does not infer ancestry or silently accept different evidence. Missing or
+failed checks on a confirmed person's merge are reported with
+`merged_without_green_checks`, without reverting anything. The stored result
+keeps checks, source and commit separately from any delivery judgment.
+
+
 ## Google
 
 ### The plugin
