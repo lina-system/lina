@@ -232,6 +232,8 @@ For binary materials, staging an import creates only an opaque-token file under 
 
 An export copies and verifies the requested revision into `staging/export/`, records its destination, person, agent, revision and hash in canon, then invokes the grant-owning caller's delivery operation outside the canon transaction. Successful delivery is recorded as delivered and the staged copy is removed. A failed or interrupted delivery remains unknown and is never retried automatically. Reopening removes abandoned export staging without repeating delivery. The caller checks the destination grant before invoking export; the asset store never chooses or writes an external destination itself.
 
+Asset cleanup removes only its opaque-id files. The replay exporter owns the `episode-*` and temporary `.episode-*` directories in the same staging area; asset cleanup leaves those directories and their bytes intact so an episode export cannot prevent Core from restarting. A symlink or an unexpected entry remains invalid.
+
 ### Importing another memory system
 
 A person may install a memory importer add-on for a source they used before and hand it that source's memory. Every adapter follows the [common import contract](conversation-and-memory.md#memory-importer-add-ons); [Hermes](conversation-and-memory.md#importing-a-hermes-install) is the first adapter and the owner's M1 continuity test. The [add-on list and grants](integrations.md#memory-importers) define what each adapter may read. Core, onboarding and the default install have no dependency on an importer. Ordinary material import above remains a Core operation. For memory imports:
