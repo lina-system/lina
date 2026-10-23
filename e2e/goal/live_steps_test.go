@@ -131,7 +131,7 @@ func (w *stepWorld) Execute(ctx context.Context, a work.Action) (work.Observatio
 		if a.Check == nil || a.Revision == "" {
 			return out, fmt.Errorf("missing criterion check")
 		}
-		out.Criterion = &work.CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: a.Revision, Kind: a.Check.Kind, Ref: w.proof("criterion-"+a.ID, a.Revision).Ref, Passed: true}
+		out.Criterion = &work.CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: a.Revision, Kind: a.Check.Kind, Collected: &work.CollectedEvidence{Record: []byte(`{"observed":true}`), Output: "fixture check output"}, Ref: w.proof("criterion-"+a.ID, a.Revision).Ref, Passed: true}
 	default:
 		return out, fmt.Errorf("unexpected action %s", a.Kind)
 	}
