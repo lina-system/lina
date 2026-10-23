@@ -135,7 +135,7 @@ func TestSealJSONSidecar(t *testing.T) {
 			if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
 				t.Fatal(err)
 			}
-			key := LegacyKey{string(HermesLCM), "profile", "messages", "2"}
+			key := LegacyKey{string(HermesLCM), "profile", "messages", "1"}
 			req.Sidecars = []Sidecar{{Key: LegacyKey{string(HermesLCM), "profile", "sidecars", "output"}, Event: key, SnapshotPath: path, SHA256: bytesHash([]byte(raw))}}
 			p, err := Prepare(t.Context(), req)
 			if err != nil {

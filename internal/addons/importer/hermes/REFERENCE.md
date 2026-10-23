@@ -132,6 +132,12 @@ become `body_masking_error`, with originals and retry reports retained. The fina
 scalar coverage check reads decoded JSON; scanning serialized escapes as plain
 text would discard already-masked quoted arguments.
 
+A material-backed assistant event with tool calls publishes the live JSON
+projection inline, using the sidecar bytes as its content, and the import record
+keeps the original sidecar material for reverse mapping. The event therefore has
+no material reference, so ledger reads, expansion and summary input see the
+calls.
+
 ## Owner channels and display provenance
 
 Read-only reference: Hermes Agent (MIT), revision

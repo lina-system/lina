@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/secrets"
@@ -120,15 +121,12 @@ func (p *Plan) publishConversation(ctx context.Context, tx *canon.Tx, c *convers
 		if err := tx.QueryRowContext(ctx, "SELECT material_id,material_revision FROM import_event WHERE id=?", r.id).Scan(&material, &materialRevision); err != nil {
 			return err
 		}
-		display, err := publishedBody(r)
-		if err != nil {
-			return err
-		}
+		content := r.body
 		if material.Valid {
 			found := false
 			for _, attachment := range c.records {
 				if attachment.kind == "material" && len(attachment.links) == 1 && attachment.links[0].target == r.id {
-					display = attachment.sources[0].row.text("bytes")
+					content = attachment.sources[0].row.text("bytes")
 					found = true
 					break
 				}
@@ -137,13 +135,23 @@ func (p *Plan) publishConversation(ctx context.Context, tx *canon.Tx, c *convers
 				return ErrConflict
 			}
 		}
+		display, err := publishedBody(r, content)
+		if err != nil {
+			return err
+		}
 		// Originals and byte-addressed flags stay in import_event for lossless
 		// reverse mapping; live consumers use the native masked representation.
-		if !material.Valid && display != r.body {
+		projected := display != content
+		if projected {
 			display, err = maskScalarCallCredentials(display)
 			if err != nil {
 				// Projection masking failures use the same durable outcome
 				// as failures in the shared body scanner below.
+				err = secrets.ErrSpan
+			}
+			if !utf8.ValidString(content) {
+				// json.Marshal would replace invalid bytes; refuse the
+				// projection instead of publishing altered content.
 				err = secrets.ErrSpan
 			}
 		}
@@ -184,7 +192,15 @@ func (p *Plan) publishConversation(ctx context.Context, tx *canon.Tx, c *convers
 		}
 		var body any = masked.Text()
 		if material.Valid {
-			body = nil
+			if projected {
+				// A live JSON projection replaces the material body for this
+				// event; import_event keeps the original sidecar for reverse
+				// mapping.
+				material = sql.NullString{}
+				materialRevision = sql.NullInt64{}
+			} else {
+				body = nil
+			}
 		}
 		origin, _ := json.Marshal(originFields)
 		_, err = tx.ExecContext(ctx, `INSERT INTO conv_event(id,conversation_id,parent_id,person_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,replay_of,body,material_id,material_revision)

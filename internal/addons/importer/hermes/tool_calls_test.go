@@ -2,8 +2,12 @@
 package hermes
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -390,6 +394,111 @@ func TestImportedToolCallMaskingFailureReported(t *testing.T) {
 	row, err := Reverse(t.Context(), db, ref.Key)
 	if err != nil || row.text("tool_calls") != string(calls) || RowHash(row) != ref.SourceHash {
 		t.Fatalf("original calls changed: %v", err)
+	}
+	if _, err = p.Verify(t.Context(), db); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A sidecar material supplies the output text of its event. An assistant event
+// with tool calls still needs the live JSON projection, so the seal publishes
+// that projection inline and leaves the original sidecar on the import record.
+func TestImportedMaterialToolCallsKeepLiveProjection(t *testing.T) {
+	req := importRequest(t)
+	db := importStore(t)
+	writer, store := importMaterials(t, db)
+	req.Materials = writer
+	const secret = "sk-proj-abcdefghijklmnopqrstuv"
+	raw := []byte("synthetic large result password=" + secret)
+	path := filepath.Join(t.TempDir(), "output")
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	arguments := `{"path":"/work/기록.txt"}`
+	calls := `[{"id":"read-1","type":"function","function":{"name":"read_file","arguments":` + strconv.Quote(arguments) + `}}]`
+	src, err := canon.OpenSQLite(t.Context(), req.Profiles[0].LCMPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = src.Exec("UPDATE messages SET content='Externalized output',tool_calls=? WHERE store_id=2", calls)
+	src.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := LegacyKey{string(HermesLCM), "profile", "messages", "2"}
+	req.Sidecars = []Sidecar{{Key: LegacyKey{string(HermesLCM), "profile", "sidecars", "output"}, Event: key, SnapshotPath: path, SHA256: bytesHash(raw)}}
+	p, err := Prepare(t.Context(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	if _, err = p.Import(t.Context(), db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = p.Seal(t.Context(), db, func(context.Context) (string, error) { return "backup", nil }); err != nil {
+		t.Fatal(err)
+	}
+	ref, err := Resolve(t.Context(), db, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := ledger.New(db, importedMaterials{store})
+	e, err := events.Get(t.Context(), ref.RecordID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := func(body string) {
+		t.Helper()
+		var got struct {
+			Content   string
+			ToolCalls []struct {
+				Type      string
+				CallID    string `json:"call_id"`
+				Name      string
+				Arguments string
+			} `json:"tool_calls"`
+		}
+		if err := json.Unmarshal([]byte(body), &got); err != nil {
+			t.Fatalf("material tool-call event body is not structured: %q: %v", body, err)
+		}
+		if !strings.Contains(got.Content, "synthetic large result") || strings.Contains(got.Content, secret) {
+			t.Fatalf("material content lost or unmasked: %q", got.Content)
+		}
+		if len(got.ToolCalls) != 1 {
+			t.Fatalf("lost calls: %q", body)
+		}
+		if call := got.ToolCalls[0]; call.Type != "function_call" || call.CallID != "read-1" || call.Name != "read_file" || call.Arguments != arguments {
+			t.Fatalf("call: %+v", call)
+		}
+	}
+	check(e.Body.Text())
+	if e.Material.ID != "" || strings.Contains(e.Body.DerivedText(), secret) {
+		t.Fatalf("material projection: %+v %q", e.Material, e.Body.DerivedText())
+	}
+	page, err := (compaction.Expansion{DB: db, Events: events}).Read(t.Context(), "agent", "event:"+e.ID, 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var expanded compaction.ExpansionPage
+	if err = json.Unmarshal(page, &expanded); err != nil || len(expanded.Events) != 1 {
+		t.Fatalf("expand: %s %v", page, err)
+	}
+	check(expanded.Events[0].Body)
+	// The original sidecar stays referenced by the import record for reverse mapping.
+	var id string
+	var revision int64
+	if err = db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT material_id,material_revision FROM import_event WHERE id=?", ref.RecordID).Scan(&id, &revision)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	original, err := store.Read(t.Context(), id, revision)
+	if err != nil || !bytes.Equal(original, raw) {
+		t.Fatal("original sidecar changed", err)
+	}
+	row, err := Reverse(t.Context(), db, key)
+	if err != nil || RowHash(row) != ref.SourceHash {
+		t.Fatalf("source round trip: %v", err)
 	}
 	if _, err = p.Verify(t.Context(), db); err != nil {
 		t.Fatal(err)
