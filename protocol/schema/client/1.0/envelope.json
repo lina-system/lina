@@ -1970,6 +1970,18 @@
         },
         "mode": {
           "$ref": "#/$defs/input_mode"
+        },
+        "reply_to": {
+          "type": "string",
+          "minLength": 1
+        },
+        "card": {
+          "type": "string",
+          "minLength": 1
+        },
+        "thread": {
+          "type": "string",
+          "minLength": 1
         }
       },
       "required": [],

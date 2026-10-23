@@ -4,52 +4,16 @@
 // It does not enable a binding policy for ordinary conversations.
 package intakereplay
 
-import "time"
+import "github.com/thisisjun786/lina/internal/core/binding"
 
 var Routers = []string{"focus-only", "rules-then-focus"}
 
-type Target struct {
-	Class  string `json:"class"`
-	ID     string `json:"id,omitempty"`
-	Kind   string `json:"kind,omitempty"`
-	Parent string `json:"parent,omitempty"`
-}
-type Item struct {
-	ID           string    `json:"id"`
-	Title        string    `json:"title"`
-	Kind         string    `json:"kind"`
-	State        string    `json:"state"`
-	LastActivity time.Time `json:"last_activity"`
-	Names        []string  `json:"names,omitempty"`
-	Links        []string  `json:"links,omitempty"`
-}
-type Question struct {
-	ID      string   `json:"id"`
-	Target  string   `json:"target"`
-	Options []string `json:"options"`
-	YesNo   bool     `json:"yes_no,omitempty"`
-}
-type State struct {
-	Clock           time.Time  `json:"clock"`
-	Focus           Target     `json:"focus"`
-	FocusAgeSeconds int64      `json:"focus_age_seconds"`
-	Items           []Item     `json:"items"`
-	Questions       []Question `json:"questions"`
-	// Surface keys identify reply messages, cards or threads; values are item ids.
-	Surfaces map[string]string `json:"surfaces"`
-}
-type Turn struct {
-	Role string `json:"role"`
-	Text string `json:"text"`
-}
-type Input struct {
-	Text                string `json:"text"`
-	ReplyTo             string `json:"reply_to,omitempty"`
-	Card                string `json:"card,omitempty"`
-	Thread              string `json:"thread,omitempty"`
-	PreviousTurnSeconds int64  `json:"previous_turn_seconds"`
-	Recent              []Turn `json:"recent"`
-}
+type Target = binding.Target
+type Item = binding.Item
+type Question = binding.Question
+type State = binding.State
+type Turn = binding.Turn
+type Input = binding.Input
 type Gold struct {
 	Target Target `json:"target"`
 	Ask    bool   `json:"ask"`
