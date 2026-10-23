@@ -445,7 +445,16 @@ completion conditions to repository tests and installed Core scenarios.
   views, the timezone-aware today fixture, atomic cycle refusal and explicit
   ambiguous-date refusal. [The to-do scenario](../../e2e/m2/todos.json) runs Core
   through capture, refused writes, views, rescheduling and index repair on
-  restart. Recurrence advancement, candidates and memo promotion belong to #156.
+  restart.
+- #156 adds native recurrence validation, future-only completion and overdue
+  advancement, plus memo promotion and revision-guarded undo. Its
+  [installed-Core scenario](../../e2e/m2/record-recurrence-promotion.json) verifies
+  these record operations and model-free recurrence recovery after restart.
+  [The candidate scenario](../../e2e/m2/record-candidates.json) verifies automatic
+  addition from retained owner evidence, pending unverifiable sources, duplicate
+  refusal, undo notices and restart retention. Source facts are re-resolved by
+  Core inside its fenced publication intent; no source-registration endpoint is
+  added.
 - #674 permits planning edits that preserve delegated completion. Its
   [installed-Core scenario](../../e2e/m2/todo-completed-planning.json) checks
   saved tags, priority and checklist, the completed state and restart durability.
@@ -457,8 +466,8 @@ completion conditions to repository tests and installed Core scenarios.
   negotiated `records` capability. Lists retain Core order and internal ids stay
   out of display rows. [The record journey](../../e2e/m2/tui-records.json) covers
   conversation capture, restart, discovery, direct browsing, preview cancellation
-  and explicit confirmation of token-based quick add. Memo promotion
-  remains #156.
+  and explicit confirmation of token-based quick add. #156 exposes memo
+  promotion and undo through the installed conversation record tools.
 - Done when: a quick add shows chips before it saves; every view is a Core query result drawn without client ranking; a progress view line holds no id-shaped field; the board groups Core's rows into Waiting for me, Running and Done; a follow-up note reaches a running background run at its next round trip; the usage meter reads "unknown" for an unreported quota.
 - Depends on: G1-21, G2-13, G2-23, G2-25. Design refs: T-12, T-13, T-14.
 

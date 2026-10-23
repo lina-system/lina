@@ -333,6 +333,11 @@ window does not block a healthy weekly window; only exhausted windows determine
 when the worker becomes eligible again. A stop without an identified exhausted
 window adds an unknown-window block with no reset, preserving the reported
 measurements rather than assigning the stop to a healthy window.
+Quota freshness is checked for each provider, account and window independently.
+A newer observation replaces only its matching window; an unchanged, older or
+missing sibling cannot discard that update or clear another window's block.
+An unknown-window stop inferred from an error clears on a newer observation
+for that account, without requiring every reported window to be refreshed.
 
 | Path | What the provider reports | Source of the rows |
 | --- | --- | --- |
@@ -954,7 +959,7 @@ The first implementation issue demonstrates the runtime with these checks. Each 
 | V6 supply-chain baseline | The Go and npm gates of [dependencies.md](../policy/dependencies.md), run by the local foundation verification ([foundation.md](../policy/foundation.md)) on the minimal dependency set, with `go.sum`, the module count, the Claude adapter's lockfile and its transitive package count recorded | The gates pass, `go.sum` verifies against the checksum database, `govulncheck` passes, and no npm package needs a lifecycle script |
 | V7 development loop | A worker's edit to Go code, then `go build`, `go vet` and `go test` for the affected packages; and a full local `foundation` run (`node scripts/foundation.mjs --full`) | The time from the edit to the result of those commands, and the full `foundation` time, stay within the budget declared before the run |
 
-Foundation keeps one local command and one required CI result. Its shared candidate plan separates build and analysis, measured unit-package shards, and acceptance scenario-file shards. Scenario imports, helper inputs and the binaries they launch determine which acceptance cases a change reaches; shared or unmapped inputs select all. Deleted or renamed runtime fixtures retain acceptance coverage: an input without a known consumer that maps to an acceptance package selects every scenario in that package. Pushes to `dev` and nightly verification run every case. Missing or mismatched shard results fail the final gate. The [foundation policy](../policy/foundation.md#execution) defines the execution and evidence contract. V7 measurements identify the exact workload, environment, repeated command and spread before and after a change; successful and failed runs remain distinguishable.
+Foundation keeps one local command and one required CI result. Its shared candidate plan separates build and analysis, measured unit-package shards, and acceptance scenario-file shards. Scenario imports, helper inputs and the binaries they launch determine which acceptance cases a change reaches; shared or unmapped inputs select all. Deleted or renamed runtime fixtures retain acceptance coverage: an input without a known consumer that maps to an acceptance package selects every scenario in that package. Pushes to `dev` and nightly verification run every case. A failed-job rerun uses the newest attempt for each shard while retaining results for jobs not rerun; older attempts cannot overwrite the selected result. Missing or mismatched shard results fail the final gate. The [foundation policy](../policy/foundation.md#execution) defines the execution and evidence contract. V7 measurements identify the exact workload, environment, repeated command and spread before and after a change; successful and failed runs remain distinguishable.
 
 ## Deferred
 

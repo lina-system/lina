@@ -1,6 +1,7 @@
 {
   "cases": [
     {"name": "success", "expected": "ready_for_review"},
+    {"name": "host-capacity", "expected": "ready_for_review", "host_capacity": true},
     {"name": "legacy-admission", "expected": "ready_for_review", "legacy_admission": true}
   ],
   "what": "Produce a file in the task worktree and submit its pull request",

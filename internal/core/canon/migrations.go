@@ -55,7 +55,9 @@ func Migrations() []Migration {
 		{Version: 41, SQL: TimersSchema},
 		{Version: 42, SQL: startersSchema},
 		{Version: 43, SQL: WorkerChoiceSchema},
-		{Version: 44, SQL: WorkSwitchSchema},
+		{Version: 44, SQL: namingSchema},
+		{Version: 45, SQL: recordOperationsSchema},
+		{Version: 46, SQL: WorkSwitchSchema},
 	}
 }
 
@@ -92,7 +94,7 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 		{31, "worker_dispatch"},
 		{41, "timer"}, {41, "timer_fire"}, {40, "work_completion_origins"}, {43, "worker_quota"}, {40, "work_completions"}, {40, "work_completion_claims"},
 		{34, "waiting_decisions"},
-		{44, "work_worker_reservations"}, {44, "work_switches"}, {44, "work_switch_tasks"}, {44, "work_switch_events"},
+		{46, "work_worker_reservations"}, {46, "work_switches"}, {46, "work_switch_tasks"}, {46, "work_switch_events"},
 		{28, "work_waiting_rounds"}, {28, "work_waiting_decisions"},
 		{38, "records_todo"},
 		{36, "skill_maintenance"}, {36, "skill_maintenance_members"}, {36, "skill_maintenance_notices"},
@@ -101,7 +103,9 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 		{32, "discord_presentations"}, {32, "discord_buttons"}, {32, "channel_steering"},
 		{35, "authority_delegations"}, {35, "coding_managers"}, {35, "coding_assignments"},
 		{37, "work_events"}, {37, "work_records"},
+		{44, "naming_breaches"},
 		{42, "agent_starters"}, {42, "agent_selection"},
+		{45, "record_operations"}, {45, "record_candidates"},
 	} {
 		var count int
 		if err = db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name=?", entry.table).Scan(&count); err != nil {

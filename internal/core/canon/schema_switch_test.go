@@ -15,14 +15,16 @@ func TestBackupFromPublishedSchemaUpgradesSwitchSchema(t *testing.T) {
 		{Version: 41, SQL: TimersSchema},
 		{Version: 42, SQL: startersSchema},
 		{Version: 43, SQL: WorkerChoiceSchema},
-		{Version: 44, SQL: WorkSwitchSchema},
+		{Version: 44, SQL: namingSchema},
+		{Version: 45, SQL: recordOperationsSchema},
+		{Version: 46, SQL: WorkSwitchSchema},
 	}
 	for _, want := range published {
 		if len(all) < want.Version || all[want.Version-1] != want {
 			t.Fatalf("published migration %d changed or switch did not follow it", want.Version)
 		}
 	}
-	cfg.Migrations = all[:43]
+	cfg.Migrations = all[:45]
 	source := openStore(t, cfg)
 	if err := source.Write(t.Context(), func(tx *Tx) error {
 		_, err := tx.ExecContext(t.Context(), `INSERT INTO skill_maintenance VALUES('operation',1,'preserved','merge',0);
