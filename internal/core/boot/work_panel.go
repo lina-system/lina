@@ -3,6 +3,7 @@ package boot
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/progress"
@@ -57,6 +58,22 @@ func (r *conversationRuntime) backgroundProgress(ctx context.Context, names map[
 		units = append(units, u)
 	}
 	return units, nil
+}
+
+// Cards are flat; overview rows retain the goal-child groups from Compute.
+func workCardOrder(rows []protocol.ProgressRow) []string {
+	cards := make([]protocol.ProgressRow, 0, len(rows))
+	for _, row := range rows {
+		if row.Line.Kind != "goal" {
+			cards = append(cards, row)
+		}
+	}
+	slices.SortStableFunc(cards, func(a, b protocol.ProgressRow) int { return workCardRank(a.Line) - workCardRank(b.Line) })
+	order := make([]string, 0, len(cards))
+	for _, card := range cards {
+		order = append(order, card.Ref)
+	}
+	return order
 }
 
 func workCardRank(line protocol.ProgressLine) int {

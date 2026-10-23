@@ -44,6 +44,27 @@ func projectWork(payload protocol.Payload) *state.WorkSummary {
 		c.Waiting, _ = strconv.Atoi(string(v.Waiting))
 		cards = append(cards, c)
 	}
+	if p.CardOrder != nil {
+		byID := make(map[string]state.WorkCard, len(cards))
+		for _, card := range cards {
+			byID[card.ID] = card
+		}
+		ordered := make([]state.WorkCard, 0, len(cards))
+		for _, id := range *p.CardOrder {
+			if card, ok := byID[id]; ok {
+				ordered = append(ordered, card)
+				delete(byID, id)
+			}
+		}
+		// An older or partial projection keeps all remaining cards in row order.
+		for _, card := range cards {
+			if _, ok := byID[card.ID]; ok {
+				ordered = append(ordered, card)
+				delete(byID, card.ID)
+			}
+		}
+		cards = ordered
+	}
 	return &state.WorkSummary{Cards: cards}
 }
 

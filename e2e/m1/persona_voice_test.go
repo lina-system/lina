@@ -14,6 +14,11 @@ import (
 )
 
 func emitPersonaCall(w http.ResponseWriter, id, name string, args any) {
+	if catalog, ok := w.(interface {
+		toolInvocation(string, any) (string, any)
+	}); ok {
+		name, args = catalog.toolInvocation(name, args)
+	}
 	raw, _ := json.Marshal(args)
 	item, _ := json.Marshal(map[string]any{"type": "function_call", "id": "item-" + id, "call_id": id, "name": name, "arguments": string(raw)})
 	w.Header().Set("Content-Type", "text/event-stream")

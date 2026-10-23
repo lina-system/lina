@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -280,7 +279,7 @@ func (r *conversationRuntime) ownerProjectionOrder(ctx context.Context, order wa
 		}
 		rows = append(rows, protocol.ProgressRow{Ref: entry.Ref, Line: line})
 	}
-	slices.SortStableFunc(rows, func(a, b protocol.ProgressRow) int { return workCardRank(a.Line) - workCardRank(b.Line) })
+	cardOrder := workCardOrder(rows)
 	// Track the complete list before the Home limit. A change below that limit
 	// must invalidate an open full waiting view even when Home looks identical.
 	full, err := json.Marshal(waitingRows(list))
@@ -292,7 +291,7 @@ func (r *conversationRuntime) ownerProjectionOrder(ctx context.Context, order wa
 	list.Entries = list.Entries[:count]
 	waiting := waitingRows(list)
 	more := number(list.More)
-	return protocol.Progress{Rows: &rows, Waiting: &waiting, WaitingMore: &more}, string(full), nil
+	return protocol.Progress{Rows: &rows, CardOrder: &cardOrder, Waiting: &waiting, WaitingMore: &more}, string(full), nil
 }
 func (r *conversationRuntime) publishOwnerViews(ctx context.Context) error {
 	v := r.ownerViews
@@ -302,7 +301,7 @@ func (r *conversationRuntime) publishOwnerViews(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	update := protocol.ProgressUpdate{Rows: p.Rows, Waiting: p.Waiting, WaitingMore: p.WaitingMore}
+	update := protocol.ProgressUpdate{Rows: p.Rows, CardOrder: p.CardOrder, Waiting: p.Waiting, WaitingMore: p.WaitingMore}
 	text := ownerText(p)
 	update.Text = &text
 	raw, err := json.Marshal(update)

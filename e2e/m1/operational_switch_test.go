@@ -188,7 +188,7 @@ func testOperationalSwitch(t *testing.T, outcome string) {
 			}
 		}
 		emit := func(name string, args map[string]any) {
-			emitPersonaCall(w, fmt.Sprintf("switch-worker-%d", n), name, args)
+			emitPersonaCall(w, fmt.Sprintf("switch-worker-%d", n), "call_tool", map[string]any{"name": name, "arguments": args})
 		}
 		switch n {
 		case 1, 3:

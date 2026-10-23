@@ -221,7 +221,7 @@ func testInstalledCodexSession(t *testing.T, slowManager bool) {
 	var calls atomic.Int32
 	var delayed atomic.Bool
 	var control map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct{ Input, Tools []json.RawMessage }
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Error(err)
@@ -254,21 +254,17 @@ func testInstalledCodexSession(t *testing.T, slowManager bool) {
 		if scriptedCodingManager(t, w, req) {
 			return
 		}
-		names := map[string]bool{}
-		for _, raw := range req.Tools {
-			var d struct{ Name string }
-			json.Unmarshal(raw, &d)
-			names[d.Name] = true
+		// Outcome reactions report a result without granting execution tools.
+		// The explicit person/control turns below still require every control.
+		if respondWorkerCompletion(w, req.Input, fixture.Result) {
+			return
 		}
 		for _, name := range []string{"worker_start", "worker_input", "worker_interrupt", "worker_snapshot"} {
-			if !names[name] {
+			if !toolReachable(req.Tools, name) {
 				t.Errorf("Core did not offer %s", name)
 				emitResponse(w, "missing worker tool", true)
 				return
 			}
-		}
-		if respondWorkerCompletion(w, req.Input, fixture.Result) {
-			return
 		}
 		n := calls.Add(1)
 		resuming := slowManager && n == 3
@@ -333,7 +329,7 @@ func testInstalledCodexSession(t *testing.T, slowManager bool) {
 		default:
 			emitResponse(w, "worker journey complete", true)
 		}
-	}))
+	})))
 	defer server.Close()
 	h, bootstrap := installedConversationHarness(t, server.URL)
 	if slowManager {
@@ -428,7 +424,7 @@ func TestM2InstalledCodexLive(t *testing.T) {
 	workdir := t.TempDir()
 	var calls atomic.Int32
 	var session string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct{ Input, Tools []json.RawMessage }
 		if json.NewDecoder(r.Body).Decode(&req) != nil {
 			t.Error("invalid model request")
@@ -471,7 +467,7 @@ func TestM2InstalledCodexLive(t *testing.T) {
 		default:
 			emitResponse(w, "live worker result received: LINA_CODEX_OK", true)
 		}
-	}))
+	})))
 	defer server.Close()
 	h, bootstrap := installedConversationHarness(t, server.URL)
 	seedCodingFixture(t, h, bootstrap)
@@ -511,11 +507,17 @@ func TestM2InstalledCodexLive(t *testing.T) {
 
 // Existing adapter journeys explicitly handle the additional persona turns.
 func respondWorkerCompletion(w http.ResponseWriter, inputs []json.RawMessage, result string) bool {
-	if len(inputs) == 0 {
-		return false
+	// Discovery adds call/results after the current input. Classify the latest
+	// user input, rather than mistaking a load_tools receipt for a new request.
+	var item struct{ Role, Content string }
+	found := false
+	for i := len(inputs) - 1; i >= 0; i-- {
+		if json.Unmarshal(inputs[i], &item) == nil && item.Role == "user" {
+			found = true
+			break
+		}
 	}
-	var item struct{ Content string }
-	if json.Unmarshal(inputs[len(inputs)-1], &item) != nil || !strings.Contains(item.Content, `<external_evidence origin="worker-session:`) {
+	if !found || !strings.Contains(item.Content, `<external_evidence origin="worker-session:`) {
 		return false
 	}
 	if result == "" {

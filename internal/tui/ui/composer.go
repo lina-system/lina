@@ -5,6 +5,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"unicode"
 
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
@@ -58,23 +59,27 @@ func (m *shellModel) editComposer(msg tea.Msg) tea.Cmd {
 		return nil
 	}
 	m.syncComposer()
+	// The placeholder is the only retained credential context. Protect text
+	// typed at that boundary as well as later pastes, including after undo or
+	// recall, without retaining any of the original secret.
+	if key, ok := msg.(tea.KeyPressMsg); ok && key.Text != "" && key.Mod & ^tea.ModShift == 0 {
+		c := &m.conversation.composer
+		c.DeleteSelection()
+		key.Text = trimChatContinuation(c.Value()[:composerOffset(c)], key.Text)
+		msg = key
+	}
 	// Mask before the textarea can truncate or retain a pasted credential.
 	// The second pass also covers a value pasted after an existing "token=".
 	_, pasted := msg.(tea.PasteMsg)
 	if paste, ok := msg.(tea.PasteMsg); ok {
-		paste.Content = maskChatPaste(paste.Content)
-		msg = paste
 		// Check the full insertion before the textarea limit can cut a token
 		// assembled across pastes below its recognizable length.
 		c := &m.conversation.composer
 		c.DeleteSelection()
 		text := c.Value()
-		lines := strings.Split(text, "\n")
-		offset := 0
-		for _, line := range lines[:c.Line()] {
-			offset += len(line) + 1
-		}
-		offset += len(string([]rune(lines[c.Line()])[:c.Column()]))
+		offset := composerOffset(c)
+		paste.Content = maskChatPaste(trimChatContinuation(text[:offset], paste.Content))
+		msg = paste
 		inserted := text[:offset] + paste.Content + text[offset:]
 		if masked := maskChatPaste(inserted); masked != inserted {
 			c.SetValue(masked)
@@ -99,6 +104,30 @@ func (m *shellModel) editComposer(msg tea.Msg) tea.Cmd {
 	draft.Text = c.Value()
 	m.content, _ = state.Reduce(m.content, state.EditDraft{Draft: draft})
 	return command
+}
+
+func composerOffset(c *textarea.Model) int {
+	lines := strings.Split(c.Value(), "\n")
+	offset := 0
+	for _, line := range lines[:c.Line()] {
+		offset += len(line) + 1
+	}
+	return offset + len(string([]rune(lines[c.Line()])[:c.Column()]))
+}
+
+// Discard only the newly inserted continuation. Existing text after the cursor
+// may be public text next to a masked quoted value and must remain intact.
+func trimChatContinuation(before, inserted string) string {
+	if !strings.HasSuffix(before, secret.Placeholder) {
+		return inserted
+	}
+	boundary := strings.IndexFunc(inserted, func(r rune) bool {
+		return unicode.IsSpace(r) || strings.ContainsRune(",;\"'<>}]).", r)
+	})
+	if boundary < 0 {
+		return ""
+	}
+	return inserted[boundary:]
 }
 
 // A rejected structured value must not fall back to its original bytes.

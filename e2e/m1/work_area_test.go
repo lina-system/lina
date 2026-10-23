@@ -74,7 +74,7 @@ func TestM2WorkArea(t *testing.T) {
 	results := make(chan []work.Material, 2)
 	var receiptID, head string
 	count := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct{ Input, Tools []json.RawMessage }
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Error(err)
@@ -83,14 +83,8 @@ func TestM2WorkArea(t *testing.T) {
 		if scriptedWorkCompletion(w, request.Input) {
 			return
 		}
-		names := map[string]bool{}
-		for _, raw := range request.Tools {
-			var d struct{ Name string }
-			_ = json.Unmarshal(raw, &d)
-			names[d.Name] = true
-		}
 		for _, name := range scenario.Tools {
-			if !names[name] {
+			if !toolReachable(request.Tools, name) {
 				t.Errorf("running Core missing tool %s", name)
 				emitResponse(w, "Unavailable.", true)
 				return
@@ -127,7 +121,7 @@ func TestM2WorkArea(t *testing.T) {
 			results <- saved
 		}
 		emitResponse(w, "Recorded.", true)
-	}))
+	})))
 	defer server.Close()
 	h, bootstrap := installedConversationHarness(t, server.URL)
 	seedCodingFixture(t, h, bootstrap)

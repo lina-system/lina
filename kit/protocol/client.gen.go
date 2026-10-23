@@ -577,6 +577,7 @@ type PlanResponse struct {
 	Revision    *string      `json:"revision,omitempty"`
 }
 type Progress struct {
+	CardOrder   *[]string      `json:"card_order,omitempty"`
 	Lanes       *[]WorkerLane  `json:"lanes,omitempty"`
 	NextCursor  *string        `json:"next_cursor,omitempty"`
 	Rows        *[]ProgressRow `json:"rows,omitempty"`
@@ -615,6 +616,7 @@ type ProgressRow struct {
 	Ref  string       `json:"ref"`
 }
 type ProgressUpdate struct {
+	CardOrder   *[]string       `json:"card_order,omitempty"`
 	Rows        *[]ProgressRow  `json:"rows,omitempty"`
 	Stream      *StreamMetadata `json:"stream,omitempty"`
 	Text        *string         `json:"text,omitempty"`
@@ -4109,6 +4111,12 @@ const clientSchemaJSON = `{
         "next_cursor": {
           "type": "string"
         },
+        "card_order": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "rows": {
           "type": "array",
           "items": {
@@ -4137,6 +4145,12 @@ const clientSchemaJSON = `{
         },
         "text": {
           "type": "string"
+        },
+        "card_order": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         },
         "rows": {
           "type": "array",

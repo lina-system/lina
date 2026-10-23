@@ -46,7 +46,7 @@ func TestM2TimersInstalledCore(t *testing.T) {
 	saved := make(chan timers.Timer, 1)
 	results := make(chan coreexec.RecordReceipt, 4)
 	anchor := time.Now().UTC().Add(-24 * time.Hour).Truncate(time.Minute)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		var req struct {
 			Input []json.RawMessage
@@ -181,7 +181,7 @@ func TestM2TimersInstalledCore(t *testing.T) {
 				emitResponse(w, "Unexpected action.", true)
 			}
 		}
-	}))
+	})))
 	defer server.Close()
 	h, start := installedConversationHarness(t, server.URL)
 	core := start(true)

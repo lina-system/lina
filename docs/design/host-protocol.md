@@ -674,9 +674,14 @@ a connection time or a local countdown. A finish is supplied only for a complete
 work verdict, not merely an idle worker. Work cards, live conversation workers and
 independent background runs contribute rows without duplicating the same task.
 Core orders cards needing the person first, then running, then other waiting or
-unobserved work, then done. Clients preserve that order and count only the cards
-they fold or omit. These fields are additive in client 1.0; old clients ignore them
-and new clients accept their absence.
+unobserved work, then done. The optional `card_order` array in `progress` and
+`progress_update` carries the opaque refs of all non-goal rows in that order,
+with ties retaining overview order. The shared `rows` keep goals immediately
+before their children with their original depth. Clients use `card_order` only
+for flat cards and count only the cards they fold or omit. Without it, cards
+follow row order; unknown or repeated refs are ignored, and any unlisted cards
+follow in row order. These fields are additive in client 1.0; old clients ignore
+them and new clients accept their absence.
 
 A `progress_update` replaces the overview atomically, retaining the normal topic
 cursor and snapshot/replay behavior. A changed full waiting list advances this

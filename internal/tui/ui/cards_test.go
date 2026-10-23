@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -27,9 +28,19 @@ func cardModel(t *testing.T) *shellModel {
 	c := state.Card{ID: "approval", Epoch: "1", Revision: 1, Token: "revision", Kind: protocol.KindApprovalRequest, Agent: "Agent", Summary: "Send", Targets: []state.CardField{{Name: "recipient", Value: "recipient@example.invalid"}}, Choices: []protocol.ApprovalChoice{protocol.ApprovalChoiceOnce, protocol.ApprovalChoiceDeny}}
 	m.content, _ = state.Reduce(m.content, state.PutCard{Card: c})
 	m.content, _ = state.Reduce(m.content, state.OpenCard{ID: c.ID})
-	m.View()
+	displayCard(t, m)
 	return m
 }
+
+// Model tests use the same successful-output boundary as the connection owner.
+func displayCard(t *testing.T, m *shellModel) {
+	t.Helper()
+	d := &display{interactive: true, output: io.Discard, styles: NewStyles(Options{Profile: TrueColor})}
+	if err := d.showShell(m); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCardPressOnlySeparateConfirmAndEscape(t *testing.T) {
 	m := cardModel(t)
 	for _, event := range []term.KeyEvent{term.Repeat, term.Release} {
@@ -234,6 +245,7 @@ func TestDecisionOverlayOwnsKeysAboveExistingComposer(t *testing.T) {
 	m.events = true
 	m.content, _ = state.Reduce(m.content, state.EditDraft{Draft: state.Draft{Text: "unsent draft"}})
 	m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
+	displayCard(t, m)
 	if m.content.CardView.ID != "approval" || m.View().Cursor != nil {
 		t.Fatal("card failed to own focus")
 	}

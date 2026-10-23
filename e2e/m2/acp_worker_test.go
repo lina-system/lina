@@ -189,6 +189,36 @@ func TestACPWorkersThroughRunningCore(t *testing.T) {
 						return
 					}
 				}
+				// Exercise the real on-demand declaration path before a deferred
+				// dispatch or interrupt. The native declaration assertion below
+				// still checks that Core actually loaded the requested tool.
+				declared := func(name string) bool {
+					for _, tool := range req.Tools {
+						if tool.Name == name {
+							return true
+						}
+					}
+					return false
+				}
+				needed := ""
+				if requestCount.Load() == 0 {
+					needed = "dispatch_work"
+				}
+				if cancelRequested.Load() && !cancelSent.Load() {
+					needed = "worker_interrupt"
+				}
+				if needed != "" && !declared(needed) {
+					if !declared("load_tools") {
+						select {
+						case fixtureErrors <- fmt.Errorf("no declaration or loader for %s", needed):
+						default:
+						}
+						emitResponse(w, "Worker unavailable.", true)
+						return
+					}
+					emitPersonaCall(w, "load-"+needed, "load_tools", map[string]any{"tools": []string{needed}})
+					return
+				}
 				if cancelRequested.Load() && cancelSent.CompareAndSwap(false, true) {
 					emitPersonaCall(w, "cancel", "worker_interrupt", cancelArgs.Load())
 					return

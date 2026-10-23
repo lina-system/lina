@@ -151,7 +151,7 @@ func (a *Adapter) body(r provider.Request) ([]byte, error) {
 	// chooses its default effort. Effort controls only the reasoning override.
 	body := map[string]any{"model": r.Model, "store": false, "stream": true,
 		"include": []string{"reasoning.encrypted_content"}}
-	if r.Instructions != "" && r.Purpose != provider.Auxiliary && allowed("instructions") {
+	if r.Instructions != "" && allowed("instructions") {
 		body["instructions"] = r.Instructions
 	}
 	if r.Effort != "" {
@@ -161,7 +161,7 @@ func (a *Adapter) body(r provider.Request) ([]byte, error) {
 		body["reasoning"] = map[string]string{"effort": string(r.Effort)}
 	}
 	if len(r.Tools) > 0 {
-		if r.Purpose == provider.Auxiliary || !allowed("tools") {
+		if !allowed("tools") {
 			return reject()
 		}
 		for _, tool := range r.Tools {
