@@ -28,7 +28,10 @@ func (d *display) write(text string) error {
 	if d.rawOutput {
 		text = strings.ReplaceAll(text, "\n", "\r\n")
 	}
-	_, err := io.WriteString(d.output, text)
+	n, err := io.WriteString(d.output, text)
+	if err == nil && n != len(text) {
+		err = io.ErrShortWrite
+	}
 	return err
 }
 

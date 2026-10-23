@@ -337,8 +337,16 @@ func (s *Service) execute(ctx context.Context, r Record) {
 				}
 				return
 			}
-			generation := r.Attempt
-			run = work.Run{ID: fmt.Sprintf("%s:%d", r.ID, generation), TaskID: r.ID, Generation: generation, Worker: r.Worker, NodeID: s.cfg.Main}
+			run, err = s.nextRun(ctx, r)
+			if err != nil {
+				return
+			}
+			// Readiness refusals consume chooser attempts without starting a run.
+			// Persist the actual generation so restart observes the same run.
+			r.Attempt = run.Generation
+			if err = s.save(ctx, r); err != nil {
+				return
+			}
 			if r.Recoveries > 0 && s.cfg.AuthorizeRecovery != nil {
 				allowed, err := s.cfg.AuthorizeRecovery(ctx, r)
 				if err != nil || !allowed {
@@ -358,6 +366,16 @@ func (s *Service) execute(ctx context.Context, r Record) {
 			admitted, settled = true, false
 			thread, err = s.startAttempt(ctx, l, adapter, r, run.ID, workdir)
 			if err != nil {
+				if errors.Is(err, worker.ErrNeedsSignIn) {
+					if closeAdapter(ctx) != nil {
+						return
+					}
+					admitted, settled = false, true
+					if err = s.needsSignIn(ctx, &r, adapter); err != nil {
+						return
+					}
+					continue
+				}
 				admitted = true
 				closeAdapter(context.Background())
 				return
@@ -396,6 +414,10 @@ func (s *Service) execute(ctx context.Context, r Record) {
 			}
 			observed := false
 			var progressSequence uint64
+			if err = s.reportReadiness(ctx, r, run, &progressSequence); err != nil {
+				unbind()
+				return
+			}
 			var progress progressBuffer
 			progressTick := time.NewTicker(progressInterval)
 			defer progressTick.Stop()
@@ -494,6 +516,10 @@ func (s *Service) execute(ctx context.Context, r Record) {
 			}
 			break
 		}
+	}
+	if thread.ID == "" {
+		// All attempted sessions refused readiness; no turn or receipt exists.
+		return
 	}
 	// Claude and Antigravity synthesize connection failures without a result.
 	// Codex alone also reports observed provider failures as "connection";

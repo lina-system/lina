@@ -1135,6 +1135,22 @@ Delegation to a worker is ready when:
 
 When a check fails, delegation is reported as unsupported with its cause. An ACP worker that answers `session/new` with the authentication error (-32000) is reported as needs sign-in, not as broken. Conversation readiness is separate and can pass while worker readiness fails.
 
+The ACP adapter returns a typed needs-sign-in failure only for that explicit
+`session/new` refusal, after closing the partial client and its process. It
+sends no prompt and retains no remote error text or account data. A protocol
+or connection failure is not evidence of an authentication refusal.
+Dispatch retains the refused worker, probed version and `needs_sign_in` code
+in its record without creating a worker run or receipt. After confirmed child
+cleanup, it uses the existing eligibility block and chooser to try the next
+worker within the existing two-worker limit. The replacement's work card also
+reports which worker needs sign-in. Explicit worker selection stays explicit;
+other start failures remain uncertain and are not retried.
+
+`TestCursorReadinessThroughRunningCore` installs Core with synthetic Cursor and
+Gemini executables. It covers Cursor's unverified CLI version, the sign-in
+refusal and fallback, and a signed-in Cursor task producing a committed file
+and adapter-derived receipt. A live Cursor account test remains opt-in.
+
 The optional local graph scheduler also checks its initial quota observation
 before releasing recovered tasks. A failed or unanswered quota read disables
 that scheduler, with a fifteen-second deadline for the read. A successful read

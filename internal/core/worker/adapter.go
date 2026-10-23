@@ -102,6 +102,11 @@ type Input struct{ Text string }
 // It must never describe a transport failure or an ambiguous remote outcome.
 var ErrInputRefused = errors.New("worker input refused before dispatch")
 
+// ErrNeedsSignIn is a definitive authentication refusal during Start, before
+// any prompt or task input. The adapter must close and join its partial child
+// before returning it. Other start errors can have unknown effects.
+var ErrNeedsSignIn = errors.New("worker needs sign-in")
+
 type Reason string
 
 const (

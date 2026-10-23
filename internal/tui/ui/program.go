@@ -488,7 +488,22 @@ func runShellCommand(command tea.Cmd, handle func(tea.Msg) error) error {
 }
 
 func (d *display) showShell(model *shellModel) error {
+	if err := d.showShellFrame(model); err != nil {
+		return err
+	}
+	if d.interactive && model.cardDisplayed() {
+		// The final target page has now reached the terminal. Publish the
+		// confirmation hint without requiring another key or status update.
+		return d.showShellFrame(model)
+	}
+	return nil
+}
+
+func (d *display) showShellFrame(model *shellModel) error {
 	if d.renderer != nil {
+		if c, ok := model.content.CurrentCard(); ok && c.Kind == protocol.KindApprovalRequest {
+			return d.renderer.showFlushed(model.View(), tea.WindowSizeMsg{Width: model.size.Width, Height: model.size.Height})
+		}
 		return d.renderer.show(model.View(), tea.WindowSizeMsg{Width: model.size.Width, Height: model.size.Height})
 	}
 	if d.interactive && d.styles.options.Profile != Monochrome {
@@ -521,7 +536,7 @@ func (d *display) showShell(model *shellModel) error {
 	if err := d.showStatus(model.status); err != nil {
 		return err
 	}
-	if !d.interactive || len(model.content.Blocks) == 0 && !model.hasComposer() && !model.accounts.open && model.quitHint() == "" && d.frame == "" {
+	if !d.interactive || len(model.content.Blocks) == 0 && !model.hasComposer() && !model.accounts.open && model.content.CardView.ID == "" && model.quitHint() == "" && d.frame == "" {
 		return nil
 	}
 	// Plain terminals already received each notice once above. Transcript
