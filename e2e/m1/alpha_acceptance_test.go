@@ -71,6 +71,7 @@ func alphaScreen(t *testing.T, h *harness, terminal *terminal, stage string, rea
 	defer cancel()
 	snapshot, err := terminal.screen.Wait(ctx, func(s tuiterm.Snapshot) bool { return ready(screenText(s)) })
 	if err != nil {
+		alphaSaveScreen(t, terminal, stage+"-failed", snapshot, forbidden)
 		t.Fatalf("alpha screen %s did not arrive: %v", stage, err)
 	}
 	alphaSaveScreen(t, terminal, stage, snapshot, forbidden)

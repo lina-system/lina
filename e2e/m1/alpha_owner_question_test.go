@@ -6,10 +6,49 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 )
+
+func alphaQuestionText(text string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		// Markdown quote prefixes are presentation syntax. An operator inside
+		// a sentence is content and must still be visible in the capture.
+		for {
+			trimmed := strings.TrimLeft(line, " ")
+			if len(line)-len(trimmed) > 3 || !strings.HasPrefix(trimmed, ">") {
+				break
+			}
+			line = strings.TrimPrefix(strings.TrimPrefix(trimmed, ">"), " ")
+		}
+		lines[i] = line
+	}
+	plain := strings.NewReplacer("*", "", "_", "", "`", "", "#", "").Replace(strings.Join(lines, "\n"))
+	return strings.Join(strings.Fields(plain), "")
+}
+
+func TestAlphaQuestionScreenPreservesQuotedContent(t *testing.T) {
+	intro, question, continuation := "The worker is waiting.", "Which name should it use?", "Your answer will reach that worker."
+	for _, marker := range []string{"> ", ">> ", "  > > "} {
+		source := intro + "\n\n" + marker + "**" + question + "**\n\n" + continuation
+		// A wrapped TUI paragraph contains the same content without Markdown
+		// delimiters. Removing the question must still fail the observation.
+		displayed := "● " + intro + "\n\n" + question + "\n\n" + continuation
+		if !strings.Contains(alphaQuestionText(displayed), alphaQuestionText(source)) {
+			t.Errorf("visible quoted question was rejected for marker %q", marker)
+		}
+		missing := "● " + intro + "\n\n" + continuation
+		if strings.Contains(alphaQuestionText(missing), alphaQuestionText(source)) {
+			t.Error("a missing question was accepted")
+		}
+	}
+	if alphaQuestionText("Is 3 > 2?") == alphaQuestionText("Is 3 2?") {
+		t.Error("literal comparison inside a sentence was erased")
+	}
+}
 
 // A worker's durable question alone does not prove LINA delivered it. An
 // unrelated acknowledgement or a provisional response must not release the
