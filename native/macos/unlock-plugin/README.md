@@ -105,12 +105,17 @@ enough to compile and verify locally but is not shippable. With
 `LINA_NOTARY_PROFILE` set it also submits the bundle to notarytool and staples
 the ticket.
 
-The core's tests run in the Linux foundation check. The bundle build and the
-signature check run on an Apple silicon hosted macOS runner in
-[`macos-unlock-plugin.yml`](../../../.github/workflows/macos-unlock-plugin.yml),
-which runs `build.sh`, then `codesign --verify --strict` and `lipo -archs` on the
-result, and keeps the bundle as a build artifact. The job's step summary holds
-the compiler, signature and architecture output for the reviewed head.
+The core's tests run in the Linux foundation check, which also parses
+`build.sh` with `bash -n`: the script only ever runs on macOS, so nothing else
+would catch a shell error in it.
+
+The bundle build and the signature check run on an Apple silicon hosted macOS
+runner in
+[`macos-unlock-plugin.yml`](../../../.github/workflows/macos-unlock-plugin.yml).
+The job runs `build.sh`, then `codesign --verify --strict`, `codesign -dvvv` and
+`lipo -archs` on the result, fails when the hardened runtime flag is absent or
+when a Developer ID signing run has the wrong team, and keeps the bundle as a
+build artifact. Its step summary holds that output for the head it ran on.
 
 That job signs with LINA's Developer ID identity when the repository carries the
 certificate and the hardened runtime flag either way. The identity comes from
