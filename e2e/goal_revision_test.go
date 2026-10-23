@@ -26,6 +26,9 @@ type revisionWorld struct {
 	*codeWorld
 	authorizationChecks, approvalSignals int
 	granted                              bool
+	unstartedExecuted, siblingRevised    chan struct{}
+	receipts                             map[string]work.Observation
+	observations                         int
 }
 
 func (w *revisionWorld) Authorize(ctx context.Context, a work.Action) error {
@@ -43,8 +46,35 @@ func (w *revisionWorld) Authorize(ctx context.Context, a work.Action) error {
 	return nil
 }
 
-func (w *revisionWorld) Execute(ctx context.Context, a work.Action) (work.Observation, error) {
+func (w *revisionWorld) Observe(_ context.Context, a work.Action) (work.Observation, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	// Reopen the fixture's completed operation receipt, just as the installed
+	// driver reads a worker result after a goal revision. Never repeat the effect.
+	o, ok := w.receipts[a.ID]
+	if !ok {
+		return work.Observation{}, fmt.Errorf("missing operation receipt: %s", a.ID)
+	}
+	w.observations++
+	return o, nil
+}
+
+func (w *revisionWorld) Execute(ctx context.Context, a work.Action) (o work.Observation, err error) {
+	defer func() {
+		if err == nil {
+			w.mu.Lock()
+			w.receipts[a.ID] = o
+			w.mu.Unlock()
+		}
+	}()
 	if a.Kind == work.PlanGoal {
+		if a.TaskID == "right" {
+			select {
+			case <-w.unstartedExecuted:
+			case <-ctx.Done():
+				return work.Observation{}, ctx.Err()
+			}
+		}
 		w.mu.Lock()
 		w.calls = append(w.calls, a)
 		w.mu.Unlock()
@@ -52,7 +82,17 @@ func (w *revisionWorld) Execute(ctx context.Context, a work.Action) (work.Observ
 		repair.Repairs, repair.DependsOn = a.TaskID, []string{a.TaskID}
 		return work.Observation{Status: work.OutcomeSucceeded, Tasks: []work.Task{repair}}, nil
 	}
-	o, err := w.codeWorld.Execute(ctx, a)
+	o, err = w.codeWorld.Execute(ctx, a)
+	if err == nil && a.Kind == work.Assign && a.TaskID == "unstarted" {
+		// Hold this completed worker receipt across the sibling's revision.
+		// Core must observe its artifact under the new inputs, without rerunning it.
+		close(w.unstartedExecuted)
+		select {
+		case <-w.siblingRevised:
+		case <-ctx.Done():
+			return work.Observation{}, ctx.Err()
+		}
+	}
 	if err == nil && a.Kind == work.RunQA {
 		w.mu.Lock()
 		defer w.mu.Unlock()
@@ -116,7 +156,7 @@ func TestM2RunToDoneAfterQueuedSiblingRevision(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "system/core/main.json"), []byte(`{"main_id":"revision-host"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	w := &revisionWorld{codeWorld: &codeWorld{heads: map[string]string{}, merges: map[string]string{}, qa: map[string]bool{}, root: root}}
+	w := &revisionWorld{codeWorld: &codeWorld{heads: map[string]string{}, merges: map[string]string{}, qa: map[string]bool{}, root: root}, unstartedExecuted: make(chan struct{}), siblingRevised: make(chan struct{}), receipts: map[string]work.Observation{}}
 	service := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, _ *http.Request) {
 		w.mu.Lock()
 		defer w.mu.Unlock()
@@ -203,6 +243,15 @@ func TestM2RunToDoneAfterQueuedSiblingRevision(t *testing.T) {
 			return err
 		},
 		Changed: func(ctx context.Context, s work.State) error {
+			for _, g := range s.Goals {
+				if len(g.Tasks) == 5 {
+					select {
+					case <-w.siblingRevised:
+					default:
+						close(w.siblingRevised)
+					}
+				}
+			}
 			for _, a := range s.Actions {
 				if a.Kind == work.Deploy && a.State == "awaiting_authorization" {
 					w.mu.Lock()
@@ -247,7 +296,11 @@ func TestM2RunToDoneAfterQueuedSiblingRevision(t *testing.T) {
 		joined = true
 		t.Fatalf("Core stopped before completion: %v", err)
 	case <-ctx.Done():
-		t.Fatalf("revision stranded a sibling action (interleaving prepared=%t)", prepared.Load())
+		inspect, stop := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+		defer stop()
+		state, err := engine.Snapshot(inspect)
+		raw, _ := json.Marshal(state)
+		t.Fatalf("revision stranded a sibling action (interleaving prepared=%t): snapshot=%s error=%v", prepared.Load(), raw, err)
 	}
 	if len(g.Tasks) != 5 || len(g.Checks) != 13 || !g.Deployment.Passed || !g.Verification.Passed {
 		t.Fatalf("goal closed without repair/lifecycle evidence: %+v", g)
@@ -274,6 +327,9 @@ func TestM2RunToDoneAfterQueuedSiblingRevision(t *testing.T) {
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.observations == 0 {
+		t.Fatal("the revised goal did not observe the completed sibling effect")
+	}
 	deployments := 0
 	for _, a := range w.calls {
 		if a.Kind == work.Deploy {

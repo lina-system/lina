@@ -97,8 +97,7 @@ func (r *conversationRuntime) goalTaskReceipt(ctx context.Context, s goal.State,
 		if a.GoalID != g.ID || a.TaskID != t.ID || a.Attempt != t.Attempt || a.Superseded || a.State != "finished" || a.InputVersion == nil {
 			continue
 		}
-		switch a.Kind {
-		case goal.Assign, goal.Resume, goal.RepairConflict, goal.RepairQA, goal.ContinueWorker:
+		if goal.WorkerAction(a.Kind) {
 			var receipt goal.Observation
 			if json.Unmarshal(a.Receipt, &receipt) != nil || receipt.Status != goal.OutcomeSucceeded || !receipt.EffectsSettled || receipt.Head != t.Head {
 				continue
@@ -115,7 +114,6 @@ func (r *conversationRuntime) goalTaskReceipt(ctx context.Context, s goal.State,
 				return record, goal.ErrNeedsPerson
 			}
 			return record, nil
-		case goal.InspectPR, goal.Merge, goal.RunQA, goal.Deploy, goal.Verify, goal.Observe, goal.Decide, goal.PlanGoal, goal.CheckCriterion:
 		}
 	}
 	return dispatch.Record{}, goal.ErrNeedsPerson
