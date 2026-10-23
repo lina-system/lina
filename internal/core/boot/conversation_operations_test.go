@@ -190,6 +190,7 @@ func TestConversationRegistrationSurface(t *testing.T) {
 				protocol.KindChannelRequest: "channels", protocol.KindAgentTalkGet: "exchanges", protocol.KindAgentTalkExpand: "exchanges",
 				protocol.KindAgentRequest: "agents", protocol.KindMemoryRequest: "memory",
 				protocol.KindPlanRequest: "planning", protocol.KindProgressDigestGet: "progress",
+				protocol.KindMiniAppRequest: "mini_apps",
 			}
 			additional := map[protocol.Kind][]protocol.Capability{
 				protocol.KindAgentRequest: {{Name: "growth", Version: "1.0"}},
