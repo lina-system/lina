@@ -581,7 +581,7 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 			return err
 		}
 		stale := staleInputs(g, a)
-		if stale && a.State == "finished" && !a.Superseded {
+		if stale && a.State == "finished" && (!a.Superseded || a.RetirementReconciled && len(a.Receipt) != 0) {
 			// This outcome was already accepted. Journal the late report without
 			// replacing its settlement or reopening it for another observation.
 			return nil
@@ -608,7 +608,7 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 					}
 				}
 			}
-			if hasExternalEffect(a) && !currentActionTarget(g, a) && !effectSettled(a, o) {
+			if !a.RetirementReconciled && hasExternalEffect(a) && !currentActionTarget(g, a) && !effectSettled(a, o) {
 				// A different target cannot inherit this effect. Retain its
 				// lease and bounded observation wait until its outcome is known.
 				a.State = "unknown"
@@ -734,8 +734,28 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 			}
 		case OutcomeSucceeded:
 			a.State = "finished"
+			correcting := a.Kind == PlanGoal && g.DefinitionPending
+			var changed map[string]bool
+			if correcting {
+				changed = correctedTaskChanges(g.Tasks, o.Tasks)
+				pending, err := correctionEffectsPending(v, g.ID)
+				if err != nil {
+					return err
+				}
+				if pending {
+					// A late old receipt may have scheduled a fresh read since
+					// this manager was dispatched. Use the same revision barrier.
+					a.Superseded = true
+					return put(v, "action", id, a)
+				}
+			}
 			if err = applySuccess(&g, t, a, o, e.cfg.Now().Unix()); err != nil {
 				return err
+			}
+			if correcting && !g.DefinitionPending {
+				if err = retireCorrectedTaskReceipts(v, g.ID, changed); err != nil {
+					return err
+				}
 			}
 		default:
 			return ErrInvalid
@@ -822,7 +842,6 @@ func applySuccess(g *Goal, t *Task, a Action, o Observation, now int64) error {
 		if t == nil || o.PR.Head == "" {
 			return ErrInvalid
 		}
-		t.Head = o.PR.Head
 		t.PR = o.PR
 		t.PR.ObservedAt = now
 	case Merge:

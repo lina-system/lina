@@ -430,11 +430,15 @@ without undo. Replay and view aliases of an already adopted source/action
 remain pending without another record, undo handle or notice, across restart.
 A new independent commitment may add the same action once no open equivalent
 remains. Three rejected additions in a recognized class retains later items of
-that class as candidates.
+that class as candidates. Automatic additions allocate an unused record path;
+an existing file never blocks a valid candidate or gets overwritten by it.
 
 Recurring completion and advancement append one `record_occurrence` work-ledger
 event in the same checkpoint as the saved version. The event names the old and
 new occurrences and the reason; it creates neither a new task nor a worker card.
+Completion after the recurrence is exhausted still records one completion
+event without scheduling another occurrence. Repeating the saved write or
+editing a completed record does not record completion again.
 Editing only the current next occurrence preserves the original recurrence
 anchor. Changing the recurrence rule starts the future series at its new next
 occurrence. Core's counters remain inaccessible to tool arguments.
@@ -1077,9 +1081,13 @@ the operational switch's directory gate. Multiple paths for one external task
 share its task binding while retaining every path for later adoption checks.
 Rollback fences a dispatch even though its new task id differs from the imported
 task id. A refused preflight releases its reservations after process cleanup;
-an attempted start or missing terminal result retains them across restart. A
-confirmed terminal result releases them only after process cleanup and the
-durable task finish. Shutdown alone is not terminal evidence.
+an attempted start or missing terminal result retains them across restart.
+Every synthesized Claude or Antigravity connection failure, including malformed
+messages, mismatched sessions and invalid results, leaves the execution unknown
+without a completion receipt. Codex transport loss does the same; an observed
+terminal Codex provider connection failure still settles the execution. A
+confirmed terminal result releases reservations only after process cleanup and
+the durable task finish. Shutdown alone is not terminal evidence.
 
 After a successful result, Core compares protected refs and changed files with
 the definition, then reads the branch's PR through fixed `ghclient` calls. Delivery
@@ -1273,6 +1281,8 @@ A goal is in one of these states. The person sees them only through the progress
 **The liveness rule.** A goal that is not final always has at least one of these: a task or background run in progress, a named wait with a wake condition and a deadline, a recovery in progress, or a row in "Waiting for me". Core checks the rule after every transition it commits for the goal. A goal that has none is orphaned. Core then runs the derivation of the next action at once. When the derivation finds nothing to do, Core gives the manager session one turn that names the gap: the open criteria and the fact that nothing will move them. When that turn records no task, wait or decision either, the goal becomes `blocked` with a row that says in plain words that LINA could not find a way to finish it and what is missing. A goal never ends silently and never sits idle with open criteria.
 
 **Revision.** A correction by the person, a decision, or a late answer to a question whose deadline passed, is a new revision of the goal. Tasks whose inputs did not change keep their results. Tasks whose inputs changed, and the tasks that depend on them, are derived again. A criterion that was met stays met only while its evidence still refers to the current target.
+
+**Corrected-plan reconciliation.** The manager response to a corrected definition contains the complete task list for that canonical record revision, without add/update/remove patch fields. Core reconciles by task ID: the same ID with unchanged instructions, repository, base, write area and dependencies keeps its state and results; a changed definition replaces that task and re-derives it and its transitive dependents. New IDs are added. IDs absent from the complete list are retired and never re-run. Undispatched actions retire without spending attempts; already-claimed actions retain their reservations until Core reads their outcome and are never dispatched again. Their outcomes remain receipted against the old definition and cannot advance a replacement task with the same ID. No correction deletes branches, files or artifacts. The existing effect barrier is also checked when a manager response arrives, so a newly scheduled receipt read cannot be overtaken by a plan. The existing terminal-outcome fence preserves accepted task results; delayed reports cannot bind old effects to a reused task ID. Worker attempt numbers remain monotonic for each goal/task ID across replacement and removal followed by reintroduction; undispatched cancellations spend no attempt. Changed tasks retire their settled receipts through the existing supersession fence. PR inspection, merge and merge-evidence checks select only an accepted, non-superseded worker receipt for the current attempt, following an accepted observation back to its original effect. Unchanged tasks retain their accepted receipt across definition revisions.
 
 The conversation can correct an admitted goal through `revise_code_goal`, using
 its goal id and the latest canonical record revision. Admission returns the
@@ -1846,8 +1856,12 @@ identical import retry remains idempotent. Reservations survive loss of
 observations and restart; a terminal worker turn releases its reservation, even
 when the worker reports a provider connection failure. A synthesized
 `connection_lost` finish is not terminal evidence and retains the reservation.
-Input refused locally before sending a request preserves the existing turn's
-binding, or releases a new idle-turn reservation that never ran. Ambiguous
+An initial worker start definitively refused before dispatch releases its
+reservation after successful process cleanup, even when the calling context
+has been cancelled. An ambiguous start or failed cleanup retains it. Input
+refused locally before sending a request, including steering context cancellation,
+preserves the existing turn's binding, or releases a new idle-turn reservation
+that never ran. Ambiguous
 input outcomes remain reserved as unknown. Every accepted worker input
 rebinds its reservation to the resulting turn before an older completion can
 release it, including a turn that became idle during steering. An unreadable
