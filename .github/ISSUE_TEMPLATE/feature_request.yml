@@ -21,7 +21,7 @@ body:
     attributes:
       label: Done when
       value: |
-        - [ ] 
+        - [ ]
     validations:
       required: true
   - type: textarea

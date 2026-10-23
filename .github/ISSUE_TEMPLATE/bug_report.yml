@@ -22,6 +22,6 @@ body:
       label: Done when
       description: The checks that prove it is fixed.
       value: |
-        - [ ] 
+        - [ ]
     validations:
       required: true
