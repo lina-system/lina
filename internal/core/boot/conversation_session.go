@@ -187,6 +187,11 @@ func (s *turnState) resolveCompactionItems(ctx context.Context, items []provider
 			candidates = append(candidates, compaction.Record{ID: id, Item: projected[0], User: e.SpeakerKind == guard.Person})
 		}
 	}
+	// The loop request carries the model projection, so result calls arrive
+	// condensed. Project the candidates the same way before matching.
+	for i := range candidates {
+		candidates[i].Item = assemble.CondenseResultCall(candidates[i].Item)
+	}
 	var resolved []compaction.Record
 	for _, item := range items {
 		found := false

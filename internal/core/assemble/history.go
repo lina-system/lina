@@ -46,7 +46,7 @@ func History(events []ledger.Event, conversation, agent string, partner ...strin
 			if !validProviderItem(raw, e.Origin.Entry) {
 				return nil, ErrHistory
 			}
-			items = append(items, raw)
+			items = append(items, CondenseResultCall(raw))
 			continue
 		}
 		if evidence, external := m.Evidence(); external {
