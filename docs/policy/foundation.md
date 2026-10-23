@@ -300,6 +300,14 @@ history in 60 seconds. Core connection and process waits retain their existing
 Neither scenario retries failed observations or substitutes a sleep for a
 protocol or process-completion barrier.
 
+Manual work-turn acceptance waits follow the exact client input's durable turn.
+A failed or aborted turn fails the scenario immediately with its input id, turn
+id and state; it cannot later complete. An input with no turn yet, or an active
+turn, retains the scenario deadline. `TestM2QueuedWorkTurnTerminal` exercises
+these states in canon, including completed turns belonging to other inputs,
+sources and conversations. This prevents a known terminal failure from consuming
+the package budget while unrelated worker scenarios wait for execution slots.
+
 Verification runs in a clean worktree without credentials: no Git or GitHub credentials, tokens, account secrets, personal data, or production services, and no write access to any remote. Actual model and provider calls and subjective quality evaluations run separately in explicitly authorized environments.
 
 [Integration](integration.md) decides how a passing candidate joins `dev`. A passing `foundation` does not authorize a [release](releases.md) or a deployment.
