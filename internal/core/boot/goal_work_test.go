@@ -107,7 +107,7 @@ func TestDispatchWorkToolUsesBoundOwnerAndRejectsExecutionClaims(t *testing.T) {
 		return loop.Result{Code: loop.OK, Output: []byte(`{"existing":true}`)}
 	}}}
 	declarations, err := r.prepareGoalWorkTools("turn", nil, tools)
-	if err != nil || len(declarations) != 2 {
+	if err != nil || len(declarations) != 4 {
 		t.Fatalf("work tool not composed: %v %v", declarations, err)
 	}
 	if result := tools["dispatch_work"].Execute(t.Context(), provider.ToolCall{}); string(result.Output) != `{"existing":true}` {

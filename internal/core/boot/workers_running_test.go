@@ -121,6 +121,8 @@ func TestConversationWorkerRunningStates(t *testing.T) {
 		{name: "active", state: worker.Active, want: "in_progress"},
 		{name: "approval", state: worker.Waiting, pending: []worker.Request{{Method: "item/commandExecution/requestApproval"}}, want: "needs_input"},
 		{name: "question", state: worker.Waiting, pending: []worker.Request{{Method: "item/tool/requestUserInput"}}, want: "needs_input"},
+		{name: "ACP permission", state: worker.Waiting, pending: []worker.Request{{Method: "session/request_permission"}}, want: "needs_input"},
+		{name: "Core tool", state: worker.Waiting, pending: []worker.Request{{Method: "item/tool/call"}}, want: "unknown"},
 		{name: "unexplained wait", state: worker.Waiting, want: "unknown"},
 		{name: "unknown", state: worker.Unknown, want: "unknown"},
 		{name: "snapshot unavailable", err: errors.New("worker unavailable"), want: "unknown"},
@@ -145,6 +147,18 @@ func TestConversationWorkerRunningStates(t *testing.T) {
 			}
 			if len(snapshot.Entries) != 1 {
 				t.Fatalf("running entries: %+v", snapshot)
+			}
+			progress, err := r.ownerSnapshot(t.Context())
+			if err != nil || progress.Rows == nil || len(*progress.Rows) != 1 {
+				t.Fatalf("progress rows: %+v %v", progress.Rows, err)
+			}
+			line := (*progress.Rows)[0].Line
+			state := ""
+			if line.State != nil {
+				state = string(*line.State)
+			}
+			if state != tc.want {
+				t.Errorf("progress state: %q, want %s", state, tc.want)
 			}
 			row := snapshot.Entries[0]
 			if row.Ref != (runs.ListRef{Source: "session", ID: "fixture"}) || row.View.State != tc.want || row.View.AgentName != agent.Name {

@@ -15,6 +15,7 @@ import (
 )
 
 type textPager struct {
+	result                   *resultPager
 	board                    *boardView
 	records                  *recordPager
 	recordID                 string
@@ -80,12 +81,21 @@ func (m *shellModel) refreshOpenCard() {
 	}
 	for _, card := range m.resultCards() {
 		if card.ID == p.cardID {
+			if p.result != nil {
+				if card.ResultID != p.result.request.ResultID || card.ResultRevision != string(*p.result.request.Revision) {
+					*p = textPager{}
+				}
+				return
+			}
 			p.text = sanitize.Display(resultText(card))
 			if p.followEnd {
 				p.offset = len(m.pagerLines())
 			}
 			return
 		}
+	}
+	if p.result != nil {
+		*p = textPager{}
 	}
 }
 
@@ -234,7 +244,7 @@ func (m *shellModel) pagerRows() []render.StyledRow {
 	}
 	config := render.Config{Width: max(1, width)}
 	stream := m.resultStreams[m.conversation.pager.cardID].stream
-	if stream == nil {
+	if stream == nil || m.conversation.pager.result != nil {
 		stream = render.NewStream("pager", config, nil)
 		stream.Seal(1, m.pagerText())
 	}

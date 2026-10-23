@@ -4,6 +4,7 @@ package codex
 import (
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/kit/provider"
@@ -20,6 +21,17 @@ func (s *Session) notification(raw []byte) error {
 	event := worker.Event{Thread: s.snapshot.Thread}
 	var thread, turn string
 	switch {
+	case n.ThreadNameUpdated != nil:
+		thread, turn = n.ThreadNameUpdated.Params.ThreadId, s.snapshot.Thread.TurnID
+		event.Kind = worker.ProgressEvent
+		event.Progress = &worker.Progress{Phase: "doing"}
+	case n.TurnPlanUpdated != nil:
+		thread, turn = n.TurnPlanUpdated.Params.ThreadId, n.TurnPlanUpdated.Params.TurnId
+		if turn != s.snapshot.Thread.TurnID || s.finished[turn] {
+			return nil
+		}
+		event.Kind = worker.ProgressEvent
+		event.Progress = &worker.Progress{Phase: "doing"}
 	case n.TurnStarted != nil:
 		p := n.TurnStarted.Params
 		thread, turn = p.ThreadId, p.Turn.ID
@@ -132,17 +144,23 @@ func (s *Session) notification(raw []byte) error {
 		return s.resolved(n.ServerRequestResolved.Params)
 	case n.ThreadStatusChanged != nil:
 		p := n.ThreadStatusChanged.Params
-		if p.ThreadId == s.snapshot.Thread.ID {
-			s.snapshot.State = threadState(p.Status)
-			s.revision++
+		if p.ThreadId != s.snapshot.Thread.ID {
+			return nil
 		}
-		return nil
+		s.snapshot.State = threadState(p.Status)
+		thread, turn = p.ThreadId, s.snapshot.Thread.TurnID
+		event.Kind = worker.ProgressEvent
+		event.Progress = &worker.Progress{Phase: "status"}
 	default:
 		return nil // Unknown optional notifications never establish completion.
 	}
 	if thread == "" || thread != s.snapshot.Thread.ID {
 		return nil
 	}
+	s.doing.Record("codex", raw, time.Now())
+	if turn == "" {
+		return nil
+	} // Metadata before the first turn is carried by its first event.
 	s.revision++
 	event.Thread = s.snapshot.Thread
 	event.Thread.TurnID = turn
@@ -151,6 +169,16 @@ func (s *Session) notification(raw []byte) error {
 
 // publish is called only by the reader with mu held.
 func (s *Session) publish(event worker.Event) error {
+	if event.Thread.ID == s.snapshot.Thread.ID && event.Thread.TurnID == s.snapshot.Thread.TurnID {
+		if s.snapshot.State == worker.Active || s.snapshot.State == worker.Idle {
+			s.doing.Busy(s.snapshot.State == worker.Active, time.Now())
+		}
+		observation := s.doing.Snapshot()
+		if !observation.Since.IsZero() {
+			event.Doing = &observation
+			s.snapshot.Doing = &observation
+		}
+	}
 	if err := event.Validate(); err != nil {
 		return err
 	}

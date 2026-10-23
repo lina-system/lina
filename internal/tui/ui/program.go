@@ -43,6 +43,7 @@ type shellClient interface {
 	Control(context.Context, protocol.Payload) (string, error)
 	Progress(context.Context, protocol.ProgressGet) (string, error)
 	Waiting(context.Context, protocol.WaitingGet) (string, error)
+	Result(context.Context, protocol.ResultGet) (string, error)
 	Running(context.Context, protocol.RunningGet) (string, error)
 	Record(context.Context, protocol.RecordRequest) (string, error)
 	Memory(context.Context, protocol.MemoryRequest) (string, error)

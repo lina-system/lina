@@ -18,7 +18,7 @@ import (
 // descriptions cannot change group membership or grant authority.
 func declarationGroup(name string) string {
 	switch name {
-	case "prepare_work", "retain_work_result", "report_work_result", "land_work_result", "dispatch_work", "dispatch_code_goal", "revise_code_goal", "worker_start", "worker_input", "worker_interrupt", "worker_snapshot", "worker_quota", "worker_read_file":
+	case "prepare_work", "retain_work_result", "report_work_result", "land_work_result", "dispatch_work", "dispatch_code_goal", "revise_code_goal", "submit_step_graph", "read_step_graph", "worker_start", "worker_input", "worker_interrupt", "worker_snapshot", "worker_quota", "worker_read_file":
 		return "work"
 	case "create_timer", "timer_status", "cancel_timer":
 		return "calendar"

@@ -4,6 +4,7 @@ package boot
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -51,6 +52,33 @@ func TestPlanningInNewConversationView(t *testing.T) {
 	preview, err := view.planResults.Read(t.Context(), scope, result.ReadRequest{ID: card.ID})
 	if err != nil || preview.ID != card.ID || preview.Revision != card.Revision {
 		t.Fatalf("new conversation cannot read its draft: %+v %v", preview, err)
+	}
+	view.topics, err = clientsrv.NewTopics("1", clientsrv.TopicOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(view.topics.Close)
+	if err := view.seedHistory(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	start, sub, err := view.topics.Subscribe("conversation:"+view.conversation, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sub.Close()
+	found := false
+	for _, item := range start.Snapshot.Items {
+		if item.Key != card.ID {
+			continue
+		}
+		var restored protocol.Result
+		if err := json.Unmarshal(item.Data, &restored); err != nil {
+			t.Fatal(err)
+		}
+		found = reflect.DeepEqual(restored, planWire(preview))
+	}
+	if !found {
+		t.Fatal("managed draft lost its confirmation body or identity on restore")
 	}
 	if head, err := r.records.Head(t.Context()); err != nil || head != root.Revision {
 		t.Fatalf("new conversation published unconfirmed plan records: %q %v", head, err)

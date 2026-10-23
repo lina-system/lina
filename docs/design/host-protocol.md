@@ -456,6 +456,15 @@ A result has these fields:
 | `revised_by` | The person id or the agent id that made this revision |
 | `provenance` | `{ agent_id, conversation_id, turn_id, task_id }`. `task_id` is null unless delegated work (a task or a background run) produced the result; it then holds that task's or run's id. |
 
+Authored conversation cards may carry the first text page with `next`, a UTF-8
+byte offset. The `conversation` capability's `result_get` reads the retained
+text with `result_id`, `conversation_id`, `revision` and optional `offset`
+(default zero). Each `result` response carries at most 64 KiB of text and an
+optional `next`; absence of `next` means the text is complete. Pages never split
+a code point. Core binds reads to the connected person and an existing agent's
+main conversation. A changed revision returns `stale_revision`, so a reader
+cannot join pages from different revisions. These reads create no model turn.
+
 The sources a body relies on travel in the envelope's `source_refs`. The `summary` field exists on every result; the `summary` type is a result whose body is an outline.
 
 The closed list of types for version 1.0:
