@@ -94,11 +94,75 @@ A live turn today recalls nothing by topic: no ledger search, no expand, no `rec
 - **Machine.** Linux x86-64, 24 threads, Go 1.27.3, with other jobs running (load about 7). Times show scale and shape, not exact budgets. Sizes and row counts are exact.
 - **Not measured.** Recall quality on the parity set: #849 has not published its question set yet (see [Recall quality](#recall-quality)).
 
-The harness becomes the committed store benchmark (#867), so later steps report against the same corpus. The private sample and scratch databases were deleted after the run.
+The committed [store benchmark](../../internal/core/storebench/README.md) (#867)
+provides a reproducible generated corpus and an opt-in reader for offline Hermes
+LCM snapshots. Its generated baseline below is separate from the private sample
+above. The private sample and scratch databases were deleted after the original run.
 
 ## Measurements
 
 All numbers below were observed on the sample and machine in [Method](#method).
+
+### Committed benchmark baseline
+
+Observed on schema 52, based on `33aa9346`, with the committed benchmark's default
+seed 851 and 100 turns. Command: `go test -bench . ./internal/core/storebench`.
+One measured fresh corpus; Linux amd64, Go 1.27.3, Intel Core Ultra 7 265KF,
+20 logical CPUs, other jobs running. Times are observations, not CI budgets.
+The following subsection alone uses generated data; the later measurements
+retain the original private sample.
+
+The generated corpus has 1,830 events, 100 person events, 476 events containing
+Hangul (26.01%), 4,011,575 text bytes (2,192 per event), 27 large bodies,
+100 distinct memory items and 2 summary nodes (14,604 bytes). The length buckets
+approximate the published mean and large-body share; the private length
+histogram is unknown. Unique generated person statements do not reproduce the
+private sample's repeated-statement revision amplification. This is a fixed
+workload for comparing schema steps, not a recall-quality or full-history estimate.
+
+| Allocation before forget | Bytes |
+| --- | ---: |
+| Database, including free pages | 21,614,592 |
+| Search trees, including index text and postings | 14,282,752 |
+| Free pages | 0 |
+| Large event bodies outside the database | 884,827 |
+
+| Main `dbstat` trees | Bytes |
+| --- | ---: |
+| `conv_event` | 4,177,920 |
+| `ledger_search_data` | 6,778,880 |
+| `ledger_search_text` | 5,062,656 |
+| `ledger_search_bigram` | 475,136 |
+| Its primary-key index | 548,864 |
+| `ledger_search_bigram_event` | 421,888 |
+| `memory_item` | 942,080 |
+| `memory_revision` | 479,232 |
+| `memory_search_data` | 376,832 |
+| `memory_search_text` | 286,720 |
+| `sum_node` | 20,480 |
+| `sum_cover` | 4,096 |
+
+All writes and queries use Core's pinned embedded SQLite. Because that engine
+omits `dbstat`, Python's standard SQLite reads allocation metadata from the same
+committed scratch database in read-only mode. The JSON report lists bytes for
+every B-tree. `index_bytes` sums trees whose owning table contains `search`,
+`fts` or `bigram`; future index changes must keep that classification current.
+
+| Path | Samples | p50 (ms) | p95 (ms) | max (ms) |
+| --- | ---: | ---: | ---: | ---: |
+| `ledger.AdmitBatch`, one turn | 100 | 19.922 | 51.330 | 126.104 |
+| Memory `Remember` | 100 | 3.008 | 9.927 | 23.006 |
+| Summary `Publish` | 2 | 2.277 | 2.698 | 2.698 |
+| Ledger search, limit 12 | 60 | 16.180 | 27.215 | 27.982 |
+| Memory recall, limit 12 | 60 | 6.233 | 10.316 | 12.948 |
+| `recall_person`, depth 0 | 60 | 6.397 | 29.401 | 33.726 |
+| `retract.Forget`, distinct items | 3 | 241.698 | 353.361 | 353.361 |
+
+Queries use 48 literal substrings and 12 Hangul pairs from generated person
+events. The three paths returned 720, 637 and 637 total hits, respectively.
+All three forgotten items became invisible. No generated or private message,
+summary or query text is retained in this note. Later steps should run the same
+command and corpus settings and report their own before/after numbers.
 
 ### Index size
 
