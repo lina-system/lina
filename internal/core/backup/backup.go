@@ -201,6 +201,9 @@ func Create(ctx context.Context, cfg Config) (result Manifest, err error) {
 			return result, err
 		}
 	}
+	if err = copyOperatorJournal(ctx, source, dest, boundary, &m.Files, &m.Directories); err != nil {
+		return result, err
+	}
 	if err = boundary("copied"); err != nil {
 		return result, err
 	}

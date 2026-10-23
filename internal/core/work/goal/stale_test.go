@@ -109,7 +109,7 @@ func TestStaleCriterionResultDoesNotStopEngine(t *testing.T) {
 			t.Fatalf("old check was not retired with its observation: %+v", a)
 		}
 		retired = retired || a.ID == old.ID
-		if a.Kind == PlanGoal && a.State == "finished" && a.GoalRevision == s.Goals[0].Revision {
+		if a.Kind == PlanGoal && a.State == "finished" && a.RecordRevision == s.Goals[0].RecordRevision {
 			plans++
 		}
 	}
