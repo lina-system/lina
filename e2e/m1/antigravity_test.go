@@ -31,6 +31,7 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 	var scenario struct {
 		Cases []struct {
 			Name, Expected, Preset, Choice string
+			Bridge                         bool `json:"bridge"`
 			LegacyAdmission                bool `json:"legacy_admission"`
 			HostCapacity                   bool `json:"host_capacity"`
 			Omit                           string
@@ -172,7 +173,11 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 					if scenario.Worker == "claude" {
 						args["worker"] = scenario.Worker
 					}
-					emitPersonaCall(w, "worker-start", "dispatch_work", args)
+					if test.Bridge {
+						emitPersonaCall(w, "worker-start", "call_tool", map[string]any{"name": "dispatch_work", "arguments": args})
+					} else {
+						emitPersonaCall(w, "worker-start", "dispatch_work", args)
+					}
 				} else {
 					code := test.ToolCode
 					if code == "" {

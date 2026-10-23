@@ -18,7 +18,7 @@ import (
 
 func TestToolGroupsOrderReachabilityAndReplay(t *testing.T) {
 	all := []provider.ToolDecl{
-		[]byte(`{"name":"create_timer"}`), []byte(`{"name":"calculate"}`), []byte(`{"name":"worker_start"}`), []byte(`{"name":"web_search"}`), []byte(`{"name":"observe_health"}`),
+		[]byte(`{"name":"create_timer"}`), []byte(`{"name":"calculate"}`), []byte(`{"name":"worker_start"}`), []byte(`{"name":"web_search"}`), []byte(`{"name":"web_extract"}`), []byte(`{"name":"observe_health"}`),
 	}
 	names := func(ds []provider.ToolDecl) []string {
 		var n []string
@@ -32,7 +32,7 @@ func TestToolGroupsOrderReachabilityAndReplay(t *testing.T) {
 		first  []string
 	}{
 		{`["work","device"]`, []string{"calculate", "load_tools", "call_tool", "worker_start", "observe_health"}},
-		{`["calendar","web_research"]`, []string{"calculate", "load_tools", "call_tool", "create_timer", "web_search"}},
+		{`["calendar","web_research"]`, []string{"calculate", "load_tools", "call_tool", "create_timer", "web_search", "web_extract"}},
 		{`[]`, []string{"calculate", "load_tools", "call_tool"}},
 	} {
 		t.Run(tt.groups, func(t *testing.T) {
@@ -41,7 +41,7 @@ func TestToolGroupsOrderReachabilityAndReplay(t *testing.T) {
 			if !reflect.DeepEqual(names(c.first), tt.first) {
 				t.Fatal(names(c.first))
 			}
-			call := provider.ToolCall{ID: "load", Name: "load_tools", Arguments: `{"tools":["web_search","worker_start","observe_health","create_timer","calculate"]}`}
+			call := provider.ToolCall{ID: "load", Name: "load_tools", Arguments: `{"tools":["web_search","worker_start","observe_health","create_timer","calculate","web_extract"]}`}
 			if _, err := bindings[call.Name].Validate(call); err != nil {
 				t.Fatal(err)
 			}
