@@ -3,6 +3,7 @@ package turn
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 
@@ -79,13 +80,32 @@ func (b *turnBudget) configure(cfg loop.Config, report bool) loop.Config {
 		}
 		return nil
 	}
-	blocked := func(name string) bool {
+	handoff := func(name string) bool { return name == "start_run" || name == "dispatch_work" }
+	blocked := func(c provider.ToolCall) bool {
 		level := b.gauge.Snapshot().Level
-		return level == budget.Hard || level == budget.Soft && name != "start_run" && name != "dispatch_work"
+		if level == budget.Hard {
+			return true
+		}
+		if level != budget.Soft || handoff(c.Name) {
+			return false
+		}
+		// A name in model JSON is not enough: the installed bridge must validate
+		// the deferred binding and its arguments. Execution still checks authority.
+		if c.Name == "call_tool" {
+			var nested struct {
+				Name string `json:"name"`
+			}
+			bridge := cfg.Tools[c.Name]
+			if json.Unmarshal([]byte(c.Arguments), &nested) == nil && handoff(nested.Name) && bridge.Validate != nil && bridge.Execute != nil {
+				_, err := bridge.Validate(c)
+				return err != nil
+			}
+		}
+		return true
 	}
 	admit := cfg.Admit
 	cfg.Admit = func(ctx context.Context, c provider.ToolCall) *loop.Result {
-		if blocked(c.Name) {
+		if blocked(c) {
 			return &loop.Result{ID: c.ID, Code: BudgetReached}
 		}
 		if admit != nil {

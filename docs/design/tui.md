@@ -1602,7 +1602,12 @@ operation is shown locally and never becomes a model prompt.
   `/agents rename <id> <name>` keeps the id; `/agents delete <id>` uses the
   existing agent trash transition and ends its bindings. Selecting another
   agent drops the old conversation display and subscriptions, while Core keeps
-  independent lanes. Deleting the selected agent selects the first remaining
+  independent lanes. Question cards belong to the conversation id supplied by
+  Core. The conversation and its transcript pager show them only in that
+  conversation, including resolved cards replayed to a new client. Pending
+  questions remain available across agents in Waiting for me and through F6;
+  the asking agent's display name never determines conversation membership.
+  Deleting the selected agent selects the first remaining
   list entry when that deletion is the client's own action; a selection lost
   across reconnect instead requires an explicit choice (T-05). An empty list
   stays available for creation. Initialization never
