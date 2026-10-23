@@ -6,9 +6,6 @@ package proc
 
 import (
 	"encoding/binary"
-	"errors"
-	"fmt"
-	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -68,6 +65,21 @@ func processIdentityOf(pid int) (processIdentity, error) {
 	}, nil
 }
 
+// processStateOf reads one process's identity and status.
+func processStateOf(pid int) (processState, bool) {
+	identity, err := processIdentityOf(pid)
+	if err != nil {
+		return processState{}, false
+	}
+	state := processState{processIdentity: identity}
+	var buf [procShortBSDInfoSize]byte
+	if err := procInfo(procInfoCallPIDInfo, uint32(pid), procPIDShortBSDInfo, 1, buf[:]); err != nil {
+		return processState{}, false
+	}
+	state.zombie = binary.LittleEndian.Uint32(buf[12:16]) == procStatusZombie
+	return state, true
+}
+
 // processStates reads the identity and zombie flag of every process. Both
 // flavors skip the same-user check, so an unprivileged owner still sees a
 // descendant that changed its credentials.
@@ -77,20 +89,11 @@ func processStates() ([]processState, error) {
 		return nil, err
 	}
 	states := make([]processState, 0, len(pids))
-	var buf [procShortBSDInfoSize]byte
 	for _, pid := range pids {
-		identity, err := processIdentityOf(pid)
-		if err != nil {
+		state, ok := processStateOf(pid)
+		if !ok {
 			continue // exited between the listing and the read
 		}
-		state := processState{processIdentity: identity}
-		if err := procInfo(procInfoCallPIDInfo, uint32(pid), procPIDShortBSDInfo, 1, buf[:]); err != nil {
-			if errors.Is(err, syscall.ESRCH) {
-				continue // exited between the identity and status reads
-			}
-			return nil, fmt.Errorf("read process status %d: %w", pid, err)
-		}
-		state.zombie = binary.LittleEndian.Uint32(buf[12:16]) == procStatusZombie
 		states = append(states, state)
 	}
 	return states, nil

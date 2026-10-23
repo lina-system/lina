@@ -166,7 +166,16 @@ func killDescendants(w *watcher, root processIdentity) error {
 			if err != nil || current.uniqueID != state.uniqueID {
 				continue
 			}
-			if err := syscall.Kill(state.pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+			err = syscall.Kill(state.pid, syscall.SIGKILL)
+			if errors.Is(err, syscall.EPERM) {
+				// The process can exit between the scan and the signal, and
+				// Darwin answers a zombie with EPERM. Continue only when the
+				// same identity has positively ended.
+				if ended(current) {
+					continue
+				}
+			}
+			if err != nil && !errors.Is(err, syscall.ESRCH) {
 				return fmt.Errorf("kill descendant %d: %w", state.pid, err)
 			}
 			live = true
@@ -179,6 +188,17 @@ func killDescendants(w *watcher, root processIdentity) error {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+// ended reports whether a process record positively shows that the process has
+// exited: unreadable, gone, or a zombie.
+func ended(identity processIdentity) bool {
+	current, err := processIdentityOf(identity.pid)
+	if err != nil || current.uniqueID != identity.uniqueID {
+		return true // gone, or the pid now belongs to another process
+	}
+	state, ok := processStateOf(identity.pid)
+	return !ok || state.zombie
 }
 
 // killTokenProcesses kills same-user processes that inherited the exact owner
