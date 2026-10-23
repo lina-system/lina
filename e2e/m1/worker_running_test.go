@@ -12,8 +12,10 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/thisisjun786/lina/e2e/fixture"
 	"github.com/thisisjun786/lina/internal/design"
 	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
+	"github.com/thisisjun786/lina/kit/loop"
 )
 
 // A conversation delegation remains visible after the persona's turn ends.
@@ -40,6 +42,7 @@ func TestM2ConversationWorkerProgressInstalledCore(t *testing.T) {
 func testConversationWorkerViews(t *testing.T, progress, failure bool, glyphs string) {
 	workdir := t.TempDir()
 	var calls atomic.Int32
+	var restartRefused atomic.Bool
 	var control map[string]any
 	server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct{ Input, Tools []json.RawMessage }
@@ -50,10 +53,27 @@ func testConversationWorkerViews(t *testing.T, progress, failure bool, glyphs st
 		if scriptedCodingManager(t, w, req) {
 			return
 		}
-		if respondWorkerCompletion(w, req.Input, "") {
-			if failure && len(req.Tools) != 0 {
-				t.Error("failed worker reaction can start more work")
+		if _, completion := workerCompletionInput(req.Input); completion {
+			if failure {
+				// Declarations remain cacheable. Prove the reaction cannot
+				// execute a restart, including through the deferred-tool bridge.
+				var item struct {
+					Type, Output string
+					CallID       string `json:"call_id"`
+				}
+				_ = json.Unmarshal(fixture.LastInput(req.Input), &item)
+				if item.Type != "function_call_output" {
+					emitPersonaCall(w, "refused-restart", "worker_start", map[string]any{"workdir": workdir, "task_packet": "Unauthorized restart from failure notice"})
+					return
+				}
+				var result loop.Result
+				if item.CallID != "refused-restart" || json.Unmarshal([]byte(item.Output), &result) != nil || result.Code != loop.Unavailable {
+					t.Errorf("failure reaction did not refuse execution: %s", item.Output)
+				} else {
+					restartRefused.Store(true)
+				}
 			}
+			respondWorkerCompletion(w, req.Input, "")
 			return
 		}
 		switch calls.Add(1) {
@@ -182,6 +202,9 @@ func testConversationWorkerViews(t *testing.T, progress, failure bool, glyphs st
 		waitComposerReady(t, h, terminal)
 		h.keys(terminal, "\x10")
 		waitWorkCard("")
+	}
+	if failure && !restartRefused.Load() {
+		t.Error("failure reaction execution boundary was not checked")
 	}
 	if calls.Load() != 4 {
 		t.Fatalf("worker rounds=%d", calls.Load())

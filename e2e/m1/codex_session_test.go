@@ -506,17 +506,25 @@ func TestM2InstalledCodexLive(t *testing.T) {
 	h.stopCore(core)
 }
 
-// Existing adapter journeys explicitly handle the additional persona turns.
-func respondWorkerCompletion(w http.ResponseWriter, inputs []json.RawMessage, result string) bool {
+func workerCompletionInput(inputs []json.RawMessage) (string, bool) {
 	// Tool follow-ups retain the same current input; packet evidence after it
 	// is not another worker outcome or a new request.
 	var item struct{ Role, Content string }
 	if json.Unmarshal(fixture.CurrentInput(inputs), &item) != nil || item.Role != "user" || !strings.Contains(item.Content, `<external_evidence origin="worker-session:`) {
+		return "", false
+	}
+	return item.Content, true
+}
+
+// Existing adapter journeys explicitly handle the additional persona turns.
+func respondWorkerCompletion(w http.ResponseWriter, inputs []json.RawMessage, result string) bool {
+	content, ok := workerCompletionInput(inputs)
+	if !ok {
 		return false
 	}
 	if result == "" {
 		emitResponse(w, "Worker finished.", true)
-	} else if strings.Contains(item.Content, result) {
+	} else if strings.Contains(content, result) {
 		emitResponse(w, "Worker outcome: "+result, true)
 	} else {
 		emitResponse(w, "Worker stopped.", true)
