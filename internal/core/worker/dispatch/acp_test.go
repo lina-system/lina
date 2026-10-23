@@ -20,7 +20,7 @@ func TestACPWorkerRegistration(t *testing.T) {
 		}
 	}
 	t.Setenv("PATH", dir)
-	s := &Service{}
+	s := &Service{cfg: Config{Workers: InstalledACPFactories(Config{})}}
 	for _, name := range []string{"gemini", "cursor", "grok", "claude-acp"} {
 		if !s.WorkerAvailable(name) {
 			t.Errorf("installed ACP worker %s is not registered", name)
@@ -103,5 +103,24 @@ func TestACPProfilesAreAcceptedByDispatchTool(t *testing.T) {
 		if !slices.Contains(declaration.Parameters.Properties["worker"].Enum, name) {
 			t.Errorf("registered worker %s absent from tool schema", name)
 		}
+	}
+}
+
+func TestConfiguredWorkerFactoriesStayIsolatedFromHostDiscovery(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "gemini"), []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	s, err := Open(t.Context(), Config{DB: store(t), Workers: []Factory{{Name: "configured", Open: func(context.Context, lease.Lease) (worker.Adapter, func(context.Context) error, error) {
+		t.Error("empty queue opened a worker")
+		return nil, nil, nil
+	}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close(context.Background())
+	if len(s.cfg.Workers) != 1 || s.cfg.Workers[0].Name != "configured" || s.WorkerAvailable("gemini") {
+		t.Fatalf("explicit factories widened to host installations: %+v", s.cfg.Workers)
 	}
 }

@@ -141,7 +141,6 @@ func Open(ctx context.Context, cfg Config) (*Service, error) {
 	if len(s.cfg.Workers) == 0 && cfg.Binary != "" {
 		s.cfg.Workers = []Factory{AntigravityFactory(cfg)}
 	}
-	s.cfg.Workers = registerACP(s.cfg)
 	records, err := s.records(ctx)
 	if err != nil {
 		s.cancel()

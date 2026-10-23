@@ -31,8 +31,8 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 	binary, _ := proc.LookPath("agy")
 	codexBinary, _ := proc.LookPath("codex")
 	claude, _ := proc.LookPath("claude")
-	factories := dispatch.InstalledACPFactories(dispatch.Config{Environment: proc.WorkerEnvironment(), Epoch: r.epoch, Activities: r.activities})
-	if binary == "" && codexBinary == "" && claude == "" && len(factories) == 0 {
+	acpFactories := dispatch.InstalledACPFactories(dispatch.Config{Environment: proc.WorkerEnvironment(), Epoch: r.epoch, Activities: r.activities})
+	if binary == "" && codexBinary == "" && claude == "" && len(acpFactories) == 0 {
 		return nil
 	}
 	gh, err := proc.LookPath("gh")
@@ -47,12 +47,15 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	var factories []dispatch.Factory
 	if binary != "" {
 		factories = append(factories, dispatch.AntigravityFactory(dispatch.Config{Binary: binary, Environment: proc.WorkerEnvironment(), Epoch: r.epoch, Activities: r.activities}))
 	}
 	if codexBinary != "" {
 		factories = append(factories, dispatch.CodexFactory(codexBinary))
 	}
+	// Keep the established order when quota and choice rules are tied.
+	factories = append(factories, acpFactories...)
 	rules, err := dispatch.ReadRules(r.root)
 	if err != nil {
 		return err

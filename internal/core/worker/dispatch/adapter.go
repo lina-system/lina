@@ -31,11 +31,6 @@ func (s *Service) WorkerAvailable(name string) bool {
 			return true
 		}
 	}
-	for _, profile := range workeracp.Installed() {
-		if profile.Name == name {
-			return true
-		}
-	}
 	return name == "antigravity" && s.cfg.Binary != "" || name == "claude" && s.cfg.ClaudeBinary != ""
 }
 
@@ -55,12 +50,6 @@ func (s *Service) attempt(name string) (attempt, observation, error) {
 		}
 		a := claudecode.New(claudecode.Config{Binary: s.cfg.ClaudeBinary, Environment: s.cfg.Environment, Epoch: s.cfg.Epoch, Leaser: s.cfg.Activities})
 		return a, observeAdapter(a), nil
-	}
-	for _, profile := range workeracp.Installed() {
-		if profile.Name == name {
-			a := workeracp.New(workeracp.Config{Profile: profile, Environment: s.cfg.Environment, Epoch: s.cfg.Epoch, Leaser: s.cfg.Activities})
-			return a, observeAdapter(a), nil
-		}
 	}
 	return nil, nil, errors.New("worker unavailable")
 }
@@ -117,20 +106,6 @@ func InstalledACPFactories(cfg Config) []Factory {
 			a := workeracp.New(workeracp.Config{Profile: profile, Environment: cfg.Environment, Epoch: cfg.Epoch, Leaser: cfg.Activities})
 			return a, a.Close, nil
 		}})
-	}
-	return factories
-}
-
-func registerACP(cfg Config) []Factory {
-	factories := append([]Factory(nil), cfg.Workers...)
-	for _, installed := range InstalledACPFactories(cfg) {
-		present := false
-		for _, existing := range factories {
-			present = present || existing.Name == installed.Name
-		}
-		if !present {
-			factories = append(factories, installed)
-		}
 	}
 	return factories
 }
