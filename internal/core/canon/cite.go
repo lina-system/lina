@@ -82,6 +82,23 @@ func WriteEvidenceCitations(ctx context.Context, tx *Tx, kind, id string, revisi
 	if err != nil {
 		return err
 	}
+	// Quotes disappear from new records. An unchanged reference keeps its
+	// existing span when a later revision is written from those records.
+	old, err := citationRows(ctx, tx, `SELECT ordinal,target_kind,target_id,target_revision,span_start,span_end,precision,role FROM cite WHERE view_kind=? AND view_id=? AND dropped_revision IS NULL`, kind, id)
+	if err != nil {
+		return err
+	}
+	for i := range refs {
+		if refs[i].SpanStart.Valid {
+			continue
+		}
+		for _, c := range old {
+			if c.TargetKind == refs[i].TargetKind && c.TargetID == refs[i].TargetID && c.TargetRevision == refs[i].TargetRevision {
+				refs[i].SpanStart, refs[i].SpanEnd = c.SpanStart, c.SpanEnd
+				break
+			}
+		}
+	}
 	return ReplaceCitations(ctx, tx, kind, id, strconv.FormatInt(revision, 10), refs)
 }
 
@@ -98,4 +115,23 @@ func WriteSummaryCitations(ctx context.Context, tx *Tx, id string, revision int6
 func BriefCitationID(person, agent string) string {
 	raw, _ := json.Marshal([]string{person, agent})
 	return string(raw)
+}
+
+// CitationValue is transient. The tombstone contains identity and deletion
+// metadata only; its source content is never part of the projection.
+type CitationValue struct {
+	Quote     string
+	Status    string
+	Tombstone *CitationTombstone
+}
+type CitationTombstone struct {
+	Agent  string `json:"agent"`
+	Person string `json:"person"`
+	At     int64  `json:"at"`
+}
+
+func CitationsAt(ctx context.Context, tx *Tx, kind, id string, revision int64) ([]Citation, error) {
+	return citationRows(ctx, tx, `SELECT ordinal,target_kind,target_id,target_revision,span_start,span_end,precision,role FROM cite
+ WHERE view_kind=? AND view_id=? AND CAST(added_revision AS INTEGER)<=?
+ AND (dropped_revision IS NULL OR CAST(dropped_revision AS INTEGER)>?) ORDER BY ordinal`, kind, id, revision, revision)
 }

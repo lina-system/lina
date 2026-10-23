@@ -560,6 +560,12 @@ type ItemDone struct {
 	Stream   *StreamMetadata      `json:"stream,omitempty"`
 	Text     *string              `json:"text,omitempty"`
 }
+type MemoryEvidence struct {
+	Quote     *string          `json:"quote,omitempty"`
+	Reference string           `json:"reference"`
+	Status    *string          `json:"status,omitempty"`
+	Tombstone *MemoryTombstone `json:"tombstone,omitempty"`
+}
 
 // MemoryImportProgress: Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.
 type MemoryImportProgress struct {
@@ -584,12 +590,18 @@ type MemoryResult struct {
 	Operation *string          `json:"operation,omitempty"`
 }
 type MemorySummary struct {
-	Content  string      `json:"content"`
-	Evidence []string    `json:"evidence"`
-	Holder   string      `json:"holder"`
-	ItemID   string      `json:"item_id"`
-	Revision json.Number `json:"revision"`
-	Scope    string      `json:"scope"`
+	Content         string            `json:"content"`
+	Evidence        []string          `json:"evidence"`
+	EvidenceDetails *[]MemoryEvidence `json:"evidence_details,omitempty"`
+	Holder          string            `json:"holder"`
+	ItemID          string            `json:"item_id"`
+	Revision        json.Number       `json:"revision"`
+	Scope           string            `json:"scope"`
+}
+type MemoryTombstone struct {
+	Agent  string      `json:"agent"`
+	At     json.Number `json:"at"`
+	Person string      `json:"person"`
 }
 type MultiTaskControl struct {
 	Action         string       `json:"action"`
@@ -765,7 +777,9 @@ type ReplayRequest struct {
 	Candidates *[]ReplayCandidate `json:"candidates,omitempty"`
 	Effort     *string            `json:"effort,omitempty"`
 	Episode    *string            `json:"episode,omitempty"`
+	Fixture    *string            `json:"fixture,omitempty"`
 	Model      *string            `json:"model,omitempty"`
+	Provider   *string            `json:"provider,omitempty"`
 	TurnID     *string            `json:"turn_id,omitempty"`
 }
 type ReplayResult struct {
@@ -6270,6 +6284,12 @@ const clientSchemaJSON = `{
             "type": "string",
             "minLength": 1
           }
+        },
+        "evidence_details": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/memory_evidence"
+          }
         }
       },
       "additionalProperties": false,
@@ -6600,6 +6620,14 @@ const clientSchemaJSON = `{
     "replay_request": {
       "type": "object",
       "properties": {
+        "provider": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "fixture": {
+          "type": "string",
+          "maxLength": 524288
+        },
         "turn_id": {
           "type": "string",
           "maxLength": 512
@@ -7644,6 +7672,48 @@ const clientSchemaJSON = `{
         "label"
       ],
       "additionalProperties": false
+    },
+    "memory_evidence": {
+      "type": "object",
+      "properties": {
+        "reference": {
+          "type": "string",
+          "minLength": 1
+        },
+        "quote": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "tombstone": {
+          "$ref": "#/$defs/memory_tombstone"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "reference"
+      ]
+    },
+    "memory_tombstone": {
+      "type": "object",
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "person": {
+          "type": "string"
+        },
+        "at": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "agent",
+        "person",
+        "at"
+      ]
     },
     "a2a_profile": {
       "type": "object",

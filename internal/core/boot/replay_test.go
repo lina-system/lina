@@ -50,3 +50,19 @@ func TestReplayExportRoutesAuthorizedAgent(t *testing.T) {
 		})
 	}
 }
+
+func TestProviderReplayRefusesWithoutOptInAndForeignOwner(t *testing.T) {
+	r := controlRuntime(t)
+	name, fixture := "chatgpt", "{}"
+	for _, tc := range []struct {
+		person, optin string
+		code          protocol.ErrorCode
+	}{{r.person, "", protocol.ErrorMalformed}, {"foreign", "1", protocol.ErrorNotAuthorized}} {
+		t.Setenv("LINA_QA_REAL_MODEL", tc.optin)
+		_, err := r.Replay(t.Context(), clientsrv.Session{PersonID: tc.person}, protocol.ReplayRequest{Provider: &name, Fixture: &fixture})
+		var refused *clientsrv.OperationError
+		if !errors.As(err, &refused) || refused.Code != tc.code {
+			t.Fatalf("%v", err)
+		}
+	}
+}

@@ -103,6 +103,9 @@ func TestACPDecisionsThroughRunningCore(t *testing.T) {
 			env := []string{"PATH=" + bin, "HOME=" + root, "XDG_CONFIG_HOME=" + root, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0", "LANG=C", "LINA_ACP_FIXTURE=" + fixture, "LINA_ACP_CASE=" + mode, "LINA_ACP_WORKER=" + scenario.worker}
 			write(filepath.Join(bin, "systemctl"), "#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\ncase \"$2\" in show) printf 'not-found\\n';; daemon-reload|enable) exit 0;; *) exit 97;; esac\n", 0700)
 			bundle := makeInstallBundle(t, root, binary, nodeBinary)
+			if scenario.worker == "claude-acp" {
+				syntheticClaudeACPBundle(t, root, bundle, acpDecisionsScript)
+			}
 			setup := exec.CommandContext(ctx, binary, "install", "--state-root", state, "--unit-dir", filepath.Join(root, "units"), "--bundle", bundle)
 			setup.Env = env
 			if out, err := setup.CombinedOutput(); err != nil {
