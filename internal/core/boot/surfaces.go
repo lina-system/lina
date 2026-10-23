@@ -28,14 +28,18 @@ func (r *conversationRuntime) surfaceAction(ctx context.Context, session clients
 		return clientsrv.Result{}, malformedManagement()
 	}
 	var agent, conversation, sourceEvent string
+	var observedRevision int64
 	err = r.db.Read(ctx, func(tx *canon.Tx) error {
-		return tx.QueryRowContext(ctx, `SELECT agent,conversation,event_id FROM result_heads WHERE id=? AND person=?`, p.ResultID, session.PersonID).Scan(&agent, &conversation, &sourceEvent)
+		return tx.QueryRowContext(ctx, `SELECT agent,conversation,event_id,revision FROM result_heads WHERE id=? AND person=?`, p.ResultID, session.PersonID).Scan(&agent, &conversation, &sourceEvent, &observedRevision)
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return clientsrv.Result{}, outsideManagement()
 	}
 	if err != nil {
 		return clientsrv.Result{}, err
+	}
+	if observedRevision != revision {
+		return clientsrv.Result{}, &clientsrv.OperationError{Code: protocol.ErrorStaleRevision}
 	}
 	view := r
 	if r.router != nil {
