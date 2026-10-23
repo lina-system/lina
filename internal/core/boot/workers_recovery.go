@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -350,6 +351,7 @@ func (s *retainedWorker) Snapshot(context.Context, worker.Thread) (worker.Thread
 }
 
 func (e *workerSession) trackRecoveryRequest(id string, pending bool) error {
+	id = fmt.Sprintf("%d:%d:%s", e.thread.ProcessGeneration, e.thread.BindingEpoch, id)
 	e.recoveryMu.Lock()
 	defer e.recoveryMu.Unlock()
 	rec := e.recovery

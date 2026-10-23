@@ -72,3 +72,24 @@ func TestWorkerRecoveryBlocksInputWithUnsettledEffects(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkerRecoveryRequestResolutionCannotCrossBindings(t *testing.T) {
+	r := controlRuntime(t)
+	rec := recovery.Record{ID: "thread", Person: r.person, Agent: r.agent, Input: "input", Conversation: r.conversation, Thread: worker.Thread{ID: "thread", TurnID: "turn", TaskID: "task", ProcessGeneration: 1, BindingEpoch: 1}, State: "unknown"}
+	e := &workerSession{origin: r, thread: rec.Thread, recovery: rec}
+	if err := e.trackRecoveryRequest("request-1", true); err != nil {
+		t.Fatal(err)
+	}
+	oldRequestKey := e.requestKey("request-1")
+	e.thread.BindingEpoch++
+	if e.requestKey("request-1") == oldRequestKey {
+		t.Fatal("approval key reused a retired binding")
+	}
+	e.recovery.Thread = e.thread
+	if err := e.trackRecoveryRequest("request-1", false); err != nil {
+		t.Fatal(err)
+	}
+	if len(e.recovery.PendingRequests) != 1 {
+		t.Fatal("replacement process cleared an unobserved old request")
+	}
+}

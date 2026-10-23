@@ -15,7 +15,7 @@ import (
 )
 
 func (e *workerSession) requestKey(id string) string {
-	return fmt.Sprintf("worker-request:%d:%s:%s", e.thread.ProcessGeneration, e.thread.ID, id)
+	return fmt.Sprintf("worker-request:%d:%d:%s:%s", e.thread.ProcessGeneration, e.thread.BindingEpoch, e.thread.ID, id)
 }
 
 func (e *workerSession) requestApproval(event worker.Event) {
