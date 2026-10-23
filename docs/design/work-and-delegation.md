@@ -156,6 +156,15 @@ Core alone uses its explicit administrative command path to maintain the base
 refs and clean up assigned branches. This repository guard is not a worker
 plugin or OS confinement: workers use their own runtime setup, and a process
 running as the user can deliberately bypass a Git hook. Core never resets or cleans another task's checkout.
+Scheduler allocations from registered clones install this same guard and exact
+branch binding before starting the worker. The clone's remote and local base
+remain unchanged. Existing unrelated executable hooks or a custom hooks path
+refuse the allocation rather than being disabled; a guard failure is a known
+pre-dispatch failure. Core's fixed Git administration can still fetch the next
+landed base and create a dependent worktree under the shared guard.
+Scheduled workers publish to origin's URL directly: a named-remote push also
+updates local tracking refs, which remain protected. The target remote and
+assigned branch are unchanged, and publication never disables the guard.
 The installed-Core [headless work-area scenario](../../e2e/m2/work-area.json)
 allocates two real linked worktrees, rejects cross-task branch updates, deletion
 and renaming into a reserved branch, commits on each assigned branch, and retains
@@ -583,6 +592,8 @@ The manager is a prepared dev turn in the existing conversation engine. It recei
 
 For `worker_start`, manager admission runs before the worker execution registry, under the calling turn's cancellation lifecycle. Waiting for the shared manager lane and completing the manager turn do not consume the worker's 30-second start deadline. Core issues the start grant and records the worker effect only after admission succeeds, then rechecks the durable delegation before launch. Admission failure or cancellation creates no worker-start effect, so it cannot leave an unlaunched worker with an unknown outcome that blocks an identical retry. Once worker execution begins, the existing receipt and unknown-outcome rules still apply.
 
+`schedule_work` validates the graph before manager admission, then obtains the same durable dev binding and assignment judgment for every task before admitting the graph or starting a worker. A missing live dev identity is reported without a worker effect. The work cards name dev and its manager conversation as owner; the existing coding assignments retain the originating conversation and effect ceiling for delivery, refresh, stop controls, recovery, and conflict returns. Retrying an admitted definition reuses its judgment. Recovery requires that durable admission and a live dev owner; a legacy queued task without manager admission cannot start a worker.
+
 `dispatch_work` retains the asking conversation as the delivery destination and records dev as the work owner with the manager conversation. The installed worker owns code and its PR; Core observes the current PR head, checks, review and produced artifact receipts. The same manager conversation judges delivery against its retained definition. A manager's verified verdict is separate from merge or deployment. Missing evidence stays unverified. `worker_start` sessions also run under dev ownership and return questions, approvals and results through the originating conversation; their completion alone remains an unverified claim.
 
 Git work allocated with `prepare_work` has the same dev owner and manager binding; non-coding work keeps its original owner. The requesting conversation can retain its own delegated result through that recorded binding. For PR delivery, Core retains the exact observed base/head, sanitized change evidence and review metadata. A bounded or unavailable change observation cannot become a verified manager verdict. The return notice distinguishes the worker/PR observation from the manager's verdict and from a merge.
@@ -729,6 +740,15 @@ resets the reservation or the number of attempted workers.
 
 The worker owns its pull request to green. Inside the work thread it waits for CI and the review bots, fixes every CI failure and the P0 and P1 review findings once, and waits for the checks at the resulting head before reporting done. P2 and P3 findings are reported with the result and do not block the merge. The review and CI fix loop belongs to the worker's turn; it never goes through LINA Core as a round trip.
 
+In this repository, the PR foundation gate includes the applicable docs,
+automation, dependencies, build/analysis and unit checks. E2e runs after merge
+on every `dev` push and nightly; the `e2e` PR label opts into reached scenarios
+before merge. Post-merge test failures become deduplicated `qa` issues in the
+current milestone, with the tested head, first failing range and diagnostics.
+An explicit pass on a later head closes the matching finding. They do not block
+unrelated pull requests. The [foundation policy](../policy/foundation.md)
+defines this repository's selection and automated QA evidence.
+
 At merge the manager session checks the result against the work definition's done condition, scope and design reference, then asks Core to merge or close. It sends work back only when the result misses that definition, never to triage review findings or CI failures. The steps are in Judgment and delivery, and the only GitHub writes LINA Core makes on delegated work are merging and closing (see GitHub writes and merges).
 
 **Prose polish.** Once a worker has opened a pull request, a polish step runs beside the review and CI and never gates them. It rewrites only person-facing prose: the pull request body here, and likewise the issue bodies LINA drafts and release notes. Facts, code, paths and links stay unchanged, which LINA checks mechanically by comparing them before and after; when the check fails, or the polish fails, the original stays. Changes to UI copy get a polish suggestion attached to the pull request and are never committed automatically. The polish model is a provider setting: by default Argon through the person's Antigravity when they have it, and the step is skipped otherwise. It never blocks a merge.
@@ -754,6 +774,13 @@ The manager session splits work into tasks that one worker can finish as one pul
 ### Write areas
 
 - Every task declares a write area in its work definition. Two tasks whose write areas overlap are dependent: LINA Core orders them and never runs them together.
+- Graph admission is atomic. Missing dependencies, cycles, empty or invalid areas,
+  and unordered overlapping areas within one graph are refused before any task
+  is created. Area identity is the registered repository, shared across clones
+  and conversations. Relative globs support `*`, `?`, character classes and `**`
+  as a whole path component. A matched directory, including one matched by a
+  wildcard, includes its descendants. Intersection checks include files not yet created;
+  unrelated graphs with overlapping areas wait on the existing lease.
 - Goal dispatch compares repository-relative paths and glob intersections across all goals in the same repository. A matched directory includes its descendants, and `**` can cross directory boundaries. Different spellings of an overlapping area do not create separate leases; disjoint areas remain eligible in parallel.
 - LINA Core holds an area lease for each task from hand-off until the task has landed, is closed or is abandoned. The lease follows the liveness of the task's worker (see Liveness): a task judged abandoned frees its lease, and nothing else frees it earlier.
 - Hotspot files are shared resources: dependency manifests and lockfiles, generated code, registries and index files, changelogs, and any file that recent history shows many tasks changing. A task that needs a hotspot file takes the whole hotspot area, or the change moves into one dedicated task that the others depend on.
@@ -796,6 +823,31 @@ work ledger has not recorded. Unassigned tasks have no worker lane yet.
 - The manager session selects work and its order; the work engine reserves capacity, obtains Node bids and dispatches the recorded assignments. The one-coordinator rule of the Work engine holds: a worker is never used through its own team or coordinator feature.
 - When a task has landed, the work engine releases at once every task that was waiting only on it.
 - A task that cannot start has exactly one visible reason: a dependency, an area held by another task, a worker out of quota, or host capacity.
+- Graph admission checks the authenticated originating preset's worker-effect
+  ceiling before creating tasks. Each task retains its originating turn's
+  policy binding; startup recovery and conflict return recheck it before worker
+  effects. A restricted preset cannot gain worker authority through a relay.
+- The deterministic reason order is dependency (by task id), area holder (by task
+  id), worker quota, then host capacity. The running list and task Details use
+  that same reason. A terminal worker turn frees execution capacity, while its
+  area remains held until a Core-owned forge read confirms merged or closed.
+  An open/queued pull request, a receipt, or a successful merge request cannot
+  satisfy the dependency. Merge observation does not create a verified verdict.
+- Dispatch reservations and the single conflict-return claim precede worker
+  input in the canon ledger. Repeated wakes cannot duplicate either effect.
+  Recovery rebuilds reservations; an uncertain start or correction is retained
+  for reconciliation, never automatically repeated. Completion, new graph,
+  quota notification/reset and a refreshed forge observation release eligible
+  tasks. A five-minute reconciliation observes inactive pull requests for lost
+  signals; it does not perform a model call or a merge.
+- A known failure before worker dispatch settles that attempt as failed and
+  frees capacity and its area for other tasks in the same release event. It
+  neither lands the failed task nor replays setup after recovery; any prepared
+  worktree remains preserved. Errors after sending a start retain reservations
+  until the outcome is reconciled.
+  This also applies during startup recovery: readiness is established before
+  dispatch, and a recovered task's setup failure cannot disable delegation or
+  terminate another task that was started in the same release event.
 - When slots are free, the manager may start a dependent task as a stacked pull request on an open predecessor. It records the predecessor and its head as the task's base, and Core checks capacity and disjoint write-area leases before dispatch. The dependency remains: the dependent cannot land before the predecessor. The worker brings the stack onto the landed base and owns its resulting checks to green before the manager checks the delivery.
 
 ## Workers
@@ -1313,6 +1365,10 @@ Code-change work continues:
    Core durably claims each delivered repository/PR/head before the manager check, binding its task, generation and receipt. A second request for that head is refused, including after restart; a fix generation's new head has its own claim. Core evaluates GitHub merge preconditions, change-evidence availability and then the complete observed path list. A failing check blocks without a verified verdict or a finding. Missing or oversized change evidence finishes the claimed review as `blocked` with cause `change_evidence_unavailable`, without a verdict, findings or a model call; this takes precedence over a scope miss. With available evidence, an out-of-area path records a scope miss (`needs_changes`) without calling the model. The manager receives the observed diff and base-commit design text through the existing source-labeled handoff. Only a valid structured `coding_decision` can record a verdict and optional schema-validated findings; prose records neither. The result and work verdict commit together against the still-current receipt/head. A merge can read that recorded judgment without requesting another check.
 6. **Return a missed work definition.** Only when the result misses the work definition does the manager send work back through Core to the same worker, once, as a new execution generation, naming what was not met. An idle thread receives it with `turn/start`. The worker owns that generation's CI and review fixes too. After its receipt the manager checks the entire resulting head against the work definition, including its diff and write area, so new changes cannot bypass the done condition, scope or design reference; it starts no separate review or CI fix loop. A remaining gap blocks the task and closes the pull request with that reason, without a `verified` verdict, and is reported to the person, who can ask for a corrected work definition (see Messages and questions).
 7. **Merge or close.** When the manager judges the work definition met, Core records the `verified` verdict and merges that head through the merge slot only when the required checks hold at the head it last read, no P0 or P1 finding is open and the pre-merge safety rule of [product-families.md](product-families.md) holds. P2 and P3 findings are recorded with the result and do not block the merge. A worker that reports a remaining CI failure or P0 or P1 after its fix pass has not delivered green: the manager asks Core to close the pull request with that reason and record the task as blocked without a `verified` verdict, rather than returning review or CI work. The merge ends as an apply record (see GitHub writes and merges), and the task has landed when one read of GitHub shows the pull request merged (see Event-driven flow). Core then starts QA for that merge and delivers its result to the manager for follow-up judgment. Core also closes a pull request on the manager's decision, with its reason written on it, in the case of step 6 and when the task is cancelled.
+
+The one return preserves the task, work area, branch, original definition and worker. It carries only P0 and P1 finding records by their original ids alongside the missed definition; lower-priority records remain with the result. Core saves the return allowance before a new generation can start and checks the whole resulting head. Each generation retains separate artifact evidence. An old completion acknowledgement cannot replace the correction's state.
+
+Core saves a PR close intent with the receipt, head and reason before invoking GitHub. A confirmed close requires both the closed state and the saved reason in the PR comments; it leaves the task blocked with that reason and no verified verdict. After interruption Core observes the existing close and does not repeat it. Pending or missing CI/review evidence cannot be used as a residual failure. A confirmed merge is recorded as application before another task can claim the completed task's write area.
 
 Every message LINA Core sends to a work thread, and every result a work thread returns, passes through separate delivery layers: `transport_accepted`, `received`, `agreed`, `applied`, `verified`. Each layer is recorded with its own evidence, and no layer implies the next. Delivery layers are not effect states ([host-protocol.md](host-protocol.md)). A worker's background completion notice is never a delivery acknowledgement.
 
@@ -1881,7 +1937,8 @@ transactions read those copied observations and the canonical owner names.
 Rows are scoped to the requesting person and name the owner agent before
 the worker. An idle session leaves the list without asserting that the task is
 verified; a new active turn makes it visible again. Unknown observations stay
-unknown. These rows do not alter the task or background-run state mappings.
+unknown. Scheduled workers retain their durable task rows and do not also
+contribute session rows. These rows do not alter the task or background-run state mappings.
 
 - A row is one task, one background run or one conversation-started worker. It has one of three states. In progress: a worker (or a background sub-agent) is working on it, or its pull request is being operated on. Waiting: it is not running, with one visible reason: a dependency, an area held by another task, a worker out of quota, host capacity, CI pending, a question or decision for the person, or a pause. Landed: the task has landed (see Terms), or the background run has ended with its outcome.
 - The states map onto the work card states: working is in progress; waiting, paused and input needed are waiting; done is landed. A stalled or failed task shows its state word until it is dispatched again (see Stall and failure).
@@ -1889,6 +1946,13 @@ unknown. These rows do not alter the task or background-run state mappings.
 - A running count, such as "2 running, 1 waiting for you", shows in the conversation header or composer. It counts progress lines other than 목표 lines (see Progress line), by their state, so it grows with the 일 the person reads and not with the number of workers; the rows of this list are counted in the list itself.
 - A state change updates its row in place. It never opens a panel, moves focus, starts a message or interrupts a reply. A landing of one task of several is a row change and not a notice (see Notifications in [surfaces.md](surfaces.md)).
 - A landed row stays until the person has seen it, then it moves to history. Stopping works per row and for all rows ([surfaces.md](surfaces.md#running-list)).
+- For scheduled work, a stop durably closes the selected task or all tasks in
+  the authenticated person/conversation scope before active workers receive
+  interrupts. Queued cards can be stopped without a worker session. Completion,
+  quota changes, conflict observations and restart cannot dispatch a stopped
+  card. An active or uncertain execution keeps its area and capacity reservation
+  until termination is observed; a stop request does not assert a forge close,
+  a merge or successful delivery.
 - An agent exchange is not a row: it appears only in the agent talk log ([surfaces.md](surfaces.md#agent-talk-log)), and as a row of "Waiting for me" when the person is the decision owner.
 
 ## Observation, handover and discovery

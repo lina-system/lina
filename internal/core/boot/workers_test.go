@@ -262,6 +262,22 @@ func TestWorkerInterruptRequiresQuoteFromCurrentUserInput(t *testing.T) {
 	}
 }
 
+func TestScheduledSessionCannotBypassSchedulerWithOrdinaryInput(t *testing.T) {
+	owner := &conversationRuntime{person: "person", agent: "agent", conversation: "main:agent"}
+	probe := &workerProbe{snapshot: worker.ThreadSnapshot{Thread: worker.Thread{ID: "thread", TurnID: "turn", ProcessGeneration: 1, BindingEpoch: 1}, State: worker.Idle}}
+	entry := &workerSession{adapter: probe, origin: owner, thread: probe.snapshot.Thread, scheduled: true}
+	owner.workers = &workerRuntime{sessions: map[string]*workerSession{"thread": entry}}
+	args, _ := json.Marshal(workerArgs{Session: "thread", Turn: "turn", Generation: 1, Binding: 1, Text: "continue"})
+	in, err := workerSchema("worker_input", args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := owner.workerOperation(t.Context(), "worker_input", "turn", ledger.Event{}, in)
+	if err != nil || result.State != tools.Failed || probe.inputs != 0 {
+		t.Fatalf("scheduled task bypassed admission: %+v inputs=%d error=%v", result, probe.inputs, err)
+	}
+}
+
 func TestWorkerStartAcceptsSingleMethodSelection(t *testing.T) {
 	if _, err := workerSchema("worker_start", json.RawMessage(`{"workdir":"/tmp/task","task_packet":"Inspect fixture","kind":"post_merge_qa","skill":"qa"}`)); err != nil {
 		t.Fatal(err)

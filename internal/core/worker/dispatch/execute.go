@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -175,6 +176,19 @@ func (s *Service) execute(ctx context.Context, r Record) {
 	if err != nil {
 		return
 	}
+	priorProtected := r.Protected
+	r.Protected = map[string]string{}
+	for _, line := range strings.Split(protected, "\n") {
+		ref, head, ok := strings.Cut(line, " ")
+		if ok && strings.HasPrefix(ref, "refs/heads/") {
+			r.Protected[ref] = head
+		}
+	}
+	if (observing || r.ReturnReceipt != "") && !maps.Equal(priorProtected, r.Protected) {
+		r.Protected = priorProtected
+		r.Code = "protected_ref_changed"
+		return
+	}
 	if r.ParentRefs == "" {
 		if observing {
 			return
@@ -182,15 +196,6 @@ func (s *Service) execute(ctx context.Context, r Record) {
 		r.ParentRefs = protected
 	} else {
 		protected = r.ParentRefs
-	}
-	if r.Protected == nil {
-		r.Protected = map[string]string{}
-		for _, line := range strings.Split(protected, "\n") {
-			ref, head, ok := strings.Cut(line, " ")
-			if ok && strings.HasPrefix(ref, "refs/heads/") {
-				r.Protected[ref] = head
-			}
-		}
 	}
 	if err = s.save(ctx, r); err != nil {
 		return
@@ -517,6 +522,12 @@ func (s *Service) execute(ctx context.Context, r Record) {
 	// The artifact contains source-labeled observations, never an acceptance or
 	// merge verdict. Strip remote prose before persisting; it is untrusted input.
 	if r.PR != nil {
+		r.FailureReason = r.PR.FailureReason()
+		if masked, err := secrets.Mask(r.FailureReason); err == nil {
+			r.FailureReason = masked.Text()
+		} else {
+			r.FailureReason = ""
+		}
 		for i := range r.PR.Reviews {
 			r.PR.Reviews[i].Body = ""
 		}
@@ -529,8 +540,8 @@ func (s *Service) execute(ctx context.Context, r Record) {
 	}
 	evidence = []byte(masked.Text())
 	artifact := filepath.Join(taskRoot, "result.json")
-	if r.Attempt > 1 {
-		artifact = filepath.Join(taskRoot, fmt.Sprintf("result-%d.json", r.Attempt))
+	if r.Attempt > 1 || r.GenerationBase > 0 {
+		artifact = filepath.Join(taskRoot, fmt.Sprintf("result-%d.json", run.Generation))
 	}
 	if err = os.WriteFile(artifact, evidence, 0600); err != nil {
 		return
@@ -545,7 +556,7 @@ func (s *Service) execute(ctx context.Context, r Record) {
 	if err = s.finish(ctx, r, run.ID, status, receipt); err != nil {
 		r.Code = "receipt_failed"
 	} else {
-		// A committed failure receipt can still describe unknown effects.
+		// A committed terminal receipt can still describe unknown effects.
 		// Only the committed recovery state can release its directory fence.
 		var state string
 		readErr := s.cfg.DB.Read(ctx, func(tx *canon.Tx) error {

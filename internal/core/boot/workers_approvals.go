@@ -121,6 +121,8 @@ func (b *workerRuntime) deliverAnswers(ctx context.Context) {
 			// invitation to send a grant again or to execute the worker's command here.
 			if err != nil {
 				e.bridgeFailure(err)
+			} else {
+				e.answerDelivered(ctx, event.Thread)
 			}
 		}
 	}
@@ -157,4 +159,20 @@ func (e *workerSession) stopMatching(turnID, requestID string) {
 }
 func (e *workerSession) bridgeFailure(err error) {
 	_ = e.origin.workerNotice(e.origin.ctx, e.input, e.requestKey(fmt.Sprintf("error:%d", time.Now().UnixNano())), "Codex request could not be delivered: "+err.Error())
+}
+
+// A scheduled task resumes only after all pending requests have been answered.
+func (e *workerSession) answerDelivered(ctx context.Context, thread worker.Thread) {
+	if e.answered == nil {
+		return
+	}
+	e.mu.Lock()
+	pending := len(e.approvals) > 0
+	for _, q := range e.questions {
+		pending = pending || q.card.Card.Outcome == nil
+	}
+	e.mu.Unlock()
+	if !pending {
+		e.answered(ctx, thread)
+	}
 }

@@ -65,6 +65,9 @@ type Record struct {
 	PendingRequests map[string]bool            `json:"pending_requests,omitempty"`
 	DecisionAt      int64                      `json:"decision_at,omitempty"`
 	GoalAction      string                     `json:"goal_action,omitempty"`
+	ReturnReceipt   string                     `json:"return_receipt,omitempty"`
+	GenerationBase  int                        `json:"generation_base,omitempty"`
+	FailureReason   string                     `json:"failure_reason,omitempty"`
 	RepositoryKey   string                     `json:"repository_key,omitempty"`
 	Worker          string                     `json:"worker,omitempty"`
 	Tried           []string                   `json:"tried,omitempty"`
@@ -76,6 +79,8 @@ type Record struct {
 	Protected       map[string]string          `json:"protected_refs,omitempty"`
 	Method          *skills.Body               `json:"method,omitempty"`
 	BaseCommit      string                     `json:"base_commit,omitempty"`
+	ChangedFiles    []string                   `json:"changed_files,omitempty"`
+	DesignText      map[string]string          `json:"design_at_base,omitempty"`
 	ChangeEvidence  string                     `json:"change_evidence,omitempty"`
 	Owner           string                     `json:"owner,omitempty"`
 	Manager         string                     `json:"manager,omitempty"`
@@ -89,8 +94,6 @@ type Record struct {
 	PR              *antigravity.PullRequest   `json:"pull_request,omitempty"`
 	Denied          []antigravity.DeniedAction `json:"denied_actions,omitempty"`
 	Announced       bool                       `json:"announced"`
-	ChangedFiles    []string                   `json:"changed_files,omitempty"`
-	DesignText      map[string]string          `json:"design_at_base,omitempty"`
 }
 
 // TaskDefinition exposes the actual assigned branch while retaining the
@@ -497,7 +500,7 @@ func (s *Service) sync() {
 			err = s.cfg.DB.Read(s.ctx, func(tx *canon.Tx) error {
 				return tx.QueryRowContext(s.ctx, `SELECT count(*) FROM turn_calls WHERE turn_id=? AND json_extract(call,'$.Name')='dispatch_work' AND json_extract(result,'$.code')='ok' AND json_extract(result,'$.output.id')=?`, r.Origin.Turn, r.ID).Scan(&committed)
 			})
-			if err != nil || committed == 0 && !r.Goal {
+			if err != nil || committed == 0 && !(r.Goal && r.ReturnReceipt != "") {
 				continue
 			}
 			s.mu.Lock()

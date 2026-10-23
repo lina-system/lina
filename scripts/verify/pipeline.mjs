@@ -114,6 +114,24 @@ async function automation(root, env) {
   return { status: suite.status, output };
 }
 
+// Keep test identity and bounded diagnostic lines for post-merge QA. Nested
+// failures belong to one top-level scenario, not separate duplicate issues.
+export function goTestOutcomes(output) {
+  const tests = new Map();
+  for (const line of output.split('\n')) {
+    let event;
+    try { event = JSON.parse(line); } catch { continue; }
+    if (!event.Package || !event.Test) continue;
+    const name = event.Test.split('/')[0];
+    const key = event.Package + ':' + name;
+    if (!tests.has(key)) tests.set(key, { package: event.Package, test: name, result: 'unknown', output: '' });
+    const record = tests.get(key);
+    if (event.Output) record.output = (record.output + event.Output).slice(-16000);
+    if (event.Test === name && ['pass', 'fail', 'skip'].includes(event.Action)) record.result = event.Action;
+  }
+  return [...tests.values()];
+}
+
 export async function executeTask(root, plan, id, log = console.error) {
   validatePlan(plan, root);
   const task = plan.tasks.find(task => task.id === id);
@@ -153,6 +171,7 @@ export async function executeTask(root, plan, id, log = console.error) {
   return {
     schema: 1, id, kind: task.kind, head: plan.head, tree: plan.tree, digest: plan.digest,
     result: outcome.status === 0 ? 'success' : 'failure', started, finished, seconds: (finished - started) / 1000,
+    tests: task.kind === 'e2e' ? goTestOutcomes(outcome.output) : undefined,
     toolchain: outcome.toolchain ?? outcome.output.match(/^go1\.\d+\.\d+$/m)?.[0], timings,
   };
 }

@@ -10,8 +10,8 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/internal/core/work"
-	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/antigravity"
 )
 
@@ -51,7 +51,7 @@ func (s *Service) finish(ctx context.Context, r Record, runID, status string, re
 		if err := work.FinishIn(ctx, tx, r.ID, runID, status, head); err != nil {
 			return err
 		}
-		if r.Snapshot != nil && r.Snapshot.Finish != nil && r.Snapshot.Finish.Status != worker.Done {
+		if r.Snapshot != nil {
 			r = recoveryRecord(r)
 		}
 		if r.State != "unknown" {
@@ -117,6 +117,11 @@ func (s *Service) React(ctx context.Context, event work.Completion, card work.Ca
 			r.Code = "pr_unverified"
 			r.ChangeEvidence = ""
 		}
+		masked, maskErr := secrets.Mask(current.FailureReason())
+		if maskErr != nil {
+			return true, maskErr
+		}
+		r.FailureReason = masked.Text()
 		for i := range current.Reviews {
 			current.Reviews[i].Body = ""
 		}
@@ -129,6 +134,21 @@ func (s *Service) React(ctx context.Context, event work.Completion, card work.Ca
 	if err = s.cfg.Publish(ctx, r); err != nil {
 		return true, err
 	}
-	r.Announced = true
-	return true, s.save(ctx, r)
+	return true, s.cfg.DB.Write(ctx, func(tx *canon.Tx) error {
+		var raw []byte
+		var current Record
+		if err := tx.QueryRowContext(ctx, "SELECT record FROM worker_dispatch WHERE id=?", r.ID).Scan(&raw); err != nil {
+			return err
+		}
+		if err := json.Unmarshal(raw, &current); err != nil {
+			return err
+		}
+		// A manager may have queued the correction while handling this receipt.
+		// Its new generation owns the record; the old completion only gets acked.
+		if current.State != r.State || current.ReturnReceipt != r.ReturnReceipt || current.GenerationBase != r.GenerationBase {
+			return nil
+		}
+		current.Announced = true
+		return saveRecord(ctx, tx, current)
+	})
 }

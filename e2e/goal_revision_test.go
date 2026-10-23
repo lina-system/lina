@@ -9,10 +9,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/boot"
+	"github.com/thisisjun786/lina/internal/core/canon"
 	work "github.com/thisisjun786/lina/internal/core/work/goal"
 )
 
@@ -97,6 +99,12 @@ func (w *revisionWorld) finish(ctx context.Context, e *work.Engine, task string,
 }
 
 func TestM2RunToDoneAfterQueuedSiblingRevision(t *testing.T) {
+	// This scenario bounds goal progress, not the host's first compilation of
+	// SQLite's verified Wasm module. Prepare that shared test dependency before
+	// starting the unchanged runtime deadline, as the installed harness does.
+	if _, _, err := canon.SQLiteEngine(); err != nil {
+		t.Fatal(err)
+	}
 	root, err := os.MkdirTemp("", "lina-revision-e2e-")
 	if err != nil {
 		t.Fatal(err)
@@ -118,6 +126,7 @@ func TestM2RunToDoneAfterQueuedSiblingRevision(t *testing.T) {
 	w.url = service.URL
 	closed := make(chan work.Goal, 1)
 	var engine *work.Engine
+	var prepared atomic.Bool
 	host := func(context.Context) (work.Node, error) {
 		return work.Node{ID: "revision-host", Connected: true, ObservedAt: time.Now().Unix(), CPUCores: 4, CPULimit: 4, AvailableMemoryMB: 8000, MemoryLimitMB: 8000, AvailableDiskMB: 8000, DiskLimitMB: 8000, Workers: map[string]bool{"stub": true}}, nil
 	}
@@ -189,7 +198,9 @@ func TestM2RunToDoneAfterQueuedSiblingRevision(t *testing.T) {
 			}
 			// Both repair managers and an unrelated worker are queued. The first
 			// manager revises the goal; Core must dispatch the others afterwards.
-			return w.finish(ctx, e, "left", work.PlanGoal)
+			err := w.finish(ctx, e, "left", work.PlanGoal)
+			prepared.Store(err == nil)
+			return err
 		},
 		Changed: func(ctx context.Context, s work.State) error {
 			for _, a := range s.Actions {
@@ -236,7 +247,7 @@ func TestM2RunToDoneAfterQueuedSiblingRevision(t *testing.T) {
 		joined = true
 		t.Fatalf("Core stopped before completion: %v", err)
 	case <-ctx.Done():
-		t.Fatal("revision stranded a sibling action")
+		t.Fatalf("revision stranded a sibling action (interleaving prepared=%t)", prepared.Load())
 	}
 	if len(g.Tasks) != 5 || len(g.Checks) != 13 || !g.Deployment.Passed || !g.Verification.Passed {
 		t.Fatalf("goal closed without repair/lifecycle evidence: %+v", g)

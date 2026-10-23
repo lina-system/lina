@@ -144,6 +144,67 @@ func TestQuotaReplacementKeepsOneOrdinaryRecovery(t *testing.T) {
 	}
 }
 
+func TestSuccessfulRecoveredDispatchKeepsUnknownEffects(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		effectsKnown bool
+		pending      map[string]bool
+		wantState    string
+	}{
+		{name: "unconfirmed tool effects", wantState: "unknown"},
+		{name: "retained request", effectsKnown: true, pending: map[string]bool{"request": true}, wantState: "unknown"},
+		{name: "settled", effectsKnown: true, wantState: "finished"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := store(t)
+			w := work.New(db)
+			s := &Service{cfg: Config{DB: db, Work: w}}
+			ctx := t.Context()
+			if err := w.Create(ctx, work.Task{ID: "task", AgentID: "agent", ConversationID: "conversation", Title: "Task", Done: "result", ArtifactRoots: []string{"/task"}}); err != nil {
+				t.Fatal(err)
+			}
+			thread := worker.Thread{ID: "thread", TurnID: "turn", TaskID: "task", AttemptID: "task:1"}
+			if err := w.Start(ctx, work.Run{ID: thread.AttemptID, TaskID: "task", Generation: 1, Worker: "codex", ThreadID: thread.ID, TurnID: thread.TurnID, NodeID: "main"}); err != nil {
+				t.Fatal(err)
+			}
+			r := Record{ID: "task", Attempt: 1, State: "unknown", Thread: &thread, PendingRequests: tc.pending, Announced: true}
+			if err := db.Write(ctx, func(tx *canon.Tx) error {
+				_, err := tx.ExecContext(ctx, "INSERT INTO worker_dispatch VALUES('task','origin','repo','unknown',?)", mustJSON(r))
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+			// execute derives a successful result before committing its observation.
+			// A successful turn is not proof that all its effects have settled.
+			r.State = "finished"
+			r.Snapshot = &worker.ThreadSnapshot{Thread: thread, Finish: &worker.Finish{Status: worker.Done}, EffectsKnown: tc.effectsKnown}
+			now := time.Now()
+			receipt := work.Receipt{SchemaVersion: 1, RelationshipID: "task", ExecutionGeneration: 1, Attempt: 1, Outcome: "ready_for_review", Producer: "child", TurnRef: work.TurnRef{ThreadID: thread.ID, TurnID: thread.TurnID, TurnStatus: "completed"}, EmittedAt: now, Manifest: []work.Artifact{{Path: "/task/result", SHA256: strings.Repeat("a", 64)}}}
+			receipt.Provenance = []work.Provenance{{ArtifactID: "adapter-derived:task", TaskID: "task", NodeID: "main", Path: "/task/result", SHA256: receipt.Manifest[0].SHA256, ObservedAt: now}}
+			receipt.RevisionHash = work.ManifestHash(receipt.Manifest)
+			receipt.EventID = work.ReceiptID(receipt)
+			if err := s.finish(ctx, r, thread.AttemptID, "completed", receipt); err != nil {
+				t.Fatal(err)
+			}
+			saved, err := s.records(ctx)
+			if err != nil || len(saved) != 1 {
+				t.Fatalf("read recovery record: %+v %v", saved, err)
+			}
+			got := saved[0]
+			if got.State != tc.wantState {
+				t.Fatalf("successful recovered dispatch state=%s, want=%s; unresolved effects would lose their directory fence", got.State, tc.wantState)
+			}
+			if got.Snapshot == nil || got.Snapshot.EffectsKnown != tc.effectsKnown || len(got.PendingRequests) != len(tc.pending) || got.Recoveries != 0 {
+				t.Fatalf("recovery evidence or allowance changed: %+v", got)
+			}
+			card, err := w.Get(ctx, r.ID)
+			if err != nil || card.Receipt == nil || card.Receipt.EventID != receipt.EventID {
+				t.Fatalf("successful receipt not retained: %+v %v", card, err)
+			}
+		})
+	}
+}
+
 func TestDispatchCancellationSurvivesStaleObservation(t *testing.T) {
 	db := store(t)
 	s := &Service{cfg: Config{DB: db}}

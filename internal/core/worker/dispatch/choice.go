@@ -424,7 +424,7 @@ func (s *Service) reserveWorker(ctx context.Context, r *Record, name string) err
 		}
 		next := *r
 		next.Worker = name
-		next.Attempt = max(r.Attempt, len(r.Tried)) + 1
+		next.Attempt = max(r.Attempt, r.GenerationBase+len(r.Tried)) + 1
 		next.Thread = nil
 		next.Snapshot = nil
 		next.PendingRequests = nil
