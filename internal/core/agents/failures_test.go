@@ -17,6 +17,7 @@ import (
 )
 
 func TestGitRevisionIsReadableAndCorruptionBlocksPreparation(t *testing.T) {
+	t.Parallel()
 	s, db, root := setup(t)
 	a := create(t, s, "")
 	first, err := s.Prepare(t.Context(), "first", a.ID)
@@ -65,6 +66,7 @@ func TestGitRevisionIsReadableAndCorruptionBlocksPreparation(t *testing.T) {
 	}
 }
 func TestCompetingRevisionsCannotReplaceEachOther(t *testing.T) {
+	t.Parallel()
 	s, db, root := setup(t)
 	a := create(t, s, "")
 	second, err := agents.Open(root, db)
@@ -105,6 +107,7 @@ func TestCompetingRevisionsCannotReplaceEachOther(t *testing.T) {
 	}
 }
 func TestDeletionAndPresetFanoutRollBackAsOneWrite(t *testing.T) {
+	t.Parallel()
 	s, db, _ := setup(t)
 	p := agents.Preset{ID: "shared", Core: "old"}
 	if err := s.UpdatePreset(t.Context(), p, "person"); err != nil {
@@ -146,6 +149,7 @@ func TestDeletionAndPresetFanoutRollBackAsOneWrite(t *testing.T) {
 	}
 }
 func TestReadOnlyWriterCannotPublishRevision(t *testing.T) {
+	t.Parallel()
 	s, _, root := setup(t)
 	a := create(t, s, "")
 	db, err := canon.OpenReader(t.Context(), filepath.Join(root, "canon.sqlite"))
@@ -167,6 +171,7 @@ func TestReadOnlyWriterCannotPublishRevision(t *testing.T) {
 	}
 }
 func TestConcurrentFirstRunCreatesOneAgent(t *testing.T) {
+	t.Parallel()
 	s, _, _ := setup(t)
 	start := make(chan struct{})
 	results := make(chan agents.FirstRun, 4)
@@ -193,6 +198,7 @@ func TestConcurrentFirstRunCreatesOneAgent(t *testing.T) {
 	}
 }
 func TestVersionPathCannotEscapeStateRoot(t *testing.T) {
+	t.Parallel()
 	s, db, root := setup(t)
 	a := create(t, s, "")
 	outside := t.TempDir()
