@@ -73,8 +73,17 @@ func TestM2InstalledGrowthFollowups(t *testing.T) {
 			})
 		}
 	})
-	operation := "delete"
-	request(t, protocol.AgentRequest{Operation: &operation, AgentID: &agent})
+	operation := "list"
+	listed := request(t, protocol.AgentRequest{Operation: &operation})
+	if listed.Agents == nil || len(*listed.Agents) != 8 {
+		t.Fatal("starter agents missing")
+	}
+	operation = "delete"
+	// Exercise the original empty-agent recovery condition after removing every
+	// starter, including the one whose growth revisions were just changed.
+	for _, a := range *listed.Agents {
+		request(t, protocol.AgentRequest{Operation: &operation, AgentID: &a.AgentID})
+	}
 	c.Close()
 	h.stopCore(core)
 	core = start(false)

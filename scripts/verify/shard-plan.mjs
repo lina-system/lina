@@ -28,7 +28,8 @@ export function balance(items, count) {
 }
 
 // Dependencies come from Go, and scenario inputs include their source and
-// helper/fixture files. A deleted or otherwise unaccounted input selects all.
+// helper/fixture files. Unaccounted inputs select their owning package's
+// scenarios, or all scenarios when no package owns the path.
 export function selectScenarios({ scenarios, packages, changed, full = false, shared = false }) {
   const all = reason => ({ selected: [...scenarios], reason });
   if (full) return all('full');
@@ -48,6 +49,9 @@ export function selectScenarios({ scenarios, packages, changed, full = false, sh
   }
   const reachesChange = scenario => {
     if (inputsOf(scenario).some(input => changed.includes(input))) return true;
+    // Deleted runtime fixtures disappear from the scanner's existing inputs.
+    // Keep every scenario in their package when the consumer is no longer known.
+    if (changedPackages.has(scenario.package)) return true;
     const reached = new Set([...(scenario.imports ?? []), ...(scenario.binaries ?? [])]);
     for (const path of reached) {
       if (changedPackages.has(path)) return true;

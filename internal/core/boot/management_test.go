@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -58,6 +59,38 @@ func managementFixture(t *testing.T) (*conversationRuntime, clientsrv.Session, s
 	return &conversationRuntime{root: root, controls: controls, main: "fixture", epoch: 1, db: db, agents: store, removals: removals, person: "person", lanes: lane.New()}, clientsrv.Session{PersonID: "person"}, first.Agent.ID, second.ID
 }
 func textptr(s string) *string { return &s }
+
+func TestChosenAgentResumesAfterStoreReopen(t *testing.T) {
+	r, session, first, chosen := managementFixture(t)
+	r.agent = first
+	router := &conversationRouter{root: r, views: map[string]*conversationRuntime{}}
+	for _, id := range []string{first, chosen} {
+		router.views[id] = &conversationRuntime{person: r.person, agent: id, conversation: "main:" + id}
+	}
+	if _, err := r.Agent(t.Context(), session, protocol.AgentRequest{Operation: textptr("choose"), AgentID: &chosen}); err != nil {
+		t.Fatal(err)
+	}
+	store, err := agents.Open(r.root, r.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	r.agents = store
+	history, err := router.History(t.Context(), session, protocol.HistoryGet{})
+	if err != nil || history.AgentID == nil || *history.AgentID != chosen {
+		t.Fatalf("restart lost the last conversation: %+v %v", history, err)
+	}
+	// A deleted selection cannot redirect a newly opened surface to an older
+	// runtime view. Use the original default, independently of boot's focus.
+	r.agent = chosen
+	if err := r.agents.Delete(t.Context(), chosen, session.PersonID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	history, err = router.History(t.Context(), session, protocol.HistoryGet{})
+	if err != nil || history.AgentID == nil || *history.AgentID != first {
+		t.Fatalf("deleted selection did not fall back to the default: %+v %v", history, err)
+	}
+}
 func TestManagementBindsPersonAndScopesTargets(t *testing.T) {
 	r, session, a, b := managementFixture(t)
 	saved, err := r.Memory(t.Context(), session, protocol.MemoryRequest{Operation: textptr("remember"), AgentID: &a, Holder: textptr("agent"), Text: textptr("fixture private statement")})
@@ -89,12 +122,17 @@ func TestManagementBindsPersonAndScopesTargets(t *testing.T) {
 	}
 }
 func TestDeletingDefaultLeavesExistingStoreUsable(t *testing.T) {
-	r, session, a, b := managementFixture(t)
+	r, session, _, b := managementFixture(t)
 	renamed, err := r.Agent(t.Context(), session, protocol.AgentRequest{Operation: textptr("rename"), AgentID: &b, Name: textptr("renamed")})
 	if err != nil || renamed.AgentID == nil || *renamed.AgentID != b {
 		t.Fatal(err)
 	}
-	for _, id := range []string{a, b} {
+	all, err := r.agents.List(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range all {
+		id := row.ID
 		if _, err := r.Agent(t.Context(), session, protocol.AgentRequest{Operation: textptr("delete"), AgentID: &id}); err != nil {
 			t.Fatal(err)
 		}
