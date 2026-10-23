@@ -68,6 +68,9 @@ func readOnlyEnvelope(e protocol.Envelope) bool {
 	if p, ok := e.Payload.(protocol.MockRequest); ok {
 		return p.Action == "read" || p.Action == "asset"
 	}
+	if p, ok := e.Payload.(protocol.MiniAppRequest); ok && e.Kind == protocol.KindMiniAppRequest {
+		return p.Operation == "list" || p.Operation == "open" || p.Operation == "history"
+	}
 	if readOnlyKinds[e.Kind] {
 		return true
 	}

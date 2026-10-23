@@ -147,7 +147,7 @@ func ClientCombinationsFor(target string) []Combination {
 	}}
 	newer := rows[0]
 	newer.ProtocolVersion = "1.1"
-	newer.Capabilities = append(append([]protocol.Capability(nil), newer.Capabilities...), protocol.Capability{Name: "mocks", Version: "1.0"})
-	newer.Evidence = append(append([]string(nil), newer.Evidence...), "go test ./e2e/m1 -run TestM3DrawnMocks")
+	newer.Capabilities = append(append([]protocol.Capability(nil), newer.Capabilities...), protocol.Capability{Name: "mocks", Version: "1.0"}, protocol.Capability{Name: "mini_apps", Version: "1.0"})
+	newer.Evidence = append(append([]string(nil), newer.Evidence...), "go test ./e2e/m1 -run TestM3DrawnMocks", "go test ./e2e/m4 -run TestMiniAppsThroughRunningCore")
 	return append(rows, newer)
 }

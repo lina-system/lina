@@ -161,6 +161,12 @@ func New(cfg Config) (*Service, error) {
 
 func (s *Service) now() time.Time { return s.cfg.Now() }
 
+// SetOnRemove installs the hook that closes a live origin before an app's files
+// move to the trash. It is set after the host exists.
+func (s *Service) SetOnRemove(fn func(appID string)) {
+	s.cfg.OnRemove = fn
+}
+
 func (s *Service) lock(ctx context.Context) error {
 	select {
 	case s.mu <- struct{}{}:

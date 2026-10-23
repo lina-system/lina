@@ -219,20 +219,24 @@ func TestFrameRefusesNavigationAway(t *testing.T) {
 			return err
 		}
 		time.Sleep(1500 * time.Millisecond)
-		var out struct{ Before, After string }
-		expression := `(async()=>{const f=document.getElementById('app');const before=f.src;try{f.contentWindow.location='https://example.com/'}catch{}await new Promise(r=>setTimeout(r,1200));return{Before:before,After:f.src}})()`
+		var first string
+		if err := c.evaluate(t.Context(), `document.getElementById('app').src`, &first); err != nil {
+			return err
+		}
+		if !strings.Contains(first, "/?code=") {
+			t.Fatalf("the frame dropped its one-time code on the app's first load: %s", first)
+		}
+		home, _, _ := strings.Cut(first, "/?")
+		home += "/"
+		// The app navigates its own frame away from its origin. The policy does
+		// not stop a navigation; the framing page returns the frame to the app.
+		var out struct{ After string }
+		expression := `(async()=>{const f=document.getElementById('app');try{f.contentWindow.location='https://example.com/'}catch{}await new Promise(r=>setTimeout(r,2000));return{After:f.src}})()`
 		if err := c.evaluate(t.Context(), expression, &out); err != nil {
 			return err
 		}
-		if !strings.HasPrefix(out.After, strings.Split(out.Before, "/?")[0]) {
-			t.Fatalf("frame let the app leave its origin: %s -> %s", out.Before, out.After)
-		}
-		var docURL string
-		if err := c.evaluate(t.Context(), `document.getElementById('app').src`, &docURL); err != nil {
-			return err
-		}
-		if !strings.Contains(docURL, "/?code=") {
-			t.Fatalf("frame reloaded without a code: %s", docURL)
+		if out.After != home {
+			t.Fatalf("the frame did not return to the app origin after a navigation away: %s", out.After)
 		}
 		return nil
 	})

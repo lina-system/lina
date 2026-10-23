@@ -2,7 +2,7 @@
   "$comment": "SPDX-License-Identifier: Apache-2.0",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Client 1.0 and 1.1 envelope",
-  "description": "Client envelopes. Version 1.1 adds drawn mock results and their read, asset and work handoff requests. Version 1.0 retains text fallback.",
+  "description": "Client envelopes. Version 1.1 adds drawn mock results and their read, asset and work handoff requests. Version 1.0 retains text fallback. Version 1.1 adds mini app requests.",
   "type": "object",
   "properties": {
     "protocol": {
@@ -100,7 +100,9 @@
         "a2a_request",
         "a2a_result",
         "mock_request",
-        "mock_response"
+        "mock_response",
+        "mini_app_request",
+        "mini_app_result"
       ]
     },
     "message_id": {
@@ -1678,6 +1680,38 @@
     {
       "if": {
         "properties": {
+          "kind": {
+            "const": "mini_app_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/mini_app_request"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "mini_app_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/mini_app_result"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
           "protocol": {
             "properties": {
               "version": {
@@ -1695,7 +1729,9 @@
                 "kind": {
                   "enum": [
                     "mock_request",
-                    "mock_response"
+                    "mock_response",
+                    "mini_app_request",
+                    "mini_app_result"
                   ]
                 }
               }
@@ -6663,6 +6699,176 @@
       "required": [
         "asset_id",
         "revision"
+      ],
+      "additionalProperties": false
+    },
+    "mini_app": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "agent": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "request": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "allowed_revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "allowed": {
+          "type": "boolean"
+        },
+        "reads": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "string",
+            "maxLength": 64
+          }
+        },
+        "requests": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "string",
+            "maxLength": 64
+          }
+        },
+        "hosts": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "string",
+            "maxLength": 256
+          }
+        },
+        "schedule": {
+          "type": "string",
+          "maxLength": 8
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "agent",
+        "request",
+        "revision",
+        "allowed_revision",
+        "allowed",
+        "reads",
+        "requests",
+        "hosts"
+      ],
+      "additionalProperties": false
+    },
+    "mini_app_revision": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "request": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "required": [
+        "revision",
+        "request"
+      ],
+      "additionalProperties": false
+    },
+    "mini_app_request": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "list",
+            "open",
+            "allow",
+            "deny",
+            "keep",
+            "undo",
+            "restore",
+            "remove",
+            "history"
+          ]
+        },
+        "app": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "operation"
+      ],
+      "additionalProperties": false
+    },
+    "mini_app_result": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "maxLength": 16
+        },
+        "apps": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/mini_app"
+          }
+        },
+        "app": {
+          "$ref": "#/$defs/mini_app"
+        },
+        "url": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "tailnet": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "revisions": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/mini_app_revision"
+          }
+        },
+        "code": {
+          "type": "string",
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "operation",
+        "apps"
       ],
       "additionalProperties": false
     }
