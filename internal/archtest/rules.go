@@ -22,7 +22,7 @@ var layers = func() map[string]int {
 		"canon eventstore secrets ctlfiles guard ids",
 		"authority lifecycle budget manifest binding toolcatalog recall",
 		"ledger inbox agents memory retract skills records assets work timers plugins channels accounts",
-		"a2a lane assemble compaction turn runs replay intakereplay reply results modelpath localmodel exec exchange gateway worker reactor review ghclient progress waiting backup update recover clientsrv jobs mcphost install miniapps",
+		"a2a lane assemble compaction turn runs replay intakereplay reply results modelpath localmodel exec exchange messenger gateway worker reactor review ghclient progress waiting backup update recover clientsrv jobs mcphost install miniapps",
 		"boot supervise",
 	} {
 		for _, name := range strings.Fields(names) {

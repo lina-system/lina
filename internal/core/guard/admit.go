@@ -31,6 +31,17 @@ const (
 	EntryFile
 	EntryAgentExchange
 	EntryBackgroundNotice
+
+	// Messenger entries are selected by a source adapter's platform route flag
+	// for a read message. The flag comes from the platform's own data (an author
+	// equal to the connected account, a bot or app author, a platform notice, or
+	// anyone else), never from display names or message text. EntryMessengerAgent
+	// is a message a LINA write sent in the person's name, matched to its effect.
+	EntryMessengerPerson
+	EntryMessengerAgent
+	EntryMessengerAutomation
+	EntryMessengerSystem
+	EntryMessengerParticipant
 )
 
 // SpeakerKind records the source of content, independently of a model API role.
@@ -79,6 +90,16 @@ func Admit(entry Entry, origin, body string) (Message, error) {
 		speaker, external = Agent, true
 	case EntryBackgroundNotice:
 		speaker, external = System, true
+	case EntryMessengerPerson:
+		speaker = Person
+	case EntryMessengerAgent:
+		speaker = Agent
+	case EntryMessengerAutomation:
+		speaker, external = Automation, true
+	case EntryMessengerSystem:
+		speaker, external = System, true
+	case EntryMessengerParticipant:
+		speaker, external = ExternalParticipant, true
 	default:
 		return Message{}, ErrEntry
 	}

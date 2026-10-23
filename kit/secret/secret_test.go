@@ -80,3 +80,38 @@ func TestCredentialInjection(t *testing.T) {
 		t.Fatal("nil header accepted")
 	}
 }
+
+// murmur masks only the userinfo password and the values of sensitive query or
+// fragment names inside a URL; hosts, paths, names and other values stay.
+// Research: docs/research/messengers.md (murmur mapped onto Core).
+func TestMaskURLSecrets(t *testing.T) {
+	const hash = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+	for _, tc := range []struct{ name, input, want string }{
+		{"query token", "link https://example.com/cb?token=synthetic-abc123&next=/home", "link https://example.com/cb?token=" + secret.Placeholder + "&next=/home"},
+		{"encoded name", "https://example.com/x?%74oken=synthetic-abc", "https://example.com/x?%74oken=" + secret.Placeholder},
+		{"suffix name", "https://example.com/x?access_token=synthetic-abc", "https://example.com/x?access_token=" + secret.Placeholder},
+		{"signature name", "https://example.com/x?sig=synthetic-abc123", "https://example.com/x?sig=" + secret.Placeholder},
+		{"session name", "https://example.com/x?session=synthetic-abc123", "https://example.com/x?session=" + secret.Placeholder},
+		{"fragment name", "https://example.com/#refresh_token=synthetic-abc", "https://example.com/#refresh_token=" + secret.Placeholder},
+		{"userinfo password", "https://jun:synthetic-pass@example.com/path", "https://jun:" + secret.Placeholder + "@example.com/path"},
+		{"plain url", "https://example.com/a/b?page=2&sort=asc#top", "https://example.com/a/b?page=2&sort=asc#top"},
+		{"id and hash", "https://example.com/items/12345 and sha256 " + hash, "https://example.com/items/12345 and sha256 " + hash},
+		{"hash value", "https://example.com/x?id=" + hash, "https://example.com/x?id=" + hash},
+		{"trailing punctuation", "https://example.com/x?token=synthetic-abc).", "https://example.com/x?token=" + secret.Placeholder + ")."},
+		{"two pairs", "https://example.com/x?a=1&sig=synthetic-1&b=2", "https://example.com/x?a=1&sig=" + secret.Placeholder + "&b=2"},
+		{"empty value", "https://example.com/x?token=&a=1", "https://example.com/x?token=&a=1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			masked, err := secret.Mask(tc.input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if masked.Text() != tc.want {
+				t.Fatalf("masked = %q, want %q", masked.Text(), tc.want)
+			}
+			if strings.Contains(masked.DerivedText(), secret.Placeholder) {
+				t.Fatal("derived text retained a placeholder")
+			}
+		})
+	}
+}
