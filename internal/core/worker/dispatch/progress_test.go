@@ -39,7 +39,7 @@ func TestDispatchMasksStreamedCredentialsBeforeLedger(t *testing.T) {
 			if err := s.save(t.Context(), r); err != nil {
 				t.Fatal(err)
 			}
-			s.cfg.Workers = []Factory{{Name: a.Name(), Open: func(context.Context, lease.Lease) (worker.Adapter, func(context.Context) error, error) {
+			s.cfg.Workers = []Factory{{Name: a.Name(), Explicit: true, Chooser: true, Open: func(context.Context, lease.Lease) (worker.Adapter, func(context.Context) error, error) {
 				return a, func(context.Context) error { return nil }, nil
 			}}}
 			s.execute(s.ctx, r)
