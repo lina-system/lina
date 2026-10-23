@@ -54,4 +54,16 @@ func TestReturnDefinitionOncePreservesAssignment(t *testing.T) {
 	if err := s.ReturnDefinition(ctx, r, rr); err == nil {
 		t.Fatal("second return accepted")
 	}
+	// A pre-recovery journal can have GenerationBase without Attempt. The
+	// correction must still advance past the generation it is correcting.
+	got.State = "running"
+	if err := s.save(ctx, got); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.reserveWorker(ctx, &got, "codex"); err != nil {
+		t.Fatal(err)
+	}
+	if got.Attempt != card.Run.Generation+1 {
+		t.Fatalf("returned dispatch generation=%d, want=%d", got.Attempt, card.Run.Generation+1)
+	}
 }

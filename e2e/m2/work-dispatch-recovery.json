@@ -1,0 +1,10 @@
+{
+  "cases": [{"name":"success","choice":"rule","expected":"ready_for_review"}],
+  "what":"Create result.txt and submit its pull request.",
+  "done":"The committed result has a current green pull request.",
+  "worker":"codex",
+  "binary":"codex",
+  "script":"../m2/work-dispatch-recovery.mjs",
+  "work_area":true,
+  "crash_recovery":true
+}

@@ -126,16 +126,23 @@ export function goTestOutcomes(output) {
     let event;
     try { event = JSON.parse(line); } catch { continue; }
     if (!event?.Package) continue;
-    if (!packages.has(event.Package)) packages.set(event.Package, { output: '', started: new Set() });
+    if (!packages.has(event.Package)) packages.set(event.Package, { output: '', states: new Map() });
     const pkg = packages.get(event.Package);
     if (event.Output) pkg.output = (pkg.output + event.Output).slice(-16000);
     if (!event.Test) {
       // Timeouts and panics can end a package without test-level fail events.
-      // Only tests actually started in this package can inherit that failure.
+      // A parallel test may have emitted run but still be waiting for a slot.
+      // Attribute the package failure only to an active leaf or an explicit
+      // nested failure; a parent waiting on paused children is inconclusive.
       if (event.Action === 'fail') {
-        for (const key of pkg.started) {
-          const record = tests.get(key);
+        for (const record of tests.values()) {
+          if (record.package !== event.Package) continue;
           if (record.result !== 'unknown') continue;
+          const states = [...pkg.states].filter(([name]) => name === record.test || name.startsWith(record.test + '/'));
+          const unfinished = states.filter(([, state]) => ['run', 'cont', 'pause'].includes(state));
+          const active = unfinished.some(([name, state]) => state !== 'pause'
+            && !unfinished.some(([child]) => child.startsWith(name + '/')));
+          if (!active && !states.some(([, state]) => state === 'fail')) continue;
           record.result = 'fail';
           record.output = (record.output + pkg.output).slice(-16000);
         }
@@ -146,7 +153,7 @@ export function goTestOutcomes(output) {
     const key = event.Package + ':' + name;
     if (!tests.has(key)) tests.set(key, { package: event.Package, test: name, result: 'unknown', output: '' });
     const record = tests.get(key);
-    if (event.Action === 'run') pkg.started.add(key);
+    if (['run', 'pause', 'cont', 'pass', 'fail', 'skip'].includes(event.Action)) pkg.states.set(event.Test, event.Action);
     if (event.Output) record.output = (record.output + event.Output).slice(-16000);
     if (event.Test === name && ['pass', 'fail', 'skip'].includes(event.Action)) record.result = event.Action;
   }

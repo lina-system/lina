@@ -122,7 +122,42 @@ func fixture() {
 			status = "idle"
 			notify("turn/completed", map[string]any{"threadId": "thread-1", "turn": map[string]any{"id": turn, "status": "interrupted"}})
 			reply(map[string]any{})
+		case "thread/turns/list":
+			mode := os.Getenv("LINA_CODEX_FIXTURE")
+			items := []any{}
+			if mode == "recover-command" || mode == "recover-command-done" {
+				items = append(items, map[string]any{"type": "commandExecution", "id": "cmd", "status": "completed", "exitCode": 0})
+			}
+			result := map[string]any{"id": turn, "status": "failed", "itemsView": "full", "items": items}
+			if mode == "recover-command-done" {
+				result["status"] = "completed"
+			}
+			if mode == "recover-missing-items" {
+				delete(result, "items")
+			}
+			if mode == "recover-truncated" || mode == "recover-items" {
+				result["itemsView"] = "summary"
+			}
+			if mode == "recover-paged" && r.Params["cursor"] == nil {
+				reply(map[string]any{"data": []any{map[string]any{"id": "unrelated", "status": "completed", "items": []any{}}}, "nextCursor": "next"})
+			} else {
+				reply(map[string]any{"data": []any{result}})
+			}
+		case "thread/items/list":
+			mode := os.Getenv("LINA_CODEX_FIXTURE")
+			if mode != "recover-items" {
+				reply(map[string]any{})
+				continue
+			}
+			if r.Params["cursor"] == nil {
+				reply(map[string]any{"data": []any{map[string]any{"turnId": turn, "item": map[string]any{"type": "agentMessage", "id": "m1", "text": "first"}}}, "nextCursor": "next-item"})
+			} else {
+				reply(map[string]any{"data": []any{map[string]any{"turnId": turn, "item": map[string]any{"type": "agentMessage", "id": "m2", "text": "last"}}}})
+			}
 		case "thread/read":
+			if strings.HasPrefix(os.Getenv("LINA_CODEX_FIXTURE"), "recover-") {
+				status = "idle"
+			}
 			if _, present := r.Params["includeTurns"]; present {
 				os.Exit(91)
 			}
@@ -153,6 +188,10 @@ func fixture() {
 					s = "inProgress"
 				}
 				turns = append(turns, map[string]any{"id": turn, "status": s})
+			}
+			if os.Getenv("LINA_CODEX_FIXTURE") == "lost-finish" {
+				status = "idle"
+				turns = []any{map[string]any{"id": turn, "status": "completed", "items": []any{}}, map[string]any{"id": "older-turn", "status": "completed", "items": []any{}}}
 			}
 			reply(map[string]any{"thread": map[string]any{"id": "thread-1", "cwd": cwd, "status": map[string]any{"type": status}, "turns": turns}})
 		default:
@@ -444,5 +483,73 @@ func TestSummarySnapshotDoesNotReopenAcceptedPendingTurn(t *testing.T) {
 	}
 	if err := s.Input(ctx, snap.Thread, worker.Input{Text: "must not open another turn"}); err == nil {
 		t.Fatal("pending accepted turn was restarted")
+	}
+}
+
+func TestSnapshotReconcilesExactTurnAfterLostFinish(t *testing.T) {
+	s, ctx, l := openFixture(t, "lost-finish")
+	th, err := s.Start(ctx, l, worker.StartSpec{TaskID: "task", AttemptID: "attempt", Workdir: t.TempDir(), TaskPacket: "hold"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, err := s.Snapshot(ctx, th)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Thread != th || snap.State != worker.Idle {
+		t.Fatalf("lost finish was not reconciled against the exact turn: %+v", snap)
+	}
+}
+
+func TestReconcileRequiresCompleteEffectEvidence(t *testing.T) {
+	for _, mode := range []string{"recover-empty", "recover-paged", "recover-items", "recover-command", "recover-missing-items", "recover-truncated"} {
+		t.Run(mode, func(t *testing.T) {
+			s, ctx, l := openFixture(t, mode)
+			th, err := s.Start(ctx, l, worker.StartSpec{TaskID: "task", AttemptID: "attempt", Workdir: t.TempDir(), TaskPacket: "hold"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			snap, err := s.Reconcile(ctx, th)
+			if mode == "recover-truncated" || mode == "recover-missing-items" {
+				if err == nil || snap.EffectsKnown {
+					t.Fatalf("missing item page settled: %+v %v", snap, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			known := mode == "recover-empty" || mode == "recover-paged" || mode == "recover-items"
+			if snap.Thread != th || snap.Finish == nil || snap.Finish.Status != worker.Failed || snap.EffectsKnown != known {
+				t.Fatalf("reconcile=%+v want effects known=%v", snap, known)
+			}
+		})
+	}
+}
+func TestInterruptAllowsOnlyContractReasons(t *testing.T) {
+	for _, reason := range []worker.Reason{worker.UserCancel, worker.BudgetCap, worker.NodePolicyCancel, worker.StallRecovery, "timeout", "silence", ""} {
+		t.Run(string(reason), func(t *testing.T) {
+			s, ctx, l := openFixture(t, "normal")
+			th, err := s.Start(ctx, l, worker.StartSpec{TaskID: "task", AttemptID: "attempt", Workdir: t.TempDir(), TaskPacket: "hold"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = s.Interrupt(ctx, th, reason)
+			valid := reason == worker.UserCancel || reason == worker.BudgetCap || reason == worker.NodePolicyCancel || reason == worker.StallRecovery
+			if valid {
+				if err != nil {
+					t.Fatal(err)
+				}
+				finish(t, ctx, s, worker.Interrupted)
+			} else {
+				if err == nil {
+					t.Fatal("unlisted interrupt reason accepted")
+				}
+				snap, err := s.Snapshot(ctx, th)
+				if err != nil || snap.State != worker.Active {
+					t.Fatalf("refused reason interrupted: %+v %v", snap, err)
+				}
+			}
+		})
 	}
 }

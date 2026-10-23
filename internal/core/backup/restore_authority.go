@@ -49,6 +49,14 @@ func invalidateAuthority(ctx context.Context, db *canon.Store) error {
 		if _, err := tx.ExecContext(ctx, "UPDATE authority_merges SET state='restored',record=json_set(record,'$.State','restored') WHERE state IN ('bound','ready','blocked')"); err != nil {
 			return err
 		}
+		// A backup predates later worker attempts. It cannot restore an unused
+		// allowance or replay a captured dispatch; all observations stay retained.
+		if _, err := tx.ExecContext(ctx, `UPDATE worker_recovery SET record=json_set(record,'$.State','unknown','$.Canceled',json('true')) WHERE json_extract(record,'$.State') IN ('running','retrying','unknown')`); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE worker_dispatch SET state='unknown',record=json_set(record,'$.state','unknown','$.restored',json('true')) WHERE state IN ('queued','running','unknown')`); err != nil {
+			return err
+		}
 		// A captured queue predates any delivery after the generation. Even an
 		// unclaimed or retryable send has an unknown outcome after restoration.
 		// Preserve parts and receipts, but neither dispatch nor settle old claims.

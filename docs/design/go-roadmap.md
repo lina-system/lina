@@ -364,7 +364,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 - Delivery increment (#144): a missed definition returns once with only P0/P1 ids; the same task/worktree/worker produces a new generation. A residual gap or terminal CI/review failure closes with its reason and blocks without verification. The existing merge service records application only after confirmation, releasing waiting work. `e2e/m2/delivery.json` covers return, merge, close and restart through installed Core.
 - Depends on: G2-02, G2-18, G2-19. Design refs: C-58; [work-and-delegation.md](work-and-delegation.md#judgment-and-delivery).
 
-**G2-08 Worker stop, reconcile and one dispatch again.** Interrupts, snapshot reconcile, one dispatch again.
+**G2-08 Worker stop, reconcile and one dispatch again.** Interrupts, snapshot reconcile, one dispatch again. #135 adds durable session bindings, exact-turn Codex reads, one committed continuation allowance and a persistent second-failure decision in installed Core. Headless dispatch retains terminal snapshots and per-attempt receipts; missing or uncertain evidence blocks replay. The dedicated worker-recovery, headless-worker-recovery and work-dispatch-recovery M2 scenarios exercise these paths.
 - Done when: `kill -9` of Core mid-task leaves the effect unknown and the thread snapshot settles it without a new turn; dispatch again happens once and only when no unknown effect remains; a second failure becomes a decision row; an interrupt is sent only for the listed reasons.
 - Depends on: G1-02, G2-04, G2-05. Design refs: C-29, C-58; [work-and-delegation.md](work-and-delegation.md#stall-and-failure).
 
@@ -728,4 +728,4 @@ A number marked (P) is a starting value of this design. The others come from the
 
 ## Not scheduled here
 
-The LINA app (a private repository), the library viewers and meeting notes, the Google plugin, Jev, Klotho supervision and the QA product map, the news feed, LIFE, the launcher, OpenViking and the mobile host. The development-time improvement loop is not a product feature; only G1-39 serves it.
+The LINA app (its own repository), the library viewers and meeting notes, the Google plugin, Jev, Klotho supervision and the QA product map, the news feed, LIFE, the launcher, OpenViking and the mobile host. The development-time improvement loop is not a product feature; only G1-39 serves it.

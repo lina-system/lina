@@ -2604,6 +2604,9 @@ Recovery retains uncertain reservations without replay.
 The adapter does not advertise unsupported approval replies, steering or work tools; manager design acceptance, parallel scheduling and merge remain their own flows.
 See [Antigravity headless adapter](work-and-delegation.md#antigravity-headless-adapter) for the evidence boundary and account-free acceptance limits.
 
+Worker recovery implementation and acceptance scenarios are described in
+[the package notes](../../internal/core/worker/RECOVERY.md).
+
 **C-60 ACP client and ACP workers (new).**
 Contract: [work-and-delegation.md](work-and-delegation.md#acp-adapter).
 Evidence: [worker-protocols.md](../research/worker-protocols.md).
@@ -3215,7 +3218,7 @@ A committed claim is never dispatched twice, including when its outcome is unkno
 
 **Open points at the Go level**, with the default in brackets: the SQLite binding (V2); the Git backend for the records repository (a pure-Go library, measured with thousands of files); the Telegram and Discord client libraries; whether `moirai-worker` reads canon directly or through the job API at scale; concurrent turns per Claude account (2).
 
-**Not designed here:** the LINA app (a private repository), the library viewers and meeting notes, the Google plugin, Jev, Klotho supervision and the QA map, the news feed, LIFE, the launcher, OpenViking, and the mobile host.
+**Not designed here:** the LINA app (its own repository), the library viewers and meeting notes, the Google plugin, Jev, Klotho supervision and the QA map, the news feed, LIFE, the launcher, OpenViking, and the mobile host.
 
 ## Decision index
 
