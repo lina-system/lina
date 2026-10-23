@@ -331,6 +331,8 @@ func testUpdateActivation(t *testing.T, scenarioPath string) {
 			if failure == "killed-after-ready" {
 				select {
 				case <-smokeReached:
+				case <-activate.done:
+					t.Fatalf("candidate exited before smoke: %v; stdout: %s; stderr: %s", activate.err, &activate.stdout, &activate.stderr)
 				case <-ctx.Done():
 					t.Fatal("candidate never dispatched smoke")
 				}

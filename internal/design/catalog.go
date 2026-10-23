@@ -44,6 +44,15 @@ type translation struct{ en, ko string }
 // Keys are wire codes or local presentation ids, never English source text.
 // Keep both languages together so a new entry cannot omit a translation.
 var catalog = map[string]translation{
+	"agents.role.system":             {"Setup and system health", "설정·시스템 관리"},
+	"agents.role.lina":               {"Plans and coordination", "계획·업무 조율"},
+	"agents.role.dev":                {"Development owner", "개발 담당"},
+	"agents.role.knowledge":          {"People and knowledge", "인물·지식 관리"},
+	"agents.role.life":               {"Hobbies and daily life", "취미·일상"},
+	"agents.role.creative":           {"Creative work", "창작"},
+	"agents.role.investing":          {"Investing · Advice only", "투자 · 조언만 제공"},
+	"agents.role.legal":              {"Legal · Drafts only", "법률 · 초안만 작성"},
+	"agents.from_description":        {"From a description", "설명으로 생성"},
 	"stop_all":                       {"Stop all", "모두 중단"},
 	"requested":                      {"Requested", "요청됨"},
 	"progress.digest_count":          {"%s items · %s more", "%s개 · %s개 더"},
