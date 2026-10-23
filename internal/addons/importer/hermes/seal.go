@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -146,6 +147,20 @@ func (p *Plan) publishConversation(ctx context.Context, tx *canon.Tx, c *convers
 			}
 		}
 		masked, err := secrets.Mask(display, spans...)
+		if err == nil && json.Valid([]byte(display)) {
+			// The decoded-string scanner must not weaken the original scan.
+			// For example, a numeric token value has no string boundary it can
+			// mask. Retain only placeholder matches; otherwise use the fallback.
+			if !json.Valid([]byte(masked.Text())) {
+				err = secrets.ErrSpan
+			}
+			for _, s := range ScanSecrets([]byte(masked.Text())) {
+				if strings.Trim(masked.Text()[s.Start:s.End], "\"'") != secret.Placeholder {
+					err = secrets.ErrSpan
+					break
+				}
+			}
+		}
 		originFields := map[string]string{"kind": "import", "locator": r.id, "source_session": e.session}
 		if errors.Is(err, secrets.ErrSpan) {
 			// Keep the original in import_event / its material. Publish only a

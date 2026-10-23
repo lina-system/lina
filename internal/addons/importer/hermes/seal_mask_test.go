@@ -57,8 +57,9 @@ func TestSealJSONBodies(t *testing.T) {
 
 func TestSealUnmaskableBody(t *testing.T) {
 	for name, body := range map[string]string{
-		"depth":    strings.Repeat("[", 66) + `"synthetic-private-value"` + strings.Repeat("]", 66),
-		"encoding": "synthetic-private-value\xff",
+		"depth":          strings.Repeat("[", 66) + `"synthetic-private-value"` + strings.Repeat("]", 66),
+		"encoding":       "synthetic-private-value\xff",
+		"numeric secret": `{"token":123456789}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			p, db, key := prepareBodyImport(t, body)
@@ -121,8 +122,9 @@ func TestSealUnmaskableBody(t *testing.T) {
 
 func TestSealJSONSidecar(t *testing.T) {
 	for name, raw := range map[string]string{
-		"JSON":       `{"token":"synthetic-private-value","public":"visible"}`,
-		"unmaskable": strings.Repeat("[", 66) + `"synthetic-private-value"` + strings.Repeat("]", 66),
+		"JSON":           `{"token":"synthetic-private-value","public":"visible"}`,
+		"unmaskable":     strings.Repeat("[", 66) + `"synthetic-private-value"` + strings.Repeat("]", 66),
+		"numeric secret": `{"password":123456,"public":"visible"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			req := importRequest(t)
