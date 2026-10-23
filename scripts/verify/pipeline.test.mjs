@@ -135,3 +135,26 @@ test('local workers overlap other checks while retaining one four-scenario e2e p
   assert.equal(overlap, false);
   assert.equal(unitDuringAcceptance, true);
 });
+
+test('an actual failing Go scenario publishes the diagnostic for post-merge QA', async t => {
+  const sb = sandbox(t);
+  const { work } = developmentRepository(sb);
+  const toolchain = 'go 1.27\ntoolchain go1.27.3\n';
+  sb.commit(work, 'test: seed failing acceptance', {
+    'go.mod': 'module example.invalid/lina\n' + toolchain,
+    'kit/go.mod': 'module example.invalid/lina/kit\n' + toolchain,
+    'go.work': toolchain + 'use (\n.\n./kit\n)\n',
+    'doc.go': 'package lina\n', 'kit/doc.go': 'package kit\n',
+    'cmd/lina/main.go': 'package main\nfunc main() {}\n',
+    'e2e/scenario_test.go': 'package e2e\nimport "testing"\nfunc TestOne(t *testing.T) { t.Run("child", func(t *testing.T) { t.Fatal("forced QA diagnostic") }) }\n',
+  });
+  const { plan } = selectFoundation({ cwd: work, full: true, event: 'push', log() {} });
+  assert.equal(plan.selection.result, 'success');
+  const task = plan.tasks.find(task => task.kind === 'e2e');
+  const record = await executeTask(work, plan, task.id, () => {});
+  assert.equal(record.result, 'failure');
+  assert.equal(record.tests.length, 1);
+  assert.equal(record.tests[0].test, 'TestOne');
+  assert.equal(record.tests[0].result, 'fail');
+  assert.match(record.tests[0].output, /scenario_test.go:3: forced QA diagnostic/);
+});
