@@ -611,8 +611,9 @@ test('modifying, renaming, and deleting a design document stay documentation-onl
   }
 });
 
-for (const path of ['docs/design/example.mjs', 'docs/design/nested/example.md', 'docs/designer/example.md', 'docs/design/example.MD']) {
-  test(`${path} is not a registered design document`, t => {
+for (const path of ['docs/design/example.mjs', 'docs/design/nested/example.md', 'docs/designer/example.md', 'docs/design/example.MD',
+  'docs/research/example.mjs', 'docs/research/nested/example.md']) {
+  test(`${path} is not a registered document`, t => {
     const r = repository(t);
     mkdirSync(join(r.cwd, path, '..'), { recursive: true });
     writeFileSync(join(r.cwd, path), 'fixture\n');
