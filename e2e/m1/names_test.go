@@ -175,7 +175,12 @@ func TestNamesReachEveryAgentAndCountRetiredAliases(t *testing.T) {
 		if probe.Conversation != createdIn && strings.Contains(encoded, "Creation-only detail.") || probe.Conversation != correctedIn && strings.Contains(encoded, "Correction-only detail.") {
 			t.Fatal("shared name disclosed another agent's source text")
 		}
-		p = h.command("replay", probe.TurnID, "--socket", h.socket, "--out", filepath.Join(h.root, fmt.Sprintf("name-replay-%d", i)))
+		args := []string{"replay", probe.TurnID, "--socket", h.socket, "--out", filepath.Join(h.root, fmt.Sprintf("name-replay-%d", i))}
+		if i%2 != 0 {
+			args[1] = filepath.Join(out.Directory, "episodes.jsonl")
+			args = append(args, "--turn", probe.TurnID)
+		}
+		p = h.command(args...)
 		p.start(t)
 		p.wait(t, 0)
 	}
