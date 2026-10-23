@@ -63,10 +63,20 @@ static int rerun_as_root(int argc, char **argv) {
   char command[4096];
   size_t used = 0;
   command[0] = '\0';
-  const char *prefix = "LINA_PRIVILEGED=1 ";
+  // The privileged shell starts in another directory, so relative arguments
+  // keep their meaning.
+  char directory[PATH_MAX];
+  if (getcwd(directory, sizeof(directory)) == NULL) return 1;
+  const char *prefix = "cd ";
   if (strlen(prefix) >= sizeof(command)) return 1;
   memcpy(command, prefix, strlen(prefix));
   used = strlen(prefix);
+  if (!quote(directory, command, sizeof(command), &used)) return 1;
+  const char *and = " && LINA_PRIVILEGED=1 ";
+  if (used + strlen(and) >= sizeof(command)) return 1;
+  memcpy(command + used, and, strlen(and));
+  used += strlen(and);
+  command[used] = '\0';
   char executable[PATH_MAX];
   uint32_t size = sizeof(executable);
   if (_NSGetExecutablePath(executable, &size) != 0) return 1;

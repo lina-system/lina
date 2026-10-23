@@ -197,41 +197,30 @@ static int guard_daemon(struct lina_darwin *darwin) {
 }
 
 // The rollback command's transport: one frame each way, no Node, no Core and no
-// network, just this socket.
-struct socket_request {
-  int status;
-};
-
+// network, just this socket. A guard that cannot be reached is a failure, not a
+// refusal: the person is told to ask an administrator for the root command.
 static int send_request(void *context, const uint8_t request[LINA_RESTORE_FRAME],
                         uint8_t reply[LINA_RESTORE_FRAME], bool *refused) {
-  struct socket_request *socket_request_context = context;
+  (void)context;
+  *refused = false;
   int fd = socket(AF_UNIX, SOCK_STREAM, 0);
-  if (fd < 0) {
-    socket_request_context->status = -1;
-    *refused = false;
-    return -1;
-  }
+  if (fd < 0) return -1;
   struct sockaddr_un address;
   memset(&address, 0, sizeof(address));
   address.sun_family = AF_UNIX;
   snprintf(address.sun_path, sizeof(address.sun_path), "%s", LINA_GUARD_SOCKET);
   if (connect(fd, (struct sockaddr *)&address, sizeof(address)) != 0) {
     close(fd);
-    socket_request_context->status = -2;
-    *refused = true;
     return -1;
   }
   bool ok = write_exact(fd, request, LINA_RESTORE_FRAME) && read_exact(fd, reply, LINA_RESTORE_FRAME);
   close(fd);
-  socket_request_context->status = ok ? 0 : -3;
-  *refused = false;
   return ok ? 0 : -1;
 }
 
 static int restore_command(struct lina_darwin *darwin) {
   bool root = geteuid() == 0;
-  struct socket_request context = {0};
-  struct lina_rollback transport = {&context, send_request};
+  struct lina_rollback transport = {NULL, send_request};
   enum lina_rollback_result result =
       lina_rollback_run(&darwin->host, &darwin->paths, root, &transport);
   switch (result) {
