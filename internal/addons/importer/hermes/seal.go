@@ -109,6 +109,36 @@ func (p *Plan) Seal(ctx context.Context, db Canon, backup func(context.Context) 
 	return report, err
 }
 
+// displayMask masks an event display under the publication rule. A body that
+// cannot be masked becomes an unavailable notice instead of a display.
+func displayMask(display string) (secrets.Masked, error) {
+	var spans []secrets.Span
+	// Raw assignment spans may include JSON's quotes or escape sequences.
+	// Let the shared JSON scanner inspect decoded strings instead. These
+	// spans are detector output, not independent sensitivity annotations.
+	if !json.Valid([]byte(display)) {
+		for _, s := range ScanSecrets([]byte(display)) {
+			spans = append(spans, secrets.Span{Start: s.Start, End: s.End, Sensitivity: s.Kind})
+		}
+	}
+	masked, err := secrets.Mask(display, spans...)
+	if err == nil && json.Valid([]byte(display)) {
+		// The decoded-string scanner must not weaken the original scan.
+		// For example, a numeric token value has no string boundary it can
+		// mask. Retain only placeholder matches; otherwise use the fallback.
+		if !json.Valid([]byte(masked.Text())) {
+			err = secrets.ErrSpan
+		}
+		for _, s := range ScanSecrets([]byte(masked.Text())) {
+			if strings.Trim(masked.Text()[s.Start:s.End], "\"'") != secret.Placeholder {
+				err = secrets.ErrSpan
+				break
+			}
+		}
+	}
+	return masked, err
+}
+
 func (p *Plan) publishConversation(ctx context.Context, tx *canon.Tx, c *conversation) error {
 	parent := ""
 	for _, r := range c.records {
@@ -137,30 +167,7 @@ func (p *Plan) publishConversation(ctx context.Context, tx *canon.Tx, c *convers
 		}
 		// Originals and byte-addressed flags stay in import_event for lossless
 		// reverse mapping; live consumers use the native masked representation.
-		var spans []secrets.Span
-		// Raw assignment spans may include JSON's quotes or escape sequences.
-		// Let the shared JSON scanner inspect decoded strings instead. These
-		// spans are detector output, not independent sensitivity annotations.
-		if !json.Valid([]byte(display)) {
-			for _, s := range ScanSecrets([]byte(display)) {
-				spans = append(spans, secrets.Span{Start: s.Start, End: s.End, Sensitivity: s.Kind})
-			}
-		}
-		masked, err := secrets.Mask(display, spans...)
-		if err == nil && json.Valid([]byte(display)) {
-			// The decoded-string scanner must not weaken the original scan.
-			// For example, a numeric token value has no string boundary it can
-			// mask. Retain only placeholder matches; otherwise use the fallback.
-			if !json.Valid([]byte(masked.Text())) {
-				err = secrets.ErrSpan
-			}
-			for _, s := range ScanSecrets([]byte(masked.Text())) {
-				if strings.Trim(masked.Text()[s.Start:s.End], "\"'") != secret.Placeholder {
-					err = secrets.ErrSpan
-					break
-				}
-			}
-		}
+		masked, err := displayMask(display)
 		originFields := map[string]string{"kind": "import", "locator": r.id, "source_session": e.session}
 		if errors.Is(err, secrets.ErrSpan) {
 			// Keep the original in import_event / its material. Publish only a

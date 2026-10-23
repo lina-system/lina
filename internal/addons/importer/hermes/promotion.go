@@ -13,7 +13,6 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/memory"
-	"github.com/thisisjun786/lina/internal/core/secrets"
 )
 
 type PromotionPolicy struct {
@@ -38,6 +37,20 @@ func instruction(text string) bool {
 	return false
 }
 
+// promotionBody returns the body publication displays for r: the adopted
+// output sidecar bytes when the event has one, and the inline body otherwise.
+// Missing sidecar bytes keep the inline body, as publication does.
+func promotionBody(c *conversation, r *record) string {
+	if r.event != nil {
+		for _, attachment := range c.records {
+			if attachment.kind == "material" && attachment.material != nil && len(attachment.links) == 1 && attachment.links[0].target == r.id {
+				return attachment.sources[0].row.text("bytes")
+			}
+		}
+	}
+	return r.body
+}
+
 // PromotionBatches proposes verbatim quotes, never facts extracted from summary
 // text. Acceptance attests that a cluster concerns the person; it is not an
 // inferred provenance upgrade. The source language and precision stay intact.
@@ -55,12 +68,19 @@ func (p *Plan) PromotionBatches(policy PromotionPolicy) ([]PromotionBatch, error
 	}
 	for _, c := range p.conversations {
 		for _, r := range c.records {
-			if superseded[r.id] || hasFlag(r, "retracted") || strings.TrimSpace(r.body) == "" || len(ScanSecrets([]byte(r.body))) > 0 {
+			if superseded[r.id] || hasFlag(r, "retracted") || strings.TrimSpace(r.body) == "" {
+				continue
+			}
+			// Promotion judges the body publication displays. An event whose
+			// output sidecar cannot be masked publishes an unavailable notice,
+			// so it cannot back a memory item; secrets stay excluded either way.
+			display := promotionBody(c, r)
+			if len(ScanSecrets([]byte(display))) > 0 {
 				continue
 			}
 			// Unavailable bodies and secrets recognized only after JSON decoding
 			// cannot become verbatim promotion drafts or memory evidence.
-			masked, err := secrets.Mask(r.body)
+			masked, err := displayMask(display)
 			if err != nil || len(masked.Spans()) != 0 {
 				continue
 			}

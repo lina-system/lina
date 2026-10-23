@@ -191,6 +191,60 @@ func TestSealJSONSidecar(t *testing.T) {
 	}
 }
 
+func TestPromotionUsesSidecarBody(t *testing.T) {
+	for name, raw := range map[string]string{
+		"unmaskable":     strings.Repeat("[", 66) + `"synthetic-private-value"` + strings.Repeat("]", 66),
+		"numeric secret": `{"password":123456,"public":"visible"}`,
+		"secret":         `{"token":"synthetic-private-value","public":"visible"}`,
+		"benign":         `{"output":"synthetic output"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			req := importRequest(t)
+			db := importStore(t)
+			writer, _ := importMaterials(t, db)
+			req.Materials = writer
+			path := filepath.Join(t.TempDir(), "output")
+			if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+				t.Fatal(err)
+			}
+			// A proven-person message whose display is its output sidecar.
+			key := LegacyKey{string(HermesLCM), "profile", "messages", "1"}
+			req.Sidecars = []Sidecar{{Key: LegacyKey{string(HermesLCM), "profile", "sidecars", "output"}, Event: key, SnapshotPath: path, SHA256: bytesHash([]byte(raw))}}
+			p, err := Prepare(t.Context(), req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { p.Close() })
+			if _, err = p.Import(t.Context(), db); err != nil {
+				t.Fatal(err)
+			}
+			ref, err := Resolve(t.Context(), db, key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			batches, err := p.PromotionBatches(PromotionPolicy{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			proposed := false
+			for _, batch := range batches {
+				for _, id := range batch.Sources {
+					proposed = proposed || id == ref.RecordID
+				}
+			}
+			if name == "benign" {
+				if !proposed {
+					t.Fatalf("benign sidecar event not proposed: %+v", batches)
+				}
+				return
+			}
+			if proposed {
+				t.Fatalf("unavailable sidecar proposed for promotion: %+v", batches)
+			}
+		})
+	}
+}
+
 func prepareBodyImport(t *testing.T, body string) (*Plan, *canon.Store, LegacyKey) {
 	t.Helper()
 	req := importRequest(t)
