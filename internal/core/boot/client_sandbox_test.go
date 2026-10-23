@@ -36,6 +36,15 @@ func TestClientSocketExcludedFromSandbox(t *testing.T) {
 	}
 	root := stateRoot(t)
 	socket := filepath.Join(root, "run/core.sock")
+	args := []string{"-test.run=^TestClientSocketExcludedFromSandbox$"}
+	if testing.CoverMode() != "" {
+		// The instrumented child must write coverage inside the existing
+		// writable workspace; its inherited test output directory is read-only.
+		coverage := filepath.Join(root, "workspace")
+		t.Setenv("GOCOVERDIR", coverage)
+		args = append(args, "-test.gocoverdir="+coverage)
+	}
+	args = append(args, "--", "--socket-canary", socket)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	var box *sandbox.Sandbox
@@ -55,7 +64,7 @@ func TestClientSocketExcludedFromSandbox(t *testing.T) {
 		for _, network := range []bool{false, true} {
 			l := lease.New(func() {})
 			var output bytes.Buffer
-			err := box.Run(ctx, l, sandbox.Command{Path: executable, Args: []string{"-test.run=^TestClientSocketExcludedFromSandbox$", "--", "--socket-canary", socket}, Network: network, Stdout: &output, Stderr: &output})
+			err := box.Run(ctx, l, sandbox.Command{Path: executable, Args: args, Network: network, Stdout: &output, Stderr: &output})
 			l.Release()
 			if err != nil {
 				return fmt.Errorf("sandbox canary network=%v: %w: %s", network, err, &output)

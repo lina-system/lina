@@ -85,7 +85,7 @@ func (m *shellModel) agentDiscoveryDone() {
 	}
 }
 
-func switchConversation(ctx context.Context, c *clientapi.Client, m *shellModel, agent string) error {
+func switchConversation(ctx context.Context, c shellClient, m *shellModel, agent string) error {
 	if m.conversation.id != "" && !m.conversation.agentMissing {
 		off := false
 		for _, topic := range []string{"conversation:" + m.conversation.id, "results:" + m.conversation.id} {

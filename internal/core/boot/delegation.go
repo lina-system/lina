@@ -632,6 +632,16 @@ func (d *delegationRuntime) events(ctx context.Context) {
 					entry.workTool(event)
 				}
 			case worker.ProgressEvent:
+				if event.Progress.Phase == "server_request_resolved" {
+					d.root.workers.mu.Lock()
+					entry := d.root.workers.sessions[event.Thread.ID]
+					d.root.workers.mu.Unlock()
+					if entry != nil {
+						entry.stopMatching(event.Thread.TurnID, event.Progress.ItemID)
+						entry.answerDelivered(ctx, event.Thread)
+						entry.origin.notifyOwnerViews()
+					}
+				}
 				if entry := d.resultSession(event.Thread); entry != nil && event.Progress.Phase == "item_completed" && event.Progress.Text != "" {
 					entry.output = event.Progress.Text
 					entry.outputThread = event.Thread
