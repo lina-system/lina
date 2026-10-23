@@ -405,6 +405,7 @@ func TestACPDecisionsThroughRunningCore(t *testing.T) {
 				}
 			}
 			noFile()
+			assertACPDecisionViews(t, h, fmt.Sprintf("task:%s:%d", record.ID, card.Run.Generation))
 			if mode == "form" {
 				if question.Card == nil || question.ConversationID != conversation || question.Form == nil || len(question.Form.Fields) != 3 || question.Form.PluginName != scenario.worker {
 					t.Fatalf("form lost origin or schema: %+v", question)
@@ -563,6 +564,61 @@ func TestACPDecisionsThroughRunningCore(t *testing.T) {
 				t.Fatalf("cancel was not interrupted: %+v", card)
 			}
 		})
+	}
+}
+
+// Read fresh owner views while the worker is blocked on its unanswered request.
+// The fixture cannot finish until the test answers, so this has no duration race.
+func assertACPDecisionViews(t *testing.T, h *harness, ref string) {
+	t.Helper()
+	for _, topic := range []string{"running", "progress"} {
+		c, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "test", []protocol.Capability{{Name: topic, Version: "1.0"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close()
+		if _, err = c.Subscribe(h.ctx, protocol.Subscribe{Topic: &topic}); err != nil {
+			t.Fatal(err)
+		}
+		frame, err := c.Receive(h.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapshot, ok := frame.Payload.(protocol.Snapshot)
+		if !ok || snapshot.Topic != topic {
+			t.Fatalf("missing %s snapshot: %+v", topic, frame)
+		}
+		var state *protocol.RunningState
+		for _, item := range snapshot.Items {
+			switch item.Kind {
+			case protocol.KindRunningUpdate:
+				var update protocol.RunningUpdate
+				if err := json.Unmarshal(item.Payload, &update); err != nil {
+					t.Fatal(err)
+				}
+				if update.RunID != nil && *update.RunID == ref {
+					state = update.State
+				}
+			case protocol.KindProgressUpdate:
+				var update protocol.ProgressUpdate
+				if err := json.Unmarshal(item.Payload, &update); err != nil {
+					t.Fatal(err)
+				}
+				if update.Rows != nil {
+					for _, row := range *update.Rows {
+						if row.Ref == ref {
+							state = row.Line.State
+						}
+					}
+				}
+			}
+		}
+		if state == nil {
+			t.Fatalf("%s has no state for %s: %+v", topic, ref, snapshot)
+		}
+		if *state != protocol.RunningStateNeedsInput {
+			t.Fatalf("%s state = %s, want needs_input", topic, *state)
+		}
 	}
 }
 

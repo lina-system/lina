@@ -2041,8 +2041,12 @@ transactions read those copied observations and the canonical owner names.
 Rows are scoped to the requesting person and name the owner agent before
 the worker. An idle session leaves the list without asserting that the task is
 verified; a new active turn makes it visible again. Unknown observations stay
-unknown. Scheduled workers retain their durable task rows and do not also
-contribute session rows. These rows do not alter the task or background-run state mappings.
+unknown. A pending ACP `session/request_permission` needs the person's input,
+just like a Codex approval: both the running row and progress line show input
+needed until the request is resolved. A pending Core tool call alone does not
+claim the person's attention. Scheduled workers retain their durable task rows
+and do not also contribute session rows. These rows do not alter the task or
+background-run state mappings.
 
 - A row is one task, one background run or one conversation-started worker. It has one of three states. In progress: a worker (or a background sub-agent) is working on it, or its pull request is being operated on. Waiting: it is not running, with one visible reason: a dependency, an area held by another task, a worker out of quota, host capacity, CI pending, a question or decision for the person, or a pause. Landed: the task has landed (see Terms), or the background run has ended with its outcome.
 - The states map onto the work card states: working is in progress; waiting, paused and input needed are waiting; done is landed. A stalled or failed task shows its state word until it is dispatched again (see Stall and failure).
