@@ -74,7 +74,7 @@ func (r *conversationRuntime) resultEnvironment(ctx context.Context, g grant.Gra
 	return env, err
 }
 func (r *conversationRuntime) prepareResultTools(turnID string, input ledger.Event, shapes reply.Shapes, bindings map[string]loop.Tool) error {
-	journal := measuredResultJournal{LedgerJournal: results.LedgerJournal{Surface: input.Surface}, config: conversationReplyConfig(&shapes)}
+	journal := measuredResultJournal{LedgerJournal: results.LedgerJournal{Surface: input.Surface, ParentID: input.ID}, config: conversationReplyConfig(&shapes)}
 	store, err := results.New(r.db, results.Config{Journal: journal})
 	if err != nil {
 		return err
@@ -130,26 +130,31 @@ func (r *conversationRuntime) resultNotice(ctx context.Context, call provider.To
 	return out
 }
 
-func (r *conversationRuntime) publishTypedResult(ctx context.Context, source ledger.Event) error {
-	if source.AgentID != r.agent || source.ConversationID != r.conversation {
-		return results.ErrOutOfScope
-	}
+func (r *conversationRuntime) typedResultView(ctx context.Context, source ledger.Event) (result.Result, reply.ResultView, error) {
 	var value result.Result
+	if source.AgentID != r.agent || source.ConversationID != r.conversation {
+		return value, reply.ResultView{}, results.ErrOutOfScope
+	}
 	if err := json.Unmarshal([]byte(source.Body.Text()), &value); err != nil {
-		return err
+		return value, reply.ResultView{}, err
 	}
 	cfg := conversationReplyConfig(nil)
 	measurement, err := r.journal().Get(ctx, "reply-check:"+source.ID)
 	if err == nil {
 		var check reply.Check
 		if err := json.Unmarshal([]byte(measurement.Body.Text()), &check); err != nil {
-			return err
+			return value, reply.ResultView{}, err
 		}
 		cfg.Shapes, cfg.Budget = check.Shapes, check.Budget
 	} else if !errors.Is(err, ledger.ErrNotFound) {
-		return err
+		return value, reply.ResultView{}, err
 	}
 	view, err := reply.ProjectResult(cfg, value)
+	return value, view, err
+}
+
+func (r *conversationRuntime) publishTypedResult(ctx context.Context, source ledger.Event) error {
+	value, view, err := r.typedResultView(ctx, source)
 	if err != nil {
 		return err
 	}
@@ -171,4 +176,27 @@ func (r *conversationRuntime) publishTypedResult(ctx context.Context, source led
 		Title: value.Title, Summary: view.Text, Text: &text, RevisedBy: value.RevisedBy,
 		Provenance: protocol.ResultProvenance{AgentID: value.Provenance.AgentID, ConversationID: value.Provenance.ConversationID, TurnID: value.Provenance.TurnID, TaskID: value.Provenance.TaskID},
 	})
+}
+
+// A channel uses the same pinned shape as the app. The existing conversation
+// link opens the source card; only an eligible short table is sent inline.
+func (r *conversationRuntime) typedChannelText(ctx context.Context, source ledger.Event) (string, error) {
+	value, view, err := r.typedResultView(ctx, source)
+	if err != nil {
+		return "", err
+	}
+	if view.Inline {
+		return view.Text, nil
+	}
+	cfg := conversationReplyConfig(view.Check.Shapes)
+	cfg.Budget = view.Check.Budget
+	filter, err := reply.NewFilter(cfg)
+	if err != nil {
+		return "", err
+	}
+	caption, err := filter.Push(strings.TrimSpace(view.Text + " " + value.Title))
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(caption.Text + "\n" + "lina://conversation/" + r.conversation), nil
 }
