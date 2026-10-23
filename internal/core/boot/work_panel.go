@@ -73,6 +73,8 @@ func workCardRank(line protocol.ProgressLine) int {
 		return 1
 	case protocol.RunningStateDone:
 		return 3
+	case protocol.RunningStateWaiting, protocol.RunningStateReadyForReview, protocol.RunningStateFailed, protocol.RunningStateStopped, protocol.RunningStateUnknown:
+		return 2
 	default:
 		return 2
 	}
