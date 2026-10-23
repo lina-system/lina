@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package goal
 
-import "testing"
+import (
+	"bytes"
+	"testing"
+)
 
 func TestRetiredSiblingRepairAssessmentIsDerivedAgain(t *testing.T) {
 	e := revisionEngine(t, readyTask("a"), readyTask("b"))
@@ -30,10 +33,19 @@ func TestRetiredSiblingRepairAssessmentIsDerivedAgain(t *testing.T) {
 	// while leaving b's failed task inputs and QA evidence unchanged.
 	revisionEdit(t, e)
 	repair.ID, repair.Repairs, repair.DependsOn = "obsolete-repair-b", "b", []string{"b"}
+	before := encode(revisionSnapshot(t, e).Goals[0])
 	for range 2 {
 		if err := e.Report(t.Context(), managers[1].ID, managers[1].Epoch, Observation{Status: OutcomeSucceeded, Tasks: []Task{repair}}); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if after := encode(revisionSnapshot(t, e).Goals[0]); !bytes.Equal(before, after) {
+		t.Fatal("stale report changed the current goal")
+	}
+	// The central input fence retains stale reports as history. The next
+	// derivation releases the retired judgment's one-shot planning flag.
+	if err := e.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
 	}
 	g := revisionSnapshot(t, e).Goals[0]
 	if b := g.Tasks[1]; b.Stage != TaskQAFailed || b.RepairAsked || b.RepairedBy != "" || b.QA.Ref != "failed-qa" {
