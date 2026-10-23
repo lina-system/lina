@@ -13,6 +13,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/guard"
+	"github.com/thisisjun786/lina/internal/core/recall"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 )
 
@@ -342,7 +343,10 @@ func revision(ctx context.Context, tx *canon.Tx, item Item, raw []byte) error {
 	if err != nil {
 		return err
 	}
-	return canon.WriteEvidenceCitations(ctx, tx, "memory", item.ID, item.Revision, evidence)
+	if err := canon.WriteEvidenceCitations(ctx, tx, "memory", item.ID, item.Revision, evidence); err != nil {
+		return err
+	}
+	return recall.IndexText(ctx, tx, "memory", item.ID, item.Content)
 }
 func readItem(ctx context.Context, tx *canon.Tx, id string) (Item, error) {
 	var raw []byte
