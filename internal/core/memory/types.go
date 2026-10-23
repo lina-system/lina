@@ -24,6 +24,7 @@ type Kind string
 
 const (
 	Fact               Kind = "fact"
+	Name               Kind = "name"
 	Preference         Kind = "preference"
 	Commitment         Kind = "commitment"
 	Decision           Kind = "decision"
@@ -107,6 +108,7 @@ type Item struct {
 	ID           string     `json:"id,omitempty"`
 	Kind         Kind       `json:"kind"`
 	Content      string     `json:"content"`
+	Name         *NameValue `json:"name,omitempty"`
 	Gloss        string     `json:"gloss,omitempty"`
 	Holder       Holder     `json:"holder,omitempty"`
 	Person       string     `json:"person,omitempty"`
@@ -168,6 +170,7 @@ func (s RecallScope) Holders() []Holder {
 }
 
 type Query struct {
+	Kind       Kind   // Optional kind filter, applied before ranking and limits.
 	After      string // Optional last item identity in the current revision order.
 	ID         string // Optional exact identity, filtered before the result limit.
 	Text       string
