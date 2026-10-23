@@ -6,6 +6,16 @@ selection runs it once; there is no recursive test runner. Builds are shared,
 state roots are private, children are joined and temporary state is removed.
 Existing persona-growth extensions still use this harness and `../m2/` fixtures.
 
+The shared conversation client checks admission before subscribing, so its
+readiness receive loop cannot consume live conversation events. It still
+correlates each probe reply and retries only an explicit recovery refusal.
+`TestConversationReadinessBeforeSubscription` checks the ordering through the
+real client server after an unavailable probe. `TestM2WorkerFixtureFinishGate`
+waits for the synthetic worker to enter its completion gate before requesting
+a second snapshot, then checks one completion and the result file. The gate
+wait runs outside the worker request loop. `TestM2InstalledWorkerOutcome`
+exercises the corresponding worker, file read-back and restart path in Core.
+
 This map follows the nine acceptance checks and failure injections in
 [LINA 1](../../docs/design/go-roadmap.md#lina-1). External providers and Telegram
 are synthetic wires; the production stores, operations, Core and TUI are real.
