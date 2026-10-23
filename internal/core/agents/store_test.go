@@ -52,6 +52,7 @@ func create(t *testing.T, s *agents.Store, preset string) agents.Agent {
 	return a
 }
 func TestRevisionAppliesAtNextPreparationAndSurvivesReopen(t *testing.T) {
+	t.Parallel()
 	s, db, root := setup(t)
 	a := create(t, s, "")
 	b := create(t, s, "")
@@ -97,6 +98,7 @@ func TestRevisionAppliesAtNextPreparationAndSurvivesReopen(t *testing.T) {
 	}
 }
 func TestPresetUpdatesOnlyItsCoreAndDefaultVoice(t *testing.T) {
+	t.Parallel()
 	s, db, _ := setup(t)
 	p := agents.Preset{ID: "sample", Core: "one", DefaultVoice: "voice one", BlankSettings: []string{"color"}}
 	if err := s.UpdatePreset(t.Context(), p, "person"); err != nil {
@@ -173,6 +175,7 @@ func TestPresetUpdatesOnlyItsCoreAndDefaultVoice(t *testing.T) {
 	}
 }
 func TestTrashEndsBindingsAndExpiresAtThirtyDays(t *testing.T) {
+	t.Parallel()
 	s, _, root := setup(t)
 	a, b := create(t, s, ""), create(t, s, "")
 	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -227,6 +230,7 @@ func TestTrashEndsBindingsAndExpiresAtThirtyDays(t *testing.T) {
 	}
 }
 func TestFirstRunIsIdempotentAndOnlyNeedsChatGPT(t *testing.T) {
+	t.Parallel()
 	s, db, root := setup(t)
 	first, err := s.FirstRun(t.Context(), "person", false)
 	if err != nil {
@@ -257,6 +261,7 @@ func TestFirstRunIsIdempotentAndOnlyNeedsChatGPT(t *testing.T) {
 }
 
 func TestPreparationKeepsAgentIdentityAndOriginalOwner(t *testing.T) {
+	t.Parallel()
 	s, _, _ := setup(t)
 	a := create(t, s, "")
 	first, err := s.Prepare(t.Context(), "identity-first", a.ID)
@@ -278,6 +283,7 @@ func TestPreparationKeepsAgentIdentityAndOriginalOwner(t *testing.T) {
 }
 
 func TestFirstRunUpgradesOnlyShippedPlaceholderLayers(t *testing.T) {
+	t.Parallel()
 	for _, customCore := range []bool{false, true} {
 		t.Run(fmt.Sprint(customCore), func(t *testing.T) {
 			s, _, _ := setup(t)
