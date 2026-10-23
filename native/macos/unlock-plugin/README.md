@@ -127,14 +127,18 @@ The job runs `build.sh`, then `codesign --verify --strict`, `codesign -dvvv` and
 when a Developer ID signing run has the wrong team, and keeps the bundle as a
 build artifact. Its step summary holds that output for the head it ran on.
 
-That job signs with LINA's Developer ID identity when the repository carries the
-certificate and the hardened runtime flag either way. The identity comes from
-four secrets: `MACOS_SIGNING_P12` (base64 of the exported certificate and key),
-`MACOS_SIGNING_P12_PASSWORD`, `MACOS_SIGN_IDENTITY` (the identity's common name)
-and `MACOS_TEAM_ID`. Without them the job builds with an ad-hoc signature, which
-proves the bundle compiles and verifies but is not shippable; the job summary
-records which path ran. Notarization stays optional and needs
-`LINA_NOTARY_PROFILE` on a machine where the bundle is released.
+That job signs with LINA's Developer ID identity only on `dev`, `main` and `v*`
+tags, and only when the repository carries the certificate; the hardened runtime
+flag is required on every path. The restriction is part of the rule, not a
+convenience: a branch push runs the checked-out `build.sh` next to the imported
+key, so a branch that may replace that script must never see the key. The
+identity comes from four secrets: `MACOS_SIGNING_P12` (base64 of the exported
+certificate and key), `MACOS_SIGNING_P12_PASSWORD`, `MACOS_SIGN_IDENTITY` (the
+identity's common name) and `MACOS_TEAM_ID`. Without them, or off those refs, the
+job builds with an ad-hoc signature, which proves the bundle compiles and
+verifies but is not shippable; the job summary records which path ran.
+Notarization stays optional and needs `LINA_NOTARY_PROFILE` on a machine where
+the bundle is released.
 
 The arm64 build and signature run recorded for this bundle is in
 [`evidence/macos-unlock-bundle.json`](../../../evidence/macos-unlock-bundle.json).

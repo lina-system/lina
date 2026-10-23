@@ -32,9 +32,14 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 15
     env:
-      # Signing is optional: the repository carries the Developer ID identity
-      # only when its secrets are set, and the ad-hoc build check runs otherwise.
-      LINA_SIGNING: ${{ secrets.MACOS_SIGNING_P12 != '' }}
+      # The Developer ID identity signs releases only. A branch push runs the
+      # checked-out build.sh with the key in the keychain, so signing is limited
+      # to the protected branch and release tags; every other ref, including a
+      # pull request, builds with an ad-hoc signature and gets no key.
+      LINA_SIGNING: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main'
+          || startsWith(github.ref, 'refs/tags/v'))
+        && secrets.MACOS_SIGNING_P12 != '' }}
     steps:
       - name: Check out the candidate
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
