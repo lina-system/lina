@@ -70,3 +70,7 @@ Service rendering and installation live in
 [`internal/core/install`](../internal/core/install/install.go). The
 [runtime contract](../docs/design/runtime.md#the-lina-command) governs product
 behavior.
+
+The macOS parts of a desktop install — the unlock plug-in, the lock guard, the
+installer and the rollback command — are packaged separately; see
+[the macOS package](macos/README.md).
