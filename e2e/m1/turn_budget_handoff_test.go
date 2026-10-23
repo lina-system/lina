@@ -16,6 +16,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/runs"
 	"github.com/thisisjun786/lina/internal/design"
+	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -157,7 +158,16 @@ func TestM1TurnBudgetHandoffInstalledCore(t *testing.T) {
 	terminal := h.startTerminalSize([]string{"TERM=xterm-256color"}, false, true, 120, 60)
 	waitComposerReady(t, h, terminal)
 	h.keys(terminal, "\x12")
-	waitScreen(t, h, terminal, design.Text(design.English, "running.state.in_progress")+": "+scenario.Input)
+	wantRunning := design.Text(design.English, "running.state.in_progress") + ": " + scenario.Input
+	screen, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
+		// At 120 columns the running pager occupies the rightmost 40 columns.
+		// Join its visual wraps without mixing in the conversation's input echo.
+		panel := strings.Join(panelCellRows(s, 80, 40), " ")
+		return strings.Contains(strings.Join(strings.Fields(panel), " "), wantRunning)
+	})
+	if err != nil {
+		t.Fatalf("running panel missing %q: %v; cells=%s", wantRunning, err, screenText(screen))
+	}
 	h.keys(terminal, "\x1b")
 	key := "boundary-407"
 	if _, err = client.Input(h.ctx, protocol.Input{ConversationID: &conversation, InputID: &key, Text: &scenario.Next}); err != nil {

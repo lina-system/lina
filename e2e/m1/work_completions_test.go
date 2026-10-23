@@ -3,6 +3,7 @@ package e2e_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"net/http"
@@ -179,14 +180,17 @@ func queuedWorkTurn(t *testing.T, h *harness, c *clientapi.Client, conversation,
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		var n int
+		var state string
 		if err = db.Read(h.ctx, func(tx *canon.Tx) error {
-			return tx.QueryRowContext(h.ctx, `SELECT count(*) FROM inbox i JOIN turn_runs t ON t.inbox_id=i.id WHERE i.conversation=? AND i.source='client' AND i.native_id=? AND t.state='completed'`, conversation, key).Scan(&n)
-		}); err != nil {
+			return tx.QueryRowContext(h.ctx, `SELECT t.state FROM inbox i JOIN turn_runs t ON t.inbox_id=i.id WHERE i.conversation=? AND i.source='client' AND i.native_id=?`, conversation, key).Scan(&state)
+		}); err != nil && err != sql.ErrNoRows {
 			t.Fatal(err)
 		}
-		if n == 1 {
+		switch state {
+		case "completed":
 			return
+		case "failed", "aborted":
+			t.Fatalf("manual work turn %s ended as %s", key, state)
 		}
 		select {
 		case <-ticker.C:
