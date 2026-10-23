@@ -65,7 +65,9 @@ No new client command or TUI memory screen is introduced.
 
 Core now registers `memory-extraction:<agent>` on its existing job socket.
 Admission, startup and a one-minute poll prepare at most 32 ledger events per
-agent, grouping eligible person messages in a 30-second window. Jobs run at
+agent, grouping eligible person messages in a 30-second window. Preparation
+shrinks the event prefix to fit the 6 MiB encoded task limit. Admission sends a
+coalesced notification; all preparation runs on the background loop. Jobs run at
 most once a minute, with a one-minute timeout, an 8,192-token reservation and
 a 131,072-token job budget. These are initial bounded defaults, not a measured
 quality claim. Model calls use the auxiliary route without tools or persona.

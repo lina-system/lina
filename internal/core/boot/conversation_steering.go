@@ -22,9 +22,7 @@ type acceptedSteering struct {
 // adapters reuse this coordinator, including steering during a live turn.
 func (r *conversationRuntime) submitInput(event ledger.Event, inboxID int64, steer bool, runner *conversationRuntime) error {
 	if r.router != nil {
-		// Admission is durable. Background scheduling failure must not prevent
-		// the reply; the periodic scan and startup resume from the same cursor.
-		_ = r.router.root.queueExtraction(r.ctx, r.agent)
+		r.router.root.notifyExtraction()
 	}
 	items, err := assemble.History([]ledger.Event{event}, r.conversation, r.agent)
 	if err != nil {

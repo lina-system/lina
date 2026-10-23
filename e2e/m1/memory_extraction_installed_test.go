@@ -13,6 +13,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/memory"
+	readcanon "github.com/thisisjun786/lina/internal/moirai/canon"
 )
 
 // Other worker scenarios have no durable personal fact in their scripted
@@ -86,6 +87,34 @@ func TestM2InstalledMemoryExtraction(t *testing.T) {
 	}
 	client, conversation := conversationClient(t, h)
 	admittedTurn(t, h, client, conversation, "extraction-owner", statement)
+	// Admission wakes the background scheduler; wait on the durable ready task,
+	// not a guessed delay, before starting the one-shot worker.
+	reader, err := readcanon.Open(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	ready := false
+	for !ready {
+		work, err := reader.Ready(h.ctx, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, item := range work {
+			if item.Job.ID == "memory-extraction:"+strings.TrimPrefix(conversation, "main:") {
+				ready = true
+			}
+		}
+		if !ready {
+			select {
+			case <-h.ctx.Done():
+				t.Fatal("extraction task not scheduled", h.ctx.Err())
+			case <-ticker.C:
+			}
+		}
+	}
 	runWorker()
 	if calls.Load() != 1 {
 		t.Fatalf("owner statement extraction calls=%d, want 1", calls.Load())

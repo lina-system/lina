@@ -319,3 +319,58 @@ func TestMemoryExtractionApplyFailureKeepsCursorAndCachedResult(t *testing.T) {
 		t.Fatal("Apply retry repeated model call")
 	}
 }
+
+func TestMemoryExtractionAdmissionDoesNotWaitForPreparation(t *testing.T) {
+	r, p, _ := extractionFixture(t)
+	r.router = &conversationRouter{root: r, views: map[string]*conversationRuntime{r.agent: r}}
+	extractionEvent(t, r, "source", guard.EntryOwner, "I enjoy hiking.")
+	event, err := r.journal().Get(t.Context(), "source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.steps = []turnStep{{events: turnText("Noted.")}}
+	// Hold the extraction service gate until after admission returns. Success
+	// requires independence from this gate; the deadline only diagnoses a hang.
+	r.memoryExtraction.mu.Lock()
+	done := make(chan error, 1)
+	go func() { done <- r.submitInput(event, 1, false, r) }()
+	select {
+	case err := <-done:
+		r.memoryExtraction.mu.Unlock()
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		r.memoryExtraction.mu.Unlock()
+		<-done
+		t.Fatal("conversation admission waited for extraction preparation")
+	}
+}
+
+func TestMemoryExtractionShrinksLargeBatch(t *testing.T) {
+	r, _, s := extractionFixture(t)
+	statement := "I enjoy hiking. " + strings.Repeat("Synthetic detail. ", 7000)
+	for i := range 32 {
+		extractionEvent(t, r, fmt.Sprint("large-", i), guard.EntryOwner, statement)
+	}
+	if err := r.queueExtraction(t.Context(), r.agent); err != nil {
+		t.Fatalf("large prefix stalled extraction: %v", err)
+	}
+	var raw []byte
+	if err := r.db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT input FROM moirai_tasks WHERE job=? AND sequence=1", extractionPrefix+r.agent).Scan(&raw)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var batch memory.ExtractionBatch
+	if err := json.Unmarshal(raw, &batch); err != nil {
+		t.Fatal(err)
+	}
+	if len(raw) > 6<<20 || batch.Through <= batch.After || batch.Through >= 32 {
+		t.Fatalf("batch did not shrink: bytes=%d through=%d", len(raw), batch.Through)
+	}
+	cursor, err := s.ExtractionCursor(t.Context(), extractionPrefix+r.agent)
+	if err != nil || cursor != 0 {
+		t.Fatal("queued batch advanced committed source")
+	}
+}

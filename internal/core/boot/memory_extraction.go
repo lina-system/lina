@@ -18,21 +18,24 @@ import (
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
-const extractionPrefix = "memory-extraction:"
+const (
+	extractionPrefix       = "memory-extraction:"
+	extractionPayloadLimit = 6 << 20
+)
 
 type memoryExtractionRuntime struct {
 	mu       sync.Mutex
 	services map[string]*jobs.Service
 	stop     context.CancelFunc
 	done     chan struct{}
+	wake     chan struct{}
 }
 
 func (r *conversationRuntime) startMemoryExtraction(ctx context.Context) error {
 	if r.route == nil {
 		return nil
 	}
-	r.memoryExtraction = &memoryExtractionRuntime{services: map[string]*jobs.Service{}}
-	_ = r.queueAllExtraction(ctx)
+	r.memoryExtraction = &memoryExtractionRuntime{services: map[string]*jobs.Service{}, wake: make(chan struct{}, 1)}
 	loopCtx, cancel := context.WithCancel(ctx)
 	m := r.memoryExtraction
 	m.stop, m.done = cancel, make(chan struct{})
@@ -40,16 +43,30 @@ func (r *conversationRuntime) startMemoryExtraction(ctx context.Context) error {
 		defer close(m.done)
 		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
+		_ = r.queueAllExtraction(loopCtx)
 		for {
 			select {
 			case <-loopCtx.Done():
 				return
+			case <-m.wake:
+				_ = r.queueAllExtraction(loopCtx)
 			case <-ticker.C:
 				_ = r.queueAllExtraction(loopCtx)
 			}
 		}
 	}()
 	return nil
+}
+
+// Admission only signals the existing background loop. Coalescing retains a
+// rescan while preparation runs, without delaying replies or live steering.
+func (r *conversationRuntime) notifyExtraction() {
+	if m := r.memoryExtraction; m != nil {
+		select {
+		case m.wake <- struct{}{}:
+		default:
+		}
+	}
 }
 
 func (r *conversationRuntime) extractionService(ctx context.Context, agent string) (*jobs.Service, error) {
@@ -66,7 +83,7 @@ func (r *conversationRuntime) extractionService(ctx context.Context, agent strin
 		return service, nil
 	}
 	id := extractionPrefix + agent
-	def := jobs.Definition{Agent: agent, Account: r.route.Request(nil).Credential.Account, Provider: r.route.Adapter.Provider(), MaxPayloadBytes: 6 << 20,
+	def := jobs.Definition{Agent: agent, Account: r.route.Request(nil).Credential.Account, Provider: r.route.Adapter.Provider(), MaxPayloadBytes: extractionPayloadLimit,
 		Model: r.extractionModel,
 		Apply: jobs.ExtractionApply(id, agent, r.person, nil),
 		PrepareApply: func(ctx context.Context, task jobapi.Task) (func(context.Context, *canon.Tx, jobapi.Task, json.RawMessage) error, error) {
@@ -147,11 +164,21 @@ WHERE speaker_kind='person' AND person_id=? AND json_extract(origin,'$.kind')='n
 	if err != nil {
 		return err
 	}
-	batch, err := memory.New(r.db).PrepareExtraction(ctx, memory.RecallScope{Agent: agent, Person: r.person}, after, 32, 30*time.Second, resolve)
-	if err != nil {
-		return err
+	for limit := 32; limit >= 1; limit /= 2 {
+		batch, err := memory.New(r.db).PrepareExtraction(ctx, memory.RecallScope{Agent: agent, Person: r.person}, after, limit, 30*time.Second, resolve)
+		if err != nil {
+			return err
+		}
+		raw, err := json.Marshal(batch)
+		if err != nil {
+			return err
+		}
+		if len(raw) <= extractionPayloadLimit {
+			return service.ScheduleExtraction(ctx, id, batch)
+		}
 	}
-	return service.ScheduleExtraction(ctx, id, batch)
+	// Do not skip a single event that cannot fit. Its source remains pending.
+	return jobapi.ErrInvalid
 }
 
 func (r *conversationRuntime) extractionEvidence(ctx context.Context, batch memory.ExtractionBatch) (memory.ResolveEvidence, error) {
