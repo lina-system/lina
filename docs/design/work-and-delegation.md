@@ -425,8 +425,12 @@ sources, quotation mismatches and retracted evidence remain pending. The
 `list_candidates` tool returns durable numbered pages; confidence alone never
 adds a task. An automatic addition produces its saved record and undo handle,
 and undo cancels the new task without deleting its history. Replays do not
-repeat adoption. Three rejected additions in a recognized class retains later
-items of that class as candidates.
+repeat adoption, including after the original task is completed or canceled
+without undo. Replay and view aliases of an already adopted source/action
+remain pending without another record, undo handle or notice, across restart.
+A new independent commitment may add the same action once no open equivalent
+remains. Three rejected additions in a recognized class retains later items of
+that class as candidates.
 
 Recurring completion and advancement append one `record_occurrence` work-ledger
 event in the same checkpoint as the saved version. The event names the old and
