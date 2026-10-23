@@ -52,7 +52,7 @@ const goObjects = text => JSON.parse(`[${text.trim().replace(/^}\s*\n{/gm, '},{'
 
 export function kind(path) {
   if (['scripts/verify/test-times.json', 'scripts/verify/bwrap.apparmor'].includes(path)) return 'automation';
-  if (path.startsWith('adapters/claude/')) return 'automation';
+  if (path.startsWith('adapters/claude/') || path.startsWith('adapters/claude-acp/')) return 'automation';
   if (path.startsWith('third_party/')) return 'dependencies';
   if (path === 'packaging/README.md') return 'docs';
   if (path === 'packaging/sqlite-vec/build.sh') return 'automation';
