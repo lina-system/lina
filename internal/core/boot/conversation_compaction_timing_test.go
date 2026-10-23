@@ -57,18 +57,21 @@ func TestCacheColdReadsTheLastRequestAndTheRouteLifetime(t *testing.T) {
 	if cold, err := r.cacheCold(t.Context(), r.route.Model, now); err != nil || cold {
 		t.Fatalf("an unknown lifetime compacted early: cold=%v err=%v", cold, err)
 	}
+	// The Claude API-key route admits a 1-hour lifetime, so the two-hour-old
+	// request above has an expired cache and a turn boundary may compact early.
+	r.route = &modelpath.ResponsesConfig{Model: "fixture-model", Route: "claude_api_key", Adapter: &cacheLifetimeAdapter{lifetime: provider.CapabilitySet{provider.CacheLifetime1hCapability}}}
+	if cold, err := r.cacheCold(t.Context(), r.route.Model, now); err != nil || !cold {
+		t.Fatalf("an expired 1-hour cache did not compact early: cold=%v err=%v", cold, err)
+	}
 }
 
 func TestSummaryRequestKeepsTheConversationPrefixAndDropsTheTail(t *testing.T) {
 	r, _, agent, _ := managementFixture(t)
 	r.agent, r.conversation = agent, "main:"+agent
-	var err error
-	r.route, err = modelpath.ResponsesFromEnv(func(key string) string {
-		return map[string]string{"LINA_RESPONSES_BASE_URL": "http://127.0.0.1:1", "LINA_RESPONSES_MODEL": "fixture-model", "LINA_RESPONSES_API_KEY": "synthetic-key"}[key]
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	// The Claude API-key route is the one that admits cache marks and a 1-hour
+	// lifetime; the summary must stay a valid marked request there.
+	marks := provider.CapabilitySet{provider.PrefixCacheCapability, provider.CacheIdentityCapability, provider.CacheMarksCapability, provider.CacheLifetime1hCapability}
+	r.route = &modelpath.ResponsesConfig{Model: "fixture-model", Route: "claude_api_key", Adapter: &cacheLifetimeAdapter{lifetime: marks}}
 	queuedContextEvent(t, r, "old", "archive-marker "+strings.Repeat("old ", 2500), guard.EntryOwner, "")
 	queuedContextEvent(t, r, "reply", strings.Repeat("public ", 1800), guard.EntryAgent, "")
 	current := queuedContextEvent(t, r, "current", "Continue", guard.EntryOwner, "")
@@ -114,5 +117,21 @@ func TestSummaryRequestKeepsTheConversationPrefixAndDropsTheTail(t *testing.T) {
 	raw, _ := json.Marshal(summary.Items)
 	if strings.Contains(string(raw), "Continue") || strings.Contains(string(raw), `"public-context"`) {
 		t.Fatalf("summary carried the current input or packet: %s", raw)
+	}
+	// A route that admits marks must accept the trimmed request Core sends.
+	if summary.CacheIdentity == "" || summary.CacheIdentity != request.CacheIdentity {
+		t.Fatalf("summary lost the conversation cache identity: %q want %q", summary.CacheIdentity, request.CacheIdentity)
+	}
+	if len(summary.Capabilities.CacheMarks) == 0 {
+		t.Fatal("summary carried no cache mark on a marks route")
+	}
+	for _, mark := range summary.Capabilities.CacheMarks {
+		if mark.Position != summary.Layout.Fixed && (summary.Layout.PreviousInput == nil || mark.Position != *summary.Layout.PreviousInput) {
+			t.Fatalf("summary marked a boundary outside its prefix: %+v in %+v", mark, summary.Layout)
+		}
+	}
+	supported, admitted := r.route.Capabilities(summary.Model)
+	if err := provider.ValidateUse(summary, supported, admitted); err != nil {
+		t.Fatalf("summary request is not valid on its route: %v", err)
 	}
 }

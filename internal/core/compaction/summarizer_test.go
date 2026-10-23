@@ -104,6 +104,11 @@ func TestRetainedPrefixRequestKeepsSegmentToolsAndMarks(t *testing.T) {
 	if len(sent.Capabilities.CacheMarks) != 2 || sent.Capabilities.CacheMarks[0].Position != prefix || sent.Capabilities.CacheMarks[1].Position != previous {
 		t.Fatalf("summary request kept marks outside its prefix: %+v", sent.Capabilities.CacheMarks)
 	}
+	// A marks route validates the same request Core sends, positions included.
+	marks := provider.CapabilitySet{provider.CacheIdentityCapability, provider.CacheMarksCapability, provider.CacheLifetime1hCapability}
+	if err := provider.ValidateUse(sent, marks, marks); err != nil {
+		t.Fatalf("summary request rejected by its own layout and marks: %v", err)
+	}
 }
 
 func TestSummaryToolCallFailsWithoutRunning(t *testing.T) {
