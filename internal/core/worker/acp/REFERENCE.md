@@ -105,6 +105,25 @@ Claude Code, Cursor, Gemini CLI and Grok are built-in profiles. Added profiles
 come from the C-60 settings file. Dispatch resolves their executable at startup
 and keeps the resulting factories local to that Core service.
 
+## Typed failures and quota (#750)
+
+- **Seen:** `claude-agent-acp` v0.94.0's `src/air-extension.ts`,
+  `src/session-failure-extension.ts` and `src/acp-agent.ts` advertise AIR v1
+  `sessionFailure` in initialize's top-level metadata after client opt-in.
+  `session_info_update._meta.jetbrains.air.sessionFailure` carries severity,
+  category and actions, not the implementation's internal failure kind.
+  Error category `limit` with `retry` means rate limited; with no actions it
+  means quota exhausted. `access` with `login` means sign-in required.
+  `connection` with `new_session` means lost connection. Warnings describe
+  retries and are not terminal. Claude's `rate_limit_info` is forwarded at
+  `usage_update._meta["_claude/rateLimit"]`.
+- **Inferred:** Decode only advertised machine fields, never failure prose.
+  Keep request errors and stop reasons ahead of extension failures. A missing
+  quota report creates no measurement, and absent windows/resets remain unknown.
+- **Unknown:** Live vendor account behavior and future extension shapes are
+  unverified. This implements native ACP contracts, not an external worker
+  orchestration port; no Hermes, Honcho, LCM-X or CRW code is copied.
+
 ## Once-only recovery (#751)
 
 - **Seen:** The native shared client provides `ResumeSession` and `LoadSession`,
