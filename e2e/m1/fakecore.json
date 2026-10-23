@@ -9,6 +9,9 @@
     {"request": "normal/input.json", "emit": ["normal/turn_state.json"]},
     {"emit": ["normal/connected.json", "normal/output_delta.json"], "faults": {"epoch": "43", "disconnect_after": 1}}
   ],
-  "tui": [{"request": "hello.json", "emit": ["welcome.json"]}],
-  "tui_refused": [{"request": "hello.json", "faults": {"refusal": "unsupported_combination"}}]
+  "tui": [[{"request": "hello.json", "emit": ["welcome.json"]}]],
+  "tui_refused": [
+    [{"request": "hello.json", "faults": {"refusal": "unsupported_combination"}}],
+    [{"request": "hello-legacy.json", "faults": {"refusal": "unsupported_combination"}}]
+  ]
 }
