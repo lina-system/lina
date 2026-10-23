@@ -322,6 +322,22 @@ func (s *Store) Finish(ctx context.Context, f Fire) error {
 		return err
 	})
 }
+
+// Fail settles a failed delivery under the same bounded replay policy as
+// restart recovery. The durable attempt budget is shared across both paths.
+func (s *Store) Fail(ctx context.Context, f Fire) error {
+	return s.db.Write(ctx, func(tx *canon.Tx) error {
+		if err := checkClaim(ctx, tx, f); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `UPDATE timer_fire SET state=CASE
+			WHEN read_only=0 OR attempts>1 THEN 'unknown'
+			WHEN NOT EXISTS(SELECT 1 FROM timer WHERE id=timer_id AND enabled=1) THEN 'cancelled'
+			ELSE 'pending' END WHERE id=?`, f.ID)
+		return err
+	})
+}
+
 func (s *Store) NextDue(ctx context.Context) (time.Time, error) {
 	var next sql.NullString
 	err := s.db.Read(ctx, func(tx *canon.Tx) error {

@@ -232,7 +232,7 @@ func TestFirstRunIsIdempotentAndOnlyNeedsChatGPT(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.Agent.Name != "LINA" || first.Agent.Preset != "lina" || first.SignInProvider != "chatgpt" {
+	if first.Agent.Name != "Lina" || first.Agent.Preset != "lina" || first.SignInProvider != "chatgpt" {
 		t.Fatal(first)
 	}
 	again, err := s.FirstRun(t.Context(), "person", true)
