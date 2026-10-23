@@ -620,3 +620,24 @@ running reference. Worker stop replies use `stop_result.outcome: requested`;
 background stops retain their terminal outcome. Acknowledgement never verifies
 work completion. Empty/malformed requests are refused and no control is inferred
 from forwarded channel text.
+
+
+### Direct record views and capture
+
+The `records` 1.0 capability provides `record_request` and `record_result`.
+`query` carries an optional view, search and exclusive `after` cursor, with civil
+`day` and IANA `zone` for dated lenses. Core binds the person from the connection
+and returns up to 50 rows in index order. `read` carries a row reference and
+returns its current title, note and chips. Long notes use bounded UTF-8 pages;
+subsequent reads carry `after` and the first page's revision, and a changed
+revision refuses continuation. References and revisions are routing data.
+
+`preview` carries quick-add text and returns chips plus an opaque token without
+writing a record. `save` carries only that token and requires an authenticated
+owner connection. Core commits the exact preview through the shared record
+writer. The connection-bound token expires after fifteen minutes, is superseded
+by another preview, and returns the same receipt on repeated confirmation.
+Reconnect never replays it. An uncertain publication is not attempted again.
+Domain refusals include `ambiguous_date`, `records_changed`, `stale_revision`,
+`record_not_found`, `invalid_record` and `preview_expired`. Outside edits are
+never silently adopted. Neither request accepts a person identity or file path.

@@ -46,6 +46,9 @@ func TestM2TUIWorkerQuestionNameInstalledCore(t *testing.T) {
 				if scriptedCodingManager(t, w, req) {
 					return
 				}
+				if respondWorkerCompletion(w, req.Input, fixture.Result) {
+					return
+				}
 				if calls.Add(1) == 1 {
 					emitPersonaCall(w, "start-worker", "worker_start", map[string]any{"workdir": workdir, "task_packet": fixture.TaskPacket})
 					return

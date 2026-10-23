@@ -399,3 +399,44 @@ func TestPlanningUpgradePreservesPublishedWorkSequenceGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPlanningUpgradePreservesPublishedTimersAndCompletions(t *testing.T) {
+	cfg := storeConfig(t)
+	cfg.Migrations = append(append([]Migration{}, Migrations()[:39]...),
+		Migration{Version: 40, SQL: WorkCompletionsSchema}, Migration{Version: 41, SQL: TimersSchema})
+	db := openStore(t, cfg)
+	if err := db.Write(t.Context(), func(tx *Tx) error {
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO work_completion_origins(task_id,record) VALUES('existing',X'01');
+INSERT INTO timer(id,person,agent,conversation,authored,next_at) VALUES('existing','person','agent','conversation',X'02','2026-10-24T00:00:00Z');`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Migrations = Migrations()
+	db = openStore(t, cfg)
+	if err := db.Read(t.Context(), func(tx *Tx) error {
+		var record, authored []byte
+		if err := tx.QueryRowContext(t.Context(), "SELECT record FROM work_completion_origins WHERE task_id='existing'").Scan(&record); err != nil {
+			return err
+		}
+		if err := tx.QueryRowContext(t.Context(), "SELECT authored FROM timer WHERE id='existing'").Scan(&authored); err != nil {
+			return err
+		}
+		if !bytes.Equal(record, []byte{1}) || !bytes.Equal(authored, []byte{2}) {
+			t.Fatal("published completion or timer changed")
+		}
+		var n int
+		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM plan_drafts").Scan(&n); err != nil {
+			return err
+		}
+		if n != 0 {
+			t.Fatal("upgrade created a plan")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}

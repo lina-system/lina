@@ -28,6 +28,7 @@ var clientKinds = []string{
 	"restart_request", "restart_get", "restart_status",
 	"export_request", "export_result", "replay_request", "replay_result",
 	"plan_request", "plan_response", "web_request", "web_result",
+	"record_request", "record_result",
 }
 
 func clientMessage(t *testing.T, kind string, payload any) map[string]any {
@@ -62,6 +63,8 @@ func concretePayloads() map[string]any {
 		"stop_result":        map[string]any{"run_id": "run-1", "outcome": "cancelled"},
 		"tool_activity":      map[string]any{"call_id": "call-example", "tool_name": "Reading file", "status": "started"},
 		"restart_status":     map[string]any{"owed": false},
+		"record_request":     map[string]any{"operation": "query", "view": "memos"},
+		"record_result":      map[string]any{"operation": "query", "rows": []any{}},
 		"web_request":        map[string]any{"operation": "status"},
 		"web_result":         map[string]any{"provider": "firecrawl", "configured": false},
 		"export_result":      map[string]any{"directory": "staging/export/synthetic", "manifest": "{}"},
