@@ -9,6 +9,7 @@ import (
 )
 
 func TestImportedSpeakerAttribution(t *testing.T) {
+	t.Parallel()
 	state, db := hermesFixture(t, "state")
 	if _, err := db.Exec(string(fixture(t, "speakers-state.sql"))); err != nil {
 		t.Fatal(err)
@@ -50,6 +51,7 @@ func TestImportedSpeakerAttribution(t *testing.T) {
 // A known automated source remains decisive when another copy has incomplete
 // provenance. Honcho's owner claim must not turn either copy into person.
 func TestAutomatedHonchoOwnerWithIncompleteCopy(t *testing.T) {
+	t.Parallel()
 	state, db := hermesFixture(t, "state")
 	if _, err := db.Exec(string(fixture(t, "speakers-state.sql"))); err != nil {
 		t.Fatal(err)
@@ -86,6 +88,7 @@ func honchoSpeakerFixture(t *testing.T) []SpeakerSources {
 // LCM can retain a message whose host message row is absent. Its session still
 // carries provenance in the host database and must participate in attribution.
 func TestLCMOnlyHonchoOwnerUsesHostSessionKind(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, update string
 		want         guard.SpeakerKind
@@ -138,6 +141,7 @@ func TestLCMOnlyHonchoOwnerUsesHostSessionKind(t *testing.T) {
 }
 
 func TestLCMOwnerClaimNeedsHostSessionProof(t *testing.T) {
+	t.Parallel()
 	for _, source := range []string{"telegram", "cli"} {
 		for _, withState := range []bool{false, true} {
 			t.Run(source+map[bool]string{false: "/absent-host", true: "/missing-session"}[withState], func(t *testing.T) {
