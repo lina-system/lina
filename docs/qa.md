@@ -101,6 +101,39 @@ session, and close it during cleanup. No real account, sign-in or
 and [the installed scenario](../e2e/m1/tui-conversation.json) for the acceptance
 boundary.
 
+### Real-model mode
+
+Acceptance and QA runs use the intended production model rather than a cheaper
+substitute, because a weaker model hides the failures that matter. The same
+Core and client journeys run against a Responses-compatible endpoint configured
+outside the repository:
+
+| Variable | Meaning |
+| --- | --- |
+| `LINA_QA_REAL_MODEL` | Set to `1` to opt into external model calls. |
+| `LINA_RESPONSES_BASE_URL` | The endpoint's API prefix; the adapter appends `/responses`. |
+| `LINA_RESPONSES_MODEL` | The exact model to test. There is no default or fallback model. |
+| `LINA_RESPONSES_API_KEY` | The endpoint's API key, from the environment. |
+
+```sh
+export LINA_QA_REAL_MODEL=1
+export LINA_RESPONSES_BASE_URL LINA_RESPONSES_MODEL LINA_RESPONSES_API_KEY
+go test -count=1 -v ./e2e/m1 -run 'TestResponsesRoundTrip|TestRealModelHeadlessConversation'
+```
+
+`TestResponsesRoundTrip` streams one Core-side request through the configured
+adapter. `TestRealModelHeadlessConversation` installs Core, sends a message
+through the headless client, requires durable input acknowledgement, streamed
+deltas and completed assistant items, and requires the persisted turn to
+survive a Core restart under the same conversation id. Without the opt-in or
+key both real tests skip instead of failing, so credential-free CI and
+foundation stay green. An opted-in run with invalid configuration, an
+unreachable endpoint or a broken stream fails. Installation is Linux-only, so
+other hosts skip the headless journey.
+
+Keep endpoint values and the key out of shell tracing, logs, reports and
+commits. See [the harness guide](../e2e/README.md) for the endpoint rules.
+
 ### Connection-only exploration
 
 For connection lifecycle exploration, build from the tested checkout and start
@@ -167,13 +200,14 @@ entry point as a gap with an existing issue reference, rather than claiming a
 package test established a user journey.
 
 Current coverage has limits: the installed conversation fixture does not prove
-real sign-in, real-model acceptance, or every journey below. Fake-Core scenarios
-and scripted provider wires establish only their exercised boundaries. The
-real-model probe and the still-skipped `TestRealModelHeadlessConversation` in
-the harness guide are separate from the installed synthetic conversation test;
-a probe or skip does not establish a client journey. Earlier connection-only
-increment notes describe those increments, not the capabilities of configured
-Core today. Do not invent flags or use a real account to fill a coverage gap.
+real sign-in or every journey below. Fake-Core scenarios and scripted provider
+wires establish only their exercised boundaries. The real-model journeys in
+the harness guide run the same Core provider route and the same headless client
+path against the configured endpoint; when they skip for a missing opt-in, key
+or Linux host, the skip does not establish a client journey. Earlier
+connection-only increment notes describe those increments, not the capabilities
+of configured Core today. Do not invent flags or use a real account to fill a
+coverage gap.
 
 | Journey | Observe and retain |
 | --- | --- |
