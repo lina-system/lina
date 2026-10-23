@@ -188,6 +188,11 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err != nil {
 		return nil, err
 	}
+	if selected, e := r.agents.Selected(ctx, r.person); e == nil {
+		first.Agent = selected
+	} else if !errors.Is(e, agents.ErrNotFound) {
+		return nil, e
+	}
 	r.removals, err = retract.Open(ctx, retract.Config{Canon: db, Root: root})
 	if err != nil {
 		return nil, err
@@ -359,7 +364,7 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 		select {
 		case <-r.ownerViews.done:
 		case <-ctx.Done():
-			return ctx.Err()
+			return errors.Join(err, ctx.Err())
 		}
 	}
 	if r.delegation != nil {
@@ -375,18 +380,24 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 		}
 	}
 	if r.workEngine != nil {
-		if err = r.workEngine.close(ctx); err != nil {
-			return err
+		waitErr := r.workEngine.close(ctx)
+		select {
+		case <-r.workEngine.done:
+			// A joined engine's failure must not skip the remaining cleanup.
+			// Check completion itself: a wait timeout leaves its stores in use.
+			err = r.workEngine.err
+		default:
+			return waitErr
 		}
 	}
 	if r.workerDispatch != nil {
-		if err = r.workerDispatch.Close(ctx); err != nil {
-			return err
+		if closeErr := r.workerDispatch.Close(ctx); closeErr != nil {
+			return errors.Join(err, closeErr)
 		}
 	}
 	if r.workerGitHub != nil {
-		if err = r.workerGitHub.Close(ctx); err != nil {
-			return err
+		if closeErr := r.workerGitHub.Close(ctx); closeErr != nil {
+			return errors.Join(err, closeErr)
 		}
 	}
 	if m := r.skillMaintenance; m != nil && m.stop != nil {
@@ -394,7 +405,7 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 		select {
 		case <-m.done:
 		case <-ctx.Done():
-			return ctx.Err()
+			return errors.Join(err, ctx.Err())
 		}
 		m.stop = nil
 	}
@@ -403,7 +414,7 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 		select {
 		case <-r.waitingDone:
 		case <-ctx.Done():
-			return ctx.Err()
+			return errors.Join(err, ctx.Err())
 		}
 		r.waitingStop = nil
 	}
@@ -413,7 +424,7 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 		case result := <-r.growth.done:
 			err = errors.Join(err, result)
 		case <-ctx.Done():
-			return ctx.Err()
+			return errors.Join(err, ctx.Err())
 		}
 		r.growth.stop = nil
 	}
@@ -421,9 +432,8 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 		r.channels.Close()
 	}
 	if r.lanes != nil {
-		err = r.lanes.Close(ctx)
-		if err != nil {
-			return err
+		if closeErr := r.lanes.Close(ctx); closeErr != nil {
+			return errors.Join(err, closeErr)
 		}
 	}
 	if r.workers != nil {
@@ -435,7 +445,7 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 			select {
 			case <-b.done:
 			case <-ctx.Done():
-				return ctx.Err()
+				return errors.Join(err, ctx.Err())
 			}
 		}
 		if b.service != nil {
@@ -510,7 +520,7 @@ func (r *conversationRuntime) Input(ctx context.Context, s clientsrv.Session, p 
 	}
 	digest := sha256.Sum256([]byte(r.person + "\x00" + r.conversation + "\x00" + *p.InputID))
 	eventID := "input:" + hex.EncodeToString(digest[:])
-	admission := &conversationAdmission{db: r.db, input: inbox.Input{Key: inbox.Key{Conversation: r.conversation, Source: "client", NativeID: *p.InputID}, Body: []byte(masked.Text())}}
+	admission := &conversationAdmission{db: r.db, person: r.person, agent: r.agent, input: inbox.Input{Key: inbox.Key{Conversation: r.conversation, Source: "client", NativeID: *p.InputID}, Body: []byte(masked.Text())}}
 	language, err := r.inputLanguage(ctx, *p.Text)
 	if err != nil {
 		return protocol.ItemDone{}, err
