@@ -524,6 +524,11 @@ func alphaResidency(t *testing.T, duration time.Duration) int {
 			sample()
 			stopFlush()
 			<-flushed
+			select {
+			case err := <-flushResult:
+				t.Fatal(err)
+			default:
+			}
 			if err := recorder.flush(); err != nil {
 				t.Fatal(err)
 			}
@@ -537,7 +542,9 @@ func alphaResidency(t *testing.T, duration time.Duration) int {
 			terminal.process.wait(t, 0)
 			h.stopCore(core)
 			stopped = true
-			if duration >= 24*time.Hour && report.MeasuredSeconds >= 86400 {
+			// Decide on the metrics themselves: the deferred report writer runs
+			// after this return and must not be the only source of the duration.
+			if duration >= 24*time.Hour && recorder.metrics().Measured >= 86400 {
 				report.Status = "passed"
 			}
 			return report.Probes
