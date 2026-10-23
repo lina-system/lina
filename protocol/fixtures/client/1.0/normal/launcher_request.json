@@ -1,0 +1,25 @@
+{
+  "protocol": {
+    "name": "client",
+    "version": "1.0"
+  },
+  "kind": "launcher_request",
+  "message_id": "launcher-request-example",
+  "attempt_id": "launcher-request-example-attempt-1",
+  "reply_to": null,
+  "sender": {
+    "party": "client",
+    "id": "client-example"
+  },
+  "epoch": "42",
+  "sent_at": "2026-01-01T00:00:01Z",
+  "idempotency_key": null,
+  "effect_state": "none",
+  "receipt_ref": null,
+  "source_refs": [],
+  "error": null,
+  "payload": {
+    "request_id": "launcher-request-1",
+    "text": "Summarize the morning."
+  }
+}

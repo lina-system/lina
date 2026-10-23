@@ -212,6 +212,57 @@ func (e *Engine) hydrate(g *Goal) error {
 	return nil
 }
 
+// GoalSentences returns each goal's canonical sentence, keyed by goal id.
+// The execution ledger does not store that prose. A missing or unreadable
+// definition omits only that goal. A ledger failure, or any other records
+// error, fails the call so a projection does not invent the remaining names.
+func (e *Engine) GoalSentences(ctx context.Context) (map[string]string, error) {
+	if e.cfg.Records == nil {
+		return nil, ErrInvalid
+	}
+	rows, err := e.journal.Records(ctx, "goal")
+	if err != nil {
+		return nil, err
+	}
+	titles := map[string]string{}
+	for _, row := range rows {
+		var g Goal
+		if err = json.Unmarshal(row.Body, &g); err != nil {
+			return nil, err
+		}
+		sentence, readErr := e.goalSentence(ctx, g)
+		if readErr != nil {
+			if errors.Is(readErr, ErrDefinitionMissing) || errors.Is(readErr, ErrInvalid) {
+				continue
+			}
+			return nil, readErr
+		}
+		if sentence != "" {
+			titles[g.ID] = sentence
+		}
+	}
+	return titles, nil
+}
+
+func (e *Engine) goalSentence(ctx context.Context, g Goal) (string, error) {
+	if cached, ok := e.definitions.Load(definitionKey{g.RecordID, g.RecordRevision}); ok {
+		saved := cached.(savedDefinition)
+		if saved.revision == g.RecordRevision {
+			return saved.definition.Outcome, nil
+		}
+	}
+	r, rev, err := e.cfg.Records.Read(ctx, g.RecordID)
+	if err != nil {
+		return "", err
+	}
+	d, err := parseDefinition(r, g.Person, g.Agent)
+	if err != nil {
+		return "", err
+	}
+	e.definitions.Store(definitionKey{g.RecordID, rev}, savedDefinition{d, rev, string(r.Data)})
+	return d.Outcome, nil
+}
+
 // RefreshDefinitions reads records outside any canon transaction. A changed
 // definition fences execution until one manager turn interprets the correction.
 func (e *Engine) RefreshDefinitions(ctx context.Context) error {
@@ -293,46 +344,4 @@ func (e *Engine) RefreshDefinitions(ctx context.Context) error {
 		}
 	}
 	return nil
-}
-
-// Execution history and evidence stay in the journal. Only the current task
-// projection drops superseded work after its effects have settled. A landed
-// dependency remains satisfied; an unlanded one requires replanning dependents.
-func retainScopedTasks(repositories []string, tasks []Task) []Task {
-	removed := map[string]Task{}
-	for _, task := range tasks {
-		if !has(repositories, task.Repository) {
-			removed[task.ID] = task
-		}
-	}
-	for changed := true; changed; {
-		changed = false
-		for _, task := range tasks {
-			if _, ok := removed[task.ID]; ok {
-				continue
-			}
-			for _, id := range task.DependsOn {
-				if predecessor, ok := removed[id]; ok && !predecessor.Merge.proves(predecessor.Merge.Revision) {
-					removed[task.ID] = task
-					changed = true
-					break
-				}
-			}
-		}
-	}
-	kept := []Task{}
-	for _, task := range tasks {
-		if _, ok := removed[task.ID]; ok {
-			continue
-		}
-		dependencies := []string{}
-		for _, id := range task.DependsOn {
-			if _, ok := removed[id]; !ok {
-				dependencies = append(dependencies, id)
-			}
-		}
-		task.DependsOn = dependencies
-		kept = append(kept, task)
-	}
-	return kept
 }

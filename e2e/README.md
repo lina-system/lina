@@ -113,7 +113,7 @@ kit changes and the documents-only exclusion in a disposable Git repository.
 
 ## Real model mode
 
-For QA and acceptance, use the intended real model (currently `claude-opus-5-5`),
+For QA and acceptance, use the intended real model (`claude-opus-5-5`),
 not a cheaper substitute. Configure these variables outside the repository:
 
 | Variable | Meaning |
@@ -137,11 +137,22 @@ API keys only; ChatGPT OAuth credentials cannot be redirected to them. No reques
 retries, redirects or substitute billing paths are enabled.
 
 Real tests skip when the opt-in switch or key is absent, including credential-free
-CI and foundation. With both present, invalid configuration, an unavailable
-endpoint or a broken stream fails the journey. Ordinary fixture tests still run.
+CI and foundation, and where Core cannot be installed. With both present,
+invalid configuration, an unavailable endpoint or a broken stream fails the
+journey. Ordinary fixture tests still run.
 Builds and ordinary product subprocesses retain their isolated environment;
 only the opted-in probe and the headless journey's Core receive the explicit
 provider configuration.
+
+`TestRealModelHeadlessConversation` installs Core in private temporary state,
+sends one message through the headless client over Core's socket, and requires a
+durable input acknowledgement, live deltas, completed assistant items replacing
+the streamed identities, and an inactive turn. It then restarts Core and
+requires the same canon history, text and item identities under the same
+conversation id in a new epoch. `TestHeadlessConversationFixture` runs the same
+client journey against a loopback server with no external credential. Both
+install real binaries, so hosts other than Linux skip with the same reason as
+the other installed scenarios; a skip is not a passing journey.
 
 ## Alpha owner-use acceptance
 
