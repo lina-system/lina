@@ -678,7 +678,7 @@ test('QA guide and repository opt-in have registered verification', () => {
 });
 
 test('Claude adapter and npm configuration select automation and dependency verification', () => {
-  for (const path of ['adapters/claude/adapter.ts', 'adapters/claude/package.json', 'adapters/claude/package-lock.json', '.npmrc', '.node-version', 'package.json', 'package-lock.json']) {
+  for (const path of ['adapters/claude-acp/package.json', 'adapters/claude-acp/package-lock.json', 'adapters/claude/adapter.ts', 'adapters/claude/package.json', 'adapters/claude/package-lock.json', '.npmrc', '.node-version', 'package.json', 'package-lock.json']) {
     assert.equal(kind(path), 'automation', path);
   }
 });

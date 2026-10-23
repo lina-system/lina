@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thisisjun786/lina/e2e/fixture"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
@@ -66,20 +65,33 @@ func TestM2TimersInstalledCore(t *testing.T) {
 				t.Errorf("Core omitted %s", name)
 			}
 		}
-		var last struct{ Type, CallID, Output, Role, Content string }
 		// Provider wire uses call_id rather than the Go field spelling.
-		var wire struct {
+		var last struct {
 			Type    string `json:"type"`
 			CallID  string `json:"call_id"`
 			Output  string `json:"output"`
 			Role    string `json:"role"`
 			Content string `json:"content"`
 		}
-		if len(req.Input) == 0 || json.Unmarshal(fixture.LastInput(req.Input), &wire) != nil {
+		// The ContextPacket follows the current input. Read backwards to the
+		// latest user/system event or tool output, excluding packet evidence.
+		found := false
+		for i := len(req.Input) - 1; i >= 0; i-- {
+			item := last
+			if err := json.Unmarshal(req.Input[i], &item); err != nil {
+				t.Error(err)
+				return
+			}
+			if item.Type == "function_call_output" || item.Role == "user" && !strings.Contains(item.Content, "<external_evidence ") {
+				last = item
+				found = true
+				break
+			}
+		}
+		if !found {
 			t.Error("no current input")
 			return
 		}
-		last.Type, last.CallID, last.Output, last.Role, last.Content = wire.Type, wire.CallID, wire.Output, wire.Role, wire.Content
 		output := func(out any) {
 			var result struct {
 				Code   string

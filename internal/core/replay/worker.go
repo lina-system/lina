@@ -13,6 +13,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/internal/core/toolcatalog"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/proc"
@@ -150,6 +151,11 @@ func Sandboxed(ctx context.Context, cfg SandboxConfig, initial WorkerInput) (out
 	if cfg.Stream == nil {
 		return out, ErrInvalid
 	}
+	all, err := recordedDeclarations(initial.Calls)
+	if err != nil {
+		return out, err
+	}
+	catalog := &toolcatalog.Catalog{First: initial.Request.Tools, All: all, Offset: len(initial.Request.Items)}
 	scratch, err := os.MkdirTemp("", "lina-replay-")
 	if err != nil {
 		return out, err
@@ -233,12 +239,17 @@ func Sandboxed(ctx context.Context, cfg SandboxConfig, initial WorkerInput) (out
 		request := *frame.Request
 		// The child owns only loop evolution. It cannot change the account, model,
 		// instructions, or offered tools selected by the authenticated operation.
+		// Restore loaded schemas only from that operation's recorded catalog.
 		request.Model = initial.Request.Model
 		request.Effort = initial.Request.Effort
 		request.Instructions = initial.Request.Instructions
 		request.Tools = initial.Request.Tools
 		request.Fields = initial.Request.Fields
 		request.Purpose = provider.Replay
+		request, err = catalog.Transform(ctx, request)
+		if err != nil {
+			return out, err
+		}
 		stream, e := cfg.Stream(ctx, request)
 		if e != nil {
 			return out, e

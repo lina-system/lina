@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/thisisjun786/lina/internal/core/install"
 	"github.com/thisisjun786/lina/internal/core/work/goal"
 	"github.com/thisisjun786/lina/kit/lease"
 	"math"
@@ -35,7 +36,9 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 	binary, _ := proc.LookPath("agy")
 	codexBinary, _ := proc.LookPath("codex")
 	claude, _ := proc.LookPath("claude")
-	acpConfig := dispatch.Config{Root: r.root, Environment: proc.WorkerEnvironment(), Epoch: r.epoch, Activities: r.activities}
+	acpConfig := dispatch.Config{Root: r.root, Environment: proc.WorkerEnvironment(), Epoch: r.epoch, Activities: r.activities, PrepareClaudeACP: func(ctx context.Context, l lease.Lease) (string, error) {
+		return install.ClaudeACP(ctx, l, filepath.Join(r.root, "system/adapters/claude-acp"))
+	}}
 	acpFactories := dispatch.InstalledACPFactories(acpConfig)
 	addedFactories, problems := dispatch.AddedACPFactories(acpConfig)
 	for _, problem := range problems {
@@ -158,6 +161,8 @@ func (r *conversationRuntime) bindDispatchedWorker(record dispatch.Record, adapt
 	}
 	owner := newConversationView(r.router.root, record.Owner, record.Manager)
 	owner.codingDelivery = delivery
+	// Dispatch owns cancellation and the task reservation. Owner steering is
+	// restricted to the active turn, independently of scheduled-card ownership.
 	e := &workerSession{cancelTask: func(ctx context.Context) error { return r.workerDispatch.Cancel(ctx, record.ID) }, adapter: adapter, close: func() error { return adapter.Interrupt(context.Background(), thread, worker.UserCancel) }, origin: owner, input: input, thread: thread, executionGeneration: record.Attempt, packet: packet, workdir: workdir, started: time.Now(), done: make(chan struct{}), approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}, active: map[string]lease.Lease{}}
 	r.workers.mu.Lock()
 	r.workers.sessions[thread.ID] = e
@@ -214,6 +219,24 @@ func (r *conversationRuntime) authorizeWorkerRecovery(ctx context.Context, recor
 // Resolve the persisted source before recovering work or delivering its result.
 // A missing/revoked channel never inherits the personal conversation's authority.
 func (r *conversationRuntime) dispatchRecoveryView(ctx context.Context, record dispatch.Record) (*conversationRuntime, ledger.Event, error) {
+	// A goal retains its manager as task owner. Resolve only its authenticated
+	// coding assignment to recover the separate requester/delivery binding.
+	if id, delegated := strings.CutPrefix(record.Origin.Turn, "coding:"); delegated {
+		var assignment codingAssignment
+		err := r.db.Read(ctx, func(tx *canon.Tx) error {
+			var err error
+			assignment, err = readCoding(ctx, tx, id)
+			return err
+		})
+		if err != nil {
+			return nil, ledger.Event{}, err
+		}
+		if assignment.Tool != "dispatch_code_goal" || assignment.Owner != record.Origin.Agent || assignment.Conversation != record.Origin.Conversation || assignment.Origin.Person != record.Origin.Person {
+			return nil, ledger.Event{}, channels.ErrDenied
+		}
+		record.Origin = assignment.Origin
+	}
+
 	input, err := r.journal().Get(ctx, strings.TrimPrefix(record.Origin.Turn, "turn:"))
 	if err != nil {
 		return nil, input, err

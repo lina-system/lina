@@ -49,26 +49,31 @@ func TestACPWorkersThroughRunningCore(t *testing.T) {
 		{name: "success", worker: "gemini", binary: "gemini", mode: "success"},
 		{name: "cursor", worker: "cursor", binary: "cursor-agent", mode: "success"},
 		{name: "grok", worker: "grok", binary: "grok", mode: "success"},
-		{name: "claude-acp", worker: "claude-acp", binary: "claude-agent-acp", mode: "success"},
 		{name: "exit", worker: "gemini", binary: "gemini", mode: "exit"},
 		{name: "cancel", worker: "gemini", binary: "gemini", mode: "cancel"},
 	})
 }
 
 type acpScenario struct {
-	fixedHostLoad              bool
 	profiles                   string
 	startupWarnings            []string
 	name, worker, binary, mode string
+	unavailable                string
 	script                     string
 	parallel                   bool
 	answerQuestions            bool
 	environment                []string
 	setup                      func(*testing.T, string)
+	bundleFiles                func(*testing.T, string, string)
+	beforeDispatch             func(*testing.T, string)
 	beforeFinish, afterFinish  func(*testing.T, *harness, string, dispatch.Record)
 }
 
 func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
+	bwrap, err := exec.LookPath("bwrap")
+	if err != nil {
+		t.Fatal(err)
+	}
 	binary := filepath.Join(t.TempDir(), "lina")
 	build := exec.CommandContext(t.Context(), "go", "build", "-mod=readonly", "-ldflags=-w", "-o", binary, "./cmd/lina")
 	build.Dir = "../.."
@@ -137,6 +142,9 @@ func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
 			env = append(env, scenario.environment...)
 			write(filepath.Join(bin, "systemctl"), "#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\ncase \"$2\" in show) printf 'not-found\\n';; daemon-reload|enable) exit 0;; *) exit 97;; esac\n", 0700)
 			bundle := makeInstallBundle(t, root, binary, nodeBinary)
+			if scenario.bundleFiles != nil {
+				scenario.bundleFiles(t, root, bundle)
+			}
 			setup := exec.CommandContext(ctx, binary, "install", "--state-root", state, "--unit-dir", filepath.Join(root, "units"), "--bundle", bundle)
 			setup.Env = env
 			if out, err := setup.CombinedOutput(); err != nil {
@@ -172,6 +180,7 @@ func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
 			git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "Initial design")
 			git("remote", "add", "origin", "https://github.com/fixture/project.git")
 			var requestCount atomic.Int32
+			var missingObserved atomic.Bool
 			var cancelRequested atomic.Bool
 			var cancelSent atomic.Bool
 			var cancelArgs atomic.Value
@@ -198,7 +207,12 @@ func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
 							Code   string
 							Output json.RawMessage
 						}
-						if json.Unmarshal([]byte(item.Output), &result) != nil || result.Code != "ok" {
+						decodeErr := json.Unmarshal([]byte(item.Output), &result)
+						missing := decodeErr == nil && result.Code == "tool_unavailable" && scenario.unavailable != "" && strings.Contains(string(result.Output), "claude")
+						if missing {
+							missingObserved.Store(true)
+						}
+						if decodeErr != nil || (result.Code != "ok" && !missing) {
 							select {
 							case fixtureErrors <- fmt.Errorf("tool failed: %s", item.Output):
 							default:
@@ -261,42 +275,39 @@ func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
 					emitPersonaCall(w, "cancel", "worker_interrupt", cancelArgs.Load())
 					return
 				}
-				if requestCount.Add(1) == 1 {
+				count := requestCount.Add(1)
+				if count == 1 || (scenario.unavailable != "" && count == 2) {
 					available := false
 					for _, tool := range req.Tools {
 						if tool.Name == "dispatch_work" {
 							available = slices.Contains(tool.Parameters.Properties["worker"].Enum, scenario.worker)
 						}
 					}
-					offered <- available
+					if count == 1 {
+						offered <- available
+					}
 					if !available {
 						emitResponse(w, "Worker unavailable.", true)
 						return
 					}
-					emitPersonaCall(w, "dispatch", "dispatch_work", map[string]any{"repository": repo, "base": "dev", "branch": "acp-result", "worker": scenario.worker, "what": "Create result.txt", "why": "Exercise ACP execution", "scope": []string{"result.txt"}, "not_touch": []string{"design.md"}, "done": "A committed result file with verified PR evidence", "design_refs": []string{"design.md#result"}, "write_area": []string{"result.txt"}})
+					selected := scenario.worker
+					if scenario.unavailable != "" && count == 1 {
+						selected = scenario.unavailable
+					}
+					emitPersonaCall(w, fmt.Sprintf("dispatch-%d", count), "dispatch_work", map[string]any{"repository": repo, "base": "dev", "branch": "acp-result", "worker": selected, "what": "Create result.txt", "why": "Exercise ACP execution", "scope": []string{"result.txt"}, "not_touch": []string{"design.md"}, "done": "A committed result file with verified PR evidence", "design_refs": []string{"design.md#result"}, "write_area": []string{"result.txt"}})
 					return
 				}
 				emitResponse(w, "Task accepted.", true)
 			}))
 			defer server.Close()
+			loadfile, pidfile := filepath.Join(fixture, "loadavg"), filepath.Join(fixture, "core.pid")
+			write(loadfile, "0.00 0.00 0.00 1/1 1\n", 0600)
 			start := func() func() {
 				t.Helper()
-				c := exec.CommandContext(ctx, installedBinary, "core", "--state-root", state, "--socket", h.socket)
-				pidfile := filepath.Join(fixture, "core.pid")
-				if scenario.fixedHostLoad {
-					bwrap, e := exec.LookPath("bwrap")
-					if e != nil {
-						t.Fatal("worker load fixture requires bubblewrap:", e)
-					}
-					loadfile := filepath.Join(fixture, "loadavg")
-					write(loadfile, "0.00 0.00 0.00 1/1 1\n", 0600)
-					// Keep the real host sampler and capacity gate; only this Core
-					// sees fixed load, independent of other jobs on the test host.
-					// The shell parent keeps bwrap's parent-death signal tied to
-					// a live thread; the inner shell records Core for shutdown.
-					args := []string{bwrap, "--die-with-parent", "--dev-bind", "/", "/", "--ro-bind", loadfile, "/proc/loadavg", "--", "/bin/sh", "-c", `printf '%s\n' "$$" > "$1"; shift; exec "$@"`, "acp-load", pidfile, installedBinary, "core", "--state-root", state, "--socket", h.socket}
-					c = exec.CommandContext(ctx, "/bin/sh", append([]string{"-c", `"$@" & child=$!; wait "$child"`, "acp-load-parent"}, args...)...)
-				}
+				// Isolate only the resource sample, as in the Cursor scenario. The
+				// real Core sampler and capacity admission still run.
+				args := []string{bwrap, "--die-with-parent", "--dev-bind", "/", "/", "--ro-bind", loadfile, "/proc/loadavg", "--", "/bin/sh", "-c", `printf '%s\n' "$$" > "$1"; shift; exec "$@"`, "acp-load", pidfile, installedBinary, "core", "--state-root", state, "--socket", h.socket}
+				c := exec.CommandContext(ctx, "/bin/sh", append([]string{"-c", `"$@" & child=$!; wait "$child"`, "acp-load-parent"}, args...)...)
 				c.Env = append(append([]string(nil), env...), "LINA_RESPONSES_BASE_URL="+server.URL+"/v1", "LINA_RESPONSES_MODEL=fixture", "LINA_RESPONSES_API_KEY=synthetic-core-key")
 				var logs bytes.Buffer
 				c.Stdout = &logs
@@ -312,17 +323,13 @@ func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
 						return
 					}
 					stopped = true
-					if scenario.fixedHostLoad {
-						rawPID, pidErr := os.ReadFile(pidfile)
-						pid, parseErr := strconv.Atoi(strings.TrimSpace(string(rawPID)))
-						if pidErr != nil || parseErr != nil || pid <= 0 {
-							t.Error("missing Core process identity", pidErr, parseErr)
-							c.Process.Kill()
-						} else {
-							syscall.Kill(pid, syscall.SIGTERM)
-						}
+					rawPID, pidErr := os.ReadFile(pidfile)
+					pid, parseErr := strconv.Atoi(strings.TrimSpace(string(rawPID)))
+					if pidErr != nil || parseErr != nil || pid <= 0 {
+						t.Error("missing Core process identity", pidErr, parseErr)
+						c.Process.Kill()
 					} else {
-						c.Process.Signal(syscall.SIGTERM)
+						syscall.Kill(pid, syscall.SIGTERM)
 					}
 					select {
 					case e := <-done:
@@ -415,6 +422,9 @@ func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
 					}
 				}
 			}()
+			if scenario.beforeDispatch != nil {
+				scenario.beforeDispatch(t, root)
+			}
 			key, text := "delegate", "Create result.txt through the ACP worker."
 			if _, err = c.Input(ctx, protocol.Input{ConversationID: &conversation, InputID: &key, Text: &text}); err != nil {
 				t.Fatal(err)
@@ -525,6 +535,9 @@ func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
 			wait("terminal observation", func() bool { return read() && (record.State == "finished" || record.State == "unknown") })
 			if scenario.afterFinish != nil {
 				scenario.afterFinish(t, h, fixture, record)
+			}
+			if scenario.unavailable != "" && !missingObserved.Load() {
+				t.Fatal("missing worker cause not returned through running Core")
 			}
 			switch mode {
 			case "exit":

@@ -22,11 +22,11 @@ func TestAddedACPWorkersThroughRunningCore(t *testing.T) {
 	]}`
 	addedScript := strings.Replace(acpAgentScript, "const args={gemini:", "const args={'my-agent':['acp','literal argument; $HOME'],gemini:", 1)
 	runACPWorkersThroughRunningCore(t, []acpScenario{
-		{fixedHostLoad: true, name: "added", worker: "my-agent", binary: "synthetic-agent", mode: "success", script: addedScript, profiles: profiles,
+		{name: "added", worker: "my-agent", binary: "synthetic-agent", mode: "success", script: addedScript, profiles: profiles,
 			startupWarnings: []string{"profile 2: command is required", "profile 3: name is reserved", "profile 4: name is reserved"}},
-		{fixedHostLoad: true, name: "builtin-survives-invalid-profiles", worker: "gemini", binary: "gemini", mode: "success", profiles: profiles,
+		{name: "builtin-survives-invalid-profiles", worker: "gemini", binary: "gemini", mode: "success", profiles: profiles,
 			startupWarnings: []string{"profile 2: command is required", "profile 3: name is reserved", "profile 4: name is reserved"}},
-		{fixedHostLoad: true, name: "builtin-survives-malformed-file", worker: "gemini", binary: "gemini", mode: "success", profiles: `{"version":1,"profiles":[`,
+		{name: "builtin-survives-malformed-file", worker: "gemini", binary: "gemini", mode: "success", profiles: `{"version":1,"profiles":[`,
 			startupWarnings: []string{"worker-profiles.json: invalid JSON"}},
 	})
 }
