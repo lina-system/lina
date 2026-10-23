@@ -46,7 +46,11 @@ func (r *conversationRuntime) progressDigest(ctx context.Context, s clientsrv.Se
 	entries := []progress.Entry{}
 	for _, row := range *p.Rows {
 		v := row.Line
-		entries = append(entries, progress.Entry{Line: progress.Line{Name: v.Name, Stage: v.Stage, JustFinished: v.JustFinished, Next: v.Next}})
+		line := progress.Line{Name: v.Name, Stage: v.Stage, JustFinished: v.JustFinished, Next: v.Next}
+		if v.State != nil {
+			line.State = string(*v.State)
+		}
+		entries = append(entries, progress.Entry{Line: line})
 	}
 	d := progress.Digest(lines, entries)
 	omitted, _ := p.WaitingMore.Int64()

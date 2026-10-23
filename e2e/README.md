@@ -455,10 +455,15 @@ before running the real readiness check, and outputs and durable state are
 checked for credential disclosure.
 
 `m3/crw-takeover.json` runs the operator import binary against an installed Core's
-stopped state root, checks exclusive ownership and idempotent retry, removes the
-source snapshot, then exercises the running Core's record tools. Imported evidence
+stopped state root, checks exclusive ownership and idempotent retry, then exercises
+the running Core's record tools. A backup restores into a fresh destination; the
+source snapshot is removed before the restored Core starts. Imported evidence
 is found through search and read by LINA id, source-id lookup fails, a new result
-is saved, and restart keeps the imported identity. This operator-only test and
+is saved, and restart keeps the imported identity. The board shows canonical
+states for complete and incomplete issues and milestones, including earlier
+milestone publications interrupted before journal acknowledgement. Retry and
+restart preserve those records' saved revisions and projected deadline sources.
+This operator-only test and
 fixture are excluded from release archives together with the takeover tool.
 
 `m2/claude-worker.json` runs `dispatch_work` with `worker=claude` through
@@ -516,7 +521,11 @@ expansion with stage provenance, refresh, folding and reopening. It exercises
 Core's read path and TUI. `TestM3WorkerLanesLiveSession` additionally starts the
 installed stdio worker fixture through Core's conversation tools, makes it write
 a real artifact, and expands its runtime lane to show the worker output without
-calling the model. Vendor transport is synthetic; no personal account is used.
+calling the model. While the worker holds an interrupt reply, the developer page
+must return its session as unknown when the five-second snapshot context expires.
+Only then does the fixture release the interrupt, produce its result and allow
+the refreshed lane to report idle. Vendor transport is synthetic; no personal
+account is used.
 
 `m2/progress-waiting.json` uses the installed Core and synthetic stdio worker
 journey to read the owner progress capability and full waiting list during an

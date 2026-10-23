@@ -255,3 +255,16 @@ func TestRecallExactIdentityPrecedesLimitAndKeepsScope(t *testing.T) {
 		}
 	}
 }
+
+func TestExchangeCommonOnlyFiltersBeforeLimit(t *testing.T) {
+	db := database(t)
+	common := commit(t, db, proposal("A", "Shared naming convention"))
+	private := proposal("A", "Private conversation detail")
+	private.Item.Holder = "A"
+	private.ExplicitHolder = true
+	commit(t, db, private)
+	hits, err := New(db).Recall(t.Context(), RecallScope{Agent: "A", Person: "person", CommonOnly: true, ExternalModel: true}, Query{At: 100, Limit: 1})
+	if err != nil || len(hits) != 1 || hits[0].ID != common.ID {
+		t.Fatalf("exchange leaked own private holder: %+v %v", hits, err)
+	}
+}

@@ -66,16 +66,18 @@ lookup key. A record is limited to 1 MiB.
 | --- | --- | --- |
 | tracker | initiative | goal, always draft until the person confirms |
 | tracker | project | project with a mandatory done condition |
-| tracker | issue | todo |
-| tracker | milestone | todo with mandatory deadline and done condition |
+| tracker | issue | todo: `open` when incomplete, `completed` when done |
+| tracker | milestone | todo: `open` when incomplete, `completed` when done, with mandatory deadline and done condition |
 | tracker | plan, completion_criteria, decision, scope, parent_binding | reference document |
 | intent | intent_card | intent card, preserving exact intent text and parent |
 | crw | relay_store, scope, assignment, relationship, link, parent_binding, attempt, receipt, verdict, acknowledgement, branch, worktree, completion_criteria, decision | observed reference document with mandatory raw payload |
 
 CRW observations do not populate active runs, permissions, Core verdicts or
 worker queues. Historical branches and paths are text, never destinations for
-file operations. Tracker done state is retained, except that initiatives remain
-drafts. A CRW verdict is still a historical observation. Product code can read
+file operations. The export's `done: true` completes tracker issues and
+milestones; `false` or an omitted `done` leaves them `open`. Initiatives always
+remain `draft`; CRW records always remain `observed`. Other tracker records and
+intent cards retain their `active`/`done` mapping. A CRW verdict is still a historical observation. Product code can read
 the records through its normal `read_record` tool using the reported LINA ids.
 The import does not implement plan confirmation or the operational switch.
 
@@ -91,12 +93,29 @@ and do not fail the run. Inspect all outcomes before any switch decision.
 
 `system/crw-takeover-journal.json` in the destination is private operator state.
 It binds the single snapshot and actor and durably reserves random ids before
-publishing any record. Keep it with the state backup; never delete or replace it
-to force another import. There is no product API or schema for this journal.
+publishing any record. Core backup captures its opaque bytes and verifies its
+hash with the matching records. Restore replaces it with that generation's
+journal, or removes later reservations when restoring a generation without one.
+Interrupted restore blocks the tool until publication is resumed. Never delete
+or replace the journal to force another import. Older backups that omitted it
+cannot recover its reservations. There is no product API or schema for it.
 On retry, reserved ids reconcile against the records repository, including a
 crash after publication but before its journal acknowledgement. Already imported
 records report `reused: true`; the retry creates no records or commits and does
-not overwrite subsequent user edits. Deleted imported records fail visibly.
+not overwrite subsequent user edits. This also holds after backup/restore and
+after a record moves. Deleted imported records fail visibly.
+
+Earlier imports may store to-dos as `active` or `done` without
+`deadline_source`. Core recognizes their tracker issue/milestone provenance and
+snapshot digest and projects `open`/`completed` and the deadline source without
+changing their files or revisions. A later planning edit takes precedence over
+the original snapshot. No reimport or bulk rewrite is needed.
+
+If the earlier importer stopped after saving a to-do but before acknowledging
+its journal entry, retry accepts its exact earlier bytes as well as the current
+encoding. Both are checked against the same verified snapshot and reserved id.
+Different content is reported lost and left untouched. Preserve the journal and
+inspect that conflict; do not remove the reservation to force a new import.
 
 Records are committed individually; a failed run may have imported earlier rows.
 Keep its report, fix transient destination failures, and retry the same verified

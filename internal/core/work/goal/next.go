@@ -235,7 +235,11 @@ func has(items []string, id string) bool {
 	return false
 }
 func reserves(a Action) bool {
-	return a.State != "finished" && (a.Kind == Assign || a.Kind == Resume || a.Kind == RepairConflict || a.Kind == RepairQA || a.Kind == ContinueWorker)
+	return a.State != "finished" && workerAction(a.Kind)
+}
+
+func workerAction(kind ActionKind) bool {
+	return kind == Assign || kind == Resume || kind == RepairConflict || kind == RepairQA || kind == ContinueWorker
 }
 
 // Slots applies both installed resource caps and the live observation. An
@@ -391,7 +395,15 @@ func Derive(state State, now time.Time) (Plan, error) {
 	}
 	add := func(g Goal, t Task, kind ActionKind, revision, node string) {
 		a := Action{GoalID: g.ID, TaskID: t.ID, Kind: kind, Attempt: t.Attempt, Revision: revision, NodeID: node, State: "queued", Deadline: now.Add(SafetySweep).Unix()}
-		if kind == Assign || kind == Resume || kind == RepairConflict || kind == RepairQA || kind == ContinueWorker {
+		if workerAction(kind) {
+			// A full plan can remove an ID and add it back in a later revision.
+			// Its settled worker history still owns the earlier attempt numbers.
+			// Undispatched awards and explicit refusals spend no attempt.
+			for _, old := range state.Actions {
+				if old.GoalID == g.ID && old.TaskID == t.ID && workerAction(old.Kind) && old.Epoch != 0 && len(old.Receipt) != 0 && !settledRefusal(old) {
+					a.Attempt = max(a.Attempt, old.Attempt)
+				}
+			}
 			a.Attempt++
 			a.Resources = t.Resources
 		}
