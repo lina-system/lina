@@ -122,6 +122,24 @@ func TestConversationTurnText(t *testing.T) {
 	assertTurnRequests(t, p, 1)
 }
 
+func TestConversationStopPublishesOutcomeAfterCancellation(t *testing.T) {
+	r, p := turnRuntime(t)
+	input, inboxID := admitTurnInput(t, r, "stopped-input")
+	ctx, cancel := context.WithCancelCause(t.Context())
+	defer cancel(nil)
+	p.steps = []turnStep{{before: func(provider.Request) {
+		cancel(turn.Interrupt{Issuer: turn.Person})
+	}}}
+	if err := r.run(ctx, &loop.Inputs{}, input, inboxID); err == nil {
+		t.Fatal("cancelled turn returned success")
+	}
+	stopped, err := turn.New(r.db).Stopped(t.Context(), input.ID)
+	if err != nil || stopped.NoticeID == "" {
+		t.Fatalf("durable stop outcome: %+v, %v", stopped, err)
+	}
+	assertTurnPublished(t, r, input.ID, stopped.NoticeID)
+}
+
 func TestConversationTurnTools(t *testing.T) {
 	r, p := turnRuntime(t)
 	calls := []provider.ToolCall{{ID: "skills", Name: "skill_index", Arguments: `{}`}, {ID: "plans", Name: "plan_index", Arguments: `{}`}}

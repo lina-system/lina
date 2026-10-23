@@ -120,7 +120,7 @@ func TestAuthoredResultContentAndHistoryInstalledCore(t *testing.T) {
 				waitScreen(t, h, terminal, design.Text(design.English, "live"))
 				waitScreen(t, h, terminal, "Authored result")
 				h.keys(terminal, "\x0f\x1b[F") // Open the card and follow its end as pages load.
-				waitScreen(t, h, terminal, "RESULT-END")
+				t.Logf("Authored result pager capture:\n%s", screenText(waitScreen(t, h, terminal, "RESULT-END")))
 				h.keys(terminal, "\x04")
 				terminal.process.wait(t, 0)
 				h.expectTerminalRestored(terminal)
