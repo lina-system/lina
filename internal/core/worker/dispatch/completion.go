@@ -54,6 +54,10 @@ func (s *Service) finish(ctx context.Context, r Record, runID, status string, re
 		if r.Snapshot != nil && r.Snapshot.Finish != nil && r.Snapshot.Finish.Status != worker.Done {
 			r = recoveryRecord(r)
 		}
+		if r.State != "unknown" {
+			// An earlier uncertainty notice does not acknowledge this result.
+			r.Announced = false
+		}
 		return saveRecord(ctx, tx, r)
 	})
 }

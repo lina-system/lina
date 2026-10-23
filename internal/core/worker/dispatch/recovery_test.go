@@ -95,6 +95,7 @@ func TestTerminalSnapshotCannotCommitWithoutItsReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.State = "finished"
+	r.Announced = true // An earlier sweep already announced uncertainty.
 	r.Snapshot = &worker.ThreadSnapshot{Thread: worker.Thread{ID: "thread", TurnID: "turn"}, Finish: &worker.Finish{Status: worker.Done}, EffectsKnown: true}
 	if err := s.finish(t.Context(), r, "task:1", "completed"); err == nil {
 		t.Fatal("terminal snapshot committed without receipt evidence")
@@ -123,7 +124,7 @@ func TestTerminalSnapshotCannotCommitWithoutItsReceipt(t *testing.T) {
 		t.Fatalf("terminal receipt missing: %+v %v", card, err)
 	}
 	saved, err = s.records(t.Context())
-	if err != nil || saved[0].Snapshot == nil || saved[0].State != "finished" {
+	if err != nil || saved[0].Snapshot == nil || saved[0].State != "finished" || saved[0].Announced {
 		t.Fatalf("terminal snapshot missing: %+v %v", saved, err)
 	}
 

@@ -3,6 +3,7 @@ package dispatch
 
 import (
 	"context"
+	"fmt"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker"
@@ -32,6 +33,11 @@ func (a *quotaStopAdapter) Start(_ context.Context, _ lease.Lease, s worker.Star
 }
 
 func TestQuotaHandoffWaitSurvivesCompletionOutbox(t *testing.T) {
+	for _, unknown := range []bool{false, true} {
+		t.Run(fmt.Sprint(unknown), func(t *testing.T) { testQuotaHandoffSettlement(t, unknown) })
+	}
+}
+func testQuotaHandoffSettlement(t *testing.T, unknown bool) {
 	db := store(t)
 	d := definition(t)
 	gitFixture(t, d.Repository, "remote", "add", "origin", "https://github.com/fixture/project.git")
@@ -46,7 +52,7 @@ func TestQuotaHandoffWaitSurvivesCompletionOutbox(t *testing.T) {
 	}
 	defer area.Close(context.Background())
 	s, err := openService(t, Config{DB: db, Work: work.New(db), Area: area, Root: root, Main: "main", Epoch: 1, Workers: []Factory{{Name: "first", Open: func(context.Context, lease.Lease) (worker.Adapter, func(context.Context) error, error) {
-		return &quotaStopAdapter{events: make(chan worker.Event, 1)}, func(context.Context) error { return nil }, nil
+		return &quotaStopAdapter{events: make(chan worker.Event, 1), unknown: unknown}, func(context.Context) error { return nil }, nil
 	}}}})
 	if err != nil {
 		t.Fatal(err)
@@ -64,6 +70,16 @@ func TestQuotaHandoffWaitSurvivesCompletionOutbox(t *testing.T) {
 	}
 	s.execute(t.Context(), r)
 	records, err := s.records(t.Context())
+	if unknown {
+		var count int
+		err := db.Read(t.Context(), func(tx *canon.Tx) error {
+			return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM work_worker_reservations WHERE worker_id GLOB 'task:*'").Scan(&count)
+		})
+		if err != nil || len(records) != 1 || records[0].State != "unknown" || count == 0 {
+			t.Fatalf("unknown effects lost directory fence: %+v reservations=%d err=%v", records, count, err)
+		}
+		return
+	}
 	if err != nil || len(records) != 1 || records[0].State != "queued" || records[0].Wait != "worker_quota" || len(records[0].Tried) != 1 || records[0].Packet == "" {
 		t.Fatalf("settled first attempt stranded handoff: %+v %v", records, err)
 	}

@@ -531,7 +531,14 @@ func (s *Service) execute(ctx context.Context, r Record) {
 	if err = s.finish(ctx, r, run.ID, status, receipt); err != nil {
 		r.Code = "receipt_failed"
 	} else {
-		settled, deliverySaved = true, true
+		// A committed failure receipt can still describe unknown effects.
+		// Only the committed recovery state can release its directory fence.
+		var state string
+		readErr := s.cfg.DB.Read(ctx, func(tx *canon.Tx) error {
+			return tx.QueryRowContext(ctx, "SELECT state FROM worker_dispatch WHERE id=?", r.ID).Scan(&state)
+		})
+		settled = readErr == nil && state != "unknown"
+		deliverySaved = true
 	}
 }
 func taskPacket(r Record) (string, error) {

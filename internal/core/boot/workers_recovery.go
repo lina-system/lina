@@ -228,6 +228,14 @@ func (e *workerSession) reconcileWorker(ctx context.Context) {
 	}
 	next, send := recovery.Observe(rec, snap)
 	next.ObservedAt = time.Now().UnixNano()
+	if send || next.State == "finished" || next.State == "decision" || next.State == "parked" {
+		// The exact terminal read replaces a missing FinishEvent for this turn.
+		// A later turn's activity remains independently bound.
+		e.mu.Lock()
+		e.active[snap.Thread.TurnID].Release()
+		delete(e.active, snap.Thread.TurnID)
+		e.mu.Unlock()
+	}
 	if next.State == "decision" && next.DecisionAt == 0 {
 		next.DecisionAt = time.Now().UnixNano()
 	}

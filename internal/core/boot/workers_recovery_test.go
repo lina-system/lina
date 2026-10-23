@@ -2,10 +2,13 @@
 package boot
 
 import (
+	"context"
 	"encoding/json"
+	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/recovery"
+	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/tools"
 	"testing"
@@ -91,5 +94,29 @@ func TestWorkerRecoveryRequestResolutionCannotCrossBindings(t *testing.T) {
 	}
 	if len(e.recovery.PendingRequests) != 1 {
 		t.Fatal("replacement process cleared an unobserved old request")
+	}
+}
+
+type recoveryCompletionProbe struct{ workerProbe }
+
+func (p *recoveryCompletionProbe) Reconcile(context.Context, worker.Thread) (worker.ThreadSnapshot, error) {
+	return p.snapshot, nil
+}
+func TestWorkerRecoveryReleasesCompletedTurnActivity(t *testing.T) {
+	r := controlRuntime(t)
+	now := time.Now()
+	input, err := r.journal().Admit(t.Context(), guard.EntryOwner, ledger.Input{ID: "reconcile-lease", ConversationID: r.conversation, AgentID: r.agent, PersonID: r.person, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Produce result"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	thread := worker.Thread{ID: "thread", TurnID: "turn", TaskID: "task", AttemptID: "attempt", ProcessGeneration: 1, BindingEpoch: 1}
+	probe := &recoveryCompletionProbe{workerProbe{snapshot: worker.ThreadSnapshot{Thread: thread, State: worker.Idle, Finish: &worker.Finish{Status: worker.Done}, EffectsKnown: true}}}
+	released := false
+	activity := lease.New(func() { released = true })
+	defer activity.Release()
+	e := &workerSession{origin: r, input: input, thread: thread, adapter: probe, active: map[string]lease.Lease{thread.TurnID: activity}, recovery: recovery.Record{ID: thread.ID, Person: r.person, Agent: r.agent, Conversation: r.conversation, Input: input.ID, Thread: thread, State: "unknown"}}
+	e.reconcileWorker(t.Context())
+	if e.recovery.State != "finished" || !released || len(e.active) != 0 || probe.inputs != 0 {
+		t.Fatalf("reconciled completion retained activity: state=%s released=%v active=%d inputs=%d", e.recovery.State, released, len(e.active), probe.inputs)
 	}
 }
