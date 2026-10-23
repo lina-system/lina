@@ -4,6 +4,7 @@ package ui
 
 import (
 	"context"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -11,6 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/thisisjun786/lina/internal/design"
+	"github.com/thisisjun786/lina/internal/tui/layout"
 	"github.com/thisisjun786/lina/internal/tui/sanitize"
 	"github.com/thisisjun786/lina/internal/tui/state"
 	"github.com/thisisjun786/lina/internal/tui/term"
@@ -20,6 +22,30 @@ import (
 type shellCardAnswer struct {
 	Generation uint64
 	Request    state.CardAnswerRequest
+}
+
+// Reading is local to this open card and its exact wrapping. Only rows actually
+// included in a rendered viewport count, never rows skipped by navigation.
+type cardReading struct {
+	id, epoch, token string
+	revision         uint64
+	size             layout.Size
+	rows             []bool
+}
+
+func (r cardReading) matches(c state.Card, size layout.Size, rows int) bool {
+	return r.id == c.ID && r.epoch == c.Epoch && r.token == c.Token &&
+		r.revision == c.Revision && r.size == size && len(r.rows) == rows
+}
+
+func (m *shellModel) resetCardReading() {
+	m.cardRead = cardReading{}
+	m.content, _ = state.Reduce(m.content, state.CardTargetsVisible{})
+}
+
+func (m *shellModel) cardTargetsRead(c state.Card, rows int) bool {
+	return m.size.Width >= 40 && m.size.Height >= 10 &&
+		m.cardRead.matches(c, m.size, rows) && !slices.Contains(m.cardRead.rows, false)
 }
 
 func (m *shellModel) cardCommand(msg state.Msg) tea.Cmd {
@@ -52,6 +78,7 @@ func (m *shellModel) cardKey(key term.Key) (tea.Cmd, bool) {
 				m.cardGate.CardChanged(m.now())
 				m.cardField = 0
 				m.cardScroll = 0
+				m.resetCardReading()
 				return nil, true
 			}
 		}
@@ -68,6 +95,7 @@ func (m *shellModel) cardKey(key term.Key) (tea.Cmd, bool) {
 		return nil, true
 	}
 	if key.Name == "esc" {
+		m.resetCardReading()
 		return m.cardCommand(state.CloseCard{}), true
 	}
 	switch key.Name {
@@ -76,14 +104,16 @@ func (m *shellModel) cardKey(key term.Key) (tea.Cmd, bool) {
 		return nil, true
 	case "down":
 		rows, _ := m.cardRows(c)
-		m.cardScroll = min(max(0, len(rows)-m.size.Height), m.cardScroll+1)
+		m.cardScroll = min(max(0, len(rows)-(m.size.Height-1)), m.cardScroll+1)
 		return nil, true
 	case "pgup":
-		m.cardScroll = max(0, m.cardScroll-max(1, m.size.Height-1))
+		m.cardScroll = max(0, m.cardScroll-max(1, m.size.Height-2))
 		return nil, true
 	case "pgdown":
 		rows, _ := m.cardRows(c)
-		m.cardScroll = min(max(0, len(rows)-m.size.Height), m.cardScroll+max(1, m.size.Height-1))
+		// Reserve the connection row and the continuation hint. Advancing by
+		// more would skip a target row at each page boundary.
+		m.cardScroll = min(max(0, len(rows)-(m.size.Height-1)), m.cardScroll+max(1, m.size.Height-2))
 		return nil, true
 	}
 	if !m.mutationsAllowed() || c.Outcome != "" || m.content.CardView.Pending {
@@ -97,8 +127,8 @@ func (m *shellModel) cardKey(key term.Key) (tea.Cmd, bool) {
 				return m.cardCommand(state.ChooseApproval{Choice: c.Choices[n-1]}), true
 			}
 		case "enter":
-			_, complete := m.cardRows(c)
-			m.content, _ = state.Reduce(m.content, state.CardTargetsVisible{Complete: complete})
+			_, targets := m.cardRows(c)
+			m.content, _ = state.Reduce(m.content, state.CardTargetsVisible{Complete: m.cardTargetsRead(c, targets)})
 			return m.cardCommand(state.ConfirmCard{}), true
 		}
 		return nil, true
@@ -140,9 +170,9 @@ func (m *shellModel) cardKey(key term.Key) (tea.Cmd, bool) {
 	return nil, true
 }
 
-// All target text wraps; it is never ellipsized. Confirm remains disabled when
-// the full target area cannot fit, including after a resize or group update.
-func (m *shellModel) cardRows(c state.Card) ([]string, bool) {
+// All target text wraps; it is never ellipsized. Return the end of the target
+// area separately so controls and continuation hints never count as reading it.
+func (m *shellModel) cardRows(c state.Card) ([]string, int) {
 	width := max(1, m.size.Width)
 	var rows []string
 	add := func(text string) {
@@ -156,7 +186,8 @@ func (m *shellModel) cardRows(c state.Card) ([]string, bool) {
 	for _, field := range c.Targets {
 		add(field.Name + ": " + field.Value)
 	}
-	complete := len(rows) <= m.size.Height-4 && m.size.Width >= 40 && m.size.Height >= 10
+	targets := len(rows)
+	complete := m.cardTargetsRead(c, targets)
 	if c.Form != nil {
 		add(c.Form.PluginName)
 		for i, field := range c.Form.Fields {
@@ -196,16 +227,30 @@ func (m *shellModel) cardRows(c state.Card) ([]string, bool) {
 		add(design.Text(m.styles.options.Language, "card.question_keys"))
 	}
 	add(design.Text(m.styles.options.Language, "card.escape"))
-	return rows, complete
+	return rows, targets
 }
 
 func (m *shellModel) cardContent(c state.Card) string {
 	if m.size.Height <= 0 || m.size.Width <= 0 {
 		return ""
 	}
-	rows, _ := m.cardRows(c)
+	rows, targets := m.cardRows(c)
 	height := max(0, m.size.Height-1)
 	start := min(max(0, m.cardScroll), max(0, len(rows)-height))
+	end := min(len(rows), start+height)
+	if end < len(rows) {
+		end-- // The continuation hint replaces this row.
+	}
+	if c.Kind == protocol.KindApprovalRequest && m.size.Width >= 40 && m.size.Height >= 10 {
+		if !m.cardRead.matches(c, m.size, targets) {
+			m.cardRead = cardReading{id: c.ID, epoch: c.Epoch, token: c.Token, revision: c.Revision, size: m.size, rows: make([]bool, targets)}
+		}
+		for i := start; i < min(end, targets); i++ {
+			m.cardRead.rows[i] = true
+		}
+		// Refresh the hint in this same frame when the last unread row appears.
+		rows, _ = m.cardRows(c)
+	}
 	rows = rows[start:]
 	if len(rows) > height {
 		rows = rows[:height]
