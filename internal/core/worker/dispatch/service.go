@@ -115,6 +115,19 @@ func Open(ctx context.Context, cfg Config) (*Service, error) {
 		return nil, err
 	}
 	for _, r := range records {
+		if cfg.Work != nil && r.State == "finished" && r.PR != nil {
+			card, err := cfg.Work.Get(ctx, r.ID)
+			if err != nil {
+				s.cancel()
+				return nil, err
+			}
+			if card.Run != nil && !card.Active && card.Receipt != nil && card.Head == "" && card.CompletionHead == "" {
+				if err = cfg.Work.RestoreCompletionHead(ctx, r.ID, card.Run.ID, r.PR.Head); err != nil {
+					s.cancel()
+					return nil, err
+				}
+			}
+		}
 		if r.State == "running" {
 			r.State = "unknown"
 			r.Code = "interrupted_execution"
@@ -308,8 +321,7 @@ func (s *Service) recordForAdmission(ctx context.Context, origin Origin, callID 
 func mustJSON(v any) []byte { b, _ := json.Marshal(v); return b }
 func (s *Service) save(ctx context.Context, r Record) error {
 	return s.cfg.DB.Write(ctx, func(tx *canon.Tx) error {
-		_, err := tx.ExecContext(ctx, "UPDATE worker_dispatch SET state=?,record=? WHERE id=?", r.State, mustJSON(r), r.ID)
-		return err
+		return saveRecord(ctx, tx, r)
 	})
 }
 func (s *Service) records(ctx context.Context) ([]Record, error) {
@@ -368,6 +380,12 @@ func (s *Service) sync() {
 			s.wg.Add(1)
 			go func() { defer s.wg.Done(); s.execute(r) }()
 		} else if (r.State == "finished" || r.State == "unknown") && !r.Announced {
+			// Completed ledger deliveries belong exclusively to the durable reactor.
+			if s.cfg.Work != nil {
+				if card, e := s.cfg.Work.Get(s.ctx, r.ID); e == nil && card.Receipt != nil && !card.Active && card.TurnStatus != "" {
+					continue
+				}
+			}
 			if s.cfg.Publish != nil && s.cfg.Publish(s.ctx, r) == nil {
 				r.Announced = true
 				_ = s.save(s.ctx, r)
