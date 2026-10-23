@@ -52,7 +52,9 @@ func alphaLiveApproval(t *testing.T, h *harness, terminal *terminal, approval pr
 		}
 	}
 	alphaScreen(t, h, terminal, "approval-"+key, func(s string) bool { return strings.Contains(s, approval.Card.Summary) }, "")
-	h.keys(terminal, "\x1b[17~")
+	// Negotiate press/release events before opening the card, as the question
+	// harness does. Legacy terminals deliberately reject immediate approval keys.
+	h.keys(terminal, "\x1b[?3u\x1b[17~")
 	confirm := design.Text(design.Korean, "card.confirm")
 	cut := design.Text(design.Korean, "card.targets_cut")
 	page := alphaScreen(t, h, terminal, "approval-page-"+key+"-000", func(s string) bool { return strings.Contains(s, confirm) || strings.Contains(s, cut) }, "")
