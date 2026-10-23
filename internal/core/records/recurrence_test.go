@@ -88,3 +88,11 @@ func TestRecurrenceKeepsTodayAndOriginalAnchor(t *testing.T) {
 		t.Fatal("month anchor drifted", v, err)
 	}
 }
+
+func TestCompletionRelativeTimestampKeepsPrecision(t *testing.T) {
+	now := time.Date(2026, 1, 10, 12, 34, 56, 123456789, time.UTC)
+	v := Todo{State: "completed", Repeat: &Repeat{Rule: "FREQ=DAILY;INTERVAL=3", Next: "2026-01-01T09:00:31.12Z", FromCompletion: true}}
+	if _, err := advanceTodo(&v, now, true); err != nil || v.Repeat.Next != "2026-01-13T12:34:56.123456789Z" {
+		t.Fatal(v.Repeat, err)
+	}
+}

@@ -932,8 +932,9 @@ there is no separate client endpoint.
   reason. These events create no delegated work card. Core runs
   overdue advancement at startup and each minute without a model or worker.
   Date-only occurrences remain due throughout their civil day. Timed
-  recurrences have minute precision; the shared calendar resolves DST gaps
-  and folds as C-26 specifies. Tests cover month ends, leap years and zone gaps.
+  to-dos preserve seconds and fractional seconds (up to Go time precision);
+  the ordinary timer schedule remains minute-based. The shared calendar resolves
+  DST gaps and folds as C-26 specifies. Tests cover month ends, leap years and zone gaps.
 
 - Reminders and pre-warnings are timer rows (C-26).
 - Candidates are durable rows with a ledger source, exact quotation, confidence

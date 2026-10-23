@@ -6,6 +6,7 @@ import "testing"
 func TestTodoRecurrenceNextCorpus(t *testing.T) {
 	for _, tc := range []struct{ rule, from, zone, want string }{
 		{"FREQ=DAILY;INTERVAL=3", "2026-01-01T09:00:00Z", "UTC", "2026-01-04T09:00:00Z"},
+		{"FREQ=DAILY", "2026-01-01T09:00:31.123456789Z", "UTC", "2026-01-02T09:00:31.123456789Z"},
 		{"FREQ=WEEKLY;BYDAY=MO,WE", "2026-01-05T09:00:00Z", "UTC", "2026-01-07T09:00:00Z"},
 		{"FREQ=MONTHLY", "2026-01-31T09:00:00Z", "UTC", "2026-03-31T09:00:00Z"},
 		{"FREQ=MONTHLY;BYMONTHDAY=-1", "2026-01-31T09:00:00Z", "UTC", "2026-02-28T09:00:00Z"},

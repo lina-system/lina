@@ -92,7 +92,7 @@ func advanceTodo(v *Todo, now time.Time, completed bool) (bool, error) {
 		s.RRule = strings.Join(parts, ";")
 		if completed {
 			after = now
-			s.Start = now.Truncate(time.Minute)
+			s.Start = now
 			if len(r.Next) == 10 {
 				loc, _ := time.LoadLocation(s.Zone)
 				t := now.In(loc)
@@ -102,7 +102,7 @@ func advanceTodo(v *Todo, now time.Time, completed bool) (bool, error) {
 			if len(r.Next) == 10 {
 				r.Start = s.Start.In(loc).Format(time.DateOnly)
 			} else {
-				r.Start = s.Start.In(loc).Format(time.RFC3339)
+				r.Start = s.Start.In(loc).Format(time.RFC3339Nano)
 			}
 		}
 	}
@@ -120,7 +120,7 @@ func advanceTodo(v *Todo, now time.Time, completed bool) (bool, error) {
 		if len(r.Next) == 10 {
 			r.Next = next.In(loc).Format(time.DateOnly)
 		} else {
-			r.Next = next.In(loc).Format(time.RFC3339)
+			r.Next = next.In(loc).Format(time.RFC3339Nano)
 		}
 		v.State = "open"
 		v.When = ""

@@ -412,8 +412,8 @@ startup and each minute, without calling a model. Date-only occurrences become
 overdue after their local day. An exhausted rule stops scheduling; an absence
 alone does not complete the task. Supported rules are daily, weekly, monthly or
 yearly with interval, by-day, by-month-day, count or until. Invalid rules are
-refused before publication. Timed recurrences use minute precision and the
-native timer's daylight-saving rules.
+refused before publication. Timed recurrences preserve seconds and fractional seconds (up to Go time
+precision) and use the native timer's daylight-saving rules.
 
 The installed `propose_candidate` tool takes a source event id, exact quotation,
 title, note and confidence. An empty source refers to the current authenticated

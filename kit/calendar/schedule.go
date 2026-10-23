@@ -15,11 +15,12 @@ var ErrInvalid = errors.New("invalid timer")
 // Schedule has exactly one of At, Cron or RRule. Recurrences have minute
 // precision and use an explicit IANA zone; Start anchors RRULE intervals.
 type Schedule struct {
-	At    time.Time `json:"at,omitempty"`
-	Start time.Time `json:"start,omitempty"`
-	Zone  string    `json:"zone,omitempty"`
-	Cron  string    `json:"cron,omitempty"`
-	RRule string    `json:"rrule,omitempty"`
+	At        time.Time `json:"at,omitempty"`
+	Start     time.Time `json:"start,omitempty"`
+	Zone      string    `json:"zone,omitempty"`
+	Cron      string    `json:"cron,omitempty"`
+	RRule     string    `json:"rrule,omitempty"`
+	subminute bool      // enabled only by the to-do recurrence constructor
 }
 
 type calendar struct {
@@ -73,6 +74,9 @@ func (s Schedule) Next(after time.Time) (time.Time, error) {
 					continue
 				}
 				at := resolveCivil(civil, c.loc, offsets, gaps)
+				if s.subminute && !at.IsZero() && civilTime(at.In(c.loc)).Equal(civil) {
+					at = at.Add(time.Duration(c.start.Second())*time.Second + time.Duration(c.start.Nanosecond()))
+				}
 				if at.IsZero() || (!c.start.IsZero() && at.Before(c.start)) {
 					continue
 				}
@@ -146,7 +150,7 @@ func (s Schedule) parse() (calendar, error) {
 		c.anyWeek = strings.HasPrefix(parts[4], "*")
 		return c, nil
 	}
-	if s.Start.IsZero() || s.Start.Second() != 0 || s.Start.Nanosecond() != 0 {
+	if s.Start.IsZero() || !s.subminute && (s.Start.Second() != 0 || s.Start.Nanosecond() != 0) {
 		return c, ErrInvalid
 	}
 	c.start = s.Start.In(c.loc)

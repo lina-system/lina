@@ -9,7 +9,7 @@ import (
 // Recurrence is the to-do subset of the native calendar calculator. Start is
 // retained across advances so month ends, intervals and COUNT cannot drift.
 func Recurrence(rule string, start time.Time, zone string) (Schedule, error) {
-	s := Schedule{RRule: rule, Start: start, Zone: zone}
+	s := Schedule{RRule: rule, Start: start, Zone: zone, subminute: true}
 	for _, part := range strings.Split(strings.TrimPrefix(rule, "RRULE:"), ";") {
 		key, value, _ := strings.Cut(part, "=")
 		switch key {
