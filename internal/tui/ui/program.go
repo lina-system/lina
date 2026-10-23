@@ -147,7 +147,6 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 			signin.close()
 			clear(pending)
 			clear(management.pending)
-			model.conversation.pager = textPager{}
 			clear(channelPending)
 			clear(webPending)
 			clear(talkPending)

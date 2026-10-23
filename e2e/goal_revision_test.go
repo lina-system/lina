@@ -141,12 +141,42 @@ func TestM2RunToDoneAfterQueuedSiblingRevision(t *testing.T) {
 				}
 			}
 			// Right has passing cached proofs but left owns the merge slot.
+			receiptedRight := w.heads["right"]
 			w.heads["right"] = "changed-right-head"
 			if err := e.Signal(ctx, work.Signal{ID: "right-head-changed", GoalID: g.ID, TaskID: "right"}); err != nil {
 				return err
 			}
 			for _, id := range []string{"left", "right"} {
 				if id == "right" {
+					if err := w.finish(ctx, e, id, work.InspectPR); err != nil {
+						return err
+					}
+					s, err := e.Snapshot(ctx)
+					if err != nil {
+						return err
+					}
+					right := s.Goals[0].Tasks[1]
+					if right.Head != receiptedRight || right.PR.Head != "changed-right-head" {
+						return fmt.Errorf("inspection changed receipted head: %+v", right)
+					}
+					if err := e.Reconcile(ctx); err != nil {
+						return err
+					}
+					s, err = e.Snapshot(ctx)
+					if err != nil {
+						return err
+					}
+					for _, a := range s.Actions {
+						if a.TaskID == "right" && a.Kind == work.Merge && a.State == "queued" {
+							return fmt.Errorf("unreceipted head became mergeable")
+						}
+					}
+					// The PR is restored to the worker's receipted artifact; fresh
+					// proofs of that exact head are required before continuing.
+					w.heads["right"] = receiptedRight
+					if err := e.Signal(ctx, work.Signal{ID: "right-head-restored", GoalID: g.ID, TaskID: "right"}); err != nil {
+						return err
+					}
 					if err := w.finish(ctx, e, id, work.InspectPR); err != nil {
 						return err
 					}
@@ -216,7 +246,7 @@ func TestM2RunToDoneAfterQueuedSiblingRevision(t *testing.T) {
 			t.Fatalf("unfinished task: %+v", task)
 		}
 	}
-	if g.Tasks[1].Head != "changed-right-head" || g.Tasks[2].Attempt != 1 {
+	if g.Tasks[1].Head != "head-right-1" || g.Tasks[2].Attempt != 1 {
 		t.Fatal("PR head was not refreshed or cancellation consumed a worker attempt")
 	}
 	failed := 0

@@ -3,6 +3,7 @@ package codex
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/core/worker"
@@ -30,8 +31,8 @@ func TestSteerNeverStartsIdleTurn(t *testing.T) {
 		}
 		break
 	}
-	if err := p.s.Steer(p.ctx, thread, worker.Input{Text: "late follow-up"}); err == nil {
-		t.Fatal("steer reopened an idle turn")
+	if err := p.s.Steer(p.ctx, thread, worker.Input{Text: "late follow-up"}); !errors.Is(err, worker.ErrInputRefused) {
+		t.Fatalf("idle steering must be a known refusal: %v", err)
 	}
 	select {
 	case request := <-p.received:

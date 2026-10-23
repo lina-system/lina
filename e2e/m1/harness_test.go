@@ -44,6 +44,11 @@ func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && os.Args[1] == "proc-supervise" {
 		os.Exit(proc.SuperviseMain(os.Args[2:], os.Stderr))
 	}
+	closeCache, err := prepareSQLiteCache()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	commandBuilds.binaries = make(map[string]string)
 	code := m.Run()
 	if commandBuilds.directory != "" {
@@ -51,6 +56,10 @@ func TestMain(m *testing.M) {
 			fmt.Fprintln(os.Stderr, err)
 			code = 1
 		}
+	}
+	if err := closeCache(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		code = 1
 	}
 	os.Exit(code)
 }
@@ -101,7 +110,9 @@ func buildCommand(t *testing.T, name string) string {
 		t.Fatalf("expected two Go cache paths, got %d", len(paths))
 	}
 	binary := filepath.Join(home, name)
-	build := exec.CommandContext(ctx, "go", "build", "-mod=readonly", "-o", binary, "./cmd/"+name)
+	// Acceptance exercises the real command, but never uses DWARF. Omitting
+	// debugger data reduces repeated bundle copying, hashing and archiving.
+	build := exec.CommandContext(ctx, "go", "build", "-mod=readonly", "-ldflags=-w", "-o", binary, "./cmd/"+name)
 	build.Dir = "../.."
 	build.Env = []string{
 		"PATH=" + os.Getenv("PATH"), "HOME=" + home, "XDG_CONFIG_HOME=" + home,
@@ -158,6 +169,7 @@ func (h *harness) command(args ...string) *process {
 	p.command.Env = []string{
 		"HOME=" + h.root, "XDG_STATE_HOME=" + h.root, "XDG_CONFIG_HOME=" + h.root,
 		"XDG_RUNTIME_DIR=" + h.root, "PATH=", "TERM=dumb", "LANG=C", "LC_ALL=C",
+		sqliteCacheEnv + "=" + os.Getenv(sqliteCacheEnv),
 	}
 	p.command.WaitDelay = time.Second
 	p.command.Stdout, p.command.Stderr = &p.stdout, &p.stderr
@@ -200,7 +212,11 @@ func (p *process) killAndWait() {
 
 func (p *process) wait(t *testing.T, code int) {
 	t.Helper()
-	timer := time.NewTimer(operationTimeout)
+	p.waitWithin(t, code, operationTimeout)
+}
+func (p *process) waitWithin(t *testing.T, code int, budget time.Duration) {
+	t.Helper()
+	timer := time.NewTimer(budget)
 	defer timer.Stop()
 	select {
 	case <-p.done:
@@ -232,10 +248,9 @@ func (h *harness) connect(core *process) net.Conn {
 	h.t.Helper()
 	return h.connectWithin(core, operationTimeout)
 }
-
-func (h *harness) connectWithin(core *process, timeout time.Duration) net.Conn {
+func (h *harness) connectWithin(core *process, budget time.Duration) net.Conn {
 	h.t.Helper()
-	ctx, cancel := context.WithTimeout(h.ctx, timeout)
+	ctx, cancel := context.WithTimeout(h.ctx, budget)
 	defer cancel()
 	retry := time.NewTicker(5 * time.Millisecond)
 	defer retry.Stop()

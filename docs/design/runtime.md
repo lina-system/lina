@@ -39,13 +39,14 @@ External components (document parsers, OCR, the local transcription component, t
 
 ## Installed tools
 
-LINA uses some tools that the user installs and that LINA neither ships nor pins: coding tools such as Codex, Claude Code, Antigravity or Cursor, which LINA runs as workers ([work-and-delegation.md](work-and-delegation.md)), the command-line tools that plugins rely on, such as `gh`, the local server commands of third-party plugins ([integrations.md](integrations.md)), the official `grok` command that the Grok adapter drives, and the Node.js that the Claude adapter runs on. Each is a separate project with its own releases and repository.
+LINA uses some tools that the user installs and that LINA neither ships nor pins: coding tools such as Codex, Claude Code, Cursor, Gemini CLI, Grok or Antigravity, which LINA runs as workers ([work-and-delegation.md](work-and-delegation.md)), the command-line tools that plugins rely on, such as `gh`, the local server commands of third-party plugins ([integrations.md](integrations.md)), the official `grok` command that the Grok adapter drives, and the Node.js that the Claude adapter runs on. Each is a separate project with its own releases and repository.
 
 - LINA uses the installed tool found on `PATH` or at a path the user configured, and records the version it observed.
 - LINA lists the versions of each such tool that it has verified. A version not on the list is reported to the user as unverified, with the version found and the verified versions, and LINA still uses the tool. A function becomes unsupported only when its tool is missing, can't be started or connected to, or fails its protocol handshake, and LINA says why.
 - LINA never installs, updates or pins the tool on its own, and installs nothing inside it.
 - LINA OS may offer to install these tools for the user ([product-families.md](product-families.md)).
 - Nothing in this section applies to the Claude Agent SDK package. LINA installs that package itself, on first use of a Claude account, under Provider adapters.
+- Nor does it apply to the `claude-agent-acp` program that lets the ACP adapter drive Claude Code ([work-and-delegation.md](work-and-delegation.md#claude-code-through-acp)). The release pins it with its own lockfile, and LINA installs it on first use of the Claude Code worker, under the same rules as the Claude adapter's lockfile, without its optional packages. It always runs the person's installed `claude`; LINA still never installs, updates or pins Claude Code itself.
 
 ## Processes
 
@@ -56,7 +57,7 @@ LINA uses some tools that the user installs and that LINA neither ships nor pins
 | `lina` TUI | Go on Bubble Tea, a static binary | A user process connected to LINA Core over its local socket or the tailnet | The terminal surface ([surfaces.md](surfaces.md)) |
 | LINA app | TypeScript on React, in a bundled shell: Wails v3 (Go) on macOS, Windows and Linux, a WebView host on mobile, Capacitor by default | A user process on the person's device, connected to LINA Core over its local socket or the tailnet | The app surface ([surfaces.md](surfaces.md)) |
 | Node | Go, a static binary | A service on each device | Device execution under grants |
-| Worker | The coding tool the user installed or signed in to, with the user's own configuration; Codex runs as `codex app-server`; Claude Code, Antigravity and Cursor (`cursor-agent`) run as headless child processes; the Cursor adapter is deferred to [#210](https://github.com/thisisjun786/lina/issues/210) | A stdio child of LINA Core, or of Node on a remote device | Workers, one child per task in flight |
+| Worker | The coding tool the user installed or signed in to, with the user's own configuration; Codex runs as `codex app-server`; Claude Code, Cursor, Gemini CLI, Grok and added agents run through the Agent Client Protocol, Claude Code under the pinned `claude-agent-acp` program; Antigravity runs as a headless child process ([work-and-delegation.md](work-and-delegation.md#workers)) | A stdio child of LINA Core, or of Node on a remote device | Workers, one child per task in flight |
 | Claude adapter | LINA's own TypeScript on Node.js, an external component pinned by the release, with the Claude Agent SDK installed on the person's machine (see Provider adapters) | A stdio child of LINA Core, started on first use of a Claude account and stopped after an idle period | Model calls through a Claude account |
 | Grok command | The official `grok` command the user installed | A stdio child of LINA Core, started for a turn and driven by the Go Grok adapter | Model calls through a Grok account |
 | Sandboxed commands | Whatever a tool call runs | Children of LINA Core inside the OS sandbox | Shell and file tools |
@@ -319,6 +320,7 @@ The Gemini adapter assembles its own stream by the same rules: deltas drive live
 **Quota.** Each account has quota rows, one per window the provider reports. A row holds:
 
 - the provider and the account;
+- the reported limit id and bucket, when available, independent of duration;
 - the window: five-hour, weekly, daily, per-minute, spend cap or unknown;
 - the share used, or unknown;
 - when the window resets, or unknown;
@@ -333,6 +335,23 @@ window does not block a healthy weekly window; only exhausted windows determine
 when the worker becomes eligible again. A stop without an identified exhausted
 window adds an unknown-window block with no reset, preserving the reported
 measurements rather than assigning the stop to a healthy window.
+Quota freshness is checked for each provider, account and bucket independently.
+Codex retains the limit id and primary, secondary or individual-limit bucket in
+optional `LimitID` and `Bucket` fields. A newer observation for the same bucket
+replaces an unknown duration when that duration becomes known. Different
+buckets remain separate even when their durations match. Rows without bucket
+identity keep their window-based matching only when the correspondence is
+unambiguous; historical bucket ids are never inferred. A measured legacy block
+without a matching identity remains blocked until its stated reset or a matching
+observation. Old JSON remains readable and older code ignores the added fields.
+A newer observation replaces only its matching bucket; an unchanged, older or
+missing sibling cannot discard that update or clear another window's block.
+An unknown-window stop without a measured bucket, inferred from an error, clears
+on a newer observation for that account, without requiring every reported
+window to be refreshed.
+When a failed read leaves both provider and account unknown, the stop belongs
+to the worker. A newer observation from that worker clears it; observations
+from another worker do not. Known providers and accounts remain isolated.
 
 | Path | What the provider reports | Source of the rows |
 | --- | --- | --- |
@@ -411,7 +430,7 @@ release assembly retains its explicit file allowlist without the SDK.
 
 ### Grok
 
-LINA runs no OAuth client against the Grok service, because the service documents no registration for other applications. The Grok adapter drives the official `grok` command that the person installed ([Installed tools](#installed-tools)) over the Agent Client Protocol (`grok agent` on standard input and output), because only that interface carries tool approvals. The command's headless print mode is read-only streaming with fixed allow and deny rules, and is used only for one-shot calls.
+LINA runs no OAuth client against the Grok service, because the service documents no registration for other applications. The Grok adapter drives the official `grok` command that the person installed ([Installed tools](#installed-tools)) over the Agent Client Protocol (`grok agent stdio`), on the same ACP client as the ACP workers ([go-core.md](go-core.md#work-engine), C-60), because only that interface carries tool approvals. The command's headless print mode is read-only streaming with fixed allow and deny rules, and is used only for one-shot calls.
 
 - The person signs in with the command's own OAuth login: the browser, or a device code on a host with no browser. LINA stores nothing. It learns the state of the account from a cheap authenticated call, not from the command's files.
 - The adapter sets the command's telemetry and trace-upload switches explicitly, to off, restricts its built-in tools and offers LINA's tools as for any agent runtime.
@@ -585,6 +604,7 @@ LINA Core and the TUI are one executable, `lina`. Its subcommands cover these us
 | Backup and restore | Takes a backup generation and restores one ([filesystem.md](filesystem.md)) |
 | Diagnosis | Reports the state and readiness of each component, with the cause of each failure |
 | Replay | Re-runs a recorded turn sandboxed and without effects, optionally under candidate harness files, and writes the result as files. It is a development tool and runs only when it is called ([Replay command](#replay-command)). |
+| Intake replay | `lina intake-replay <cases.jsonl>` scores binding baselines in fresh Core runtimes using an explicit private or synthetic case file ([Record and measurement](conversation-and-memory.md#what-a-message-is-about)). |
 | Episode export | Writes recorded turns of the chosen conversations out of the ledger into the export staging area for use outside LINA ([conversation-and-memory.md](conversation-and-memory.md#episode-export)) |
 | Version | Prints the version, the commit and the build date of the build ([versioning.md](versioning.md)) |
 
@@ -954,7 +974,7 @@ The first implementation issue demonstrates the runtime with these checks. Each 
 | V6 supply-chain baseline | The Go and npm gates of [dependencies.md](../policy/dependencies.md), run by the local foundation verification ([foundation.md](../policy/foundation.md)) on the minimal dependency set, with `go.sum`, the module count, the Claude adapter's lockfile and its transitive package count recorded | The gates pass, `go.sum` verifies against the checksum database, `govulncheck` passes, and no npm package needs a lifecycle script |
 | V7 development loop | A worker's edit to Go code, then `go build`, `go vet` and `go test` for the affected packages; and a full local `foundation` run (`node scripts/foundation.mjs --full`) | The time from the edit to the result of those commands, and the full `foundation` time, stay within the budget declared before the run |
 
-Foundation keeps one local command and one required CI result. Its shared candidate plan separates build and analysis, measured unit-package shards, and acceptance scenario-file shards. Scenario imports, helper inputs and the binaries they launch determine which acceptance cases a change reaches; shared or unmapped inputs select all. Deleted or renamed runtime fixtures retain acceptance coverage: an input without a known consumer that maps to an acceptance package selects every scenario in that package. Pushes to `dev` and nightly verification run every case. A failed-job rerun uses the newest attempt for each shard while retaining results for jobs not rerun; older attempts cannot overwrite the selected result. Missing or mismatched shard results fail the final gate. The [foundation policy](../policy/foundation.md#execution) defines the execution and evidence contract. V7 measurements identify the exact workload, environment, repeated command and spread before and after a change; successful and failed runs remain distinguishable.
+Foundation keeps one local command and one required CI result. PRs select docs, automation, dependencies, build/analysis and unit checks as applicable, without e2e by default. The `e2e` label opts a PR into its reached acceptance scenarios; label changes reselect the plan. Its shared candidate plan separates build and analysis, measured unit-package shards, and acceptance scenario-file shards. Scenario imports, helper inputs and the binaries they launch determine which acceptance cases a change reaches; shared or unmapped inputs select all. Deleted or renamed runtime fixtures retain acceptance coverage: an input without a known consumer that maps to an acceptance package selects every scenario in that package. Pushes to `dev` and nightly verification run every case. Post-merge failures open or update one `qa` issue per package and top-level test in the current milestone (`QA_MILESTONE`), carrying the tested head, first failing commit range and failure lines. A later head with an explicit passing test result closes the finding. Missing, skipped and stale observations cannot establish recovery, and these findings do not block PRs. A failed-job rerun uses the newest attempt for each shard while retaining results for jobs not rerun; older attempts cannot overwrite the selected result. Missing or mismatched shard results fail the final gate. The [foundation policy](../policy/foundation.md#execution) defines the execution and evidence contract. V7 measurements identify the exact workload, environment, repeated command and spread before and after a change; successful and failed runs remain distinguishable.
 
 ## Deferred
 

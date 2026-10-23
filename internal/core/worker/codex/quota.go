@@ -218,7 +218,7 @@ func (s *Session) quotaRows() []provider.QuotaRow {
 			if len(raw) == 0 {
 				continue
 			}
-			row := s.quotaRow(limit, key)
+			row := s.quotaRow(id, limit, key)
 			var v wire.V2RateLimitWindow
 			if json.Unmarshal(raw, &v) == nil {
 				var fields map[string]json.RawMessage
@@ -248,7 +248,7 @@ func (s *Session) quotaRows() []provider.QuotaRow {
 			rows = append(rows, row)
 		}
 		if raw := limit.fields["individualLimit"]; len(raw) > 0 {
-			row := s.quotaRow(limit, "individualLimit")
+			row := s.quotaRow(id, limit, "individualLimit")
 			row.Window = provider.SpendCap
 			var v wire.V2SpendControlLimitSnapshot
 			if json.Unmarshal(raw, &v) == nil {
@@ -267,13 +267,13 @@ func (s *Session) quotaRows() []provider.QuotaRow {
 			rows = append(rows, row)
 		}
 		if len(rows) == start {
-			rows = append(rows, s.quotaRow(limit, ""))
+			rows = append(rows, s.quotaRow(id, limit, ""))
 		}
 	}
 	return rows
 }
-func (s *Session) quotaRow(limit *quotaLimit, key string) provider.QuotaRow {
-	return provider.QuotaRow{Provider: provider.ChatGPT, Account: provider.AccountID(s.quotaAccount), Window: provider.UnknownWindow, State: provider.QuotaUnknown, Source: limit.source[key], Observed: limit.observed[key]}
+func (s *Session) quotaRow(id string, limit *quotaLimit, key string) provider.QuotaRow {
+	return provider.QuotaRow{Provider: provider.ChatGPT, Account: provider.AccountID(s.quotaAccount), LimitID: id, Bucket: key, Window: provider.UnknownWindow, State: provider.QuotaUnknown, Source: limit.source[key], Observed: limit.observed[key]}
 }
 func quotaState(used float64) provider.QuotaState {
 	if used >= 100 {

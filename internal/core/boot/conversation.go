@@ -44,6 +44,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/modelpath"
 	"github.com/thisisjun786/lina/internal/core/records"
 	"github.com/thisisjun786/lina/internal/core/reply"
+	"github.com/thisisjun786/lina/internal/core/results"
 	"github.com/thisisjun786/lina/internal/core/retract"
 	"github.com/thisisjun786/lina/internal/core/runs"
 	"github.com/thisisjun786/lina/internal/core/secrets"
@@ -61,6 +62,7 @@ import (
 	"github.com/thisisjun786/lina/kit/proc"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/provider"
+	"github.com/thisisjun786/lina/kit/result"
 	builtin "github.com/thisisjun786/lina/skills"
 )
 
@@ -73,6 +75,12 @@ type acceptedSteering struct {
 }
 
 type conversationRuntime struct {
+	// Installed only by the isolated intake replay command, never by Core boot.
+	intakeReplay func(context.Context, ledger.Event) error
+	artifactInit    sync.Once
+	artifactMu      *sync.Mutex
+	exchangeStop    context.CancelFunc
+	exchangeDone    chan struct{}
 	timers          *timers.Store
 	timerStop       context.CancelFunc
 	timerDone       chan struct{}
@@ -118,6 +126,10 @@ type conversationRuntime struct {
 	records          *records.Store
 	recordCaptureMu  sync.Mutex
 	recordCaptures   map[string]*recordCapture
+	planResults      *results.Store
+	plans            *results.Planning
+	planning         *planningRuntime
+	planningMu       sync.Mutex
 	persona          *coreexec.Persona
 	personaAuthority *authority.Service
 	personaGrants    map[string]grant.Grant
@@ -157,7 +169,7 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err != nil {
 		return nil, err
 	}
-	r := &conversationRuntime{workers: &workerRuntime{sessions: map[string]*workerSession{}}, dispatchMu: &sync.RWMutex{}, root: root, controls: controls, steering: map[string][]acceptedSteering{}, ctx: ctx, db: db, route: route, activities: activities, lanes: lane.New(), person: "person:" + main, main: main, epoch: epoch, personaGrants: map[string]grant.Grant{}, personaMu: &sync.Mutex{}}
+	r := &conversationRuntime{artifactMu: &sync.Mutex{}, workers: &workerRuntime{sessions: map[string]*workerSession{}}, dispatchMu: &sync.RWMutex{}, root: root, controls: controls, steering: map[string][]acceptedSteering{}, ctx: ctx, db: db, route: route, activities: activities, lanes: lane.New(), person: "person:" + main, main: main, epoch: epoch, personaGrants: map[string]grant.Grant{}, personaMu: &sync.Mutex{}}
 
 	if person != "" {
 		r.person = person
@@ -215,6 +227,12 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	}
 	r.records, err = records.Open(root, db)
 	if err != nil {
+		return nil, err
+	}
+	r.records.ReadCandidateMaterial = func(ctx context.Context, id string, revision int64) (string, error) {
+		return r.materials.Read(ctx, ledger.Material{ID: id, Revision: revision})
+	}
+	if err = r.initPlanning(); err != nil {
 		return nil, err
 	}
 	r.persona = coreexec.NewPersona(db, r.agents, r.materials)
@@ -290,6 +308,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err = r.recoverWorkAuthority(ctx); err != nil {
 		return nil, err
 	}
+	for kind, op := range clientsrv.WorkOperations(r) {
+		r.identity.Operations[kind] = op
+	}
 	r.startWorkerLanes()
 	if err = r.startWorkWaiting(ctx); err != nil {
 		return nil, err
@@ -319,6 +340,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err = r.startSkillMaintenance(ctx); err != nil {
 		return nil, err
 	}
+	if err = r.startPlanning(ctx); err != nil {
+		return nil, err
+	}
 	if err = r.startGrowth(ctx, controls); err != nil {
 		return nil, err
 	}
@@ -341,6 +365,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err = r.startCompletions(ctx); err != nil {
 		return nil, err
 	}
+	if err = r.startExchanges(ctx); err != nil {
+		return nil, err
+	}
 	if err = r.startTimers(ctx); err != nil {
 		return nil, err
 	}
@@ -352,6 +379,14 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 }
 func (r *conversationRuntime) Close(ctx context.Context) error {
 	var err error
+	if r.exchangeStop != nil {
+		r.exchangeStop()
+		select {
+		case <-r.exchangeDone:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	if r.timerStop != nil {
 		r.timerStop()
 		select {
@@ -544,6 +579,9 @@ func (r *conversationRuntime) Input(ctx context.Context, s clientsrv.Session, p 
 	if err = r.publish(ctx, protocol.KindItemDone, eventID, answer); err != nil {
 		return protocol.ItemDone{}, err
 	}
+	if r.intakeReplay != nil {
+		return answer, r.intakeReplay(ctx, event)
+	}
 	err = r.submitInput(event, receipt.ID, p.Mode == nil || *p.Mode == protocol.InputModeSteer, r)
 	return answer, err
 }
@@ -731,7 +769,7 @@ func (r *conversationRuntime) publishReply(ctx context.Context, key, turnID stri
 func (r *conversationRuntime) events(ctx context.Context, through string) ([]ledger.Event, error) {
 	var ids []string
 	err := r.db.Read(ctx, func(tx *canon.Tx) error {
-		query := `SELECT id FROM conv_event WHERE conversation_id=? AND (speaker_kind IN ('person','agent','forwarded') OR scaffold_kind IN ('interruption','failure','persona_change','run_handoff','background_notice','coding_handoff','work_completion','timer','timer_work','worker_session','worker_completion'))`
+		query := `SELECT id FROM conv_event WHERE conversation_id=? AND (speaker_kind IN ('person','agent','forwarded') OR scaffold_kind IN ('interruption','failure','persona_change','run_handoff','background_notice','coding_handoff','work_completion','timer','timer_work','handoff_check','worker_session','worker_completion'))`
 		args := []any{r.conversation}
 		if through != "" {
 			query += ` AND (speaker_kind NOT IN ('person','forwarded') OR rowid <= (SELECT rowid FROM conv_event WHERE id=?))`
@@ -767,6 +805,11 @@ func (r *conversationRuntime) events(ctx context.Context, through string) ([]led
 	return events, nil
 }
 func (r *conversationRuntime) seedHistory(ctx context.Context) error {
+	if r.plans != nil {
+		if err := r.publishPlanRejections(ctx); err != nil {
+			return err
+		}
+	}
 	items, err := r.historyItems(ctx)
 	if err != nil {
 		return err
@@ -787,6 +830,22 @@ func (r *conversationRuntime) seedHistory(ctx context.Context) error {
 			return err
 		}
 		text := e.Body.Text()
+		if e.ScaffoldKind == "result" {
+			var value result.Result
+			if err := json.Unmarshal([]byte(text), &value); err != nil {
+				return err
+			}
+			var err error
+			if value.Type == result.PlanType {
+				err = r.publish(ctx, protocol.KindResult, value.ID, planWire(value))
+			} else if e.SpeakerKind == guard.Agent {
+				err = r.publishResult(ctx, value)
+			}
+			if err != nil {
+				return err
+			}
+			continue
+		}
 		if e.ScaffoldKind == "background_notice" {
 			var notices []lane.Notice
 			if err := json.Unmarshal([]byte(text), &notices); err != nil {
@@ -883,6 +942,11 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		delete(r.personaGrants, turnID+":relationship")
 		delete(r.personaGrants, turnID+":names")
 		delete(r.personaGrants, turnID+":coding")
+		for id := range r.personaGrants {
+			if strings.HasPrefix(id, turnID+":results:") {
+				delete(r.personaGrants, id)
+			}
+		}
 		r.personaMu.Unlock()
 
 	}()
@@ -946,13 +1010,19 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			if err := r.prepareSkillTools(turnID, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
+			if err := r.preparePlanningTools(turnID, bindings); err != nil {
+				return turn.PreparedRequest{}, err
+			}
 			if err := r.prepareWorkTools(turnID, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
 			if err := r.prepareWorkerTools(turnID, input, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
-			if err := r.prepareRecordTools(turnID, bindings); err != nil {
+			if err := r.prepareResultTools(turnID, input, bindings); err != nil {
+				return turn.PreparedRequest{}, err
+			}
+			if err := r.prepareRecordTools(turnID, input.ID, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
 			workDeclarations, err := r.prepareGoalWorkTools(turnID, bindings)
@@ -970,8 +1040,10 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			}
 			declarations = append(declarations, coreexec.SkillDeclarations()...)
 			declarations = append(declarations, coreexec.RecordDeclarations()...)
+			declarations = append(declarations, coreexec.ResultDeclarations()...)
 			declarations = append(declarations, workDeclarations...)
 			declarations = append(declarations, methodologyDeclarations()...)
+			declarations = append(declarations, coreexec.PlanningDeclarations()...)
 			declarations = append(declarations, startRunDeclaration())
 			webProvider, err := r.selectedWebProvider()
 			if err != nil {
@@ -989,6 +1061,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			declarations = append(declarations, workerDeclarations()...)
 			declarations = append(declarations, r.prepareDelegationTools(turnID, bindings)...)
 			declarations = append(declarations, r.prepareTimerTools(turnID, bindings)...)
+			declarations = append(declarations, r.prepareExchangeTools(turnID, bindings)...)
 			if r.coding != nil {
 				clear(bindings)
 				catalog = nil
@@ -1013,6 +1086,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 					}
 					bindings[name] = tool
 				}
+			}
+			if err := r.bindDoneEvidence(ctx, persona, bindings); err != nil {
+				return turn.PreparedRequest{}, err
 			}
 			packet, _, err := atropos.Packet(ctx, minimum, 0, func(ctx context.Context) (assemble.ContextPacket, error) { return r.relationshipPacket(ctx, at) })
 			if err != nil {
@@ -1126,7 +1202,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			RuntimeTools: r.route.Adapter.Class() == provider.AgentRuntime,
 			Tools:        bindings,
 			After: func(ctx context.Context, call provider.ToolCall, result loop.Result) loop.Result {
-				return r.skillNotice(ctx, input, call, r.personaNotice(ctx, input, call, result))
+				return r.recordNotice(ctx, input, call, r.skillNotice(ctx, input, call, r.personaNotice(ctx, input, call, result)))
 			},
 			Inputs: inputQueue,
 			Stream: func(ctx context.Context, request provider.Request) (provider.Stream, error) {

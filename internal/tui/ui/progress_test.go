@@ -4,6 +4,7 @@ package ui
 import (
 	tea "charm.land/bubbletea/v2"
 	"encoding/json"
+	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/internal/tui/state"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"strings"
@@ -47,6 +48,7 @@ func TestProgressPagerUsesCurrentRowsWithoutIdentity(t *testing.T) {
 func TestOwnerCommandsAskCoreAndRetainWaitingOrder(t *testing.T) {
 	m := conversationShell()
 	m.Update(shellData{Generation: 1, Message: workListWelcome(t, "conversation", "running", "progress", "waiting")})
+	m.content.Blocks = []state.Block{{ID: "a-run", Topic: "running", RunID: "a-run", RunState: protocol.RunningStateWaiting}}
 	for _, text := range []string{"/progress", "/waiting lightest", "/stop a-run", "/stop all", "/note a-run Read appendix"} {
 		handled, cmd := m.ownerCommand(text)
 		if !handled || cmd == nil {
@@ -72,5 +74,17 @@ func TestOwnerCommandsAskCoreAndRetainWaitingOrder(t *testing.T) {
 	cmd := m.pagerKey(tea.KeyPressMsg{Code: 'o'}, "o")
 	if p := cmd().(shellManagement).Request.(protocol.WaitingGet); p.Order == nil || *p.Order != "priority" {
 		t.Fatal("order switch did not ask Core")
+	}
+}
+
+func TestProgressExecutionStateKeepsPlanUnknown(t *testing.T) {
+	for _, language := range []design.Language{design.English, design.Korean} {
+		for _, state := range []protocol.RunningState{protocol.RunningStateInProgress, protocol.RunningStateNeedsInput, protocol.RunningStateFailed, protocol.RunningStateUnknown} {
+			rows := []protocol.ProgressRow{{Ref: "private-session", Line: protocol.ProgressLine{Name: "Fixture job", Kind: "project", State: &state, Stage: "unknown", JustFinished: "unknown", Next: "unknown", Waiting: "0", Depth: "0"}}}
+			text := progressText(protocol.ProgressUpdate{Rows: &rows}, language, nil)
+			if text == nil || !strings.Contains(*text, design.Text(language, "running.state."+string(state))+": Fixture job") || !strings.Contains(*text, design.Text(language, "progress.unknown")) || strings.Contains(*text, "private-session") || strings.Contains(*text, "%") {
+				t.Fatalf("execution state changed plan or leaked identity: %v", text)
+			}
+		}
 	}
 }

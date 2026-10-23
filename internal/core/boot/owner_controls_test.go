@@ -127,9 +127,11 @@ func TestCoreDigestCountsFullWaitingAndRereadsSources(t *testing.T) {
 func TestOwnerControlsReachLiveWorker(t *testing.T) {
 	r := runRuntime(t)
 	probe := &workerProbe{snapshot: worker.ThreadSnapshot{Thread: worker.Thread{ID: "live", TurnID: "turn", ProcessGeneration: 1, BindingEpoch: 1}, State: worker.Active}}
-	entry := &workerSession{origin: r, adapter: probe, thread: probe.snapshot.Thread, active: map[string]lease.Lease{}}
-	r.workers = &workerRuntime{sessions: map[string]*workerSession{"live": entry}}
-	t.Cleanup(func() { r.workers = nil })
+	entry := &workerSession{origin: r, adapter: probe, thread: probe.snapshot.Thread, active: map[string]lease.Lease{}, workdir: t.TempDir(), reservation: "live", reservationTurn: "turn"}
+	if err := r.work.ReserveWorker(t.Context(), entry.reservation, entry.workdir); err != nil {
+		t.Fatal(err)
+	}
+	addWorkerFixtureSessions(t, r, map[string]*workerSession{"live": entry})
 	s := clientsrv.Session{PersonID: r.person}
 	id := "session:live"
 	if _, err := r.followRun(t.Context(), s, protocol.Envelope{Payload: protocol.FollowUp{RunID: id, Text: "Read appendix", ConversationID: &r.conversation}}); err != nil {

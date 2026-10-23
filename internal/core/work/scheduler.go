@@ -179,6 +179,22 @@ func validateGraph(cards []Card) error {
 	return nil
 }
 
+// ValidateSchedule checks a proposed graph before manager admission has effects.
+// Schedule repeats validation with the stored graph inside its transaction.
+func ValidateSchedule(tasks []Task) error {
+	if len(tasks) == 0 || len(tasks) > 256 {
+		return ErrInvalid
+	}
+	cards := make([]Card, len(tasks))
+	for i, task := range tasks {
+		if task.Schedule == nil {
+			return ErrInvalid
+		}
+		cards[i] = Card{Task: task}
+	}
+	return validateGraph(cards)
+}
+
 // Schedule admits the complete graph atomically. Existing identical tasks make
 // a retried tool call harmless; task definitions cannot mutate under a lease.
 func (s *Service) Schedule(ctx context.Context, tasks []Task) error {

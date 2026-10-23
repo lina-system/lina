@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/kit/result"
 )
 
 type Service struct {
@@ -79,7 +80,19 @@ func (s *Service) Start(ctx context.Context, r Run) error {
 	if r.ID == "" || r.TaskID == "" || r.Worker == "" || r.ThreadID == "" || r.TurnID == "" || r.NodeID == "" || r.Generation < 1 {
 		return ErrInvalid
 	}
-	return s.append(ctx, Event{Key: "run:" + r.ID, TaskID: r.TaskID, Kind: "started", Run: &r})
+	return s.db.Write(ctx, func(tx *canon.Tx) error {
+		var workers int
+		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM work_worker_reservations WHERE task_id=?", r.TaskID).Scan(&workers); err != nil {
+			return err
+		}
+		if workers != 0 {
+			return ErrActiveRun
+		}
+		if err := mayDirect(ctx, tx, r.TaskID); err != nil {
+			return err
+		}
+		return appendEvent(ctx, tx, Event{Key: "run:" + r.ID, TaskID: r.TaskID, Kind: "started", Run: &r})
+	})
 }
 func (s *Service) Submit(ctx context.Context, runID string, r Receipt) error {
 	s.workspaceMu.Lock()
@@ -104,15 +117,18 @@ func (s *Service) Finish(ctx context.Context, taskID, runID, status string) erro
 
 // Judge and Apply are Core-only APIs. The worker-facing transport must never
 // install handlers for them or accept an arbitrary Event.
-func (s *Service) Judge(ctx context.Context, taskID, receiptID, verdict, evidence string) error {
+func (s *Service) Judge(ctx context.Context, taskID, receiptID, verdict, evidence string, proof ...result.CompletionRequest) error {
 	s.workspaceMu.Lock()
 	defer s.workspaceMu.Unlock()
-	return s.append(ctx, Event{Key: "judge:" + receiptID, TaskID: taskID, Kind: "judged", ReceiptID: receiptID, Value: verdict, Evidence: evidence})
+	return s.append(ctx, Event{Key: "judge:" + receiptID, TaskID: taskID, Kind: "judged", ReceiptID: receiptID, Value: verdict, Evidence: evidence, DoneRequest: firstProof(proof)})
 }
-func (s *Service) Apply(ctx context.Context, taskID, receiptID, evidence string) error {
+
+// Apply without new proof carries the prepared assessment from the matching
+// accepted receipt and head. It does not need a live manager turn.
+func (s *Service) Apply(ctx context.Context, taskID, receiptID, evidence string, proof ...result.CompletionRequest) error {
 	s.workspaceMu.Lock()
 	defer s.workspaceMu.Unlock()
-	return s.append(ctx, Event{Key: "apply:" + receiptID, TaskID: taskID, Kind: "applied", ReceiptID: receiptID, Evidence: evidence})
+	return s.append(ctx, Event{Key: "apply:" + receiptID, TaskID: taskID, Kind: "applied", ReceiptID: receiptID, Evidence: evidence, DoneRequest: firstProof(proof)})
 }
 
 func ledger(ctx context.Context, tx *canon.Tx, id string) ([]Event, error) {
@@ -175,6 +191,8 @@ func appendEvent(ctx context.Context, tx *canon.Tx, e Event) error {
 		if err = json.Unmarshal(prior, &old); err != nil {
 			return err
 		}
+		old.Completion = nil // The first committed policy decision is immutable.
+		old.DoneAcceptance = nil
 		if reflect.DeepEqual(old, e) {
 			return nil
 		}
@@ -185,6 +203,36 @@ func appendEvent(ctx context.Context, tx *canon.Tx, e Event) error {
 	}
 	if err = advance(&c, e); err != nil {
 		return err
+	}
+	if e.Kind == "judged" && e.Value == "verified" && c.Task.RequiresApply && c.Task.Destination == "" {
+		// Judge runs in the prepared manager turn; Apply may run after it has
+		// ended or after Core restarts. Retain the assessment with its receipt
+		// atomically, without recording a completed delivery before application.
+		e.DoneAcceptance = &AcceptedCompletion{Head: c.Head, Assessment: result.CompletionFor(ctx, taskCompletionRequest(c, e.DoneRequest))}
+	}
+	if c.State == "done" && (e.Kind == "judged" || e.Kind == "applied" || e.Kind == "files_landed") {
+		completion := result.CompletionFor(ctx, taskCompletionRequest(c, e.DoneRequest))
+		if e.Kind == "applied" && e.DoneRequest == nil {
+			for _, accepted := range events {
+				if accepted.Kind == "judged" && accepted.ReceiptID == e.ReceiptID && accepted.DoneAcceptance != nil && accepted.DoneAcceptance.Head == c.Head {
+					completion = accepted.DoneAcceptance.Assessment
+					break
+				}
+			}
+		}
+		completion.ID, completion.AgentID = "task:"+e.TaskID+":"+e.Key, c.Task.AgentID
+		e.Completion, c.Completion = &completion, &completion
+		if err := canon.RecordDoneCompletion(ctx, tx, &completion); err != nil {
+			return err
+		}
+	}
+	if e.Kind == "created" && c.Task.ExternalControl {
+		// An existing untracked worker has no task gate to recheck. Refuse
+		// adoption in the same transaction as its directory reservation;
+		// otherwise that worker could keep steering externally owned work.
+		if err = workerInDirectory(ctx, tx, c.Task); err != nil {
+			return err
+		}
 	}
 	b, err := json.Marshal(e)
 	if err != nil {
@@ -201,6 +249,21 @@ func appendEvent(ctx context.Context, tx *canon.Tx, e Event) error {
 	}
 	return nil
 }
+
+func taskCompletionRequest(c Card, proof *result.CompletionRequest) result.CompletionRequest {
+	request := result.CompletionRequest{WorkKind: c.Task.WorkKind}
+	if proof != nil {
+		request = *proof
+	}
+	if c.Task.WorkKind != "" {
+		request.WorkKind = c.Task.WorkKind
+	}
+	if c.Task.Workspace != nil && c.Task.Workspace.Spec.RepositoryID != "" {
+		request.WorkKind = "code"
+	}
+	return request
+}
+
 func saveCard(ctx context.Context, tx *canon.Tx, c Card) error {
 	b, err := json.Marshal(c)
 	if err != nil {
@@ -255,6 +318,9 @@ func (s *Service) Rebuild(ctx context.Context) error {
 			if err = advance(&c, e); err != nil {
 				break
 			}
+			if e.Kind == "record_occurrence" {
+				continue
+			}
 			cards[id] = c
 		}
 		err = errors.Join(err, rows.Err(), rows.Close())
@@ -288,4 +354,11 @@ func (s *Service) Revision(ctx context.Context, id string) (string, error) {
 		return "", err
 	}
 	return digest(string(raw)), nil
+}
+
+func firstProof(proof []result.CompletionRequest) *result.CompletionRequest {
+	if len(proof) == 0 {
+		return nil
+	}
+	return &proof[0]
 }

@@ -14,7 +14,9 @@ import (
 )
 
 func (s *Session) Start(ctx context.Context, l lease.Lease, spec worker.StartSpec) (worker.Thread, error) {
-	s.control.Lock()
+	if err := s.control.Lock(ctx); err != nil {
+		return worker.Thread{}, err
+	}
 	defer s.control.Unlock()
 	if err := lease.Do(ctx, l, func(context.Context) error { return nil }); err != nil {
 		return worker.Thread{}, err
@@ -100,7 +102,7 @@ func (s *Session) startTurn(ctx context.Context, text string, thread worker.Thre
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !started {
-		return err
+		return errors.Join(worker.ErrInputRefused, err)
 	}
 	s.startingTurn = false
 	if err != nil {
@@ -150,10 +152,12 @@ func (s *Session) Steer(ctx context.Context, t worker.Thread, in worker.Input) e
 }
 
 func (s *Session) inputTurn(ctx context.Context, t worker.Thread, in worker.Input, activeOnly bool) error {
-	s.control.Lock()
+	if err := s.control.Lock(ctx); err != nil {
+		return errors.Join(worker.ErrInputRefused, err)
+	}
 	defer s.control.Unlock()
 	if strings.TrimSpace(in.Text) == "" {
-		return errors.New("empty worker input")
+		return errors.Join(worker.ErrInputRefused, errors.New("empty worker input"))
 	}
 	s.mu.Lock()
 	err := s.bound(t, true)
@@ -163,33 +167,38 @@ func (s *Session) inputTurn(ctx context.Context, t worker.Thread, in worker.Inpu
 	}
 	s.mu.Unlock()
 	if err != nil {
-		return err
+		return errors.Join(worker.ErrInputRefused, err)
 	}
 	switch state {
 	case worker.Idle:
 		if activeOnly {
-			return errors.New("Codex turn is no longer active")
+			return errors.Join(worker.ErrInputRefused, errors.New("Codex turn is no longer active"))
 		}
 		return s.startTurn(ctx, in.Text, t)
 	case worker.Active:
+		started := false
 		var response wire.V2TurnSteerResponse
 		err = s.callGuarded(ctx, string(wire.ClientRequestTurnSteerMethodTurnSteer), wire.V2TurnSteerParams{ThreadId: t.ID, ExpectedTurnId: t.TurnID, Input: input(in.Text)}, &response, func() error {
 			if err := s.bound(t, true); err != nil {
-				return err
+				return errors.Join(worker.ErrInputRefused, err)
 			}
 			if s.snapshot.State != worker.Active || len(s.pendingRequests()) > 0 {
-				return errors.New("Codex thread cannot accept ordinary input")
+				return errors.Join(worker.ErrInputRefused, errors.New("Codex thread cannot accept ordinary input"))
 			}
+			started = true
 			return nil
 		})
+		if !started {
+			return errors.Join(worker.ErrInputRefused, err)
+		}
 		if err == nil && response.TurnId != t.TurnID {
 			err = errors.New("Codex steering turn mismatch")
 		}
 		return err
 	case worker.Waiting, worker.Dead, worker.Unknown:
-		return errors.New("Codex thread cannot accept ordinary input")
+		return errors.Join(worker.ErrInputRefused, errors.New("Codex thread cannot accept ordinary input"))
 	}
-	return errors.New("unknown worker state")
+	return errors.Join(worker.ErrInputRefused, errors.New("unknown worker state"))
 }
 func (s *Session) Interrupt(ctx context.Context, t worker.Thread, why worker.Reason) error {
 	switch why {
@@ -197,7 +206,9 @@ func (s *Session) Interrupt(ctx context.Context, t worker.Thread, why worker.Rea
 	default:
 		return errors.New("invalid interrupt reason")
 	}
-	s.control.Lock()
+	if err := s.control.Lock(ctx); err != nil {
+		return err
+	}
 	defer s.control.Unlock()
 	s.mu.Lock()
 	err := s.bound(t, true)
@@ -216,7 +227,9 @@ func (s *Session) Interrupt(ctx context.Context, t worker.Thread, why worker.Rea
 	return s.call(ctx, string(wire.ClientRequestTurnInterruptMethodTurnInterrupt), wire.V2TurnInterruptParams{ThreadId: t.ID, TurnId: t.TurnID}, &response)
 }
 func (s *Session) Snapshot(ctx context.Context, t worker.Thread) (worker.ThreadSnapshot, error) {
-	s.control.Lock()
+	if err := s.control.Lock(ctx); err != nil {
+		return worker.ThreadSnapshot{}, err
+	}
 	defer s.control.Unlock()
 	s.mu.Lock()
 	err := s.bound(t, false)

@@ -1,0 +1,9 @@
+{
+  "cases": [
+    {"name": "approved-before-restart", "pending_admission": true, "expected": "ready_for_review"}
+  ],
+  "what": "Resume an approved work definition after interruption",
+  "done": "The worker uses the pinned base and returns one durable result",
+  "work_area": true,
+  "definition": true
+}

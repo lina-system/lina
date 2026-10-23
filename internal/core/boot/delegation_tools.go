@@ -12,6 +12,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/authority"
 	"github.com/thisisjun786/lina/internal/core/work"
+	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/provider"
 	"github.com/thisisjun786/lina/kit/tools"
@@ -67,6 +68,25 @@ func (r *conversationRuntime) prepareDelegationTools(turnID string, bindings map
 		if err != nil {
 			return delegationResult(c.ID, nil, err)
 		}
+		if err = work.ValidateSchedule(tasks); err != nil {
+			return delegationResult(c.ID, nil, err)
+		}
+		// Keep every task non-runnable until all manager judgments are durable.
+		origin := dispatch.Origin{Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: turnID}
+		for i := range tasks {
+			definition, err := json.Marshal(map[string]any{"repository": in.Repository, "definition": in.Tasks[i]})
+			if err != nil {
+				return delegationResult(c.ID, nil, err)
+			}
+			a, err := r.assignCoding(ctx, origin, tasks[i].ID, "schedule_work", in.Repository, definition)
+			if err != nil {
+				return delegationResult(c.ID, nil, err)
+			}
+			if err = r.runCodingManager(ctx, a, "assignment", nil); err != nil {
+				return delegationResult(c.ID, nil, err)
+			}
+			tasks[i].AgentID, tasks[i].ConversationID = a.Owner, a.Conversation
+		}
 		for _, task := range tasks {
 			if err := r.personaAuthority.BindDelegation(ctx, r.person, r.agent, turnID, task.AgentID, task.ID); err != nil {
 				return delegationResult(c.ID, nil, err)
@@ -93,7 +113,7 @@ func (r *conversationRuntime) prepareDelegationTools(turnID string, bindings map
 		}
 		for _, id := range in.Tasks {
 			card, err := r.work.Get(ctx, id)
-			if err != nil || card.Task.AgentID != r.agent || card.Task.ConversationID != r.conversation {
+			if err != nil || !r.scheduledDeliveryMatches(ctx, card.Task) {
 				return loop.Result{ID: c.ID, Code: loop.Denied}
 			}
 		}
@@ -129,6 +149,9 @@ func delegationResult(id string, value any, err error) loop.Result {
 		if errors.Is(err, authority.ErrPresetLimit) {
 			code = loop.Denied
 			body["code"] = authority.ErrPresetLimit.Error()
+		}
+		if errors.Is(err, errDevUnavailable) {
+			body["code"] = errDevUnavailable.Error()
 		}
 	}
 	raw, _ := json.Marshal(body)

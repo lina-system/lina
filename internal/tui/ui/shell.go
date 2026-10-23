@@ -110,44 +110,9 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case shellBegin:
-		if msg.Generation > m.generation {
-			m.generation = msg.Generation
-			if m.conversation.pager.developer || m.conversation.pager.records != nil {
-				m.conversation.pager = textPager{}
-			}
-			m.talk = talkView{attempt: m.talk.attempt + 1}
-			m.channels = channelView{attempt: m.channels.attempt + 1}
-			m.web = webView{attempt: m.web.attempt + 1}
-			m.accounts = accountView{}
-			m.accountRows = nil
-			m.accountsKnown = false
-			m.memoryPage = nil
-			m.content, _ = state.Reduce(m.content, state.ConnectionLost{})
-			m.conversation.agentPending = m.conversation.id != ""
-			// Retain the visible window, but rediscover its subscriptions only
-			// after the selected agent is validated on the new connection.
-			for topic := range m.content.Topics {
-				if m.conversation.agentPending && (strings.HasPrefix(topic, "conversation:") || strings.HasPrefix(topic, "results:")) {
-					delete(m.content.Topics, topic)
-					delete(m.resyncPending, topic)
-				}
-			}
-			m.refreshBlocks()
-			m.status = ConnectionStatus{State: Retrying}
-			m.resyncSeen = make(map[resyncSignal]protocol.StreamCursor)
-			m.cardRequests = make(map[string]state.CardAnswerRequest)
-			m.content, _ = state.Reduce(m.content, state.ResetCardRequests{})
-		}
+		m.beginGeneration(msg)
 	case shellConnection:
-		if msg.Generation == m.generation {
-			m.status = msg.Status
-			if m.status.State == Live && m.conversation.agentPending && m.conversation.id == "" {
-				// Welcome alone does not supply a valid input destination.
-				m.status.State = Connecting
-			} else if m.status.State == Live && (m.conversation.agentPending || m.hasGap() || len(m.resyncPending) > 0) {
-				m.status.State = Resyncing
-			}
-		}
+		m.applyConnection(msg)
 	case shellData:
 		if msg.Generation != m.generation {
 			return m, nil
@@ -210,6 +175,7 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.content, _ = state.Reduce(m.content, state.Notice{ID: "sandbox.unavailable", Code: "sandbox.unavailable"})
 			}
 		}
+		m.refreshBoard()
 		m.refreshRunning()
 		m.refreshProgress()
 		m.refreshBlocks()
@@ -238,7 +204,7 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = ConnectionStatus{State: Resyncing}
 		}
 		var effects []tea.Cmd
-		if projected != nil && projected.topic == "progress" && m.conversation.pager.open && m.conversation.pager.waiting {
+		if projected != nil && (projected.topic == "progress" || (projected.topic == "waiting" || projected.topic == "running") && m.conversation.pager.board != nil) && m.conversation.pager.open && (m.conversation.pager.waiting || m.conversation.pager.board != nil) {
 			effects = append(effects, m.waitingRequest())
 		}
 		for _, command := range commands {
@@ -268,6 +234,7 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		options.Width = max(1, msg.Width)
 		m.styles = NewStyles(options)
 		m.refreshDeveloper()
+		m.refreshBoard()
 	case tea.KeyboardEnhancementsMsg:
 		m.events = msg.SupportsEventTypes()
 		m.disambiguated = msg.SupportsKeyDisambiguation()
@@ -335,6 +302,47 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+func (m *shellModel) beginGeneration(msg shellBegin) {
+	if msg.Generation > m.generation {
+		m.generation = msg.Generation
+		m.conversation.pager = textPager{}
+		m.talk = talkView{attempt: m.talk.attempt + 1}
+		m.channels = channelView{attempt: m.channels.attempt + 1}
+		m.web = webView{attempt: m.web.attempt + 1}
+		m.accounts = accountView{}
+		m.accountRows = nil
+		m.accountsKnown = false
+		m.memoryPage = nil
+		m.content, _ = state.Reduce(m.content, state.ConnectionLost{})
+		m.conversation.agentPending = m.conversation.id != ""
+		// Retain the visible window, but rediscover its subscriptions only
+		// after the selected agent is validated on the new connection.
+		for topic := range m.content.Topics {
+			if m.conversation.agentPending && (strings.HasPrefix(topic, "conversation:") || strings.HasPrefix(topic, "results:")) {
+				delete(m.content.Topics, topic)
+				delete(m.resyncPending, topic)
+			}
+		}
+		m.refreshBlocks()
+		m.status = ConnectionStatus{State: Retrying}
+		m.resyncSeen = make(map[resyncSignal]protocol.StreamCursor)
+		m.cardRequests = make(map[string]state.CardAnswerRequest)
+		m.content, _ = state.Reduce(m.content, state.ResetCardRequests{})
+	}
+}
+
+func (m *shellModel) applyConnection(msg shellConnection) {
+	if msg.Generation == m.generation {
+		m.status = msg.Status
+		if m.status.State == Live && m.conversation.agentPending && m.conversation.id == "" {
+			// Welcome alone does not supply a valid input destination.
+			m.status.State = Connecting
+		} else if m.status.State == Live && (m.conversation.agentPending || m.hasGap() || len(m.resyncPending) > 0) {
+			m.status.State = Resyncing
+		}
+	}
 }
 
 // Index only changed blocks. View then requests a bounded window from the

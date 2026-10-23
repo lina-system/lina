@@ -15,7 +15,24 @@ import (
 
 // A publication is journaled before changing any tracked file, index or ref.
 // It names immutable Git objects, not a second copy of the document bytes.
-type publication struct{ Parent, Commit, Path, Blob, OldPath, OldBlob string }
+type fileChange struct {
+	Path, Blob, OldPath, OldBlob string
+	Occurrence                   *canon.RecordOccurrence `json:"occurrence,omitempty"`
+}
+type publication struct {
+	Parent, Commit, Path, Blob, OldPath, OldBlob string
+	Changes                                      []fileChange            `json:",omitempty"`
+	Operation                                    *recordOperation        `json:"operation,omitempty"`
+	Occurrence                                   *canon.RecordOccurrence `json:"occurrence,omitempty"`
+}
+
+func (p publication) edits() []fileChange {
+	if len(p.Changes) > 0 {
+		return p.Changes
+	}
+	return []fileChange{{Path: p.Path, Blob: p.Blob, OldPath: p.OldPath, OldBlob: p.OldBlob, Occurrence: p.Occurrence}}
+}
+
 type recordState struct {
 	head, token string
 	pending     *publication
@@ -94,6 +111,11 @@ func (r *Store) release(ctx context.Context, token string) error {
 func (r *Store) remember(ctx context.Context, token string, p publication) error {
 	raw, _ := json.Marshal(p)
 	return r.db.Write(ctx, func(tx *canon.Tx) error {
+		if p.Operation != nil && p.Operation.Validate != nil {
+			if err := p.Operation.Validate(ctx, tx); err != nil {
+				return err
+			}
+		}
 		changed, err := tx.ExecContext(ctx, "UPDATE records_state SET pending=? WHERE singleton=1 AND head=? AND lock_token=? AND pending IS NULL", raw, p.Parent, token)
 		if err != nil {
 			return err
@@ -109,17 +131,22 @@ func (r *Store) remember(ctx context.Context, token string, p publication) error
 	})
 }
 func (r *Store) checkpoint(ctx context.Context, p publication) error {
-	data, err := r.readObject(p.Blob, "blob")
-	if err != nil {
-		return err
-	}
-	id, err := recordID(data)
-	if err != nil {
-		return err
-	}
-	doc, err := parseDocument(data)
-	if err != nil {
-		return err
+	edits := p.edits()
+	docs := make([]document, len(edits))
+	ids := make([]string, len(edits))
+	for i, c := range edits {
+		data, err := r.readObject(c.Blob, "blob")
+		if err != nil {
+			return err
+		}
+		ids[i], err = recordID(data)
+		if err != nil {
+			return err
+		}
+		docs[i], err = parseDocument(data)
+		if err != nil {
+			return err
+		}
 	}
 	raw, _ := json.Marshal(p)
 	return r.db.Write(ctx, func(tx *canon.Tx) error {
@@ -134,12 +161,34 @@ func (r *Store) checkpoint(ctx context.Context, p publication) error {
 		if n != 1 {
 			return ErrRecordsChanged
 		}
-		_, err = tx.ExecContext(ctx, "INSERT INTO records_index(id,path,blob,revision) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET path=excluded.path,blob=excluded.blob,revision=excluded.revision", id, p.Path, p.Blob, p.Commit)
-		if err != nil {
-			return err
+		for i, c := range edits {
+			if _, err = tx.ExecContext(ctx, "INSERT INTO records_index(id,path,blob,revision) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET path=excluded.path,blob=excluded.blob,revision=excluded.revision", ids[i], c.Path, c.Blob, p.Commit); err != nil {
+				return err
+			}
+			if err = putProjection(ctx, tx, indexRow{id: ids[i], path: c.Path, blob: c.Blob, revision: p.Commit, doc: docs[i]}); err != nil {
+				return err
+			}
 		}
-		if err = putProjection(ctx, tx, indexRow{id: id, path: p.Path, blob: p.Blob, revision: p.Commit, doc: doc}); err != nil {
-			return err
+		if p.Operation != nil {
+			if len(edits) != 1 {
+				return ErrRecordsChanged
+			}
+			if err = checkpointOperation(ctx, tx, p, ids[0]); err != nil {
+				return err
+			}
+		}
+		for i, c := range edits {
+			if c.Occurrence == nil {
+				continue
+			}
+			key := "record-occurrence:" + p.Commit
+			if len(edits) > 1 {
+				key += ":" + ids[i]
+			}
+			data, _ := json.Marshal(map[string]any{"key": key, "task_id": "record:" + ids[i], "kind": "record_occurrence", "occurrence": c.Occurrence})
+			if _, err = tx.ExecContext(ctx, "INSERT INTO work_ledger(task_id,event_key,record) VALUES(?,?,?)", "record:"+ids[i], key, data); err != nil {
+				return err
+			}
 		}
 		_, err = tx.ExecContext(ctx, "UPDATE records_index_state SET head=? WHERE singleton=1", p.Commit)
 		return err
@@ -159,7 +208,7 @@ func (r *Store) recover(ctx context.Context) error {
 		return r.release(ctx, state.token)
 	}
 	p := *state.pending
-	if state.token == "" || p.Parent != state.head || !fs.ValidPath(p.Path) || p.Path == "." || strings.Split(p.Path, "/")[0] == ".git" {
+	if state.token == "" || p.Parent != state.head {
 		return ErrRecordsChanged
 	}
 	lock, err := regular(r.root, ".git/index.lock")
@@ -192,49 +241,48 @@ func (r *Store) recover(ctx context.Context) error {
 	if err = r.readTree(strings.TrimPrefix(line, "tree "), "", files, 0); err != nil {
 		return err
 	}
-	if files[p.Path] != p.Blob {
-		return ErrRecordsChanged
-	}
-	_, err = r.readObject(p.Blob, "blob")
-	if err != nil {
-		return err
-	}
-	// A crash can leave either side of the intended edit/move. Every other
-	// file must still match, and neither affected path may contain third-party bytes.
 	before := make(map[string]string, len(files))
 	for name, hash := range files {
 		before[name] = hash
 	}
-	delete(before, p.Path)
-	if p.OldPath != "" {
-		before[p.OldPath] = p.OldBlob
+	for _, c := range p.edits() {
+		if !validPath(c.Path) || (c.OldPath != "" && !validPath(c.OldPath)) || files[c.Path] != c.Blob {
+			return ErrRecordsChanged
+		}
+		if _, err = r.readObject(c.Blob, "blob"); err != nil {
+			return err
+		}
+		delete(before, c.Path)
+		if c.OldPath != "" {
+			before[c.OldPath] = c.OldBlob
+		}
 	}
-	observed := make(map[string]string, len(before)+1)
+	observed := make(map[string]string, len(before))
 	for name, hash := range before {
 		observed[name] = hash
 	}
-	for _, name := range []string{p.Path, p.OldPath} {
-		if name == "" {
-			continue
+	for _, c := range p.edits() {
+		for _, name := range []string{c.Path, c.OldPath} {
+			if name == "" {
+				continue
+			}
+			raw, e := regular(r.root, name)
+			if errors.Is(e, os.ErrNotExist) {
+				delete(observed, name)
+				continue
+			}
+			if e != nil {
+				return e
+			}
+			hash, _ := objectID("blob", raw)
+			if hash != before[name] && hash != files[name] {
+				return ErrRecordsChanged
+			}
+			observed[name] = hash
 		}
-		raw, err := regular(r.root, name)
-		if errors.Is(err, os.ErrNotExist) {
-			delete(observed, name)
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		hash, _ := objectID("blob", raw)
-		if hash != before[name] && hash != files[name] {
+		if c.OldPath != "" && observed[c.Path] == "" && observed[c.OldPath] == "" {
 			return ErrRecordsChanged
 		}
-		observed[name] = hash
-	}
-	// An edit atomically replaces an existing path; it is never absent. A move
-	// installs its destination before removing its source, so both cannot be absent.
-	if p.OldPath != "" && observed[p.Path] == "" && observed[p.OldPath] == "" {
-		return ErrRecordsChanged
 	}
 	if err = r.unchanged(observed); err != nil {
 		return err

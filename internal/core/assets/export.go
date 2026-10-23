@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 )
@@ -125,6 +126,11 @@ func (s *Store) cleanExports() error {
 		return err
 	}
 	for _, entry := range entries {
+		// Replay owns these directories in the shared export staging area.
+		// Do not remove its published episodes or follow directory symlinks.
+		if entry.IsDir() && (strings.HasPrefix(entry.Name(), "episode-") || strings.HasPrefix(entry.Name(), ".episode-")) {
+			continue
+		}
 		if !validID(entry.Name()) || !entry.Type().IsRegular() {
 			return ErrInvalid
 		}

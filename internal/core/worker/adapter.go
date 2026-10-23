@@ -7,6 +7,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/thisisjun786/lina/kit/lease"
@@ -96,6 +97,10 @@ type Thread struct {
 // Pending questions/approvals block ordinary input. Cancellation of the call's
 // context is not a request to interrupt the worker's turn.
 type Input struct{ Text string }
+
+// ErrInputRefused means the adapter rejected input before sending a request.
+// It must never describe a transport failure or an ambiguous remote outcome.
+var ErrInputRefused = errors.New("worker input refused before dispatch")
 
 type Reason string
 

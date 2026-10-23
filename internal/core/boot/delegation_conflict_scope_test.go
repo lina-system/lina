@@ -3,6 +3,7 @@ package boot
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -11,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/agents"
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/gateway"
 	"github.com/thisisjun786/lina/internal/core/guard"
@@ -18,6 +21,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/codex"
+	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 	"github.com/thisisjun786/lina/kit/lease"
 )
 
@@ -53,6 +57,24 @@ func TestConflictChannelPermission(t *testing.T) {
 				t.Fatal(err)
 			}
 			task := work.Task{ID: "channel-task", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Schedule: &work.Schedule{InputID: input.ID, Repository: "fixture/repo", Worker: "codex", Host: "local"}}
+			if _, err := r.agents.Create(ctx, agents.Create{PersonID: r.person, Name: "Developer", Preset: "dev"}); err != nil {
+				t.Fatal(err)
+			}
+			args, err := json.Marshal(task.Schedule)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assignment, err := r.assignCoding(ctx, dispatch.Origin{Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: "turn:" + input.ID}, task.ID, "schedule_work", task.Schedule.Repository, args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The first turn follows a durable manager judgment. Its owner is
+			// distinct from the source channel whose permission later changes.
+			assignment.Delegated = true
+			if err := r.db.Write(ctx, func(tx *canon.Tx) error { return saveCoding(ctx, tx, assignment) }); err != nil {
+				t.Fatal(err)
+			}
+			task.AgentID, task.ConversationID = assignment.Owner, assignment.Conversation
 			// Use the actual adapter and count turn/start RPCs. The first turn
 			// completes before the channel permission changes.
 			dir := t.TempDir()

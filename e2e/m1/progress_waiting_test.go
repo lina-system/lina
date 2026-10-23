@@ -41,7 +41,11 @@ func TestM2ProgressWaitingInstalledCore(t *testing.T) {
 		if !ok || p.Rows == nil {
 			t.Fatalf("missing progress snapshot: %+v", frame.Payload)
 		}
-		if phase != "restarted" {
+		if phase == "completed" || phase == "restarted" {
+			if len(*p.Rows) != 0 {
+				t.Fatalf("%s retained a finished worker in progress: %+v", phase, *p.Rows)
+			}
+		} else {
 			if len(*p.Rows) != 1 {
 				t.Fatalf("%s live worker absent from progress: %+v", phase, p)
 			}

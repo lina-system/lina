@@ -41,15 +41,16 @@ func TestProgressOverviewWiredToCore(t *testing.T) {
 }
 
 func TestProgressGroupsLiveSessionsAndKeepsTaskOutcomeUnknown(t *testing.T) {
-	r := controlRuntime(t)
+	r := runRuntime(t)
 	r.ownerViews.stop()
 	<-r.ownerViews.done
 	r.workers = &workerRuntime{sessions: map[string]*workerSession{}}
 	t.Cleanup(func() { r.workers = nil })
 	for _, id := range []string{"one", "two"} {
-		snap := worker.ThreadSnapshot{Thread: worker.Thread{ID: id, TaskID: "same-request"}, State: worker.Idle, Output: "unverified worker output"}
+		snap := worker.ThreadSnapshot{Thread: worker.Thread{ID: id, TaskID: "same-request"}, State: worker.Active, Output: "unverified worker output"}
 		r.workers.sessions[id] = &workerSession{adapter: &workerProbe{snapshot: snap}, origin: r, thread: snap.Thread}
 	}
+	r.background.sessions = &workerListSource{workers: r.workers, person: r.person}
 	p, err := r.ownerSnapshot(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -58,7 +59,7 @@ func TestProgressGroupsLiveSessionsAndKeepsTaskOutcomeUnknown(t *testing.T) {
 		t.Fatalf("worker sessions became duplicate work lines: %+v", p)
 	}
 	if v := (*p.Rows)[0].Line; v.JustFinished != "unknown" || v.Stage != "unknown" || v.Percent != nil {
-		t.Fatalf("worker idle became plan outcome: %+v", v)
+		t.Fatalf("worker activity became plan outcome: %+v", v)
 	}
 }
 

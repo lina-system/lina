@@ -86,3 +86,9 @@ test('Moirai is a registered component and still requires successful verificatio
   assert.equal(evaluateGate(selected, { ...passed, components: { result: 'success' } }).result, 'success');
   assert.equal(evaluateGate(selected, { ...passed, components: { result: 'skipped' } }).result, 'failure');
 });
+
+test('the registered takeover operator participates in the component gate', () => {
+  const selected = { ...scope, components: true, selectedComponents: ['crw-takeover'] };
+  assert.equal(evaluateGate(selected, { ...passed, components: { result: 'success' } }).result, 'success');
+  assert.equal(evaluateGate(selected, { ...passed, components: { result: 'failure' } }).result, 'failure');
+});

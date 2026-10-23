@@ -25,6 +25,27 @@ func TestM3DependencyReleaseInstalledCore(t *testing.T) {
 	testM3DependencyRelease(t, nil, nil, "", "")
 }
 
+func TestM3DelegationManagerAdmission(t *testing.T) {
+	raw, err := os.ReadFile("../m3/dependency-manager.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var scenario struct {
+		Cases []struct {
+			Name       string
+			MissingDev bool `json:"missing_dev"`
+		}
+	}
+	if err = json.Unmarshal(raw, &scenario); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range scenario.Cases {
+		t.Run(c.Name, func(t *testing.T) {
+			testM3DependencyRelease(t, nil, nil, "", "", dependencyReleaseOptions{missingManager: c.MissingDev})
+		})
+	}
+}
+
 func TestM3DelegationPresetLimits(t *testing.T) {
 	data, err := os.ReadFile("../m3/delegation-preset-limits.json")
 	if err != nil {
@@ -83,11 +104,17 @@ func testM3DelegationStartFailure(t *testing.T, scenario string) {
 	testM3DependencyRelease(t, &fault, nil, "", "")
 }
 
-func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, conflict *delegationConflict, preset, stopMode string, outcomes ...scheduledOutcomeScenario) {
-	var outcome scheduledOutcomeScenario
-	if len(outcomes) != 0 {
-		outcome = outcomes[0]
+type dependencyReleaseOptions struct {
+	missingManager bool
+	outcomes       scheduledOutcomeScenario
+}
+
+func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, conflict *delegationConflict, preset, stopMode string, options ...dependencyReleaseOptions) {
+	var option dependencyReleaseOptions
+	if len(options) != 0 {
+		option = options[0]
 	}
+	outcome, noDev := option.outcomes, option.missingManager
 	var recalling atomic.Bool
 	raw, err := os.ReadFile("../m3/dependency-release.json")
 	if err != nil {
@@ -102,6 +129,7 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 		t.Fatal(err)
 	}
 	var calls atomic.Int32
+	var managerCalls atomic.Int32
 	var taskIDs []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
@@ -110,6 +138,30 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Error(err)
+			return
+		}
+		for _, tool := range request.Tools {
+			if tool.Name == "coding_decision" {
+				managerCalls.Add(1)
+				scriptedCodingManager(t, w, request)
+				return
+			}
+		}
+		if noDev {
+			if calls.Add(1) == 1 {
+				emitPersonaCall(w, "missing-manager", "schedule_work", scenario)
+			} else {
+				var item struct{ Output string }
+				_ = json.Unmarshal(request.Input[len(request.Input)-1], &item)
+				var result struct {
+					Code   string
+					Output struct{ Code string }
+				}
+				if err := json.Unmarshal([]byte(item.Output), &result); err != nil || result.Code != "failed" || result.Output.Code != "dev_agent_unavailable" {
+					t.Errorf("missing dev did not report admission refusal: %s %v", item.Output, err)
+				}
+				emitResponse(w, "The dev manager is unavailable; no worker started.", true)
+			}
 			return
 		}
 		if outcome != nil && recalling.Load() {
@@ -308,12 +360,23 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 	}
 	core := start()
 	selected := ""
-	if preset != "" {
+	if preset != "" || noDev {
 		probe, _ := conversationClient(t, h)
 		person := probe.Welcome.PersonID
 		probe.Close()
 		h.stopCore(core)
-		selected = seedMethodologyAgents(t, h, person, preset)[preset]
+		if noDev {
+			withFileCanon(t, h, func(db *canon.Store) {
+				if err := db.Write(h.ctx, func(tx *canon.Tx) error {
+					_, err := tx.ExecContext(h.ctx, "UPDATE agents SET trashed_at=1 WHERE preset='dev'")
+					return err
+				}); err != nil {
+					t.Fatal(err)
+				}
+			})
+		} else {
+			selected = seedMethodologyAgents(t, h, person, preset)[preset]
+		}
 		core = start()
 	}
 	client, conversation := conversationClient(t, h)
@@ -333,7 +396,7 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 		t.Fatal(err)
 	}
 	admittedTurn(t, h, client, conversation, "dispatch-input", "Complete the three related tasks.")
-	if preset != "" {
+	if preset != "" || noDev {
 		db, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon", "canon.sqlite"))
 		if err != nil {
 			t.Fatal(err)
@@ -348,6 +411,14 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 			}
 		}
 		assertEmpty()
+		if noDev {
+			var effects int
+			if err := db.Read(h.ctx, func(tx *canon.Tx) error {
+				return tx.QueryRowContext(h.ctx, `SELECT count(*) FROM authority_effects WHERE json_extract(record,'$.Tool') IN ('worker_start','schedule_work')`).Scan(&effects)
+			}); err != nil || effects != 0 || managerCalls.Load() != 0 {
+				t.Fatalf("missing dev produced a worker effect: effects=%d manager calls=%d err=%v", effects, managerCalls.Load(), err)
+			}
+		}
 		client.Close()
 		waiting.Close()
 		h.stopCore(core)
@@ -425,6 +496,29 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 	}
 	defer db.Close(context.Background())
 	store := work.New(db)
+	for _, id := range taskIDs {
+		card, err := store.Get(h.ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var raw []byte
+		if err = db.Read(h.ctx, func(tx *canon.Tx) error {
+			return tx.QueryRowContext(h.ctx, "SELECT record FROM coding_assignments WHERE id=?", id).Scan(&raw)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		var assignment struct {
+			Owner, Conversation string
+			Delegated           bool
+			Origin              struct{ Person, Agent, Conversation, Turn string }
+		}
+		if err = json.Unmarshal(raw, &assignment); err != nil || !assignment.Delegated || assignment.Owner != card.Task.AgentID || assignment.Conversation != card.Task.ConversationID || assignment.Origin.Conversation != conversation || assignment.Origin.Agent == assignment.Owner || assignment.Origin.Turn != "turn:"+card.Task.Schedule.InputID {
+			t.Fatalf("scheduled task lost manager ownership or source delivery: %s %v", raw, err)
+		}
+	}
+	if managerCalls.Load() != 6 {
+		t.Fatalf("expected three durable manager judgments, got %d model calls", managerCalls.Load())
+	}
 	await := func(id string, predicate func(work.Card) bool) work.Card {
 		t.Helper()
 		deadline := time.NewTimer(operationTimeout)
@@ -450,14 +544,14 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 		for _, i := range []int{0, 2} {
 			await(taskIDs[i], func(c work.Card) bool { return c.Run != nil && !c.Active })
 		}
-		checkScheduledOutcomeRecords(t, h, store, taskIDs, outcome)
+		checkScheduledOutcomeRecords(t, h, store, conversation, taskIDs, outcome)
 		client.Close()
 		h.stopCore(core)
 		recalling.Store(true)
 		core = start()
 		client, conversation = conversationClient(t, h)
 		admittedTurn(t, h, client, conversation, "recall-scheduled", "Recall both scheduled worker reports.")
-		checkScheduledOutcomeRecords(t, h, store, taskIDs, outcome)
+		checkScheduledOutcomeRecords(t, h, store, conversation, taskIDs, outcome)
 		client.Close()
 		h.stopCore(core)
 		return

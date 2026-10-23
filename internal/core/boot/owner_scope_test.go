@@ -93,8 +93,11 @@ func TestOwnerControlsReachManagedChannelWorker(t *testing.T) {
 	manager := newConversationView(r, r.agent, "manager:work")
 	manager.codingDelivery = delivery
 	probe := &workerProbe{snapshot: worker.ThreadSnapshot{Thread: worker.Thread{ID: "managed", TurnID: "turn", ProcessGeneration: 1, BindingEpoch: 1}, State: worker.Active}}
-	r.workers.sessions["managed"] = &workerSession{origin: manager, adapter: probe, thread: probe.snapshot.Thread, active: map[string]lease.Lease{}}
-	t.Cleanup(func() { r.workers = nil })
+	entry := &workerSession{origin: manager, adapter: probe, thread: probe.snapshot.Thread, active: map[string]lease.Lease{}, workdir: t.TempDir(), reservation: "managed", reservationTurn: "turn"}
+	if err := manager.work.ReserveWorker(t.Context(), entry.reservation, entry.workdir); err != nil {
+		t.Fatal(err)
+	}
+	addWorkerFixtureSessions(t, r, map[string]*workerSession{"managed": entry})
 	s := clientsrv.Session{PersonID: r.person}
 	id := "session:managed"
 	for _, scope := range []string{"channel:other", delivery.conversation} {

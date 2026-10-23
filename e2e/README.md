@@ -1,5 +1,11 @@
 # Headless acceptance harness
 
+`m3/plan-invalid-response.json` exercises completed invalid JSON and cyclic
+planning responses through installed Core and Moirai. It restarts Core between
+Aux completion and Apply, verifies cached results, rejects a forged proposal,
+checks durable rejection and usage counts under duplicate application, and
+observes the next valid preview without publishing unconfirmed plan records.
+
 `m3/non-competition.json` runs installed Core's record tools through a local
 fixture provider and its public client socket. It checks a real saved record,
 refusal of an out-of-scope path used as an id, and preservation of an external
@@ -23,7 +29,14 @@ state: a completed turn on an observer socket does not prove the TUI has
 rendered it. LONG-QA waits for the idle viewport before stitching PgUp pages.
 
 The suite builds each command once per test run and removes the shared binaries
-after all scenarios finish. Foundation enumerates the acceptance tests and runs
+after all scenarios finish. These test binaries omit DWARF debugger data to reduce
+bundle copying and archiving. Test helper processes share a private SQLite Wasm
+compilation cache, with the default runtime limits and canon's digest verification.
+Only compiled code is shared; databases and results remain private to each scenario.
+The parent removes the cache after all helpers join. Installed command binaries
+and release builds retain their ordinary SQLite initialization.
+
+Foundation enumerates the acceptance tests and runs
 three disjoint batches under its shared components budget. This keeps a growing
 corpus from exhausting one package watchdog while preserving every scenario,
 assertion and operation deadline. Independent scenarios call `t.Parallel()` and
@@ -372,6 +385,8 @@ binding/scope replacement. A paired synthetic channel and an existing binding
 exercise the actual target-agent checks. Read-only canon snapshots prove that
 refused requests preserve agent revisions, actions, conversations and bindings.
 
+`m3/dependency-manager.json` exercises graph admission from a non-dev persona, durable dev ownership and assignment before dispatch, and missing-dev refusal without work cards or worker effects. Questions, approvals, refresh, stop controls, and restart retain the original conversation.
+
 `m3/dependency-release.json` runs the installed Core with a synthetic App Server
 and forge. Conversation tools admit a graph, Core creates actual Git worktrees,
 and worker processes write and commit results after a real client answers a
@@ -413,6 +428,25 @@ reports to the originating persona and restores their untrusted evidence and
 recorded snapshots after restart. Neither report verifies the task nor releases
 its dependent. The synthetic worker rejects a second turn start.
 
+`m3/plan-drafting.json` exercises accepted goal discovery through model tools,
+Klotho drafting through a real Moirai worker and installed Core job socket,
+complete preview replacement, retirement of overlapping stale requests, stale confirmation refusal, one-version record
+creation, and idempotent confirmation across Core restarts. A loopback provider
+supplies only model output; all tool, job, result, protocol and records paths are
+production paths. No external credentials or services are used.
+
+`m3/operational-switch.json` exercises the owner-only switch on the real Core
+socket: missing approval, a failed transfer with explicit service restoration,
+a held external task, successful transfer, and a real Core-launched fixture
+worker output and receipt. It covers locally refused worker input, a confirmed
+terminal provider connection failure, restart with an outstanding execution,
+rollback refusal until drain, and preservation of originals, Git branches,
+worktree registrations, receipts and journals after explicit rollback. The
+external coordinator is synthetic; its call log checks that approval precedes
+stop and durable LINA release precedes external restart. Imported tasks and receipt facts use the engine API while Core is stopped,
+as in the M2 ledger scenario; worker start, interrupt, resume and result
+observation use the running Core tool registry and a separate stdio process.
+
 Installed-Core fixtures wait for command admission after connecting the socket.
 An empty input must be refused as malformed (or capability-not-negotiated for an
 unconfigured Core), rather than unavailable during recovery, before the scenario
@@ -447,10 +481,15 @@ before running the real readiness check, and outputs and durable state are
 checked for credential disclosure.
 
 `m3/crw-takeover.json` runs the operator import binary against an installed Core's
-stopped state root, checks exclusive ownership and idempotent retry, removes the
-source snapshot, then exercises the running Core's record tools. Imported evidence
+stopped state root, checks exclusive ownership and idempotent retry, then exercises
+the running Core's record tools. A backup restores into a fresh destination; the
+source snapshot is removed before the restored Core starts. Imported evidence
 is found through search and read by LINA id, source-id lookup fails, a new result
-is saved, and restart keeps the imported identity. This operator-only test and
+is saved, and restart keeps the imported identity. The board shows canonical
+states for complete and incomplete issues and milestones, including earlier
+milestone publications interrupted before journal acknowledgement. Retry and
+restart preserve those records' saved revisions and projected deadline sources.
+This operator-only test and
 fixture are excluded from release archives together with the takeover tool.
 
 `m2/claude-worker.json` runs `dispatch_work` with `worker=claude` through
@@ -508,7 +547,11 @@ expansion with stage provenance, refresh, folding and reopening. It exercises
 Core's read path and TUI. `TestM3WorkerLanesLiveSession` additionally starts the
 installed stdio worker fixture through Core's conversation tools, makes it write
 a real artifact, and expands its runtime lane to show the worker output without
-calling the model. Vendor transport is synthetic; no personal account is used.
+calling the model. While the worker holds an interrupt reply, the developer page
+must return its session as unknown when the five-second snapshot context expires.
+Only then does the fixture release the interrupt, produce its result and allow
+the refreshed lane to report idle. Vendor transport is synthetic; no personal
+account is used.
 
 `m2/progress-waiting.json` uses the installed Core and synthetic stdio worker
 journey to read the owner progress capability and full waiting list during an
@@ -533,6 +576,14 @@ scenario checks parsed terminal cells, the worker-written artifact and cleanup.
 explicit controls to running Core and inspect the durable target runs; the worker
 scenario observes its approval, question and real artifact through the digest.
 Only external provider and platform wires are scripted.
+
+`m2/tui-board.json`, `m2/tui-note.json` and `m2/tui-usage.json` exercise the
+installed Core and real PTY TUI. The board combines an outside-change waiting
+request with a background run, updates its groups on landing and opens the
+result. The note journey holds a background provider response after ten
+foreground tool rounds, then checks one scoped follow-up in the next request.
+The account journey checks unknown quota independently of status and reported
+plan at 100 and 40 columns. External model wires and account data are synthetic.
 
 `m2/work-definition.json` drives `dispatch_work` through installed Core. It
 refuses missing done conditions, write areas and base-commit design sections,

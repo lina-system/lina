@@ -1,7 +1,34 @@
 // SPDX-License-Identifier: Apache-2.0
 package work
 
-import "testing"
+import (
+	"github.com/thisisjun786/lina/internal/core/canon"
+	"testing"
+)
+
+func TestScheduledStopKeepsManagedOriginScope(t *testing.T) {
+	s, db := testStore(t)
+	task := scheduled("managed")
+	task.PersonID, task.AgentID, task.ConversationID = "person", "dev", "manager"
+	if err := s.Schedule(t.Context(), []Task{task}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
+		if _, err := tx.ExecContext(t.Context(), `INSERT INTO coding_managers(id,person,owner,unit,conversation) VALUES('manager','person','dev','repo','manager')`); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO coding_assignments(id,manager,record) VALUES('managed','manager',?)`, []byte(`{"ID":"managed","Owner":"dev","Conversation":"manager","Tool":"schedule_work","Delegated":true,"Origin":{"Person":"person","Agent":"source","Conversation":"source-conversation","Turn":"turn:input"}}`))
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.StopScheduled(t.Context(), "person", "foreign-conversation", "managed:0"); err == nil {
+		t.Fatal("foreign origin stopped managed work")
+	}
+	if n, err := s.StopScheduled(t.Context(), "person", "source-conversation", ""); err != nil || n != 1 {
+		t.Fatalf("origin stop lost manager-owned task: count=%d err=%v", n, err)
+	}
+}
 
 func TestScheduledStopRetainsUnsettledReservations(t *testing.T) {
 	for _, started := range []bool{false, true} {

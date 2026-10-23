@@ -14,6 +14,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/progress"
 	"github.com/thisisjun786/lina/internal/core/records"
+	"github.com/thisisjun786/lina/internal/core/runs"
 	"github.com/thisisjun786/lina/internal/core/waiting"
 	"github.com/thisisjun786/lina/internal/core/waiting/view"
 	"github.com/thisisjun786/lina/kit/protocol"
@@ -230,7 +231,11 @@ func (r *conversationRuntime) ownerProjectionOrder(ctx context.Context, order wa
 	for _, u := range units {
 		present[u.ID] = true
 	}
-	for _, u := range r.liveProgress(names, list) {
+	live, err := r.liveProgress(ctx, names, list)
+	if err != nil {
+		return protocol.Progress{}, "", err
+	}
+	for _, u := range live {
 		if !present[u.ID] {
 			units = append(units, u)
 		}
@@ -240,6 +245,10 @@ func (r *conversationRuntime) ownerProjectionOrder(ctx context.Context, order wa
 	for _, entry := range entries {
 		v := entry.Line
 		line := protocol.ProgressLine{Name: v.Name, Kind: v.Kind, Stage: v.Stage, JustFinished: v.JustFinished, Next: v.Next, Waiting: number(v.Waiting), Depth: number(v.Depth)}
+		if v.State != "" {
+			state := protocol.RunningState(v.State)
+			line.State = &state
+		}
 		if v.Percent != nil {
 			percent := number(*v.Percent)
 			line.Percent = &percent
@@ -301,7 +310,11 @@ func ownerText(p protocol.Progress) string {
 			if line.Percent != nil {
 				bar = string(*line.Percent) + "%"
 			}
-			lines = append(lines, line.Name+" · "+line.Stage+" · "+bar+" · "+line.JustFinished+" → "+line.Next)
+			name := line.Name
+			if line.State != nil {
+				name = string(*line.State) + ": " + name
+			}
+			lines = append(lines, name+" · "+line.Stage+" · "+bar+" · "+line.JustFinished+" → "+line.Next)
 		}
 	}
 	if len(lines) == 0 {
@@ -325,7 +338,25 @@ func (outsideWaitingSource) Done(context.Context, *canon.Tx, string) error { ret
 // A directly started worker has no plan inventory yet. Its originating request
 // supplies the human name; session ids and output stay behind Details. Finishing
 // a worker turn does not prove the handed-off work's done condition.
-func (r *conversationRuntime) liveProgress(names map[string]string, list waiting.List) []progress.Unit {
+func (r *conversationRuntime) liveProgress(ctx context.Context, names map[string]string, list waiting.List) ([]progress.Unit, error) {
+	if r.background == nil || r.background.sessions == nil {
+		return nil, nil
+	}
+	// Use the running list's copied adapter observations and its acknowledgement
+	// rules. No adapter I/O occurs inside the canonical read, and no run/work
+	// producers participate in this conversation-worker projection.
+	source := r.background.sessions
+	if err := source.refresh(ctx); err != nil {
+		return nil, err
+	}
+	snapshot, err := runs.NewRunningList(r.db, map[string]runs.ListSource{"session": source}).Build(ctx, r.person)
+	if err != nil {
+		return nil, err
+	}
+	sessions := map[string]*workerSession{}
+	for _, session := range r.workers.entries() {
+		sessions[session.thread.ID] = session
+	}
 	pending := map[string]bool{}
 	for _, entry := range list.Entries {
 		if entry.Ref.Source == "worker" || entry.Ref.Source == "approval" {
@@ -333,7 +364,13 @@ func (r *conversationRuntime) liveProgress(names map[string]string, list waiting
 		}
 	}
 	grouped := map[string]progress.Unit{}
-	for _, session := range r.workers.entries() {
+	// The first observation for a shared task uses the running list's
+	// attention-first ordering, independent of registry map iteration.
+	for _, observation := range snapshot.Entries {
+		session := sessions[observation.Ref.ID]
+		if session == nil {
+			continue
+		}
 		if _, ok := names[session.origin.agent]; !ok || session.origin.person != r.person {
 			continue
 		}
@@ -348,8 +385,10 @@ func (r *conversationRuntime) liveProgress(names map[string]string, list waiting
 			if title == "" {
 				title = "Delegated work"
 			}
-			u = progress.Unit{ID: id, Kind: "project", Name: laneText(title), Active: true, Updated: session.input.RecordedAt.UnixNano()}
+			u = progress.Unit{ID: id, Kind: "project", Name: laneText(title), State: observation.View.State, Updated: session.input.RecordedAt.UnixNano()}
 		}
+		u.Active = u.Active || observation.Group != "landed"
+		u.Landed = u.Landed || observation.Group == "landed"
 		session.mu.Lock()
 		for id := range session.questions {
 			if pending[id] {
@@ -368,5 +407,5 @@ func (r *conversationRuntime) liveProgress(names map[string]string, list waiting
 	for _, u := range grouped {
 		units = append(units, u)
 	}
-	return units
+	return units, nil
 }

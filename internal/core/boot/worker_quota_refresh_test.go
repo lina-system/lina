@@ -20,7 +20,7 @@ type quotaRefreshProbe struct{ worker.Adapter }
 
 func (*quotaRefreshProbe) Name() string { return "codex" }
 func (*quotaRefreshProbe) Quota(context.Context) ([]provider.QuotaRow, error) {
-	return []provider.QuotaRow{{Window: provider.FiveHour, State: provider.QuotaOK, Source: provider.Endpoint, Observed: time.Now()}}, nil
+	return []provider.QuotaRow{{Provider: provider.ChatGPT, Account: "recovered-account", Window: provider.FiveHour, State: provider.QuotaOK, Source: provider.Endpoint, Observed: time.Now()}}, nil
 }
 
 func TestRoutedWorkerQuotaRefreshesDispatch(t *testing.T) {
@@ -30,12 +30,11 @@ func TestRoutedWorkerQuotaRefreshesDispatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	root.workerDispatch = s
-	if err := s.ObserveQuota(t.Context(), "codex", []provider.QuotaRow{{State: provider.QuotaBlocked, Observed: time.Now().Add(-time.Minute)}}); err != nil {
+	if err := s.ObserveQuota(t.Context(), "codex", []provider.QuotaRow{{Window: provider.UnknownWindow, State: provider.QuotaBlocked, Source: provider.ErrorCode, Observed: time.Now().Add(-time.Minute)}}); err != nil {
 		t.Fatal(err)
 	}
 	r := newConversationView(root, root.agent, root.conversation)
-	r.workers.sessions["thread"] = &workerSession{adapter: &quotaRefreshProbe{}, origin: r}
-	t.Cleanup(func() { delete(r.workers.sessions, "thread") })
+	addWorkerFixtureSessions(t, r, map[string]*workerSession{"thread": {adapter: &quotaRefreshProbe{}, origin: r}})
 	in, err := workerSchema("worker_quota", json.RawMessage(`{"session":"thread"}`))
 	if err != nil {
 		t.Fatal(err)

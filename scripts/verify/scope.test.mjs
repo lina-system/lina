@@ -611,8 +611,9 @@ test('modifying, renaming, and deleting a design document stay documentation-onl
   }
 });
 
-for (const path of ['docs/design/example.mjs', 'docs/design/nested/example.md', 'docs/designer/example.md', 'docs/design/example.MD']) {
-  test(`${path} is not a registered design document`, t => {
+for (const path of ['docs/design/example.mjs', 'docs/design/nested/example.md', 'docs/designer/example.md', 'docs/design/example.MD',
+  'docs/research/example.mjs', 'docs/research/nested/example.md']) {
+  test(`${path} is not a registered document`, t => {
     const r = repository(t);
     mkdirSync(join(r.cwd, path, '..'), { recursive: true });
     writeFileSync(join(r.cwd, path), 'fixture\n');
@@ -890,4 +891,12 @@ test('vendored manifest edits and removals keep dependencies selected', t => {
     assert.deepEqual(scope.unmapped, []);
     assert.notEqual(scope.mode, 'docs');
   }
+});
+
+test('one-time takeover operator is verified separately from release commands', () => {
+  assert.equal(kind('tools/crw-takeover/switch.go'), 'components');
+  assert.equal(kind('tools/crw-takeover/REFERENCE.md'), 'components');
+  const operator = componentRegistry.find(c => c.name === 'crw-takeover');
+  assert.deepEqual(operator.packages, ['./tools/crw-takeover/...']);
+  assert.equal(operator.binary, undefined);
 });

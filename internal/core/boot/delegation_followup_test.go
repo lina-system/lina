@@ -31,7 +31,7 @@ func (p *scheduledFollowProbe) Input(ctx context.Context, thread worker.Thread, 
 
 func (p *scheduledFollowProbe) Steer(ctx context.Context, thread worker.Thread, input worker.Input) error {
 	if p.ended {
-		return errors.New("turn already ended")
+		return errors.Join(worker.ErrInputRefused, errors.New("turn already ended"))
 	}
 	return p.workerProbe.Input(ctx, thread, input)
 }

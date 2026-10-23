@@ -30,7 +30,7 @@ func TestM3ScheduledOutcomes(t *testing.T) {
 	if err := json.Unmarshal(raw, &scenario); err != nil {
 		t.Fatal(err)
 	}
-	testM3DependencyRelease(t, nil, nil, "", "", scenario)
+	testM3DependencyRelease(t, nil, nil, "", "", dependencyReleaseOptions{outcomes: scenario})
 }
 
 func checkScheduledOutcomes(t *testing.T, h *harness, conversation string, ids []string) {
@@ -88,7 +88,7 @@ func respondScheduledOutcome(t *testing.T, w http.ResponseWriter, inputs []json.
 	return true
 }
 
-func checkScheduledOutcomeRecords(t *testing.T, h *harness, store *work.Service, ids []string, scenario scheduledOutcomeScenario) {
+func checkScheduledOutcomeRecords(t *testing.T, h *harness, store *work.Service, conversation string, ids []string, scenario scheduledOutcomeScenario) {
 	t.Helper()
 	db, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
 	if err != nil {
@@ -122,7 +122,7 @@ func checkScheduledOutcomeRecords(t *testing.T, h *harness, store *work.Service,
 		}
 		var count int
 		err = db.Read(h.ctx, func(tx *canon.Tx) error {
-			return tx.QueryRowContext(h.ctx, `SELECT count(*) FROM conv_event e JOIN inbox i ON i.native_id=e.id JOIN conv_event p ON p.id=e.parent_id WHERE e.scaffold_kind='worker_completion' AND i.source='worker-finish' AND e.conversation_id=? AND e.agent_id=? AND p.id=? AND i.conversation=e.conversation_id`, card.Task.ConversationID, card.Task.AgentID, card.Task.Schedule.InputID).Scan(&count)
+			return tx.QueryRowContext(h.ctx, `SELECT count(*) FROM conv_event e JOIN inbox i ON i.native_id=e.id JOIN conv_event p ON p.id=e.parent_id WHERE e.scaffold_kind='worker_completion' AND i.source='worker-finish' AND e.conversation_id=? AND p.conversation_id=e.conversation_id AND e.agent_id=p.agent_id AND e.agent_id<>? AND p.id=? AND i.conversation=e.conversation_id`, conversation, card.Task.AgentID, card.Task.Schedule.InputID).Scan(&count)
 		})
 		if err != nil || count != 2 {
 			t.Fatalf("origin lost or duplicated outcomes: count=%d err=%v", count, err)

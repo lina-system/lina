@@ -93,6 +93,7 @@ type HandOff struct {
 type Request struct {
 	DeliveryID, From, To string
 	HandOff              HandOff
+	Origin               *Origin
 }
 type Receipt struct {
 	ID, DeliveryID string

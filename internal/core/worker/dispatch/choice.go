@@ -193,24 +193,7 @@ func (s *Service) ObserveQuota(ctx context.Context, name string, rows []provider
 			if err = json.Unmarshal(raw, &prior); err != nil {
 				return err
 			}
-			var blockedAt time.Time
-			for _, q := range prior {
-				if q.State == provider.QuotaBlocked && q.Observed.After(blockedAt) {
-					blockedAt = q.Observed
-				}
-			}
-			if !blockedAt.IsZero() {
-				// A delayed endpoint reply cannot erase a newer observed stop.
-				// No measurement is not evidence of recovery.
-				if len(rows) == 0 {
-					return nil
-				}
-				for _, q := range rows {
-					if !q.Observed.After(blockedAt) {
-						return nil
-					}
-				}
-			}
+			rows = mergeQuotaObservations(prior, rows)
 		}
 		_, err = tx.ExecContext(ctx, "INSERT INTO worker_quota(worker,rows) VALUES(?,?) ON CONFLICT(worker) DO UPDATE SET rows=excluded.rows", name, mustJSON(rows))
 		return err
@@ -219,6 +202,76 @@ func (s *Service) ObserveQuota(ctx context.Context, name string, rows []provider
 		s.Wake()
 	}
 	return err
+}
+
+// A reported bucket identifies a limit even when its duration is unknown.
+// Legacy rows can match by a known window only when that match is unique.
+type quotaObservationID struct {
+	provider      provider.ProviderID
+	account       provider.AccountID
+	limit, bucket string
+	window        provider.Window
+}
+
+func quotaIdentity(q provider.QuotaRow) quotaObservationID {
+	key := quotaObservationID{provider: q.Provider, account: q.Account, limit: q.LimitID, bucket: q.Bucket}
+	if q.Bucket == "" {
+		key.window = q.Window
+	}
+	return key
+}
+
+func quotaPlaceholder(q provider.QuotaRow) bool {
+	if q.Bucket != "" || q.Window != provider.UnknownWindow || q.UsedPct != nil || q.ResetsAt != nil {
+		return false
+	}
+	return q.State == provider.QuotaUnknown || q.State == provider.QuotaBlocked && q.Source == provider.ErrorCode
+}
+
+func mergeQuotaObservations(prior, incoming []provider.QuotaRow) []provider.QuotaRow {
+	rows := append([]provider.QuotaRow(nil), incoming...)
+	priorCounts, incomingCounts := map[quotaObservationID]int{}, map[quotaObservationID]int{}
+	positions := map[quotaObservationID]int{}
+	for _, q := range prior {
+		priorCounts[quotaIdentity(q)]++
+	}
+	for i, q := range incoming {
+		key := quotaIdentity(q)
+		incomingCounts[key]++
+		positions[key] = i
+	}
+	for _, saved := range prior {
+		placeholder := quotaPlaceholder(saved)
+		recovered := false
+		if placeholder {
+			// Only an unmeasured placeholder or error-inferred stop can recover
+			// without matching a bucket. An unidentified stop belongs to this worker.
+			workerStop := saved.State == provider.QuotaBlocked && saved.Provider == "" && saved.Account == "" && saved.LimitID == ""
+			for _, q := range incoming {
+				sameAccount := q.Provider == saved.Provider && q.Account == saved.Account
+				sameLimit := saved.LimitID == "" || q.LimitID == saved.LimitID
+				if (workerStop || sameAccount && sameLimit) && q.Observed.After(saved.Observed) {
+					recovered = true
+					break
+				}
+			}
+		}
+		if recovered {
+			continue
+		}
+		key := quotaIdentity(saved)
+		identifiable := saved.Bucket != "" || saved.Window != provider.UnknownWindow && saved.Window != "" || placeholder
+		if identifiable && priorCounts[key] == 1 && incomingCounts[key] == 1 {
+			i := positions[key]
+			if !incoming[i].Observed.After(saved.Observed) {
+				rows[i] = saved
+			}
+		} else {
+			// Neither absence nor a guessed legacy bucket establishes recovery.
+			rows = append(rows, saved)
+		}
+	}
+	return rows
 }
 
 // selectWorker probes only eligible workers. A blocked cache survives restart;

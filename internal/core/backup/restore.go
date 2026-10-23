@@ -105,7 +105,7 @@ func Restore(ctx context.Context, cfg RestoreConfig) (result Manifest, err error
 		if json.Unmarshal(data, &plan) != nil || plan.Generation != generationPath || plan.Manifest.MainID != main.ID || !restoreArtifactsCompatible(plan.Manifest.Artifacts, cfg.Artifacts) {
 			return result, ErrRestorePending
 		}
-		if err := resumeRestore(root, func(at string) error {
+		if err := resumeRestore(root, plan.Manifest, func(at string) error {
 			if err := boundary(at); err != nil {
 				return err
 			}
@@ -211,6 +211,9 @@ func Restore(ctx context.Context, cfg RestoreConfig) (result Manifest, err error
 			return result, err
 		}
 	}
+	if err := copyOperatorJournal(ctx, source, dest, boundary, &files, &dirs); err != nil {
+		return result, err
+	}
 	if err := verify(ctx, dest, m); err != nil {
 		return result, err
 	}
@@ -229,8 +232,10 @@ func Restore(ctx context.Context, cfg RestoreConfig) (result Manifest, err error
 	if err := prepareRestoredCanon(ctx, stagePath, epoch, cfg.Migrations); err != nil {
 		return result, err
 	}
-	if err := privateDir(root, prepared+"/previous/backups"); err != nil {
-		return result, err
+	for _, dir := range []string{"backups", "system"} {
+		if err := privateDir(root, prepared+"/previous/"+dir); err != nil {
+			return result, err
+		}
 	}
 	data, err := json.Marshal(restorePlan{Generation: generationPath, Manifest: m})
 	if err != nil {
@@ -245,7 +250,7 @@ func Restore(ctx context.Context, cfg RestoreConfig) (result Manifest, err error
 	if err := boundary("prepared"); err != nil {
 		return result, err
 	}
-	if err := commitRestore(root, prepared, func(at string) error {
+	if err := commitRestore(root, prepared, m, func(at string) error {
 		if err := boundary(at); err != nil {
 			return err
 		}

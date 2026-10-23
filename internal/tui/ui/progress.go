@@ -88,7 +88,11 @@ func progressText(payload protocol.Payload, language design.Language, fallback *
 		if v.Waiting != "0" {
 			waiting = " / " + fmt.Sprintf(design.Text(language, "progress.waiting"), v.Waiting)
 		}
-		lines = append(lines, fmt.Sprintf(design.Text(language, "progress.line"), indent, v.Name, stage, bar, before, next, waiting))
+		name := v.Name
+		if v.State != nil {
+			name = design.Text(language, "running.state."+string(*v.State)) + ": " + name
+		}
+		lines = append(lines, fmt.Sprintf(design.Text(language, "progress.line"), indent, name, stage, bar, before, next, waiting))
 	}
 	if len(lines) == 0 {
 		lines = append(lines, design.Text(language, "progress.empty"))
@@ -136,6 +140,9 @@ func (m *shellModel) waitingText(rows []protocol.WaitingRow) string {
 }
 
 func (m *shellModel) ownerCommand(text string) (bool, tea.Cmd) {
+	if handled, cmd := m.noteCommand(text); handled {
+		return true, cmd
+	}
 	kind, request, ok := protocol.OwnerCommand(text, "")
 	if !ok || kind == protocol.KindInterrupt {
 		return false, nil

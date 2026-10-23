@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 package work
 
-import "reflect"
+import (
+	"reflect"
+	"strings"
+	"time"
+)
 
 // Project replays facts without clocks, database reads or worker calls.
 func Project(events []Event) (Card, error) {
@@ -17,8 +21,21 @@ func Project(events []Event) (Card, error) {
 	return c, nil
 }
 func advance(c *Card, e Event) error {
+	if e.Kind == "record_occurrence" {
+		v := e.Occurrence
+		if v == nil || v.Record == "" || e.TaskID != "record:"+v.Record || !strings.HasPrefix(e.Key, "record-occurrence:") || (v.Reason != "completed" && v.Reason != "advanced") || v.From == "" || v.Next == "" {
+			return ErrInvalid
+		}
+		if _, err := time.Parse(time.RFC3339Nano, v.At); err != nil {
+			return ErrInvalid
+		}
+		return nil
+	}
 	if e.Kind != "created" && (c.Task.ID == "" || e.TaskID != c.Task.ID) {
 		return ErrState
+	}
+	if e.Completion != nil {
+		c.Completion = e.Completion
 	}
 	switch e.Kind {
 	case "created":
@@ -105,6 +122,7 @@ func advance(c *Card, e Event) error {
 		if e.Run.Generation != generation {
 			return ErrState
 		}
+		c.Completion = nil
 		c.Head, c.CompletionHead = "", ""
 		c.Run = e.Run
 		c.Active = true
@@ -186,6 +204,13 @@ func advance(c *Card, e Event) error {
 			return ErrState
 		}
 		c.State = "unknown"
+	case "blocked":
+		if c.Active || c.Receipt == nil || c.Receipt.EventID != e.ReceiptID || c.Applied || e.Evidence == "" {
+			return ErrState
+		}
+		c.Verdict = ""
+		c.State = "input_needed"
+		c.Stages[1] = Stage{Name: "review", Source: "github", Summary: e.Evidence}
 	case "judged":
 		if c.Active || c.Receipt == nil || c.Receipt.EventID != e.ReceiptID || c.Receipt.Outcome != "ready_for_review" || c.TurnStatus != "completed" || e.Evidence == "" {
 			return ErrState

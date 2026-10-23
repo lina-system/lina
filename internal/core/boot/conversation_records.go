@@ -26,12 +26,17 @@ func (r *conversationRuntime) recordEnvironment(ctx context.Context, g grant.Gra
 	env.Revision = revision
 	return env, err
 }
-func (r *conversationRuntime) prepareRecordTools(turnID string, bindings map[string]loop.Tool) error {
+func (r *conversationRuntime) prepareRecordTools(turnID, currentEvent string, bindings map[string]loop.Tool) error {
 	registry := tools.NewRegistry(r.personaAuthority, r.activities)
 	specs, err := coreexec.RegisterRecords(registry, r.records, records.Actor{Person: r.person, Agent: r.agent})
 	if err != nil {
 		return err
 	}
+	extra, err := coreexec.RegisterRecordCandidates(registry, r.records, records.Actor{Person: r.person, Agent: r.agent}, currentEvent)
+	if err != nil {
+		return err
+	}
+	specs = append(specs, extra...)
 	for _, spec := range specs {
 		validated := turn.Tool(registry, spec, tools.Call{}, turnID)
 		bindings[spec.Name] = loop.Tool{Validate: validated.Validate, Execute: func(ctx context.Context, call provider.ToolCall) loop.Result {
@@ -41,6 +46,17 @@ func (r *conversationRuntime) prepareRecordTools(turnID string, bindings map[str
 			in, err := spec.Schema(json.RawMessage(call.Arguments))
 			if err != nil {
 				return loop.Result{ID: call.ID, Code: loop.Invalid}
+			}
+			if in.Write {
+				r.artifactMutex().Lock()
+				defer r.artifactMutex().Unlock()
+				redirected, err := r.routeArtifactWrite(ctx, turnID, call, in.Target)
+				if err != nil {
+					return exchangeResult(call.ID, nil, err)
+				}
+				if redirected != nil {
+					return *redirected
+				}
 			}
 			auth := grant.Request{GrantID: turn.EffectKey(turnID, spec.Name, in.Target, call.ID) + ":records", MainID: r.main, Epoch: r.epoch, TaskID: turnID, Host: r.main, OSUser: "core", Person: r.person, Agent: r.agent, Profile: "records"}
 			g := grant.Grant{Identity: auth, Expires: time.Now().Add(time.Hour), Scope: []grant.Permission{{Tool: spec.Name, Target: in.Target, Write: in.Write}}}

@@ -207,3 +207,64 @@ func TestCorruptExportDoesNotDeliverOrLeaveStage(t *testing.T) {
 		t.Fatalf("corrupt leftovers: %v", got)
 	}
 }
+
+func TestReopenPreservesEpisodeExportDirectories(t *testing.T) {
+	store, db, root := setup(t)
+	for _, name := range []string{"episode-SYNTHETIC", ".episode-INCOMPLETE"} {
+		path := filepath.Join(root, "staging/export", name)
+		if err := os.MkdirAll(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(path, "episodes.jsonl"), []byte("synthetic episode\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	abandoned := filepath.Join(root, "staging/export", "0123456789abcdef0123456789abcdef")
+	if err := os.WriteFile(abandoned, []byte("interrupted asset export"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	store.Close()
+	reopened, err := assets.Open(t.Context(), root, db)
+	if err != nil {
+		t.Fatalf("episode export prevents Core restart: %v", err)
+	}
+	defer reopened.Close()
+	if _, err := os.Stat(abandoned); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("abandoned asset export retained: %v", err)
+	}
+	for _, name := range []string{"episode-SYNTHETIC", ".episode-INCOMPLETE"} {
+		data, err := os.ReadFile(filepath.Join(root, "staging/export", name, "episodes.jsonl"))
+		if err != nil || string(data) != "synthetic episode\n" {
+			t.Fatalf("episode bytes changed during asset cleanup: %s %v", data, err)
+		}
+	}
+}
+
+func TestExportCleanupRefusesUnexpectedEntries(t *testing.T) {
+	for _, symlink := range []bool{false, true} {
+		t.Run(fmt.Sprint(symlink), func(t *testing.T) {
+			store, db, root := setup(t)
+			staging := filepath.Join(root, "staging/export")
+			if err := os.MkdirAll(staging, 0700); err != nil {
+				t.Fatal(err)
+			}
+			var err error
+			if symlink {
+				err = os.Symlink(t.TempDir(), filepath.Join(staging, "episode-SYMLINK"))
+			} else {
+				err = os.Mkdir(filepath.Join(staging, "unexpected"), 0700)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			store.Close()
+			reopened, err := assets.Open(t.Context(), root, db)
+			if reopened != nil {
+				reopened.Close()
+			}
+			if !errors.Is(err, assets.ErrInvalid) {
+				t.Fatalf("unexpected export staging accepted: %v", err)
+			}
+		})
+	}
+}
