@@ -17,6 +17,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/recovery"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
@@ -85,6 +86,9 @@ func recoveryWorkerFixture() {
 			reply(map[string]any{"turn": map[string]any{"id": turn, "status": "inProgress"}})
 			if turns == 1 {
 				_ = os.WriteFile(filepath.Join(dir, "recovery-result.txt"), []byte("The worker preserved its work."), 0600)
+				if mode == "disconnected" {
+					return // Lose the completion notification after producing the result.
+				}
 			} else {
 				// The second attempt observes the retained artifact and fails explicitly.
 				raw, err := os.ReadFile(filepath.Join(dir, "recovery-result.txt"))
@@ -105,7 +109,7 @@ func recoveryWorkerFixture() {
 				time.Sleep(time.Millisecond)
 			}
 			status := "failed"
-			if mode == "completed" {
+			if mode == "completed" || mode == "disconnected" {
 				status = "completed"
 			}
 			items := []any{map[string]any{"type": "agentMessage", "id": "message", "text": "Retained worker result."}}
@@ -175,6 +179,25 @@ func TestM2WorkerRecovery(t *testing.T) {
 				raw, err := os.ReadFile(filepath.Join(dir, scenario.Artifact))
 				return err == nil && string(raw) == scenario.Result
 			})
+			completedReactions := func() int {
+				db, closeDB, err := canon.OpenSQLiteInspection(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer closeDB()
+				var count int
+				if err := db.QueryRowContext(h.ctx, "SELECT count(*) FROM turn_runs t JOIN inbox i ON i.id=t.inbox_id WHERE i.source='worker-finish' AND t.state='completed'").Scan(&count); err != nil {
+					t.Fatal(err)
+				}
+				return count
+			}
+			priorReactions := 0
+			if mode == "disconnected" {
+				priorReactions = 1
+				// The provisional notice must commit and finish its reaction before
+				// restarting Core; otherwise this would only test a lost process.
+				waitRecovery(t, h, func() bool { return completedReactions() == priorReactions })
+			}
 			c.Close()
 			core.killAndWait() // SIGKILL: no graceful worker or Core checkpoint.
 			before := calls.Load()
@@ -241,22 +264,29 @@ func TestM2WorkerRecovery(t *testing.T) {
 			}
 			client.Close()
 			reactions := 0
-			if mode == "completed" {
+			if mode == "completed" || mode == "disconnected" {
 				reactions = 1
 			}
-			waitRecovery(t, h, func() bool {
+			waitRecovery(t, h, func() bool { return completedReactions() == priorReactions+reactions })
+			if mode == "disconnected" {
 				db, closeDB, err := canon.OpenSQLiteInspection(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
 				if err != nil {
 					t.Fatal(err)
 				}
-				defer closeDB()
-				var completed int
-				err = db.QueryRowContext(h.ctx, "SELECT count(*) FROM turn_runs t JOIN inbox i ON i.id=t.inbox_id WHERE i.source='worker-finish' AND t.state='completed'").Scan(&completed)
+				var body []byte
+				err = db.QueryRowContext(h.ctx, "SELECT body FROM inbox WHERE source='worker-finish' ORDER BY id DESC LIMIT 1").Scan(&body)
+				closeDB()
 				if err != nil {
 					t.Fatal(err)
 				}
-				return completed == reactions
-			})
+				var outcome struct {
+					Status worker.FinishStatus
+					Output string
+				}
+				if err := json.Unmarshal(body, &outcome); err != nil || outcome.Status != worker.Done || outcome.Output != "Retained worker result." {
+					t.Fatalf("recovered result did not reach inbox: %s %v", body, err)
+				}
+			}
 			h.stopCore(core)
 			if record := read(); record.State != want {
 				t.Fatalf("recovery state=%+v", record)

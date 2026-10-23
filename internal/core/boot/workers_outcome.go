@@ -81,6 +81,16 @@ func (e *workerSession) finishOutcome(ctx context.Context, event worker.Event, o
 	} else if !errors.Is(err, ledger.ErrNotFound) {
 		return err
 	}
+	if event.Finish.Failure == worker.ConnectionFailure && event.Finish.Code == "connection_lost" {
+		// Transport loss is provisional: it must neither occupy the terminal
+		// result's identity nor replace a terminal result already recorded above.
+		id = "worker-transport-lost:" + hex.EncodeToString(digest[:])
+		if _, err := r.journal().Get(ctx, id); err == nil {
+			return nil
+		} else if !errors.Is(err, ledger.ErrNotFound) {
+			return err
+		}
+	}
 
 	// A failed recovery is delivered by its decision row. It cannot feed an
 	// automatic model turn that might create another worker for the same task.
