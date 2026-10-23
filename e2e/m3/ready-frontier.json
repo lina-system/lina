@@ -1,0 +1,12 @@
+{
+  "name": "Ready frontier across task, background run and wait",
+  "test": "TestM3ReadyFrontierInstalledCore",
+  "steps": [
+    "Submit a graph with independent background and date steps and a dependent code task through the installed manager tool",
+    "Read the real skill catalog in the background and save its result",
+    "Observe the date without reserving worker capacity",
+    "Release the dependent worker only after both predecessors land",
+    "Observe a committed worker result, merge, QA, deployment and runtime verification",
+    "Restart Core and read the same graph without repeating background or worker effects"
+  ]
+}

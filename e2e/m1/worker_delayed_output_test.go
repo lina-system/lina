@@ -19,7 +19,11 @@ import (
 func TestM2WorkerDelayedCompletionOutput(t *testing.T) {
 	dir := t.TempDir()
 	const output = "The follow-up result survived."
-	var readBack atomic.Bool
+	const startInput = "Delegate a file task and keep its result."
+	const continueInput = "Continue the recovered worker."
+	const recallInput = "Recall the follow-up result."
+	var readBack, recalled atomic.Bool
+	var starts atomic.Int32
 	server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct{ Input, Tools []json.RawMessage }
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -60,27 +64,49 @@ func TestM2WorkerDelayedCompletionOutput(t *testing.T) {
 				if result.Output["live"] != false || result.Output["turn"] != "turn-2" || result.Output["output"] != output {
 					t.Errorf("restart lost the recorded result: %+v", result.Output)
 				}
+				recalled.Store(true)
 				emitResponse(w, output, true)
 			default:
 				emitResponse(w, "The worker is running.", true)
 			}
 			return
 		}
+		// The ContextPacket follows the current input and includes user-role
+		// evidence. Select the latest scenario input or this worker's result,
+		// skipping unrelated packet items and earlier conversation history.
+		content := ""
+		for i := len(req.Input) - 1; i >= 0; i-- {
+			var item struct{ Role, Content string }
+			if json.Unmarshal(req.Input[i], &item) != nil || item.Role != "user" {
+				continue
+			}
+			if item.Content == startInput || item.Content == continueInput || item.Content == recallInput || strings.Contains(item.Content, `<external_evidence origin="worker-session:recovery-thread">`) {
+				content = item.Content
+				break
+			}
+		}
 		switch {
-		case strings.Contains(last.Content, "Continue the recovered worker"):
+		case content == continueInput:
 			emitPersonaCall(w, "snapshot", "worker_snapshot", map[string]any{"session": "recovery-thread"})
-		case strings.Contains(last.Content, "Recall the follow-up"):
+		case content == recallInput:
 			emitPersonaCall(w, "recall", "worker_snapshot", map[string]any{"session": "recovery-thread"})
-		case strings.Contains(last.Content, "turn-2"):
-			if !strings.Contains(last.Content, output) {
+		case strings.Contains(content, "turn-2"):
+			if !strings.Contains(content, output) {
 				t.Error("follow-up completion reached the model without its output")
 			}
 			emitPersonaCall(w, "read-result", "worker_read_file", map[string]any{"session": "recovery-thread", "path": "follow-up.txt"})
-		default:
-			if respondWorkerCompletion(w, req.Input, "Recovered the first result.") {
+		case strings.Contains(content, "turn-1"):
+			emitResponse(w, "Recovered the first result.", true)
+		case content == startInput:
+			if starts.Add(1) > 1 {
+				t.Error("fixture requested another worker start")
+				emitResponse(w, "Unexpected worker start.", true)
 				return
 			}
 			emitPersonaCall(w, "start", "worker_start", map[string]any{"workdir": dir, "task_packet": "Preserve this task's result."})
+		default:
+			t.Error("missing delayed-completion scenario input")
+			emitResponse(w, "Unexpected input.", true)
 		}
 	})))
 	defer server.Close()
@@ -104,7 +130,7 @@ func TestM2WorkerDelayedCompletionOutput(t *testing.T) {
 	}
 	core := start()
 	c, conv := conversationClient(t, h)
-	admittedTurn(t, h, c, conv, "start", "Delegate a file task and keep its result.")
+	admittedTurn(t, h, c, conv, "start", startInput)
 	waitRecovery(t, h, func() bool {
 		raw, err := os.ReadFile(filepath.Join(dir, "recovery-result.txt"))
 		return err == nil && string(raw) == "The worker preserved its work."
@@ -118,7 +144,7 @@ func TestM2WorkerDelayedCompletionOutput(t *testing.T) {
 	waitWorkerCanon(t, h, `SELECT count(*) FROM worker_recovery WHERE json_extract(record,'$.State')='finished'`, 1)
 	waitRecovery(t, h, func() bool { return workerRecoveryReactions(t, h) == 1 })
 	c, conv = conversationClient(t, h)
-	admittedTurn(t, h, c, conv, "continue", "Continue the recovered worker.")
+	admittedTurn(t, h, c, conv, "continue", continueInput)
 	waitRecovery(t, h, func() bool { return workerRecoveryReactions(t, h) == 2 })
 	if !readBack.Load() {
 		t.Error("follow-up did not read back the worker's file")
@@ -141,9 +167,12 @@ func TestM2WorkerDelayedCompletionOutput(t *testing.T) {
 	h.stopCore(core)
 	core = start()
 	c, conv = conversationClient(t, h)
-	admittedTurn(t, h, c, conv, "recall", "Recall the follow-up result.")
+	admittedTurn(t, h, c, conv, "recall", recallInput)
 	c.Close()
 	h.stopCore(core)
+	if starts.Load() != 1 || !recalled.Load() {
+		t.Errorf("worker starts=%d recalled=%t", starts.Load(), recalled.Load())
+	}
 	if raw, err := os.ReadFile(filepath.Join(dir, "turn-count")); err != nil || string(raw) != "2" {
 		t.Fatalf("unexpected worker execution: turns=%s err=%v", raw, err)
 	}

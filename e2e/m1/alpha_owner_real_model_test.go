@@ -192,7 +192,7 @@ func alphaOwnerCodingAndQuestion(t *testing.T, spoken bool) {
 	h, start := alphaOwnerHarness(t, true)
 	workdir := t.TempDir()
 	core := start()
-	c, _ := conversationClient(t, h, protocol.Capability{Name: "waiting", Version: "1.0"})
+	c, conversation := conversationClient(t, h, protocol.Capability{Name: "waiting", Version: "1.0"})
 	waitingTopic := "waiting"
 	if _, err := c.Subscribe(h.ctx, protocol.Subscribe{Topic: &waitingTopic}); err != nil {
 		t.Fatal(err)
@@ -246,10 +246,10 @@ func alphaOwnerCodingAndQuestion(t *testing.T, spoken bool) {
 		switch p := frame.Payload.(type) {
 		case protocol.TurnState:
 			if p.Active != nil && !*p.Active {
-				spokenQuestion = alphaOwnerSpokenQuestion(t, h)
+				spokenQuestion = alphaSpokenQuestion(t, h, conversation)
 			}
 		case protocol.ItemDone:
-			spokenQuestion = alphaOwnerSpokenQuestion(t, h)
+			spokenQuestion = alphaSpokenQuestion(t, h, conversation)
 		case protocol.ApprovalRequest:
 			alphaLiveApproval(t, h, terminal, p)
 		case protocol.Question:
@@ -409,6 +409,32 @@ func alphaNameRequest(text string) bool {
 		}
 	}
 	return false
+}
+
+func alphaQuestionVisible(reply, screen string) bool {
+	// The request and handoff can both mention a name. Match a question from
+	// the committed reply, allowing Markdown removal and terminal wrapping.
+
+	for _, line := range strings.Split(reply, "\n") {
+		if alphaNameRequest(line) && strings.Contains(alphaQuestionText(screen), alphaQuestionText(line)) {
+			return true
+		}
+	}
+	return false
+}
+
+func alphaSpokenQuestion(t *testing.T, h *harness, conversation string) string {
+	t.Helper()
+	db, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close(context.Background())
+	reply, err := alphaSpokenWorkerQuestion(h.ctx, db, conversation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return reply
 }
 
 func alphaLastWorkerOutput(t *testing.T, h *harness) (string, int) {

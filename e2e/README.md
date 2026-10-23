@@ -180,7 +180,9 @@ its turn must be committed before the test answers; a failed response fails the
 journey immediately. The capture must contain that response, not just the
 original request or handoff acknowledgement. Screen comparison removes
 Markdown quote prefixes while retaining the question and literal operators
-inside its sentences.
+inside its sentences. `TestAlphaSpokenQuestionInstalledCore` holds the handoff
+and response boundaries in an account-free journey through installed Core and
+a worker process.
 It watches the real worker throughout the task and retains a card showing both
 elapsed time and current activity; the worker may already be idle at the answer
 transition. `TestM3WorkPanelLiveCodexWorker` separately checks the fixture worker's

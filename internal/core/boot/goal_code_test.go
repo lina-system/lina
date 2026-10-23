@@ -26,8 +26,13 @@ func TestCodeGoalConnectionsRequirePrivateOwnerFile(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"repositories":{}}`), 0644); err != nil {
 		t.Fatal(err)
 	}
+	// WriteFile applies the process umask. The public configuration must stay
+	// mode 0644 or a restrictive mask turns the fixture private.
 	if err := os.Chmod(path, 0644); err != nil {
 		t.Fatal(err)
+	}
+	if info, err := os.Lstat(path); err != nil || info.Mode().Perm() != 0644 {
+		t.Fatalf("public configuration mode: %v %v", info, err)
 	}
 	if _, err := readCodeConnections(root); err == nil {
 		t.Fatal("publicly readable configuration accepted")

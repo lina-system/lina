@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -82,7 +81,7 @@ func TestAlphaWorkerQuestionWaitsForDelivery(t *testing.T) {
 	event("completion", "", "tool", "worker_completion", `{"output":"What name should I use?"}`)
 	check := func(want string, failed bool) {
 		t.Helper()
-		got, err := alphaSpokenWorkerQuestion(h.ctx, db)
+		got, err := alphaSpokenWorkerQuestion(h.ctx, db, "conversation")
 		if got != want || (err != nil) != failed {
 			t.Fatalf("delivered=%q err=%v; want=%q failure=%t", got, err, want, failed)
 		}
@@ -98,15 +97,15 @@ func TestAlphaWorkerQuestionWaitsForDelivery(t *testing.T) {
 	check("Which name should the worker use?", false)
 }
 
-func alphaSpokenWorkerQuestion(ctx context.Context, db *canon.Store) (string, error) {
+func alphaSpokenWorkerQuestion(ctx context.Context, db *canon.Store, conversation string) (string, error) {
 	var output string
 	err := db.Read(ctx, func(tx *canon.Tx) error {
 		rows, err := tx.QueryContext(ctx, `SELECT w.id,w.body,coalesce(t.state,''),coalesce(e.body,'')
  FROM conv_event w
  LEFT JOIN inbox i ON i.native_id=w.id AND i.source='worker-finish' AND i.conversation=w.conversation_id
  LEFT JOIN turn_runs t ON t.inbox_id=i.id AND t.conversation=w.conversation_id
- LEFT JOIN conv_event e ON e.parent_id=w.id AND e.conversation_id=w.conversation_id AND e.speaker_kind='agent'
- WHERE w.scaffold_kind='worker_completion' ORDER BY w.rowid DESC,e.rowid DESC LIMIT 1`)
+ LEFT JOIN conv_event e ON e.parent_id=w.id AND e.conversation_id=w.conversation_id AND e.agent_id=w.agent_id AND e.speaker_kind='agent' AND coalesce(e.scaffold_kind,'')=''
+ WHERE w.conversation_id=? AND w.scaffold_kind='worker_completion' ORDER BY w.rowid DESC,e.rowid DESC LIMIT 1`, conversation)
 		if err != nil {
 			return err
 		}
@@ -133,18 +132,4 @@ func alphaSpokenWorkerQuestion(ctx context.Context, db *canon.Store) (string, er
 		return rows.Err()
 	})
 	return output, err
-}
-
-func alphaOwnerSpokenQuestion(t *testing.T, h *harness) string {
-	t.Helper()
-	db, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close(context.Background())
-	reply, err := alphaSpokenWorkerQuestion(h.ctx, db)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return reply
 }

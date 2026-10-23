@@ -14,7 +14,7 @@ import (
 
 func TestACPWorkerRegistration(t *testing.T) {
 	dir := t.TempDir()
-	for _, binary := range []string{"gemini", "cursor-agent", "grok", "claude-agent-acp", "claude"} {
+	for _, binary := range []string{"gemini", "cursor-agent", "grok", "node", "claude"} {
 		if err := os.WriteFile(filepath.Join(dir, binary), []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
 			t.Fatal(err)
 		}

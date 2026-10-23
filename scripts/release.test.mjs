@@ -125,13 +125,19 @@ releaseTest('the default dry run builds a dated alpha release and publishes noth
     assert.equal(artifact.sha256, createHash('sha256').update(readFileSync(path)).digest('hex'));
     const contents = run('tar', ['-tzf', path], { cwd: out });
     assert.equal(contents.status, 0);
-    for (const name of ['lina', 'lina-node', 'manifest.json', 'LICENSE', 'THIRD-PARTY-NOTICES.md', 'sqlite-vec-NOTICE.md']) {
+    for (const name of ['lina', 'lina-node', 'manifest.json', 'LICENSE', 'THIRD-PARTY-NOTICES.md', 'sqlite-vec-NOTICE.md', 'adapters/claude-acp/package.json', 'adapters/claude-acp/package-lock.json']) {
       assert.ok(contents.stdout.split('\n').includes(name), name);
     }
     const built = JSON.parse(run('tar', ['-xOzf', path, 'manifest.json'], { cwd: out }).stdout);
     assert.equal(built.commit, s.commit);
     assert.equal(built.version, manifest.version);
     assert.equal(built.target, target);
+    assert.equal(built.installFiles.length,2);
+    for(const file of built.installFiles){
+      const bytes=run('tar',['-xOzf',path,file.name],{cwd:out}).stdout;
+      assert.equal(file.size,Buffer.byteLength(bytes));
+      assert.equal(file.sha256,createHash('sha256').update(bytes).digest('hex'));
+    }
   }
   // A dry run leaves no evidence note behind and no extra work tree.
   assert.notEqual(git(s.work, ['notes', '--ref=refs/notes/foundation', 'show', s.commit], { env: s.sb.env }).status, 0);

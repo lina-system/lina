@@ -35,13 +35,18 @@ func runImportHermes(args []string) int {
 	lcm := flags.String("lcm", "lcm.db", "LCM database path relative to the source directory")
 	state := flags.String("state", "state.db", "host database path relative to the source directory")
 	sidecars := flags.String("sidecars-dir", "lcm-large-outputs", "sidecar directory relative to the source")
-	owner := flags.String("owner-session", "", "comma-separated confirmed owner CLI sessions; other routes remain unproven")
+	owner := flags.String("owner-session", "", "comma-separated confirmed owner CLI, desktop or webui session ids")
+	var ownerChannels []string
+	flags.Func("owner-channel", "confirmed gateway source:user:chat (repeatable; private/dm sessions only)", func(value string) error {
+		ownerChannels = append(ownerChannels, value)
+		return nil
+	})
 	rehearse := flags.Bool("rehearse", false, "print rehearsal only, without writing canon")
 	confirm := flags.Bool("confirm-import", false, "confirm source profile, destination and owner maps, then import")
 	promote := flags.String("promote", "", "reviewed cluster ids, all, or none; accepting attests that the quotes concern the person")
 	horizon := flags.Int64("horizon", 0, "exclude dated nonrecurring candidates before this Unix timestamp")
 	flags.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: lina import-hermes --state-root <path> --source <path> --profile <id> --agent <id> --person <id> [--owner-session <ids>] [--rehearse]\nPrints rehearsal first, then asks to import and separately to promote reviewed clusters. Stop Core before importing.")
+		fmt.Fprintln(os.Stderr, "usage: lina import-hermes --state-root <path> --source <path> --profile <id> --agent <id> --person <id> [--owner-session <ids>] [--owner-channel <source:user:chat>] [--rehearse]\nPrints rehearsal first, then asks to import and separately to promote reviewed clusters. Stop Core before importing.")
 		flags.PrintDefaults()
 	}
 	if err := flags.Parse(args); err != nil {
@@ -60,7 +65,7 @@ func runImportHermes(args []string) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
-	err := importHermes(ctx, *root, *source, *lcm, *state, *sidecars, hermes.Profile{ID: *profile, AgentID: *agent, PersonID: *person}, *owner, *rehearse, *confirm, *promote, hermes.PromotionPolicy{Horizon: *horizon}, os.Stdin, os.Stdout)
+	err := importHermes(ctx, *root, *source, *lcm, *state, *sidecars, hermes.Profile{ID: *profile, AgentID: *agent, PersonID: *person}, *owner, ownerChannels, *rehearse, *confirm, *promote, hermes.PromotionPolicy{Horizon: *horizon}, os.Stdin, os.Stdout)
 	if errors.Is(err, ctlfiles.ErrLocked) {
 		fmt.Fprintln(os.Stderr, "lina import-hermes: Core is running. Stop Core first, then rerun the command.")
 		return 69
@@ -72,7 +77,7 @@ func runImportHermes(args []string) int {
 	return 0
 }
 
-func importHermes(ctx context.Context, root, source, lcm, state, sidecarsDir string, profile hermes.Profile, owner string, rehearse, confirm bool, promote string, policy hermes.PromotionPolicy, input io.Reader, output io.Writer) error {
+func importHermes(ctx context.Context, root, source, lcm, state, sidecarsDir string, profile hermes.Profile, owner string, ownerChannels []string, rehearse, confirm bool, promote string, policy hermes.PromotionPolicy, input io.Reader, output io.Writer) error {
 	source, err := filepath.EvalSymlinks(source)
 	if err != nil {
 		return err
@@ -124,10 +129,13 @@ func importHermes(ctx context.Context, root, source, lcm, state, sidecarsDir str
 	if profile.LCMPath == "" && profile.StatePath == "" {
 		return errors.New("no source database selected")
 	}
-	for _, session := range strings.Split(owner, ",") {
-		if session = strings.TrimSpace(session); session != "" {
-			profile.OwnerChannels = append(profile.OwnerChannels, hermes.OwnerChannel{Source: "cli", SessionID: session})
-		}
+	candidates, err := hermes.DiscoverOwnerChannels(ctx, profile.StatePath)
+	if err != nil {
+		return err
+	}
+	profile.OwnerChannels, err = confirmedHermesOwners(candidates, owner, ownerChannels)
+	if err != nil {
+		return err
 	}
 	sidecars, err := hermes.DiscoverSidecars(ctx, source, sidecarsDir, staging, []hermes.Profile{profile})
 	if err != nil {
@@ -165,7 +173,7 @@ func importHermes(ctx context.Context, root, source, lcm, state, sidecarsDir str
 		return strings.TrimSpace(scanner.Text()), nil
 	}
 	if !confirm {
-		a, err := answer("Confirm the profile, agent, person and owner-session maps above. Type import to copy and seal this source, or anything else to stop:")
+		a, err := answer("Confirm the profile, agent, person and owner maps above. Type import to copy and seal this source, or anything else to stop:")
 		if err != nil {
 			return err
 		}
@@ -301,4 +309,55 @@ func importHermes(ctx context.Context, root, source, lcm, state, sidecarsDir str
 		Promoted         int
 		BackupGeneration string
 	}{n, seal.BackupGeneration})
+}
+
+// Confirm only provenance present in this immutable profile snapshot. Gateway
+// tuples expand to its private sessions; local sessions are individually attested.
+func confirmedHermesOwners(candidates []hermes.OwnerChannelCandidate, sessions string, channels []string) ([]hermes.OwnerChannel, error) {
+	var result []hermes.OwnerChannel
+	seen := map[string]bool{}
+	add := func(c hermes.OwnerChannelCandidate) {
+		if !seen[c.SessionID] {
+			result = append(result, c.OwnerChannel)
+			seen[c.SessionID] = true
+		}
+	}
+	for _, session := range strings.Split(sessions, ",") {
+		session = strings.TrimSpace(session)
+		if session == "" {
+			continue
+		}
+		matched := false
+		for _, c := range candidates {
+			if c.SessionID == session && (c.Source == "cli" || c.Source == "desktop" || c.Source == "webui") && (c.ChatType == "" || c.ChatType == "private" || c.ChatType == "dm") {
+				add(c)
+				matched = true
+			}
+		}
+		if !matched {
+			return nil, errors.New("owner-session must name a listed CLI, desktop or webui session without a shared chat")
+		}
+	}
+	for _, channel := range channels {
+		parts := strings.SplitN(channel, ":", 3)
+		if len(parts) != 3 || parts[1] == "" || parts[2] == "" {
+			return nil, errors.New("owner-channel requires source:user:chat")
+		}
+		switch parts[0] {
+		case "telegram", "discord", "slack", "signal", "whatsapp":
+		default:
+			return nil, errors.New("owner-channel requires a supported gateway source")
+		}
+		matched := false
+		for _, c := range candidates {
+			if c.Source == parts[0] && c.UserID == parts[1] && c.ChatID == parts[2] && (c.ChatType == "private" || c.ChatType == "dm") {
+				add(c)
+				matched = true
+			}
+		}
+		if !matched {
+			return nil, errors.New("owner-channel does not match a listed private or dm session")
+		}
+	}
+	return result, nil
 }

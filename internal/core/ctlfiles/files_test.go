@@ -195,13 +195,20 @@ func TestUnsafePathsAreRefused(t *testing.T) {
 				err = os.Link(target, path)
 			case "public epoch":
 				err = os.WriteFile(path, []byte("77"), 0644)
-				if err == nil {
-					// The unsafe mode is the test input, independent of umask.
-					err = os.Chmod(path, 0644)
-				}
 			}
 			if err != nil {
 				t.Fatal(err)
+			}
+			// WriteFile applies the process umask. The public epoch must stay
+			// mode 0644 or a restrictive mask turns the fixture private.
+			if kind == "public epoch" {
+				if err := os.Chmod(path, 0644); err != nil {
+					t.Fatal(err)
+				}
+				info, err := os.Lstat(path)
+				if err != nil || info.Mode().Perm() != 0644 {
+					t.Fatalf("public epoch mode: %v %v", info, err)
+				}
 			}
 			if _, err := store.MintEpoch(0, 0); err == nil {
 				t.Fatal("unsafe epoch accepted")
