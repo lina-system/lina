@@ -17,7 +17,7 @@ import (
 )
 
 func TestSaveCreatesOneVersionedRecord(t *testing.T) {
-	s, db, _, _ := setup(t)
+	_, db, _, _ := setup(t)
 	root := t.TempDir()
 	if err := os.Chmod(root, 0700); err != nil {
 		t.Fatal(err)
@@ -27,7 +27,7 @@ func TestSaveCreatesOneVersionedRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { w.Close() })
-	s, err = New(db, Config{Journal: LedgerJournal{Surface: ledger.Surface{Kind: "tui"}}, Writer: w})
+	s, err := New(db, Config{Journal: LedgerJournal{Surface: ledger.Surface{Kind: "tui"}}, Writer: w})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestRecordsDetectExternalChangeAndRejectPathEscape(t *testing.T) {
 }
 
 func TestSavedFileOwnsBytesAfterPreviewAssetIsTrashed(t *testing.T) {
-	s, db, _, _ := setup(t)
+	_, db, _, _ := setup(t)
 	root := t.TempDir()
 	if err := os.Chmod(root, 0700); err != nil {
 		t.Fatal(err)
@@ -131,7 +131,7 @@ func TestSavedFileOwnsBytesAfterPreviewAssetIsTrashed(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer w.Close()
-	s, err = New(db, Config{Journal: LedgerJournal{Surface: ledger.Surface{Kind: "tui"}}, Writer: w})
+	s, err := New(db, Config{Journal: LedgerJournal{Surface: ledger.Surface{Kind: "tui"}}, Writer: w})
 	if err != nil {
 		t.Fatal(err)
 	}

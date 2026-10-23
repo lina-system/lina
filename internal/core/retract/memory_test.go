@@ -307,7 +307,7 @@ func TestForgetExcludesTransitiveDerivedMemory(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshotCanon(t, generation, filepath.Join(root, "canon.sqlite"))
-	db, s, flow, _, _ = memoryAt(t, root)
+	db, _, _, _, _ = memoryAt(t, root)
 	check(0)
 	assertNoSearchRows(t, db)
 }
