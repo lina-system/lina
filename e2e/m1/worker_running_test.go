@@ -53,7 +53,7 @@ func testConversationWorkerViews(t *testing.T, progress, failure bool, glyphs st
 		if scriptedCodingManager(t, w, req) {
 			return
 		}
-		if _, completion := workerCompletionInput(req.Input); completion {
+		if workerCompletionInput(req.Input) != "" {
 			if failure {
 				// Declarations remain cacheable. Prove the reaction cannot
 				// execute a restart, including through the deferred-tool bridge.

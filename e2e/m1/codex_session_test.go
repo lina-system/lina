@@ -170,7 +170,11 @@ func codexSessionFixture() {
 					if err := os.WriteFile(filepath.Join(workdir, "result.txt"), []byte("LINA_WORKER_RESULT"), 0600); err != nil {
 						os.Exit(97)
 					}
-					notify("item/completed", map[string]any{"threadId": "fixture-thread", "turnId": turnID, "item": map[string]any{"type": "agentMessage", "id": "result", "text": "Created result.txt: LINA_WORKER_RESULT"}})
+					output := "Created result.txt: LINA_WORKER_RESULT"
+					if question := os.Getenv("LINA_WORKER_FINISH_QUESTION"); question != "" {
+						output = question
+					}
+					notify("item/completed", map[string]any{"threadId": "fixture-thread", "turnId": turnID, "item": map[string]any{"type": "agentMessage", "id": "result", "text": output}})
 					state = "idle"
 					notify("turn/completed", map[string]any{"threadId": "fixture-thread", "turn": map[string]any{"id": turnID, "status": "completed"}})
 				}(cwd, turn)
@@ -506,20 +510,20 @@ func TestM2InstalledCodexLive(t *testing.T) {
 	h.stopCore(core)
 }
 
-func workerCompletionInput(inputs []json.RawMessage) (string, bool) {
+func workerCompletionInput(inputs []json.RawMessage) string {
 	// Tool follow-ups retain the same current input; packet evidence after it
 	// is not another worker outcome or a new request.
 	var item struct{ Role, Content string }
 	if json.Unmarshal(fixture.CurrentInput(inputs), &item) != nil || item.Role != "user" || !strings.Contains(item.Content, `<external_evidence origin="worker-session:`) {
-		return "", false
+		return ""
 	}
-	return item.Content, true
+	return item.Content
 }
 
 // Existing adapter journeys explicitly handle the additional persona turns.
 func respondWorkerCompletion(w http.ResponseWriter, inputs []json.RawMessage, result string) bool {
-	content, ok := workerCompletionInput(inputs)
-	if !ok {
+	content := workerCompletionInput(inputs)
+	if content == "" {
 		return false
 	}
 	if result == "" {
