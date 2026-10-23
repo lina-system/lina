@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -255,6 +256,40 @@ func (h *harness) startCore() *process {
 	return p
 }
 
+// diagReadiness is a temporary measurement: on a readiness timeout it records
+// the child's accumulated CPU time and how long readiness actually took.
+func diagReadiness(h *harness, core *process, budget time.Duration) {
+	pid := core.command.Process.Pid
+	cpu := func() time.Duration {
+		data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+		if err != nil {
+			return -1
+		}
+		fields := strings.Fields(string(data))
+		if len(fields) < 15 {
+			return -1
+		}
+		utime, _ := strconv.ParseInt(fields[13], 10, 64)
+		stime, _ := strconv.ParseInt(fields[14], 10, 64)
+		return time.Duration(utime+stime) * (time.Second / 100)
+	}
+	start := time.Now()
+	load, _ := os.ReadFile("/proc/loadavg")
+	pressure, _ := os.ReadFile("/proc/pressure/cpu")
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		conn, err := net.Dial("unix", h.socket)
+		if err == nil {
+			conn.Close()
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	h.t.Logf("DIAG readiness budget=%s exceeded: extra-wait=%s total-cpu=%s load=%s cpu-pressure=%s",
+		budget, time.Since(start).Round(time.Millisecond), cpu(),
+		strings.TrimSpace(string(load)), strings.TrimSpace(string(pressure)))
+}
+
 func (h *harness) connect(core *process) net.Conn {
 	h.t.Helper()
 	return h.connectWithin(core, operationTimeout)
@@ -270,6 +305,9 @@ func (h *harness) connectWithin(core *process, budget time.Duration) net.Conn {
 	// Decide by the deadlines the loop owns, so a short scenario allowance is
 	// never reported as a Core startup or protocol fault.
 	notListening := func() {
+		if os.Getenv("LINA_DIAG_READY") != "" {
+			diagReadiness(h, core, budget)
+		}
 		if deadline, ok := h.ctx.Deadline(); ok && !time.Now().Before(deadline) {
 			h.t.Fatalf("Core did not listen: scenario context expired")
 		}
