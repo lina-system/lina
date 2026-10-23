@@ -72,6 +72,7 @@ func admit(t *testing.T, s *canon.Store) int64 {
 	return r.ID
 }
 func TestClaimPreparationAndRecoveryNeverReplay(t *testing.T) {
+	t.Parallel()
 	db, cfg := database(t)
 	s := turn.New(db)
 	id := admit(t, db)
@@ -117,6 +118,7 @@ func TestClaimPreparationAndRecoveryNeverReplay(t *testing.T) {
 	}
 }
 func TestEffectKeyScopeAndIntent(t *testing.T) {
+	t.Parallel()
 	a := turn.EffectKey("turn", "edit", "target", "call")
 	for _, b := range []string{turn.EffectKey("task", "edit", "target", "call"), turn.EffectKey("turn", "edit", "target", "other"), turn.EffectKey("turn", "edit", "else", "call"), turn.EffectKey("turn", "read", "target", "call")} {
 		if a == b || a == "" {
@@ -125,6 +127,7 @@ func TestEffectKeyScopeAndIntent(t *testing.T) {
 	}
 }
 func TestEffectAppliedOnceAcrossRestart(t *testing.T) {
+	t.Parallel()
 	for _, receipt := range []bool{false, true} {
 		t.Run(map[bool]string{false: "crash_before_receipt", true: "receipt_committed"}[receipt], func(t *testing.T) {
 			db, cfg := database(t)
@@ -197,6 +200,7 @@ func (s *stream) Next(context.Context) (provider.Event, error) {
 func (*stream) Meta() provider.Meta { return provider.Meta{} }
 func (*stream) Close() error        { return nil }
 func TestRunClaimsBeforePreparationAndNeverResends(t *testing.T) {
+	t.Parallel()
 	db, _ := database(t)
 	s := turn.New(db)
 	id := admit(t, db)
@@ -223,6 +227,7 @@ func TestRunClaimsBeforePreparationAndNeverResends(t *testing.T) {
 }
 
 func TestRecoveryClosesCallsCommittedAsItemsBeforeResponseEnds(t *testing.T) {
+	t.Parallel()
 	db, cfg := database(t)
 	s := turn.New(db)
 	id := admit(t, db)
@@ -248,6 +253,7 @@ func TestRecoveryClosesCallsCommittedAsItemsBeforeResponseEnds(t *testing.T) {
 	}
 }
 func TestClaimRollbackAndWrongConversation(t *testing.T) {
+	t.Parallel()
 	db, _ := database(t)
 	s := turn.New(db)
 	id := admit(t, db)
@@ -260,6 +266,7 @@ func TestClaimRollbackAndWrongConversation(t *testing.T) {
 }
 
 func TestApprovalResumesStoredArgumentsWithFreshDeadline(t *testing.T) {
+	t.Parallel()
 	db, cfg := database(t)
 	auth := grant.Request{GrantID: "grant", MainID: "main", Epoch: cfg.Epoch, TaskID: "turn", Host: "host", OSUser: "user", Person: "person", Agent: "agent"}
 	svc, err := authority.Open(t.Context(), db, authority.Config{Epoch: cfg.Epoch, CanPresent: func() bool { return true }, Resolve: func(context.Context, string) (grant.Grant, grant.Environment, error) {
@@ -300,6 +307,7 @@ func TestApprovalResumesStoredArgumentsWithFreshDeadline(t *testing.T) {
 	}
 }
 func TestResultCommitsOnCompletionBeforeEarlierCallFinishes(t *testing.T) {
+	t.Parallel()
 	db, _ := database(t)
 	s := turn.New(db)
 	id := admit(t, db)
@@ -355,6 +363,7 @@ func TestResultCommitsOnCompletionBeforeEarlierCallFinishes(t *testing.T) {
 }
 
 func TestRuntimeCallsAppendWithinOneRound(t *testing.T) {
+	t.Parallel()
 	db, _ := database(t)
 	s := turn.New(db)
 	if err := s.Claim(t.Context(), "runtime", "conversation", admit(t, db)); err != nil {
