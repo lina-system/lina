@@ -84,6 +84,8 @@ func (e *workerSession) inputWorker(ctx context.Context, snap worker.ThreadSnaps
 	if prior.ID != "" {
 		intent := prior
 		intent.State, intent.Thread.TurnID, intent.Finish = "unknown", "", nil
+		// Remember which turn cannot be evidence of this pending continuation.
+		intent.RetryFrom = prior.Thread.TurnID
 		intent.Reservation, intent.ObservedAt = e.reservation, 0
 		if err := store.Put(ctx, intent); err != nil {
 			return tools.Failed, errors.Join(err, release())
@@ -117,6 +119,7 @@ func (e *workerSession) inputWorker(ctx context.Context, snap worker.ThreadSnaps
 			if prior.ID != "" {
 				next := e.recovery
 				next.Thread, next.State = current.Thread, "running"
+				next.RetryFrom = prior.RetryFrom
 				if err = store.Put(context.WithoutCancel(ctx), next); err == nil {
 					e.recovery = next
 				}

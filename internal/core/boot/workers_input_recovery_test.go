@@ -97,10 +97,31 @@ func TestWorkerInputRecoveryAdmission(t *testing.T) {
 				if mode == "uncertain" && !errors.Is(err, context.DeadlineExceeded) {
 					t.Fatal(err)
 				}
+				if mode == "uncertain" {
+					if err := entry.bindStartedRecovery(t.Context(), prior.Thread); err != nil {
+						t.Fatal(err)
+					}
+					rec = read()
+					if rec.State != "unknown" || rec.Thread.TurnID != "" {
+						t.Fatal("previous start notification replaced uncertain admission", rec)
+					}
+				}
 				// A fresh read of the previous completed turn cannot settle the intent.
 				old := worker.ThreadSnapshot{Thread: prior.Thread, State: worker.Idle, Finish: &worker.Finish{Status: worker.Done}, EffectsKnown: true}
 				if next, send := recovery.Observe(rec, old); next.State != "unknown" || send {
 					t.Fatal("previous turn settled pending input", next, send)
+				}
+				if mode == "uncertain" {
+					// A late, exact new-turn notification may resolve the binding,
+					// but it must transfer the fence and activity together.
+					base.snapshot.Thread.TurnID, base.snapshot.State = "new", worker.Active
+					if err := entry.bindStartedRecovery(t.Context(), base.snapshot.Thread); err != nil {
+						t.Fatal(err)
+					}
+					_, boundActivity := entry.active["new"]
+					if rec := read(); rec.Thread.TurnID != "new" || rec.State != "running" || entry.reservationTurn != "new" || !boundActivity {
+						t.Fatalf("late accepted binding lost execution ownership: rec=%+v turn=%q activity=%v", rec, entry.reservationTurn, boundActivity)
+					}
 				}
 			default:
 				if err != nil || result.State != tools.Applied || rec.State != "running" || rec.Thread != base.snapshot.Thread || rec.Finish != nil || rec.Reservation != entry.reservation || rec.Retries != prior.Retries {
