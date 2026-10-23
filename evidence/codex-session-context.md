@@ -47,3 +47,23 @@ file, exactly one applied start effect, and durable notices after Core restart.
 The model and installed worker are synthetic; this does not claim verification
 against a live provider account. Production behavior and design contracts are
 unchanged.
+
+## Focused verification
+
+All commands ran through `dv heavy`. Before the helper correction, the new
+regression failed its completed, interrupted and discovery cases with
+`handled=false, want true`; its newer-input cases passed. After the correction,
+all five cases passed.
+
+```sh
+go test -count=1 -v ./e2e/m1 -run '^TestWorkerCompletionFixtureContext$'
+go test -count=3 -v ./e2e/m1 -run '^TestM2InstalledCodexSession$'
+go test -count=1 -v ./e2e/m1 -run '^TestM2InstalledCodexSlowManager$'
+```
+
+The original scenario passed all three repetitions (2.81 s, 1.90 s and 2.02 s).
+The slow-manager scenario passed in 33.86 s with its existing 31-second manager
+delay. The same normal scenario had failed in all three baseline/diagnostic
+runs. No timeouts, sleeps, control counts or product assertions were relaxed.
+Final changed-range foundation and current-head CI/review results are recorded
+on the pull request.
