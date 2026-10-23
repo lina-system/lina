@@ -9,14 +9,12 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/reply"
 	"github.com/thisisjun786/lina/internal/core/results"
-	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/grant"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/protocol"
@@ -164,22 +162,12 @@ func (r *conversationRuntime) publishTypedResult(ctx context.Context, source led
 		speaker := protocol.ConversationSpeakerAgent
 		return r.publish(ctx, protocol.KindItemDone, key, protocol.ItemDone{Text: &view.Text, Speaker: &speaker})
 	}
-	text := value.Summary + "\n" + value.Text
-	if len(text) > conversationPreviewBytes {
-		end := conversationPreviewBytes
-		for !utf8.RuneStart(text[end]) {
-			end--
-		}
-		text = text[:end] + "\n… " + design.Text(eventLanguage(source), "reply.truncated")
+	p := authoredResultWire(value, view.Text)
+	text, next, err := resultTextPage(*p.Text, 0)
+	if err != nil {
+		return err
 	}
-	p := protocol.Result{
-		ResultID: value.ID, Revision: json.Number(strconv.Itoa(value.Revision)), Type: protocol.ResultType(value.Type), Status: protocol.ResultStatus(value.Status),
-		Title: value.Title, Summary: view.Text, Text: &text, RevisedBy: value.RevisedBy,
-		Provenance: protocol.ResultProvenance{AgentID: value.Provenance.AgentID, ConversationID: value.Provenance.ConversationID, TurnID: value.Provenance.TurnID, TaskID: value.Provenance.TaskID},
-	}
-	if value.Completion != nil {
-		p.Completion = &protocol.CompletionStatus{State: protocol.CompletionState(value.Completion.State), Label: value.Completion.Label}
-	}
+	p.Text, p.Next = &text, next
 	return r.publish(ctx, protocol.KindResult, key, p)
 }
 

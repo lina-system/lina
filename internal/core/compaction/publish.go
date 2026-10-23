@@ -46,6 +46,9 @@ func (s *Store) publish(ctx context.Context, p Proposal, audit func(*canon.Tx) e
 				return err
 			}
 		}
+		if err := canon.WriteSummaryCitations(ctx, tx, n.ID, n.Revision); err != nil {
+			return err
+		}
 		if audit != nil {
 			return audit(tx)
 		}
