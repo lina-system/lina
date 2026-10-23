@@ -51,7 +51,7 @@ func testQuotaHandoffSettlement(t *testing.T, unknown bool) {
 		t.Fatal(err)
 	}
 	defer area.Close(context.Background())
-	s, err := openService(t, Config{DB: db, Work: work.New(db), Area: area, Root: root, Main: "main", Epoch: 1, Workers: []Factory{{Name: "first", Open: func(context.Context, lease.Lease) (worker.Adapter, func(context.Context) error, error) {
+	s, err := openService(t, Config{DB: db, Work: work.New(db), Area: area, Root: root, Main: "main", Epoch: 1, Workers: []Factory{{Name: "first", Explicit: true, Chooser: true, Open: func(context.Context, lease.Lease) (worker.Adapter, func(context.Context) error, error) {
 		return &quotaStopAdapter{events: make(chan worker.Event, 1), unknown: unknown}, func(context.Context) error { return nil }, nil
 	}}}})
 	if err != nil {

@@ -37,32 +37,10 @@ accept. Its generated `FormValue` holds exactly one string, number or boolean.
 
 ## Kind inventory
 
-Every kind below has its own generated payload type. Names use snake case on the
-wire and exported Go names, for example `output_delta`, `KindOutputDelta` and
-`OutputDelta`.
-
-| Contract family | Kinds |
-| --- | --- |
-| Handshake and errors | `hello`, `welcome`, `error` |
-| Conversation and history | `conversation_start`, `input`, `interrupt`, `history_get`, `history`, `subscribe` |
-| Stream events | `output_delta`, `item_done`, `turn_state`, `tool_activity` |
-| Approvals and questions | `approval_request`, `approval_answer`, `question`, `question_answer` |
-| Results | `result`, `result_get`, `result_edit`, `result_save` |
-| Running list and background work | `running_get`, `running`, `running_update`, `stop`, `follow_up`, `background_notice` |
-| Progress | `progress_get`, `progress`, `progress_update`, `progress_digest_get`, `progress_digest` |
-| Waiting list | `waiting_get`, `waiting`, `waiting_update`, `waiting_answer` |
-| Details and readiness | `details_get`, `details`, `readiness_failure` |
-| Agent management | `agent_request`, `agent_result` |
-| Work records | `work_request`, `work_result` |
-| Record views and capture | `record_request`, `record_result` |
-| Accounts | `account_request`, `account_result` |
-| Memory | `memory_request`, `memory_result`, `memory_import_progress`, `memory_promotion_batch` |
-| Channels | `channel_request`, `channel_result`, `channel_state` |
-| Web setup | `web_request`, `web_result` |
-| Agent exchanges | `agent_talk_get`, `agent_talk`, `agent_talk_entry`, `agent_talk_expand`, `agent_talk_subscribe` |
-| Connection and task control | `connected`, `disconnected`, `task_status`, `run_status`, `task_cancel`, `multi_task_control` |
-| Sign-in relay | `sign_in_listen`, `sign_in_listening`, `sign_in_open`, `sign_in_redirect` |
-| Core lifecycle | `restart_request`, `restart_get`, `restart_status` |
+The closed kind list is `properties.kind.enum` in
+[envelope.json](../../protocol/schema/client/1.0/envelope.json). Every kind has its
+own generated payload type. Names use snake case on the wire and exported Go
+names, for example `output_delta`, `KindOutputDelta` and `OutputDelta`.
 
 ## Reserved shapes
 

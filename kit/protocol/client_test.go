@@ -8,29 +8,6 @@ import (
 	"testing"
 )
 
-// This inventory follows the client-connection capability table and kind list.
-// Every kind must have a distinct generated payload, even while reserved.
-var clientKinds = []string{
-	"hello", "welcome", "error", "conversation_start", "input", "interrupt",
-	"history_get", "history", "subscribe", "output_delta", "item_done", "turn_state", "tool_activity",
-	"approval_request", "approval_answer", "question", "question_answer",
-	"result", "result_get", "result_edit", "result_save",
-	"running_get", "running", "running_update", "stop", "stop_result", "follow_up", "background_notice",
-	"progress_get", "progress", "progress_update", "progress_digest_get", "progress_digest",
-	"waiting_get", "waiting", "waiting_update", "waiting_answer", "details_get", "details",
-	"readiness_failure", "agent_request", "agent_result", "work_request", "work_result", "work_switch_request", "work_switch_result",
-	"account_request", "account_result", "memory_request", "memory_result",
-	"memory_import_progress", "memory_promotion_batch", "channel_request", "channel_result", "channel_state",
-	"agent_talk_get", "agent_talk", "agent_talk_entry", "agent_talk_expand", "agent_talk_subscribe",
-	"connected", "disconnected", "task_status", "run_status", "task_cancel", "multi_task_control",
-	"sign_in_listen", "sign_in_listening", "sign_in_open", "sign_in_redirect",
-	"snapshot", "resync", "resync_required",
-	"restart_request", "restart_get", "restart_status",
-	"export_request", "export_result", "replay_request", "replay_result",
-	"plan_request", "plan_response", "web_request", "web_result",
-	"record_request", "record_result",
-}
-
 func clientMessage(t *testing.T, kind string, payload any) map[string]any {
 	t.Helper()
 	value := jsonValue(t, fixture(t, "hello")).(map[string]any)
@@ -114,12 +91,10 @@ func concretePayloads() map[string]any {
 }
 
 func TestEveryClientKindRoundTripsWithTypedPayload(t *testing.T) {
-	if !reflect.DeepEqual(clientKinds, clientSchema.Properties["kind"].Enum) {
-		t.Fatal("client kind coverage differs from the closed schema list")
-	}
 	concrete := concretePayloads()
 	types := map[reflect.Type]string{}
-	for _, kind := range clientKinds {
+	// Every schema kind must have a distinct generated payload, even while reserved.
+	for _, kind := range clientSchema.Properties["kind"].Enum {
 		t.Run(kind, func(t *testing.T) {
 			payload, ok := concrete[kind]
 			if !ok {

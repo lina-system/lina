@@ -5,9 +5,13 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -19,6 +23,46 @@ func schemaData(t *testing.T) []byte {
 		t.Fatal(err)
 	}
 	return data
+}
+
+func TestGeneratedSchemaPreservesSource(t *testing.T) {
+	data := schemaData(t)
+	source, err := generate(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := parser.ParseFile(token.NewFileSet(), "client.gen.go", source, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, decl := range file.Decls {
+		group, ok := decl.(*ast.GenDecl)
+		if !ok || group.Tok != token.CONST {
+			continue
+		}
+		for _, spec := range group.Specs {
+			value := spec.(*ast.ValueSpec)
+			if value.Names[0].Name != "clientSchemaJSON" {
+				continue
+			}
+			literal, ok := value.Values[0].(*ast.BasicLit)
+			if !ok || literal.Kind != token.STRING {
+				t.Fatal("embedded schema is not a string literal")
+			}
+			embedded, err := strconv.Unquote(literal.Value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if embedded != string(data) {
+				t.Error("embedded schema differs from the canonical source bytes")
+			}
+			if !strings.HasPrefix(literal.Value, "`") {
+				t.Error("embedded schema is not a raw string")
+			}
+			return
+		}
+	}
+	t.Fatal("generated source has no schema constant")
 }
 
 func TestSchemaChangesGenerateWorkingTypesAndValidation(t *testing.T) {
@@ -108,7 +152,8 @@ func TestProbe(t *testing.T) {
 
 func TestGeneratorRefusesUnsupportedOrIncompleteSchema(t *testing.T) {
 	for label, change := range map[string]func(map[string]any){
-		"unknown keyword": func(root map[string]any) { root["unevaluatedProperties"] = false },
+		"backtick in schema": func(root map[string]any) { root["$comment"] = "Contains a ` delimiter" },
+		"unknown keyword":    func(root map[string]any) { root["unevaluatedProperties"] = false },
 		"open object would lose fields": func(root map[string]any) {
 			root["$defs"].(map[string]any)["agent"].(map[string]any)["additionalProperties"] = true
 		},
