@@ -4,6 +4,7 @@ package e2e_test
 import (
 	"context"
 	"crypto/sha256"
+	"debug/buildinfo"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -42,10 +43,19 @@ func TestAlphaResidencyProbe(t *testing.T) {
 }
 
 type alphaResidentSample struct {
-	Elapsed float64 `json:"elapsed_seconds"`
-	RSS     uint64  `json:"rss_bytes"`
-	Peak    uint64  `json:"peak_rss_bytes"`
-	Start   string  `json:"process_start_ticks"`
+	Elapsed       float64  `json:"elapsed_seconds"`
+	RSS           uint64   `json:"rss_bytes"`
+	Peak          uint64   `json:"peak_rss_bytes"`
+	Start         string   `json:"process_start_ticks"`
+	Gap           float64  `json:"gap_seconds"`
+	Read          float64  `json:"read_seconds"`
+	PreviousRead  float64  `json:"previous_read_seconds"`
+	PreviousWrite float64  `json:"previous_write_seconds"`
+	PreviousSync  float64  `json:"previous_sync_seconds"`
+	MemorySome    *float64 `json:"memory_some_avg10,omitempty"`
+	MemoryFull    *float64 `json:"memory_full_avg10,omitempty"`
+	IOSome        *float64 `json:"io_some_avg10,omitempty"`
+	IOFull        *float64 `json:"io_full_avg10,omitempty"`
 }
 
 func alphaReadResident(pid int) (alphaResidentSample, error) {
@@ -93,6 +103,40 @@ func alphaReadResident(pid int) (alphaResidentSample, error) {
 	return sample, nil
 }
 
+func alphaPressureAvg10(kind string) (some, full *float64) {
+	text, err := os.ReadFile("/proc/pressure/" + kind)
+	if err != nil {
+		return nil, nil
+	}
+	someValue, fullValue, ok := parsePressureAvg10(string(text))
+	if !ok {
+		return nil, nil
+	}
+	return &someValue, &fullValue
+}
+
+func alphaProductCommit(binary string) string {
+	if directory := os.Getenv("LINA_ALPHA_BUILD"); filepath.IsAbs(directory) {
+		var manifest struct {
+			Commit string `json:"source_commit"`
+		}
+		raw, err := os.ReadFile(filepath.Join(directory, "pinned-binaries.json"))
+		if err == nil && json.Unmarshal(raw, &manifest) == nil && len(manifest.Commit) == 40 {
+			return manifest.Commit
+		}
+	}
+	info, err := buildinfo.ReadFile(binary)
+	if err != nil {
+		return ""
+	}
+	for _, setting := range info.Settings {
+		if setting.Key == "vcs.revision" {
+			return setting.Value
+		}
+	}
+	return ""
+}
+
 func alphaResidency(t *testing.T, duration time.Duration) int {
 	directory := os.Getenv("LINA_ALPHA_CAPTURES")
 	if !filepath.IsAbs(directory) {
@@ -120,6 +164,13 @@ func alphaResidency(t *testing.T, duration time.Duration) int {
 		Samples         int       `json:"samples"`
 		Probes          int       `json:"health_probes"`
 		MaximumGap      float64   `json:"maximum_sample_gap_seconds"`
+		ReadBeforeGap   float64   `json:"read_seconds_before_maximum_gap"`
+		WriteBeforeGap  float64   `json:"write_seconds_before_maximum_gap"`
+		SyncBeforeGap   float64   `json:"sync_seconds_before_maximum_gap"`
+		MaximumRead     float64   `json:"maximum_read_seconds"`
+		MaximumWrite    float64   `json:"maximum_write_seconds"`
+		MaximumSync     float64   `json:"maximum_sync_seconds"`
+		ProductCommit   string    `json:"product_commit"`
 		Started         time.Time `json:"started_at"`
 		Ended           time.Time `json:"ended_at"`
 	}{Status: "incomplete", RequiredSeconds: 86400, Budget: alphaResidentBudget}
@@ -154,6 +205,7 @@ func alphaResidency(t *testing.T, duration time.Duration) int {
 		t.Fatal(err)
 	}
 	report.ArtifactSHA256 = fmt.Sprintf("%x", sha256.Sum256(binary))
+	report.ProductCommit = alphaProductCommit(h.binary)
 	ctx, cancel := context.WithTimeout(t.Context(), duration+10*time.Minute)
 	defer cancel()
 	h.ctx = ctx
@@ -211,6 +263,7 @@ func alphaResidency(t *testing.T, duration time.Duration) int {
 	begin := time.Now()
 	report.Started = begin.UTC()
 	last := begin
+	var gaps residencyGapRecord
 	sample := func() {
 		select {
 		case <-core.done:
@@ -218,28 +271,54 @@ func alphaResidency(t *testing.T, duration time.Duration) int {
 		default:
 		}
 		now := time.Now()
+		readStart := time.Now()
 		reading, err := alphaReadResident(core.command.Process.Pid)
 		if err != nil {
 			t.Fatal(err)
 		}
+		reading.MemorySome, reading.MemoryFull = alphaPressureAvg10("memory")
+		reading.IOSome, reading.IOFull = alphaPressureAvg10("io")
+		readSeconds := time.Since(readStart).Seconds()
 		reading.Elapsed = now.Sub(begin).Seconds()
 		report.MeasuredSeconds = reading.Elapsed
 		gap := now.Sub(last).Seconds()
-		report.MaximumGap = max(report.MaximumGap, gap)
 		last = now
+		reading.Gap = gap
+		reading.Read = readSeconds
+		reading.PreviousRead = gaps.read
+		reading.PreviousWrite = gaps.write
+		reading.PreviousSync = gaps.sync
 		if reading.Start != first.Start {
 			t.Fatal("Core process identity changed")
 		}
 		report.Peak = max(report.Peak, reading.Peak)
 		report.Samples++
-		if err := json.NewEncoder(samples).Encode(reading); err != nil {
+		raw, err := json.Marshal(reading)
+		if err != nil {
 			t.Fatal(err)
 		}
+		writeStart := time.Now()
+		if _, err := samples.Write(append(raw, '\n')); err != nil {
+			t.Fatal(err)
+		}
+		writeSeconds := time.Since(writeStart).Seconds()
+		// File.Sync is fsync. Its duration stays on the next gap so a stall
+		// can be told apart from the scheduler without moving the limit.
+		syncStart := time.Now()
 		if err := samples.Sync(); err != nil {
 			t.Fatal(err)
 		}
+		syncSeconds := time.Since(syncStart).Seconds()
+		gaps.note(gap, readSeconds, writeSeconds, syncSeconds)
+		report.MaximumGap = gaps.Maximum
+		report.ReadBeforeGap = gaps.ReadBeforeMaximum
+		report.WriteBeforeGap = gaps.WriteBeforeMaximum
+		report.SyncBeforeGap = gaps.SyncBeforeMaximum
+		report.MaximumRead = max(report.MaximumRead, readSeconds)
+		report.MaximumWrite = max(report.MaximumWrite, writeSeconds)
+		report.MaximumSync = max(report.MaximumSync, syncSeconds)
 		if gap > 2 {
-			t.Fatal("resource sample gap exceeds two seconds")
+			t.Fatalf("resource sample gap %.3fs exceeds two seconds; previous read %.3fs write %.3fs sync %.3fs", gap, gaps.ReadBeforeMaximum, gaps.WriteBeforeMaximum, gaps.SyncBeforeMaximum)
 		}
 		if reading.Peak > alphaResidentBudget {
 			t.Fatalf("Core peak RSS %d exceeds predeclared budget %d", reading.Peak, alphaResidentBudget)
