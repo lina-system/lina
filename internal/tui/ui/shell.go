@@ -47,6 +47,7 @@ type shellModel struct {
 	waitingOrder  string
 	activityFrame uint64
 	cardScroll    int
+	cardRead      cardReading
 	cardRequests  map[string]state.CardAnswerRequest
 	focused       bool
 	cardGate      term.Gate
@@ -131,6 +132,9 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.BlurMsg:
 		m.focused = false
 	case tea.WindowSizeMsg:
+		if m.size.Width != max(0, msg.Width) || m.size.Height != max(0, msg.Height) {
+			m.resetCardReading()
+		}
 		m.size = layout.Size{Width: max(0, msg.Width), Height: max(0, msg.Height)}
 		options := m.styles.options
 		options.Width = max(1, msg.Width)
@@ -232,6 +236,7 @@ func (m *shellModel) beginGeneration(msg shellBegin) {
 		m.resyncSeen = make(map[resyncSignal]protocol.StreamCursor)
 		m.cardRequests = make(map[string]state.CardAnswerRequest)
 		m.content, _ = state.Reduce(m.content, state.ResetCardRequests{})
+		m.resetCardReading()
 	}
 }
 
@@ -324,6 +329,7 @@ func (m *shellModel) applyData(message state.Msg) tea.Cmd {
 	afterCard, _ := m.content.CurrentCard()
 	if beforeCard.ID != afterCard.ID || beforeCard.Revision != afterCard.Revision {
 		m.cardGate.CardChanged(m.now())
+		m.resetCardReading()
 	}
 	if projected != nil && m.content.Topics[projected.topic].OutOfSync {
 		if floor, exists := m.resyncPending[projected.topic]; !exists || compareStreamCursor(projected.cursor, floor) > 0 {

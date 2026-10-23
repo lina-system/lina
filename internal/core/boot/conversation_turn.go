@@ -39,8 +39,11 @@ import (
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
-// turnState holds the mutable state shared by a conversation turn's callbacks.
+// turnState holds the inputs and mutable state shared by a conversation turn's callbacks.
 type turnState struct {
+	runtime            *conversationRuntime
+	input              ledger.Event
+	turnID             string
 	items              []provider.Item
 	events             []ledger.Event
 	memoryEpoch        uint64
@@ -71,6 +74,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 	releaseCredentials := r.vault.BeginTurn()
 	defer releaseCredentials()
 	s := turnState{
+		runtime:   r,
+		input:     input,
+		turnID:    turnID,
 		bindings:  map[string]loop.Tool{},
 		filters:   map[string]*conversationReplyStream{},
 		questions: &questionTurn{},
@@ -105,193 +111,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		Resolve: func(context.Context) (turn.ModelPolicy, error) {
 			return turn.ModelPolicy{Model: r.route.Model, Revision: "configured", Class: r.route.Adapter.Class()}, nil
 		},
-		Context: func(ctx context.Context, policy turn.ModelPolicy) (turn.PreparedRequest, error) {
-			if err := r.refreshPersona(ctx); err != nil {
-				return turn.PreparedRequest{}, err
-			}
-
-			persona, err := r.agents.Prepare(ctx, turnID, r.agent)
-			if err != nil {
-				return turn.PreparedRequest{}, err
-			}
-			s.items, s.memoryRefs, s.memoryEpoch, s.events, err = r.modelContext(ctx, input.ID)
-
-			if err != nil {
-				return turn.PreparedRequest{}, err
-			}
-			current, err := assemble.History([]ledger.Event{input}, r.conversation, r.agent)
-			if err != nil || len(current) != 1 {
-				return turn.PreparedRequest{}, assemble.ErrHistory
-			}
-			// modelContext includes the current event after its filtered history.
-			// Keep the assembly's dedicated current-input slot exactly once, and fail
-			// closed if retraction removed it between admission and preparation.
-			if len(s.items) == 0 || !bytes.Equal(s.items[len(s.items)-1], current[0]) {
-				return turn.PreparedRequest{}, assemble.ErrHistory
-			}
-			s.items = s.items[:len(s.items)-1]
-			at := time.Now().UTC()
-			minimum := assemble.ContextPacket{{ID: "clock:" + turnID, Kind: assemble.Clock, Text: at.Format(time.RFC3339Nano)}}
-			settings, err := r.agents.State(ctx, r.agent)
-			if err != nil {
-				return turn.PreparedRequest{}, err
-			}
-			s.replyShapes, err = reply.ShapesFrom(agents.ProjectWorkMethod(persona, settings))
-			if err != nil {
-				return turn.PreparedRequest{}, err
-			}
-			catalog, personaPacket, err := r.preparePersonaTools(ctx, turnID, input, persona, settings, at, s.bindings, s.questions)
-
-			if err != nil {
-				return turn.PreparedRequest{}, err
-			}
-			minimum = append(minimum, personaPacket...)
-			methodology, err := r.methodologyContext(ctx)
-			if err != nil {
-				return turn.PreparedRequest{}, err
-			}
-			minimum = append(minimum, methodology...)
-			namePacket, names, err := r.namePacket(ctx, at)
-			if err != nil {
-				return turn.PreparedRequest{}, err
-			}
-			s.preparedNames = names
-			minimum = append(minimum, namePacket...)
-			if err := r.prepareSkillTools(turnID, s.bindings); err != nil {
-				return turn.PreparedRequest{}, err
-			}
-			if err := r.preparePlanningTools(turnID, s.bindings); err != nil {
-				return turn.PreparedRequest{}, err
-			}
-			if err := r.prepareWorkTools(turnID, s.bindings); err != nil {
-				return turn.PreparedRequest{}, err
-			}
-			if err := r.prepareWorkerTools(turnID, input, s.bindings); err != nil {
-				return turn.PreparedRequest{}, err
-			}
-			if err := r.prepareRecordTools(turnID, input.ID, s.bindings); err != nil {
-				return turn.PreparedRequest{}, err
-			}
-			workDeclarations, err := r.prepareGoalWorkTools(turnID, s.bindings)
-			if err != nil {
-				return turn.PreparedRequest{}, err
-			}
-			if err := r.prepareMethodologyTools(turnID, s.bindings); err != nil {
-				return turn.PreparedRequest{}, err
-			}
-			if err := r.prepareResultTools(turnID, input, s.replyShapes, s.bindings); err != nil {
-				return turn.PreparedRequest{}, err
-			}
-			declarations := append(coreexec.PersonaDeclarations(), coreexec.PersonaSettingDeclaration(), coreexec.WorkMethodDeclaration())
-			declarations = append(declarations, coreexec.EmotionDeclarations()...)
-			declarations = append(declarations, coreexec.RelationshipDeclaration())
-			declarations = append(declarations, askQuestionDeclaration(), resolveQuestionDeclaration())
-			if r.channelBinding == nil || r.channelBinding.Scope.Memory {
-				declarations = append(declarations, coreexec.NameDeclaration())
-			}
-			declarations = append(declarations, coreexec.SkillDeclarations()...)
-			declarations = append(declarations, coreexec.RecordDeclarations()...)
-			declarations = append(declarations, coreexec.ResultDeclarations()...)
-			declarations = append(declarations, workDeclarations...)
-			declarations = append(declarations, methodologyDeclarations()...)
-			declarations = append(declarations, coreexec.PlanningDeclarations()...)
-			declarations = append(declarations, startRunDeclaration())
-			webProvider, err := r.selectedWebProvider()
-			if err != nil {
-				return turn.PreparedRequest{}, err
-			}
-			webDeclarations, err := r.prepareWebTools(turnID, webProvider, s.bindings)
-			if err != nil {
-				return turn.PreparedRequest{}, err
-			}
-			declarations = append(declarations, webDeclarations...)
-			if r.router.root.workerDispatch != nil {
-				declarations = append(declarations, dispatch.Declaration())
-			}
-			declarations = append(declarations, coreexec.WorkDeclarations()...)
-			declarations = append(declarations, workerDeclarations()...)
-			declarations = append(declarations, r.prepareDelegationTools(turnID, s.bindings)...)
-			declarations = append(declarations, r.prepareTimerTools(turnID, s.bindings)...)
-			declarations = append(declarations, r.prepareExchangeTools(turnID, s.bindings)...)
-			if r.coding != nil {
-				clear(s.bindings)
-				catalog = nil
-				declarations, err = r.prepareCodingDecision(turnID, s.bindings)
-				if err != nil {
-					return turn.PreparedRequest{}, err
-				}
-			}
-			if r.channelBinding != nil && !r.channelBinding.Scope.Tools {
-				clear(s.bindings)
-				declarations = nil
-				catalog = nil
-			}
-			if failedWorkerReaction(input) {
-				clear(s.bindings)
-				declarations = nil
-				catalog = nil
-			}
-			if r.channelBinding != nil {
-				for name, tool := range s.bindings {
-					execute := tool.Execute
-					tool.Execute = func(ctx context.Context, call provider.ToolCall) loop.Result {
-						if err := r.validateChannel(ctx); err != nil || !r.channelBinding.Scope.Tools {
-							return loop.Result{ID: call.ID, Code: loop.Denied}
-						}
-						return execute(ctx, call)
-					}
-					s.bindings[name] = tool
-				}
-			}
-			if err := r.bindDoneEvidence(ctx, persona, s.bindings); err != nil {
-				return turn.PreparedRequest{}, err
-			}
-			packet, _, err := atropos.Packet(ctx, minimum, 0, func(ctx context.Context) (assemble.ContextPacket, error) { return r.relationshipPacket(ctx, at) })
-			if err != nil {
-				return turn.PreparedRequest{}, err
-			}
-			if err := pinPersonaState(packet, r.agent, r.conversation); err != nil {
-				return turn.PreparedRequest{}, err
-			}
-			request, report := assemble.Assemble(assemble.Input{
-				Core:    assemble.PersonaCoreV1 + "\n" + assemble.TUIFormatting,
-				AgentID: r.agent, PersonaRevision: persona.Commit, Persona: persona.Layers,
-				AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID, WorkMethod: persona.WorkMethod,
-				Catalog: catalog, AlwaysTools: declarations,
-				History: s.items, Current: current[0], Packet: packet,
-				Model: policy.Model, Effort: policy.Effort, MaxTokens: 128000,
-			}, conversationRequestSize)
-			if report.Failure != "" {
-				if report.Failure == assemble.TooLarge {
-					return turn.PreparedRequest{}, turn.ErrRequestTooLarge
-
-				}
-				return turn.PreparedRequest{}, turn.ErrInvalid
-			}
-			assembly := turn.Assembly{AgentID: r.agent, PersonaRevision: persona.Commit, WorkMethodRevision: persona.WorkMethodRevision, InstructionFormat: "persona-tui-work-method-v1", PreparedAt: at.Format(time.RFC3339Nano), Profile: append([]turn.Reference(nil), s.memoryRefs...), AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID, Items: append([]turn.Reference(nil), s.memoryRefs...)}
-			assembly.Context, err = r.recordContextSources(ctx, packet, report)
-			if err != nil {
-				return turn.PreparedRequest{}, err
-			}
-			for _, event := range s.events {
-				projected, err := assemble.History([]ledger.Event{event}, r.conversation, r.agent)
-				if err != nil {
-					return turn.PreparedRequest{}, err
-				}
-				if len(projected) == 0 {
-					continue
-				}
-				digest := sha256.Sum256([]byte(event.Body.Text()))
-				assembly.History = append(assembly.History, turn.Reference{ID: event.ID, Revision: hex.EncodeToString(digest[:])})
-			}
-			for _, ref := range report.Items {
-				assembly.Items = append(assembly.Items, turn.Reference{ID: ref.ID, Revision: ref.Revision})
-			}
-			for _, ref := range report.Skills {
-				assembly.Skills = append(assembly.Skills, turn.Reference{ID: ref.ID, Revision: ref.Revision})
-			}
-			return turn.PreparedRequest{Request: request, Assembly: assembly, Counter: conversationRequestSize, MaxTokens: 128000}, nil
-		},
+		Context:     s.prepare,
 		Acknowledge: evidence.Acknowledge, RecordRequest: evidence.RecordRequest,
 		Digest: assemble.Digest,
 	}
@@ -532,6 +352,195 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		_ = r.publish(ctx, protocol.KindItemDone, turnID+":status", protocol.ItemDone{Text: &text, Speaker: &speaker})
 	}
 	return err
+}
+
+func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.PreparedRequest, error) {
+	r, input, turnID := s.runtime, s.input, s.turnID
+	if err := r.refreshPersona(ctx); err != nil {
+		return turn.PreparedRequest{}, err
+	}
+
+	persona, err := r.agents.Prepare(ctx, turnID, r.agent)
+	if err != nil {
+		return turn.PreparedRequest{}, err
+	}
+	s.items, s.memoryRefs, s.memoryEpoch, s.events, err = r.modelContext(ctx, input.ID)
+
+	if err != nil {
+		return turn.PreparedRequest{}, err
+	}
+	current, err := assemble.History([]ledger.Event{input}, r.conversation, r.agent)
+	if err != nil || len(current) != 1 {
+		return turn.PreparedRequest{}, assemble.ErrHistory
+	}
+	// modelContext includes the current event after its filtered history.
+	// Keep the assembly's dedicated current-input slot exactly once, and fail
+	// closed if retraction removed it between admission and preparation.
+	if len(s.items) == 0 || !bytes.Equal(s.items[len(s.items)-1], current[0]) {
+		return turn.PreparedRequest{}, assemble.ErrHistory
+	}
+	s.items = s.items[:len(s.items)-1]
+	at := time.Now().UTC()
+	minimum := assemble.ContextPacket{{ID: "clock:" + turnID, Kind: assemble.Clock, Text: at.Format(time.RFC3339Nano)}}
+	settings, err := r.agents.State(ctx, r.agent)
+	if err != nil {
+		return turn.PreparedRequest{}, err
+	}
+	s.replyShapes, err = reply.ShapesFrom(agents.ProjectWorkMethod(persona, settings))
+	if err != nil {
+		return turn.PreparedRequest{}, err
+	}
+	catalog, personaPacket, err := r.preparePersonaTools(ctx, turnID, input, persona, settings, at, s.bindings, s.questions)
+
+	if err != nil {
+		return turn.PreparedRequest{}, err
+	}
+	minimum = append(minimum, personaPacket...)
+	methodology, err := r.methodologyContext(ctx)
+	if err != nil {
+		return turn.PreparedRequest{}, err
+	}
+	minimum = append(minimum, methodology...)
+	namePacket, names, err := r.namePacket(ctx, at)
+	if err != nil {
+		return turn.PreparedRequest{}, err
+	}
+	s.preparedNames = names
+	minimum = append(minimum, namePacket...)
+	if err := r.prepareSkillTools(turnID, s.bindings); err != nil {
+		return turn.PreparedRequest{}, err
+	}
+	if err := r.preparePlanningTools(turnID, s.bindings); err != nil {
+		return turn.PreparedRequest{}, err
+	}
+	if err := r.prepareWorkTools(turnID, s.bindings); err != nil {
+		return turn.PreparedRequest{}, err
+	}
+	if err := r.prepareWorkerTools(turnID, input, s.bindings); err != nil {
+		return turn.PreparedRequest{}, err
+	}
+	if err := r.prepareRecordTools(turnID, input.ID, s.bindings); err != nil {
+		return turn.PreparedRequest{}, err
+	}
+	workDeclarations, err := r.prepareGoalWorkTools(turnID, s.bindings)
+	if err != nil {
+		return turn.PreparedRequest{}, err
+	}
+	if err := r.prepareMethodologyTools(turnID, s.bindings); err != nil {
+		return turn.PreparedRequest{}, err
+	}
+	if err := r.prepareResultTools(turnID, input, s.replyShapes, s.bindings); err != nil {
+		return turn.PreparedRequest{}, err
+	}
+	declarations := append(coreexec.PersonaDeclarations(), coreexec.PersonaSettingDeclaration(), coreexec.WorkMethodDeclaration())
+	declarations = append(declarations, coreexec.EmotionDeclarations()...)
+	declarations = append(declarations, coreexec.RelationshipDeclaration())
+	declarations = append(declarations, askQuestionDeclaration(), resolveQuestionDeclaration())
+	if r.channelBinding == nil || r.channelBinding.Scope.Memory {
+		declarations = append(declarations, coreexec.NameDeclaration())
+	}
+	declarations = append(declarations, coreexec.SkillDeclarations()...)
+	declarations = append(declarations, coreexec.RecordDeclarations()...)
+	declarations = append(declarations, coreexec.ResultDeclarations()...)
+	declarations = append(declarations, workDeclarations...)
+	declarations = append(declarations, methodologyDeclarations()...)
+	declarations = append(declarations, coreexec.PlanningDeclarations()...)
+	declarations = append(declarations, startRunDeclaration())
+	webProvider, err := r.selectedWebProvider()
+	if err != nil {
+		return turn.PreparedRequest{}, err
+	}
+	webDeclarations, err := r.prepareWebTools(turnID, webProvider, s.bindings)
+	if err != nil {
+		return turn.PreparedRequest{}, err
+	}
+	declarations = append(declarations, webDeclarations...)
+	if r.router.root.workerDispatch != nil {
+		declarations = append(declarations, dispatch.Declaration())
+	}
+	declarations = append(declarations, coreexec.WorkDeclarations()...)
+	declarations = append(declarations, workerDeclarations()...)
+	declarations = append(declarations, r.prepareDelegationTools(turnID, s.bindings)...)
+	declarations = append(declarations, r.prepareTimerTools(turnID, s.bindings)...)
+	declarations = append(declarations, r.prepareExchangeTools(turnID, s.bindings)...)
+	if r.coding != nil {
+		clear(s.bindings)
+		catalog = nil
+		declarations, err = r.prepareCodingDecision(turnID, s.bindings)
+		if err != nil {
+			return turn.PreparedRequest{}, err
+		}
+	}
+	if r.channelBinding != nil && !r.channelBinding.Scope.Tools {
+		clear(s.bindings)
+		declarations = nil
+		catalog = nil
+	}
+	if failedWorkerReaction(input) {
+		clear(s.bindings)
+		declarations = nil
+		catalog = nil
+	}
+	if r.channelBinding != nil {
+		for name, tool := range s.bindings {
+			execute := tool.Execute
+			tool.Execute = func(ctx context.Context, call provider.ToolCall) loop.Result {
+				if err := r.validateChannel(ctx); err != nil || !r.channelBinding.Scope.Tools {
+					return loop.Result{ID: call.ID, Code: loop.Denied}
+				}
+				return execute(ctx, call)
+			}
+			s.bindings[name] = tool
+		}
+	}
+	if err := r.bindDoneEvidence(ctx, persona, s.bindings); err != nil {
+		return turn.PreparedRequest{}, err
+	}
+	packet, _, err := atropos.Packet(ctx, minimum, 0, func(ctx context.Context) (assemble.ContextPacket, error) { return r.relationshipPacket(ctx, at) })
+	if err != nil {
+		return turn.PreparedRequest{}, err
+	}
+	if err := pinPersonaState(packet, r.agent, r.conversation); err != nil {
+		return turn.PreparedRequest{}, err
+	}
+	request, report := assemble.Assemble(assemble.Input{
+		Core:    assemble.PersonaCoreV1 + "\n" + assemble.TUIFormatting,
+		AgentID: r.agent, PersonaRevision: persona.Commit, Persona: persona.Layers,
+		AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID, WorkMethod: persona.WorkMethod,
+		Catalog: catalog, AlwaysTools: declarations,
+		History: s.items, Current: current[0], Packet: packet,
+		Model: policy.Model, Effort: policy.Effort, MaxTokens: 128000,
+	}, conversationRequestSize)
+	if report.Failure != "" {
+		if report.Failure == assemble.TooLarge {
+			return turn.PreparedRequest{}, turn.ErrRequestTooLarge
+
+		}
+		return turn.PreparedRequest{}, turn.ErrInvalid
+	}
+	assembly := turn.Assembly{AgentID: r.agent, PersonaRevision: persona.Commit, WorkMethodRevision: persona.WorkMethodRevision, InstructionFormat: "persona-tui-work-method-v1", PreparedAt: at.Format(time.RFC3339Nano), Profile: append([]turn.Reference(nil), s.memoryRefs...), AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID, Items: append([]turn.Reference(nil), s.memoryRefs...)}
+	assembly.Context, err = r.recordContextSources(ctx, packet, report)
+	if err != nil {
+		return turn.PreparedRequest{}, err
+	}
+	for _, event := range s.events {
+		projected, err := assemble.History([]ledger.Event{event}, r.conversation, r.agent)
+		if err != nil {
+			return turn.PreparedRequest{}, err
+		}
+		if len(projected) == 0 {
+			continue
+		}
+		digest := sha256.Sum256([]byte(event.Body.Text()))
+		assembly.History = append(assembly.History, turn.Reference{ID: event.ID, Revision: hex.EncodeToString(digest[:])})
+	}
+	for _, ref := range report.Items {
+		assembly.Items = append(assembly.Items, turn.Reference{ID: ref.ID, Revision: ref.Revision})
+	}
+	for _, ref := range report.Skills {
+		assembly.Skills = append(assembly.Skills, turn.Reference{ID: ref.ID, Revision: ref.Revision})
+	}
+	return turn.PreparedRequest{Request: request, Assembly: assembly, Counter: conversationRequestSize, MaxTokens: 128000}, nil
 }
 
 func (r *conversationRuntime) verifyBuild(ctx context.Context) error {
