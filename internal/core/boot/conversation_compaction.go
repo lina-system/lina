@@ -194,7 +194,7 @@ func (r *conversationRuntime) compactConversation(ctx context.Context, in assemb
 	}
 	view.Request = request
 	view.Packet = request.Items[fixed+len(in.History) : len(request.Items)-1]
-	builder := &compaction.Builder{Store: store, Events: r.journal(), Agent: r.agent, Conversation: r.conversation, Model: in.Model, GenerationRevision: string(in.Effort), Now: time.Now, NextID: func() string { return "summary:" + rand.Text() }}
+	builder := &compaction.Builder{Store: store, Events: r.journal(), Agent: r.agent, Conversation: r.conversation, CurrentInput: current.ID, Model: in.Model, GenerationRevision: string(in.Effort), Now: time.Now, NextID: func() string { return "summary:" + rand.Text() }}
 	builder.Generate = func(ctx context.Context, segment compaction.PassSegment) (compaction.Text, error) {
 		// Builder checked the exact coverage/frontier and supplied canonical
 		// source ids. Project those ids in their original provider format.
