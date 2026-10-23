@@ -20,6 +20,12 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+// TestM1TUIMemoryAgentsInstalledCore (m1/tui-memory-agents.json) covers
+// management commands in the installed Core and real TUI. A loopback Responses
+// fixture detects command leakage, verifies memory inclusion before and after
+// correction/forget, and checks privacy scopes. The same scenario round-trips
+// agent create/choose/rename/delete by id, sends a turn in the chosen lane and
+// verifies persistent deletion after Core restart.
 func TestM1TUIMemoryAgentsInstalledCore(t *testing.T) {
 	t.Parallel()
 

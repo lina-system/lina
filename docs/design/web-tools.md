@@ -1,6 +1,6 @@
 # Web search and page reading
 
-This contract implements issue #440 alongside [runtime tools](runtime.md#tools)
+This contract implements issue #440 alongside [runtime tools](runtime.md#tools-and-sandbox)
 and [credentials](integrations.md#credentials-and-sign-in).
 
 ## Reference observations before implementation

@@ -317,22 +317,74 @@ func decodeQuestionJSON(raw string, out any) error {
 type questionTurn struct {
 	mu       sync.Mutex
 	runtime  *conversationRuntime
-	input    ledger.Event
 	pending  map[string]bool
 	assessed map[string]bool
+	sources  map[string][]ledger.Event
 }
 
 func (g *questionTurn) init(r *conversationRuntime, input ledger.Event, pending []waiting.ConversationQuestion) {
-	g.runtime, g.input = r, input
+	g.runtime = r
 	g.pending, g.assessed = map[string]bool{}, map[string]bool{}
-	if input.SpeakerKind != guard.Person || input.PersonID != r.person || input.Origin.Kind != "native" || input.ReplayOf != "" {
+	g.sources = map[string][]ledger.Event{}
+	if !g.personInput(input) {
 		return
 	}
 	for _, q := range pending {
 		if q.Input != input.ID {
 			g.pending[q.ID] = true
+			g.sources[q.ID] = []ledger.Event{input}
 		}
 	}
+}
+
+func (g *questionTurn) personInput(input ledger.Event) bool {
+	r := g.runtime
+	return input.SpeakerKind == guard.Person && input.PersonID == r.person && input.AgentID == r.agent && input.ConversationID == r.conversation && input.Origin.Kind == "native" && input.ReplayOf == ""
+}
+
+// Only admission's durable event, consumed at a round boundary, can supply a
+// new answer. Refresh here so questions asked during this turn are eligible,
+// without treating the input that caused a question as an answer to it.
+func (g *questionTurn) consume(ctx context.Context, accepted acceptedSteering) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	input, r := accepted.event, g.runtime
+	if !g.personInput(input) {
+		return nil
+	}
+	pending, err := waiting.NewConversationQuestions(r.db).Pending(ctx, r.person, r.agent)
+	if err != nil {
+		return err
+	}
+	visibility, err := r.removals.Snapshot(ctx, r.person, r.agent)
+	if err != nil {
+		return err
+	}
+	if !visibility.Visible(retract.Ref{Kind: retract.Event, ID: input.ID}) {
+		return nil
+	}
+	for _, q := range pending {
+		if q.Input == input.ID || !visibility.Visible(retract.Ref{Kind: retract.Event, ID: q.Input}) {
+			continue
+		}
+		allowed, err := r.questionContextAllowed(ctx, q)
+		if err != nil {
+			return err
+		}
+		if allowed && accepted.runner != nil {
+			// Sharing a conversation does not widen the steering sender's scope.
+			allowed, err = accepted.runner.questionContextAllowed(ctx, q)
+			if err != nil {
+				return err
+			}
+		}
+		if allowed {
+			g.pending[q.ID] = true
+			g.assessed[q.ID] = false
+			g.sources[q.ID] = append(g.sources[q.ID], input)
+		}
+	}
+	return nil
 }
 func (g *questionTurn) check(ctx context.Context) error {
 	g.mu.Lock()
@@ -368,35 +420,53 @@ type questionDecisionInput struct {
 	Value string `json:"value,omitempty"`
 }
 
-func (g *questionTurn) decode(raw string) (questionDecisionInput, error) {
+// The caller holds mu. Prefer the most recently consumed matching source when
+// two owner inputs contain the same quote; never combine bytes across inputs.
+func (g *questionTurn) decode(raw string) (questionDecisionInput, ledger.Event, error) {
 	var in questionDecisionInput
-	if decodeQuestionJSON(raw, &in) != nil || strings.TrimSpace(in.Quote) == "" || !strings.Contains(g.input.Body.Text(), in.Quote) || !g.pending[in.ID] {
-		return in, waiting.ErrInvalid
+	var input ledger.Event
+	if decodeQuestionJSON(raw, &in) != nil || strings.TrimSpace(in.Quote) == "" || !g.pending[in.ID] {
+		return in, input, waiting.ErrInvalid
+	}
+	sources := g.sources[in.ID]
+	for i := len(sources) - 1; i >= 0; i-- {
+		if strings.Contains(sources[i].Body.Text(), in.Quote) {
+			input = sources[i]
+			break
+		}
+	}
+	if input.ID == "" {
+		return in, input, waiting.ErrInvalid
 	}
 	switch in.Kind {
 	case "related", "default_applied":
 		if in.Value != "" {
-			return in, waiting.ErrInvalid
+			return in, input, waiting.ErrInvalid
 		}
 	case "answered":
 		if strings.TrimSpace(in.Value) == "" {
-			return in, waiting.ErrInvalid
+			return in, input, waiting.ErrInvalid
 		}
 	default:
-		return in, waiting.ErrInvalid
+		return in, input, waiting.ErrInvalid
 	}
-	return in, nil
+	return in, input, nil
 }
 func (g *questionTurn) tool() loop.Tool {
 	return loop.Tool{
-		Validate: func(c provider.ToolCall) (string, error) { in, err := g.decode(c.Arguments); return in.ID, err },
+		Validate: func(c provider.ToolCall) (string, error) {
+			g.mu.Lock()
+			defer g.mu.Unlock()
+			in, _, err := g.decode(c.Arguments)
+			return in.ID, err
+		},
 		Execute: func(ctx context.Context, c provider.ToolCall) loop.Result {
-			in, err := g.decode(c.Arguments)
+			g.mu.Lock()
+			defer g.mu.Unlock()
+			in, input, err := g.decode(c.Arguments)
 			if err != nil {
 				return loop.Result{ID: c.ID, Code: loop.Invalid}
 			}
-			g.mu.Lock()
-			defer g.mu.Unlock()
 			r := g.runtime
 			s := waiting.NewConversationQuestions(r.db)
 			q, err := s.Get(ctx, in.ID)
@@ -411,7 +481,7 @@ func (g *questionTurn) tool() loop.Tool {
 				return loop.Result{ID: c.ID, Code: loop.Invalid, Output: json.RawMessage(`{"code":"question_withdrawn"}`)}
 			}
 			if q.Resolution == nil && in.Kind != "related" {
-				d := waiting.QuestionResolution{Kind: in.Kind, Input: g.input.ID, Value: in.Value, At: time.Now().UTC()}
+				d := waiting.QuestionResolution{Kind: in.Kind, Input: input.ID, Value: in.Value, At: time.Now().UTC()}
 				if in.Kind == "default_applied" {
 					d.Value = q.Default
 				}
@@ -426,7 +496,7 @@ func (g *questionTurn) tool() loop.Tool {
 					if d.Kind != "default_applied" {
 						return nil
 					}
-					_, err = ledger.New(questionTransaction{tx}, nil).Admit(ctx, guard.EntrySystem, r.questionDefaultInput(g.input, q, d))
+					_, err = ledger.New(questionTransaction{tx}, nil).Admit(ctx, guard.EntrySystem, r.questionDefaultInput(input, q, d))
 					return err
 				}); err != nil {
 					return loop.Result{ID: c.ID, Code: loop.Invalid}
@@ -436,8 +506,8 @@ func (g *questionTurn) tool() loop.Tool {
 					return loop.Result{ID: c.ID, Code: loop.Failed}
 				}
 			}
-			if q.Resolution != nil && q.Resolution.Kind == "default_applied" && q.Resolution.Input == g.input.ID {
-				if err = r.questionDefaultNotice(ctx, g.input, q); err != nil {
+			if q.Resolution != nil && q.Resolution.Kind == "default_applied" && q.Resolution.Input == input.ID {
+				if err = r.questionDefaultNotice(ctx, input, q); err != nil {
 					return loop.Result{ID: c.ID, Code: loop.Failed}
 				}
 			}
@@ -451,7 +521,7 @@ func (g *questionTurn) tool() loop.Tool {
 	}
 }
 func resolveQuestionDeclaration() provider.ToolDecl {
-	return provider.ToolDecl(`{"type":"function","name":"resolve_question","description":"Before other tools or your final reply, account for each pending question using the current person input. Quote that input. Use answered with the person's value, related if they ask a related follow-up without answering, or default_applied if they move to an unrelated topic. Core applies the stored default, closes the question and records a notice. Continue the original work with that value. No resolution grants effect authority.","parameters":{"type":"object","properties":{"id":{"type":"string"},"kind":{"type":"string","enum":["answered","related","default_applied"]},"quote":{"type":"string"},"value":{"type":"string"}},"required":["id","kind","quote"],"additionalProperties":false}}`)
+	return provider.ToolDecl(`{"type":"function","name":"resolve_question","description":"Before other tools or your final reply, account for each pending question using the current person input or owner steering received during this turn. Quote the input that answers it or changes the topic. Use answered with the person's value, related if they ask a related follow-up without answering, or default_applied if they move to an unrelated topic. Core applies the stored default, closes the question and records a notice. Continue the original work with that value. No resolution grants effect authority.","parameters":{"type":"object","properties":{"id":{"type":"string"},"kind":{"type":"string","enum":["answered","related","default_applied"]},"quote":{"type":"string"},"value":{"type":"string"}},"required":["id","kind","quote"],"additionalProperties":false}}`)
 }
 
 type questionTransaction struct{ tx *canon.Tx }

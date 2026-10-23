@@ -17,6 +17,14 @@ import (
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
+// TestM2WorkerChoice (m2/worker-choice.json) runs installed Core through the
+// conversation protocol. Synthetic Antigravity and Codex streams prove unknown
+// quota, blocked-worker exclusion, one quota handoff with identical packet
+// bytes, a second quota stop, repository choice rules, and overlapping-area
+// waits across restart. The worker creates the real result file and Git commit;
+// GitHub observations are synthetic. The first quota-stopped process
+// deliberately remains alive until Core reaps it, and the replacement checks
+// that it is gone before touching the workspace.
 func TestM2WorkerChoice(t *testing.T) {
 	t.Parallel()
 	testHeadlessWorkerThroughInstalledCore(t, "../m2/worker-choice.json", false)
