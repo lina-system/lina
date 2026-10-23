@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
-	"github.com/thisisjun786/lina/internal/core/worker"
 )
 
 var errNoChange = errors.New("work_no_change")
@@ -67,8 +66,9 @@ type Config struct {
 	Sweep         <-chan time.Time
 	// Sessions owns the worker processes of goal steps. After every committed
 	// event, a session whose step has landed or been closed is ended, so live
-	// sessions follow the frontier and not the history of the goal.
-	Sessions *worker.Live
+	// sessions follow the frontier and not the history of the goal. The work
+	// layer names only what it calls; the worker registry implements it.
+	Sessions SessionOwner
 	// Changed publishes a committed projection. A delivery failure does not
 	// revoke the state; startup and subsequent events can publish it again.
 	Changed func(context.Context, State) error

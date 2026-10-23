@@ -1292,6 +1292,7 @@ Code-change work ends in a pull request that the worker opens, and goes through 
 - A cancel is final only when `turn/completed` reports `interrupted`, or when the ACP `session/prompt` reply reports the stop reason `cancelled`.
 - Pause stops LINA's delivery to the work thread. It does not stop execution. Paused work never resumes automatically.
 - Close keeps files, branches, worktrees and receipts and never deletes the thread. `thread/archive` is sent only on an explicit close.
+- Ending a session joins the worker's process and keeps everything the close rule keeps: the thread, branch, worktree, receipts and the recorded thread or session id stay readable. Core ends a session whose step has landed or been closed (see Step graph); ending is not closing, so no `thread/archive` is sent and no next execution generation inherits a claim on the process.
 
 ### Steering delivery and receipts
 

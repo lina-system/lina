@@ -3,16 +3,19 @@ package reactor
 
 import (
 	"context"
-
-	"github.com/thisisjun786/lina/internal/core/worker"
 )
+
+// SessionOwner ends every live worker session outside a keep set.
+type SessionOwner interface {
+	EndUnlisted(ctx context.Context, keep map[string]bool) error
+}
 
 // LiveSessions ends worker sessions whose steps have landed or been closed.
 // Keep names the handles that may stay live: steps in progress or under
 // pull-request operation. It is read from committed state, never from a worker
 // claim, so two reaps over the same ledger end the same sessions.
 type LiveSessions struct {
-	Sessions *worker.Live
+	Sessions SessionOwner
 	Keep     func(context.Context) (map[string]bool, error)
 }
 

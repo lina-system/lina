@@ -4,6 +4,7 @@ package goal_test
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -188,21 +189,69 @@ func (w *stepWorld) assign(a work.Action) (work.Observation, error) {
 	return out, nil
 }
 
-// tenSteps is the scenario's graph: ten steps in five dependent waves.
-func tenSteps() []work.Task {
-	deps := map[string][]string{
-		"s2": {"s1"}, "s3": {"s1"},
-		"s4": {"s2"}, "s5": {"s2"},
-		"s6": {"s3"}, "s7": {"s3"},
-		"s8": {"s4", "s5"}, "s9": {"s6", "s7"},
-		"s10": {"s8", "s9"},
+// liveSessionsScenario is the m3 fixture: the goal, its criterion and a
+// ten-step graph in five dependent waves.
+type liveSessionsScenario struct {
+	Summary    string `json:"summary"`
+	Done       string `json:"done"`
+	Repository string `json:"repository"`
+	Base       string `json:"base"`
+	Worker     string `json:"worker"`
+	Resources  struct {
+		CPU      float64 `json:"cpu"`
+		MemoryMB int64   `json:"memory_mb"`
+		DiskMB   int64   `json:"disk_mb"`
+	} `json:"resources"`
+	Criterion struct {
+		ID        string `json:"id"`
+		Statement string `json:"statement"`
+		Kind      string `json:"kind"`
+		Method    string `json:"method"`
+		Target    string `json:"target"`
+	} `json:"criterion"`
+	Steps []struct {
+		ID        string   `json:"id"`
+		Done      string   `json:"done"`
+		BlockedBy []string `json:"blocked_by"`
+	} `json:"steps"`
+}
+
+// readLiveSessions reads the scenario fixture. The graph is data, so the
+// scenario states its waves without repeating them in code.
+func readLiveSessions(t *testing.T) liveSessionsScenario {
+	t.Helper()
+	raw, err := os.ReadFile("../m3/live-sessions.json")
+	if err != nil {
+		t.Fatal(err)
 	}
-	tasks := []work.Task{}
-	for i := 1; i <= 10; i++ {
-		id := fmt.Sprintf("s%d", i)
-		tasks = append(tasks, work.Task{ID: id, Done: "change is merged and QA passes", Repository: "fixture", Base: "dev", Area: id + "/**", Worker: "stub", Resources: work.Resources{CPU: 1, MemoryMB: 128, DiskMB: 128}, Stage: work.TaskReady, DependsOn: deps[id]})
+	var s liveSessionsScenario
+	if err = json.Unmarshal(raw, &s); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Steps) != 10 {
+		t.Fatalf("the scenario states %d steps, want 10", len(s.Steps))
+	}
+	return s
+}
+
+// tasks is the scenario's graph: each step of the fixture as a ready task.
+func (s liveSessionsScenario) tasks() []work.Task {
+	tasks := make([]work.Task, 0, len(s.Steps))
+	for _, step := range s.Steps {
+		tasks = append(tasks, work.Task{ID: step.ID, Done: step.Done, Repository: s.Repository, Base: s.Base, Area: step.ID + "/**", Worker: s.Worker, Resources: work.Resources{CPU: s.Resources.CPU, MemoryMB: s.Resources.MemoryMB, DiskMB: s.Resources.DiskMB}, Stage: work.TaskReady, DependsOn: step.BlockedBy})
 	}
 	return tasks
+}
+
+// criterion is the goal's done condition, read from the fixture.
+func (s liveSessionsScenario) criterion(t *testing.T) work.Criterion {
+	t.Helper()
+	kinds := map[string]work.EvidenceKind{"read": work.ReadEvidence, "run": work.RunEvidence, "citation": work.CitationEvidence}
+	kind, ok := kinds[s.Criterion.Kind]
+	if !ok {
+		t.Fatalf("unknown evidence kind %q", s.Criterion.Kind)
+	}
+	return work.Criterion{ID: s.Criterion.ID, Statement: s.Criterion.Statement, Check: work.CriterionCheck{Kind: kind, Method: s.Criterion.Method, Target: s.Criterion.Target}}
 }
 
 // expectedLive is the number of steps under pull-request operation, read from
@@ -262,7 +311,15 @@ func inFlight(s work.State) int {
 	return count
 }
 
+// TestLiveWorkerSessionsFollowTheStepFrontier (m3/live-sessions.json) runs a
+// goal of ten steps in five dependent waves against a headless Core. Every
+// step's worker is a real process that keeps running past its turn. After
+// every committed event the registry's live count is compared with the
+// projection of the published state: a step in progress or under pull-request
+// operation counts, a landed step does not. Every ended thread is then read
+// back from the registry.
 func TestLiveWorkerSessionsFollowTheStepFrontier(t *testing.T) {
+	scenario := readLiveSessions(t)
 	root, err := os.MkdirTemp("", "lina-live-steps-")
 	if err != nil {
 		t.Fatal(err)
@@ -294,7 +351,7 @@ func TestLiveWorkerSessionsFollowTheStepFrontier(t *testing.T) {
 			if err != nil || len(saved.Goals) > 0 {
 				return err
 			}
-			return e.Admit(ctx, work.Goal{ID: "ten-steps", Person: person, Agent: agent, Summary: "ten changes land", Done: "every change is merged and checked", Scope: work.GoalScope{Repositories: []string{"fixture"}, Includes: "ten changes"}, NoServiceReason: "library", Tasks: tenSteps(), Criteria: []work.Criterion{{ID: "artifact", Statement: "every merged change is checked", Check: work.CriterionCheck{Kind: work.ReadEvidence, Method: "artifact.read", Target: "fixture"}}}})
+			return e.Admit(ctx, work.Goal{ID: "ten-steps", Person: person, Agent: agent, Summary: scenario.Summary, Done: scenario.Done, Scope: work.GoalScope{Repositories: []string{scenario.Repository}, Includes: scenario.Summary}, NoServiceReason: "library", Tasks: scenario.tasks(), Criteria: []work.Criterion{scenario.criterion(t)}})
 		},
 		Changed: func(_ context.Context, s work.State) error {
 			mu.Lock()

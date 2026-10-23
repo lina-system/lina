@@ -60,6 +60,13 @@ func underPullRequest(t Task) bool {
 	return false
 }
 
+// SessionOwner ends the worker sessions of steps that have left the frontier.
+// Core implements it with the process-local worker registry. Naming only the
+// one call here keeps the work layer below worker.
+type SessionOwner interface {
+	EndUnlisted(ctx context.Context, keep map[string]bool) error
+}
+
 // reapSessions ends the worker processes of steps that have left the frontier.
 // It reads only committed state, so two reaps over the same ledger end the same
 // sessions. A nil registry keeps nothing and ends nothing.
