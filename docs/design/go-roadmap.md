@@ -368,7 +368,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 
 **G2-18 Work definition and worker choice.** `dispatch_work`, task packet, chooser, quota fallback.
 - #138 wires quota-aware Antigravity/Codex choice, fenced write-area claims and one durable packet-preserving handoff into installed Core. `e2e/m2/worker-choice.json` covers quota, overlap, editable situation rules and restart with real task artifacts.
-- Definition validation (#137): invalid definitions and unresolved base-commit sections are refused before admission. Valid packets retain the assignment and pinned base through queueing and retries. `e2e/m2/work-definition.json` covers refusal and a real worker result through running Core.
+- Definition validation (#137): invalid definitions and unresolved base-commit sections are refused before admission. Valid packets retain the assignment and pinned base through queueing and retries. `e2e/m2/work-definition.json` covers refusal and a real worker result through running Core. Admission recovery (#728) persists that snapshot before the manager runs; `e2e/m2/work-admission.json` covers a restart between manager approval and queueing, a moved base branch and the resulting worker artifact.
 - Done when: a definition without a done condition or write area is refused; two tasks with overlapping write areas are never in flight together; a worker whose quota row is blocked is not chosen before its reset; unknown quota is usable; a quota stop hands the same packet once to the next worker.
 - Depends on: G2-01, G2-04. Design refs: C-57; [work-and-delegation.md](work-and-delegation.md#work-definition).
 
@@ -394,6 +394,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 ### 2.D Owner views
 
 **G2-13 Progress view, full waiting list and digest.** Progress lines, digest, full waiting list.
+- #157's [acceptance evidence](../../evidence/progress-acceptance.md) maps its five completion conditions to the merged sub-issues and observed installed-Core scenarios.
 - #158 connects the Core overview and full waiting query to current work, approval, question, run, exchange and outside-change sources. `e2e/m2/progress-waiting.json` drives installed Core through worker approval, a question, a real artifact and source removal. The to-do waiting producer and plan-based stage/bar are left to the to-do record work (issue 154); the channel digest and shared controls are supplied by #159.
 - #159 adds the Core digest and shared TUI/channel commands for waiting order, stop, stop all and follow-up. `e2e/m2/progress-controls.json` covers the live Core, built TUI, paired gateway and an actual worker artifact. #676 extends it to live conversation publication of channel commands and replies, including refusals and preserved order after restart.
 - Done when: a progress line holds no id or pull request and reads unknown for an unobserved value; the digest has at most five lines and a count; a waiting row whose source shows it done is dropped; the order switch is asked of Core; stop, stop all and a follow-up have the same effect from the TUI and from a channel.
@@ -455,9 +456,15 @@ completion conditions to repository tests and installed Core scenarios.
   refusal, undo notices and restart retention. Source facts are re-resolved by
   Core inside its fenced publication intent; no source-registration endpoint is
   added.
+- #732 prevents replay and view aliases from adding a finished task again.
+  [The replay scenario](../../e2e/m2/record-candidate-replay.json) verifies
+  completion and cancellation through Core tools, then restart and replay
+  refusal without another record, notice or undo operation.
 - #674 permits planning edits that preserve delegated completion. Its
   [installed-Core scenario](../../e2e/m2/todo-completed-planning.json) checks
   saved tags, priority and checklist, the completed state and restart durability.
+- The [parent acceptance record](../../evidence/todos-acceptance.md) maps all five
+  completion conditions to existing package tests and installed Core scenarios.
 - Done when: the today rule passes its fixture; a recurring item advances only to a future occurrence; a dependency cycle is rejected; an ambiguous date is never saved silently; a candidate is added on its own only when the deterministic test passes.
 - Depends on: G2-22, G2-03. Design refs: C-54; [work-and-delegation.md](work-and-delegation.md#the-to-do-record).
 

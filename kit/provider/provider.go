@@ -257,6 +257,10 @@ const (
 type QuotaRow struct {
 	Provider ProviderID
 	Account  AccountID
+	// LimitID and Bucket identify the provider's bucket independently of its
+	// reported duration. Empty fields retain compatibility with older rows.
+	LimitID  string `json:",omitempty"`
+	Bucket   string `json:",omitempty"`
 	Window   Window
 	UsedPct  *float64
 	ResetsAt *time.Time

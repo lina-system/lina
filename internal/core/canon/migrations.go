@@ -57,7 +57,8 @@ func Migrations() []Migration {
 		{Version: 43, SQL: WorkerChoiceSchema},
 		{Version: 44, SQL: namingSchema},
 		{Version: 45, SQL: recordOperationsSchema},
-		{Version: 46, SQL: doneEvidenceSchema + ResultSchema},
+		{Version: 46, SQL: WorkSwitchSchema},
+		{Version: 47, SQL: doneEvidenceSchema + ResultSchema},
 	}
 }
 
@@ -94,6 +95,7 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 		{31, "worker_dispatch"},
 		{41, "timer"}, {41, "timer_fire"}, {40, "work_completion_origins"}, {43, "worker_quota"}, {40, "work_completions"}, {40, "work_completion_claims"},
 		{34, "waiting_decisions"},
+		{46, "work_worker_reservations"}, {46, "work_switches"}, {46, "work_switch_tasks"}, {46, "work_switch_events"},
 		{28, "work_waiting_rounds"}, {28, "work_waiting_decisions"},
 		{38, "records_todo"},
 		{36, "skill_maintenance"}, {36, "skill_maintenance_members"}, {36, "skill_maintenance_notices"},
@@ -102,7 +104,7 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 		{32, "discord_presentations"}, {32, "discord_buttons"}, {32, "channel_steering"},
 		{35, "authority_delegations"}, {35, "coding_managers"}, {35, "coding_assignments"},
 		{37, "work_events"}, {37, "work_records"},
-		{44, "naming_breaches"}, {46, "done_completions"}, {46, "result_heads"}, {46, "result_saves"},
+		{44, "naming_breaches"}, {47, "done_completions"}, {47, "result_heads"}, {47, "result_saves"},
 		{42, "agent_starters"}, {42, "agent_selection"},
 		{45, "record_operations"}, {45, "record_candidates"},
 	} {

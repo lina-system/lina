@@ -127,7 +127,10 @@ func TestCoreDigestCountsFullWaitingAndRereadsSources(t *testing.T) {
 func TestOwnerControlsReachLiveWorker(t *testing.T) {
 	r := runRuntime(t)
 	probe := &workerProbe{snapshot: worker.ThreadSnapshot{Thread: worker.Thread{ID: "live", TurnID: "turn", ProcessGeneration: 1, BindingEpoch: 1}, State: worker.Active}}
-	entry := &workerSession{origin: r, adapter: probe, thread: probe.snapshot.Thread, active: map[string]lease.Lease{}}
+	entry := &workerSession{origin: r, adapter: probe, thread: probe.snapshot.Thread, active: map[string]lease.Lease{}, workdir: t.TempDir(), reservation: "live", reservationTurn: "turn"}
+	if err := r.work.ReserveWorker(t.Context(), entry.reservation, entry.workdir); err != nil {
+		t.Fatal(err)
+	}
 	r.workers = &workerRuntime{sessions: map[string]*workerSession{"live": entry}}
 	t.Cleanup(func() { r.workers = nil })
 	s := clientsrv.Session{PersonID: r.person}

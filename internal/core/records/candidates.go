@@ -90,11 +90,13 @@ func (s *Store) ProposeCandidate(ctx context.Context, a Actor, input CandidateIn
 		if rejected >= 3 {
 			return errCandidatePending
 		}
-		var undone int
-		if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM record_candidates WHERE person=? AND source_revision=? AND equivalence=? AND status='rejected'", a.Person, revision, key).Scan(&undone); err != nil {
+		// Adoption survives completion or cancellation of the record. Resolve
+		// aliases to the source hash so replay cannot create the same work again.
+		var adopted int
+		if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM record_candidates WHERE person=? AND source_revision=? AND equivalence=? AND status IN ('added','rejected')", a.Person, revision, key).Scan(&adopted); err != nil {
 			return err
 		}
-		if undone > 0 {
+		if adopted > 0 {
 			return errCandidatePending
 		}
 		rows, err := tx.QueryContext(ctx, "SELECT title,coalesce(json_extract(v.fields,'$.source'),'') FROM records_text t LEFT JOIN records_todo v ON v.id=t.id WHERE t.person=? AND t.kind='todo' AND t.state NOT IN ('completed','canceled')", a.Person)

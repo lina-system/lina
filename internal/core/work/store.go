@@ -77,7 +77,19 @@ func (s *Service) Start(ctx context.Context, r Run) error {
 	if r.ID == "" || r.TaskID == "" || r.Worker == "" || r.ThreadID == "" || r.TurnID == "" || r.NodeID == "" || r.Generation < 1 {
 		return ErrInvalid
 	}
-	return s.append(ctx, Event{Key: "run:" + r.ID, TaskID: r.TaskID, Kind: "started", Run: &r})
+	return s.db.Write(ctx, func(tx *canon.Tx) error {
+		var workers int
+		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM work_worker_reservations WHERE task_id=?", r.TaskID).Scan(&workers); err != nil {
+			return err
+		}
+		if workers != 0 {
+			return ErrActiveRun
+		}
+		if err := mayDirect(ctx, tx, r.TaskID); err != nil {
+			return err
+		}
+		return appendEvent(ctx, tx, Event{Key: "run:" + r.ID, TaskID: r.TaskID, Kind: "started", Run: &r})
+	})
 }
 func (s *Service) Submit(ctx context.Context, runID string, r Receipt) error {
 	s.workspaceMu.Lock()
@@ -200,6 +212,14 @@ func appendEvent(ctx context.Context, tx *canon.Tx, e Event) error {
 		completion.ID, completion.AgentID = "task:"+e.TaskID+":"+e.Key, c.Task.AgentID
 		e.Completion, c.Completion = &completion, &completion
 		if err := canon.RecordDoneCompletion(ctx, tx, &completion); err != nil {
+			return err
+		}
+	}
+	if e.Kind == "created" && c.Task.ExternalControl {
+		// An existing untracked worker has no task gate to recheck. Refuse
+		// adoption in the same transaction as its directory reservation;
+		// otherwise that worker could keep steering externally owned work.
+		if err = workerInDirectory(ctx, tx, c.Task); err != nil {
 			return err
 		}
 	}
