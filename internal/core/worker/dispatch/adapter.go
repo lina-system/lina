@@ -7,6 +7,7 @@ import (
 	"errors"
 
 	"github.com/thisisjun786/lina/internal/core/worker"
+	workeracp "github.com/thisisjun786/lina/internal/core/worker/acp"
 	"github.com/thisisjun786/lina/internal/core/worker/antigravity"
 	"github.com/thisisjun786/lina/internal/core/worker/claudecode"
 	"github.com/thisisjun786/lina/kit/lease"
@@ -55,6 +56,8 @@ func (s *Service) attempt(name string) (attempt, observation, error) {
 
 func observeAdapter(adapter worker.Adapter) observation {
 	switch a := adapter.(type) {
+	case *workeracp.Adapter:
+		return func() (json.RawMessage, []antigravity.DeniedAction) { return mustJSON(a.Result()), nil }
 	case *antigravity.Adapter:
 		return func() (json.RawMessage, []antigravity.DeniedAction) {
 			result := a.Result()
@@ -95,4 +98,30 @@ func (s *Service) workersFor(r Record) []Factory {
 		}
 		return a, a.Close, nil
 	}}}
+}
+
+// InstalledACPFactories makes ACP workers available to the same chooser as the
+// existing adapters. Discovery only resolves the person's installed commands.
+func InstalledACPFactories(cfg Config) []Factory {
+	var factories []Factory
+	for _, profile := range workeracp.Installed() {
+		factories = append(factories, Factory{Name: profile.Name, Open: func(context.Context, lease.Lease) (worker.Adapter, func(context.Context) error, error) {
+			a := workeracp.New(workeracp.Config{Profile: profile, Environment: cfg.Environment, Epoch: cfg.Epoch, Leaser: cfg.Activities})
+			return a, a.Close, nil
+		}})
+	}
+	return factories
+}
+
+// Keep definition admission aligned with the built-in adapter registrations.
+func registeredWorker(name string) bool {
+	if name == "" || name == "antigravity" || name == "claude" {
+		return true
+	}
+	for _, profile := range workeracp.BuiltinProfiles() {
+		if profile.Name == name {
+			return true
+		}
+	}
+	return false
 }
