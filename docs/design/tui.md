@@ -106,6 +106,10 @@ snapshot restore the subscribed view in Core's history order. A durable stopped
 outcome stays with its interrupted turn before later inputs and replies, including
 after reconnect and terminal resize.
 
+A new connection generation closes every pager, including plain text, while
+retaining conversation history and the unsent draft. Repeated or older generation
+events do not reset a reopened pager.
+
 Connection loss includes a request write failing before the receive loop observes
 EOF. The client closes that transport and the same connection owner enters
 Retrying; a failed or unacknowledged submission returns to the draft and is never
