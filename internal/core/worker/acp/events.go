@@ -3,6 +3,7 @@ package acp
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -67,7 +68,14 @@ func (a *Adapter) prompt(th worker.Thread, replies <-chan wire.PromptResult) {
 				<-requests
 			}
 			if result.Err != nil {
-				a.finish(th, worker.Finish{Status: worker.Failed, Failure: worker.ConnectionFailure, Code: "prompt_failed"})
+				failure := worker.ConnectionFailure
+				var remote *wire.RPCError
+				if errors.As(result.Err, &remote) {
+					// A complete error reply ends the turn even if EOF follows it.
+					// Its message and data are not part of the retained result.
+					failure = worker.WorkerFailure
+				}
+				a.finish(th, worker.Finish{Status: worker.Failed, Failure: failure, Code: "prompt_failed"})
 				return
 			}
 			a.mu.Lock()
