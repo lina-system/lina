@@ -771,8 +771,9 @@ type ProgressLine struct {
 	Waiting      json.Number      `json:"waiting"`
 }
 type ProgressRow struct {
-	Line ProgressLine `json:"line"`
-	Ref  string       `json:"ref"`
+	Line      ProgressLine         `json:"line"`
+	Ref       string               `json:"ref"`
+	StageRefs *[]ProgressStageRefs `json:"stage_refs,omitempty"`
 }
 type ProgressStage struct {
 	Kind   string               `json:"kind"`
@@ -781,10 +782,20 @@ type ProgressStage struct {
 	State  string               `json:"state"`
 	Steps  *[]ProgressStageStep `json:"steps,omitempty"`
 }
+type ProgressStageRefs struct {
+	Kind   string       `json:"kind"`
+	Number *json.Number `json:"number,omitempty"`
+	Steps  []string     `json:"steps"`
+}
 type ProgressStageStep struct {
-	Name      string  `json:"name"`
-	StartedAt *string `json:"started_at,omitempty"`
-	State     string  `json:"state"`
+	Name      string                 `json:"name"`
+	StartedAt *string                `json:"started_at,omitempty"`
+	State     string                 `json:"state"`
+	Workers   *[]ProgressStageWorker `json:"workers,omitempty"`
+}
+type ProgressStageWorker struct {
+	Name  string       `json:"name"`
+	State RunningState `json:"state"`
 }
 type ProgressUpdate struct {
 	CardOrder   *[]string       `json:"card_order,omitempty"`
@@ -5455,21 +5466,21 @@ const clientSchemaJSON = `{
       "additionalProperties": false
     },
     "waiting_answer": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "details_get": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "details": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -5947,14 +5958,14 @@ const clientSchemaJSON = `{
       "additionalProperties": false
     },
     "memory_import_progress": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "memory_promotion_batch": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -6135,7 +6146,7 @@ const clientSchemaJSON = `{
       "additionalProperties": false
     },
     "agent_talk_subscribe": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -6197,7 +6208,7 @@ const clientSchemaJSON = `{
       "additionalProperties": false
     },
     "task_cancel": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -6696,14 +6707,14 @@ const clientSchemaJSON = `{
       ]
     },
     "saved_reference": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "save_destination": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -8374,6 +8385,12 @@ const clientSchemaJSON = `{
         "started_at": {
           "type": "string",
           "format": "date-time"
+        },
+        "workers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/progress_stage_worker"
+          }
         }
       },
       "required": [
@@ -8390,6 +8407,12 @@ const clientSchemaJSON = `{
         },
         "line": {
           "$ref": "#/$defs/progress_line"
+        },
+        "stage_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/progress_stage_refs"
+          }
         }
       },
       "required": [
@@ -10347,6 +10370,45 @@ const clientSchemaJSON = `{
       "required": [
         "operation",
         "apps"
+      ],
+      "additionalProperties": false
+    },
+    "progress_stage_worker": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/running_state"
+        }
+      },
+      "required": [
+        "name",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "progress_stage_refs": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "kind",
+        "steps"
       ],
       "additionalProperties": false
     }

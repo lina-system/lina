@@ -64,7 +64,7 @@ func Goals(ctx context.Context, tx *canon.Tx, person string, agents map[string]s
 		if err != nil {
 			return nil, err
 		}
-		u := Unit{ID: g.ID, Kind: "goal", Name: name, Stages: stages, Active: true, Percent: goalPercent(g), Waiting: goalWaiting(g), Now: goalNow(g, stages, language), Next: goalNext(stages)}
+		u := Unit{ID: g.ID, Agent: g.Agent, Kind: "goal", Name: name, Stages: stages, Active: true, Percent: goalPercent(g), Waiting: goalWaiting(g), Now: goalNow(g, stages, language), Next: goalNext(stages)}
 		if u.Name == "" {
 			u.Name = design.Text(language, "progress.untitled")
 		}

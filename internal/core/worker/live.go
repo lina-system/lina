@@ -38,10 +38,11 @@ type Live struct {
 
 type liveEntry struct {
 	Session
-	mu     sync.Mutex
-	ended  bool
-	close  func(context.Context) error
-	events <-chan Event
+	adapter Adapter
+	mu      sync.Mutex
+	ended   bool
+	close   func(context.Context) error
+	events  <-chan Event
 }
 
 // NewLive returns an empty registry. A nil registry is not usable; callers that
@@ -70,7 +71,7 @@ func (l *Live) Adopt(s Session, a Adapter, close func(context.Context) error) er
 		}
 		l.mu.Lock()
 	}
-	e := &liveEntry{Session: s, close: close, events: a.Events()}
+	e := &liveEntry{Session: s, adapter: a, close: close, events: a.Events()}
 	l.sessions[s.ID] = e
 	delete(l.ended, s.ID)
 	l.mu.Unlock()
@@ -182,6 +183,26 @@ func (l *Live) List() []Session {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
+}
+
+// Observe reads one already-owned session without holding the registry lock
+// across adapter I/O. An ended or replaced session cannot survive the read.
+// Callers authorize the handle before calling; this grants no worker control.
+func (l *Live) Observe(ctx context.Context, id string) (Session, ThreadSnapshot, bool, error) {
+	if l == nil {
+		return Session{}, ThreadSnapshot{}, false, nil
+	}
+	l.mu.Lock()
+	e := l.sessions[id]
+	l.mu.Unlock()
+	if e == nil {
+		return Session{}, ThreadSnapshot{}, false, nil
+	}
+	snapshot, err := e.adapter.Snapshot(ctx, e.Thread)
+	l.mu.Lock()
+	current := l.sessions[id] == e
+	l.mu.Unlock()
+	return e.Session, snapshot, current, err
 }
 
 // Count is the number of live worker processes.
