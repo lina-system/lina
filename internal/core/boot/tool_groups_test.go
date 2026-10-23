@@ -121,6 +121,27 @@ func TestDeferredRuntimeToolKeepsValidationAndAuthority(t *testing.T) {
 	}
 }
 
+// Completion evidence and channel checks wrap bindings after group selection.
+// The runtime bridge must execute those final policy wrappers too.
+func TestDeferredRuntimeToolKeepsFinalPolicyBinding(t *testing.T) {
+	bindings := map[string]loop.Tool{"land_work_result": {
+		Validate: func(provider.ToolCall) (string, error) { return "work", nil },
+		Execute: func(_ context.Context, call provider.ToolCall) loop.Result {
+			return loop.Result{ID: call.ID, Code: loop.OK}
+		},
+	}}
+	prepareToolGroups([]provider.ToolDecl{provider.ToolDecl(`{"name":"land_work_result"}`)}, agents.WorkMethodSettings{}, bindings)
+	binding := bindings["land_work_result"]
+	binding.Execute = func(_ context.Context, call provider.ToolCall) loop.Result {
+		return loop.Result{ID: call.ID, Code: loop.Denied}
+	}
+	bindings["land_work_result"] = binding
+	got := bindings["call_tool"].Execute(t.Context(), provider.ToolCall{ID: "call", Name: "call_tool", Arguments: `{"name":"land_work_result","arguments":{}}`})
+	if got.Code != loop.Denied {
+		t.Fatalf("deferred bridge bypassed final policy: %s", got.Code)
+	}
+}
+
 func TestWorkMethodRequestReplayKeepsPinnedRecord(t *testing.T) {
 	method := `{"schema":1,"preset":"dev","workers":{"dispatch":true}}`
 	input := assemble.Input{Core: assemble.PersonaCoreV1 + "\n" + assemble.TUIFormatting, AgentID: "dev", PersonaRevision: "commit", AgentName: "Dev", OwnerPersonID: "person", Persona: agents.Layers{Core: "fixture"}, WorkMethod: method, Current: []byte(`{"role":"user","content":"Make the result"}`), Model: "fixture-model", MaxTokens: 128000}

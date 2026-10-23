@@ -96,11 +96,11 @@ func prepareToolGroups(all []provider.ToolDecl, method agents.WorkMethodSettings
 	// Agent runtimes may hold their native declaration list fixed for a session.
 	// This bridge invokes only the already-registered deferred bindings; their
 	// own validation and execution/authority gates remain the final boundary.
-	deferred := map[string]loop.Tool{}
+	deferred := map[string]bool{}
 	var deferredNames []string
 	for _, name := range names {
 		if declarationGroup(name) != "" {
-			deferred[name] = bindings[name]
+			deferred[name] = true
 			deferredNames = append(deferredNames, name)
 		}
 	}
@@ -112,8 +112,10 @@ func prepareToolGroups(all []provider.ToolDecl, method agents.WorkMethodSettings
 		if decodeWorkerArgs(json.RawMessage(call.Arguments), &in) != nil || !bytes.HasPrefix(bytes.TrimSpace(in.Arguments), []byte("{")) {
 			return provider.ToolCall{}, loop.Tool{}, tools.ErrInvalid
 		}
-		binding, ok := deferred[in.Name]
-		if !ok || binding.Validate == nil || binding.Execute == nil {
+		// Resolve the final binding: channel and completion policies may wrap
+		// it after the declaration catalog is prepared.
+		binding := bindings[in.Name]
+		if !deferred[in.Name] || binding.Validate == nil || binding.Execute == nil {
 			return provider.ToolCall{}, loop.Tool{}, tools.ErrInvalid
 		}
 		nested := provider.ToolCall{ID: call.ID, Name: in.Name, Arguments: string(in.Arguments)}
