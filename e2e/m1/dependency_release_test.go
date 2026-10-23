@@ -444,7 +444,13 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 		}
 	}
 	if outcome != nil {
-		checkScheduledOutcomes(t, h, client, conversation, store, taskIDs, outcome)
+		checkScheduledOutcomes(t, h, conversation, taskIDs)
+		// Persona delivery and scheduler settlement use separate lanes. Wait
+		// for both observations before asserting the terminal task projection.
+		for _, i := range []int{0, 2} {
+			await(taskIDs[i], func(c work.Card) bool { return c.Run != nil && !c.Active })
+		}
+		checkScheduledOutcomeRecords(t, h, store, taskIDs, outcome)
 		client.Close()
 		h.stopCore(core)
 		recalling.Store(true)

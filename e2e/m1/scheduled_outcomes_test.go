@@ -33,7 +33,7 @@ func TestM3ScheduledOutcomes(t *testing.T) {
 	testM3DependencyRelease(t, nil, nil, "", "", scenario)
 }
 
-func checkScheduledOutcomes(t *testing.T, h *harness, client *clientapi.Client, conversation string, store *work.Service, ids []string, scenario scheduledOutcomeScenario) {
+func checkScheduledOutcomes(t *testing.T, h *harness, conversation string, ids []string) {
 	t.Helper()
 	controls, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "followup-fixture", []protocol.Capability{{Name: "running", Version: "1.0"}})
 	if err != nil {
@@ -66,7 +66,6 @@ func checkScheduledOutcomes(t *testing.T, h *harness, client *clientapi.Client, 
 	// The persona's actual completed turns prove delivery; a committed worker
 	// claim alone does not satisfy the conversation-result assertion.
 	waitWorkerCanon(t, h, `SELECT count(*) FROM conv_event e JOIN conv_event p ON p.id=e.parent_id JOIN turn_runs t ON t.id='turn:'||p.id WHERE p.scaffold_kind='worker_completion' AND e.speaker_kind='agent' AND coalesce(e.scaffold_kind,'')<>'result' AND t.state='completed'`, 2)
-	checkScheduledOutcomeRecords(t, h, store, ids, scenario)
 }
 
 func respondScheduledOutcome(t *testing.T, w http.ResponseWriter, inputs []json.RawMessage, scenario scheduledOutcomeScenario) bool {
