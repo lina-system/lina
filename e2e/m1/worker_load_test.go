@@ -159,6 +159,37 @@ func waitForHostCapacity(t *testing.T, h *harness, fixture string) string {
 	}
 }
 
+func waitForCapacityClaim(t *testing.T, h *harness, fixture, id string) {
+	t.Helper()
+	tick := time.NewTicker(20 * time.Millisecond)
+	defer tick.Stop()
+	var last string
+	for {
+		records, err := workerDispatchRecords(h.ctx, h)
+		if err != nil || len(records) != 1 {
+			t.Fatalf("capacity dispatch lost: count=%d err=%v", len(records), err)
+		}
+		r := records[0]
+		launches, err := workerLaunches(fixture)
+		last = fmt.Sprintf("id=%s state=%s wait=%s attempts=%d launches=%q", r.ID, r.State, r.Wait, len(r.Tried), launches)
+		if err != nil || r.ID != id || len(r.Tried) > 1 || strings.Count(launches, "worker\n") > 1 {
+			t.Fatalf("capacity wakeup changed work: %s err=%v", last, err)
+		}
+		if r.State == "running" && r.Wait == "" && r.AreaHeld {
+			t.Log("capacity claimed:", last)
+			return
+		}
+		if r.State != "queued" {
+			t.Fatalf("held capacity work ended before release: %s", last)
+		}
+		select {
+		case <-h.ctx.Done():
+			t.Fatalf("capacity wakeup missing: %s: %v", last, h.ctx.Err())
+		case <-tick.C:
+		}
+	}
+}
+
 func assertCapacityWorkOnce(t *testing.T, h *harness, fixture, id string) {
 	t.Helper()
 	records, err := workerDispatchRecords(h.ctx, h)

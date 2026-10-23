@@ -21,10 +21,16 @@ import (
 
 func managementFixture(t *testing.T) (*conversationRuntime, clientsrv.Session, string, string) {
 	t.Helper()
-	root := t.TempDir()
-	if err := os.Chmod(root, 0700); err != nil {
+	// Growth starts jobs.sock here; keep test names out of its bounded Unix path.
+	root, err := os.MkdirTemp("", "lina-management-")
+	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(root); err != nil {
+			t.Error(err)
+		}
+	})
 	controls, err := ctlfiles.Open(root)
 	if err != nil {
 		t.Fatal(err)

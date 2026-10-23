@@ -6,6 +6,18 @@ native Linux and macOS pseudo-terminals; it needs no window, display server,
 provider account, external network service or human input. Conversation screens
 use the pinned terminal library and a VT emulator.
 
+## Worker fixture stabilization
+
+The shared harness passes its current numeric Go CPU budget (`GOMAXPROCS`) to
+child commands while keeping their environment isolated. A subprocess regression
+checks parent budgets of 1 and 3 against the child's actual runtime setting.
+
+The host-capacity scenario observes its original dispatch's durable running claim
+and area lease within the operation deadline while a fixture barrier holds worker
+completion. It cancels that wakeup context before releasing the worker and checks
+completion and restart within the scenario deadline. This keeps the wakeup check
+independent of Git and manager delivery time while retaining exactly-once checks.
+
 Scenario notes live in the doc comments of their `Test` functions. The M1
 acceptance map is [m1/README.md](m1/README.md). Helpers are test-only Go files in
 `m1/`, shared by scenario tests. Keeping process creation in test files follows
