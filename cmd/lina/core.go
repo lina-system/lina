@@ -78,7 +78,7 @@ func runCore(args []string) int {
 			return 78
 		}
 	}
-	cfg := boot.Config{StateRoot: *root, Socket: *socket, Conversation: route, ClientManifest: *metadata}
+	cfg := boot.Config{StateRoot: *root, Socket: *socket, Conversation: route, ClientManifest: *metadata, Work: &boot.WorkConfig{Installed: true}}
 	if *tailnet != "" {
 		cfg.Tailnet = &clientsrv.TailnetConfig{Address: *tailnet, Socket: *tailscaleSocket}
 	}

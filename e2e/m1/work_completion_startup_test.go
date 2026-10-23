@@ -81,6 +81,13 @@ func TestM2PendingWorkCompletionAtStartup(t *testing.T) {
 			}
 		}
 		must(s.Create(h.ctx, work.Task{ID: "pending-task", PersonID: person, AgentID: agent, ConversationID: conversation, Title: scenario.Startup.Title, Done: scenario.Startup.Done}))
+		// This synthetic producer explicitly owns a personal task; a current
+		// absence of channel bindings is not evidence of its original scope.
+		origin, _ := json.Marshal(map[string]string{"Person": person, "Agent": agent, "Conversation": conversation})
+		must(db.Write(h.ctx, func(tx *canon.Tx) error {
+			_, err := tx.ExecContext(h.ctx, "INSERT INTO work_completion_origins(task_id,record) VALUES('pending-task',?)", origin)
+			return err
+		}))
 		must(s.Start(h.ctx, work.Run{ID: "pending-attempt", TaskID: "pending-task", Generation: 1, Worker: "fixture", ThreadID: "thread", TurnID: "turn", NodeID: "node"}))
 		receipt := work.Receipt{SchemaVersion: 1, RelationshipID: "pending-task", ExecutionGeneration: 1, Attempt: 1, RevisionHash: strings.Repeat("0", 64), Outcome: "blocked_needs_input", Producer: "child", TurnRef: work.TurnRef{ThreadID: "thread", TurnID: "turn", TurnStatus: "completed"}, EmittedAt: time.Now()}
 		receipt.EventID = work.ReceiptID(receipt)

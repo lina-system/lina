@@ -159,7 +159,7 @@ func waitResizeChrome(t *testing.T, h *harness, term *terminal, height int, draf
 	defer cancel()
 	content := draft
 	if content == "" {
-		content = fmt.Sprintf(design.Text(design.English, "composer.placeholder"), "LINA")
+		content = fmt.Sprintf(design.Text(design.English, "composer.placeholder"), "Lina")
 	}
 	snapshot, err := term.screen.Wait(ctx, func(s tuiterm.Snapshot) bool {
 		rows := screenRows(s)

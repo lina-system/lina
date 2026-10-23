@@ -109,6 +109,7 @@ The loop's structure follows the pi agent loop (`packages/agent`):
 The loop behaves as follows:
 
 - Admission first commits input to canon's durable inbox, unique on conversation, source and native id. A duplicate keeps the original bytes and row id. The storage acknowledgement follows the commit and does not wait for a turn; a failed commit sends no acknowledgement. Turn execution uses one lane per conversation, in submission order, while other conversations can proceed independently. Shutdown cancels active turns and waits for them to return before releasing their services. The inbox and lane packages supply these boundaries; client admission, turn claims and steering integration are separate flows ([go-core.md C-09](go-core.md#conversation)).
+- If the work engine fails, Core joins it and continues conversation cleanup: owner-view watchers, worker dispatch, worker sessions and stores. Shutdown returns the engine failure together with later cleanup errors. A timeout while joining a still-running engine does not permit closing the resources it uses.
 - The inner loop runs tool calls and input that arrives while a turn runs (steering). The outer loop runs follow-up input after a turn ends.
 - Tool calls of one response run in parallel, and their results return in the original call order. Argument validation and pre-tool checks run in order, before any call starts.
 - A tool call in a response cut off by the output limit is never executed. The loop returns a result that asks the model to call again with complete arguments.
@@ -326,6 +327,12 @@ The Gemini adapter assembles its own stream by the same rules: deltas drive live
 - when it was observed.
 
 An unreported value is `unknown`, never zero, and LINA never invents a reset time that the provider did not give.
+
+Parking a worker preserves each window's reported state. An exhausted five-hour
+window does not block a healthy weekly window; only exhausted windows determine
+when the worker becomes eligible again. A stop without an identified exhausted
+window adds an unknown-window block with no reset, preserving the reported
+measurements rather than assigning the stop to a healthy window.
 
 | Path | What the provider reports | Source of the rows |
 | --- | --- | --- |

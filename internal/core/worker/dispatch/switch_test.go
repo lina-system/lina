@@ -16,18 +16,11 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/work"
+	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/loop"
-	"github.com/thisisjun786/lina/kit/proc"
 	"github.com/thisisjun786/lina/kit/provider"
 )
-
-func TestMain(m *testing.M) {
-	if len(os.Args) > 1 && os.Args[1] == "proc-supervise" {
-		os.Exit(proc.SuperviseMain(os.Args[2:], os.Stderr))
-	}
-	os.Exit(m.Run())
-}
 
 type switchLeaser struct{}
 
@@ -118,6 +111,7 @@ printf '{"event":"result","result":{"conversation_id":"fixture","status":"ERROR"
 	t.Cleanup(func() { s.cfg.Area.Close(context.Background()) })
 	d := definition(t)
 	d.Repository = repo
+	d.Worker = "antigravity"
 	result := s.Tool(Origin{Person: "owner", Agent: "agent", Conversation: "conversation", Turn: "source-turn"}).Execute(ctx, provider.ToolCall{ID: "call", Name: "dispatch_work", Arguments: string(mustJSON(d))})
 	if result.Code != loop.OK {
 		t.Fatal(result)
@@ -182,7 +176,7 @@ func TestDispatchSwitchRefusesWithoutControl(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			s.execute(r)
+			s.execute(s.ctx, r)
 			if _, err := os.Stat(marker); !os.IsNotExist(err) {
 				t.Fatal("dispatch launched without switch activation", err)
 			}
@@ -216,7 +210,7 @@ func TestDispatchSwitchTracksExecutionThroughRollback(t *testing.T) {
 			ctx, cancel := context.WithCancel(s.ctx)
 			s.ctx = ctx
 			done := make(chan struct{})
-			go func() { defer close(done); s.execute(r) }()
+			go func() { defer close(done); s.execute(s.ctx, r) }()
 			t.Cleanup(func() { cancel(); <-done })
 			observed := make(chan error, 1)
 			go func() { _, err := bufio.NewReader(ready).ReadString('\n'); observed <- err }()
@@ -263,6 +257,69 @@ func TestDispatchSwitchTracksExecutionThroughRollback(t *testing.T) {
 				}
 			} else if err := w.CompleteRollback(t.Context(), "switch", "owner", "drained"); err != nil {
 				t.Fatal("terminal dispatch retained its reservation", err)
+			}
+		})
+	}
+}
+
+type uncertainSwitchAdapter struct {
+	quotaStopAdapter
+	started *int
+}
+
+func (a *uncertainSwitchAdapter) Name() string { return "second" }
+func (a *uncertainSwitchAdapter) Start(context.Context, lease.Lease, worker.StartSpec) (worker.Thread, error) {
+	(*a.started)++
+	return worker.Thread{}, errors.New("launch outcome unknown")
+}
+
+func TestDispatchSwitchFencesQuotaReplacement(t *testing.T) {
+	for _, rollback := range []bool{true, false} {
+		t.Run(fmt.Sprintf("rollback=%t", rollback), func(t *testing.T) {
+			s, r, _, _, _ := switchDispatchFixture(t, false)
+			r.Definition.Worker = ""
+			if err := s.save(t.Context(), r); err != nil {
+				t.Fatal(err)
+			}
+			w := externalDispatchTask(t, s, []string{r.Definition.Repository}, true)
+			starts := 0
+			rolledBack := false
+			s.cfg.Workers = []Factory{
+				{Name: "first", Open: func(context.Context, lease.Lease) (worker.Adapter, func(context.Context) error, error) {
+					return &quotaStopAdapter{events: make(chan worker.Event, 1)}, func(context.Context) error {
+						if rollback && !rolledBack {
+							rolledBack = true
+							return w.RequestRollback(t.Context(), "switch", "owner", "quota handoff")
+						}
+						return nil
+					}, nil
+				}},
+				{Name: "second", Open: func(context.Context, lease.Lease) (worker.Adapter, func(context.Context) error, error) {
+					return &uncertainSwitchAdapter{started: &starts}, func(context.Context) error { return nil }, nil
+				}},
+			}
+			s.execute(s.ctx, r)
+			records, err := s.records(t.Context())
+			if err != nil || len(records) != 1 {
+				t.Fatal(records, err)
+			}
+			if rollback {
+				if starts != 0 || records[0].Code != "control_held" {
+					t.Fatalf("rollback launched replacement: starts=%d state=%s code=%s", starts, records[0].State, records[0].Code)
+				}
+				if err := w.CompleteRollback(t.Context(), "switch", "owner", "first worker settled"); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if starts != 1 || records[0].State != "unknown" {
+					t.Fatalf("uncertain replacement was settled: starts=%d state=%s code=%s", starts, records[0].State, records[0].Code)
+				}
+				if err := w.RequestRollback(t.Context(), "switch", "owner", "unknown replacement"); err != nil {
+					t.Fatal(err)
+				}
+				if err := w.CompleteRollback(t.Context(), "switch", "owner", "unproven completion"); !errors.Is(err, work.ErrActiveRun) {
+					t.Fatalf("uncertain replacement lost reservation: %v", err)
+				}
 			}
 		})
 	}

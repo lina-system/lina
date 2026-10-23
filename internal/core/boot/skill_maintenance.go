@@ -180,7 +180,12 @@ func (r *conversationRuntime) publishSkillMaintenance(ctx context.Context) error
 			if len(agents) == 0 {
 				return nil
 			}
-			view, err = r.router.view(ctx, clientsrv.Session{PersonID: r.person}, agents[0].ID)
+			session := clientsrv.Session{PersonID: r.person}
+			history, discoveryErr := r.router.History(ctx, session, protocol.HistoryGet{})
+			if discoveryErr != nil {
+				return discoveryErr
+			}
+			view, err = r.router.view(ctx, session, *history.AgentID)
 			if err != nil {
 				return err
 			}
