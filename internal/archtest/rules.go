@@ -22,7 +22,7 @@ var layers = func() map[string]int {
 		"canon eventstore secrets ctlfiles guard ids",
 		"authority lifecycle budget manifest",
 		"ledger inbox agents memory retract skills records assets work timers plugins channels accounts",
-		"lane assemble compaction turn runs replay reply results modelpath exec exchange gateway worker reactor review ghclient progress waiting backup update recover clientsrv jobs mcphost install",
+		"lane assemble compaction turn runs replay intakereplay reply results modelpath exec exchange gateway worker reactor review ghclient progress waiting backup update recover clientsrv jobs mcphost install",
 		"boot supervise",
 	} {
 		for _, name := range strings.Fields(names) {
@@ -46,6 +46,8 @@ func moiraiLayer(name string) int {
 		return 4
 	case name == "internal/moirai":
 		return 3
+	case within(name, "internal/moirai/planning"):
+		return 2
 	case within(name, "internal/moirai/canon"):
 		return 2
 	case within(name, "internal/moirai/jobapi"):

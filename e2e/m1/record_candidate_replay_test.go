@@ -19,6 +19,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/records"
+	resultkit "github.com/thisisjun786/lina/kit/result"
 )
 
 // Alias provenance is fixture data admitted through the ledger while Core is
@@ -121,7 +122,11 @@ func TestM2RecordCandidateReplayAfterFinish(t *testing.T) {
 					emitPersonaCall(w, "read", "read_record", coreexec.RecordRead{ID: added.RecordID})
 				case 3:
 					result(&saved)
-					emitPersonaCall(w, "finish", "write_record", coreexec.RecordWrite{ID: saved.ID, Revision: saved.Revision, Kind: "todo", Title: scenario.Title, Todo: &records.Todo{State: state, Source: added.Source}})
+					var proof *resultkit.CompletionRequest
+					if state == "completed" {
+						proof = &resultkit.CompletionRequest{WorkKind: "document", Evidence: []resultkit.EvidenceReference{{Kind: "source_reopened", CallID: "read"}}}
+					}
+					emitPersonaCall(w, "finish", "write_record", coreexec.RecordWrite{ID: saved.ID, Revision: saved.Revision, Kind: "todo", Title: scenario.Title, Completion: proof, Todo: &records.Todo{State: state, Source: added.Source}})
 				case 4:
 					result(&finished)
 					if finished.ID != added.RecordID || finished.Revision == saved.Revision || !strings.Contains(finished.Markdown, `state: "`+state+`"`) {

@@ -15,6 +15,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/internal/core/records"
+	resultkit "github.com/thisisjun786/lina/kit/result"
 )
 
 func TestM2RecordRecurrencePromotionInstalledCore(t *testing.T) {
@@ -107,20 +108,29 @@ func TestM2RecordRecurrencePromotionInstalledCore(t *testing.T) {
 			create("capture-repeat", scenario.Recurring)
 		case 5:
 			result(&recurring)
-			emitPersonaCall(w, "complete-repeat", "write_record", coreexec.RecordWrite{ID: recurring.ID, Revision: recurring.Revision, Kind: "todo", Title: scenario.Recurring, Todo: &records.Todo{State: "completed", Repeat: &records.Repeat{Rule: scenario.Rule, Next: scenario.First}}})
+			emitPersonaCall(w, "reopen-source", "read_record", coreexec.RecordRead{ID: memo.ID})
 		case 6:
+			var source coreexec.RecordReceipt
+			result(&source)
+			if source.Markdown != memo.Markdown {
+				t.Error("source readback changed")
+			}
+			emitPersonaCall(w, "complete-repeat", "write_record", coreexec.RecordWrite{ID: recurring.ID, Revision: recurring.Revision, Kind: "todo", Title: scenario.Recurring, Completion: &resultkit.CompletionRequest{WorkKind: "document", Evidence: []resultkit.EvidenceReference{{Kind: "source_reopened", CallID: "reopen-source"}}}, Todo: &records.Todo{State: "completed", Repeat: &records.Repeat{Rule: scenario.Rule, Next: scenario.First}}})
+		case 7:
 			result(&completion)
 			if completion.ID != recurring.ID || completion.Revision == recurring.Revision {
 				t.Error("recurrence identity", completion)
 			}
 			checkFuture(coreexec.RecordReceipt{ID: completion.ID, Revision: completion.Revision, Markdown: completion.Markdown})
+			emitResponse(w, "Converted the memo and undid it. The checked recurring task advanced.", true)
+		case 8:
 			create("capture-overdue", scenario.Overdue)
-		case 7:
+		case 9:
 			result(&overdue)
 			emitResponse(w, "Converted the memo and undid it. The recurring task advanced.", true)
-		case 8:
+		case 10:
 			emitPersonaCall(w, "read-overdue", "read_record", coreexec.RecordRead{ID: overdue.ID})
-		case 9:
+		case 11:
 			var advanced coreexec.RecordReceipt
 			result(&advanced)
 			if advanced.ID != overdue.ID || advanced.Revision == overdue.Revision {
@@ -128,14 +138,14 @@ func TestM2RecordRecurrencePromotionInstalledCore(t *testing.T) {
 			}
 			checkFuture(advanced)
 			emitPersonaCall(w, "read-restored", "read_record", coreexec.RecordRead{ID: memo.ID})
-		case 10:
+		case 12:
 			var got coreexec.RecordReceipt
 			result(&got)
 			if got != restored {
 				t.Error("restart changed restored memo", got)
 			}
 			emitPersonaCall(w, "list-todos", "query_records", coreexec.RecordQuery{Kind: "todo", Limit: 100})
-		case 11:
+		case 13:
 			var got struct{ Rows []records.Row }
 			result(&got)
 			if len(got.Rows) != 2 {
@@ -152,17 +162,18 @@ func TestM2RecordRecurrencePromotionInstalledCore(t *testing.T) {
 	core := start(true)
 	c, conversation := conversationClient(t, h)
 	admittedTurn(t, h, c, conversation, "record-actions", "Capture a memo, promote it, undo it and complete a recurring task.")
+	admittedTurn(t, h, c, conversation, "record-overdue", "Capture the other recurring task.")
 	c.Close()
 	h.stopCore(core)
 	core = start(true)
-	if calls.Load() != 7 {
+	if calls.Load() != 9 {
 		t.Fatal("startup used a model to advance recurrence", calls.Load())
 	}
 	c, conversation = conversationClient(t, h)
 	admittedTurn(t, h, c, conversation, "record-actions-restart", "Read the recurring tasks and restored memo.")
 	c.Close()
 	h.stopCore(core)
-	if calls.Load() != 11 {
+	if calls.Load() != 13 {
 		t.Fatal("provider calls", calls.Load())
 	}
 	db, err := canon.OpenSQLiteReader(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))

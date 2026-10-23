@@ -326,6 +326,25 @@ When it asks, Core keeps the instruction pending until the person explicitly sel
 
 **Record and measurement.** The binding is a system event linked to the input event. It holds the target, the candidates offered, the rule or judge that decided, the judge's probabilities when it answered, and any later move. Every input of the person gets one, so an input that was never answered shows. Core counts moves per 100 bindings by who decided. The [intake replay](../research/message-intake.md#replay-evaluation) scores every change to the rules, the candidate ranking, a judge or the instructions before it enters use: right item, right new or existing, and asked when it should and not otherwise. A change that raises silent wrong picks on running work does not ship.
 
+The development command `lina intake-replay <cases.jsonl>` accepts an explicit
+case path outside the repository and prints JSON counts and rates, separately
+for random and hard sets and each decider. Each case/router pair starts a fresh,
+private Core conversation runtime, seeds records, work and run snapshots plus
+ledger context and open questions, admits the person's input through Core, and
+reads the linked system binding event back before scoring. No provider or worker
+is launched. Temporary state is removed after each pair. The replay-only
+baselines do not change ordinary conversation intake.
+
+The two baselines are **focus-only** (always the recorded focus, including an
+aged focus) and **rules-then-focus** (the three explicit-fact rules above, then
+that same focus). They deliberately do not interpret new children, split
+requests or ask questions. Their failures on those cases measure the work left
+for the model. Public synthetic fixtures pin every case's score for both
+baselines; they are not an estimate of accuracy on the person's messages.
+Missing or malformed cases and runtime failures are counted by reason and never
+enter a success numerator. The command exits nonzero on exclusions. See the
+[case format and scoring definitions](../research/message-intake.md#replay-file-format).
+
 Implementation: #785 (the intake replay), #786 (the binding event, candidates and Core rules), #787 (the model's part, asking and the duplicate check) and #788 (showing and moving).
 
 ### Request assembly
@@ -579,7 +598,7 @@ A methodology is the judgment an agent applies to one kind of work. It comes fro
 Rules every methodology inherits:
 
 1. Decide reversible things and say what was done in one line. Ask once, with one recommendation, for what is irreversible, external, costly or public; never offer a menu. A question or a stated direction from the person is answered, not executed; an imperative is executed. Alternative artifacts offered for the person's choice, up to the work-method record's candidate count and with one marked favourite, are not a menu.
-2. Verify before reporting and say what was checked. Keep verified, estimated and unknown apart. Done means observed where the person uses it, with the evidence kind the work-method record requires for that kind of work ([preset-work-methods.md](preset-work-methods.md#done-evidence)); another agent's or a worker's report stays a labelled claim until reproduced.
+2. Verify before reporting and say what was checked. Keep verified, estimated and unknown apart. Done means observed where the person uses it, with the evidence kind the work-method record requires for that kind of work ([preset-work-methods.md](preset-work-methods.md#done-evidence)); another agent's or a worker's report stays a labelled claim until reproduced. Core records missing evidence as a claim with a separate "not verified" card label and an agent breach; it never rewrites the reply.
 3. Do not re-explain or re-confirm what is decided.
 4. Reports are short, conclusion first, and silent when nothing changed.
 5. Quote the person's words and never intensify them. A joke or an exaggeration is not derived into a fact.

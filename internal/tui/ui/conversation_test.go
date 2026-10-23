@@ -249,6 +249,31 @@ func TestConversationStructuredResultsStayCards(t *testing.T) {
 	}
 }
 
+func TestCompletionCardShowsUnverifiedWithoutChangingContent(t *testing.T) {
+	m := conversationShell()
+	topic := "conversation:fixture"
+	m.Update(shellData{Generation: 1, Message: state.Snapshot{Epoch: "1", Revocation: "1", Topic: topic}})
+	body := "The repair is complete."
+	card := protocol.Result{ResultID: "completion-card", Type: protocol.ResultTypeDocumentDraft, Status: protocol.ResultStatusPreview,
+		Title: "Repair", Summary: "The repair is complete.", Text: &body,
+		Completion: &protocol.CompletionStatus{State: protocol.CompletionStateClaimed, Label: "not verified"},
+		Provenance: protocol.ResultProvenance{ConversationID: "fixture"},
+		Stream:     &protocol.StreamMetadata{Topic: topic, Key: "completion-card", Cursor: protocol.StreamCursor{Epoch: "1", Seq: "1"}, Revision: "1"}}
+	projected, err := projectStream(protocol.Envelope{Epoch: "1", Kind: protocol.KindResult, Payload: card})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Update(shellData{Generation: 1, Message: projected.message})
+	view := m.View().Content
+	if !strings.Contains(view, "not verified") || !strings.Contains(view, card.Summary) {
+		t.Fatalf("completion card: %s", view)
+	}
+	m.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+	if m.conversation.pager.text != body {
+		t.Fatalf("result body rewritten: %q", m.conversation.pager.text)
+	}
+}
+
 func TestConversationOpenCardReceivesRemainingReply(t *testing.T) {
 	m := conversationShell()
 	topic := "conversation:fixture"

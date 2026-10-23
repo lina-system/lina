@@ -172,8 +172,11 @@ func TestM2WorkLedger(t *testing.T) {
 	if err != nil || frame.Error != nil {
 		t.Fatalf("open work card: %+v %v", frame, err)
 	}
+	if live.Completion == nil || live.Completion.State != "claimed" || live.Completion.Label != "not verified" {
+		t.Fatalf("missing completion assessment: %+v", live.Completion)
+	}
 	result, ok := frame.Payload.(protocol.Running)
-	if !ok || result.Text == nil || !strings.Contains(*result.Text, scenario.AcceptedState+": "+scenario.Title) || !strings.Contains(*result.Text, "worker_report") || !strings.Contains(*result.Text, "core_review") {
+	if !ok || result.Text == nil || !strings.Contains(*result.Text, live.Completion.Label+": "+scenario.Title) || !strings.Contains(*result.Text, "worker_report") || !strings.Contains(*result.Text, "core_review") {
 		t.Fatalf("missing live card evidence: %+v", result)
 	}
 	reader, err := canon.OpenReader(h.ctx, path)

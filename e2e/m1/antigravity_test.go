@@ -429,7 +429,10 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 			if scenario.Delivery {
 				assertDelivery(t, h, fixture, test.Name)
 			}
-			if (scenario.CompletionEvents || scenario.Delivery || test.HostCapacity) && providerCalls.Load() != beforeRestart {
+			if scenario.Conformance {
+				assertConformance(t, h, test.Name)
+			}
+			if (scenario.CompletionEvents || scenario.Conformance || scenario.Delivery || test.HostCapacity) && providerCalls.Load() != beforeRestart {
 				t.Fatal("restart replayed a manager or conversation model call")
 			}
 			expectedCalls := int32(2)
