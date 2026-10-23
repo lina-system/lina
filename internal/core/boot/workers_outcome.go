@@ -39,6 +39,16 @@ type workerCompletion struct {
 	Failure    worker.FailureKind  `json:"failure,omitempty"`
 }
 
+// A failed worker's result reaction reports its outcome. Only the recovery
+// controller or a later person instruction can authorize another execution.
+func failedWorkerReaction(input ledger.Event) bool {
+	if input.ScaffoldKind != "worker_completion" {
+		return false
+	}
+	var result workerCompletion
+	return json.Unmarshal([]byte(input.Body.Text()), &result) != nil || result.Status != worker.Done
+}
+
 func (e *workerSession) finish(ctx context.Context, event worker.Event) error {
 	return e.finishOutcome(ctx, event, e.output, true)
 }

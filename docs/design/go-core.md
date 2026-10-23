@@ -1419,7 +1419,7 @@ its conversation response is a separate reaction and never starts a worker turn.
 never repeated, including after restart. The same task, thread, directory and
 prior receipts are retained. A second settled failure becomes a durable decision
 in Waiting for me; keeping it paused or stopping it grants no further execution.
-A person cancellation disables automatic recovery. Restoring a backup disables captured recovery and queued dispatch authority while preserving observations and receipts. All adapters reject interrupt
+The first observed failure retains its normal conversation result response, with execution tools withheld. That response cannot start another worker; the recovery controller still owns the single continuation. A second failed attempt uses the decision row without an autonomous model response. A person cancellation disables automatic recovery. Restoring a backup disables captured recovery and queued dispatch authority while preserving observations and receipts. All adapters reject interrupt
 reasons outside user, budget, Node policy and the stall rule.
 
 Headless dispatch commits terminal snapshots, attempt-specific receipts and the next recovery state in one canon transaction. Codex dispatch retains the native thread and exact turn before work bookkeeping, so restart can observe the original attempt and recover its real worktree result without launching a turn. Recovery revalidates the originating channel and goal scope; quota replacements do not consume the one ordinary recovery. A

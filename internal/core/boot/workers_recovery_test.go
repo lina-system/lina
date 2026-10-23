@@ -135,8 +135,9 @@ func TestWorkerRecoveryFailureRetainsUnknownDirectoryReservation(t *testing.T) {
 	if err := r.work.ReserveWorker(t.Context(), reservation, dir); err != nil {
 		t.Fatal(err)
 	}
-	probe := &failedRecoveryProbe{events: make(chan worker.Event, 1)}
+	probe := &failedRecoveryProbe{events: make(chan worker.Event, 2)}
 	probe.events <- worker.Event{Kind: worker.FinishEvent, Thread: thread, Finish: &worker.Finish{Status: worker.Failed, Failure: worker.WorkerFailure, Code: "tool_failed"}}
+	probe.events <- worker.Event{Kind: worker.FinishEvent, Thread: thread, Finish: &worker.Finish{Status: worker.Failed, Failure: worker.ConnectionFailure, Code: "connection_lost"}}
 	close(probe.events)
 	e := &workerSession{origin: r, thread: thread, adapter: probe, workdir: dir, reservation: reservation, reservationTurn: thread.TurnID, active: map[string]lease.Lease{}, done: make(chan struct{}), close: func() error { return nil }, recovery: recovery.Record{ID: thread.ID, Person: r.person, Agent: r.agent, Conversation: r.conversation, Input: "input", Thread: thread, State: "running", Reservation: reservation}}
 	e.observe()

@@ -1252,6 +1252,7 @@ A stream without a final result, tool activity requiring readback, or an
 unobserved process after Core dies remains unknown. These headless adapters do
 not claim a persisted-thread read operation they do not provide. Reconciliation
 uses the existing events and a five-minute safety sweep; it does not call a model.
+A first live worker failure keeps its normal result response, with no execution tools in that response. The known failure stays visible while unknown effects retain their directory fence. The response cannot grant another worker attempt.
 Confirmed successful completion evidence uses the normal result-delivery inbox. Its separate
 conversation response neither replays worker input nor grants another attempt.
 

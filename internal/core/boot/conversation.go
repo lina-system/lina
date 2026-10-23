@@ -1013,6 +1013,11 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				declarations = nil
 				catalog = nil
 			}
+			if failedWorkerReaction(input) {
+				clear(bindings)
+				declarations = nil
+				catalog = nil
+			}
 			if r.channelBinding != nil {
 				for name, tool := range bindings {
 					execute := tool.Execute

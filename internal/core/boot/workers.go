@@ -664,11 +664,17 @@ func (e *workerSession) observe() {
 		case worker.FinishEvent:
 			e.recoveryMu.Lock()
 			rec := e.recovery
+			if event.Thread == rec.Thread && event.Finish.Failure == worker.ConnectionFailure && event.Finish.Code == "connection_lost" && rec.Finish != nil && rec.Finish.Code != "connection_lost" {
+				// Losing the process after a terminal result cannot erase that
+				// turn's observation or settle any remaining unknown effects.
+				e.recoveryMu.Unlock()
+				continue
+			}
 			settled := rec.ID == ""
 			if event.Thread == rec.Thread {
 				rec.Finish = event.Finish
 			}
-			deliver := event.Finish.Status == worker.Done || rec.Canceled || rec.ID == ""
+			deliver := event.Finish.Status == worker.Done || rec.Canceled || rec.ID == "" || rec.Retries == 0
 			delivered := false
 			if deliver {
 				err := e.finish(e.origin.ctx, event)
@@ -679,7 +685,7 @@ func (e *workerSession) observe() {
 			}
 			if rec.ID != "" {
 				rec.State = "unknown"
-				if delivered {
+				if delivered && (event.Finish.Status == worker.Done || rec.Canceled) {
 					rec.State = "finished"
 				}
 				if (recovery.Recovery{DB: e.origin.db}).Put(e.origin.ctx, rec) == nil {
