@@ -30,23 +30,27 @@ receive boundary. These checks do not establish the complete M1 journeys.
 ### TUI screens and input acceptance (#106)
 
 The parent issue combines the shell (#107), conversation and composer (#108),
-and approval and question cards (#109). Run the child issues' package checks
-and the existing fake-Core and installed-Core journeys together:
+and approval and question cards (#109), all closed. Run the child issues'
+package checks and the fake-Core, approval-race and installed-Core journeys
+together:
 
 ```sh
 go test -count=1 ./internal/tui/term/... ./internal/tui/ui/... ./internal/design/... ./cmd/lina/... ./internal/tui/state/...
-go test -count=1 ./e2e/... -run '^TestM1TUI(Shell|Recovery|ConversationInstalledCore|ConversationStream)$'
+go test -count=1 ./e2e/... -run '^TestM1TUI(Shell|Recovery|Cards|ConversationInstalledCore|ConversationStream)$'
 node scripts/foundation.mjs
 ```
 
-| Parent acceptance | Evidence and remaining work |
+Core-backed work in these commands needs a Linux host; on macOS the Core
+admission check refuses the state root before any TUI code runs.
+
+| Parent acceptance | Evidence |
 | --- | --- |
 | Start, connect, refuse, recover and quit through a PTY | `TestM1TUIShell` and `TestM1TUIRecovery`, driven by `e2e/m1/tui-shell.json` and `e2e/m1/tui-recovery.json`. |
-| Two fake clients race one approval; exactly one resolves | Depends on #109. Add its approval scenario to this acceptance command when available; conversation input tests do not establish approval resolution. |
+| Two fake clients race one approval; exactly one resolves | `TestM1TUICards` answers one card from two socket clients of the production listener; `e2e/m1/tui-cards.json` expects exactly one `resolved` and one `already_resolved`. The same scenario checks a group changed after display and the replayed-approval bell through the recording writer. |
 | Unchanged state writes zero bytes | `TestUnchangedConnectionWritesNothing` and `TestWorkListsFollowWelcomeCapabilities` check output lengths after rendering the same state twice. |
 | Absent Core shows its screen and starts no Core | `TestM1TUIShell` checks the absent state, exit status and absence of newly created state; `TestShellAbsentScreenKeepsHistoryOffScreen` checks the view. |
 | Every closed code has a catalog entry by id | `TestCatalogCoversClosedWireCodes` walks schema enums; `TestConnectionCatalogAndReadOnlyStates` checks connection ids in both languages. |
-| All child issues are closed | Check #107, #108 and #109 before closing #106. Passing these commands alone does not satisfy this condition. |
+| All child issues are closed | #107, #108 and #109 are closed. |
 
 The design contracts are [T-04](design/tui.md#approvals-questions-and-sign-in-t-04),
 [T-05](design/tui.md#connection-states-t-05),
@@ -56,7 +60,7 @@ The design contracts are [T-04](design/tui.md#approvals-questions-and-sign-in-t-
 [T-13](design/tui.md#results-cards-and-the-pager-t-13), and
 [T-15](design/tui.md#notifications-t-15).
 This acceptance map changes no product behavior. Approval races, stale groups
-and replayed approval bells remain #109's acceptance work.
+and replayed approval bells belong to `e2e/m1/tui-cards.json`, closed with #109.
 
 ### Synthetic Responses conversation
 
