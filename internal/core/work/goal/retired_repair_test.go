@@ -35,6 +35,11 @@ func TestRetiredSiblingRepairAssessmentIsDerivedAgain(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// Report retains obsolete evidence; reconciliation releases its planning
+	// reservation before the next manager assessment is derived.
+	if err := e.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	g := revisionSnapshot(t, e).Goals[0]
 	if b := g.Tasks[1]; b.Stage != TaskQAFailed || b.RepairAsked || b.RepairedBy != "" || b.QA.Ref != "failed-qa" {
 		t.Fatalf("retired assessment stranded or changed its task: %+v", b)
