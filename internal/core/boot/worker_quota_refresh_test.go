@@ -20,7 +20,7 @@ type quotaRefreshProbe struct{ worker.Adapter }
 
 func (*quotaRefreshProbe) Name() string { return "codex" }
 func (*quotaRefreshProbe) Quota(context.Context) ([]provider.QuotaRow, error) {
-	return []provider.QuotaRow{{Window: provider.FiveHour, State: provider.QuotaOK, Source: provider.Endpoint, Observed: time.Now()}}, nil
+	return []provider.QuotaRow{{Provider: provider.ChatGPT, Account: "recovered-account", Window: provider.FiveHour, State: provider.QuotaOK, Source: provider.Endpoint, Observed: time.Now()}}, nil
 }
 
 func TestRoutedWorkerQuotaRefreshesDispatch(t *testing.T) {

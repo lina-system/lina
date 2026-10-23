@@ -123,3 +123,29 @@ func TestLN133QuotaNullUsage(t *testing.T) {
 		t.Fatalf("null update retained stale usage=%+v", rows)
 	}
 }
+
+func TestQuotaBucketIdentitySurvivesDurationDiscovery(t *testing.T) {
+	for _, id := range []string{"", "codex"} {
+		t.Run("limit="+id, func(t *testing.T) {
+			payload, _ := json.Marshal(map[string]any{"accountId": "account", "rateLimits": map[string]any{
+				"limitId": id, "primary": map[string]any{"usedPercent": 100}, "secondary": map[string]any{"usedPercent": 20},
+			}, "rateLimitsByLimitId": map[string]any{"review": map[string]any{"primary": map[string]any{"usedPercent": 100, "windowDurationMins": 300}}}})
+			p := newAdapterPeer(t, string(payload))
+			th := p.start(t)
+			before, err := p.s.Quota(p.ctx)
+			if err != nil || len(before) != 3 {
+				t.Fatalf("initial quota: %+v %v", before, err)
+			}
+			if before[0].LimitID != id || before[0].Bucket != "primary" || before[0].Window != provider.UnknownWindow || before[1].Bucket != "secondary" || before[2].LimitID != "review" || before[2].Bucket != "primary" {
+				t.Fatalf("missing independent bucket identities: %+v", before)
+			}
+			update, _ := json.Marshal(map[string]any{"rateLimits": map[string]any{"limitId": id, "primary": map[string]any{"usedPercent": 12, "windowDurationMins": 300}}})
+			p.send(frame{Method: "account/rateLimits/updated", Params: update})
+			p.snapshot(t, th)
+			after, err := p.s.Quota(p.ctx)
+			if err != nil || len(after) != 3 || after[0].LimitID != before[0].LimitID || after[0].Bucket != before[0].Bucket || after[0].Window != provider.FiveHour || after[0].State != provider.QuotaOK || after[2].State != provider.QuotaBlocked || !after[1].Observed.Equal(before[1].Observed) {
+				t.Fatalf("duration discovery changed bucket identity or sibling: %+v %v", after, err)
+			}
+		})
+	}
+}
