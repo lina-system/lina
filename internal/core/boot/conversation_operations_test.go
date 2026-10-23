@@ -184,6 +184,7 @@ func TestConversationRegistrationSurface(t *testing.T) {
 			want := map[protocol.Kind]string{
 				protocol.KindAccountRequest: "accounts", protocol.KindSignInListening: "sign_in_relay", protocol.KindSignInRedirect: "sign_in_relay",
 				protocol.KindRecordRequest: "records", protocol.KindWebRequest: "web",
+				protocol.KindResultGet:     "results",
 				protocol.KindExportRequest: "replay", protocol.KindReplayRequest: "replay",
 				protocol.KindApprovalAnswer: "waiting", protocol.KindQuestionAnswer: "waiting", protocol.KindWaitingGet: "waiting",
 				protocol.KindWorkSwitchRequest: "work", protocol.KindProgressGet: "worker_lanes",
