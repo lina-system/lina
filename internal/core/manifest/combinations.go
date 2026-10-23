@@ -70,12 +70,13 @@ func ValidateCombinations(rows []Combination) error {
 				return fmt.Errorf("empty combination evidence")
 			}
 		}
-		caps := make(map[protocol.Capability]bool)
+		caps := make(map[[2]string]bool)
 		for _, capability := range row.Capabilities {
-			if capability.Name == "" || !protocolVersionPattern.MatchString(capability.Version) || caps[capability] {
+			key := [2]string{capability.Name, capability.Version}
+			if capability.Name == "" || !protocolVersionPattern.MatchString(capability.Version) || caps[key] {
 				return fmt.Errorf("invalid or duplicate capability")
 			}
-			caps[capability] = true
+			caps[key] = true
 		}
 	}
 	return nil
@@ -145,9 +146,9 @@ func ClientCombinationsFor(target string) []Combination {
 			"go test ./e2e/m1 -run TestM1TurnBudgetHandoffInstalledCore",
 		},
 	}}
-	newer := rows[0]
-	newer.ProtocolVersion = "1.1"
-	newer.Capabilities = append(append([]protocol.Capability(nil), newer.Capabilities...), protocol.Capability{Name: "mocks", Version: "1.0"}, protocol.Capability{Name: "mini_apps", Version: "1.0"})
-	newer.Evidence = append(append([]string(nil), newer.Evidence...), "go test ./e2e/m1 -run TestM3DrawnMocks", "go test ./e2e/m4 -run TestMiniAppsThroughRunningCore")
-	return append(rows, newer)
+	modern := rows[0]
+	modern.ProtocolVersion = "1.1"
+	modern.Capabilities = append(append([]protocol.Capability{}, modern.Capabilities...), protocol.SurfaceResultsCapability(), protocol.Capability{Name: "mocks", Version: "1.0"}, protocol.Capability{Name: "mini_apps", Version: "1.0"})
+	modern.Evidence = append(append([]string{}, modern.Evidence...), "go test ./e2e/m1 -run TestGeneratedSurfaceInstalledCore", "go test ./e2e/m1 -run TestM3DrawnMocks", "go test ./e2e/m4 -run TestMiniAppsThroughRunningCore")
+	return append(rows, modern)
 }

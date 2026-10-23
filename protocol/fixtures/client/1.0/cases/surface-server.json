@@ -1,0 +1,34 @@
+{
+  "side": "server",
+  "input": [
+    "normal/surface_hello.json",
+    "invalid/surface_legacy_version.json",
+    "invalid/surface_action_legacy_version.json",
+    "invalid/surface_version.json",
+    "invalid/surface_catalogId.json",
+    "invalid/surface_catalogVersion.json",
+    "invalid/surface_widget.json",
+    "invalid/surface_field.json",
+    "normal/surface_action.json"
+  ],
+  "output": [
+    "normal/surface_hello.json",
+    "normal/surface_action.json"
+  ],
+  "errors": [
+    "",
+    "malformed",
+    "malformed",
+    "malformed",
+    "malformed",
+    "malformed",
+    "malformed",
+    "malformed",
+    ""
+  ],
+  "outcome": {
+    "accepted": 2,
+    "unknown_kinds": 0,
+    "malformed": 7
+  }
+}

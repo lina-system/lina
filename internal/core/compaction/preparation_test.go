@@ -9,6 +9,7 @@ import (
 )
 
 func TestPreparationRejectsChangedModelAndRootRevision(t *testing.T) {
+	t.Parallel()
 	for _, change := range []string{"model", "root revision"} {
 		t.Run(change, func(t *testing.T) {
 			b, v, db := builderFixture(t)
@@ -41,6 +42,7 @@ func TestPreparationRejectsChangedModelAndRootRevision(t *testing.T) {
 }
 
 func TestRootOnlyDemandBuildsHigherLevel(t *testing.T) {
+	t.Parallel()
 	b, v, _ := builderFixture(t)
 	segment := PassSegment{Records: v.History, Protected: []Record{v.Input}}
 	b.Generate = func(context.Context, PassSegment) (Text, error) {
@@ -75,6 +77,7 @@ func TestRootOnlyDemandBuildsHigherLevel(t *testing.T) {
 }
 
 func TestRetractionRebuildsThreeLevelsFromRemainingEvidence(t *testing.T) {
+	t.Parallel()
 	db, s, r, _ := fixture(t)
 	publish(t, s, proposal(t, s, "leaf"))
 	publish(t, s, Proposal{Expected: frontier(t, s), ID: "parent", Children: []string{"leaf"}, Cover: []Coverage{{EventID: "e2"}}, Output: output("parent")})

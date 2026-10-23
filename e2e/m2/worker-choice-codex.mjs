@@ -1,6 +1,13 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
 // Synthetic Codex wire boundary; the task's Git/filesystem effects are real.
+// Core frames every input; the vendor receives the frame and reads its body.
+function messageText(text) {
+ if (!text.startsWith('<lina-message ')) return text;
+ const match=text.match(/^<lina-message [^>]*><text>([\s\S]*)<\/text><\/lina-message>$/);
+ if (!match) throw Error('invalid worker message frame');
+ return match[1].replace(/&(#x[0-9a-f]+|#[0-9]+|amp|lt|gt|quot|apos);/gi,(_,e)=>e[0]==='#'?String.fromCodePoint(e[1].toLowerCase()==='x'?parseInt(e.slice(2),16):Number(e.slice(1))):({amp:'&',lt:'<',gt:'>',quot:'"',apos:"'"})[e]);
+}
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
@@ -24,7 +31,7 @@ for await (const line of readline.createInterface({input:process.stdin})) {
   cwd=p.cwd;
   reply({thread:{id:'choice-codex'},cwd,model:'fixture'});break;
  case 'turn/start': {
-  const packet=p.input[0].text;
+  const packet=messageText(p.input[0].text);
   if(fs.existsSync(path.join(root,'first-pid'))) {
    const pid=Number(fs.readFileSync(path.join(root,'first-pid'),'utf8'));
    let alive=false;try {process.kill(pid,0);alive=true;}catch{}

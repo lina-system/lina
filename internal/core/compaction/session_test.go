@@ -12,6 +12,7 @@ import (
 )
 
 func TestLoopTransformBlocksDispatchOnSummaryFailure(t *testing.T) {
+	t.Parallel()
 	p, v := fixturePass()
 	failed := errors.New("summary failed")
 	p.Summarize = func(context.Context, PassSegment) (Text, error) { return Text{}, failed }
@@ -29,6 +30,7 @@ func TestLoopTransformBlocksDispatchOnSummaryFailure(t *testing.T) {
 	}
 }
 func TestSessionPreservesCompactedPrefixAcrossAppends(t *testing.T) {
+	t.Parallel()
 	p, v := fixturePass()
 	calls := 0
 	p.Summarize = func(context.Context, PassSegment) (Text, error) {

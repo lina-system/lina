@@ -1,0 +1,153 @@
+{
+  "protocol": {
+    "name": "client",
+    "version": "1.1"
+  },
+  "kind": "result",
+  "message_id": "result-example",
+  "attempt_id": "result-attempt-1",
+  "reply_to": null,
+  "sender": {
+    "party": "core",
+    "id": "main-example"
+  },
+  "epoch": "42",
+  "sent_at": "2026-01-01T00:00:01Z",
+  "idempotency_key": null,
+  "effect_state": "none",
+  "receipt_ref": null,
+  "source_refs": [],
+  "error": null,
+  "payload": {
+    "result_id": "result-example",
+    "revision": 1,
+    "type": "surface",
+    "title": "Example",
+    "summary": "Example summary",
+    "status": "preview",
+    "saved_as": null,
+    "revised_by": "agent-example",
+    "provenance": {
+      "agent_id": "agent-example",
+      "conversation_id": "conversation-example",
+      "turn_id": "turn-example",
+      "task_id": null
+    },
+    "body": {
+      "version": "v0.9",
+      "catalogId": "lina.cards",
+      "catalogVersion": "1.0",
+      "surfaceId": "dentist",
+      "components": [
+        {
+          "id": "root",
+          "component": "Column",
+          "children": [
+            "title",
+            "slots",
+            "book"
+          ]
+        },
+        {
+          "id": "title",
+          "component": "Text",
+          "text": "치과 예약 시간"
+        },
+        {
+          "id": "slots",
+          "component": "ChoicePicker",
+          "label": "되는 시간",
+          "options": [
+            {
+              "label": "화 10:30",
+              "value": "tue-1030"
+            },
+            {
+              "label": "수 15:00",
+              "value": "wed-1500"
+            },
+            {
+              "label": "금 09:00",
+              "value": "fri-0900"
+            }
+          ],
+          "value": {
+            "path": "/slot"
+          },
+          "variant": "mutuallyExclusive"
+        },
+        {
+          "id": "book",
+          "component": "Button",
+          "child": "bookLabel",
+          "action": {
+            "event": {
+              "name": "choose",
+              "context": {
+                "slot": {
+                  "path": "/slot"
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "bookLabel",
+          "component": "Text",
+          "text": "이 시간으로 예약 요청"
+        }
+      ],
+      "dataModel": {
+        "slot": [
+          "tue-1030"
+        ]
+      },
+      "deleted": false
+    },
+    "text": "치과 예약 시간\n되는 시간\n[1] ● 화 10:30\n[2] ○ 수 15:00\n[3] ○ 금 09:00\n[a] 이 시간으로 예약 요청",
+    "surface_controls": {
+      "fields": [
+        {
+          "id": "/slot",
+          "label": "되는 시간",
+          "kind": "choice",
+          "value": [
+            "tue-1030"
+          ],
+          "multiple": false,
+          "choices": [
+            {
+              "key": "1",
+              "label": "화 10:30",
+              "value": "tue-1030"
+            },
+            {
+              "key": "2",
+              "label": "수 15:00",
+              "value": "wed-1500"
+            },
+            {
+              "key": "3",
+              "label": "금 09:00",
+              "value": "fri-0900"
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "key": "a",
+          "name": "choose",
+          "values": {
+            "slot": [
+              "tue-1030"
+            ]
+          },
+          "bindings": {
+            "slot": "/slot"
+          }
+        }
+      ]
+    }
+  }
+}

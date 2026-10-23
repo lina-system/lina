@@ -12,6 +12,9 @@ import (
 // Handlers must honor cancellation and must not retain the request payload.
 type Operation struct {
 	Capability protocol.Capability
+	// Alternatives admit the same operation through another negotiated grant.
+	// Used when a newer capability adopts an existing request kind.
+	Alternatives []protocol.Capability
 	// AdditionalCapabilities share this wire kind; CapabilityFor selects the
 	// one required by each request before the handler is called.
 	AdditionalCapabilities []protocol.Capability
