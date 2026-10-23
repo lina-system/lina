@@ -42,7 +42,11 @@ func TestACPSchemaInvalidSubmissionStaysOpen(t *testing.T) {
 	if err != nil || outcome != protocol.DecisionOutcomeResolved || len(probe.answers) != 1 || !json.Valid(probe.answers[0].Result) {
 		t.Fatalf("decline after invalid value: outcome=%s err=%v answers=%d", outcome, err, len(probe.answers))
 	}
-	if string(probe.answers[0].Result) != `{"action":"decline"}` {
+	var response struct {
+		Action string
+		Meta   map[string]string `json:"_meta"`
+	}
+	if json.Unmarshal(probe.answers[0].Result, &response) != nil || response.Action != "decline" || response.Meta["lina/message"] == "" {
 		t.Fatalf("decline body: %s", probe.answers[0].Result)
 	}
 }

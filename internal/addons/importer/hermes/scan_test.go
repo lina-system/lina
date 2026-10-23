@@ -9,6 +9,7 @@ import (
 )
 
 func TestSecretScanPreservesOriginalBytesAndOffsets(t *testing.T) {
+	t.Parallel()
 	body := []byte("한글 prefix token=\"synthetic-value\" end\n-----BEGIN PRIVATE KEY-----\nsynthetic bytes\n-----END PRIVATE KEY-----\nokay")
 	original := bytes.Clone(body)
 	spans := ScanSecrets(body)
@@ -51,6 +52,7 @@ func TestSecretScanPreservesOriginalBytesAndOffsets(t *testing.T) {
 }
 
 func TestSecretShapesBinaryAndUnclosedKey(t *testing.T) {
+	t.Parallel()
 	for _, body := range []string{
 		"sk-" + strings.Repeat("x", 24), "ghp_" + strings.Repeat("x", 24),
 		"Bearer synthetic-auth", "password: 'synthetic-pass'", "api_key=synthetic",
@@ -67,6 +69,7 @@ func TestSecretShapesBinaryAndUnclosedKey(t *testing.T) {
 }
 
 func TestProjectionRejectsInvalidFlags(t *testing.T) {
+	t.Parallel()
 	for _, spans := range [][]Span{
 		{{Start: -1, End: 2, Kind: "secret"}}, {{Start: 0, End: 4, Kind: "secret"}},
 		{{Start: 2, End: 1, Kind: "secret"}}, {{Start: 0, End: 2, Kind: "secret"}, {Start: 1, End: 3, Kind: "secret"}},

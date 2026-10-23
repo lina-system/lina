@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -33,9 +35,9 @@ func decodeWorkerArgs(raw json.RawMessage, out any) error {
 	}
 	return nil
 }
-func toolReply(body any, success bool) json.RawMessage {
+func framedToolReply(sender, kind, task, id string, body any, success bool) json.RawMessage {
 	text, _ := json.Marshal(body)
-	raw, _ := json.Marshal(wire.DynamicToolCallResponse{Success: success, ContentItems: []wire.V2DynamicToolCallOutputContentItem{{InputText: &wire.V2DynamicToolCallOutputContentItemInputText{Text: string(text)}}}})
+	raw, _ := json.Marshal(wire.DynamicToolCallResponse{Success: success, ContentItems: []wire.V2DynamicToolCallOutputContentItem{{InputText: &wire.V2DynamicToolCallOutputContentItemInputText{Text: worker.FrameMessage(sender, kind, task, id, string(text))}}}})
 	return raw
 }
 func (e *workerSession) workTool(event worker.Event) {
@@ -65,14 +67,16 @@ func (e *workerSession) replyTool(event worker.Event, body any, err error) {
 	}
 	ctx, cancel := context.WithTimeout(e.origin.ctx, 10*time.Second)
 	defer cancel()
+
 	e.control.Lock()
 	defer e.control.Unlock()
-	raw, messages, prepareErr := e.mailboxReply(ctx, event, toolReply(body, success))
+	raw, messages, prepareErr := e.mailboxReply(ctx, event, framedToolReply("core", "tool", event.Thread.TaskID, e.requestKey(event.ToolCall.ID)+":reply", body, success))
 	if prepareErr != nil {
 		e.bridgeFailure(prepareErr)
 		return
 	}
 	if err := e.adapter.Answer(ctx, event.Thread, worker.Answer{RequestID: event.ToolCall.ID, Result: raw}); err != nil {
+
 		e.bridgeFailure(err)
 		return
 	}
@@ -99,19 +103,43 @@ func (e *workerSession) executeWorkTool(ctx context.Context, event worker.Event)
 		return map[string]any{"assignment_id": e.thread.TaskID, "execution_generation": max(1, e.executionGeneration), "attempt_id": e.thread.AttemptID, "thread_id": event.Thread.ID, "turn_id": event.Thread.TurnID, "task_packet": e.packet, "workdir": e.workdir, "node_id": e.origin.main, "revision": fmt.Sprintf("%x", sha256.Sum256([]byte(e.packet))), "materials": []string{}, "memory": []string{}}, nil
 	case "coordinate":
 		var args struct {
-			Request string `json:"request"`
+			Request string   `json:"request"`
+			Files   []string `json:"files,omitempty"`
 		}
 		if err := decodeWorkerArgs(call.Arguments, &args); err != nil {
 			return nil, err
 		}
-		if strings.TrimSpace(args.Request) == "" {
-			return nil, errors.New("empty coordination request")
+		if strings.TrimSpace(args.Request) == "" || len(args.Request) > 64<<10 {
+			return nil, errors.New("coordination request must contain 1 to 65536 bytes")
 		}
-		id := e.requestKey(call.ID)
-		if err := e.origin.workerNotice(ctx, e.input, id, "Worker coordination request: "+args.Request); err != nil {
+		files, err := worker.ReadMessageFiles(e.workdir, args.Files)
+		if err != nil {
 			return nil, err
 		}
-		return map[string]any{"accepted": true, "event_id": id}, nil
+		id := e.requestKey(call.ID)
+		message, _ := json.Marshal(map[string]any{"request": args.Request, "files": files})
+		if err := worker.AdmitMessage(ctx, e.origin.db, e.thread.TaskID, id, string(message)); err != nil {
+			return nil, err
+		}
+		// Keep Core-named copies outside the assignment worktree.
+		var copies []string
+		if len(files) > 0 {
+			dir := filepath.Join(e.origin.root, "work", "messages", fmt.Sprintf("%x", sha256.Sum256([]byte(e.thread.TaskID+"\x00"+id))))
+			if err := os.MkdirAll(dir, 0700); err != nil {
+				return nil, err
+			}
+			for i, f := range files {
+				path := filepath.Join(dir, fmt.Sprintf("%02d.txt", i))
+				if err := os.WriteFile(path, []byte(f.Text), 0600); err != nil {
+					return nil, err
+				}
+				copies = append(copies, path)
+			}
+		}
+		if err := e.origin.workerNotice(ctx, e.input, id, worker.FrameMessage(e.thread.ID, "tool", e.thread.TaskID, id, string(message))); err != nil {
+			return nil, err
+		}
+		return map[string]any{"accepted": true, "event_id": id, "files": copies}, nil
 	case "submit_receipt":
 		var args struct {
 			Receipt work.Receipt `json:"receipt"`

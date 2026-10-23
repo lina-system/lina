@@ -14,6 +14,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"github.com/thisisjun786/lina/internal/core/manifest"
+	"github.com/thisisjun786/lina/kit/protocol"
 )
 
 type PreflightResult struct {
@@ -126,7 +127,7 @@ func CheckPeers(candidate, required []manifest.Combination) error {
 			for _, requiredCap := range peer.Capabilities {
 				matched := false
 				for _, cap := range row.Capabilities {
-					if cap == requiredCap {
+					if protocol.CapabilitySubset(requiredCap, cap) {
 						matched = true
 						break
 					}

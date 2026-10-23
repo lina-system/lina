@@ -60,6 +60,12 @@ func (r *conversationRuntime) deliverCoding(ctx context.Context, a codingAssignm
 		}
 		rr.Receipt, rr.Generation = card.Receipt.EventID, card.Run.Generation
 	}
+	if strings.HasPrefix(d.Origin.Turn, "turn:a2a-input:") {
+		if rr.State == "complete" && rr.Verdict == "verified" && d.FailureReason == "" {
+			return "verified", nil
+		}
+		return "unverified", nil
+	}
 	if card.Applied {
 		return "merged", nil
 	}

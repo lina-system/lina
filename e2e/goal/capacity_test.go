@@ -38,7 +38,7 @@ func TestCoreReplansQueuedAssignmentAfterHostChanges(t *testing.T) {
 				n.Yielding = !restart
 				return n, nil
 			},
-			Ready: func(ctx context.Context, e *work.Engine, person, agent string) error {
+			Ready: func(ctx context.Context, e *work.Engine, person, _ string) error {
 				agent, err := fixtureWorkOwner(ctx, root)
 				if err != nil {
 					return err

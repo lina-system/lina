@@ -127,3 +127,11 @@ test('TUI guard rejects raw color, ANSI colors and presentation glyphs', () => {
     'var wire = "\\x1b]52;c;payload\\a"',
   ]) assert.deepEqual(lintGo(source), [], source);
 });
+
+test('CSS font stacks keep generic fallbacks unquoted', t => {
+  const dir = fixture(t);
+  generate(dir);
+  const css = readFileSync(join(dir, 'design/tokens/tokens.css'), 'utf8');
+  assert.match(css, /--lina-type-body: "Pretendard", sans-serif;/);
+  assert.doesNotMatch(css, /"(?:sans-serif|monospace|serif)"/);
+});

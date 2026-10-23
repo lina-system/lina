@@ -816,7 +816,7 @@ The work of a goal is a graph of steps inside and a numbered list outside. The p
 - **Kinds and landing.** Graph submissions may mix `task` (the default), `background` and `wait` steps. A background step carries a `start_run` brief and resource request; it uses the existing run service and lands from its stored complete result. A wait names either a date (`at`, Unix seconds) or a canonical record and its current revision with a deadline. Core closes it only after observing the date or a different owner-visible record revision. An expired unchanged record needs a decision. Waits hold no worker capacity or write-area lease. Code predecessors release on observed merge, background predecessors on complete stored results, and wait predecessors on their closing observation; a completion claim alone releases none of them. An incomplete background result stays visible for a manager decision. A start the run service refuses before admission creates no run and no effect; the step closes as needing a decision, which releases its reservation so the manager can correct the brief.
 - **One placement pass.** The ready frontier includes steps held by area, quota or capacity, in deadline, dependency depth, goal creation time, goal id and step id order. Core reserves every compatible start in that pass, accounting for earlier reservations in the same pass. A quota hold is distinct from a host-capacity hold. Graph storage order and event delivery order do not set placement order; recovery observes existing claimed starts instead of issuing them again.
 - **Stages are display.** The stage list (see Stages) is a projection of the graph. A stage never holds work back: a step starts when it is in the frontier, even while an earlier stage still has steps running.
-- **Live sessions.** A worker session is live only while its step is in progress or its pull request is being operated on. When the step has landed or been closed, Core ends the worker's process without closing its thread or session (see Control). Files, branches, receipts and the recorded thread or session id remain, and a later execution generation resumes it the way that worker's recovery does (see Codex adapter and ACP adapter). The number of live sessions therefore follows the frontier, never the history of the goal.
+- **Live sessions.** A worker session is live only while its step is in progress or its pull request is being operated on. An open pull request keeps the session so the one conflict return can use it. When the step has landed or been closed, Core ends the worker's process and releases its activity without closing its thread or session (see Control). Files, branches, receipts and the recorded thread or session id remain, and a later execution generation resumes it the way that worker's recovery does (see Codex adapter and ACP adapter). The number of live sessions therefore follows the frontier, never the history of the goal.
 
 | Part | Owner | Reason |
 | --- | --- | --- |
@@ -862,13 +862,23 @@ work ledger has not recorded. Unassigned tasks have no worker lane yet.
   tasks. A five-minute reconciliation observes inactive pull requests for lost
   signals; it does not perform a model call or a merge.
 - A known failure before worker dispatch settles that attempt as failed and
-  frees capacity and its area for other tasks in the same release event. It
-  neither lands the failed task nor replays setup after recovery; any prepared
-  worktree remains preserved. Errors after sending a start retain reservations
-  until the outcome is reconciled.
+  frees capacity and its area for other tasks in the same release event. The
+  settlement commits on a bounded cleanup context that does not follow caller
+  cancellation, so a canceled turn cannot keep the slot or the area. That
+  cleanup does not start another worker on the canceled call; the next wake,
+  including after restart, uses the freed slot. The failed attempt neither
+  lands nor replays setup after recovery; any prepared worktree remains
+  preserved. Errors after sending a start retain reservations until the
+  outcome is reconciled.
   This also applies during startup recovery: readiness is established before
   dispatch, and a recovered task's setup failure cannot disable delegation or
   terminate another task that was started in the same release event.
+- A quota or rate-limit finish is recorded before queued graph tasks are
+  reconsidered. When that finish has no exhausted window, the worker stays
+  blocked until its reset or a later measurement shows the limit below the cap.
+  The snapshot that missed the failure, and any older or unknown snapshot, does
+  not clear the stop. Rows from concurrent sessions merge per reported bucket
+  and window; a newer row in one window does not replace another window.
 - When slots are free, the manager may start a dependent task as a stacked pull request on an open predecessor. It records the predecessor and its head as the task's base, and Core checks capacity and disjoint write-area leases before dispatch. The dependency remains: the dependent cannot land before the predecessor. The worker brings the stack onto the landed base and owns its resulting checks to green before the manager checks the delivery.
 
 ## Workers
@@ -1440,6 +1450,15 @@ and restart. This is account-free acceptance, not a live Antigravity login test.
 
 ### Approvals
 
+- Core signs each authenticated worker approval answer with Ed25519. The record
+  quotes the displayed request, hashes the original parameters, and binds the
+  choice and person to the task, attempt, session, turn, process generation,
+  binding epoch and request id. Adapters pin Core's public key through trusted
+  setup and verify that record before selecting the native once/deny response.
+  ACP carries the record in response metadata; other adapters translate the
+  verified record into their native permission response. Text is never an
+  approval. The signing key is local to the running Core authority; restart
+  invalidates unused answers rather than replaying them.
 - When the worker asks for an approval (for Codex: a command, a file change or permissions; for an ACP worker: `session/request_permission`), the adapter routes the request to the originating conversation, and the person's answer goes back to the worker. On a remote device the Node relays both.
 - Scheduled workers use the same conversation bridge. A worker's request withdrawal stops its matching question or approval card. Later answers cannot reach the worker, and other tasks keep their pending decisions. The scheduled task returns to working only when no request remains pending; withdrawal does not release its execution capacity or write-area lease.
 - For an ACP worker, the person's once maps to the worker's `allow_once` option and deny to `reject_once`. LINA never selects `allow_always` or `reject_always`, because they change the rules the worker remembers in the person's setup. A cancel answers every pending request of the turn with `cancelled`, as the protocol requires.
@@ -1450,6 +1469,30 @@ and restart. This is account-free acceptance, not a live Antigravity login test.
 
 ### LINA tools for workers
 
+- Every textual input from Core is a `lina-message` frame carrying sender,
+  speaker kind, work id and message id. Attributes and body are XML escaped,
+  so content cannot close or forge a frame. Manager input is `agent`, recovery
+  is `system`, tool results are `tool`, and only authenticated person answers
+  are `person`. Native typed form values remain unchanged, with the provenance frame in
+  response metadata.
+  Vendor API roles do not change this provenance.
+  Durable steering retains sender and speaker kind separately from the person
+  who owns the task. Push and inbox delivery frame the original source; mailbox
+  notices and tool envelopes remain `tool`. Old mailbox records without source
+  metadata are `system` evidence, never inferred person instructions.
+- Workers address only Core through `coordinate`; recipient, worker and group
+  arguments are refused. Core permits twelve automatic coordination requests
+  and follow-up inputs per task between trusted decisions. Admission survives
+  restart and deduplicates retries. A new person input, an authenticated answer
+  or owner control, or a recorded manager return can replenish the allowance
+  once; replaying that decision cannot. At the cap Core refuses the exchange
+  with an explicit explanation. Projection reads and completion receipts remain
+  available so a capped worker can still report its result.
+- A coordination request may include up to ten visible relative text-file
+  paths from its own worktree: 256 KiB per UTF-8 file and 512 KiB total.
+  Hidden components, symlinks, traversal, non-regular files, binary text and
+  home configuration folders are refused. Core retains non-executable private
+  copies with the request. An attachment grants no execution or approval.
 - LINA's work tools reach a worker through its adapter: for Codex, `thread/start.dynamicTools` in the namespace `lina`. LINA Core identifies the caller by thread, turn and call ids. For an ACP worker, it is one stdio MCP server that `session/new` names for that session only (see ACP adapter). For another worker, the adapter uses the per-run mechanism of that tool that installs nothing in the user's setup. Where a tool has no such channel, the adapter builds the receipt from the tool's final result and the pull request it opened, and marks it adapter-derived.
 - The tools are: submit a completion receipt; ask a question; send a coordination request (to LINA Core only, never to another worker); read the task projection, which is the LINA materials and memory projections the task may read. GitHub work and other integrations need no LINA tool; the worker uses its own setup.
 - LINA Core declares the tools and handles `item/tool/call`, or the MCP tool calls of an ACP worker's session server. The receipt and question schemas are LINA's own and are versioned with the worker adapter.
@@ -2195,6 +2238,7 @@ LINA Core keeps one progress line for each 일 and each 목표 that has work in 
 
 The stage list is how the person sees the steps of a goal: a short numbered list, never a graph. LINA Core computes it from the step graph (see Step graph) and the work cards; a client only draws it ([surfaces.md](surfaces.md#progress-at-a-glance)).
 
+- **Source.** Core projects the list from the admitted step graph revisions in commit order and the step states observed with each of them; it keeps no separate stage record. A step whose blockers have not landed is not ready and reads next. The same ledger therefore gives the same list after a restart, and a projection that changes nothing changes no entry.
 - **Numbering.** A step with no blockers is in stage 1, and any other step is in the stage after the highest stage of its blockers. A stage is every step with the same number. Steps that may run at the same time therefore share one stage, which is one entry of the list, never one entry per step.
 - **Done stages stay done.** A stage is done when each of its steps has landed or was closed as superseded. A done stage keeps its number and its steps and never reopens: a step admitted later is placed at least one stage past the leading run of done stages. A repair step, or a step that a correction by the person adds, therefore appears as the current or a later stage, never inside a finished one.
 - **Entries.** The list is the numbered stages in order, followed by 확인 (checking), the collection of evidence before close (see Evidence before close). While a goal is `defining` and has no admitted graph, its list is the single entry 설계 (design), and a `done` goal shows 끝 (done). A numbered entry carries its number, its state and its label. The label of a one-step stage is that step's name; the label of a larger stage is the name of its first step, ordered by start and then by id, followed by the number of the others ("로그인 화면 수정 외 1").

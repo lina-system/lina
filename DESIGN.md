@@ -137,8 +137,8 @@ of app pixels. Duration values are milliseconds.
 | space.inline | `8px` (1 cells) | `8px` (1 cells) | `8px` (1 cells) |
 | space.page | `32px` (2 cells) | `32px` (2 cells) | `32px` (2 cells) |
 | space.section | `24px` (1 cells) | `24px` (1 cells) | `24px` (1 cells) |
-| type.body | `"Pretendard", "sans-serif"` | `"Pretendard", "sans-serif"` | `"Pretendard", "sans-serif"` |
-| type.code | `"ui-monospace", "monospace"` | `"ui-monospace", "monospace"` | `"ui-monospace", "monospace"` |
+| type.body | `"Pretendard", sans-serif` | `"Pretendard", sans-serif` | `"Pretendard", sans-serif` |
+| type.code | `ui-monospace, monospace` | `ui-monospace, monospace` | `ui-monospace, monospace` |
 | type.lineHeight | `1.5` | `1.5` | `1.5` |
 | type.size | `16px` | `16px` | `16px` |
 | type.titleWeight | `700` | `700` | `700` |
