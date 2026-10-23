@@ -56,11 +56,7 @@ It handles one bounded JSON request on stdin and returns one typed reply on stdo
 `cmd/lina` only registers `kit/tools.Main`; the implementation can later be registered by `lina-node`.
 This adds no shipped executable and is not a hidden re-exec mode.
 
-The control-file increment (#36) starts with `lina core --state-root <path> --socket <path>`.
-The state root must already exist, and installation supplies `system/core/main.json`; Core never invents a replacement identity.
-`lina install` verifies the build bundle, creates a random main id in a new private state root, and registers the `lina-core.service` user unit with explicit state-root and socket arguments.
-Existing state and services are refused, including an install's own previous identity; installation is not an update or implicit restart.
-The concrete layout and failure behavior are specified in [runtime.md](runtime.md#the-lina-command).
+Implementation notes: [C-01 control-file increment](../../internal/core/boot/REFERENCE.md#c-01-control-file-increment).
 
 **C-02 Binaries and modules (changed).**
 Subcommands of `lina`, proposed here because [runtime.md](runtime.md#the-lina-command) defers the names: `core`, `tui`, `install`, `update` (prepare only), `backup`, `restore` (main stopped), `doctor`, `replay`, `export`, `about`, `version`.
@@ -152,16 +148,7 @@ Without the socket only background memory and planning are unsupported.
 A summary on demand runs in Core, so conversation never depends on the worker.
 The release manifest pins the worker with Core, so this socket has no version negotiation.
 
-The job API increment exposes `Aux`, `Apply` and `Report` over bounded HTTP/JSON requests on that Unix socket.
-Listening requires the held Core state-root lock, kept for the listener lifetime.
-Under that lock a restart may reclaim an existing 0600 socket only when a connection probe returns `ECONNREFUSED`; a live listener, uncertain probe, non-socket path, or non-private socket/directory is refused without changing that path.
-The types and client live in `internal/moirai/jobapi`; `internal/core/jobs` owns the service.
-Core registers each job's model callback, account binding and transactional write-rule callback.
-Neither SQL, credentials, provider selection nor tool authority cross this API.
-Auxiliary calls receive no persona instructions.
-A deterministic growth job may carry its precomputed growth snapshot candidate as data; Core binds the target agent and refuses other persona layers (C-23).
-A Core schema owner includes `jobs.Schema` and the shared budget schema in its numbered migrations; neither serving the API nor starting a worker creates or migrates canon.
-Concrete memory/planning algorithms and installation remain their own roadmap increments.
+Implementation notes: [C-56 job API increment](../../internal/core/jobs/REFERENCE.md#c-56-job-api-increment).
 
 The job socket trusts the installation's OS user.
 Its private directory and socket permissions are the caller boundary; it has no worker-specific token or peer-identity check.
@@ -303,11 +290,7 @@ Start steps:
 9. Reconcile.
 10. READY.
 
-The #36 startup coordinator executes these boundaries in order.
-Event writer, read-only canon peek, canon open/probe/migrate, epoch mirror and reconciliation have explicit service interfaces for their owning implementations.
-In this increment the CLI has no event writer or canon implementation and serves only the handshake; an absent or empty canon directory is allowed, but an existing canon store without its service is refused before minting an epoch.
-The coordinator passes a null epoch to startup events by leaving the event writer unbound until step 5; it supplies the new epoch only after the file and directory fsyncs succeed.
-Canon's writer cannot open before that boundary.
+Implementation notes: [C-04 startup increment](../../internal/core/boot/REFERENCE.md#c-04-startup-increment).
 
 Steps 1–4 have no new epoch and confer no authority.
 A kill at one of those boundaries is followed by an epoch above the last durable high-water mark; a kill at or after step 5 is followed by an epoch above that killed run's minted epoch.
@@ -379,13 +362,7 @@ A restart is never forced by timeout; only the person may force it.
 Exit codes: 0 stop, 75 planned restart, 78 fatal, 69 lock held.
 Settings, persona, bindings and plugin lists change by control verbs and never restart Core.
 
-The #37 lease API is `Acquire(ctx, lease.Activity{Class, Reason}) (lease.Lease, error)`.
-Classes are `Hard`, `Live` and `Reported`; an unknown class or empty reason is refused.
-Kit adapters carry the lease in their typed API and enter external work through `lease.Do(ctx, lease, call)`.
-Its missing-argument fixture must fail compilation, and its companion with a lease must compile.
-Zero and released leases are rejected before the callback runs.
-A lease is an activity record, not an authorization grant.
-Leaser implementations register activity before constructing its handle with `lease.New` and supply the callback that removes it.
+Implementation notes: [C-05 lease API increment](../../kit/lease/REFERENCE.md#c-05-lease-api-increment).
 
 Lease copies share one lifetime.
 `Release` is idempotent, prevents new calls and removes the activity only after every call already inside `Do` has returned, including error and panic paths.
@@ -467,12 +444,7 @@ The Claude adapter, its lockfile and the SDK pin move only with a LINA update; t
 A store newer than the binary exits 78 without writing.
 Migrations are forward-only, numbered, one transaction each.
 
-The #149 preparation boundary is `lina update --prepare --state-root <path> --archive <tar.gz> --sha256 <digest>`.
-`internal/core/update` freezes and hashes the download before unpacking, checks every manifest artifact, then runs the candidate's `lina core --preflight` through `kit/proc`.
-Candidate versions live under `system/updates/<archive-sha256>`; creation is exclusive and never replaces another attempt.
-A successful candidate gets a durable `prepared.json` receipt, including the verified manifest digest.
-Activation rechecks that digest and all copied artifacts.
-The active binaries, service, control records and canon remain unchanged.
+Implementation notes: [C-38 preparation increment](../../internal/core/update/REFERENCE.md#c-38-preparation-increment).
 
 `core --preflight --state-root <path> [--manifest <path>] [--required-manifest <path>]` exits 0 with a JSON schema/peer result or 78 with a cause.
 It takes no Core lock, creates no authority or socket, loads no provider configuration and makes no installed-state writes.
@@ -492,20 +464,7 @@ The six gate cells are `pass`, `fail` or `unknown`; every cell must be `pass`.
 Preparation establishes candidate verification, schema relation, peer rows and staging space only.
 Idle and verified-generation remain `unknown` until the activation owner supplies a fenced idle observation and a recent verified backup.
 A prepared receipt is not activation authority or a READY receipt.
-The #150 activation command is `lina update --activate --state-root <path> --candidate <prepared-directory>`.
-Both binaries must advertise `update_protocol: 1` in preflight; older binaries without the durable boot/READY guard are refused before drain.
-It verifies the installed service's exact paths and refuses foreign units or drop-ins before controlling it.
-An independent `update.lock` excludes competing updaters and grants no canon authority.
-Core's existing `core.lock` remains the only writer lock.
-The updater persists its attempt before requesting the running Core's explicit drain, waits for durable commitment and lock release without forcing active work, and then stops the owned service.
-It takes a new verified generation through the installed old binary, verifies the generation/version pair and reruns candidate preflight on the stopped store.
-Release-owned binaries, manifest and adapter files move as one recorded composition; the prior directories and failed candidates are kept.
-Settings stay in their installed control records, outside binary replacement.
-The installed binary's backup and rollback restore (including resumed rollback) use the updater context without an added installer command deadline; data size must not impose a fixed 30-second failure boundary.
-Both retain `kit/proc` ownership and cancellation, filtered environments and bounded command output.
-Activation and interrupted-update recovery share the service start/readiness check.
-A recovery start or readiness failure persists `held` with `update_resume_failed` without clearing READY, even from a terminal record.
-Readiness failure stops the owned service using a bounded context independent of caller cancellation before returning the failure.
+Implementation notes: [C-38 activation increment](../../internal/core/update/REFERENCE.md#c-38-activation-increment).
 
 `update.json` is a schema-1 private atomic control record outside backups.
 It binds the root, normal socket, candidate, previous composition, binary digests, generation and phase.
@@ -645,12 +604,7 @@ A committed publication group is atomic with respect to snapshot and queue reade
 Physical writes share a serialized writer and the 1 MiB framing limit, and are bounded by cancellation or the 45-second timeout.
 Shutdown closes the connection and joins its subscription workers.
 
-The local listener uses the generated `kit/protocol` types.
-It creates missing socket directories at 0700, requires an existing parent to be private and owned by Core's OS user, and binds the socket at 0600 before accepting clients.
-The listener refuses an occupied socket path.
-Boot may first reclaim its own recorded stale socket under the C-03 rules.
-Kernel peer credentials must match Core's user before any frame is processed.
-Linux uses `SO_PEERCRED`; the Darwin credential adapter uses `LOCAL_PEERCRED` and `LOCAL_PEERPID`, while private socket binding remains Linux-only in this increment.
+Implementation notes: [C-42 local listener implementation](../../internal/core/clientsrv/REFERENCE.md#c-42-local-listener-implementation).
 
 Frames are newline-delimited JSON-RPC 2.0, capped at 1 MiB including the newline; EOF without that newline is not a message.
 The first request is `hello`; its response preserves the JSON-RPC id and carries the answer envelope in `result`.
@@ -684,10 +638,7 @@ Empty targets are `malformed`, absent or foreign runs are `out_of_scope`, and th
 This stops one background run; it does not terminate Core.
 Deduplication, event recording and the remaining client operations are separate client-service work.
 
-`e2e/m3/tailnet-listener.json` runs installed Core through `boot.Run`, with real TCP and Unix sockets, a synthetic Unix LocalAPI and a loopback network seam that observes the requested tailnet bind/source addresses.
-It compares complete welcomes, performs real tool rounds and a background model request, and proves typed, approval-free, repeated stop cancels that request from either transport.
-The built CLI separately proves public-bind startup refusal.
-This does not claim a two-device Tailscale deployment test; WebSocket framing remains #203.
+Implementation notes: [C-42 tailnet acceptance](../../internal/core/clientsrv/REFERENCE.md#c-42-tailnet-acceptance).
 
 ```go
 type Hub interface {
@@ -706,13 +657,7 @@ A body above the inline size (P: 16 KiB) goes to `materials/lina/` and the event
 Only the Moirai write path and the ledger package write these tables.
 Provider-item JSON is masked at decoded string boundaries and serialized safely; both the persisted body and its derived history projection retain valid JSON, including nested JSON strings with quoted credentials.
 
-The #57 increment installs all three tables through `canon.Migrations`.
-SQLite triggers refuse updates, ordinary deletes and replacement inserts, including on relations and sensitivity spans.
-The explicit person-authorized erasure path remains a separate operation to implement; this store exposes no deletion bypass.
-`ledger.Store.Admit` commits the event, its relations and its spans in one fenced transaction and returns an event only after commit.
-A repeated event id fails without changing the first event.
-Parent references must exist in the same conversation; replay, scaffold and relation targets must already exist.
-Scaffold references name an event that stores the scaffold once, with the same scaffold kind.
+Implementation notes: [C-17 ledger increment](../../internal/core/ledger/REFERENCE.md#c-17-ledger-increment).
 
 Native origin records retain the entry and source locator so readback preserves the distinction between ordinary agent speech and an external agent exchange, or between an ordinary system line and a background notice.
 Only person entries carry `person_id`; every native event names the conversation's agent.
@@ -721,15 +666,7 @@ Secret spans address the original input before masking.
 Nonsecret tags address the replaced text; all stored offsets therefore describe only the masked body.
 Secret-shaped metadata is refused instead of silently changing ids or source locators.
 
-Core's composition layer supplies the ledger's material interface from the assets store, without an import between L3 stores.
-It opens one `assets.MaterialWriter` before admission, which reconciles markers from interrupted preparations.
-Preparation syncs a marker and the masked body without retaining asset metadata; `PreparedMaterial.Insert` inserts that metadata in the same canon transaction as the event.
-Closing the preparation after the transaction checks committed canon, removing uncommitted bytes and preserving committed revisions.
-An interrupted cleanup leaves its durable marker for the next opening.
-Cleanup cannot revoke an event that committed.
-The threshold applies to masked UTF-8 bytes.
-Reads verify the immutable material revision; missing or corrupt bytes return event metadata marked `bytes_unavailable`, with no complete message.
-Real SQLite and asset-store scenarios, including abrupt process exits at publication boundaries, cover these behaviors; the increment adds no conversation capability to Core's protocol or the TUI.
+Implementation notes: [C-17 material integration](../../internal/core/ledger/REFERENCE.md#c-17-material-integration).
 
 **C-24 Agent as data (changed).**
 An agent is rows and files, not a process.
@@ -832,8 +769,7 @@ A request still over its limit stops with `request_too_large`, preserving curren
 Only model output reaches the turn journal; neither the packet nor the initial assembled request is persisted.
 Package scenarios exercise the pure layout, cancellation and timeout, each preparation failure, committed evidence before dispatch and SQLite reopen.
 These packages expose no new client-protocol or TUI capability; application admission and provider/account wiring belong to their consuming flow.
-The #57 store supplies the immutable history records for assembly; preparation, request hashes and assembly lists belong to the consuming preparation/assembly implementation.
-Ledger admission neither constructs nor stores a ContextPacket.
+Implementation notes: [C-11 assembly boundary](../../internal/core/ledger/REFERENCE.md#c-11-assembly-boundary).
 
 **C-08 Loop and run durability (changed).**
 `kit/loop` is the loop core of [runtime.md](runtime.md#conversation-loop): a stream function, a context transform before each request, hooks before and after each tool call, steering and follow-up input, cancellation through the turn, and parallel tool calls.
@@ -853,18 +789,7 @@ Rules, each testable with a scripted provider:
 
 After a restart an accepted turn is never replayed ([runtime.md](runtime.md#failures-and-retries)).
 
-The #55 increment implements `kit/loop.Run` over `provider.Stream`.
-It waits for a terminal event and a clean stream end before releasing any call, and reports `incomplete_response` for a cut-off call so a caller can request complete arguments without an automatic retry.
-Completed items are committed verbatim as they arrive; aborted visible deltas are stored separately and excluded from model context.
-Validation and before hooks finish in call order before execution.
-Independent calls use at most eight slots; normalized write targets form ordered dependency chains.
-Results commit as each call ends and enter model context in call order.
-Cancellation does not replace a started call's returned result: a committed success or unknown receipt remains success or unknown in the turn journal.
-Only calls that never started receive a synthetic aborted result.
-Steering is drained at request boundaries, before the context transform.
-Every return, including errors, atomically closes steering admission and returns pending input in `Outcome.FollowUps`.
-An input accepted after the final drain is included in that handoff; `Inputs.Push` returns false after closure so the lane retains ownership and routes it to the next turn.
-Each run uses its own input queue.
+Implementation notes: [C-08 loop increment](../../kit/loop/REFERENCE.md#c-08-loop-increment).
 
 `turn.Store` installs its schema through a caller-supplied numbered canon migration after the inbox schema.
 Claiming an inbox row and inserting the turn are one fenced transaction, with one turn per inbox row; preparation commits before a model request.
@@ -876,13 +801,7 @@ The registry revalidates those normalized arguments before authorization.
 Approval-required dispatch returns `awaiting_person`; `ResumeApproval` uses only the approval's stored arguments with a fresh execution deadline.
 The earlier model result remains immutable; the later effect receipt belongs to authority.
 
-LN-450 adds `Journal.Start` after durable call commit, queueing and final admission, immediately before tool execution.
-Preflight refusals and calls aborted or denied while queued emit no activity.
-A start observer error prevents execution, commits a synthetic aborted result and propagates.
-`turn.Options.ToolActivity` observes that start and its matching finish only after the result commits, with call id, raw registered tool name, started flag, result code and monotonic duration; it carries no arguments or output.
-Independent calls can notify concurrently.
-Finish uses the loop's bounded cleanup context even after cancellation, and observer errors never rewrite receipts or suppress committed-result notifications or budget accounting.
-Client wiring translates tool names with the trusted `tools.DisplayName` catalog; unknown names always become `Using tool`.
+Implementation notes: [C-08 tool activity increment](../../internal/core/turn/REFERENCE.md#c-08-tool-activity-increment).
 
 Installed Core wires these journal observers into its conversation topic.
 It publishes `waiting_model` at admission and each request boundary, `tool` with the current catalog label before dispatch, `streaming` when assistant output arrives, and `stopping` on a person interrupt.
@@ -924,13 +843,7 @@ The manager does not claim, replay or retry durable inputs; turn claims and stee
 Installed Core composes these packages through `boot.conversationRuntime`: client admission commits the inbox row and input ledger event together before publishing the echo and offering steering or submitting a turn.
 Duplicate input returns the original acknowledgement without dispatching another turn.
 
-The #61 increment adds `lane.Manager.SubmitLoop`, `Steer` and `Stop`.
-Each submitted loop receives a fresh steering queue.
-Admission commits a message before offering it to the active turn; an accepted message enters the next request boundary.
-A rejected push remains owned by admission and becomes a follow-up.
-Stop carries the supplied `turn.Interrupt` cause through the active turn and its tools, refuses further steering to that turn, and leaves queued turns intact.
-The lane stays occupied until the active work returns.
-Preparation and claim failures close the input queue too and return pending input to the caller.
+Implementation notes: [C-09 steering increment](../../internal/core/lane/REFERENCE.md#c-09-steering-increment).
 
 `turn.Options.InputEvent` binds a turn to its accepted ledger event in the claim transaction.
 The owner installs `turn.ControlSchema` as a new numbered migration after the turn and ledger schemas.
@@ -1150,7 +1063,7 @@ Contract: [host-protocol.md](host-protocol.md#typed-results), [conversation-and-
 - Save is a Core effect with the key of `result_save` (CP-05); destinations are those of the saving section.
 - Summary-first writing is a background run given the latest outline revision.
 - Managed planning previews use the same result ledger and revision checks.
-  Core installs the results and planning receipt schemas in the numbered canon catalog at migration 49, after the published Korean records search migration 33, waiting decisions migration 34, preset effects migration 35 and skill maintenance migration 36, work engine migration 37 and to-do records migration 38, work event sequence guard migration 39, work completions migration 40 timers migration 41, starter/selection migration 42 and worker choice migration 43, naming-breach migration 44, record-operation migration 45 and operational switch migration 46, handoffs migration 47 and work-review migration 48.
+  Implementation notes: [C-52 planning migration order](../../internal/core/results/REFERENCE.md#c-52-planning-migration-order).
   Generic presentation and saving cannot replace or confirm a managed plan.
   The `planning` capability binds confirmation to the authenticated person, agent, preview revision and accepted root revision.
   Complete plan bodies carry done conditions, ordered stage labels and dependency ids in addition to card entries.
@@ -1160,16 +1073,7 @@ Contract: [host-protocol.md](host-protocol.md#typed-results), [conversation-and-
   Each changed recurring record retains its completion transformation and occurrence in the same publication checkpoint, including recovery of a multi-record batch.
   A completed invalid draft produces only a durable rejection and conversation outcome, never a result revision or plan records; replay cannot duplicate it.
 
-The #104 increment implements these boundaries in `kit/result`, `internal/core/results` and `internal/core/exec`.
-Core supplies the trusted person, agent, conversation and turn; none is accepted from tool arguments.
-`present_result` takes `type`, `title`, `summary` and a complete `body`, with `result_id` and `base_revision` only for replacement.
-Optional `reply_type` identifies `chat`, `status`, `comparison`, `candidates` or `third_party` for the work-method shape checks; it is stored with the result.
-A `document_draft` may name a `recipient`, and its blocks may mark `audience` as `recipient` or `person`.
-These annotations never change the stored or rendered body.
-`read_result` takes `result_id` and returns the complete current result and its revision.
-`save_result` takes `result_id`, `revision` and a resolved `destination`; its binding requires an exact matching request from the person in the current turn.
-A grant alone does not constitute that request.
-The three operations use the existing tool registry, authority gate and leases, run in Core, and require no network or approval interaction.
+Implementation notes: [C-52 result tool increment](../../internal/core/results/REFERENCE.md#c-52-result-tool-increment).
 
 Body validation is a closed schema over [the kit types](../../kit/result/body.go): exact field names, no unknown or duplicate keys, one complete JSON value, required fields present and non-null unless explicitly nullable.
 Validation also checks references, tagged block variants and cell value types.
@@ -1296,11 +1200,7 @@ The ledger names the class per request.
   An adapter only applies what Core chose.
   It never chooses a capability itself and never needs one to succeed.
 
-#53 implements this boundary in `kit/provider`.
-Credentials are per-call, omit their bearer from JSON, and print only a placeholder; `Authorize` applies the bearer to the HTTP request without returning it.
-Model-list network calls also require a lease.
-The future secret-store adapter supplies these credentials.
-Items and tool declarations retain provider JSON so opaque state can round-trip without reconstruction.
+Implementation notes: [C-43 provider increment](../../kit/provider/REFERENCE.md#c-43-provider-increment).
 
 **C-44 Responses and Gemini adapters (new).**
 Responses adapter: Go standard-library HTTP and a bounded SSE reader, `store` false, `stream` true, the request field list from the build manifest, `reasoning.encrypted_content` requested, and tools declared in the form the sign-in request surface requires (`apply_patch` as a custom tool or a one-string function).
@@ -1309,14 +1209,7 @@ Current-turn items are never sent altered or dropped.
 [V1](runtime.md#runtime-acceptance) decides the open fields.
 Gemini adapter: the Go genai client, stateless requests, thought parts returned as received, and the same stream rules.
 
-#54 implements `kit/provider/responses` with `net/http` and small JSON/SSE wire types.
-`responses.ReadConfig` reads `providers.chatgpt` from the build manifest through the transport-independent `responses/config` package, which Core's manifest reader also uses; the adapter rejects an absent required field, an unsupported field, a different adapter identity, or a nonzero retry count.
-`Request.Fields` may narrow that list but never widen it.
-It sends only the manifest-approved fields, keeps input items and tool declarations byte-for-byte and in order, and rejects system-role items.
-`apply_patch` is a custom tool or a function accepting one required string.
-Auxiliary requests reject tools and omit separate instructions.
-Every stateless request includes `reasoning.encrypted_content`, including when effort is empty and the model uses its default.
-A field list that excludes `include` refuses the request before sending; the adapter never silently loses reasoning state.
+Implementation notes: [C-44 Responses increment](../../kit/provider/responses/REFERENCE.md#c-44-responses-increment).
 
 The HTTP request uses the supplied per-call credential and the fixed API origin, with zero retries and no redirects.
 The SSE reader handles comments, named events, multiline data and CRLF, and bounds each event at 32 MiB.
@@ -1329,9 +1222,7 @@ Failures use recognized code, then type, then HTTP status; neither classificatio
 Missing usage fields remain nil, including reported zero versus missing counts.
 Model lists are display data, and plan quota has no invented number or reset time.
 
-Scripted wires establish these adapter invariants, and clean-build tests establish manifest production and validation.
-The adapter is not yet reachable through Core's conversation protocol or the TUI, so this increment has no observable scenario under `e2e/m1/`.
-It does not establish live OAuth, entitlement, or V1 acceptance of the provisional request-field list.
+Implementation notes: [C-44 adapter acceptance](../../kit/provider/responses/REFERENCE.md#c-44-adapter-acceptance).
 
 **C-45 Claude adapter process (new).**
 An external TypeScript program on the person's Node.js.
@@ -1343,12 +1234,7 @@ The protocol is one JSON message per line on stdio.
 - Core refuses the turn if `init` lists anything LINA did not put there.
 - First use installs the SDK from the release lockfile ([runtime.md](runtime.md#provider-adapters)); it is never shipped in LINA artifacts.
 
-#167 implements the external TypeScript program and the [version 1 JSON-line wire](../../adapters/claude/README.md#c-45-wire-version-1), including correlated MCP tool results, cancellation, ping/pong, init refusal and reported usage.
-The SDK is installed from the adapter lockfile with lifecycle scripts disabled; foundation verifies sources, integrity, exact pins, registry signatures and the stub suite in a disposable installation.
-An explicitly configured Core route starts the program through `kit/proc`, routes runtime tool calls through the existing admission and durable call/result journal, and joins it on stream close.
-The ledger records `AgentRuntime`; the ordered context travels as a JSON transcript in the SDK prompt, so native vendor request fidelity is not claimed.
-`e2e/m2/claude-adapter.json` exercises the installed Core, a real Core tool, streamed reply and restart persistence with a stub vendor runtime.
-Automatic account setup, first-use installation, quota projection and idle pooling remain #168; this increment's explicit route launches one process per request.
+Implementation notes: [C-45 runtime increment](../../adapters/claude/REFERENCE.md#c-45-runtime-increment).
 
 **C-46 Grok adapter (new).**
 A Go Agent Client Protocol client over the `grok` command on stdio, best effort.
@@ -1386,13 +1272,7 @@ One refresh goroutine runs per account.
 Rotation, timing, keep-alive and failure follow [runtime.md](runtime.md#credentials), and the flows per provider are in [runtime.md](runtime.md#accounts-and-sign-in).
 The sign-in relay runs on the `client` connection ([integrations.md](integrations.md#consent-through-the-client)).
 
-#80 implements `internal/core/accounts` as a callable Core store.
-One store owns each fenced canon writer, and one actor per account serializes credential admission, replacement, status changes and scheduled refresh.
-Account metadata lives in canon; the person/provider/account key selects one opaque access-and-refresh record in the secret store.
-No token enters canon or the account projection.
-`Credential` returns only the requested account's opaque provider credential.
-The provider credential keeps its bearer as `secret.Secret`, including under nested formatting, and `Authorize` applies it only through `secret.InjectHeader`; the constructor and printable representations retain their existing API.
-ChatGPT OAuth admission also requires `chatgpt.tokens.use.direct`.
+Implementation notes: [C-47 account store increment](../../internal/core/accounts/REFERENCE.md#c-47-account-store-increment).
 
 The actor refreshes ten minutes before either known expiry (halfway through a shorter lifetime), with a daily idle keep-alive when expiry is unknown or farther away.
 Existing turns finish before the exchange; new turns wait until the credential replacement finishes.
@@ -1410,9 +1290,7 @@ A temporary keychain read failure before any exchange preserves the account stat
 Missing or malformed credentials still require sign-in.
 Returned credentials are per-call snapshots for trusted adapters; callers must keep their use inside the pinned turn and must not retain them for later requests.
 
-The store tests use real canon and private secret files, injected issuer/storage failures and a virtual clock.
-#81 connects the sign-in service and fixed-issuer refresh exchange to this store, installs client relay operations, and exercises owner binding through the real client socket in `e2e/m1/chatgpt-signin.json`.
-Live OAuth and request-surface acceptance remain pending the owner-run [V1 check](../../evidence/v1-chatgpt.md); provider-side revocation remains separate from local sign-out.
+Implementation notes: [C-47 sign-in integration](../../internal/core/accounts/REFERENCE.md#c-47-sign-in-integration).
 
 
 The sign-in keeps state, nonce and PKCE verifier only in Core.
@@ -1427,12 +1305,7 @@ The service owner uses the fixed `canon.Migrations` catalog, which includes `acc
 The connection id is assigned by Core and differs across reconnects even when a client repeats its public id.
 Legacy empty payloads decode but cannot perform a sign-in.
 
-#112 wires this store and the existing sign-in relay into installed Core even without a configured conversation model.
-SignInSchema is fixed at version 16 in canon, after the published turn and compaction migrations.
-The composition opens one secret store and one account store on the same fenced canon writer.
-The production issuer remains fixed; only the in-process test composition injects an HTTP transport.
-The client combination advertises accounts and relay independently of conversation.
-Core startup, backup, restore and the read-only doctor share `boot.ApplicationMigrations`, which returns the fixed canon catalog, so each recognizes the account schema installed by the same binary.
+Implementation notes: [C-47 installed account services](../../internal/core/accounts/REFERENCE.md#c-47-installed-account-services).
 
 Account list projects metadata for the connection's person.
 Sign-out runs on the existing account actor and obtains the secret store's existing mutation reservation.
@@ -1492,13 +1365,7 @@ Usage rows name agent, account, provider, run kind and run; unreported is nil.
 At the limit the conversation stops sending and runs wait with their checkpoint.
 
 
-#53 implements `budget.Reserve` and `Settle` inside a caller-owned fenced canon transaction.
-The caller installs `budget.Schema` in its migration.
-Reservations count every agent and all seven run kinds against one token allowance; settlement is idempotent for identical usage and rejects a rewrite.
-Each row retains agent, account, provider, run kind and run, with unreported usage encoded as null.
-Known input plus output replaces the reservation charge without double-counting cached or reasoning subsets; if either total is missing, the charge retains at least the reservation until usage is known.
-This charge is admission accounting, not reported usage.
-No Core protocol or TUI operation exposes the budget yet.
+Implementation notes: [C-10 budget increment](../../internal/core/budget/REFERENCE.md#c-10-budget-increment).
 
 ## Tools, approval and secrets
 
@@ -1569,10 +1436,7 @@ The startup snapshot carries availability and a stable cause; the shell/file ser
 Failure reports `shell_file_tools_unsupported` privately and publishes `connected.shell_file_tools_available=false` on the core topic for one localized TUI setup notice.
 It never prevents the client handshake or enables an unsandboxed fallback.
 Reverse shutdown closes process admission and kills and joins owned commands.
-The #50 acceptance canary checks canon, secrets, material revisions, symlink aliases, the client socket and its hard-link aliases with network both blocked and authorized; `e2e/m1/sandbox.json` covers a missing or failing launcher with production Core composition over installed state and the installed TUI.
-Each case submits a TUI message through the configured conversation route, receives a scripted provider reply, waits for turn completion and recovers the reply after reopening the TUI without another model call.
-It also checks the stable sandbox-failure cause and localized setup notices.
-The configured conversation route and its installed-Core reply proof are specified in [host-protocol.md](host-protocol.md#conversation-payloads).
+Implementation notes: [C-14 sandbox acceptance](../../kit/sandbox/REFERENCE.md#c-14-sandbox-acceptance).
 
 Linux process ownership uses the explicit per-command `proc-supervise` helper with `PR_SET_CHILD_SUBREAPER`.
 It kills and waits for the whole descendant tree, including `setsid`/`setpgid` escapes and orphans, before returning.
@@ -1662,13 +1526,7 @@ Guard admission and evidence rendering are callable Core services.
 The current connection-only protocol exposes neither conversation content nor tool and approval operations; protocol/TUI scenarios accompany the future adapters that expose them.
 Imported history retains the separate provenance rules in [Event fields](conversation-and-memory.md#event-fields).
 
-The masking/store increment (#48) supplies `internal/core/secrets.Mask` as the native-text admission boundary, within the issue's package scope.
-It replaces common provider-token shapes, credential assignments, bearer/basic credentials, private-key blocks (including an unfinished block), and caller-flagged secret spans.
-Its immutable `Masked` value contains only replaced text and `secret` spans using half-open UTF-8 byte offsets in that text.
-`Text` is the display/storage projection; `DerivedText` excludes the spans for indexes, summary inputs, ContextPackets and exports.
-Serialized records retain the flags and reject unmasked recognized credentials on read.
-Detection is heuristic: callers must pass explicit sensitivity spans for credentials without a recognized shape.
-The future ledger, assembly and egress paths must use this boundary; the current protocol still has no conversation capability.
+Implementation notes: [C-15 masking increment](../../internal/core/secrets/REFERENCE.md#c-15-masking-increment).
 
 `kit/secret.Secret` prints `[REDACTED]` through Go formatting, JSON/text serialization and structured logging, including nested values; it has no plaintext field that an unexported containing field can expose through formatting.
 Its only plaintext exits are `Environment` and `InjectHeader`, which validate the target field and reject invalid values.
@@ -1678,7 +1536,7 @@ The caller still owns the destination grant and redirect policy.
 Core must hold its state-root lock for the store's lifetime.
 Backend errors expose no credential or path; a failing keychain does not trigger a fallback.
 Every active turn holds a store pin; mutation is refused until all pins are released.
-OS-keychain platform adapters, credential forms and turn/boot wiring are not exposed by this increment.
+Implementation notes: [C-15 credential integration status](../../internal/core/secrets/REFERENCE.md#c-15-credential-integration-status).
 
 ## Records and memory
 
@@ -1694,10 +1552,10 @@ The SQLite binding is chosen by [V2](runtime.md#runtime-acceptance) against four
 sqlite-vec is the optional embedding feature; with no embedding endpoint, recall uses FTS5.
 
 Canon owns one fixed, append-only application migration catalog, shared by Core startup and backup.
-The published development order is retraction at version 11, turn records/control/outcomes at versions 12/13/14, compaction at version 15, and account sign-in at version 16.
+Implementation notes: [C-16 published migration order](../../internal/core/canon/REFERENCE.md#c-16-published-migration-order).
 Runtime composition never appends the turn schemas by the current list length.
 A database created by the current dev catalog upgrades without recreating existing turn tables, and later migrations append after these fixed numbers.
-No release has shipped: incompatible older development layouts are refused with a published-catalog error before writer initialization, without a compatibility shim, renumbering or normalization.
+Implementation notes: [C-16 development catalog compatibility](../../internal/core/canon/REFERENCE.md#c-16-development-catalog-compatibility).
 
 The ordered application migrations are returned by `canon.Migrations`; table groups keep their schema in separate files.
 The asset tables hold stable ids and observed paths, immutable revision metadata, export delivery records and trash transitions.
@@ -1705,7 +1563,7 @@ The asset tables hold stable ids and observed paths, immutable revision metadata
 File preparation and external delivery happen outside canon transactions; revision bytes are synced before their metadata is committed.
 A stale writer cannot replace existing revision bytes.
 
-The registry retains assets at version 1 and appends `InboxSchema` at version 2.
+Implementation notes: [C-16 initial catalog versions](../../internal/core/canon/REFERENCE.md#c-16-initial-catalog-versions).
 Identical-byte edits also enter the fenced write transaction and confirm the current revision and non-trashed state before succeeding.
 Asset reads can stream with size and SHA-256 checked at EOF, without holding the store mutex while the consumer reads; the byte-slice convenience API refuses content over its explicit 8 MiB limit.
 Closing a stream before EOF releases it without establishing integrity.
@@ -1725,12 +1583,7 @@ type Repo interface {
 type Index interface{ Query(ctx context.Context, v View, p Params) ([]Row, error) } // today, upcoming, anytime, later, memos, board
 ```
 
-The installed write path uses `internal/core/records.Repo`, with go-git's pure-Go object/hash and index codecs behind a confined local filesystem adapter.
-Result saving uses the same repository implementation.
-Core opens the repository with the published canon migration catalog; `records_state` journals the pending publication and `records_index` holds disposable id/path/blob/revision locators.
-Backup reads the published records head from its canon snapshot.
-Before the first saved version (also after an interrupted first attempt), it copies the repository files and intent without inventing a commit entry in the generation manifest.
-The adapter writes loose objects and a linear local history; it has no Git subprocess, remote, transport or credential dependency.
+Implementation notes: [C-53 repository implementation](../../internal/core/records/REFERENCE.md#c-53-repository-implementation).
 
 `Read` returns the record and the commit of its last content or path change.
 Unrelated record commits leave that revision valid.
@@ -1764,7 +1617,7 @@ A changed, added, deleted, invalid or non-regular file, or a changed repository 
 Tool results show a bounded list of change kinds and validation outcomes without outside bytes or filesystem paths.
 Startup keeps ordinary conversations available when an outside change is present; the next record operation shows the refusal.
 Only Core-journaled recovery may finish an interrupted publication.
-Outside-change acceptance is not automatic and no accept/merge operation is supplied by this increment.
+Implementation notes: [C-53 outside-change acceptance status](../../internal/core/records/REFERENCE.md#c-53-outside-change-acceptance-status).
 
 Installed conversations register `read_record`, `write_record` and `query_records` through the ordinary authority, lease and effect-receipt registry.
 These tools capture and edit memos and knowledge documents; Core supplies the owner, asking agent, id and PARA path.
@@ -1786,11 +1639,7 @@ Design:
 
 - Views are SQL queries over the index, run by Core.
   `query_records` carries the view, civil day, IANA zone and existing id cursor.
-  `records_todo` is a disposable projection of typed front matter, appended at migration 38.
-  Migration marks the index stale; startup rebuilds it from published files.
-  Missing to-do rows also trigger repair even when the saved index head matches.
-  No canonical record is moved or deleted by the migration.
-  Legacy tracker imports with verified-snapshot provenance project `active`/`done` to `open`/`completed` and derive a missing deadline source from that provenance, without rewriting the published files.
+  Implementation notes: [C-54 to-do projection migration](../../internal/core/records/REFERENCE.md#c-54-to-do-projection-migration).
 - `write_record(kind: todo)` accepts sentence-only capture and complete optional planning fields.
   It preserves them on text-only edits.
   Exact dates are checked before publication; unresolved input returns `ambiguous_date`.
@@ -1801,11 +1650,7 @@ Design:
   The tool cannot set work execution state or complete a delegated task.
   Planning-field edits may preserve an already `completed` state; only transitions into completion require the delegated-work guard.
   Execution observations remain protected on every edit.
-- The today fixture includes overdue starts, deadlines, current recurring occurrences, undated tasks, terminal states and zone boundaries.
-  The installed Core scenario `e2e/m2/todos.json` exercises saves, date and cycle refusals, today/upcoming/anytime queries, rescheduling and restart after index loss.
-  `e2e/m2/todo-completed-planning.json` covers editing a completed delegated to-do through Core and retaining its fields and completion after restart.
-  `e2e/m2/todo-timestamps.json` covers timestamp refusals in all date fields, an invalid edit, and valid timed tasks in board/list and dated views.
-  `e2e/m2/record-recurrence-promotion.json` exercises same-record recurrence completion, model-free advancement at Core restart, memo promotion and undo.
+- Implementation notes: [C-54 to-do acceptance scenarios](../../internal/core/records/REFERENCE.md#c-54-to-do-acceptance-scenarios).
 - Recurrence uses the native timer parser's daily, weekly, monthly and yearly subset with interval, by-day, by-month-day, count and until.
   The public package helper is `timers.Next(rule, from, zone)`, backed by the pure shared `kit/calendar` calculator so the two store families do not import each other.
   Existing series retain their start anchor; a completion-relative series anchors at completion.
@@ -1855,10 +1700,7 @@ Undo restores the prior bytes as a new revision, or cancels a newly added candid
 Both check the requesting person and record revision.
 An undo is idempotent and never reactivates a rejected candidate.
 
-Migration 45 adds the canonical `record_operations` and `record_candidates` machine-state tables, without modifying existing files.
-Operation membership, undo handles and candidate admission results travel in the records publication intent and commit with its index checkpoint.
-Recovery therefore cannot publish a promotion or automatic addition without its undo receipt.
-Durable operation notices are projected into the owning agent's conversation independently of a model reply and recovered on startup; existing notices are not republished.
+Implementation notes: [C-54 operation migration and recovery](../../internal/core/records/REFERENCE.md#c-54-operation-migration-and-recovery).
 
 **C-18 Compaction and the summary tree (changed).**
 `compaction.Policy` is data with the values of [conversation-and-memory.md](conversation-and-memory.md#compaction-and-resume); the in-turn pass and the continuation turn follow the same section.
@@ -1934,12 +1776,7 @@ This uses the canonical ledger and adds no schema migration.
 A failed summarizer or write leaves the entire tree unpublished or invalid.
 An unrelated revocation conservatively requires stale trees to be rebuilt before use, matching preparation snapshot epoch checks.
 
-For compatibility with previously published trees (#511), inherited exclusions are validated against the canonical ledger and consumed at their ledger positions, independently of their stored child order.
-Earlier builders could assign an audit or other excluded event beyond a retained message to a child.
-Those rows retain their ownership, reasons and links, but an inherited exclusion in the verbatim tail does not extend the new node's prefix or time bounds.
-This recovery applies only to stored, canonically excluded events; actual child inputs and all newly proposed coverage must still follow the ordered prefix.
-It supports root-only condensation and later extension without rewriting summaries or introducing a schema migration.
-Invalid reasons, foreign events, unavailable children and interleaved inputs remain errors.
+Implementation notes: [C-18 inherited exclusion compatibility](../../internal/core/compaction/REFERENCE.md#c-18-inherited-exclusion-compatibility).
 
 These operations add no TUI or client-protocol endpoint.
 The consuming compaction flow owns model selection, authorized masked body/material resolution, the nonce envelope, request fitting, compaction audit events and exact-body expansion; the storage layer never calls a provider or silently truncates a failed summary.
@@ -2016,16 +1853,10 @@ Depth 1 makes one cancellable auxiliary call with a 10-second deadline and no re
 Its structured sentences retain only citations to the retrieved id and revision; sentences left without citations are dropped.
 A depth above 1 returns the background-required outcome to the caller.
 The standing profile is an ephemeral view ordered by the latest committed revision, with line and tokenizer budgets supplied by assembly.
-These operations are callable Core/tool services, tested with real canon and ledger package scenarios.
-Explicit client memory actions also have installed-Core acceptance through the [TUI memory requests](tui.md#memory-and-agent-command-requests); the condition-by-condition evidence is listed under [G1-13](go-roadmap.md#1d-memory-context-and-skills).
+Implementation notes: [C-21 recall acceptance](../../internal/core/memory/REFERENCE.md#c-21-recall-acceptance).
 The indexed memory matcher and the ledger search service are described in C-22.
 
-The memory-job increment exposes Core-owned preparation, pre-dispatch checks and `ExtractionApply`, `MaintenanceApply` and `BriefApply` callbacks in `internal/core/memory`.
-They register with the existing job API; the worker still reads immutable tasks and submits their results through `Apply`.
-The composing schema owner installs `memory.JobsSchema` alongside `jobs.Schema` and the shared budget schema in a numbered migration.
-Worker startup never migrates canon.
-These are package and job-socket capabilities; installation and conversation composition select their schedules and model bindings.
-No new client command or TUI memory screen is introduced.
+Implementation notes: [C-21 memory job interfaces](../../internal/core/memory/REFERENCE.md#c-21-memory-job-interfaces).
 
 Extraction scans a bounded ledger prefix for one agent, retaining the source cursor and revocation epoch.
 Only canonical person events enter an utterance; replay and `view_of` copies do not trigger another extraction.
@@ -2059,7 +1890,7 @@ Empty output from a current task increases the next eligible turn by `min(base c
 A ready-only read requires the same topic, still-valid evidence and a turn age no greater than twice the base cadence.
 It never waits or calls a model.
 An Aux call whose outcome is unknown retains the job API's pending reservation and is not silently retried.
-Synthetic package tests and `e2e/m1/memory-jobs.json` exercise these operations with the real worker binary and Core job socket; model quality and installed scheduling remain composition concerns.
+Implementation notes: [C-21 memory job acceptance](../../internal/core/memory/REFERENCE.md#c-21-memory-job-acceptance).
 
 **C-22 Korean search (changed).**
 FTS5 with the trigram tokenizer for ledger and memory, plus a Hangul bigram posting table for words of two syllables.
@@ -2074,17 +1905,7 @@ Index rows use the same secret-free projection as recall, commit with their sour
 Holder and conversation access, current validity and retraction filters apply before ranking or limiting hits.
 The synthetic corpus in `testdata/korean/search.json` covers attached particles, imported text, duplicate occurrences, separated syllables and literal quotes.
 
-The ledger store exposes `Search` with a required agent and person scope, optional origin, speaker and occurrence-time filters, and an explicit replay opt-in.
-A person event establishes conversation ownership; conversations with another person or no established person are excluded, including their agent/tool replies.
-The same scope gates pending backfill before any source bytes are read.
-The default limit is 20 hits and the maximum is 100.
-The migration durably queues existing events; an insert trigger also queues imported rows.
-Native admission writes the secret-free text and both indexes in its event transaction.
-Search drains the requesting person's and agent's pending rows in batches of 128 before reading hits.
-It reads material bytes outside canon transactions, and a missing or unverifiable material fails the search instead of returning cached text as a complete event.
-Index metadata records `trigram` and `hangul_bigram`.
-One-character queries and two-character queries outside composed Hangul have no postings in this increment.
-Ledger search is a package boundary; it adds no TUI or Core client capability.
+Implementation notes: [C-22 ledger search implementation](../../internal/core/ledger/REFERENCE.md#c-22-ledger-search-implementation).
 
 Memory recall uses the same literal trigram/bigram choice over its normalized content, retaining case and whitespace normalization.
 A materialized person/holder/scope/validity set precedes text matching.
@@ -2121,7 +1942,7 @@ The shared worker socket and growth capability remain registered with an empty a
 Growth payloads allow 6 MiB of encoded JSON, with the unchanged 262144-character snapshot limit and 1 MiB client frame bound; ordinary jobs retain 256 KiB, and the worker request envelope allows 8 MiB.
 Repeated undo returns the current persona revision while retaining its original undo record.
 The installed-Core M2 scenario checks actual model instructions before adoption, on the next turn and after undo, as well as notice delivery and restart suppression.
-The published catalog through version 19 retains its SQL and order; growth appends at 20 and job/budget tables at 21.
+Implementation notes: [C-23 growth migration order](../../internal/core/agents/REFERENCE.md#c-23-growth-migration-order).
 
 The main's `skill-maintenance` planning job snapshots user-created skill bundles and asks Core's auxiliary model path for pruning and near-duplicate merging decisions, without persona or tools.
 A stale procedure needs content evidence of retirement or replacement; age or non-use alone is insufficient.
@@ -2142,7 +1963,7 @@ A single existing `undo_skill` handle restores every member atomically as new re
 The store remembers the rejected operation by kind, member IDs and input content hashes, so changing the merge destination, generated wording or reason cannot repeat an undone merge.
 Rejected merged output hashes also use ordinary skill suppression.
 Built-in IDs are excluded even when locally patched.
-Migration 36 adds operation membership and a durable notice outbox, preserving the published work-waiting schema at version 28, records search at version 29, merge authority at version 30, worker dispatch at version 31, Discord at version 32, Korean records search at version 33, waiting decisions at version 34, preset effects at version 35 and all earlier migrations.
+Implementation notes: [C-23 maintenance migration order](../../internal/core/skills/REFERENCE.md#c-23-maintenance-migration-order).
 
 Installed Core registers this job on its shared `run/jobs.sock`, queues changes on skill writes and restart, and retries notice delivery and scheduling each minute.
 `skill_notices` returns the committed one-line notices and undo handles; Core also projects the notices into conversation history independently of a model reply.
@@ -2157,12 +1978,7 @@ Core classifies notice and status reads as research and enablement changes as lo
 An included worker is enabled by install and uses that same socket.
 `e2e/m2/skill-maintenance.json` exercises the installed Core, actual worker process and synthetic provider through pruning, merging, notices, grouped undo and restart suppression.
 
-The #71 store publishes a metadata-only catalog in canon and keeps instruction files in immutable Git trees in `versions/skills/`, one folder per skill.
-The composing owner installs `skills.Schema` in a numbered canon migration.
-A write merges the submitted files with the current bundle, checks both the existing and resulting bundle, and requires the expected revision.
-Automatic writes accept regular, non-executable UTF-8 Markdown with only one-line `name` and `description` front-matter scalars.
-Unknown front-matter fields and executable/support-code files return `skill_requires_explicit_acceptance`; text inside a Markdown code example remains instruction text.
-The automatic path adds no connection or permission.
+Implementation notes: [C-23 skill store implementation](../../internal/core/skills/REFERENCE.md#c-23-skill-store-implementation).
 
 Git objects and immutable revision refs are synced before the fenced canon transaction publishes the head and catalog entry.
 Only a successful transaction returns the one-line notice and undo handle.
@@ -2237,9 +2053,7 @@ Honcho matching considers every matched host/LCM session copy; a unique same-ses
 Ambiguous matches become standalone `honcho-only` events.
 Matching never supplies person proof; the existing provenance classifier runs on the complete copy set.
 
-The shared canon catalog appends import storage and completion receipts at migration 24, after the unchanged published migrations 1–23.
-Core, backup and restore can reopen imported state using that same catalog.
-Empty import tables do not load an adapter or start a run.
+Implementation notes: [C-28 import migration](../../internal/addons/importer/hermes/REFERENCE.md#c-28-import-migration).
 The prepared plan applies stages 3–8 in one fenced transaction per conversation: events and relations, sidecar material records, Honcho messages, legacy summary records and the remaining history.
 References and per-column sensitivity spans commit with their records.
 Unsealed events, relations and event spans live in `import_event`, `import_event_relation` and `import_event_span`, outside `conv_event` and every native evidence view.
@@ -2368,28 +2182,9 @@ Core shutdown joins pollers before closing their stores.
 Ordinary bound owner messages enter the durable gateway inbox; the channel worker drains them through the existing turn execution and outbound queue.
 
 
-#147 adds `gateway/discord` behind the same adapter boundary and boots one outbound Gateway session per saved Discord bot.
-Its `coder/websocket` transport is pinned at v1.8.15; REST calls use the fixed Discord v10 origin without redirects or automatic effect retries.
-The shared catalog appends Discord presentations and pending buttons plus consumed channel steering at migration 32, leaving migrations 1–31 unchanged.
-The optional channel control `platform` field defaults to Telegram.
-Discord connection verifies the bot identity before replacing its credential or worker.
-Gateway close 4007/4009 clears that bot's durable session/sequence cursor before the existing supervisor retries with Identify.
-This also applies before Hello.
-Other transport closes retain Resume state; native-event receipts and bindings are preserved across the reset (#548).
+Implementation notes: [C-27 Discord integration](../../internal/core/gateway/discord/REFERENCE.md#c-27-discord-integration).
 
-The channel worker now drains committed owner inbox rows into the existing turn lanes.
-Private owner inputs use the shared main conversation and admission/steering coordinator; shared chats retain their separate conversation.
-Admission never waits for a running turn or outbound HTTP call.
-Consumed channel steering is marked durably before the next model request so restart cannot turn it into another turn.
-Channel ledger events retain platform/chat provenance and binding scope; the same model, tool and background-run services execute the work.
-A completed reply and a landed background artifact are projected once into the channel ledger and shaped for the existing durable outbound queue.
-Restart finds the same inbox/turn/queue identities.
-It cannot repeat a started model turn or an uncertain send.
-Scoped runners retain the original inbound address and resolve its current effective binding before model dispatch and tool execution, including new thread overrides of a parent fallback.
-Accepted steering retains that runner alongside its event and inbox identity; deferred follow-ups use the input's runner even when the preceding turn used the app or another channel scope (#506).
-Background delivery projections keep `EntryBackgroundNotice` and `background_notice` provenance; queue validation recognizes those committed events without promoting them to agent history.
-No channel stream publishes provisional deltas.
-Controls expose permanent delivery failure as the binding's unreachable flag.
+Implementation notes: [C-27 channel turn integration](../../internal/core/gateway/REFERENCE.md#c-27-channel-turn-integration).
 
 Discord approval presentations are Core-computed, with once/deny components.
 A live private tools binding supplies local surface availability, and an independent presentation worker does not hold the turn lane.
@@ -2426,17 +2221,13 @@ A private HTTPS transport inserts the secret token only for Telegram's fixed API
 Decoded token echoes are masked before admission.
 Tokens are never process environment values, event fields or ledger input.
 
-The #97 package increment provides `gateway.Adapter`, `channels.Store` and `gateway.Queue`.
-The shared canon catalog installs `channels.Schema` at version 17 after the agent and inbox tables.
-The channel dispatch extends `agent_bindings` with a cascading foreign key, so agent trash removes dispatches in that same transaction and restore never revives them.
-Binding changes record the owner, agent and scope.
-The most specific topic binding wins; the delivery also retains the original topic when it uses its parent binding.
+Implementation notes: [C-27 gateway increment](../../internal/core/gateway/REFERENCE.md#c-27-gateway-increment).
 
 Connections start denied.
 Pairing uses a random 128-bit code, stores only its SHA-256 hash, expires after five minutes, and consumes it once.
 Platform identities are canonical positive decimal user ids.
 Pairing cannot silently replace an already paired identity.
-This increment implements the default owner-only admission mode; the optional addressed external-participant mode remains for its consuming flow.
+Implementation notes: [C-27 admission mode status](../../internal/core/gateway/REFERENCE.md#c-27-admission-mode-status).
 
 `Gateway.Admit` commits the inbox row, a bot/native-event receipt and the adapter cursor together before calling the turn/steering dispatcher.
 The adapter supplies both its previously committed cursor and its next opaque cursor; a stale cursor rolls back the entire transaction.
@@ -2454,11 +2245,7 @@ Missing or ambiguous outcomes, transport errors, and `sending` rows found after 
 A blocked chat marks all its bindings unreachable and stops its pending sends.
 The caller runs queue recovery once before starting adapters.
 
-Package scenarios use real canon and SIGKILL barriers before admission commit, after commit and during a send.
-The #96 completion scenario, `e2e/m1/telegram.json`, reopens a saved connection and its secret through production boot with only the platform HTTP transport replaced.
-It holds the bot identity lookup until shutdown, verifies READY and the unavailable connection through the channel protocol, and requires Core to cancel and join the request before stopping.
-It does not install a separate canon service or start its own adapter.
-Live channel turn composition and app delivery views attach in their owning flows.
+Implementation notes: [C-27 Telegram acceptance](../../internal/core/gateway/telegram/REFERENCE.md#c-27-telegram-acceptance).
 
 **C-25 Agent exchanges (changed).**
 Client agent selection addresses an existing agent id in the one Core; it starts no exchange and creates no per-agent engine.
@@ -2556,19 +2343,13 @@ type Adapter interface {
   Claude Code, Cursor, Gemini CLI, Grok and added agents through the one ACP adapter of C-60.
   Antigravity as a headless child with streaming output.
   The Claude Code headless adapter below remains until the worker evaluation chooses between it and the ACP profile.
-- #132 connects session start, input, interrupt and snapshot to Core's normal conversation tool registry.
-  Launch receipts record the installed version and control handle; version and terminal-output notices survive in conversation history.
-  The per-session process belongs to Core, and hard activity is held per active turn.
-  Session completion is not task delivery; full work dispatch, recovery, approvals and dynamic work tools remain their separate roadmap steps.
+- Implementation notes: [C-29 session integration](../../internal/core/worker/REFERENCE.md#c-29-session-integration).
 - Workers run with the user's own setup and get no LINA sandbox, credential, hook or skill ([work-and-delegation.md](work-and-delegation.md#workers)).
   Approvals go to the originating conversation.
   A worker on another device is started and relayed by that device's Node.
 - A process group kill is the stop.
   A cut turn's effects are unknown until `Snapshot` and a read of GitHub settle them.
-- The #133 running-Core bridge declares the four `lina` dynamic work tools, routes worker approvals through authenticated authority cards carrying the originating conversation, claims each answer before its single send, and exposes measured/unknown quota rows through `worker_quota`.
-  Request withdrawal and terminal turns stop pending decisions.
-  Tool results and completion receipts remain worker evidence, not verification verdicts.
-  The headless `e2e/m2/codex-work-tools.json` scenario covers the stdio and conversation protocol round trip.
+- Implementation notes: [C-29 work tools and approvals](../../internal/core/worker/REFERENCE.md#c-29-work-tools-and-approvals).
 - Work tools: for Codex, `lina` dynamic tools (submit receipt, ask, coordinate, read projection).
   For the others, the receipt is built from the final result and the pull request and marked adapter-derived.
 - The delegated-task store records the requesting agent and conversation, done condition, artifact roots and whether application is required.
@@ -2576,33 +2357,11 @@ type Adapter interface {
   Admission appends an event and updates the active-run reservation in one fenced canon transaction; a task cannot admit a second active run.
   A terminal observation releases execution capacity but is not a delivery or acceptance.
 
-`internal/core/worker/claudecode` implements C-29 with the installed `claude` headless process (`--print --output-format stream-json --verbose`).
-The matching `result` ends the turn before process exit; missing results, invalid messages, reported errors and permission denials fail.
-Core owns and reaps the child tree.
-`dispatch_work` accepts `worker: "claude"` through the same durable admission, work allocation, PR checks and manager boundary as Antigravity.
-An explicit selection keeps that adapter; omitted selection uses the quota and situation chooser in C-57, with Antigravity first among otherwise equal candidates.
-The artifact retains the final result alongside the independently read PR; receipt provenance is `adapter-derived`.
-No worker settings or integrations are installed.
-The headless `e2e/m2/claude-worker.json` scenario exercises installed Core, actual Git work and durable receipts with synthetic worker and GitHub boundaries.
+Implementation notes: [C-29 headless worker implementation](../../internal/core/worker/claudecode/REFERENCE.md#c-29-headless-worker-implementation).
 
-`internal/core/worker/antigravity` implements C-29 against the documented `agy` headless stream.
-A `result` emits exactly one typed finish before process exit; `denied_actions` overrides a `SUCCESS` status.
-The supervised process owner retains its hard activity until all descendants have been reaped.
-No result or exit code constitutes delivery.
-Fixed `ghclient` reads verify the task PR's identity, current head, checks and review, with a head recheck after inline comments.
+Implementation notes: [C-29 headless stream implementation](../../internal/core/worker/antigravity/REFERENCE.md#c-29-headless-stream-implementation).
 
-`internal/core/worker/dispatch` wires the adapter into installed Core's `dispatch_work` tool and existing work ledger.
-Migration 31 adds the dispatch journal; a committed conversation tool receipt gates execution.
-Identical retries load the durable admission before any manager handoff, preserving older manager definitions and ownership without resetting execution state.
-The journal admits queued work independently and reserves intersecting write areas transactionally at handoff; unknown execution retains its reservation.
-Core allocates through its shared `work.Area`, records the pinned workspace on the task and starts the worker in `work/tasks/<task-id>` from the detached base.
-The independent parent clone keeps the GitHub origin for worker publishing and the local allocation source separately.
-Adapter observations live outside the checkout in `work/runs/`; receipt provenance names those files.
-Core checks design references, protected refs and write areas, and persists an adapter-derived artifact/receipt.
-Terminal observations publish to the source conversation and survive restart.
-Recovery retains uncertain reservations without replay.
-The adapter does not advertise unsupported approval replies, steering or work tools; manager design acceptance, parallel scheduling and merge remain their own flows.
-See [Antigravity headless adapter](work-and-delegation.md#antigravity-headless-adapter) for the evidence boundary and account-free acceptance limits.
+Implementation notes: [C-29 dispatch integration](../../internal/core/worker/dispatch/REFERENCE.md#c-29-dispatch-integration).
 
 Worker recovery implementation and acceptance scenarios are described in
 [the package notes](../../internal/core/worker/RECOVERY.md).
@@ -2616,8 +2375,7 @@ Evidence: [worker-protocols.md](../research/worker-protocols.md).
 - `initialize` sends protocol version 1 and fails the handshake on any other answer.
   The client declares form elicitation and no `fs` or `terminal` capability; it answers `fs/*` and `terminal/*` with method-not-found.
   Version 2 changes how a turn ends and is a separate, verified change.
-- The shared client uses the stable `schema-v1.26.0` schema.
-  Its generated baseline in `third_party/acp/upstream/types.go` and kit copy are byte-identical and checked by regeneration.
+- Implementation notes: [C-60 generated client baseline](../../kit/acp/REFERENCE.md#c-60-generated-client-baseline).
   `Start` owns a stdio child through `kit/proc`; `New` accepts a `kit/rpc` transport.
   Both require `Initialize` before session calls.
   `Close` waits for both the read loop and transport teardown, including owned process cleanup after connection cancellation or a concurrent failure.
@@ -2627,9 +2385,7 @@ Evidence: [worker-protocols.md](../research/worker-protocols.md).
   Cancelling a call's wait does not send a protocol cancel or retry work; the session stays busy until its reply arrives.
   Malformed frames, EOF and overflowing the bounded event queues fail the connection.
   Consumers drain updates and requests while calls run and apply Core's authorization and approval policy.
-- `internal/core/worker/acp` implements C-29 on that client.
-  A profile holds the worker name, the command and arguments, the environment variables it sets (such as `CLAUDE_CODE_EXECUTABLE`), the version probe and the vendor rate-limit key it may read.
-  Claude Code, Cursor, Gemini CLI and Grok are built-in profiles; person-added profiles come from an editable settings file defined by their own issue.
+- Implementation notes: [C-60 worker profiles](../../internal/core/worker/acp/REFERENCE.md#c-60-worker-profiles).
 - `kit/acp.StartPrompt` returns after writing `session/prompt` and supplies one buffered result.
   The adapter starts each turn through that barrier, so an immediate `session/cancel` cannot precede the prompt.
   `Prompt` retains its blocking convenience API; cancelling its wait sends no protocol cancel.
@@ -2712,14 +2468,7 @@ type Definition struct {
   Any blocked window excludes the worker until its explicit reset.
   A quota, rate-limit or login stop parks the worker and permits one replacement with the identical persisted packet, task branch and workspace, after the previous process tree is reaped.
   Each attempt has a separate ledger generation; restart never repeats an uncertain attempt.
-- #138 connects the chooser to `dispatch_work` with Antigravity and Codex.
-  The optional `system/core/worker-choice.json` table has `provisional: true` and `rules` of `{worker, tags, priority}`; all tags must match the definition's kind or repository.
-  Quota and capacity cannot be overridden.
-  Equal candidates retain installation order (Antigravity, then Codex).
-  Core reads the table at startup and rejects malformed rules.
-  The initial resource estimate is one CPU, 512 MiB memory and 1024 MiB disk per active reservation, deducted from the measured main-host resources.
-  Canon migration 43 replaces the repository-wide unique index with fenced area claims and durable worker quota.
-  A late quota snapshot cannot erase a newer observed stop; admission rechecks quota before reserving the attempt.
+- Implementation notes: [C-57 chooser integration](../../internal/core/worker/dispatch/REFERENCE.md#c-57-chooser-integration).
 - Dispatch compares glob intersections before launch, including directory descendants and `**`, and validates result files with the same path language.
   A terminal worker event does not free the area.
   Applied work releases it; uncertain effects retain it through restart.
@@ -2772,9 +2521,7 @@ type Definition struct {
 - Scheduled assignments declare the existing LINA `read_projection`, `ask`, `coordinate` and `submit_receipt` work tools and route each call through the same bound worker-session bridge.
   A submitted receipt is retained as unverified worker evidence in the originating conversation; it cannot grant merge authority or satisfy a dependency.
 - One task, one worker, one worktree, one branch, created by Core with the Git command from a parent clone in `work/clones/`.
-  #127 wires `prepare_work` and `retain_work_result` into the running conversation tool registry.
-  `work.Area` owns leased Git subprocesses through `kit/proc`, detached allocation at the pinned base, protected refs and branch bundles.
-  Core closes its process owner during shutdown.
+  Implementation notes: [C-57 work area integration](../../internal/core/work/REFERENCE.md#c-57-work-area-integration).
 - The developer lane projection reads current `work_cards` in a canon snapshot through `internal/core/progress`.
   Installed Core registers read-only `progress_get` under `worker_lanes` 1.0, independently of a provider route.
   `after` is an opaque source/id cursor; `progress.lanes` contains up to 32 current worker sessions and `next_cursor` only when another visible session exists.
@@ -2798,13 +2545,7 @@ Contract: [work-and-delegation.md](work-and-delegation.md#event-driven-flow), [w
 
 - A completion event is a row keyed by task, attempt and head SHA, and its claim is idempotent.
   Chat input and events share one reaction path.
-- #128 adds canon migration 40 for `work_completions`, separate claim tombstones and Core-captured completion origins.
-  A trusted terminal observation and its completion row commit with the work ledger/card in one fenced transaction, after a receipt exists.
-  A late receipt creates the same signal when termination was already observed.
-  The attempt key is Core's run ID; Git heads come from Core observations, and a result without a Git head uses the empty head.
-  A corrected file receipt or directory fingerprint replaces the current row for that task/attempt/head with a new reaction identity; prior claims remain tombstones, and unchanged output retains its identity.
-  Worker receipt formats stay unchanged.
-  On upgrade, persisted dispatch PR evidence fills a previously absent terminal head; it cannot replace a known head.
+- Implementation notes: [C-58 completion migration](../../internal/core/reactor/REFERENCE.md#c-58-completion-migration).
 - The boot-owned reactor starts after background services and the final lanes are initialized, wakes from canon commits, claims only the current attempt/head, and hands the receipt to the existing inbox and conversation lane.
   Non-dispatch receipts enter the bound conversation engine as a hidden, source-labeled work-completion input; a display notice alone cannot acknowledge them.
   A durable turn identity prevents replay after restart.
@@ -2833,7 +2574,7 @@ Contract: [work-and-delegation.md](work-and-delegation.md#event-driven-flow), [w
   This keeps `gh api --include` headers and JSON machine-readable under an inherited color-capable terminal without changing the user's login, tool configuration or parent environment.
   The installed-Core scenario exercises this inherited environment through the real child boundary.
 - The conformance check uses the owning dev manager's existing conversation and `coding_decision` tool, once per delivered head.
-  Canon migration 48 claims the normalized repository, PR number and head before manager dispatch, binding the task, execution generation and receipt.
+  Implementation notes: [C-58 review claims migration](../../internal/core/review/REFERENCE.md#c-58-review-claims-migration).
   A duplicate request is refused even after interruption or restart.
   A fix generation with a new head gets its own check.
   Reading an existing judgment at merge is not another request.
@@ -2851,14 +2592,7 @@ Contract: [work-and-delegation.md](work-and-delegation.md#event-driven-flow), [w
   `e2e/m2/conformance.json` exercises the installed Core, actual worker commits, mechanical gates, structured findings, prose rejection and restart.
 - The return for a missed work definition, the close on a remaining gap or undelivered green head, and the merge steps are those of the contract.
   Core takes the merge slot, merges pinned to the head last read, and only one read after the merge lands the task.
-- #144 connects the completion reactor's dispatch delivery to that judgment.
-  A missed work definition queues one new generation of the same task, branch, worktree and worker.
-  Its packet contains the unmet definition and only P0/P1 finding records, retaining their ids; P2/P3 stay in the review record.
-  The return receipt and generation offset commit before launch.
-  Completed worker processes are restarted with the retained packet; Core does not claim to resume a live session after its process was joined.
-  Each generation retains its own result artifact.
-  A stale completion cannot overwrite the queued correction.
-  An unchanged corrected head retains its previous failed check and closes against the new receipt without a second review.
+- Implementation notes: [C-58 correction delivery](../../internal/core/worker/dispatch/REFERENCE.md#c-58-correction-delivery).
 - A remaining definition gap, or a worker delivery with terminal failing checks or open P0/P1 findings, closes the PR with the saved reason and records blocked without a verified verdict.
   Pending or missing checks and reviews never authorize closing.
   Core verifies PR identity before the fixed-argument close, records intent before the child starts and confirms both the closed state and the exact saved reason in the PR comments.
@@ -2869,20 +2603,8 @@ Contract: [work-and-delegation.md](work-and-delegation.md#event-driven-flow), [w
   Retained unknown, queued or merged intents are reconciled before the open-PR readiness check, so a confirmed merge can acquire its missing application record after interruption without repeating the write.
   A goal-owned dispatch keeps its worker action open during the correction, accepts only the final receipt/head and leaves merging to the goal's existing merge action.
   `e2e/m2/delivery.json` covers installed Core, real temporary worktrees and worker results, the filtered return, corrected merge, residual closure and restart without repeated effects.
-- #141 adds the running Core's `github_merge` capability and the shared `ghclient.Merge` service.
-  A person connects a PR to its parent clone and named protected local branches; Core verifies the clone's origin and captures those refs before work.
-  Head acceptance reads GitHub and compares those refs again.
-  The merge takes a repository/base slot, reads checks and unresolved priority findings, rechecks PR identity, compares protected refs and commits an unknown intent before the fixed head-pinned child runs.
-  A moved head is returned as fresh evidence and requires explicit acceptance; there is no automatic merge or review retry.
-  A command's success alone is not landing: Core checks the merge commit, exact target ref and checks on that commit.
-  Queue/unknown states retain a durable base reservation and permit only observation.
-  Restart never repeats a write.
-- `authority.Merges` stores the connection, captured refs, accepted head, requesting person/agent and final evidence in canon migration 30.
-  It is merge authority bookkeeping, not a replacement for the pinned work-ledger receipt/verdict schemas.
-  The work reactor can consume the same service and evidence.
-  A confirmed external merge is `observed`, a confirmed successful Core call is a `receipt`; neither issues a delivery verdict.
-  Restore invalidates unused merge permission while retaining uncertain reservations and terminal evidence.
-  `e2e/m2/github-merge.json` drives the installed Core, a synthetic gh child and a real temporary Git clone, including restart and failed checks on a person's merge.
+- Implementation notes: [C-58 merge integration](../../internal/core/ghclient/REFERENCE.md#c-58-merge-integration).
+- Implementation notes: [C-58 merge authority migration](../../internal/core/ghclient/REFERENCE.md#c-58-merge-authority-migration).
 - A head change detected during review reads also refreshes the observation once and blocks the merge.
   That refresh grants no admission, including when the original head returns; another head change or a failed read ends the attempt.
   The installed-Core merge scenario covers the race between PR identity and review reads and requires explicit head acceptance afterward.
@@ -2910,12 +2632,7 @@ One transaction selects due timers, inserts a fire row unique on (timer, instant
 Uses: reminders and pre-warnings, the briefing, expiry of exchanges and approvals, deterministic sensors (a model runs only when the signature changes) and jobs.
 At restart a claimed fire of an older epoch is replaced once, and only if its action is read-only.
 
-#129 implements `timers` through the running Core.
-`create_timer` admits an immutable schedule and action from an authenticated private main conversation; Core supplies the person, agent and conversation.
-`timer_status` and `cancel_timer` recheck that binding.
-Repeated admission under the same tool-call identity returns the saved receipt, including after expiry; a changed request conflicts.
-Cancellation stops future fires; already claimed work may finish.
-Channel scheduling is not admitted without a durable channel authority binding.
+Implementation notes: [C-26 timer tool increment](../../internal/core/timers/REFERENCE.md#c-26-timer-tool-increment).
 
 Schedules accept one RFC3339 instant, a five-field cron expression (numeric lists, ranges and steps), or a minute-resolution RRULE with an explicit IANA zone and start instant.
 RRULE supports MINUTELY, HOURLY, DAILY, WEEKLY, MONTHLY and YEARLY frequencies; INTERVAL; COUNT or UTC UNTIL; BYMINUTE, BYHOUR, BYDAY (weekday names), BYMONTHDAY (including negative days) and BYMONTH.
@@ -2927,12 +2644,7 @@ Cron day-of-month and weekday restrictions use their ordinary OR rule.
 Civil-time resolution includes non-hour transitions: a gap maps to its first valid instant and a fold uses its first occurrence.
 Colliding gap candidates share the same fire identity.
 
-Canon migration 41 adds authored timer rows and scheduler-owned next instants, signatures and fire claims after completion events.
-One transaction commits a unique `(timer, instant)` fire and its next instant before any dispatch.
-One sleeper and four bounded delivery workers serve the scheduler.
-A timer's next fire cannot overtake an unfinished claim.
-On restart an older-epoch reminder or sensor claim is replaced at most once; an interrupted effect-capable job or second interrupted claim becomes `unknown` and remains inspectable.
-This is one durable fire per instant, not an exactly-once external-effect promise.
+Implementation notes: [C-26 scheduler migration](../../internal/core/timers/REFERENCE.md#c-26-scheduler-migration).
 
 A delivery error uses the same attempt budget within the running Core: read-only work gets one replacement after a one-second delay; a job or second failed attempt becomes `unknown`.
 A cancelled read-only fire is not requeued.
@@ -2981,7 +2693,7 @@ Package tests cover civil-time transitions, concurrent claims and SIGKILL at bot
   Pending landings in the same conversation and ownership scope, at most 10 seconds from the first landing (inclusive), form one event; an idle lane delivers immediately.
   A delivery commits its conversation event and outbox acknowledgement together before subscriber publication.
   A failed commit retains the pending notices for explicit recovery and never retries in a loop.
-  The display rows and notices are Core APIs in this increment; client 1.0 waiting/running payloads remain reserved until their surface implementation.
+  Implementation notes: [C-55 display integration status](../../internal/core/runs/REFERENCE.md#c-55-display-integration-status).
 - `progress.Compute` builds one line per running 일 and 목표 per [work-and-delegation.md](work-and-delegation.md#progress-line): name, stage word and bar, just finished (the outcome line of the latest landing, built from structured fields and the title), next, and a waiting mark.
   Unobserved values are unknown, never zero.
   State words are codes; clients own the Korean and English catalogs.
@@ -3002,7 +2714,7 @@ Package tests cover civil-time transitions, concurrent claims and SIGKILL at bot
   Current producers include canonical approvals, work-round questions, input-needed runs, explicit blocked work, person-owned exchanges, live worker questions and outside record-change problems.
   Live adapter requests are read under their session locks outside canon's writer to avoid reversing the worker callback lock order.
   They remain answerable through the existing authenticated question/approval forms.
-  Canon migration 34 installs the already-defined waiting decision journal in the application catalog.
+  Implementation notes: [C-55 waiting migration](../../internal/core/waiting/REFERENCE.md#c-55-waiting-migration).
 - Canon closes its change notification only after a committed mutation; read callbacks and rollbacks remain quiet.
   Core coalesces those events and live worker changes for 250 ms, rereads the sources, and publishes the replaced overview when its contents or the full waiting list change.
   A change below Home's five-row limit still advances the overview cursor, causing an open full waiting view to reread its sources.
@@ -3011,9 +2723,7 @@ Package tests cover civil-time transitions, concurrent claims and SIGKILL at bot
   This detects outside record edits and restoration without unrelated canon writes.
   The timer stops with Core; idle installs without observers do not perform these periodic source reads, and unchanged snapshots still publish no frame.
   The headless `e2e/m2/progress-waiting.json` scenario covers installed Core, an actual stdio child, approval and question disappearance, a worker-created artifact and restart without provider replay.
-- #159 implements `progress_digest_get` through the same current-source overview.
-  `progress.Digest` keeps waiting rows first and emits at most five single-line display rows without bars or navigation identities, plus total and omitted counts and a progress link.
-  The requested waiting order is computed by Core before the limit.
+- Implementation notes: [C-55 progress digest increment](../../internal/core/progress/REFERENCE.md#c-55-progress-digest-increment).
 - Explicit TUI and paired-channel commands use the same Core operations: `/progress`, `/waiting priority|lightest`, `/stop <run>`, `/stop all` and `/note <run> <text>`.
   Bare `/stop` interrupts the current conversation.
   Targeted controls recheck the person and optional conversation; stop-all captures the person's live background runs and worker sessions in private surfaces, and only the bound conversation in a shared channel.
@@ -3175,12 +2885,7 @@ A preallocated reserve lets a failure commit on a full disk.
 `diag.VerifyCitations` is the test oracle for the model, interruption and storage injections.
 Tokens, cost and latency live in the canon `usage` table, not in events.
 
-The #41 package increment implements the closed emitter, strict twelve-field codec, boot/turn/task root constructors, query filters and citation oracle.
-`internal/core/eventstore` takes a caller-supplied `database/sql.DB` for a dedicated SQLite event database and a typed full-disk classifier.
-It requests WAL/FULL on one reserved connection, commits every append and releases a separately allocated reserve for one full-disk retry.
-[The diagnosis contract](self-diagnosis-log.md#storage) defines its ownership, query and reserve behavior.
-The SQLite binding remains #39 work; package and scripted SQL tests do not establish reopen/crash durability or an actual full-disk commit.
-Core startup, flow roots and the conversation query tool attach in their consuming issues; this increment changes no protocol or TUI operation.
+Implementation notes: [C-33 event store increment](../../internal/core/eventstore/REFERENCE.md#c-33-event-store-increment).
 
 ## Contract change proposals
 
@@ -3220,7 +2925,7 @@ The key excludes the boot epoch; authority binds the arguments and actor identit
 **CP-05. Accepted 2026-10-20.**
 [materials-and-knowledge.md](materials-and-knowledge.md#saving-a-result): the idempotency key of a result save is built from the result id, the revision, the action and the destination, as [host-protocol.md](host-protocol.md#typed-results) says.
 C-52 uses the key of `result_save`.
-The #104 implementation hashes the unambiguous tuple of result id, revision, `result_save` and the normalized destination; call ids, turns and boot epochs do not change it.
+Implementation notes: [CP-05 result save key](../../internal/core/results/REFERENCE.md#cp-05-result-save-key).
 A committed claim is never dispatched twice, including when its outcome is unknown.
 
 **Open points at the Go level**, with the default in brackets: the SQLite binding (V2); the Git backend for the records repository (a pure-Go library, measured with thousands of files); the Telegram and Discord client libraries; whether `moirai-worker` reads canon directly or through the job API at scale; concurrent turns per Claude account (2).

@@ -673,6 +673,9 @@ func (e *workerSession) encode(s worker.ThreadSnapshot) tools.Result {
 	return tools.Result{State: tools.Applied, Body: raw, Revision: s.Thread.ID + ":" + s.Thread.TurnID}
 }
 func (e *workerSession) observe() {
+	// Reconciliation can finish a turn before its live completion arrives.
+	// Interleaved messages and finishes must only consume their own output.
+	outputs := make(map[worker.Thread]string)
 	defer func() {
 		close(e.done)
 		e.origin.workers.wakeRecovery()
@@ -692,7 +695,7 @@ func (e *workerSession) observe() {
 				e.stopRequest(event.Progress.ItemID)
 			}
 			if event.Progress.Phase == "item_completed" && event.Progress.Text != "" {
-				e.output = event.Progress.Text
+				outputs[event.Thread] = event.Progress.Text
 			}
 		case worker.UsageEvent:
 		case worker.FinishEvent:
@@ -711,7 +714,7 @@ func (e *workerSession) observe() {
 			deliver := event.Finish.Status == worker.Done || rec.Canceled || rec.ID == "" || rec.Retries == 0
 			delivered := false
 			if deliver {
-				err := e.finish(e.origin.ctx, event)
+				err := e.finishOutcome(e.origin.ctx, event, outputs[event.Thread], true)
 				delivered = err == nil
 				if err != nil && e.origin.ctx.Err() == nil {
 					fmt.Fprintf(os.Stderr, "worker completion admission failed: %v\n", err)
@@ -749,7 +752,7 @@ func (e *workerSession) observe() {
 				delete(e.active, event.Thread.TurnID)
 			}
 			e.mu.Unlock()
-			e.output = ""
+			delete(outputs, event.Thread)
 			e.origin.workers.wakeRecovery()
 		case worker.ApprovalEvent:
 			if e.trackRecoveryRequest(event.Approval.ID, true) != nil {

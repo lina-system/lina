@@ -117,6 +117,20 @@ async function automation(root, env) {
   return { status: suite.status, output };
 }
 
+function goTimeoutOutput(pkg, output) {
+  const lines = (pkg.pending + output).split('\n');
+  pkg.pending = lines.pop().slice(-16000);
+  for (const line of lines) {
+    if (line.startsWith('panic: test timed out after ')) pkg.timeoutSection = 'header';
+    else if (pkg.timeoutSection === 'header' && line === '\trunning tests:') pkg.timeoutSection = 'tests';
+    else if (pkg.timeoutSection === 'tests') {
+      const match = /^\t\t(.+) \([^)]+\)$/.exec(line);
+      if (match) pkg.running.add(match[1]);
+      else pkg.timeoutSection = null;
+    } else pkg.timeoutSection = null;
+  }
+}
+
 // Keep test identity and bounded diagnostic lines for post-merge QA. Nested
 // failures belong to one top-level scenario, not separate duplicate issues.
 export function goTestOutcomes(output) {
@@ -126,14 +140,20 @@ export function goTestOutcomes(output) {
     let event;
     try { event = JSON.parse(line); } catch { continue; }
     if (!event?.Package) continue;
-    if (!packages.has(event.Package)) packages.set(event.Package, { output: '', states: new Map() });
+    if (!packages.has(event.Package)) packages.set(event.Package, {
+      output: '', states: new Map(), pending: '', timeoutSection: null, running: new Set(),
+    });
     const pkg = packages.get(event.Package);
-    if (event.Output) pkg.output = (pkg.output + event.Output).slice(-16000);
+    if (event.Output) {
+      pkg.output = (pkg.output + event.Output).slice(-16000);
+      goTimeoutOutput(pkg, event.Output);
+    }
     if (!event.Test) {
       // Timeouts and panics can end a package without test-level fail events.
       // A parallel test may have emitted run but still be waiting for a slot.
-      // Attribute the package failure only to an active leaf or an explicit
-      // nested failure; a parent waiting on paused children is inconclusive.
+      // A parent with paused children may still be executing its own body.
+      // Go's timeout running-test list supplies that evidence independently
+      // of the bounded diagnostic tail; otherwise that parent is inconclusive.
       if (event.Action === 'fail') {
         for (const record of tests.values()) {
           if (record.package !== event.Package) continue;
@@ -142,7 +162,7 @@ export function goTestOutcomes(output) {
           const unfinished = states.filter(([, state]) => ['run', 'cont', 'pause'].includes(state));
           const active = unfinished.some(([name, state]) => state !== 'pause'
             && !unfinished.some(([child]) => child.startsWith(name + '/')));
-          if (!active && !states.some(([, state]) => state === 'fail')) continue;
+          if (!active && !states.some(([name, state]) => state === 'fail' || pkg.running.has(name))) continue;
           record.result = 'fail';
           record.output = (record.output + pkg.output).slice(-16000);
         }

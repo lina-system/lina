@@ -1441,6 +1441,8 @@ under the same control lock as reconciliation before releasing reservations
 or sending input.
 A delayed event may deliver an earlier turn's result, but only an event matching
 the current recovery thread and turn can change that recovery state.
+Core keeps reported output with its execution identity. An earlier turn's
+message or completion cannot replace or clear another turn's pending output.
 
 ## Judgment and delivery
 
