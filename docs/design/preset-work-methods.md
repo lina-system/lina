@@ -370,6 +370,8 @@ M4-4 (#590) scores each replay case against its expectation. The checks it can a
 
 A change ships only if it improves its agent and regresses no other agent. Before scoring, the replay runner drops turns that the system injected in the user role (compaction summaries and an agent's own delegated briefs). [Numbers](../research/m4-owner-agent-sessions.md#numbers) explains why.
 
+The method scores reply text. A replay request declares no tools and creates no worker task, so a record's `tools`, `workers` and `handoff` fields change the request only as text: what they govern is measured by the work it produces, not by this runner. The record's `reply` fields and the persona layers do shape the reply, and those are what a replay run can decide.
+
 ### The runner
 
 `lina method-replay <cases.jsonl> --changed <agent[,agent]>` is the M4-4 development command. It reads one private case file, plays each case once per variant through the configured model route and writes a JSON report. It is not installed behavior: no conversation, schedule or turn calls it, and it performs no effect, because a case's only output is reply text.
