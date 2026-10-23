@@ -464,6 +464,12 @@ func syntheticStageView(t *testing.T, fixture panelFixture, card panelCard) pane
 	entries := syntheticStages(t, fixture, "diamond")
 	for i := range entries {
 		entries[i].Open = i == 0
+		if entries[i].Open {
+			entries[i].State = "working"
+			for j := range entries[i].Steps {
+				entries[i].Steps[j].State = "working"
+			}
+		}
 	}
 	view := panelStageView{Card: card.ID, Entries: entries, Rows: syntheticStageRows(entries)}
 	if len(entries) > 0 && len(entries[0].Steps) > 0 {

@@ -682,12 +682,18 @@ func checkWorkers(r *panelRecording) panelVerdict {
 			for _, worker := range view.Workers {
 				v.Input = true
 				open := false
+				stepInProgress := false
 				for _, entry := range view.Entries {
 					if entry.Number == worker.Entry && entry.Open {
 						open = true
+						for _, step := range entry.Steps {
+							if step.Name == worker.Step && (step.State == "working" || step.State == "needs_input") {
+								stepInProgress = true
+							}
+						}
 					}
 				}
-				if !worker.Expanded || worker.Step == "" || !open {
+				if !worker.Expanded || worker.Step == "" || !open || !stepInProgress {
 					v.Detail = fmt.Sprintf("%s: worker row %q is not under an expanded step of an open entry", c.Name, worker.Text)
 					return v
 				}
