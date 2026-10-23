@@ -85,6 +85,9 @@ func (p Player) Play(ctx context.Context, c Case, v Variant) (string, error) {
 				return "", err
 			}
 			reply.WriteString(text)
+		case provider.ToolCallReady:
+			// No tool is declared for a measured case, so a call is not offered.
+			return "", ErrReply
 		case provider.Terminal:
 			if reply.Len() == 0 {
 				reply = deltas

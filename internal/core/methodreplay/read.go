@@ -162,6 +162,8 @@ func Validate(c Case) string {
 			if !c.Reversible {
 				return "invalid_case"
 			}
+		case NoInternal, DoneEvidence:
+			// Scored from the reply text alone; retired aliases are optional.
 		case Language:
 			if c.Language != "ko" && c.Language != "en" {
 				return "invalid_case"
