@@ -16,7 +16,7 @@ import (
 
 func TestM2WorkDefinition(t *testing.T) {
 	t.Parallel()
-	testAntigravityThroughInstalledCore(t, "../m2/work-definition.json", false)
+	testHeadlessWorkerThroughInstalledCore(t, "../m2/work-definition.json", false)
 }
 
 func assertDefinitionRefused(t *testing.T, h *harness, fixture string) {

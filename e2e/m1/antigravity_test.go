@@ -19,10 +19,10 @@ import (
 
 func TestM3AntigravityThroughInstalledCore(t *testing.T) {
 	t.Parallel()
-	testAntigravityThroughInstalledCore(t, "../m3/antigravity.json", true)
+	testHeadlessWorkerThroughInstalledCore(t, "../m3/antigravity.json", true)
 }
 
-func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, presetVariants bool) {
+func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, presetVariants bool) {
 	t.Helper()
 	raw, err := os.ReadFile(scenarioPath)
 	if err != nil {
@@ -37,13 +37,17 @@ func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, pres
 			MoveBase                       bool   `json:"move_base"`
 			ToolCode                       string `json:"tool_code"`
 		}
-		What, Done       string
-		WorkArea         bool `json:"work_area"`
-		Definition       bool `json:"definition"`
-		CompletionEvents bool `json:"completion_events"`
+		What, Done             string
+		Worker, Binary, Script string
+		WorkArea               bool `json:"work_area"`
+		CompletionEvents       bool `json:"completion_events"`
+		Definition             bool `json:"definition"`
 	}
 	if err = json.Unmarshal(raw, &scenario); err != nil {
 		t.Fatal(err)
+	}
+	if scenario.Worker == "" {
+		scenario.Worker, scenario.Binary, scenario.Script = "antigravity", "agy", "../m3/antigravity-worker.mjs"
 	}
 	for _, preset := range []string{"system", "creative"} {
 		if !presetVariants {
@@ -90,11 +94,11 @@ func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, pres
 			git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "Initial design")
 			base := git("rev-parse", "dev")
 			git("remote", "add", "origin", "https://github.com/fixture/project.git")
-			script, err := os.ReadFile("../m3/antigravity-worker.mjs")
+			script, err := os.ReadFile(scenario.Script)
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, name := range []string{"agy", "gh"} {
+			for _, name := range []string{scenario.Binary, "gh"} {
 				if err = os.WriteFile(filepath.Join(bin, name), script, 0700); err != nil {
 					t.Fatal(err)
 				}
@@ -152,7 +156,7 @@ func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, pres
 						}
 					}
 					if !offered.Load() {
-						t.Error("running Core does not offer dispatch_work with installed agy")
+						t.Error("running Core does not offer dispatch_work with installed worker")
 						emitResponse(w, "Unavailable.", true)
 						return
 					}
@@ -162,6 +166,9 @@ func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, pres
 					}
 					if test.DesignRef != "" {
 						args["design_refs"] = []string{test.DesignRef}
+					}
+					if scenario.Worker == "claude" {
+						args["worker"] = scenario.Worker
 					}
 					emitPersonaCall(w, "worker-start", "dispatch_work", args)
 				} else {
@@ -234,7 +241,7 @@ func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, pres
 			}
 			found := false
 			inspect := func(e protocol.Envelope) {
-				if item, ok := e.Payload.(protocol.ItemDone); ok && item.Text != nil && (strings.Contains(*item.Text, "antigravity:") || strings.Contains(*item.Text, "codex:")) {
+				if item, ok := e.Payload.(protocol.ItemDone); ok && item.Text != nil && (strings.Contains(*item.Text, scenario.Worker+":") || test.Choice != "" && strings.Contains(*item.Text, "codex:")) {
 					if !strings.Contains(*item.Text, test.Expected) {
 						t.Fatalf("unexpected worker result: %s", *item.Text)
 					}
@@ -259,6 +266,9 @@ func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, pres
 			assertCodingOwnership(t, h, ids["dev"], conversation, workerCase == "success", managerTurns)
 			if test.Choice != "" {
 				assertWorkerChoice(t, h, fixture, test.Choice)
+			}
+			if scenario.Worker == "claude" {
+				assertClaudeReceipt(t, h, workerCase)
 			}
 			if scenario.CompletionEvents {
 				assertWorkCompletion(t, h)

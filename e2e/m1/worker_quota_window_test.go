@@ -17,7 +17,7 @@ import (
 
 func TestM2WorkerQuotaWindows(t *testing.T) {
 	t.Parallel()
-	testAntigravityThroughInstalledCore(t, "../m2/worker-quota-windows.json", false)
+	testHeadlessWorkerThroughInstalledCore(t, "../m2/worker-quota-windows.json", false)
 }
 
 func assertWorkerQuotaWindows(t *testing.T, h *harness, fixture string) {

@@ -177,6 +177,7 @@ func (s *Service) execute(r Record) {
 	var thread worker.Thread
 	var run work.Run
 	var finish worker.Finish
+	var observation observation
 	for len(r.Tried) < 2 {
 		adapter, closeAdapter, selectErr := s.selectWorker(ctx, l, r)
 		if selectErr != nil {
@@ -187,6 +188,7 @@ func (s *Service) execute(r Record) {
 			queued = true
 			return
 		}
+		observation = observeAdapter(adapter)
 		r.Version, err = adapter.Version(ctx)
 		if err != nil {
 			closeAdapter(context.Background())
@@ -251,9 +253,6 @@ func (s *Service) execute(r Record) {
 		if err != nil || closeErr != nil {
 			return
 		}
-		if a, ok := adapter.(*antigravity.Adapter); ok {
-			r.Denied = a.Result().DeniedActions
-		}
 		if quotaStop && len(r.Tried) == 1 {
 			if err = service.Finish(ctx, r.ID, run.ID, "failed"); err != nil {
 				return
@@ -264,6 +263,21 @@ func (s *Service) execute(r Record) {
 		break
 	}
 	r.State = "finished"
+	rawResult, denied := observation()
+	observed, err := secrets.Mask(string(mustJSON(struct {
+		Result json.RawMessage            `json:"result"`
+		Denied []antigravity.DeniedAction `json:"denied_actions"`
+	}{rawResult, denied})))
+	if err != nil {
+		r.Code = "invalid_result"
+		return
+	}
+	// Mask before assigning to the record: the deferred journal save must not
+	// retain the unmasked final response even if later PR reads fail.
+	if err = json.Unmarshal([]byte(observed.Text()), &r); err != nil {
+		r.Code = "invalid_result"
+		return
+	}
 	status, outcome := "completed", "ready_for_review"
 	if finish.Status != worker.Done {
 		status, outcome = "failed", "failed"

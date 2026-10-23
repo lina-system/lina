@@ -124,9 +124,9 @@ func (s *Service) claim(ctx context.Context, r *Record) (bool, error) {
 				}
 			}
 		}
-		if r.Wait == "" && len(s.cfg.Workers) > 0 {
+		if r.Wait == "" && len(s.workersFor(*r)) > 0 {
 			var candidates []work.WorkerCandidate
-			for _, f := range s.cfg.Workers {
+			for _, f := range s.workersFor(*r) {
 				var raw []byte
 				var quota []provider.QuotaRow
 				err := tx.QueryRowContext(ctx, "SELECT rows FROM worker_quota WHERE worker=?", f.Name).Scan(&raw)
@@ -237,7 +237,7 @@ func (s *Service) selectWorker(ctx context.Context, l lease.Lease, r Record) (wo
 			v.close(context.Background())
 		}
 	}()
-	for _, f := range s.cfg.Workers {
+	for _, f := range s.workersFor(r) {
 		cached, err := s.quota(ctx, f.Name)
 		if err != nil {
 			return nil, nil, err

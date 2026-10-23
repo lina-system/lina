@@ -1284,6 +1284,18 @@ type Adapter interface {
 - Work tools: for Codex, `lina` dynamic tools (submit receipt, ask, coordinate, read projection). For the others, the receipt is built from the final result and the pull request and marked adapter-derived.
 - The delegated-task store records the requesting agent and conversation, done condition, artifact roots and whether application is required. A run binds its task, generation, worker, thread, turn and observing node. Admission appends an event and updates the active-run reservation in one fenced canon transaction; a task cannot admit a second active run. A terminal observation releases execution capacity but is not a delivery or acceptance.
 
+`internal/core/worker/claudecode` implements C-29 with the installed `claude`
+headless process (`--print --output-format stream-json --verbose`). The matching
+`result` ends the turn before process exit; missing results, invalid messages,
+reported errors and permission denials fail. Core owns and reaps the child tree.
+`dispatch_work` accepts `worker: "claude"` through the same durable admission,
+work allocation, PR checks and manager boundary as Antigravity. Omitted worker
+selection retains Antigravity for existing requests and stored records. The
+artifact retains the final result alongside the independently read PR; receipt
+provenance is `adapter-derived`. No worker settings or integrations are installed.
+The headless `e2e/m2/claude-worker.json` scenario exercises installed Core, actual
+Git work and durable receipts with synthetic worker and GitHub boundaries.
+
 `internal/core/worker/antigravity` implements C-29 against the documented `agy`
 headless stream. A `result` emits exactly one typed finish before process exit;
 `denied_actions` overrides a `SUCCESS` status. The supervised process owner

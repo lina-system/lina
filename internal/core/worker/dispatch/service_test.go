@@ -207,3 +207,32 @@ func gitFixture(t *testing.T, dir string, args ...string) string {
 	}
 	return strings.TrimSpace(string(out))
 }
+
+func TestDispatchAcceptsClaudeSelection(t *testing.T) {
+	db := store(t)
+	s, err := openService(t, Config{DB: db, Epoch: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close(context.Background())
+	raw, _ := json.Marshal(definition(t))
+	var args map[string]any
+	if err := json.Unmarshal(raw, &args); err != nil {
+		t.Fatal(err)
+	}
+	args["worker"] = "claude"
+	raw, _ = json.Marshal(args)
+	tool := s.Tool(Origin{Person: "person", Agent: "agent", Conversation: "main:agent", Turn: "turn:input"})
+	call := provider.ToolCall{ID: "call", Name: "dispatch_work", Arguments: string(raw)}
+	// Selection is part of the durable definition; execution availability is
+	// checked at launch so old queued work keeps its original adapter choice.
+	if got := tool.Execute(t.Context(), call); got.Code != loop.OK {
+		t.Fatalf("Claude dispatch rejected: %s", got.Code)
+	}
+	args["worker"] = "unknown"
+	raw, _ = json.Marshal(args)
+	call.Arguments = string(raw)
+	if got := tool.Execute(t.Context(), call); got.Code != loop.Invalid {
+		t.Fatal("unknown worker accepted", got)
+	}
+}

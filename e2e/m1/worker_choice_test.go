@@ -19,7 +19,7 @@ import (
 
 func TestM2WorkerChoice(t *testing.T) {
 	t.Parallel()
-	testAntigravityThroughInstalledCore(t, "../m2/worker-choice.json", false)
+	testHeadlessWorkerThroughInstalledCore(t, "../m2/worker-choice.json", false)
 }
 func assertWorkerChoice(t *testing.T, h *harness, fixture, mode string) {
 	t.Helper()
