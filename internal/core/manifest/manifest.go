@@ -12,13 +12,15 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/manifest/crwpin"
+	"github.com/thisisjun786/lina/kit/provider"
 	responseconfig "github.com/thisisjun786/lina/kit/provider/responses/config"
 )
 
 // Manifest identifies a clean source commit and the binaries produced from it.
 // Additional JSON fields are allowed as later components add their metadata.
 type Manifest struct {
-	VerifiedWorkerVersions map[string][]string `json:"verifiedWorkerVersions,omitempty"`
+	ProviderCapabilities   map[string]provider.CapabilitySet `json:"providerCapabilities,omitempty"`
+	VerifiedWorkerVersions map[string][]string               `json:"verifiedWorkerVersions,omitempty"`
 	// CRWPin is absent only in artifacts built before the work-ledger start gate.
 	CRWPin                *crwpin.Record                   `json:"crwPin,omitempty"`
 	SupportedCombinations []Combination                    `json:"supportedCombinations"`
@@ -67,6 +69,20 @@ func Read(path string) (Manifest, error) {
 
 // Validate checks the required metadata and artifact records.
 func (m Manifest) Validate() error {
+	for route, capabilities := range m.ProviderCapabilities {
+		if route != "chatgpt" && route != "responses_api_key" && route != "claude" {
+			return fmt.Errorf("unknown provider route")
+		}
+		if !capabilities.Valid() {
+			return fmt.Errorf("invalid provider capabilities")
+		}
+		for _, capability := range capabilities {
+			if !provider.Admitted(route).Has(capability) {
+				return fmt.Errorf("unadmitted provider capability")
+			}
+		}
+	}
+
 	if m.CRWPin != nil {
 		if err := m.CRWPin.Validate(); err != nil {
 			return fmt.Errorf("crwPin: %w", err)

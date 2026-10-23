@@ -255,6 +255,11 @@ func TestM2WorkArea(t *testing.T) {
 	}
 	core = start(true)
 	waitCompletionHandled(t, h)
+	select {
+	case <-results:
+		t.Fatal("completion reaction consumed the scripted retention turn")
+	default:
+	}
 	c, conversation = conversationClient(t, h)
 	admittedTurn(t, h, c, conversation, "retain-area", "Preserve the completed local result without applying it.")
 	var saved []work.Material
