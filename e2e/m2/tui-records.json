@@ -1,0 +1,7 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "title": "소풍 준비",
+  "note": "연필을 챙기고 장소를 확인한다.",
+  "capture": "책 반납 %심부름 !",
+  "journey": ["save through conversation", "restart Core", "discover records in help", "browse memo inbox", "open memo", "preview quick add", "confirm save", "browse Core lenses"]
+}

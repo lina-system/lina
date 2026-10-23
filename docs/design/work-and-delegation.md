@@ -698,7 +698,34 @@ adapter model selection is checked against the returned model. Per-task effort
 selection is refused until assignment verification supports it.
 
 Version notices and terminal worker output enter the originating conversation's
-canon history and restore after Core restart. Snapshot reads thread summary state and includes the latest
+canon history and restore after Core restart. A terminal conversation-started
+worker turn commits its task packet, work directory, dev owner and manager,
+session/turn identity, status
+and claimed output together with one follow-up inbox entry. The existing
+conversation lane runs that follow-up as the originating conversation's persona after the current
+turn closes. The persona reads back the promised effect with the available tools
+before reporting a checked result; a worker's completed status or report alone is
+not verification. Failed or interrupted work is reported as such, with any
+remaining uncertainty. This is an ordinary conversation continuation, not a new
+worker review loop or an automatic worker retry. Raw worker output is evidence
+for the persona, not a second system-speaker result in the conversation.
+
+`worker_read_file` reads a relative file in the owned session's work directory
+through the existing sandboxed file executor, returning its content and revision.
+It grants no writes or network access and refuses paths outside that directory.
+The same scoped read can use a recorded completion after restart. Completed
+worker records remain model context as untrusted evidence, including legacy
+worker notices. `worker_snapshot` can return the recorded terminal outcome when
+no live session remains, explicitly marked non-live; that record cannot authorize
+worker control. Unstarted completion follow-ups resume from canon after restart;
+a claimed turn is never replayed and a committed reply is not duplicated.
+Channel replies follow the completion back to its original input, retaining that
+input's address and the existing outbound delivery identity across restart.
+Recovery resolves the retained channel inbox address and its current most-specific
+binding, including thread permissions; sharing a persona or main conversation
+never substitutes another channel's memory or tool scope.
+
+Snapshot reads thread summary state and includes the latest
 completed assistant message observed on the owned session, not a delivery verdict.
 It does not request paginated turn history. An idle summary cannot reopen a
 just-accepted turn before its start/completion is observed; that state is unknown. A reported activity owns
@@ -716,13 +743,19 @@ versions still run and report both their version and the verified list. The
 adapter declares progress, usage, completion, steering, questions, approvals,
 work tools and quota. The #133 bridge below supplies the request/answer path.
 Thread recovery and automatic retry remain G2-08; a session handle from a prior
-Core process is unavailable, and its existing launch/result records remain.
+Core process is unavailable for control; its recorded terminal outcome remains readable.
 
 The credential-free installed-Core scenario is
 [`e2e/m2/codex-session.json`](../../e2e/m2/codex-session.json). It drives all four
 tools through the model loop and Unix client protocol, including an unverified
 worker, an actual fixture-worker file result, and conversation history after
-restart. The separately opted-in installed-Codex test preserves the user's setup;
+restart. `TestM2InstalledWorkerOutcome` in
+[`e2e/m1/worker_outcome_test.go`](../../e2e/m1/worker_outcome_test.go) additionally
+holds completion until the initial conversation closes, checks the persona's
+file read-back and single result, and asks for the outcome after Core restart.
+It also restarts after the completion is committed but before its queued
+follow-up starts, checking one recovered reply and no worker relaunch.
+The separately opted-in installed-Codex test preserves the user's setup;
 its file-tool probe encountered a worker approval, so live approval/file execution
 is not counted as session acceptance evidence.
 
