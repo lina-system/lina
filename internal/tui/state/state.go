@@ -19,6 +19,7 @@ type Msg interface{ isMsg() }
 type Cmd func(context.Context) Msg
 
 type Block struct {
+	Work                     *WorkSummary
 	ShellFileToolsAvailable  *bool
 	Card                     *Card
 	Waiting                  *WaitingSummary
@@ -39,6 +40,16 @@ type Block struct {
 	Done, Local              bool
 	Removed                  bool
 	filter                   sanitize.Stream
+}
+
+// WorkCard carries Core's ordered display values, without deriving work state.
+type WorkSummary struct{ Cards []WorkCard }
+
+type WorkCard struct {
+	ID, Name, Now     string
+	Started, Finished time.Time
+	State             protocol.RunningState
+	Waiting           int
 }
 
 // WaitingSummary is display-only. Answer identities remain on decision cards.

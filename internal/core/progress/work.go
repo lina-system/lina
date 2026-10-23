@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"strconv"
+	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/work"
+	"github.com/thisisjun786/lina/internal/design"
 )
 
 // WorkCards rereads the disposable projection rebuilt from the work ledger at
@@ -50,6 +52,24 @@ func UnplannedWork(cards map[string]work.Card) []Unit {
 	units := []Unit{}
 	for id, c := range cards {
 		u := Unit{ID: id, Parent: c.Task.GoalID, Kind: "project", Name: c.Task.Title, Active: c.Run != nil || c.State == "input_needed"}
+		u.StartedAt, u.FinishedAt = c.StartedAt, c.FinishedAt
+		u.State = c.State
+		switch c.State {
+		case "working":
+			u.State = "in_progress"
+		case "input_needed":
+			u.State = "needs_input"
+		case "done":
+			if c.Completion != nil && c.Completion.State != "done" {
+				u.State = "ready_for_review"
+				u.FinishedAt = time.Time{}
+			}
+		}
+		language := design.ConversationLanguage(c.Task.Title, design.English)
+		u.Now = design.Text(language, "running.state."+u.State)
+		if c.Active && c.State == "working" && c.Activity != "" {
+			u.Now = design.Text(language, "work."+c.Activity)
+		}
 		u.Landed = c.State == "ready_for_review" || c.State == "done" || c.State == "failed" || c.State == "stopped"
 		if goals[id] {
 			u.Kind = "goal"

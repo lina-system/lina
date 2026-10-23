@@ -2528,6 +2528,12 @@
         "next_cursor": {
           "type": "string"
         },
+        "card_order": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "rows": {
           "type": "array",
           "items": {
@@ -2556,6 +2562,12 @@
         },
         "text": {
           "type": "string"
+        },
+        "card_order": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         },
         "rows": {
           "type": "array",
@@ -5444,6 +5456,17 @@
     "progress_line": {
       "type": "object",
       "properties": {
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "finished_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "now": {
+          "type": "string"
+        },
         "name": {
           "type": "string"
         },

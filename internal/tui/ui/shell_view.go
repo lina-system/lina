@@ -60,7 +60,7 @@ func (m *shellModel) View() tea.View {
 	view.KeyboardEnhancements.ReportEventTypes = true
 	if m.hasComposer() && m.status.State.active() {
 		plan := m.conversationPlan()
-		if plan.Tier != layout.TooSmall && !m.conversation.pager.open && !m.accounts.open && !m.web.open && !m.channels.open && !m.talk.open && m.content.CardView.ID == "" {
+		if plan.Tier != layout.TooSmall && !m.conversation.pager.open && !m.conversation.workFocused && !m.accounts.open && !m.web.open && !m.channels.open && !m.talk.open && m.content.CardView.ID == "" {
 			view.Cursor = m.conversation.composer.Cursor()
 			if view.Cursor != nil {
 				view.Cursor.Position.X += m.styles.composerPromptWidth()
