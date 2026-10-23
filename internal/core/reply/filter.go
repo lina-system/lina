@@ -54,6 +54,7 @@ type View struct {
 // stops generation or rewrites its source. The caller persists FullText through
 // the ledger before claiming the answer is recorded.
 type Filter struct {
+	shapes      *Shapes
 	budget      Budget
 	korean      bool
 	renderLines func(string) int
@@ -70,7 +71,15 @@ func NewFilter(c Config) (*Filter, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Filter{budget: budget, korean: korean, renderLines: c.RenderLines}, nil
+	f := &Filter{budget: budget, korean: korean, renderLines: c.RenderLines}
+	if c.Shapes != nil {
+		if !c.Shapes.valid() {
+			return nil, ErrConfig
+		}
+		shapes := *c.Shapes
+		f.shapes = &shapes
+	}
+	return f, nil
 }
 
 // Budget returns the resolved limit in the selected language's scalar values.

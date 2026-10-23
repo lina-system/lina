@@ -213,8 +213,12 @@ func (c *channelRuntime) channelReplies(ctx context.Context, view *conversationR
  AND (parent_id=? OR parent_id IN (
    SELECT id FROM conv_event WHERE parent_id=? AND scaffold_kind='worker_completion'
    AND json_extract(origin,'$.kind')='native' AND json_extract(origin,'$.entry')=?))
- AND ((speaker_kind='agent' AND scaffold_kind IS NULL) OR (speaker_kind='system' AND scaffold_kind='background_notice' AND json_extract(origin,'$.kind')='native' AND json_extract(origin,'$.entry')=?))
- ORDER BY rowid`, view.conversation, view.agent, parent, parent, guard.EntryTool, guard.EntryBackgroundNotice)
+ AND ((speaker_kind='agent' AND (scaffold_kind IS NULL OR (scaffold_kind='result'
+   AND json_extract(origin,'$.kind')='native' AND json_extract(origin,'$.entry')=?
+   AND EXISTS(SELECT 1 FROM result_heads h WHERE h.id=json_extract(CASE WHEN json_valid(body) THEN body ELSE '{}' END,'$.result_id')
+     AND h.agent=conv_event.agent_id AND h.conversation=conv_event.conversation_id))))
+ OR (speaker_kind='system' AND scaffold_kind='background_notice' AND json_extract(origin,'$.kind')='native' AND json_extract(origin,'$.entry')=?))
+ ORDER BY rowid`, view.conversation, view.agent, parent, parent, guard.EntryTool, guard.EntryAgent, guard.EntryBackgroundNotice)
 		if err != nil {
 			return err
 		}
@@ -244,6 +248,12 @@ func (c *channelRuntime) channelReplies(ctx context.Context, view *conversationR
 			summary, link = "", ""
 		}
 		text := item.Body.Text()
+		if item.ScaffoldKind == "result" {
+			text, err = view.typedChannelText(ctx, item)
+			if err != nil {
+				return err
+			}
+		}
 		if item.Origin.Entry == guard.EntryBackgroundNotice {
 			var notices []lane.Notice
 			if err := json.Unmarshal([]byte(text), &notices); err != nil {

@@ -149,7 +149,7 @@ func TestRecordFailureRollsBackPairAndRetries(t *testing.T) {
 			if _, err := f.Record(t.Context(), store, recording()); err == nil {
 				t.Fatal("failed commit acknowledged")
 			}
-			for _, id := range []string{"reply", "card-event"} {
+			for _, id := range []string{"reply", "card-event", "reply-check:reply"} {
 				if _, err := store.Get(t.Context(), id); !errors.Is(err, ledger.ErrNotFound) {
 					t.Fatalf("partial %s: %v", id, err)
 				}
@@ -383,7 +383,7 @@ func TestLargeReplyBatchRollbackRemovesBothMaterials(t *testing.T) {
 	if _, err := f.Record(t.Context(), store, recording()); err == nil {
 		t.Fatal("rollback acknowledged")
 	}
-	for _, id := range []string{"reply", "card-event"} {
+	for _, id := range []string{"reply", "card-event", "reply-check:reply"} {
 		if _, err := store.Get(t.Context(), id); !errors.Is(err, ledger.ErrNotFound) {
 			t.Fatalf("partial %s: %v", id, err)
 		}

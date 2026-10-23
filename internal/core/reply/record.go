@@ -98,6 +98,7 @@ func (f *Filter) Record(ctx context.Context, journal *ledger.Store, r Recording)
 				ScaffoldKind: "result", Body: string(body), Relations: []ledger.Relation{{TargetID: source.ID, Kind: "view_of", Ordinal: 0}}}
 			inputs = append(inputs, ledger.Admission{Entry: guard.EntrySystem, Input: in})
 		}
+		inputs = append(inputs, f.Check().Admission(r.Source))
 		events, err := journal.AdmitBatch(ctx, inputs)
 		if err != nil {
 			return Recorded{}, err

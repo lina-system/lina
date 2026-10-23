@@ -28,6 +28,7 @@ var ErrConfig = errors.New("invalid reply configuration")
 // Korean is always 1:1; other languages require an explicit positive ratio.
 // Region tags use their base language. No language is inferred from the text.
 type Config struct {
+	Shapes      *Shapes
 	Budget      Budget
 	Language    string
 	Ratios      map[string]float64
