@@ -3,6 +3,7 @@ package persona_test
 
 import (
 	"github.com/thisisjun786/lina/persona"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,7 +31,11 @@ func TestCatalogAndIndependentPairBudgets(t *testing.T) {
 			t.Fatalf("unexpected starter: %+v", s)
 		}
 		delete(want, s.Key)
-		source[s.Key+"/work-method-v1.json"] = &fstest.MapFile{Data: []byte(persona.EmptyWorkMethod(s.Key))}
+		method, err := fs.ReadFile(persona.Shipped(), s.Key+"/work-method-v1.json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		source[s.Key+"/work-method-v1.json"] = &fstest.MapFile{Data: method}
 		source[s.Key+"/core-v1.md"] = &fstest.MapFile{Data: []byte(strings.Repeat("x", 32768))}
 		source[s.Key+"/default-voice-v1.md"] = &fstest.MapFile{Data: []byte(strings.Repeat("y", 32768))}
 	}
