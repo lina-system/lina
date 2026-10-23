@@ -128,14 +128,9 @@ func TestM3OperationalSwitch(t *testing.T) {
 		if scriptedCodingManager(t, w, req) {
 			return
 		}
-		// Worker finishes are separate, source-labeled inputs. They can arrive
-		// after the command turn and must not advance its tool-response script.
-		if len(req.Input) > 0 {
-			var notice struct{ Role, Content string }
-			if json.Unmarshal(req.Input[len(req.Input)-1], &notice) == nil && notice.Role == "user" && strings.Contains(notice.Content, `<external_evidence origin="worker-session:fixture-thread">`) {
-				emitResponse(w, "Worker outcome recorded.", true)
-				return
-			}
+		if respondWorkerCompletion(w, req.Input, "LINA_WORKER_RESULT") {
+			return
+
 		}
 		n := providerCalls.Add(1)
 		if n == 2 || n >= 4 {
@@ -150,7 +145,8 @@ func TestM3OperationalSwitch(t *testing.T) {
 			}
 			_ = json.Unmarshal(req.Input[len(req.Input)-1], &item)
 			if err := json.Unmarshal([]byte(item.Output), &result); err != nil {
-				t.Errorf("worker step %d received non-tool input %s: %v", n, req.Input[len(req.Input)-1], err)
+				t.Errorf("worker step %d: %v; last input: %s", n, err, req.Input[len(req.Input)-1])
+
 				return
 			}
 			expected := "ok"

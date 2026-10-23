@@ -12,6 +12,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/review"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
+	"github.com/thisisjun786/lina/kit/result"
 )
 
 func (r *conversationRuntime) beginConformance(ctx context.Context, a codingAssignment, d *dispatch.Record) (review.Record, error) {
@@ -52,7 +53,7 @@ func (r *conversationRuntime) beginConformance(ctx context.Context, a codingAssi
 	return rr, err
 }
 
-func (r *conversationRuntime) finishConformance(ctx context.Context, a codingAssignment, rr review.Record) error {
+func (r *conversationRuntime) finishConformance(ctx context.Context, a codingAssignment, rr review.Record, proof ...result.CompletionRequest) error {
 	return r.db.Write(ctx, func(tx *canon.Tx) error {
 		current, err := readCoding(ctx, tx, a.ID)
 		if err != nil {
@@ -69,7 +70,7 @@ func (r *conversationRuntime) finishConformance(ctx context.Context, a codingAss
 		if rr.State == "unverified" {
 			verdict = "unverified"
 		}
-		if err = work.ConformanceIn(ctx, tx, a.ID, rr.Receipt, rr.Head, verdict, rr.Evidence); err != nil {
+		if err = work.ConformanceIn(ctx, tx, a.ID, rr.Receipt, rr.Head, verdict, rr.Evidence, proof...); err != nil {
 			return err
 		}
 		current.Verdict = rr.Verdict

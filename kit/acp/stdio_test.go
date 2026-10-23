@@ -29,7 +29,8 @@ func TestStdioE2E(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	l := lease.New(func() {})
+	released := make(chan struct{})
+	l := lease.New(func() { close(released) })
 	defer l.Release()
 	cwd := t.TempDir()
 	c, err := acp.Start(ctx, l, proc.Command{Path: exe, Args: []string{"-test.run=^TestStdioAgentProcess$"}, Dir: cwd, Env: []string{"LINA_ACP_TEST_CHILD=1"}})
@@ -52,6 +53,9 @@ func TestStdioE2E(t *testing.T) {
 	}()
 	select {
 	case p := <-c.Permissions():
+		if p == nil {
+			t.Fatalf("permission connection closed: %v", c.Err())
+		}
 		if err = p.Answer(ctx, "once"); err != nil {
 			t.Fatal(err)
 		}
@@ -92,6 +96,15 @@ func TestStdioE2E(t *testing.T) {
 	_, err = c.Prompt(ctx, acp.PromptRequest{SessionID: s.SessionID, Prompt: []acp.ContentBlock{{Text: &acp.ContentBlockText{Text: "exit"}}}})
 	if err == nil {
 		t.Fatal("process exit reported success")
+	}
+	if err = c.Close(); err != nil {
+		t.Fatal(err)
+	}
+	l.Release()
+	select {
+	case <-released:
+	default:
+		t.Fatal("Close returned with owned process activity still live")
 	}
 }
 func TestStdioAgentProcess(t *testing.T) {
@@ -134,11 +147,11 @@ func TestStdioAgentProcess(t *testing.T) {
 		os.Exit(16)
 	}
 	send(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"stdio","update":{"sessionUpdate":"tool_call","toolCallId":"write","title":"Write result","kind":"edit","status":"pending"}}}`)
-	send(`{"jsonrpc":"2.0","id":"permission","method":"session/request_permission","params":{"sessionId":"stdio","toolCall":{"toolCallId":"write"},"options":[{"optionId":"once","kind":"allow_once","name":"Once"}]}}`)
+	send(`{"jsonrpc":"2.0","id":null,"method":"session/request_permission","params":{"sessionId":"stdio","toolCall":{"toolCallId":"write"},"options":[{"optionId":"once","kind":"allow_once","name":"Once"}]}}`)
 	f = recv()
 	var response acp.RequestPermissionResponse
 	json.Unmarshal(f.Result, &response)
-	if response.Outcome.Selected == nil || response.Outcome.Selected.OptionID != "once" {
+	if string(f.ID) != "null" || response.Outcome.Selected == nil || response.Outcome.Selected.OptionID != "once" {
 		os.Exit(17)
 	}
 	if os.WriteFile("result.txt", []byte("verified result\n"), 0600) != nil {

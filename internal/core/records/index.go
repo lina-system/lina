@@ -113,6 +113,9 @@ func putProjection(ctx context.Context, tx *canon.Tx, r indexRow) error {
 	}
 	d := r.doc
 	if d.todo != nil {
+		if err := canon.RecordDoneCompletion(ctx, tx, d.todo.Completion); err != nil {
+			return err
+		}
 		b, _ := json.Marshal(d.todo)
 		next := ""
 		if d.todo.Repeat != nil && !d.todo.Repeat.Exhausted {
