@@ -29,6 +29,9 @@ var (
 )
 
 type Surface struct {
+	ReplyTo  string `json:"reply_to,omitempty"`
+	Card     string `json:"card,omitempty"`
+	Thread   string `json:"thread,omitempty"`
 	Language string `json:"language,omitempty"`
 	Kind     string `json:"kind"`
 	Platform string `json:"platform,omitempty"`
@@ -125,11 +128,19 @@ type Canon interface {
 }
 
 type Store struct {
-	db        Canon
-	materials Materials
+	db             Canon
+	materials      Materials
+	afterAdmission func(context.Context, *canon.Tx, Event) error
 }
 
 func New(db Canon, materials Materials) *Store { return &Store{db: db, materials: materials} }
+
+// AfterAdmission composes Core-owned projections in the event transaction.
+// The hook must do no external I/O and its error rolls back the admission.
+func (s *Store) AfterAdmission(fn func(context.Context, *canon.Tx, Event) error) *Store {
+	s.afterAdmission = fn
+	return s
+}
 
 // Admission binds an event to its trusted entry path.
 type Admission struct {
@@ -211,6 +222,11 @@ func (s *Store) AdmitBatch(ctx context.Context, inputs []Admission) (_ []Event, 
 			if err := writeEvent(ctx, tx, *e); err != nil {
 				return err
 			}
+			if s.afterAdmission != nil {
+				if err := s.afterAdmission(ctx, tx, *e); err != nil {
+					return err
+				}
+			}
 		}
 		return nil
 	})
@@ -281,7 +297,7 @@ func prepare(entry guard.Entry, in Input) (Event, error) {
 		(m.SpeakerKind() == guard.Person && !safeID(in.PersonID)) || (m.SpeakerKind() != guard.Person && in.PersonID != "") {
 		return Event{}, ErrInvalid
 	}
-	for _, text := range []string{in.ParentID, in.ScaffoldKind, in.ScaffoldID, in.ReplayOf, in.Locator, in.Surface.Platform, in.Surface.ChatID} {
+	for _, text := range []string{in.ParentID, in.ScaffoldKind, in.ScaffoldID, in.ReplayOf, in.Locator, in.Surface.Platform, in.Surface.ChatID, in.Surface.ReplyTo, in.Surface.Card, in.Surface.Thread} {
 		if !safeText(text) {
 			return Event{}, ErrInvalid
 		}

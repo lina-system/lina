@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -109,6 +110,9 @@ func putProjection(ctx context.Context, tx *canon.Tx, r indexRow) error {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM records_todo WHERE id=?", r.id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "INSERT INTO records_activity(id,last_activity) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET last_activity=excluded.last_activity", r.id, r.at.UTC().Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
 	d := r.doc
