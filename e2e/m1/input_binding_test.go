@@ -38,7 +38,7 @@ func TestM2InputBindingInstalledCore(t *testing.T) {
 			}
 		}
 		if !found {
-			t.Errorf("request missing %s binding for the saved project", rule)
+			t.Errorf("request missing %s binding for the saved to-do", rule)
 		}
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -49,15 +49,15 @@ func TestM2InputBindingInstalledCore(t *testing.T) {
 		}
 		switch calls.Add(1) {
 		case 1:
-			emitPersonaCall(w, "create", "write_record", map[string]any{"id": "", "revision": "", "kind": "project", "title": "Garden", "note": "Plan the beds."})
+			emitPersonaCall(w, "create", "write_record", map[string]any{"id": "", "revision": "", "kind": "todo", "title": "Garden", "note": "Plan the beds."})
 		case 2:
 			var result struct{ ID string }
 			_ = json.Unmarshal(assertAskResult(t, request.Input, "create", "ok", ""), &result)
 			recordID = result.ID
 			if recordID == "" {
-				t.Error("project was not created")
+				t.Error("to-do was not created")
 			}
-			emitResponse(w, "The project is saved.", true)
+			emitResponse(w, "The to-do is saved.", true)
 		case 3:
 			checkBinding(request.Input, "exact-reference")
 			emitPersonaCall(w, "ask", "ask_question", map[string]any{"question": "Which format?", "recommendation": "Use a table", "choices": []string{"table", "list"}, "default": "table"})
@@ -87,17 +87,17 @@ func TestM2InputBindingInstalledCore(t *testing.T) {
 			emitPersonaCall(w, "read-live", "read_record", map[string]any{"id": recordID})
 		case 7:
 			if !strings.Contains(string(assertAskResult(t, request.Input, "read-live", "ok", "")), "Garden") {
-				t.Error("wrong project read")
+				t.Error("wrong to-do read")
 			}
-			emitResponse(w, "The project is checked.", true)
+			emitResponse(w, "The to-do is checked.", true)
 		case 8:
 			checkBinding(request.Input, "reply-or-card")
 			emitPersonaCall(w, "read-restored", "read_record", map[string]any{"id": recordID})
 		case 9:
 			if !strings.Contains(string(assertAskResult(t, request.Input, "read-restored", "ok", "")), "Garden") {
-				t.Error("project did not survive restart")
+				t.Error("to-do did not survive restart")
 			}
-			emitResponse(w, "The project is still available.", true)
+			emitResponse(w, "The to-do is still available.", true)
 		default:
 			t.Error("unexpected model call")
 			emitResponse(w, "Finished.", true)
@@ -109,7 +109,7 @@ func TestM2InputBindingInstalledCore(t *testing.T) {
 	defer func() { h.stopCore(core) }()
 	c, conversation := conversationClient(t, h)
 	defer c.Close()
-	admittedTurn(t, h, c, conversation, "create", "Create a project")
+	admittedTurn(t, h, c, conversation, "create", "Create a to-do")
 	if calls.Load() != 2 {
 		t.Fatalf("creation turn did not execute tools: calls=%d", calls.Load())
 	}
