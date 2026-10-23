@@ -73,6 +73,19 @@ func putName(ctx context.Context, tx *canon.Tx, item Item) (Item, error) {
 	if after < before {
 		return Item{}, ErrEvidence
 	}
+	if after == before {
+		previous, err := nameInputOrder(ctx, tx, old.Evidence, before)
+		if err != nil {
+			return Item{}, err
+		}
+		incoming, err := nameInputOrder(ctx, tx, item.Evidence, after)
+		if err != nil {
+			return Item{}, err
+		}
+		if incoming < previous {
+			return Item{}, ErrEvidence
+		}
+	}
 	current := nameKey(item.Name.Current)
 	aliases := slices.Clone(item.Name.RetiredAliases)
 	add := func(alias string) {
@@ -126,6 +139,24 @@ func putName(ctx context.Context, tx *canon.Tx, item Item) (Item, error) {
 		}
 	}
 	return item, nil
+}
+
+// Evidence ids have already been resolved to their canonical lineage. The
+// ledger's admission order breaks same-second ties across conversations without
+// changing stored evidence timestamps. Non-ledger adapters keep timestamp order.
+func nameInputOrder(ctx context.Context, tx *canon.Tx, evidence []Evidence, at int64) (int64, error) {
+	var latest int64
+	for _, ref := range evidence {
+		if ref.Kind != Event || ref.OccurredAt != at {
+			continue
+		}
+		var sequence int64
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(rowid),0) FROM conv_event WHERE id=?`, ref.ID).Scan(&sequence); err != nil {
+			return 0, err
+		}
+		latest = max(latest, sequence)
+	}
+	return latest, nil
 }
 
 // Names is complete within the authorized scope; it is not a relevance search.

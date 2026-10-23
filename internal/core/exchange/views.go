@@ -104,7 +104,7 @@ func (s *Store) Expire(ctx context.Context, at time.Time) error {
 			if err != nil {
 				return err
 			}
-			if at.Before(r.HandOff.Deadline) {
+			if r.State == Answered || at.Before(r.HandOff.Deadline) {
 				continue
 			}
 			if _, err = tx.ExecContext(ctx, "UPDATE exchanges SET outcome=?,needs_person=0 WHERE id=?", Expired, id); err != nil {
