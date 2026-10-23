@@ -53,8 +53,21 @@ func (r *conversationRuntime) startWork(ctx context.Context, cfg *WorkConfig) er
 			if g.Person != r.person {
 				return work.ErrInvalid
 			}
-			_, err := r.agents.Get(ctx, g.Agent)
-			return err
+			if _, err := r.agents.Get(ctx, g.Agent); err != nil {
+				return err
+			}
+			turnID := g.Turn
+			if turnID == "" {
+				turnID = "goal-admission:" + g.ID + ":" + g.Agent
+			}
+			method, err := r.preparedMethod(ctx, turnID, g.Agent)
+			if err != nil {
+				return err
+			}
+			if !dispatches(method) {
+				return work.ErrInvalid
+			}
+			return nil
 		},
 		Refresh: func(ctx context.Context, e *work.Engine) error {
 			if cfg.MainHost == nil {

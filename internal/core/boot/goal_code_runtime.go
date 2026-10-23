@@ -3,7 +3,9 @@ package boot
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"strings"
 	"time"
 
@@ -39,14 +41,33 @@ func (r *conversationRuntime) publishCodeGoals(ctx context.Context, s goal.State
 		if g.Conversation == "" || g.Turn == "" || (g.State != goal.GoalDone && g.State != goal.GoalBlocked) {
 			continue
 		}
-		view, err := r.router.view(ctx, clientsrv.Session{PersonID: g.Person}, g.Agent)
+		// A routed goal belongs to the code owner. Its result still answers the
+		// original person input, retained in the durable coding assignment.
+		agent, conversation, originTurn := g.Agent, g.Conversation, g.Turn
+		if err := r.db.Read(ctx, func(tx *canon.Tx) error {
+			a, err := readCoding(ctx, tx, g.ID)
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			if a.Owner != g.Agent || a.Origin.Person != g.Person {
+				return goal.ErrInvalid
+			}
+			agent, conversation, originTurn = a.Origin.Agent, a.Origin.Conversation, a.Origin.Turn
+			return nil
+		}); err != nil {
+			return err
+		}
+		view, err := r.router.view(ctx, clientsrv.Session{PersonID: g.Person}, agent)
 		if err != nil {
 			return err
 		}
 		// The originating conversation, rather than the agent's current default,
 		// receives the durable result after a restart or a client disconnect.
-		if view.conversation != g.Conversation {
-			view = newConversationView(r, g.Agent, g.Conversation)
+		if view.conversation != conversation {
+			view = newConversationView(r, agent, conversation)
 		}
 		id := "goal-result:" + codingID(g.ID, string(g.State), g.RecordRevision)
 		if _, err = view.journal().Get(ctx, id); err == nil {
@@ -54,7 +75,7 @@ func (r *conversationRuntime) publishCodeGoals(ctx context.Context, s goal.State
 		} else if !errors.Is(err, ledger.ErrNotFound) {
 			return err
 		}
-		parent, err := view.journal().Get(ctx, strings.TrimPrefix(g.Turn, "turn:"))
+		parent, err := view.journal().Get(ctx, strings.TrimPrefix(originTurn, "turn:"))
 		if err != nil {
 			return err
 		}
@@ -63,7 +84,7 @@ func (r *conversationRuntime) publishCodeGoals(ctx context.Context, s goal.State
 			text = "This work needs attention. " + g.Summary
 		}
 		now := time.Now()
-		event, err := view.journal().Admit(ctx, guard.EntrySystem, ledger.Input{ID: id, ConversationID: g.Conversation, ParentID: parent.ID, AgentID: g.Agent, Surface: parent.Surface, ScaffoldKind: "goal_result", OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: text})
+		event, err := view.journal().Admit(ctx, guard.EntrySystem, ledger.Input{ID: id, ConversationID: conversation, ParentID: parent.ID, AgentID: agent, Surface: parent.Surface, ScaffoldKind: "goal_result", OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: text})
 		if err != nil {
 			return err
 		}

@@ -163,7 +163,8 @@ func TestCodeGoalLibraryProofNamesCurrentMerge(t *testing.T) {
 }
 
 func TestCodeGoalRoutesTasksAndChecksWithinServiceScope(t *testing.T) {
-	r, _, agent, _ := managementFixture(t)
+	r, _, _, _ := managementFixture(t)
+	agent := workAgentFixture(t, r)
 	r.agent = agent
 	r.conversation = "main:" + agent
 	recordsRepo, err := records.Open(r.root, r.db)

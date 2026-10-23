@@ -4,8 +4,8 @@ package boot
 
 import "testing"
 
-// These queries include provider history without displaying protocol items. Keep their
-// bytes, including the different notice sets, unchanged by the extraction.
+// Model and display have separate notice sets. Provider protocol items enter
+// model context and stay out of restored display, including agent-origin calls.
 func TestConversationScaffoldSQLPreservesQueries(t *testing.T) {
 	const modelContext = `SELECT id FROM conv_event WHERE conversation_id=? AND (speaker_kind IN ('person','agent','forwarded') OR scaffold_kind IN ('provider_item','interruption','failure','persona_change','run_handoff','background_notice','coding_handoff','work_completion','timer','timer_work','handoff_check','worker_session','worker_completion','question_default','question_answer'))`
 	const display = `

@@ -691,6 +691,8 @@ turns words such as “verified” into acceptance evidence.
 
 ### Choosing the worker
 
+Before creating worker work, Core applies the prepared work-method record. Only an agent with `workers.dispatch` owns the task. Another agent's code request is delivered as an agent exchange to the same person's dispatch-enabled owner of `code`; the original effect limits and grants still apply. Work allocation, direct worker starts, `dispatch_work` and code-goal admission use that owner. Selecting the owner does not select the worker.
+
 LINA chooses the worker for a task from the situation, the person's subscription quota and the host's capacity, and hands the task off. The situation is the kind of work and the repository. Quota is what each worker reports about its remaining quota; an unknown quota is a value, and for a worker that reports none LINA Core uses its own usage accounting ([runtime.md](runtime.md)). The choice follows an editable table of rules, marked provisional, which the power settings show ([surfaces.md](surfaces.md)). A worker whose quota row is ok is preferred, an unknown row is usable but unmeasured, a blocked row is unavailable until the stated reset (or until the next successful call when no reset is given), and a reset time is never inferred ([runtime.md](runtime.md#usage-and-cost)). If a worker stops on quota, rate limit, login expiry or repeated connection failure, LINA hands the same task packet to the next suitable worker without asking the person. Two workers never share a worktree.
 
 The installed `dispatch_work` path preserves the admitted packet, pinned base,
@@ -1134,6 +1136,22 @@ Delegation to a worker is ready when:
 2. the adapter's session opens (for Codex, `initialize`; for an ACP worker, `initialize` answering protocol version 1, then `session/new`; for another worker, the first step of its own protocol)
 
 When a check fails, delegation is reported as unsupported with its cause. An ACP worker that answers `session/new` with the authentication error (-32000) is reported as needs sign-in, not as broken. Conversation readiness is separate and can pass while worker readiness fails.
+
+The ACP adapter returns a typed needs-sign-in failure only for that explicit
+`session/new` refusal, after closing the partial client and its process. It
+sends no prompt and retains no remote error text or account data. A protocol
+or connection failure is not evidence of an authentication refusal.
+Dispatch retains the refused worker, probed version and `needs_sign_in` code
+in its record without creating a worker run or receipt. After confirmed child
+cleanup, it uses the existing eligibility block and chooser to try the next
+worker within the existing two-worker limit. The replacement's work card also
+reports which worker needs sign-in. Explicit worker selection stays explicit;
+other start failures remain uncertain and are not retried.
+
+`TestCursorReadinessThroughRunningCore` installs Core with synthetic Cursor and
+Gemini executables. It covers Cursor's unverified CLI version, the sign-in
+refusal and fallback, and a signed-in Cursor task producing a committed file
+and adapter-derived receipt. A live Cursor account test remains opt-in.
 
 The optional local graph scheduler also checks its initial quota observation
 before releasing recovered tasks. A failed or unanswered quota read disables

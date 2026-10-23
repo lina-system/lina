@@ -80,6 +80,10 @@ func TestM2WorkReplacementAndFailureCleanup(t *testing.T) {
 			cfg := boot.Config{StateRoot: root, Socket: filepath.Join(root, "run/core.sock"), Work: &boot.WorkConfig{
 				Driver: func(e *work.Engine) (work.Driver, error) { driver.engine = e; return driver, nil },
 				Ready: func(ctx context.Context, e *work.Engine, person, agent string) error {
+					agent, err := fixtureWorkOwner(ctx, root)
+					if err != nil {
+						return err
+					}
 					ids := []string{"b"}
 					if replacement {
 						ids = []string{"a", "b"}

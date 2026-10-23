@@ -39,7 +39,7 @@ func TestM2TimerRecoveryInstalledCore(t *testing.T) {
 	saved := make(chan timers.Timer, 1)
 	result := make(chan coreexec.RecordReceipt, 1)
 	var reactions atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct{ Input []json.RawMessage }
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.Input) == 0 {
 			t.Error("missing provider input", err)
@@ -112,7 +112,7 @@ func TestM2TimerRecoveryInstalledCore(t *testing.T) {
 			reactions.Add(1)
 			emitPersonaCall(w, "read", "read_record", coreexec.RecordRead{ID: source.ID})
 		}
-	}))
+	})))
 	defer server.Close()
 	h, start := installedConversationHarness(t, server.URL)
 	core := start(true)
