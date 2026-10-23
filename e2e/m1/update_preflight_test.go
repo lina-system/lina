@@ -88,6 +88,16 @@ func TestM2UpdatePreflight(t *testing.T) {
 				t.Fatal(err)
 			}
 			path := filepath.Join(h.root, "canon/canon.sqlite")
+			if name == "older" || name == "fresh" || name == "corrupt" {
+				// These cases replace the whole database, not just its main file.
+				// A copied WAL can restore the original pages over a corrupt file,
+				// or turn a fresh fixture into an orphan-WAL recovery case.
+				for _, suffix := range []string{"-wal", "-shm"} {
+					if err := os.Remove(path + suffix); err != nil && !os.IsNotExist(err) {
+						t.Fatal(err)
+					}
+				}
+			}
 			code := 0
 			rows := manifest.ClientCombinations()
 			switch name {
