@@ -228,13 +228,13 @@ func TestGlobIntersection(t *testing.T) {
 	}{
 		{"src/**", "src/a/b.go", true}, {"src/**/a.go", "src/a.go", true}, {"src/*.go", "src/sub/a.go", false}, {"src/*.go", "src/*.md", false}, {"src/a?.go", "src/[bc]*.go", false}, {"src/[ab]*.go", "src/b?.go", true}, {"go.mod", "go.mod", true}, {"src/**", "src2/**", false}, {"**/go.mod", "go.mod", true},
 	} {
-		got, err := AreasOverlap([]string{tc.a}, []string{tc.b})
+		got, err := ScheduledAreasOverlap([]string{tc.a}, []string{tc.b})
 		if err != nil || got != tc.want {
 			t.Errorf("%s / %s = %v %v", tc.a, tc.b, got, err)
 		}
 	}
 	for _, p := range []string{"", "../a", "/a", "a/../b", "a/[", "a/**x"} {
-		if _, err := AreasOverlap([]string{p}, []string{"**"}); err == nil {
+		if _, err := ScheduledAreasOverlap([]string{p}, []string{"**"}); err == nil {
 			t.Errorf("accepted invalid glob %q", p)
 		}
 	}

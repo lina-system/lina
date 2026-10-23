@@ -105,7 +105,7 @@ func validateGraph(cards []Card) error {
 		if p.Group == "" || p.Repository == "" || p.Repository != strings.ToLower(p.Repository) || p.Worker == "" || p.Host == "" || len(p.Areas) > 64 || len(p.DependsOn) > 256 {
 			return ErrInvalid
 		}
-		if _, err := AreasOverlap(p.Areas, p.Areas); err != nil {
+		if _, err := ScheduledAreasOverlap(p.Areas, p.Areas); err != nil {
 			return err
 		}
 		if _, ok := tasks[t.ID]; ok {
@@ -167,7 +167,7 @@ func validateGraph(cards []Card) error {
 			if x.Group != y.Group || x.Repository != y.Repository {
 				continue
 			}
-			overlap, err := AreasOverlap(x.Areas, y.Areas)
+			overlap, err := ScheduledAreasOverlap(x.Areas, y.Areas)
 			if err != nil {
 				return err
 			}
@@ -262,7 +262,7 @@ func (s *Service) Release(ctx context.Context, av Availability) (released []Card
 					if other.Task.ID == c.Task.ID || other.Task.Schedule == nil || !other.Scheduling.AreaHeld || other.Task.Schedule.Repository != p.Repository {
 						continue
 					}
-					overlap, e := AreasOverlap(p.Areas, other.Task.Schedule.Areas)
+					overlap, e := ScheduledAreasOverlap(p.Areas, other.Task.Schedule.Areas)
 					if e != nil {
 						return e
 					}

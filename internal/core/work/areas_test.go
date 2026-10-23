@@ -24,7 +24,7 @@ func TestDirectoryAreaIntersections(t *testing.T) {
 	} {
 		t.Run(tc.a+"_"+tc.b, func(t *testing.T) {
 			for _, pair := range [][2]string{{tc.a, tc.b}, {tc.b, tc.a}} {
-				got, err := AreasOverlap([]string{pair[0]}, []string{pair[1]})
+				got, err := ScheduledAreasOverlap([]string{pair[0]}, []string{pair[1]})
 				if err != nil || got != tc.want {
 					t.Errorf("%q / %q = %v, %v; want %v", pair[0], pair[1], got, err, tc.want)
 				}

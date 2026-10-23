@@ -183,7 +183,7 @@ func (d *delegationRuntime) tasks(ctx context.Context, r *conversationRuntime, t
 			}
 			deps = append(deps, keys[dep])
 		}
-		area, err := work.AreasOverlap(definition.Areas, definition.Areas)
+		area, err := work.ScheduledAreasOverlap(definition.Areas, definition.Areas)
 		if err != nil || !area {
 			return nil, work.ErrInvalid
 		}

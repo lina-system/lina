@@ -3,174 +3,181 @@ package work
 
 import (
 	"fmt"
+	"path"
 	"regexp"
 	"regexp/syntax"
 	"strings"
 	"unicode"
 )
 
-// areaProgram compiles repository-relative globs, including ** as a complete
-// path component. Intersection is tested on languages, not existing files:
-// leases must cover files a worker has yet to create. A matched directory also
-// covers its descendants, including when the directory is matched by a glob.
-func areaProgram(glob string) (*syntax.Prog, error) {
-	if glob == "" || len(glob) > 512 || strings.ContainsAny(glob, "\\\x00\r\n") {
-		return nil, ErrInvalid
+// Areas name repository-relative paths or globs. A matched directory also
+// covers its descendants; ** can cross directories. Compare the languages,
+// not the files that happen to exist today: workers can create new files.
+func AreasOverlap(a, b string) bool {
+	x, y := areaProgram(a), areaProgram(b)
+	if x == nil || y == nil {
+		// An uninterpretable legacy declaration cannot prove disjointness.
+		return true
 	}
-	var b strings.Builder
-	parts := strings.Split(glob, "/")
-	for i, p := range parts {
-		if p == "" || p == "." || p == ".." {
-			return nil, ErrInvalid
-		}
-		if p == "**" {
-			if i == len(parts)-1 {
-				b.WriteString(".*")
-			} else {
-				b.WriteString("([^/]+/)*")
-			}
-			continue
-		}
-		if strings.Contains(p, "**") {
-			return nil, ErrInvalid
-		}
-		runes := []rune(p)
-		for j := 0; j < len(runes); j++ {
-			switch runes[j] {
-			case '*':
-				b.WriteString("[^/]*")
-			case '?':
-				b.WriteString("[^/]")
-			case '[':
-				end := j + 1
-				for end < len(runes) && runes[end] != ']' {
-					end++
-				}
-				if end == len(runes) {
-					return nil, ErrInvalid
-				}
-				cls := string(runes[j : end+1])
-				if strings.Contains(cls, "/") {
-					return nil, ErrInvalid
-				}
-				if strings.HasPrefix(cls, "[!") {
-					cls = "[^/" + strings.TrimPrefix(cls, "[!")
-				} else if strings.HasPrefix(cls, "[^") {
-					cls = "[^/" + strings.TrimPrefix(cls, "[^")
-				}
-				b.WriteString(cls)
-				j = end
-			default:
-				b.WriteString(regexp.QuoteMeta(string(runes[j])))
-			}
-		}
-		if i < len(parts)-1 {
-			b.WriteByte('/')
-		}
-	}
-	b.WriteString("(?:/.*)?")
-	re, err := syntax.Parse(b.String(), syntax.Perl|syntax.DotNL)
-	if err != nil {
-		return nil, fmt.Errorf("%w: glob", ErrInvalid)
-	}
-	return syntax.Compile(re.Simplify())
-}
-func epsilon(p *syntax.Prog, pc uint32) []uint32 {
-	seen := map[uint32]bool{}
-	todo := []uint32{pc}
-	var out []uint32
-	for len(todo) > 0 {
-		x := todo[len(todo)-1]
-		todo = todo[:len(todo)-1]
-		if seen[x] {
-			continue
-		}
-		seen[x] = true
-		in := p.Inst[x]
-		switch in.Op {
-		case syntax.InstAlt, syntax.InstAltMatch:
-			todo = append(todo, in.Out, in.Arg)
-		case syntax.InstCapture, syntax.InstNop, syntax.InstEmptyWidth:
-			todo = append(todo, in.Out)
-		case syntax.InstFail:
-		case syntax.InstMatch, syntax.InstRune, syntax.InstRune1, syntax.InstRuneAny, syntax.InstRuneAnyNotNL:
-			out = append(out, x)
-		}
-	}
-	return out
-}
-func runeRanges(in syntax.Inst) []rune {
-	switch in.Op {
-	case syntax.InstRune, syntax.InstRune1:
-		if len(in.Rune) == 1 {
-			return []rune{in.Rune[0], in.Rune[0]}
-		}
-		return in.Rune
-	case syntax.InstRuneAny:
-		return []rune{0, unicode.MaxRune}
-	case syntax.InstRuneAnyNotNL:
-		return []rune{0, '\n' - 1, '\n' + 1, unicode.MaxRune}
-	case syntax.InstAlt, syntax.InstAltMatch, syntax.InstCapture, syntax.InstEmptyWidth, syntax.InstMatch, syntax.InstFail, syntax.InstNop:
-	}
-	return nil
-}
-func intersects(a, b *syntax.Prog) bool {
 	type pair struct{ x, y uint32 }
-	todo := []pair{{uint32(a.Start), uint32(b.Start)}}
+	queue := []pair{{uint32(x.Start), uint32(y.Start)}}
 	seen := map[pair]bool{}
-	for len(todo) > 0 {
-		s := todo[len(todo)-1]
-		todo = todo[:len(todo)-1]
-		if seen[s] {
+	for len(queue) > 0 {
+		p := queue[len(queue)-1]
+		queue = queue[:len(queue)-1]
+		if seen[p] {
 			continue
 		}
-		seen[s] = true
-		for _, x := range epsilon(a, s.x) {
-			for _, y := range epsilon(b, s.y) {
-				ai, bi := a.Inst[x], b.Inst[y]
-				if ai.Op == syntax.InstMatch && bi.Op == syntax.InstMatch {
-					return true
-				}
-				ar, br := runeRanges(ai), runeRanges(bi)
-				match := false
-				for i := 0; i < len(ar); i += 2 {
-					for j := 0; j < len(br); j += 2 {
-						if max(ar[i], br[j]) <= min(ar[i+1], br[j+1]) {
-							match = true
-						}
-					}
-				}
-				if match {
-					todo = append(todo, pair{ai.Out, bi.Out})
-				}
+		seen[p] = true
+		i, j := x.Inst[p.x], y.Inst[p.y]
+		if i.Op == syntax.InstMatch && j.Op == syntax.InstMatch {
+			return true
+		}
+		if next := areaEpsilon(i); len(next) > 0 {
+			for _, pc := range next {
+				queue = append(queue, pair{pc, p.y})
+			}
+			continue
+		}
+		if next := areaEpsilon(j); len(next) > 0 {
+			for _, pc := range next {
+				queue = append(queue, pair{p.x, pc})
+			}
+			continue
+		}
+		a, b := areaRunes(i), areaRunes(j)
+		for len(a) > 0 && len(b) > 0 {
+			if a[0] <= b[1] && b[0] <= a[1] {
+				queue = append(queue, pair{i.Out, j.Out})
+				break
+			}
+			if a[1] < b[1] {
+				a = a[2:]
+			} else {
+				b = b[2:]
 			}
 		}
 	}
 	return false
 }
-func AreasOverlap(a, b []string) (bool, error) {
-	var left, right []*syntax.Prog
-	for _, set := range []struct {
-		in  []string
-		out *[]*syntax.Prog
-	}{{a, &left}, {b, &right}} {
-		if len(set.in) == 0 {
-			return false, ErrInvalid
-		}
-		for _, glob := range set.in {
-			p, err := areaProgram(glob)
-			if err != nil {
-				return false, err
+
+func areaExpression(area string) string {
+	area = path.Clean(area)
+	if area == "." {
+		area = "**"
+	}
+	if path.IsAbs(area) || area == ".." || strings.HasPrefix(area, "../") {
+		return ""
+	}
+	if _, err := path.Match(area, ""); err != nil {
+		return ""
+	}
+	runes := []rune(area)
+	var re strings.Builder
+	re.WriteString("(?s:")
+	for i := 0; i < len(runes); i++ {
+		switch runes[i] {
+		case '*':
+			if i+1 < len(runes) && runes[i+1] == '*' {
+				i++
+				if i+1 < len(runes) && runes[i+1] == '/' {
+					i++
+					re.WriteString("(?:.*/)?")
+				} else {
+					re.WriteString(".*")
+				}
+			} else {
+				re.WriteString("[^/]*")
 			}
-			*set.out = append(*set.out, p)
+		case '?':
+			re.WriteString("[^/]")
+		case '\\':
+			i++ // path.Match above checked the escape.
+			re.WriteString(regexp.QuoteMeta(string(runes[i])))
+		case '[':
+			re.WriteByte('[')
+			i++
+			if runes[i] == '^' {
+				re.WriteByte('^')
+				i++
+			}
+			for ; i < len(runes) && runes[i] != ']'; i++ {
+				if runes[i] == '\\' {
+					i++
+				} else if runes[i] == '-' {
+					re.WriteByte('-')
+					continue
+				}
+				// Glob escapes are literal characters, not regexp escapes
+				// such as \d or POSIX character classes.
+				fmt.Fprintf(&re, `\x{%x}`, runes[i])
+			}
+			re.WriteByte(']')
+		default:
+			re.WriteString(regexp.QuoteMeta(string(runes[i])))
 		}
 	}
-	for _, x := range left {
-		for _, y := range right {
-			if intersects(x, y) {
-				return true, nil
-			}
-		}
+	re.WriteString(")(?:/.*)?")
+	return re.String()
+}
+
+func areaProgram(area string) *syntax.Prog {
+	expression := areaExpression(area)
+	if expression == "" {
+		return nil
 	}
-	return false, nil
+	parsed, err := syntax.Parse(expression, syntax.Perl)
+	if err != nil {
+		return nil
+	}
+	program, err := syntax.Compile(parsed.Simplify())
+	if err != nil {
+		return nil
+	}
+	return program
+}
+
+// AreaContains uses the same path language as the scheduler, treating the
+// observed filename literally, including characters that are special in globs.
+func AreaContains(area, file string) bool {
+	if path.IsAbs(file) || path.Clean(file) != file || file == ".." || strings.HasPrefix(file, "../") {
+		return false
+	}
+	expression := areaExpression(area)
+	if expression == "" {
+		return false
+	}
+	match, err := regexp.Compile("^(?:" + expression + ")$")
+	return err == nil && match.MatchString(file)
+}
+
+func areaEpsilon(i syntax.Inst) []uint32 {
+	switch i.Op {
+	case syntax.InstAlt, syntax.InstAltMatch:
+		return []uint32{i.Out, i.Arg}
+	case syntax.InstNop, syntax.InstCapture, syntax.InstEmptyWidth:
+		return []uint32{i.Out}
+	case syntax.InstFail, syntax.InstMatch, syntax.InstRune, syntax.InstRune1, syntax.InstRuneAny, syntax.InstRuneAnyNotNL:
+		return nil
+	default:
+		return nil
+	}
+}
+
+func areaRunes(i syntax.Inst) []rune {
+	switch i.Op {
+	case syntax.InstRune, syntax.InstRune1:
+		if len(i.Rune) == 1 {
+			return []rune{i.Rune[0], i.Rune[0]}
+		}
+		return i.Rune
+	case syntax.InstRuneAny:
+		return []rune{0, unicode.MaxRune}
+	case syntax.InstRuneAnyNotNL:
+		return []rune{0, '\n' - 1, '\n' + 1, unicode.MaxRune}
+	case syntax.InstAlt, syntax.InstAltMatch, syntax.InstNop, syntax.InstCapture, syntax.InstEmptyWidth, syntax.InstFail, syntax.InstMatch:
+		return nil
+	default:
+		return nil
+	}
 }

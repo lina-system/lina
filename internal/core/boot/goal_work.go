@@ -14,10 +14,12 @@ import (
 // policy, canon writer or epoch. Without an installed worker integration, the
 // ordinary conversation remains available and delegation is unsupported.
 type WorkConfig struct {
-	Driver   func(*work.Engine) (work.Driver, error)
-	MainHost func(context.Context) (work.Node, error)
-	Ready    func(context.Context, *work.Engine, string, string) error
-	Changed  func(context.Context, work.State) error
+	// Installed selects Core-owned production adapters and owner connection settings.
+	Installed bool
+	Driver    func(*work.Engine) (work.Driver, error)
+	MainHost  func(context.Context) (work.Node, error)
+	Ready     func(context.Context, *work.Engine, string, string) error
+	Changed   func(context.Context, work.State) error
 }
 type workRuntime struct {
 	engine *work.Engine
@@ -36,6 +38,13 @@ func (w *workRuntime) close(ctx context.Context) error {
 	}
 }
 func (r *conversationRuntime) startWork(ctx context.Context, cfg *WorkConfig) error {
+	if cfg != nil && cfg.Installed {
+		var err error
+		cfg, err = r.installedCodeWork()
+		if err != nil {
+			return err
+		}
+	}
 	if cfg == nil || cfg.Driver == nil {
 		return work.ErrInvalid
 	}
@@ -67,6 +76,9 @@ func (r *conversationRuntime) startWork(ctx context.Context, cfg *WorkConfig) er
 	// Startup derivation precedes publishing the integration's ingress. Its
 	// effects wait for the runner, after the durable epoch and canon mirror.
 	if err = e.Reconcile(ctx); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return err
 	}
 	if cfg.Ready != nil {
