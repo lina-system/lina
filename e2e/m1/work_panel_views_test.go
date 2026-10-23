@@ -122,7 +122,7 @@ func TestM3WorkPanelViewsInstalledCore(t *testing.T) {
 										}
 										found := -1
 										for j, r := range rows[2 : fixture.Height-4] {
-											if strings.Contains(r, line.Name) {
+											if strings.Contains(r, strings.Fields(line.Name)[0]+" ") {
 												if found != -1 {
 													return false
 												}
@@ -136,18 +136,32 @@ func TestM3WorkPanelViewsInstalledCore(t *testing.T) {
 											return false
 										}
 										shown++
-										activityRow := found + 1
-										if compact {
-											activityRow = found
-										}
-										if !strings.Contains(rows[activityRow], *line.Now) {
-											return false
-										}
+
 										started, e := time.Parse(time.RFC3339Nano, *line.StartedAt)
 										if e != nil {
 											return false
 										}
-										if !strings.HasSuffix(rows[found], panelElapsed(time.Now().Sub(started))) && !strings.HasSuffix(rows[found], panelElapsed(before.Sub(started))) {
+										elapsed := panelElapsed(time.Now().Sub(started))
+										if !strings.HasSuffix(rows[found], elapsed) {
+											elapsed = panelElapsed(before.Sub(started))
+										}
+										if !strings.HasSuffix(rows[found], elapsed) {
+											return false
+										}
+										body := strings.TrimSpace(strings.TrimSuffix(rows[found], elapsed))
+										body = strings.TrimPrefix(strings.TrimPrefix(body, "› "), "> ")
+										if compact {
+											valid := false
+											for split, r := range body {
+												if r == ' ' && panelVisiblePrefix(body[:split], line.Name) && panelVisiblePrefix(strings.TrimSpace(body[split+1:]), *line.Now) {
+													valid = true
+													break
+												}
+											}
+											if !valid {
+												return false
+											}
+										} else if !panelVisiblePrefix(body, line.Name) || !panelVisiblePrefix(strings.TrimSpace(rows[found+1]), *line.Now) {
 											return false
 										}
 									}
@@ -284,4 +298,15 @@ func seedPanelViews(t *testing.T, h *harness, n int, fixture panelViewsFixture) 
 	}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// Check content independently of the renderer's clipping budgets.
+func panelVisiblePrefix(shown, full string) bool {
+	for _, tail := range []string{"…", "..."} {
+		if strings.HasSuffix(shown, tail) {
+			prefix := strings.TrimSuffix(shown, tail)
+			return prefix != "" && strings.HasPrefix(full, prefix)
+		}
+	}
+	return shown == full
 }

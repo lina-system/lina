@@ -1,9 +1,29 @@
 {
   "$comment": "SPDX-License-Identifier: Apache-2.0",
-  "counts": [20, 50],
-  "widths": [120, 100],
+  "counts": [
+    20,
+    50
+  ],
+  "widths": [
+    120,
+    100
+  ],
   "height": 34,
-  "names": ["Job", "작업", "é", "👩‍💻", "資料"],
-  "states": ["in_progress", "waiting", "done", "needs_input"],
+  "names": [
+    "Job",
+    "작업",
+    "é",
+    "👩‍💻",
+    "資料",
+    "éééééééééééééééééééééééééééééééééééééééééééééééééééééééé",
+    "👩‍💻👩‍💻👩‍💻👩‍💻👩‍💻👩‍💻👩‍💻👩‍💻👩‍💻👩‍💻👩‍💻👩‍💻👩‍💻👩‍💻👩‍💻👩‍💻👩‍💻👩‍💻👩‍💻👩‍💻",
+    "資料資料資料資料資料資料資料資料資料資料資料資料資料資料資料資料資料資料資料資料資料資料資料資料資料資料資料資料"
+  ],
+  "states": [
+    "in_progress",
+    "waiting",
+    "done",
+    "needs_input"
+  ],
   "draft": "keep draft"
 }

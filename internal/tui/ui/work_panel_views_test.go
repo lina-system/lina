@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/internal/tui/render"
 	"github.com/thisisjun786/lina/internal/tui/state"
@@ -230,5 +231,26 @@ func TestWorkPanelViewsObservedStatesAndFilteredOverflow(t *testing.T) {
 	m.Update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
 	if rows := m.workPanelRows(40, 10); len(rows) != 1 {
 		t.Fatalf("reopening lost filter: %q", rows)
+	}
+}
+
+func TestWorkPanelViewsBesideWideWaitingText(t *testing.T) {
+	for _, label := range []string{"👩‍💻", strings.Repeat("👩‍💻", 30)} {
+		m := navigationShell(120, navigationCards(50))
+		m.content.Capabilities = append(m.content.Capabilities, protocol.Capability{Name: "waiting", Version: "1.0"})
+		m.content.Blocks = append(m.content.Blocks, state.Block{ID: "waiting", Topic: "waiting", Text: label})
+		m.Update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+		view := ansi.Strip(m.conversationContent(false))
+		plan := m.conversationPlan()
+		row := strings.Split(view, "\n")[plan.Cards.Y]
+		right := m.workPanelRows(plan.SidePane.Width, plan.SidePane.Height)[plan.Cards.Y-plan.SidePane.Y]
+		start := strings.LastIndex(row, right)
+		if start < 0 || (render.Unicode{}).Width(row[:start]) != plan.SidePane.X {
+			t.Fatalf("left text shifted/clipped work panel: want column %d row=%q", plan.SidePane.X, row)
+		}
+		prefix := render.Truncate(row, plan.SidePane.X, render.Unicode{})
+		if (render.Unicode{}).Width(prefix) != plan.SidePane.X || !strings.HasSuffix(prefix, " ") {
+			t.Fatalf("missing sidebar gap: %q", prefix)
+		}
 	}
 }
