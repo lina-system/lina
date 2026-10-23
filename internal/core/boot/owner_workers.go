@@ -104,7 +104,7 @@ func (r *conversationRuntime) ownerWorkerControl(ctx context.Context, s clientsr
 	if err != nil {
 		return malformedManagement()
 	}
-	result, err := entry.origin.workerOperation(ctx, name, "", ledger.Event{}, in)
+	result, err := entry.origin.workerOperationWithOwner(ctx, name, "", ledger.Event{}, in, true)
 	if err != nil {
 		return err
 	}

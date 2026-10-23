@@ -184,6 +184,9 @@ func appendEvent(ctx context.Context, tx *canon.Tx, e Event) error {
 	if e.Kind == "receipt" && (c.Run == nil || c.Run.ID != e.RunID) {
 		return ErrState
 	}
+	if e.Kind == "worker_progress" && (c.Run == nil || c.Run.ID != e.RunID || !c.Active || c.Receipt != nil) {
+		return ErrState
+	}
 	var prior []byte
 	err = tx.QueryRowContext(ctx, "SELECT record FROM work_ledger WHERE event_key=?", e.Key).Scan(&prior)
 	if err == nil {
