@@ -17,7 +17,7 @@ func identity(parts ...string) string {
 func ConversationIdentity(main, agent, conversation string) string {
 	return identity("lina-cache-conversation-v1", main, agent, conversation)
 }
-func RunIdentity(run string) string { return identity("lina-cache-run-v1", run) }
+func RunIdentity(run string) string { return provider.RunCacheIdentity(run) }
 
 // SelectCapabilities is pure Core policy: no model output, clock or network
 // discovery selects optimizations. Unsupported or unadmitted choices stay absent.

@@ -4,6 +4,7 @@ package runs_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/lina/internal/core/assemble"
 	"github.com/thisisjun786/lina/internal/core/runs"
@@ -11,6 +12,8 @@ import (
 )
 
 func TestRunCacheIdentityAndEvidenceSurviveRestart(t *testing.T) {
+	checkCtx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
 	var cfg runs.Config
 	sent := make(chan provider.Request, 1)
 	s, _, _ := setupWith(t, func(ctx context.Context, r provider.Request) (provider.Stream, error) {
@@ -35,8 +38,8 @@ func TestRunCacheIdentityAndEvidenceSurviveRestart(t *testing.T) {
 	var first provider.Request
 	select {
 	case first = <-sent:
-	case <-t.Context().Done():
-		t.Fatal(t.Context().Err())
+	case <-checkCtx.Done():
+		t.Fatal(checkCtx.Err())
 	}
 	record, err := s.Get(t.Context(), id)
 	if err != nil || len(record.Requests) != 1 || record.Requests[0].Hash != assemble.Digest(first) || record.Requests[0].CacheIdentity != assemble.RunIdentity(id) {
@@ -58,14 +61,18 @@ func TestRunCacheIdentityAndEvidenceSurviveRestart(t *testing.T) {
 	if err := reopened.Recover(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err := reopened.Wait(t.Context(), id); err != nil {
+	// Recovery retains an interrupted run until Core explicitly releases it.
+	if err := reopened.Release(checkCtx, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := reopened.Wait(checkCtx, id); err != nil {
 		t.Fatal(err)
 	}
 	var second provider.Request
 	select {
 	case second = <-sent:
-	case <-t.Context().Done():
-		t.Fatal(t.Context().Err())
+	case <-checkCtx.Done():
+		t.Fatal(checkCtx.Err())
 	}
 	record, err = reopened.Get(t.Context(), id)
 	if err != nil || len(record.Requests) != 2 || record.Requests[1].Hash != assemble.Digest(second) || first.CacheIdentity != second.CacheIdentity || second.Capabilities.CacheIdentity != first.CacheIdentity {

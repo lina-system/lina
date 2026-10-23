@@ -64,7 +64,7 @@ func (r *conversationRuntime) startRuns(ctx context.Context) error {
 		return err
 	}
 	b.service, err = runs.New(runs.Config{Epoch: r.epoch, DB: r.db, Assets: r.assets, WorkDir: filepath.Join(r.root, "work"),
-		SelectCapabilities: r.route.Prepare, ProviderClass: r.route.Adapter.Class(),
+		SelectCapabilities: r.selectProviderCapabilities, ProviderClass: r.route.Adapter.Class(),
 		Model: r.route.Model, Tools: adapters, Authorize: r.authorizeRun, AuthorizeFollowUp: r.authorizeRunFollowSource, PublishPromotion: turn.PublishPromotion,
 		Stream: func(ctx context.Context, req provider.Request) (provider.Stream, error) {
 			activity, err := r.activities.Acquire(ctx, lease.Activity{Class: lease.Live, Reason: "background run"})

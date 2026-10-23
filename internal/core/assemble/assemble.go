@@ -5,9 +5,6 @@
 package assemble
 
 import (
-	"crypto/sha256"
-	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
 	"sort"
 
@@ -109,32 +106,7 @@ func clone(items []provider.Item) []provider.Item {
 
 // Digest covers the logical model request, including exact opaque item bytes.
 // Credentials and a runtime's live tool bridge are deliberately not input data.
-func Digest(r provider.Request) string {
-	h := sha256.New()
-	write := func(b []byte) {
-		var n [8]byte
-		binary.BigEndian.PutUint64(n[:], uint64(len(b)))
-		h.Write(n[:])
-		h.Write(b)
-	}
-	write([]byte("lina-request-v1"))
-	meta, _ := json.Marshal([]string{string(r.Model), string(r.Effort), r.Instructions, string(r.Purpose)})
-	write(meta)
-	fields, _ := json.Marshal(r.Fields)
-	write(fields)
-	for _, list := range [][]provider.Item{r.Tools, r.Items} {
-		var n [8]byte
-		binary.BigEndian.PutUint64(n[:], uint64(len(list)))
-		h.Write(n[:])
-		for _, raw := range list {
-			write(raw)
-		}
-	}
-	if metadata := provider.RequestMetadata(r); metadata != nil {
-		write(metadata)
-	}
-	return hex.EncodeToString(h.Sum(nil))
-}
+func Digest(r provider.Request) string { return provider.RequestDigest(r) }
 
 func group(k Kind) int {
 	switch k {

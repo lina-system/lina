@@ -240,6 +240,12 @@ func TestConversationCompactionTrimsOptionalContext(t *testing.T) {
 					t.Fatalf("large history summary calls=%d", calls)
 				}
 			} else {
+				// The direct assembly baseline needs the same native person
+				// provenance that compaction obtains from the ledger.
+				if scenario == "short-history" {
+					previous := 1
+					in.PreviousInput = &previous
+				}
 				baseline, baselineReport := assemble.Assemble(in, conversationRequestSize)
 				if baselineReport.Failure != "" || !reflect.DeepEqual(request, baseline) || calls != 0 {
 					t.Fatalf("compaction changed the previously fitting request: calls=%d", calls)

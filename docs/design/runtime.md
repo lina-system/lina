@@ -293,7 +293,7 @@ Each provider adapter declares a capability set for each model it serves: the pr
 The model boundary exposes a named capability set per model. A missing name is
 unsupported, including for models absent from an adapter's declarations. The
 model list provides no capability defaults. Core intersects the declaration with
-the build's route admission set before choosing values. Adapters refuse a
+the build's route admission set and any narrower adapter configuration before choosing values. Adapters refuse a
 requested capability outside either set before starting HTTP or a runtime.
 
 A capability is used only under all of these rules:

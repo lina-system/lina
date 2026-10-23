@@ -5,7 +5,6 @@ package modelpath
 
 import (
 	"errors"
-	"github.com/thisisjun786/lina/internal/core/assemble"
 	"strings"
 
 	"github.com/thisisjun786/lina/kit/provider"
@@ -56,14 +55,23 @@ func (c *Config) Request(items []provider.Item) provider.Request {
 	return provider.Request{Credential: c.credential, Model: c.Model, Purpose: provider.Turn, Items: items}
 }
 
-// Prepare chooses only capabilities that the adapter reports and this build
-// admits. Callers record this exact request before dispatching it.
-func (c *Config) Prepare(r provider.Request) (provider.Request, error) {
-	var err error
+// Capabilities returns the model declaration and the build's route admission.
+// Core's composition root applies its selection policy before recording a call.
+func (c *Config) Capabilities(model provider.ModelRef) (provider.CapabilitySet, provider.CapabilitySet) {
 	route := c.Route
 	if route == "" {
 		route = string(c.Adapter.Provider())
 	}
-	r.Capabilities, err = assemble.SelectCapabilities(r, c.Adapter.Capabilities(r.Model), provider.Admitted(route))
-	return r, err
+	admitted := provider.Admitted(route)
+	if configured, ok := c.Adapter.(provider.CapabilityAdmission); ok {
+		narrowing := configured.AdmittedCapabilities(model)
+		var intersection provider.CapabilitySet
+		for _, capability := range admitted {
+			if narrowing.Has(capability) {
+				intersection = append(intersection, capability)
+			}
+		}
+		admitted = intersection
+	}
+	return c.Adapter.Capabilities(model), admitted
 }

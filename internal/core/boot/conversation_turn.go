@@ -102,7 +102,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 	evidence := turn.EvidenceWriter{Ledger: r.journal(), ConversationID: r.conversation, ParentID: input.ID, Surface: input.Surface, Now: time.Now}
 	prep := &turn.Preparation{
 		VerifyBuild:        r.verifyBuild,
-		SelectCapabilities: r.route.Prepare,
+		SelectCapabilities: r.selectProviderCapabilities,
 		Account:            func(context.Context) (provider.Credential, error) { return r.route.Request(nil).Credential, nil },
 		Resolve: func(context.Context) (turn.ModelPolicy, error) {
 			return turn.ModelPolicy{Model: r.route.Model, Revision: "configured", Class: r.route.Adapter.Class()}, nil

@@ -22,6 +22,10 @@ const (
 	FlexCapability               Capability = "flex"
 )
 
+// CapabilityAdmission reports an adapter configuration's additional narrowing.
+// It cannot grant a capability absent from the build's route admission set.
+type CapabilityAdmission interface{ AdmittedCapabilities(ModelRef) CapabilitySet }
+
 type CapabilitySet []Capability
 
 func (s CapabilitySet) Has(c Capability) bool { return slices.Contains(s, c) }
