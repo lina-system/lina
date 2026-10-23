@@ -557,6 +557,7 @@ type Interrupt struct {
 }
 type ItemDone struct {
 	AgentID  *string              `json:"agent_id,omitempty"`
+	Details  *string              `json:"details,omitempty"`
 	EchoKey  *string              `json:"echo_key,omitempty"`
 	PersonID *string              `json:"person_id,omitempty"`
 	Speaker  *ConversationSpeaker `json:"speaker,omitempty"`
@@ -4287,6 +4288,10 @@ const clientSchemaJSON = `{
     "item_done": {
       "type": "object",
       "properties": {
+        "details": {
+          "type": "string",
+          "maxLength": 4096
+        },
         "stream": {
           "$ref": "#/$defs/stream_metadata"
         },

@@ -14,8 +14,9 @@ they do not establish current acceptance or change the contracts.
 It sends only the manifest-approved fields, keeps input items and tool declarations byte-for-byte and in order, and rejects system-role items.
 `apply_patch` is a custom tool or a function accepting one required string.
 Auxiliary requests reject tools and omit separate instructions.
-Every stateless request includes `reasoning.encrypted_content`, including when effort is empty and the model uses its default.
-A field list that excludes `include` refuses the request before sending; the adapter never silently loses reasoning state.
+A stateless request asks for `reasoning.encrypted_content` when the request carries the selected reasoning-state capability, including when effort is empty and the model uses its default.
+A route whose admission narrows that capability away sends the same request without the include option, so the recorded capability evidence and the wire agree.
+A field list that excludes `include` refuses only a request that selected the capability; the adapter never silently loses selected reasoning state.
 
 ### C-44 adapter acceptance
 

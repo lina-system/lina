@@ -105,3 +105,34 @@ func TestResultPageResponseDoesNotReopenClosedPager(t *testing.T) {
 		t.Fatal("closed pager reopened or fetched another page")
 	}
 }
+
+func TestSystemNoticeDetailsPreserveAuthoredResultSelection(t *testing.T) {
+	m := conversationShell()
+	m.conversation.id = "main:agent"
+	var notice protocol.ItemDone
+	if err := json.Unmarshal([]byte(`{"speaker":"system","text":"Request could not continue.","details":"Request: 181354"}`), &notice); err != nil {
+		t.Fatal(err)
+	}
+	block := state.Block{ID: "notice", Kind: protocol.KindItemDone, Topic: "conversation:" + m.conversation.id, Done: true}
+	projectConversationBlock(&block, notice)
+	if block.Body != "Request: 181354" || block.Speaker != protocol.ConversationSpeakerSystem {
+		t.Fatalf("notice Details missing: %+v", block)
+	}
+	artifact := state.Block{ID: "artifact", Kind: protocol.KindResult, Topic: block.Topic, Body: "RESULT-END", Done: true}
+	m.content.Blocks = []state.Block{artifact, block}
+	m.refreshResultStreams(state.Snapshot{})
+	if selected, ok := m.selectedCard(); !ok || selected.ID != artifact.ID {
+		t.Fatalf("notice replaced authored result: %+v", selected)
+	}
+	m.openResultCard()
+	if m.conversation.pager.text != artifact.Body {
+		t.Fatal("default pager lost the authored result")
+	}
+	m.conversation.pager = textPager{}
+	m.conversation.cardsFocused = true
+	m.conversationKey(tea.KeyPressMsg{Code: tea.KeyDown})
+	m.openResultCard()
+	if m.conversation.pager.text != block.Body {
+		t.Fatal("notice Details are not reachable from card navigation")
+	}
+}

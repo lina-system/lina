@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/lina/e2e/fixture"
 	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
@@ -132,34 +133,22 @@ func loseCompletion(t *testing.T, h *harness) {
 // Script only the current completion input. A prior completion in conversation
 // history must not consume a later person's tool request.
 func scriptedWorkCompletion(w http.ResponseWriter, input []json.RawMessage) bool {
-	// Core appends ContextPacket after the current input. Its mandatory clock
-	// reference marks the boundary; later user-role evidence is not a new input.
-	for i, raw := range input {
-		var item struct{ Role, Content string }
-		if json.Unmarshal(raw, &item) == nil && item.Role == "developer" && strings.Contains(item.Content, `References: [{"id":"clock:`) {
-			input = input[:i]
-			break
-		}
+	var item struct{ Role, Content string }
+	if json.Unmarshal(fixture.CurrentInput(input), &item) != nil || item.Role != "user" {
+		return false
 	}
-	for i := len(input) - 1; i >= 0; i-- {
-		var item struct{ Role, Content string }
-		if json.Unmarshal(input[i], &item) != nil || item.Role != "user" {
-			continue
-		}
-		_, envelope, _ := strings.Cut(item.Content, "\n")
-		var event struct{ Text string }
-		if json.Unmarshal([]byte(envelope), &event) != nil {
-			return false
-		}
-		_, body, _ := strings.Cut(event.Text, "\n")
-		var data struct{ Kind string }
-		if json.Unmarshal([]byte(body), &data) != nil || data.Kind != "work_completion" {
-			return false
-		}
-		emitResponse(w, "The saved work is available for review.", true)
-		return true
+	_, envelope, _ := strings.Cut(item.Content, "\n")
+	var event struct{ Text string }
+	if json.Unmarshal([]byte(envelope), &event) != nil {
+		return false
 	}
-	return false
+	_, body, _ := strings.Cut(event.Text, "\n")
+	var data struct{ Kind string }
+	if json.Unmarshal([]byte(body), &data) != nil || data.Kind != "work_completion" {
+		return false
+	}
+	emitResponse(w, "The saved work is available for review.", true)
+	return true
 }
 
 // Queue a manual request behind any completion turn and wait for that exact

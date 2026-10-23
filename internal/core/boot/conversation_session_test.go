@@ -26,7 +26,7 @@ import (
 
 func TestConversationSessionCompactsBeforeToolFollowup(t *testing.T) {
 	r, p := turnRuntime(t)
-	queuedContextEvent(t, r, "archive", "archive-marker "+strings.Repeat("archive ", 4000), guard.EntryOwner, "")
+	queuedContextEvent(t, r, "archive", "archive-marker "+strings.Repeat("archive ", 5000), guard.EntryOwner, "")
 	queuedContextEvent(t, r, "archive-reply", "Archived.", guard.EntryAgent, "")
 	input, inbox := admitTurnInput(t, r, "continue-current-work")
 	reasoning, _ := json.Marshal(map[string]string{"type": "reasoning", "encrypted_content": strings.Repeat("opaque", 6000)})
@@ -93,7 +93,9 @@ func TestConversationQueuesSummaryOnlyAfterDelivery(t *testing.T) {
 		t.Run(fmt.Sprintf("condense=%v", condense), func(t *testing.T) {
 			r, p := turnRuntime(t)
 			r.route.Adapter = usageTurnProvider{p}
-			queuedContextEvent(t, r, "archive", strings.Repeat("archive ", 4000), guard.EntryOwner, "")
+			// Keep the completed request above the unchanged preparation trigger
+			// even though enabled-tool instructions no longer duplicate schemas.
+			queuedContextEvent(t, r, "archive", strings.Repeat("archive ", 7500), guard.EntryOwner, "")
 			queuedContextEvent(t, r, "archive-reply", "Archived.", guard.EntryAgent, "")
 			input, inbox := admitTurnInput(t, r, "finish-current-work")
 			count := func(table string) int {
@@ -172,7 +174,7 @@ func (p budgetTurnProvider) RequestBudget(model provider.ModelRef) (int, func(pr
 func TestConversationUsesAdapterContextBudget(t *testing.T) {
 	r, p := turnRuntime(t)
 	r.route.Adapter = budgetTurnProvider{p}
-	queuedContextEvent(t, r, "archive", strings.Repeat("archive ", 4000), guard.EntryOwner, "")
+	queuedContextEvent(t, r, "archive", strings.Repeat("archive ", 7000), guard.EntryOwner, "")
 	queuedContextEvent(t, r, "reply", "Archived.", guard.EntryAgent, "")
 	input, inbox := admitTurnInput(t, r, "continue")
 	summary, _ := json.Marshal(compaction.Text{Requests: "none", Topics: "archive", Actions: "Archived.", Values: "42", Omitted: "repeated archive"})
@@ -233,7 +235,11 @@ func TestConversationOversizeRecordsContinuationAndSizes(t *testing.T) {
 	if measured.Sizes.Total < measured.Sizes.Threshold || measured.Sizes.Window != 128000 || measured.Sizes.Active < len(reasoning) {
 		t.Fatalf("invalid breakdown: %+v", measured.Sizes)
 	}
-	capture := func() protocol.Result {
+	type diagnosticNotice struct {
+		Text, Details *string
+		Speaker       protocol.ConversationSpeaker
+	}
+	capture := func() diagnosticNotice {
 		t.Helper()
 		snapshot, sub, err := r.topics.Subscribe("conversation:"+r.conversation, nil)
 		if err != nil {
@@ -242,28 +248,34 @@ func TestConversationOversizeRecordsContinuationAndSizes(t *testing.T) {
 		defer sub.Close()
 		for _, item := range snapshot.Snapshot.Items {
 			if item.Kind == protocol.KindResult {
-				var result protocol.Result
-				if err := json.Unmarshal(item.Data, &result); err != nil {
+				t.Fatal("size diagnostic became an authored result")
+			}
+			if item.Kind == protocol.KindItemDone {
+				var notice diagnosticNotice
+				if err := json.Unmarshal(item.Data, &notice); err != nil {
 					t.Fatal(err)
 				}
-				return result
+				if notice.Details != nil {
+					return notice
+				}
 			}
 		}
-		t.Fatal("size Details were not delivered")
-		return protocol.Result{}
+		t.Fatal("size Details were not delivered with the system notice")
+		return diagnosticNotice{}
 	}
 	live := capture()
-	if live.Text == nil || !strings.Contains(*live.Text, fmt.Sprintf("Request: %d", measured.Sizes.Total)) {
-		t.Fatal("Details differ from recorded measurement")
+	if live.Text == nil || live.Details == nil || live.Speaker != protocol.ConversationSpeakerSystem ||
+		!strings.Contains(*live.Details, fmt.Sprintf("Request: %d", measured.Sizes.Total)) {
+		t.Fatal("system notice Details differ from recorded measurement")
 	}
 	if err := r.seedHistory(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	restored := capture()
-	if restored.Text == nil || restored.ResultID != live.ResultID || *restored.Text != *live.Text {
-		t.Fatal("restored Details changed")
+	if restored.Text == nil || restored.Details == nil || *restored.Text != *live.Text || *restored.Details != *live.Details {
+		t.Fatal("restored notice or Details changed")
 	}
-	t.Logf("Diagnostic capture: %s — %s\n%s", live.Title, live.Summary, *live.Text)
+	t.Logf("Diagnostic capture: %s\n%s", *live.Text, *live.Details)
 }
 
 type usageTurnProvider struct{ *turnProvider }

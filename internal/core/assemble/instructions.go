@@ -8,12 +8,23 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/lina/internal/core/agents"
+	"github.com/thisisjun786/lina/internal/core/toolcatalog"
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
 // Instructions projects the prepared agent and the actual request declarations.
 // JSON escaping keeps names and layer text inside their respective blocks.
 func Instructions(persona agents.Preparation, tools []provider.ToolDecl) (string, error) {
+	return instructions(persona, tools, false)
+}
+
+// LegacyInstructions reproduces the full-schema instruction block of recorded
+// v1 requests. New requests use Instructions and keep schemas only natively.
+func LegacyInstructions(persona agents.Preparation, tools []provider.ToolDecl) (string, error) {
+	return instructions(persona, tools, true)
+}
+
+func instructions(persona agents.Preparation, tools []provider.ToolDecl, legacy bool) (string, error) {
 	identity, err := json.Marshal(struct {
 		AgentID       string        `json:"agent_id"`
 		Name          string        `json:"name"`
@@ -37,7 +48,10 @@ func Instructions(persona agents.Preparation, tools []provider.ToolDecl) (string
 		replyInstructions = `Apply this agent's work_method reply fields, using the effective values in persona_settings.work_method.values when present. They do not replace the person's reply budgets. Use present_result for status, comparisons, artifact choices and third-party drafts; its summary is the verdict shown first. Status and comparison verdicts occupy one line. Mark status and candidates with reply_type; for candidates, each table row or comparison target is one offered artifact and reply.candidates is the maximum. Keep third-party drafts recipient-only: name recipient and mark block audience where it differs. Do not add private process notes to recipient content. Core preserves complete results and counts breaches without rewriting them. Do not repeat the result body in a follow-up acknowledgement.
 `
 	}
-	enabled, err := json.Marshal(append([]provider.ToolDecl{}, tools...))
+	enabled, err := toolcatalog.EnabledNames(tools)
+	if legacy {
+		enabled, err = json.Marshal(append([]provider.ToolDecl{}, tools...))
+	}
 	if err != nil {
 		return "", err
 	}

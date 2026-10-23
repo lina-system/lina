@@ -4,6 +4,7 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
+	"slices"
 
 	"github.com/thisisjun786/lina/internal/core/worker"
 	workeracp "github.com/thisisjun786/lina/internal/core/worker/acp"
@@ -98,10 +99,15 @@ func workerRegistry() []Factory {
 	return factories
 }
 
-func explicitWorkers() []string {
+func explicitWorkers(added ...Factory) []string {
 	var names []string
 	for _, f := range workerRegistry() {
 		if f.Explicit {
+			names = append(names, f.Name)
+		}
+	}
+	for _, f := range added {
+		if f.Explicit && f.Open != nil && !slices.Contains(names, f.Name) {
 			names = append(names, f.Name)
 		}
 	}

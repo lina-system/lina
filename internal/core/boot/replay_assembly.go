@@ -15,17 +15,21 @@ import (
 )
 
 func replayInstructions(format string, p agents.Preparation, tools []provider.ToolDecl) (string, error) {
-	if format != "persona-tui-work-method-v1" {
+	if format != "persona-tui-work-method-v1" && format != "persona-tui-work-method-v2" {
 		p.WorkMethod = ""
 	}
-	text, err := assemble.Instructions(p, tools)
+	build := assemble.LegacyInstructions
+	if format == "persona-tui-work-method-v2" {
+		build = assemble.Instructions
+	}
+	text, err := build(p, tools)
 	if err != nil {
 		return "", err
 	}
 	switch format {
 	case "agent-v1":
 		return text, nil
-	case "persona-tui-v1", "persona-tui-work-method-v1":
+	case "persona-tui-v1", "persona-tui-work-method-v1", "persona-tui-work-method-v2":
 		return assemble.PersonaCoreV1 + "\n" + assemble.TUIFormatting + "\n\n" + text, nil
 	case "persona-v1":
 		return assemble.PersonaCoreV1 + "\n\n" + text, nil
@@ -110,7 +114,7 @@ func rebuildPersonaItems(ep replay.Episode, sources []replay.Context, profile []
 		return nil, replay.Exclusion("missing_assembly")
 	}
 	core := assemble.PersonaCoreV1
-	if a.InstructionFormat == "persona-tui-v1" || a.InstructionFormat == "persona-tui-work-method-v1" {
+	if a.InstructionFormat == "persona-tui-v1" || a.InstructionFormat == "persona-tui-work-method-v1" || a.InstructionFormat == "persona-tui-work-method-v2" {
 		core += "\n" + assemble.TUIFormatting
 	}
 	request, report := assemble.Assemble(assemble.Input{
