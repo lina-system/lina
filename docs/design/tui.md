@@ -797,7 +797,7 @@ The approval record is Core's. The TUI shows it and sends the person's decision 
 
 **The card** shows what the contract says an approval request shows, the requesting agent with its recommendation first, and its choices ([main-authority.md](main-authority.md#approval)). Doing nothing means the action will not run. A request that a channel cannot present waits here ([main-authority.md](main-authority.md#channels)).
 
-- Target fields are never truncated. If they do not fit, the details view scrolls. Confirmation becomes available only after every target page has been displayed, including every wrapped row. The reading record belongs to the open card's identity, epoch, revision and terminal dimensions; a changed revision or size discards it. Closing the card or reconnecting also clears it. Reading all pages permits a separate one-time confirmation; scrolling itself never decides anything.
+- Target fields are never truncated. If they do not fit, the details view scrolls. Confirmation becomes available only after every target page has been displayed, including every wrapped row. Constructing or queuing a view does not count: the client records reading only after the terminal writer accepts the complete frame. Approval frames wait for that write before processing the next input, so rapid paging cannot skip an intermediate frame. A failed or partial write records no reading. The reading record belongs to the open card's identity, epoch, revision and terminal dimensions; a changed revision or size discards it. Closing the card or reconnecting also clears it. Reading all pages permits a separate one-time confirmation; scrolling itself never decides anything.
 - Requests of one scope are one card. A changed group returns stale; the card refreshes and the person selects again.
 - A decision is two steps: select, then a separate confirm key. Keys are press-only. Esc closes the view and decides nothing. No free-text path answers an approval, and no `/approve` exists.
 - Outcomes the TUI handles: resolved, already resolved elsewhere, withdrawn, expired (not performed), stale epoch or group, and refused. A pending approval is stopped by a Core restart ([runtime.md](runtime.md#recovery)), and the card says so.
@@ -1089,12 +1089,20 @@ scanner as Core before they reach the composer, local echo, undo or sent-input
 recall. The complete insertion is scanned before the composer length limit to cover
 a value pasted after a credential field name or a token split across pastes. If that replacement changes surrounding draft text, the
 cursor moves to the end of the masked draft. Ordinary pastes keep their insertion
-position. Masking precedes the composer length limit. Invalid structured input
+position. An exact redaction placeholder also marks a continuation boundary:
+text pasted or typed immediately after it is discarded up to the next whitespace
+or value delimiter (comma, semicolon, quote, angle bracket, closing brace,
+closing bracket, closing parenthesis or period). The delimiter and subsequent
+text remain. This applies after undo or input recall and to literal placeholders;
+it retains no original credential bytes. Inserting elsewhere or replacing the
+whole placeholder uses normal input handling.
+Masking precedes the composer length limit. Invalid structured input
 that cannot be masked safely becomes a placeholder. Dedicated sign-in and API
 key fields keep their separate hidden-input path. These detectors recognize
 known shapes; they do not identify every possible arbitrary secret. Core still
 masks every input before ledger storage and derivation.
-`TestM1TUIChatPasteInstalledCore` exercises the installed Core and a 120×34 PTY,
+`TestM1TUIChatPasteInstalledCore` and
+`TestM1TUIChatPasteContinuationInstalledCore` exercise the installed Core and a 120×34 PTY,
 checking the unsent draft, local echo, sent-input recall, provider input,
 persistent files and restored conversation. It scans terminal output as well
 as settled screens, so an intermediate leaked frame also fails.

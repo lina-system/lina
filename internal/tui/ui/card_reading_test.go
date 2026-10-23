@@ -31,6 +31,7 @@ func readApprovalPages(t *testing.T, m *shellModel) {
 	c, _ := m.content.CurrentCard()
 	seen := ""
 	for range 100 {
+		displayCard(t, m)
 		seen += m.cardContent(c) + "\n"
 		before := m.cardScroll
 		if cmd, _ := m.cardKey(term.Key{Name: "pgdown", Events: true}); cmd != nil {
@@ -52,8 +53,7 @@ func readApprovalPages(t *testing.T, m *shellModel) {
 
 func TestApprovalReadingPagesThenSeparateConfirm(t *testing.T) {
 	m := longApprovalModel(t)
-	c, _ := m.content.CurrentCard()
-	m.cardContent(c)
+	displayCard(t, m)
 	m.cardKey(term.Key{Name: "1", Events: true})
 	if cmd, _ := m.cardKey(term.Key{Name: "enter", Events: true}); cmd != nil {
 		t.Fatal("unread targets approved")
@@ -73,13 +73,12 @@ func TestApprovalReadingPagesThenSeparateConfirm(t *testing.T) {
 
 func TestApprovalReadingRequiresEveryRenderedPage(t *testing.T) {
 	m := longApprovalModel(t)
-	c, _ := m.content.CurrentCard()
-	m.cardContent(c)
+	displayCard(t, m)
 	// Navigation without painting the intermediate pages cannot count as reading.
 	for range 100 {
 		m.cardKey(term.Key{Name: "pgdown", Events: true})
 	}
-	m.cardContent(c)
+	displayCard(t, m)
 	m.cardKey(term.Key{Name: "1", Events: true})
 	if cmd, _ := m.cardKey(term.Key{Name: "enter", Events: true}); cmd != nil {
 		t.Fatal("skipped pages counted as read")
