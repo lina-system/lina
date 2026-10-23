@@ -47,6 +47,8 @@ type ContextItem struct {
 }
 type ContextPacket []ContextItem
 type Input struct {
+	MainID, ConversationID         string
+	PreviousInput                  *int // Exclusive position in History from native person provenance, nil if absent.
 	WorkMethod                     string
 	Core, AgentID, PersonaRevision string
 	AgentName, OwnerPersonID       string // Prepared identity; when present, the persona is projected once in Instructions.
@@ -82,6 +84,7 @@ type Drop struct {
 
 // Report is safe to record: it contains identities, digests and counts, no bodies.
 type Report struct {
+	Layout                         *provider.RequestLayout `json:",omitempty"`
 	AgentID, PersonaRevision, Hash string
 	Skills, Items                  []Ref
 	Dropped                        []Drop
@@ -126,6 +129,9 @@ func Digest(r provider.Request) string {
 		for _, raw := range list {
 			write(raw)
 		}
+	}
+	if metadata := provider.RequestMetadata(r); metadata != nil {
+		write(metadata)
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }
@@ -214,6 +220,12 @@ func Assemble(in Input, counter Counter) (provider.Request, Report) {
 	}
 	r := provider.Request{Model: in.Model, Effort: in.Effort, Purpose: provider.Turn, Fields: append(provider.FieldList(nil), in.Fields...)}
 	r.Tools = append(clone(in.AlwaysTools), clone(in.LoadedTools)...)
+	if in.MainID != "" || in.ConversationID != "" {
+		if in.MainID == "" || in.ConversationID == "" {
+			return fail(Invalid)
+		}
+		r.CacheIdentity = ConversationIdentity(in.MainID, in.AgentID, in.ConversationID)
+	}
 	if in.AgentName != "" || in.OwnerPersonID != "" {
 		if in.AgentName == "" || in.OwnerPersonID == "" {
 			return fail(Invalid)
@@ -230,6 +242,17 @@ func Assemble(in Input, counter Counter) (provider.Request, Report) {
 	}
 	catalog, _ := json.Marshal(in.Catalog)
 	r.Items = append(r.Items, message("developer", string(catalog)))
+	r.Layout = &provider.RequestLayout{Fixed: provider.Position{Items: len(r.Items), Tools: len(in.AlwaysTools)}}
+	historyStart := len(r.Items)
+	if len(in.Summary) > 0 {
+		historyStart++
+	}
+	if in.PreviousInput != nil {
+		if *in.PreviousInput <= 0 || *in.PreviousInput > len(in.History) {
+			return fail(Invalid)
+		}
+		r.Layout.PreviousInput = &provider.Position{Items: historyStart + *in.PreviousInput, Tools: len(r.Tools)}
+	}
 	if len(in.Summary) > 0 {
 		r.Items = append(r.Items, append(provider.Item(nil), in.Summary...))
 	}
@@ -294,6 +317,7 @@ func Assemble(in Input, counter Counter) (provider.Request, Report) {
 			r.Items = append(r.Items, raw)
 		}
 		r.Items = append(r.Items, append(provider.Item(nil), in.Current...))
+		r.Layout.CurrentInput = provider.Position{Items: len(r.Items), Tools: len(r.Tools)}
 		report.Tokens = counter(r)
 		return report.Tokens >= 0
 	}
@@ -327,6 +351,7 @@ func Assemble(in Input, counter Counter) (provider.Request, Report) {
 			report.Skills = append(report.Skills, ref)
 		}
 	}
+	report.Layout = r.Layout.Clone()
 	report.Hash = Digest(r)
 	return r, report
 }

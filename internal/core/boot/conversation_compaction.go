@@ -159,8 +159,13 @@ func (r *conversationRuntime) compactConversation(ctx context.Context, in assemb
 	if len(view.Root) > 0 {
 		in.History = append(in.History, view.Root)
 	}
+	in.PreviousInput = nil
 	for _, item := range view.History {
 		in.History = append(in.History, item.Item)
+		if item.User {
+			n := len(in.History)
+			in.PreviousInput = &n
+		}
 	}
 	request, report = assemble.Assemble(in, conversationRequestSize)
 	if report.Failure != "" && report.Failure != assemble.TooLarge {
@@ -221,8 +226,13 @@ func (r *conversationRuntime) compactConversation(ctx context.Context, in assemb
 	if len(fitted.View.Root) > 0 {
 		in.History = append(in.History, fitted.View.Root)
 	}
+	in.PreviousInput = nil
 	for _, item := range fitted.View.History {
 		in.History = append(in.History, item.Item)
+		if item.User {
+			n := len(in.History)
+			in.PreviousInput = &n
+		}
 	}
 	request, report = assemble.Assemble(in, conversationRequestSize)
 	report.Dropped = append(budgetDrops, report.Dropped...)

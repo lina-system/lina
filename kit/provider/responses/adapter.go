@@ -49,6 +49,7 @@ func newAdapter(config Config, client *http.Client, baseURL string, apiKeyOnly b
 		return nil, err
 	}
 	config.RequestFields = slices.Clone(config.RequestFields)
+	config.Capabilities = slices.Clone(config.Capabilities)
 	if client == nil {
 		client = &http.Client{}
 	}
@@ -59,6 +60,12 @@ func newAdapter(config Config, client *http.Client, baseURL string, apiKeyOnly b
 }
 func (*Adapter) Provider() provider.ProviderID { return provider.ChatGPT }
 func (*Adapter) Class() provider.Class         { return provider.ModelAPI }
+func (*Adapter) Capabilities(model provider.ModelRef) provider.CapabilitySet {
+	if model == "" {
+		return nil
+	}
+	return provider.CapabilitySet{provider.ReasoningStateCapability}
+}
 func (a *Adapter) request(ctx context.Context, c provider.Credential, method, path string, body []byte) (*http.Response, error) {
 	if a.apiKeyOnly && c.Kind != provider.APIKey {
 		return nil, &provider.Failure{Kind: provider.NotAccepted}
@@ -119,6 +126,19 @@ func (*Adapter) Quota(ctx context.Context, c provider.Credential) ([]provider.Qu
 	return []provider.QuotaRow{{Provider: provider.ChatGPT, Account: c.Account, Window: provider.UnknownWindow, State: provider.QuotaUnknown, Source: provider.ErrorCode, Observed: time.Now().UTC()}}, nil
 }
 func (a *Adapter) body(r provider.Request) ([]byte, error) {
+	admitted := a.config.Capabilities
+	if a.apiKeyOnly {
+		var narrowed provider.CapabilitySet
+		for _, c := range admitted {
+			if provider.Admitted("responses_api_key").Has(c) {
+				narrowed = append(narrowed, c)
+			}
+		}
+		admitted = narrowed
+	}
+	if err := provider.ValidateUse(r, a.Capabilities(r.Model), admitted); err != nil {
+		return nil, err
+	}
 	reject := func() ([]byte, error) { return nil, &provider.Failure{Kind: provider.NotAccepted} }
 	if r.Model == "" || !r.Purpose.Valid() || r.Bridge != nil {
 		return reject()

@@ -5,6 +5,7 @@ package modelpath
 
 import (
 	"errors"
+	"github.com/thisisjun786/lina/internal/core/assemble"
 	"strings"
 
 	"github.com/thisisjun786/lina/kit/provider"
@@ -14,6 +15,7 @@ import (
 // Config is an explicit model route, independent of stored account
 // credentials. The caller constructs it once per route; it is never written to canon.
 type Config struct {
+	Route      string
 	Adapter    provider.Adapter
 	Model      provider.ModelRef
 	credential provider.Credential
@@ -47,9 +49,21 @@ func ResponsesFromEnv(getenv func(string) string) (*ResponsesConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &ResponsesConfig{Adapter: adapter, Model: provider.ModelRef(model), credential: provider.NewCredential("configured-responses", provider.APIKey, key)}, nil
+	return &ResponsesConfig{Route: "responses_api_key", Adapter: adapter, Model: provider.ModelRef(model), credential: provider.NewCredential("configured-responses", provider.APIKey, key)}, nil
 }
 
 func (c *Config) Request(items []provider.Item) provider.Request {
 	return provider.Request{Credential: c.credential, Model: c.Model, Purpose: provider.Turn, Items: items}
+}
+
+// Prepare chooses only capabilities that the adapter reports and this build
+// admits. Callers record this exact request before dispatching it.
+func (c *Config) Prepare(r provider.Request) (provider.Request, error) {
+	var err error
+	route := c.Route
+	if route == "" {
+		route = string(c.Adapter.Provider())
+	}
+	r.Capabilities, err = assemble.SelectCapabilities(r, c.Adapter.Capabilities(r.Model), provider.Admitted(route))
+	return r, err
 }

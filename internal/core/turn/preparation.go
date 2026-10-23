@@ -63,14 +63,15 @@ type RequestEvidence = ledger.RequestEvidence
 // supplies Assemble through this callback; it must not read client history.
 // Acknowledge and RecordRequest return only after their ledger commits.
 type Preparation struct {
-	VerifyBuild   func(context.Context) error
-	Account       func(context.Context) (provider.Credential, error)
-	Resolve       func(context.Context) (ModelPolicy, error)
-	Context       func(context.Context, ModelPolicy) (PreparedRequest, error)
-	Acknowledge   func(context.Context, Acknowledgement) error
-	RecordRequest func(context.Context, RequestEvidence) error
-	Digest        func(provider.Request) string
-	Show          func(PreparationFailure)
+	SelectCapabilities func(provider.Request) (provider.Request, error)
+	VerifyBuild        func(context.Context) error
+	Account            func(context.Context) (provider.Credential, error)
+	Resolve            func(context.Context) (ModelPolicy, error)
+	Context            func(context.Context, ModelPolicy) (PreparedRequest, error)
+	Acknowledge        func(context.Context, Acknowledgement) error
+	RecordRequest      func(context.Context, RequestEvidence) error
+	Digest             func(provider.Request) string
+	Show               func(PreparationFailure)
 }
 
 func (p *Preparation) failure(step Step, err error) error {
@@ -179,6 +180,26 @@ func (p *Preparation) prepare(ctx context.Context, id string, cfg loop.Config) (
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
+		r.Layout = r.Layout.Clone()
+		if r.Layout != nil {
+			r.Layout.CurrentInput.Tools = len(r.Tools)
+			if r.Layout.PreviousInput != nil {
+				r.Layout.PreviousInput.Tools = len(r.Tools)
+			}
+			if len(r.Items) > len(prepared.Request.Items) {
+				r.Layout.Newest = &provider.Position{Items: len(r.Items), Tools: len(r.Tools)}
+			}
+			if !r.Layout.Valid(r) {
+				return nil, p.failure(ContextStep, ErrInvalid)
+			}
+		}
+		if p.SelectCapabilities != nil {
+			var err error
+			r, err = p.SelectCapabilities(r)
+			if err != nil {
+				return nil, p.failure(ContextStep, err)
+			}
+		}
 		tokens := prepared.Counter(r)
 		if tokens < 0 {
 			return nil, p.failure(ContextStep, ErrInvalid)
@@ -192,6 +213,11 @@ func (p *Preparation) prepare(ctx context.Context, id string, cfg loop.Config) (
 			return nil, p.failure(ContextStep, ErrInvalid)
 		}
 		e := RequestEvidence{TurnID: id, Hash: hash, Round: round, Class: model.Class, Assembly: cloneAssembly(prepared.Assembly), Model: r.Model, Effort: r.Effort, Tools: r.Tools, Fields: r.Fields}
+		e.CacheIdentity, e.Layout = r.CacheIdentity, r.Layout.Clone()
+		if !r.Capabilities.Empty() {
+			used := r.Capabilities.Clone()
+			e.Capabilities = &used
+		}
 		if err := p.RecordRequest(ctx, e); err != nil {
 			return nil, p.failure(ContextStep, err)
 		}

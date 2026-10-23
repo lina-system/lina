@@ -109,8 +109,9 @@ export function build({ cwd = root, out, target, version: requestedVersion, exec
       throw new Error('Responses manifest does not match the adapter or retry policy');
     }
     if (!clean() || gitOut(cwd, ['rev-parse', 'HEAD']) !== commit) return null;
+    const providerCapabilities = JSON.parse(readFileSync(join(cwd, 'kit/provider/capabilities.json'), 'utf8'));
     const verifiedWorkerVersions = { codex: JSON.parse(readFileSync(join(cwd, 'internal/core/worker/codex/versions.json'), 'utf8')) };
-    const manifest = { version, commit, date, target, goToolchain, kitVersion, binaries, sqlite, providers, supportedCombinations, crwPin, verifiedWorkerVersions };
+    const manifest = { version, commit, date, target, goToolchain, kitVersion, binaries, sqlite, providers, providerCapabilities, supportedCombinations, crwPin, verifiedWorkerVersions };
     const staging = mkdtempSync(join(out, '.manifest-'));
     try {
       const temporary = join(staging, 'manifest.json');

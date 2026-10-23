@@ -7,6 +7,8 @@ import (
 	"errors"
 	"sync/atomic"
 
+	"github.com/thisisjun786/lina/internal/core/assemble"
+	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/provider"
 )
@@ -65,7 +67,7 @@ func (s *Service) run(ctx context.Context, id string) error {
 		return err
 	}
 	var scopeFailed atomic.Bool
-	cfg := loop.Config{Request: provider.Request{Model: s.cfg.Model, Purpose: provider.Background, Instructions: instructions}, Tools: map[string]loop.Tool{}}
+	cfg := loop.Config{Request: provider.Request{CacheIdentity: assemble.RunIdentity(id), Model: s.cfg.Model, Purpose: provider.Background, Instructions: instructions}, Tools: map[string]loop.Tool{}}
 	if r.Origin.Job != "" {
 		cfg.Request.Purpose = provider.BackgroundJob
 	}
@@ -202,6 +204,20 @@ func (s *Service) run(ctx context.Context, id string) error {
 			return nil, err
 		}
 		if err = s.authorizeFollowSources(ctx, current); err != nil {
+			return nil, err
+		}
+		if s.cfg.SelectCapabilities != nil {
+			req, err = s.cfg.SelectCapabilities(req)
+			if err != nil {
+				return nil, err
+			}
+		}
+		evidence := ledger.RequestEvidence{TurnID: id, Round: len(current.Requests), Hash: assemble.Digest(req), Class: s.cfg.ProviderClass, CacheIdentity: req.CacheIdentity, Layout: req.Layout.Clone(), Model: req.Model, Effort: req.Effort, Tools: req.Tools, Fields: req.Fields}
+		if !req.Capabilities.Empty() {
+			used := req.Capabilities.Clone()
+			evidence.Capabilities = &used
+		}
+		if err := s.update(ctx, id, func(r *Record) error { r.Requests = append(r.Requests, evidence); return nil }); err != nil {
 			return nil, err
 		}
 		s.activity(id, 1)
