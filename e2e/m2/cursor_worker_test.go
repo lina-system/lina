@@ -134,6 +134,7 @@ func TestCursorReadinessThroughRunningCore(t *testing.T) {
 			git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "Initial design")
 			git("remote", "add", "origin", "https://github.com/fixture/project.git")
 			var requestCount atomic.Int32
+			var inputBound atomic.Bool
 			var targetRepo atomic.Value
 			targetRepo.Store(repo)
 			offered := make(chan bool, 1)
@@ -196,6 +197,16 @@ func TestCursorReadinessThroughRunningCore(t *testing.T) {
 					}
 					if !declared("dispatch_work") && declared("load_tools") {
 						emitPersonaCall(w, "load-dispatch_work", "load_tools", map[string]any{"tools": []string{"dispatch_work"}})
+						return
+					}
+					if !inputBound.Swap(true) {
+						// Recovery intentionally starts new work in another repository;
+						// retain that distinction before creating a matching task title.
+						emitPersonaCall(w, "bind-dispatch", "bind_input", map[string]any{"bindings": []map[string]any{{
+							"request": 0, "quote": "Create result.txt through the ACP worker.",
+							"target":     map[string]string{"class": "new", "kind": "task"},
+							"difference": "Create the result in repository " + targetRepo.Load().(string) + "; earlier work belongs to another repository.",
+						}}})
 						return
 					}
 				}
@@ -305,6 +316,7 @@ func TestCursorReadinessThroughRunningCore(t *testing.T) {
 					git("-C", nextRepo, "remote", "set-url", "origin", "https://github.com/fixture/recovered.git")
 					targetRepo.Store(nextRepo)
 					requestCount.Store(0)
+					inputBound.Store(false)
 					stop = start()
 				}
 				c, conversation := conversationClient(t, h)
