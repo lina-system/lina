@@ -6,15 +6,102 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/kit/loop"
+	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/provider"
 )
+
+func TestTurnStateObservationCompletionPublication(t *testing.T) {
+	r, _ := turnRuntime(t)
+	input, inboxID := admitTurnInput(t, r, "state-input")
+	s := turnState{
+		runtime: r, input: input, turnID: "turn:" + input.ID,
+		bindings: map[string]loop.Tool{}, filters: map[string]*conversationReplyStream{}, questions: &questionTurn{},
+	}
+	if err := turn.New(r.db).Claim(t.Context(), s.turnID, r.conversation, inboxID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.prepare(t.Context(), turn.ModelPolicy{Model: "turn-fixture"}); err != nil {
+		t.Fatal(err)
+	}
+	var keys []string
+	for round, text := range []string{"First reply.", "Second reply."} {
+		s.round = round + 1
+		key := fmt.Sprintf("%s:%d:7", s.turnID, s.round)
+		keys = append(keys, key)
+		for _, event := range turnText(text) {
+			event.Index = 7
+			if err := s.observe(t.Context(), event); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// Each response has its own filter even when output indices repeat.
+		if filter := s.filters[key]; filter == nil || filter.sent != text {
+			t.Fatalf("stream %s = %+v", key, filter)
+		}
+		if err := r.db.Read(t.Context(), func(tx *canon.Tx) error {
+			var saved string
+			if err := tx.QueryRowContext(t.Context(), `SELECT body FROM turn_partials WHERE turn_id=? AND round=? AND ordinal=?`, s.turnID, round, 7).Scan(&saved); err != nil {
+				return err
+			}
+			if saved != text {
+				t.Errorf("checkpoint round %d = %q, want %q", round, saved, text)
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := r.journal().Get(t.Context(), key); err == nil {
+			t.Fatalf("provisional item %s admitted before completion", key)
+		}
+	}
+	start, sub, err := r.topics.Subscribe("conversation:"+r.conversation, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sub.Close()
+	var streams []string
+	for _, item := range start.Snapshot.Items {
+		if item.Kind == protocol.KindOutputDelta {
+			streams = append(streams, item.Key)
+		}
+	}
+	if !reflect.DeepEqual(streams, keys) {
+		t.Fatalf("visible stream keys = %v, want %v", streams, keys)
+	}
+	if err := s.complete(t.Context(), r.db); err != nil {
+		t.Fatal(err)
+	}
+	// Completion admits replies and their checks, but does not publish them.
+	for _, key := range keys {
+		item, err := r.journal().Get(t.Context(), key)
+		if err != nil || item.ParentID != input.ID || item.SpeakerKind != guard.Agent {
+			t.Fatalf("completed reply %s: %+v, %v", key, item, err)
+		}
+	}
+	var checks int
+	for _, item := range s.saved {
+		if item.ScaffoldKind == "reply_check" {
+			checks++
+		}
+	}
+	if checks != len(keys) || len(s.saved) != 2*len(keys) {
+		t.Fatalf("completion batch = %+v", s.saved)
+	}
+	assertTurnPublished(t, r, input.ID)
+	if err := s.publishOutcome(t.Context(), loop.Outcome{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	assertTurnPublished(t, r, append([]string{input.ID}, keys...)...)
+}
 
 func TestConversationTurnText(t *testing.T) {
 	r, p := turnRuntime(t)

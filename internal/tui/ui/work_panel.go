@@ -3,7 +3,6 @@ package ui
 
 import (
 	"fmt"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -91,11 +90,10 @@ func workElapsed(d time.Duration) string {
 	return fmt.Sprintf("%dm", minutes)
 }
 
-// Navigation and rendering share the same cards; folded completions are not
-// invisible keyboard stops.
-func (m *shellModel) workPanelCards() ([]state.WorkCard, int) {
-	active := []state.WorkCard{}
-	done := 0
+// Navigation and rendering share the same sequence; folded done cards have no
+// selectable row. Keep the selected ID across updates, or its former position
+// when that card leaves the sequence.
+func (m *shellModel) selectableWorkCards() (active []state.WorkCard, done int) {
 	for _, c := range m.workCards() {
 		if c.State == protocol.RunningStateDone && c.Waiting == 0 {
 			done++
@@ -103,23 +101,20 @@ func (m *shellModel) workPanelCards() ([]state.WorkCard, int) {
 		}
 		active = append(active, c)
 	}
+	v := &m.conversation
+	if len(active) == 0 {
+		v.workSelected, v.workIndex, v.workOffset = "", 0, 0
+		return active, done
+	}
+	index := min(v.workIndex, len(active)-1)
+	for i, c := range active {
+		if c.ID == v.workSelected {
+			index = i
+			break
+		}
+	}
+	v.workSelected, v.workIndex = active[index].ID, index
 	return active, done
-}
-
-// Keep identity across reordering, or select the replacement at the old index.
-func (m *shellModel) workSelection(cards []state.WorkCard) int {
-	p := &m.conversation
-	if len(cards) == 0 {
-		p.workSelected = ""
-		p.workIndex, p.workOffset = 0, 0
-		return -1
-	}
-	index := slices.IndexFunc(cards, func(c state.WorkCard) bool { return c.ID == p.workSelected })
-	if index < 0 {
-		index = min(max(0, p.workIndex), len(cards)-1)
-	}
-	p.workSelected, p.workIndex = cards[index].ID, index
-	return index
 }
 
 func (m *shellModel) workPanelRows(width, height int) []string {
@@ -132,7 +127,7 @@ func (m *shellModel) workPanelRows(width, height int) []string {
 		ellipsis = "..."
 	}
 	rows := []string{text("work.title")}
-	active, done := m.workPanelCards()
+	active, done := m.selectableWorkCards()
 	available := height - 1
 	if done > 0 {
 		available--
@@ -141,27 +136,18 @@ func (m *shellModel) workPanelRows(width, height int) []string {
 	if shown < len(active) {
 		shown = min(len(active), max(0, (available-1)/2))
 	}
-	start := 0
-	selected := -1
-	if m.conversation.workFocused {
-		selected = m.workSelection(active)
-		if shown > 0 {
-			start = min(max(0, m.conversation.workOffset), len(active)-shown)
-			if selected < start {
-				start = selected
-			}
-			if selected >= start+shown {
-				start = selected - shown + 1
-			}
-			m.conversation.workOffset = start
-		}
+	start := min(m.conversation.workOffset, max(0, len(active)-shown))
+	if shown > 0 {
+		start = min(start, m.conversation.workIndex)
+		start = max(start, m.conversation.workIndex-shown+1)
 	}
+	m.conversation.workOffset = start
 	marker := m.styles.tokens.GlyphUnicodeAction
 	if m.styles.options.ASCII {
 		marker = m.styles.tokens.GlyphAsciiAction
 	}
 	now := m.now().Add(m.content.Offset)
-	for i, c := range active[start : start+shown] {
+	for _, c := range active[start : start+shown] {
 		elapsed := text("unknown")
 		if !c.Started.IsZero() {
 			end := now
@@ -173,7 +159,7 @@ func (m *shellModel) workPanelRows(width, height int) []string {
 		prefix := ""
 		if m.conversation.workFocused {
 			prefix = strings.Repeat(" ", (render.Unicode{}).Width(marker)+1)
-			if start+i == selected {
+			if c.ID == m.conversation.workSelected {
 				prefix = marker + " "
 			}
 		}
@@ -233,9 +219,9 @@ func (m *shellModel) workPanelKey(key string) tea.Cmd {
 	case "esc":
 		m.conversation.workFocused = false
 	case "up", "down":
-		cards, _ := m.workPanelCards()
-		index := m.workSelection(cards)
-		if index >= 0 {
+		cards, _ := m.selectableWorkCards()
+		index := m.conversation.workIndex
+		if len(cards) > 0 {
 			if key == "up" {
 				index = max(0, index-1)
 			} else {
