@@ -52,6 +52,25 @@ transactional adoption path. These storage boundaries are LINA requirements.
 
 ## Implementation notes
 
+### Import cost bounds
+
+- **seen** — LCM-X `host_uid.py:299-334` at the pinned revision looks up
+  `bindings.get(uid, ())` before checking canonical and payload versions.
+  Its lineage reader at lines 102–130 follows compression parents and stops
+  at explicit forks. The public source was inspected read-only because the
+  installation paths were unavailable.
+- **inferred** — A profile-local UID index preserves LINA's existing lineage
+  ambiguity checks while avoiding scans of unrelated binding groups. The
+  immutable plan can retain one rehearsal result and encoding, including an
+  error, across preview, conversation adoption and rollback retries.
+- **unknown** — Synthetic checks establish call counts and result parity;
+  they do not establish throughput on an owner's installation.
+
+The regression counts rehearsal computations over multiple conversations and
+a rolled-back adoption. The Core job acceptance scenario runs the actual
+deterministic worker for two conversations and checks the retained report,
+receipts, reversible references and idempotent replay.
+
 Design authority: [Go Core](../../../../docs/design/go-core.md) and the contracts it cites.
 These notes retain implementation and validation history from the cited increments;
 they do not establish current acceptance or change the contracts.

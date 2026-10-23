@@ -70,7 +70,19 @@ func TestM1StagedImportWorker(t *testing.T) {
 		paths[kind] = path
 	}
 	req := importer.Request{BatchID: "synthetic-batch", Confirmed: true, Profiles: []importer.Profile{{ID: scenario.Profile, AgentID: scenario.Agent, PersonID: scenario.Person, StatePath: paths["state"], LCMPath: paths["lcm"], OwnerChannels: []importer.OwnerChannel{{SessionID: "synthetic-session", Source: "cli"}}}}}
+	second := req.Profiles[0]
+	second.ID += "-second"
+	req.Profiles = append(req.Profiles, second)
 	plan, err := importer.Prepare(h.ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer plan.Close()
+	rehearsal, err := plan.Rehearse()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRehearsal, err := json.Marshal(rehearsal)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +102,7 @@ func TestM1StagedImportWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	tasks := plan.Tasks()
-	if len(tasks) != 1 {
+	if len(tasks) != 2 {
 		t.Fatalf("tasks=%d", len(tasks))
 	}
 	for _, task := range tasks {
@@ -104,18 +116,18 @@ func TestM1StagedImportWorker(t *testing.T) {
 	worker := h.command("--canon", path, "--socket", socket, "--once")
 	worker.start(t)
 	worker.wait(t, 0)
-	if got := jobWatermark(t, store, scenario.JobID); got != 1 {
+	if got := jobWatermark(t, store, scenario.JobID); got != 2 {
 		t.Fatalf("watermark=%d", got)
 	}
 	verified, err := plan.Verify(h.ctx, store)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if verified.Rows != scenario.References {
+	if verified.Rows != 2*scenario.References {
 		t.Fatalf("references=%d", verified.Rows)
 	}
 	if err = store.Read(h.ctx, func(tx *canon.Tx) error {
-		for table, want := range map[string]int{"import_event": scenario.Events, "conv_event": 0, "moirai_aux": 0, "memory_item": 0, "moirai_applied": 1} {
+		for table, want := range map[string]int{"import_event": 2 * scenario.Events, "conv_event": 0, "moirai_aux": 0, "memory_item": 0, "moirai_applied": 2, "import_rehearsal": 1} {
 			var n int
 			if err := tx.QueryRowContext(h.ctx, "SELECT count(*) FROM "+table).Scan(&n); err != nil {
 				return err
@@ -123,6 +135,13 @@ func TestM1StagedImportWorker(t *testing.T) {
 			if n != want {
 				t.Errorf("%s count=%d want %d", table, n, want)
 			}
+		}
+		var stored string
+		if err := tx.QueryRowContext(h.ctx, "SELECT report FROM import_rehearsal WHERE batch_id=?", req.BatchID).Scan(&stored); err != nil {
+			return err
+		}
+		if stored != string(wantRehearsal) {
+			t.Error("worker adoption changed the rehearsed report")
 		}
 		return nil
 	}); err != nil {

@@ -138,7 +138,15 @@ func newProfile(ctx context.Context, p *Plan, profile Profile) (*profileBuilder,
 		k := s.row.text("lineage_key") + "\x00" + s.row.text("uid")
 		bindings[k] = append(bindings[k], s)
 	}
+	type uidGroup struct {
+		lineage string
+		rows    []sourceRow
+	}
+	bindingsByUID := map[string][]uidGroup{}
 	for _, ss := range bindings {
+		first := ss[0].row
+		uid := first.text("uid")
+		bindingsByUID[uid] = append(bindingsByUID[uid], uidGroup{first.text("lineage_key"), ss})
 		var original *record
 		for _, s := range ss {
 			if s.row.text("kind") == "canonical" {
@@ -182,15 +190,14 @@ func newProfile(ctx context.Context, p *Plan, profile Profile) (*profileBuilder,
 		if uid != "" {
 			var candidates []sourceRow
 			lineage := ""
-			for _, ss := range bindings {
-				first := ss[0].row
-				lk := first.text("lineage_key")
-				if first.text("uid") == uid && (lk == root || strings.HasSuffix(lk, ":"+root)) {
+			for _, group := range bindingsByUID[uid] {
+				lk := group.lineage
+				if lk == root || strings.HasSuffix(lk, ":"+root) {
 					if lineage != "" && lineage != lk {
 						return nil, fmt.Errorf("%w: ambiguous UID lineage", ErrSnapshot)
 					}
 					lineage = lk
-					candidates = ss
+					candidates = group.rows
 				}
 			}
 			for _, binding := range candidates {

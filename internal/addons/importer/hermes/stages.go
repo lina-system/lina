@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/assets"
@@ -69,13 +70,18 @@ type TableCount struct {
 	Omitted                 string
 }
 type Plan struct {
-	batch         string
-	rehearsal     bool
-	people        map[string]string
-	mappings      []ProfileMapping
-	profiles      []string
-	conversations []*conversation
-	inventory     []TableCount
+	rehearse        func() (RehearsalReport, error)
+	rehearsalOnce   sync.Once
+	rehearsalReport RehearsalReport
+	rehearsalJSON   string
+	rehearsalErr    error
+	batch           string
+	rehearsal       bool
+	people          map[string]string
+	mappings        []ProfileMapping
+	profiles        []string
+	conversations   []*conversation
+	inventory       []TableCount
 }
 type Report struct {
 	AddedEvents, AddedRecords, AddedReferences int
@@ -119,6 +125,7 @@ func prepare(ctx context.Context, req Request, honcho []honchoWorkspace) (_ *Pla
 		return nil, ErrSnapshot
 	}
 	p := &Plan{batch: req.BatchID, rehearsal: req.Rehearsal, people: map[string]string{}}
+	p.rehearse = p.rehearseSnapshot
 	defer func() {
 		if err != nil {
 			err = errors.Join(err, p.Close())

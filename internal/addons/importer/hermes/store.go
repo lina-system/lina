@@ -65,16 +65,24 @@ func (p *Plan) Apply(ctx context.Context, tx *canon.Tx, index int) (Report, erro
 		return Report{}, err
 	}
 	at := time.Now().UTC().Format(time.RFC3339Nano)
-	rehearsal, err := p.Rehearse()
+	p.prepareRehearsal()
+	if p.rehearsalErr != nil {
+		return Report{}, p.rehearsalErr
+	}
+	batch, err := tx.ExecContext(ctx, "INSERT INTO import_batch(id,created_at) VALUES(?,?) ON CONFLICT(id) DO NOTHING", p.batch, at)
 	if err != nil {
 		return Report{}, err
 	}
-	encodedReport, _ := json.Marshal(rehearsal)
-	if _, err := tx.ExecContext(ctx, "INSERT INTO import_batch(id,created_at) VALUES(?,?) ON CONFLICT(id) DO NOTHING", p.batch, at); err != nil {
+	added, err := batch.RowsAffected()
+	if err != nil {
 		return Report{}, err
 	}
-	if _, err := tx.ExecContext(ctx, "INSERT INTO import_rehearsal(batch_id,report) VALUES(?,?) ON CONFLICT(batch_id) DO NOTHING", p.batch, string(encodedReport)); err != nil {
-		return Report{}, err
+	// The batch and its report commit together. Avoid passing the full report
+	// through SQLite again for every subsequent conversation.
+	if added != 0 {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO import_rehearsal(batch_id,report) VALUES(?,?)", p.batch, p.rehearsalJSON); err != nil {
+			return Report{}, err
+		}
 	}
 	report := Report{}
 	materials := map[string]assets.Asset{}
