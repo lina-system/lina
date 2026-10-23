@@ -126,10 +126,11 @@ func (m *shellModel) workPanelRows(width, height int) []string {
 		}
 		more := fmt.Sprintf(text("work.more"), ellipsis, len(active)-shown)
 		if waiting > 0 {
-			more += " · " + fmt.Sprintf(text("work.needs"), waiting)
+			separator := m.styles.tokens.GlyphUnicodeActivitySeparator
 			if m.styles.options.ASCII {
-				more = strings.ReplaceAll(more, " · ", " / ")
+				separator = m.styles.tokens.GlyphAsciiActivitySeparator
 			}
+			more += " " + separator + " " + fmt.Sprintf(text("work.needs"), waiting)
 		}
 		rows = append(rows, panelClip(more, width, ellipsis))
 	}
