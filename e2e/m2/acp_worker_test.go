@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -54,6 +55,8 @@ func TestACPWorkersThroughRunningCore(t *testing.T) {
 }
 
 type acpScenario struct {
+	profiles                   string
+	startupWarnings            []string
 	name, worker, binary, mode string
 	unavailable                string
 	script                     string
@@ -157,6 +160,9 @@ func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
 			}
 			h.socket = installed.Socket
 			installedBinary := filepath.Join(state, "system/bin/lina")
+			if scenario.profiles != "" {
+				write(filepath.Join(state, "system/core/worker-profiles.json"), scenario.profiles, 0600)
+			}
 			git := func(args ...string) string {
 				t.Helper()
 				c := exec.CommandContext(ctx, filepath.Join(bin, "git"), args...)
@@ -182,7 +188,12 @@ func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
 			fixtureErrors := make(chan error, 1)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var req struct {
-					Tools []struct{ Name string }
+					Tools []struct {
+						Name       string
+						Parameters struct {
+							Properties map[string]struct{ Enum []string }
+						}
+					}
 					Input []json.RawMessage
 				}
 				if e := json.NewDecoder(r.Body).Decode(&req); e != nil {
@@ -268,7 +279,9 @@ func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
 				if count == 1 || (scenario.unavailable != "" && count == 2) {
 					available := false
 					for _, tool := range req.Tools {
-						available = available || tool.Name == "dispatch_work"
+						if tool.Name == "dispatch_work" {
+							available = slices.Contains(tool.Parameters.Properties["worker"].Enum, scenario.worker)
+						}
 					}
 					if count == 1 {
 						offered <- available
@@ -320,6 +333,11 @@ func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
 					}
 					select {
 					case e := <-done:
+						for _, cause := range scenario.startupWarnings {
+							if !strings.Contains(logs.String(), cause) {
+								t.Errorf("startup did not report %q: %s", cause, &logs)
+							}
+						}
 						if e != nil {
 							t.Errorf("Core exit: %v %s", e, &logs)
 						}
@@ -552,6 +570,12 @@ type harness struct {
 
 const acpAgentScript = `#!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
+function messageText(text) {
+ if (!text.startsWith('<lina-message ')) return text;
+ const match=text.match(/^<lina-message [^>]*><text>([\s\S]*)<\/text><\/lina-message>$/);
+ if (!match) throw Error('invalid worker message frame');
+ return match[1].replace(/&(#x[0-9a-f]+|#[0-9]+|amp|lt|gt|quot|apos);/gi,(_,e)=>e[0]==='#'?String.fromCodePoint(e[1].toLowerCase()==='x'?parseInt(e.slice(2),16):Number(e.slice(1))):({amp:'&',lt:'<',gt:'>',quot:'"',apos:"'"})[e]);
+}
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
@@ -588,7 +612,7 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
   if(process.env.LINA_ACP_CASE==='cancel')break;
   release(()=>{
    if(process.env.LINA_ACP_CASE==='exit')process.exit(0);
-   const definition=JSON.parse(packet.slice(packet.indexOf('{')));
+   const definition=JSON.parse(messageText(packet).slice(messageText(packet).indexOf('{')));
    const git=(...args)=>execFileSync('git',args,{encoding:'utf8'}).trim();
    git('switch','-c',definition.branch);fs.writeFileSync('result.txt','ACP result\n');git('add','result.txt');git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','Create ACP result');
    const head=git('rev-parse','HEAD');

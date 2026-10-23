@@ -4,6 +4,7 @@ package boot
 import (
 	"context"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/progress"
@@ -16,16 +17,44 @@ import (
 
 func (e *workerSession) observeActivity(event worker.Event) {
 	activity := worker.Activity(event)
+	turn := e.progressTurn()
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if event.Doing != nil && event.Thread.ID == e.thread.ID && event.Thread.TurnID == e.thread.TurnID {
+	if event.Doing != nil && event.Thread.ID == turn.ID && event.Thread.TurnID == turn.TurnID {
 		e.doing = doing.Clean(event.Doing.Line)
+		e.doingTurn = turn.TurnID
 	}
 	if activity != "" {
 		e.activity = "work." + activity
 	} else if event.Kind == worker.FinishEvent {
 		e.activity = ""
 	}
+}
+
+// progressTurn is the session's current turn. e.thread stays the launch
+// handle. Input and recovery rebind the recovery record and the reservation
+// without replacing that handle.
+func (e *workerSession) progressTurn() worker.Thread {
+	e.recoveryMu.Lock()
+	bound := e.recovery.Thread
+	e.recoveryMu.Unlock()
+	if bound.ID != "" && bound.TurnID != "" {
+		return bound
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	current := e.thread
+	if turn, ok := reservedTurn(e.reservationTurn); ok {
+		current.TurnID = turn
+	}
+	return current
+}
+
+func reservedTurn(turn string) (string, bool) {
+	if turn == "" || strings.HasPrefix(turn, "unknown:") {
+		return "", false
+	}
+	return turn, true
 }
 
 // Background runs outside delegated tasks belong to the same work panel.

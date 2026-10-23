@@ -94,15 +94,17 @@ const (
 )
 
 // Evidence's metadata is filled from canon, never trusted from a proposed item.
-// Quote is removed on recall when the evidence belongs to another agent.
+// Quote and availability are read-time projections and never new stored evidence.
 type Evidence struct {
-	Kind        EvidenceKind `json:"kind"`
-	ID          string       `json:"id"`
-	Revision    int64        `json:"revision,omitempty"`
-	Precision   Precision    `json:"precision"`
-	SourceAgent string       `json:"source_agent,omitempty"`
-	OccurredAt  int64        `json:"occurred_at,omitempty"`
-	Quote       string       `json:"quote,omitempty"`
+	Kind        EvidenceKind             `json:"kind"`
+	ID          string                   `json:"id"`
+	Revision    int64                    `json:"revision,omitempty"`
+	Precision   Precision                `json:"precision"`
+	SourceAgent string                   `json:"source_agent,omitempty"`
+	OccurredAt  int64                    `json:"occurred_at,omitempty"`
+	Quote       string                   `json:"quote,omitempty"`
+	Status      string                   `json:"status,omitempty"`
+	Tombstone   *canon.CitationTombstone `json:"tombstone,omitempty"`
 }
 type Item struct {
 	ID           string     `json:"id,omitempty"`

@@ -242,6 +242,20 @@ The implementation issues carry these.
 **Open points.**
 
 - [surfaces.md](../design/surfaces.md#app-front-end) still sets the app as React on Wails, while the app repository's issues (#1–#6, from 2026-10-20) plan Flutter. The Generated UI section names a renderer for either. Settling the stack is a separate change.
-- `design/tokens/tokens.css` sets `--lina-type-body: "Pretendard", "sans-serif"`. CSS reads the quoted `"sans-serif"` as a family name, not the generic fallback. The spike's template used its own unquoted fallback.
+- Resolved by drawn mocks: the token generator now leaves CSS generic font families unquoted. The shared template bundles Pretendard 1.3.9 under OFL.
 - `genui` is being replaced by `a2ui_flutter`, which is not yet released. Choose at implementation time, behind the same catalog.
-- Which headless engine draws a mock's PNG on the main is open, together with charts for channels.
+- Drawn mocks use installed Chromium/Chrome via DevTools Protocol, with an isolated profile and the browser sandbox enabled. The executable browser checks and negative control are in `internal/core/results/mocks`; the running-Core scenario is `TestM3DrawnMocks`. Charts for channels remain separate.
+
+### Drawn mock evaluation
+
+The versioned first-draw set is
+[`evaluation.json`](../../internal/core/results/mocks/testdata/evaluation.json),
+derived from the appointment, running-work, to-do and today-filter requests above.
+Each case records its request, checklist, candidate and expected dimensions.
+`TestMockEvaluationFirstVersions` reports elements, controls, tokens, network,
+errors, both widths and text separately. It uses the real Chromium renderer and
+does not sum dimensions into a quality score. These candidates are synthetic
+regression fixtures, not evidence of general model quality and not owner labels.
+There are zero owner-labelled cases; a model judge remains unqualified and is
+not used as a revision gate. Qualification requires measured agreement on at
+least 50 distinct owner-labelled cases; synthetic or duplicate cases cannot count.

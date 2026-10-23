@@ -506,6 +506,9 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		}
 		return err
 	}
+	if conversation != nil {
+		conversation.startRecall(ctx)
+	}
 	var workDone <-chan struct{}
 	if conversation != nil && cfg.Work != nil {
 		if err := conversation.startWork(ctx, cfg.Work); err != nil {

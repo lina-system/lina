@@ -9,6 +9,7 @@ import (
 )
 
 func TestOwnerDisplayProvenance(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, source, display, metadata, chatType string
 		confirmed                                 bool
@@ -68,6 +69,7 @@ func TestOwnerDisplayProvenance(t *testing.T) {
 }
 
 func TestRehearsalOwnerCandidates(t *testing.T) {
+	t.Parallel()
 	path, db := hermesFixture(t, "state")
 	if _, err := db.Exec(string(fixture(t, "speakers-state.sql"))); err != nil {
 		t.Fatal(err)
@@ -112,6 +114,7 @@ func TestRehearsalOwnerCandidates(t *testing.T) {
 }
 
 func TestLocalOwnerRecordedIdentity(t *testing.T) {
+	t.Parallel()
 	for _, source := range []string{"desktop", "webui"} {
 		t.Run(source, func(t *testing.T) {
 			path, db := hermesFixture(t, "state")

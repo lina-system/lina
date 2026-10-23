@@ -56,7 +56,12 @@ func commit(t *testing.T, db *canon.Store, in Write) Item {
 }
 func TestRecallFiltersBeforeLimitAndHidesForeignEvidence(t *testing.T) {
 	db := database(t)
-	store := New(db)
+	store := New(db).WithQuotes(func(_ context.Context, person, agent string, ref canon.Citation) (canon.CitationValue, error) {
+		if person != "person" || !strings.HasPrefix(ref.TargetID, agent+"/") {
+			t.Fatal("foreign evidence resolved")
+		}
+		return canon.CitationValue{Quote: "original statement"}, nil
+	})
 	a := proposal("A", "shared fact")
 	common := commit(t, db, a)
 	// Same common fact, learned through B, has one id with two evidence refs.

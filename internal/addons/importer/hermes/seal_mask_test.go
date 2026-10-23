@@ -15,6 +15,7 @@ import (
 )
 
 func TestSealJSONBodies(t *testing.T) {
+	t.Parallel()
 	for name, body := range map[string]string{
 		"assignment":  `{"token":"synthetic-private-value","public":"visible"}`,
 		"escaped":     `{"password":"synthetic-\"private-value","public":"visible"}`,
@@ -56,6 +57,7 @@ func TestSealJSONBodies(t *testing.T) {
 }
 
 func TestSealUnmaskableBody(t *testing.T) {
+	t.Parallel()
 	for name, body := range map[string]string{
 		"depth":          strings.Repeat("[", 66) + `"synthetic-private-value"` + strings.Repeat("]", 66),
 		"encoding":       "synthetic-private-value\xff",
@@ -121,6 +123,7 @@ func TestSealUnmaskableBody(t *testing.T) {
 }
 
 func TestSealJSONSidecar(t *testing.T) {
+	t.Parallel()
 	for name, raw := range map[string]string{
 		"JSON":           `{"token":"synthetic-private-value","public":"visible"}`,
 		"unmaskable":     strings.Repeat("[", 66) + `"synthetic-private-value"` + strings.Repeat("]", 66),
@@ -135,7 +138,7 @@ func TestSealJSONSidecar(t *testing.T) {
 			if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
 				t.Fatal(err)
 			}
-			key := LegacyKey{string(HermesLCM), "profile", "messages", "2"}
+			key := LegacyKey{string(HermesLCM), "profile", "messages", "1"}
 			req.Sidecars = []Sidecar{{Key: LegacyKey{string(HermesLCM), "profile", "sidecars", "output"}, Event: key, SnapshotPath: path, SHA256: bytesHash([]byte(raw))}}
 			p, err := Prepare(t.Context(), req)
 			if err != nil {
@@ -188,6 +191,102 @@ func TestSealJSONSidecar(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestPromotionUsesSidecarBody(t *testing.T) {
+	t.Parallel()
+	for name, raw := range map[string]string{
+		"unmaskable":     strings.Repeat("[", 66) + `"synthetic-private-value"` + strings.Repeat("]", 66),
+		"numeric secret": `{"password":123456,"public":"visible"}`,
+		"secret":         `{"token":"synthetic-private-value","public":"visible"}`,
+		"benign":         `{"output":"synthetic output"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			req := importRequest(t)
+			db := importStore(t)
+			writer, _ := importMaterials(t, db)
+			req.Materials = writer
+			path := filepath.Join(t.TempDir(), "output")
+			if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+				t.Fatal(err)
+			}
+			// A proven-person message whose display is its output sidecar.
+			key := LegacyKey{string(HermesLCM), "profile", "messages", "1"}
+			req.Sidecars = []Sidecar{{Key: LegacyKey{string(HermesLCM), "profile", "sidecars", "output"}, Event: key, SnapshotPath: path, SHA256: bytesHash([]byte(raw))}}
+			p, err := Prepare(t.Context(), req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { p.Close() })
+			if _, err = p.Import(t.Context(), db); err != nil {
+				t.Fatal(err)
+			}
+			ref, err := Resolve(t.Context(), db, key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			batches, err := p.PromotionBatches(PromotionPolicy{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			proposed := false
+			for _, batch := range batches {
+				for _, id := range batch.Sources {
+					proposed = proposed || id == ref.RecordID
+				}
+			}
+			if name == "benign" {
+				if !proposed {
+					t.Fatalf("benign sidecar event not proposed: %+v", batches)
+				}
+				return
+			}
+			if proposed {
+				t.Fatalf("unavailable sidecar proposed for promotion: %+v", batches)
+			}
+		})
+	}
+}
+
+func TestPromotionScreensInlineQuoteWithSidecar(t *testing.T) {
+	t.Parallel()
+	req := importRequest(t)
+	// The quote stays the inline sentence, so a secret there must exclude the
+	// event even when the adopted sidecar that publication displays is benign.
+	sqlSource(t, req.Profiles[0].LCMPath, "UPDATE messages SET content='password=synthetic-private-value' WHERE store_id=1")
+	db := importStore(t)
+	writer, _ := importMaterials(t, db)
+	req.Materials = writer
+	raw := `{"output":"synthetic output"}`
+	path := filepath.Join(t.TempDir(), "output")
+	if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+	key := LegacyKey{string(HermesLCM), "profile", "messages", "1"}
+	req.Sidecars = []Sidecar{{Key: LegacyKey{string(HermesLCM), "profile", "sidecars", "output"}, Event: key, SnapshotPath: path, SHA256: bytesHash([]byte(raw))}}
+	p, err := Prepare(t.Context(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { p.Close() })
+	if _, err = p.Import(t.Context(), db); err != nil {
+		t.Fatal(err)
+	}
+	ref, err := Resolve(t.Context(), db, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	batches, err := p.PromotionBatches(PromotionPolicy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, batch := range batches {
+		for _, id := range batch.Sources {
+			if id == ref.RecordID {
+				t.Fatalf("inline secret proposed for promotion: %+v", batch)
+			}
+		}
 	}
 }
 

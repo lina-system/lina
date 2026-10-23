@@ -39,9 +39,13 @@ func ClaudeFactory(cfg Config) Factory {
 		return a, a.Close, nil
 	}}
 }
-func CodexFactory(binary string) Factory {
+func CodexFactory(binary string, keys ...[]byte) Factory {
+	var key []byte
+	if len(keys) > 0 {
+		key = keys[0]
+	}
 	return Factory{Name: "codex", Chooser: true, Rules: true, Open: func(ctx context.Context, l lease.Lease) (worker.Adapter, func(context.Context) error, error) {
-		a, err := codex.Open(ctx, l, codex.Config{Executable: binary})
+		a, err := codex.Open(ctx, l, codex.Config{Executable: binary, ApprovalKey: key})
 		if err != nil {
 			return nil, nil, err
 		}

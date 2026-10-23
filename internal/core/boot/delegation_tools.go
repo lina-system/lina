@@ -120,6 +120,7 @@ func (r *conversationRuntime) prepareDelegationTools(turnID string, _ *toolPrepa
 		var result error
 		for _, id := range in.Tasks {
 			result = errors.Join(result, r.delegation.reactor.Observe(ctx, id))
+			r.delegation.retireSettled(ctx, id)
 		}
 		var cards []work.Card
 		for _, id := range in.Tasks {

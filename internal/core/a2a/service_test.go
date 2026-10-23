@@ -353,6 +353,29 @@ func TestMultipartBinaryEvidence(t *testing.T) {
 	}
 }
 
+func TestMultipartJSONArtifactIsValidatedAfterAssembly(t *testing.T) {
+	f := peer(t, "task")
+	call, err := f.send(t, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call.Profile.MediaType = "application/json"
+	body := []byte(`{"result":"verified result"}`)
+	call.Profile.SHA256 = hash(body)
+	first, second := `{"result":`, `"verified result"}`
+	artifacts := []Artifact{{ID: "json", Parts: []Part{{Text: &first, MediaType: "application/json"}, {Text: &second, MediaType: "application/json"}}}}
+	if err = f.service.verify(t.Context(), f.connection, &call, artifacts); err != nil || !call.Verified || len(call.Evidence) != 1 || !bytes.Equal(call.Evidence[0].Body, body) {
+		t.Fatal("split JSON artifact refused", err)
+	}
+
+	// Each part is valid JSON on its own, but the assembled body is not.
+	left, right := `{"result":"verified result"}`, `{"extra":true}`
+	broken := []Artifact{{ID: "json", Parts: []Part{{Text: &left, MediaType: "application/json"}, {Text: &right, MediaType: "application/json"}}}}
+	if err = f.service.verify(t.Context(), f.connection, &call, broken); err == nil || call.Validated {
+		t.Fatal("concatenated non-JSON body admitted")
+	}
+}
+
 func TestOpaqueTaskIDsAreNotJoinedForSecretDetection(t *testing.T) {
 	f := peer(t, "short-ids")
 	call, err := f.send(t, false)

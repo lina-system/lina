@@ -142,8 +142,14 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			Tools:        s.bindings,
 			Transform: func(ctx context.Context, request provider.Request) (provider.Request, error) {
 				request, err := s.toolCatalog.transform(ctx, request)
-				if err != nil || s.compaction == nil {
+				if err != nil {
 					return request, err
+				}
+				// A presented body is durable; the follow-up request carries the
+				// bounded reference so a long result cannot outgrow the model.
+				request = assemble.CondenseResultCalls(request)
+				if s.compaction == nil {
+					return request, nil
 				}
 				return s.compaction.transform(ctx, request)
 			},
@@ -590,7 +596,7 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 	if s.toolCatalog != nil {
 		s.toolCatalog.offset = len(request.Items)
 	}
-	assembly := turn.Assembly{AgentID: r.agent, PersonaRevision: persona.Commit, WorkMethodRevision: persona.WorkMethodRevision, InstructionFormat: "persona-tui-work-method-v1", RequestLayout: ledger.InputBeforeContextV1, PreparedAt: at.Format(time.RFC3339Nano), Profile: append([]turn.Reference(nil), s.memoryRefs...), AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID, Items: append([]turn.Reference(nil), s.memoryRefs...)}
+	assembly := turn.Assembly{AgentID: r.agent, PersonaRevision: persona.Commit, WorkMethodRevision: persona.WorkMethodRevision, InstructionFormat: "persona-tui-work-method-v2", RequestLayout: ledger.InputBeforeContextV1, PreparedAt: at.Format(time.RFC3339Nano), Profile: append([]turn.Reference(nil), s.memoryRefs...), AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID, Items: append([]turn.Reference(nil), s.memoryRefs...)}
 	assembly.Context, err = r.recordContextSources(ctx, packet, report)
 	if err != nil {
 		return turn.PreparedRequest{}, err

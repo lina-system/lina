@@ -142,7 +142,7 @@ func TestM3WorkPanelViewsInstalledCore(t *testing.T) {
 										if e != nil {
 											return false
 										}
-										elapsed := panelElapsed(time.Now().Sub(started))
+										elapsed := panelElapsed(time.Since(started))
 										if !strings.HasSuffix(rows[found], elapsed) {
 											elapsed = panelElapsed(before.Sub(started))
 										}

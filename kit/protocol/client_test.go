@@ -37,6 +37,7 @@ func roundTrip(t *testing.T, value map[string]any) Envelope {
 
 func concretePayloads() map[string]any {
 	return map[string]any{
+		"mock_request":       map[string]any{"action": "read", "result_id": "mock", "revision": float64(1), "conversation_id": "main:agent"},
 		"stop_result":        map[string]any{"run_id": "run-1", "outcome": "cancelled"},
 		"tool_activity":      map[string]any{"call_id": "call-example", "tool_name": "Reading file", "status": "started"},
 		"restart_status":     map[string]any{"owed": false},
@@ -86,6 +87,7 @@ func concretePayloads() map[string]any {
 				"payload": map[string]any{"text": "complete"},
 			}},
 		},
+		"surface_action":      map[string]any{"result_id": "card", "revision": float64(1), "action": "choose", "values": map[string]any{"slot": []any{"wed-1500"}}, "input_id": "press"},
 		"work_switch_request": map[string]any{"operation": "switch_status", "switch_id": "switch-1"},
 		"work_switch_result":  map[string]any{"switch_id": "switch-1", "state": "approved", "approval": "input-1", "snapshot": "hash", "tasks": []any{"task-1"}, "events": []any{}},
 		"resync":              map[string]any{"topic": "conversation:example", "cursor": map[string]any{"epoch": "7", "seq": float64(2)}},
@@ -110,6 +112,9 @@ func TestEveryClientKindRoundTripsWithTypedPayload(t *testing.T) {
 				value = jsonValue(t, fixture(t, kind)).(map[string]any)
 			case "error":
 				value = jsonValue(t, fixture(t, "unsupported_combination")).(map[string]any)
+			case "surface_action", "mock_request", "mock_response":
+
+				value["protocol"].(map[string]any)["version"] = "1.1"
 			case "result_save":
 				value["idempotency_key"] = "example-save-key"
 			}

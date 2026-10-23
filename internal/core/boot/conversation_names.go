@@ -21,7 +21,7 @@ func (r *conversationRuntime) namePacket(ctx context.Context, at time.Time) (ass
 	if r.channelBinding != nil && !r.channelBinding.Scope.Memory {
 		return nil, nil, nil
 	}
-	hits, err := memory.New(r.db).Names(ctx, memory.RecallScope{Agent: r.agent, Person: r.person, ExternalModel: true}, at.Unix())
+	hits, err := r.memoryStore().Names(ctx, memory.RecallScope{Agent: r.agent, Person: r.person, ExternalModel: true}, at.Unix())
 	if err != nil {
 		return nil, nil, err
 	}

@@ -95,6 +95,7 @@ type GoalDecision struct {
 	Decision QuestionDecision
 }
 type Card struct {
+	Steering       []SteeringMessage     `json:"steering,omitempty"`
 	Doing          *observation.Snapshot `json:"doing,omitempty"`
 	StartedAt      time.Time             `json:"started_at,omitzero"`
 	FinishedAt     time.Time             `json:"finished_at,omitzero"`
@@ -132,6 +133,7 @@ type AcceptedCompletion struct {
 // Event has one payload selected by Kind. Events are admitted by Service only;
 // clients and workers never append arbitrary events or acceptance judgments.
 type Event struct {
+	Steering       *SteeringMessage          `json:"steering,omitempty"`
 	Doing          *observation.Snapshot     `json:"doing,omitempty"`
 	RecordedAt     string                    `json:"recorded_at,omitempty"`
 	Scheduling     *Scheduling               `json:"scheduling,omitempty"`

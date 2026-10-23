@@ -40,6 +40,9 @@ func (s *Session) Start(ctx context.Context, l lease.Lease, spec worker.StartSpe
 		return worker.Thread{}, errors.New("Codex session already assigned")
 	}
 	s.started = true
+	if len(spec.ApprovalKey) > 0 {
+		s.approvalKey = append([]byte(nil), spec.ApprovalKey...)
+	}
 	s.tools = declared
 	s.snapshot = worker.ThreadSnapshot{Thread: worker.Thread{TaskID: spec.TaskID, AttemptID: spec.AttemptID, ProcessGeneration: s.generation, BindingEpoch: 1}, State: worker.Unknown, Worker: s.Name(), Version: s.version, Capabilities: s.Capabilities()}
 	s.mu.Unlock()
