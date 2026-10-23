@@ -289,6 +289,14 @@ func agentFixture() {
 					progress("REPLAY_ONLY")
 				}
 			}
+			// Live updates before the response fill the adapter's restore hold.
+			// The burst exceeds the client queue and the hold together, so the
+			// response cannot be read before the hold reaches its bound.
+			if os.Getenv("ACP_RESTORE_BURST") == "overflow" {
+				for range 1024 {
+					thought("LIVE_AFTER_RESTORE")
+				}
+			}
 			reply(f.ID, map[string]any{})
 			// A live update follows the restore response and must reach the adapter.
 			thought("LIVE_AFTER_RESTORE")

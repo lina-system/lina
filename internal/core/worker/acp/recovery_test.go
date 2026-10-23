@@ -80,6 +80,17 @@ func TestRecoverAttemptRestoresBeforePrompt(t *testing.T) {
 	}
 }
 
+func TestRestoreOverflowFailsInsteadOfDropping(t *testing.T) {
+	a, ctx, l, spec := fixture(t)
+	a.cfg.Environment = append(a.cfg.Environment, "ACP_RECOVERY=resume", "ACP_RESTORE_BURST=overflow")
+	prior := worker.Thread{ID: "fixture", TurnID: "acp:1", TaskID: spec.TaskID, AttemptID: "previous", ProcessGeneration: 999, BindingEpoch: 6}
+	th, err := a.RecoverAttempt(ctx, l, spec, prior)
+	// Losing a live update would hide effects, so the restore fails instead.
+	if !errors.Is(err, wire.ErrOverflow) || th.ID != "" {
+		t.Fatalf("restore over the hold limit: thread=%+v error=%v", th, err)
+	}
+}
+
 func TestTerminalSnapshotRetainsRecoveryEvidence(t *testing.T) {
 	for _, effect := range []string{"none", "tool", "unknown", "replay"} {
 		t.Run(effect, func(t *testing.T) {
