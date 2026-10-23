@@ -2,6 +2,7 @@
 package goal
 
 import (
+	"reflect"
 	"slices"
 )
 
@@ -10,7 +11,7 @@ func sameTaskDefinition(a, b Task) bool {
 	ad, bd := slices.Clone(a.DependsOn), slices.Clone(b.DependsOn)
 	slices.Sort(ad)
 	slices.Sort(bd)
-	return a.ID == b.ID && a.Done == b.Done && a.Repository == b.Repository &&
+	return stepKind(a.Kind) == stepKind(b.Kind) && reflect.DeepEqual(a.Background, b.Background) && reflect.DeepEqual(a.Wait, b.Wait) && a.ID == b.ID && a.Done == b.Done && a.Repository == b.Repository &&
 		a.Base == b.Base && a.Area == b.Area && a.Worker == b.Worker &&
 		a.Resources == b.Resources && a.Repairs == b.Repairs && slices.Equal(ad, bd)
 }
