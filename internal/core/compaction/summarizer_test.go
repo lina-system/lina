@@ -111,6 +111,35 @@ func TestRetainedPrefixRequestKeepsSegmentToolsAndMarks(t *testing.T) {
 	}
 }
 
+// A request without a boundary sends the same prefix items and tools but no
+// cache mark, which is the shape the summary had before it reused the
+// conversation's cached prefix.
+func TestSummaryRequestWithoutLayoutDropsTheCachedBoundary(t *testing.T) {
+	prefix := provider.Position{Items: 1, Tools: 1}
+	previous := provider.Position{Items: 2, Tools: 1}
+	current := provider.Position{Items: 6, Tools: 1}
+	var sent provider.Request
+	stream := &summaryStream{events: []provider.Event{{Kind: provider.ItemDone, Item: summaryItem(t)}, {Kind: provider.Terminal}}}
+	a := Auxiliary{RetainPrefix: true, Request: provider.Request{
+		Model: "model", Instructions: "fixed persona", Items: []provider.Item{message("fixed")},
+		CacheIdentity: strings.Repeat("a", 64),
+		Capabilities: provider.CapabilityUse{CacheIdentity: strings.Repeat("a", 64), CacheMarks: []provider.CacheMark{
+			{Position: prefix, Lifetime: provider.Cache1Hour},
+			{Position: previous, Lifetime: provider.Cache1Hour},
+			{Position: current, Lifetime: provider.Cache1Hour},
+		}},
+	}, Stream: func(_ context.Context, r provider.Request) (provider.Stream, error) { sent = r; return stream, nil }}
+	if _, err := a.Summarize(t.Context(), PassSegment{Records: []Record{{ID: "r1", Item: message("one")}}}); err != nil {
+		t.Fatal(err)
+	}
+	if sent.Layout != nil || len(sent.Capabilities.CacheMarks) != 0 {
+		t.Fatalf("a request without a boundary kept marks: %+v %+v", sent.Layout, sent.Capabilities)
+	}
+	if len(sent.Items) != 3 || !bytes.Equal(sent.Items[0], message("fixed")) || sent.CacheIdentity == "" {
+		t.Fatalf("baseline summary lost its prefix or identity: %s", sent.Items)
+	}
+}
+
 func TestSummaryToolCallFailsWithoutRunning(t *testing.T) {
 	stream := &summaryStream{events: []provider.Event{{Kind: provider.ToolCallReady, Call: &provider.ToolCall{ID: "call", Name: "read_file"}}, {Kind: provider.Terminal}}}
 	a := Auxiliary{Request: provider.Request{Model: "model"}, Stream: func(context.Context, provider.Request) (provider.Stream, error) { return stream, nil }}
