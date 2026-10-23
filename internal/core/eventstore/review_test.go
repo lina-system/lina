@@ -131,6 +131,17 @@ func TestPrepareReserveStillRejectsUnsafeFiles(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			// WriteFile applies the process umask. The unsafe reserve must stay
+			// mode 0644 or a restrictive mask turns the fixture private.
+			if kind == "permissions" {
+				if err := os.Chmod(path, 0644); err != nil {
+					t.Fatal(err)
+				}
+				info, err := os.Lstat(path)
+				if err != nil || info.Mode().Perm() != 0644 {
+					t.Fatalf("public reserve mode: %v %v", info, err)
+				}
+			}
 			if r, err := prepareReserve(dir, func(*os.File) error { t.Fatal("unsafe file reached allocator"); return nil }); err == nil {
 				r.Close()
 				t.Fatal("unsafe reserve accepted")
