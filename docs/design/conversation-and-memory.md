@@ -314,7 +314,7 @@ Word lists and timing do not bind. In the owner's data, status, memory and new-w
 - two targets still tie after the rules and its own reading;
 - a wrong pick would do something a move cannot undo: steer a running task or run, start work that runs at once, or send, pay or delete.
 
-It asks one question, with its recommended pick first and the tied targets as one-tap answers. Otherwise it picks the most likely target and shows it. A question the person passes over closes at their next unrelated turn, and the recommended pick applies. The tie is read from the candidates and the cost of a wrong pick, never from the model's stated confidence. No message in the owner's data needed such a question.
+It asks one question, with its recommended pick first and the tied targets as one-tap answers. Otherwise it picks the most likely target and shows it. Until the person answers, the message is held: nothing is steered, started, sent, paid or deleted for it, and the question stays a row in "Waiting for me" ([surfaces.md](surfaces.md#waiting-for-me)). Unlike other passed-over questions ([Applying the record](preset-work-methods.md#applying-the-record)), it never falls back to the recommended pick, because that pick is the one a move could not undo. The tie is read from the candidates and the cost of a wrong pick, never from the model's stated confidence. No message in the owner's data needed such a question.
 
 **Showing and moving.**
 
