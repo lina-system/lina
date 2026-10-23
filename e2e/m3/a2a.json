@@ -1,0 +1,15 @@
+{
+  "artifact": "Observable remote operation result.",
+  "modes": [
+    "task",
+    "direct",
+    "stream",
+    "binary",
+    "claim",
+    "input",
+    "auth",
+    "lost",
+    "forbidden",
+    "leak"
+  ]
+}

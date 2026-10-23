@@ -47,7 +47,10 @@ func interruptNotice(ctx context.Context, tx *canon.Tx, id string, cause Interru
 	return terminalNotice(ctx, tx, id, &cause.Issuer, "interruption", "notice."+string(cause.Issuer))
 }
 
-func failureNotice(ctx context.Context, tx *canon.Tx, id string) error {
+func failureNotice(ctx context.Context, tx *canon.Tx, id string, cause error) error {
+	if errors.Is(cause, ErrRequestTooLarge) {
+		return terminalNotice(ctx, tx, id, nil, "failure", "notice.request_too_large")
+	}
 	return terminalNotice(ctx, tx, id, nil, "failure", "notice.failed")
 }
 
