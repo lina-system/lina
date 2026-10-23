@@ -31,7 +31,7 @@ func TestWorkerSteeringThroughRunningCore(t *testing.T) {
   await bridge.call('tools/call',{name:'check_inbox',arguments:{read:[mail.id]}});
   fs.writeFileSync(path.join(root,'steering-id'),mail.id);
   const definition=JSON.parse(messageText(packet).slice(messageText(packet).indexOf('{')));`, 1)
-	script = strings.Replace(script, "fs.writeFileSync('result.txt','ACP result\\n')", "fs.writeFileSync('result.txt',mail.text+'\\n')", 1)
+	script = strings.Replace(script, "fs.writeFileSync('result.txt','ACP result\\n')", "fs.writeFileSync('result.txt',messageText(mail.text)+'\\n')", 1)
 	script = strings.Replace(script, "reply(pending,{stopReason:'end_turn'});", `await bridge.call('tools/call',{name:'check_inbox',arguments:{acted:[mail.id]}});
   await bridge.close();reply(pending,{stopReason:'end_turn'});`, 1)
 	runACPWorkersThroughRunningCore(t, []acpScenario{{name: "steering", worker: "gemini", binary: "gemini", mode: "steering", script: script,

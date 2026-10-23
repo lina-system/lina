@@ -539,8 +539,19 @@ func (r *conversationRuntime) workerOperationWithOwner(ctx context.Context, name
 	}
 	if name == "worker_input" {
 
+		sender, kind := r.agent, "agent"
+		if owner {
+			sender, kind = r.person, "person"
+		}
+		id, _ := ctx.Value(workerCallIdentityKey{}).(string)
+		if owner {
+			id = turn.EffectKey(r.conversation, "owner_worker_input", snap.Thread.ID, turnID)
+		}
+		if id == "" {
+			id = rand.Text()
+		}
 		if owner && snap.Thread.TaskID != "" {
-			if err := worker.ResetMessages(ctx, r.db, snap.Thread.TaskID, "owner:"+turnID); err != nil {
+			if err := worker.ResetMessages(ctx, r.db, snap.Thread.TaskID, "owner:"+id); err != nil {
 				activity.Release()
 				return tools.Result{State: tools.Failed}, err
 			}
@@ -549,17 +560,6 @@ func (r *conversationRuntime) workerOperationWithOwner(ctx context.Context, name
 				activity.Release()
 				return tools.Result{State: tools.Failed}, err
 			}
-		}
-		sender, kind := r.agent, "agent"
-		if owner {
-			sender, kind = r.person, "person"
-		}
-		id, _ := ctx.Value(workerCallIdentityKey{}).(string)
-		if owner {
-			id = "owner:" + turnID
-		}
-		if id == "" {
-			id = rand.Text()
 		}
 		if !owner && snap.Thread.TaskID != "" {
 			if err := worker.AdmitMessage(ctx, r.db, snap.Thread.TaskID, id, a.Text); err != nil {
