@@ -77,3 +77,50 @@ func TestRecurrenceForms(t *testing.T) {
 		}
 	}
 }
+
+func TestRecurrenceIntervalHorizonAdmission(t *testing.T) {
+	for _, rule := range []string{
+		"FREQ=YEARLY;INTERVAL=400", "FREQ=YEARLY;INTERVAL=500",
+		"FREQ=MONTHLY;INTERVAL=4800", "FREQ=MONTHLY;INTERVAL=6000",
+		"FREQ=WEEKLY;INTERVAL=20871", "FREQ=WEEKLY;INTERVAL=100000",
+	} {
+		t.Run(rule, func(t *testing.T) {
+			s, _ := openTimers(t, t.TempDir(), 1)
+			now := instant("2026-01-01T00:00:00Z")
+			tm := timerFixture("oversize", "reminder")
+			tm.Schedule = Schedule{Start: now.Add(time.Hour), Zone: "UTC", RRule: rule}
+			if _, err := s.Create(t.Context(), tm, now); err == nil {
+				t.Fatal("accepted interval outside advancement horizon")
+			}
+			normal := timerFixture("normal", "reminder")
+			if _, err := s.Create(t.Context(), normal, now); err != nil {
+				t.Fatal(err)
+			}
+			fires, err := s.ClaimDue(t.Context(), now.Add(time.Hour), "1")
+			if err != nil || len(fires) != 1 || fires[0].Timer.ID != normal.ID {
+				t.Fatalf("unrelated timer blocked: fires=%+v err=%v", fires, err)
+			}
+		})
+	}
+}
+
+func TestRecurrenceIntervalsWithinHorizon(t *testing.T) {
+	for _, rule := range []string{
+		"FREQ=YEARLY;INTERVAL=399", "FREQ=MONTHLY;INTERVAL=4799",
+		"FREQ=WEEKLY;INTERVAL=20870", "FREQ=DAILY;INTERVAL=100000",
+		"FREQ=HOURLY;INTERVAL=100000", "FREQ=MINUTELY;INTERVAL=100000",
+	} {
+		t.Run(rule, func(t *testing.T) {
+			start := instant("2026-01-01T00:00:00Z")
+			s := Schedule{Start: start, Zone: "UTC", RRule: rule}
+			first, err := s.Next(start.Add(-time.Minute))
+			if err != nil || !first.Equal(start) {
+				t.Fatal(first, err)
+			}
+			next, err := s.Next(first)
+			if err != nil || !next.After(first) || !next.Before(start.AddDate(400, 0, 0)) {
+				t.Fatal(next, err)
+			}
+		})
+	}
+}
