@@ -1751,6 +1751,12 @@ assembly references and digest. This does not retain a transient ContextPacket
 or credentials. The identity-aware format calls the same `assemble.Instructions`
 builder as live turns; the recorded identity is used even if the agent is later
 renamed. Legacy layer-only records retain their original assembly format.
+Profile references retain their request order. Reconstruction uses the same
+single-line whitespace projection as the live profile over each authorized,
+masked memory revision. A correction successor excludes the predecessor even
+when its original revision is still stored. The installed-Core scenario in
+`e2e/m1/memory_replay_test.go` checks exact requests after restart, current
+memory exclusions and unchanged canon bytes through export and replay.
 A producer that lacks reconstructible assembly evidence is
 excluded with `missing_assembly`; replay never substitutes today's history or
 persona. Current assistant reply events and the structured source references in recorded
