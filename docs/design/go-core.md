@@ -973,7 +973,7 @@ added candidate to-do; it refuses a subsequent edit. Both check the requesting
 person and record revision. An undo is idempotent and never reactivates a
 rejected candidate.
 
-Migration 44 adds the canonical `record_operations` and `record_candidates`
+Migration 45 adds the canonical `record_operations` and `record_candidates`
 machine-state tables, without modifying existing files. Operation membership,
 undo handles and candidate admission results travel in the records publication
 intent and commit with its index checkpoint. Recovery therefore cannot publish
