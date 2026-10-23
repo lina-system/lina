@@ -21,6 +21,7 @@ import (
 )
 
 func TestRestoreReplaysRemovalsBeforeFirstReadInAnotherRoot(t *testing.T) {
+	t.Parallel()
 	for _, operation := range []string{"forget", "delete", "recover"} {
 		t.Run(operation, func(t *testing.T) {
 			db := restoreDB(t)
@@ -190,6 +191,7 @@ func TestRestoreReplaysRemovalsBeforeFirstReadInAnotherRoot(t *testing.T) {
 }
 
 func TestRestoreRemovalListsNeverDiscardNewerHistory(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		source, target, want string
 		invalid              bool
@@ -208,6 +210,7 @@ func TestRestoreRemovalListsNeverDiscardNewerHistory(t *testing.T) {
 }
 
 func TestRestoreRefusesMissingRemovalList(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	if err := os.Chmod(root, 0700); err != nil {
 		t.Fatal(err)
