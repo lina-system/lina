@@ -27,7 +27,7 @@ func assertConformance(t *testing.T, h *harness, mode string) {
 	var rr review.Record
 	var card work.Card
 	var d dispatch.Record
-	if err = db.QueryRow("SELECT record FROM work_reviews").Scan(&raw); err != nil {
+	if err = db.QueryRow("SELECT record FROM work_reviews ORDER BY json_extract(record,'$.generation') DESC LIMIT 1").Scan(&raw); err != nil {
 		t.Fatal(err)
 	}
 	if err = json.Unmarshal(raw, &rr); err != nil {
@@ -45,7 +45,7 @@ func assertConformance(t *testing.T, h *harness, mode string) {
 	if err = json.Unmarshal(raw, &d); err != nil {
 		t.Fatal(err)
 	}
-	if card.Receipt == nil || rr.Receipt != card.Receipt.EventID || rr.Head != card.Head || d.PR == nil || rr.Head != d.PR.Head || card.Applied {
+	if card.Receipt == nil || rr.Receipt != card.Receipt.EventID || rr.Head != card.Head || d.PR == nil || rr.Head != d.PR.Head || card.Applied != (mode == "success") {
 		t.Fatal("review did not bind the actual delivery", rr, card)
 	}
 	if d.DesignText["design.md#result"] == "" || len(d.ChangedFiles) == 0 {
@@ -57,7 +57,7 @@ func assertConformance(t *testing.T, h *harness, mode string) {
 	}
 	switch mode {
 	case "scope":
-		if rr.Verdict != "needs_changes" || card.Verdict != "needs_changes" || !strings.Contains(rr.Evidence, "outside.txt") || len(rr.Findings) != 0 || managerInputs != 0 {
+		if rr.Verdict != "needs_changes" || card.Verdict != "" || card.State != "input_needed" || !strings.Contains(rr.Evidence, "outside.txt") || len(rr.Findings) != 0 || managerInputs != 0 {
 			t.Fatalf("scope miss called model or lost evidence: %+v calls=%d", rr, managerInputs)
 		}
 	case "failed-check":
@@ -69,7 +69,7 @@ func assertConformance(t *testing.T, h *harness, mode string) {
 			t.Fatalf("prose stored judgment: %+v calls=%d", rr, managerInputs)
 		}
 	case "findings":
-		if rr.State != "complete" || rr.Verdict != "needs_changes" || len(rr.Findings) != 1 || rr.Findings[0].Severity != "P1" || managerInputs != 1 {
+		if rr.State != "complete" || rr.Verdict != "needs_changes" || len(rr.Findings) != 1 || rr.Findings[0].Severity != "P1" || managerInputs != 2 || card.Verdict != "" || card.State != "input_needed" {
 			t.Fatalf("structured result lost: %+v calls=%d", rr, managerInputs)
 		}
 	case "success":

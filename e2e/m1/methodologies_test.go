@@ -195,8 +195,8 @@ func assertCodingOwnership(t *testing.T, h *harness, owner, origin string, verif
 		if err = json.Unmarshal(raw, &card); err != nil {
 			t.Fatal(err)
 		}
-		if card.Task.AgentID != owner || card.Task.ConversationID != dispatched.Manager || card.Receipt == nil || card.Verdict != "verified" || card.Applied {
-			t.Fatalf("coding work lacks dev judgment or falsely merged: %+v", card)
+		if card.Task.AgentID != owner || card.Task.ConversationID != dispatched.Manager || card.Receipt == nil || card.Verdict != "verified" || !card.Applied {
+			t.Fatalf("coding work lacks dev judgment or confirmed merge: %+v", card)
 		}
 		var completed int
 		if err = db.QueryRow("SELECT count(*) FROM turn_runs WHERE conversation=? AND state='completed'", dispatched.Manager).Scan(&completed); err != nil || completed != managerTurns {

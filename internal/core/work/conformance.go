@@ -10,6 +10,16 @@ import (
 // ConformanceIn commits a Core-owned delivery decision together with its review
 // record. The current receipt and observed head must still match at commit.
 func ConformanceIn(ctx context.Context, tx *canon.Tx, task, receipt, head, verdict, evidence string) error {
+	return conformanceIn(ctx, tx, task, receipt, head, verdict, evidence, "block:")
+}
+
+// BlockDeliveryIn records final delivery rejection separately from the initial
+// merge-precondition observation, without inventing a verified verdict.
+func BlockDeliveryIn(ctx context.Context, tx *canon.Tx, task, receipt, head, evidence string) error {
+	return conformanceIn(ctx, tx, task, receipt, head, "", evidence, "delivery-block:")
+}
+
+func conformanceIn(ctx context.Context, tx *canon.Tx, task, receipt, head, verdict, evidence, blockKey string) error {
 	var raw []byte
 	var card Card
 	if err := tx.QueryRowContext(ctx, "SELECT record FROM work_cards WHERE task_id=?", task).Scan(&raw); err != nil {
@@ -26,7 +36,7 @@ func ConformanceIn(ctx context.Context, tx *canon.Tx, task, receipt, head, verdi
 	}
 	e := Event{Key: "judge:" + receipt, TaskID: task, Kind: "judged", ReceiptID: receipt, Value: verdict, Evidence: evidence}
 	if verdict == "" {
-		e.Key = "block:" + receipt
+		e.Key = blockKey + receipt
 		e.Kind = "blocked"
 	}
 	return appendEvent(ctx, tx, e)
