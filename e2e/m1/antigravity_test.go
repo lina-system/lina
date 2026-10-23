@@ -32,6 +32,7 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 		Cases []struct {
 			Name, Expected, Preset, Choice string
 			LegacyAdmission                bool `json:"legacy_admission"`
+			HostCapacity                   bool `json:"host_capacity"`
 			Omit                           string
 			DesignRef                      string `json:"design_ref"`
 			MoveBase                       bool   `json:"move_base"`
@@ -66,11 +67,12 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 		t.Run(test.Name, func(t *testing.T) {
 			t.Parallel()
 			workerCase := test.Name
-			if test.Preset != "" || test.LegacyAdmission || test.MoveBase {
+			if test.Preset != "" || test.LegacyAdmission || test.MoveBase || test.HostCapacity {
 				workerCase = "success"
 			}
 			var err error
 			fixture := t.TempDir()
+			load := newWorkerLoad(t, fixture)
 			repo := filepath.Join(fixture, "repo")
 			bin := filepath.Join(fixture, "bin")
 			for _, dir := range []string{repo, bin} {
@@ -149,10 +151,6 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 					return
 				}
 				callNumber := calls.Add(1)
-				if test.Choice == "capacity" && callNumber == 3 {
-					emitResponse(w, "Continuing the task.", true)
-					return
-				}
 				if callNumber == 1 || test.Choice == "overlap" && callNumber == 3 {
 					for _, tool := range req.Tools {
 						if tool.Name == "dispatch_work" {
@@ -180,7 +178,9 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 					if code == "" {
 						code = "ok"
 					}
-					methodologyOutput(t, methodologyRequest{Input: req.Input}, code, nil)
+					if !test.HostCapacity || callNumber == 2 {
+						methodologyOutput(t, methodologyRequest{Input: req.Input}, code, nil)
+					}
 					emitResponse(w, "Task accepted.", true)
 				}
 			}))
@@ -205,30 +205,26 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 				managerTurns = 1
 			}
 			fixtureCase := workerCase
+			if test.HostCapacity {
+				load.set(t, "1000000.00")
+			}
 			if test.Choice != "" {
 				fixtureCase = test.Choice
 			}
-			loadFile := filepath.Join(fixture, "loadavg")
-			load := "0.00 0.00 0.00 1/1 1\n"
-			if test.Choice == "capacity" {
-				load = "1000000.00 1000000.00 1000000.00 1/1 1\n"
-			}
-			if err = os.WriteFile(loadFile, []byte(load), 0600); err != nil {
-				t.Fatal(err)
-			}
-			var coreProcess *os.Process
 			start := func() *process {
 				p := h.command("core", "--state-root", h.root, "--socket", h.socket)
 				p.command.Env = append(p.command.Env, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "LINA_WORKER_FIXTURE="+fixture, "LINA_WORKER_CASE="+fixtureCase, "LINA_RESPONSES_BASE_URL="+server.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
-				boundProcess := bindDispatchLoad(t, p, loadFile)
+				load.wrap(t, p)
 				p.start(t)
-				coreProcess = boundProcess()
 				h.connectWithin(p, time.Minute).Close()
 				waitCoreReady(t, h)
 				return p
 			}
 			core := start()
 			t.Cleanup(func() {
+				if t.Failed() {
+					logWorkerDispatchState(t, h, fixture)
+				}
 				if t.Failed() && test.Choice == "quota-windows" {
 					logWorkerQuotaState(t, h)
 				}
@@ -242,12 +238,12 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 			events := admittedTurn(t, h, c, conversation, "delegate", "Create result.txt through the installed worker and submit its PR.")
 			if !offered.Load() || t.Failed() {
 				c.Close()
-				h.stopCore(core, coreProcess)
+				h.stopCore(core)
 				return
 			}
 			if test.ToolCode == "invalid_arguments" {
 				c.Close()
-				h.stopCore(core, coreProcess)
+				h.stopCore(core)
 				assertDefinitionRefused(t, h, fixture)
 				return
 			}
@@ -259,13 +255,19 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 				}
 				managerTurns++
 			}
-			if test.Choice == "capacity" {
-				waitForHostCapacity(t, h, fixture)
-				// Preserve the bind-mounted inode while publishing headroom.
-				if err = os.WriteFile(loadFile, []byte("0.00 0.00 0.00 1/1 1\n"), 0600); err != nil {
-					t.Fatal(err)
-				}
-				events = append(events, admittedTurn(t, h, c, conversation, "capacity-ready", "Continue the accepted task.")...)
+			var capacityID string
+			resultContext := h.ctx
+			if test.HostCapacity {
+				capacityID = waitForHostCapacity(t, h, fixture)
+				load.set(t, "0.00")
+				// Finish before the dispatcher's minute-long safety sweep: the
+				// new input's committed event must wake this queued dispatch.
+				var cancel context.CancelFunc
+				resultContext, cancel = context.WithTimeout(h.ctx, operationTimeout)
+				defer cancel()
+				recovery := *h
+				recovery.ctx = resultContext
+				events = append(events, admittedTurn(t, &recovery, c, conversation, "capacity-released", "The host has capacity again.")...)
 			}
 			found := false
 			inspect := func(e protocol.Envelope) {
@@ -280,9 +282,9 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 				inspect(e)
 			}
 			for !found {
-				e, err := c.Receive(h.ctx)
+				e, err := c.Receive(resultContext)
 				if err != nil {
-					t.Fatal("worker result missing", err, dispatchedWorkerDiagnostic(h, fixture))
+					t.Fatal("worker result missing", err)
 				}
 				inspect(e)
 			}
@@ -290,7 +292,7 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 				waitCompletionHandled(t, h)
 			}
 			c.Close()
-			h.stopCore(core, coreProcess)
+			h.stopCore(core)
 			assertCodingOwnership(t, h, ids["dev"], conversation, workerCase == "success", managerTurns)
 			if test.Choice != "" {
 				assertWorkerChoice(t, h, fixture, test.Choice)
@@ -327,6 +329,9 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 				}
 			}
 			beforeRestart := providerCalls.Load()
+			if test.HostCapacity {
+				assertCapacityWorkOnce(t, h, fixture, capacityID)
+			}
 			if scenario.CompletionEvents {
 				loseCompletion(t, h)
 			}
@@ -345,19 +350,20 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 				t.Fatalf("durable result lost: %s", saved)
 			}
 			c.Close()
-			h.stopCore(core, coreProcess)
+			h.stopCore(core)
 			if scenario.CompletionEvents {
 				assertWorkCompletion(t, h)
 			}
-			if scenario.CompletionEvents && providerCalls.Load() != beforeRestart {
+			if (scenario.CompletionEvents || test.HostCapacity) && providerCalls.Load() != beforeRestart {
 				t.Fatal("restart replayed a manager or conversation model call")
 			}
 			expectedCalls := int32(2)
+			if test.HostCapacity {
+				expectedCalls++
+				assertCapacityWorkOnce(t, h, fixture, capacityID)
+			}
 			if test.Choice == "overlap" {
 				expectedCalls = 4
-			}
-			if test.Choice == "capacity" {
-				expectedCalls = 3
 			}
 			if calls.Load() != expectedCalls {
 				t.Fatalf("restart replayed provider: %d", calls.Load())

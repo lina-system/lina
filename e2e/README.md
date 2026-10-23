@@ -315,6 +315,13 @@ creates its assigned branch at the detached base, produces a real commit and
 attempts ordinary writes to protected refs. Assertions check the shared
 `work/tasks` allocation, independent parent clone, unchanged source checkout,
 clean result, artifact provenance and live-card equivalence to ledger replay.
+The shared installed-worker harness gives each Linux Core a private loadavg
+fixture through a Bubblewrap read-only bind mount. Its default is idle, so host
+load cannot park unrelated worker scenarios. The capacity case first observes
+`queued / host_capacity` with no attempt or launch, then lowers load and sends
+a new conversation input. The same work produces its result once and is not
+replayed after restart. Failures include dispatch state, wait, attempts and
+worker launch observations. Production sampling, limits and timeouts are unchanged.
 Run it with `go test -count=1 ./e2e/m1 -run '^TestM2DispatchedWorkArea$'`.
 
 `m2/tui-composer-identity.json` installs Core/TUI into a temporary root and creates
@@ -488,10 +495,3 @@ replacement worker commits a real result. Persisted quota keeps the windows
 independent before and after restart, and selection at the reported short-window
 reset does not wait for the healthy weekly window. Reset-boundary assertions use
 explicit times rather than waiting for a provider window.
-
-The installed-worker scenarios bind a private synthetic `/proc/loadavg` into the
-Core's test mount namespace. Concurrent build load cannot decide their outcome.
-Core still uses its production host sampler and capacity rules. The capacity
-case observes a durable wait with no worker launch under high load, then changes
-the sample and commits a conversation event to release the same task. This does
-not change the host's `/proc` or production settings.

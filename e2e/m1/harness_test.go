@@ -144,6 +144,7 @@ func newHarness(t *testing.T, binary string) *harness {
 
 type process struct {
 	command *exec.Cmd
+	signal  func(os.Signal) error // Optional child target for a test-only launcher.
 	done    chan struct{}
 	err     error // Read only after done closes, including all diagnostic buffers.
 	stdout  bytes.Buffer
@@ -246,13 +247,13 @@ func (h *harness) connectWithin(core *process, timeout time.Duration) net.Conn {
 	}
 }
 
-func (h *harness) stopCore(core *process, target ...*os.Process) {
+func (h *harness) stopCore(core *process) {
 	h.t.Helper()
-	signalTarget := core.command.Process
-	if len(target) > 0 {
-		signalTarget = target[0]
+	signal := core.signal
+	if signal == nil {
+		signal = core.command.Process.Signal
 	}
-	if err := signalTarget.Signal(syscall.SIGTERM); err != nil {
+	if err := signal(syscall.SIGTERM); err != nil {
 		h.t.Fatal(err)
 	}
 	core.wait(h.t, 0)
