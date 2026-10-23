@@ -287,6 +287,11 @@ func agentFixture() {
 			}
 			text := f.Params.Prompt[0].Text
 			switch text {
+			case "rpc-error", "rpc-error-exit":
+				send(map[string]any{"jsonrpc": "2.0", "id": f.ID, "error": map[string]any{"code": -32603, "message": "private-prompt-detail", "data": map[string]any{"detail": "private-error-data"}}})
+				if text == "rpc-error-exit" {
+					os.Exit(0)
+				}
 			case "permission", "question":
 				pending, requestMode = f.ID, text
 				method := "session/request_permission"

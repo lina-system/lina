@@ -69,15 +69,19 @@ func (a *Adapter) prompt(th worker.Thread, replies <-chan wire.PromptResult) {
 				<-requests
 			}
 			if result.Err != nil {
-				f := worker.Finish{Status: worker.Failed, Failure: worker.ConnectionFailure, Code: "prompt_failed"}
-				var rpc *wire.RPCError
-				if errors.As(result.Err, &rpc) {
-					f.Failure, f.Code = worker.WorkerFailure, fmt.Sprintf("rpc_%d", rpc.Code)
-					if rpc.Code == -32000 {
-						f.Failure = worker.LoginFailure
-					}
+				// An error reply observes termination, not the outcome of its
+				// effects. Later prompts cannot reconcile that uncertainty.
+				a.mu.Lock()
+				a.uncertainEffects = true
+				a.mu.Unlock()
+				failure := worker.ConnectionFailure
+				var remote *wire.RPCError
+				if errors.As(result.Err, &remote) {
+					// A complete error reply ends the turn even if EOF follows.
+					// Retain neither its numeric code nor remote message/data.
+					failure = worker.WorkerFailure
 				}
-				a.finish(th, f)
+				a.finish(th, worker.Finish{Status: worker.Failed, Failure: failure, Code: "prompt_failed"})
 				return
 			}
 			a.mu.Lock()
@@ -227,7 +231,7 @@ func (a *Adapter) observeNativeTool(id string, status *wire.ToolCallStatus, init
 	a.nativeTools[id] = known
 }
 func (a *Adapter) effectsKnownLocked() bool {
-	if len(a.pending) != 0 || a.nativeOverflow {
+	if len(a.pending) != 0 || a.nativeOverflow || a.uncertainEffects {
 		return false
 	}
 	for _, known := range a.nativeTools {

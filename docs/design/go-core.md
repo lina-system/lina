@@ -103,7 +103,7 @@ Layers under `internal/core/`:
 | Layer | Packages |
 | --- | --- |
 | L1 | `canon` (writer, fence, migrations), `eventstore`, `secrets`, `ctlfiles`, `guard` (masking), `ids` |
-| L2 | `authority` (gate, grants, approvals, effect ledger), `lifecycle`, `budget`, `manifest` |
+| L2 | `authority` (gate, grants, approvals, effect ledger), `lifecycle`, `budget`, `manifest`, `toolcatalog` (pure declaration reconstruction) |
 | L3 | One store per table group: `ledger`, `inbox`, `agents`, `memory`, `retract`, `skills`, `records`, `assets`, `work`, `timers`, `plugins`, `channels`, `accounts` |
 | L4 | Flows: `lane`, `assemble`, `compaction`, `turn`, `runs`, `replay`, `intakereplay`, `reply`, `results`, `modelpath`, `exec`, `exchange`, `gateway`, `worker`, `reactor`, `review`, `ghclient`, `progress`, `waiting`, `backup`, `update`, `recover`, `clientsrv`, `jobs`, `mcphost`, `install` |
 | L5 | `boot`, `supervise` |
@@ -1232,6 +1232,10 @@ The protocol is one JSON message per line on stdio.
 - Core to adapter: `start` (system text, items, tool declarations, model, effort), `tool_result`, `cancel`, `ping`.
 - Adapter to Core: `init` (tools, MCP servers and plugins the runtime loaded), `delta`, `item_done`, `tool_call`, `usage`, `limit`, `terminal` (reason, session id, cost estimate), `error`.
 - Core refuses the turn if `init` lists anything LINA did not put there.
+- Ending the stream context or a pending `Next` context terminates the request,
+  unblocks its stdio reads and writes, and makes `Next` return the context error
+  even if the runtime is silent. The runtime and its supervisor are reaped
+  without requiring a separate `Close`; `Close` remains an idempotent join.
 - First use installs the SDK from the release lockfile ([runtime.md](runtime.md#provider-adapters)); it is never shipped in LINA artifacts.
 
 Implementation notes: [C-45 runtime increment](../../adapters/claude/REFERENCE.md#c-45-runtime-increment).
@@ -2426,7 +2430,9 @@ Evidence: [worker-protocols.md](../research/worker-protocols.md).
 | `session/update`: message, thought, tool call, tool-call update, plan | progress |
 | `usage_update`, usage in the `session/prompt` reply | usage |
 | `session/prompt` reply | finish: `end_turn` done; `cancelled` interrupted; `refusal`, `max_tokens`, `max_turn_requests` failed as a worker error naming the stop reason |
-| JSON-RPC error on a request; session-failure extension | finish failed: -32000 login expiry; extension kinds map to quota, rate limit, login or connection |
+| `session/new` JSON-RPC error -32000 | readiness refusal: needs sign-in |
+| `session/prompt` JSON-RPC error | finish failed: worker error with `prompt_failed`; effects remain unknown |
+| Advertised session-failure extension | finish failed: quota, rate limit, login or connection |
 | `session/request_permission` | approval |
 | `elicitation/create` (form) | question |
 | A tool call on LINA's session MCP server | work-tool call |
@@ -2444,7 +2450,8 @@ Evidence: [worker-protocols.md](../research/worker-protocols.md).
   categories/actions are classified. Prompt RPC errors and stop reasons retain
   precedence; warning updates and unknown metadata cannot finish a turn.
   A terminal ACP snapshot carries its observed finish; transport loss leaves
-  effects unknown, as do native tool calls without a reported terminal outcome.
+  effects unknown, as do prompt errors and native tool calls without a reported
+  terminal outcome. A later prompt does not reconcile an earlier error.
   Dispatch persists streamed quota measurements before session
   teardown and uses that snapshot to fence the one allowed replacement.
   The synthetic installed-Core scenario is `e2e/m2/acp_quota_test.go`.

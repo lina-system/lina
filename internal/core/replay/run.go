@@ -11,6 +11,7 @@ import (
 	"io"
 	"sync"
 
+	"github.com/thisisjun786/lina/internal/core/toolcatalog"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/provider"
 )
@@ -77,6 +78,11 @@ func Run(ctx context.Context, cfg RunConfig) (loop.Outcome, error) {
 		}
 		recorded[key] = append(recorded[key], *call.Result)
 	}
+	all, err := recordedDeclarations(cfg.Calls)
+	if err != nil {
+		return loop.Outcome{}, err
+	}
+	catalog := &toolcatalog.Catalog{First: cfg.Request.Tools, All: all, Offset: len(cfg.Request.Items)}
 	var mu sync.Mutex
 	missing := false
 	cfg.Request.Purpose = provider.Replay
@@ -100,13 +106,13 @@ func Run(ctx context.Context, cfg RunConfig) (loop.Outcome, error) {
 			missing = true
 			return &loop.Result{ID: call.ID, Code: loop.Unavailable}
 		},
-		Transform: func(_ context.Context, r provider.Request) (provider.Request, error) {
+		Transform: func(ctx context.Context, r provider.Request) (provider.Request, error) {
 			mu.Lock()
 			defer mu.Unlock()
 			if missing {
 				return r, ErrExcluded
 			}
-			return r, nil
+			return catalog.Transform(ctx, r)
 		},
 	})
 	mu.Lock()

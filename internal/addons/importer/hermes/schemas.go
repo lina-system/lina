@@ -515,3 +515,22 @@ var registeredSQLiteSchemas = map[SQLiteSource]SQLiteSchema{
 }
 
 func schemaDefault(value string) *string { return &value }
+
+// The delivery ledger is created lazily by the gateway. These are two exact
+// registered extensions, before and after its adapter_profile migration.
+var deliveryColumns = []Column{
+	{Name: "obligation_id", Type: "TEXT", PrimaryKey: 1},
+	{Name: "session_key", Type: "TEXT", NotNull: true},
+	{Name: "platform", Type: "TEXT", NotNull: true},
+	{Name: "chat_id", Type: "TEXT", NotNull: true},
+	{Name: "thread_id", Type: "TEXT"},
+	{Name: "content", Type: "TEXT", NotNull: true},
+	{Name: "state", Type: "TEXT", NotNull: true},
+	{Name: "attempts", Type: "INTEGER", NotNull: true, Default: schemaDefault("0")},
+	{Name: "created_at", Type: "REAL", NotNull: true},
+	{Name: "updated_at", Type: "REAL", NotNull: true},
+	{Name: "owner_pid", Type: "INTEGER"},
+	{Name: "owner_started_at", Type: "INTEGER"},
+	{Name: "last_error", Type: "TEXT"},
+	{Name: "adapter_profile", Type: "TEXT"},
+}

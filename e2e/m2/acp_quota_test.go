@@ -4,6 +4,9 @@ package e2e_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"crypto/sha512"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -84,12 +87,13 @@ func TestACPTypedFailuresThroughRunningCore(t *testing.T) {
 					t.Fatal(e)
 				}
 			}
-			for _, name := range []string{"claude-agent-acp", "claude", "gemini", "grok", "gh"} {
+			for _, name := range []string{"claude", "gemini", "grok", "gh"} {
 				write(filepath.Join(bin, name), quotaAgentScript, 0700)
 			}
 			env := []string{"PATH=" + bin, "HOME=" + root, "XDG_CONFIG_HOME=" + root, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0", "LANG=C", "LINA_ACP_FIXTURE=" + fixture, "LINA_ACP_CASE=" + mode}
 			write(filepath.Join(bin, "systemctl"), "#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\ncase \"$2\" in show) printf 'not-found\\n';; daemon-reload|enable) exit 0;; *) exit 97;; esac\n", 0700)
 			bundle := makeInstallBundle(t, root, binary, nodeBinary)
+			syntheticClaudeACPBundle(t, root, bundle, quotaAgentScript)
 			setup := exec.CommandContext(ctx, binary, "install", "--state-root", state, "--unit-dir", filepath.Join(root, "units"), "--bundle", bundle)
 			setup.Env = env
 			if out, err := setup.CombinedOutput(); err != nil {
@@ -478,7 +482,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import {execFileSync} from 'node:child_process';
-const root=process.env.LINA_ACP_FIXTURE, name=path.basename(process.argv[1]), mode=process.env.LINA_ACP_CASE;
+const root=process.env.LINA_ACP_FIXTURE, entry=path.basename(process.argv[1]), name=entry==='index.js'?'claude-agent-acp':entry, mode=process.env.LINA_ACP_CASE;
 if(name==='gh') {
  if(process.argv[2]==='api') console.log('[[]]');
  else console.log(fs.readFileSync(path.join(root,'pr.json'),'utf8'));
@@ -539,3 +543,71 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
  }
 });
 `
+
+// Protocol fixtures still use synthetic agents, but exercise Core's managed
+// install/start path. The real pinned wrapper and npm integrity are covered by
+// TestClaudeACPThroughRunningCore and TestClaudeACPRejectsCorruptTarball.
+func syntheticClaudeACPBundle(t *testing.T, root, bundle, program string) {
+	t.Helper()
+	const pkg = "@agentclientprotocol/claude-agent-acp"
+	const version = "0.0.0-fixture"
+	dependencies := map[string]string{pkg: version}
+	packageJSON, err := json.Marshal(map[string]any{"name": "acp-protocol-fixture", "version": version, "dependencies": dependencies})
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha512.Sum512([]byte(program))
+	lock, err := json.Marshal(map[string]any{"lockfileVersion": 3, "packages": map[string]any{
+		"":                    map[string]any{"version": version, "dependencies": dependencies},
+		"node_modules/" + pkg: map[string]any{"version": version, "resolved": "https://registry.npmjs.org/" + pkg + "/-/claude-agent-acp-" + version + ".tgz", "integrity": "sha512-" + base64.StdEncoding.EncodeToString(digest[:])},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(bundle, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest map[string]any
+	if err = json.Unmarshal(raw, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	files, _ := manifest["installFiles"].([]any)
+	for _, file := range []struct {
+		name string
+		data []byte
+	}{{"package.json", packageJSON}, {"package-lock.json", lock}} {
+		name := "adapters/claude-acp/" + file.name
+		if err = os.MkdirAll(filepath.Dir(filepath.Join(bundle, name)), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err = os.WriteFile(filepath.Join(bundle, name), file.data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, map[string]any{"name": name, "size": len(file.data), "sha256": fmt.Sprintf("%x", sha256.Sum256(file.data))})
+	}
+	manifest["installFiles"] = files
+	raw, err = json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(bundle, "manifest.json"), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	script, err := json.Marshal(program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	npm := fmt.Sprintf(`#!/usr/bin/env node
+// SPDX-License-Identifier: Apache-2.0
+const fs=require('node:fs');
+if(process.argv[2]!=='ci')throw Error('unexpected fixture npm operation');
+const dir='node_modules/@agentclientprotocol/claude-agent-acp';
+fs.mkdirSync(dir+'/dist',{recursive:true});
+fs.writeFileSync(dir+'/package.json',JSON.stringify({name:'@agentclientprotocol/claude-agent-acp',version:'0.0.0-fixture',type:'module'}));
+fs.writeFileSync(dir+'/dist/index.js',%s);
+`, script)
+	if err = os.WriteFile(filepath.Join(root, "bin/npm"), []byte(npm), 0700); err != nil {
+		t.Fatal(err)
+	}
+}

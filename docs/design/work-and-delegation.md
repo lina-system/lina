@@ -929,7 +929,7 @@ Core exposes `worker_start`, `worker_input`, `worker_interrupt` and
 receipts. These operate installed Codex sessions in an explicitly supplied work
 directory. They do not implement the scheduler or the `dispatch_work` definition
 flow. Each session belongs to its originating person, agent and conversation;
-control requires the current turn, process generation and binding epoch.
+For a delegated code goal, the durable coding assignment keeps the original requester separate from the manager that owns the task. Both bound conversations can inspect its worker, read its files and control it; unrelated conversations cannot. Owner follow-ups steer an active dispatched turn without starting another, and cancellation stays with its dispatcher rather than the scheduled-card path. Core checks the assignment’s person, owner and manager conversation before recovering the requester, including after restart. Control requires the current turn, process generation and binding epoch.
 User cancellation additionally quotes the current user input. Starting a session
 is recorded as a launch receipt, never as verified delivery.
 
@@ -1119,7 +1119,7 @@ they do not enable operations the adapter has not implemented.
 - **Completion and cancel.** As Completion signals and Control define. A turn that is still open when the process exits is a failure; a `cancelled` stop reason without a cancel from Core is reported as cancelled by the worker.
 - **Client boundary.** Request ids may be strings, integers or null; replies preserve the original id, and an omitted id denotes a notification. Closing the client waits for transport and owned-process teardown even when another failure started cleanup. The shared client marks load replay before publishing updates and clears that mark when it reads the load response. Its pending permission handles expire when the prompt replies. Cancelling a local wait leaves the operation outstanding; only an explicit `session/cancel` requests interruption. A stalled consumer that fills a client event queue fails the connection rather than dropping progress or blocking completion.
 - **Recovery.** Core records the session id. Once-only recovery starts the same command again in the same worktree and sends `session/resume` where the worker advertises it, otherwise `session/load`. The history that `session/load` replays is not reported again as new progress. A worker that offers neither is restarted with a new session.
-- **Quota and typed failures.** ACP defines no quota signal. The adapter reads, in this order: the JSON-RPC error of a request (-32000 is login expiry); the stop reason (`refusal`, `max_tokens` and `max_turn_requests` are worker errors naming it); the JetBrains session-failure extension where the worker advertises it (rate limited, quota exhausted, sign-in required); and the vendor rate-limit metadata that a profile names, such as Claude Code's `usage_update._meta["_claude/rateLimit"]`. Anything else is unknown, and LINA's own usage accounting applies ([runtime.md](runtime.md#usage-and-cost)).
+- **Quota and typed failures.** ACP defines no quota signal. The adapter reads, in this order: the JSON-RPC error of `session/new` (-32000 means needs sign-in) or of `session/prompt` (a worker failure with code `prompt_failed`); the stop reason (`refusal`, `max_tokens` and `max_turn_requests` are worker errors naming it); the JetBrains session-failure extension where the worker advertises it (rate limited, quota exhausted, sign-in required); and the vendor rate-limit metadata that a profile names, such as Claude Code's `usage_update._meta["_claude/rateLimit"]`. Anything else is unknown, and LINA's own usage accounting applies ([runtime.md](runtime.md#usage-and-cost)).
   Core opts into only AIR v1 `sessionFailure` and accepts it only when the
   initialize response advertises it. Its error-severity category/actions map
   to rate limited (`limit`/`retry`), quota exhausted (`limit`/no actions),
@@ -1149,6 +1149,13 @@ Card observations are coalesced at 250 ms intervals, with a final flush before
 the receipt. They neither submit a receipt nor end the run.
 A cancelled prompt records an interrupted turn and receipt; an open prompt lost
 with its process remains an uncertain failed execution without a receipt.
+A JSON-RPC error reply to the prompt is an observed worker failure, including
+when the process exits immediately after replying. It uses code `prompt_failed`
+regardless of the remote error code. Core records the failed turn
+and an adapter-derived receipt without retaining the remote error message or
+data. The reply alone does not settle external effects: unresolved effects keep
+the existing recovery fence until reconciliation; a later successful prompt
+does not settle that earlier uncertainty.
 The adapter advertises progress, completion, work tools, approvals and questions. ACP
 requests use the existing worker authority and waiting-card bridge, preserving
 the originating conversation. Cards identify the ACP worker; Codex cards retain
@@ -1164,6 +1171,16 @@ requesting a capability that is not implemented fails before dispatch.
 #### Claude Code through ACP
 
 Claude Code has no ACP mode of its own. The `claude-agent-acp` program (Apache-2.0, from the ACP project) wraps it. The LINA release pins it with its own lockfile, like the Claude adapter, and Core installs it on first use of the Claude Code worker with lifecycle scripts disabled and optional packages omitted, so the Claude Code binary that its package can carry is never installed ([runtime.md](runtime.md#installed-tools)). It runs on the person's Node.js. It always runs the person's installed `claude`, never the copy of Claude Code that its package can carry, so the person's version, login, settings, plugins and permission mode stay in use. It starts Claude Code with its permission prompts routed over ACP and with the person's user, project and local settings, and writes nothing into the person's setup. Because it always loads those settings, it can serve only as a worker, never as the Claude conversation provider ([runtime.md](runtime.md#providers)).
+
+Core discovers this worker from the person's `claude` and `node`, without
+requiring a global ACP program. After selection, Core installs the release's
+program in its private state from the shipped manifest and lockfile. Failed
+installs are discarded; complete installs are checked before reuse. Readiness
+records `claude --version`; the result separately records `agentInfo.version`.
+A missing Claude or Node returns an unsupported cause for this worker through
+`dispatch_work`, while other installed workers remain available. The `claude`
+headless worker remains a separate selection pending evaluation. A separately
+opted-in live test records the person's Claude version and the program version.
 
 ### Readiness
 

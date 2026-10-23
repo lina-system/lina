@@ -34,13 +34,13 @@ func (b *profileBuilder) addSidecar(ctx context.Context, s Sidecar, writer *asse
 	if !missing || s.SHA256 != "" {
 		hash, err := hex.DecodeString(s.SHA256)
 		if err != nil || len(hash) != 32 || hex.EncodeToString(hash) != s.SHA256 {
-			return ErrSnapshot
+			return invalidSnapshot("sidecar SHA-256 format")
 		}
 	}
 	if !missing {
 		sum := sha256.Sum256(data)
 		if hex.EncodeToString(sum[:]) != s.SHA256 {
-			return ErrSnapshot
+			return invalidSnapshot("sidecar SHA-256 match")
 		}
 	}
 	row := Row{}
@@ -56,13 +56,13 @@ func (b *profileBuilder) addSidecar(ctx context.Context, s Sidecar, writer *asse
 	r.links = []importLink{{e.id, "output", 0}}
 	if !missing {
 		if writer == nil && !b.p.rehearsal {
-			return ErrSnapshot
+			return invalidSnapshot("sidecar material writer required")
 		}
 		// One output event owns one sidecar material. Ambiguity is refused.
 		for _, c := range b.conversations {
 			for _, other := range c.records {
 				if other != r && other.material != nil && other.links[0].target == e.id {
-					return ErrSnapshot
+					return invalidSnapshot("one material per output event")
 				}
 			}
 		}
@@ -85,7 +85,7 @@ func (b *profileBuilder) addSidecar(ctx context.Context, s Sidecar, writer *asse
 		c := &b.p.inventory[i]
 		if c.System == s.Key.System && c.Instance == s.Key.Instance && c.Table == s.Key.Kind {
 			if c.Omitted != "" {
-				return ErrSnapshot
+				return invalidSnapshot("sidecar inventory must be retained")
 			}
 			c.Rows++
 			found = true

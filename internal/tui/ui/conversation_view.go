@@ -99,7 +99,7 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 	appendTools("")
 	hasItems := false
 	for _, b := range m.content.Blocks {
-		if !conversationBlock(b) {
+		if !m.conversationBlock(b) {
 			continue
 		}
 		hasItems = true
@@ -293,8 +293,12 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 	if plan.SidePane.Height > 0 && !m.conversation.pager.open && m.hasCapability("progress") {
 		lines := m.workPanelRows(plan.SidePane.Width, plan.SidePane.Height)
 		for y := 0; y < plan.SidePane.Height; y++ {
-			left := ansi.Truncate(rows[plan.SidePane.Y+y], plan.Conversation.Width, "")
-			left += strings.Repeat(" ", max(0, plan.SidePane.X-ansi.StringWidth(left)))
+			left := rows[plan.SidePane.Y+y]
+			// The panel and terminal use codepoint cell widths. Clip at that
+			// boundary, then retain ANSI styling with the library's grapheme budget.
+			visible := render.Truncate(ansi.Strip(left), plan.Conversation.Width, render.Unicode{})
+			left = ansi.Truncate(left, ansi.StringWidth(visible), "")
+			left += strings.Repeat(" ", max(0, plan.SidePane.X-(render.Unicode{}).Width(ansi.Strip(left))))
 			right := ""
 			if y < len(lines) {
 				right = lines[y]

@@ -20,16 +20,25 @@ func TestPromptRPCFailures(t *testing.T) {
 	for _, tc := range []struct {
 		code    string
 		failure worker.FailureKind
-	}{{"-32000", worker.LoginFailure}, {"-32603", worker.WorkerFailure}} {
+	}{{"-32000", worker.WorkerFailure}, {"-32603", worker.WorkerFailure}} {
 		t.Run(tc.code, func(t *testing.T) {
 			a, ctx, l, s := fixture(t)
 			a.cfg.Environment = append(a.cfg.Environment, "ACP_ERROR_METHOD=session/prompt", "ACP_SESSION_ERROR="+tc.code)
-			if _, err := a.Start(ctx, l, s); err != nil {
+			th, err := a.Start(ctx, l, s)
+			if err != nil {
 				t.Fatal(err)
 			}
 			f := terminal(t, ctx, a)
-			if f.Status != worker.Failed || f.Failure != tc.failure {
+			if f.Status != worker.Failed || f.Failure != tc.failure || f.Code != "prompt_failed" {
 				t.Fatalf("RPC %s: %+v", tc.code, f)
+			}
+			snapshot, err := a.Snapshot(ctx, th)
+			if err != nil || snapshot.EffectsKnown {
+				t.Fatalf("RPC error established effect safety: %+v %v", snapshot, err)
+			}
+			rows, err := a.Quota(ctx)
+			if err != nil || len(rows) != 0 {
+				t.Fatalf("RPC error invented quota: %+v %v", rows, err)
 			}
 		})
 	}
@@ -220,5 +229,27 @@ func TestNativeToolOutcomeFencesReplacement(t *testing.T) {
 				t.Fatalf("effects known=%v want=%v: %v", snap.EffectsKnown, tc.known, err)
 			}
 		})
+	}
+}
+
+func TestPromptSuccessDoesNotReconcileEarlierRPCError(t *testing.T) {
+	a, ctx, l, s := fixture(t)
+	s.TaskPacket = "rpc-error"
+	th, err := a.Start(ctx, l, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f := terminal(t, ctx, a); f.Failure != worker.WorkerFailure {
+		t.Fatal(f)
+	}
+	if err = a.Input(ctx, th, worker.Input{Text: "success"}); err != nil {
+		t.Fatal(err)
+	}
+	if f := terminal(t, ctx, a); f.Status != worker.Done {
+		t.Fatal(f)
+	}
+	snap, err := a.Snapshot(ctx, th)
+	if err != nil || snap.EffectsKnown {
+		t.Fatalf("later prompt settled unknown effects: %+v %v", snap, err)
 	}
 }
