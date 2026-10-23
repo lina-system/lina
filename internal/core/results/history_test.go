@@ -15,6 +15,7 @@ import (
 )
 
 func TestResultStorageEventsNeverExposeBodyToAssembledHistory(t *testing.T) {
+	t.Parallel()
 	s, db, _, _ := setup(t)
 	first := present(t, s)
 	p := proposal()

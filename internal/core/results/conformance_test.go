@@ -13,12 +13,14 @@ import (
 )
 
 func TestCoreResultConformance(t *testing.T) {
+	t.Parallel()
 	cases, err := conformance.LoadApplications(os.DirFS("../../../protocol/fixtures/client/1.0/application/results"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, c := range cases {
 		t.Run(c.Name, func(t *testing.T) {
+			t.Parallel()
 			if c.Service != "results" {
 				t.Fatalf("unhandled service %q", c.Service)
 			}

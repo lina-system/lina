@@ -25,7 +25,6 @@ import (
 
 // installedMessages harness state shared by the wire checks below.
 type installedMessages struct {
-	root     string
 	mu       sync.Mutex
 	requests []map[string]any
 	phase    int

@@ -12,6 +12,7 @@ import (
 )
 
 func TestSurfaceBatchPublishesOnlyCompleteRevisions(t *testing.T) {
+	t.Parallel()
 	store, db, _, _ := setup(t)
 	raw, err := os.ReadFile("../../../kit/result/testdata/progress.json")
 	if err != nil {
@@ -57,6 +58,7 @@ func TestSurfaceBatchPublishesOnlyCompleteRevisions(t *testing.T) {
 }
 
 func TestSurfaceSaveHasNoMaterialDestination(t *testing.T) {
+	t.Parallel()
 	if _, err := destination(result.SurfaceType, result.Destination{Kind: "resource"}); !errors.Is(err, ErrOutOfScope) {
 		t.Fatalf("surface save=%v", err)
 	}
