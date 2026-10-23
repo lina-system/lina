@@ -14,7 +14,9 @@ import (
 func Score(c Case, reply string) Result {
 	text := norm.NFC.String(reply)
 	prose := proseLines(text)
-	result := Result{Chars: chars(text), Checks: make([]CheckResult, 0, len(c.Checks))}
+	// Every check ignores fenced code blocks, including length: a code sample is
+	// not the person's prose, so its characters do not spend the reply budget.
+	result := Result{Chars: chars(strings.Join(prose, "\n")), Checks: make([]CheckResult, 0, len(c.Checks))}
 	empty := strings.TrimSpace(text) == ""
 	for _, check := range c.Checks {
 		passed := false

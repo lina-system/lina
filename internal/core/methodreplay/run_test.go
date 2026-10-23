@@ -113,6 +113,41 @@ func TestRunRecordsFailuresWithoutText(t *testing.T) {
 	}
 }
 
+func TestRunExcludesACaseThatLostARun(t *testing.T) {
+	// With three repeats, a case with two failed tailored runs is excluded even
+	// when its other runs completed: it is never compared as a pass or a drop.
+	c := runCase("dev-001", "dev", false)
+	plays := 0
+	report, err := Run(t.Context(), Config{Cases: []Case{c},
+		Variants: []Variant{{Name: "baseline"}, {Name: "tailored"}}, Repeat: 3, Changed: []string{"dev"},
+		Play: func(_ context.Context, _ Case, v Variant) (string, error) {
+			if v.Name == "tailored" {
+				plays++
+				if plays > 1 {
+					return "", errors.New("provider unavailable")
+				}
+			}
+			return "확인했습니다.", nil
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range report.Cases[0].Variants {
+		if v.Name == "tailored" && (v.Reason != "model_error" || v.Runs != 1) {
+			t.Fatalf("partial variant not marked: %+v", v)
+		}
+	}
+	if report.Excluded != 1 {
+		t.Fatalf("report=%+v", report)
+	}
+	if len(report.Agents) != 1 || report.Agents[0].Cases != 0 || report.Agents[0].Verdict != "insufficient" {
+		t.Fatalf("a partial case reached the comparison: %+v", report.Agents)
+	}
+	if report.Ship.Ships {
+		t.Fatalf("a partial case decided the ship rule: %+v", report.Ship)
+	}
+}
+
 func TestRunDropsInjectedTurnsBeforePlaying(t *testing.T) {
 	c := runCase("dev-001", "dev", false)
 	c.Turns = append([]Turn{{Role: "user", Text: "압축 요약", Injected: true}}, c.Turns...)

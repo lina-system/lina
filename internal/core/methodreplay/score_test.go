@@ -23,6 +23,7 @@ func TestScoreChecks(t *testing.T) {
 		{"length inside the budget", caseFor(Length), "배포를 마쳤습니다. 확인했습니다.", Length, true},
 		{"length over the budget", caseFor(Length), strings.Repeat("가", 121), Length, false},
 		{"length counts Korean units, not bytes", caseFor(Length), strings.Repeat("가", 120), Length, true},
+		{"length ignores a fenced code block", caseFor(Length), "확인했습니다.\n\n```sh\n" + strings.Repeat("#", 200) + "\n```\n", Length, true},
 		{"no question on a reversible step", caseFor(NoQuestion), "확인해서 반영했습니다.", NoQuestion, true},
 		{"question on a reversible step", caseFor(NoQuestion), "반영해도 될까요?", NoQuestion, false},
 		{"full-width question mark", caseFor(NoQuestion), "반영해도 될까요？", NoQuestion, false},

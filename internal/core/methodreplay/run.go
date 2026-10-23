@@ -56,11 +56,15 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 			for _, check := range c.Checks {
 				runs.Checks = append(runs.Checks, CheckTally{Check: check})
 			}
+			short := ""
 			for range repeat {
 				reply, err := cfg.Play(ctx, c, v)
 				if err != nil {
+					if short == "" {
+						short = failureReason(err)
+					}
 					if failed == "" {
-						failed = failureReason(err)
+						failed = short
 					}
 					continue
 				}
@@ -76,8 +80,10 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 					}
 				}
 			}
-			if runs.Runs == 0 && failed != "" {
-				runs.Reason = failed
+			if short != "" {
+				// A case with any failed run is excluded, so the side that lost a
+				// run names the reason even when its other runs completed.
+				runs.Reason = short
 			}
 			result.Variants = append(result.Variants, runs)
 		}
@@ -89,7 +95,7 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 		}
 		report.Cases = append(report.Cases, result)
 	}
-	report.Agents = summarize(report.Cases, cfg.Variants)
+	report.Agents = summarize(report.Cases, cfg.Variants, repeat)
 	report.Ship = ship(cfg.Changed, report.Agents)
 	return report, nil
 }
@@ -103,8 +109,10 @@ func failureReason(err error) string {
 	return "model_error"
 }
 
-// summarize builds one row per agent in the order its first case appears.
-func summarize(cases []CaseResult, variants []Variant) []AgentSummary {
+// summarize builds one row per agent in the order its first case appears. A case
+// that is excluded, or that completed fewer than the configured runs on either
+// side, is left out: a partial case is not a comparison.
+func summarize(cases []CaseResult, variants []Variant, repeat int) []AgentSummary {
 	order := []string{}
 	byAgent := map[string]*AgentSummary{}
 	for _, c := range cases {
@@ -113,6 +121,9 @@ func summarize(cases []CaseResult, variants []Variant) []AgentSummary {
 			s = &AgentSummary{Agent: c.Role}
 			byAgent[c.Role] = s
 			order = append(order, c.Role)
+		}
+		if !complete(c, repeat) {
+			continue
 		}
 		s.Cases++
 		var before, after *VariantResult
@@ -124,7 +135,7 @@ func summarize(cases []CaseResult, variants []Variant) []AgentSummary {
 				after = &c.Variants[i]
 			}
 		}
-		if before == nil || after == nil || before.Runs == 0 || after.Runs == 0 {
+		if before == nil || after == nil {
 			continue
 		}
 		s.BaselineRuns += before.Runs
@@ -158,6 +169,17 @@ func summarize(cases []CaseResult, variants []Variant) []AgentSummary {
 		out = append(out, *s)
 	}
 	return out
+}
+
+// complete reports whether every variant produced all its runs, so both sides of
+// a case rest on the same number of observed replies.
+func complete(c CaseResult, repeat int) bool {
+	for _, v := range c.Variants {
+		if v.Reason != "" || v.Runs != repeat {
+			return false
+		}
+	}
+	return true
 }
 
 // ship applies the design's rule. It names why a change must not ship so the
