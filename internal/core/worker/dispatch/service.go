@@ -496,8 +496,9 @@ func (s *Service) sync() {
 					continue
 				}
 			}
+			// Goal recovery is admitted without a conversation tool-call receipt.
 			committed, err := s.admissionCommitted(s.ctx, r)
-			if err != nil || !committed && !(r.Goal && r.ReturnReceipt != "") {
+			if err != nil || !committed && !(r.Goal && (r.ReturnReceipt != "" || r.Recoveries > 0)) {
 				continue
 			}
 			s.mu.Lock()

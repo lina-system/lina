@@ -242,3 +242,66 @@ func TestConversationCompactionTrimsOptionalContext(t *testing.T) {
 		})
 	}
 }
+
+func TestConversationCompactionBudgetsPublishedHistory(t *testing.T) {
+	for _, oversized := range []bool{false, true} {
+		t.Run(map[bool]string{false: "fitting-packet", true: "oversized-packet"}[oversized], func(t *testing.T) {
+			r, _, agent, _ := managementFixture(t)
+			r.agent, r.conversation = agent, "main:"+agent
+			var err error
+			r.route, err = modelpath.ResponsesFromEnv(func(key string) string {
+				return map[string]string{"LINA_RESPONSES_BASE_URL": "http://127.0.0.1:1", "LINA_RESPONSES_MODEL": "fixture-model", "LINA_RESPONSES_API_KEY": "synthetic-key"}[key]
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			queuedContextEvent(t, r, "old", strings.Repeat("old ", 2500), guard.EntryOwner, "")
+			queuedContextEvent(t, r, "reply", strings.Repeat("public ", 1800), guard.EntryAgent, "")
+			current := queuedContextEvent(t, r, "current", "Continue", guard.EntryOwner, "")
+			items, _, _, events, err := r.modelContext(t.Context(), current.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			in := assemble.Input{AgentID: agent, PersonaRevision: "fixture", Model: "fixture-model", Core: "core", Current: items[len(items)-1], History: items[:len(items)-1], MaxTokens: 22000}
+			if _, report := assemble.Assemble(in, conversationRequestSize); report.Failure != assemble.TooLarge {
+				t.Fatal("fixture raw history must exceed the hard budget")
+			}
+			stream := func(_ context.Context, _ provider.Request) (provider.Stream, error) {
+				text, _ := json.Marshal(compaction.Text{Requests: "none", Topics: "archive", Actions: "read", Values: "archive", Omitted: "repeated text"})
+				item, _ := json.Marshal(map[string]any{"type": "message", "role": "assistant", "content": []map[string]string{{"type": "output_text", "text": string(text)}}})
+				return &handoffRuntimeStream{events: []provider.Event{{Kind: provider.ItemDone, Item: item}, {Kind: provider.Terminal}}}, nil
+			}
+			if _, report, err := r.compactConversation(t.Context(), in, events, stream); err != nil || report.Failure != "" {
+				t.Fatalf("publish root: %v %+v", err, report)
+			}
+			in.Packet = assemble.ContextPacket{
+				{ID: "clock", Kind: assemble.Clock, Text: "2026-10-23T00:00:00Z"},
+				{ID: "relationship", Kind: assemble.Memory, Text: "We are study partners."},
+			}
+			if oversized {
+				in.Packet = append(in.Packet, assemble.ContextItem{ID: "oversized", Kind: assemble.External, Origin: "fixture:external", Text: strings.Repeat("external ", 3000)})
+			}
+			request, report, err := r.compactConversation(t.Context(), in, events, func(context.Context, provider.Request) (provider.Stream, error) {
+				t.Fatal("published history fits without another summary")
+				return nil, nil
+			})
+			if err != nil || report.Failure != "" {
+				t.Fatalf("reuse root: %v %+v", err, report)
+			}
+			if !reflect.DeepEqual(report.Items, []assemble.Ref{{ID: "clock"}, {ID: "relationship"}}) {
+				t.Errorf("fitting optional context dropped against covered raw history: items=%v drops=%v", report.Items, report.Dropped)
+			}
+			var wantDrops []assemble.Drop
+			if oversized {
+				wantDrops = []assemble.Drop{{ID: "oversized", Reason: assemble.Budget}}
+			}
+			if !reflect.DeepEqual(report.Dropped, wantDrops) {
+				t.Errorf("budget drops=%v, want %v", report.Dropped, wantDrops)
+			}
+			raw, _ := json.Marshal(request.Items)
+			if !bytes.Contains(raw, []byte("We are study partners.")) || bytes.Contains(raw, []byte("old old")) || report.Tokens > in.MaxTokens || report.Hash != assemble.Digest(request) {
+				t.Error("dispatched request lost optional context, summary coverage, budget, or evidence digest")
+			}
+		})
+	}
+}

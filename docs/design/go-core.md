@@ -2906,6 +2906,7 @@ Contract: [work-and-delegation.md](work-and-delegation.md#event-driven-flow), [w
   The installed-Core merge scenario covers the race between PR identity and review reads and requires explicit head acceptance afterward.
 - Stall handling and the reconcile sweep (every 5 minutes (P), no model call) follow the contract.
   #135 commits a failed attempt's terminal observation and recovery reservation together. A completion from that old attempt cannot deliver the next attempt's result. Unknown effects retain their reservation; the second settled failure creates a decision. A reconciled success enters the normal result inbox without another worker turn.
+- #930 admits a goal worker's committed recovery through the dispatch scheduler without requiring a conversation `turn_calls` receipt. The existing goal-action authorization and once-only recovery allowance still gate the attempt. `e2e/m2/goal-worker-recovery.json` covers a recovered result and a second failure through installed Core.
 
 **C-30 Task states and stage sources (changed).**
 Card states, `done` and verdicts are those of [work-and-delegation.md](work-and-delegation.md#progress-display) and [work-and-delegation.md](work-and-delegation.md#judgment-and-delivery).

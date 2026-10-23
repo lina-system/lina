@@ -527,7 +527,7 @@ func (s *Service) execute(ctx context.Context, r Record) {
 		}
 	}
 	if thread.ID == "" {
-		// All attempted sessions refused readiness; no turn or receipt exists.
+		// Refused sessions create no worker turn or receipt.
 		return
 	}
 	// Claude and Antigravity synthesize connection failures without a result.
