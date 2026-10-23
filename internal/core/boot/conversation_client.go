@@ -42,9 +42,12 @@ func (r *conversationRuntime) History(ctx context.Context, s clientsrv.Session, 
 }
 
 func (r *conversationRuntime) Input(ctx context.Context, s clientsrv.Session, p protocol.Input) (protocol.ItemDone, error) {
-	return r.admitInput(ctx, s, p, nil)
+	return r.admitInput(ctx, s, p, "tui", nil)
 }
-func (r *conversationRuntime) admitInput(ctx context.Context, s clientsrv.Session, p protocol.Input, check func(context.Context, *canon.Tx) error) (protocol.ItemDone, error) {
+
+// admitInput is the one durable admission path. The launcher adds no second
+// conversation or inbox: it only names the surface and the launcher thread.
+func (r *conversationRuntime) admitInput(ctx context.Context, s clientsrv.Session, p protocol.Input, surface string, check func(context.Context, *canon.Tx) error) (protocol.ItemDone, error) {
 	if err := r.authorize(s, p.ConversationID); err != nil {
 		return protocol.ItemDone{}, err
 	}
@@ -62,7 +65,7 @@ func (r *conversationRuntime) admitInput(ctx context.Context, s clientsrv.Sessio
 		return protocol.ItemDone{}, err
 	}
 	now := time.Now()
-	event, err := ledger.New(admission, r.materials).AfterAdmission(r.bindInput).Admit(ctx, guard.EntryOwner, ledger.Input{ID: eventID, ConversationID: r.conversation, PersonID: r.person, AgentID: r.agent, Surface: ledger.Surface{Kind: "tui", Language: string(language), ReplyTo: stringValue(p.ReplyTo), Card: stringValue(p.Card), Thread: stringValue(p.Thread)}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Locator: *p.InputID, Body: *p.Text})
+	event, err := ledger.New(admission, r.materials).AfterAdmission(r.bindInput).Admit(ctx, guard.EntryOwner, ledger.Input{ID: eventID, ConversationID: r.conversation, PersonID: r.person, AgentID: r.agent, Surface: ledger.Surface{Kind: surface, Language: string(language), ReplyTo: stringValue(p.ReplyTo), Card: stringValue(p.Card), Thread: stringValue(p.Thread)}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Locator: *p.InputID, Body: *p.Text})
 	receipt := admission.receipt
 	if errors.Is(err, errAdmittedInput) {
 		event, err = r.journal().Get(ctx, eventID)
@@ -107,7 +110,7 @@ func (r *conversationRuntime) topicAuthorized(ctx context.Context, topic string)
 			return err == nil
 		}
 	}
-	return topic == "progress" && r.ownerViews != nil || topic == "running" && r.background != nil || topic == "core" || topic == "waiting" && r.decisions != nil
+	return topic == "progress" && r.ownerViews != nil || topic == "running" && r.background != nil || topic == "core" || topic == "waiting" && r.decisions != nil || topic == "launcher"
 }
 
 func stringValue(p *string) string {

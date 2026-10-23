@@ -42,6 +42,12 @@ func (c *Client) Interrupt(ctx context.Context, interrupt protocol.Interrupt) (s
 	return c.request(ctx, protocol.KindInterrupt, interrupt)
 }
 
+// Launcher submits one launcher line. Receive owns its result and the short
+// reply events on the launcher topic.
+func (c *Client) Launcher(ctx context.Context, request protocol.LauncherRequest) (string, error) {
+	return c.request(ctx, protocol.KindLauncherRequest, request)
+}
+
 func (c *Client) History(ctx context.Context, history protocol.HistoryGet) (string, error) {
 	return c.request(ctx, protocol.KindHistoryGet, history)
 }
