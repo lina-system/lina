@@ -672,6 +672,11 @@ test('vector rebuilds select automation and their notices remain documents', () 
   assert.equal(kind('packaging/sqlite-vec/unregistered.py'), 'unmapped');
 });
 
+test('the macOS package is documentation with its build inputs', () => {
+  assert.equal(kind('packaging/macos/README.md'), 'docs');
+  assert.equal(kind('packaging/macos/build.sh'), 'automation');
+});
+
 test('native parts select automation and carry their own tests', t => {
   for (const path of ['native/macos/unlock-plugin/src/lina_unlock.c', 'native/macos/unlock-plugin/README.md', 'native/macos/unlock-plugin/Info.plist']) {
     assert.equal(kind(path), 'automation', path);
