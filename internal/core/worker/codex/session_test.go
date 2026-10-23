@@ -125,10 +125,13 @@ func fixture() {
 		case "thread/turns/list":
 			mode := os.Getenv("LINA_CODEX_FIXTURE")
 			items := []any{}
-			if mode == "recover-command" {
+			if mode == "recover-command" || mode == "recover-command-done" {
 				items = append(items, map[string]any{"type": "commandExecution", "id": "cmd", "status": "completed", "exitCode": 0})
 			}
 			result := map[string]any{"id": turn, "status": "failed", "itemsView": "full", "items": items}
+			if mode == "recover-command-done" {
+				result["status"] = "completed"
+			}
 			if mode == "recover-missing-items" {
 				delete(result, "items")
 			}
