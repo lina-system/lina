@@ -245,7 +245,7 @@ func TestAlphaOwnerCodingAndQuestion(t *testing.T) {
 		alphaScreen(t, h, terminal, "question-in-conversation", alphaNameRequest, "")
 		h.keys(terminal, "\x1b[200~이름은 민준이야. 그 답을 같은 Codex 작업자에게 전하고 작업을 계속해 줘.\x1b[201~\r")
 	}
-	pane := terminal.screen.Snapshot()
+	pane := alphaConversationScreen(t, h, terminal, design.Korean)
 	var right strings.Builder
 	for _, row := range pane.Cells {
 		for _, cell := range row[min(80, len(row)):] {
