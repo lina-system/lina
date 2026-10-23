@@ -18,6 +18,7 @@ type Provenance struct {
 	TaskID         *string `json:"task_id"`
 }
 type Result struct {
+	Completion *Completion     `json:"completion,omitempty"`
 	ID         string          `json:"result_id"`
 	Revision   int             `json:"revision"`
 	Type       Type            `json:"type"`
@@ -34,21 +35,23 @@ type Result struct {
 // Card is the model-visible acknowledgement. The complete body is returned only
 // by Read. Earlier acknowledgements are immutable history items.
 type Card struct {
-	ID       string    `json:"result_id"`
-	Revision int       `json:"revision"`
-	Type     Type      `json:"type"`
-	Title    string    `json:"title"`
-	Summary  string    `json:"summary"`
-	Text     string    `json:"text"`
-	SavedAs  *SavedRef `json:"saved_as"`
+	Completion *Completion `json:"completion,omitempty"`
+	ID         string      `json:"result_id"`
+	Revision   int         `json:"revision"`
+	Type       Type        `json:"type"`
+	Title      string      `json:"title"`
+	Summary    string      `json:"summary"`
+	Text       string      `json:"text"`
+	SavedAs    *SavedRef   `json:"saved_as"`
 }
 type PresentRequest struct {
-	ID           string          `json:"result_id,omitempty"`
-	BaseRevision int             `json:"base_revision,omitempty"`
-	Type         Type            `json:"type"`
-	Title        string          `json:"title"`
-	Summary      string          `json:"summary"`
-	Body         json.RawMessage `json:"body"`
+	Completion   *CompletionRequest `json:"completion,omitempty"`
+	ID           string             `json:"result_id,omitempty"`
+	BaseRevision int                `json:"base_revision,omitempty"`
+	Type         Type               `json:"type"`
+	Title        string             `json:"title"`
+	Summary      string             `json:"summary"`
+	Body         json.RawMessage    `json:"body"`
 }
 type ReadRequest struct {
 	ID string `json:"result_id"`

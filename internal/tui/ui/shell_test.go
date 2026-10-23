@@ -42,6 +42,24 @@ func TestShellConnectionStatesRetainWindow(t *testing.T) {
 	}
 }
 
+func TestShellBeginClosesTextPager(t *testing.T) {
+	m := newShell(Options{Width: 80, Profile: Monochrome}, time.Now)
+	m.openPager("Full text")
+	m.Update(shellBegin{Generation: 2})
+	if !reflect.DeepEqual(m.conversation.pager, textPager{}) {
+		t.Fatal("new generation retained the text pager")
+	}
+
+	m.openPager("Reopened text")
+	before := m.conversation.pager
+	for _, generation := range []uint64{1, 2} {
+		m.Update(shellBegin{Generation: generation})
+		if !reflect.DeepEqual(m.conversation.pager, before) {
+			t.Fatalf("stale or repeated generation %d changed the pager", generation)
+		}
+	}
+}
+
 func TestShellAbsentScreenKeepsHistoryOffScreen(t *testing.T) {
 	m := newShell(Options{Width: 80, Profile: Monochrome}, time.Now)
 	m.Update(shellData{Generation: 1, Message: state.Snapshot{Epoch: "42", Revocation: "1", Topic: "conversation:example", Cursor: 1, Items: []state.Block{{ID: "item", Text: "RETAINED-HISTORY", Revision: 1, Done: true}}}})

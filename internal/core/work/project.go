@@ -34,6 +34,9 @@ func advance(c *Card, e Event) error {
 	if e.Kind != "created" && (c.Task.ID == "" || e.TaskID != c.Task.ID) {
 		return ErrState
 	}
+	if e.Completion != nil {
+		c.Completion = e.Completion
+	}
 	switch e.Kind {
 	case "created":
 		if c.Task.ID != "" || e.Task == nil || e.Task.ID != e.TaskID {
@@ -89,6 +92,7 @@ func advance(c *Card, e Event) error {
 		if e.Run.Generation != generation {
 			return ErrState
 		}
+		c.Completion = nil
 		c.Head, c.CompletionHead = "", ""
 		c.Run = e.Run
 		c.Active = true

@@ -44,6 +44,7 @@ type translation struct{ en, ko string }
 // Keys are wire codes or local presentation ids, never English source text.
 // Keep both languages together so a new entry cannot omit a translation.
 var catalog = map[string]translation{
+	"claimed":         {"not verified", "미검증"},
 	"usage.unknown":   {"Usage unknown", "사용량 알 수 없음"},
 	"command.unknown": {"Unknown command. Use /help.", "알 수 없는 명령입니다. /help를 확인하세요."},
 	"note.help":       {"Use /note <run> <text>, or choose a run in /board.", "/note <run> <text>를 입력하거나 /board에서 작업을 선택하세요."},
@@ -95,6 +96,7 @@ var catalog = map[string]translation{
 	"records.state.backlog":            {"Later", "나중에"},
 	"records.state.open":               {"To do", "할 일"},
 	"records.state.started":            {"Started", "하는 중"},
+	"records.state.claimed":            {"Not verified", "미검증"},
 	"records.state.completed":          {"Done", "끝"},
 	"records.state.canceled":           {"Canceled", "안 하기로 함"},
 	"records.records_changed":          {"Records changed outside LINA. Review the changes before saving.", "LINA 밖에서 기록이 바뀌었습니다. 저장 전에 변경 내용을 확인하세요."},

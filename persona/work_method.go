@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/thisisjun786/lina/kit/result"
 )
 
 const MaxWorkMethodBytes = 16 << 10
@@ -46,7 +48,7 @@ var methodFields = map[string]methodField{
 	"handoff.owns":        list(`[]`, "setup", "device", "account", "health_of_lina", "schedule", "to_do", "mail", "business_document", "coordination", "code", "pull_request", "worker_task", "people_record", "wiki", "life_record", "inventory", "diet_log", "creative_artifact", "creative_tooling_brief", "investment_analysis", "contract_draft", "tax_calculation", "legal_review"),
 	"handoff.check_back":  {fallback: `true`, kind: "bool"},
 }
-var doneEvidence = map[string]string{"service": "read_back_running", "interface": "real_view", "data": "live_vs_shown", "message": "sent_copy", "code": "owner_path_run", "document": "source_reopened", "purchase": "receipt", "peer_report": "labelled_claim"}
+var doneEvidence = result.DefaultDoneEvidence()
 
 func init() {
 	var kinds []string

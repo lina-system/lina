@@ -14,6 +14,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/internal/core/records"
+	resultkit "github.com/thisisjun786/lina/kit/result"
 )
 
 func TestM2ExhaustedRecordCompletionInstalledCore(t *testing.T) {
@@ -76,7 +77,7 @@ func TestM2ExhaustedRecordCompletionInstalledCore(t *testing.T) {
 			if repeat == nil || !repeat.Exhausted || !strings.Contains(exhausted.Markdown, `state: "open"`) {
 				t.Error("startup did not exhaust the open series", exhausted)
 			}
-			emitPersonaCall(w, "complete", "write_record", coreexec.RecordWrite{ID: saved.ID, Revision: exhausted.Revision, Kind: "todo", Title: scenario.Title, Todo: &records.Todo{State: "completed", Repeat: &records.Repeat{Rule: scenario.Rule, Next: scenario.First}}})
+			emitPersonaCall(w, "complete", "write_record", coreexec.RecordWrite{ID: saved.ID, Revision: exhausted.Revision, Kind: "todo", Title: scenario.Title, Completion: &resultkit.CompletionRequest{WorkKind: "document", Evidence: []resultkit.EvidenceReference{{Kind: "source_reopened", CallID: "read-exhausted"}}}, Todo: &records.Todo{State: "completed", Repeat: &records.Repeat{Rule: scenario.Rule, Next: scenario.First}}})
 		case 5:
 			if !result(&completed) {
 				emitResponse(w, "Completion failed.", true)

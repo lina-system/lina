@@ -812,11 +812,17 @@ func (r *conversationRuntime) seedHistory(ctx context.Context) error {
 		}
 		text := e.Body.Text()
 		if e.ScaffoldKind == "result" {
-			var plan result.Result
-			if err := json.Unmarshal([]byte(text), &plan); err != nil {
+			var value result.Result
+			if err := json.Unmarshal([]byte(text), &value); err != nil {
 				return err
 			}
-			if err := r.publish(ctx, protocol.KindResult, plan.ID, planWire(plan)); err != nil {
+			var err error
+			if value.Type == result.PlanType {
+				err = r.publish(ctx, protocol.KindResult, value.ID, planWire(value))
+			} else if e.SpeakerKind == guard.Agent {
+				err = r.publishResult(ctx, value)
+			}
+			if err != nil {
 				return err
 			}
 			continue
@@ -917,6 +923,11 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		delete(r.personaGrants, turnID+":relationship")
 		delete(r.personaGrants, turnID+":names")
 		delete(r.personaGrants, turnID+":coding")
+		for id := range r.personaGrants {
+			if strings.HasPrefix(id, turnID+":results:") {
+				delete(r.personaGrants, id)
+			}
+		}
 		r.personaMu.Unlock()
 
 	}()
@@ -989,6 +1000,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			if err := r.prepareWorkerTools(turnID, input, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
+			if err := r.prepareResultTools(turnID, input, bindings); err != nil {
+				return turn.PreparedRequest{}, err
+			}
 			if err := r.prepareRecordTools(turnID, input.ID, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
@@ -1007,6 +1021,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			}
 			declarations = append(declarations, coreexec.SkillDeclarations()...)
 			declarations = append(declarations, coreexec.RecordDeclarations()...)
+			declarations = append(declarations, coreexec.ResultDeclarations()...)
 			declarations = append(declarations, workDeclarations...)
 			declarations = append(declarations, methodologyDeclarations()...)
 			declarations = append(declarations, coreexec.PlanningDeclarations()...)
@@ -1051,6 +1066,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 					}
 					bindings[name] = tool
 				}
+			}
+			if err := r.bindDoneEvidence(ctx, persona, bindings); err != nil {
+				return turn.PreparedRequest{}, err
 			}
 			packet, _, err := atropos.Packet(ctx, minimum, 0, func(ctx context.Context) (assemble.ContextPacket, error) { return r.relationshipPacket(ctx, at) })
 			if err != nil {

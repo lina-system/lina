@@ -5,11 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/kit/result"
 )
 
 // ConformanceIn commits a Core-owned delivery decision together with its review
 // record. The current receipt and observed head must still match at commit.
-func ConformanceIn(ctx context.Context, tx *canon.Tx, task, receipt, head, verdict, evidence string) error {
+func ConformanceIn(ctx context.Context, tx *canon.Tx, task, receipt, head, verdict, evidence string, proof ...result.CompletionRequest) error {
 	var raw []byte
 	var card Card
 	if err := tx.QueryRowContext(ctx, "SELECT record FROM work_cards WHERE task_id=?", task).Scan(&raw); err != nil {
@@ -24,7 +25,7 @@ func ConformanceIn(ctx context.Context, tx *canon.Tx, task, receipt, head, verdi
 	if verdict == "unverified" {
 		return nil
 	}
-	e := Event{Key: "judge:" + receipt, TaskID: task, Kind: "judged", ReceiptID: receipt, Value: verdict, Evidence: evidence}
+	e := Event{Key: "judge:" + receipt, TaskID: task, Kind: "judged", ReceiptID: receipt, Value: verdict, Evidence: evidence, DoneRequest: firstProof(proof)}
 	if verdict == "" {
 		e.Key = "block:" + receipt
 		e.Kind = "blocked"
