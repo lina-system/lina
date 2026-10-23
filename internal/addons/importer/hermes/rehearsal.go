@@ -11,6 +11,7 @@ import (
 type ProfileMapping struct {
 	Profile, Agent, Person string
 	OwnerChannels          []OwnerChannel
+	CandidateOwnerChannels []OwnerChannelCandidate
 }
 
 // SourceGap names absent numeric ids between observed source rows. It does not
