@@ -27,19 +27,15 @@ import (
 func TestM2InstalledCodeGoalTool(t *testing.T) {
 	t.Parallel()
 	var offered atomic.Bool
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request struct{ Tools []struct{ Name string } }
+	server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct{ Tools []fixtureToolDeclaration }
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Error(err)
 			return
 		}
-		for _, tool := range request.Tools {
-			if tool.Name == "dispatch_code_goal" {
-				offered.Store(true)
-			}
-		}
+		offered.Store(toolReachable(request.Tools, "dispatch_code_goal"))
 		emitResponse(w, "Ready.", true)
-	}))
+	})))
 	defer server.Close()
 	h, start := installedConversationHarness(t, server.URL)
 	core := start(true)
@@ -130,7 +126,7 @@ func installedCodeGoal(t *testing.T, mode string) {
 	if !restarting {
 		close(releaseProbe)
 	}
-	service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	service := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			select {
 			case <-releaseProbe:
@@ -158,7 +154,7 @@ func installedCodeGoal(t *testing.T, mode string) {
 			}
 		}
 		_ = json.NewEncoder(w).Encode(deployed)
-	}))
+	})))
 	defer service.Close()
 	defer func() {
 		select {
@@ -168,7 +164,7 @@ func installedCodeGoal(t *testing.T, mode string) {
 		}
 	}()
 	var calls atomic.Int32
-	model := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	model := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request methodologyRequest
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Error(err)
@@ -186,10 +182,7 @@ func installedCodeGoal(t *testing.T, mode string) {
 			return
 		}
 		if calls.Add(1) == 1 {
-			offered := false
-			for _, tool := range request.Tools {
-				offered = offered || tool.Name == "dispatch_code_goal"
-			}
+			offered := toolReachable(request.Tools, "dispatch_code_goal")
 			if !offered {
 				t.Error("installed Core has no goal driver")
 				emitResponse(w, "Unavailable.", true)
@@ -200,7 +193,7 @@ func installedCodeGoal(t *testing.T, mode string) {
 			methodologyOutput(t, request, "ok", nil)
 			emitResponse(w, "Work started.", true)
 		}
-	}))
+	})))
 	defer model.Close()
 	h, bootstrap := installedConversationHarness(t, model.URL)
 	seedCodingFixture(t, h, bootstrap)

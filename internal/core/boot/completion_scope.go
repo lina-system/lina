@@ -82,14 +82,31 @@ func (r *conversationRuntime) completionRunner(ctx context.Context, card work.Ca
 	if origin.Person != r.person || origin.Agent != card.Task.AgentID || origin.Conversation != card.Task.ConversationID {
 		return nil, channels.ErrDenied
 	}
-	shared, err := r.router.channelView(ctx, channels.Binding{Person: r.person, Agent: card.Task.AgentID, Conversation: card.Task.ConversationID})
+	// Ownership stays with the dispatch-enabled manager. A delegated result
+	// resumes the requester using the authority captured before task admission.
+	agent, conversation := origin.Agent, origin.Conversation
+	var assignment codingAssignment
+	err = r.db.Read(ctx, func(tx *canon.Tx) error {
+		var err error
+		assignment, err = readCoding(ctx, tx, card.Task.ID)
+		return err
+	})
+	if err == nil {
+		if assignment.Owner != card.Task.AgentID || assignment.Conversation != card.Task.ConversationID || assignment.Origin.Person != origin.Person || assignment.Origin.Agent == "" || assignment.Origin.Conversation == "" {
+			return nil, channels.ErrDenied
+		}
+		agent, conversation = assignment.Origin.Agent, assignment.Origin.Conversation
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	shared, err := r.router.channelView(ctx, channels.Binding{Person: r.person, Agent: agent, Conversation: conversation})
 	if err != nil {
 		return nil, err
 	}
 	if origin.Binding == nil {
 		return shared, nil
 	}
-	runner := newConversationView(r.router.root, card.Task.AgentID, card.Task.ConversationID)
+	runner := newConversationView(r.router.root, agent, conversation)
 	runner.channelBinding = origin.Binding
 	runner.channelAddress = origin.Address
 	runner.coordinator = shared
