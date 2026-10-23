@@ -62,14 +62,18 @@ func (r *conversationRuntime) bindInput(ctx context.Context, tx *canon.Tx, input
 
 func (r *conversationRuntime) bindingState(ctx context.Context, tx *canon.Tx, input ledger.Event) (binding.State, error) {
 	s := binding.State{Clock: input.RecordedAt, Focus: binding.Target{Class: "none"}, Surfaces: map[string]string{}}
-	// A channel without personal-context access must not receive the app's work
-	// queue or focus merely because it shares the main conversation identity.
-	if r.channelBinding != nil && (!r.channelBinding.Scope.Memory || !r.channelBinding.Scope.Tools) {
+	// Work follows the tool scope; personal names and shared conversation
+	// context independently require the memory scope.
+	if r.channelBinding != nil && !r.channelBinding.Scope.Tools {
 		return s, nil
+	}
+	address := ""
+	if r.channelBinding != nil && !r.channelBinding.Scope.Memory {
+		address = r.channelAddress.Key()
 	}
 	// Read the latest binding and exchange before this input, using ledger order.
 	var raw, at string
-	err := tx.QueryRowContext(ctx, `SELECT b.body,p.recorded_at FROM conv_event b JOIN conv_event p ON p.id=b.parent_id WHERE b.conversation_id=? AND b.agent_id=? AND p.person_id=? AND b.scaffold_kind=? AND p.rowid<(SELECT rowid FROM conv_event WHERE id=?) ORDER BY p.rowid DESC LIMIT 1`, input.ConversationID, input.AgentID, input.PersonID, inputBindingKind, input.ID).Scan(&raw, &at)
+	err := tx.QueryRowContext(ctx, `SELECT b.body,p.recorded_at FROM conv_event b JOIN conv_event p ON p.id=b.parent_id WHERE b.conversation_id=? AND b.agent_id=? AND p.person_id=? AND b.scaffold_kind=? AND p.rowid<(SELECT rowid FROM conv_event WHERE id=?) AND (?='' OR EXISTS(SELECT 1 FROM channel_receipts receipt WHERE receipt.address=? AND p.id='channel-input:'||receipt.inbox_id)) ORDER BY p.rowid DESC LIMIT 1`, input.ConversationID, input.AgentID, input.PersonID, inputBindingKind, input.ID, address, address).Scan(&raw, &at)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return s, err
 	}
@@ -81,7 +85,7 @@ func (r *conversationRuntime) bindingState(ctx context.Context, tx *canon.Tx, in
 		s.Focus = previous.Target
 		// Agent replies also keep an exchange fresh; tool/system traffic does not.
 		var latest string
-		err = tx.QueryRowContext(ctx, `SELECT recorded_at FROM conv_event WHERE conversation_id=? AND agent_id=? AND speaker_kind IN ('person','agent') AND rowid<(SELECT rowid FROM conv_event WHERE id=?) AND coalesce(scaffold_kind,'')<>'provider_item' ORDER BY rowid DESC LIMIT 1`, input.ConversationID, input.AgentID, input.ID).Scan(&latest)
+		err = tx.QueryRowContext(ctx, `SELECT e.recorded_at FROM conv_event e WHERE e.conversation_id=? AND e.agent_id=? AND e.speaker_kind IN ('person','agent') AND e.rowid<(SELECT rowid FROM conv_event WHERE id=?) AND coalesce(e.scaffold_kind,'')<>'provider_item' AND (?='' OR EXISTS(SELECT 1 FROM channel_receipts receipt WHERE receipt.address=? AND ('channel-input:'||receipt.inbox_id=e.id OR 'channel-input:'||receipt.inbox_id=e.parent_id))) ORDER BY e.rowid DESC LIMIT 1`, input.ConversationID, input.AgentID, input.ID, address, address).Scan(&latest)
 		if err != nil {
 			return s, err
 		}
@@ -190,7 +194,10 @@ func (r *conversationRuntime) bindingState(ctx context.Context, tx *canon.Tx, in
 		return s, err
 	}
 	// Names use the same visibility, validity and retraction checks as recall.
-	names, err := memory.New(questionTransaction{tx}).Names(ctx, memory.RecallScope{Person: input.PersonID, Agent: input.AgentID, ExternalModel: true}, input.RecordedAt.Unix())
+	var names []memory.Hit
+	if address == "" {
+		names, err = memory.New(questionTransaction{tx}).Names(ctx, memory.RecallScope{Person: input.PersonID, Agent: input.AgentID, ExternalModel: true}, input.RecordedAt.Unix())
+	}
 	if err != nil {
 		return s, err
 	}
@@ -222,6 +229,22 @@ func (r *conversationRuntime) bindingState(ctx context.Context, tx *canon.Tx, in
 	for _, q := range pending {
 		if q.Conversation != input.ConversationID {
 			continue
+		}
+		visible, err := waiting.ConversationQuestionVisible(ctx, tx, q)
+		if err != nil {
+			return s, err
+		}
+		if !visible {
+			continue
+		}
+		if address != "" {
+			var count int
+			if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM channel_receipts WHERE address=? AND 'channel-input:'||inbox_id=?", address, q.Input).Scan(&count); err != nil {
+				return s, err
+			}
+			if count == 0 {
+				continue
+			}
 		}
 		target, err := bindingTarget(ctx, tx, input, q.Input)
 		if err != nil {

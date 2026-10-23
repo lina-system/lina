@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/intakereplay"
 	"github.com/thisisjun786/lina/internal/core/ledger"
@@ -247,5 +248,31 @@ func TestInputBindingRecoveryDoesNotStealFocus(t *testing.T) {
 	}
 	if d.Target.ID != "b" || !d.Unresolved {
 		t.Fatal("recovered older input replaced recent focus", d)
+	}
+}
+
+func TestInputBindingChannelWorkWithoutMemory(t *testing.T) {
+	r := controlRuntime(t)
+	ctx := t.Context()
+	now := time.Now().UTC()
+	state := intakereplay.State{Clock: now, Focus: intakereplay.Target{Class: "none"}, Items: []intakereplay.Item{{ID: "garden", Title: "Garden", Kind: "project", State: "active", LastActivity: now}}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(ctx, state, intakereplay.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	r.channelBinding = &channels.Binding{Scope: channels.Scope{Tools: true}}
+	input, err := r.journal().Admit(ctx, guard.EntryOwner, ledger.Input{ID: "channel-work", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Surface: ledger.Surface{Kind: "channel", Platform: "telegram", ChatID: "1"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Garden"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := r.journal().Get(ctx, inputBindingID(input.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d binding.Decision
+	if err = json.Unmarshal([]byte(saved.Body.Text()), &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.Target.ID != "garden" || d.Decider != "exact-reference" {
+		t.Fatal("work scope incorrectly requires memory scope", d)
 	}
 }
