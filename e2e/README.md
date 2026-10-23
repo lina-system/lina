@@ -212,9 +212,15 @@ go test -count=1 -v -timeout=12m ./e2e/m1 -run '^TestAlphaOwner'
 
 On Linux, the residency collector samples the installed Core's RSS and
 high-water mark once per second and checks its public protocol every minute.
-It rejects a process/epoch change, an exit, a missing counter, a sample gap over
-two seconds, or a peak above the predeclared 256 MiB budget. It records the source
-commit, source cleanliness and installed binary digest. The full run requires a
+Sampling only queues the sample; a separate goroutine writes the pending batch
+to `resident.jsonl` and flushes it once per second, so a slow filesystem cannot
+delay the next counter read. It rejects a process/epoch change, an exit, a
+missing counter, a sample gap over two seconds, or a peak above the predeclared
+256 MiB budget, and a failed sample write fails the run. It records the source
+commit, source cleanliness and installed binary digest. `result.json` records
+`maximum_sample_gap_seconds` beside `maximum_write_seconds`, which is the
+longest write plus flush, so a later gap failure is attributable to the sampler
+or the filesystem. The full run requires a
 clean source commit, the real model opt-in and 86,400 measured seconds; its TUI
 stays attached. The 65-second collector probe exercises a periodic health request and is always recorded as incomplete
 acceptance, even when the probe test succeeds. These are Linux Core measurements,

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -39,6 +40,186 @@ func TestAlphaResidencyProbe(t *testing.T) {
 	if probes := alphaResidency(t, 65*time.Second); probes < 3 {
 		t.Fatal("residency preflight did not exercise its periodic health probe")
 	}
+}
+
+// TestAlphaResidencyWriterKeepsSamplesOffTheWritePath pins that a stalled
+// persistence step cannot delay reading Core's counters: real /proc samples
+// keep queueing while the writer is blocked inside its first flush.
+func TestAlphaResidencyWriterKeepsSamplesOffTheWritePath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "resident.jsonl")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	stalled := func(raw []byte) error {
+		once.Do(func() { close(entered) })
+		<-release
+		_, err := file.Write(raw)
+		return err
+	}
+	writer := newAlphaResidentWriter(file, 10*time.Millisecond, stalled)
+	writer.add(alphaResidentSample{Elapsed: 1})
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("writer did not persist the first sample")
+	}
+	pid := os.Getpid()
+	collected := make(chan struct{})
+	go func() {
+		defer close(collected)
+		for i := range 20 {
+			reading, err := alphaReadResident(pid)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			reading.Elapsed = float64(i)
+			writer.add(reading)
+		}
+	}()
+	select {
+	case <-collected:
+	case <-time.After(5 * time.Second):
+		t.Fatal("sampling blocked on a stalled write")
+	}
+	close(release)
+	if err := writer.settle(); err != nil {
+		t.Fatal(err)
+	}
+	if writer.maximumWrite() <= 0 {
+		t.Fatal("write time was not recorded")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lines := strings.Count(string(data), "\n"); lines != 21 {
+		t.Fatalf("persisted %d samples, want 21", lines)
+	}
+}
+
+// TestAlphaResidencyWriterReportsFailedWrite pins that a persistence failure
+// surfaces to the sampling loop instead of silently dropping samples.
+func TestAlphaResidencyWriterReportsFailedWrite(t *testing.T) {
+	writer := newAlphaResidentWriter(nil, time.Hour, func([]byte) error { return errors.New("disk full") })
+	writer.add(alphaResidentSample{Elapsed: 1})
+	if err := writer.settle(); err == nil || !strings.Contains(err.Error(), "disk full") {
+		t.Fatalf("settle error = %v, want the write failure", err)
+	}
+	if writer.failure() == nil {
+		t.Fatal("write failure was not recorded for the sampler")
+	}
+	if writer.maximumWrite() <= 0 {
+		t.Fatal("write time was not recorded")
+	}
+}
+
+// alphaResidentWriter persists samples away from the sampling path, so a slow
+// filesystem cannot delay the next read of Core's counters.
+type alphaResidentWriter struct {
+	persist func([]byte) error
+	stop    chan struct{}
+	done    chan struct{}
+	mu      sync.Mutex
+	pending []alphaResidentSample
+	maximum time.Duration
+	err     error
+}
+
+func newAlphaResidentWriter(file *os.File, interval time.Duration, persist func([]byte) error) *alphaResidentWriter {
+	writer := &alphaResidentWriter{persist: persist, stop: make(chan struct{}), done: make(chan struct{})}
+	go writer.run(interval)
+	return writer
+}
+
+// alphaPersistSamples writes one batch and flushes it to stable storage.
+func alphaPersistSamples(file *os.File) func([]byte) error {
+	return func(batch []byte) error {
+		if _, err := file.Write(batch); err != nil {
+			return err
+		}
+		return file.Sync()
+	}
+}
+
+// add queues a sample. It never waits for persistence.
+func (writer *alphaResidentWriter) add(sample alphaResidentSample) {
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	writer.pending = append(writer.pending, sample)
+}
+
+func (writer *alphaResidentWriter) run(interval time.Duration) {
+	defer close(writer.done)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			writer.flush()
+		case <-writer.stop:
+			writer.flush()
+			return
+		}
+	}
+}
+
+func (writer *alphaResidentWriter) flush() {
+	writer.mu.Lock()
+	batch := writer.pending
+	writer.pending = nil
+	writer.mu.Unlock()
+	if len(batch) == 0 {
+		return
+	}
+	var raw []byte
+	for _, sample := range batch {
+		line, err := json.Marshal(sample)
+		if err != nil {
+			writer.record(0, err)
+			return
+		}
+		raw = append(raw, line...)
+		raw = append(raw, '\n')
+	}
+	begin := time.Now()
+	err := writer.persist(raw)
+	writer.record(time.Since(begin), err)
+}
+
+func (writer *alphaResidentWriter) record(elapsed time.Duration, err error) {
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	writer.maximum = max(writer.maximum, elapsed)
+	if err != nil && writer.err == nil {
+		writer.err = err
+	}
+}
+
+// settle stops the writer after persisting every queued sample.
+func (writer *alphaResidentWriter) settle() error {
+	close(writer.stop)
+	<-writer.done
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	return writer.err
+}
+
+func (writer *alphaResidentWriter) maximumWrite() time.Duration {
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	return writer.maximum
+}
+
+func (writer *alphaResidentWriter) failure() error {
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	return writer.err
 }
 
 type alphaResidentSample struct {
@@ -106,7 +287,7 @@ func alphaResidency(t *testing.T, duration time.Duration) int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer samples.Close()
+	writer := newAlphaResidentWriter(samples, time.Second, alphaPersistSamples(samples))
 	report := struct {
 		Status          string    `json:"status"`
 		SourceDirty     bool      `json:"source_dirty"`
@@ -120,13 +301,23 @@ func alphaResidency(t *testing.T, duration time.Duration) int {
 		Samples         int       `json:"samples"`
 		Probes          int       `json:"health_probes"`
 		MaximumGap      float64   `json:"maximum_sample_gap_seconds"`
+		MaximumWrite    float64   `json:"maximum_write_seconds"`
 		Started         time.Time `json:"started_at"`
 		Ended           time.Time `json:"ended_at"`
 	}{Status: "incomplete", RequiredSeconds: 86400, Budget: alphaResidentBudget}
+	// Settling persists the last queued samples before the report reads the
+	// recorded write time, so both artifacts describe the same run.
 	defer func() {
+		if err := writer.settle(); err != nil {
+			t.Error(err)
+		}
+		if err := samples.Close(); err != nil {
+			t.Error(err)
+		}
 		if t.Failed() {
 			report.Status = "failed"
 		}
+		report.MaximumWrite = writer.maximumWrite().Seconds()
 		report.Ended = time.Now().UTC()
 		raw, _ := json.MarshalIndent(report, "", "  ")
 		if err := os.WriteFile(filepath.Join(directory, "result.json"), append(raw, '\n'), 0600); err != nil {
@@ -232,11 +423,10 @@ func alphaResidency(t *testing.T, duration time.Duration) int {
 		}
 		report.Peak = max(report.Peak, reading.Peak)
 		report.Samples++
-		if err := json.NewEncoder(samples).Encode(reading); err != nil {
-			t.Fatal(err)
-		}
-		if err := samples.Sync(); err != nil {
-			t.Fatal(err)
+		// Queueing is in-memory; the writer flushes and fsyncs on its own path.
+		writer.add(reading)
+		if err := writer.failure(); err != nil {
+			t.Fatalf("persisting resident samples: %v", err)
 		}
 		if gap > 2 {
 			t.Fatal("resource sample gap exceeds two seconds")
