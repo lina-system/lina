@@ -1160,6 +1160,13 @@ replacement must belong to the corrected scope.
 
 When a revision invalidates queued actions, Core retires them and releases their reservations in the same ledger transaction. A worker action that was never dispatched restores its task's runnable stage and does not spend an attempt, continuation or recovery. A cancelled manager action likewise does not consume the task's repair turn. Adding a repair task also revises the goal: obsolete queued sibling actions are retired and derived again, so independent work remains runnable. Actions already claimed keep their reservations until Core reads their outcome; revision never dispatches their effects again.
 
+A task signal or revision cannot reopen an action whose outcome Core already
+accepted as terminal. A different late report against its obsolete inputs stays
+in the event history without replacing the accepted receipt or changing the
+task's later stage, including after restart. Only superseded effects whose
+outcomes still need reconciliation receive replacement observations; those
+reads retain the original effect identity and never dispatch it again.
+
 A completed criterion check for an obsolete goal revision, checking round or target is retained as a receipt without applying its evidence or stopping Core. A manager response assesses only the canonical record revision it was given; an older response cannot clear the corrected definition's fence, add its old tasks, or mark the correction blocked. Independent sibling repair plans remain valid across execution revisions while the canonical definition is unchanged.
 
 Retiring an obsolete task repair assessment clears its assessment marker in
