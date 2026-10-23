@@ -63,6 +63,20 @@ func measure(ctx context.Context, root string, c corpus) (_ report, err error) {
 	if err := os.Chmod(root, 0700); err != nil {
 		return r, err
 	}
+	// The binding's VFS uses SQLITE_TMPDIR for sort/temporary databases. Keep
+	// even large private workloads inside scratch. These tests are deliberately
+	// serial; restore the caller's environment after every measured corpus.
+	previousTemp, hadTemp := os.LookupEnv("SQLITE_TMPDIR")
+	if err := os.Setenv("SQLITE_TMPDIR", root); err != nil {
+		return r, err
+	}
+	defer func() {
+		if hadTemp {
+			err = errors.Join(err, os.Setenv("SQLITE_TMPDIR", previousTemp))
+		} else {
+			err = errors.Join(err, os.Unsetenv("SQLITE_TMPDIR"))
+		}
+	}()
 	if err := os.MkdirAll(filepath.Join(root, "canon"), 0700); err != nil {
 		return r, err
 	}

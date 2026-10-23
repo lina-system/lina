@@ -5,7 +5,8 @@ service or production state. It runs the shipped migrations, `ledger.AdmitBatch`
 the memory tool's `Remember`, `compaction.Publish`, ledger search, memory recall,
 depth-zero `recall_person` and `retract.Forget`. Large bodies use the real assets
 writer. Each run owns a private scratch directory and removes it after closing
-the stores.
+the stores. SQLite sort and temporary databases are confined there with a scoped
+`SQLITE_TMPDIR`; the serial harness restores the caller's environment afterward.
 
 ```sh
 go test ./internal/core/storebench
