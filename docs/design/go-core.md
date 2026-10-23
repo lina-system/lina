@@ -265,6 +265,11 @@ If the filesystem context cannot be isolated, startup refuses before binding.
 
 The root, `system/` and `system/core/` must be owned by the current user and private (0700); existing unsafe paths are refused, not chmodded.
 Control records must be regular files at 0600, owned by that user, without symbolic or hard links.
+A read opens the record without following symbolic links, accepts only a regular file with one link, then checks the directory entry with `Lstat` and requires it to name the same inode.
+A link inside `system/core/` is therefore refused even when its target is a private record in that directory.
+The directory-fsync, rename write path replaces the inode, so a read may hold the previous, unlinked inode or find a different entry.
+Such a read discards what it opened and revalidates the replacement, up to eight attempts; a record still changing after that fails the read.
+An unsafe entry that was not replaced fails immediately.
 Records larger than 64 KiB, malformed JSON objects and invalid epochs stop startup with exit 78.
 The epoch file contains only its canonical decimal digits, with no whitespace; overflow refuses the start and preserves the record.
 Linux filesystem validation permits ext-family, XFS, Btrfs, tmpfs, overlay, F2FS, ZFS, NILFS, ReiserFS and JFS.
