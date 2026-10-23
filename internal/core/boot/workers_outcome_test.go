@@ -349,4 +349,16 @@ func TestRecoveredWorkerCompletionQueuesOneResultWithoutWorkerReplay(t *testing.
 	}); err != nil || admitted != 1 {
 		t.Fatalf("snapshot did not queue exactly one result: %d %v", admitted, err)
 	}
+	// A second failed attempt is a decision, not another autonomous model input.
+	event.Thread.TurnID = "failed-second"
+	event.Finish = &worker.Finish{Status: worker.Failed, Failure: worker.WorkerFailure}
+	if err = entry.recoveredFinish(t.Context(), event, "failed again"); err != nil {
+		t.Fatal(err)
+	}
+	if err = r.db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM inbox WHERE source='worker-finish'").Scan(&admitted)
+	}); err != nil || admitted != 1 {
+		t.Fatalf("failed recovery queued autonomous work: %d %v", admitted, err)
+	}
+
 }

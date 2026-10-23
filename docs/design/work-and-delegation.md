@@ -1062,7 +1062,7 @@ A stream without a final result, tool activity requiring readback, or an
 unobserved process after Core dies remains unknown. These headless adapters do
 not claim a persisted-thread read operation they do not provide. Reconciliation
 uses the existing events and a five-minute safety sweep; it does not call a model.
-Confirmed completion evidence uses the normal result-delivery inbox. Its separate
+Confirmed successful completion evidence uses the normal result-delivery inbox. Its separate
 conversation response neither replays worker input nor grants another attempt.
 
 ## Judgment and delivery

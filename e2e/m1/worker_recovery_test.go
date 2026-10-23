@@ -241,7 +241,7 @@ func TestM2WorkerRecovery(t *testing.T) {
 			}
 			client.Close()
 			reactions := 0
-			if mode != "unknown" {
+			if mode == "completed" {
 				reactions = 1
 			}
 			waitRecovery(t, h, func() bool {
