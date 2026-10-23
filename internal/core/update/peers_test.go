@@ -9,7 +9,7 @@ import (
 
 func TestPeerRowsRequireProtocolPlatformAndCapabilities(t *testing.T) {
 	required := manifest.ClientCombinations()
-	for _, change := range []string{"unchanged", "missing", "protocol", "platform", "capability", "evidence"} {
+	for _, change := range []string{"unchanged", "missing", "protocol", "platform", "capability", "evidence", "catalog", "result type"} {
 		t.Run(change, func(t *testing.T) {
 			rows := manifest.ClientCombinations()
 			switch change {
@@ -23,6 +23,17 @@ func TestPeerRowsRequireProtocolPlatformAndCapabilities(t *testing.T) {
 				rows[0].Capabilities = rows[0].Capabilities[:1]
 			case "evidence":
 				rows[0].Evidence = nil
+			case "catalog", "result type":
+				for _, cap := range rows[1].Capabilities {
+					if cap.Name != "results" {
+						continue
+					}
+					if change == "catalog" {
+						*cap.Catalogs = nil
+					} else {
+						*cap.Types = nil
+					}
+				}
 			}
 			err := CheckPeers(rows, required)
 			if (err == nil) != (change == "unchanged") {

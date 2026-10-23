@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package clientapi owns the typed client connection to Core. It has no access
-// to Core state and never starts Core or retries a request.
+// to Core state and never starts Core or retries an operation.
 package clientapi
 
 import (
@@ -57,20 +57,37 @@ func Dial(ctx context.Context, socket, productVersion string) (*Client, error) {
 }
 
 // DialWithCapabilities offers only the caller's implemented capabilities.
+// A 1.1 handshake refused as unsupported may reconnect once using 1.0.
 // Welcome may grant any subset, never an unoffered capability or version.
 func DialWithCapabilities(ctx context.Context, socket, productVersion string, capabilities []protocol.Capability) (*Client, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", socket)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrUnavailable, err)
-	}
-	client, err := handshake(ctx, conn, productVersion, capabilities)
-	if err != nil {
+	for attempt := 0; attempt < 2; attempt++ {
+		conn, err := (&net.Dialer{}).DialContext(ctx, "unix", socket)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrUnavailable, err)
+		}
+		client, err := handshake(ctx, conn, productVersion, capabilities)
+		if err == nil {
+			return client, nil
+		}
 		conn.Close()
-		return nil, err
+		var refusal *Refusal
+		if attempt != 0 || !offersClient11(capabilities) || !errors.As(err, &refusal) || refusal.Cause.Code != protocol.ErrorUnsupportedCombination {
+			return nil, err
+		}
+		// An installed 1.0 Core refuses the 1.1 envelope before negotiation.
+		// Reconnect once within the original deadline, with only fields that
+		// its strict decoder knows. No operation has been sent or retried.
+		legacy := make([]protocol.Capability, 0, len(capabilities))
+		for _, capability := range capabilities {
+			if capability.Name != "results" && capability.Name != "mocks" {
+				legacy = append(legacy, protocol.Capability{Name: capability.Name, Version: capability.Version})
+			}
+		}
+		capabilities = legacy
 	}
-	return client, nil
+	return nil, ErrUnavailable
 }
 
 func handshake(ctx context.Context, conn net.Conn, productVersion string, capabilities []protocol.Capability) (*Client, error) {
@@ -88,21 +105,22 @@ func handshake(ctx context.Context, conn net.Conn, productVersion string, capabi
 			<-interrupted
 		}
 	}()
-	version := "1.0"
-	if slices.Contains(capabilities, protocol.Capability{Name: "mocks", Version: "1.0"}) {
-		version = "1.1"
-	}
 	clientID := rand.Text()
 	peer, platform := "lina-tui", runtime.GOOS+"/"+runtime.GOARCH
+	versions := []string{"1.0"}
+	if offersClient11(capabilities) {
+		versions = []string{"1.1", "1.0"}
+	}
 	hello := protocol.Envelope{
-		Protocol: protocol.Protocol{Name: "client", Version: version},
-		Kind:     protocol.KindHello, MessageID: rand.Text(), AttemptID: rand.Text(),
+		Protocol: protocol.Protocol{Name: "client", Version: versions[0]},
+
+		Kind: protocol.KindHello, MessageID: rand.Text(), AttemptID: rand.Text(),
 		Sender: protocol.Sender{Party: protocol.PartyClient, ID: clientID}, Epoch: "0",
 		SentAt: time.Now().UTC().Format(time.RFC3339Nano), EffectState: protocol.EffectNone,
 		SourceRefs: []protocol.SourceRef{},
 		Payload: protocol.Hello{
 			Party: protocol.PartyClient, ID: clientID, ProductVersion: productVersion, Peer: &peer, Platform: &platform,
-			ProtocolVersions: []string{version}, Capabilities: append([]protocol.Capability{}, capabilities...),
+			ProtocolVersions: versions, Capabilities: append([]protocol.Capability{}, capabilities...),
 		},
 	}
 	request := struct {
@@ -139,15 +157,17 @@ func handshake(ctx context.Context, conn net.Conn, productVersion string, capabi
 	}
 	welcome, ok := envelope.Payload.(protocol.Welcome)
 	if !ok || envelope.Kind != protocol.KindWelcome || envelope.Error != nil || envelope.EffectState != protocol.EffectNone ||
-		welcome.ProtocolVersion != version || welcome.MainID != envelope.Sender.ID || welcome.Epoch != envelope.Epoch {
+		!slices.Contains(versions, welcome.ProtocolVersion) || welcome.MainID != envelope.Sender.ID || welcome.Epoch != envelope.Epoch {
+
 		return nil, errors.New("invalid welcome")
 	}
-	seen := make(map[protocol.Capability]bool)
+	seen := make(map[[2]string]bool)
 	for _, granted := range welcome.Capabilities {
-		if seen[granted] || !slices.Contains(capabilities, granted) {
+		key := [2]string{granted.Name, granted.Version}
+		if seen[key] || !slices.ContainsFunc(capabilities, func(offered protocol.Capability) bool { return protocol.CapabilitySubset(granted, offered) }) {
 			return nil, errors.New("invalid granted capability")
 		}
-		seen[granted] = true
+		seen[key] = true
 	}
 
 	// Stop and join cancellation before clearing the handshake deadline. A
@@ -163,4 +183,8 @@ func handshake(ctx context.Context, conn net.Conn, productVersion string, capabi
 		return nil, err
 	}
 	return &Client{conn: conn, Welcome: welcome, reader: reader, writer: rpc.NewWriter(conn), clientID: clientID, pending: make(map[string]struct{})}, nil
+}
+
+func offersClient11(capabilities []protocol.Capability) bool {
+	return protocol.HasCapability(capabilities, protocol.SurfaceResultsCapability()) || protocol.HasCapability(capabilities, protocol.Capability{Name: "mocks", Version: "1.0"})
 }
