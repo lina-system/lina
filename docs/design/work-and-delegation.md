@@ -723,6 +723,9 @@ Every worker adapter offers the work engine the same operations:
 - Methods used: `thread/start`, `thread/resume`, `thread/read`, `thread/list`, `thread/loaded/list`, `thread/archive` (explicit close only), `turn/start`, `turn/steer` (`expectedTurnId` required), `turn/interrupt`, `skills/list`, `account/rateLimits/read`.
 - Server requests handled: `item/tool/call`, `item/commandExecution/requestApproval`, `item/fileChange/requestApproval`, `item/permissions/requestApproval`, `item/tool/requestUserInput`, `mcpServer/elicitation/request`.
 - Notifications consumed: `turn/*`, `item/*`, `thread/tokenUsage/updated`, `account/rateLimits/updated`, `serverRequest/resolved`, `error`, `hook/*`.
+- A completion may arrive before the `turn/start` reply without a preceding
+  `turn/started` notification. The returned handle retains that completed turn's
+  id and terminal status so Core can record its outcome, including quota stops.
 - The adapter calls no other method. LINA never changes the user's Codex settings or plugins.
 - The same JSON-RPC shape never implies the same capability. `turn/completed` is never evidence of a product effect.
 - LINA Core starts the installed Codex as `codex app-server --listen stdio://`, a stdio child with LINA Core's environment and the user's own Codex home. On a remote device the registered Node starts it. When its standard input closes, the child exits normally. The only client is LINA Core, or on a remote device that device's registered Node.
