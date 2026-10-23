@@ -73,6 +73,12 @@ func alphaScreen(t *testing.T, h *harness, terminal *terminal, stage string, rea
 	if err != nil {
 		t.Fatalf("alpha screen %s did not arrive: %v", stage, err)
 	}
+	alphaSaveScreen(t, terminal, stage, snapshot, forbidden)
+	return snapshot
+}
+
+func alphaSaveScreen(t *testing.T, terminal *terminal, stage string, snapshot tuiterm.Snapshot, forbidden string) {
+	t.Helper()
 	t.Log("observed screen:", stage)
 	text, raw := screenText(snapshot), terminal.screen.Bytes()
 	if forbidden != "" && (strings.Contains(text, forbidden) || bytes.Contains(raw, []byte(forbidden))) {
@@ -90,7 +96,6 @@ func alphaScreen(t *testing.T, h *harness, terminal *terminal, stage string, rea
 			}
 		}
 	}
-	return snapshot
 }
 
 func alphaTurn(t *testing.T, h *harness, terminal *terminal, observer *clientapi.Client, input, reply, stage string) {

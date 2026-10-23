@@ -17,6 +17,7 @@ import (
 	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/design"
+	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -26,7 +27,7 @@ func alphaOwnerHarness(t *testing.T, worker bool) (*harness, func() *process) {
 	if os.Getenv("LINA_RESPONSES_MODEL") != "claude-opus-5-5" {
 		t.Fatal("alpha acceptance requires the owner-selected model")
 	}
-	h, _ := installedConversationHarness(t, "")
+	h := alphaOwnerInstalledHarness(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	t.Cleanup(cancel)
 	h.ctx = ctx
@@ -190,6 +191,32 @@ func TestAlphaOwnerCodingAndQuestion(t *testing.T) {
 	}
 	terminal, _ := h.startConversationTUI(120, 34, "TERM=xterm-256color", "LC_ALL=ko")
 	alphaScreen(t, h, terminal, "fresh", func(s string) bool { return strings.Contains(s, "Ctrl+D") }, "")
+	// Observe the real worker throughout its lifetime. A spoken question can
+	// leave it idle, so inspecting only after the answer misses a real card.
+	cardContext, stopCard := context.WithCancel(h.ctx)
+	type cardObservation struct {
+		snapshot tuiterm.Snapshot
+		err      error
+	}
+	card := make(chan cardObservation, 1)
+	screen := terminal.screen
+	go func() {
+		snapshot, err := screen.Wait(cardContext, func(s tuiterm.Snapshot) bool {
+			panel := strings.Join(panelCellRows(s, 80, 40), "\n")
+			return alphaHasWorkCard(panel) && !strings.Contains(panel, design.Text(design.Korean, "developer.state.unknown"))
+		})
+		card <- cardObservation{snapshot, err}
+	}()
+	initialTerminal := terminal
+	defer func() {
+		stopCard()
+		observed := <-card
+		if observed.err == nil {
+			alphaSaveScreen(t, initialTerminal, "work-card", observed.snapshot, "")
+		} else if !t.Failed() {
+			t.Error("the real worker never displayed a card with elapsed time and current activity")
+		}
+	}()
 	input := fmt.Sprintf("Codex 작업자에게 작은 Python 코딩 작업을 맡겨 줘. 작업 폴더는 %s야. greeting.py에 greet(name)이 '안녕, ' + name을 반환하도록 구현해. 작업자가 먼저 나에게 사용할 이름을 질문하고, 내 답을 받은 뒤 그 이름으로 테스트를 실행하게 해. 성공하면 result.json에 name, greeting, tests_passed 필드를 저장해. 파일은 이 폴더 안에만 만들고, 각 Python 파일 첫 줄에 Apache-2.0 SPDX 주석을 넣어. 원격 작업은 필요 없어. 끝나면 네가 결과 파일을 읽고 한국어로 알려 줘.", workdir)
 	h.keys(terminal, "\x1b[200~"+input+"\x1b[201~\r")
 	var question protocol.Question
@@ -205,18 +232,10 @@ func TestAlphaOwnerCodingAndQuestion(t *testing.T) {
 		switch p := frame.Payload.(type) {
 		case protocol.TurnState:
 			if p.Active != nil && !*p.Active {
-				workerText, _ := alphaLastWorkerOutput(t, h)
-				if alphaNameRequest(workerText) {
-					spokenQuestion = workerText
-				}
+				spokenQuestion = alphaOwnerSpokenQuestion(t, h)
 			}
 		case protocol.ItemDone:
-			if p.Speaker != nil && *p.Speaker == protocol.ConversationSpeakerAgent && p.Text != nil {
-				workerText, _ := alphaLastWorkerOutput(t, h)
-				if alphaNameRequest(workerText) {
-					spokenQuestion = workerText
-				}
-			}
+			spokenQuestion = alphaOwnerSpokenQuestion(t, h)
 		case protocol.ApprovalRequest:
 			alphaLiveApproval(t, h, terminal, p)
 		case protocol.Question:
@@ -242,13 +261,17 @@ func TestAlphaOwnerCodingAndQuestion(t *testing.T) {
 	} else {
 		// A worker can finish its turn with a question. Verify its durable source,
 		// then answer through the same conversation so LINA must route the reply.
-		alphaScreen(t, h, terminal, "question-in-conversation", alphaNameRequest, "")
+		visible := func(text string) string {
+			plain := strings.NewReplacer("*", "", "_", "", "`", "", "#", "").Replace(text)
+			return strings.Join(strings.Fields(plain), "")
+		}
+		alphaScreen(t, h, terminal, "question-in-conversation", func(s string) bool {
+			return strings.Contains(visible(s), visible(spokenQuestion))
+		}, "")
 		h.keys(terminal, "\x1b[200~이름은 민준이야. 그 답을 같은 Codex 작업자에게 전하고 작업을 계속해 줘.\x1b[201~\r")
 	}
-	// A spoken question leaves the worker idle until its continuation starts;
-	// a structured answer may let it finish before the overlay closes. Neither
-	// requires a transient card here. The held-worker journey checks the card;
-	// this journey requires the delivered result and verifies its artifact below.
+	// The watcher retains the active card even when the worker is already idle
+	// by the time the question overlay closes.
 	alphaConversationScreen(t, h, terminal, design.Korean)
 
 	// A result is accepted only after a persona turn follows an actual worker
