@@ -3,6 +3,7 @@ package ui
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -62,11 +63,17 @@ func (m *shellModel) recordsCommand(text string) (bool, tea.Cmd) {
 	if view == "all" {
 		view = ""
 	}
-	now := m.now()
-	day, zone := now.Format(time.DateOnly), now.Location().String()
-	// time.Local.String() is "Local" rather than an IANA identifier. Core accepts
-	// the main host's Local zone too; remote clients send their actual zone.
-	v.query = protocol.RecordRequest{Operation: "query", View: &view, Search: &search, Day: &day, Zone: &zone}
+	v.query = protocol.RecordRequest{Operation: "query", View: &view, Search: &search}
+	if view == "today" || view == "upcoming" || view == "week" {
+		now := m.now()
+		zone, ok := recordZone(now, os.Readlink, os.ReadFile)
+		if !ok {
+			m.conversation.pager.text = design.Text(m.styles.options.Language, "records.zone_unavailable")
+			return true, nil
+		}
+		day := now.Format(time.DateOnly)
+		v.query.Day, v.query.Zone = &day, &zone
+	}
 	return true, m.recordRequest(v.query)
 }
 func (m *shellModel) recordRequest(request protocol.RecordRequest) tea.Cmd {

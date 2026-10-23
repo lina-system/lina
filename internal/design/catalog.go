@@ -44,6 +44,9 @@ type translation struct{ en, ko string }
 // Keys are wire codes or local presentation ids, never English source text.
 // Keep both languages together so a new entry cannot omit a translation.
 var catalog = map[string]translation{
+	"record_request":                   {"Record request", "기록 요청"},
+	"record_result":                    {"Record result", "기록 결과"},
+	"records.zone_unavailable":         {"Set TZ to your timezone, such as Asia/Seoul, to use dated views.", "날짜 화면을 사용하려면 TZ를 Asia/Seoul 같은 시간대로 설정하세요."},
 	"records.saved":                    {"Saved", "저장됨"},
 	"records.record_operation_unknown": {"Save outcome is unknown. Check the record list before trying again.", "저장 결과를 확인할 수 없습니다. 다시 시도하기 전에 기록 목록을 확인하세요."},
 	"records.heading":                  {"Records", "기록"},

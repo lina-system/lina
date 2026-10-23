@@ -7,6 +7,7 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestUnsupportedRecordCommandsNeverBecomeChat(t *testing.T) {
@@ -97,5 +98,21 @@ func TestQuickAddShowsCoreChipsBeforeExplicitSave(t *testing.T) {
 	m.Update(shellBegin{Generation: 2})
 	if m.conversation.pager.open {
 		t.Fatal("reconnect retained capture")
+	}
+}
+
+func TestDatedRecordQueriesNeverSendProcessLocalAlias(t *testing.T) {
+	m := conversationShell()
+	m.content.Capabilities = append(m.content.Capabilities, protocol.Capability{Name: "records", Version: "1.0"})
+	m.now = func() time.Time { return time.Date(2026, 10, 23, 1, 0, 0, 0, time.FixedZone("Local", 0)) }
+	for _, view := range []string{"today", "upcoming", "week"} {
+		_, cmd := m.recordsCommand("/records " + view)
+		if cmd == nil {
+			continue
+		} // An unresolved client zone must refuse the dated lens.
+		request := cmd().(shellManagement).Request.(protocol.RecordRequest)
+		if request.Zone == nil || *request.Zone == "Local" {
+			t.Fatal("sent process-local timezone alias", request.Zone)
+		}
 	}
 }

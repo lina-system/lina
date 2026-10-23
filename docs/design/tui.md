@@ -794,7 +794,9 @@ Record commands are also listed in `/help`. `/records` opens the memo inbox;
 `/memos` is its direct alias. `/records <view> [search]` accepts Core's `today`,
 `upcoming`, `anytime`, `later`, `memos`, `board`, `list` and `week` lenses;
 `/records all [search]` searches every record kind. The client passes the local
-civil day and IANA zone for dated views. It draws rows in the order returned by
+civil day and resolved IANA zone for dated views; it never sends the process-local
+`Local` alias. If the client cannot resolve its zone, dated views explain how
+to set `TZ`, while undated views remain available. It draws rows in the order returned by
 Core, including Core's overdue and blocked annotations; it never ranks or
 recomputes membership. Up/Down selects, Enter opens, `r` refreshes and Ctrl+N
 requests the next bounded page with the same view and search. Empty results
