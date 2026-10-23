@@ -220,3 +220,39 @@ func TestOptionalWorkerGetsOwnUserService(t *testing.T) {
 		}
 	}
 }
+
+func TestClaudeACPBundleIsVerifiedAndCopiedWithoutInstall(t *testing.T) {
+	cfg, host := fixture(t)
+	data, err := os.ReadFile(filepath.Join(cfg.BundleDir, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatal(err)
+	}
+	var files []artifact
+	for _, name := range []string{"package.json", "package-lock.json"} {
+		name = "adapters/claude-acp/" + name
+		body := []byte("synthetic " + name)
+		write(t, filepath.Join(cfg.BundleDir, name), body, 0600)
+		files = append(files, artifact{name, int64(len(body)), fmt.Sprintf("%x", sha256.Sum256(body))})
+	}
+	m["installFiles"] = files
+	data, _ = json.Marshal(m)
+	write(t, filepath.Join(cfg.BundleDir, "manifest.json"), data, 0600)
+	if _, err := Run(t.Context(), cfg, host); err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range files {
+		got, err := os.ReadFile(filepath.Join(cfg.StateRoot, "system", file.Name))
+		if err != nil || fmt.Sprintf("%x", sha256.Sum256(got)) != file.SHA256 {
+			t.Fatal("ACP release inputs not copied", err)
+		}
+	}
+	for _, call := range host.calls {
+		if strings.Contains(call, "npm") {
+			t.Fatal("downloaded before worker use")
+		}
+	}
+}

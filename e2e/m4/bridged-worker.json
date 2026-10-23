@@ -1,5 +1,5 @@
 {
-  "cases": [{"name": "success", "expected": "ready_for_review", "bridge": true}],
+  "cases": [{"name": "success", "expected": "ready_for_review", "bridge": true, "soft_budget": true}],
   "what": "Create and commit the requested result through the deferred tool bridge",
   "done": "Core observes the worker result and its current pull request receipt",
   "work_area": true

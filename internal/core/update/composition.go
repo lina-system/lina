@@ -144,7 +144,7 @@ func verifyInstalledSystem(ctx context.Context, system string) (manifest.Manifes
 	}
 	for _, b := range append(append([]manifest.Binary{}, m.Binaries...), extra.InstallFiles...) {
 		name := filepath.Join("bin", b.Name)
-		if strings.HasPrefix(b.Name, "adapters/claude/") {
+		if strings.HasPrefix(b.Name, "adapters/claude/") || b.Name == "adapters/claude-acp/package.json" || b.Name == "adapters/claude-acp/package-lock.json" {
 			name = b.Name
 		} else if b.Name != "lina" && b.Name != "moirai-worker" {
 			continue
