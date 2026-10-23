@@ -205,6 +205,27 @@ func waitingRows(list waiting.List) []protocol.WaitingRow {
 	return rows
 }
 func number(n int) json.Number { return json.Number(strconv.Itoa(n)) }
+
+// goalTitles reads each goal's own sentence from the work engine's hydrated
+// snapshot. The execution ledger never holds the goal's prose, so a projection
+// that read only the ledger could not name the line.
+func (r *conversationRuntime) goalTitles(ctx context.Context) (map[string]string, error) {
+	titles := map[string]string{}
+	if r.workEngine == nil || r.workEngine.engine == nil {
+		return titles, nil
+	}
+	s, err := r.workEngine.engine.Snapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, g := range s.Goals {
+		if g.Summary != "" {
+			titles[g.ID] = g.Summary
+		}
+	}
+	return titles, nil
+}
+
 func (r *conversationRuntime) ownerSnapshot(ctx context.Context) (protocol.Progress, error) {
 	p, _, err := r.ownerProjection(ctx)
 	return p, err
@@ -222,10 +243,22 @@ func (r *conversationRuntime) ownerProjectionOrder(ctx context.Context, order wa
 		return protocol.Progress{}, "", err
 	}
 	var units []progress.Unit
+	titles, err := r.goalTitles(ctx)
+	if err != nil {
+		return protocol.Progress{}, "", err
+	}
 	err = r.db.Read(ctx, func(tx *canon.Tx) error {
 		var err error
 		units, err = progress.WorkUnits(ctx, tx, r.person, names)
-		return err
+		if err != nil {
+			return err
+		}
+		goals, err := progress.Goals(ctx, tx, r.person, names, func(id string) string { return titles[id] })
+		if err != nil {
+			return err
+		}
+		units = append(units, goals...)
+		return nil
 	})
 	if err != nil {
 		return protocol.Progress{}, "", err
