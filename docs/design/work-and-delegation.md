@@ -732,6 +732,16 @@ and local repository path. Quota eligibility and host capacity always win over
 priority. Without rules, otherwise equal candidates retain the installed
 Antigravity-then-Codex order. These rules grant no worker permissions.
 
+Dispatch keeps worker eligibility in one factory registry. Explicit selections
+are Antigravity, headless Claude and the built-in ACP profiles; automatic
+selection uses Antigravity, Codex and installed ACP profiles in that order.
+Headless Claude remains explicit-only, and the provisional rules file accepts
+only Antigravity and Codex. Admission, the tool's worker enum and rule validation
+derive from those registrations. Startup converts legacy binary settings into
+factories; runtime readiness and selection use only configured factories. A
+returned task keeps its recorded worker, including a chooser-only worker such
+as Codex, without changing what a new task may explicitly select.
+
 Queued tasks may share a repository. Core claims their declared areas in the
 same fenced transaction as handoff, and only free areas can start. The claim
 continues through delivery and manager judgment until trusted application;

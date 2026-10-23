@@ -4,9 +4,15 @@ package boot
 
 import (
 	"context"
+	"encoding/json"
 	"slices"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/guard"
+	"github.com/thisisjun786/lina/internal/core/lane"
+	"github.com/thisisjun786/lina/internal/core/secrets"
+	"github.com/thisisjun786/lina/kit/protocol"
+	"github.com/thisisjun786/lina/kit/result"
 )
 
 // Match the durable display sources, not model context. Cards replace their
@@ -76,4 +82,84 @@ func (r *conversationRuntime) historyItems(ctx context.Context) ([]conversationH
 	})
 	slices.Reverse(items)
 	return items, err
+}
+
+func (r *conversationRuntime) seedHistory(ctx context.Context) error {
+	if r.plans != nil {
+		if err := r.publishPlanRejections(ctx); err != nil {
+			return err
+		}
+	}
+	items, err := r.historyItems(ctx)
+	if err != nil {
+		return err
+	}
+	for _, item := range items {
+		if item.eventID == "" {
+			masked, err := secrets.Mask(item.partial)
+			if err != nil {
+				return err
+			}
+			if err = r.publishPartial(ctx, item.key, item.turnID, masked.Text()); err != nil {
+				return err
+			}
+			continue
+		}
+		e, err := r.journal().Get(ctx, item.eventID)
+		if err != nil {
+			return err
+		}
+		text := e.Body.Text()
+		if e.ScaffoldKind == "result" {
+			var value result.Result
+			if err := json.Unmarshal([]byte(text), &value); err != nil {
+				return err
+			}
+			var err error
+			if value.Type == result.PlanType {
+				err = r.publish(ctx, protocol.KindResult, value.ID, planWire(value))
+			} else if e.SpeakerKind == guard.Agent {
+				err = r.publishTypedResult(ctx, e)
+			}
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		if e.ScaffoldKind == "background_notice" {
+			var notices []lane.Notice
+			if err := json.Unmarshal([]byte(text), &notices); err != nil {
+				return err
+			}
+			if err := r.publishNoticeText(ctx, e.ID, notices); err != nil {
+				return err
+			}
+			continue
+		}
+		if e.SpeakerKind == guard.Agent {
+			filter, err := conversationFilter()
+			if err != nil {
+				return err
+			}
+			view, err := filter.Push(text)
+			if err != nil {
+				return err
+			}
+			if err = r.publishReply(ctx, e.ID, "turn:"+e.ParentID, view, eventLanguage(e)); err != nil {
+				return err
+			}
+			continue
+		}
+		speaker := protocol.ConversationSpeaker(e.SpeakerKind)
+		p := protocol.ItemDone{Text: &text, Speaker: &speaker}
+		if e.SpeakerKind == guard.Person {
+			key := e.Origin.Locator
+			p.EchoKey = &key
+			p.PersonID = &r.person
+		}
+		if err = r.publish(ctx, protocol.KindItemDone, e.ID, p); err != nil {
+			return err
+		}
+	}
+	return r.setActive(ctx, false)
 }
