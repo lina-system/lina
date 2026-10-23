@@ -137,8 +137,9 @@ API keys only; ChatGPT OAuth credentials cannot be redirected to them. No reques
 retries, redirects or substitute billing paths are enabled.
 
 Real tests skip when the opt-in switch or key is absent, including credential-free
-CI and foundation. With both present, invalid configuration, an unavailable
-endpoint or a broken stream fails the journey. Ordinary fixture tests still run.
+CI and foundation, and where Core cannot be installed. With both present,
+invalid configuration, an unavailable endpoint or a broken stream fails the
+journey. Ordinary fixture tests still run.
 Builds and ordinary product subprocesses retain their isolated environment;
 only the opted-in probe and the headless journey's Core receive the explicit
 provider configuration.
@@ -149,9 +150,9 @@ durable input acknowledgement, live deltas, completed assistant items replacing
 the streamed identities, and an inactive turn. It then restarts Core and
 requires the same canon history, text and item identities under the same
 conversation id in a new epoch. `TestHeadlessConversationFixture` runs the same
-client journey against a loopback server and skips no step. Both install real
-binaries, so hosts other than Linux skip with the same reason as the other
-installed scenarios; a skip is not a passing journey.
+client journey against a loopback server with no external credential. Both
+install real binaries, so hosts other than Linux skip with the same reason as
+the other installed scenarios; a skip is not a passing journey.
 
 ## Alpha owner-use acceptance
 
