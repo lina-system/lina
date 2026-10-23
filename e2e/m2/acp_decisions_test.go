@@ -12,6 +12,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -31,6 +33,13 @@ import (
 // This scenario launches the real Core command. Only the model, ACP agent and
 // GitHub boundary are synthetic; dispatch, worktrees, commits and cards are real.
 func TestACPDecisionsThroughRunningCore(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("installed worker capacity requires Linux host sampling")
+	}
+	bwrap, err := exec.LookPath("bwrap")
+	if err != nil {
+		t.Fatal("worker load fixture requires bubblewrap:", err)
+	}
 	binary := filepath.Join(t.TempDir(), "lina")
 	build := exec.CommandContext(t.Context(), "go", "build", "-mod=readonly", "-ldflags=-w", "-o", binary, "./cmd/lina")
 	build.Dir = "../.."
@@ -226,10 +235,16 @@ func TestACPDecisionsThroughRunningCore(t *testing.T) {
 				emitResponse(w, "Task accepted.", true)
 			}))
 			defer server.Close()
+			loadfile, pidfile := filepath.Join(fixture, "loadavg"), filepath.Join(fixture, "core.pid")
+			write(loadfile, "0.00 0.00 0.00 1/1 1\n", 0600)
 			var crash func()
 			start := func() func() {
 				t.Helper()
-				c := exec.CommandContext(ctx, installedBinary, "core", "--state-root", state, "--socket", h.socket)
+				// Use the installed-worker load fixture so unrelated host work cannot
+				// park this approval scenario. The real sampler and capacity gate run.
+				// Keep a shell parent alive for bwrap's parent-death signal.
+				args := []string{bwrap, "--die-with-parent", "--dev-bind", "/", "/", "--ro-bind", loadfile, "/proc/loadavg", "--", "/bin/sh", "-c", `printf '%s\n' "$$" > "$1"; shift; exec "$@"`, "acp-load", pidfile, installedBinary, "core", "--state-root", state, "--socket", h.socket}
+				c := exec.CommandContext(ctx, "/bin/sh", append([]string{"-c", `"$@" & child=$!; wait "$child"`, "acp-load-parent"}, args...)...)
 				c.Env = append(append([]string(nil), env...), "LINA_RESPONSES_BASE_URL="+server.URL+"/v1", "LINA_RESPONSES_MODEL=fixture", "LINA_RESPONSES_API_KEY=synthetic-core-key")
 				var logs bytes.Buffer
 				c.Stdout = &logs
@@ -240,12 +255,26 @@ func TestACPDecisionsThroughRunningCore(t *testing.T) {
 				done := make(chan error, 1)
 				go func() { done <- c.Wait() }()
 				stopped := false
+				signalCore := func(signal syscall.Signal) error {
+					raw, err := os.ReadFile(pidfile)
+					if err != nil {
+						return err
+					}
+					pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+					if err != nil || pid <= 0 {
+						return fmt.Errorf("invalid Core process identity: %q", raw)
+					}
+					return syscall.Kill(pid, signal)
+				}
 				stop := func() {
 					if stopped {
 						return
 					}
 					stopped = true
-					c.Process.Signal(syscall.SIGTERM)
+					if err := signalCore(syscall.SIGTERM); err != nil {
+						t.Error(err)
+						c.Process.Kill()
+					}
 					select {
 					case e := <-done:
 						if e != nil {
@@ -262,7 +291,7 @@ func TestACPDecisionsThroughRunningCore(t *testing.T) {
 						return
 					}
 					stopped = true
-					if err := c.Process.Kill(); err != nil {
+					if err := signalCore(syscall.SIGKILL); err != nil {
 						t.Fatal(err)
 					}
 					<-done
@@ -405,6 +434,7 @@ func TestACPDecisionsThroughRunningCore(t *testing.T) {
 				}
 			}
 			noFile()
+			assertACPDecisionViews(t, h, "session:"+record.Thread.ID, record.Thread.TaskID)
 			if mode == "form" {
 				if question.Card == nil || question.ConversationID != conversation || question.Form == nil || len(question.Form.Fields) != 3 || question.Form.PluginName != scenario.worker {
 					t.Fatalf("form lost origin or schema: %+v", question)
@@ -563,6 +593,71 @@ func TestACPDecisionsThroughRunningCore(t *testing.T) {
 				t.Fatalf("cancel was not interrupted: %+v", card)
 			}
 		})
+	}
+}
+
+// Read fresh owner views while the worker is blocked on its unanswered request.
+// The fixture cannot finish until the test answers, so this has no duration race.
+func assertACPDecisionViews(t *testing.T, h *harness, runningRef, progressRef string) {
+	t.Helper()
+	for _, topic := range []string{"running", "progress"} {
+		ref := runningRef
+		if topic == "progress" {
+			ref = progressRef
+		}
+		ctx, cancel := context.WithTimeout(h.ctx, 10*time.Second)
+		defer cancel()
+		c, err := clientapi.DialWithCapabilities(ctx, h.socket, "test", []protocol.Capability{{Name: topic, Version: "1.0"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close()
+		if _, err = c.Subscribe(ctx, protocol.Subscribe{Topic: &topic}); err != nil {
+			t.Fatal(err)
+		}
+		state := protocol.RunningState("")
+		for state != protocol.RunningStateNeedsInput {
+			frame, err := c.Receive(ctx)
+			if err != nil {
+				t.Fatalf("%s state for %s = %q, want needs_input: %v", topic, ref, state, err)
+			}
+			if frame.Error != nil {
+				t.Fatalf("%s refused: %+v", topic, frame.Error)
+			}
+			var payloads []json.RawMessage
+			if snapshot, ok := frame.Payload.(protocol.Snapshot); ok {
+				if snapshot.Topic != topic {
+					t.Fatalf("unexpected snapshot topic %q", snapshot.Topic)
+				}
+				for _, item := range snapshot.Items {
+					payloads = append(payloads, item.Payload)
+				}
+			} else {
+				raw, err := json.Marshal(frame.Payload)
+				if err != nil {
+					t.Fatal(err)
+				}
+				payloads = append(payloads, raw)
+			}
+			for _, raw := range payloads {
+				var update struct {
+					RunID string `json:"run_id"`
+					State protocol.RunningState
+					Rows  []protocol.ProgressRow
+				}
+				if err := json.Unmarshal(raw, &update); err != nil {
+					t.Fatal(err)
+				}
+				if topic == "running" && update.RunID == ref {
+					state = update.State
+				}
+				for _, row := range update.Rows {
+					if topic == "progress" && row.Ref == ref && row.Line.State != nil {
+						state = *row.Line.State
+					}
+				}
+			}
+		}
 	}
 }
 
