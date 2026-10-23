@@ -53,7 +53,7 @@ The [CI workflow](../../.github/workflows/ci.yml) checks pull requests targeting
 
 Selection runs once and publishes a plan bound to the candidate head, tree and a digest of the entire plan. Independent jobs read that same artifact: docs, automation, dependencies, build/vet/exhaustive, unit packages balanced by measured time, and e2e scenarios balanced by source file. The growing m1 corpus is split further; m2 and m3 tests that share the m1 harness are grouped by their milestone test names. The default plan has up to four unit shards and six m1, two m2 and one m3 acceptance shards, omitting empty shards. The final job keeps the single required check name `foundation` and aggregates results without rerunning any command. Shard artifact names include the workflow run attempt and download into separate directories. The gate reads the highest numbered attempt available for each shard, retaining earlier results for jobs that were not rerun. An earlier failure cannot overwrite a newer success, and a newer failure cannot fall back to an earlier success. A missing, failed, cancelled, skipped, stale or duplicate selected result fails the gate, as does a failed upstream job.
 
-A documentation-only plan invokes no Go work. Node comes from `.node-version` when present, otherwise Node 24. Selection uses the exact workspace Go toolchain when Go inventory is needed; Go jobs also install the `toolchain` named in `go.mod`. Missing or inconsistent toolchain declarations fail verification. Actions are pinned to commit SHAs. Only automation installs checksum-verified actionlint 1.7.12. Verification jobs have read-only repository permissions, write no evidence note, and never publish or integrate a change. Only the separate post-merge QA job has issue-write permission; PRs never execute its reporter.
+A documentation-only plan invokes no Go work. Node comes from `.node-version` when present, otherwise Node 24. Selection uses the exact workspace Go toolchain when Go inventory is needed; Go jobs also install the `toolchain` named in `go.mod`. Missing or inconsistent toolchain declarations fail verification. Actions are pinned to commit SHAs. Only automation installs checksum-verified actionlint 1.7.12. Its unsupported-key diagnostic for GitHub's `concurrency.queue` is narrowly excluded; the QA workflow regression checks `queue: max` and keeps cancellation disabled. Verification jobs have read-only repository permissions, write no evidence note, and never publish or integrate a change. Only the separate post-merge QA job has issue-write permission; PRs never execute its reporter.
 
 Jobs that exercise Linux sandboxing install Ubuntu's Bubblewrap package and the [checked AppArmor profile](../../scripts/verify/bwrap.apparmor) permitting `/usr/bin/bwrap` to create user namespaces. The Linux automation tests compile that profile with `apparmor_parser --skip-kernel-load --skip-cache`; they do not load it into the developer's kernel. A direct namespace launch probes CI setup before running tests. These settings apply to disposable CI runners; missing sandbox support is a verification failure.
 
@@ -63,9 +63,23 @@ After a full run on `dev` (push, nightly or manual), the independent QA job
 reads the exact plan and newest shard result artifacts, including failures.
 `scripts/verify/post-merge-qa.mjs` opens or updates a `qa` issue for each failing
 Go top-level test, with nested failure lines, the tested head, first failing
-commit range and workflow run. Configure the repository's `QA_MILESTONE`
+commit range and workflow run. A package timeout or panic also fails each started,
+unfinished test, with bounded package diagnostics. Completed tests retain their
+results; tests that never started are not reported as failures. Configure the
+repository's `QA_MILESTONE`
 variable to the current milestone number; a missing setting fails reporting
 instead of assigning findings to a guessed milestone.
+
+Before opening the first issue for a test, the reporter checks retained artifacts
+from completed later CI runs on the same branch. It validates each plan and result
+against the run head and plan digest, selects the newest attempt per shard, and
+compares commit ancestry. A latest terminal pass on a descendant head prevents
+an older failure from creating an already recovered finding, even when the pass
+was reported before any issue existed. A same-head failure takes precedence over
+a pass. Missing, expired or skipped results cannot establish recovery; malformed
+results fail reporting. This uses existing Actions artifacts within their retention
+period, without creating issues for tests that have only passed. The reporter
+needs `actions: read` for cross-run artifacts and `unzip` to read their JSON members.
 
 Issue identity includes branch, package and test name in a machine-readable
 body marker. Repeated failures update the same issue, including reopening a
@@ -73,7 +87,9 @@ resolved finding. An explicit pass on a later descendant head closes it.
 Same-head reruns, skipped or missing tests, invalid artifacts and older heads
 do not prove recovery. Each test is reconciled independently of unrelated test
 failures. The first failing range survives updates. Reporting is serialized
-and its token is available only to the reporter step, never to verification.
+with `queue: max`, preserving up to 100 pending jobs in GitHub's FIFO queue.
+The queue is bounded: GitHub cancels additional jobs when those slots are full.
+Its token is available only to the reporter step, never to verification.
 PR runs perform only the QA job's scope check and cannot write issues.
 
 For validation before landing, dispatch CI on an explicitly named
