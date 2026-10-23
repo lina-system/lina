@@ -111,6 +111,12 @@ async function automation(root, env) {
     '^unexpected key "queue" for "concurrency" section\\.', ...workflows])).status !== 0) {
     return { status: 1, output: 'actionlint failed:\n' + output };
   }
+  // The locked-Mac unlock plug-in keeps its decision core portable. Compile and
+  // run its tests here, where no macOS SDK is needed.
+  if (existsSync(join(root, 'native'))
+      && (await invoke(process.execPath, [join(root, 'scripts/verify/check-native.mjs')])).status !== 0) {
+    return { status: 1, output: 'native checks failed:\n' + output };
+  }
   for (const file of scripts) if ((await invoke(process.execPath, ['--check', file])).status !== 0) return { status: 1, output };
   if (!tests.length) return { status: 0, output: output + 'no test files\n' };
   const suite = await invoke(process.execPath, ['--test', ...tests]);
