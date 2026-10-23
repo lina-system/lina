@@ -234,3 +234,15 @@ func ResultTools(registry *tools.Registry, service ResultService, scope result.S
 	}
 	return bindings, nil
 }
+
+func ResultDeclarations() []provider.ToolDecl {
+	props := map[string]any{
+		"result_id": map[string]any{"type": "string"}, "base_revision": map[string]any{"type": "integer"},
+		"type":  map[string]any{"type": "string", "enum": []string{"summary", "table", "diagram", "chart", "document_draft", "comparison", "plan_view", "file"}},
+		"title": map[string]any{"type": "string"}, "summary": map[string]any{"type": "string"},
+		"body": map[string]any{"type": "object"}, "completion": result.CompletionSchema(),
+	}
+	present, _ := json.Marshal(map[string]any{"type": "function", "name": "present_result", "description": "Present a result card. For a document_draft, body contains blocks (kind: paragraph, text) and from_summary: null. A reported completion includes completion.work_kind and evidence references to successful tool calls (turn_id, call_id, kind); an empty turn_id means this turn. Missing required evidence is recorded as claimed and shown as not verified. Editing requires result_id and base_revision.", "parameters": map[string]any{"type": "object", "properties": props, "required": []string{"type", "title", "summary", "body"}, "additionalProperties": false}})
+	read := provider.ToolDecl(`{"type":"function","name":"read_result","description":"Read a result card in this conversation, including its completion evidence and current revision.","parameters":{"type":"object","properties":{"result_id":{"type":"string"}},"required":["result_id"],"additionalProperties":false}}`)
+	return []provider.ToolDecl{present, read}
+}

@@ -21,6 +21,19 @@ import (
 // running observation cannot pass or fail based on the worker's duration.
 func TestM2ConversationWorkerRunningInstalledCore(t *testing.T) {
 	t.Parallel()
+	testConversationWorkerViews(t, false, false)
+}
+
+func TestM2ConversationWorkerProgressInstalledCore(t *testing.T) {
+	t.Parallel()
+	for _, outcome := range []string{"success", "failure"} {
+		t.Run(outcome, func(t *testing.T) {
+			testConversationWorkerViews(t, true, outcome == "failure")
+		})
+	}
+}
+
+func testConversationWorkerViews(t *testing.T, progress, failure bool) {
 	workdir := t.TempDir()
 	var calls atomic.Int32
 	var control map[string]any
@@ -51,7 +64,11 @@ func TestM2ConversationWorkerRunningInstalledCore(t *testing.T) {
 			if err := json.Unmarshal([]byte(item.Output), &result); err != nil || result.Code != "ok" || result.Output["state"] != "active" {
 				t.Errorf("worker_start did not start an active worker: %s (%v)", item.Output, err)
 			}
-			control = map[string]any{"session": result.Output["session"], "turn": result.Output["turn"], "generation": result.Output["generation"], "binding": result.Output["binding"], "text": "finish running-list fixture"}
+			instruction := "finish running-list fixture"
+			if failure {
+				instruction = "fail running-list fixture"
+			}
+			control = map[string]any{"session": result.Output["session"], "turn": result.Output["turn"], "generation": result.Output["generation"], "binding": result.Output["binding"], "text": instruction}
 			emitResponse(w, "The delegated work is running.", true)
 		case 3:
 			emitPersonaCall(w, "finish-worker", "worker_input", control)
@@ -104,13 +121,44 @@ func TestM2ConversationWorkerRunningInstalledCore(t *testing.T) {
 		}
 		return false
 	})
+	if progress {
+		h.keys(terminal, "\x1b")
+		waitComposerReady(t, h, terminal)
+		h.keys(terminal, "\x10") // Ctrl+P
+		wait(func(s string) bool {
+			return strings.Contains(s, "Delegate a small file job.") && strings.Contains(s, "latest:")
+		})
+	}
 	// Keep the pager open: completion must arrive as a live removal, without
 	// requiring Ctrl+R again or confusing an idle session with verified delivery.
 	admittedTurn(t, h, c, conversation, "finish-delegation", "Finish the worker's current job.")
-	wait(func(s string) bool {
-		return strings.Contains(s, design.Text(design.English, "running.keys")) && !strings.Contains(s, "Codex")
-	})
 	receiveWorkerFollowups(t, h, c, 1)
+	if progress {
+		wait(func(s string) bool {
+			if failure {
+				return strings.Contains(s, "Delegate a small file job.") && strings.Contains(s, design.Text(design.English, "running.state.failed")) && strings.Contains(s, "latest:")
+			}
+			return strings.Contains(s, design.Text(design.English, "progress.empty"))
+		})
+		h.keys(terminal, "\x1b")
+		waitComposerReady(t, h, terminal)
+		h.keys(terminal, "\x12")
+	}
+	wait(func(s string) bool {
+		return strings.Contains(s, design.Text(design.English, "running.keys")) && (strings.Contains(s, "Codex") == failure) && (!failure || strings.Contains(s, design.Text(design.English, "running.state.failed")))
+	})
+	if failure {
+		h.keys(terminal, "d")
+		wait(func(s string) bool {
+			return strings.Contains(s, design.Text(design.English, "running.keys")) && !strings.Contains(s, "Codex")
+		})
+	}
+	if progress {
+		h.keys(terminal, "\x1b")
+		waitComposerReady(t, h, terminal)
+		h.keys(terminal, "\x10")
+		wait(func(s string) bool { return strings.Contains(s, design.Text(design.English, "progress.empty")) })
+	}
 	if calls.Load() != 4 {
 		t.Fatalf("worker rounds=%d", calls.Load())
 	}

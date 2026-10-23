@@ -2,6 +2,7 @@
 package records
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"sync"
@@ -12,6 +13,68 @@ import (
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 )
+
+func TestCandidateOccupiedPaths(t *testing.T) {
+	for _, interrupted := range []bool{false, true} {
+		name := "normal"
+		if interrupted {
+			name = "recovery"
+		}
+		t.Run(name, func(t *testing.T) {
+			s, root, db := setup(t)
+			occupied := []Change{
+				{ID: "first", Path: "inbox/candidate-1.md", Data: doc("first", "Candidate 1")},
+				{ID: "second", Path: "inbox/candidate-1-2.md", Data: doc("second", "Candidate 1 2")},
+			}
+			for i := range occupied {
+				occupied[i].Base = commit(t, s, occupied[i])
+			}
+			in := proposal("source", "Send notes")
+			seedCandidateSource(t, db, in.Source, in.Quotation, actor.Person, guard.EntryOwner)
+			if interrupted {
+				s.PublicationHook = func(stage string) error {
+					if stage == "file" {
+						return errors.New("interrupted candidate")
+					}
+					return nil
+				}
+			}
+			added, err := s.ProposeCandidate(t.Context(), actor, in)
+			if (!interrupted && err != nil) || (interrupted && !errors.Is(err, ErrUncertain)) {
+				t.Fatalf("candidate with occupied paths: %v", err)
+			}
+			recovered, err := Open(root, db)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer recovered.Close()
+			got, err := recovered.ProposeCandidate(t.Context(), actor, in)
+			if err != nil || got.Number != 1 || got.Status != "added" || got.RecordID == "" || got.Undo == "" || got.Notice == "" {
+				t.Fatal("retry lost candidate receipt", got, err)
+			}
+			if !interrupted && got != added {
+				t.Fatal("retry changed candidate", got, added)
+			}
+			r, _, err := recovered.Read(t.Context(), got.RecordID)
+			if err != nil || r.Path == occupied[0].Path || r.Path == occupied[1].Path {
+				t.Fatal("candidate path collision", r.Path, err)
+			}
+			rows, err := recovered.Query(t.Context(), Params{Person: actor.Person, Kind: "todo"})
+			if err != nil || len(rows) != 1 || rows[0].ID != got.RecordID {
+				t.Fatal("duplicate addition", rows, err)
+			}
+			if _, err = recovered.UndoRecord(t.Context(), actor, got.Undo); err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range occupied {
+				r, rev, err := recovered.Read(t.Context(), want.ID)
+				if err != nil || r.Path != want.Path || !bytes.Equal(r.Data, want.Data) || rev != want.Base {
+					t.Fatal("occupied record changed", r, rev, err)
+				}
+			}
+		})
+	}
+}
 
 func seedCandidateSource(t *testing.T, db Canon, id, body, person string, entry guard.Entry) {
 	t.Helper()

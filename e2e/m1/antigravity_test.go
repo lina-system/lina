@@ -45,6 +45,7 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 		WorkArea               bool `json:"work_area"`
 		CompletionEvents       bool `json:"completion_events"`
 		Definition             bool `json:"definition"`
+		Conformance            bool `json:"conformance"`
 	}
 	if err = json.Unmarshal(raw, &scenario); err != nil {
 		t.Fatal(err)
@@ -155,6 +156,27 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 					raw, _ := json.Marshal(req.Input)
 					if strings.Contains(string(raw), "coding_delivery") {
 						assertClaimBeforeManager(t, completionHarness)
+					}
+				}
+				if scenario.Conformance {
+					encoded, _ := json.Marshal(req.Input)
+					manager := false
+					for _, tool := range req.Tools {
+						manager = manager || tool.Name == "coding_decision"
+					}
+					var last struct{ Type string }
+					if len(req.Input) > 0 {
+						_ = json.Unmarshal(req.Input[len(req.Input)-1], &last)
+					}
+					if manager && strings.Contains(string(encoded), "coding_delivery") && last.Type != "function_call_output" {
+						if test.Name == "prose" {
+							emitResponse(w, "The result looks correct.", true)
+							return
+						}
+						if test.Name == "findings" {
+							emitPersonaCall(w, "finding-decision", "coding_decision", map[string]any{"decision": "needs_changes", "evidence": "The result misses the done condition.", "findings": []map[string]string{{"id": "f1", "severity": "P1", "file": "result.txt", "claim": "Missing required behavior."}}})
+							return
+						}
 					}
 				}
 				if scriptedCodingManager(t, w, req) {
@@ -319,6 +341,9 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 			c.Close()
 			h.stopCore(core)
 			assertCodingOwnership(t, h, ids["dev"], conversation, workerCase == "success", managerTurns)
+			if scenario.Conformance {
+				assertConformance(t, h, test.Name)
+			}
 			if test.Choice != "" {
 				assertWorkerChoice(t, h, fixture, test.Choice)
 			}
@@ -376,6 +401,9 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 			}
 			c.Close()
 			h.stopCore(core)
+			if scenario.Worker == "claude" && claudeUnknownCode(workerCase) != "" {
+				assertClaudeReceipt(t, h, workerCase)
+			}
 			if scenario.CompletionEvents {
 				assertWorkCompletion(t, h)
 			}

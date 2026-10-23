@@ -2,6 +2,7 @@
 package e2e_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,7 +12,9 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -84,6 +87,39 @@ func TestM3WorkerLanesLiveSession(t *testing.T) {
 	defer server.Close()
 	h, bootstrap := installedConversationHarness(t, server.URL)
 	seedCodingFixture(t, h, bootstrap)
+	// The fixture acknowledges interrupt arrival, then withholds its RPC reply
+	// until Core returns a developer page. The adapter must remain locked while
+	// the page's five-second snapshot context expires.
+	laneResult := make(chan error, 1)
+	gate := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+		readLane := func() error {
+			client, err := clientapi.DialWithCapabilities(ctx, h.socket, "lane-deadline", []protocol.Capability{{Name: "worker_lanes", Version: "1.0"}})
+			if err != nil {
+				return err
+			}
+			defer client.Close()
+			if _, err = client.Progress(ctx, protocol.ProgressGet{}); err != nil {
+				return err
+			}
+			frame, err := client.Receive(ctx)
+			if err != nil {
+				return err
+			}
+			p, ok := frame.Payload.(protocol.Progress)
+			if frame.Error != nil || !ok || p.Lanes == nil || len(*p.Lanes) != 1 {
+				return fmt.Errorf("missing lane while interrupt held: %+v", frame)
+			}
+			lane := (*p.Lanes)[0]
+			if lane.State != "unknown" || lane.ThreadID != "fixture-thread" || lane.TurnID != "turn-1" || lane.TaskID == "" || lane.Generation == "0" {
+				return fmt.Errorf("expired snapshot lost state or identity: %+v", lane)
+			}
+			return nil
+		}
+		laneResult <- readLane()
+	}))
+	defer gate.Close()
 	bin := t.TempDir()
 	exe, err := os.Executable()
 	if err != nil {
@@ -94,10 +130,19 @@ func TestM3WorkerLanesLiveSession(t *testing.T) {
 	}
 	core := h.command("core", "--state-root", h.root, "--socket", h.socket)
 	core.command.Env = append(core.command.Env, "PATH="+bin, "LINA_WORKER_FIXTURE=1", "CODEX_HOME=/fixture/codex-home", "LINA_RESPONSES_BASE_URL="+server.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
+	core.command.Env = append(core.command.Env, "LINA_WORKER_INTERRUPT_GATE="+gate.URL)
 	core.start(t)
 	h.connect(core).Close()
 	c, conversation := conversationClient(t, h)
 	admittedTurn(t, h, c, conversation, "lane-worker", scenario.LiveInput)
+	select {
+	case err := <-laneResult:
+		if err != nil {
+			t.Fatalf("developer lane did not return unknown during held interrupt: %v", err)
+		}
+	default:
+		t.Fatal("worker interrupt did not reach the snapshot deadline scenario")
+	}
 	receiveWorkerFollowups(t, h, c, 2)
 	if calls.Load() != 6 {
 		t.Fatalf("worker rounds=%d", calls.Load())

@@ -1,6 +1,9 @@
 # Integrations
 
-This contract fixes how LINA connects to external services. LINA's conversation engine reaches a service through a plugin: one installable integration unit with a manifest. LINA ships first-party plugins for GitHub and Google and a small reviewed catalog of others, and the person can add any other MCP server. LINA Core hosts every plugin for every agent, holds the credentials LINA itself obtains, marks the tools that need approval and records every write. The contract covers the plugin system and its catalog, credentials and sign-in, the rules every plugin follows, the channels through which agents talk with the person on external messaging platforms, and the GitHub and Google plugins. It is normative: implementations must follow it, and any change to it is made in this file and joins dev under [integration.md](../policy/integration.md). Turning on a plugin is the person's act. A first-party plugin or a catalog entry is part of a release, never a change to this contract.
+This contract fixes how LINA connects to external services. LINA's conversation engine reaches a tool service through a plugin: one installable integration unit with a manifest. LINA ships first-party plugins for GitHub and Google and a small reviewed catalog of others, and the person can add any other MCP server. LINA Core hosts every plugin for every agent, holds the credentials LINA itself obtains, marks the tools that need approval and records every write. The contract covers the plugin system and its catalog, credentials and sign-in, the rules every plugin follows, the channels through which agents talk with the person on external messaging platforms, and the GitHub and Google plugins. It is normative: implementations must follow it, and any change to it is made in this file and joins dev under [integration.md](../policy/integration.md). Turning on a plugin is the person's act. A first-party plugin or a catalog entry is part of a release, never a change to this contract.
+
+Remote agents use the separate [A2A boundary](#a2a), hosted by Core alongside
+the plugin and channel integrations.
 
 ## Scope
 
@@ -13,6 +16,7 @@ This contract covers:
 - credentials, LINA's secret store and sign-in, including OAuth to remote MCP servers
 - the rules every plugin follows: field ownership, change signals, external evidence, writes and failures
 - channels: connections to external messaging platforms, their credentials, pairing, bindings and scopes, and the adapter boundary
+- A2A: publishing a LINA agent and calling remote agents, including calls on behalf of Nodes
 - the GitHub plugin: the user's `gh` login and git setup, the command profile, LINA Core's own reads, field ownership in a connected part and the GitHub-specific merge rules
 - the Google plugin: the built-in connector, the user's own OAuth client, accounts, areas, consent and token failures
 
@@ -186,7 +190,7 @@ Sign-in to a remote MCP server follows the [MCP authorization specification](htt
 
 ### Consent through the client
 
-LINA Core has no inbound endpoint, and a sign-in never happens inside the LINA app's own interface ([surfaces.md](surfaces.md#no-web-feel)). Consent runs through the client the person is using, and the sign-in belongs to the person that client connection acts for ([host-protocol.md](host-protocol.md)):
+LINA Core has no inbound OAuth callback endpoint, and a sign-in never happens inside the LINA app's own interface ([surfaces.md](surfaces.md#no-web-feel)). The optional A2A listener below is not a sign-in callback. Consent runs through the client the person is using, and the sign-in belongs to the person that client connection acts for ([host-protocol.md](host-protocol.md)):
 
 1. The client opens a loopback port and reports it to LINA Core. A plugin definition can fix the port for a service that accepts only one registered redirect port, and the client then listens on it. LINA Core builds the authorization URL with that redirect, which uses the path that LINA Core names and the port the client reports, and keeps the PKCE verifier and the state.
 2. The LINA app or the TUI opens the URL in the system browser and receives the redirect on that port.
@@ -200,12 +204,206 @@ A sign-in URL is never opened through a shell command. A URL with a `javascript:
 These rules apply to every plugin.
 
 - **Every field has one owner.** The data model names the canonical side of each field. LINA Core never treats its copy of an externally owned field as canonical. When the two disagree, LINA Core reads the external side again.
-- **Change signals are hints.** A notification or a change feed tells LINA Core to read again. It isn't a record of what changed. Periodic reconciliation compares LINA's links and derived data with the external side and catches missed signals. LINA Core reaches every service with outbound requests only. No service calls in to LINA Core. The channel gateway follows the same rule: it opens its own outbound connection to the platform, and no platform calls in. A signal can also start inside LINA, such as a worker's completion event, and is treated the same way: it starts a read and is not the record of what changed.
+- **Change signals are hints.** A notification or a change feed tells LINA Core to read again. It isn't a record of what changed. Periodic reconciliation compares LINA's links and derived data with the external side and catches missed signals. LINA Core reaches plugin services with outbound requests only. No plugin service calls in to LINA Core. The channel gateway follows the same rule: it opens its own outbound connection to the platform, and no platform calls in. A signal can also start inside LINA, such as a worker's completion event, and is treated the same way: it starts a read and is not the record of what changed.
 - **External content is evidence, not instruction.** Everything read through a plugin, tool results included, carries provenance: the plugin, the account, the object id when there is one, the fetch time, and the revision or etag when the service has one. It enters model requests as untrusted input ([conversation-and-memory.md](conversation-and-memory.md)). It never becomes a fact, an approval, a current instruction or a persona change by itself, and it never changes an approval decision ([main-authority.md](main-authority.md)).
 - **Every write is an effect.** A plugin write is an effect that runs under the grant of its task or conversation, and an outward or irreversible one only after approval ([main-authority.md](main-authority.md)). The effect ledger ([runtime.md](runtime.md)) records the plugin, the account, the tool, the argument hash, whether the call was outward or irreversible, the approval basis (a grant, or approval of this call), the effect state ([host-protocol.md](host-protocol.md)), the conversation or task id, the agent that called the tool, and the person the write acts for. Its idempotency key takes the plugin and tool as the action and the argument hash as the intent, and a normalized target only when the service profile names one.
 - **Unknown outcomes are never sent again.** When a write's outcome is unknown, LINA Core reads the service to settle it if the service profile says how. Otherwise it tells the person that the outcome is unknown.
 - **A lost response stream is not a reason to send a write again.** The MCP specification tells a client to re-issue a request whose response stream was lost. LINA Core does so only for a tool that the server marks `readOnlyHint: true`, with a new request id. It never does so for any other tool: the outcome is unknown and is settled as above. Cancelling a write by closing the stream likewise leaves its outcome unknown, not undone.
 - **A failing plugin never blocks conversation.** The plugin shows as failing, with its cause, and the rest of LINA keeps working.
+
+## A2A
+
+This M3 contract covers publishing a LINA persona and calling an outside
+agent. It targets the [A2A v1.0.1 specification](https://github.com/a2aproject/A2A/blob/v1.0.1/docs/specification.md),
+with **1.0** on the wire. Its versioned
+[a2a.proto](https://github.com/a2aproject/A2A/blob/v1.0.1/specification/a2a.proto)
+defines message shapes and ProtoJSON representation; this section defines
+LINA's admission and behavior. The [research note](../research/a2a.md) records
+source findings and limits. This design adds no running endpoint or dependency.
+
+A2A is a separate Core integration, not an MCP plugin, channel, worker adapter
+or `node` connection. An A2A peer does not become a LINA person, client, Node
+or local worker. The owner explicitly enables each publication or remote
+connection. Discovering a card or installing a worker enables neither.
+
+### Protocol profile
+
+The first implementation uses HTTPS JSON-RPC 2.0 and SSE. Requests carry
+`A2A-Version: 1.0`; cards declare `supportedInterfaces` with
+`protocolBinding: "JSONRPC"` and `protocolVersion: "1.0"`. An incompatible
+interface or required extension is refused. A missing version means 0.3 by
+the specification and is unsupported here. There is no automatic fallback.
+gRPC, HTTP+JSON and push notifications are outside this first profile. Published
+cards declare streaming true, push notifications false and extended cards
+false; unsupported push and extended-card operations return their specified errors.
+
+| Operation | Published LINA agent | Calling a remote agent |
+| --- | --- | --- |
+| Agent Card | One approved card per persona at `/.well-known/agent-card.json` or its configured card URL | Fetch the configured card and select a compatible interface; carry its tenant when present |
+| `SendMessage`, `SendStreamingMessage` | Admit durable Core work; return a task, then progress and artifacts | Record the outgoing effect before sending; accept a task or direct message |
+| `GetTask`, `ListTasks` | Return only the caller's authorized task projections | Reconcile a known task; listing proves a send only if it unambiguously identifies that send |
+| `SubscribeToTask` | Start with a current task snapshot, then updates | Reconnect without sending the initial message again |
+| `CancelTask` | Ask Core to stop; report canceled only after execution stops | Ask the remote to stop; an acknowledgment cannot prove reversal of effects |
+
+Success is `{jsonrpc: "2.0", id, result}` with the operation's specified
+result. Send results wrap `task` or `message`; SSE results use `StreamResponse`.
+Errors use `{jsonrpc: "2.0", id, error}` with numeric `code`, a short `message`
+and optional typed `data`. States use the proto enum names, such as
+`TASK_STATE_WORKING`. A LINA host envelope, grant, receipt or raw conversation
+history is never an A2A response.
+
+Outbound `SendMessage` requests set `configuration.returnImmediately: true`.
+Inbound non-streaming `SendMessage` requests honor that field: true returns
+after durable admission; false or absent waits for a terminal or interrupted
+task as [section 3.2.2](https://github.com/a2aproject/A2A/blob/v1.0.1/docs/specification.md#322-sendmessageconfiguration)
+specifies. `SendStreamingMessage` always delivers updates in real time;
+`returnImmediately` has no effect on streaming operations.
+
+HTTP timeout or stream closure does not cancel admitted work. Lists use cursor
+pagination, descending status timestamp order, an empty `nextPageToken` on the final page,
+and the specified history and `includeArtifacts` limits. Tokens are bound to
+the caller and query; neither counts nor pagination reveal another caller's work.
+
+### Publishing a LINA agent
+
+Publication is off by default. The owner chooses the persona, published name
+and description, HTTPS address, permitted caller identities, offered tasks and
+the local conversation that receives the work. Under the existing
+[remote-access rule](runtime.md#remote-access), the first A2A listener binds
+only a tailnet address, with the owner's TLS setup and Tailscale access policy.
+It exposes no `client`, `node` or administrative handlers. Callers must have
+network access to that address as well as A2A authorization. Public Internet
+ingress, tunnels and proxies are outside this design and need a separate
+change to the remote-access contract. Enabling publication provisions none of
+those or an identity provider.
+
+The Agent Card contains approved public metadata only: display name,
+description, implementation version, interface, security schemes and
+requirements, input/output media types and skills with stable ids. It carries
+no private persona instructions, memory, conversations, credentials, local
+paths or private examples. Implementation version and protocol version are
+separate. An interface tenant routes to its configured publication and grants
+nothing.
+
+**Sign-in.** The owner configures a trusted external OAuth/OIDC issuer and
+service audience. The card declares that scheme through `securitySchemes` and
+`securityRequirements`. Callers obtain their own access tokens from the issuer
+outside A2A. Core validates signature or issuer-bound introspection, issuer,
+audience, expiry and scopes, then maps the authenticated subject and client
+identity to an explicit caller binding. An ID token, proxy identity header or
+person id in a message is insufficient. Core neither becomes an authorization
+server nor reuses a model-provider login. Discovery may be unauthenticated
+within that permitted network; every task operation requires authentication
+and binding authorization. This service authentication admits no LINA client
+or device and does not replace Tailscale admission.
+
+**Offered tasks.** Each skill describes an owner-enabled task definition, such
+as research over named materials, creating a document or a coding change in a
+named repository. Its definition fixes inputs, outputs, materials, tools,
+write area, effect limits, execution budget and done condition. Core matches
+the request to a definition before model or tool work; ambiguity needs input
+and work outside the definitions is rejected. A skill is descriptive, not a
+tool grant; SendMessage gains no invented standard `skillId` field.
+
+Admitted work reaches Core's existing conversation, tools and dispatcher. A
+coding task reaches an installed worker with a complete work definition; a
+model's plan cannot satisfy it. Scope and preset ceilings follow the whole
+task. Only the owner's permitted LINA surfaces may approve an outward effect
+or scope expansion. The caller may supply input and cancel its work, but may
+not approve, publish another agent, change settings, read unrelated history
+or enlarge its binding. Dispatch enforces these checks, not prompt wording.
+
+**Results.** Core assigns opaque A2A task/context identities and durably binds
+them to caller, publication, owner, requesting persona and local work. The
+external context is scoped to the caller, not the persona's main conversation
+id. A follow-up may continue only an authorized nonterminal task; guessing an
+id cannot attach to another context.
+
+The owner's conversation receives origin, progress, questions and durable
+results through the existing running-list and result delivery paths.
+Completion yields a verified local result and an A2A artifact projection
+limited to the binding's permitted output. The binding covers these task
+replies, not mail, public posts or other outward effects inside the work.
+Artifacts have stable ids and media types, with provenance retained in Core.
+Downloads require task authorization; they never expose local paths or ambient
+credentials. Result delivery is deduplicated across restart. Core emits
+`COMPLETED` only after verifying the task's done condition, not merely from
+model text, a tool exit or a worker's completion claim.
+
+### Calling a remote agent
+
+The owner adds a connection with a card URL, approved service origin,
+authentication scheme and permitted tasks. Core stores the observed card,
+interface, scopes and a secret-store reference to the owner's credential.
+OAuth uses the existing client browser relay with a configured issuer and
+client registration. A person-supplied API key or bearer credential is usable
+when the card declares it. There is no credential discovery, account fallback
+or forwarding of inbound credentials. Unsupported authentication needs setup.
+
+Core admits a persona's call for its owner and conversation. A Node's call
+also passes through Core under that Node's current grant, using the
+[A2A relay](host-protocol.md#a2a-and-the-node-connection). Core owns the remote
+HTTP transport in both cases; Nodes receive no remote credential.
+
+Before sending, Core binds the local task and command to the connection,
+origin/interface/tenant, credential account, operation and effect class, exact
+outgoing payload and material revisions, return scope, budget and deadline.
+[Remote A2A authority](main-authority.md#remote-a2a-agents) is checked before
+each send and follow-up. No full conversation or memory is uploaded by
+default. A request for more data or a different credential pauses the task;
+remote text cannot widen its scope.
+
+Card, interface, OAuth metadata and artifact URLs use HTTPS and the address
+checks of remote MCP sign-in. A person-selected private-host exception covers
+only that host. Redirects cannot widen the allowed origin, reach metadata
+services or forward credentials. Changed endpoint, tenant, authentication or
+required scopes invalidate admission until the owner confirms the connection.
+Card descriptions and safety claims neither classify effects nor grant
+authority. Unsupported media or required extensions fail before task data is sent.
+
+Core persists remote task/context ids or the direct response with the local
+binding. Status feeds progress; `INPUT_REQUIRED` becomes a task question and
+`AUTH_REQUIRED` becomes sign-in on an owner surface. Secrets never travel in
+task messages. Remote text and artifacts are external evidence: Core validates
+and retains the permitted result with source, time and hash, then delivers it
+to the originating conversation and any still-authorized Node command.
+Remote `COMPLETED` is a claim checked against the local done condition, not a
+LINA receipt or automatic acceptance of an external effect.
+
+### Recovery and failures
+
+Published sends require a nonempty `messageId`. Before dispatch, Core stores
+caller, publication, message id and canonical request hash with the local task
+in one durable admission. Identical retries return that admission; reusing an
+id with changed input is invalid. JSON-RPC ids are correlation ids only.
+Outbound message ids are stable, but A2A makes remote send deduplication
+optional. An uncertain send is **unknown**, never an automatic replay or a
+reason to try another agent. Read or resubscribe to a known remote task;
+otherwise the owner must resolve the uncertainty.
+
+Revocation, epoch change or Node disconnect blocks new sends and follow-ups.
+Accepted remote work may continue. Core reconciles it through narrowly
+authorized observation or cancellation; absent that authority, the outcome
+stays unknown. A revoked credential or grant is never reused. Restart recovers
+task bindings and result delivery before new dispatch. Cancellation reports
+observations and never promises to reverse an effect already made.
+
+| Failure | Response or local state | Retry rule |
+| --- | --- | --- |
+| Missing, expired or invalid caller credential | HTTP 401 with challenge | Sign in; no dispatch |
+| Caller outside publication scope | HTTP 403 | Owner changes binding; no automatic retry |
+| Missing or inaccessible task/context | `TaskNotFoundError` (-32001) | No existence hint or automatic retry |
+| Invalid input, conflicting message id or invalid cursor | `InvalidParamsError` (-32602) | Correct input; no dispatch |
+| Unsupported version, media or operation | Specified A2A error | Reconfigure; no fallback |
+| Core recovering, storage unavailable or capacity exhausted | HTTP 503 or 429 with retry guidance | Retry reads or provably unadmitted sends; identical published sends are deduplicated |
+| Tool or worker failure after admission | Failed task with safe cause | Existing work retry policy |
+| Input, approval or sign-in needed | `INPUT_REQUIRED` or `AUTH_REQUIRED` and local waiting item | Resume only after the appropriate recorded answer |
+| Lost acknowledgment, stream, cancellation confirmation or effect evidence | Unknown local effect with retained identity | Observe and reconcile; never blindly resend |
+
+Logs retain correlation ids, versions, status and timing, never tokens,
+request bodies, private task content or credential-bearing artifact URLs.
+Implementation acceptance must drive a running Core with actual tool or
+worker results; protocol fixtures alone do not establish this behavior.
 
 ## Channels
 
@@ -240,7 +438,7 @@ A channel is an external messaging platform through which the person talks with 
 
 ### Transport
 
-- The gateway is outbound only, like every other service connection (see Plugin rules). Telegram is read by long polling and Discord by the Gateway session, with interactions received on that session and never at an endpoint URL. There is no webhook mode in the first design, because it would need a public listener ([runtime.md](runtime.md#remote-access)).
+- The gateway is outbound only, like plugin connections (see Plugin rules). Telegram is read by long polling and Discord by the Gateway session, with interactions received on that session and never at an endpoint URL. There is no webhook mode in the first design, because it would need a public listener ([runtime.md](runtime.md#remote-access)).
 - LINA Core owns exactly one poller or Gateway session per bot token, and only the main runs it. After a restart the previous generation is fenced ([runtime.md](runtime.md#recovery)).
 - The adapter's cursor, such as the Telegram update offset, is stored durably before an update is acted on. The platform's ids (update, interaction and message ids) are the idempotency keys of inbound events, so a repeated event is handled once.
 - When the main was down for longer than the platform keeps undelivered messages, LINA tells the person that messages may have been missed.
@@ -407,7 +605,7 @@ LINA's GitHub writes include pushing branches, opening and updating pull request
 
 ### Completion signals
 
-GitHub cannot call in to LINA, which has no inbound endpoint, so LINA Core reads what GitHub knows, and an event inside LINA decides when ([work-and-delegation.md](work-and-delegation.md)).
+LINA has no GitHub webhook endpoint, so LINA Core reads what GitHub knows, and an event inside LINA decides when ([work-and-delegation.md](work-and-delegation.md)).
 
 - A worker's completion event starts the reads. The first is one view of the pull request: its state, head SHA, review threads and the check results at that head.
 - While the checks of a task's pull request are unfinished, LINA Core watches that pull request only: one watcher per pull request, never two at once, using conditional requests and the interval that GitHub's responses ask for. The watch starts with the completion event and ends with the checks' conclusion, or with the pull request closing or merging. A rate-limit response backs the watch off and shows as "CI pending" with its cause.

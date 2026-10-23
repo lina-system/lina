@@ -230,85 +230,114 @@ func (s *Store) Head(ctx context.Context) (CommitID, error) {
 	head, _, err := s.snapshot(ctx)
 	return head, err
 }
-func (s *Store) Commit(ctx context.Context, c Change, a Actor) (rev Rev, err error) {
+func (s *Store) Commit(ctx context.Context, c Change, a Actor) (Rev, error) {
 	recordsMu.Lock()
 	defer recordsMu.Unlock()
 	return s.commitLocked(ctx, c, a, nil)
 }
-func (s *Store) commitLocked(ctx context.Context, c Change, a Actor, operation *recordOperation) (rev Rev, err error) {
+func (s *Store) commitLocked(ctx context.Context, c Change, a Actor, operation *recordOperation) (Rev, error) {
+	return s.commitBatchLocked(ctx, []Change{c}, a, operation)
+}
+
+// CommitBatch publishes a complete set in one Git revision. Validation precedes
+// the publication intent; recovery completes precisely that intent after a cut.
+func (s *Store) CommitBatch(ctx context.Context, changes []Change, a Actor) (Rev, error) {
+	recordsMu.Lock()
+	defer recordsMu.Unlock()
+	return s.commitBatchLocked(ctx, changes, a, nil)
+}
+
+func (s *Store) commitBatchLocked(ctx context.Context, changes []Change, a Actor, operation *recordOperation) (rev Rev, err error) {
 	intent := false
 	defer func() {
 		if err != nil && intent {
 			err = errors.Join(ErrUncertain, err)
 		}
 	}()
-	if a.Person == "" || a.Agent == "" || !validPath(c.Path) {
+	if a.Person == "" || a.Agent == "" || len(changes) == 0 || len(changes) > 1000 {
 		return "", ErrInvalid
 	}
-	id, err := recordID(c.Data)
-	if err != nil || id != c.ID {
-		return "", ErrInvalid
-	}
-	candidate, err := parseDocument(c.Data)
-	if err != nil {
-		return "", err
-	}
-	var occurrence *canon.RecordOccurrence
-	requestedCompletion := candidate.state == "completed"
 	parent, files, err := s.snapshot(ctx)
 	if err != nil {
 		return "", err
 	}
-	old, err := s.find(files, c.ID)
-	if err != nil && !errors.Is(err, ErrNotFound) {
-		return "", err
-	}
-	if errors.Is(err, ErrNotFound) {
-		if c.Base != "" {
-			return "", ErrStaleRevision
-		}
-	} else {
-		rev, err := s.recordRevision(ctx, parent, old, files[old.Path])
+	seenIDs, seenPaths := map[string]bool{}, map[string]bool{}
+	candidates := map[string]document{}
+	edits := []fileChange{}
+	for _, c := range changes {
+		candidate, err := parseDocument(c.Data)
 		if err != nil {
 			return "", err
 		}
-		if c.Base == "" || c.Base != rev {
-			return "", ErrStaleRevision
+		id, e := recordID(c.Data)
+		if e != nil || id != c.ID || !validPath(c.Path) || seenIDs[c.ID] || seenPaths[c.Path] {
+			return "", ErrInvalid
 		}
-		previous, parseErr := parseDocument(old.Data)
-		if parseErr != nil {
-			return "", parseErr
+		seenIDs[c.ID], seenPaths[c.Path] = true, true
+		candidates[c.ID] = candidate
+		var occurrence *canon.RecordOccurrence
+		requestedCompletion := candidate.state == "completed"
+		old, e := s.find(files, c.ID)
+		if e != nil && !errors.Is(e, ErrNotFound) {
+			return "", e
 		}
-		now := time.Now()
-		if s.Now != nil {
-			now = s.Now()
-		}
-		c.Data, err = transformCompletion(c.Data, previous, now)
-		if err != nil {
-			return "", err
-		}
-		candidate, err = parseDocument(c.Data)
-		if err != nil {
-			return "", err
-		}
-		if previous.todo != nil && previous.todo.Repeat != nil && candidate.todo != nil && candidate.todo.Repeat != nil {
-			before, after := previous.todo.Repeat, candidate.todo.Repeat
-			if before.Next != after.Next || before.Completed != after.Completed || before.Exhausted != after.Exhausted {
-				reason := "advanced"
-				if requestedCompletion && previous.state != "completed" {
-					reason = "completed"
+		if errors.Is(e, ErrNotFound) {
+			if c.Base != "" {
+				return "", ErrStaleRevision
+			}
+		} else {
+			rev, e = s.recordRevision(ctx, parent, old, files[old.Path])
+			if e != nil {
+				return "", e
+			}
+			if c.Base == "" || c.Base != rev {
+				return "", ErrStaleRevision
+			}
+			previous, parseErr := parseDocument(old.Data)
+			if parseErr != nil {
+				return "", parseErr
+			}
+			now := time.Now()
+			if s.Now != nil {
+				now = s.Now()
+			}
+			c.Data, err = transformCompletion(c.Data, previous, now)
+			if err != nil {
+				return "", err
+			}
+			candidate, err = parseDocument(c.Data)
+			if err != nil {
+				return "", err
+			}
+			if previous.todo != nil && previous.todo.Repeat != nil && candidate.todo != nil && candidate.todo.Repeat != nil {
+				before, after := previous.todo.Repeat, candidate.todo.Repeat
+				completed := requestedCompletion && previous.state != "completed"
+				if completed || before.Next != after.Next || before.Completed != after.Completed || before.Exhausted != after.Exhausted {
+					reason := "advanced"
+					if completed {
+						reason = "completed"
+					}
+					occurrence = &canon.RecordOccurrence{Record: c.ID, At: now.UTC().Format(time.RFC3339Nano), From: before.Next, Next: after.Next, Reason: reason, Exhausted: after.Exhausted}
 				}
-				occurrence = &canon.RecordOccurrence{Record: c.ID, At: now.UTC().Format(time.RFC3339Nano), From: before.Next, Next: after.Next, Reason: reason, Exhausted: after.Exhausted}
+			}
+			candidates[c.ID] = candidate
+			if old.Path == c.Path && bytes.Equal(old.Data, c.Data) {
+				continue
 			}
 		}
-		if old.Path == c.Path && bytes.Equal(old.Data, c.Data) {
-			return rev, nil
+		if files[c.Path] != "" && c.Path != old.Path {
+			return "", ErrPathExists
 		}
+		blob, e := s.object("blob", c.Data)
+		if e != nil {
+			return "", e
+		}
+		edits = append(edits, fileChange{Path: c.Path, Blob: blob, OldPath: old.Path, OldBlob: files[old.Path], Occurrence: occurrence})
 	}
-	if files[c.Path] != "" && c.Path != old.Path {
-		return "", ErrPathExists
+	if len(edits) == 0 {
+		return rev, nil
 	}
-	if err = s.validateTodoLinks(ctx, c.ID, candidate); err != nil {
+	if err = s.validateTodoBatch(ctx, candidates); err != nil {
 		return "", err
 	}
 	token, err := s.acquire(ctx)
@@ -318,13 +347,10 @@ func (s *Store) commitLocked(ctx context.Context, c Change, a Actor, operation *
 	if err = s.publicationStep("lock"); err != nil {
 		return "", err
 	}
-	blob, err := s.object("blob", c.Data)
-	if err != nil {
-		return "", err
+	for _, c := range edits {
+		delete(files, c.OldPath)
+		files[c.Path] = c.Blob
 	}
-	oldBlob := files[old.Path]
-	delete(files, old.Path)
-	files[c.Path] = blob
 	tree, err := s.tree(files)
 	if err != nil {
 		return "", err
@@ -333,9 +359,12 @@ func (s *Store) commitLocked(ctx context.Context, c Change, a Actor, operation *
 	if err != nil {
 		return "", err
 	}
-	p := publication{Parent: parent, Commit: commit, Path: c.Path, Blob: blob, OldPath: old.Path, OldBlob: oldBlob}
-	p.Operation = operation
-	p.Occurrence = occurrence
+	p := publication{Parent: parent, Commit: commit, Changes: edits, Operation: operation}
+	if len(changes) == 1 {
+		c := edits[0]
+		p.Path, p.Blob, p.OldPath, p.OldBlob = c.Path, c.Blob, c.OldPath, c.OldBlob
+		p.Occurrence, p.Changes = c.Occurrence, nil
+	}
 	intent = true
 	if err = s.remember(ctx, token, p); err != nil {
 		if errors.Is(err, errCandidatePending) {
@@ -370,26 +399,28 @@ func (s *Store) publicationStep(stage string) error {
 	return nil
 }
 func (s *Store) install(p publication, files map[string]string) error {
-	data, err := s.readObject(p.Blob, "blob")
-	if err != nil {
-		return err
-	}
-	if err = s.atomic(p.Path, data); err != nil {
-		return err
-	}
-	if err = s.publicationStep("file"); err != nil {
-		return err
-	}
-	if p.OldPath != "" && p.OldPath != p.Path {
-		if err = s.root.Remove(p.OldPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+	for _, c := range p.edits() {
+		data, err := s.readObject(c.Blob, "blob")
+		if err != nil {
 			return err
 		}
-		if err = syncDirectory(s.root, path.Dir(p.OldPath)); err != nil {
+		if err = s.atomic(c.Path, data); err != nil {
 			return err
 		}
-	}
-	if err = s.publicationStep("remove"); err != nil {
-		return err
+		if err = s.publicationStep("file"); err != nil {
+			return err
+		}
+		if c.OldPath != "" && c.OldPath != c.Path {
+			if err = s.root.Remove(c.OldPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+			if err = syncDirectory(s.root, path.Dir(c.OldPath)); err != nil {
+				return err
+			}
+		}
+		if err = s.publicationStep("remove"); err != nil {
+			return err
+		}
 	}
 	index, err := gitIndex(files)
 	if err != nil {

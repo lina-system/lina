@@ -32,11 +32,14 @@ func validateRestoreLayout(m Manifest) error {
 		return path == "."
 	}
 	for _, dir := range m.Directories {
-		if !allowed(dir) {
+		if !allowed(dir) && !(dir == "system" && hasOperatorJournal(m)) {
 			return ErrInvalid
 		}
 	}
 	for _, file := range m.Files {
+		if file.Path == operatorJournal && file.Link == "" && file.Mode == 0600 {
+			continue
+		}
 		if !allowed(file.Path) || file.Path == "." || strings.HasPrefix(file.Path, "canon/") && file.Path != "canon/canon.sqlite" {
 			return ErrInvalid
 		}

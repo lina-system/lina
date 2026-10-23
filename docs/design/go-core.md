@@ -46,7 +46,7 @@ Kit seams, following [runtime.md](runtime.md#lina-kit):
 | --- | --- | --- |
 | `provider` (`responses`, `gemini`, `grokacp`, `claudeproc`) | The adapters | The secret store; retries |
 | `loop`, `tools`, `sandbox`, `proc` | Loop core, executor, sandbox wrapper, environment builder, process groups | State paths |
-| `protocol`, `rpc`, `result`, `materials` | Generated types, JSON-RPC line peer, typed-body validation and rendering, parsing, citation check, web fetch | A database writer |
+| `protocol`, `rpc`, `acp`, `result`, `materials` | Generated types, JSON-RPC line peer, the Agent Client Protocol client (C-60), typed-body validation and rendering, parsing, citation check, web fetch | A database writer |
 | `grant`, `lease`, `secret`, `diag` | The Authorization check shared by Core and Node, leases, a placeholder-printing secret type, closed enums | Persona, skills, knowledge scope |
 
 Callers pass state locations, persona, skills and knowledge scope.
@@ -66,7 +66,7 @@ The separate worker has its own downward import layers. Core may import only its
 | Worker layer | Packages |
 | --- | --- |
 | W1 | `internal/moirai/jobapi` (credential-free types and Unix-socket client) |
-| W2 | `internal/moirai/canon` (read-only job snapshots) |
+| W2 | `internal/moirai/canon` (read-only job snapshots), `internal/moirai/planning` (pure proposal validation) |
 | W3 | `internal/moirai` (job execution and scheduling) |
 | W4 | `cmd/moirai-worker` (command and signals) |
 
@@ -81,6 +81,14 @@ The job API increment exposes `Aux`, `Apply` and `Report` over bounded HTTP/JSON
 Core owns a job's kind (memory or planning), interval, deadline (at most two minutes), token allowance, maximum tokens per call, on/off switch and adoption record. It enqueues immutable, consecutive source tasks. The worker reads the epoch, policy, committed watermark and next task in a single `mode=ro` / `query_only` snapshot. Its reader exposes no writer. Jobs have separate deadlines and run independently; a slow or failed job does not hold up another job or the conversation path.
 
 `Aux` binds the source task to an auxiliary model call, reserves both the job allowance and shared main budget, and durably caches the result. Missing usage retains the reservation charge. A disconnected worker does not cancel Core's admitted, bounded call, so a restarted worker can recover its result without another model request. If Core stops before recording a result, the durable reservation reports an unknown outcome and is not automatically retried. This accounting and the cached auxiliary result are Core-owned bookkeeping, not an adopted memory or plan.
+
+For planning, a terminal model response with unusable content is a completed
+call. Core returns the inert `{"rejected":"invalid_plan"}` auxiliary output and
+the call's usage, so the ordinary Aux cache and budget settlement survive a
+restart. The worker forwards that outcome to Apply. Core requires it to match
+the cached output before committing a planning rejection and advancing the
+watermark. Invalid content cannot pin the queue; transport failure before
+completion still keeps the conservative unknown reservation.
 
 `Apply` validates the epoch, job switch, schedule and expected watermark, then invokes the registered write rules. The accepted changes, next schedule, proposal receipt and watermark commit in one fenced canon transaction. Failure rolls all of them back. An identical proposal replay returns the receipt; a changed proposal at the same sequence conflicts. Core persists an explicit `Deterministic` job-policy flag in the read-only work snapshot. When true, the worker submits the Core-supplied task input as the proposal directly to Apply; no model callback, account binding or model allowance is required. Core refuses Aux for that job. When false (including older records without the flag), the worker obtains model output through Aux before applying; it never infers the route from a zero budget. Killing a worker cannot write canon or advance its watermark; a Core transaction already committed remains committed. Core's fenced apply helper is also the only mutation boundary for job administration, Aux accounting and Report. Reports carry only a closed status and the current watermark; they cannot advance progress or change policy. The worker has no credential-loading path, clears inherited environment variables at entry, and never contacts a provider.
 
@@ -518,6 +526,28 @@ The current installed adapter uses Korean counting and the shared TUI renderer a
 - A revision is one ledger event with the whole result.
 - Save is a Core effect with the key of `result_save` (CP-05); destinations are those of the saving section.
 - Summary-first writing is a background run given the latest outline revision.
+- Managed planning previews use the same result ledger and revision checks.
+  Core installs the results and planning receipt schemas in the numbered canon
+  catalog at migration 49, after the published Korean records search migration
+  33, waiting decisions migration 34, preset effects migration 35 and skill
+  maintenance migration 36, work engine migration 37 and to-do records migration
+  38, work event sequence guard migration 39, work completions migration 40
+  timers migration 41, starter/selection migration 42 and worker choice migration
+  43, naming-breach migration 44, record-operation migration 45 and operational
+  switch migration 46, handoffs migration 47 and work-review migration 48. Generic presentation and saving cannot replace or confirm a managed
+  plan. The `planning` capability binds confirmation to the authenticated person,
+  agent, preview revision and accepted root revision. Complete plan bodies carry
+  done conditions, ordered stage labels and dependency ids in addition to card
+  entries. Confirmation removes the confirm action without changing the content
+  revision that the person approved.
+  The records batch validates to-do ownership, parent kinds and dependency cycles
+  against the complete candidate together with published records, allowing new
+  projects and prerequisites within the same atomic publication.
+  Single-record operations retain their admission and undo receipts. Each changed
+  recurring record retains its completion transformation and occurrence in the
+  same publication checkpoint, including recovery of a multi-record batch.
+  A completed invalid draft produces only a durable rejection and conversation
+  outcome, never a result revision or plan records; replay cannot duplicate it.
 
 The #104 increment implements these boundaries in `kit/result`, `internal/core/results` and `internal/core/exec`. Core supplies the trusted person, agent, conversation and turn; none is accepted from tool arguments. `present_result` takes `type`, `title`, `summary` and a complete `body`, with `result_id` and `base_revision` only for replacement. `read_result` takes `result_id` and returns the complete current result and its revision. `save_result` takes `result_id`, `revision` and a resolved `destination`; its binding requires an exact matching request from the person in the current turn. A grant alone does not constitute that request. The three operations use the existing tool registry, authority gate and leases, run in Core, and require no network or approval interaction.
 
@@ -531,7 +561,7 @@ Body validation is a closed schema over [the kit types](../../kit/result/body.go
 | `chart` | `kind` is `bar`, `line`, `area`, `pie` or `scatter`; each series has `name` and inline `values` of `{x,y}`. `x` is text or a number, numeric for scatter; `y` is numeric, nonnegative for pie. `x_axis` and `y_axis` each have `label` and `unit`. |
 | `document_draft` | Ordered `blocks` are closed variants: heading (`text`, `level` 1–6), paragraph/quote (`text`), list (`items`), table (`table`), code (`text`, optional `language`), image (`asset`, `text` alternative description), citation (`anchor`, `text`). `from_summary` is null or `{result_id,revision}`. |
 | `comparison` | Each target has `label`, `old`, `new` and `hunks` with zero-based `old_start`, `old_count`, `new_start`, `new_count` within the corresponding text. `apply` is null or an opaque request id. Save is refused; applying is a separate flow. |
-| `plan_view` | Ordered entries have unique `id`, `kind` (`goal`, `project`, `todo`, `area`, `memo`, `resource`), `title`, `state` (`planned`, `active`, `blocked`, `done`, `cancelled`) and nullable `parent`, which must precede the child. `confirm` is null or an opaque confirmation id. Save is refused. |
+| `plan_view` | Ordered entries have unique `id`, `kind` (`goal`, `project`, `todo`, `area`, `memo`, `resource`), `title`, `state` (`planned`, `active`, `blocked`, `done`, `cancelled`) and nullable `parent`, which must precede the child. `confirm` is null or an opaque confirmation id. Optional `done`, `stage` and `depends_on` fields retain the plan details; managed Klotho entries require done conditions. Save is refused. |
 | `file` | `asset` is `{asset_id,revision}`, `name` is nonempty, `size` is nonnegative bytes and `media_type` is PDF, PPTX or ODP. Saving copies verified bytes into an independently owned material. |
 
 Asset and result references have positive revisions. A citation anchor has either `event_id` or `asset`, plus a nonempty half-open `start`/`end` passage range. Strings, including code and links, remain inert data.
@@ -635,7 +665,7 @@ streamed reply and restart persistence with a stub vendor runtime. Automatic
 account setup, first-use installation, quota projection and idle pooling remain
 #168; this increment's explicit route launches one process per request.
 
-**C-46 Grok adapter (new).** A Go Agent Client Protocol client over the `grok` command on stdio, best effort. The steps are `initialize`, session create with LINA tools handed as MCP servers, prompt, updates, permission requests routed to Core's approval path, and cancel. Telemetry and trace upload are switched off explicitly. Account state comes from a cheap authenticated call, not from the command's files.
+**C-46 Grok adapter (new).** A Go Agent Client Protocol client over the `grok` command on stdio, best effort. It uses the shared `kit/acp` client of C-60; only the provider rules below differ from a worker. The steps are `initialize`, session create with LINA tools handed as MCP servers, prompt, updates, permission requests routed to Core's approval path, and cancel. Telemetry and trace upload are switched off explicitly. Account state comes from a cheap authenticated call, not from the command's files.
 
 **C-47 Accounts, credentials and sign-in (new).**
 
@@ -929,7 +959,10 @@ there is no separate client endpoint.
   dependencies, waiting state, planned start and checklist ticks. The same
   publication checkpoint appends a `record_occurrence` event to the work ledger,
   including the prior occurrence, next occurrence, time and completion/advance
-  reason. These events create no delegated work card. Core runs
+  reason. Completing an already exhausted series also appends one completion
+  event, even when its recurrence fields stay unchanged. Repeating the saved
+  write or editing an already completed record adds no completion event.
+  These events create no delegated work card. Core runs
   overdue advancement at startup and each minute without a model or worker.
   Date-only occurrences remain due throughout their civil day. Timed
   to-dos preserve seconds and fractional seconds (up to Go time precision);
@@ -962,11 +995,17 @@ there is no separate client endpoint.
   pages retain unanswered proposals and define an explicit scope for presenting
   a group, without automatically accepting it.
 - Automatic additions commit their numbered candidate, record and undo receipt
-  through the existing publication journal. A committed intent is the recovery
+  through the existing publication journal. Core allocates the first unused
+  path under the repository writer lock: `inbox/candidate-<number>.md`, then
+  `inbox/candidate-<number>-2.md` and higher suffixes. Occupied records keep
+  their contents, paths and revisions. A committed intent is the recovery
   decision; restart finishes that exact decision without dispatching a tool or
   reclassifying source text. The headless `e2e/m2/record-candidates.json` scenario
   covers verified admission, forged and missing evidence, duplicate refusal,
-  notices, undo, and pending/rejected persistence after restart.
+  notices, undo, occupied-path preservation and pending/rejected persistence
+  after restart. `e2e/m2/record-exhausted-completion.json` covers model-free
+  exhaustion, completion through installed Core tools, a later note edit and
+  exactly one completion event after restart.
   `e2e/m2/record-candidate-replay.json` covers replay/view suppression after
   completion and cancellation through installed Core tools and a restart,
   preserving the saved version without another record, notice or undo operation.
@@ -1351,7 +1390,7 @@ type Adapter interface {
 ```
 
 - The common event kinds are progress, usage, finish, question, approval and work-tool call. Each event has one matching payload and a thread identity; malformed combinations are rejected. A finish distinguishes done, interrupted and typed failures (quota, rate limit, login expiry, connection and worker errors). Done ends a turn and is not a delivery verdict. Thread controls carry the turn id, process generation and binding epoch for reconciliation.
-- Adapters: Codex over `codex app-server` on stdio (Go types generated for each verified version; exhaustive switches). Claude Code, Antigravity and Cursor (`cursor-agent`) as headless children with streaming output. Cursor uses `stream-json`, process exit plus a final stream event, and session resume by chat id; these are to be confirmed against the installed version in [#210](https://github.com/thisisjun786/lina/issues/210).
+- Adapters: Codex over `codex app-server` on stdio (Go types generated for each verified version; exhaustive switches). Claude Code, Cursor, Gemini CLI, Grok and added agents through the one ACP adapter of C-60. Antigravity as a headless child with streaming output. The Claude Code headless adapter below remains until the worker evaluation chooses between it and the ACP profile.
 - #132 connects session start, input, interrupt and snapshot to Core's normal conversation tool registry. Launch receipts record the installed version and control handle; version and terminal-output notices survive in conversation history. The per-session process belongs to Core, and hard activity is held per active turn. Session completion is not task delivery; full work dispatch, recovery, approvals and dynamic work tools remain their separate roadmap steps.
 - Workers run with the user's own setup and get no LINA sandbox, credential, hook or skill ([work-and-delegation.md](work-and-delegation.md#workers)). Approvals go to the originating conversation. A worker on another device is started and relayed by that device's Node.
 - A process group kill is the stop. A cut turn's effects are unknown until `Snapshot` and a read of GitHub settle them.
@@ -1398,6 +1437,30 @@ manager design acceptance, parallel scheduling and merge remain their own flows.
 See [Antigravity headless adapter](work-and-delegation.md#antigravity-headless-adapter)
 for the evidence boundary and account-free acceptance limits.
 
+**C-60 ACP client and ACP workers (new).** Contract: [work-and-delegation.md](work-and-delegation.md#acp-adapter). Evidence: [worker-protocols.md](../research/worker-protocols.md).
+
+- `kit/acp` is the client of Agent Client Protocol version 1 over stdio, one JSON message per line on the `kit/rpc` line peer. Its Go types are generated from the JSON Schema of a pinned ACP release (Apache-2.0) and committed under `third_party/` with the vendoring rules of [dependencies.md](../policy/dependencies.md), as the Codex app-server types are: never edited by hand, regenerated on sync, request ids keep their string, integer or null identity, and unknown variants keep their wire JSON.
+- `initialize` sends protocol version 1 and fails the handshake on any other answer. The client declares form elicitation and no `fs` or `terminal` capability; it answers `fs/*` and `terminal/*` with method-not-found. Version 2 changes how a turn ends and is a separate, verified change.
+- The shared client uses the stable `schema-v1.26.0` schema. Its generated baseline in `third_party/acp/upstream/types.go` and kit copy are byte-identical and checked by regeneration. `Start` owns a stdio child through `kit/proc`; `New` accepts a `kit/rpc` transport. Both require `Initialize` before session calls. `Close` waits for both the read loop and transport teardown, including owned process cleanup after connection cancellation or a concurrent failure. Updates carry a replay flag, set until the `session/load` response is read. Permission handles are single-use and invalidated when their prompt completes; explicit cancel answers pending requests for that session, including requests already in flight. The client permits one outstanding operation per session. Cancelling a call's wait does not send a protocol cancel or retry work; the session stays busy until its reply arrives. Malformed frames, EOF and overflowing the bounded event queues fail the connection. Consumers drain updates and requests while calls run and apply Core's authorization and approval policy.
+- `internal/core/worker/acp` implements C-29 on that client. A profile holds the worker name, the command and arguments, the environment variables it sets (such as `CLAUDE_CODE_EXECUTABLE`), the version probe and the vendor rate-limit key it may read. Claude Code, Cursor, Gemini CLI and Grok are built-in profiles; person-added profiles come from an editable settings file defined by their own issue.
+- An ACP session id is the thread id. ACP version 1 has no turn id, so Core assigns one per `session/prompt` request and binds every update, request and reply of that request to it, with the process generation and binding epoch.
+
+| ACP message | `worker.Event` |
+| --- | --- |
+| `session/update`: message, thought, tool call, tool-call update, plan | progress |
+| `usage_update`, usage in the `session/prompt` reply | usage |
+| `session/prompt` reply | finish: `end_turn` done; `cancelled` interrupted; `refusal`, `max_tokens`, `max_turn_requests` failed as a worker error naming the stop reason |
+| JSON-RPC error on a request; session-failure extension | finish failed: -32000 login expiry; extension kinds map to quota, rate limit, login or connection |
+| `session/request_permission` | approval |
+| `elicitation/create` (form) | question |
+| A tool call on LINA's session MCP server | work-tool call |
+| Process exit while a `session/prompt` is open | finish failed: connection |
+
+- LINA's session MCP server is `lina worker-tools`, a stdio subcommand of `cmd/lina`. Core opens no new listener for it: the worker starts it from the `session/new` entry, and it connects to Core's local client socket with a token bound to one session. Core accepts each call only for that session's current turn, generation and epoch.
+- `Snapshot` has no protocol read in ACP version 1. It returns Core's record of the session: state, pending requests and the last message. After a Core restart the state is unknown until once-only recovery loads the session again.
+- `Quota` returns rows only from the session-failure extension and a profile's named rate-limit key; with neither, it returns none and the chooser treats the worker as unknown.
+- Every child is owned through `kit/proc` and reaped with its process tree; LINA's own model credential is removed from its environment.
+
 **C-57 Work definition, choice and splitting (new).**
 
 ```go
@@ -1413,13 +1476,25 @@ type Definition struct {
 ```
 
 - The agent drafts a definition with the `dispatch_work` tool. Core validates required fields, glob syntax and that the design reference resolves to a Markdown section in the repository at the base commit before admission. Before invoking the manager, it persists the pinned commit and definition snapshot in a non-runnable `admitting` record. Retries resume that snapshot; only manager success moves it to `queued`. Core renders the task packet with the assignment id, base commit and complete definition. Code examples are not design sections.
+- Klotho drafting runs through Moirai's job API and the Core auxiliary model
+  route. The worker validates the proposed structure and holds no write or
+  confirmation authority. Core writes a full preview revision and its job receipt
+  in one transaction. Obsolete replacements commit a terminal rejection and
+  advance the watermark without replacing the card, so they cannot strand later
+  planning jobs. Their outcome lines are recovered from the same durable receipt.
+  Completed invalid model outputs use the same terminal rejection path after
+  settling their usage, without retrying the completed call.
+  Only the client confirmation creates the corresponding
+  Markdown records, as one recoverable Git publication. Splitting the confirmed
+  work into hand-off tasks uses the existing work ledger, without another plan
+  confirmation or another planning receipt.
 - Core does not split work itself. The dev preset carries the splitting criteria as guidance ([work-and-delegation.md](work-and-delegation.md#splitting-into-tasks)). Core checks mechanically that each task has one done condition and a write area, that overlapping areas are ordered by a dependency, that dependencies have no cycle, and that hotspot files are taken whole or moved to one task.
 - `Chooser` ranks installed workers by quota, situation rules and measured host capacity. OK quota precedes warning and unknown; absent quota is unknown and usable. Any blocked window excludes the worker until its explicit reset. A quota, rate-limit or login stop parks the worker and permits one replacement with the identical persisted packet, task branch and workspace, after the previous process tree is reaped. Each attempt has a separate ledger generation; restart never repeats an uncertain attempt.
 - #138 connects the chooser to `dispatch_work` with Antigravity and Codex. The optional `system/core/worker-choice.json` table has `provisional: true` and `rules` of `{worker, tags, priority}`; all tags must match the definition's kind or repository. Quota and capacity cannot be overridden. Equal candidates retain installation order (Antigravity, then Codex). Core reads the table at startup and rejects malformed rules. The initial resource estimate is one CPU, 512 MiB memory and 1024 MiB disk per active reservation, deducted from the measured main-host resources. Canon migration 43 replaces the repository-wide unique index with fenced area claims and durable worker quota. A late quota snapshot cannot erase a newer observed stop; admission rechecks quota before reserving the attempt.
 - Dispatch compares glob intersections before launch, including directory descendants and `**`, and validates result files with the same path language. A terminal worker event does not free the area. Applied work releases it; uncertain effects retain it through restart. Canon commit notifications, quota updates and explicit reset timers wake selection, with a one-minute safety sweep for host changes. A queued record retains one wait reason: area, quota or capacity. `e2e/m2/worker-choice.json` exercises the installed Core path with real file and Git effects and synthetic worker/GitHub streams.
 - `Scheduler.Release` runs on events (landed, new task, quota change, a parked worker's reset), not on a poll. It starts every task whose dependencies landed, whose area lease is free and whose worker has quota. Area leases live from hand-off to landed, closed or abandoned. Concurrency is the free slots that the reported load and resources of the main host and each Node allow, with no fixed count per repository ([work-and-delegation.md](work-and-delegation.md#capacity)). A task that cannot start shows exactly one reason.
 - One task, one worker, one worktree, one branch, created by Core with the Git command from a parent clone in `work/clones/`. #127 wires `prepare_work` and `retain_work_result` into the running conversation tool registry. `work.Area` owns leased Git subprocesses through `kit/proc`, detached allocation at the pinned base, protected refs and branch bundles. Core closes its process owner during shutdown.
-- The developer lane projection reads current `work_cards` in a canon snapshot through `internal/core/progress`. Installed Core registers read-only `progress_get` under `worker_lanes` 1.0, independently of a provider route. `after` is an opaque source/id cursor; `progress.lanes` contains up to 32 current worker sessions and `next_cursor` only when another visible session exists. Rows carry run/task/persona identity, persona name, worker, thread, turn, node, generation, task state/title and source-labeled stage details. Display fields are bounded before transport. Core authorizes the installation's person and excludes explicitly foreign-person tasks and deleted personas; legacy unowned records belong to the installation. Tasks without a run and superseded generations do not create lanes. A finished worker turn remains distinct from Core-verified task completion. Refresh rereads authoritative state; this view neither dispatches work nor infers scheduler transitions. Boot appends the installed worker runtime's sessions after durable work pages, using their adapter snapshots and masking output before display. Idle means only the worker turn ended; it is not a work verdict.
+- The developer lane projection reads current `work_cards` in a canon snapshot through `internal/core/progress`. Installed Core registers read-only `progress_get` under `worker_lanes` 1.0, independently of a provider route. `after` is an opaque source/id cursor; `progress.lanes` contains up to 32 current worker sessions and `next_cursor` only when another visible session exists. Rows carry run/task/persona identity, persona name, worker, thread, turn, node, generation, task state/title and source-labeled stage details. Display fields are bounded before transport. Core authorizes the installation's person and excludes explicitly foreign-person tasks and deleted personas; legacy unowned records belong to the installation. Tasks without a run and superseded generations do not create lanes. A finished worker turn remains distinct from Core-verified task completion. Refresh rereads authoritative state; this view neither dispatches work nor infers scheduler transitions. Boot appends the installed worker runtime's sessions after durable work pages, using their adapter snapshots and masking output before display. These snapshots share one five-second page context, including time spent waiting for a worker control to finish. Expiry or caller cancellation returns unknown session rows with their identities preserved; it neither cancels the worker nor allows conflicting controls to overlap. Idle means only the worker turn ended; it is not a work verdict.
 - The CRW pin is the start gate for the work ledger records: a pin record and a LINA fixture runner whose expected values come from the fixture ([work-and-delegation.md](work-and-delegation.md#start-gate)).
 - `internal/core/work/pin` verifies SHA-256 over every adopted file before running
   any case. The runner passes only inputs to the record validator; a validator
@@ -1432,11 +1507,13 @@ type Definition struct {
 - #128 adds canon migration 40 for `work_completions`, separate claim tombstones and Core-captured completion origins. A trusted terminal observation and its completion row commit with the work ledger/card in one fenced transaction, after a receipt exists. A late receipt creates the same signal when termination was already observed. The attempt key is Core's run ID; Git heads come from Core observations, and a result without a Git head uses the empty head. A corrected file receipt or directory fingerprint replaces the current row for that task/attempt/head with a new reaction identity; prior claims remain tombstones, and unchanged output retains its identity. Worker receipt formats stay unchanged. On upgrade, persisted dispatch PR evidence fills a previously absent terminal head; it cannot replace a known head.
 - The boot-owned reactor starts after background services and the final lanes are initialized, wakes from canon commits, claims only the current attempt/head, and hands the receipt to the existing inbox and conversation lane. Non-dispatch receipts enter the bound conversation engine as a hidden, source-labeled work-completion input; a display notice alone cannot acknowledge them. A durable turn identity prevents replay after restart. Work admission records its original channel binding and exact thread address, or an explicit personal origin. Completion runners restore that authority and revalidate it before model dispatch and tools; a changed binding cannot widen memory or tool access. Legacy tasks without a recorded origin remain pending; neither a main-conversation name nor the absence of a current channel binding proves personal authority. Dispatch persists its final evidence in the same transaction as the terminal work event. The reactor reads the PR again before manager delivery; a moved head updates the observed head and discards the stale signal. Successfully read failing checks or blocking reviews reach the manager as unverified evidence; only failed observations wait for retry. Event data cannot authorize a verdict or merge.
 - Startup and a five-minute sweep recreate missing rows from the ledger-derived cards in batches of 128 without model or worker calls. Separate handled/ignored claim tombstones prevent a restored signal from repeating its reaction. Unacknowledged claims resume in a new epoch with the same inbox/turn identity; failed reactions become eligible at the next sweep. Shutdown cancels and joins the reactor. `e2e/m2/work-completions.json` verifies the installed Core, worker artifact, durable claim before manager judgment, and loss/restart recovery without another model call.
-- `Reactor.On` does, in order: one read of the pull request through `ghclient` (a `gh` child with fixed arguments); one design-conformance review; return of P0 and P1 findings once; merge or close; then `Scheduler.Release`. The CI watcher follows [completion signals](integrations.md#completion-signals).
+- `Reactor.On` does, in order: one read of the pull request through `ghclient` (a `gh` child with fixed arguments); one manager conformance check for the delivered head; return only a missed work definition once; merge or close; then `Scheduler.Release`. The CI watcher follows [completion signals](integrations.md#completion-signals).
 - `ghclient` is owned by boot for one Core epoch. Each fixed-argument `gh` child runs through `kit/proc` with a live activity lease, the user's GitHub login and no model-provider credentials. The client serializes observation in one watcher per normalized repository/PR, bounds response bytes and pagination, retains conditional REST validators, and exposes pending causes and retry times through the `github` client capability. The read/watch operations use no shell, events feed, webhook or external write. Boot cancels and joins it before releasing its resources. The installed-Core scenario in `e2e/m2/github-ci.json` covers the socket-to-child-to-result path.
 - The `ghclient` child environment removes `GH_FORCE_TTY`, `CLICOLOR_FORCE` and `FORCE_COLOR`, and sets `NO_COLOR=1` and `CLICOLOR=0`. Prompts, paging and debug output are disabled. This keeps `gh api --include` headers and JSON machine-readable under an inherited color-capable terminal without changing the user's login, tool configuration or parent environment. The installed-Core scenario exercises this inherited environment through the real child boundary.
-- The review is Core's own call on the `background` role. The diff, the design reference text at the base commit and the work definition go in as an enveloped data block. Findings come back as schema-validated records `{id, severity P0..P3, file, claim}`. A failing required check and a change outside the write area are P1 findings computed by Core. A prose-only reply stores none. A large diff is reviewed by file group and merged into one finding set.
-- The return, the close on a residual finding and the merge steps are those of the contract. Core takes the merge slot, merges pinned to the head last read, and only one read after the merge lands the task.
+- The conformance check uses the owning dev manager's existing conversation and `coding_decision` tool, once per delivered head. Canon migration 48 claims the normalized repository, PR number and head before manager dispatch, binding the task, execution generation and receipt. A duplicate request is refused even after interruption or restart. A fix generation with a new head gets its own check. Reading an existing judgment at merge is not another request.
+- Core checks GitHub readiness and the observed diff's file paths before calling the manager. Failed or incomplete checks and blocking GitHub reviews are merge preconditions: they block the task without a `verified` verdict or model findings. A change outside the declared write area is a Core-computed scope miss, recorded as `needs_changes` without calling a model. Renames are observed as deletion and addition, so both paths are checked with the scheduler's path language.
+- The manager receives the work definition, observed diff and design text read at the admission's pinned base, as source-labeled data in the existing handoff. Missing or oversized change evidence cannot be accepted. A structured `coding_decision` records `verified` or `needs_changes` and its evidence; optional findings use the validated shape `{id, severity P0..P3, file, claim}`. Prose alone records no verdict or finding. The head record, work verdict and assignment judgment commit in one transaction, rechecking the current receipt and head. A verified judgment with P0/P1 findings is refused. This creates no separate review model, reviewer panel or Core CI-fix loop. `e2e/m2/conformance.json` exercises the installed Core, actual worker commits, mechanical gates, structured findings, prose rejection and restart.
+- The return for a missed work definition, the close on a remaining gap or undelivered green head, and the merge steps are those of the contract. Core takes the merge slot, merges pinned to the head last read, and only one read after the merge lands the task.
 - #141 adds the running Core's `github_merge` capability and the shared `ghclient.Merge` service. A person connects a PR to its parent clone and named protected local branches; Core verifies the clone's origin and captures those refs before work. Head acceptance reads GitHub and compares those refs again. The merge takes a repository/base slot, reads checks and unresolved priority findings, rechecks PR identity, compares protected refs and commits an unknown intent before the fixed head-pinned child runs. A moved head is returned as fresh evidence and requires explicit acceptance; there is no automatic merge or review retry. A command's success alone is not landing: Core checks the merge commit, exact target ref and checks on that commit. Queue/unknown states retain a durable base reservation and permit only observation. Restart never repeats a write.
 - `authority.Merges` stores the connection, captured refs, accepted head, requesting person/agent and final evidence in canon migration 30. It is merge authority bookkeeping, not a replacement for the pinned work-ledger receipt/verdict schemas. The work reactor can consume the same service and evidence. A confirmed external merge is `observed`, a confirmed successful Core call is a `receipt`; neither issues a delivery verdict. Restore invalidates unused merge permission while retaining uncertain reservations and terminal evidence. `e2e/m2/github-merge.json` drives the installed Core, a synthetic gh child and a real temporary Git clone, including restart and failed checks on a person's merge.
 - A head change detected during review reads also refreshes the observation once and blocks the merge. That refresh grants no admission, including when the original head returns; another head change or a failed read ends the attempt. The installed-Core merge scenario covers the race between PR identity and review reads and requires explicit head acceptance afterward.
@@ -1513,6 +1590,7 @@ both sides of the claim commit.
 - `runs.RunningList` combines `runs.RunListSource` over canonical run records and delegated-task producers, re-reading their current records. Input-needed rows come first, then complete or partial results ready for review, then other in-progress, waiting and landed rows. Waiting rows carry one scheduler-owned reason; unrecognized state codes or unexplained waiting fail the snapshot. Delegated tasks contribute their durable cards through the same list; an unreconciled task uses the explicit `unknown` state and remains visible. Opening or dismissing a landed row records its removal from the list in canon without deleting its source or result; opening live work keeps it visible.
 - Run landings carry a durable generation key and landing instant; `runs.TransferNotices` acknowledges a generation only after the lane outbox accepts it durably. Question and landing generations remain distinct even at the same clock instant. The lane masks the summary before persistence and owns a durable notice outbox and serializes delivery with the whole conversation turn. Already queued person input precedes a notice. Pending landings in the same conversation and ownership scope, at most 10 seconds from the first landing (inclusive), form one event; an idle lane delivers immediately. A delivery commits its conversation event and outbox acknowledgement together before subscriber publication. A failed commit retains the pending notices for explicit recovery and never retries in a loop. The display rows and notices are Core APIs in this increment; client 1.0 waiting/running payloads remain reserved until their surface implementation.
 - `progress.Compute` builds one line per running 일 and 목표 per [work-and-delegation.md](work-and-delegation.md#progress-line): name, stage word and bar, just finished (the outcome line of the latest landing, built from structured fields and the title), next, and a waiting mark. Unobserved values are unknown, never zero. State words are codes; clients own the Korean and English catalogs.
+- Conversation-worker progress consumes the same `workerListSource` observations and `runs.RunningList` projection as the running list. Adapter snapshots are collected outside canonical transactions; idle sessions are absent, unavailable snapshots remain unknown, and failed sessions use the same `running_seen` acknowledgement. The optional execution-state code is distinct from the unobserved plan stage, percent, last task and next task. Headless installed-Core scenarios drive a fixture worker through success and failure while the real TUI keeps Progress open, then verify agreement and dismissal through Running.
 - Work progress shares the running list's person- and execution-generation-bound acknowledgement. Ready-for-review, done, failed and stopped cards are landed for display and retire once seen; ready-for-review is not a successful completion verdict. Opening live work leaves it visible. The installed-Core scenario `e2e/m2/progress-seen-review.json` verifies open and dismiss, live progress publication, restart retention and preservation of the card and artifact.
 - The installed Core exposes `progress_get` with `view: overview` and the `progress` topic, separately from developer worker lanes. Display lines contain no identity; their enclosing rows carry navigation references. An unplanned work definition or directly started worker is visible with unknown plan stage, percentage and next task; a task receipt cannot supply the just-finished plan task. The to-do waiting producer and plan-based stage/bar are left to the to-do record work (issue 154); a worker's terminal event is not a delivery verdict. The TUI renders stage codes and unknown values through its language catalog, and refreshes an open progress pane without replacing the conversation draft.
 - The full `waiting_get` query uses the common source ordering and Home limit/count. Current producers include canonical approvals, work-round questions, input-needed runs, explicit blocked work, person-owned exchanges, live worker questions and outside record-change problems. Live adapter requests are read under their session locks outside canon's writer to avoid reversing the worker callback lock order. They remain answerable through the existing authenticated question/approval forms. Canon migration 34 installs the already-defined waiting decision journal in the application catalog.
@@ -1591,6 +1669,15 @@ Restore prepares a private copy before publishing any area. Removal replay and a
 Pending effects include channel deliveries: captured `queued` and `sending` rows become `unknown` in the same invalidation transaction, before reads or adapters start. Restored messages cannot be claimed for delivery or settled by an old attempt. Their parts, partial-delivery receipts and retry metadata remain available; `sent`, `unknown`, `blocked` and `refused` rows retain their outcomes. This also applies when resuming an interrupted restore.
 
 A pending publication lives under `staging/restore.pending`. Core checks for it while holding its lock, before opening services or minting an epoch, and refuses startup until the restore is completed. Publication saves the replaced areas, installs the replayed removal list and all captured areas, and installs canon last. Each rename and its parent directories are synced. Repeating restore resumes an interrupted publication, reacquires the installed source's lock and reapplies its latest removal history before retiring the marker. Both Core and the backup command refuse a pending publication. The marker is retired only after the whole generation is durable.
+
+The one-time operator's `system/crw-takeover-journal.json` is the sole captured
+file under `system/`. Backup hashes and copies its opaque bytes under the same
+Core lock as canon and records; Core never interprets its source identities.
+Restore replaces it with the captured journal, or removes later reservations
+when the generation contains none, before publishing canon. The same pending
+marker fences the importer and supports resuming journal replacement or removal.
+Other installation and control files retain their existing restore rules. No
+product API, canon schema or release artifact depends on the operator tool.
 `lina backup --state-root <path>` requires Core to be stopped, holds the stable exclusive Core lock through publication, and refuses a running Core without writing state while explaining how to stop it (`systemctl --user stop lina-core.service`, or Ctrl+C for a foreground Core).
 
 The `backup` flow requires the exclusive Core lock and quiesced writers. It reconciles the removal journal before capturing canon, uses the online SQLite backup API, verifies all recorded material revisions and copied version-space, derived and workspace files, then publishes `manifest.json` last. Its schema-1 manifest records artifact/schema versions, capture epoch and revocation watermark as well as the complete inventory. Published persona and skill commit objects are verified incrementally against their Git type, declared length and hash, without an additional content-size cap. A killed copy has no published manifest; hash, journal, cancellation and I/O failures publish no generation. Restore remains a separate whole-generation operation.
@@ -1626,4 +1713,4 @@ Titles are the headings above. Earlier ids C-01 to C-42 keep their number where 
 - Kept: C-03 to C-07, C-15, C-16, C-19, C-26, C-32, C-33, C-38, C-40.
 - Changed: C-01, C-02, C-08 to C-14, C-17, C-18, C-20 to C-25, C-27 to C-30, C-34, C-35, C-39, C-42. Contract decisions replace the earlier ones. The main cases: the Moirai worker is a separate service, there is no hidden sandbox mode, no automatic replay, no automatic retries by Core, six tool classes and per-agent ceilings withdrawn, workers unconfined, survival tier withdrawn, key pinning withdrawn.
 - Withdrawn: C-31 (confirmation list; the approval rule decides), C-36 (desk and work Mac; placement is not a contract), C-37 (model proxy instance; the proxy is removed), C-41 (placement across machines; parallel hand-off decides).
-- New: C-43 to C-59.
+- New: C-43 to C-60.

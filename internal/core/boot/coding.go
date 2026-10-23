@@ -16,6 +16,8 @@ import (
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/inbox"
 	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/internal/core/review"
+	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
@@ -23,7 +25,9 @@ import (
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/provider"
+	"github.com/thisisjun786/lina/kit/result"
 	"github.com/thisisjun786/lina/kit/tools"
+	"slices"
 )
 
 var errDevUnavailable = errors.New("dev_agent_unavailable")
@@ -35,12 +39,21 @@ type codingAssignment struct {
 	Arguments                        json.RawMessage
 	Delegated                        bool
 	Verdict                          string
+	VerdictHead, VerdictReceipt      string
 }
 
 type codingTurn struct {
 	Assignment codingAssignment
 	Phase      string
 	Result     *dispatch.Record
+	Review     *review.Record
+}
+
+type codingDecision struct {
+	Decision   string                   `json:"decision"`
+	Evidence   string                   `json:"evidence"`
+	Findings   json.RawMessage          `json:"findings,omitempty"`
+	Completion result.CompletionRequest `json:"completion,omitempty"`
 }
 
 func codingID(parts ...string) string {
@@ -147,16 +160,40 @@ func (r *conversationRuntime) runCodingManager(ctx context.Context, a codingAssi
 	if err := r.db.Read(ctx, func(tx *canon.Tx) error { var err error; a, err = readCoding(ctx, tx, a.ID); return err }); err != nil {
 		return err
 	}
-	if phase == "assignment" && a.Delegated || phase == "delivery" && a.Verdict != "" {
+	if phase == "assignment" && a.Delegated {
 		return nil
 	}
 	owner, err := r.agents.Get(ctx, a.Owner)
 	if err != nil || owner.Preset != "dev" {
 		return errDevUnavailable
 	}
+	var conformance *review.Record
+	if phase == "delivery" {
+		rr, err := r.beginConformance(ctx, a, result)
+		if err != nil {
+			return err
+		}
+		if rr.State != "checking" {
+			return nil
+		}
+		conformance = &rr
+		defer func() {
+			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			current, e := review.New(r.db).Get(cleanup, rr.Key)
+			if e == nil && current.State == "checking" {
+				current.State = "unverified"
+				current.Cause = "no_verdict"
+				_ = r.finishConformance(cleanup, a, current)
+			}
+		}()
+	}
 	view := newConversationView(r.router.root, a.Owner, a.Conversation)
-	view.coding = &codingTurn{Assignment: a, Phase: phase, Result: result}
+	view.coding = &codingTurn{Assignment: a, Phase: phase, Result: result, Review: conformance}
 	id := "coding-" + phase + ":" + a.ID
+	if conformance != nil {
+		id += ":" + conformance.Head + ":" + conformance.Receipt
+	}
 	turnID := "turn:" + id
 	if err = r.personaAuthority.BindDelegation(ctx, a.Origin.Person, a.Owner, "coding:"+a.ID, a.Owner, turnID); err != nil {
 		return err
@@ -206,8 +243,8 @@ func (r *conversationRuntime) runCodingManager(ctx context.Context, a codingAssi
 	if phase == "assignment" && !a.Delegated {
 		return errors.New("coding_definition_not_delegated")
 	}
-	if phase == "delivery" && a.Verdict == "" {
-		return errors.New("coding_delivery_unverified")
+	if phase == "delivery" && (a.Verdict == "" || a.VerdictHead != result.PR.Head) {
+		return errConformanceUnverified
 	}
 	return nil
 }
@@ -215,14 +252,23 @@ func (r *conversationRuntime) runCodingManager(ctx context.Context, a codingAssi
 func (r *conversationRuntime) prepareCodingDecision(turnID string, bindings map[string]loop.Tool) ([]provider.ToolDecl, error) {
 	c := r.coding
 	spec := tools.Spec{Name: "coding_decision", Classify: tools.Class(tools.LocalWrite), Conc: 1, Deadline: time.Minute, Placement: tools.Core, Schema: func(raw json.RawMessage) (tools.Input, error) {
-		var a struct {
-			Decision string `json:"decision"`
-			Evidence string `json:"evidence"`
-		}
+		var a codingDecision
 		if decodeWorkerArgs(raw, &a) != nil || strings.TrimSpace(a.Evidence) == "" || len(a.Evidence) > 8192 {
 			return tools.Input{}, tools.ErrInvalid
 		}
-		if c.Phase == "assignment" && a.Decision != "delegate" {
+		findings, err := conformanceFindings(a.Findings)
+		if err != nil {
+			return tools.Input{}, tools.ErrInvalid
+		}
+		for _, f := range findings {
+			if c.Result == nil || !slices.Contains(c.Result.ChangedFiles, f.File) {
+				return tools.Input{}, tools.ErrInvalid
+			}
+			if a.Decision == "verified" && (f.Severity == "P0" || f.Severity == "P1") {
+				return tools.Input{}, tools.ErrInvalid
+			}
+		}
+		if c.Phase == "assignment" && (a.Decision != "delegate" || len(findings) != 0) {
 			return tools.Input{}, tools.ErrInvalid
 		}
 		if c.Phase == "delivery" && a.Decision != "verified" && a.Decision != "needs_changes" && a.Decision != "unverified" {
@@ -235,35 +281,46 @@ func (r *conversationRuntime) prepareCodingDecision(turnID string, bindings map[
 	}}
 	registry := tools.NewRegistry(r.personaAuthority, r.activities)
 	if err := registry.Register(spec, func(ctx context.Context, _ lease.Lease, in tools.Input) (tools.Result, error) {
-		var decision struct {
-			Decision string `json:"decision"`
-			Evidence string `json:"evidence"`
+		var decision codingDecision
+		masked, err := secrets.Mask(string(in.Arguments))
+		if err != nil {
+			return tools.Result{State: tools.Failed}, err
 		}
-		_ = json.Unmarshal(in.Arguments, &decision)
-		if c.Phase == "delivery" && decision.Decision != "unverified" {
-			card, err := r.work.Get(ctx, c.Assignment.ID)
-			if err != nil || card.Receipt == nil {
-				return tools.Result{State: tools.Failed}, errors.New("coding_receipt_missing")
+		if err = json.Unmarshal([]byte(masked.DerivedText()), &decision); err != nil {
+			return tools.Result{State: tools.Failed}, err
+		}
+		if c.Phase == "delivery" {
+			if c.Review == nil {
+				return tools.Result{State: tools.Failed}, work.ErrState
 			}
-			if err = r.work.Judge(ctx, card.Task.ID, card.Receipt.EventID, decision.Decision, decision.Evidence); err != nil {
+			rr := *c.Review
+			rr.Findings, err = conformanceFindings(decision.Findings)
+			if err != nil {
 				return tools.Result{State: tools.Failed}, err
 			}
-		}
-		err := r.db.Write(ctx, func(tx *canon.Tx) error {
-			a, err := readCoding(ctx, tx, c.Assignment.ID)
-			if err != nil {
-				return err
+			rr.State, rr.Verdict, rr.Evidence = "complete", decision.Decision, decision.Evidence
+			if decision.Decision == "unverified" {
+				rr.State = "unverified"
+				rr.Cause = "manager_unverified"
+				rr.Verdict = ""
+				rr.Findings = nil
 			}
-			if a.Owner != r.agent {
-				return tools.ErrInvalid
-			}
-			if c.Phase == "assignment" {
+			// Code cannot select a weaker work kind through model arguments.
+			decision.Completion.WorkKind = "code"
+			err = r.finishConformance(ctx, c.Assignment, rr, decision.Completion)
+		} else {
+			err = r.db.Write(ctx, func(tx *canon.Tx) error {
+				a, err := readCoding(ctx, tx, c.Assignment.ID)
+				if err != nil {
+					return err
+				}
+				if a.Owner != r.agent {
+					return tools.ErrInvalid
+				}
 				a.Delegated = true
-			} else {
-				a.Verdict = decision.Decision
-			}
-			return saveCoding(ctx, tx, a)
-		})
+				return saveCoding(ctx, tx, a)
+			})
+		}
 		if err != nil {
 			return tools.Result{State: tools.Failed}, err
 		}
@@ -278,5 +335,28 @@ func (r *conversationRuntime) prepareCodingDecision(turnID string, bindings map[
 	r.personaGrants[auth.GrantID] = grant.Grant{Identity: auth, Expires: time.Now().Add(time.Hour), Scope: []grant.Permission{{Tool: spec.Name, Target: target, Write: true}}, Revisions: map[string]string{target: auth.Revision}}
 	r.personaMu.Unlock()
 	bindings[spec.Name] = turn.Tool(registry, spec, tools.Call{Auth: auth}, turnID)
-	return []provider.ToolDecl{provider.ToolDecl(`{"type":"function","name":"coding_decision","description":"Record the owning dev manager's scoped assignment or delivery judgment. Use delegate only for a sufficient work definition; delivery verdicts are verified, needs_changes or unverified, with evidence. This does not merge or deploy.","parameters":{"type":"object","properties":{"decision":{"type":"string","enum":["delegate","verified","needs_changes","unverified"]},"evidence":{"type":"string"}},"required":["decision","evidence"],"additionalProperties":false}}`)}, nil
+	decl, err := json.Marshal(map[string]any{
+		"type": "function", "name": spec.Name,
+		"description": "Record the dev manager's assignment or delivery judgment. Include completion references for checked owner-path evidence. This does not merge or deploy.",
+		"parameters": map[string]any{"type": "object", "properties": map[string]any{
+			"decision": map[string]any{"type": "string", "enum": []string{"delegate", "verified", "needs_changes", "unverified"}},
+			"evidence": map[string]any{"type": "string"}, "completion": result.CompletionSchema(),
+			"findings": map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{
+				"id": map[string]any{"type": "string"}, "severity": map[string]any{"type": "string", "enum": []string{"P0", "P1", "P2", "P3"}},
+				"file": map[string]any{"type": "string"}, "claim": map[string]any{"type": "string"},
+			}, "required": []string{"id", "severity", "file", "claim"}, "additionalProperties": false}},
+		}, "required": []string{"decision", "evidence"}, "additionalProperties": false},
+	})
+	if err != nil {
+		return nil, err
+	}
+	declarations := []provider.ToolDecl{decl}
+	if c.Phase == "delivery" {
+		read, err := r.prepareCodingEvidence(turnID, bindings)
+		if err != nil {
+			return nil, err
+		}
+		declarations = append(declarations, read)
+	}
+	return declarations, nil
 }

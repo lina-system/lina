@@ -3,6 +3,7 @@ package boot
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/assemble"
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/replay"
@@ -56,7 +58,11 @@ func (r *conversationRuntime) Export(ctx context.Context, s clientsrv.Session, p
 		}
 	}
 	if q.Agent != "" && q.Agent != r.agent {
-		return protocol.ExportResult{}, &clientsrv.OperationError{Code: protocol.ErrorOutOfScope}
+		view, err := r.router.view(ctx, s, q.Agent)
+		if err != nil {
+			return protocol.ExportResult{}, err
+		}
+		return view.Export(ctx, s, p)
 	}
 	for _, id := range q.Conversations {
 		if err := r.authorize(s, &id); err != nil {
@@ -93,6 +99,22 @@ func (r *conversationRuntime) Replay(ctx context.Context, s clientsrv.Session, p
 			return protocol.ReplayResult{}, replayFailure(replay.ErrInvalid)
 		}
 		id = original.TurnID
+	}
+	// Select the agent from the owner's canonical input, never from uploaded
+	// episode metadata. Source.Load still gates all content and provenance.
+	var agent string
+	err := r.db.Read(ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(ctx, `SELECT e.agent_id FROM turn_control c JOIN conv_event e ON e.id=c.input_event WHERE c.turn_id=? AND e.person_id=?`, id, s.PersonID).Scan(&agent)
+	})
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return protocol.ReplayResult{}, replayFailure(err)
+	}
+	if err == nil && agent != r.agent {
+		view, err := r.router.view(ctx, s, agent)
+		if err != nil {
+			return protocol.ReplayResult{}, err
+		}
+		return view.Replay(ctx, s, p)
 	}
 	source := r.replaySource()
 	ep, err := source.Load(ctx, replay.Scope{Person: s.PersonID, Agent: r.agent}, id)
@@ -151,16 +173,12 @@ func (r *conversationRuntime) Replay(ctx context.Context, s clientsrv.Session, p
 	defer activity.Release()
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	denied := []string{r.replaySocket}
-	for _, name := range []string{"canon", "secrets", "system/core", "versions", "materials", "derived", "staging", "backups"} {
-		denied = append(denied, filepath.Join(r.root, name))
-	}
 	reads, err := r.replayReads(source, ep)
 	if err != nil {
 		return protocol.ReplayResult{}, replayFailure(err)
 	}
 	usage := []provider.Meta{}
-	out, err := replay.Sandboxed(ctx, replay.SandboxConfig{Reads: reads, Executable: executable, Denied: denied, Environment: []string{"PATH=" + os.Getenv("PATH")}, Stream: func(ctx context.Context, request provider.Request) (provider.Stream, error) {
+	out, err := replay.Sandboxed(ctx, replay.SandboxConfig{Reads: reads, Executable: executable, Denied: r.replayDenied(), Environment: []string{"PATH=" + os.Getenv("PATH")}, Stream: func(ctx context.Context, request provider.Request) (provider.Stream, error) {
 		if err := source.ValidateEpisode(ctx, ep); err != nil {
 			return nil, err
 		}
@@ -194,6 +212,20 @@ func (r *conversationRuntime) Replay(ctx context.Context, s clientsrv.Session, p
 	}
 	text := string(raw)
 	return protocol.ReplayResult{Output: &text}, nil
+}
+
+func (r *conversationRuntime) replayDenied() []string {
+	// Startup creates agent views before Boot publishes the listening socket.
+	// Read the shared runtime's final configuration rather than a view's copy.
+	socket := r.replaySocket
+	if r.router != nil {
+		socket = r.router.root.replaySocket
+	}
+	denied := []string{socket}
+	for _, name := range []string{"canon", "secrets", "system/core", "versions", "materials", "derived", "staging", "backups"} {
+		denied = append(denied, filepath.Join(r.root, name))
+	}
+	return denied
 }
 
 type replayUsageStream struct {

@@ -1,0 +1,20 @@
+{
+  "side": "client",
+  "input": [
+    "results/plan_view_with_body.json",
+    "normal/plan_response.json"
+  ],
+  "output": [
+    "results/plan_view_with_body.json",
+    "normal/plan_response.json"
+  ],
+  "errors": [
+    "",
+    ""
+  ],
+  "outcome": {
+    "accepted": 2,
+    "malformed": 0,
+    "unknown_kinds": 0
+  }
+}

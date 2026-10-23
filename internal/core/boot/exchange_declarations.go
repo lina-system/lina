@@ -1,0 +1,13 @@
+// SPDX-License-Identifier: Apache-2.0
+package boot
+
+import "github.com/thisisjun786/lina/kit/provider"
+
+func exchangeDeclarations() []provider.ToolDecl {
+	return []provider.ToolDecl{
+		provider.ToolDecl(`{"type":"function","name":"send_handoff","description":"Queue a typed hand-off to another agent. Pending means no delivery receipt yet; use handoff_status before saying sent. Core checks back at next_check and on the receiver's report. Reports are claims until checked.","parameters":{"type":"object","properties":{"to":{"type":"string"},"next_check":{"type":"string","format":"date-time"},"handoff":{"type":"object","properties":{"subject":{"type":"string"},"wanted":{"type":"string"},"out_of_scope":{"type":"string"},"done":{"type":"string"},"check":{"type":"string"},"deadline":{"type":"string","format":"date-time"},"materials":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"revision":{"type":"string"}},"required":["id","revision"],"additionalProperties":false}}},"required":["subject","wanted","out_of_scope","done","check","deadline"],"additionalProperties":false}},"required":["to","handoff","next_check"],"additionalProperties":false}}`),
+		provider.ToolDecl(`{"type":"function","name":"handoff_status","description":"Read this sender's delivery receipt, waiting item and labelled receiver report.","parameters":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"],"additionalProperties":false}}`),
+		provider.ToolDecl(`{"type":"function","name":"begin_artifact_change","description":"Open work on an artifact before changing it. Use record: followed by the record id, or the canonical destination for files. Core uses handoff.owns and preserves an existing open owner. A handoff response means no second change was opened.","parameters":{"type":"object","properties":{"artifact":{"type":"object","properties":{"kind":{"type":"string"},"id":{"type":"string"}},"required":["kind","id"],"additionalProperties":false},"done":{"type":"string"},"wanted":{"type":"string"},"out_of_scope":{"type":"string"},"next_check":{"type":"string","format":"date-time"},"deadline":{"type":"string","format":"date-time"}},"required":["artifact","done","wanted","out_of_scope","next_check","deadline"],"additionalProperties":false}}`),
+		provider.ToolDecl(`{"type":"function","name":"finish_artifact_change","description":"Release your open artifact work after checking its end condition. Supply the work_id returned by begin_artifact_change. This releases ownership; it does not claim verified completion.","parameters":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"],"additionalProperties":false}}`),
+	}
+}
