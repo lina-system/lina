@@ -654,7 +654,7 @@ func seedDiscordApproval(t *testing.T, root string, epoch uint64) {
 	}
 	defer db.Close()
 	var agent, person string
-	if err = db.QueryRow("SELECT agent_id,person_id FROM agent_revisions LIMIT 1").Scan(&agent, &person); err != nil {
+	if err = db.QueryRow("SELECT r.agent_id,r.person_id FROM agent_revisions r JOIN agent_first_run f ON f.agent_id=r.agent_id WHERE r.revision=1").Scan(&agent, &person); err != nil {
 		t.Fatal(err)
 	}
 	a := authority.Approval{ID: "discord_approval", EffectKey: "discord_effect", Epoch: epoch, Person: person, Agent: agent, State: authority.Pending, Choices: []authority.Choice{authority.Once, authority.Deny}, What: "Synthetic approval", Where: "Synthetic destination", Arguments: json.RawMessage(`{}`)}

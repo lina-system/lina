@@ -134,7 +134,7 @@ func waitHistoryComposer(t *testing.T, h *harness, terminal *terminal, text stri
 		}
 		line := screenRows(s)[row]
 		if text == "" {
-			return line == "› "+fmt.Sprintf(design.Text(design.English, "composer.placeholder"), "LINA") && s.CursorX == 2
+			return line == "› "+fmt.Sprintf(design.Text(design.English, "composer.placeholder"), "Lina") && s.CursorX == 2
 		}
 		return strings.TrimPrefix(strings.TrimPrefix(line, "› "), "  ") == text && s.CursorX == 2+(render.Unicode{}).Width(text)
 	})
