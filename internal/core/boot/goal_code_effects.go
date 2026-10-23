@@ -161,28 +161,31 @@ func (r *conversationRuntime) mergeGoalPR(ctx context.Context, record dispatch.R
 	binding := authority.MergeBinding{ID: record.ID, Person: record.Origin.Person, Agent: record.Owner, Repository: repository, Number: ref.Number, Base: record.Definition.Base, Clone: record.Definition.Repository, Protected: record.Protected}
 	var result ghclient.MergeResult
 	var err error
+	// An interrupted write must be observed before an OPEN-only preflight.
+	// GitHub may already have merged the pinned head while application is still
+	// absent from our ledger. Bind rechecks the retained assignment identity.
+	if err = merges.Bind(ctx, binding); err != nil {
+		return goal.Observation{}, err
+	}
+	current, err := merges.Get(ctx, record.ID, record.Origin.Person)
+	if err != nil {
+		return goal.Observation{}, err
+	}
+	if current.State == "unknown" || current.State == "queued" || current.State == "merged" {
+		if current.Head != "" && current.Head != a.Revision {
+			return goal.Observation{}, authority.ErrMergeState
+		}
+		observe = true
+	}
 	if observe {
 		// Another actor may have merged before our preflight created a row.
 		// Recover bookkeeping from the retained dispatch, without Accept/Begin
 		// or a merge command. Bind also refuses a conflicting existing row.
-		if err = merges.Bind(ctx, binding); err != nil {
-			return goal.Observation{}, err
-		}
 		result, err = r.workerGitHub.ReadLanded(ctx, ref, record.Definition.Base, a.Revision, "")
 	} else {
 		// Re-read the full current-head review and manager binding at dispatch.
 		if _, err = r.inspectGoalPR(ctx, record, repository); err != nil {
 			return goal.Observation{}, err
-		}
-		if err = merges.Bind(ctx, binding); err != nil {
-			return goal.Observation{}, err
-		}
-		current, err := merges.Get(ctx, record.ID, record.Origin.Person)
-		if err != nil {
-			return goal.Observation{}, err
-		}
-		if current.State == "unknown" || current.State == "queued" || current.State == "merged" {
-			return r.mergeGoalPR(ctx, record, repository, a, true)
 		}
 		if err = merges.Accept(ctx, record.ID, record.Origin.Person, a.Revision); err != nil {
 			return goal.Observation{}, err

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/lina/internal/core/authority"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ghclient"
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
@@ -215,4 +216,75 @@ func closedGitHubFixture(t *testing.T, r *conversationRuntime, head, reason stri
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { r.workerGitHub.Close(context.Background()) })
+}
+
+func TestCodingRetainedMergeIntentReconcilesBeforeOpenPRPreflight(t *testing.T) {
+	for _, state := range []string{"unknown", "queued", "merged"} {
+		t.Run(state, func(t *testing.T) {
+			r, a, d := conformanceFixture(t)
+			d.Definition.Repository = "/retained-clone"
+			d.Protected = map[string]string{"refs/heads/dev": strings.Repeat("b", 40)}
+			rr, err := r.beginConformance(t.Context(), a, &d)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rr.State, rr.Verdict, rr.Evidence = "complete", "verified", "Definition met."
+			if err := r.finishConformance(t.Context(), a, rr); err != nil {
+				t.Fatal(err)
+			}
+			merges := authority.NewMerges(r.db, r.epoch)
+			binding := authority.MergeBinding{ID: a.ID, Person: a.Origin.Person, Agent: a.Owner, Repository: "owner/repo", Base: "dev", Clone: d.Definition.Repository, Number: 7, Protected: d.Protected}
+			if err := merges.Bind(t.Context(), binding); err != nil {
+				t.Fatal(err)
+			}
+			if err := merges.Accept(t.Context(), a.ID, a.Origin.Person, rr.Head); err != nil {
+				t.Fatal(err)
+			}
+			if err := merges.Record(t.Context(), a.ID, a.Origin.Person, state, json.RawMessage(`{}`)); err != nil {
+				t.Fatal(err)
+			}
+			d.PR.State, d.Code = "MERGED", "pr_unverified"
+			commit := strings.Repeat("c", 40)
+			dir := t.TempDir()
+			binary := filepath.Join(dir, "gh")
+			calls := filepath.Join(dir, "calls")
+			script := `#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+printf '%s\n' "$*" >> "$LN144_CALLS"
+[ "$1" = api ] || exit 99
+printf 'HTTP/2.0 200 OK\r\n\r\n'
+case "$*" in
+ */pulls/7*) printf '%s\n' '{"number":7,"state":"closed","merged":true,"head":{"sha":"HEAD"},"base":{"ref":"dev","repo":{"full_name":"owner/repo"}},"merge_commit_sha":"COMMIT"}';;
+ */check-runs*) printf '%s\n' '{"total_count":1,"check_runs":[{"name":"foundation","status":"completed","conclusion":"success"}]}';;
+ */status*) printf '%s\n' '{"sha":"COMMIT","total_count":0,"statuses":[]}';;
+ */git/ref/heads/dev*) printf '%s\n' '{"ref":"refs/heads/dev","object":{"type":"commit","sha":"COMMIT"}}';;
+ */commits/COMMIT*) printf '%s\n' '{"sha":"COMMIT"}';;
+ *) exit 98;;
+esac
+`
+			script = strings.NewReplacer("HEAD", rr.Head, "COMMIT", commit).Replace(script)
+			if err := os.WriteFile(binary, []byte(script), 0700); err != nil {
+				t.Fatal(err)
+			}
+			r.workerGitHub, err = ghclient.New(t.Context(), ghclient.Config{Path: binary, Leaser: lifecycle.NewRegistry(nil), Env: []string{"LN144_CALLS=" + calls}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer r.workerGitHub.Close(context.Background())
+			for i := 0; i < 2; i++ {
+				got, err := r.deliverCoding(t.Context(), a, d)
+				if err != nil || got != "merged" {
+					t.Fatalf("retained %s intent could not land: %s %v", state, got, err)
+				}
+			}
+			card, err := r.work.Get(t.Context(), a.ID)
+			if err != nil || !card.Applied || card.State != "done" {
+				t.Fatalf("confirmed merge did not apply: %+v %v", card, err)
+			}
+			log, err := os.ReadFile(calls)
+			if err != nil || strings.Count(string(log), "/pulls/7") != 1 || strings.Contains(string(log), "pr ") {
+				t.Fatalf("replayed a preflight or write: %s %v", log, err)
+			}
+		})
+	}
 }
