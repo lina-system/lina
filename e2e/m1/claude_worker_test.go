@@ -10,6 +10,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/work"
+	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 )
 
 func TestM2ClaudeWorkerThroughInstalledCore(t *testing.T) {
@@ -19,6 +20,10 @@ func TestM2ClaudeWorkerThroughInstalledCore(t *testing.T) {
 
 func assertClaudeReceipt(t *testing.T, h *harness, mode string) {
 	t.Helper()
+	if mode == "exit-zero" {
+		assertClaudeUnknownExecution(t, h)
+		return
+	}
 	files, err := filepath.Glob(filepath.Join(h.root, "work", "runs", "*", "result.json"))
 	if err != nil || len(files) != 1 {
 		t.Fatalf("adapter evidence: %v %v", files, err)
@@ -62,5 +67,38 @@ func assertClaudeReceipt(t *testing.T, h *harness, mode string) {
 		}
 	} else if card.Receipt.Outcome != "failed" {
 		t.Fatal("failed worker became delivery")
+	}
+}
+
+// A clean process exit without a result frame does not settle the execution.
+// Reopen its durable state after Core stops to verify the switch fence remains.
+func assertClaudeUnknownExecution(t *testing.T, h *harness) {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(h.root, "work", "runs", "*", "result.json"))
+	if err != nil || len(files) != 0 {
+		t.Fatalf("missing worker result invented terminal evidence: %v %v", files, err)
+	}
+	db, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon", "canon.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close(h.ctx)
+	var record dispatch.Record
+	var reservations int
+	if err := db.Read(h.ctx, func(tx *canon.Tx) error {
+		var raw []byte
+		if err := tx.QueryRowContext(h.ctx, "SELECT record FROM worker_dispatch").Scan(&raw); err != nil {
+			return err
+		}
+		if err := json.Unmarshal(raw, &record); err != nil {
+			return err
+		}
+		return tx.QueryRowContext(h.ctx, "SELECT count(*) FROM work_worker_reservations WHERE worker_id GLOB ?", record.ID+":*").Scan(&reservations)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	card, err := work.New(db).Get(h.ctx, record.ID)
+	if err != nil || record.State != "unknown" || record.Code != "missing_result" || record.WorkerName() != "claude" || len(record.Result) != 0 || reservations == 0 || card.Run == nil || card.Run.Worker != "claude" || card.Receipt != nil {
+		t.Fatalf("missing result lost durable uncertainty: record=%+v card=%+v reservations=%d err=%v", record, card, reservations, err)
 	}
 }

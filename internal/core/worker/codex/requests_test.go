@@ -35,6 +35,7 @@ func newAdapterPeerScript(t *testing.T, quota string, beforeTurnReply, beforeQuo
 
 func newAdapterPeerTurnScript(t *testing.T, quota string, beforeTurnReply, beforeQuotaReply []frame, announceTurn bool) *adapterPeer {
 	t.Helper()
+
 	inR, inW, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
