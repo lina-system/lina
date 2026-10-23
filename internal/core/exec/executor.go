@@ -174,3 +174,17 @@ func (e *Executor) fileRequest(ctx context.Context, l lease.Lease, raw json.RawM
 	}
 	return reply, nil
 }
+
+// ReadFile exposes only the existing sandboxed read operation to Core's
+// session-scoped result checks. The caller owns authority admission and lease.
+func (e *Executor) ReadFile(ctx context.Context, activity lease.Lease, path string) (tools.Result, error) {
+	req := tools.FileRequest{Operation: "read", Path: path}
+	if err := tools.ValidateFileRequest(req); err != nil {
+		return tools.Result{State: tools.Failed}, err
+	}
+	raw, err := json.Marshal(req)
+	if err != nil {
+		return tools.Result{State: tools.Failed}, err
+	}
+	return e.file(ctx, activity, tools.Input{Arguments: raw})
+}

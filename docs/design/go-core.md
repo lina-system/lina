@@ -898,11 +898,15 @@ there is no separate client endpoint.
   targets are owner-scoped and a recursive index query rejects cycles under the
   repository writer lock. The existing revision CAS and durable tool receipts
   apply unchanged. The tool cannot set work execution state or complete a
-  delegated task.
+  delegated task. Planning-field edits may preserve an already `completed`
+  state; only transitions into completion require the delegated-work guard.
+  Execution observations remain protected on every edit.
 - The today fixture includes overdue starts, deadlines, current recurring
   occurrences, undated tasks, terminal states and zone boundaries. The installed
   Core scenario `e2e/m2/todos.json` exercises saves, date and cycle refusals,
   today/upcoming/anytime queries, rescheduling and restart after index loss.
+  `e2e/m2/todo-completed-planning.json` covers editing a completed delegated
+  to-do through Core and retaining its fields and completion after restart.
   Recurrence advancement, candidates and memo promotion remain #156.
 - Recurrence is Core's own parser for the subset (daily, weekly, monthly, yearly; interval; by-day; by-month-day; count; until) plus the from-completion flag. `Next(rule, from, zone)` advances only to a future occurrence. A table-driven corpus covers month ends and zone gaps.
 - Reminders and pre-warnings are timer rows (C-26).
@@ -1279,6 +1283,18 @@ type Adapter interface {
 - The #133 running-Core bridge declares the four `lina` dynamic work tools, routes worker approvals through authenticated authority cards carrying the originating conversation, claims each answer before its single send, and exposes measured/unknown quota rows through `worker_quota`. Request withdrawal and terminal turns stop pending decisions. Tool results and completion receipts remain worker evidence, not verification verdicts. The headless `e2e/m2/codex-work-tools.json` scenario covers the stdio and conversation protocol round trip.
 - Work tools: for Codex, `lina` dynamic tools (submit receipt, ask, coordinate, read projection). For the others, the receipt is built from the final result and the pull request and marked adapter-derived.
 - The delegated-task store records the requesting agent and conversation, done condition, artifact roots and whether application is required. A run binds its task, generation, worker, thread, turn and observing node. Admission appends an event and updates the active-run reservation in one fenced canon transaction; a task cannot admit a second active run. A terminal observation releases execution capacity but is not a delivery or acceptance.
+
+`internal/core/worker/claudecode` implements C-29 with the installed `claude`
+headless process (`--print --output-format stream-json --verbose`). The matching
+`result` ends the turn before process exit; missing results, invalid messages,
+reported errors and permission denials fail. Core owns and reaps the child tree.
+`dispatch_work` accepts `worker: "claude"` through the same durable admission,
+work allocation, PR checks and manager boundary as Antigravity. Omitted worker
+selection retains Antigravity for existing requests and stored records. The
+artifact retains the final result alongside the independently read PR; receipt
+provenance is `adapter-derived`. No worker settings or integrations are installed.
+The headless `e2e/m2/claude-worker.json` scenario exercises installed Core, actual
+Git work and durable receipts with synthetic worker and GitHub boundaries.
 
 `internal/core/worker/antigravity` implements C-29 against the documented `agy`
 headless stream. A `result` emits exactly one typed finish before process exit;
