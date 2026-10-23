@@ -763,6 +763,8 @@ Each agent's persona has four fixed layers, applied in this order: core, default
 
 The store publishes a preset update atomically across agents of that preset, including recoverable agents in the trash. Shipped-layer publication preserves the preset's other metadata and blank definitions. Conversation lanes share one publisher so refreshes and per-preset warnings are serialized; custom presets are not refreshed from shipped material. Existing blank-setting values and definitions stay with each agent; new agents receive the current preset's blank definitions. Publishing identical core and default voice does not mint another persona revision. Direct edits to a preset agent may change only its user voice and growth snapshot.
 
+Turn preparation projects a filled setting only while its source event is visible to that person and agent. This includes work-method fills, even retired ones. Hidden or missing source references contribute neither values nor evidence references to the ContextPacket; visible values retain their provenance and unfilled preset blanks remain available. Filtering does not rewrite stored persona state or change its write revision.
+
 A persona preparation acknowledgement durably binds a turn id, agent id, revision number and Git commit. Repeating preparation for that turn retains its revision even after restart; reusing the turn id for another agent is refused. The saved bytes are verified before acknowledgement. Concurrent persona edits use an expected revision and reject stale writers. The complete preparation flow still owns the context, policy and account steps; the persona acknowledgement alone never permits a model call.
 
 ### Changing a persona
@@ -1225,7 +1227,7 @@ Retraction is the first step of every removal. A retracted item or revision is e
 - **No re-extraction.** Lachesis never extracts a forgotten item again from the ledger events it rested on, while the item is in the trash and after it leaves a tombstone. A forgotten item never comes back from the same conversation.
 - **Erasure scope.** Permanent deletion reaches every copy LINA manages: current canon, registered Nodes and remote copies. Backup generations are never rewritten: a restore applies every retraction and tombstone again, including those made after the latest generation, and the erased content leaves the backups as their generations age out ([filesystem.md](filesystem.md)). Exported files, messages already sent through an external channel, and copies held by other people are outside it, and LINA says so when it deletes.
 
-Corrections and deletions apply from the next turn. A request already sent is not recalled; the next preparation's retraction check excludes the item.
+Corrections and deletions apply from the next turn. A request already sent is not recalled; the next preparation's retraction check excludes the item, including persona setting values derived from its hidden source events.
 
 Derived data (search and vector indexes, prepared recall material and summaries) records the revocation epoch it was built at. Derived data built before a retraction is rebuilt before it is used again. Derived data is never the only copy of anything and never outlives a deletion.
 
