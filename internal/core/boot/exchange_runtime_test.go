@@ -192,3 +192,7 @@ func TestExchangeRevalidatesCommonMemoryBeforeEachDispatch(t *testing.T) {
 		})
 	}
 }
+
+func (handoffRuntimeAdapter) Capabilities(provider.ModelRef) provider.CapabilitySet { return nil }
+
+func (*exchangeMemoryAdapter) Capabilities(provider.ModelRef) provider.CapabilitySet { return nil }

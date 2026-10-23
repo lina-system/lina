@@ -1,6 +1,6 @@
 # Dependencies
 
-This policy covers code that LINA takes from outside the repository: Go modules, the Go toolchain, the npm packages of the Claude adapter and of repository tooling, pinned binaries, external components, and upstream source and generated upstream code vendored into the repository. LINA Core runs all day with the user's credentials, so outside code must be pinned, reviewed like any other code, and verified by `foundation` before it can join `dev`. The rules apply from the first change that adds a dependency, and the `foundation` check enforces them.
+This policy covers code that LINA takes from outside the repository: Go modules, the Go toolchain, the npm packages of the Claude adapter, the Claude ACP worker program and repository tooling, pinned binaries, external components, and upstream source and generated upstream code vendored into the repository. LINA Core runs all day with the user's credentials, so outside code must be pinned, reviewed like any other code, and verified by `foundation` before it can join `dev`. The rules apply from the first change that adds a dependency, and the `foundation` check enforces them.
 
 ## Scope
 
@@ -9,6 +9,7 @@ This policy covers:
 - Go modules in every `go.mod` and `go.sum`
 - the Go toolchain used by `foundation` and release builds
 - npm packages in the root `package.json` and lockfile: repository tooling that needs an npm package
+- the Claude ACP worker program's independent lockfile in `adapters/claude-acp/`
 - the Claude adapter's lockfile, which pins the Claude Agent SDK package that LINA installs on the person's machine on first use of a Claude account ([runtime.md](../design/runtime.md))
 - binaries that LINA ships or downloads, and external components
 - upstream source and generated upstream code under `third_party/`
@@ -48,7 +49,7 @@ LINA's components are Go. Their outside code comes in as Go modules.
 
 ## npm packages
 
-npm is used only for packages that run on Node.js: the Claude Agent SDK package that the Claude adapter installs from its own lockfile, and repository tooling that needs an npm package. LINA ships no Node.js runtime: the Claude adapter runs on the Node.js the person installed ([runtime.md](../design/runtime.md)). LINA's other components use no npm package.
+npm is used only for packages that run on Node.js: the Claude Agent SDK package that the Claude adapter installs from its own lockfile, the pinned Claude ACP worker program with its own lockfile, and repository tooling that needs an npm package. LINA ships no Node.js runtime: the Claude adapter runs on the Node.js the person installed ([runtime.md](../design/runtime.md)). LINA's other components use no npm package.
 
 ### Package manager and configuration
 
@@ -72,9 +73,10 @@ Run tools from the lockfile through package scripts or `npx --no-install`. Scrip
 
 ### Lockfile
 
-- One `package-lock.json` at the root covers every npm package. It is committed and changes only through npm, in the same change as the manifest change that causes it.
+- The root `package-lock.json` covers repository tooling. Each external Claude program has its own `package-lock.json` beside its manifest. It is committed and changes only through npm, in the same change as the manifest change that causes it.
 - `foundation` and release builds install with `npm ci --ignore-scripts`, which fails if the lockfile and manifests disagree. Use `npm install` only to change dependencies, never to verify them.
 - The Claude adapter's lockfile is committed with the adapter. On first use LINA Core installs from it with `npm ci --ignore-scripts --omit=dev`, from the public registry, and verifies the installed packages against the lockfile's integrity values; nothing new is resolved.
+- The Claude ACP worker program is installed on first selected use with `npm ci --ignore-scripts --omit=dev --omit=optional`. npm verifies tarballs against the committed SHA-512 values, including cache hits. Core uses an isolated npm home and configuration, publishes only a complete installation, checks that optional packages are absent, and verifies the installed file inventory before reuse. The program runs the person's installed `claude`; Core never installs its optional Claude Code binary.
 - Install and build steps run in a clean worktree with no credentials. The publication stage is a separate stage that installs no packages and uses the owner's local credentials ([releases.md](releases.md)).
 
 ### No lifecycle scripts
@@ -86,7 +88,7 @@ Run tools from the lockfile through package scripts or `npx --no-install`. Scrip
 
 ### Signatures and provenance
 
-- After `npm ci --ignore-scripts`, run `npm audit signatures`. A missing or invalid registry signature or an invalid provenance attestation fails the check.
+- After each locked installation (including the ACP program with optional packages omitted), run `npm audit signatures` in the dependency check. A missing or invalid registry signature or an invalid provenance attestation fails the check.
 
 ## Adding or updating a dependency
 

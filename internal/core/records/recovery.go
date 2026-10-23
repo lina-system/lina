@@ -131,6 +131,10 @@ func (r *Store) remember(ctx context.Context, token string, p publication) error
 	})
 }
 func (r *Store) checkpoint(ctx context.Context, p publication) error {
+	commit, _, err := r.commitFiles(p.Commit)
+	if err != nil {
+		return err
+	}
 	edits := p.edits()
 	docs := make([]document, len(edits))
 	ids := make([]string, len(edits))
@@ -165,7 +169,7 @@ func (r *Store) checkpoint(ctx context.Context, p publication) error {
 			if _, err = tx.ExecContext(ctx, "INSERT INTO records_index(id,path,blob,revision) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET path=excluded.path,blob=excluded.blob,revision=excluded.revision", ids[i], c.Path, c.Blob, p.Commit); err != nil {
 				return err
 			}
-			if err = putProjection(ctx, tx, indexRow{id: ids[i], path: c.Path, blob: c.Blob, revision: p.Commit, doc: docs[i]}); err != nil {
+			if err = putProjection(ctx, tx, indexRow{id: ids[i], path: c.Path, blob: c.Blob, revision: p.Commit, at: commit.at, doc: docs[i]}); err != nil {
 				return err
 			}
 		}

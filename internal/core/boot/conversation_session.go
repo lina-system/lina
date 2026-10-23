@@ -29,6 +29,7 @@ type conversationCompaction struct {
 	pass         compaction.Pass
 	view         compaction.View
 	session      *compaction.Session
+	transient    map[string]compaction.Record
 	pending      map[string]bool
 	resolved     map[string]bool
 }
@@ -75,6 +76,30 @@ func (c *conversationCompaction) transform(ctx context.Context, request provider
 		fitted = request
 	} else {
 		fitted, err = c.session.Transform(ctx, request)
+		if err == nil && fitted.Layout != nil {
+			// Compaction can move both input boundaries without reducing the
+			// item count below the initial request. Rebuild positions from the
+			// retained ledger projection, never from user-role summary/context.
+			view := c.session.View()
+			layout := fitted.Layout.Clone()
+			position := len(view.Fixed)
+			if len(view.Root) > 0 {
+				position++
+			}
+			layout.PreviousInput = nil
+			for _, record := range view.History {
+				position++
+				if record.User {
+					layout.PreviousInput = &provider.Position{Items: position, Tools: len(fitted.Tools)}
+				}
+			}
+			layout.CurrentInput = provider.Position{Items: position + 1, Tools: len(fitted.Tools)}
+			layout.Newest = nil
+			if len(view.Active) > 0 {
+				layout.Newest = &provider.Position{Items: len(fitted.Items), Tools: len(fitted.Tools)}
+			}
+			fitted.Layout = layout
+		}
 	}
 	sizes, measureErr := c.session.Sizes()
 	if measureErr == nil && c.logSizes != nil {
@@ -95,6 +120,9 @@ func (s *turnState) resolveCompactionItems(ctx context.Context, items []provider
 		c.resolved = map[string]bool{}
 	}
 	var candidates []compaction.Record
+	for _, record := range c.transient {
+		candidates = append(candidates, record)
+	}
 	err := r.db.Read(ctx, func(tx *canon.Tx) error {
 		rows, err := tx.QueryContext(ctx, "SELECT round,ordinal,item FROM turn_items WHERE turn_id=? ORDER BY round,ordinal", s.turnID)
 		if err != nil {
@@ -187,7 +215,7 @@ type summaryStream struct {
 func (s *summaryStream) Close() error {
 	defer s.release()
 	if s.meter != nil {
-		s.meter.usage = s.Stream.Meta().Usage
+		s.meter.usage = append(s.meter.usage, s.Stream.Meta().Usage)
 	}
 	return s.Stream.Close()
 }

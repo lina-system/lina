@@ -87,6 +87,7 @@ func (r *conversationRuntime) compactConversation(ctx context.Context, in assemb
 	// segment, never this turn's input or transient ContextPacket.
 	auxiliaryRequest := request
 	auxiliaryRequest.Credential = r.route.Request(nil).Credential
+	auxiliaryRequest.Layout = nil                  // The summary has no current input or transient packet boundaries.
 	auxiliaryRequest.Items = request.Items[:fixed] // Profiles must not become summary source text.
 	auxiliary := compaction.Auxiliary{Request: auxiliaryRequest, RetainPrefix: true, Stream: stream}
 	store := compaction.New(r.db)
@@ -99,22 +100,28 @@ func (r *conversationRuntime) compactConversation(ctx context.Context, in assemb
 		node, err := store.Node(ctx, frontier.Root)
 		if errors.Is(err, compaction.ErrUnavailable) {
 			node, err = store.Rebuild(ctx, r.conversation, func(ctx context.Context, segment compaction.Segment) (compaction.Output, error) {
-				var sources []compaction.Record
+				// Rebuild uses only the freshly rebuilt child, never the stale
+				// node's text. Keep the child boundary so ordinary value carry
+				// also applies when new visible events remain after retraction.
+				if len(segment.Children) > 1 {
+					return compaction.Output{}, compaction.ErrCoverage
+				}
+				input := compaction.PassSegment{}
 				for _, child := range segment.Children {
 					var text compaction.Text
 					if err := json.Unmarshal([]byte(child.Output.Text), &text); err != nil {
 						return compaction.Output{}, err
 					}
-					sources = append(sources, compaction.Record{ID: "node:" + child.ID, Item: compaction.SummaryItem(text, false)})
+					input.RootID, input.Root = child.ID, compaction.SummaryItem(text, false)
 				}
 				for _, id := range segment.Events {
 					item, err := project(ctx, id)
 					if err != nil {
 						return compaction.Output{}, err
 					}
-					sources = append(sources, item)
+					input.Records = append(input.Records, item)
 				}
-				text, err := auxiliary.Summarize(ctx, compaction.PassSegment{Records: sources})
+				text, err := auxiliary.Summarize(ctx, input)
 				if err != nil {
 					return compaction.Output{}, err
 				}
@@ -167,8 +174,13 @@ func (r *conversationRuntime) compactConversation(ctx context.Context, in assemb
 	if len(view.Root) > 0 {
 		in.History = append(in.History, view.Root)
 	}
+	in.PreviousInput = nil
 	for _, item := range view.History {
 		in.History = append(in.History, item.Item)
+		if item.User {
+			n := len(in.History)
+			in.PreviousInput = &n
+		}
 	}
 	request, report = assemble.Assemble(in, count)
 	if report.Failure != "" && report.Failure != assemble.TooLarge {
@@ -231,8 +243,13 @@ func (r *conversationRuntime) compactConversation(ctx context.Context, in assemb
 	if len(fitted.View.Root) > 0 {
 		in.History = append(in.History, fitted.View.Root)
 	}
+	in.PreviousInput = nil
 	for _, item := range fitted.View.History {
 		in.History = append(in.History, item.Item)
+		if item.User {
+			n := len(in.History)
+			in.PreviousInput = &n
+		}
 	}
 	request, report = assemble.Assemble(in, count)
 	report.Dropped = append(budgetDrops, report.Dropped...)

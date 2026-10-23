@@ -12,6 +12,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/assets"
 	"github.com/thisisjun786/lina/internal/core/budget"
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/materials"
 	"github.com/thisisjun786/lina/kit/provider"
@@ -86,6 +87,7 @@ type Artifact struct {
 	Citations []materials.Anchor `json:"citations,omitempty"`
 }
 type Record struct {
+	Requests []ledger.RequestEvidence `json:"request_assembly,omitempty"`
 	// Start identity and the original receipt commit with the run. Only hashes
 	// of native call metadata/brief are retained, never unmasked arguments.
 	StartKey, StartDigest       string
@@ -153,12 +155,14 @@ type MaterialStore interface {
 	SaveRunResult(context.Context, string, []byte, assets.Actor) (assets.Asset, error)
 }
 type Config struct {
-	Epoch   uint64 // current Core epoch, supplied by the composition root
-	WorkDir string // private Core work area, not a conversation workspace
-	DB      Canon
-	Assets  MaterialStore
-	Stream  loop.StreamFunc
-	Tools   map[string]Tool
+	SelectCapabilities func(provider.Request) (provider.Request, error)
+	ProviderClass      provider.Class
+	Epoch              uint64 // current Core epoch, supplied by the composition root
+	WorkDir            string // private Core work area, not a conversation workspace
+	DB                 Canon
+	Assets             MaterialStore
+	Stream             loop.StreamFunc
+	Tools              map[string]Tool
 	// PublishPromotion attaches the handle to its source turn in the same
 	// fenced transaction as run admission. Required only by StartFromTurn.
 	PublishPromotion func(context.Context, *canon.Tx, string, budget.Handle, budget.Handoff) error

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -98,6 +99,17 @@ func (s *turnState) prepareSummaryAfterDelivery(ctx context.Context, out loop.Ou
 		return err
 	}
 	view.Active = append(view.Active, last...)
+	// Steering bindings are scoped context snapshots, not conversation sources.
+	// Keep their size in the completed request without offering them to Builder.
+	active := make([]compaction.Record, 0, len(view.Active))
+	for _, record := range view.Active {
+		if _, ok := c.transient[record.ID]; ok {
+			view.Packet = append(view.Packet, record.Item)
+		} else {
+			active = append(active, record)
+		}
+	}
+	view.Active = active
 	m := r.summaryState()
 	// A completed snapshot no longer has a protected active input. The builder
 	// is immutable while the optional worker uses it, including across new turns.
@@ -164,7 +176,7 @@ func summaryPreparationID(agent, conversation string) string {
 type summaryUsageKey struct{}
 type summaryUsage struct {
 	called bool
-	usage  provider.Usage
+	usage  []provider.Usage
 }
 
 func (m *summaryUsage) result() provider.Usage {
@@ -172,5 +184,45 @@ func (m *summaryUsage) result() provider.Usage {
 		zero := int64(0)
 		return provider.Usage{Input: &zero, Output: &zero}
 	}
-	return m.usage
+	if len(m.usage) == 0 {
+		return provider.Usage{}
+	}
+	sum := func(a, b *int64) *int64 {
+		if a == nil || b == nil {
+			return nil
+		}
+		n := int64(math.MaxInt64)
+		if *a <= math.MaxInt64-*b {
+			n = *a + *b
+		}
+		return &n
+	}
+	total := m.usage[0]
+	// A bounded values-condensation call is part of the same preparation.
+	// Unknown fields remain unknown; neither a later call nor cache detail can
+	// replace the reported input/output of the earlier request.
+	for _, next := range m.usage[1:] {
+		total.Input = sum(total.Input, next.Input)
+		total.Output = sum(total.Output, next.Output)
+		total.Cached = sum(total.Cached, next.Cached)
+		total.CacheWrite = sum(total.CacheWrite, next.CacheWrite)
+		total.Reasoning = sum(total.Reasoning, next.Reasoning)
+		if total.CostEstimate != nil && next.CostEstimate != nil && total.CostEstimate.Currency == next.CostEstimate.Currency {
+			total.CostEstimate = &provider.Money{Currency: total.CostEstimate.Currency, Micros: *sum(&total.CostEstimate.Micros, &next.CostEstimate.Micros)}
+		} else {
+			total.CostEstimate = nil
+		}
+		buckets := map[provider.CacheLifetime]provider.CacheUsage{}
+		for lifetime, old := range total.CacheByLifetime {
+			value := next.CacheByLifetime[lifetime]
+			buckets[lifetime] = provider.CacheUsage{Read: sum(old.Read, value.Read), Write: sum(old.Write, value.Write)}
+		}
+		for lifetime := range next.CacheByLifetime {
+			if _, ok := buckets[lifetime]; !ok {
+				buckets[lifetime] = provider.CacheUsage{}
+			}
+		}
+		total.CacheByLifetime = buckets
+	}
+	return total
 }

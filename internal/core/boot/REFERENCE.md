@@ -46,3 +46,10 @@ summary or incomplete reasoning round trip. Its size card restores from canon.
 the worker socket, summary publication, the retained tail and restart using a
 synthetic provider. Focused boot regressions cover follow-up fitting, adapter
 budgets, committed preparation adoption and refused continuation diagnostics.
+
+After integrating provider capability selection, live fitting recomputes cache
+boundaries from retained ledger records. Auxiliary preparation fingerprints
+exclude foreground input positions. Steering's input-binding evidence remains
+protected transient context and cannot become summary source text. A summary's
+bounded value-condensation call contributes to the same preparation's reported
+usage; missing usage remains unknown.

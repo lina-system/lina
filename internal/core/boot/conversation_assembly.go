@@ -84,6 +84,11 @@ func (r *conversationRuntime) recordContextSources(ctx context.Context, packet a
 			for _, e := range item.Evidence {
 				source.Evidence = append(source.Evidence, ledger.Reference{ID: e.ID, Revision: e.Revision})
 			}
+		case item.Kind == assemble.Waiting && strings.HasPrefix(item.Origin, "input-binding:"):
+			source.Source = "input-binding-v1"
+			for _, ref := range item.Evidence {
+				source.Evidence = append(source.Evidence, ledger.Reference{ID: ref.ID})
+			}
 		case item.Kind == assemble.Clock && strings.HasPrefix(item.ID, "clock:"):
 			source.Source = "clock-v1"
 		case item.Kind == assemble.SkillBody:
@@ -107,4 +112,13 @@ func (r *conversationRuntime) conversationBudget() (int, func(provider.Request) 
 		}
 	}
 	return 128000, conversationRequestSize
+}
+
+// Selection lives in Core composition; route configuration and run flows do not
+// import assembly policy from another flow family.
+func (r *conversationRuntime) selectProviderCapabilities(request provider.Request) (provider.Request, error) {
+	supported, admitted := r.route.Capabilities(request.Model)
+	var err error
+	request.Capabilities, err = assemble.SelectCapabilities(request, supported, admitted)
+	return request, err
 }

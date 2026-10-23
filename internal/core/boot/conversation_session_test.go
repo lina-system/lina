@@ -50,6 +50,9 @@ func TestConversationSessionCompactsBeforeToolFollowup(t *testing.T) {
 				t.Fatal("follow-up did not replace summarized history")
 			}
 			current, _ := assemble.History([]ledger.Event{input}, r.conversation, r.agent)
+			if req.Layout == nil || !req.Layout.Valid(req) || !bytes.Equal(req.Items[req.Layout.CurrentInput.Items-1], current[0]) || req.Layout.PreviousInput != nil || req.Layout.Newest == nil || req.Layout.Newest.Items != len(req.Items) {
+				t.Fatalf("compaction lost provider cache boundaries: layout=%+v items=%d", req.Layout, len(req.Items))
+			}
 			count := 0
 			found := false
 			for _, item := range req.Items {
@@ -86,66 +89,78 @@ func TestConversationSessionCompactsBeforeToolFollowup(t *testing.T) {
 }
 
 func TestConversationQueuesSummaryOnlyAfterDelivery(t *testing.T) {
-	r, p := turnRuntime(t)
-	r.route.Adapter = usageTurnProvider{p}
-	queuedContextEvent(t, r, "archive", strings.Repeat("archive ", 4000), guard.EntryOwner, "")
-	queuedContextEvent(t, r, "archive-reply", "Archived.", guard.EntryAgent, "")
-	input, inbox := admitTurnInput(t, r, "finish-current-work")
-	count := func(table string) int {
-		t.Helper()
-		var n int
-		err := r.db.Read(t.Context(), func(tx *canon.Tx) error {
-			return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM "+table).Scan(&n)
+	for _, condense := range []bool{false, true} {
+		t.Run(fmt.Sprintf("condense=%v", condense), func(t *testing.T) {
+			r, p := turnRuntime(t)
+			r.route.Adapter = usageTurnProvider{p}
+			queuedContextEvent(t, r, "archive", strings.Repeat("archive ", 4000), guard.EntryOwner, "")
+			queuedContextEvent(t, r, "archive-reply", "Archived.", guard.EntryAgent, "")
+			input, inbox := admitTurnInput(t, r, "finish-current-work")
+			count := func(table string) int {
+				t.Helper()
+				var n int
+				err := r.db.Read(t.Context(), func(tx *canon.Tx) error {
+					return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM "+table).Scan(&n)
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return n
+			}
+			p.steps = []turnStep{{before: func(req provider.Request) {
+				if count("moirai_tasks") != 0 {
+					t.Fatal("summary prepared before answer delivery")
+				}
+			}, events: turnText(strings.Repeat("Archive complete. ", 1100))}}
+			if err := r.run(t.Context(), &loop.Inputs{}, input, inbox); err != nil {
+				t.Fatal(err)
+			}
+			if count("moirai_tasks") == 0 {
+				t.Fatal("completed request crossed the threshold but no summary preparation was queued")
+			}
+			if count("sum_node") != 0 {
+				t.Fatal("after-delivery preparation published a summary node")
+			}
+			assertTurnRequests(t, p, 1)
+			summary, _ := json.Marshal(compaction.Text{Requests: "none", Topics: "archive", Actions: "Archived.", Values: "42", Omitted: "repeated archive"})
+			if condense {
+				large, _ := json.Marshal(compaction.Text{Requests: "none", Topics: "archive", Actions: "Archived.", Values: strings.Repeat("fact ", 5000), Omitted: "repeated archive"})
+				p.steps = append(p.steps, turnStep{events: turnText(string(large))})
+			}
+			p.steps = append(p.steps, turnStep{events: turnText(string(summary))}, turnStep{events: turnText("Done.")})
+			m := &r.summaryPreparation
+			job, err := m.jobs.Policy(t.Context(), m.id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := (moirai.Worker{Core: m.jobs}).Step(t.Context(), jobapi.Work{Epoch: r.epoch, Job: job, Task: jobapi.Task{Sequence: 1}}); err != nil {
+				t.Fatal(err)
+			}
+			if count("sum_node") != 0 {
+				t.Fatal("worker published before foreground fitting")
+			}
+			var charged int
+			if err := r.db.Read(t.Context(), func(tx *canon.Tx) error {
+				return tx.QueryRowContext(t.Context(), "SELECT charged FROM budget_usage WHERE run=?", m.id).Scan(&charged)
+			}); err != nil {
+				t.Fatal(err)
+			}
+			calls := 1
+			if condense {
+				calls = 2
+			}
+			if charged != 168*calls {
+				t.Fatalf("summary usage charged=%d, want reported input+output %d", charged, 168*calls)
+			}
+			next, receipt := admitTurnInput(t, r, "next-work")
+			if err := r.run(t.Context(), &loop.Inputs{}, next, receipt); err != nil {
+				t.Fatal(err)
+			}
+			assertCompactionRequests(t, p, 2+calls)
+			if count("sum_node") != 1 {
+				t.Fatal("prepared summary was not published by next turn")
+			}
 		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return n
-	}
-	p.steps = []turnStep{{before: func(req provider.Request) {
-		if count("moirai_tasks") != 0 {
-			t.Fatal("summary prepared before answer delivery")
-		}
-	}, events: turnText(strings.Repeat("Archive complete. ", 1100))}}
-	if err := r.run(t.Context(), &loop.Inputs{}, input, inbox); err != nil {
-		t.Fatal(err)
-	}
-	if count("moirai_tasks") == 0 {
-		t.Fatal("completed request crossed the threshold but no summary preparation was queued")
-	}
-	if count("sum_node") != 0 {
-		t.Fatal("after-delivery preparation published a summary node")
-	}
-	assertTurnRequests(t, p, 1)
-	summary, _ := json.Marshal(compaction.Text{Requests: "none", Topics: "archive", Actions: "Archived.", Values: "42", Omitted: "repeated archive"})
-	p.steps = append(p.steps, turnStep{events: turnText(string(summary))}, turnStep{events: turnText("Done.")})
-	m := &r.summaryPreparation
-	job, err := m.jobs.Policy(t.Context(), m.id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := (moirai.Worker{Core: m.jobs}).Step(t.Context(), jobapi.Work{Epoch: r.epoch, Job: job, Task: jobapi.Task{Sequence: 1}}); err != nil {
-		t.Fatal(err)
-	}
-	if count("sum_node") != 0 {
-		t.Fatal("worker published before foreground fitting")
-	}
-	var charged int
-	if err := r.db.Read(t.Context(), func(tx *canon.Tx) error {
-		return tx.QueryRowContext(t.Context(), "SELECT charged FROM budget_usage WHERE run=?", m.id).Scan(&charged)
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if charged != 168 {
-		t.Fatalf("summary usage charged=%d, want reported input+output 168", charged)
-	}
-	next, receipt := admitTurnInput(t, r, "next-work")
-	if err := r.run(t.Context(), &loop.Inputs{}, next, receipt); err != nil {
-		t.Fatal(err)
-	}
-	assertCompactionRequests(t, p, 3)
-	if count("sum_node") != 1 {
-		t.Fatal("prepared summary was not published by next turn")
 	}
 }
 

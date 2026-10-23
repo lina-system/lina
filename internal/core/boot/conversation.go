@@ -49,6 +49,7 @@ type conversationRuntime struct {
 	summaryPreparation conversationPreparation
 	// Installed only by the isolated intake replay command, never by Core boot.
 	intakeReplay    func(context.Context, ledger.Event) error
+	intakeSnapshot  bool
 	artifactInit    sync.Once
 	artifactMu      *sync.Mutex
 	exchangeStop    context.CancelFunc

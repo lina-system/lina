@@ -103,8 +103,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 
 	evidence := turn.EvidenceWriter{Ledger: r.journal(), ConversationID: r.conversation, ParentID: input.ID, Surface: input.Surface, Now: time.Now}
 	prep := &turn.Preparation{
-		VerifyBuild: r.verifyBuild,
-		Account:     func(context.Context) (provider.Credential, error) { return r.route.Request(nil).Credential, nil },
+		VerifyBuild:        r.verifyBuild,
+		SelectCapabilities: r.selectProviderCapabilities,
+		Account:            func(context.Context) (provider.Credential, error) { return r.route.Request(nil).Credential, nil },
 		Resolve: func(context.Context) (turn.ModelPolicy, error) {
 			return turn.ModelPolicy{Model: r.route.Model, Revision: "configured", Class: r.route.Adapter.Class()}, nil
 		},
@@ -112,7 +113,18 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		Acknowledge: evidence.Acknowledge, RecordRequest: evidence.RecordRequest,
 		Digest: assemble.Digest,
 	}
-	inputQueue := &conversationInputs{runtime: r, inputs: inputs, questions: s.questions}
+	inputQueue := &conversationInputs{runtime: r, inputs: inputs, questions: s.questions, retainBinding: func(input string, index int, item provider.Item) {
+		if s.compaction == nil {
+			return
+		}
+		c := s.compaction
+		if c.transient == nil {
+			c.transient = map[string]compaction.Record{}
+		}
+		id := fmt.Sprintf("input-binding:%s:%d", input, index)
+		c.transient[id] = compaction.Record{ID: id, Item: append(provider.Item(nil), item...)}
+		c.pending[id] = true
+	}}
 	out, err := turn.New(r.db).Run(ctx, turn.Options{ID: turnID, Conversation: r.conversation, InboxID: inboxID, InputEvent: input.ID, Preparation: prep, Complete: s.complete,
 		Finish: func(ctx context.Context, tx *canon.Tx, cause error) error {
 			if errors.Is(cause, compaction.ErrContinuation) {
@@ -420,6 +432,11 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 	s.items = s.items[:len(s.items)-1]
 	at := time.Now().UTC()
 	minimum := assemble.ContextPacket{{ID: "clock:" + turnID, Kind: assemble.Clock, Text: at.Format(time.RFC3339Nano)}}
+	bound, err := r.inputBindingPacket(ctx, input)
+	if err != nil {
+		return turn.PreparedRequest{}, err
+	}
+	minimum = append(minimum, bound...)
 	settings, err := r.agents.State(ctx, r.agent)
 	if err != nil {
 		return turn.PreparedRequest{}, err
@@ -519,6 +536,7 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 	}
 	window, count := r.conversationBudget()
 	request, report, err := r.compactConversation(ctx, assemble.Input{
+		MainID: r.main, ConversationID: r.conversation,
 		Core:    assemble.PersonaCoreV1 + "\n" + assemble.TUIFormatting,
 		AgentID: r.agent, PersonaRevision: persona.Commit, Persona: persona.Layers,
 		AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID, WorkMethod: persona.WorkMethod,
