@@ -1378,6 +1378,11 @@ returns to the originating conversation and survives restart without repeating
 effects. An uncertain worker, merge, QA or deployment is observed; it is never
 re-executed by the observation path. A deployment retains its original connection
 before dispatch so a changed setting cannot settle it against another service.
+When a probe confirms an uncertain deployment, Core records the applied authority
+receipt and releases that effect's target reservation in one transaction. It
+checks the original actor, target and action binding, refuses a live invocation,
+and cannot release a subsequent writer's reservation. The deployment is not
+issued again.
 
 The installed-binary acceptance uses fixture worker and GitHub executables, real
 Git commits, registered check commands and a local HTTP service. It proves one

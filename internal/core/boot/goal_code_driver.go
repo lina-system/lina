@@ -188,7 +188,18 @@ func (d *codeGoalDriver) Observe(ctx context.Context, a goal.Action) (goal.Obser
 		if err != nil || (effect.State != tools.Unknown && effect.State != tools.Applied) {
 			return goal.Observation{}, goal.ErrNeedsPerson
 		}
-		return d.runCheck(ctx, g, a, repo, repo.Service.Probe, repo.Service.Target, false)
+		if effect.Tool != "deploy_code_goal" || effect.Plugin != "" || effect.Account != "" || !effect.Write || effect.Outward != repo.Service.Public || effect.Person != g.Person || effect.Agent != g.Agent || effect.TaskID != g.Turn || effect.Target != "code-deploy:"+repo.Service.Target || effect.Revision != a.Revision {
+			return goal.Observation{}, goal.ErrNeedsPerson
+		}
+		observation, err := d.runCheck(ctx, g, a, repo, repo.Service.Probe, repo.Service.Target, false)
+		if err != nil || observation.Status != goal.OutcomeSucceeded || !observation.Proof.Passed {
+			return observation, err
+		}
+		body, _ := json.Marshal(map[string]any{"source": "probe", "proof": observation.Proof})
+		if err = d.runtime.personaAuthority.ReconcileApplied(ctx, effect, tools.Result{State: tools.Applied, Revision: a.Revision, Body: body}); err != nil {
+			return goal.Observation{}, err
+		}
+		return observation, nil
 	case goal.InspectPR, goal.Verify, goal.CheckCriterion:
 		// Recovered reads use the new Core epoch without redispatching an effect.
 		a.Epoch = d.runtime.epoch

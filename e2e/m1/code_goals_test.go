@@ -49,7 +49,7 @@ func TestM2InstalledCodeGoalTool(t *testing.T) {
 
 func TestM2InstalledCodeGoalDriver(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"private", "public", "failed-deploy"} {
+	for _, mode := range []string{"private", "public", "failed-deploy", "restart-deploy"} {
 		t.Run(mode, func(t *testing.T) { t.Parallel(); installedCodeGoal(t, mode) })
 	}
 }
@@ -99,7 +99,19 @@ func installedCodeGoal(t *testing.T, mode string) {
 	}
 	var mu sync.Mutex
 	deployed := map[string]string{}
+	deployedSignal := make(chan struct{}, 1)
+	releaseProbe := make(chan struct{})
+	if mode != "restart-deploy" {
+		close(releaseProbe)
+	}
 	service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			select {
+			case <-releaseProbe:
+			case <-r.Context().Done():
+				return
+			}
+		}
 		mu.Lock()
 		defer mu.Unlock()
 		if r.Method == http.MethodPost {
@@ -108,10 +120,21 @@ func installedCodeGoal(t *testing.T, mode string) {
 				w.WriteHeader(400)
 				return
 			}
+			select {
+			case deployedSignal <- struct{}{}:
+			default:
+			}
 		}
 		_ = json.NewEncoder(w).Encode(deployed)
 	}))
 	defer service.Close()
+	defer func() {
+		select {
+		case <-releaseProbe:
+		default:
+			close(releaseProbe)
+		}
+	}()
 	var calls atomic.Int32
 	model := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request methodologyRequest
@@ -164,6 +187,19 @@ func installedCodeGoal(t *testing.T, mode string) {
 	core := start()
 	c, conversation := conversationClient(t, h)
 	events := admittedTurn(t, h, c, conversation, "goal", "Create the result and run it through deployment and verification.")
+	if mode == "restart-deploy" {
+		select {
+		case <-deployedSignal:
+		case <-h.ctx.Done():
+			t.Fatal("deployment did not reach the service")
+		}
+		c.Close()
+		h.stopCore(core)
+		core = start()
+		c, conversation = conversationClient(t, h)
+		close(releaseProbe)
+		events = nil
+	}
 	done := false
 	inspect := func(e protocol.Envelope) {
 		if item, ok := e.Payload.(protocol.ItemDone); ok && item.Text != nil {
@@ -249,6 +285,18 @@ func installedCodeGoal(t *testing.T, mode string) {
 			return rows.Err()
 		})
 		t.Fatalf("goal not closed with evidence: %+v\nactions: %v\ncore: %s", g, debug, core.stderr.String())
+	}
+	if mode == "restart-deploy" {
+		var state, active string
+		err = db.Read(t.Context(), func(tx *canon.Tx) error {
+			if err := tx.QueryRowContext(t.Context(), "SELECT json_extract(record,'$.State') FROM authority_effects WHERE json_extract(record,'$.Tool')='deploy_code_goal'").Scan(&state); err != nil {
+				return err
+			}
+			return tx.QueryRowContext(t.Context(), "SELECT active_key FROM authority_targets WHERE target='code-deploy:fixture-service'").Scan(&active)
+		})
+		if err != nil || state != "applied" || active != "" {
+			t.Fatalf("reconciled deployment kept authority reserved: state=%s active=%s err=%v", state, active, err)
+		}
 	}
 	closeDB()
 	for _, check := range g.Checks {

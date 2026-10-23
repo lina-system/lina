@@ -52,7 +52,9 @@ if(name==='host-report') {
   evidence='Read result.txt from the merged commit';
  } else if(name==='deploy') {
   if(git('rev-parse','HEAD')!==revision || revision!==merged()) throw Error('wrong deploy checkout');
+  event('deploy');
   const response=await fetch(process.env.LINA_GOAL_FIXTURE_URL,{method:'POST',body:JSON.stringify({revision,body:fs.readFileSync('result.txt','utf8')})});
+  if(process.env.LINA_GOAL_MODE==='restart-deploy'){setInterval(()=>{},1000);await new Promise(()=>{});}
   passed=response.ok && process.env.LINA_GOAL_MODE!=='failed-deploy';evidence='Service accepted the merged artifact';
  } else if(name==='probe') {
   const response=await fetch(process.env.LINA_GOAL_FIXTURE_URL);
@@ -60,7 +62,7 @@ if(name==='host-report') {
   passed=response.ok && result.revision===revision && result.body==='worker produced this result\n';
   evidence='Read the running service revision and response';
  } else throw Error('unexpected check '+name);
- event(name);
+ if(name!=='deploy') event(name);
  console.log(JSON.stringify({revision,target,passed,evidence}));
  if(!passed) process.exitCode=1;
 }
