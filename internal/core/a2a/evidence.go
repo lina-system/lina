@@ -33,6 +33,10 @@ func (s *Service) hasSecret(c Connection, b []byte) bool {
 }
 
 func (s *Service) verify(ctx context.Context, c Connection, call *Call, artifacts []Artifact) error {
+	acceptedHash := ""
+	if call.Verified && call.AcceptedBy != "" {
+		acceptedHash = call.VerifiedHash
+	}
 	call.Verified = false
 	call.Validated = false
 	call.VerifiedHash = ""
@@ -111,6 +115,9 @@ func (s *Service) verify(ctx context.Context, c Connection, call *Call, artifact
 			}
 			combined = append(combined, body...)
 		}
+		if s.hasSecret(c, combined) {
+			return ErrEvidence
+		}
 		call.Evidence = append(call.Evidence, Evidence{Artifact: artifact.ID, MediaType: mediaType, Body: bytes.Clone(combined), SHA256: hash(combined), Source: c.Origin, Observed: time.Now().UTC()})
 	}
 	call.Validated = true
@@ -120,7 +127,7 @@ func (s *Service) verify(ctx context.Context, c Connection, call *Call, artifact
 	// Hashing or a remote COMPLETED claim alone proves nothing. The retained
 	// content must satisfy the owner's pre-admitted local done condition.
 	for _, e := range call.Evidence {
-		if e.SHA256 == call.Profile.SHA256 {
+		if e.SHA256 == call.Profile.SHA256 || call.Profile.SHA256 == "" && e.SHA256 == acceptedHash {
 			call.Verified = true
 			call.VerifiedHash = e.SHA256
 			call.State = "verified"

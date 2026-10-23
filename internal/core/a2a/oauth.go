@@ -149,6 +149,10 @@ func (s *Service) CompleteOAuth(ctx context.Context, session, code, state, issue
 			}
 		}
 	}
+	// Serialize the final recheck, credential installation and connection write
+	// with Configure/Revoke/SetCredential. The HTTP exchange holds no mutation lock.
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	// Recheck after exchange before storing for an owner-revoked connection.
 	current, err := s.Connection(ctx, c.Person, c.ID)
 	if err != nil || !current.Enabled || current.Revision != c.Revision {

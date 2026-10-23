@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -530,5 +531,132 @@ func TestDiscoveryURLCannotCarryEncodedCredential(t *testing.T) {
 	}
 	if f.cardGets.Load() != before {
 		t.Fatal("credential-bearing discovery URL was transmitted")
+	}
+}
+
+func TestMultipartCredentialReflectionIsNeverRetained(t *testing.T) {
+	f := peer(t, "task")
+	call, err := f.send(t, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, second := f.token[:8], f.token[8:]
+	err = f.service.verify(t.Context(), f.connection, &call, []Artifact{{ID: "split", Parts: []Part{{Text: &first}, {Text: &second}}}})
+	if err == nil || call.Validated {
+		t.Fatal("credential assembled from parts was admitted")
+	}
+	retained, err := f.service.Call(t.Context(), f.owner, call.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range retained.Evidence {
+		if bytes.Contains(e.Body, []byte(f.token)) {
+			t.Fatal("assembled credential persisted")
+		}
+	}
+}
+
+type oauthMutationBackend struct {
+	onWrite func()
+	body    []byte
+}
+
+func (b *oauthMutationBackend) Read(secrets.Key) ([]byte, error) {
+	if len(b.body) == 0 {
+		return nil, secrets.ErrNotFound
+	}
+	return bytes.Clone(b.body), nil
+}
+func (b *oauthMutationBackend) Write(_ secrets.Key, v []byte) error {
+	if b.onWrite != nil {
+		b.onWrite()
+	}
+	b.body = bytes.Clone(v)
+	return nil
+}
+func (b *oauthMutationBackend) Delete(secrets.Key) error { b.body = nil; return nil }
+func (b *oauthMutationBackend) Close() error             { return nil }
+
+func TestOAuthInstallationFencesConnectionMutation(t *testing.T) {
+	f := peer(t, "task")
+	issuer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "oauth-fixture", "token_type": "Bearer", "expires_in": 3600, "scope": "task"})
+	}))
+	defer issuer.Close()
+	c := f.connection
+	c.Scheme = "oauth"
+	c.OAuth = &OAuth{Issuer: issuer.URL, AuthorizationURL: issuer.URL + "/authorize", TokenURL: issuer.URL + "/token", ClientID: "fixture", Scopes: []string{"task"}}
+	raw, _ := json.Marshal(map[string]any{"oauth2SecurityScheme": map[string]any{"flows": map[string]any{"authorizationCode": map[string]any{"authorizationUrl": c.OAuth.AuthorizationURL, "tokenUrl": c.OAuth.TokenURL, "scopes": map[string]string{"task": "Call tasks"}}}}})
+	c.Card.SecuritySchemes["oauth"] = raw
+	if err := f.service.saveConnection(t.Context(), c); err != nil {
+		t.Fatal(err)
+	}
+	backend := &oauthMutationBackend{}
+	vault, err := secrets.NewStore(backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer vault.Close()
+	f.service.Vault = vault
+	// Deterministically inject a completed revoke at the storage boundary if
+	// another connection mutation is able to enter. No sleeps/race luck.
+	revoked := false
+	backend.onWrite = func() {
+		if f.service.mu.TryLock() {
+			f.service.mu.Unlock()
+			if err := f.service.Revoke(t.Context(), f.owner.Person, c.ID); err != nil {
+				t.Fatal(err)
+			}
+			revoked = true
+		}
+	}
+	target, err := f.service.BeginOAuth(t.Context(), f.owner.Person, c.ID, "session", 32123)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, _ := url.Parse(target)
+	err = f.service.CompleteOAuth(t.Context(), "session", "code", u.Query().Get("state"), issuer.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := f.service.Connection(t.Context(), f.owner.Person, c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if revoked && current.Enabled {
+		t.Fatal("OAuth completion undid a completed revoke")
+	}
+	if !revoked {
+		if err := f.service.Revoke(t.Context(), f.owner.Person, c.ID); err != nil {
+			t.Fatal(err)
+		}
+		current, err = f.service.Connection(t.Context(), f.owner.Person, c.ID)
+		if err != nil || current.Enabled {
+			t.Fatal("serialized revoke lost", err)
+		}
+	}
+}
+
+func TestUnchangedEvidenceKeepsOwnerVerification(t *testing.T) {
+	f := peer(t, "task")
+	connection := f.connection
+	connection.Profiles[0].SHA256 = ""
+	if _, err := f.service.Configure(t.Context(), connection, nil); err != nil {
+		t.Fatal(err)
+	}
+	call, err := f.send(t, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted, err := f.service.Accept(t.Context(), f.owner, call.ID, call.Evidence[0].SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed, err := f.service.Observe(t.Context(), f.owner, call.ID, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !observed.Verified || observed.State != "verified" || observed.VerifiedHash != accepted.VerifiedHash || observed.AcceptedBy != accepted.AcceptedBy {
+		t.Fatal("unchanged content lost owner verification")
 	}
 }
