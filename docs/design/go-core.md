@@ -329,7 +329,7 @@ The reconcile table follows [runtime.md](runtime.md#recovery) and [main-authorit
 | Model request or partial stream | Discarded; the turn is `interrupted` and not replayed; one plain line in the conversation |
 | Tool intent with no receipt | `unknown`; never run again; an irreversible one waits for the person |
 | Node effect, Node not back | `unknown` until the Node reports |
-| Worker turn cut by the restart | `unknown`; settled by reading the thread |
+| Worker turn cut by the restart | `unknown`; settled by reading the thread, or by a completion committed for that exact turn before the cut |
 | Pending approval | Stopped; a late button is answered stale |
 | Background run that was working | Resumed once from its checkpoint; a second cut lands it failed or partial |
 | Outbound channel send, outcome unknown | Not sent again |
