@@ -114,6 +114,7 @@ func TestDelegationRecoveryChecksInheritedPresetBeforeSetup(t *testing.T) {
 
 func TestDelegationBindsOriginPolicyBeforeDispatch(t *testing.T) {
 	r, d, _ := delegationPolicyRuntime(t)
+	prepareScheduledManagerRuntime(t, r, &scheduledManagerAdapter{r: r})
 	view := newConversationView(r, r.agent, r.conversation)
 	view.delegation = d
 	var started bool

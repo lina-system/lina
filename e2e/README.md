@@ -379,6 +379,8 @@ binding/scope replacement. A paired synthetic channel and an existing binding
 exercise the actual target-agent checks. Read-only canon snapshots prove that
 refused requests preserve agent revisions, actions, conversations and bindings.
 
+`m3/dependency-manager.json` exercises graph admission from a non-dev persona, durable dev ownership and assignment before dispatch, and missing-dev refusal without work cards or worker effects. Questions, approvals, refresh, stop controls, and restart retain the original conversation.
+
 `m3/dependency-release.json` runs the installed Core with a synthetic App Server
 and forge. Conversation tools admit a graph, Core creates actual Git worktrees,
 and worker processes write and commit results after a real client answers a

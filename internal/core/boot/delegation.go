@@ -249,7 +249,11 @@ func (b *limitedOutput) Write(p []byte) (int, error) {
 	return b.Buffer.Write(p)
 }
 func (d *delegationRuntime) origin(ctx context.Context, task work.Task) (*conversationRuntime, ledger.Event, error) {
-	origin, err := d.root.router.view(ctx, clientsrv.Session{PersonID: task.PersonID}, task.AgentID)
+	delivery, err := d.root.scheduledOrigin(ctx, task)
+	if err != nil {
+		return nil, ledger.Event{}, err
+	}
+	origin, err := d.root.router.view(ctx, clientsrv.Session{PersonID: delivery.Person}, delivery.Agent)
 	if err != nil {
 		return nil, ledger.Event{}, err
 	}
@@ -257,43 +261,56 @@ func (d *delegationRuntime) origin(ctx context.Context, task work.Task) (*conver
 	if err != nil {
 		return nil, ledger.Event{}, err
 	}
-	if input.ConversationID != task.ConversationID || input.AgentID != task.AgentID {
+	if input.ConversationID != delivery.Conversation || input.AgentID != delivery.Agent {
 		return nil, ledger.Event{}, work.ErrState
 	}
-	if origin.conversation != task.ConversationID {
+	if origin.conversation != delivery.Conversation {
 		// These identities come from the admitted task and its recorded input.
 		// A channel task's requests and evidence belong to that conversation.
-		origin, err = d.root.router.channelView(ctx, channels.Binding{Person: task.PersonID, Agent: task.AgentID, Conversation: task.ConversationID})
+		origin, err = d.root.router.channelView(ctx, channels.Binding{Person: delivery.Person, Agent: delivery.Agent, Conversation: delivery.Conversation})
 		if err != nil {
 			return nil, ledger.Event{}, err
 		}
 	}
-	if origin.agent != task.AgentID || origin.person != task.PersonID || origin.conversation != task.ConversationID {
+	if origin.agent != delivery.Agent || origin.person != delivery.Person || origin.conversation != delivery.Conversation {
 		return nil, ledger.Event{}, work.ErrState
 	}
 	return origin, input, nil
 }
 
 // Recovery and conflict returns obey the same origin ceiling as admission.
-// Bind legacy queued tasks too, before any repository or worker setup occurs.
+// A durable manager judgment is required before repository or worker setup.
 func (d *delegationRuntime) checkScheduledPolicy(ctx context.Context, task work.Task) error {
 	if task.Schedule == nil || task.Schedule.InputID == "" {
 		return work.ErrInvalid
 	}
 	originTurn := "turn:" + task.Schedule.InputID
+	origin, err := d.root.scheduledOrigin(ctx, task)
+	if err != nil {
+		return err
+	}
 	args, err := json.Marshal(task.Schedule)
 	if err != nil {
 		return err
 	}
-	request := authority.PolicyRequest{Key: "preset:scheduled-origin:" + task.ID, Person: task.PersonID, Agent: task.AgentID,
+	request := authority.PolicyRequest{Key: "preset:scheduled-origin:" + task.ID, Person: origin.Person, Agent: origin.Agent,
 		TaskID: originTurn, Tool: "schedule_work", Target: task.Schedule.Repository, Class: tools.WorkerEffect, Arguments: args}
 	if err = authority.CheckPreset(ctx, d.root.db, d.root.epoch, request); err != nil {
 		return err
 	}
-	if err = d.root.personaAuthority.BindDelegation(ctx, task.PersonID, task.AgentID, originTurn, task.AgentID, task.ID); err != nil {
+	a, err := d.root.scheduledAssignment(ctx, task)
+	if err != nil {
+		return err
+	}
+	owner, err := d.root.agents.Get(ctx, a.Owner)
+	if err != nil || owner.Preset != "dev" {
+		return errDevUnavailable
+	}
+	if err = d.root.personaAuthority.BindDelegation(ctx, task.PersonID, origin.Agent, originTurn, task.AgentID, task.ID); err != nil {
 		return err
 	}
 	request.Key, request.TaskID = "preset:scheduled-worker:"+task.ID, task.ID
+	request.Agent = task.AgentID
 	return authority.CheckPreset(ctx, d.root.db, d.root.epoch, request)
 }
 
@@ -393,7 +410,9 @@ func (d *delegationRuntime) start(ctx context.Context, c work.Card) (run work.Ru
 	delete(d.leases, "pending:"+c.Task.ID)
 	d.leases[thread.ID+":"+thread.TurnID] = l
 	d.mu.Unlock()
-	entry := &workerSession{scheduled: true, adapter: adapter, close: adapter.Close, compatibility: adapter.Compatibility(), origin: origin, input: input, thread: thread, packet: packet, workdir: p.Workdir, approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}, active: map[string]lease.Lease{}, done: make(chan struct{}), process: process}
+	owner := newConversationView(d.root, c.Task.AgentID, c.Task.ConversationID)
+	owner.codingDelivery = origin
+	entry := &workerSession{scheduled: true, adapter: adapter, close: adapter.Close, compatibility: adapter.Compatibility(), origin: owner, input: input, thread: thread, packet: packet, workdir: p.Workdir, approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}, active: map[string]lease.Lease{}, done: make(chan struct{}), process: process}
 	entry.answered = func(answerCtx context.Context, t worker.Thread) {
 		_ = d.reactor.Answered(answerCtx, t.TaskID, t.ID, t.TurnID)
 	}

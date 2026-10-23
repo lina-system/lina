@@ -21,13 +21,27 @@ func (s *Service) StopScheduled(ctx context.Context, person, conversation, refer
 		}
 		if reference != "" {
 			c, err := ReadReference(ctx, tx, reference)
-			if err != nil || c.Task.Schedule == nil || c.Task.PersonID != person || conversation != "" && c.Task.ConversationID != conversation {
+			if err != nil || c.Task.Schedule == nil || c.Task.PersonID != person {
+				return ErrState
+			}
+			matches, err := scheduledConversationMatches(ctx, tx, c.Task, conversation)
+			if err != nil {
+				return err
+			}
+			if !matches {
 				return ErrState
 			}
 			cards = []Card{c}
 		}
 		for _, c := range cards {
-			if c.Task.Schedule == nil || c.Task.PersonID != person || conversation != "" && c.Task.ConversationID != conversation || c.Scheduling.Closed || c.Scheduling.Landed {
+			if c.Task.Schedule == nil || c.Task.PersonID != person || c.Scheduling.Closed || c.Scheduling.Landed {
+				continue
+			}
+			matches, err := scheduledConversationMatches(ctx, tx, c.Task, conversation)
+			if err != nil {
+				return err
+			}
+			if !matches {
 				continue
 			}
 			state := c.Scheduling
@@ -45,4 +59,19 @@ func (s *Service) StopScheduled(ctx context.Context, person, conversation, refer
 		return nil
 	})
 	return
+}
+
+// Manager ownership does not remove the originating conversation's stop scope.
+// The retained binding must still name this exact person, owner and task.
+func scheduledConversationMatches(ctx context.Context, tx *canon.Tx, task Task, conversation string) (bool, error) {
+	if conversation == "" || task.ConversationID == conversation {
+		return true, nil
+	}
+	var count int
+	err := tx.QueryRowContext(ctx, `SELECT count(*) FROM coding_assignments WHERE id=?
+		AND json_extract(record,'$.Owner')=? AND json_extract(record,'$.Conversation')=?
+		AND json_extract(record,'$.Tool')='schedule_work' AND json_extract(record,'$.Delegated')=1
+		AND json_extract(record,'$.Origin.Person')=? AND json_extract(record,'$.Origin.Conversation')=?`,
+		task.ID, task.AgentID, task.ConversationID, task.PersonID, conversation).Scan(&count)
+	return count == 1, err
 }
