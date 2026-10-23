@@ -23,8 +23,9 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 	if r.route == nil {
 		return nil
 	}
-	binary, err := proc.LookPath("agy")
-	if err != nil {
+	binary, _ := proc.LookPath("agy")
+	claude, _ := proc.LookPath("claude")
+	if binary == "" && claude == "" {
 		return nil
 	}
 	gh, err := proc.LookPath("gh")
@@ -39,7 +40,7 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	r.workerDispatch, err = dispatch.Open(ctx, dispatch.Config{DB: r.db, Work: r.work, Area: r.workArea, Skills: r.skills, Root: r.root, Main: r.main, Epoch: r.epoch, Binary: binary, Git: git, PR: r.workerGitHub, Environment: proc.WorkerEnvironment(), Activities: r.activities, Manage: func(ctx context.Context, record dispatch.Record) (dispatch.Record, error) {
+	r.workerDispatch, err = dispatch.Open(ctx, dispatch.Config{DB: r.db, Work: r.work, Area: r.workArea, Skills: r.skills, Root: r.root, Main: r.main, Epoch: r.epoch, Binary: binary, ClaudeBinary: claude, Git: git, PR: r.workerGitHub, Environment: proc.WorkerEnvironment(), Activities: r.activities, Manage: func(ctx context.Context, record dispatch.Record) (dispatch.Record, error) {
 		raw, _ := json.Marshal(record.TaskDefinition())
 		a, err := r.assignCoding(ctx, record.Origin, record.ID, "dispatch_work", record.Definition.Repository, raw)
 		if err != nil {
@@ -71,7 +72,7 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		text := "antigravity: " + record.Code
+		text := record.WorkerName() + ": " + record.Code
 		if record.Version != "" {
 			text += " (" + record.Version + "; unverified version)"
 		}

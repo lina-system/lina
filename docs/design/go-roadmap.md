@@ -351,7 +351,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 - Done when: the round trip completes with the installed Codex and records its version; an unverified version is reported and still used; a worker approval reaches the originating conversation and the answer returns; no sandbox, credential or setting is imposed on the worker.
 - Depends on: G1-05, G1-18. Design refs: C-29; [work-and-delegation.md](work-and-delegation.md#codex-adapter).
 
-**G2-05 Claude Code adapter.** Headless child, final result as signal.
+**G2-05 Claude Code adapter.** Headless child, final result as signal. #134 connects the installed `claude` worker to `dispatch_work`, preserves its final result with independent PR evidence in an adapter-derived receipt, and covers execution and failure paths through `e2e/m2/claude-worker.json`. The account-free scenario does not establish live Claude version compatibility.
 - Done when: a final result message ends the turn; exit without one is a failure; a receipt built from the final result and the pull request is marked adapter-derived; nothing is installed into the user's tool.
 - Depends on: G2-04. Design refs: C-29; [work-and-delegation.md](work-and-delegation.md#completion-signals).
 

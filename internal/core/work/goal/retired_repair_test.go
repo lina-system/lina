@@ -38,6 +38,7 @@ func TestRetiredSiblingRepairAssessmentIsDerivedAgain(t *testing.T) {
 		if a.ID == managers[1].ID && (a.State != "finished" || !a.Superseded || a.RetirementReconciled) {
 			t.Fatalf("old report did not retain pending retirement: %+v", a)
 		}
+
 	}
 	cfg := e.cfg
 	cfg.Epoch++
