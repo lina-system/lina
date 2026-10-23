@@ -1496,6 +1496,7 @@ An observed concurrent change returns unknown and keeps the recovery information
 A completed receipt describes the final observation, not future writes through another process's open descriptor.
 Captures remain readable through file reads after reopening and participate in workspace manifest revisions.
 A recovery-like directory name is not proof of worker ownership and never hides its files from a command receipt; this also keeps later writes through captured open inodes observable.
+Worker-reserved capture slots are recorded in the private version store and accounted separately from the 10,000-entry workspace manifest limit, so retained captures cannot exhaust workspace manifest snapshots on their own.
 These live captures share the workspace's access scope, whereas the immutable before/after version store remains private to the file worker.
 Restore from a saved-version id uses its immutable bytes and the current destination revision.
 A multi-file patch is prevalidated but is not a filesystem transaction: an interrupted commit is unknown with retained recovery information.
