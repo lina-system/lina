@@ -32,7 +32,7 @@ function fixture(n = 1, revision = hex(n, 40)) {
       step, result: 'pass', epoch: String(i + 1), root_id: hex(n * 10 + (i === 3 ? 1 : 0)),
       ready: true, effects_replayed: 0, evidence_sha256: observation,
     })),
-    restore: { generation_id: hex(n * 20), whole_generation: true,
+    restore: { generation_id: 'generation-ABCDEFGHIJKLMNOPQRSTUVWXYZ', whole_generation: true,
       forgotten_search_hits: 0, forgotten_summary_hits: 0, forgotten_context_hits: 0 },
     checks: Object.fromEntries(checks.map(id => [id, { result: 'pass', evidence_sha256: headless }])),
     failures: Object.fromEntries(failureChecks.map(id => [id, { result: 'pass', evidence_sha256: headless }])),
@@ -200,6 +200,34 @@ test('one terminal measurement cannot satisfy two confirmed terminals', () => {
   terminals.ids.push(hex(999));
   terminals.records.push(...terminals.records.map(row => ({ ...row, terminal_id: hex(999) })));
   assert.throws(() => validateRecord(f.record, f), /terminal_identity/);
+});
+
+test('restore accepts the opaque generation ID emitted by the backup service', () => {
+  const f = fixture();
+  f.record.attempts[0].restore.generation_id = 'generation-ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  assert.equal(validateRecord(f.record, f).accepted, true);
+});
+
+test('headless evidence cannot attest the owner UI or serial restart session', () => {
+  for (const part of ['ui_ux', 'matrix']) {
+    const f = fixture(), a = f.record.attempts[0];
+    if (part === 'ui_ux') a.ui_ux.evidence_sha256 = a.headless_sha256;
+    else a.matrix[0].evidence_sha256 = a.headless_sha256;
+    assert.throws(() => validateRecord(f.record, f), /owner_observation/);
+  }
+});
+
+test('a terminal gap is retained unchanged in history but never passes acceptance', () => {
+  const old = fixture(), a = old.record.attempts[0], row = a.terminals.records[6];
+  const spike = JSON.parse(old.attachments.get(row.evidence_sha256));
+  spike.result = row.result = 'gap';
+  const bytes = JSON.stringify(spike);
+  row.evidence_sha256 = digest(bytes); old.attachments.set(row.evidence_sha256, bytes);
+  assert.throws(() => validateRecord(old.record, old));
+  const next = fixture(2);
+  old.record.attempts.push(next.record.attempts[0]);
+  for (const [hash, content] of next.attachments) old.attachments.set(hash, content);
+  assert.equal(validateRecord(old.record, old).accepted, true);
 });
 
 test('headless receipt requires observed passing tests and successful package exit', () => {
