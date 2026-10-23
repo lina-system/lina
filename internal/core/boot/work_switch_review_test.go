@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/internal/core/work"
@@ -132,6 +133,12 @@ func TestSwitchInputOutcomeControlsReservation(t *testing.T) {
 func reviewWorkerFixture(t *testing.T) (*conversationRuntime, *workerSession, *transferProbe) {
 	r, _, agent, _ := managementFixture(t)
 	r.ctx = t.Context()
+	r.agent, r.conversation = agent, "conversation"
+	var err error
+	r.topics, err = clientsrv.NewTopics("1", clientsrv.TopicOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	r.work = work.New(r.db)
 	dir := t.TempDir()
 	task := work.Task{ID: "external", PersonID: r.person, AgentID: agent, ConversationID: "conversation", Title: "Work", Done: "Result", ExternalControl: true, ArtifactRoots: []string{dir}}
