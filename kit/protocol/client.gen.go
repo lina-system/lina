@@ -598,12 +598,15 @@ type ProgressGet struct {
 }
 type ProgressLine struct {
 	Depth        json.Number   `json:"depth"`
+	FinishedAt   *string       `json:"finished_at,omitempty"`
 	JustFinished string        `json:"just_finished"`
 	Kind         string        `json:"kind"`
 	Name         string        `json:"name"`
 	Next         string        `json:"next"`
+	Now          *string       `json:"now,omitempty"`
 	Percent      *json.Number  `json:"percent,omitempty"`
 	Stage        string        `json:"stage"`
+	StartedAt    *string       `json:"started_at,omitempty"`
 	State        *RunningState `json:"state,omitempty"`
 	Waiting      json.Number   `json:"waiting"`
 }
@@ -7022,6 +7025,17 @@ const clientSchemaJSON = `{
     "progress_line": {
       "type": "object",
       "properties": {
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "finished_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "now": {
+          "type": "string"
+        },
         "name": {
           "type": "string"
         },

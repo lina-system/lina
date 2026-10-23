@@ -16,3 +16,11 @@ func (s *Service) ReportProgress(ctx context.Context, taskID, runID string, sequ
 	}
 	return s.append(ctx, Event{Key: fmt.Sprintf("worker-progress:%s:%d", runID, sequence), TaskID: taskID, RunID: runID, Kind: "worker_progress", Value: summary})
 }
+
+// ReportActivity records a safe activity class, separate from worker prose.
+func (s *Service) ReportActivity(ctx context.Context, taskID, runID string, sequence uint64, activity string) error {
+	if sequence == 0 {
+		return ErrInvalid
+	}
+	return s.append(ctx, Event{Key: fmt.Sprintf("worker-activity:%s:%d", runID, sequence), TaskID: taskID, RunID: runID, Kind: "worker_activity", Value: activity})
+}

@@ -76,7 +76,9 @@ func TestOlderSchemaClientReceivesPresentationAdditions(t *testing.T) {
 	_ = json.Unmarshal(defs["progress_line"], &progress)
 	var progressFields map[string]json.RawMessage
 	_ = json.Unmarshal(progress["properties"], &progressFields)
-	delete(progressFields, "state")
+	for _, field := range []string{"state", "started_at", "finished_at", "now"} {
+		delete(progressFields, field)
+	}
 	progress["properties"], _ = json.Marshal(progressFields)
 	defs["progress_line"], _ = json.Marshal(progress)
 	defs["stream_item"] = removeKind(defs["stream_item"])
@@ -132,7 +134,7 @@ func TestOldClient(t *testing.T) {
  for _, name := range []string{"State", "Summary", "Reason"} {
   if _, present := reflect.TypeFor[RunningUpdate]().FieldByName(name); present { t.Fatalf("test client knows running %s", name) }
  }
- if _, present := reflect.TypeFor[ProgressLine]().FieldByName("State"); present { t.Fatal("test client knows progress state") }
+ for _,name:=range []string{"State","StartedAt","FinishedAt","Now"} { if _,present:=reflect.TypeFor[ProgressLine]().FieldByName(name);present {t.Fatalf("test client knows %s",name)} }
  if slices.Contains(clientSchema.Properties["kind"].Enum, "tool_activity") { t.Fatal("test client knows tool_activity") }
  var client ClientDecoder
  for _, name := range []string{"phase_tool", "tool_started", "tool_finished_ok", "activity_snapshot", "phase_snapshot", "phase_streaming", "item_done", "running_localized", "running_snapshot"} {
@@ -170,7 +172,7 @@ func TestOldClient(t *testing.T) {
  data, err := os.ReadFile(filepath.Join(os.Getenv("PROTOCOL_FIXTURES"), "normal", "progress_update.json")); if err != nil { t.Fatal(err) }
  var envelope map[string]any
  if err := json.Unmarshal(data, &envelope); err != nil { t.Fatal(err) }
- envelope["payload"] = map[string]any{"rows": []any{map[string]any{"ref":"session:fixture", "line":map[string]any{"name":"Fixture job", "kind":"project", "state":"failed", "stage":"unknown", "just_finished":"unknown", "next":"unknown", "waiting":0, "depth":0}}}}
+ envelope["payload"] = map[string]any{"rows": []any{map[string]any{"ref":"session:fixture", "line":map[string]any{"name":"Fixture job", "kind":"project", "state":"failed", "started_at":"2026-01-01T00:00:00Z", "finished_at":"2026-01-01T00:42:00Z", "now":"Checking result", "stage":"unknown", "just_finished":"unknown", "next":"unknown", "waiting":0, "depth":0}}}}
  data, err = json.Marshal(envelope); if err != nil { t.Fatal(err) }
  var progressClient ClientDecoder
  got, err := progressClient.Decode(data); if err != nil { t.Fatal(err) }

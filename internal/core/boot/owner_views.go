@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,6 +18,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/runs"
 	"github.com/thisisjun786/lina/internal/core/waiting"
 	"github.com/thisisjun786/lina/internal/core/waiting/view"
+	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -229,24 +231,45 @@ func (r *conversationRuntime) ownerProjectionOrder(ctx context.Context, order wa
 	if err != nil {
 		return protocol.Progress{}, "", err
 	}
-	present := map[string]bool{}
-	for _, u := range units {
-		present[u.ID] = true
+	present := map[string]int{}
+	for i, u := range units {
+		present[u.ID] = i
 	}
 	live, err := r.liveProgress(ctx, names, list)
 	if err != nil {
 		return protocol.Progress{}, "", err
 	}
 	for _, u := range live {
-		if !present[u.ID] {
+		if i, exists := present[u.ID]; !exists {
 			units = append(units, u)
+		} else if u.Waiting > 0 {
+			units[i].Waiting = u.Waiting
+			units[i].Now = u.Now
+			units[i].State = "needs_input"
 		}
 	}
+	background, err := r.backgroundProgress(ctx, names)
+	if err != nil {
+		return protocol.Progress{}, "", err
+	}
+	units = append(units, background...)
 	entries := progress.Compute(units)
 	rows := []protocol.ProgressRow{}
 	for _, entry := range entries {
 		v := entry.Line
 		line := protocol.ProgressLine{Name: v.Name, Kind: v.Kind, Stage: v.Stage, JustFinished: v.JustFinished, Next: v.Next, Waiting: number(v.Waiting), Depth: number(v.Depth)}
+		if !v.StartedAt.IsZero() {
+			value := v.StartedAt.UTC().Format(time.RFC3339Nano)
+			line.StartedAt = &value
+		}
+		if !v.FinishedAt.IsZero() {
+			value := v.FinishedAt.UTC().Format(time.RFC3339Nano)
+			line.FinishedAt = &value
+		}
+		if v.Now != "" {
+			value := laneText(v.Now)
+			line.Now = &value
+		}
 		if v.State != "" {
 			state := protocol.RunningState(v.State)
 			line.State = &state
@@ -257,6 +280,7 @@ func (r *conversationRuntime) ownerProjectionOrder(ctx context.Context, order wa
 		}
 		rows = append(rows, protocol.ProgressRow{Ref: entry.Ref, Line: line})
 	}
+	slices.SortStableFunc(rows, func(a, b protocol.ProgressRow) int { return workCardRank(a.Line) - workCardRank(b.Line) })
 	// Track the complete list before the Home limit. A change below that limit
 	// must invalidate an open full waiting view even when Home looks identical.
 	full, err := json.Marshal(waitingRows(list))
@@ -387,22 +411,34 @@ func (r *conversationRuntime) liveProgress(ctx context.Context, names map[string
 			if title == "" {
 				title = "Delegated work"
 			}
-			u = progress.Unit{ID: id, Kind: "project", Name: laneText(title), State: observation.View.State, Updated: session.input.RecordedAt.UnixNano()}
+			u = progress.Unit{ID: id, Kind: "project", Name: laneText(title), State: observation.View.State, StartedAt: session.started, Now: design.Text(eventLanguage(session.input), "running.state."+observation.View.State), Updated: session.input.RecordedAt.UnixNano()}
 		}
 		u.Active = u.Active || observation.Group != "landed"
 		u.Landed = u.Landed || observation.Group == "landed"
+		if !session.started.IsZero() && (u.StartedAt.IsZero() || session.started.Before(u.StartedAt)) {
+			u.StartedAt = session.started
+		}
 		session.mu.Lock()
+		if !exists && session.activity != "" && observation.View.State == "in_progress" {
+			u.Now = design.Text(eventLanguage(session.input), session.activity)
+		}
+		owned := map[string]bool{}
 		for id := range session.questions {
-			if pending[id] {
-				u.Waiting++
-			}
+			owned[id] = true
 		}
 		for id := range session.approvals {
-			if pending[id] {
-				u.Waiting++
-			}
+			owned[id] = true
 		}
 		session.mu.Unlock()
+		for _, entry := range list.Entries {
+			if owned[entry.Ref.ID] && pending[entry.Ref.ID] {
+				if u.Waiting == 0 {
+					u.Now = design.Text(eventLanguage(session.input), "running.state.needs_input") + " · " + laneText(entry.View.Sentence)
+				}
+				u.Waiting++
+				u.State = "needs_input"
+			}
+		}
 		grouped[id] = u
 	}
 	units := make([]progress.Unit, 0, len(grouped))

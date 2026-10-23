@@ -612,7 +612,17 @@ The work panel is the primary way to see work in the TUI: a sidebar at the right
 - The second row, indented two cells, is Core's Now: what the 일 is doing right now, in a few words ([work-and-delegation.md](work-and-delegation.md#progress-line)). It is truncated the same way and never wraps.
 - A 목표 has no card of its own; each of its 일 has one. A goal that is a single 할 일, or a background run outside any 일, is a card too.
 - Cards keep Core's order: waiting on the person, running, waiting on something outside, done. Done cards fold into one row. When the cards do not fit, the last row (`…`, or `...` in ASCII) gives the number of hidden cards and, when any of them waits on the person, how many. Cards that wait on the person are hidden last. The numbers always equal the hidden cards.
-- The panel redraws only when a shown value changes, so a running card costs at most one redraw a minute for its elapsed time.
+- The panel redraws only when a shown value changes, so a running card costs at most one redraw a minute for its elapsed time. Its timer uses the next elapsed-minute boundary and the existing Core clock offset. An absent start stays unknown. Snapshot replacement and live updates share the same typed card projection; neither changes conversation focus or the reading anchor.
+
+The alpha card path is exercised by `TestM3WorkPanelInstalledCoreMatrix` and
+`TestM3WorkPanelLiveCodexWorker`, using `e2e/m3/work-panel.json`. The former reads
+replayed work through installed Core in both languages and glyph modes at 120x34
+and 100x34, including 1, 5, 20 and 50 cards. The latter launches the Codex protocol
+fixture through Core, observes the same start and changing person-request activity
+in a real 120x34 PTY, and checks the resulting artifact and restart. The deterministic
+TUI matrix checks two-row clipping, folded/overflow counts and 50 streamed changes
+with a retained draft, focus and reading anchor. Stage-list and scheduling-control
+evaluations remain with their corresponding implementation issues.
 
 **Views.** Ctrl+P on the focused panel switches between cards and a compact view of one row per 일: the name, then Now, then the elapsed time right-aligned; Now shrinks first. Left and Right change the state filter: all, needs you, running, waiting, done. The title shows the filter when it is not all, and fold and count rows then count only that state.
 

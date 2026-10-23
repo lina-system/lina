@@ -666,6 +666,18 @@ never means zero. Stage and unknown are codes localized by the client. An option
 execution state; it does not supply a plan stage or completion verdict. Older
 clients may omit this additional presentation field.
 
+The optional `started_at` and `finished_at` fields are RFC 3339 instants recorded
+by Core; `now` is Core's short current-activity line. The TUI applies its snapshot
+clock offset when displaying elapsed minutes. Missing timestamps remain unknown,
+including work recorded before Core began retaining them. Clients never substitute
+a connection time or a local countdown. A finish is supplied only for a completed
+work verdict, not merely an idle worker. Work cards, live conversation workers and
+independent background runs contribute rows without duplicating the same task.
+Core orders cards needing the person first, then running, then other waiting or
+unobserved work, then done. Clients preserve that order and count only the cards
+they fold or omit. These fields are additive in client 1.0; old clients ignore them
+and new clients accept their absence.
+
 A `progress_update` replaces the overview atomically, retaining the normal topic
 cursor and snapshot/replay behavior. A changed full waiting list advances this
 cursor even when the five Home rows and remaining count are unchanged; a client
