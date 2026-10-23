@@ -233,7 +233,7 @@ func destination(kind result.Type, d result.Destination) (result.Destination, er
 		default:
 			return d, ErrOutOfScope
 		}
-	case result.ComparisonType, result.PlanType:
+	case result.ComparisonType, result.PlanType, result.MockType:
 		return d, ErrOutOfScope
 	default:
 		return d, result.ErrMalformed

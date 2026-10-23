@@ -388,7 +388,7 @@ func (s *Service) FollowScoped(ctx context.Context, id, key, note string, source
 			}
 		}
 	}
-	if r.State == Landed {
+	if r.State == Landed || r.Brief.Result == "mock" && mockPublicationReady(r.MockState) {
 		return ErrState
 	}
 	if key != "" {

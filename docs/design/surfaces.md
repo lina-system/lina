@@ -639,7 +639,12 @@ before advancing. The initial draw is followed by at most three redraws.
 `all_passed`, `no_improvement` and `redraw_limit` are the recorded stop reasons;
 a renderer/model failure is `mock_unavailable`. Failed candidates remain private
 run evidence and never replace the last visible revision. A restart resumes the
-committed phase; publication is idempotent under the native run id.
+committed phase; publication is idempotent under the native run id. Accepted
+follow-ups during drawing start a fresh checklist/redraw budget, retain the
+interrupted candidates, and draw from the latest candidate with the new input.
+Once all checks are committed, publication is frozen: additional live steering
+is refused, and feedback uses the published result revision instead. No accepted
+follow-up can be silently discarded.
 
 The shared template lives in `design/`: generated token CSS, base styles and
 bundled Pretendard. Mocks use structural XHTML with fixed local interactions:

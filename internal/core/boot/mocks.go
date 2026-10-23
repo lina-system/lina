@@ -87,6 +87,15 @@ func (r *conversationRuntime) drawMock(ctx context.Context, record runs.Record, 
 			return runs.Artifact{}, "", err
 		}
 	}
+	if len(record.MockHistory) > 0 {
+		var prior mocks.State
+		if err := json.Unmarshal(record.MockHistory[len(record.MockHistory)-1], &prior); err != nil {
+			return runs.Artifact{}, "", err
+		}
+		if len(prior.Attempts) > 0 {
+			previous = prior.Attempts[len(prior.Attempts)-1].Fragment
+		}
+	}
 	state := mocks.State{Request: request}
 	if len(record.MockState) > 0 {
 		if err = json.Unmarshal(record.MockState, &state); err != nil {
@@ -97,6 +106,11 @@ func (r *conversationRuntime) drawMock(ctx context.Context, record runs.Record, 
 		Model: func(ctx context.Context, input mocks.ModelInput) (json.RawMessage, error) {
 			if err := r.authorizeRun(ctx, record.Origin, record.Brief); err != nil {
 				return nil, err
+			}
+			for _, source := range record.FollowSources {
+				if err := r.authorizeRunFollowSource(ctx, record, source); err != nil {
+					return nil, err
+				}
 			}
 			return view.mockModel(ctx, record.ID, input)
 		},
@@ -187,7 +201,13 @@ func (r *conversationRuntime) mockModel(ctx context.Context, run string, input m
 				Type, Role string
 				Content    []struct{ Type, Text string }
 			}
-			if json.Unmarshal(event.Item, &item) != nil || item.Type != "message" || item.Role != "assistant" {
+			if json.Unmarshal(event.Item, &item) != nil {
+				return nil, result.ErrMalformed
+			}
+			if item.Type == "reasoning" {
+				continue
+			}
+			if item.Type != "message" || item.Role != "assistant" {
 				return nil, result.ErrMalformed
 			}
 			for _, part := range item.Content {

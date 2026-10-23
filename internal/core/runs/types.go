@@ -89,8 +89,9 @@ type Artifact struct {
 	Citations []materials.Anchor `json:"citations,omitempty"`
 }
 type Record struct {
-	MockState json.RawMessage          `json:"mock_state,omitempty"`
-	Requests  []ledger.RequestEvidence `json:"request_assembly,omitempty"`
+	MockHistory []json.RawMessage        `json:"mock_history,omitempty"`
+	MockState   json.RawMessage          `json:"mock_state,omitempty"`
+	Requests    []ledger.RequestEvidence `json:"request_assembly,omitempty"`
 	// Start identity and the original receipt commit with the run. Only hashes
 	// of native call metadata/brief are retained, never unmasked arguments.
 	StartKey, StartDigest       string
