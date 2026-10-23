@@ -116,7 +116,9 @@ Recorded completions carry a structured `completion` request with `work_kind`
 and `evidence` references (`kind`, `turn_id`, `call_id`). An empty `turn_id`
 selects the current prepared turn; storage retains its full identity. Core
 resolves each reference to a committed successful tool result in the same
-agent's conversation, excluding retracted inputs. A missing or failed call,
+agent's conversation, excluding retracted inputs. Only completion-writing tools
+resolve evidence, and only the referenced turn/call pairs are read before the
+write transaction. Ordinary tools do not scan past results. A missing or failed call,
 another conversation's call, a wrong evidence kind, or a missing work kind
 cannot satisfy the requirement. The agent is responsible for choosing the
 observation that checks the work; this reference check does not replace the

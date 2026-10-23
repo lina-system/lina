@@ -3,7 +3,9 @@ package boot
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 
 	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -22,9 +24,28 @@ func (r *conversationRuntime) bindDoneEvidence(ctx context.Context, prepared age
 	}
 	policy := agents.ProjectWorkMethod(prepared, state)
 	for name, tool := range bindings {
+		switch name {
+		case "write_record", "present_result", "land_work_result", "coding_decision":
+		default:
+			continue
+		}
 		execute := tool.Execute
 		tool.Execute = func(ctx context.Context, call provider.ToolCall) loop.Result {
-			observed, err := r.doneObservations(ctx)
+			// Decode only the completion envelope. The tool still owns validation
+			// of its arguments and decides whether a completion is being recorded.
+			var args struct {
+				Completion *result.CompletionRequest `json:"completion"`
+			}
+			var refs []result.EvidenceReference
+			if json.Unmarshal([]byte(call.Arguments), &args) == nil && args.Completion != nil {
+				refs = args.Completion.Evidence
+				for i := range refs {
+					if refs[i].TurnID == "" {
+						refs[i].TurnID = prepared.TurnID
+					}
+				}
+			}
+			observed, err := r.doneObservations(ctx, refs)
 			if err != nil {
 				return loop.Result{ID: call.ID, Code: loop.Failed}
 			}
@@ -50,31 +71,38 @@ func (r *conversationRuntime) bindDoneEvidence(ctx context.Context, prepared age
 	return nil
 }
 
-func (r *conversationRuntime) doneObservations(ctx context.Context) (map[[2]string]bool, error) {
+func (r *conversationRuntime) doneObservations(ctx context.Context, refs []result.EvidenceReference) (map[[2]string]bool, error) {
 	observed := map[[2]string]bool{}
+	if len(refs) == 0 {
+		return observed, nil
+	}
 	err := r.db.Read(ctx, func(tx *canon.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT c.turn_id,c.call_id,c.result
+		seen := map[[2]string]bool{}
+		for _, ref := range refs {
+			key := [2]string{ref.TurnID, ref.CallID}
+			if seen[key] || ref.TurnID == "" || ref.CallID == "" {
+				continue
+			}
+			seen[key] = true
+			var raw []byte
+			err := tx.QueryRowContext(ctx, `SELECT c.result
  FROM turn_calls c JOIN turn_runs t ON t.id=c.turn_id
  JOIN retract_visible_event p ON p.id='prepare:'||t.id
  JOIN turn_control ctl ON ctl.turn_id=t.id
  JOIN retract_visible_event input ON input.id=ctl.input_event
- WHERE t.conversation=? AND p.agent_id=? AND c.result IS NOT NULL`, r.conversation, r.agent)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var turnID, callID string
-			var raw []byte
-			if err = rows.Scan(&turnID, &callID, &raw); err != nil {
+ WHERE c.turn_id=? AND c.call_id=? AND t.conversation=? AND p.agent_id=? AND c.result IS NOT NULL`, ref.TurnID, ref.CallID, r.conversation, r.agent).Scan(&raw)
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			if err != nil {
 				return err
 			}
 			var observation loop.Result
 			if json.Unmarshal(raw, &observation) == nil && observation.Code == loop.OK && len(observation.Output) > 0 && string(observation.Output) != "null" {
-				observed[[2]string{turnID, callID}] = true
+				observed[key] = true
 			}
 		}
-		return rows.Err()
+		return nil
 	})
 	return observed, err
 }
