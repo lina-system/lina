@@ -90,6 +90,33 @@ func workElapsed(d time.Duration) string {
 	return fmt.Sprintf("%dm", minutes)
 }
 
+// Navigation and rendering share the same sequence; folded done cards have no
+// selectable row. Keep the selected ID across updates, or its former position
+// when that card leaves the sequence.
+func (m *shellModel) selectableWorkCards() (active []state.WorkCard, done int) {
+	for _, c := range m.workCards() {
+		if c.State == protocol.RunningStateDone && c.Waiting == 0 {
+			done++
+			continue
+		}
+		active = append(active, c)
+	}
+	v := &m.conversation
+	if len(active) == 0 {
+		v.workSelected, v.workIndex, v.workOffset = "", 0, 0
+		return active, done
+	}
+	index := min(v.workIndex, len(active)-1)
+	for i, c := range active {
+		if c.ID == v.workSelected {
+			index = i
+			break
+		}
+	}
+	v.workSelected, v.workIndex = active[index].ID, index
+	return active, done
+}
+
 func (m *shellModel) workPanelRows(width, height int) []string {
 	if width <= 0 || height <= 0 {
 		return nil
@@ -100,15 +127,7 @@ func (m *shellModel) workPanelRows(width, height int) []string {
 		ellipsis = "..."
 	}
 	rows := []string{text("work.title")}
-	active := []state.WorkCard{}
-	done := 0
-	for _, c := range m.workCards() {
-		if c.State == protocol.RunningStateDone && c.Waiting == 0 {
-			done++
-			continue
-		}
-		active = append(active, c)
-	}
+	active, done := m.selectableWorkCards()
 	available := height - 1
 	if done > 0 {
 		available--
@@ -117,8 +136,14 @@ func (m *shellModel) workPanelRows(width, height int) []string {
 	if shown < len(active) {
 		shown = min(len(active), max(0, (available-1)/2))
 	}
+	start := min(m.conversation.workOffset, max(0, len(active)-shown))
+	if shown > 0 {
+		start = min(start, m.conversation.workIndex)
+		start = max(start, m.conversation.workIndex-shown+1)
+	}
+	m.conversation.workOffset = start
 	now := m.now().Add(m.content.Offset)
-	for _, c := range active[:shown] {
+	for _, c := range active[start : start+shown] {
 		elapsed := text("unknown")
 		if !c.Started.IsZero() {
 			end := now
@@ -140,8 +165,8 @@ func (m *shellModel) workPanelRows(width, height int) []string {
 	}
 	if shown < len(active) && len(rows) < height {
 		waiting := 0
-		for _, c := range active[shown:] {
-			if c.Waiting > 0 {
+		for i, c := range active {
+			if (i < start || i >= start+shown) && c.Waiting > 0 {
 				waiting++
 			}
 		}
@@ -183,13 +208,8 @@ func (m *shellModel) workPanelKey(key string) tea.Cmd {
 	case "esc":
 		m.conversation.workFocused = false
 	case "up", "down":
-		cards := m.workCards()
-		index := 0
-		for i, c := range cards {
-			if c.ID == m.conversation.workSelected {
-				index = i
-			}
-		}
+		cards, _ := m.selectableWorkCards()
+		index := m.conversation.workIndex
 		if len(cards) > 0 {
 			if key == "up" {
 				index = max(0, index-1)
@@ -197,6 +217,7 @@ func (m *shellModel) workPanelKey(key string) tea.Cmd {
 				index = min(len(cards)-1, index+1)
 			}
 			m.conversation.workSelected = cards[index].ID
+			m.conversation.workIndex = index
 		}
 	}
 	return nil
