@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -55,6 +56,7 @@ func TestACPWorkersThroughRunningCore(t *testing.T) {
 }
 
 type acpScenario struct {
+	fixedHostLoad              bool
 	profiles                   string
 	startupWarnings            []string
 	name, worker, binary, mode string
@@ -280,6 +282,21 @@ func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
 			start := func() func() {
 				t.Helper()
 				c := exec.CommandContext(ctx, installedBinary, "core", "--state-root", state, "--socket", h.socket)
+				pidfile := filepath.Join(fixture, "core.pid")
+				if scenario.fixedHostLoad {
+					bwrap, e := exec.LookPath("bwrap")
+					if e != nil {
+						t.Fatal("worker load fixture requires bubblewrap:", e)
+					}
+					loadfile := filepath.Join(fixture, "loadavg")
+					write(loadfile, "0.00 0.00 0.00 1/1 1\n", 0600)
+					// Keep the real host sampler and capacity gate; only this Core
+					// sees fixed load, independent of other jobs on the test host.
+					// The shell parent keeps bwrap's parent-death signal tied to
+					// a live thread; the inner shell records Core for shutdown.
+					args := []string{bwrap, "--die-with-parent", "--dev-bind", "/", "/", "--ro-bind", loadfile, "/proc/loadavg", "--", "/bin/sh", "-c", `printf '%s\n' "$$" > "$1"; shift; exec "$@"`, "acp-load", pidfile, installedBinary, "core", "--state-root", state, "--socket", h.socket}
+					c = exec.CommandContext(ctx, "/bin/sh", append([]string{"-c", `"$@" & child=$!; wait "$child"`, "acp-load-parent"}, args...)...)
+				}
 				c.Env = append(append([]string(nil), env...), "LINA_RESPONSES_BASE_URL="+server.URL+"/v1", "LINA_RESPONSES_MODEL=fixture", "LINA_RESPONSES_API_KEY=synthetic-core-key")
 				var logs bytes.Buffer
 				c.Stdout = &logs
@@ -295,7 +312,18 @@ func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
 						return
 					}
 					stopped = true
-					c.Process.Signal(syscall.SIGTERM)
+					if scenario.fixedHostLoad {
+						rawPID, pidErr := os.ReadFile(pidfile)
+						pid, parseErr := strconv.Atoi(strings.TrimSpace(string(rawPID)))
+						if pidErr != nil || parseErr != nil || pid <= 0 {
+							t.Error("missing Core process identity", pidErr, parseErr)
+							c.Process.Kill()
+						} else {
+							syscall.Kill(pid, syscall.SIGTERM)
+						}
+					} else {
+						c.Process.Signal(syscall.SIGTERM)
+					}
 					select {
 					case e := <-done:
 						for _, cause := range scenario.startupWarnings {
