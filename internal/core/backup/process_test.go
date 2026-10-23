@@ -14,6 +14,7 @@ import (
 )
 
 func TestKillDuringCopyLeavesNoGeneration(t *testing.T) {
+	t.Parallel()
 	if root := os.Getenv("LINA_BACKUP_CRASH_ROOT"); root != "" {
 		cfg, _ := fixtureAt(t, root)
 		if err := os.Mkdir(filepath.Join(root, "workspace"), 0700); err != nil {
