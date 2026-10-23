@@ -148,10 +148,16 @@ static int read_right(void *context, const char *name, struct lina_right *out) {
   (void)context;
   CFDictionaryRef stored = NULL;
   OSStatus status = AuthorizationRightGet(name, &stored);
-  if (status != errAuthorizationSuccess || stored == NULL) {
-    if (stored != NULL) CFRelease(stored);
+  if (status == errAuthorizationDenied || (status == errAuthorizationSuccess && stored == NULL)) {
     // A right that is not in the database is absent, not unreadable.
+    if (stored != NULL) CFRelease(stored);
     return 1;
+  }
+  if (status != errAuthorizationSuccess) {
+    if (stored != NULL) CFRelease(stored);
+    // An unreadable definition is never treated as absent: the install would
+    // otherwise overwrite a rule it could not back up.
+    return -1;
   }
   lina_right_clear(out);
   CFIndex count = CFDictionaryGetCount(stored);

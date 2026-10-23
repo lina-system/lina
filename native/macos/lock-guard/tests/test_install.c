@@ -159,6 +159,22 @@ static void install_refuses_unmeasured_build(void) {
   CHECK(lina_install(&intel.host, &paths, &input).code == LINA_INSTALL_DEVICE);
 }
 
+static void install_refuses_an_unreadable_rule(void) {
+  struct fake_host fake;
+  setup(&fake);
+  struct lina_right unknown;
+  lina_right_clear(&unknown);
+  lina_right_set_string(&unknown, "class", "rule");
+  fake_right_set(&fake, LINA_RIGHT_SCREENSAVER, &unknown);
+  // The database returns an error instead of a definition.
+  fake.read_right_status = -1;
+  struct lina_outcome outcome = lina_install(&fake.host, &paths, &input);
+  CHECK(outcome.code == LINA_INSTALL_RULE);
+  CHECK_STR(outcome.reason, "rule-unreadable");
+  CHECK(fake.write_count == 0);
+  CHECK(!fake.bundle_present);
+}
+
 static void install_restores_when_read_back_differs(void) {
   struct fake_host fake;
   setup(&fake);
@@ -257,5 +273,6 @@ void test_install(void) {
   install_cleans_up_after_failed_self_test();
   install_stops_on_bad_signature();
   install_keeps_an_earlier_install_working();
+  install_refuses_an_unreadable_rule();
   install_restores_when_read_back_differs();
 }
