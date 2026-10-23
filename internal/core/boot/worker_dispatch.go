@@ -151,9 +151,9 @@ func (r *conversationRuntime) bindDispatchedWorker(record dispatch.Record, adapt
 	}
 	owner := newConversationView(r.router.root, record.Owner, record.Manager)
 	owner.codingDelivery = delivery
-	// Dispatch owns the task reservation and subsequent turns. Reuse the
-	// scheduled-session control path for owner steering and cancellation.
-	e := &workerSession{scheduled: true, cancelTask: func(ctx context.Context) error { return r.workerDispatch.Cancel(ctx, record.ID) }, adapter: adapter, close: func() error { return adapter.Interrupt(context.Background(), thread, worker.UserCancel) }, origin: owner, input: input, thread: thread, executionGeneration: record.Attempt, packet: packet, workdir: workdir, started: time.Now(), done: make(chan struct{}), approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}, active: map[string]lease.Lease{}}
+	// Dispatch owns cancellation and the task reservation. Owner steering is
+	// restricted to the active turn, independently of scheduled-card ownership.
+	e := &workerSession{cancelTask: func(ctx context.Context) error { return r.workerDispatch.Cancel(ctx, record.ID) }, adapter: adapter, close: func() error { return adapter.Interrupt(context.Background(), thread, worker.UserCancel) }, origin: owner, input: input, thread: thread, executionGeneration: record.Attempt, packet: packet, workdir: workdir, started: time.Now(), done: make(chan struct{}), approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}, active: map[string]lease.Lease{}}
 	r.workers.mu.Lock()
 	r.workers.sessions[thread.ID] = e
 	r.workers.mu.Unlock()

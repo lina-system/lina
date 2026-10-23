@@ -317,8 +317,12 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 	return r.workerOperationWithOwner(ctx, name, turnID, input, in, false)
 }
 
+// Task-controlled sessions use their scheduler or dispatcher for admission.
+// Owner follow-ups can steer an active turn but cannot start a fresh one.
+func (e *workerSession) taskControlled() bool { return e.scheduled || e.cancelTask != nil }
+
 // Only the authenticated owner-control path can set owner. It is not a model
-// argument and permits steering an active scheduled turn, never starting one.
+// argument and permits steering an active task-controlled turn, never starting one.
 func (r *conversationRuntime) workerOperationWithOwner(ctx context.Context, name, turnID string, input ledger.Event, in tools.Input, owner bool) (tools.Result, error) {
 	if name == "worker_start" || name == "worker_input" || name == "worker_interrupt" {
 		defer r.notifyWorkerRunning()
@@ -467,8 +471,8 @@ func (r *conversationRuntime) workerOperationWithOwner(ctx context.Context, name
 		body, err := json.Marshal(map[string]any{"rows": rows})
 		return tools.Result{State: tools.Applied, Body: body}, err
 	}
-	if entry.scheduled && name == "worker_input" && !owner {
-		return tools.Result{State: tools.Failed, Body: workerError(errors.New("scheduled work is controlled by the scheduler"))}, nil
+	if entry.taskControlled() && name == "worker_input" && !owner {
+		return tools.Result{State: tools.Failed, Body: workerError(errors.New("worker follow-up requires owner control"))}, nil
 	}
 	// Read the authoritative snapshot immediately before any control. The model's
 	// handle is compared to it; a thread id alone never authorizes input.
@@ -495,8 +499,8 @@ func (r *conversationRuntime) workerOperationWithOwner(ctx context.Context, name
 	if snap.Thread.TurnID != a.Turn || snap.Thread.ProcessGeneration != a.Generation || snap.Thread.BindingEpoch != a.Binding {
 		return tools.Result{State: tools.Failed, Body: workerError(errors.New("stale worker handle"))}, nil
 	}
-	if entry.scheduled && name == "worker_input" && snap.State != worker.Active {
-		return tools.Result{State: tools.Failed, Body: workerError(errors.New("scheduled worker is not active"))}, nil
+	if entry.taskControlled() && name == "worker_input" && snap.State != worker.Active {
+		return tools.Result{State: tools.Failed, Body: workerError(errors.New("worker is not active"))}, nil
 	}
 	var activity lease.Lease
 	if name == "worker_input" && snap.State == worker.Idle {
@@ -529,7 +533,7 @@ func (r *conversationRuntime) workerOperationWithOwner(ctx context.Context, name
 	// Keep the new activity private until its returned turn id is bound. A late
 	// finish for the prior turn can only release that prior turn's activity.
 	entry.mu.Lock()
-	if name == "worker_input" && !entry.scheduled && r.work != nil {
+	if name == "worker_input" && !entry.taskControlled() && r.work != nil {
 		if snap.State == worker.Idle {
 			// Snapshot is an authoritative terminal observation too. A delayed
 			// finish notification cannot retain the old reservation or release
@@ -559,8 +563,8 @@ func (r *conversationRuntime) workerOperationWithOwner(ctx context.Context, name
 	}
 	switch name {
 	case "worker_input":
-		if entry.scheduled {
-			// Input may start an idle turn. Scheduled owner follow-ups must
+		if entry.taskControlled() {
+			// Input may start an idle turn. Task-controlled owner follow-ups must
 			// remain steer-only even if completion races this snapshot.
 			steerer, ok := entry.adapter.(interface {
 				Steer(context.Context, worker.Thread, worker.Input) error
@@ -596,7 +600,7 @@ func (r *conversationRuntime) workerOperationWithOwner(ctx context.Context, name
 			entry.mu.Unlock()
 			return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
 		}
-		if !entry.scheduled {
+		if !entry.taskControlled() {
 			// Input may observe an idle worker after our active snapshot and start
 			// another turn. Bind every accepted input before queued completions can
 			// acquire mu; ambiguity keeps a reservation that no old event can free.

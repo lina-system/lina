@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	goal "github.com/thisisjun786/lina/internal/core/work/goal"
 	"github.com/thisisjun786/lina/internal/core/worker"
+	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/tools"
 	"os"
 	"path/filepath"
@@ -120,7 +122,7 @@ func TestWorkMethodDispatchUsesPreparedSourceRecord(t *testing.T) {
 }
 
 func TestDelegatedGoalWorkerRetainsRequesterBinding(t *testing.T) {
-	r := controlRuntime(t)
+	r := runRuntime(t)
 	now := time.Now()
 	input, err := r.journal().Admit(t.Context(), guard.EntryOwner, ledger.Input{ID: "goal-worker-request", ConversationID: r.conversation, AgentID: r.agent, PersonID: r.person, Surface: ledger.Surface{Kind: "app"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Create the result"})
 	if err != nil {
@@ -197,6 +199,21 @@ func TestDelegatedGoalWorkerRetainsRequesterBinding(t *testing.T) {
 	}
 	if probe.inputs != 2 {
 		t.Fatalf("control calls=%d", probe.inputs)
+	}
+	probe.snapshot.State = worker.Idle
+	if err := r.ownerWorkerControl(t.Context(), clientsrv.Session{PersonID: r.person}, "session:goal-thread", &r.conversation, "idle-steer", "Continue"); err == nil {
+		t.Fatal("dispatched worker started a new idle turn")
+	}
+	probe.snapshot.State = worker.Active
+	cancelled := 0
+	r.workers.sessions[probe.snapshot.Thread.ID].cancelTask = func(context.Context) error { cancelled++; return nil }
+	stopped, err := r.stopAllRuns(t.Context(), clientsrv.Session{PersonID: r.person}, protocol.Envelope{MessageID: "stop-goal", Payload: protocol.MultiTaskControl{Action: "stop_all", ConversationID: &r.conversation}})
+	if err != nil {
+		t.Fatalf("requester could not stop dispatched worker: %v", err)
+	}
+	count := stopped.Payload.(protocol.MultiTaskControl).Count
+	if cancelled != 1 || probe.interrupts != 1 || count == nil || *count != "1" {
+		t.Fatalf("cancels=%d interrupts=%d count=%v", cancelled, probe.interrupts, count)
 	}
 	record.Origin.Conversation = "unrelated"
 	if _, _, err := r.dispatchRecoveryView(t.Context(), record); err == nil {
