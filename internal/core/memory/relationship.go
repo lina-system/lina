@@ -3,7 +3,6 @@ package memory
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 )
@@ -38,7 +37,7 @@ func endRelationshipPredecessor(ctx context.Context, tx *canon.Tx, replacement I
 	}
 	previous.ValidUntil = replacement.ValidFrom
 	previous.Revision++
-	raw, err := json.Marshal(previous)
+	raw, err := marshalRecord(previous)
 	if err != nil {
 		return err
 	}

@@ -88,6 +88,8 @@ type conversationRuntime struct {
 	coordinator     *conversationRuntime
 
 	materials        *conversationMaterials
+	recallStop       context.CancelFunc
+	recallDone       chan struct{}
 	assets           *assets.Store
 	root             string
 	steering         map[string][]acceptedSteering
@@ -393,6 +395,14 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 		r.publications.stop()
 		select {
 		case <-r.publications.done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	if r.recallStop != nil {
+		r.recallStop()
+		select {
+		case <-r.recallDone:
 		case <-ctx.Done():
 			return ctx.Err()
 		}

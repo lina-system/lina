@@ -327,6 +327,16 @@ func (s *managementSession) response(ctx context.Context, c shellClient, e proto
 			lines = append(lines, fmt.Sprintf("%d", len(*p.Items)))
 			for _, item := range *p.Items {
 				lines = append(lines, item.ItemID+"  "+item.Holder+"  "+design.Text(m.styles.options.Language, item.Scope), item.Content, strings.Join(item.Evidence, "  "))
+				if item.EvidenceDetails != nil {
+					for _, ref := range *item.EvidenceDetails {
+						if ref.Quote != nil {
+							lines = append(lines, *ref.Quote)
+						}
+						if ref.Status != nil {
+							lines = append(lines, ref.Reference+"  "+*ref.Status)
+						}
+					}
+				}
 			}
 		}
 		m.openPager(strings.Join(lines, "\n"))
