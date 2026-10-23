@@ -31,7 +31,8 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 	binary, _ := proc.LookPath("agy")
 	codexBinary, _ := proc.LookPath("codex")
 	claude, _ := proc.LookPath("claude")
-	if binary == "" && codexBinary == "" && claude == "" {
+	factories := dispatch.InstalledACPFactories(dispatch.Config{Environment: proc.WorkerEnvironment(), Epoch: r.epoch, Activities: r.activities})
+	if binary == "" && codexBinary == "" && claude == "" && len(factories) == 0 {
 		return nil
 	}
 	gh, err := proc.LookPath("gh")
@@ -46,7 +47,6 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	var factories []dispatch.Factory
 	if binary != "" {
 		factories = append(factories, dispatch.AntigravityFactory(dispatch.Config{Binary: binary, Environment: proc.WorkerEnvironment(), Epoch: r.epoch, Activities: r.activities}))
 	}
