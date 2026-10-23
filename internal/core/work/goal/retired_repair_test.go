@@ -35,6 +35,11 @@ func TestRetiredSiblingRepairAssessmentIsDerivedAgain(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// Reporting retains superseded history. The next derivation reconciles
+	// that retirement before planning from the corrected definition.
+	if err := e.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	g := revisionSnapshot(t, e).Goals[0]
 	if b := g.Tasks[1]; b.Stage != TaskQAFailed || b.RepairAsked || b.RepairedBy != "" || b.QA.Ref != "failed-qa" {
 		t.Fatalf("retired assessment stranded or changed its task: %+v", b)
