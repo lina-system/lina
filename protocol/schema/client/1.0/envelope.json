@@ -2149,6 +2149,10 @@
     "item_done": {
       "type": "object",
       "properties": {
+        "details": {
+          "type": "string",
+          "maxLength": 4096
+        },
         "stream": {
           "$ref": "#/$defs/stream_metadata"
         },

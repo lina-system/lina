@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -57,12 +56,7 @@ func TestM1TUIIdentityFromAgentStore(t *testing.T) {
 				} else if persona.AgentID != want.AgentID || persona.Name != want.Name || persona.OwnerPersonID != owner || persona.Layers != want.Layers {
 					t.Errorf("provider persona differs from the active agent store: %+v", persona)
 				}
-				var enabled []json.RawMessage
-				if err := json.Unmarshal(instructionBlock(body.Instructions, "enabled_tools"), &enabled); err != nil {
-					t.Errorf("missing enabled tool list in provider instructions: %v", err)
-				} else if !reflect.DeepEqual(mustJSON(t, enabled), mustJSON(t, append([]json.RawMessage{}, body.Tools...))) {
-					t.Error("instructions advertise tools different from this request's declarations")
-				}
+				assertEnabledToolNames(t, body.Instructions, body.Tools)
 				for _, vendor := range []string{"anthropic", "claude", "openai", "sdk"} {
 					if strings.Contains(strings.ToLower(body.Instructions), vendor) {
 						t.Errorf("identity instructions name a model vendor/runtime: %s", vendor)
