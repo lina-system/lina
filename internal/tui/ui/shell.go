@@ -165,6 +165,10 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.accountPaste(msg.Content)
 			return m, nil
 		}
+		if p := m.conversation.pager; p.open && p.surface != nil && p.surface.editing >= 0 {
+			p.surface.edit += strings.ReplaceAll(sanitize.Display(msg.Content), "\n", " ")
+			return m, nil
+		}
 		if m.hasComposer() {
 			return m, m.editComposer(tea.PasteMsg{Content: sanitize.Display(msg.Content)})
 		}

@@ -713,6 +713,22 @@ that order, the conversation's reading position or the draft.
 
 E11 to E14 read the pass from Core's ledger, not from timing. The run records N, the frames, the measured times and each result. A miss is investigated before a bound changes. The evaluation does not establish whether Core's Now lines and the manager's step names are good words for the person, which needs a check against human labels, or whether the person asks "what is running" less often; the research note names the field measurement for that.
 
+The harness and its self-test live in `TestM3WorkPanelEvaluation` and
+`TestM3WorkPanelChecksRejectWrongFrames`. The fixture carries the fixed cases,
+the graph corpus and the name corpus. The driver acts as the fixture manager: it
+admits each 일's graph through Core's goal engine as a step-graph revision, then
+records the 일's work with a stub worker session against that goal. It reads
+Core's own card order, card fields and projected stage list as its oracle — the
+stage list must match the corpus graph in steps, depth and parallel groups, so a
+lost blocker fails the run — and records every settled 120x34 frame in both
+languages and glyph modes. A check whose input the build does not publish yet is
+reported as missing and never as a pass: E4 and E8 to E9 need the injected step
+transitions of #771, E6 and E7 the opened 일 view of #770, and E11 to E14 the
+scheduling passes of #772 and #773. The self-test
+builds a well-formed recording, changes one thing per check, and requires that
+check to fail and the others to stay green except where they read the same
+evidence.
+
 E10 also uses `e2e/m3/work-panel-views.json` and
 `TestM3WorkPanelViewsInstalledCore`: installed Core replays a mixed-state work
 ledger and supplies the card fields to the real TUI at 120x34 and 100x34, with
@@ -1371,10 +1387,13 @@ the two-mode comparison. S11 requires every width observation from 100 through
 greater width in that range. SIGINT and SIGTERM cancel the scenario runner through
 its terminal-restoration paths.
 
-LN-85 delivers the harness and scenario validation. The confirmed terminal matrix,
-owner-run S1–S7 and S9–S11 evidence, and final library decision remain in
-[follow-up #371](https://github.com/thisisjun786/lina/issues/371), including #87's
-outstanding acceptance. Harness completion does not establish the spike gate.
+LN-85 delivers the harness and scenario validation. [#86](https://github.com/thisisjun786/lina/issues/86)
+records the proposed terminal matrix in `evidence/tui-spike/terminals.json`.
+Owner confirmation of that list is still pending and is the first Done-when item
+of [follow-up #371](https://github.com/thisisjun786/lina/issues/371), which also
+owns the confirmed matrix, owner-run S1–S7 and S9–S11 evidence and the final
+library decision, including #87's outstanding acceptance. Harness completion
+does not establish the spike gate.
 
 Fallbacks, in order. F1: Bubble Tea with its own probe, a quiet spinner, a lower frame rate while streaming and a frame memo. F2: a row-string renderer on Ultraviolet with changed rows only, in synchronized output. F3: tcell v3. The reducer, render, layout and `clientapi` do not change in any fallback.
 

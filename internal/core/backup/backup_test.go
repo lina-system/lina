@@ -70,6 +70,7 @@ func noGeneration(t *testing.T, root string) {
 	}
 }
 func TestGenerationAndHashMismatch(t *testing.T) {
+	t.Parallel()
 	for _, corrupt := range []bool{false, true} {
 		t.Run(map[bool]string{false: "whole", true: "corrupt material"}[corrupt], func(t *testing.T) {
 			cfg, store := fixture(t)
@@ -123,6 +124,7 @@ func TestGenerationAndHashMismatch(t *testing.T) {
 	}
 }
 func TestFailureBeforePublication(t *testing.T) {
+	t.Parallel()
 	for _, stage := range []string{"removals", "snapshot", "copy", "verify", "publish"} {
 		t.Run(stage, func(t *testing.T) {
 			cfg, s := fixture(t)
@@ -142,6 +144,7 @@ func TestFailureBeforePublication(t *testing.T) {
 	}
 }
 func TestMalformedRemovalsPreventCopy(t *testing.T) {
+	t.Parallel()
 	cfg, s := fixture(t)
 	material(t, s)
 	if err := os.MkdirAll(filepath.Join(cfg.Root, "backups"), 0700); err != nil {

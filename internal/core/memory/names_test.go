@@ -10,6 +10,7 @@ import (
 )
 
 func TestNameIsCommonKnowledge(t *testing.T) {
+	t.Parallel()
 	db := database(t)
 	in := proposal("A", "The desk computer is Birch, formerly Cedar.")
 	if err := json.Unmarshal([]byte(`{"kind":"name","subject":{"kind":"world","id":"desk-computer"},"name":{"current":"Birch","retired_aliases":["Cedar"]}}`), &in.Item); err != nil {
@@ -35,6 +36,7 @@ func TestNameIsCommonKnowledge(t *testing.T) {
 }
 
 func TestNameCorrectionsRetainIdentityAndAliasesAcrossAgents(t *testing.T) {
+	t.Parallel()
 	db := database(t)
 	defer func() { assertMemoryCitations(t, db) }()
 	in := proposal("A", "The computer is Cedar.")
@@ -83,6 +85,7 @@ func TestNameCorrectionsRetainIdentityAndAliasesAcrossAgents(t *testing.T) {
 }
 
 func TestNameScopeAndCompleteSelection(t *testing.T) {
+	t.Parallel()
 	db := database(t)
 	add := func(subject string, change func(*Write)) Item {
 		in := proposal("A", "The name is "+subject)
@@ -120,6 +123,7 @@ func TestNameScopeAndCompleteSelection(t *testing.T) {
 }
 
 func TestInvalidNameValues(t *testing.T) {
+	t.Parallel()
 	for _, value := range []*NameValue{nil, {Current: ""}, {Current: "Birch", RetiredAliases: []string{"birch"}}, {Current: "Birch", RetiredAliases: []string{"Cedar", "CEDAR"}}, {Current: "Birch\nextra"}} {
 		in := proposal("A", "name")
 		in.Item.Kind = Name

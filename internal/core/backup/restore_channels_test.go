@@ -18,6 +18,7 @@ import (
 )
 
 func TestRestoreInvalidatesChannelDeliveries(t *testing.T) {
+	t.Parallel()
 	for _, targetKind := range []string{"same", "other", "resumed"} {
 		t.Run(targetKind, func(t *testing.T) {
 			cfg, assets := fixture(t)
