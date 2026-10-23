@@ -24,7 +24,7 @@ func (r *conversationRuntime) installedCodeWork() (*WorkConfig, error) {
 			return &codeGoalDriver{runtime: r, engine: e, connections: connections}, nil
 		},
 		MainHost: func(ctx context.Context) (goal.Node, error) {
-			workers := map[string]bool{"antigravity": r.workerDispatch != nil && len(connections.Repositories) > 0}
+			workers := map[string]bool{"antigravity": r.workerDispatch.WorkerAvailable("antigravity") && len(connections.Repositories) > 0}
 			sample, err := r.codeHost(ctx, connections, workers)
 			if err != nil {
 				return goal.Node{ID: r.main, ObservedAt: time.Now().Unix()}, nil
