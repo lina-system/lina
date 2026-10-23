@@ -11,6 +11,12 @@ on:
     paths:
       - 'native/macos/**'
       - '.github/workflows/macos-unlock-plugin.yml'
+  # A branch push is the only trigger a worker can count on: the bundle is
+  # macOS-only, so feature branches need it before the pull request runs it.
+  push:
+    paths:
+      - 'native/macos/**'
+      - '.github/workflows/macos-unlock-plugin.yml'
   workflow_dispatch:
 
 permissions:
