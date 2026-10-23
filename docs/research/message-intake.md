@@ -159,7 +159,7 @@ A question is warranted only when two targets still tie after everything Core an
 - **Every input gets a recorded target.** Half of the agents' wrong picks were lost or re-posted messages. A binding for every input makes a dropped one visible.
 - **Several requests in one message** (12 percent) get one binding each.
 
-These are implemented in [What a message is about](../design/conversation-and-memory.md#what-a-message-is-about) and [Messages about work](../design/work-and-delegation.md#messages-about-work).
+The design is [What a message is about](../design/conversation-and-memory.md#what-a-message-is-about) and [Messages about work](../design/work-and-delegation.md#messages-about-work). Issues #785 to #788 implement it, the replay first.
 
 ## Limits
 

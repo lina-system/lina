@@ -324,6 +324,8 @@ It asks one question, with its recommended pick first and the tied targets as on
 
 **Record and measurement.** The binding is a system event linked to the input event. It holds the target, the candidates offered, the rule or judge that decided, the judge's probabilities when it answered, and any later move. Every input of the person gets one, so an input that was never answered shows. Core counts moves per 100 bindings by who decided. The [intake replay](../research/message-intake.md#replay-evaluation) scores every change to the rules, the candidate ranking, a judge or the instructions before it enters use: right item, right new or existing, and asked when it should and not otherwise. A change that raises silent wrong picks on running work does not ship.
 
+Implementation: #785 (the intake replay), #786 (the binding event, candidates and Core rules), #787 (the model's part, asking and the duplicate check) and #788 (showing and moving).
+
 ### Request assembly
 
 - LINA Core assembles every instruction in a request. A request carries no base instructions of a coding worker; LINA Core puts the agent's persona and the context in directly.
