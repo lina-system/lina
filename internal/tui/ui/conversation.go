@@ -14,6 +14,10 @@ import (
 )
 
 type conversationView struct {
+	workFocused  bool
+	workSelected string
+	workIndex    int
+	workOffset   int
 	undo         []state.Draft
 	history      *inputHistory
 	scroll       int
@@ -46,6 +50,9 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 	}
 	if m.conversation.pager.open {
 		return m.pagerKey(msg, key.Name)
+	}
+	if m.conversation.workFocused {
+		return m.workPanelKey(key.Name)
 	}
 	if m.conversation.cardsFocused && (key.Name == "up" || key.Name == "down") {
 		cards := m.resultCards()
@@ -124,8 +131,11 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		m.openRunning()
 		return nil
 	case "ctrl+p":
-		m.openPager(m.topicText("progress"))
-		m.conversation.pager.progress = true
+		if !m.hasCapability("progress") {
+			m.openPager(design.Text(m.styles.options.Language, "capability_not_negotiated"))
+			return nil
+		}
+		m.conversation.workFocused = true
 		return m.subscribeSnapshot("progress")
 	case "tab", "shift+tab":
 		m.conversation.cardsFocused = !m.conversation.cardsFocused

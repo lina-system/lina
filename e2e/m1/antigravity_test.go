@@ -19,6 +19,13 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+// TestM3AntigravityThroughInstalledCore (m3/antigravity.json) dispatches
+// through installed Core's conversation tool, starts its supervised headless
+// worker in a new worktree, produces a real file and commit, and verifies a
+// recorded PR at that head. Separate cases cover soft denial despite SUCCESS,
+// exit zero without result, pending checks, and durable conversation results
+// without execution replay on restart. No personal worker account or GitHub
+// write is used.
 func TestM3AntigravityThroughInstalledCore(t *testing.T) {
 	t.Parallel()
 	testHeadlessWorkerThroughInstalledCore(t, "../m3/antigravity.json", true)
@@ -33,6 +40,7 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 	var scenario struct {
 		Cases []struct {
 			Name, Expected, Preset, Choice string
+			Bridge                         bool `json:"bridge"`
 			LegacyAdmission                bool `json:"legacy_admission"`
 			PendingAdmission               bool `json:"pending_admission"`
 			HostCapacity                   bool `json:"host_capacity"`
@@ -152,10 +160,10 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 				git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "Move base after validation")
 				sourceBase.Store(git("rev-parse", "dev"))
 			}
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				providerCalls.Add(1)
 				var req struct {
-					Tools []struct{ Name string }
+					Tools []json.RawMessage
 					Input []json.RawMessage
 				}
 				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -164,7 +172,12 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 				}
 				// Move the branch before returning any manager response, so
 				// execution cannot race this fixture's admission boundary.
-				for _, tool := range req.Tools {
+				for _, raw := range req.Tools {
+					var tool struct{ Name string }
+					if err := json.Unmarshal(raw, &tool); err != nil {
+						t.Error(err)
+						return
+					}
 					if tool.Name == "coding_decision" && test.MoveBase && moved.CompareAndSwap(false, true) {
 						moveBase()
 					}
@@ -177,10 +190,7 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 				}
 				if scenario.Conformance || scenario.Delivery {
 					encoded, _ := json.Marshal(req.Input)
-					manager := false
-					for _, tool := range req.Tools {
-						manager = manager || tool.Name == "coding_decision"
-					}
+					manager := toolReachable(req.Tools, "coding_decision")
 					var last struct{ Type string }
 					if len(req.Input) > 0 {
 						_ = json.Unmarshal(req.Input[len(req.Input)-1], &last)
@@ -210,11 +220,7 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 				}
 				callNumber := calls.Add(1)
 				if callNumber == 1 || test.Choice == "overlap" && callNumber == 3 {
-					for _, tool := range req.Tools {
-						if tool.Name == "dispatch_work" {
-							offered.Store(true)
-						}
-					}
+					offered.Store(toolReachable(req.Tools, "dispatch_work"))
 					if !offered.Load() {
 						t.Error("running Core does not offer dispatch_work with installed worker")
 						emitResponse(w, "Unavailable.", true)
@@ -230,7 +236,11 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 					if scenario.Worker == "claude" {
 						args["worker"] = scenario.Worker
 					}
-					emitPersonaCall(w, "worker-start", "dispatch_work", args)
+					if test.Bridge {
+						emitPersonaCall(w, "worker-start", "call_tool", map[string]any{"name": "dispatch_work", "arguments": args})
+					} else {
+						emitPersonaCall(w, "worker-start", "dispatch_work", args)
+					}
 				} else {
 					code := test.ToolCode
 					if code == "" {
@@ -241,7 +251,7 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 					}
 					emitResponse(w, "Task accepted.", true)
 				}
-			}))
+			})))
 			defer server.Close()
 			h, bootstrap := installedConversationHarness(t, server.URL)
 			ids := seedCodingFixture(t, h, bootstrap, test.Preset)

@@ -48,7 +48,7 @@ func (s *Session) notification(raw []byte) error {
 		if turn == "" {
 			return errors.New("Codex turn completed without id")
 		}
-		if s.finished[turn] {
+		if s.finishEvents[turn] {
 			return nil
 		}
 		f := &worker.Finish{}
@@ -69,6 +69,10 @@ func (s *Session) notification(raw []byte) error {
 		if s.startingTurn && (s.snapshot.Thread.TurnID == "" || s.finished[s.snapshot.Thread.TurnID]) {
 			s.snapshot.Thread.TurnID = turn
 		}
+		if s.finishEvents == nil {
+			s.finishEvents = map[string]bool{}
+		}
+		s.finishEvents[turn] = true
 		s.finished[turn] = true
 		s.clearRequests(turn)
 		if s.snapshot.Thread.TurnID == turn {
@@ -81,6 +85,22 @@ func (s *Session) notification(raw []byte) error {
 		thread, turn = p.ThreadId, p.TurnId
 		event.Kind = worker.ProgressEvent
 		event.Progress = &worker.Progress{ItemID: p.ItemId, Phase: "delta", Text: p.Delta}
+	case n.ItemStarted != nil:
+		p := n.ItemStarted.Params
+		thread, turn = p.ThreadId, p.TurnId
+		event.Kind = worker.ProgressEvent
+		phase := "started"
+		switch {
+		case p.Item.CommandExecution != nil:
+			phase = "command"
+		case p.Item.FileChange != nil:
+			phase = "file_change"
+		case p.Item.AgentMessage != nil:
+			phase = "message"
+		case p.Item.McpToolCall != nil || p.Item.DynamicToolCall != nil:
+			phase = "tool"
+		}
+		event.Progress = &worker.Progress{Phase: phase}
 	case n.ItemCompleted != nil:
 		p := n.ItemCompleted.Params
 		thread, turn = p.ThreadId, p.TurnId

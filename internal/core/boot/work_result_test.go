@@ -28,7 +28,8 @@ import (
 func TestReportWorkRequiresObservedTermination(t *testing.T) {
 	for _, state := range []string{"running", "unknown_after_restart"} {
 		t.Run(state, func(t *testing.T) {
-			r, _, agent, _ := managementFixture(t)
+			r, _, _, _ := managementFixture(t)
+			agent := workAgentFixture(t, r)
 			r.agent, r.conversation = agent, "conversation"
 			r.personaMu = &sync.Mutex{}
 			r.personaGrants = map[string]grant.Grant{}
@@ -55,7 +56,7 @@ func TestReportWorkRequiresObservedTermination(t *testing.T) {
 				t.Fatal(err)
 			}
 			bindings := map[string]loop.Tool{}
-			if err = r.prepareWorkTools("manager-turn", bindings); err != nil {
+			if _, err = r.prepareWorkTools("manager-turn", nil, bindings); err != nil {
 				t.Fatal(err)
 			}
 			call := func(name, id string, args any) loop.Result {
@@ -96,7 +97,7 @@ func TestReportWorkRequiresObservedTermination(t *testing.T) {
 				if err = r.work.Recover(t.Context(), "restart"); err != nil {
 					t.Fatal(err)
 				}
-				if err = r.prepareWorkTools("restarted-manager-turn", bindings); err != nil {
+				if _, err = r.prepareWorkTools("restarted-manager-turn", nil, bindings); err != nil {
 					t.Fatal(err)
 				}
 			}

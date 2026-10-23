@@ -27,6 +27,8 @@ import (
 	"github.com/thisisjun786/lina/kit/secret"
 )
 
+// TestM1WebUnconfigured checks installed Core's explicit missing-provider
+// status, absence of web declarations and one-round notice.
 func TestM1WebUnconfigured(t *testing.T) {
 	t.Parallel()
 
@@ -39,7 +41,7 @@ func TestM1WebUnconfigured(t *testing.T) {
 		t.Fatal(err)
 	}
 	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		var request struct {
 			Instructions string
@@ -66,7 +68,7 @@ func TestM1WebUnconfigured(t *testing.T) {
 			t.Error("missing explicit web setup status and notice in model instructions")
 		}
 		emitResponse(w, scenario.Notice, true)
-	}))
+	})))
 	defer server.Close()
 	h, start := installedConversationHarness(t, server.URL)
 	core := start(true)
@@ -162,6 +164,13 @@ func TestM1WebSetupPersistsWithoutLeakingKey(t *testing.T) {
 	h.stopCore(core)
 }
 
+// TestM1WebSearchExtractAndCitation runs the production Core composition in a
+// separate test helper with a synthetic manifest recording that executable, and
+// injects only the Firecrawl HTTP transport. The real TUI saves a hidden key;
+// the protocol client approves each network request; the real provider adapter
+// searches and extracts against stub responses; TUI cells show both running
+// activities; the scripted model cites the source URL. No real provider account
+// is used, and model compliance beyond the scripted boundary is not claimed.
 func TestM1WebSearchExtractAndCitation(t *testing.T) {
 	t.Parallel()
 
@@ -171,7 +180,7 @@ func TestM1WebSearchExtractAndCitation(t *testing.T) {
 	const providerKey = "fc-synthetic-private-key"
 	// A successful provider may reflect the credential using JSON escapes.
 	const escapedKey = `\u0066c-synthetic-private-key`
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v2/search" || r.URL.Path == "/v2/scrape" {
 			if r.Header.Get("Authorization") != "Bearer "+providerKey {
 				t.Error("stored key was not sent to provider")
@@ -209,13 +218,7 @@ func TestM1WebSearchExtractAndCitation(t *testing.T) {
 		if strings.Contains(string(mustJSON(t, req)), providerKey) {
 			t.Error("decoded provider credential reached model request")
 		}
-		names := map[string]bool{}
-		for _, raw := range req.Tools {
-			var d struct{ Name string }
-			_ = json.Unmarshal(raw, &d)
-			names[d.Name] = true
-		}
-		if !names["web_search"] || !names["web_extract"] {
+		if !toolReachable(req.Tools, "web_search") || !toolReachable(req.Tools, "web_extract") {
 			t.Error("web tools missing in normal turn")
 		}
 		n := calls.Add(1)
@@ -254,7 +257,7 @@ func TestM1WebSearchExtractAndCitation(t *testing.T) {
 			t.Error("unexpected model call")
 			emitResponse(w, "Unexpected.", true)
 		}
-	}))
+	})))
 	defer server.Close()
 	h, _ := installedConversationHarness(t, server.URL)
 	// The synthetic installation records the helper as its Core artifact. The

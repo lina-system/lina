@@ -31,7 +31,7 @@ func TestConversationSkillAuthorityAndReceipts(t *testing.T) {
 		t.Fatal(err)
 	}
 	bindings := map[string]loop.Tool{}
-	if err := r.prepareSkillTools("turn", bindings); err != nil {
+	if _, err := r.prepareSkillTools("turn", nil, bindings); err != nil {
 		t.Fatal(err)
 	}
 	call := func(id, name string, args any) loop.Result {

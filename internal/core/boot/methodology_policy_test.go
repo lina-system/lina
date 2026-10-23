@@ -31,7 +31,7 @@ func TestPresetCeilingSurvivesPersonaEditsRenameAndChannelScope(t *testing.T) {
 				view.channelBinding = &channels.Binding{Person: r.person, Agent: a.ID, Scope: channels.Scope{Tools: true}}
 				bindings := map[string]loop.Tool{}
 				turnID := a.ID + "-turn"
-				if err = view.prepareWorkerTools(turnID, ledger.Event{}, bindings); err != nil {
+				if _, err = view.prepareWorkerTools(turnID, &toolPreparation{event: ledger.Event{}}, bindings); err != nil {
 					t.Fatal(err)
 				}
 				result := bindings["worker_start"].Execute(t.Context(), provider.ToolCall{ID: "attempt", Name: "worker_start", Arguments: `{"workdir":"/tmp/synthetic","task_packet":"execute accepted draft"}`})
@@ -40,14 +40,14 @@ func TestPresetCeilingSurvivesPersonaEditsRenameAndChannelScope(t *testing.T) {
 				if result.Code != loop.Denied || refusal.Code != "preset_effect_limit" || refusal.Boundary == "" {
 					t.Fatalf("layer %d lifted policy: %+v", i, result)
 				}
-				if err = view.prepareMethodologyTools(turnID, bindings); err != nil {
+				if _, err = view.prepareMethodologyTools(turnID, nil, bindings); err != nil {
 					t.Fatal(err)
 				}
 				calculation := bindings["calculate"].Execute(t.Context(), provider.ToolCall{ID: "calculation", Name: "calculate", Arguments: `{"expression":"100*0.07"}`})
 				if calculation.Code != loop.OK {
 					t.Fatalf("private calculation refused: %+v", calculation)
 				}
-				if err = view.prepareWorkTools(turnID, bindings); err != nil {
+				if _, err = view.prepareWorkTools(turnID, nil, bindings); err != nil {
 					t.Fatal(err)
 				}
 				landing := bindings["land_work_result"].Execute(t.Context(), provider.ToolCall{ID: "land", Name: "land_work_result", Arguments: `{"task_id":"synthetic-draft","receipt_id":"receipt","fingerprint":"fingerprint","judgment":"Accepted draft; copy it to the supplied destination."}`})

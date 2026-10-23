@@ -13,6 +13,14 @@ import (
 	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 )
 
+// TestM2ClaudeWorkerThroughInstalledCore (m2/claude-worker.json) runs
+// dispatch_work with worker=claude through installed Core. A headless fixture
+// worker writes and commits a real artifact, opens a synthetic PR and reports a
+// final result while staying alive. Core must reap it, retain the result and PR
+// in an adapter-derived receipt, and preserve the conversation result on
+// restart. Other cases cover permission denial, exit zero without a result and
+// pending PR checks. No personal account or GitHub write is used. Run with go
+// test ./e2e/m1 -run '^TestM2ClaudeWorkerThroughInstalledCore$'.
 func TestM2ClaudeWorkerThroughInstalledCore(t *testing.T) {
 	t.Parallel()
 	testHeadlessWorkerThroughInstalledCore(t, "../m2/claude-worker.json", false)
@@ -71,6 +79,9 @@ func assertClaudeReceipt(t *testing.T, h *harness, mode string) {
 	}
 }
 
+// TestM2HeadlessWorkerRecovery runs m2/headless-worker-recovery.json through
+// installed Core, checking Claude dispatch's two attempts, retained receipt
+// artifacts and durable decision with a synthetic worker and no account.
 func TestM2HeadlessWorkerRecovery(t *testing.T) {
 	testHeadlessWorkerThroughInstalledCore(t, "../m2/headless-worker-recovery.json", false)
 }

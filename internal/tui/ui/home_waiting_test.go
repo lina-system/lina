@@ -69,7 +69,7 @@ func TestHomeWaitingKeepsDecisionForms(t *testing.T) {
 	if m.conversationPlan().Cards.Height != 0 || m.content.CardView.ID != card.ID || m.content.Draft.Text != "KEEP-DRAFT" {
 		t.Fatal("overview clear kept stale Home cards or changed the form/draft")
 	}
-	m.View()
+	displayCard(t, m)
 	m.cardKey(term.Key{Name: "1", Events: true})
 	command, _ := m.cardKey(term.Key{Name: "enter", Events: true})
 	if command == nil {

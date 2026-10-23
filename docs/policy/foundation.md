@@ -63,9 +63,13 @@ After a full run on `dev` (push, nightly or manual), the independent QA job
 reads the exact plan and newest shard result artifacts, including failures.
 `scripts/verify/post-merge-qa.mjs` opens or updates a `qa` issue for each failing
 Go top-level test, with nested failure lines, the tested head, first failing
-commit range and workflow run. A package timeout or panic also fails each started,
-unfinished test, with bounded package diagnostics. Completed tests retain their
-results; tests that never started are not reported as failures. Configure the
+commit range and workflow run. A package timeout or panic also fails each
+unfinished test with an active leaf or an explicit nested failure, with bounded
+package diagnostics. Parallel tests paused for an execution slot, including
+parents waiting only on paused subtests, remain unknown and create no QA issue.
+Unknown results cannot close an existing issue or make the foundation gate pass.
+Completed tests retain their results; tests that never started are not reported
+as failures. Configure the
 repository's `QA_MILESTONE`
 variable to the current milestone number; a missing setting fails reporting
 instead of assigning findings to a guessed milestone.
@@ -137,7 +141,7 @@ Deleted paths and both sides of a rename participate. A `.md` suffix alone does 
 
 ## Current checks
 
-- **docs:** validate local file targets in all tracked Markdown and `LICENSE`, including links from unchanged documents to deleted targets (`scripts/verify/check-docs.mjs`). This does not validate external URLs, heading anchors, or the meaning of prose.
+- **docs:** validate local file targets in all tracked Markdown and `LICENSE`, including links from unchanged documents to deleted targets (`scripts/verify/check-docs.mjs`). Local `*.md#fragment` links must match a GitHub-style heading anchor in the target document, including numbered suffixes for duplicate headings. ATX and setext headings count; code examples and comments do not. Custom HTML IDs are not supported. External URLs, bare `#fragment` links, non-Markdown fragments and the meaning of prose are outside this check.
 - **automation:** run `actionlint` on workflow files when present, check JavaScript syntax and run the Node behavioral suite of the scripts under `scripts/`. A missing actionlint executable or invalid workflow fails the check. Tests that use Git run in disposable repositories with every `GIT_*` variable cleared. Integration and release tests run against a disposable bare remote; they never push to the real remote or publish a real release.
 - **components:** build, vet and run the pinned `exhaustive` analyzer in one shard, then run uncached unit and acceptance shards for selected Go components (`scripts/verify/check-components.mjs`). Command builds go to a temporary directory; the check executes each produced command without arguments and verifies its usage error. Temporary outputs and the isolated home directory are removed when the check ends.
 

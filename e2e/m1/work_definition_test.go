@@ -14,6 +14,14 @@ import (
 	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 )
 
+// TestM2WorkDefinition (m2/work-definition.json) drives dispatch_work through
+// installed Core. It refuses missing done conditions, write areas and
+// base-commit design sections, including headings inside code examples, before
+// a worker is queued. Valid work receives the full packet and produces a
+// committed file, observed PR and durable receipt. Moving the source base
+// during manager admission leaves the allocated worktree and packet pinned to
+// the validated commit. Worker and GitHub boundaries are synthetic; Core, Git
+// and the work ledger run normally.
 func TestM2WorkDefinition(t *testing.T) {
 	t.Parallel()
 	testHeadlessWorkerThroughInstalledCore(t, "../m2/work-definition.json", false)

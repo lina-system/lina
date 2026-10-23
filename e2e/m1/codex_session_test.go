@@ -181,6 +181,18 @@ func codexSessionFixture() {
 	}
 }
 
+// TestM2InstalledCodexSession (m2/codex-session.json) runs installed Core, its
+// real conversation model loop, tool authority and stdio child ownership with a
+// synthetic installed Codex. It asserts version reporting for an unverified
+// version, active steering, confirmed interrupt, idle continuation, a file
+// produced by the worker and terminal output in the originating conversation
+// before and after Core restart. The worker checks that no sandbox, approval,
+// model-provider or config override is sent and that Core's dedicated provider
+// credential is absent. Run it with go test -count=1 ./e2e/m1 -run
+// '^TestM2InstalledCodexSession$'. The opt-in LINA_CODEX_LIVE=1 go test
+// -count=1 -v ./internal/core/worker/codex -run '^TestInstalledCodex$' uses the
+// user's installed Codex and own configuration. It verifies control and a
+// model-generated result without changing approval or sandbox settings.
 func TestM2InstalledCodexSession(t *testing.T) {
 	t.Parallel()
 	testInstalledCodexSession(t, false)
@@ -209,7 +221,7 @@ func testInstalledCodexSession(t *testing.T, slowManager bool) {
 	var calls atomic.Int32
 	var delayed atomic.Bool
 	var control map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct{ Input, Tools []json.RawMessage }
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Error(err)
@@ -247,14 +259,8 @@ func testInstalledCodexSession(t *testing.T, slowManager bool) {
 		if respondWorkerCompletion(w, req.Input, fixture.Result) {
 			return
 		}
-		names := map[string]bool{}
-		for _, raw := range req.Tools {
-			var d struct{ Name string }
-			json.Unmarshal(raw, &d)
-			names[d.Name] = true
-		}
 		for _, name := range []string{"worker_start", "worker_input", "worker_interrupt", "worker_snapshot"} {
-			if !names[name] {
+			if !toolReachable(req.Tools, name) {
 				t.Errorf("Core did not offer %s", name)
 				emitResponse(w, "missing worker tool", true)
 				return
@@ -323,7 +329,7 @@ func testInstalledCodexSession(t *testing.T, slowManager bool) {
 		default:
 			emitResponse(w, "worker journey complete", true)
 		}
-	}))
+	})))
 	defer server.Close()
 	h, bootstrap := installedConversationHarness(t, server.URL)
 	if slowManager {
@@ -406,6 +412,11 @@ func testInstalledCodexSession(t *testing.T, slowManager bool) {
 	h.stopCore(core)
 }
 
+// TestM2InstalledCodexLive drives installed Core's normal tool path into the
+// actual installed Codex, then waits on the worker's conversation result before
+// reading its snapshot. Only Core's conversation provider is synthetic; the
+// worker uses its own model setup. Opt in with LINA_CODEX_LIVE=1 go test
+// -count=1 -v ./e2e/m1 -run '^TestM2InstalledCodexLive$'.
 func TestM2InstalledCodexLive(t *testing.T) {
 	if os.Getenv("LINA_CODEX_LIVE") != "1" {
 		t.Skip("explicit installed-worker acceptance only")
@@ -413,7 +424,7 @@ func TestM2InstalledCodexLive(t *testing.T) {
 	workdir := t.TempDir()
 	var calls atomic.Int32
 	var session string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct{ Input, Tools []json.RawMessage }
 		if json.NewDecoder(r.Body).Decode(&req) != nil {
 			t.Error("invalid model request")
@@ -456,7 +467,7 @@ func TestM2InstalledCodexLive(t *testing.T) {
 		default:
 			emitResponse(w, "live worker result received: LINA_CODEX_OK", true)
 		}
-	}))
+	})))
 	defer server.Close()
 	h, bootstrap := installedConversationHarness(t, server.URL)
 	seedCodingFixture(t, h, bootstrap)
@@ -496,11 +507,17 @@ func TestM2InstalledCodexLive(t *testing.T) {
 
 // Existing adapter journeys explicitly handle the additional persona turns.
 func respondWorkerCompletion(w http.ResponseWriter, inputs []json.RawMessage, result string) bool {
-	if len(inputs) == 0 {
-		return false
+	// Discovery adds call/results after the current input. Classify the latest
+	// user input, rather than mistaking a load_tools receipt for a new request.
+	var item struct{ Role, Content string }
+	found := false
+	for i := len(inputs) - 1; i >= 0; i-- {
+		if json.Unmarshal(inputs[i], &item) == nil && item.Role == "user" {
+			found = true
+			break
+		}
 	}
-	var item struct{ Content string }
-	if json.Unmarshal(inputs[len(inputs)-1], &item) != nil || !strings.Contains(item.Content, `<external_evidence origin="worker-session:`) {
+	if !found || !strings.Contains(item.Content, `<external_evidence origin="worker-session:`) {
 		return false
 	}
 	if result == "" {

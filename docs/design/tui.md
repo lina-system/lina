@@ -592,6 +592,13 @@ Contract: [surfaces.md](surfaces.md#progress-at-a-glance), [work-and-delegation.
 
 The work panel is the primary way to see work in the TUI: a sidebar at the right of the conversation with one card per 일. The person reads the 일, not the workers. Every string follows the wording rule of [surfaces.md](surfaces.md#default-view). The TUI computes no stage, order, state or text of work; it draws Core's progress lines and counts only the cards it folds.
 
+Core's `card_order` selects the flat card sequence. The shared overview remains
+in goal-child order for indented text views; projecting cards never mutates it.
+Without `card_order`, cards retain the received row order.
+`TestM3ProgressHierarchyInstalledCore` (`e2e/m3/progress-hierarchy.json`) checks
+both orders through installed Core, restart, and the 120x34 sidebar and 100x34
+overlay in Korean and English with Unicode and ASCII glyphs.
+
 **Place.** In the wide tier the panel is always shown while the `progress` capability is granted. It is a column from below the header to above the composer rule, 40 columns wide, or a third of the terminal width up to 56 columns (P), separated from the conversation by one blank column. With no cards it shows only its one-word title. While it is shown, the At a glance card row and the running strip take no rows, and their counts stay in the status line. The Waiting for me card row stays under the conversation, where decisions are answered. In the medium and narrow tiers the same panel is an overlay over the conversation region, opened by Ctrl+P and closed by Esc. It replaces the full-screen progress view.
 
 **Cards.** Below the title, each 일 is a card of exactly two rows, and nothing else by default:
@@ -612,7 +619,17 @@ The work panel is the primary way to see work in the TUI: a sidebar at the right
 - The second row, indented two cells, is Core's Now: what the 일 is doing right now, in a few words ([work-and-delegation.md](work-and-delegation.md#progress-line)). It is truncated the same way and never wraps.
 - A 목표 has no card of its own; each of its 일 has one. A goal that is a single 할 일, or a background run outside any 일, is a card too.
 - Cards keep Core's order: waiting on the person, running, waiting on something outside, done. Done cards fold into one row. When the cards do not fit, the last row (`…`, or `...` in ASCII) gives the number of hidden cards and, when any of them waits on the person, how many. Cards that wait on the person are hidden last. The numbers always equal the hidden cards.
-- The panel redraws only when a shown value changes, so a running card costs at most one redraw a minute for its elapsed time.
+- The panel redraws only when a shown value changes, so a running card costs at most one redraw a minute for its elapsed time. Its timer uses the next elapsed-minute boundary and the existing Core clock offset. An absent start stays unknown. Snapshot replacement and live updates share the same typed card projection; neither changes conversation focus or the reading anchor.
+
+The alpha card path is exercised by `TestM3WorkPanelInstalledCoreMatrix` and
+`TestM3WorkPanelLiveCodexWorker`, using `e2e/m3/work-panel.json`. The former reads
+replayed work through installed Core in both languages and glyph modes at 120x34
+and 100x34, including 1, 5, 20 and 50 cards. The latter launches the Codex protocol
+fixture through Core, observes the same start and changing person-request activity
+in a real 120x34 PTY, and checks the resulting artifact and restart. The deterministic
+TUI matrix checks two-row clipping, folded/overflow counts and 50 streamed changes
+with a retained draft, focus and reading anchor. Stage-list and scheduling-control
+evaluations remain with their corresponding implementation issues.
 
 **Views.** Ctrl+P on the focused panel switches between cards and a compact view of one row per 일: the name, then Now, then the elapsed time right-aligned; Now shrinks first. Left and Right change the state filter: all, needs you, running, waiting, done. The title shows the filter when it is not all, and fold and count rows then count only that state.
 
@@ -637,7 +654,14 @@ The work panel is the primary way to see work in the TUI: a sidebar at the right
 - When the entries do not fit, the leading done entries fold into one row that keeps the last done entry visible, and the entries after the first next one fold into a count. The current stage never folds. Expanded steps fold like cards: waiting on the person first, then working, waiting and done, then a count row.
 - Ctrl+O opens the Details of the selected card, entry or step in the pager. Esc goes back one level: from the steps to the stage list, from the stage list to the cards, and from the cards to the composer with its draft.
 
-**Keys.** Ctrl+P focuses the panel in the wide tier and opens the overlay otherwise. Up and Down move between cards and entries; the keys of Views and Adjusting act on the selection. Selection keys on the 일 or step id and survives reordering; when its card leaves, the selection moves to the card that takes its place.
+**Keys.** Ctrl+P focuses the panel in the wide tier and opens the overlay otherwise. Up and Down move between cards and entries; the keys of Views and Adjusting act on the selection. Selection keys on the 일 or step id and survives reordering; when its card leaves, the selection moves to the card that takes its place. In the focused card view, the selected name starts with the action mark (`›`, or `>` in ASCII); its width comes from the name budget so elapsed time stays intact.
+
+In both the sidebar and overlay, card navigation scrolls just enough to keep
+both rows of the selected card visible, including after a resize or progress
+update. Folded done cards are skipped. The overflow row counts all cards outside
+the visible window, before and after it, including those waiting on the person.
+The initial window starts at the top of Core's order; scrolling never changes
+that order, the conversation's reading position or the draft.
 
 **Updates.** Topic updates replace cards in place. They never move focus, scroll the conversation, change the draft or close an opened 일 view. From Core's commit of a work event to the PTY frame that shows the changed card, the 95th percentile is at most 500 ms and the maximum at most 1 s with 50 일 running (P).
 
@@ -780,7 +804,7 @@ The approval record is Core's. The TUI shows it and sends the person's decision 
 
 **The card** shows what the contract says an approval request shows, the requesting agent with its recommendation first, and its choices ([main-authority.md](main-authority.md#approval)). Doing nothing means the action will not run. A request that a channel cannot present waits here ([main-authority.md](main-authority.md#channels)).
 
-- Target fields are never truncated. If they do not fit, the details view scrolls. Confirmation becomes available only after every target page has been displayed, including every wrapped row. The reading record belongs to the open card's identity, epoch, revision and terminal dimensions; a changed revision or size discards it. Closing the card or reconnecting also clears it. Reading all pages permits a separate one-time confirmation; scrolling itself never decides anything.
+- Target fields are never truncated. If they do not fit, the details view scrolls. Confirmation becomes available only after every target page has been displayed, including every wrapped row. Constructing or queuing a view does not count: the client records reading only after the terminal writer accepts the complete frame. Approval frames wait for that write before processing the next input, so rapid paging cannot skip an intermediate frame. A failed or partial write records no reading. The reading record belongs to the open card's identity, epoch, revision and terminal dimensions; a changed revision or size discards it. Closing the card or reconnecting also clears it. Reading all pages permits a separate one-time confirmation; scrolling itself never decides anything.
 - Requests of one scope are one card. A changed group returns stale; the card refreshes and the person selects again.
 - A decision is two steps: select, then a separate confirm key. Keys are press-only. Esc closes the view and decides nothing. No free-text path answers an approval, and no `/approve` exists.
 - Outcomes the TUI handles: resolved, already resolved elsewhere, withdrawn, expired (not performed), stale epoch or group, and refused. A pending approval is stopped by a Core restart ([runtime.md](runtime.md#recovery)), and the card says so.
@@ -1072,12 +1096,20 @@ scanner as Core before they reach the composer, local echo, undo or sent-input
 recall. The complete insertion is scanned before the composer length limit to cover
 a value pasted after a credential field name or a token split across pastes. If that replacement changes surrounding draft text, the
 cursor moves to the end of the masked draft. Ordinary pastes keep their insertion
-position. Masking precedes the composer length limit. Invalid structured input
+position. An exact redaction placeholder also marks a continuation boundary:
+text pasted or typed immediately after it is discarded up to the next whitespace
+or value delimiter (comma, semicolon, quote, angle bracket, closing brace,
+closing bracket, closing parenthesis or period). The delimiter and subsequent
+text remain. This applies after undo or input recall and to literal placeholders;
+it retains no original credential bytes. Inserting elsewhere or replacing the
+whole placeholder uses normal input handling.
+Masking precedes the composer length limit. Invalid structured input
 that cannot be masked safely becomes a placeholder. Dedicated sign-in and API
 key fields keep their separate hidden-input path. These detectors recognize
 known shapes; they do not identify every possible arbitrary secret. Core still
 masks every input before ledger storage and derivation.
-`TestM1TUIChatPasteInstalledCore` exercises the installed Core and a 120×34 PTY,
+`TestM1TUIChatPasteInstalledCore` and
+`TestM1TUIChatPasteContinuationInstalledCore` exercise the installed Core and a 120×34 PTY,
 checking the unsent draft, local echo, sent-input recall, provider input,
 persistent files and restored conversation. It scans terminal output as well
 as settled screens, so an intermediate leaked frame also fails.

@@ -21,6 +21,23 @@ func Project(events []Event) (Card, error) {
 	return c, nil
 }
 func advance(c *Card, e Event) error {
+	before := c.State
+	if err := advanceState(c, e); err != nil {
+		return err
+	}
+	at, _ := time.Parse(time.RFC3339Nano, e.RecordedAt)
+	if e.Kind == "created" {
+		c.StartedAt = at
+	}
+	if c.State == "done" && before != "done" {
+		c.FinishedAt = at
+	}
+	if c.State != "done" {
+		c.FinishedAt = time.Time{}
+	}
+	return nil
+}
+func advanceState(c *Card, e Event) error {
 	if e.Kind == "record_occurrence" {
 		v := e.Occurrence
 		if v == nil || v.Record == "" || e.TaskID != "record:"+v.Record || !strings.HasPrefix(e.Key, "record-occurrence:") || (v.Reason != "completed" && v.Reason != "advanced") || v.From == "" || v.Next == "" {
@@ -122,6 +139,7 @@ func advance(c *Card, e Event) error {
 		if e.Run.Generation != generation {
 			return ErrState
 		}
+		c.Activity = ""
 		c.Completion = nil
 		c.Head, c.CompletionHead = "", ""
 		c.Run = e.Run
@@ -136,6 +154,16 @@ func advance(c *Card, e Event) error {
 		c.Applied = false
 		c.TurnStatus = ""
 		c.Stages = []Stage{{Name: "worker", Source: "unknown"}, {Name: "review", Source: "unknown"}, {Name: "apply", Source: "unknown"}}
+	case "worker_activity":
+		if c.Run == nil || c.Run.ID != e.RunID || !c.Active || c.TurnStatus != "" {
+			return ErrState
+		}
+		switch e.Value {
+		case "working", "responding", "executing", "editing", "tool":
+		default:
+			return ErrInvalid
+		}
+		c.Activity = e.Value
 	case "worker_progress":
 		if c.Run == nil || c.Run.ID != e.RunID || !c.Active || c.TurnStatus != "" || strings.TrimSpace(e.Value) == "" {
 			return ErrState

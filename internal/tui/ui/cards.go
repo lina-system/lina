@@ -25,7 +25,7 @@ type shellCardAnswer struct {
 }
 
 // Reading is local to this open card and its exact wrapping. Only rows actually
-// included in a rendered viewport count, never rows skipped by navigation.
+// included in a successfully written viewport count, never prepared views.
 type cardReading struct {
 	id, epoch, token string
 	revision         uint64
@@ -234,23 +234,9 @@ func (m *shellModel) cardContent(c state.Card) string {
 	if m.size.Height <= 0 || m.size.Width <= 0 {
 		return ""
 	}
-	rows, targets := m.cardRows(c)
+	rows, _ := m.cardRows(c)
 	height := max(0, m.size.Height-1)
 	start := min(max(0, m.cardScroll), max(0, len(rows)-height))
-	end := min(len(rows), start+height)
-	if end < len(rows) {
-		end-- // The continuation hint replaces this row.
-	}
-	if c.Kind == protocol.KindApprovalRequest && m.size.Width >= 40 && m.size.Height >= 10 {
-		if !m.cardRead.matches(c, m.size, targets) {
-			m.cardRead = cardReading{id: c.ID, epoch: c.Epoch, token: c.Token, revision: c.Revision, size: m.size, rows: make([]bool, targets)}
-		}
-		for i := start; i < min(end, targets); i++ {
-			m.cardRead.rows[i] = true
-		}
-		// Refresh the hint in this same frame when the last unread row appears.
-		rows, _ = m.cardRows(c)
-	}
 	rows = rows[start:]
 	if len(rows) > height {
 		rows = rows[:height]
@@ -268,6 +254,31 @@ func (m *shellModel) cardContent(c state.Card) string {
 	}
 
 	return strings.Join(rows, "\n")
+}
+
+// The connection owner calls this only after the exact current view has been
+// written successfully. It processes no keys, resizes or Core updates while
+// waiting for that write, so the card identity and viewport cannot change.
+func (m *shellModel) cardDisplayed() bool {
+	c, ok := m.content.CurrentCard()
+	if !ok || c.Kind != protocol.KindApprovalRequest || m.size.Width < 40 || m.size.Height < 10 {
+		return false
+	}
+	rows, targets := m.cardRows(c)
+	complete := m.cardTargetsRead(c, targets)
+	height := m.size.Height - 1
+	start := min(max(0, m.cardScroll), max(0, len(rows)-height))
+	end := min(len(rows), start+height)
+	if end < len(rows) {
+		end-- // The continuation hint replaces this row.
+	}
+	if !m.cardRead.matches(c, m.size, targets) {
+		m.cardRead = cardReading{id: c.ID, epoch: c.Epoch, token: c.Token, revision: c.Revision, size: m.size, rows: make([]bool, targets)}
+	}
+	for i := start; i < min(end, targets); i++ {
+		m.cardRead.rows[i] = true
+	}
+	return !complete && m.cardTargetsRead(c, targets)
 }
 
 func (m *shellModel) cardNotificationText(bell state.CardBell) string {

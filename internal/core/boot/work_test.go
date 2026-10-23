@@ -18,7 +18,8 @@ import (
 )
 
 func TestWorkToolsBindAuthorityAndReplay(t *testing.T) {
-	r, _, agent, _ := managementFixture(t)
+	r, _, _, _ := managementFixture(t)
+	agent := workAgentFixture(t, r)
 	r.agent = agent
 	r.conversation = "conversation"
 	r.personaMu = &sync.Mutex{}
@@ -36,7 +37,7 @@ func TestWorkToolsBindAuthorityAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	bindings := map[string]loop.Tool{}
-	if err = r.prepareWorkTools("turn", bindings); err != nil {
+	if _, err = r.prepareWorkTools("turn", nil, bindings); err != nil {
 		t.Fatal(err)
 	}
 	call := func(id string, args any) loop.Result {

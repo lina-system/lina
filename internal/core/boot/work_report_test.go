@@ -27,7 +27,8 @@ import (
 func TestWorkReportRequiresObservedExit(t *testing.T) {
 	for _, state := range []string{"no run", "active", "recovered unknown", "completed", "failed", "interrupted", "wrong run", "old generation", "other conversation"} {
 		t.Run(state, func(t *testing.T) {
-			r, _, agent, _ := managementFixture(t)
+			r, _, _, _ := managementFixture(t)
+			agent := workAgentFixture(t, r)
 			r.agent, r.conversation = agent, "conversation"
 			r.personaMu = &sync.Mutex{}
 			r.personaGrants = map[string]grant.Grant{}
@@ -52,7 +53,7 @@ func TestWorkReportRequiresObservedExit(t *testing.T) {
 				t.Fatal(err)
 			}
 			bindings := map[string]loop.Tool{}
-			if err = r.prepareWorkTools("turn", bindings); err != nil {
+			if _, err = r.prepareWorkTools("turn", nil, bindings); err != nil {
 				t.Fatal(err)
 			}
 			invoke := func(id, name string, args any) loop.Result {
@@ -109,7 +110,7 @@ func TestWorkReportRequiresObservedExit(t *testing.T) {
 					err = r.work.Start(t.Context(), next)
 				} else if state == "other conversation" {
 					r.conversation = "foreign-conversation"
-					err = r.prepareWorkTools("turn", bindings)
+					_, err = r.prepareWorkTools("turn", nil, bindings)
 				}
 			}
 			if err != nil {

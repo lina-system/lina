@@ -61,6 +61,7 @@ type workerSession struct {
 	scheduled       bool
 	answered        func(context.Context, worker.Thread)
 	started         time.Time
+	activity        string
 	approvals       map[string]worker.Event
 	questions       map[string]*workerQuestion
 	output          string
@@ -181,9 +182,10 @@ func workerDeclarations() []provider.ToolDecl {
 	}
 }
 
-func (r *conversationRuntime) prepareWorkerTools(turnID string, input ledger.Event, bindings map[string]loop.Tool) error {
+func (r *conversationRuntime) prepareWorkerTools(turnID string, preparation *toolPreparation, bindings map[string]loop.Tool) ([]provider.ToolDecl, error) {
+	input := preparation.event
 	if r.workers == nil {
-		return nil
+		return workerDeclarations(), nil
 	}
 	registry := tools.NewRegistry(r.personaAuthority, r.activities)
 	for _, name := range []string{"worker_start", "worker_input", "worker_interrupt", "worker_snapshot", "worker_quota", "worker_read_file"} {
@@ -197,7 +199,7 @@ func (r *conversationRuntime) prepareWorkerTools(turnID string, input ledger.Eve
 			return r.workerOperation(ctx, name, turnID, input, in)
 		})
 		if err != nil {
-			return err
+			return nil, err
 		}
 		validated := turn.Tool(registry, spec, tools.Call{}, turnID)
 		bindings[name] = loop.Tool{Validate: validated.Validate, Execute: func(ctx context.Context, call provider.ToolCall) loop.Result {
@@ -276,7 +278,7 @@ func (r *conversationRuntime) prepareWorkerTools(turnID string, input ledger.Eve
 			return turn.Tool(registry, spec, tools.Call{Auth: auth}, turnID).Execute(ctx, call)
 		}}
 	}
-	return nil
+	return workerDeclarations(), nil
 }
 
 func (r *conversationRuntime) workerStartAssignment(ctx context.Context, turnID string, in tools.Input) (workerArgs, codingAssignment, string, error) {
@@ -443,15 +445,6 @@ func (r *conversationRuntime) workerOperationWithOwner(ctx context.Context, name
 	if closed || entry == nil || !entry.origin.workerConversation(r) {
 		return tools.Result{State: tools.Failed, Body: workerError(errors.New("worker session unavailable in this conversation"))}, nil
 	}
-	if name == "worker_input" {
-		entry.recoveryMu.Lock()
-		state := entry.recovery.State
-		entry.recoveryMu.Unlock()
-		if state == "unknown" || state == "retrying" || state == "decision" || state == "parked" {
-			return tools.Result{State: tools.Failed, Body: workerError(errors.New("worker effects require reconciliation"))}, nil
-		}
-
-	}
 	if name == "worker_read_file" {
 		return r.readWorkerFile(ctx, entry.workdir, a.Path)
 
@@ -484,6 +477,16 @@ func (r *conversationRuntime) workerOperationWithOwner(ctx context.Context, name
 	snap, err := entry.adapter.Snapshot(ctx, thread)
 	if err != nil {
 		return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
+	}
+	// Recovery may have changed while this operation waited for control or
+	// read the worker. Check it inside the serialized admission boundary.
+	if name == "worker_input" {
+		entry.recoveryMu.Lock()
+		state := entry.recovery.State
+		entry.recoveryMu.Unlock()
+		if state == "unknown" || state == "retrying" || state == "decision" || state == "parked" {
+			return tools.Result{State: tools.Failed, Body: workerError(errors.New("worker effects require reconciliation"))}, nil
+		}
 	}
 	if name == "worker_snapshot" {
 		return entry.encode(snap), nil
@@ -677,6 +680,7 @@ func (e *workerSession) observe() {
 		e.origin.notifyOwnerViews()
 	}()
 	for event := range e.adapter.Events() {
+		e.observeActivity(event)
 		switch event.Kind {
 		case worker.ProgressEvent:
 			if event.Progress.Phase == "started" {
@@ -713,7 +717,9 @@ func (e *workerSession) observe() {
 					fmt.Fprintf(os.Stderr, "worker completion admission failed: %v\n", err)
 				}
 			}
-			if rec.ID != "" {
+			// A delayed completion still belongs in its result lane, but only
+			// the exact current turn can settle this recovery record.
+			if rec.ID != "" && event.Thread == rec.Thread {
 				rec.State = "unknown"
 				if delivered && (event.Finish.Status == worker.Done || rec.Canceled) {
 					rec.State = "finished"

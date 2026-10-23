@@ -62,6 +62,9 @@ func TestWorkerCompletionIsDurableScopedAndDeduplicated(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if err := entry.recoveredFinish(t.Context(), event, entry.output); err != nil {
+		t.Fatal(err)
+	}
 	// No runtime session is present. Only the immutable canon record can answer.
 	in, err := workerSchema("worker_snapshot", json.RawMessage(`{"session":"session"}`))
 	if err != nil {
@@ -169,7 +172,7 @@ func TestWorkerCompletionCannotSupplyUserCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	bindings := map[string]loop.Tool{}
-	if err := r.prepareWorkerTools("followup", input, bindings); err != nil {
+	if _, err := r.prepareWorkerTools("followup", &toolPreparation{event: input}, bindings); err != nil {
 		t.Fatal(err)
 	}
 	got := bindings["worker_interrupt"].Execute(t.Context(), provider.ToolCall{ID: "injected", Name: "worker_interrupt", Arguments: `{"session":"session","turn":"turn","generation":1,"binding":1,"quote":"stop this worker"}`})

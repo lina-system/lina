@@ -691,6 +691,8 @@ turns words such as “verified” into acceptance evidence.
 
 ### Choosing the worker
 
+Before creating worker work, Core applies the prepared work-method record. Only an agent with `workers.dispatch` owns the task. Another agent's code request is delivered as an agent exchange to the same person's dispatch-enabled owner of `code`; the original effect limits and grants still apply. Work allocation, direct worker starts, `dispatch_work` and code-goal admission use that owner. Selecting the owner does not select the worker.
+
 LINA chooses the worker for a task from the situation, the person's subscription quota and the host's capacity, and hands the task off. The situation is the kind of work and the repository. Quota is what each worker reports about its remaining quota; an unknown quota is a value, and for a worker that reports none LINA Core uses its own usage accounting ([runtime.md](runtime.md)). The choice follows an editable table of rules, marked provisional, which the power settings show ([surfaces.md](surfaces.md)). A worker whose quota row is ok is preferred, an unknown row is usable but unmeasured, a blocked row is unavailable until the stated reset (or until the next successful call when no reset is given), and a reset time is never inferred ([runtime.md](runtime.md#usage-and-cost)). If a worker stops on quota, rate limit, login expiry or repeated connection failure, LINA hands the same task packet to the next suitable worker without asking the person. Two workers never share a worktree.
 
 The installed `dispatch_work` path preserves the admitted packet, pinned base,
@@ -1135,6 +1137,22 @@ Delegation to a worker is ready when:
 
 When a check fails, delegation is reported as unsupported with its cause. An ACP worker that answers `session/new` with the authentication error (-32000) is reported as needs sign-in, not as broken. Conversation readiness is separate and can pass while worker readiness fails.
 
+The ACP adapter returns a typed needs-sign-in failure only for that explicit
+`session/new` refusal, after closing the partial client and its process. It
+sends no prompt and retains no remote error text or account data. A protocol
+or connection failure is not evidence of an authentication refusal.
+Dispatch retains the refused worker, probed version and `needs_sign_in` code
+in its record without creating a worker run or receipt. After confirmed child
+cleanup, it uses the existing eligibility block and chooser to try the next
+worker within the existing two-worker limit. The replacement's work card also
+reports which worker needs sign-in. Explicit worker selection stays explicit;
+other start failures remain uncertain and are not retried.
+
+`TestCursorReadinessThroughRunningCore` installs Core with synthetic Cursor and
+Gemini executables. It covers Cursor's unverified CLI version, the sign-in
+refusal and fallback, and a signed-in Cursor task producing a committed file
+and adapter-derived receipt. A live Cursor account test remains opt-in.
+
 The optional local graph scheduler also checks its initial quota observation
 before releasing recovered tasks. A failed or unanswered quota read disables
 that scheduler, with a fifteen-second deadline for the read. A successful read
@@ -1389,6 +1407,12 @@ A second settled failure creates one persistent decision row in the originating
 conversation. Its choices keep work paused or stop it; neither starts a third
 automatic attempt. Files, branches and earlier receipts remain intact.
 
+Goal workers use the same recovery queue. A committed recovery allowance admits
+their queued attempt without a conversation tool-call receipt, because the goal
+engine starts the original worker directly. Core revalidates the goal action
+before claiming and starting recovery; cancellation, changed scope and unknown
+effects still prevent another attempt. Goal observation only reads the dispatch.
+
 Claude and Antigravity dispatch can recover once from a committed terminal
 snapshot whose full observation contains no tool activity. The second attempt
 uses the same pinned base and worktree and keeps separate receipt artifacts.
@@ -1399,6 +1423,17 @@ uses the existing events and a five-minute safety sweep; it does not call a mode
 A first live worker failure keeps its normal result response, with no execution tools in that response. The known failure stays visible while unknown effects retain their directory fence. The response cannot grant another worker attempt.
 Confirmed successful completion evidence uses the normal result-delivery inbox. Its separate
 conversation response neither replays worker input nor grants another attempt.
+An earlier connection-loss notice cannot suppress a later confirmed terminal
+result for the same attempt and turn. Core retains both observations and admits
+the confirmed result once, including after rebinding or restarting. Repeated
+terminal observations share one result identity; a successful live completion
+and its later reconciliation do not create separate responses.
+A terminal read does not consume the worker's completion notification: a later
+live event still reaches Core once. Input admission rechecks recovery state
+under the same control lock as reconciliation before releasing reservations
+or sending input.
+A delayed event may deliver an earlier turn's result, but only an event matching
+the current recovery thread and turn can change that recovery state.
 
 ## Judgment and delivery
 
@@ -1964,9 +1999,11 @@ LINA Core keeps one progress line for each 일 and each 목표 that has work in 
 - The stage of an 일 whose work runs as a goal is the current entry of its stage list (see Stages). Otherwise it is the stage of its plan that holds its open 할 일, and an 일 with no stages of its own has four: 설계 (design) while its plan is not confirmed, 만드는 중 (building) while any of its 할 일 is open, 확인 (checking) when every 할 일 has completed and the done condition is being checked, and 끝 (done) when the done condition is met. The bar is the share of its 할 일 that are completed, each counted equally.
 - The progress of a 목표 is the share of its 일 that are done, and its stage is that of its least advanced running 일.
 - Now is, in this order: 확인 필요 (needs you) and the subject of its row while a row of "Waiting for me" belongs to it; else 일시정지 (paused) while the person has paused it; else the name of the earliest-started step in progress, followed by the number of the other steps in progress ("로그인 화면 수정 외 1"); else its queue reason and place, or 대기 (waiting) and its one reason or wait (see Order, pause and run limit); else the stage word 설계, 확인 or 끝. It changes only when a step starts or ends, a wait or row opens or closes, or the goal's pause, rank or place changes.
-- Started is when the goal was handed over, or when a run that serves no goal started. Elapsed time runs from it to now, or to the finish of a done line.
+- Started is when the goal was handed over, or when a run that serves no goal started. Elapsed time runs from it to now, or to the finish of a done line. Core records the instant in new work-ledger events and preserves it through retries and projection rebuilds. Legacy events with no timestamp stay unknown. Live conversation workers use their Core launch time; independent background runs use their recorded creation time.
+- Before a plan's stages exist, Now reflects the observed execution: in progress, running a command, editing files, preparing a reply or using a tool. A pending person request takes precedence and supplies its subject. These are Core activity classifications, not worker prose, command arguments, reasoning or completion claims. Repeated deltas in the same activity do not change Now; an activity change is retained for durable dispatched work. Plan stage and percentage remain unknown until observed.
 - A value that cannot be observed is unknown and is shown as unknown, never as zero, as the rule of Plans says. A line says done only when the done condition is met.
 - A 목표 has a line when one of its 일 runs or something waits on the person. An 일 that belongs to a 목표 is a line below it, and an 일 that stands alone is a line of its own. A goal that is a single 할 일, and a background run that serves no goal, is a line of its own whose stage list is its one step. A finished item leaves the lines once the person has seen it.
+- Shared overview rows keep each goal immediately followed by its children, even when their execution states differ. Core supplies a separate flat card order for the work panel; sorting those cards never moves the shared rows or changes their depth.
 - A line holds no issue number, pull request, check, log or id. The tasks and runs behind a line are the running list (in progress, waiting, landed) limited to that 일 or 목표, and the state words are the same in both. They open on request, from the Details of the line ([surfaces.md](surfaces.md#default-view)).
 - The digest that an external channel shows is made from the same lines ([integrations.md](integrations.md#channels)).
 

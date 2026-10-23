@@ -432,8 +432,16 @@ func (s *Service) runAttempts(ctx context.Context, e *execution) bool {
 				}
 				return false
 			}
-			generation := r.Attempt
-			run = work.Run{ID: fmt.Sprintf("%s:%d", r.ID, generation), TaskID: r.ID, Generation: generation, Worker: r.Worker, NodeID: s.cfg.Main}
+			run, err = s.nextRun(ctx, *r)
+			if err != nil {
+				return false
+			}
+			// Readiness refusals consume chooser slots, but create no work run.
+			// Recovery and completion must retain the actual run's generation.
+			r.Attempt = run.Generation
+			if err = s.save(ctx, *r); err != nil {
+				return false
+			}
 			if r.Recoveries > 0 && s.cfg.AuthorizeRecovery != nil {
 				allowed, err := s.cfg.AuthorizeRecovery(ctx, *r)
 				if err != nil || !allowed {
@@ -453,6 +461,16 @@ func (s *Service) runAttempts(ctx context.Context, e *execution) bool {
 			e.outcome = outcomeUnknown
 			thread, err = s.startAttempt(ctx, l, adapter, *r, run.ID, workdir)
 			if err != nil {
+				if errors.Is(err, worker.ErrNeedsSignIn) {
+					if closeAdapter(ctx) != nil {
+						return false
+					}
+					e.outcome = outcomeFinished
+					if err = s.needsSignIn(ctx, r, adapter); err != nil {
+						return false
+					}
+					continue
+				}
 				closeAdapter(context.Background())
 				return false
 			}
@@ -490,7 +508,13 @@ func (s *Service) runAttempts(ctx context.Context, e *execution) bool {
 			}
 			observed := false
 			var progressSequence uint64
+			if err = s.reportReadiness(ctx, *r, run, &progressSequence); err != nil {
+				unbind()
+				return false
+			}
 			var progress progressBuffer
+			var activity string
+			var activitySequence uint64
 			progressTick := time.NewTicker(progressInterval)
 			e.deferred = append(e.deferred, progressTick.Stop)
 			recordProgress := func(summary string, progressErr error) error {
@@ -513,6 +537,13 @@ func (s *Service) runAttempts(ctx context.Context, e *execution) bool {
 						err = recordProgress(progress.Observe(*event.Progress, time.Now()))
 					} else if event.Finish != nil {
 						err = recordProgress(progress.Flush(time.Now(), true))
+					}
+					if next := worker.Activity(event); err == nil && next != "" && next != activity {
+						activitySequence++
+						err = service.ReportActivity(ctx, r.ID, run.ID, activitySequence, next)
+						if err == nil {
+							activity = next
+						}
 					}
 					if err != nil {
 						r.Code = "progress_failed"
@@ -588,6 +619,10 @@ func (s *Service) runAttempts(ctx context.Context, e *execution) bool {
 			}
 			break
 		}
+	}
+	if thread.ID == "" {
+		// Refused sessions create no worker turn or receipt.
+		return false
 	}
 	e.attempt = executionAttempt{thread: thread, run: run, finish: finish, observation: observation}
 	return true

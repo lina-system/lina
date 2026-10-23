@@ -22,6 +22,16 @@ import (
 	"github.com/thisisjun786/lina/internal/core/work"
 )
 
+// TestM2WorkArea (m2/work-area.json) drives
+// prepare_work and retain_work_result through the installed Core's conversation
+// tools. Two real linked worktrees share a parent clone at separately pinned
+// source commits. Worker Git subprocesses create and commit each assigned
+// branch; cross-task updates and deletion are rejected without moving the
+// original result head. Core retains the fixture file and exact branch bundle,
+// and the test restores them from backup after Core restart and loss of the
+// work area. Worker lifecycle and receipt observations are seeded while Core is
+// stopped; vendor dispatch is covered by the worker adapter scenarios. Run with
+// go test -count=1 ./e2e/m1 -run '^TestM2WorkArea$'.
 func TestM2WorkArea(t *testing.T) {
 	t.Parallel()
 
@@ -64,7 +74,7 @@ func TestM2WorkArea(t *testing.T) {
 	results := make(chan []work.Material, 2)
 	var receiptID, head string
 	count := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct{ Input, Tools []json.RawMessage }
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Error(err)
@@ -73,14 +83,8 @@ func TestM2WorkArea(t *testing.T) {
 		if scriptedWorkCompletion(w, request.Input) {
 			return
 		}
-		names := map[string]bool{}
-		for _, raw := range request.Tools {
-			var d struct{ Name string }
-			_ = json.Unmarshal(raw, &d)
-			names[d.Name] = true
-		}
 		for _, name := range scenario.Tools {
-			if !names[name] {
+			if !toolReachable(request.Tools, name) {
 				t.Errorf("running Core missing tool %s", name)
 				emitResponse(w, "Unavailable.", true)
 				return
@@ -117,7 +121,7 @@ func TestM2WorkArea(t *testing.T) {
 			results <- saved
 		}
 		emitResponse(w, "Recorded.", true)
-	}))
+	})))
 	defer server.Close()
 	h, bootstrap := installedConversationHarness(t, server.URL)
 	seedCodingFixture(t, h, bootstrap)

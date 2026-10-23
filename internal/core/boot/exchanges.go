@@ -113,10 +113,10 @@ func (r *conversationRuntime) artifactOwner(ctx context.Context, kind string) (s
 	}
 	return owner, nil
 }
-func (r *conversationRuntime) prepareExchangeTools(turnID string, bindings map[string]loop.Tool) []provider.ToolDecl {
+func (r *conversationRuntime) prepareExchangeTools(turnID string, _ *toolPreparation, bindings map[string]loop.Tool) ([]provider.ToolDecl, error) {
 	// Delayed authority is bound to the private owner lane, as timer jobs are.
 	if r.channelBinding != nil || r.conversation != "main:"+r.agent {
-		return nil
+		return nil, nil
 	}
 	store := r.exchangeStore()
 	bindings["send_handoff"] = loop.Tool{Validate: func(c provider.ToolCall) (string, error) {
@@ -193,7 +193,7 @@ func (r *conversationRuntime) prepareExchangeTools(turnID string, bindings map[s
 		err := store.EndChange(ctx, r.person, r.agent, a.ID)
 		return exchangeResult(c.ID, map[string]string{"state": "closed"}, err)
 	}}
-	return exchangeDeclarations()
+	return exchangeDeclarations(), nil
 }
 
 // All record write entry points call this while holding artifactMu, shared with

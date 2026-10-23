@@ -9,6 +9,10 @@ import (
 	"github.com/coder/websocket"
 )
 
+// TestM2DiscordGatewayRecovery (m2/discord-recovery.json) repeats the
+// TestM2DiscordCore journey across Gateway 4007/4009 closes, including command
+// and approval-button deduplication and Resume with the exact replacement
+// session and committed sequence after Core restart.
 func TestM2DiscordGatewayRecovery(t *testing.T) {
 	t.Parallel()
 

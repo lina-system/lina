@@ -20,6 +20,12 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+// TestM2InstalledPersonaGrowth runs the m2/persona-growth.json installed-Core
+// companion. It negotiates the growth capability, adopts during an active
+// reply, checks actual provider instructions on subsequent turns, receives one
+// conversation notice, dispatches undo, and reopens Core to check suppression,
+// history and job socket cleanup. No test-only Core service composition is used
+// in this test.
 func TestM2InstalledPersonaGrowth(t *testing.T) {
 	t.Parallel()
 

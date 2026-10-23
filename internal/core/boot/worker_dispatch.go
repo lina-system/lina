@@ -156,6 +156,8 @@ func (r *conversationRuntime) bindDispatchedWorker(record dispatch.Record, adapt
 	r.workers.sessions[thread.ID] = e
 	r.workers.mu.Unlock()
 	handle := func(event worker.Event) {
+		e.observeActivity(event)
+		defer e.origin.notifyOwnerViews()
 		switch event.Kind {
 		case worker.ApprovalEvent:
 			e.requestApproval(event)

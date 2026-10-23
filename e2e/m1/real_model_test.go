@@ -26,6 +26,16 @@ import (
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
+// TestResponsesRoundTrip/fixture and /real run the same Core-side journey
+// through internal/core/modelpath.ResponsesFromEnv and the Responses adapter:
+// send a synthetic user message, observe nonempty live deltas, receive
+// completed assistant items and a terminal event, release the model lease, and
+// save and reread a private probe record in a temporary state directory. Only
+// final items are saved; deltas are display data. The probe record is a test
+// artifact, not a canon turn. Output contains event counts and outcomes, never
+// the endpoint, key or model reply. The test removes its state on completion,
+// including failure.
+//
 // The same Core-side journey exercises the fixture and the explicitly selected
 // real model. It uses no client conversation implementation or substitute model.
 func TestResponsesRoundTrip(t *testing.T) {
@@ -186,6 +196,18 @@ func responsesRoundTrip(t *testing.T, getenv func(string) string) {
 	t.Logf("Core-side Responses round trip: deltas=%d final_items=%d terminal=true saved_probe=true; client/canon turn not exercised", deltas, len(record.Items))
 }
 
+// TestRealModelHeadlessConversation installs the built binaries in private
+// temporary state and starts actual Core with the configured route. A typed
+// headless client negotiates conversation over Core's Unix socket, discovers
+// and subscribes to the conversation, and sends one synthetic greeting request.
+// It requires durable input acknowledgement, nonempty live deltas, completed
+// assistant items replacing the streamed identities, and an inactive turn. It
+// then stops and restarts Core and compares restored canon history with the
+// live input and reply, including text, order and item identities, under the
+// same conversation id and a new Core epoch. Output reports only counts and
+// outcomes, never configuration or reply text. The model call and restart have
+// a two-minute deadline; cleanup removes the installation, canon and child
+// processes, including on failure.
 func TestRealModelHeadlessConversation(t *testing.T) {
 	requireRealModel(t)
 	headlessConversationRoundTrip(t, os.Getenv, nil)
@@ -193,6 +215,12 @@ func TestRealModelHeadlessConversation(t *testing.T) {
 
 const headlessQAInput = "Reply with a short greeting."
 
+// TestHeadlessConversationFixture runs the TestRealModelHeadlessConversation
+// client journey without external credentials. Its loopback Responses server
+// waits for the client to receive the first delta before completing the reply,
+// proving streaming without timing sleeps. Exactly one provider request across
+// restart rules out replay.
+//
 // The fixture withholds completion until the client receives a live delta.
 // This proves streaming without a timing assumption or a real credential.
 func TestHeadlessConversationFixture(t *testing.T) {
@@ -240,6 +268,11 @@ func TestHeadlessConversationFixture(t *testing.T) {
 	}
 }
 
+// TestRealModelOptIn checks that either missing opt-in or missing key skips
+// before configuration or model work. The real journey also reports SKIP in
+// ordinary credential-free CI; a successful provider probe alone remains
+// insufficient evidence of a client-level persisted turn.
+//
 // Serial: these guards change the test process provider environment.
 func TestRealModelOptIn(t *testing.T) {
 	for _, tc := range []struct{ name, optIn, key string }{
