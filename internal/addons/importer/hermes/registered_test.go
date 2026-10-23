@@ -31,6 +31,7 @@ func hermesFixture(t *testing.T, name string) (string, *sql.DB) {
 }
 
 func TestRegisteredSQLiteSnapshots(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name  string
 		kind  SQLiteSource
@@ -93,6 +94,7 @@ func TestRegisteredSQLiteSnapshots(t *testing.T) {
 }
 
 func TestRegisteredSQLiteRefusesSchemaDrift(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		kind SQLiteSource
@@ -122,6 +124,7 @@ func TestRegisteredSQLiteRefusesSchemaDrift(t *testing.T) {
 }
 
 func TestRegisteredHostViewsAreExact(t *testing.T) {
+	t.Parallel()
 	path, db := hermesFixture(t, "state")
 	if _, err := db.Exec("DROP VIEW messages_fts_src; CREATE VIEW messages_fts_src AS SELECT id, content, tool_name, tool_calls, role FROM messages"); err != nil {
 		t.Fatal(err)
@@ -133,6 +136,7 @@ func TestRegisteredHostViewsAreExact(t *testing.T) {
 }
 
 func TestUnregisteredHonchoRefusedBeforeNetwork(t *testing.T) {
+	t.Parallel()
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++; w.Write(fixture(t, "openapi-synthetic.json")) }))
 	defer srv.Close()
