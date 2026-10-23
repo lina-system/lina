@@ -87,6 +87,41 @@ func TestToolGroupsOrderReachabilityAndReplay(t *testing.T) {
 	}
 }
 
+func TestLoadToolsDoesNotRepeatInitialSchemas(t *testing.T) {
+	all := []provider.ToolDecl{
+		[]byte(`{"name":"calculate","parameters":{"type":"object","required":["expression"]}}`),
+		[]byte(`{"name":"worker_start","parameters":{"type":"object","required":["task_packet"]}}`),
+		[]byte(`{"name":"web_search","parameters":{"type":"object","required":["query"]}}`),
+	}
+	bindings := map[string]loop.Tool{}
+	catalog := prepareToolGroups(all, agents.WorkMethodSettings{Values: map[string]json.RawMessage{"tools.declare_first": []byte(`["work"]`)}}, bindings)
+	result := bindings["load_tools"].Execute(t.Context(), provider.ToolCall{ID: "load", Name: "load_tools", Arguments: `{"tools":["calculate","worker_start","web_search"]}`})
+	var loaded struct {
+		Loaded       []string            `json:"loaded_tools"`
+		Declarations []provider.ToolDecl `json:"declarations"`
+	}
+	if result.Code != loop.OK || json.Unmarshal(result.Output, &loaded) != nil {
+		t.Fatal(result)
+	}
+	if !reflect.DeepEqual(loaded.Loaded, []string{"calculate", "worker_start", "web_search"}) {
+		t.Fatalf("lost requested tool acknowledgement: %v", loaded.Loaded)
+	}
+	if !reflect.DeepEqual(loaded.Declarations, all[2:]) {
+		t.Fatalf("loader must return the deferred schema without duplicating initial schemas: %s", loaded.Declarations)
+	}
+	for _, want := range all {
+		found := false
+		for _, got := range append(append([]provider.ToolDecl{}, catalog.first...), loaded.Declarations...) {
+			if reflect.DeepEqual(got, want) {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("requested schema became unreachable: %s", want)
+		}
+	}
+}
+
 func TestDeferredRuntimeToolKeepsValidationAndAuthority(t *testing.T) {
 	calls := 0
 	bindings := map[string]loop.Tool{"worker_start": {Validate: func(c provider.ToolCall) (string, error) {

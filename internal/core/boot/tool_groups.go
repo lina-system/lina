@@ -46,6 +46,7 @@ type turnToolCatalog struct {
 func prepareToolGroups(all []provider.ToolDecl, method agents.WorkMethodSettings, bindings map[string]loop.Tool) *turnToolCatalog {
 	c := &turnToolCatalog{all: slices.Clone(all)}
 	byName := map[string]provider.ToolDecl{}
+	initial := map[string]bool{}
 	var names []string
 	for _, d := range all {
 		name := declarationName(d)
@@ -77,9 +78,13 @@ func prepareToolGroups(all []provider.ToolDecl, method agents.WorkMethodSettings
 		if err != nil {
 			return loop.Result{ID: call.ID, Code: loop.Invalid}
 		}
-		var declarations []provider.ToolDecl
+		declarations := make([]provider.ToolDecl, 0, len(requested))
 		for _, name := range requested {
-			declarations = append(declarations, byName[name])
+			// Initial schemas are already in the request. Repeating that entire
+			// catalog in tool history can crowd out the next useful operation.
+			if !initial[name] {
+				declarations = append(declarations, byName[name])
+			}
 		}
 		raw, _ := json.Marshal(struct {
 			Loaded       []string            `json:"loaded_tools"`
@@ -147,6 +152,9 @@ func prepareToolGroups(all []provider.ToolDecl, method agents.WorkMethodSettings
 				c.first = append(c.first, d)
 			}
 		}
+	}
+	for _, d := range c.first {
+		initial[declarationName(d)] = true
 	}
 	return c
 }

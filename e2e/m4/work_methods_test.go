@@ -296,6 +296,25 @@ func TestWorkMethodsThroughRunningCore(t *testing.T) {
 		observed := rounds[key]
 		mu.Unlock()
 		if observed != 4 {
+			if err := reader.Read(ctx, func(tx *canon.Tx) error {
+				rows, err := tx.QueryContext(ctx, `SELECT 'turn', id, state FROM turn_runs WHERE conversation=?
+UNION ALL SELECT 'call', json_extract(call,'$.Name'), coalesce(json_extract(result,'$.code'),'missing') FROM turn_calls WHERE turn_id IN (SELECT id FROM turn_runs WHERE conversation=?)
+UNION ALL SELECT 'failure', id, cast(body AS TEXT) FROM conv_event WHERE conversation_id=? AND scaffold_kind='failure'`, conversation, conversation, conversation)
+				if err != nil {
+					return err
+				}
+				defer rows.Close()
+				for rows.Next() {
+					var kind, id, value string
+					if err := rows.Scan(&kind, &id, &value); err != nil {
+						return err
+					}
+					t.Logf("%s %s: %s", kind, id, value)
+				}
+				return rows.Err()
+			}); err != nil {
+				t.Logf("turn diagnostics: %v", err)
+			}
 			t.Fatalf("%s turn ended before all model/tool stages: got %d requests", key, observed)
 		}
 	}
