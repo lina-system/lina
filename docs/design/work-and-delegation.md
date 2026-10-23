@@ -808,6 +808,8 @@ The work of a goal is a graph of steps inside and a numbered list outside. The p
 
 - **Step.** A step is one node of a goal's work: a task (a worker's task or an effect task), a background run, or a named wait on the outside (see Waits on the outside). Every task and background run that serves a goal is a step of that goal. A step records its kind, its name, the steps it is blocked by and the 할 일 it executes, if any. Its state is the work card state of its task or run (see Progress display), and a wait is waiting until it closes.
 - **Graph.** The steps of a goal and their blocked-by relations are the goal's step graph, kept by Core in the work ledger as numbered revisions. The manager submits each revision whole, and Core admits it atomically or refuses it with one reason: a cycle, an unknown step, an invalid write area (see Write areas), or a missing or refused name. A revision may add steps, rename steps, and change the work and blockers of steps that have not started. A step that has started is never removed; a manager that no longer needs it closes it as superseded, and it leaves the counts (see Progress display).
+- **Revision tools.** For a code goal, the manager submits the complete step list with `submit_step_graph(goal_id, expected_revision, steps)` and reads the admitted list with `read_step_graph(goal_id)`. Each step carries its stable key, name, work definition, write area and blockers. Core binds the caller to the goal's person, manager and conversation; a recorded originating conversation may use that same binding. Revision 0 means that no explicit step graph has been submitted. An accepted revision increments this number once and stores the unchanged list together with the executable task definitions in one work-ledger transaction. Repeating the same list against the immediately preceding revision returns the same receipt. A stale revision must be read again; it cannot overwrite a later list. Existing goals remain readable without a backfill. Execution events do not rewrite the admitted list, and restart preserves its order, names, work and blockers.
+- **Refusal.** A refused submission commits neither tasks nor a graph revision. It returns one machine code: `graph_cycle`, `graph_unknown_step` (including duplicate keys or blockers), `graph_invalid_area`, or `graph_invalid_name`. Other malformed work is `graph_invalid`; editing or removing started work is `graph_started_step`; a version conflict is `graph_stale_revision`. A missing goal and a caller outside its owning scope both return `graph_unavailable`. Names are measured by grapheme display width, including wide characters and combining marks, and are never shortened or rewritten to pass. Mechanical refusal covers issue/PR references, paths and filenames, branch/id notation and technical tokens, plus the graph's keys, base branches and known check names. Control and invisible formatting characters cannot hide a technical token. A name-only revision preserves worker claims and results; changing unstarted work retires only undispatched reservations and uses the normal execution fences for in-flight effects.
 - **Names.** The manager names each step in a few plain words of the person's language, at most 24 display cells (P): the thing the step does, such as "숙소 고르기" or "로그인 화면 수정", with no explanation ([surfaces.md](surfaces.md#default-view)). Core refuses a name that holds an issue or pull request number, a branch, a path, a check name or an id, the same rule as a line of the running list. Naming is judgment; the refusal is mechanical.
 - **Frontier.** After every event Core commits for a goal, the derivation of Next action computes the goal's ready frontier: the steps that have not started and whose blockers have all landed, or that have a recorded stacked start (see Parallel hand-off). Each frontier step whose write area, quota and capacity allow it is dispatched in that derivation, in the placement order of Capacity; one that cannot start shows its one reason. A step outside the frontier never starts. The frontier is computed from the ledger alone, without a model call, and two derivations over the same ledger give the same frontier in the same order.
 - **Stages are display.** The stage list (see Stages) is a projection of the graph. A stage never holds work back: a step starts when it is in the frontier, even while an earlier stage still has steps running.
@@ -1102,6 +1104,13 @@ One adapter drives every worker that speaks the Agent Client Protocol, version 1
 | Grok | `grok --no-auto-update agent stdio`, never with `--always-approve` | `grok --version`; its `initialize` puts the version only in `_meta` |
 | Added agent | The command and arguments the person entered | `agentInfo.version`, or unknown |
 
+Grok's installation and readiness version comes from `grok --version`. Its
+handshake observation separately records `_meta.agentVersion` and known standard
+capability names. Missing or malformed version metadata is unknown. Core retains
+no other handshake metadata, including host details, authentication descriptions
+or metadata nested inside capabilities. Advertised capabilities are observations;
+they do not enable operations the adapter has not implemented.
+
 - **Start.** Core starts the profile's command as a stdio child with the person's environment, removing only LINA's own model credential. `initialize` declares no file system or terminal capability, so the worker uses its own tools, and declares form elicitation. An answer other than protocol version 1 fails the handshake. The answered capabilities become the adapter's capability set: approvals and progress always, steering only with the steering extension, recovery only with `loadSession` or `session/resume`, quota only where a source below exists.
 - **Session.** `session/new` carries the worktree as `cwd` and LINA's tool server as the only entry of `mcpServers`; the worker's own MCP servers stay in its own configuration. LINA calls `session/set_config_option` only to apply a model or effort that the worker profile names, and never changes the session mode. The task packet goes out as the first `session/prompt`.
 - **Events.** Message, thought, tool-call and plan updates are progress; `usage_update` is usage; plan entries become stage summaries labelled as the worker's report. An unknown update keeps its JSON and never ends a turn. Sub-agent updates are unstable in version 1 and are not consumed; a worker's own sub-agents stay inside its turn.
@@ -1126,6 +1135,11 @@ Card observations are coalesced at 250 ms intervals, with a final flush before
 the receipt. They neither submit a receipt nor end the run.
 A cancelled prompt records an interrupted turn and receipt; an open prompt lost
 with its process remains an uncertain failed execution without a receipt.
+A JSON-RPC error reply to the prompt is an observed worker failure, including
+when the process exits immediately after replying. Core records the failed turn
+and an adapter-derived receipt without retaining the remote error message or
+data. The reply alone does not settle external effects: unresolved effects keep
+the existing recovery fence until reconciliation.
 The adapter advertises progress, completion, work tools, approvals and questions. ACP
 requests use the existing worker authority and waiting-card bridge, preserving
 the originating conversation. Cards identify the ACP worker; Codex cards retain
@@ -1974,6 +1988,7 @@ Two permissively licensed sources shaped this section; LINA keeps none of their 
 Effect states and idempotency keys are defined in [host-protocol.md](host-protocol.md), the effect ledger in [runtime.md](runtime.md), and epochs, reconciliation and the task owner's disposition of irreversible effects in [main-authority.md](main-authority.md). Work applies them as follows:
 
 - When LINA Core restarts, running worker turns are cut. Their effects are unknown. After the restart LINA Core reconciles with `thread/resume` and a `thread/read` snapshot.
+- Before sending conversation-worker input that can start a follow-up turn, Core persists an uncertain intent with its directory reservation. The prior turn's completion cannot settle that intent. Core checkpoints the accepted turn binding independently of notifications. A definitive refusal restores the prior binding and releases an unused reservation; a missing binding or failed checkpoint retains uncertainty without replay or guessing a turn on restart. Steering preserves the recovery allowance.
 - On reconnect, LINA Core reconciles with `thread/loaded/list` and `thread/read`. When a pending server request does not arrive again, the attempt is marked unknown and needing attention, and the originating conversation is told.
 - When a Node restarts or disconnects, the effects of its running turn are unknown and are reconciled. On a Node policy cancel the Node sends `turn/interrupt` and reports STOPPED or UNKNOWN.
 - A GitHub write or merge with an unknown outcome is settled by reading GitHub's state ([integrations.md](integrations.md)). It is never repeated automatically.
@@ -2058,8 +2073,12 @@ transactions read those copied observations and the canonical owner names.
 Rows are scoped to the requesting person and name the owner agent before
 the worker. An idle session leaves the list without asserting that the task is
 verified; a new active turn makes it visible again. Unknown observations stay
-unknown. Scheduled workers retain their durable task rows and do not also
-contribute session rows. These rows do not alter the task or background-run state mappings.
+unknown. A pending ACP `session/request_permission` needs the person's input,
+just like a Codex approval: both the running row and progress line show input
+needed until the request is resolved. A pending Core tool call alone does not
+claim the person's attention. Scheduled workers retain their durable task rows
+and do not also contribute session rows. These rows do not alter the task or
+background-run state mappings.
 
 - A row is one task, one background run or one conversation-started worker. It has one of three states. In progress: a worker (or a background sub-agent) is working on it, or its pull request is being operated on. Waiting: it is not running, with one visible reason: a dependency, an area held by another task, a worker out of quota, host capacity, CI pending, a question or decision for the person, or a pause. Landed: the task has landed (see Terms), or the background run has ended with its outcome.
 - The states map onto the work card states: working is in progress; waiting, paused and input needed are waiting; done is landed. A stalled or failed task shows its state word until it is dispatched again (see Stall and failure).
