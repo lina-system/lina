@@ -62,7 +62,8 @@ func Migrations() []Migration {
 		{Version: 48, SQL: workReviewsSchema},
 		{Version: 49, SQL: ResultsSchema + PlanningSchema},
 		{Version: 50, SQL: doneEvidenceSchema},
-		{Version: 51, SQL: workerRecoverySchema},
+		{Version: 51, SQL: conversationQuestionsSchema},
+		{Version: 52, SQL: workerRecoverySchema},
 	}
 }
 
@@ -96,7 +97,7 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 		{20, "conversation_order"},
 		{21, "agent_growth_steps"}, {22, "moirai_jobs"}, {22, "budget_usage"},
 		{23, "skill_versions"}, {23, "skill_heads"}, {23, "skill_undone"}, {23, "skill_repo"},
-		{31, "worker_dispatch"}, {51, "worker_recovery"},
+		{31, "worker_dispatch"}, {52, "worker_recovery"},
 		{41, "timer"}, {41, "timer_fire"}, {40, "work_completion_origins"}, {43, "worker_quota"}, {40, "work_completions"}, {40, "work_completion_claims"},
 
 		{34, "waiting_decisions"},
@@ -116,6 +117,7 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 		{50, "done_completions"}, {49, "result_saves"},
 		{42, "agent_starters"}, {42, "agent_selection"},
 		{45, "record_operations"}, {45, "record_candidates"},
+		{51, "conversation_questions"}, {51, "conversation_question_resolutions"},
 	} {
 		var count int
 		if err = db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name=?", entry.table).Scan(&count); err != nil {

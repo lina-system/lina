@@ -1125,6 +1125,17 @@ Delegation to a worker is ready when:
 
 When a check fails, delegation is reported as unsupported with its cause. An ACP worker that answers `session/new` with the authentication error (-32000) is reported as needs sign-in, not as broken. Conversation readiness is separate and can pass while worker readiness fails.
 
+The optional local graph scheduler also checks its initial quota observation
+before releasing recovered tasks. A failed or unanswered quota read disables
+that scheduler, with a fifteen-second deadline for the read. A successful read
+with unknown quota remains usable. Failed initialization closes the partial
+worker session and releases its activity lease; conversations, channels and
+background runs remain available. Core reports the failed configuration, worker
+or quota stage through `readiness_failure` on the `core` topic, including for
+clients connecting after startup. Worker error text and local paths are not
+exposed. Errors dispatching recovered tasks after readiness succeeds remain
+task failures and do not disable the scheduler or stop other workers.
+
 ### Assignment
 
 1. For file-producing work, LINA Core creates the worktree and records the parent clone's protected refs in the ledger.

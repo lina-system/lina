@@ -148,6 +148,17 @@ Steps 1–4 have no new epoch and confer no authority. A kill at one of those bo
 
 At step 8 the client service accepts handshakes in RECOVERING. Mutations return `unavailable` until reconciliation completes. Negotiated read and subscription handlers remain available during RECOVERING. READY admits the operations implemented by that client service; the default Core offers lifecycle when it is negotiated. A halt marker keeps Core in RECOVERING and is never cleared by startup or shutdown. The previous sentinel, halt marker and restart request are passed to reconciliation without silently discarding invalid records.
 
+**Optional configuration.** Delegation readiness is separate from Core readiness.
+A missing worker, failed initialization or unavailable initial quota read disables
+the configured graph tools while conversations, channels and background runs
+start normally. Initialization failure closes and joins the worker and releases
+its activity lease before Core continues. The quota probe has a fifteen-second
+deadline. Core retains a `readiness_failure` on the `core` topic under key
+`delegation`, identifying the failed stage as `delegation.configuration`,
+`delegation.worker` or `delegation.quota`. Only these stage codes cross the
+client boundary; private paths and worker error text do not. A late subscriber
+receives the same failure in its snapshot. Absent configuration emits no failure.
+
 Missing or invalid command arguments exit 64; lock contention exits 69; invalid state, corrupt control records or socket startup failures exit 78. SIGTERM and SIGINT stop accepting clients, close accepted connections (including incomplete handshakes), remove the owned socket and exit 0. Shutdown closes the socket service, canon and event writer in reverse acquisition order before releasing the lock. Each service receives a five-second shutdown deadline and must honor it. An orderly shutdown removes the sentinel and preserves the epoch, main id, halt marker and restart request. Startup failure unwinds acquired resources, retains any minted epoch and leaves the sentinel for the next recovery.
 
 A socket can accept a connection before its ownership record is published or its first handshake is served. Cancellation in this bind-to-publication interval finishes retiring the previous socket and publishing the new ownership record, then performs orderly shutdown, including sentinel removal. Cancellation before bind remains an interrupted startup and preserves recovery records with a nonzero exit. A publication or cleanup failure also remains nonzero; the CLI never turns a startup error containing cancellation into a successful exit.
@@ -1456,7 +1467,7 @@ See [Antigravity headless adapter](work-and-delegation.md#antigravity-headless-a
 for the evidence boundary and account-free acceptance limits.
 
 The #135 recovery path persists worker bindings and the one continuation allowance
-in canon migration 51. Installed Core marks unfinished sessions unknown before
+in canon migration 52. Installed Core marks unfinished sessions unknown before
 admission, resumes their existing Codex thread and reads the exact turn, paging
 its history without starting another turn. Missing or incomplete items, lost
 requests, failed reads and effects without independent evidence remain unknown.

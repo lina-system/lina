@@ -205,6 +205,9 @@ var catalog = map[string]translation{
 	"notice.run_cancelled":   {"cancelled", "취소"},
 	"notice.run_needs_input": {"needs_input", "응답 필요"},
 
+	"notice.question_default": {"Using the stated default: ", "말씀드린 기본값으로 진행해요: "},
+	"notice.question_answer":  {"Recorded your response: ", "응답을 기록했어요: "},
+
 	"notice.persona_changed": {"Your speaking-style change is saved for the next reply. Say undo to restore it.", "말투 변경을 저장했어요. 다음 답변부터 적용돼요. 되돌리려면 취소해 달라고 말해 주세요."},
 	"notice.persona_undone":  {"Your previous speaking style is restored for the next reply.", "이전 말투로 되돌렸어요. 다음 답변부터 적용돼요."},
 	"notice.emotion_off":     {"Emotional expression is off.", "감정 표현을 껐어요."},

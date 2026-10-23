@@ -1,0 +1,33 @@
+{
+  "protocol": {
+    "name": "client",
+    "version": "1.0"
+  },
+  "kind": "readiness_failure",
+  "message_id": "stream-readiness",
+  "attempt_id": "stream-readiness-attempt",
+  "reply_to": null,
+  "sender": {
+    "party": "core",
+    "id": "main-example"
+  },
+  "epoch": "42",
+  "sent_at": "2026-01-01T00:00:01Z",
+  "idempotency_key": null,
+  "effect_state": "none",
+  "receipt_ref": null,
+  "source_refs": [],
+  "error": null,
+  "payload": {
+    "stream": {
+      "topic": "core",
+      "cursor": {
+        "epoch": "42",
+        "seq": 2
+      },
+      "key": "delegation",
+      "revision": 2
+    },
+    "step": "delegation.quota"
+  }
+}
