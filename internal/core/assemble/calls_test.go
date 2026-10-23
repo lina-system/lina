@@ -47,3 +47,19 @@ func TestCondenseResultCallsKeepsRequestShape(t *testing.T) {
 		t.Fatalf("projection is not stable: %s", again.Items[1])
 	}
 }
+
+// A refused or unfinished presentation has no stored body to point at, so the
+// model keeps the arguments it must correct.
+func TestCondenseResultCallsKeepsRefusedArguments(t *testing.T) {
+	call := []byte(`{"type":"function_call","call_id":"present","name":"present_result","arguments":"{\"type\":\"document_draft\",\"body\":{\"blocks\":[]}}"}`)
+	for name, items := range map[string][]provider.Item{
+		"no receipt": {call},
+		"refused":    {call, []byte(`{"type":"function_call_output","call_id":"present","output":"{\"code\":\"denied\"}"}`)},
+		"aborted":    {call, []byte(`{"type":"function_call_output","call_id":"present","output":"{\"code\":\"aborted\"}"}`)},
+	} {
+		out := assemble.CondenseResultCalls(provider.Request{Items: items})
+		if !bytes.Equal(out.Items[0], call) {
+			t.Fatalf("%s: refused call was rewritten: %s", name, out.Items[0])
+		}
+	}
+}

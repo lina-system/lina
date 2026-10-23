@@ -200,3 +200,28 @@ func TestPresentedResultCallCarriesNoBodyIntoModelHistory(t *testing.T) {
 		t.Fatalf("plain call changed: %s %v", items, err)
 	}
 }
+
+func TestRefusedResultCallKeepsItsArgumentsInModelHistory(t *testing.T) {
+	body := strings.Repeat("결과 content.\n", 6000)
+	presented, err := json.Marshal(map[string]any{"type": "document_draft", "title": "Authored result", "summary": "Ready.", "body": map[string]any{"blocks": []any{map[string]any{"kind": "paragraph", "text": body}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	arguments, err := json.Marshal(string(presented))
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := `{"type":"function_call","call_id":"present","name":"present_result","arguments":` + string(arguments) + `}`
+	refusal := `{"type":"function_call_output","call_id":"present","output":"{\"code\":\"denied\"}"}`
+	event := func(raw string, entry guard.Entry, speaker guard.SpeakerKind) ledger.Event {
+		masked, err := secrets.Mask(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ledger.Event{ConversationID: "conversation", AgentID: "agent", SpeakerKind: speaker, Origin: ledger.Origin{Kind: "native", Entry: entry, Locator: "source"}, ScaffoldKind: "provider_item", Body: masked}
+	}
+	items, err := assemble.History([]ledger.Event{event(call, guard.EntryAgent, guard.Agent), event(refusal, guard.EntryTool, guard.Tool)}, "conversation", "agent")
+	if err != nil || len(items) != 2 || !bytes.Equal(items[0], []byte(call)) {
+		t.Fatalf("refused call lost its arguments: %v", err)
+	}
+}

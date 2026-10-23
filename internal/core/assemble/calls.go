@@ -13,29 +13,58 @@ import (
 // paired tool output names the result, its revision and its title.
 const resultCallReference = `{"note":"result body stored; the tool result names its id and revision"}`
 
-// CondenseResultCall projects one provider item for the model. It returns the
-// input unchanged unless the item presents an authored result with a body.
-func CondenseResultCall(item provider.Item) provider.Item {
-	if !bytes.Contains(item, []byte(`"present_result"`)) {
+// presentedResults returns the call ids whose paired tool output reports a
+// completed presentation. Only those calls have a stored body to refer to; a
+// refused or interrupted call keeps its arguments so the model can correct it.
+func presentedResults(items []provider.Item) map[string]bool {
+	presented := map[string]bool{}
+	for _, item := range items {
+		if !bytes.Contains(item, []byte("call_output")) {
+			continue
+		}
+		var output struct {
+			Type   string `json:"type"`
+			CallID string `json:"call_id"`
+			Output string `json:"output"`
+		}
+		if json.Unmarshal(item, &output) != nil || output.CallID == "" ||
+			(output.Type != "function_call_output" && output.Type != "custom_tool_call_output") {
+			continue
+		}
+		var receipt struct{ Code string }
+		if json.Unmarshal([]byte(output.Output), &receipt) == nil && receipt.Code == "ok" {
+			presented[output.CallID] = true
+		}
+	}
+	return presented
+}
+
+// condenseResultCall projects one provider item for the model. It returns the
+// input unchanged unless the item presents an authored result whose call
+// completed.
+func condenseResultCall(item provider.Item, presented map[string]bool) provider.Item {
+	if !bytes.Contains(item, []byte("present_result")) {
 		return item
 	}
 	var call map[string]json.RawMessage
 	if json.Unmarshal(item, &call) != nil {
 		return item
 	}
-	var kind, name string
+	var kind, name, callID string
 	if json.Unmarshal(call["type"], &kind) != nil || kind != "function_call" ||
-		json.Unmarshal(call["name"], &name) != nil || name != "present_result" {
+		json.Unmarshal(call["name"], &name) != nil || name != "present_result" ||
+		json.Unmarshal(call["call_id"], &callID) != nil || !presented[callID] {
 		return item
 	}
 	var arguments string
 	if json.Unmarshal(call["arguments"], &arguments) != nil {
 		return item
 	}
-	var presented struct {
+	var presentedRequest struct {
 		Body json.RawMessage `json:"body"`
 	}
-	if json.Unmarshal([]byte(arguments), &presented) != nil || len(presented.Body) == 0 || bytes.Equal(presented.Body, []byte("null")) {
+	if json.Unmarshal([]byte(arguments), &presentedRequest) != nil ||
+		len(presentedRequest.Body) == 0 || bytes.Equal(presentedRequest.Body, []byte("null")) {
 		return item
 	}
 	reference, err := json.Marshal(resultCallReference)
@@ -50,26 +79,37 @@ func CondenseResultCall(item provider.Item) provider.Item {
 	return condensed
 }
 
-// CondenseResultCalls replaces presented result bodies in a loop request with
-// their bounded reference. Every other item, including call identity and
-// placement, stays byte-for-byte as the loop recorded it.
+// CondenseResultCalls replaces presented result bodies in a request with their
+// bounded reference. Every other item, including call identity and placement,
+// stays byte-for-byte as the loop recorded it.
 func CondenseResultCalls(request provider.Request) provider.Request {
-	items := request.Items
-	copied := false
-	for i, item := range request.Items {
-		condensed := CondenseResultCall(item)
-		if bytes.Equal(condensed, item) {
-			continue
-		}
-		if !copied {
-			items = append([]provider.Item(nil), request.Items...)
-			copied = true
-		}
-		items[i] = condensed
-	}
-	if !copied {
+	items, changed := CondenseResultItems(request.Items)
+	if !changed {
 		return request
 	}
 	request.Items = items
 	return request
+}
+
+// CondenseResultItems projects a run of provider items together, so a call is
+// matched with its paired output before its body is replaced.
+func CondenseResultItems(items []provider.Item) ([]provider.Item, bool) {
+	if len(items) == 0 {
+		return items, false
+	}
+	presented := presentedResults(items)
+	projected := items
+	copied := false
+	for i, item := range items {
+		condensed := condenseResultCall(item, presented)
+		if bytes.Equal(condensed, item) {
+			continue
+		}
+		if !copied {
+			projected = append([]provider.Item(nil), items...)
+			copied = true
+		}
+		projected[i] = condensed
+	}
+	return projected, copied
 }

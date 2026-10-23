@@ -189,8 +189,13 @@ func (s *turnState) resolveCompactionItems(ctx context.Context, items []provider
 	}
 	// The loop request carries the model projection, so result calls arrive
 	// condensed. Project the candidates the same way before matching.
+	projected := make([]provider.Item, len(candidates))
 	for i := range candidates {
-		candidates[i].Item = assemble.CondenseResultCall(candidates[i].Item)
+		projected[i] = candidates[i].Item
+	}
+	projected, _ = assemble.CondenseResultItems(projected)
+	for i := range candidates {
+		candidates[i].Item = projected[i]
 	}
 	var resolved []compaction.Record
 	for _, item := range items {
