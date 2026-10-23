@@ -341,8 +341,8 @@ func (s *Service) execute(ctx context.Context, r Record) {
 			if err != nil {
 				return
 			}
-			// Readiness refusals consume chooser slots without starting a run.
-			// Recovery must bind the actual generation before any worker input.
+			// Readiness refusals consume chooser slots, but create no work run.
+			// Recovery and completion must retain the actual run's generation.
 			r.Attempt = run.Generation
 			if err = s.save(ctx, r); err != nil {
 				return

@@ -80,8 +80,8 @@ func assertClaudeReceipt(t *testing.T, h *harness, mode string) {
 }
 
 // TestM2HeadlessWorkerRecovery runs m2/headless-worker-recovery.json through
-// installed Core: two Claude dispatch attempts retain their receipt artifacts
-// and produce a durable decision without a third launch after restart.
+// installed Core, checking Claude dispatch's two attempts, retained receipt
+// artifacts and durable decision with a synthetic worker and no account.
 func TestM2HeadlessWorkerRecovery(t *testing.T) {
 	testHeadlessWorkerThroughInstalledCore(t, "../m2/headless-worker-recovery.json", false)
 }
