@@ -519,3 +519,146 @@ func (a *fakeAdapter) FetchAttachment(context.Context, string, string) (io.ReadC
 func (a *fakeAdapter) Capabilities() messenger.Capabilities {
 	return messenger.Capabilities{Edits: true, Deletions: true}
 }
+
+// A page with more than one id must still match an effect by the platform's
+// message id: the two IN lists take the same ids in the same order.
+func TestEffectMatchesByPlatformMessageID(t *testing.T) {
+	f := newFixture(t)
+	source := f.connect(t)
+	effect := messenger.Effect{ID: "effect-1", Platform: source.Platform, Account: source.Account, Chat: "dm-1",
+		Agent: "agent:main", Verb: "send", ClientID: "client-1", Message: "m-1", State: messenger.EffectSent, CreatedAt: f.now}
+	if err := f.store.RecordEffect(t.Context(), effect); err != nil {
+		t.Fatal(err)
+	}
+	page := messenger.Page{Messages: []messenger.Message{
+		message("m-1", messenger.RoutePerson, f.now, "sent by LINA"),
+		message("m-2", messenger.RoutePerson, f.now.Add(time.Minute), "typed by the person"),
+	}, Next: "c2"}
+	if _, err := f.store.AdmitPage(t.Context(), source, "dm-1", "", page); err != nil {
+		t.Fatal(err)
+	}
+	if event := f.eventsFor(t, source, "dm-1", "m-1"); event.SpeakerKind != guard.Agent || event.AgentID != "agent:main" || event.PersonID != "" {
+		t.Fatalf("effect-matched message: %+v", event)
+	}
+	if event := f.eventsFor(t, source, "dm-1", "m-2"); event.SpeakerKind != guard.Person || event.PersonID != "person" {
+		t.Fatalf("the person's own message: %+v", event)
+	}
+}
+
+// An own-account message waits while any write in its chat is unsettled: the
+// platform need not identify a sent message with the effect's client id.
+func TestOwnAccountMessageWaitsForTheChatsUnsettledWrite(t *testing.T) {
+	f := newFixture(t)
+	source := f.connect(t)
+	effect := messenger.Effect{ID: "effect-1", Platform: source.Platform, Account: source.Account, Chat: "dm-1",
+		Agent: "agent:main", Verb: "send", ClientID: "client-1", State: messenger.EffectPending, CreatedAt: f.now}
+	if err := f.store.RecordEffect(t.Context(), effect); err != nil {
+		t.Fatal(err)
+	}
+	page := messenger.Page{Messages: []messenger.Message{message("m-2", messenger.RoutePerson, f.now, "typed by the person")}, Next: "c2"}
+	result, err := f.store.AdmitPage(t.Context(), source, "dm-1", "", page)
+	if !errors.Is(err, messenger.ErrPageWaiting) || result.Waiting != 1 {
+		t.Fatalf("unsettled chat write did not hold the page: %+v %v", result, err)
+	}
+	if n := count(t, f.db, "SELECT count(*) FROM conv_event WHERE origin LIKE '%messenger%'"); n != 0 {
+		t.Fatal("a waiting page admitted a record")
+	}
+	// The write settles with a platform id of its own: m-2 is not it.
+	if err := f.store.SettleEffect(t.Context(), "effect-1", messenger.EffectSent, "platform-9"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.AdmitPage(t.Context(), source, "dm-1", "", page); err != nil {
+		t.Fatal(err)
+	}
+	if event := f.eventsFor(t, source, "dm-1", "m-2"); event.SpeakerKind != guard.Person || event.PersonID != "person" {
+		t.Fatalf("settled chat: %+v", event)
+	}
+}
+
+// cursorSpy records whether the chat's cursor moved before a deletion was
+// journaled.
+type cursorSpy struct {
+	db    *canon.Store
+	t     *testing.T
+	from  string
+	calls int
+}
+
+func (s *cursorSpy) Forget(ctx context.Context, _ retract.Request) error {
+	s.calls++
+	var cursor string
+	if err := s.db.Read(ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT cursor FROM messenger_chat WHERE platform=? AND account=? AND chat=?", "discord", "account-1", "dm-1").Scan(&cursor)
+	}); err != nil {
+		return err
+	}
+	if cursor != s.from {
+		s.t.Errorf("the cursor advanced before the deletion: %q, want %q", cursor, s.from)
+	}
+	return nil
+}
+
+// A page's deletions are durable before its cursor advances, so a crash after
+// the progress commit cannot skip them.
+func TestDeletionIsAppliedBeforeTheCursorAdvances(t *testing.T) {
+	f := newFixture(t)
+	source := f.connect(t)
+	if _, err := f.store.AdmitPage(t.Context(), source, "dm-1", "", messenger.Page{
+		Messages: []messenger.Message{message("m-1", messenger.RouteParticipant, f.now, "delete me")}, Next: "c1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	spy := &cursorSpy{db: f.db, t: t, from: "c1"}
+	store := messenger.Open(f.db, nil, spy).WithClock(func() time.Time { return f.now })
+	result, err := store.AdmitPage(t.Context(), source, "dm-1", "c1", messenger.Page{
+		Messages:  []messenger.Message{message("m-2", messenger.RouteParticipant, f.now.Add(time.Minute), "kept")},
+		Deletions: []messenger.Deletion{{Message: "m-1", At: f.now.Add(time.Minute)}},
+		Next:      "c2",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spy.calls != 1 || result.Deleted != 1 || result.Added != 1 {
+		t.Fatalf("deletion calls=%d result=%+v", spy.calls, result)
+	}
+}
+
+// Permanent deletion removes the text and the material reference; the row keeps
+// its identity, origin and the legacy reference the tombstone carries.
+func TestPermanentDeletionErasesTheText(t *testing.T) {
+	f := newFixture(t)
+	source := f.connect(t)
+	if _, err := f.store.AdmitPage(t.Context(), source, "dm-1", "", messenger.Page{
+		Messages: []messenger.Message{message("m-1", messenger.RouteParticipant, f.now, "erase this text")}, Next: "c1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	event := f.eventsFor(t, source, "dm-1", "m-1")
+	ref := retract.Ref{Kind: retract.Event, ID: event.ID}
+	request := retract.Request{Person: "person", Targets: []retract.Ref{ref}}
+	if err := f.removal.Forget(t.Context(), request); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.removal.Delete(t.Context(), request); err != nil {
+		t.Fatal(err)
+	}
+	var body, material, origin string
+	if err := f.db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT body,coalesce(material_id,''),origin FROM conv_event WHERE id=?", event.ID).Scan(&body, &material, &origin)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if body != "" || material != "" {
+		t.Fatalf("payload survived: body=%q material=%q", body, material)
+	}
+	if !strings.Contains(origin, "messenger") {
+		t.Fatalf("origin lost: %s", origin)
+	}
+	got, err := f.events.Get(t.Context(), event.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Body.Text() != "" {
+		t.Fatalf("the ledger still returns %q", got.Body.Text())
+	}
+}

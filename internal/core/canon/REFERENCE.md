@@ -107,3 +107,10 @@ Two triggers keep the one index consistent with the removal projection: hiding
 an event deletes its `recall_doc` row and pending entry in the same transaction
 as the removal, and restoring it queues the document again. The old ledger index
 keeps its own fence, which already covers memory-driven exclusions.
+
+Migration 66 adds the ledger's one rewrite. `conv_event` stays append-only
+except when the removal projection erased the event: then its text and material
+reference clear, and the `ev_span` rows that indexed that text go with them.
+Every other column is compared against its old value, so any other update aborts
+with the same `ledger_append_only` refusal. The trigger replacement is the only
+change, so an install at 65 keeps every row it has.

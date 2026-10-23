@@ -78,6 +78,7 @@ func Migrations() []Migration {
 		{Version: 63, SQL: retractCiteSchema},
 		{Version: 64, SQL: MiniAppsSchema},
 		{Version: 65, SQL: MessengerSchema},
+		{Version: 66, SQL: EventErasureSchema},
 	}
 }
 

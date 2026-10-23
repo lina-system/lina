@@ -59,17 +59,32 @@ func resolveEvent(ctx context.Context, tx *canon.Tx, ref Ref, person string) (Ta
 	}, nil
 }
 
-// An event's text is a ledger record, which is never rewritten. Hiding it
-// through the retraction projection is what makes it invisible at once; its
-// permanent deletion leaves the tombstone this target already carries.
-func applyEvent(_ context.Context, _ *canon.Tx, e entry, target Target) error {
+// An event's text is a ledger record, which is never rewritten while the record
+// lives. Hiding it through the retraction projection is what makes it invisible
+// at once; its permanent deletion is the one rewrite: the text and the material
+// reference go, and the row keeps the identity, the origin and the legacy
+// reference the tombstone carries.
+func applyEvent(ctx context.Context, tx *canon.Tx, e entry, target Target) error {
 	if target.Kind != Event {
 		return ErrInvalid
 	}
-	if e.Action == disconnect {
+	switch e.Action {
+	case forget, restore:
+		return nil
+	case erase:
+		// The spans index positions in the text that is going away.
+		if _, err := tx.ExecContext(ctx, "DELETE FROM ev_span WHERE event_id=?", target.ID); err != nil {
+			return err
+		}
+		// The body column stays non-null: an empty text is no content, and the
+		// check constraint needs one of text or material.
+		_, err := tx.ExecContext(ctx, "UPDATE conv_event SET body='',material_id=NULL,material_revision=NULL WHERE id=?", target.ID)
+		return err
+	case disconnect:
+		return ErrInvalid
+	default:
 		return ErrInvalid
 	}
-	return nil
 }
 
 // expandEvents passes event targets through. The caller lists every revision of

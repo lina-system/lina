@@ -412,8 +412,13 @@ func (s *Store) effectsFor(ctx context.Context, source Source, chat string, ids 
 	}
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
 	args := []any{source.Platform, source.Account, chat}
+	// The two IN lists take the same ids in the same order: the first list
+	// matches the client id and the second the platform's message id.
 	for _, id := range ids {
-		args = append(args, id, id)
+		args = append(args, id)
+	}
+	for _, id := range ids {
+		args = append(args, id)
 	}
 	err := s.db.Read(ctx, func(tx *canon.Tx) error {
 		rows, err := tx.QueryContext(ctx, `SELECT client_id,message,agent,state FROM messenger_effect
@@ -448,6 +453,18 @@ type PageResult struct {
 // so the next read sees the page again after the write settles.
 var ErrPageWaiting = errors.New("messenger_write_pending")
 
+// pendingEffects reports whether the chat has a write whose outcome is not yet
+// known. Until it settles, an own-account message can belong to that write and
+// the page must wait rather than attribute it to the person.
+func (s *Store) pendingEffects(ctx context.Context, source Source, chat string) (bool, error) {
+	var pending bool
+	err := s.db.Read(ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM messenger_effect WHERE platform=? AND account=? AND chat=? AND state='pending')",
+			source.Platform, source.Account, chat).Scan(&pending)
+	})
+	return pending, err
+}
+
 // AdmitPage commits one page of a chat: its new records, edits and the chat's
 // cursor and coverage in one canon transaction. Reading the same messages again
 // adds nothing. A message missing from a page changes nothing.
@@ -470,10 +487,25 @@ func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from 
 	if err != nil {
 		return PageResult{}, err
 	}
+	pending, err := s.pendingEffects(ctx, source, chat)
+	if err != nil {
+		return PageResult{}, err
+	}
+	deleting := make(map[string]bool, len(page.Deletions))
+	for _, deletion := range page.Deletions {
+		if !validName(deletion.Message) {
+			return PageResult{}, ErrInvalid
+		}
+		deleting[deletion.Message] = true
+	}
 	var result PageResult
 	var plans []recordPlan
 	var repairs []string
 	for _, message := range page.Messages {
+		if deleting[message.ID] {
+			// The page's own deletion wins; its tombstone is written below.
+			continue
+		}
 		row, seen := existing[message.ID]
 		if seen && row.state == "deleted" {
 			// A tombstone keeps the legacy reference: the content does not return.
@@ -493,8 +525,13 @@ func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from 
 			plan.revision, plan.added = row.revision+1, false
 		}
 		effect, hasEffect := effects[message.ID]
-		if message.Route == RoutePerson && hasEffect && effect.state == EffectPending {
-			return PageResult{Waiting: result.Waiting + 1}, ErrPageWaiting
+		if message.Route == RoutePerson {
+			// An own-account message can be the return of a write the platform has
+			// not identified yet, so an unsettled write anywhere in the chat holds
+			// the page instead of attributing the words to the person.
+			if (hasEffect && effect.state == EffectPending) || pending {
+				return PageResult{Waiting: result.Waiting + 1}, ErrPageWaiting
+			}
 		}
 		plan.ownWrite = message.Route == RoutePerson && hasEffect && (effect.state == EffectSent || effect.state == EffectUnknown)
 		plan.effect = effect
@@ -507,9 +544,18 @@ func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from 
 		}
 		plans = append(plans, plan)
 	}
-	if len(plans) == 0 && len(page.Deletions) == 0 && len(repairs) == 0 {
+	if len(page.Deletions) > 0 {
+		// A deletion is durable before the cursor passes it: a crash after the
+		// progress commit must not skip it, because the next read starts past it.
+		deleted, err := s.deleteRecords(ctx, source, chat, page.Deletions)
+		if err != nil {
+			return PageResult{}, err
+		}
+		result.Deleted = deleted
+	}
+	if len(plans) == 0 && len(repairs) == 0 {
 		// Nothing new: still record the completed read and advance the cursor.
-		return PageResult{}, s.commitProgress(ctx, source, chat, from, page, 0)
+		return result, s.commitProgress(ctx, source, chat, from, page, 0)
 	}
 	if len(plans) == 0 {
 		if err := s.db.Write(ctx, func(tx *canon.Tx) error {
@@ -522,11 +568,6 @@ func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from 
 		}); err != nil {
 			return PageResult{}, err
 		}
-		deleted, err := s.deleteRecords(ctx, source, chat, page.Deletions)
-		if err != nil {
-			return PageResult{}, err
-		}
-		result.Deleted = deleted
 		return result, nil
 	}
 	batch := make([]ledger.Admission, 0, len(plans))
@@ -569,11 +610,6 @@ func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from 
 			result.Updated++
 		}
 	}
-	deleted, err := s.deleteRecords(ctx, source, chat, page.Deletions)
-	if err != nil {
-		return PageResult{}, err
-	}
-	result.Deleted = deleted
 	return result, nil
 }
 
