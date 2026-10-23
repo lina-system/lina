@@ -2,9 +2,10 @@
 
 The [bounds are already declared](https://github.com/thisisjun786/lina/issues/87#issuecomment-6307893344).
 The [terminal list](terminals.json) is **proposed, pending owner confirmation**:
-macOS Apple Terminal, the installed LINA OS default terminal, and Apple Terminal
-over SSH. Resolve the actual LINA OS terminal product and versions when confirming
-the list. No person has performed these runs yet, and no final library step is
+macOS Apple Terminal, the installed LINA OS (Omarchy) default terminal, and Apple
+Terminal over SSH. The owner deferred confirmation to
+[follow-up #371](https://github.com/thisisjun786/lina/issues/371); resolve the
+actual LINA OS terminal product and versions there when confirming the list. No person has performed these runs yet, and no final library step is
 selected. [Follow-up #371](https://github.com/thisisjun786/lina/issues/371) owns these
 remaining cases and the final decision. They do not block LN-85's harness delivery;
 this runbook does not close #87 or establish terminal acceptance.
