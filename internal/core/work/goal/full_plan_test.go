@@ -274,3 +274,30 @@ func TestCorrectionPlanWaitsForReadScheduledAfterManagerDispatch(t *testing.T) {
 		t.Fatal("correction did not progress after receipt")
 	}
 }
+
+func TestCompletedCorrectionHistoryCannotReopenRetiredMerge(t *testing.T) {
+	e := revisionEngine(t, readyTask("a"))
+	revisionReport(t, e, "a", Assign, Observation{Status: OutcomeSucceeded, Head: "old-head", EffectsSettled: true})
+	revisionReport(t, e, "a", InspectPR, revisionPR("old-head"))
+	old := revisionReport(t, e, "a", Merge, Observation{Status: OutcomeSucceeded, Head: "old-head", Proof: Proof{Revision: "merged", Ref: "merge", Passed: true}})
+	revisionEdit(t, e)
+	replacement := readyTask("a")
+	replacement.Done = "changed instructions"
+	revisionReport(t, e, "", PlanGoal, Observation{Status: OutcomeSucceeded, Tasks: []Task{replacement}})
+	// A delayed progress observation must not reopen an effect already read
+	// to settlement and retired before this task ID was reused.
+	for _, out := range []Observation{{Status: OutcomeRunning, Handle: "old-merge"}, {Status: OutcomeFailed}} {
+		if err := e.Report(t.Context(), old.ID, old.Epoch, out); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := e.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range revisionSnapshot(t, e).Actions {
+		if a.ID == old.ID && a.State != "finished" {
+			t.Fatalf("settled merge reopened: %+v", a)
+		}
+	}
+	_ = revisionAction(t, e, "a", Assign)
+}
