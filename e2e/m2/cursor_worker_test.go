@@ -181,6 +181,18 @@ func TestCursorReadinessThroughRunningCore(t *testing.T) {
 						return
 					}
 				}
+				// Load the deferred declaration before checking worker readiness.
+				if requestCount.Load() == 0 {
+					available, loader := false, false
+					for _, tool := range req.Tools {
+						available = available || tool.Name == "dispatch_work"
+						loader = loader || tool.Name == "load_tools"
+					}
+					if !available && loader {
+						emitPersonaCall(w, "load-dispatch", "load_tools", map[string]any{"tools": []string{"dispatch_work"}})
+						return
+					}
+				}
 				if requestCount.Add(1) == 1 {
 					available := false
 					for _, tool := range req.Tools {
