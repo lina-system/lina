@@ -51,6 +51,8 @@ type Definition struct {
 }
 type Origin struct{ Person, Agent, Conversation, Turn string }
 type Record struct {
+	ReadinessFailures []ReadinessFailure `json:"readiness_failures,omitempty"`
+
 	ReturnReceipt  string                     `json:"return_receipt,omitempty"`
 	GenerationBase int                        `json:"generation_base,omitempty"`
 	FailureReason  string                     `json:"failure_reason,omitempty"`

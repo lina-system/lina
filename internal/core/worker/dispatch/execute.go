@@ -282,8 +282,10 @@ func (s *Service) execute(ctx context.Context, r Record) {
 			}
 			return
 		}
-		generation := r.GenerationBase + len(r.Tried)
-		run = work.Run{ID: fmt.Sprintf("%s:%d", r.ID, generation), TaskID: r.ID, Generation: generation, Worker: r.Worker, NodeID: s.cfg.Main}
+		run, err = s.nextRun(ctx, r)
+		if err != nil {
+			return
+		}
 		// reserveWorker persisted this attempt before any launch. A crash is
 		// uncertain, never permission to consume another replacement.
 		for _, directory := range directories {
@@ -296,6 +298,16 @@ func (s *Service) execute(ctx context.Context, r Record) {
 		admitted, settled = true, false
 		thread, err = adapter.Start(ctx, l, worker.StartSpec{TaskID: r.ID, AttemptID: run.ID, Workdir: workdir, TaskPacket: r.Packet})
 		if err != nil {
+			if errors.Is(err, worker.ErrNeedsSignIn) {
+				if closeAdapter(ctx) != nil {
+					return
+				}
+				admitted, settled = false, true
+				if err = s.needsSignIn(ctx, &r, adapter); err != nil {
+					return
+				}
+				continue
+			}
 			admitted = true
 			closeAdapter(context.Background())
 			return
@@ -321,6 +333,10 @@ func (s *Service) execute(ctx context.Context, r Record) {
 		}
 		observed := false
 		var progressSequence uint64
+		if err = s.reportReadiness(ctx, r, run, &progressSequence); err != nil {
+			unbind()
+			return
+		}
 		var progress progressBuffer
 		progressTick := time.NewTicker(progressInterval)
 		defer progressTick.Stop()
@@ -389,6 +405,10 @@ func (s *Service) execute(ctx context.Context, r Record) {
 			continue
 		}
 		break
+	}
+	if thread.ID == "" {
+		// All attempted sessions refused readiness; no turn or receipt exists.
+		return
 	}
 	// Claude and Antigravity synthesize connection failures without a result.
 	// Codex alone also reports observed provider failures as "connection";
