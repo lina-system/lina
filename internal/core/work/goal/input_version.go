@@ -104,8 +104,9 @@ func hasExternalEffect(a Action) bool {
 	return false
 }
 
-// Report only retains superseded history. Derivation then releases an unused
-// reservation, redoes a pure judgment, or reads an already dispatched effect.
+// Reports retain superseded history and clear obsolete assessment markers.
+// Derivation completes retirement, releases an unused reservation, redoes a
+// pure judgment, or reads an already dispatched effect.
 // Reading uses the original effect key; it never spends a worker recovery or
 // bypasses authorization by executing a replacement operation.
 func (e *Engine) reconcileRetired(v *View) error {

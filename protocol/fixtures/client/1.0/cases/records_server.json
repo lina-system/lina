@@ -1,0 +1,17 @@
+{
+  "side": "server",
+  "input": [
+    "normal/record_request.json"
+  ],
+  "output": [
+    "normal/record_request.json"
+  ],
+  "errors": [
+    ""
+  ],
+  "outcome": {
+    "accepted": 1,
+    "malformed": 0,
+    "unknown_kinds": 0
+  }
+}
