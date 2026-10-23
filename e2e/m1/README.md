@@ -38,6 +38,15 @@ physical input and UX. Passing this suite alone does not declare the phase done.
 
 Failure coverage also includes:
 
+- `TestM3WorkPanelLiveCodexWorker`: Core starts the worker, routes its approval
+  and question, displays live work-card activity, receives its file result and
+  retains the outcome after restart. The shared model fixture distinguishes
+  the current completion from the ContextPacket that follows it in the
+  [request layout](../../docs/design/conversation-and-memory.md#request-layout).
+  `TestWorkerCompletionFixtureRequestLayout` uses the real assembler to cover
+  trailing context, tool discovery, later inputs and result text that appears
+  only in retrieved context.
+
 - `TestM2InstalledWorkerOutcome`: the pending-at-restart case releases the
   worker only after Core emits the successful `start-worker` tool activity.
   The provider continuation waits behind that release, so it cannot supply
