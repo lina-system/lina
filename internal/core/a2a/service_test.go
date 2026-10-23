@@ -70,7 +70,7 @@ func peer(t *testing.T, mode string) *peerFixture {
 			if f.changed.Load() {
 				name = "changed"
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"name": name, "supportedInterfaces": []Interface{{URL: server.URL + "/rpc", Binding: "JSONRPC", Version: "1.0", Tenant: "tenant"}}, "defaultInputModes": []string{"text/plain"}, "defaultOutputModes": []string{"text/plain"}, "capabilities": map[string]any{"streaming": true}, "securitySchemes": map[string]any{"key": map[string]any{"httpAuthSecurityScheme": map[string]any{"scheme": "Bearer"}}}, "securityRequirements": []any{map[string]any{"schemes": map[string]any{"key": map[string]any{"list": []string{}}}}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"name": name, "description": "Controlled artifact operation", "version": "1.0.0", "skills": []any{map[string]any{"id": "artifact", "name": "Artifact", "description": "Create a controlled artifact", "tags": []string{"artifact"}}}, "supportedInterfaces": []Interface{{URL: server.URL + "/rpc", Binding: "JSONRPC", Version: "1.0", Tenant: "tenant"}}, "defaultInputModes": []string{"text/plain"}, "defaultOutputModes": []string{"text/plain"}, "capabilities": map[string]any{"streaming": true}, "securitySchemes": map[string]any{"key": map[string]any{"httpAuthSecurityScheme": map[string]any{"scheme": "Bearer"}}}, "securityRequirements": []any{map[string]any{"schemes": map[string]any{"key": map[string]any{"list": []string{}}}}}})
 			return
 		}
 		if r.Header.Get("Authorization") != "Bearer "+f.token {
@@ -99,6 +99,10 @@ func peer(t *testing.T, mode string) *peerFixture {
 			t.Error("tenant lost")
 		}
 		task := Task{ID: "remote-task", Context: "remote-context", Status: Status{State: "TASK_STATE_COMPLETED"}, Artifacts: []Artifact{{ID: "artifact", Parts: []Part{{URL: server.URL + "/artifact", MediaType: "text/plain"}}}}}
+		if f.mode == "short-ids" {
+			task.ID = "task-task"
+			task.Context = "context-task"
+		}
 		var result any = task
 		switch in.Method {
 		case "SendMessage", "SendStreamingMessage":
@@ -342,21 +346,112 @@ func TestMultipartBinaryEvidence(t *testing.T) {
 }
 
 func TestOpaqueTaskIDsAreNotJoinedForSecretDetection(t *testing.T) {
+	f := peer(t, "short-ids")
+	call, err := f.send(t, false)
+	if err != nil || call.TaskID != "task-task" || call.ContextID != "context-task" || !call.Verified {
+		t.Fatal("valid opaque identities refused", err)
+	}
+}
+
+func TestOAuthSettingsScopesRoundTrip(t *testing.T) {
+	var o OAuth
+	if err := json.Unmarshal([]byte(`{"issuer":"https://issuer.test","scopes":["task"]}`), &o); err != nil || len(o.Scopes) != 1 {
+		t.Fatal("owner OAuth scopes lost", err)
+	}
+}
+
+func TestOwnerReviewCanAdmitAnUnpredictableArtifact(t *testing.T) {
+	f := peer(t, "task")
+	connection := f.connection
+	connection.Profiles[0].SHA256 = ""
+	if _, err := f.service.Configure(t.Context(), connection, nil); err != nil {
+		t.Fatal("owner-reviewed task cannot be configured", err)
+	}
+	call, err := f.send(t, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if call.Verified || len(call.Evidence) != 1 || call.State != "unverified" {
+		t.Fatal("remote claim accepted before owner verification")
+	}
+}
+
+func TestOwnerVerificationBindsRetainedArtifactAndPerson(t *testing.T) {
+	f := peer(t, "task")
+	connection := f.connection
+	connection.Profiles[0].SHA256 = ""
+	if _, err := f.service.Configure(t.Context(), connection, nil); err != nil {
+		t.Fatal(err)
+	}
+	call, err := f.send(t, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign := f.owner
+	foreign.Person = "other"
+	if _, err = f.service.Accept(t.Context(), foreign, call.ID, call.Evidence[0].SHA256); err == nil {
+		t.Fatal("foreign owner accepted output")
+	}
+	if _, err = f.service.Accept(t.Context(), f.owner, call.ID, hash([]byte("different"))); err == nil {
+		t.Fatal("changed artifact accepted")
+	}
+	accepted, err := f.service.Accept(t.Context(), f.owner, call.ID, call.Evidence[0].SHA256)
+	if err != nil || !accepted.Verified || accepted.AcceptedBy != f.owner.Person || accepted.VerifiedHash != call.Evidence[0].SHA256 {
+		t.Fatal("owner verification not retained", err)
+	}
+	if _, err = f.service.Accept(t.Context(), f.owner, call.ID, call.Evidence[0].SHA256); err == nil {
+		t.Fatal("late verification accepted")
+	}
+	if f.sends.Load() != 1 {
+		t.Fatal("verification sent work")
+	}
+}
+
+func TestTerminalTaskCannotAskForAnotherSend(t *testing.T) {
 	f := peer(t, "task")
 	call, err := f.send(t, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	call.TaskID = ""
-	call.ContextID = ""
-	err = f.service.observeTask(t.Context(), f.connection, &call, Task{ID: "task-task", Context: "context-task", Status: Status{State: "TASK_STATE_WORKING"}})
-	if err != nil || call.TaskID != "task-task" {
-		t.Fatal("valid opaque identities refused", err)
+	err = f.service.observeTask(t.Context(), f.connection, &call, Task{ID: call.TaskID, Context: call.ContextID, Status: Status{State: "TASK_STATE_INPUT_REQUIRED"}})
+	if err == nil || call.State == "input_required" {
+		t.Fatal("terminal task reopened by remote status")
 	}
 }
-func TestOAuthSettingsScopesRoundTrip(t *testing.T) {
-	var o OAuth
-	if err := json.Unmarshal([]byte(`{"issuer":"https://issuer.test","scopes":["task"]}`), &o); err != nil || len(o.Scopes) != 1 {
-		t.Fatal("owner OAuth scopes lost", err)
+
+func TestHTTPBearerSchemeIsCaseInsensitive(t *testing.T) {
+	f := peer(t, "task")
+	c := f.connection
+	c.Card.SecuritySchemes["key"] = json.RawMessage(`{"httpAuthSecurityScheme":{"scheme":"bearer"}}`)
+	header, prefix, err := authentication(c)
+	if err != nil || header != "Authorization" || prefix != "Bearer " {
+		t.Fatal("HTTP auth scheme case rejected", err)
+	}
+}
+
+func TestRequiredAgentCardFields(t *testing.T) {
+	f := peer(t, "task")
+	base, _ := json.Marshal(f.connection.Card)
+	for _, field := range []string{"name", "description", "version", "capabilities", "supportedInterfaces", "defaultInputModes", "defaultOutputModes", "skills"} {
+		t.Run(field, func(t *testing.T) {
+			var fields map[string]json.RawMessage
+			_ = json.Unmarshal(base, &fields)
+			delete(fields, field)
+			raw, _ := json.Marshal(fields)
+			var card Card
+			_ = json.Unmarshal(raw, &card)
+			if validCardShape(card) {
+				t.Fatal("required Agent Card field omitted")
+			}
+		})
+	}
+}
+
+func TestUncertainTaskCannotFallbackWithChangedInput(t *testing.T) {
+	f := peer(t, "lost")
+	_, _ = f.send(t, false)
+	_, _ = f.service.Send(t.Context(), f.owner, "new-intent-in-same-task", Input{Connection: "peer", Task: "compute", Text: "compute differently"})
+	if f.sends.Load() != 1 {
+		t.Fatal("unknown task sent another operation under changed input")
 	}
 }

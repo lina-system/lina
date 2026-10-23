@@ -6005,7 +6005,7 @@
         },
         "sha256": {
           "type": "string",
-          "pattern": "^[0-9a-f]{64}$"
+          "pattern": "^([0-9a-f]{64})?$"
         },
         "media_type": {
           "type": "string"
@@ -6102,7 +6102,8 @@
             "credential",
             "sign_in",
             "calls",
-            "answer"
+            "answer",
+            "verify_result"
           ]
         },
         "connection": {
@@ -6122,6 +6123,10 @@
         },
         "answer": {
           "type": "string"
+        },
+        "verification_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
         }
       },
       "required": [

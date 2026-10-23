@@ -58,7 +58,7 @@ func (n Network) addresses(ctx context.Context, host, exception string) ([]net.I
 		return nil, ErrDestination
 	}
 	for _, ip := range ips {
-		if ip == nil || ip.IsUnspecified() || ip.IsMulticast() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.Equal(net.ParseIP("100.100.100.200")) || (!ip.IsGlobalUnicast() && !ip.IsLoopback()) {
+		if ip == nil || ip.IsUnspecified() || ip.IsMulticast() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.Equal(net.ParseIP("100.100.100.200")) || ip.Equal(net.ParseIP("fd00:ec2::254")) || (!ip.IsGlobalUnicast() && !ip.IsLoopback()) {
 			return nil, ErrDestination
 		}
 		// CGNAT includes tailnet addresses and requires the same explicit exception.

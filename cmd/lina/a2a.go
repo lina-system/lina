@@ -24,7 +24,7 @@ func runA2A(args []string) int {
 	flags.SetOutput(os.Stderr)
 	socket := flags.String("socket", "", "Core client socket")
 	flags.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: lina a2a --socket <path> < request.json\nOperations: configure, list, revoke, credential, sign_in, calls, answer.")
+		fmt.Fprintln(os.Stderr, "usage: lina a2a --socket <path> < request.json\nOperations: configure, list, revoke, credential, sign_in, calls, answer, verify_result.")
 	}
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {

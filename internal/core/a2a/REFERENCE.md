@@ -7,13 +7,17 @@ capability. Boot registers `remote_agent` through the ordinary tool registry.
 Owners configure connections through the `a2a` client capability. The installed
 `lina a2a --socket <path>` command reads one settings request from stdin, so
 credentials do not enter command arguments or conversation history. Operations
-are `configure`, `list`, `revoke`, `credential`, `sign_in`, `calls` and `answer`.
+are `configure`, `list`, `revoke`, `credential`, `sign_in`, `calls`, `answer` and `verify_result`.
 The canonical request schema is
 `protocol/schema/client/1.0/envelope.json`; Go client types are generated.
 
 A connection fixes the card URL, HTTPS origin, authentication scheme and task
 profiles. Each profile names an effect class, input prefix/byte limit, output
-media type/byte limit and expected SHA256. The expected hash is a local done
+media type/byte limit and verification mode. A SHA256 value selects an exact
+content check; an explicit empty value selects owner review of new content.
+The latter retains an unverified preview and requires an eligible owner to
+verify the inspected artifact hash before a verified result revision appears.
+The expected hash is a local done
 condition for the requested artifact. It does not prove unrelated effects on a
 remote system. Card descriptions cannot change this classification. Unknown
 classification asks for approval; restricted presets still refuse it.
@@ -31,7 +35,11 @@ SSE recovers through `GetTask`, never another send. `status` can also subscribe
 to an existing task. Every transmission rechecks current authority and current
 connection admission. Observation after restart uses a fresh conversation grant
 and keeps the original result provenance. Restart publishes already verified,
-undelivered results; it does not resume old grants or send work automatically.
+undelivered results and observes known working task ids with a fresh narrow
+grant. A bounded Core observer continues after the model turn ends. It never
+repeats an unknown send, and old answers cannot restart a send after an epoch
+change. Recorded current-epoch answers and credential renewal resume the existing
+task through the same authority and approval path.
 
 Input waits publish a question and a waiting row. Only the owner's recorded
 answer permits a follow-up with the existing task/context ids. Authentication
@@ -51,7 +59,8 @@ peer are refused before retaining evidence.
 
 Artifacts retain bytes, media type, source origin, observed time and SHA256.
 Parts of an artifact are assembled in order. Only content matching the admitted
-done condition yields a result. Text appears in the existing typed result
+done condition, or explicitly verified by the owner in review mode, yields a
+verified result. A remote completion alone can produce only an unverified preview. Text appears in the existing typed result
 journal; binary content uses the existing material writer and file result.
 Result head insertion is transactional and deterministic per admitted call, so
 restart cannot duplicate it. Remote failure and cancellation remain observations;

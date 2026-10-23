@@ -157,6 +157,7 @@ func (s *Service) CompleteOAuth(ctx context.Context, session, code, state, issue
 	if err = s.Vault.Put(key(c), []byte(token.Access)); err != nil {
 		return ErrSignIn
 	}
+	c.CredentialVersion = randomID()
 	c.CredentialExpires = time.Now().Add(time.Duration(min(token.Expires, 86400)) * time.Second)
 	return s.saveConnection(ctx, c)
 }
@@ -167,7 +168,11 @@ func (s *Service) SetCredential(ctx context.Context, person, id string, value []
 	if err != nil || !c.Enabled || c.Scheme == "none" || c.OAuth != nil || len(value) == 0 || len(value) > 8192 || strings.ContainsAny(string(value), "\r\n") {
 		return ErrScope
 	}
-	return s.Vault.Put(key(c), value)
+	if err = s.Vault.Put(key(c), value); err != nil {
+		return ErrSignIn
+	}
+	c.CredentialVersion = randomID()
+	return s.saveConnection(ctx, c)
 }
 
 func (s *Service) CompleteOAuthURL(ctx context.Context, session, callback string) error {

@@ -19,7 +19,7 @@ type ExternalSignIn struct {
 }
 
 func (s *SignInRelay) StartExternal(session Session, attempt ExternalSignIn) (Result, error) {
-	if session.PersonID != s.person || !session.CanDecide || session.ConnectionID == "" || !hasCapability(session.Capabilities, SignInCapability) {
+	if s.service == nil || attempt.Begin == nil || attempt.Complete == nil || attempt.Disconnect == nil || attempt.Result == nil || session.PersonID != s.person || !session.CanDecide || session.ConnectionID == "" || !hasCapability(session.Capabilities, SignInCapability) {
 		return Result{}, relayRefusal(protocol.ErrorNotAuthorized)
 	}
 	s.disconnect(session)

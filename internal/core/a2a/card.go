@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"mime"
 	"net/http"
 	"slices"
 	"strings"
@@ -42,7 +43,7 @@ func (s *Service) fetchCard(ctx context.Context, c Connection) (Card, Interface,
 	if err != nil || json.Unmarshal(raw, &card) != nil {
 		return card, Interface{}, "", ErrInvalid
 	}
-	if card.Name == "" || !slices.Contains(card.InputModes, "text/plain") || len(card.OutputModes) == 0 {
+	if !validCardShape(card) || !slices.Contains(card.InputModes, "text/plain") {
 		return card, Interface{}, "", ErrInvalid
 	}
 	for _, e := range card.Capabilities.Extensions {
@@ -69,8 +70,22 @@ func (s *Service) fetchCard(ctx context.Context, c Connection) (Card, Interface,
 	return card, chosen, hash(normalized), nil
 }
 func authentication(c Connection) (header, prefix string, err error) {
-	if c.Scheme == "none" && len(c.Card.SecurityRequirements) == 0 {
-		return "", "", nil
+	if c.Scheme == "none" {
+		public := len(c.Card.SecurityRequirements) == 0
+		for _, req := range c.Card.SecurityRequirements {
+			public = public || len(req.Schemes) == 0
+		}
+		for _, skill := range c.Card.Skills {
+			allowed := len(skill.SecurityRequirements) == 0
+			for _, req := range skill.SecurityRequirements {
+				allowed = allowed || len(req.Schemes) == 0
+			}
+			public = public && allowed
+		}
+		if public {
+			return "", "", nil
+		}
+		return "", "", ErrInvalid
 	}
 	raw, ok := c.Card.SecuritySchemes[c.Scheme]
 	if !ok {
@@ -80,6 +95,10 @@ func authentication(c Connection) (header, prefix string, err error) {
 		API   *struct{ Location, Name string } `json:"apiKeySecurityScheme"`
 		HTTP  *struct{ Scheme string }         `json:"httpAuthSecurityScheme"`
 		OAuth *json.RawMessage                 `json:"oauth2SecurityScheme"`
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil || len(fields) != 1 {
+		return "", "", ErrInvalid
 	}
 	if json.Unmarshal(raw, &scheme) != nil {
 		return "", "", ErrInvalid
@@ -98,8 +117,31 @@ func authentication(c Connection) (header, prefix string, err error) {
 	if !admitted {
 		return "", "", ErrInvalid
 	}
+	for _, skill := range c.Card.Skills {
+		if len(skill.SecurityRequirements) == 0 {
+			continue
+		}
+		allowed := false
+		for _, requirement := range skill.SecurityRequirements {
+			scopes, ok := requirement.Schemes[c.Scheme]
+			if !ok || len(requirement.Schemes) != 1 {
+				continue
+			}
+			match := true
+			for _, scope := range scopes.List {
+				if c.OAuth == nil || !slices.Contains(c.OAuth.Scopes, scope) {
+					match = false
+				}
+			}
+			allowed = allowed || match
+		}
+		if !allowed {
+			return "", "", ErrInvalid
+		}
+	}
+
 	switch {
-	case scheme.HTTP != nil && scheme.HTTP.Scheme == "Bearer":
+	case scheme.HTTP != nil && strings.EqualFold(scheme.HTTP.Scheme, "Bearer"):
 		return "Authorization", "Bearer ", nil
 	case scheme.API != nil && scheme.API.Location == "header":
 		name := http.CanonicalHeaderKey(scheme.API.Name)
@@ -124,8 +166,12 @@ func (s *Service) Configure(ctx context.Context, c Connection, credential []byte
 	}
 	names := map[string]bool{}
 	for _, p := range c.Profiles {
+		media, params, mediaErr := mime.ParseMediaType(p.MediaType)
+		if mediaErr != nil || len(params) != 0 || media != p.MediaType || !strings.Contains(media, "/") || len(p.Name) > 128 {
+			return Connection{}, ErrInvalid
+		}
 		digest, err := hex.DecodeString(p.SHA256)
-		if p.Name == "" || names[p.Name] || p.MaxInput < 1 || p.MaxInput > 64<<10 || p.MaxOutput < 1 || p.MaxOutput > 1<<20 || err != nil || len(digest) != 32 || p.MediaType == "" {
+		if p.Name == "" || names[p.Name] || p.MaxInput < 1 || p.MaxInput > 64<<10 || p.MaxOutput < 1 || p.MaxOutput > 1<<20 || (p.SHA256 != "" && (err != nil || len(digest) != 32)) || p.MediaType == "" {
 			return Connection{}, ErrInvalid
 		}
 		switch p.Class {
@@ -161,6 +207,7 @@ func (s *Service) Configure(ctx context.Context, c Connection, credential []byte
 			return Connection{}, ErrSignIn
 		}
 	}
+	c.CredentialVersion = randomID()
 	c.Enabled = true
 	c.Revision = randomID()
 	if err = s.saveConnection(ctx, c); err != nil {
@@ -180,4 +227,26 @@ func (s *Service) unchanged(ctx context.Context, o Origin, c Connection, p Profi
 		return ErrChanged
 	}
 	return s.allowed(ctx, o, c, p)
+}
+
+func validCardShape(c Card) bool {
+	if strings.TrimSpace(c.Name) == "" || strings.TrimSpace(c.Description) == "" || strings.TrimSpace(c.Version) == "" || c.Capabilities == nil || len(c.Interfaces) == 0 || len(c.Skills) == 0 || len(c.InputModes) == 0 || len(c.OutputModes) == 0 {
+		return false
+	}
+	skills := map[string]bool{}
+	for _, skill := range c.Skills {
+		if skill.ID == "" || skill.Name == "" || skill.Description == "" || len(skill.Tags) == 0 || skills[skill.ID] {
+			return false
+		}
+		skills[skill.ID] = true
+	}
+	for _, modes := range [][]string{c.InputModes, c.OutputModes} {
+		for _, mode := range modes {
+			media, _, err := mime.ParseMediaType(mode)
+			if err != nil || !strings.Contains(media, "/") {
+				return false
+			}
+		}
+	}
+	return true
 }

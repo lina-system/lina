@@ -40,7 +40,7 @@ func (s *Service) Send(ctx context.Context, o Origin, id string, in Input) (Call
 		if e != nil {
 			return Call{}, e
 		}
-		if previous.Connection != c.ID || previous.Revision != c.Revision || previous.State != "input_required" || previous.Answer != in.Text || previous.Profile != p || previous.TaskID == "" || !time.Now().Before(previous.Deadline) {
+		if previous.Connection != c.ID || previous.Revision != c.Revision || previous.State != "input_required" || previous.Answer != in.Text || previous.AnswerEpoch != o.Epoch || previous.Profile != p || previous.TaskID == "" || !time.Now().Before(previous.Deadline) {
 			return Call{}, ErrScope
 		}
 		call.Deadline = previous.Deadline
@@ -51,7 +51,7 @@ func (s *Service) Send(ctx context.Context, o Origin, id string, in Input) (Call
 	call.PayloadHash = hash(call.Payload)
 	call.Intent = hash([]byte(in.Text))
 	if old, e := s.Call(ctx, o, id); e == nil {
-		if old.PayloadHash != call.PayloadHash || old.Connection != c.ID || old.Revision != c.Revision {
+		if old.PayloadHash != call.PayloadHash || old.Connection != c.ID || old.Revision != c.Revision || old.Profile != call.Profile {
 			return Call{}, ErrInvalid
 		}
 		return old, nil
@@ -64,7 +64,7 @@ func (s *Service) Send(ctx context.Context, o Origin, id string, in Input) (Call
 		}
 		if in.Call == "" {
 			var n int
-			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM a2a_calls WHERE person=? AND conversation=? AND json_extract(record,'$.intent')=? AND json_extract(record,'$.state') IN ('unknown','working','input_required','auth_required','cancellation_unknown')`, o.Person, o.Conversation, call.Intent).Scan(&n); err != nil {
+			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM a2a_calls WHERE person=? AND conversation=? AND json_extract(record,'$.state') IN ('unknown','working','input_required','auth_required','cancellation_unknown') AND (json_extract(record,'$.intent')=? OR (json_extract(record,'$.origin.turn')=? AND json_extract(record,'$.state') IN ('unknown','cancellation_unknown')))`, o.Person, o.Conversation, call.Intent, o.Turn).Scan(&n); err != nil {
 				return err
 			}
 			if n != 0 {
@@ -100,6 +100,7 @@ func (s *Service) Send(ctx context.Context, o Origin, id string, in Input) (Call
 	if err != nil {
 		if errors.Is(err, ErrSignIn) {
 			call.State = "auth_required"
+			call.AuthVersion = c.CredentialVersion
 		} else if call.State == "unknown" || call.TaskID == "" {
 			call.State = "unknown"
 		}
@@ -176,22 +177,32 @@ func (s *Service) Answer(ctx context.Context, o Origin, id, text string) error {
 	if err != nil {
 		return err
 	}
-	if call.State != "input_required" || call.Answer != "" || len(text) == 0 || len(text) > call.Profile.MaxInput {
+	if call.State != "input_required" || (call.Answer != "" && call.AnswerEpoch == o.Epoch) || len(text) == 0 || len(text) > call.Profile.MaxInput {
 		return ErrScope
 	}
 	c, err := s.Connection(ctx, o.Person, call.Connection)
 	if err != nil {
 		return err
 	}
+	if !c.Enabled || c.Revision != call.Revision {
+		return ErrScope
+	}
 	if s.hasSecret(c, []byte(text)) {
 		return ErrScope
 	}
 	call.Answer = text
+	call.AnswerEpoch = o.Epoch
 	return s.save(ctx, call)
 }
 func (s *Service) observeTask(ctx context.Context, c Connection, call *Call, t Task) error {
 	if s.reflectsCredential(c, []byte(t.ID)) || s.reflectsCredential(c, []byte(t.Context)) || t.ID == "" || t.Context == "" || len(t.ID) > 1024 || len(t.Context) > 1024 || (call.TaskID != "" && (call.TaskID != t.ID || call.ContextID != t.Context)) {
 		return ErrUnknown
+	}
+	switch call.RemoteState {
+	case "TASK_STATE_COMPLETED", "TASK_STATE_FAILED", "TASK_STATE_REJECTED", "TASK_STATE_CANCELED":
+		if t.Status.State != call.RemoteState {
+			return ErrUnknown
+		}
 	}
 	call.TaskID, call.ContextID, call.RemoteState = t.ID, t.Context, t.Status.State
 	// Persist the remote identity before artifact reads or later stream frames.
@@ -206,6 +217,7 @@ func (s *Service) observeTask(ctx context.Context, c Connection, call *Call, t T
 		call.Question = "The remote agent needs input."
 	case "TASK_STATE_AUTH_REQUIRED":
 		call.State = "auth_required"
+		call.AuthVersion = c.CredentialVersion
 		call.Question = "Sign in to the remote agent."
 	case "TASK_STATE_FAILED", "TASK_STATE_REJECTED":
 		call.State = "failed"

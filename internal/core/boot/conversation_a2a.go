@@ -116,7 +116,7 @@ func (r *conversationRuntime) prepareA2ATools(turnID string, _ *toolPreparation,
 			if parsed != in {
 				return tools.Input{}, tools.ErrInvalid
 			}
-			if parsed.Operation == "send" && (len(parsed.Text) > profile.MaxInput || !strings.HasPrefix(parsed.Text, profile.InputPrefix)) {
+			if parsed.Operation == "send" && (len(parsed.Text) > profile.MaxInput || (parsed.Call == "" && !strings.HasPrefix(parsed.Text, profile.InputPrefix))) {
 				return tools.Input{}, tools.ErrInvalid
 			}
 			normalized, _ := json.Marshal(parsed)
@@ -128,6 +128,9 @@ func (r *conversationRuntime) prepareA2ATools(turnID string, _ *toolPreparation,
 			auth.Profile = "a2a-observe"
 		}
 		o.GrantID = auth.GrantID
+		o.Command = auth.CommandID
+		o.Host = auth.Host
+		o.OSUser = auth.OSUser
 		r.personaMu.Lock()
 		r.personaGrants[auth.GrantID] = grant.Grant{Identity: auth, Expires: time.Now().Add(10 * time.Minute), Scope: []grant.Permission{{Tool: spec.Name, Target: target}}, Revisions: map[string]string{target: c.Revision}}
 		r.personaMu.Unlock()
@@ -142,7 +145,7 @@ func (r *conversationRuntime) prepareA2ATools(turnID string, _ *toolPreparation,
 				observed, err = r.remoteAgents.Observe(ctx, o, in.Call, in.Stream, in.Operation == "cancel")
 			}
 			if observed.ID != "" {
-				if observed.Verified {
+				if observed.Validated {
 					if e := r.deliverA2A(ctx, observed); e != nil {
 						err = e
 						observed.State = "delivery_pending"
@@ -150,7 +153,7 @@ func (r *conversationRuntime) prepareA2ATools(turnID string, _ *toolPreparation,
 						observed.Delivered = true
 					}
 				}
-				if observed.State == "input_required" || observed.State == "auth_required" {
+				if observed.State == "input_required" || observed.State == "auth_required" || observed.State == "unverified" && observed.Profile.SHA256 == "" && observed.Validated {
 					_ = r.router.root.decisions.PublishQuestion(ctx, "a2a:"+observed.ID)
 				}
 				body, _ := json.Marshal(a2aStatus(observed))

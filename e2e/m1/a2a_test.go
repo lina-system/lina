@@ -38,6 +38,7 @@ type a2aPeer struct {
 	gets                  atomic.Int32
 	oauth                 atomic.Bool
 	signins               atomic.Int32
+	ready                 atomic.Bool
 }
 
 func newA2APeer(t *testing.T, artifact string) *a2aPeer {
@@ -78,11 +79,11 @@ func newA2APeer(t *testing.T, artifact string) *a2aPeer {
 				name = "Changed peer"
 			}
 			if p.oauth.Load() {
-				_ = json.NewEncoder(w).Encode(map[string]any{"name": name, "supportedInterfaces": []any{map[string]any{"url": p.server.URL + "/rpc", "protocolBinding": "JSONRPC", "protocolVersion": "1.0", "tenant": "owner-task"}}, "defaultInputModes": []string{"text/plain"}, "defaultOutputModes": []string{"text/plain", "application/octet-stream"}, "capabilities": map[string]bool{"streaming": true}, "securitySchemes": map[string]any{"oauth": map[string]any{"oauth2SecurityScheme": map[string]any{"flows": map[string]any{"authorizationCode": map[string]any{"authorizationUrl": p.server.URL + "/authorize", "tokenUrl": p.server.URL + "/token", "scopes": map[string]string{"task": "Call tasks"}}}}}}, "securityRequirements": []any{map[string]any{"schemes": map[string]any{"oauth": map[string]any{"list": []string{"task"}}}}}})
+				_ = json.NewEncoder(w).Encode(map[string]any{"name": name, "description": "Controlled artifact operation", "version": "1.0.0", "skills": []any{map[string]any{"id": "artifact", "name": "Artifact", "description": "Create a controlled artifact", "tags": []string{"artifact"}}}, "supportedInterfaces": []any{map[string]any{"url": p.server.URL + "/rpc", "protocolBinding": "JSONRPC", "protocolVersion": "1.0", "tenant": "owner-task"}}, "defaultInputModes": []string{"text/plain"}, "defaultOutputModes": []string{"text/plain", "application/octet-stream"}, "capabilities": map[string]bool{"streaming": true}, "securitySchemes": map[string]any{"oauth": map[string]any{"oauth2SecurityScheme": map[string]any{"flows": map[string]any{"authorizationCode": map[string]any{"authorizationUrl": p.server.URL + "/authorize", "tokenUrl": p.server.URL + "/token", "scopes": map[string]string{"task": "Call tasks"}}}}}}, "securityRequirements": []any{map[string]any{"schemes": map[string]any{"oauth": map[string]any{"list": []string{"task"}}}}}})
 				return
 			}
 
-			_ = json.NewEncoder(w).Encode(map[string]any{"name": name, "supportedInterfaces": []any{map[string]any{"url": p.server.URL + "/rpc", "protocolBinding": "JSONRPC", "protocolVersion": "1.0", "tenant": "owner-task"}}, "defaultInputModes": []string{"text/plain"}, "defaultOutputModes": []string{"text/plain", "application/octet-stream"}, "capabilities": map[string]bool{"streaming": true}, "securitySchemes": map[string]any{"bearer": map[string]any{"httpAuthSecurityScheme": map[string]string{"scheme": "Bearer"}}}, "securityRequirements": []any{map[string]any{"schemes": map[string]any{"bearer": map[string]any{"list": []string{}}}}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"name": name, "description": "Controlled artifact operation", "version": "1.0.0", "skills": []any{map[string]any{"id": "artifact", "name": "Artifact", "description": "Create a controlled artifact", "tags": []string{"artifact"}}}, "supportedInterfaces": []any{map[string]any{"url": p.server.URL + "/rpc", "protocolBinding": "JSONRPC", "protocolVersion": "1.0", "tenant": "owner-task"}}, "defaultInputModes": []string{"text/plain"}, "defaultOutputModes": []string{"text/plain", "application/octet-stream"}, "capabilities": map[string]bool{"streaming": true}, "securitySchemes": map[string]any{"bearer": map[string]any{"httpAuthSecurityScheme": map[string]string{"scheme": "Bearer"}}}, "securityRequirements": []any{map[string]any{"schemes": map[string]any{"bearer": map[string]any{"list": []string{}}}}}})
 			return
 		}
 		if r.Header.Get("Authorization") != "Bearer "+p.token {
@@ -127,7 +128,11 @@ func newA2APeer(t *testing.T, artifact string) *a2aPeer {
 			p.mu.Lock()
 			p.sends[mode]++
 			p.mu.Unlock()
-			if err := os.WriteFile(filepath.Join(p.root, mode), []byte(p.artifact), 0600); err != nil {
+			body := []byte(p.artifact)
+			if mode == "binary" {
+				body = []byte{0xff, 0, 1, 2, 3}
+			}
+			if err := os.WriteFile(filepath.Join(p.root, mode), body, 0600); err != nil {
 				t.Error(err)
 			}
 			if mode == "lost" {
@@ -145,6 +150,12 @@ func newA2APeer(t *testing.T, artifact string) *a2aPeer {
 			p.gets.Add(1)
 		}
 		state := "TASK_STATE_COMPLETED"
+		if mode == "async" && strings.HasPrefix(req.Method, "Send") {
+			state = "TASK_STATE_WORKING"
+		}
+		if mode == "restart" && (!p.ready.Load() || strings.HasPrefix(req.Method, "Send")) {
+			state = "TASK_STATE_WORKING"
+		}
 		if mode == "input" && req.Params.Message.Task == "" {
 			state = "TASK_STATE_INPUT_REQUIRED"
 		}
@@ -341,7 +352,7 @@ func TestM3A2AInstalledCore(t *testing.T) {
 		t.Fatal("credential echoed by settings command")
 	}
 	c, conversation := conversationClient(t, h, protocol.Capability{Name: "waiting", Version: "1.0"})
-	var lostID, inputID string
+	var lostID, inputID, retainedResult string
 	for _, mode := range scenario.Modes {
 		m.set(mode, map[string]any{"operation": "send", "connection": "peer", "task": mode, "text": mode, "stream": mode == "stream"})
 		frames := admittedTurn(t, h, c, conversation, mode, "Run the configured remote task.")
@@ -351,6 +362,9 @@ func TestM3A2AInstalledCore(t *testing.T) {
 		}
 		switch mode {
 		case "task", "direct", "stream", "binary":
+			if mode == "task" && status.ResultID != nil {
+				retainedResult = *status.ResultID
+			}
 			if code != "ok" || !status.Verified || status.ResultID == nil {
 				t.Fatalf("%s: %s %+v sends=%d", mode, code, status, p.count(mode))
 			}
@@ -396,10 +410,17 @@ func TestM3A2AInstalledCore(t *testing.T) {
 	if _, err := a2aSettings(t, h, protocol.A2aRequest{Operation: "answer", CallID: &inputID, AgentID: &agent, Answer: &answer}); err != nil {
 		t.Fatal(err)
 	}
-	m.set("answered", map[string]any{"operation": "send", "connection": "peer", "task": "input", "text": "input", "call": inputID})
-	admittedTurn(t, h, c, conversation, "answered", "Use my recorded answer.")
+	for {
+		frame, err := c.Receive(h.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result, ok := frame.Payload.(protocol.Result); ok && result.Title == "Remote agent result" {
+			break
+		}
+	}
 	if p.count("input") != 2 {
-		t.Fatal("recorded answer not sent")
+		t.Fatal("recorded answer did not resume exactly once")
 	}
 	m.set("cancel", map[string]any{"operation": "cancel", "call": inputID})
 	admittedTurn(t, h, c, conversation, "cancel", "Cancel the existing remote task.")
@@ -419,7 +440,8 @@ func TestM3A2AInstalledCore(t *testing.T) {
 	if p.count("lost") != 1 {
 		t.Fatal("restart repeated uncertain send")
 	}
-	historyID, err := c.History(h.ctx, protocol.HistoryGet{ConversationID: &conversation})
+	topic := "conversation:" + conversation
+	historyID, err := c.Subscribe(h.ctx, protocol.Subscribe{Topic: &topic})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -432,6 +454,24 @@ func TestM3A2AInstalledCore(t *testing.T) {
 			raw, _ := json.Marshal(frame)
 			if !strings.Contains(string(raw), "Remote agent result") {
 				t.Fatal("restart lost results")
+			}
+			break
+		}
+	}
+	revision := json.Number("1")
+	readID, err := c.Result(h.ctx, protocol.ResultGet{ResultID: retainedResult, Revision: &revision, ConversationID: &conversation})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		frame, err := c.Receive(h.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if frame.ReplyTo != nil && *frame.ReplyTo == readID {
+			value, ok := frame.Payload.(protocol.Result)
+			if !ok || frame.Error != nil || value.Text == nil || !strings.Contains(*value.Text, scenario.Artifact) || !strings.Contains(*value.Text, "SHA256:") || value.Provenance.ConversationID != conversation {
+				t.Fatal("retained result content/provenance unreadable", frame.Error)
 			}
 			break
 		}
@@ -662,6 +702,123 @@ func TestM3A2ABrowserSignInWait(t *testing.T) {
 	code, status := m.result()
 	if code != "ok" || !status.Verified || p.count("auth") != 1 || p.signins.Load() != 2 {
 		t.Fatal("sign-in resumed by duplicate send or lost result", code, status)
+	}
+	c.Close()
+	h.stopCore(core)
+}
+
+func TestM3A2AIndependentObservationAndRestart(t *testing.T) {
+	for _, mode := range []string{"async", "restart"} {
+		t.Run(mode, func(t *testing.T) {
+			p := newA2APeer(t, "Observable remote operation result.")
+			m := &a2aModel{token: p.token}
+			h, start := startA2ACore(t, p, m, "")
+			core := start()
+			config := p.config([]string{mode})
+			if _, err := a2aSettings(t, h, protocol.A2aRequest{Operation: "configure", Connection: &config, Credential: &p.token}); err != nil {
+				t.Fatal(err)
+			}
+			c, conversation := conversationClient(t, h, protocol.Capability{Name: "running", Version: "1.0"})
+			m.set(mode, map[string]any{"operation": "send", "connection": "peer", "task": mode, "text": mode})
+			frames := admittedTurn(t, h, c, conversation, mode, "Complete the configured remote task.")
+			code, status := m.result()
+			if code != "ok" || status.State != "working" || status.RemoteTask == nil {
+				t.Fatal("remote task not admitted", code, status)
+			}
+			if mode == "restart" {
+				c.Close()
+				h.stopCore(core)
+				p.ready.Store(true)
+				core = start()
+				c, conversation = conversationClient(t, h)
+				frames = nil
+			}
+			// Observe a result event or a retained snapshot. No extra model turn asks
+			// Core to poll, and no elapsed time is used as proof of completion.
+			topic := "conversation:" + conversation
+			if _, err := c.Subscribe(h.ctx, protocol.Subscribe{Topic: &topic}); err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, frame := range frames {
+				raw, _ := json.Marshal(frame)
+				if strings.Contains(string(raw), "result-card:a2a:"+status.ID) {
+					found = true
+				}
+			}
+			for !found {
+				frame, err := c.Receive(h.ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				raw, _ := json.Marshal(frame)
+				found = strings.Contains(string(raw), "result-card:a2a:"+status.ID)
+			}
+			if p.count(mode) != 1 || p.gets.Load() == 0 {
+				t.Fatal("observer repeated work or did not recover")
+			}
+			c.Close()
+			h.stopCore(core)
+		})
+	}
+}
+
+func TestM3A2AOwnerVerifiesNewContent(t *testing.T) {
+	p := newA2APeer(t, "A new remote document whose bytes were not known before execution.")
+	m := &a2aModel{token: p.token}
+	h, start := startA2ACore(t, p, m, "")
+	core := start()
+	config := p.config([]string{"review"})
+	config.Profiles[0].Sha256 = ""
+	if _, err := a2aSettings(t, h, protocol.A2aRequest{Operation: "configure", Connection: &config, Credential: &p.token}); err != nil {
+		t.Fatal(err)
+	}
+	c, conversation := conversationClient(t, h)
+	m.set("review", map[string]any{"operation": "send", "connection": "peer", "task": "review", "text": "review"})
+	admittedTurn(t, h, c, conversation, "review", "Ask for the configured remote document.")
+	code, status := m.result()
+	if code != "ok" || status.Verified || status.State != "unverified" || status.ResultID == nil {
+		t.Fatal("new content was auto-accepted or not available to inspect", code, status)
+	}
+	revision := json.Number("1")
+	id, err := c.Result(h.ctx, protocol.ResultGet{ResultID: *status.ResultID, Revision: &revision, ConversationID: &conversation})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		frame, err := c.Receive(h.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if frame.ReplyTo != nil && *frame.ReplyTo == id {
+			value, ok := frame.Payload.(protocol.Result)
+			if !ok || value.Text == nil || !strings.Contains(*value.Text, p.artifact) {
+				t.Fatal("owner cannot inspect exact retained content")
+			}
+			break
+		}
+	}
+	agent := strings.TrimPrefix(conversation, "main:")
+	sum := sha256.Sum256([]byte(p.artifact))
+	digest := hex.EncodeToString(sum[:])
+	wrong := strings.Repeat("0", 64)
+	if _, err := a2aSettings(t, h, protocol.A2aRequest{Operation: "verify_result", CallID: &status.ID, AgentID: &agent, VerificationHash: &wrong}); err == nil {
+		t.Fatal("different artifact hash accepted")
+	}
+	if _, err := a2aSettings(t, h, protocol.A2aRequest{Operation: "verify_result", CallID: &status.ID, AgentID: &agent, VerificationHash: &digest}); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		frame, err := c.Receive(h.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if value, ok := frame.Payload.(protocol.Result); ok && value.ResultID == *status.ResultID && value.Revision == "2" {
+			break
+		}
+	}
+	if p.count("review") != 1 {
+		t.Fatal("verification repeated remote work")
 	}
 	c.Close()
 	h.stopCore(core)

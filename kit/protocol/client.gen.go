@@ -144,13 +144,14 @@ type A2aProfile struct {
 	Sha256         string      `json:"sha256"`
 }
 type A2aRequest struct {
-	AgentID      *string        `json:"agent_id,omitempty"`
-	Answer       *string        `json:"answer,omitempty"`
-	CallID       *string        `json:"call_id,omitempty"`
-	Connection   *A2aConnection `json:"connection,omitempty"`
-	ConnectionID *string        `json:"connection_id,omitempty"`
-	Credential   *string        `json:"credential,omitempty"`
-	Operation    string         `json:"operation"`
+	AgentID          *string        `json:"agent_id,omitempty"`
+	Answer           *string        `json:"answer,omitempty"`
+	CallID           *string        `json:"call_id,omitempty"`
+	Connection       *A2aConnection `json:"connection,omitempty"`
+	ConnectionID     *string        `json:"connection_id,omitempty"`
+	Credential       *string        `json:"credential,omitempty"`
+	Operation        string         `json:"operation"`
+	VerificationHash *string        `json:"verification_hash,omitempty"`
 }
 type A2aResult struct {
 	Calls       *[]A2aCallStatus       `json:"calls,omitempty"`
@@ -7658,7 +7659,7 @@ const clientSchemaJSON = `{
         },
         "sha256": {
           "type": "string",
-          "pattern": "^[0-9a-f]{64}$"
+          "pattern": "^([0-9a-f]{64})?$"
         },
         "media_type": {
           "type": "string"
@@ -7755,7 +7756,8 @@ const clientSchemaJSON = `{
             "credential",
             "sign_in",
             "calls",
-            "answer"
+            "answer",
+            "verify_result"
           ]
         },
         "connection": {
@@ -7775,6 +7777,10 @@ const clientSchemaJSON = `{
         },
         "answer": {
           "type": "string"
+        },
+        "verification_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
         }
       },
       "required": [

@@ -119,8 +119,17 @@ func (s *Service) Call(ctx context.Context, o Origin, id string) (c Call, err er
 	return
 }
 func (s *Service) save(ctx context.Context, c Call) error {
-	raw, _ := json.Marshal(c)
 	return s.DB.Write(ctx, func(tx *canon.Tx) error {
+		var prior []byte
+		if err := tx.QueryRowContext(ctx, "SELECT record FROM a2a_calls WHERE id=?", c.ID).Scan(&prior); err != nil {
+			return err
+		}
+		var old Call
+		if err := json.Unmarshal(prior, &old); err != nil {
+			return err
+		}
+		c.Delivered = c.Delivered || old.Delivered
+		raw, _ := json.Marshal(c)
 		if err := s.epoch(ctx, tx); err != nil {
 			return err
 		}
@@ -154,8 +163,13 @@ func (s *Service) Undelivered(ctx context.Context) (out []Call, err error) {
 // Delivered marks an already idempotently journaled observation. If Core dies
 // before this write, the deterministic journal identity prevents another result.
 func (s *Service) Delivered(ctx context.Context, c Call) error {
-	c.Delivered = true
-	return s.save(ctx, c)
+	return s.DB.Write(ctx, func(tx *canon.Tx) error {
+		if err := s.epoch(ctx, tx); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `UPDATE a2a_calls SET record=json_set(record,'$.delivered',json('true')) WHERE id=? AND person=? AND agent=? AND conversation=?`, c.ID, c.Origin.Person, c.Origin.Agent, c.Origin.Conversation)
+		return err
+	})
 }
 
 type observationAuthority struct{}
@@ -199,7 +213,7 @@ func (s *Service) Validate(ctx context.Context, o Origin, in Input) (Connection,
 	if err != nil {
 		return c, p, err
 	}
-	if len(in.Text) == 0 || len(in.Text) > p.MaxInput || !strings.HasPrefix(in.Text, p.InputPrefix) {
+	if len(in.Text) == 0 || len(in.Text) > p.MaxInput || (in.Call == "" && !strings.HasPrefix(in.Text, p.InputPrefix)) {
 		return c, p, ErrScope
 	}
 	return c, p, s.allowed(ctx, o, c, p)

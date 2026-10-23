@@ -34,6 +34,8 @@ func (s *Service) hasSecret(c Connection, b []byte) bool {
 
 func (s *Service) verify(ctx context.Context, c Connection, call *Call, artifacts []Artifact) error {
 	call.Verified = false
+	call.Validated = false
+	call.VerifiedHash = ""
 	call.State = "unverified"
 	call.Evidence = nil
 	if len(artifacts) == 0 || len(artifacts) > 32 {
@@ -42,7 +44,7 @@ func (s *Service) verify(ctx context.Context, c Connection, call *Call, artifact
 	total := 0
 	seen := map[string]bool{}
 	for _, artifact := range artifacts {
-		if s.reflectsCredential(c, []byte(artifact.ID)) || artifact.ID == "" || seen[artifact.ID] || len(artifact.Parts) == 0 || len(artifact.Parts) > 32 {
+		if s.reflectsCredential(c, []byte(artifact.ID)) || artifact.ID == "" || len(artifact.ID) > 1024 || seen[artifact.ID] || len(artifact.Parts) == 0 || len(artifact.Parts) > 32 {
 			return ErrEvidence
 		}
 		seen[artifact.ID] = true
@@ -111,11 +113,16 @@ func (s *Service) verify(ctx context.Context, c Connection, call *Call, artifact
 		}
 		call.Evidence = append(call.Evidence, Evidence{Artifact: artifact.ID, MediaType: mediaType, Body: bytes.Clone(combined), SHA256: hash(combined), Source: c.Origin, Observed: time.Now().UTC()})
 	}
+	call.Validated = true
+	if call.Profile.SHA256 == "" {
+		call.Question = "Review the retained result and confirm its SHA256."
+	}
 	// Hashing or a remote COMPLETED claim alone proves nothing. The retained
 	// content must satisfy the owner's pre-admitted local done condition.
 	for _, e := range call.Evidence {
 		if e.SHA256 == call.Profile.SHA256 {
 			call.Verified = true
+			call.VerifiedHash = e.SHA256
 			call.State = "verified"
 		}
 	}

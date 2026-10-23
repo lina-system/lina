@@ -381,8 +381,11 @@ The owner uses the `a2a` client capability to configure, inspect, revoke and
 sign in to remote connections. The installed `lina a2a` command accepts settings
 on standard input. Credentials are transient settings fields and never enter a
 conversation. Task profiles bind an effect class, input prefix and byte limit,
-output media type and byte limit, and an expected artifact SHA256. This local
-done condition verifies the requested content; it does not certify unrelated
+output media type and byte limit, and either an expected artifact SHA256 or
+explicit owner review (an empty hash). In review mode, Core retains an unverified
+preview; only an eligible owner confirming the inspected artifact hash can
+produce a verified result revision. Model tools cannot perform that confirmation.
+This local done condition verifies the requested content; it does not certify unrelated
 remote effects. Unknown classification still asks, and preset ceilings apply.
 
 The `remote_agent` conversation tool lists configured task definitions, sends a
@@ -390,6 +393,12 @@ bounded message, observes a retained call or requests cancellation. The initial
 scope is the owner's direct Core conversation. Channel delegation, publication
 and Node relay are not admitted by this tool. Material or history upload is not
 implicit: only the validated text argument becomes a message part.
+
+The running list exposes retained remote work. A bounded Core observer polls
+known tasks after the model turn ends and after restart under fresh observation
+authority. It never replays an unknown initial send. Current-epoch recorded
+answers resume a follow-up through ordinary authority and approval; answers
+left unused across restart cannot send work.
 
 Input questions require the owner's recorded answer before a follow-up. A sign-in
 wait points to connection settings. OAuth uses authorization code with PKCE,

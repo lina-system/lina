@@ -26,6 +26,17 @@ type Interface struct {
 	Tenant  string `json:"tenant,omitempty"`
 }
 type Card struct {
+	Description string `json:"description"`
+	Version     string `json:"version"`
+	Skills      []struct {
+		ID                   string   `json:"id"`
+		Name                 string   `json:"name"`
+		Description          string   `json:"description"`
+		Tags                 []string `json:"tags"`
+		SecurityRequirements []struct {
+			Schemes map[string]Scopes `json:"schemes"`
+		} `json:"securityRequirements"`
+	} `json:"skills"`
 	Name                 string                     `json:"name"`
 	Interfaces           []Interface                `json:"supportedInterfaces"`
 	InputModes           []string                   `json:"defaultInputModes"`
@@ -34,7 +45,7 @@ type Card struct {
 	SecurityRequirements []struct {
 		Schemes map[string]Scopes `json:"schemes"`
 	} `json:"securityRequirements"`
-	Capabilities struct {
+	Capabilities *struct {
 		Streaming  bool `json:"streaming"`
 		Extensions []struct {
 			Required bool `json:"required"`
@@ -110,6 +121,7 @@ type OAuth struct {
 	Scopes           []string `json:"scopes"`
 }
 type Connection struct {
+	CredentialVersion string    `json:"credential_version"`
 	ID                string    `json:"id"`
 	Person            string    `json:"person"`
 	CardURL           string    `json:"card_url"`
@@ -126,6 +138,12 @@ type Connection struct {
 	Enabled           bool      `json:"enabled"`
 }
 type Origin struct {
+	Command      string `json:"command"`
+	Host         string `json:"host"`
+	OSUser       string `json:"os_user"`
+	Node         string `json:"node"`
+	NodeBoot     string `json:"node_boot"`
+	Session      string `json:"session"`
 	GrantID      string `json:"grant_id"`
 	Person       string `json:"person"`
 	Agent        string `json:"agent"`
@@ -150,25 +168,31 @@ type Evidence struct {
 	Observed  time.Time `json:"observed"`
 }
 type Call struct {
-	Admitted    Connection      `json:"admitted_connection"`
-	Intent      string          `json:"intent"`
-	ID          string          `json:"id"`
-	Origin      Origin          `json:"origin"`
-	Connection  string          `json:"connection"`
-	Revision    string          `json:"connection_revision"`
-	Profile     Profile         `json:"profile"`
-	Payload     json.RawMessage `json:"payload"`
-	PayloadHash string          `json:"payload_hash"`
-	MessageID   string          `json:"message_id"`
-	Deadline    time.Time       `json:"deadline"`
-	TaskID      string          `json:"task_id,omitempty"`
-	ContextID   string          `json:"context_id,omitempty"`
-	State       string          `json:"state"`
-	RemoteState string          `json:"remote_state,omitempty"`
-	Evidence    []Evidence      `json:"evidence,omitempty"`
-	Verified    bool            `json:"verified"`
-	Delivered   bool            `json:"delivered"`
-	Question    string          `json:"question,omitempty"`
-	Parent      string          `json:"parent,omitempty"`
-	Answer      string          `json:"answer,omitempty"`
+	Validated    bool            `json:"validated"`
+	VerifiedHash string          `json:"verified_hash,omitempty"`
+	AcceptedBy   string          `json:"accepted_by,omitempty"`
+	AcceptedAt   time.Time       `json:"accepted_at,omitempty"`
+	AnswerEpoch  uint64          `json:"answer_epoch,omitempty"`
+	AuthVersion  string          `json:"auth_version,omitempty"`
+	Admitted     Connection      `json:"admitted_connection"`
+	Intent       string          `json:"intent"`
+	ID           string          `json:"id"`
+	Origin       Origin          `json:"origin"`
+	Connection   string          `json:"connection"`
+	Revision     string          `json:"connection_revision"`
+	Profile      Profile         `json:"profile"`
+	Payload      json.RawMessage `json:"payload"`
+	PayloadHash  string          `json:"payload_hash"`
+	MessageID    string          `json:"message_id"`
+	Deadline     time.Time       `json:"deadline"`
+	TaskID       string          `json:"task_id,omitempty"`
+	ContextID    string          `json:"context_id,omitempty"`
+	State        string          `json:"state"`
+	RemoteState  string          `json:"remote_state,omitempty"`
+	Evidence     []Evidence      `json:"evidence,omitempty"`
+	Verified     bool            `json:"verified"`
+	Delivered    bool            `json:"delivered"`
+	Question     string          `json:"question,omitempty"`
+	Parent       string          `json:"parent,omitempty"`
+	Answer       string          `json:"answer,omitempty"`
 }

@@ -85,7 +85,7 @@ func (r *conversationRuntime) startRuns(ctx context.Context) error {
 	b.sessions = &workerListSource{workers: r.workers, person: r.person}
 	b.list = runs.NewRunningList(r.db, map[string]runs.ListSource{
 		"run": runs.RunListSource{}, "work": runs.WorkListSource{Person: r.person},
-		"session": b.sessions,
+		"session": b.sessions, "a2a": a2aListSource{},
 	})
 	b.notices = lane.NewNotices(r.db, nil)
 	b.notices.OnDelivered = func(d lane.Delivery) {
@@ -117,6 +117,9 @@ func (r *conversationRuntime) startRuns(ctx context.Context) error {
 					return clientsrv.Result{}, runs.ErrInvalid
 				}
 				ref := runs.ListRef{Source: "run", ID: *request.RunID}
+				if strings.HasPrefix(ref.ID, "a2a:") {
+					ref.Source = "a2a"
+				}
 				if id, ok := strings.CutPrefix(ref.ID, "task:"); ok {
 					ref.Source, ref.ID = "work", id
 				} else if id, ok := strings.CutPrefix(ref.ID, "session:"); ok {
@@ -136,6 +139,8 @@ func (r *conversationRuntime) startRuns(ctx context.Context) error {
 					var next int64
 					if ref.Source == "work" {
 						text, next, err = r.work.SummaryPage(ctx, ref.ID, offset)
+					} else if ref.Source == "a2a" {
+						text, err = r.a2aRunningSummary(ctx, s.PersonID, ref.ID)
 					} else if ref.Source == "session" {
 						text, err = r.workerRunningSummary(ctx, s.PersonID, ref.ID, offset)
 					} else {

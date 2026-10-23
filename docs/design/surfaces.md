@@ -314,7 +314,10 @@ Core presents what the person should open and keep, apart from the chat text, as
 
 - Block documents in the style of Notion: 목표 pages, designs and memos, with checklist blocks inside them. A checklist block is a line of that document until the person promotes it to a 할 일. A block document is the person's input surface (intent fields, memos) and LINA's output surface (front pages, drafts), never a giant document the person has to maintain.
 - 할 일 views in the style of Things (see To-dos).
-- Results of the types below. A PDF report or a slide deck is a `file` result, made only when the person asks. A version comparison is a `comparison` result.
+- Results of the types below. A PDF report or a slide deck is a `file` result, made only when the person asks. A version comparison is a `comparison` result. A verified remote artifact may
+  also be a `file` result with its admitted media type and an opaque material
+  reference. An unsupported viewer offers the file as data; media metadata
+  never authorizes execution or a remote URL load.
 
 **Types.** Each type has a complete rendering on every surface. The last column is the card's default action; everything else is in the work panel.
 

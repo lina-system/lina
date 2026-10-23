@@ -56,7 +56,7 @@ func a2aError(err error) error {
 	if errors.Is(err, a2a.ErrInvalid) || errors.Is(err, a2a.ErrDestination) {
 		code = protocol.ErrorMalformed
 	}
-	if errors.Is(err, a2a.ErrChanged) {
+	if errors.Is(err, a2a.ErrChanged) || errors.Is(err, a2a.ErrEvidence) {
 		code = protocol.ErrorStaleRevision
 	}
 	return &clientsrv.OperationError{Code: code}
@@ -83,7 +83,7 @@ func (r *conversationRuntime) a2aOperation(ctx context.Context, s clientsrv.Sess
 	var err error
 	// Reject misplaced credential and configuration fields rather than accepting
 	// an ambiguous settings request with ignored private data.
-	if p.Credential != nil && p.Operation != "configure" && p.Operation != "credential" || p.Connection != nil && p.Operation != "configure" || p.Answer != nil && p.Operation != "answer" {
+	if p.Credential != nil && p.Operation != "configure" && p.Operation != "credential" || p.Connection != nil && p.Operation != "configure" || p.Answer != nil && p.Operation != "answer" || p.VerificationHash != nil && p.Operation != "verify_result" {
 		return clientsrv.Result{}, malformedManagement()
 	}
 	switch p.Operation {
@@ -142,11 +142,24 @@ func (r *conversationRuntime) a2aOperation(ctx context.Context, s clientsrv.Sess
 			statuses = append(statuses, a2aStatus(c))
 		}
 		out.Calls = &statuses
+	case "verify_result":
+		o := r.a2aOrigin("owner-verification")
+		o.Agent = value(p.AgentID)
+		o.Conversation = "main:" + o.Agent
+		var verified a2a.Call
+		verified, err = r.remoteAgents.Accept(ctx, o, value(p.CallID), value(p.VerificationHash))
+		if err == nil {
+			err = r.deliverA2A(ctx, verified)
+		}
+		effect = protocol.EffectApplied
 	case "answer":
 		o := r.a2aOrigin("owner-answer")
 		o.Agent = value(p.AgentID)
 		o.Conversation = "main:" + o.Agent
 		err = r.remoteAgents.Answer(ctx, o, value(p.CallID), value(p.Answer))
+		if err == nil {
+			_ = r.decisions.PublishQuestion(ctx, "a2a:"+value(p.CallID))
+		}
 		effect = protocol.EffectApplied
 	default:
 		return clientsrv.Result{}, malformedManagement()
@@ -161,7 +174,7 @@ func a2aStatus(c a2a.Call) protocol.A2aCallStatus {
 	if c.Question != "" {
 		out.Question = &c.Question
 	}
-	if c.Verified && c.Delivered {
+	if c.Delivered && c.Validated {
 		id := "a2a:" + c.ID
 		out.ResultID = &id
 	}
