@@ -1,0 +1,30 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "goal": {
+    "id": "trip-plan",
+    "summary": "Prepare workshop",
+    "done": "The workshop plan is ready",
+    "scope": "workshop plan"
+  },
+  "steps": [
+    {
+      "id": "outline",
+      "name": "Collect dates"
+    },
+    {
+      "id": "confirm",
+      "name": "Check the venue",
+      "depends_on": [
+        "outline"
+      ]
+    }
+  ],
+  "idle_goal": {
+    "id": "guide",
+    "summary": "Read guide",
+    "done": "The guide is read",
+    "step": "Read guide"
+  },
+  "limit_ms": 250,
+  "quiet_ms": 500
+}

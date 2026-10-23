@@ -150,14 +150,19 @@ func coordinateBeforeACPDeath(t *testing.T, h *harness, fixture string) {
 	if err != nil || response.Error != "" || json.Unmarshal(response.Result, &mcp) != nil || mcp.IsError || len(mcp.Content) != 1 {
 		t.Fatal("coordination failed", err)
 	}
+	var frame struct {
+		Kind string `xml:"speaker_kind,attr"`
+		Work string `xml:"work_id,attr"`
+		Text string `xml:"text"`
+	}
 	var ack struct {
 		Accepted bool
 		EventID  string `json:"event_id"`
 	}
-	var frame struct {
-		Text string `xml:"text"`
+	if xml.Unmarshal([]byte(mcp.Content[0].Text), &frame) != nil || frame.Kind != "tool" || frame.Work == "" {
+		t.Fatal("coordination result is not a tool frame")
 	}
-	if xml.Unmarshal([]byte(mcp.Content[0].Text), &frame) != nil || json.Unmarshal([]byte(frame.Text), &ack) != nil || !ack.Accepted || ack.EventID == "" {
+	if json.Unmarshal([]byte(frame.Text), &ack) != nil || !ack.Accepted || ack.EventID == "" {
 		t.Fatal("coordination not acknowledged")
 	}
 	// The real Core acknowledged the call, committed its request and cleared
