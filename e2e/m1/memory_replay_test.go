@@ -171,7 +171,13 @@ func TestM1MemoryReplayInstalledCore(t *testing.T) {
 				}
 				evidence := legacyEvidence
 				evidence.Assembly.RequestLayout = ""
-				evidence.Hash = assemble.Digest(provider.Request{Model: evidence.Model, Effort: evidence.Effort, Purpose: provider.Turn, Instructions: original.Instructions, Items: original.Input, Tools: evidence.Tools, Fields: evidence.Fields})
+				legacyRequest := provider.Request{Model: evidence.Model, Effort: evidence.Effort, Purpose: provider.Turn,
+					Instructions: original.Instructions, Items: original.Input, Tools: evidence.Tools, Fields: evidence.Fields,
+					CacheIdentity: evidence.CacheIdentity, Layout: evidence.Layout.Clone()}
+				if evidence.Capabilities != nil {
+					legacyRequest.Capabilities = evidence.Capabilities.Clone()
+				}
+				evidence.Hash = assemble.Digest(legacyRequest)
 				raw, err := json.Marshal(evidence)
 				if err != nil {
 					db.Close()
@@ -260,7 +266,11 @@ func TestM1MemoryReplayInstalledCore(t *testing.T) {
 				t.Fatal("missing ordered memory assembly")
 			}
 			rebuilt := provider.Request{Model: ep.Evidence.Model, Effort: ep.Evidence.Effort, Purpose: provider.Turn,
-				Instructions: original.Instructions, Items: ep.Items, Tools: ep.Evidence.Tools, Fields: ep.Evidence.Fields}
+				Instructions: original.Instructions, Items: ep.Items, Tools: ep.Evidence.Tools, Fields: ep.Evidence.Fields,
+				CacheIdentity: ep.Evidence.CacheIdentity, Layout: ep.Evidence.Layout.Clone()}
+			if ep.Evidence.Capabilities != nil {
+				rebuilt.Capabilities = ep.Evidence.Capabilities.Clone()
+			}
 			if assemble.Digest(rebuilt) != ep.Evidence.Hash {
 				t.Fatal("reconstructed request differs from the recorded digest")
 			}
