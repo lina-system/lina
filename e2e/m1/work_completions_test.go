@@ -3,8 +3,10 @@ package e2e_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
-	"github.com/thisisjun786/lina/internal/core/ctlfiles"
+	"errors"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -152,6 +155,8 @@ func scriptedWorkCompletion(w http.ResponseWriter, input []json.RawMessage) bool
 
 // Queue a manual request behind any completion turn and wait for that exact
 // durable input's turn, so another turn's idle frame cannot settle this one.
+// Failed and aborted turns fail the scenario immediately; waiting for them to
+// complete would consume the shard's deadline without any possible progress.
 func queuedWorkTurn(t *testing.T, h *harness, c *clientapi.Client, conversation, key, text string) {
 	t.Helper()
 	mode := protocol.InputModeQueue
@@ -179,13 +184,11 @@ func queuedWorkTurn(t *testing.T, h *harness, c *clientapi.Client, conversation,
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		var n int
-		if err = db.Read(h.ctx, func(tx *canon.Tx) error {
-			return tx.QueryRowContext(h.ctx, `SELECT count(*) FROM inbox i JOIN turn_runs t ON t.inbox_id=i.id WHERE i.conversation=? AND i.source='client' AND i.native_id=? AND t.state='completed'`, conversation, key).Scan(&n)
-		}); err != nil {
+		settled, err := queuedWorkTurnSettled(h.ctx, db, conversation, key)
+		if err != nil {
 			t.Fatal(err)
 		}
-		if n == 1 {
+		if settled {
 			return
 		}
 		select {
@@ -193,5 +196,26 @@ func queuedWorkTurn(t *testing.T, h *harness, c *clientapi.Client, conversation,
 		case <-h.ctx.Done():
 			t.Fatal("manual work turn did not settle", h.ctx.Err())
 		}
+	}
+}
+
+func queuedWorkTurnSettled(ctx context.Context, db *canon.Store, conversation, key string) (bool, error) {
+	var id, state string
+	err := db.Read(ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(ctx, `SELECT t.id,t.state FROM inbox i JOIN turn_runs t ON t.inbox_id=i.id WHERE i.conversation=? AND i.source='client' AND i.native_id=?`, conversation, key).Scan(&id, &state)
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil // The admitted input has not started a turn yet.
+	}
+	if err != nil {
+		return false, err
+	}
+	switch state {
+	case "active":
+		return false, nil
+	case "completed":
+		return true, nil
+	default:
+		return false, fmt.Errorf("manual work input %q: turn %s ended in state %s", key, id, state)
 	}
 }
