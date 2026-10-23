@@ -52,10 +52,14 @@ func (m *shellModel) pagerText() string {
 	// could outlive authoritative replacements, revocation or a focus change.
 	var messages []string
 	for _, b := range m.content.Blocks {
-		if !conversationBlock(b) {
+		if !m.conversationBlock(b) {
 			continue
 		}
 		text := b.Text
+		if b.Card != nil {
+			// Use the same current card summary as the conversation viewport.
+			text = m.blocks[b.ID].text
+		}
 		if b.Kind == protocol.KindResult && !b.InlineReply {
 			text = design.Text(m.styles.options.Language, "result") + "  " + b.Title + "\n" + text
 		}
