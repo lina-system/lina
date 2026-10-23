@@ -1,0 +1,7 @@
+{
+  "source_title": "Timer recovery source",
+  "source_note": "Saved source for the recovery check.",
+  "result_title": "Recovered sensor result",
+  "reminder": "Review the saved result.",
+  "invalid_rule": "FREQ=YEARLY;INTERVAL=500"
+}

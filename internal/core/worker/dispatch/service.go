@@ -24,6 +24,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/internal/core/skills"
 	"github.com/thisisjun786/lina/internal/core/work"
+	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/antigravity"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/loop"
@@ -49,7 +50,15 @@ type Definition struct {
 }
 type Origin struct{ Person, Agent, Conversation, Turn string }
 type Record struct {
+	RepositoryKey  string                     `json:"repository_key,omitempty"`
+	Worker         string                     `json:"worker,omitempty"`
+	Tried          []string                   `json:"tried,omitempty"`
+	Packet         string                     `json:"packet,omitempty"`
+	AreaHeld       bool                       `json:"area_held,omitempty"`
+	Wait           string                     `json:"wait,omitempty"`
 	Result         json.RawMessage            `json:"result,omitempty"`
+	Goal           bool                       `json:"goal,omitempty"`
+	Protected      map[string]string          `json:"protected_refs,omitempty"`
 	Method         *skills.Body               `json:"method,omitempty"`
 	BaseCommit     string                     `json:"base_commit,omitempty"`
 	ChangeEvidence string                     `json:"change_evidence,omitempty"`
@@ -78,6 +87,9 @@ func (r Record) TaskDefinition() Definition {
 }
 
 func (r Record) WorkerName() string {
+	if r.Worker != "" {
+		return r.Worker
+	}
 	if r.Definition.Worker == "" {
 		return "antigravity"
 	}
@@ -92,6 +104,10 @@ func taskBranch(requested, id string) string {
 }
 
 type Config struct {
+	Workers      []Factory
+	Rules        []work.ChoiceRule
+	Capacity     func(context.Context) int
+	Bind         func(Record, worker.Adapter, worker.Thread, string, string) (func(worker.Event), func())
 	Manage       func(context.Context, Record) (Record, error)
 	Skills       *skills.Store
 	DB           *canon.Store
@@ -100,25 +116,29 @@ type Config struct {
 	Root, Main   string
 	Epoch        uint64
 	Binary, Git  string
-	ClaudeBinary string
 	PR           antigravity.PullRequestReader
 	Environment  []string
 	Activities   lease.Leaser
 	Publish      func(context.Context, Record) error
+	ClaudeBinary string
 }
 type Service struct {
 	cfg     Config
 	ctx     context.Context
 	cancel  context.CancelFunc
 	done    chan struct{}
+	wake    chan struct{}
 	mu      sync.Mutex
 	running map[string]bool
 	wg      sync.WaitGroup
 }
 
 func Open(ctx context.Context, cfg Config) (*Service, error) {
-	s := &Service{cfg: cfg, running: map[string]bool{}, done: make(chan struct{})}
+	s := &Service{cfg: cfg, running: map[string]bool{}, done: make(chan struct{}), wake: make(chan struct{}, 1)}
 	s.ctx, s.cancel = context.WithCancel(ctx)
+	if len(s.cfg.Workers) == 0 && cfg.Binary != "" {
+		s.cfg.Workers = []Factory{AntigravityFactory(cfg)}
+	}
 	records, err := s.records(ctx)
 	if err != nil {
 		s.cancel()
@@ -149,15 +169,19 @@ func Open(ctx context.Context, cfg Config) (*Service, error) {
 	}
 	go func() {
 		defer close(s.done)
-		ticker := time.NewTicker(time.Second)
-		defer ticker.Stop()
 		for {
+			changed := s.cfg.DB.Changed()
 			s.sync()
+			timer := time.NewTimer(s.nextWake())
 			select {
 			case <-s.ctx.Done():
+				timer.Stop()
 				return
-			case <-ticker.C:
+			case <-changed:
+			case <-s.wake:
+			case <-timer.C:
 			}
+			timer.Stop()
 		}
 	}()
 	return s, nil
@@ -189,7 +213,7 @@ func validate(d Definition) error {
 		return work.ErrInvalid
 	}
 	for _, pattern := range d.WriteArea {
-		if pattern == "" || path.IsAbs(pattern) || strings.Contains(pattern, "..") {
+		if strings.TrimSpace(pattern) == "" || path.IsAbs(pattern) || strings.Contains(pattern, "..") {
 			return work.ErrInvalid
 		}
 		if _, err := path.Match(pattern, "file"); err != nil {
@@ -197,8 +221,8 @@ func validate(d Definition) error {
 		}
 	}
 	for _, ref := range d.DesignRefs {
-		file, _, ok := strings.Cut(ref, "#")
-		if !ok || file == "" || path.Clean(file) != file || strings.HasPrefix(file, "/") || strings.HasPrefix(file, "../") || strings.ContainsAny(file, ":\x00") {
+		file, anchor, ok := strings.Cut(ref, "#")
+		if !ok || strings.TrimSpace(anchor) == "" || file == "" || path.Clean(file) != file || strings.HasPrefix(file, "/") || strings.HasPrefix(file, "../") || strings.ContainsAny(file, ":\x00") {
 			return work.ErrInvalid
 		}
 	}
@@ -262,9 +286,15 @@ func (s *Service) Tool(origin Origin) loop.Tool {
 			}
 			return loop.Result{ID: c.ID, Code: loop.Denied, Output: mustJSON(body)}
 		}
+		if !replay {
+			base, repositoryKey, err := s.baseForAdmission(ctx, origin, c.ID, d)
+			if err != nil {
+				return loop.Result{ID: c.ID, Code: loop.Invalid}
+			}
+			r.BaseCommit, r.RepositoryKey = base, repositoryKey
+		}
 		r.Definition = d
-		// A durable admission already passed Manage. Rebuilding it here can
-		// change older manager arguments or rerun a completed handoff.
+		// An existing admission already passed its manager decision.
 		if !replay && s.cfg.Manage != nil {
 			r, err = s.cfg.Manage(ctx, r)
 			if err != nil {
@@ -378,16 +408,16 @@ func (s *Service) sync() {
 			if busy {
 				continue
 			}
-			r.State = "running"
-			if s.save(s.ctx, r) != nil {
+			claimed, claimErr := s.claim(s.ctx, &r)
+			if claimErr != nil || !claimed {
 				s.mu.Lock()
 				delete(s.running, r.ID)
 				s.mu.Unlock()
 				continue
 			}
 			s.wg.Add(1)
-			go func() { defer s.wg.Done(); s.execute(r) }()
-		} else if (r.State == "finished" || r.State == "unknown") && !r.Announced {
+			go func() { defer s.wg.Done(); s.execute(s.ctx, r) }()
+		} else if !r.Goal && (r.State == "finished" || r.State == "unknown") && !r.Announced {
 			// Completed ledger deliveries belong exclusively to the durable reactor.
 			if s.cfg.Work != nil {
 				if card, e := s.cfg.Work.Get(s.ctx, r.ID); e == nil && card.Receipt != nil && !card.Active && card.TurnStatus != "" {
@@ -402,7 +432,7 @@ func (s *Service) sync() {
 	}
 }
 func Declaration() provider.ToolDecl {
-	return provider.ToolDecl(`{"type":"function","name":"dispatch_work","description":"Delegate a code change to the person's installed worker (antigravity by default; worker=claude selects Claude Code). Core allocates a detached task worktree from a local GitHub clone. It appends the generated task ID to the requested branch unless already present, and returns the assigned branch. The worker creates that branch. Supply the complete authorized task, design sections, done condition and write area. The dev manager checks the definition before Core returns a task receipt; completion returns to this conversation. The worker uses its own permissions and login. Optional kind selects a development method from skill_index methodology=dev; skill overrides it with one catalog ID. Core includes that version in the task packet.","parameters":{"type":"object","properties":{"worker":{"type":"string","enum":["antigravity","claude"]},"kind":{"type":"string"},"skill":{"type":"string"},"repository":{"type":"string"},"base":{"type":"string"},"branch":{"type":"string"},"what":{"type":"string"},"why":{"type":"string"},"scope":{"type":"array","items":{"type":"string"}},"not_touch":{"type":"array","items":{"type":"string"}},"done":{"type":"string"},"design_refs":{"type":"array","items":{"type":"string"}},"write_area":{"type":"array","items":{"type":"string"}}},"required":["repository","base","branch","what","why","scope","not_touch","done","design_refs","write_area"],"additionalProperties":false}}`)
+	return provider.ToolDecl(`{"type":"function","name":"dispatch_work","description":"Delegate a code change to an available installed worker; worker can explicitly select antigravity or claude. Core allocates a detached task worktree from a local GitHub clone. It appends the generated task ID to the requested branch unless already present, and returns the assigned branch. The worker creates that branch. Supply the complete authorized task, design sections, done condition and write area. The dev manager checks the definition before Core returns a task receipt; completion returns to this conversation. The worker uses its own permissions and login. Optional kind selects a development method from skill_index methodology=dev; skill overrides it with one catalog ID. Core includes that version in the task packet.","parameters":{"type":"object","properties":{"worker":{"type":"string","enum":["antigravity","claude"]},"kind":{"type":"string"},"skill":{"type":"string"},"repository":{"type":"string"},"base":{"type":"string"},"branch":{"type":"string"},"what":{"type":"string"},"why":{"type":"string"},"scope":{"type":"array","items":{"type":"string"}},"not_touch":{"type":"array","items":{"type":"string"}},"done":{"type":"string"},"design_refs":{"type":"array","items":{"type":"string"}},"write_area":{"type":"array","items":{"type":"string"}}},"required":["repository","base","branch","what","why","scope","not_touch","done","design_refs","write_area"],"additionalProperties":false}}`)
 }
 
 type output struct{ bytes.Buffer }
@@ -416,5 +446,5 @@ func (o *output) Write(p []byte) (int, error) {
 func (s *Service) command(ctx context.Context, l lease.Lease, owner *proc.Owner, dir string, args ...string) (string, error) {
 	var out output
 	err := owner.Run(ctx, l, proc.Command{Path: s.cfg.Git, Args: append([]string{"-C", dir}, args...), Env: s.cfg.Environment, Stdout: &out, Stderr: io.Discard})
-	return strings.TrimSpace(out.String()), err
+	return strings.TrimRight(out.String(), "\r\n"), err
 }

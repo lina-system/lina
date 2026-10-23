@@ -104,3 +104,23 @@ func TestFailedCriterionAsksManagerOnceInsteadOfRepeatingCheck(t *testing.T) {
 		t.Fatalf("failed evidence repeated without judgment: %+v", p)
 	}
 }
+
+func TestRepositoryCriterionUsesItsOwnMergedRevision(t *testing.T) {
+	g := Goal{Revision: 1, CheckRound: 1, Scope: GoalScope{Repositories: []string{"code", "docs"}}, ServiceTarget: "service", ServiceRepository: "code", TargetRevision: "code-merge", MergedRevisions: map[string]string{"code": "code-merge", "docs": "docs-merge"}}
+	c := Criterion{ID: "docs", Check: CriterionCheck{Kind: RunEvidence, Method: "docs.check", Target: "docs"}}
+	if revision := criterionRevision(g, c); revision != "docs-merge" {
+		t.Fatalf("documentation check received foreign revision: %s", revision)
+	}
+	evidence := CriterionEvidence{Criterion: c.ID, GoalRevision: g.Revision, Round: g.CheckRound, Target: "docs", Revision: "docs-merge", Kind: RunEvidence, Ref: "docs-output", Passed: true}
+	if !currentEvidence(g, c, evidence) {
+		t.Fatal("target repository evidence rejected")
+	}
+	evidence.Revision = "code-merge"
+	if currentEvidence(g, c, evidence) {
+		t.Fatal("foreign repository evidence accepted")
+	}
+	delete(g.MergedRevisions, "docs")
+	if revision := criterionRevision(g, c); revision != "" {
+		t.Fatalf("missing docs merge borrowed %s", revision)
+	}
+}

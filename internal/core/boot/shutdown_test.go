@@ -12,6 +12,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/boot"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
+	goal "github.com/thisisjun786/lina/internal/core/work/goal"
 )
 
 func TestStopDuringSocketPublication(t *testing.T) {
@@ -32,7 +33,7 @@ func TestStopDuringSocketPublication(t *testing.T) {
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
 				reached := false
-				err := boot.Run(ctx, boot.Config{StateRoot: root, Socket: socket, AfterStep: func(at boot.Step, _ boot.Snapshot) error {
+				err := boot.Run(ctx, boot.Config{StateRoot: root, Socket: socket, Work: &boot.WorkConfig{Installed: true}, AfterStep: func(at boot.Step, _ boot.Snapshot) error {
 					if at == step {
 						// A successful connect precedes Serve and final sentinel
 						// publication. Cancel at this exact boundary, without sleeps.
@@ -122,4 +123,32 @@ func TestStopDuringPublicationPreservesCleanupFailure(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(root, "system/core/run.sentinel")); err != nil {
 		t.Fatalf("lost failure recovery record: %v", err)
 	}
+}
+
+func TestStopDuringWorkStartup(t *testing.T) {
+	for _, failure := range []error{nil, errors.New("work integration failed")} {
+		t.Run(fmt.Sprint(failure), func(t *testing.T) {
+			root := stateRoot(t)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			cfg := boot.Config{StateRoot: root, Socket: filepath.Join(root, "run/core.sock"), Work: &boot.WorkConfig{Driver: func(*goal.Engine) (goal.Driver, error) { cancel(); return stopWorkDriver{}, failure }}}
+			err := boot.Run(ctx, cfg)
+			if failure == nil && err != nil {
+				t.Fatalf("stop during work initialization failed: %v", err)
+			}
+			if failure != nil && !errors.Is(err, failure) {
+				t.Fatalf("lost real initialization failure: %v", err)
+			}
+		})
+	}
+}
+
+type stopWorkDriver struct{}
+
+func (stopWorkDriver) Authorize(context.Context, goal.Action) error { return goal.ErrNeedsPerson }
+func (stopWorkDriver) Execute(context.Context, goal.Action) (goal.Observation, error) {
+	return goal.Observation{}, goal.ErrInvalid
+}
+func (stopWorkDriver) Observe(context.Context, goal.Action) (goal.Observation, error) {
+	return goal.Observation{}, goal.ErrInvalid
 }
