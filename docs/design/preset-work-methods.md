@@ -126,7 +126,10 @@ the prepared work-method revision, required kinds and resolved references.
 
 `write_record` applies this check to a new transition to `completed`. A claim
 is saved as `claimed` and remains visible among active to-dos; it does not
-release dependent work. Planning edits preserve an existing completion.
+release dependent work. Planning edits preserve an existing completion. An unverified recurring
+completion does not advance to the next occurrence or disappear during
+model-free recurrence maintenance. A verified occurrence retains its evidence
+while the live record advances.
 `present_result` and `read_result` expose the same metadata on result cards.
 Ordinary previews carry no completion claim. Revising a completion card without
 new evidence cannot remove its unverified status. Core never changes the

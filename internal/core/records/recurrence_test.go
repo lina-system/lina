@@ -44,6 +44,29 @@ func TestRecurringCompletionAdvancesFuture(t *testing.T) {
 	}
 }
 
+func TestClaimedRecurringCompletionStaysVisible(t *testing.T) {
+	s, _, db := setup(t)
+	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
+	s.Now = func() time.Time { return now }
+	data := todoDocument("claim", "repeat: {\"rule\":\"FREQ=MONTHLY\",\"next\":\"2020-01-31\"}\n")
+	data = []byte(strings.Replace(string(data), "state: open", "state: claimed", 1))
+	revision := commit(t, s, Change{ID: "claim", Path: "inbox/claim.md", Data: data})
+	if err := s.AdvanceRecurring(t.Context(), Actor{Person: "person", Agent: "agent"}, now); err != nil {
+		t.Fatal(err)
+	}
+	record, current, err := s.Read(t.Context(), "claim")
+	if err != nil || current != revision || string(record.Data) != string(data) {
+		t.Fatalf("unverified occurrence disappeared: %s %v", record.Data, err)
+	}
+	var occurrences int
+	err = db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM work_ledger WHERE task_id='record:claim'").Scan(&occurrences)
+	})
+	if err != nil || occurrences != 0 {
+		t.Fatalf("claim became an occurrence: %d %v", occurrences, err)
+	}
+}
+
 func stringsReplaceState(data []byte) string {
 	return strings.Replace(string(data), "state: open", "state: completed", 1)
 }
