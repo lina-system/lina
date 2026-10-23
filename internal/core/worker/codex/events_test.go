@@ -35,3 +35,33 @@ func TestFailedTurnClassification(t *testing.T) {
 		})
 	}
 }
+
+func TestCompletionBeforeStartReplyRetainsTurnBinding(t *testing.T) {
+	for _, status := range []string{"completed", "failed"} {
+		t.Run(status, func(t *testing.T) {
+			completion := frame{Method: "turn/completed", Params: json.RawMessage(`{"threadId":"thread","turn":{"id":"turn-1","status":"` + status + `","error":{"message":"quota","codexErrorInfo":"usageLimitExceeded"}}}`)}
+			p := newAdapterPeerTurnScript(t, `{"rateLimits":{}}`, []frame{completion}, nil, false)
+			thread := p.start(t)
+			if thread.TurnID != "turn-1" {
+				t.Fatalf("early completion lost accepted turn binding: %+v", thread)
+			}
+			select {
+			case event := <-p.s.Events():
+				if event.Kind != worker.FinishEvent || event.Thread != thread || event.Validate() != nil {
+					t.Fatalf("completion differs from accepted worker: %+v", event)
+				}
+				if status == "failed" && event.Finish.Failure != worker.QuotaFailure {
+					t.Fatalf("quota completion lost: %+v", event.Finish)
+				}
+			case <-p.ctx.Done():
+				t.Fatal(p.ctx.Err())
+			}
+			p.s.mu.Lock()
+			state := p.s.snapshot.State
+			p.s.mu.Unlock()
+			if state != worker.Idle {
+				t.Fatalf("completed turn reopened: %s", state)
+			}
+		})
+	}
+}
