@@ -814,6 +814,10 @@ binding. It commits the report and follow-up before releasing the execution,
 clears the prior turn's output, and deduplicates repeated completion events.
 Connection loss retains the uncertain reservation. The report remains untrusted
 evidence; it creates no receipt, verdict, merge or verified task completion.
+Before attaching a scheduled session, Core resolves a channel task's retained
+input to its current most-specific binding and address. Its follow-up keeps that
+channel's memory and tool limits and revalidates them before running; another
+channel sharing the same conversation cannot replace a revoked source binding.
 Authenticated owner follow-ups may steer an active scheduled turn after the
 current handle checks. Starting another turn remains the scheduler's operation;
 model input and owner input to idle or unknown scheduled sessions are refused.

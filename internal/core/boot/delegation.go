@@ -260,7 +260,15 @@ func (d *delegationRuntime) origin(ctx context.Context, task work.Task) (*conver
 	if input.ConversationID != task.ConversationID || input.AgentID != task.AgentID {
 		return nil, ledger.Event{}, work.ErrState
 	}
-	if origin.conversation != task.ConversationID {
+	if input.Surface.Kind == "channel" {
+		// Cached conversation views do not carry a channel's tool/memory
+		// ceiling. Resolve the retained input and current specific binding,
+		// just as completion recovery does, before starting its worker.
+		origin, err = d.root.workerCompletionView(ctx, ledger.Event{ParentID: input.ID, AgentID: input.AgentID, ConversationID: input.ConversationID, Surface: input.Surface})
+		if err != nil {
+			return nil, ledger.Event{}, err
+		}
+	} else if origin.conversation != task.ConversationID {
 		// These identities come from the admitted task and its recorded input.
 		// A channel task's requests and evidence belong to that conversation.
 		origin, err = d.root.router.channelView(ctx, channels.Binding{Person: task.PersonID, Agent: task.AgentID, Conversation: task.ConversationID})
