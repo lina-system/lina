@@ -122,7 +122,7 @@ func TestObserveQuotaFreshnessPerWindow(t *testing.T) {
 		{"other account", []provider.QuotaRow{blocked}, []provider.QuotaRow{otherAccount}, []provider.QuotaRow{otherAccount, blocked}, false},
 		{"other provider", []provider.QuotaRow{blocked}, []provider.QuotaRow{otherProvider}, []provider.QuotaRow{otherProvider, blocked}, false},
 		{"unknown stop other account", []provider.QuotaRow{unknownStop}, []provider.QuotaRow{otherAccount}, []provider.QuotaRow{otherAccount, unknownStop}, false},
-		{"repeated window rows", []provider.QuotaRow{row(provider.FiveHour, provider.QuotaOK, 1), blocked}, []provider.QuotaRow{row(provider.FiveHour, provider.QuotaOK, 1), recovered}, []provider.QuotaRow{row(provider.FiveHour, provider.QuotaOK, 1), recovered}, true},
+		{"ambiguous legacy window rows", []provider.QuotaRow{row(provider.FiveHour, provider.QuotaOK, 1), blocked}, []provider.QuotaRow{row(provider.FiveHour, provider.QuotaOK, 1), recovered}, []provider.QuotaRow{row(provider.FiveHour, provider.QuotaOK, 1), recovered, row(provider.FiveHour, provider.QuotaOK, 1), blocked}, false},
 		{"initial unknown replaced", []provider.QuotaRow{row(provider.UnknownWindow, provider.QuotaUnknown, 0)}, []provider.QuotaRow{recovered, weekly}, []provider.QuotaRow{recovered, weekly}, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -194,6 +194,81 @@ func TestUnidentifiedWorkerStopRecovery(t *testing.T) {
 			chosen := work.ChooseWorker([]work.WorkerCandidate{{Name: "codex", Slots: 1, Quota: got}}, nil, nil, nil, time.Now())
 			if (chosen != "") != test.eligible {
 				t.Fatalf("chosen=%q eligible=%t rows=%+v", chosen, test.eligible, got)
+			}
+		})
+	}
+}
+
+func TestObserveQuotaBucketIdentity(t *testing.T) {
+	base := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	row := func(limit, bucket string, window provider.Window, state provider.QuotaState, minute int) provider.QuotaRow {
+		return provider.QuotaRow{Provider: provider.ChatGPT, Account: "account", LimitID: limit, Bucket: bucket, Window: window, State: state, Source: provider.Endpoint, Observed: base.Add(time.Duration(minute) * time.Minute)}
+	}
+	blocked := row("codex", "primary", provider.UnknownWindow, provider.QuotaBlocked, 1)
+	recovered := row("codex", "primary", provider.FiveHour, provider.QuotaOK, 2)
+	sibling := row("codex", "secondary", provider.FiveHour, provider.QuotaBlocked, 1)
+	other := row("review", "primary", provider.FiveHour, provider.QuotaBlocked, 1)
+	unmeasured := row("codex", "primary", provider.UnknownWindow, provider.QuotaUnknown, 1)
+	otherAccount := recovered
+	otherAccount.Account = "other"
+	otherProvider := recovered
+	otherProvider.Provider = provider.Claude
+	stale := recovered
+	stale.Observed = base
+	legacy := blocked
+	legacy.LimitID, legacy.Bucket = "", ""
+	legacyKnown := legacy
+	legacyKnown.Window = provider.FiveHour
+	legacyRecovery := recovered
+	legacyRecovery.LimitID, legacyRecovery.Bucket = "", ""
+	legacyUnknownRecovery := legacyRecovery
+	legacyUnknownRecovery.Window = provider.UnknownWindow
+	inferredMeasurement := blocked
+	inferredMeasurement.Source = provider.ErrorCode
+	used := 100.0
+	legacyInferredMeasurement := legacy
+	legacyInferredMeasurement.Source, legacyInferredMeasurement.UsedPct = provider.ErrorCode, &used
+	for _, test := range []struct {
+		name                string
+		prior, update, want []provider.QuotaRow
+		eligible            bool
+	}{
+		{"duration discovered", []provider.QuotaRow{blocked}, []provider.QuotaRow{recovered}, []provider.QuotaRow{recovered}, true},
+		{"stale duration", []provider.QuotaRow{blocked}, []provider.QuotaRow{stale}, []provider.QuotaRow{blocked}, false},
+		{"sibling cannot recover", []provider.QuotaRow{blocked}, []provider.QuotaRow{sibling}, []provider.QuotaRow{sibling, blocked}, false},
+		{"same duration different buckets", []provider.QuotaRow{recovered, sibling}, []provider.QuotaRow{recovered}, []provider.QuotaRow{recovered, sibling}, false},
+		{"same bucket different limits", []provider.QuotaRow{blocked, other}, []provider.QuotaRow{recovered}, []provider.QuotaRow{recovered, other}, false},
+		{"different account", []provider.QuotaRow{blocked}, []provider.QuotaRow{otherAccount}, []provider.QuotaRow{otherAccount, blocked}, false},
+		{"different provider", []provider.QuotaRow{blocked}, []provider.QuotaRow{otherProvider}, []provider.QuotaRow{otherProvider, blocked}, false},
+		{"identified error retains bucket", []provider.QuotaRow{inferredMeasurement}, []provider.QuotaRow{row("codex", "secondary", provider.Weekly, provider.QuotaOK, 2)}, []provider.QuotaRow{row("codex", "secondary", provider.Weekly, provider.QuotaOK, 2), inferredMeasurement}, false},
+		{"unmeasured sibling retains identity", []provider.QuotaRow{unmeasured}, []provider.QuotaRow{row("codex", "secondary", provider.Weekly, provider.QuotaOK, 2)}, []provider.QuotaRow{row("codex", "secondary", provider.Weekly, provider.QuotaOK, 2), unmeasured}, true},
+		{"legacy unknown cannot infer bucket", []provider.QuotaRow{legacy}, []provider.QuotaRow{recovered}, []provider.QuotaRow{recovered, legacy}, false},
+		{"legacy known cannot infer bucket", []provider.QuotaRow{legacyKnown}, []provider.QuotaRow{recovered}, []provider.QuotaRow{recovered, legacyKnown}, false},
+		{"legacy measured error remains", []provider.QuotaRow{legacyInferredMeasurement}, []provider.QuotaRow{recovered}, []provider.QuotaRow{recovered, legacyInferredMeasurement}, false},
+		{"legacy unique window", []provider.QuotaRow{legacyKnown}, []provider.QuotaRow{legacyRecovery}, []provider.QuotaRow{legacyRecovery}, true},
+		{"legacy unknown lacks identity", []provider.QuotaRow{legacy}, []provider.QuotaRow{legacyUnknownRecovery}, []provider.QuotaRow{legacyUnknownRecovery, legacy}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s := &Service{cfg: Config{DB: store(t)}}
+			if err := s.ObserveQuota(t.Context(), "codex", test.prior); err != nil {
+				t.Fatal(err)
+			}
+			// Persist before the metadata changes, then recover using a fresh service.
+			restarted := &Service{cfg: s.cfg}
+			original := append([]provider.QuotaRow(nil), test.update...)
+			if err := restarted.ObserveQuota(t.Context(), "codex", test.update); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(original, test.update) {
+				t.Fatal("mutated caller rows")
+			}
+			got, err := restarted.quota(t.Context(), "codex")
+			if err != nil || !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("quota=%+v want=%+v err=%v", got, test.want, err)
+			}
+			chosen := work.ChooseWorker([]work.WorkerCandidate{{Name: "codex", Slots: 1, Quota: got}}, nil, nil, nil, base.Add(time.Hour))
+			if (chosen != "") != test.eligible {
+				t.Fatalf("chosen=%q eligible=%t", chosen, test.eligible)
 			}
 		})
 	}

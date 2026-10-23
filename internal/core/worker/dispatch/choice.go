@@ -204,40 +204,70 @@ func (s *Service) ObserveQuota(ctx context.Context, name string, rows []provider
 	return err
 }
 
-func mergeQuotaObservations(prior, rows []provider.QuotaRow) []provider.QuotaRow {
-	incoming := len(rows)
-	used := make([]bool, incoming)
+// A reported bucket identifies a limit even when its duration is unknown.
+// Legacy rows can match by a known window only when that match is unique.
+type quotaObservationID struct {
+	provider      provider.ProviderID
+	account       provider.AccountID
+	limit, bucket string
+	window        provider.Window
+}
+
+func quotaIdentity(q provider.QuotaRow) quotaObservationID {
+	key := quotaObservationID{provider: q.Provider, account: q.Account, limit: q.LimitID, bucket: q.Bucket}
+	if q.Bucket == "" {
+		key.window = q.Window
+	}
+	return key
+}
+
+func quotaPlaceholder(q provider.QuotaRow) bool {
+	if q.Bucket != "" || q.Window != provider.UnknownWindow || q.UsedPct != nil || q.ResetsAt != nil {
+		return false
+	}
+	return q.State == provider.QuotaUnknown || q.State == provider.QuotaBlocked && q.Source == provider.ErrorCode
+}
+
+func mergeQuotaObservations(prior, incoming []provider.QuotaRow) []provider.QuotaRow {
+	rows := append([]provider.QuotaRow(nil), incoming...)
+	priorCounts, incomingCounts := map[quotaObservationID]int{}, map[quotaObservationID]int{}
+	positions := map[quotaObservationID]int{}
+	for _, q := range prior {
+		priorCounts[quotaIdentity(q)]++
+	}
+	for i, q := range incoming {
+		key := quotaIdentity(q)
+		incomingCounts[key]++
+		positions[key] = i
+	}
 	for _, saved := range prior {
-		matched, recovered := false, false
-		unmeasured := saved.State == provider.QuotaUnknown && saved.UsedPct == nil && saved.ResetsAt == nil
-		inferredStop := saved.State == provider.QuotaBlocked && saved.Source == provider.ErrorCode
-		for i := 0; i < incoming; i++ {
-			q := rows[i]
-			// A failed read with no cache identifies only the worker. Fresh
-			// evidence for this worker can replace that stop after sign-in.
-			if inferredStop && saved.Window == provider.UnknownWindow && saved.Provider == "" && saved.Account == "" && saved.ResetsAt == nil && q.Observed.After(saved.Observed) {
-				recovered = true
-			}
-			if q.Provider != saved.Provider || q.Account != saved.Account {
-				continue
-			}
-			// Fresh account evidence supersedes an initial unknown placeholder
-			// or an error-inferred stop, neither of which identifies a limit.
-			if saved.Window == provider.UnknownWindow && (unmeasured || inferredStop) && q.Observed.After(saved.Observed) {
-				recovered = true
-			}
-			if q.Window == saved.Window && !used[i] && !matched {
-				matched = true
-				used[i] = true
-				// Sparse notifications retain sibling timestamps. Compare only
-				// the corresponding window, including delayed stop observations.
-				if !q.Observed.After(saved.Observed) {
-					rows[i] = saved
+		placeholder := quotaPlaceholder(saved)
+		recovered := false
+		if placeholder {
+			// Only an unmeasured placeholder or error-inferred stop can recover
+			// without matching a bucket. An unidentified stop belongs to this worker.
+			workerStop := saved.State == provider.QuotaBlocked && saved.Provider == "" && saved.Account == "" && saved.LimitID == ""
+			for _, q := range incoming {
+				sameAccount := q.Provider == saved.Provider && q.Account == saved.Account
+				sameLimit := saved.LimitID == "" || q.LimitID == saved.LimitID
+				if (workerStop || sameAccount && sameLimit) && q.Observed.After(saved.Observed) {
+					recovered = true
+					break
 				}
 			}
 		}
-		if !matched && !recovered {
-			// Absence is not evidence that a measured window recovered.
+		if recovered {
+			continue
+		}
+		key := quotaIdentity(saved)
+		identifiable := saved.Bucket != "" || saved.Window != provider.UnknownWindow && saved.Window != "" || placeholder
+		if identifiable && priorCounts[key] == 1 && incomingCounts[key] == 1 {
+			i := positions[key]
+			if !incoming[i].Observed.After(saved.Observed) {
+				rows[i] = saved
+			}
+		} else {
+			// Neither absence nor a guessed legacy bucket establishes recovery.
 			rows = append(rows, saved)
 		}
 	}

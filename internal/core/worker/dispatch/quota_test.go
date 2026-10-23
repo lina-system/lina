@@ -34,7 +34,7 @@ func TestQuotaPersistsAndBlockedWorkersAreNeverOpenedBeforeReset(t *testing.T) {
 	}
 	s := &Service{cfg: Config{DB: db, Workers: []Factory{factory("blocked", nil), factory("unknown", nil)}}}
 	reset := time.Now().Add(time.Hour)
-	if err := s.ObserveQuota(t.Context(), "blocked", []provider.QuotaRow{{State: provider.QuotaBlocked, ResetsAt: &reset}}); err != nil {
+	if err := s.ObserveQuota(t.Context(), "blocked", []provider.QuotaRow{{Window: provider.FiveHour, State: provider.QuotaBlocked, ResetsAt: &reset}}); err != nil {
 		t.Fatal(err)
 	}
 	// A new Service has no in-memory quota and must still honor the cache.
@@ -47,7 +47,7 @@ func TestQuotaPersistsAndBlockedWorkersAreNeverOpenedBeforeReset(t *testing.T) {
 	}
 	close(t.Context())
 	reset = time.Now().Add(-time.Second)
-	if err := s.ObserveQuota(t.Context(), "blocked", []provider.QuotaRow{{State: provider.QuotaBlocked, ResetsAt: &reset}}); err != nil {
+	if err := s.ObserveQuota(t.Context(), "blocked", []provider.QuotaRow{{Window: provider.FiveHour, State: provider.QuotaBlocked, ResetsAt: &reset}}); err != nil {
 		t.Fatal(err)
 	}
 	a, close, err = restarted.selectWorker(t.Context(), l, Record{Tried: []string{"unknown"}})
@@ -79,7 +79,7 @@ func TestQuotaChangeBetweenSelectionAndReservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	reset := time.Now().Add(time.Hour)
-	if err := s.ObserveQuota(t.Context(), "codex", []provider.QuotaRow{{State: provider.QuotaBlocked, ResetsAt: &reset}}); err != nil {
+	if err := s.ObserveQuota(t.Context(), "codex", []provider.QuotaRow{{Window: provider.FiveHour, State: provider.QuotaBlocked, ResetsAt: &reset}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.reserveWorker(t.Context(), &r, "codex"); !errors.Is(err, errWorkerParked) || len(r.Tried) != 0 {
@@ -90,10 +90,10 @@ func TestQuotaChangeBetweenSelectionAndReservation(t *testing.T) {
 func TestLateQuotaSnapshotCannotClearNewerStop(t *testing.T) {
 	s := &Service{cfg: Config{DB: store(t)}}
 	now := time.Now()
-	if err := s.ObserveQuota(t.Context(), "codex", []provider.QuotaRow{{State: provider.QuotaBlocked, Source: provider.ErrorCode, Observed: now}}); err != nil {
+	if err := s.ObserveQuota(t.Context(), "codex", []provider.QuotaRow{{Window: provider.UnknownWindow, State: provider.QuotaBlocked, Source: provider.ErrorCode, Observed: now}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ObserveQuota(t.Context(), "codex", []provider.QuotaRow{{State: provider.QuotaOK, Source: provider.Endpoint, Observed: now.Add(-time.Minute)}}); err != nil {
+	if err := s.ObserveQuota(t.Context(), "codex", []provider.QuotaRow{{Window: provider.UnknownWindow, State: provider.QuotaOK, Source: provider.Endpoint, Observed: now.Add(-time.Minute)}}); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := s.quota(t.Context(), "codex")
