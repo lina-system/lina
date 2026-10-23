@@ -56,3 +56,14 @@ for (const stage of ['ci', 'audit', 'test']) test(`${stage} failure fails the ga
   assert.equal(f.check((command, args, options) => { const r = f.run(command, args, options); return args[0] === stage ? { ...r, status: 1, stderr: 'fixture failure' } : r; }).status, 1);
   assert.equal(existsSync(f.calls[0].cwd), false);
 });
+
+test('Claude ACP has its own verified install without optional packages or npm test', t => {
+  const f = fixture(t);
+  const manifest = {...f.manifest, scripts: undefined};
+  f.write(f.dir, 'adapters/claude-acp/package.json', JSON.stringify(manifest));
+  f.write(f.dir, 'adapters/claude-acp/package-lock.json', JSON.stringify({...f.lock, packages: {...f.lock.packages, '': manifest}}));
+  const result = f.check();
+  assert.equal(result.status, 0, result.output);
+  const calls = f.calls.slice(3);
+  assert.deepEqual(calls.map(c => c.args), [['ci', '--ignore-scripts', '--omit=dev', '--omit=optional'], ['audit', 'signatures']]);
+});
