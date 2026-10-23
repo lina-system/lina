@@ -1497,8 +1497,7 @@ The receipt and saved-version record carry the capture's relative recovery path 
 The actual captured inode stays in a reserved `.lina-recovery-*` directory beside its former path, so an editor holding an already-open descriptor can continue writing without losing those bytes.
 An observed concurrent change returns unknown and keeps the recovery information through the worker reply and effect ledger.
 A completed receipt describes the final observation, not future writes through another process's open descriptor.
-Captures remain readable through file reads after reopening and participate in workspace manifest revisions.
-A recovery-like directory name is not proof of worker ownership and never hides its files from a command receipt; this also keeps later writes through captured open inodes observable.
+Captures remain readable through file reads after reopening; they are excluded from workspace manifest revisions.
 These live captures share the workspace's access scope, whereas the immutable before/after version store remains private to the file worker.
 Restore from a saved-version id uses its immutable bytes and the current destination revision.
 A multi-file patch is prevalidated but is not a filesystem transaction: an interrupted commit is unknown with retained recovery information.

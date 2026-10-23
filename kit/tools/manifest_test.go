@@ -62,29 +62,26 @@ func TestManifestRecordsCreatedChangedAndDeletedPaths(t *testing.T) {
 	}
 }
 
-func TestManifestIncludesUserDirectoriesWithRecoveryPrefix(t *testing.T) {
+func TestManifestExcludesRecoveryCaptures(t *testing.T) {
 	f, root, _ := fileStore(t)
-	name := "notes/.lina-recovery-drafts/plan.txt"
-	file := filepath.Join(root, filepath.FromSlash(name))
-	if err := os.MkdirAll(filepath.Dir(file), 0700); err != nil {
+	capture := filepath.Join(root, recoveryPrefix+"abc", "captured")
+	if err := os.MkdirAll(filepath.Dir(capture), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(file, []byte("before"), 0600); err != nil {
+	if err := os.WriteFile(capture, []byte("captured"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	before, err := f.Execute(t.Context(), FileRequest{Operation: "manifest"})
+	if err := os.WriteFile(filepath.Join(root, "notes"), []byte("user"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := f.Execute(t.Context(), FileRequest{Operation: "manifest"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(file, []byte("after"), 0600); err != nil {
-		t.Fatal(err)
+	if _, ok := result.Manifest[recoveryPrefix+"abc/captured"]; ok {
+		t.Fatalf("manifest retained a recovery capture: %v", result.Manifest)
 	}
-	after, err := f.Execute(t.Context(), FileRequest{Operation: "manifest"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	changes := ManifestDiff(before.Manifest, after.Manifest)
-	if len(changes) != 1 || changes[0].Path != name || changes[0].Before == changes[0].After || before.Revision == after.Revision {
-		t.Fatalf("user writes were omitted from receipt: %+v", changes)
+	if _, ok := result.Manifest["notes"]; !ok {
+		t.Fatal("manifest omitted a user file")
 	}
 }
