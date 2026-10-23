@@ -44,18 +44,27 @@ func conversationClient(t *testing.T, h *harness, extra ...protocol.Capability) 
 	// Empty input probes admission without creating a message. Only recovery's
 	// explicit refusal permits another probe.
 	for {
-		if _, err = c.Input(h.ctx, protocol.Input{}); err != nil {
-			t.Fatal(err)
-		}
-		ready, err := c.Receive(h.ctx)
+		request, err := c.Input(h.ctx, protocol.Input{})
 		if err != nil {
 			t.Fatal(err)
+		}
+		var ready protocol.Envelope
+		for {
+			ready, err = c.Receive(h.ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// A recovered continuation can publish subscribed events while
+			// the admission probe is in flight. Only its reply is readiness.
+			if ready.ReplyTo != nil && *ready.ReplyTo == request {
+				break
+			}
 		}
 		if ready.Error != nil && ready.Error.Code == protocol.ErrorMalformed {
 			break
 		}
 		if ready.Error == nil || ready.Error.Code != protocol.ErrorUnavailable {
-			t.Fatal("unexpected readiness refusal")
+			t.Fatalf("unexpected readiness refusal: %+v", ready)
 		}
 	}
 	return c, *history.ConversationID
