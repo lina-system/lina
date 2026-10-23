@@ -213,6 +213,11 @@ func mergeQuotaObservations(prior, rows []provider.QuotaRow) []provider.QuotaRow
 		inferredStop := saved.State == provider.QuotaBlocked && saved.Source == provider.ErrorCode
 		for i := 0; i < incoming; i++ {
 			q := rows[i]
+			// A failed read with no cache identifies only the worker. Fresh
+			// evidence for this worker can replace that stop after sign-in.
+			if inferredStop && saved.Window == provider.UnknownWindow && saved.Provider == "" && saved.Account == "" && saved.ResetsAt == nil && q.Observed.After(saved.Observed) {
+				recovered = true
+			}
 			if q.Provider != saved.Provider || q.Account != saved.Account {
 				continue
 			}

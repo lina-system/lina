@@ -2,6 +2,7 @@
 package dispatch
 
 import (
+	"errors"
 	"reflect"
 	"testing"
 	"time"
@@ -146,6 +147,53 @@ func TestObserveQuotaFreshnessPerWindow(t *testing.T) {
 			chosen := work.ChooseWorker([]work.WorkerCandidate{{Name: "codex", Slots: 1, Quota: got}}, nil, nil, nil, base.Add(time.Hour))
 			if (chosen != "") != test.eligible {
 				t.Errorf("chosen = %q; eligible = %t", chosen, test.eligible)
+			}
+		})
+	}
+}
+
+func TestUnidentifiedWorkerStopRecovery(t *testing.T) {
+	for _, test := range []struct {
+		name, worker string
+		age          time.Duration
+		state        provider.QuotaState
+		empty        bool
+		readError    error
+		eligible     bool
+	}{
+		{name: "fresh account", worker: "codex", age: time.Second, state: provider.QuotaOK, eligible: true},
+		{name: "failed endpoint", worker: "codex", age: time.Second, state: provider.QuotaOK, readError: errors.New("quota unavailable"), eligible: true},
+		{name: "older snapshot", worker: "codex", age: -time.Second, state: provider.QuotaOK},
+		{name: "equal snapshot", worker: "codex", state: provider.QuotaOK},
+		{name: "other worker", worker: "antigravity", age: time.Second, state: provider.QuotaOK},
+		{name: "empty snapshot", worker: "codex", empty: true},
+		{name: "fresh blocked account", worker: "codex", age: time.Second, state: provider.QuotaBlocked},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s := &Service{cfg: Config{DB: store(t)}}
+			// No cached quota and no endpoint rows: park can only identify the worker.
+			if err := s.park(t.Context(), &quotaAdapter{name: "codex", err: test.readError}); err != nil {
+				t.Fatal(err)
+			}
+			prior, err := s.quota(t.Context(), "codex")
+			if err != nil || len(prior) != 1 || prior[0].Provider != "" || prior[0].Account != "" || prior[0].State != provider.QuotaBlocked {
+				t.Fatalf("unidentified stop: %+v %v", prior, err)
+			}
+			restarted := &Service{cfg: s.cfg}
+			rows := []provider.QuotaRow{{Provider: provider.ChatGPT, Account: "restored", Window: provider.FiveHour, State: test.state, Source: provider.Endpoint, Observed: prior[0].Observed.Add(test.age)}}
+			if test.empty {
+				rows = nil
+			}
+			if err := restarted.ObserveQuota(t.Context(), test.worker, rows); err != nil {
+				t.Fatal(err)
+			}
+			got, err := restarted.quota(t.Context(), "codex")
+			if err != nil {
+				t.Fatal(err)
+			}
+			chosen := work.ChooseWorker([]work.WorkerCandidate{{Name: "codex", Slots: 1, Quota: got}}, nil, nil, nil, time.Now())
+			if (chosen != "") != test.eligible {
+				t.Fatalf("chosen=%q eligible=%t rows=%+v", chosen, test.eligible, got)
 			}
 		})
 	}

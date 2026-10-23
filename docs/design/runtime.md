@@ -338,6 +338,9 @@ A newer observation replaces only its matching window; an unchanged, older or
 missing sibling cannot discard that update or clear another window's block.
 An unknown-window stop inferred from an error clears on a newer observation
 for that account, without requiring every reported window to be refreshed.
+When a failed read leaves both provider and account unknown, the stop belongs
+to the worker. A newer observation from that worker clears it; observations
+from another worker do not. Known providers and accounts remain isolated.
 
 | Path | What the provider reports | Source of the rows |
 | --- | --- | --- |

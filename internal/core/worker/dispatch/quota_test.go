@@ -16,10 +16,11 @@ type quotaAdapter struct {
 	worker.Adapter
 	name string
 	rows []provider.QuotaRow
+	err  error
 }
 
 func (a *quotaAdapter) Name() string                                       { return a.name }
-func (a *quotaAdapter) Quota(context.Context) ([]provider.QuotaRow, error) { return a.rows, nil }
+func (a *quotaAdapter) Quota(context.Context) ([]provider.QuotaRow, error) { return a.rows, a.err }
 
 func TestQuotaPersistsAndBlockedWorkersAreNeverOpenedBeforeReset(t *testing.T) {
 	db := store(t)

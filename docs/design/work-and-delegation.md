@@ -624,6 +624,9 @@ recovery remains usable when a healthy sibling retains its earlier observation
 time; older or absent measurements preserve the corresponding saved window.
 `e2e/m2/codex-quota-recovery.json` proves a sparse Codex recovery reaches the
 installed Core's dispatch cache and remains eligible after restart.
+An error-inferred stop recorded without provider or account metadata can recover
+from a newer successful quota read by the same worker. A stale or empty read
+does not establish recovery, and known accounts keep their own blocks.
 
 The provisional worker rule table is read at startup from
 `system/core/worker-choice.json`. Its `rules` contain `worker`, `tags` and integer
