@@ -32,8 +32,16 @@ func result(t *testing.T, item lastItem, out any) {
 }
 
 func TestHandoffReceiptsAndSingleArtifactOwner(t *testing.T) {
+	for _, action := range []string{"write_record", "promote_memo", "undo_record"} {
+		t.Run(action, func(t *testing.T) { testArtifactHandoff(t, action) })
+	}
+}
+func testArtifactHandoff(t *testing.T, action string) {
 	var mu sync.Mutex
-	var doc coreexec.RecordReceipt
+	var doc struct {
+		coreexec.RecordReceipt
+		Undo string
+	}
 	var owned exchange.ChangeResult
 	var routed struct {
 		Handoff exchange.Status
@@ -67,7 +75,7 @@ func TestHandoffReceiptsAndSingleArtifactOwner(t *testing.T) {
 			for _, raw := range q.Tools {
 				var v struct{ Name string }
 				_ = json.Unmarshal(raw, &v)
-				if v.Name != "read_record" && v.Name != "write_record" {
+				if v.Name != "read_record" && v.Name != "write_record" && v.Name != "promote_memo" && v.Name != "undo_record" {
 					t.Errorf("receiver tool escaped artifact scope: %s", v.Name)
 				}
 			}
@@ -75,7 +83,14 @@ func TestHandoffReceiptsAndSingleArtifactOwner(t *testing.T) {
 			case "receiver-read":
 				var fresh coreexec.RecordReceipt
 				result(t, item, &fresh)
-				toolCall(w, "receiver-write", "write_record", coreexec.RecordWrite{ID: fresh.ID, Revision: fresh.Revision, Kind: "document", Title: "Draft", Note: "Updated by owning agent"})
+				if action == "write_record" {
+					toolCall(w, "receiver-write", action, coreexec.RecordWrite{ID: fresh.ID, Revision: fresh.Revision, Kind: "memo", Title: "Draft", Note: "Updated by owning agent"})
+				} else {
+					mu.Lock()
+					handle := doc.Undo
+					mu.Unlock()
+					toolCall(w, "receiver-write", action, coreexec.RecordAction{ID: fresh.ID, Revision: fresh.Revision, Handle: handle})
+				}
 			case "receiver-write":
 				result(t, item, nil)
 				reply(w, "The requested draft change is saved.")
@@ -98,11 +113,15 @@ func TestHandoffReceiptsAndSingleArtifactOwner(t *testing.T) {
 		}
 		if item.Type == "function_call_output" {
 			switch item.CallID {
-			case "create":
+			case "create", "bootstrap-promote":
 				mu.Lock()
 				result(t, item, &doc)
-				id := doc.ID
+				id, revision := doc.ID, doc.Revision
 				mu.Unlock()
+				if action == "undo_record" && item.CallID == "create" {
+					toolCall(w, "bootstrap-promote", "promote_memo", coreexec.RecordAction{ID: id, Revision: revision})
+					return
+				}
 				toolCall(w, "lease", "begin_artifact_change", map[string]any{"artifact": exchange.Artifact{Kind: "business_document", ID: "record:" + id}, "done": "Draft updated", "wanted": "Update draft", "out_of_scope": "No sending", "next_check": time.Now().Add(time.Hour), "deadline": time.Now().Add(2 * time.Hour)})
 			case "lease":
 				mu.Lock()
@@ -117,7 +136,13 @@ func TestHandoffReceiptsAndSingleArtifactOwner(t *testing.T) {
 			case "verify":
 				var fresh coreexec.RecordReceipt
 				result(t, item, &fresh)
-				if !strings.Contains(fresh.Markdown, "Updated by owning agent") {
+				expected := "Updated by owning agent"
+				if action == "promote_memo" {
+					expected = "kind: todo"
+				} else if action == "undo_record" {
+					expected = "kind: memo"
+				}
+				if !strings.Contains(fresh.Markdown, expected) {
 					t.Error("check-back did not read the completed artifact")
 				}
 				checks.Add(1)
@@ -132,12 +157,16 @@ func TestHandoffReceiptsAndSingleArtifactOwner(t *testing.T) {
 		case strings.Contains(item.Content, "Readiness barrier"):
 			reply(w, "Ready.")
 		case strings.Contains(item.Content, "Start owned draft"):
-			toolCall(w, "create", "write_record", coreexec.RecordWrite{Kind: "document", Title: "Draft", Note: "Original"})
+			toolCall(w, "create", "write_record", coreexec.RecordWrite{Kind: "memo", Title: "Draft", Note: "Original"})
 		case strings.Contains(item.Content, "Request another edit"):
 			mu.Lock()
 			d := doc
 			mu.Unlock()
-			toolCall(w, "edit", "write_record", coreexec.RecordWrite{ID: d.ID, Revision: d.Revision, Kind: "document", Title: "Draft", Note: "Second agent attempted edit"})
+			if action == "write_record" {
+				toolCall(w, "edit", action, coreexec.RecordWrite{ID: d.ID, Revision: d.Revision, Kind: "memo", Title: "Draft", Note: "Second agent attempted edit"})
+			} else {
+				toolCall(w, "edit", action, coreexec.RecordAction{ID: d.ID, Revision: d.Revision, Handle: d.Undo})
+			}
 		case strings.Contains(item.Content, "Check the hand-off's end condition"):
 			mu.Lock()
 			id := doc.ID

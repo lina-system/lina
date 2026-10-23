@@ -138,7 +138,7 @@ func (r *conversationRuntime) receiveHandoff(ctx context.Context, receipt exchan
 			}
 			target := strings.TrimPrefix(origin.Artifact.ID, "record:")
 			for name, tool := range bindings {
-				if name != "read_record" && name != "write_record" {
+				if name != "read_record" && name != "write_record" && name != "promote_memo" && name != "undo_record" {
 					delete(bindings, name)
 					continue
 				}
