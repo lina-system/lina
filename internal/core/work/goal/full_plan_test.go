@@ -236,7 +236,7 @@ func TestRetiredMergeKeepsOldRepositorySlotUntilRead(t *testing.T) {
 	_ = revisionAction(t, e, "next", Merge)
 }
 
-func TestCorrectionPlanWaitsForReadScheduledAfterManagerDispatch(t *testing.T) {
+func TestCorrectionPlanKeepsAcceptedLateReceiptTerminal(t *testing.T) {
 	e := revisionEngine(t, readyTask("a"))
 	old := revisionReport(t, e, "a", Assign, Observation{Status: OutcomeSucceeded, Head: "old-head", EffectsSettled: true})
 	revisionEdit(t, e)
@@ -244,34 +244,31 @@ func TestCorrectionPlanWaitsForReadScheduledAfterManagerDispatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// This late receipt schedules a current-token read after the manager started.
+	// Dev's central fence preserves an already accepted receipt. It cannot
+	// create a new read while the corrected plan is being interpreted.
 	if err = e.Report(t.Context(), old.ID, old.Epoch, Observation{Status: OutcomeSucceeded, Head: "late-head", EffectsSettled: true}); err != nil {
 		t.Fatal(err)
 	}
-	read := revisionAction(t, e, "a", Assign)
-	if read.ObserveActionID != old.ID {
-		t.Fatal("expected read of the prior effect")
+	if err = e.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	before := revisionSnapshot(t, e)
+	if before.Goals[0].Tasks[0].Head != "old-head" {
+		t.Fatal("late receipt replaced accepted head")
+	}
+	for _, a := range before.Actions {
+		if a.ObserveActionID != "" || a.Kind == Assign && a.State != "finished" {
+			t.Fatal("accepted receipt reopened while planning")
+		}
 	}
 	replacement := readyTask("a")
 	replacement.Done = "changed"
-	out := Observation{Status: OutcomeSucceeded, Tasks: []Task{replacement}}
-	if err = e.Report(t.Context(), manager.ID, manager.Epoch, out); err != nil {
+	if err = e.Report(t.Context(), manager.ID, manager.Epoch, Observation{Status: OutcomeSucceeded, Tasks: []Task{replacement}}); err != nil {
 		t.Fatal(err)
 	}
 	g := revisionSnapshot(t, e).Goals[0]
-	if !g.DefinitionPending || g.Tasks[0].Done == replacement.Done {
-		t.Fatal("manager overtook receipt read")
-	}
-	read, err = e.Claim(t.Context(), read.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = e.Report(t.Context(), read.ID, read.Epoch, Observation{Status: OutcomeSucceeded, Head: "late-head", EffectsSettled: true}); err != nil {
-		t.Fatal(err)
-	}
-	revisionReport(t, e, "", PlanGoal, out)
-	if revisionSnapshot(t, e).Goals[0].Tasks[0].Done != replacement.Done {
-		t.Fatal("correction did not progress after receipt")
+	if g.DefinitionPending || g.Tasks[0].Done != replacement.Done || g.Tasks[0].Head != "" {
+		t.Fatal("corrected plan inherited obsolete evidence")
 	}
 }
 

@@ -362,6 +362,9 @@ func TestExportExcludesRetractedReplyEvenWhenInputRemainsVisible(t *testing.T) {
 func TestPersonaContextExclusionReasons(t *testing.T) {
 	for _, tc := range []struct{ name, source, state, revision, reason string }{
 		{"missing memory", "relationship-v1", "", "", "forgotten"},
+		{"missing name", "name-v1", "", "", "forgotten"},
+		{"forgotten name", "name-v1", "retracted", "1", "forgotten"},
+		{"corrected name", "name-v1", "active", "2", "source_changed"},
 		{"retracted memory", "relationship-v1", "retracted", "1", "forgotten"},
 		{"changed memory", "relationship-v1", "active", "2", "source_changed"},
 		{"unknown producer kind", "future-packet-v1", "", "", "missing_assembly"},

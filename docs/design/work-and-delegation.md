@@ -411,7 +411,12 @@ The completion guard applies to transitions into `completed`; preserving that
 state does not permit changing an execution observation.
 
 The current conversation path accepts exact ISO dates and offset-bearing
-RFC 3339 times. Natural-language dates, ambiguous numeric dates, nonexistent
+RFC 3339 times with two-digit time components and an optional dot-separated
+fraction. Numeric offsets have hours from 00 to 14 and minutes from 00 to 59,
+and the resulting UTC instant must fit SQLite's date range. These checks apply
+to `when`, `deadline`, `repeat.next`, `waiting_on.since` and
+`waiting_on.next_check`; accepted text is preserved. Noncanonical or unsupported
+timestamps, natural-language dates, ambiguous numeric dates, nonexistent
 calendar dates and times without an offset return `ambiguous_date` before any
 saved version. The agent asks the person to resolve the date and then supplies
 the exact value; it must not invent a resolution. Natural-language parsing and
@@ -723,6 +728,9 @@ Every worker adapter offers the work engine the same operations:
 - Methods used: `thread/start`, `thread/resume`, `thread/read`, `thread/list`, `thread/loaded/list`, `thread/archive` (explicit close only), `turn/start`, `turn/steer` (`expectedTurnId` required), `turn/interrupt`, `skills/list`, `account/rateLimits/read`.
 - Server requests handled: `item/tool/call`, `item/commandExecution/requestApproval`, `item/fileChange/requestApproval`, `item/permissions/requestApproval`, `item/tool/requestUserInput`, `mcpServer/elicitation/request`.
 - Notifications consumed: `turn/*`, `item/*`, `thread/tokenUsage/updated`, `account/rateLimits/updated`, `serverRequest/resolved`, `error`, `hook/*`.
+- A completion may arrive before the `turn/start` reply without a preceding
+  `turn/started` notification. The returned handle retains that completed turn's
+  id and terminal status so Core can record its outcome, including quota stops.
 - The adapter calls no other method. LINA never changes the user's Codex settings or plugins.
 - The same JSON-RPC shape never implies the same capability. `turn/completed` is never evidence of a product effect.
 - LINA Core starts the installed Codex as `codex app-server --listen stdio://`, a stdio child with LINA Core's environment and the user's own Codex home. On a remote device the registered Node starts it. When its standard input closes, the child exits normally. The only client is LINA Core, or on a remote device that device's registered Node.
@@ -1190,7 +1198,9 @@ A goal is in one of these states. The person sees them only through the progress
 
 **The liveness rule.** A goal that is not final always has at least one of these: a task or background run in progress, a named wait with a wake condition and a deadline, a recovery in progress, or a row in "Waiting for me". Core checks the rule after every transition it commits for the goal. A goal that has none is orphaned. Core then runs the derivation of the next action at once. When the derivation finds nothing to do, Core gives the manager session one turn that names the gap: the open criteria and the fact that nothing will move them. When that turn records no task, wait or decision either, the goal becomes `blocked` with a row that says in plain words that LINA could not find a way to finish it and what is missing. A goal never ends silently and never sits idle with open criteria.
 
-**Revision.** A correction by the person, a decision, or a late answer to a question whose deadline passed, is a new revision of the goal. The manager response to a corrected definition contains the complete task list for that canonical record revision, without add/update/remove patch fields. Core reconciles by task ID: the same ID with unchanged instructions, repository, base, write area and dependencies keeps its state and results; a changed definition replaces that task and re-derives it and its transitive dependents. New IDs are added. IDs absent from the complete list are retired and never re-run. Undispatched actions retire without spending attempts; already-claimed actions retain their reservations until Core reads their outcome and are never dispatched again. Their outcomes remain receipted against the old definition and cannot advance a replacement task with the same ID. No correction deletes branches, files or artifacts. A criterion that was met stays met only while its evidence still refers to the current target.
+**Revision.** A correction by the person, a decision, or a late answer to a question whose deadline passed, is a new revision of the goal. Tasks whose inputs did not change keep their results. Tasks whose inputs changed, and the tasks that depend on them, are derived again. A criterion that was met stays met only while its evidence still refers to the current target.
+
+**Corrected-plan reconciliation.** The manager response to a corrected definition contains the complete task list for that canonical record revision, without add/update/remove patch fields. Core reconciles by task ID: the same ID with unchanged instructions, repository, base, write area and dependencies keeps its state and results; a changed definition replaces that task and re-derives it and its transitive dependents. New IDs are added. IDs absent from the complete list are retired and never re-run. Undispatched actions retire without spending attempts; already-claimed actions retain their reservations until Core reads their outcome and are never dispatched again. Their outcomes remain receipted against the old definition and cannot advance a replacement task with the same ID. No correction deletes branches, files or artifacts. The existing effect barrier is also checked when a manager response arrives, so a newly scheduled receipt read cannot be overtaken by a plan. The existing terminal-outcome fence preserves accepted task results; delayed reports cannot bind old effects to a reused task ID.
 
 The conversation can correct an admitted goal through `revise_code_goal`, using
 its goal id and the latest canonical record revision. Admission returns the
@@ -1204,7 +1214,14 @@ replacement must belong to the corrected scope.
 
 When a revision invalidates queued actions, Core retires them and releases their reservations in the same ledger transaction. A worker action that was never dispatched restores its task's runnable stage and does not spend an attempt, continuation or recovery. A cancelled manager action likewise does not consume the task's repair turn. Adding a repair task also revises the goal: obsolete queued sibling actions are retired and derived again, so independent work remains runnable. Actions already claimed keep their reservations until Core reads their outcome; revision never dispatches their effects again.
 
-A completed criterion check for an obsolete goal revision, checking round or target is retained as a receipt without applying its evidence or stopping Core. A manager response assesses only the canonical record revision it was given; an older response cannot clear the corrected definition's fence, add its old tasks, or mark the correction blocked. The same dispatch input-version fence also covers sibling repair plans across execution revisions; a superseded judgment is derived again against current inputs.
+A task signal or revision cannot reopen an action whose outcome Core already
+accepted as terminal. A different late report against its obsolete inputs stays
+in the event history without replacing the accepted receipt or changing the
+task's later stage, including after restart. Only superseded effects whose
+outcomes still need reconciliation receive replacement observations; those
+reads retain the original effect identity and never dispatch it again.
+
+A completed criterion check for an obsolete goal revision, checking round or target is retained as a receipt without applying its evidence or stopping Core. A manager response assesses only the canonical record revision it was given; an older response cannot clear the corrected definition's fence, add its old tasks, or mark the correction blocked. Independent sibling repair plans remain valid across execution revisions while the canonical definition is unchanged.
 
 Retiring an obsolete task repair assessment clears its assessment marker in
 the same transaction that retains its obsolete receipt. Later reconciliation
@@ -1231,18 +1248,15 @@ While a correction is pending, retained tasks may refer to repositories removed
 from the new scope. They do not prevent the manager assessment or unrelated
 goals from progressing. Undispatched reservations return to their runnable
 state without spending a recovery; dispatched effects are reconciled before
-applying the revised plan. The complete revised list retires omitted work and re-derives changed inputs
-and their dependents, preserving the journal and result evidence. Unchanged
-work present in that list keeps its landed results. The same effect barrier is
-checked when the manager response arrives, so a newly scheduled receipt read
-cannot be overtaken by a plan. Completed task actions are retired through the
-existing ledger flags; delayed reports cannot bind old effects to a reused task ID.
+applying the revised plan. That plan retires work outside the new scope and
+dependents whose inputs never landed, preserving the journal and result
+evidence. Unchanged work in the retained scope keeps its landed results.
 
 ### Next action
 
 After every event Core commits for a goal, Core derives the goal's next actions from the current ledger and the goal record. The event itself carries no instruction: it only says that something changed, and Core reads the current state before it acts (see Event-driven flow). The same derivation runs for every goal that is not final once at startup and in each reconcile sweep, so a lost event costs at most one sweep. Mechanics run in Core without a model call. A model turn happens only where judgment is needed: splitting work, writing a work definition or brief, checking a result against the done condition, or drafting text for the person or for someone else. The table lists who acts.
 
-A task's pull-request change signal invalidates its cached head, check, review and manager proofs, including while it waits for another task's merge slot. Core reads the pull request again before deriving a merge from those proofs. Inspection records the observed PR head separately from the worker’s receipted delivery head; a different PR head cannot merge without a matching completion receipt.
+A task's pull-request change signal invalidates its cached head, check, review and manager proofs, including while it waits for another task's merge slot. Core reads the pull request again before deriving a merge from those proofs.
 
 An inspection that confirms a base conflict for the current head uses the same
 one-rebase allowance as a conflict found at merge. Unknown mergeability keeps
@@ -1466,6 +1480,10 @@ Antigravity worker runs through the existing dispatch service, with its own
 credentials, a separate worktree and the dev manager's assignment and delivery
 judgments. An adapter without resume support preserves interrupted work and asks
 for attention; it never starts a duplicate execution to imitate a resume.
+The host reports Antigravity ready only when that adapter is registered; a
+dispatcher serving another worker is insufficient. An unavailable worker leaves
+the task waiting without allocating a workspace. Dispatch pins the task's
+selected worker.
 
 The owner registers repository connections in `system/code-work.json` under the
 installed state root. This is a private regular file with mode `0600`, outside
@@ -1528,6 +1546,16 @@ receipt and releases that effect's target reservation in one transaction. It
 checks the original actor, target and action binding, refuses a live invocation,
 and cannot release a subsequent writer's reservation. The deployment is not
 issued again.
+
+If another actor merges after inspection and before Core creates its merge
+binding, observation restores that binding from the retained dispatch and
+confirms the exact PR head and landed commit. It issues no merge command or new
+merge authorization. A scope correction does not prevent observation of an
+already dispatched worker: Core reads its original person, agent, conversation,
+turn and action receipt even when the repository has left the scope or its
+connection is no longer installed. New execution still requires the current
+scope. Settling the old receipt releases its reservation so the corrected plan
+can proceed.
 
 The installed-binary acceptance uses fixture worker and GitHub executables, real
 Git commits, registered check commands and a local HTTP service. It proves one

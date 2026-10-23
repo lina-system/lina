@@ -103,25 +103,6 @@ func restoreDeniedAssignment(t *Task, a Action) {
 	t.EffectsSettled = a.Kind != Assign
 }
 
-// A completed task's result is already included in the plan reconciliation.
-// Delayed history must not create a fresh observation against a reused task ID.
-func retireCompletedTaskHistory(v *View, goalID string) error {
-	for _, row := range v.Records("action") {
-		var a Action
-		if err := json.Unmarshal(row.Body, &a); err != nil {
-			return err
-		}
-		if a.GoalID != goalID || a.TaskID == "" || a.State != "finished" {
-			continue
-		}
-		a.Superseded, a.RetirementReconciled = true, true
-		if err := put(v, "action", a.ID, a); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func correctionEffectsPending(v *View, goalID string) (bool, error) {
 	for _, row := range v.Records("action") {
 		var a Action
