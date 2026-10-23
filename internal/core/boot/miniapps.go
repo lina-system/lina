@@ -230,7 +230,10 @@ func (f miniAppFetcher) Fetch(ctx context.Context, hosts []string, rawURL string
 	if !declared.HasHost(rawURL) || !coreexec.PublicWebURL(rawURL) {
 		return nil, "", miniapps.ErrForbidden
 	}
-	client := &http.Client{Timeout: 30 * time.Second, Transport: f.pinned(f.transport), CheckRedirect: func(r *http.Request, via []*http.Request) error {
+	transport := f.pinned(f.transport)
+	// One fetch owns its transport, so nothing is kept alive after it returns.
+	transport.DisableKeepAlives = true
+	client := &http.Client{Timeout: 30 * time.Second, Transport: transport, CheckRedirect: func(r *http.Request, via []*http.Request) error {
 		if len(via) >= 5 || !declared.HasHost(r.URL.String()) || !coreexec.PublicWebURL(r.URL.String()) {
 			return miniapps.ErrForbidden
 		}
@@ -242,9 +245,11 @@ func (f miniAppFetcher) Fetch(ctx context.Context, hosts []string, rawURL string
 	}
 	response, err := client.Do(request)
 	if err != nil {
+		transport.CloseIdleConnections()
 		return nil, "", err
 	}
 	defer response.Body.Close()
+	defer transport.CloseIdleConnections()
 	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 	if err != nil {
 		return nil, "", err
@@ -253,30 +258,23 @@ func (f miniAppFetcher) Fetch(ctx context.Context, hosts []string, rawURL string
 }
 
 // pinned dials only an address this call resolved and validated.
-func (f miniAppFetcher) pinned(base http.RoundTripper) http.RoundTripper {
-	dialer := &net.Dialer{Timeout: 15 * time.Second}
-	transport := &http.Transport{
-		Proxy:                 nil,
-		ForceAttemptHTTP2:     true,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 20 * time.Second,
-		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-			host, port, err := net.SplitHostPort(address)
-			if err != nil {
-				return nil, err
-			}
-			ip, err := f.resolve(ctx, host)
-			if err != nil {
-				return nil, err
-			}
-			return dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
-		},
+func (f miniAppFetcher) pinned(base http.RoundTripper) *http.Transport {
+	transport := &http.Transport{}
+	if t, ok := base.(*http.Transport); ok {
+		transport = t.Clone()
 	}
-	if base != nil {
-		transport.TLSClientConfig = nil
-		if t, ok := base.(*http.Transport); ok && t.TLSClientConfig != nil {
-			transport.TLSClientConfig = t.TLSClientConfig.Clone()
+	// Every connection goes to an address this fetch resolved and validated.
+	transport.Proxy = nil
+	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, err
 		}
+		ip, err := f.resolve(ctx, host)
+		if err != nil {
+			return nil, err
+		}
+		return (&net.Dialer{Timeout: 15 * time.Second}).DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
 	}
 	return transport
 }
