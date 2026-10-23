@@ -1156,8 +1156,14 @@ requests use the existing worker authority and waiting-card bridge, preserving
 the originating conversation. Cards identify the ACP worker; Codex cards retain
 their existing behavior. Form fields preserve string, number, integer, boolean
 and enum values; multi-select arrays use a text field containing a JSON array.
-Core validates the requested schema before consuming an accepted form answer.
-Secret and unsupported forms are declined without requesting secret input.
+The question lists each array's allowed values and labels.
+A property left out of the schema's required list is optional: a blank or
+missing answer is omitted from the accepted content, and the worker keeps its
+default. Core validates the requested schema before consuming an accepted form
+answer. A value that fails that schema does not settle the card, so the owner
+can correct it, decline, or cancel. Secret and unsupported forms are declined
+without requesting secret input. Field names the waiting-card bridge refuses
+are declined the same way and are not shown as a card.
 A pending native decision leaves the prompt's work tools available; prompt
 completion expires both decision and work-tool requests.
 Steering, quota and recovery remain separate integrations;

@@ -3771,6 +3771,9 @@
         "name": {
           "type": "string"
         },
+        "optional": {
+          "type": "boolean"
+        },
         "type": {
           "$ref": "#/$defs/form_field_type"
         },

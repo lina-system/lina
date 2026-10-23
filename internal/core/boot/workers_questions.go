@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/internal/core/worker"
 	acpadapter "github.com/thisisjun786/lina/internal/core/worker/acp"
@@ -186,14 +187,17 @@ func (q workerQuestions) AnswerQuestion(ctx context.Context, person string, answ
 	var raw json.RawMessage
 	if item.kind == "acp" {
 		form, parseErr := acpadapter.ParseForm(item.event.Question.Params)
-		if parseErr == nil {
-			raw, parseErr = form.Reply(answer)
-		}
 		if parseErr != nil {
 			e.mu.Unlock()
 			return protocol.DecisionOutcomeRefused, nil
 		}
-
+		var replyErr error
+		raw, replyErr = form.Reply(answer)
+		if replyErr != nil {
+			// Leave the card open. A schema miss is not a decision.
+			e.mu.Unlock()
+			return "", &clientsrv.OperationError{Code: protocol.ErrorMalformed}
+		}
 	}
 	// Claim before sending: loss of the RPC is not permission to replay an answer.
 	outcome := protocol.DecisionOutcomeResolved

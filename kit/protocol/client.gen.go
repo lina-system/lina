@@ -360,9 +360,10 @@ type FollowUp struct {
 	Text           string  `json:"text"`
 }
 type FormField struct {
-	Choices *[]string     `json:"choices,omitempty"`
-	Name    string        `json:"name"`
-	Type    FormFieldType `json:"type"`
+	Choices  *[]string     `json:"choices,omitempty"`
+	Name     string        `json:"name"`
+	Optional *bool         `json:"optional,omitempty"`
+	Type     FormFieldType `json:"type"`
 }
 type FormFieldType string
 
@@ -5359,6 +5360,9 @@ const clientSchemaJSON = `{
       "properties": {
         "name": {
           "type": "string"
+        },
+        "optional": {
+          "type": "boolean"
         },
         "type": {
           "$ref": "#/$defs/form_field_type"

@@ -250,12 +250,7 @@ func safeQuestionForm(form *protocol.QuestionForm) bool {
 	}
 	seen := map[string]bool{}
 	for _, field := range form.Fields {
-		name := strings.ToLower(strings.NewReplacer("-", "_", " ", "_").Replace(field.Name))
-		switch name {
-		case "password", "passwd", "secret", "api_key", "apikey", "key", "token", "access_token", "refresh_token", "credit_card", "card_number", "cvv", "payment", "payment_details":
-			return false
-		}
-		if name == "" || seen[field.Name] {
+		if protocol.RefusedFormFieldName(field.Name) || seen[field.Name] {
 			return false
 		}
 		seen[field.Name] = true
@@ -266,12 +261,24 @@ func validQuestionAnswer(form *protocol.QuestionForm, answer protocol.QuestionAn
 	if answer.Answer == protocol.QuestionAnswerActionDecline || answer.Answer == protocol.QuestionAnswerActionCancel {
 		return answer.Values == nil
 	}
-	if answer.Answer != protocol.QuestionAnswerActionAccept || answer.Values == nil || form == nil || len(*answer.Values) != len(form.Fields) {
+	if answer.Answer != protocol.QuestionAnswerActionAccept || answer.Values == nil || form == nil || len(*answer.Values) > len(form.Fields) {
 		return false
+	}
+	known := map[string]bool{}
+	for _, field := range form.Fields {
+		known[field.Name] = true
+	}
+	for name := range *answer.Values {
+		if !known[name] {
+			return false
+		}
 	}
 	for _, field := range form.Fields {
 		value, ok := (*answer.Values)[field.Name]
 		if !ok {
+			if field.Optional != nil && *field.Optional {
+				continue
+			}
 			return false
 		}
 		if _, err := json.Marshal(value); err != nil {

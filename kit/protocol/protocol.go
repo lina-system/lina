@@ -10,9 +10,22 @@ package protocol
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/thisisjun786/lina/kit/protocol/internal/schema"
 )
+
+// RefusedFormFieldName reports names the waiting-card bridge will not present.
+// A form that uses one cannot be answered, so callers decline it instead of
+// leaving the worker waiting.
+func RefusedFormFieldName(name string) bool {
+	name = strings.ToLower(strings.NewReplacer("-", "_", " ", "_").Replace(name))
+	switch name {
+	case "password", "passwd", "secret", "api_key", "apikey", "key", "token", "access_token", "refresh_token", "credit_card", "card_number", "cvv", "payment", "payment_details":
+		return true
+	}
+	return name == ""
+}
 
 var clientSchema = func() *schema.Node {
 	value, err := schema.Parse([]byte(clientSchemaJSON))
