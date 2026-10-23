@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -13,9 +14,11 @@ import (
 	"github.com/thisisjun786/lina/internal/core/compaction"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/internal/moirai"
 	"github.com/thisisjun786/lina/internal/moirai/jobapi"
 	"github.com/thisisjun786/lina/kit/loop"
+	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
@@ -186,4 +189,52 @@ func TestConversationOversizeRecordsContinuationAndSizes(t *testing.T) {
 		t.Fatalf("continuations=%d sizes=%d err=%v", continuation, sizes, err)
 	}
 	assertCompactionRequests(t, p, 1)
+	record, err := turn.New(r.db).Read(t.Context(), "turn:"+input.ID)
+	if err != nil || record.State != turn.Failed || len(record.Items) != 2 || !bytes.Equal(record.Items[0], reasoning) {
+		t.Fatalf("ended journal changed: state=%s items=%d err=%v", record.State, len(record.Items), err)
+	}
+	diagnostic, err := r.journal().Get(t.Context(), "continuation-sizes:turn:"+input.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var measured struct {
+		Sizes compaction.Sizes `json:"sizes"`
+	}
+	if err := json.Unmarshal([]byte(diagnostic.Body.Text()), &measured); err != nil {
+		t.Fatal(err)
+	}
+	if measured.Sizes.Total < measured.Sizes.Threshold || measured.Sizes.Window != 128000 || measured.Sizes.Active < len(reasoning) {
+		t.Fatalf("invalid breakdown: %+v", measured.Sizes)
+	}
+	capture := func() protocol.Result {
+		t.Helper()
+		snapshot, sub, err := r.topics.Subscribe("conversation:"+r.conversation, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer sub.Close()
+		for _, item := range snapshot.Snapshot.Items {
+			if item.Kind == protocol.KindResult {
+				var result protocol.Result
+				if err := json.Unmarshal(item.Data, &result); err != nil {
+					t.Fatal(err)
+				}
+				return result
+			}
+		}
+		t.Fatal("size Details were not delivered")
+		return protocol.Result{}
+	}
+	live := capture()
+	if live.Text == nil || !strings.Contains(*live.Text, fmt.Sprintf("Request: %d", measured.Sizes.Total)) {
+		t.Fatal("Details differ from recorded measurement")
+	}
+	if err := r.seedHistory(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	restored := capture()
+	if restored.Text == nil || restored.ResultID != live.ResultID || *restored.Text != *live.Text {
+		t.Fatal("restored Details changed")
+	}
+	t.Logf("Diagnostic capture: %s — %s\n%s", live.Title, live.Summary, *live.Text)
 }
