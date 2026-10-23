@@ -405,6 +405,10 @@ and `next_check`; an assignee carries `kind` and `id`. Checklist items carry onl
 `text` and `checked`. A repeat retains `rule`, the original `text`,
 `from_completion` and its current `next` occurrence; advancing it is #156.
 The record tool cannot write execution observations or complete delegated work.
+It may replace planning fields while preserving an already `completed` state,
+including on a to-do with an agent or worker assignee or a pull-request link.
+The completion guard applies to transitions into `completed`; preserving that
+state does not permit changing an execution observation.
 
 The current conversation path accepts exact ISO dates and offset-bearing
 RFC 3339 times. Natural-language dates, ambiguous numeric dates, nonexistent
@@ -1122,7 +1126,11 @@ When a revision invalidates queued actions, Core retires them and releases their
 A completed criterion check for an obsolete goal revision, checking round or target is retained as a receipt without applying its evidence or stopping Core. A manager response assesses only the canonical record revision it was given; an older response cannot clear the corrected definition's fence, add its old tasks, or mark the correction blocked. Independent sibling repair plans remain valid across execution revisions while the canonical definition is unchanged.
 
 Retiring an obsolete task repair assessment clears its assessment marker in
-the same transaction. Once the current definition is assessed, an unchanged
+the same transaction that retains its obsolete receipt. Later reconciliation
+or another obsolete response must not clear a replacement assessment.
+Reconciliation completes the pending retirement before deriving replacement
+work, including when Core restarts between the receipt and reconciliation.
+Once the current definition is assessed, an unchanged
 failed task receives a fresh repair assessment, including after restart.
 
 A canonical correction with an invalid done condition or criteria blocks only
