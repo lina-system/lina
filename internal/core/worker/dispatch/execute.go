@@ -29,9 +29,10 @@ func (s *Service) execute(r Record) {
 	// running record unknown and retains the task's active reservation.
 	ctx := s.ctx
 	admitted, settled := false, false
+	deliverySaved := false
 	queued := false
 	defer func() {
-		if ctx.Err() == nil && !settled {
+		if ctx.Err() == nil && !deliverySaved {
 			r.State = "finished"
 			if queued {
 				r.State = "queued"
@@ -326,7 +327,7 @@ func (s *Service) execute(r Record) {
 	if err = s.finish(ctx, r, run.ID, status); err != nil {
 		r.Code = "receipt_failed"
 	} else {
-		settled = true
+		settled, deliverySaved = true, true
 	}
 }
 func taskPacket(r Record) (string, error) {
