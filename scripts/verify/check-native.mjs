@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
-// Compile and run the portable decision core of the locked-Mac unlock plug-in.
+// Compile and run the portable decision core and plug-in entry points of the
+// locked-Mac unlock plug-in.
 // The core keeps every Security, socket and clock call behind an interface, so
 // this check runs on Linux with a C compiler and no macOS SDK.
 import { spawnSync } from 'node:child_process';
@@ -15,10 +16,12 @@ const sources = [
   'src/lina_unlock.c',
   'src/mechanism.c',
   'src/engine_from_callbacks.c',
+  'src/plugin_darwin.c',
   'tests/fake_host.c',
   'tests/test_decide.c',
   'tests/test_deadline.c',
   'tests/test_mechanism.c',
+  'tests/test_plugin.c',
   'tests/main.c',
 ];
 

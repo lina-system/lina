@@ -157,3 +157,105 @@ func TestQuotaWindowsStayIndependentAcrossSessions(t *testing.T) {
 		t.Fatalf("merge picked a whole snapshot: primary=%+v weekly=%+v", primary, weekly)
 	}
 }
+
+func TestInferredStopKeepsTheResetBeforeUsageReachesTheCap(t *testing.T) {
+	now := time.Now()
+	used := 99.0
+	resetAt := now.Add(time.Hour)
+	d := &delegationRuntime{}
+	d.noteQuotaFailure(now)
+	rows := []provider.QuotaRow{{
+		Provider: provider.ChatGPT, LimitID: "codex", Bucket: "primary", Window: provider.FiveHour,
+		UsedPct: &used, ResetsAt: &resetAt, Observed: now.Add(-time.Minute), State: provider.QuotaOK,
+	}}
+	blocked, reset := d.reconcileQuotaStop(rows, now)
+	if !blocked || !reset.Equal(resetAt) {
+		t.Fatalf("inferred window lost its reset: blocked=%v reset=%v", blocked, reset)
+	}
+	if blocked, _ = d.reconcileQuotaStop(rows, now.Add(time.Minute)); !blocked {
+		t.Fatal("unchanged snapshot cleared the inferred stop")
+	}
+	if blocked, _ = d.reconcileQuotaStop(rows, resetAt.Add(time.Second)); blocked {
+		t.Fatal("elapsed inferred reset stayed blocked")
+	}
+}
+
+func TestInferredStopRecoversOnlyTheLimitThatStopped(t *testing.T) {
+	now := time.Now()
+	primaryUsed := 10.0
+	weeklyUsed := 99.0
+	recovered := 20.0
+	primaryReset := now.Add(5 * time.Hour)
+	weeklyReset := now.Add(7 * 24 * time.Hour)
+	d := &delegationRuntime{}
+	d.noteQuotaFailure(now)
+	cached := []provider.QuotaRow{
+		{Provider: provider.ChatGPT, LimitID: "session", Bucket: "primary", Window: provider.FiveHour, UsedPct: &primaryUsed, ResetsAt: &primaryReset, Observed: now.Add(-time.Minute), State: provider.QuotaOK},
+		{Provider: provider.ChatGPT, LimitID: "weekly", Bucket: "secondary", Window: provider.Weekly, UsedPct: &weeklyUsed, ResetsAt: &weeklyReset, Observed: now.Add(-time.Minute), State: provider.QuotaOK},
+	}
+	blocked, reset := d.reconcileQuotaStop(cached, now)
+	if !blocked || !reset.Equal(weeklyReset) {
+		t.Fatalf("stopped limit: blocked=%v reset=%v", blocked, reset)
+	}
+	primaryOnly := []provider.QuotaRow{
+		{Provider: provider.ChatGPT, LimitID: "session", Bucket: "primary", Window: provider.FiveHour, UsedPct: &primaryUsed, ResetsAt: &primaryReset, Observed: now.Add(time.Minute), State: provider.QuotaOK},
+		{Provider: provider.ChatGPT, LimitID: "weekly", Bucket: "secondary", Window: provider.Weekly, UsedPct: &weeklyUsed, ResetsAt: &weeklyReset, Observed: now.Add(-time.Minute), State: provider.QuotaOK},
+	}
+	if blocked, reset = d.reconcileQuotaStop(primaryOnly, primaryReset.Add(time.Second)); !blocked || !reset.Equal(weeklyReset) {
+		t.Fatalf("sibling measurement cleared the stop: blocked=%v reset=%v", blocked, reset)
+	}
+	weeklyRecovered := []provider.QuotaRow{
+		{Provider: provider.ChatGPT, LimitID: "session", Bucket: "primary", Window: provider.FiveHour, UsedPct: &primaryUsed, ResetsAt: &primaryReset, Observed: now.Add(time.Minute), State: provider.QuotaOK},
+		{Provider: provider.ChatGPT, LimitID: "weekly", Bucket: "secondary", Window: provider.Weekly, UsedPct: &recovered, ResetsAt: &weeklyReset, Observed: now.Add(2 * time.Minute), State: provider.QuotaOK},
+	}
+	if blocked, _ = d.reconcileQuotaStop(weeklyRecovered, now.Add(2*time.Minute)); blocked {
+		t.Fatal("stopped limit stayed blocked after it recovered")
+	}
+}
+
+func TestHealthyResetDoesNotExtendAnExhaustedWindow(t *testing.T) {
+	now := time.Now()
+	healthy := 10.0
+	exhausted := 100.0
+	soon := now.Add(time.Hour)
+	later := now.Add(7 * 24 * time.Hour)
+	d := &delegationRuntime{}
+	d.noteQuotaFailure(now)
+	rows := []provider.QuotaRow{
+		{Provider: provider.ChatGPT, Bucket: "primary", UsedPct: &exhausted, ResetsAt: &soon, Observed: now.Add(-time.Minute), State: provider.QuotaBlocked},
+		{Provider: provider.ChatGPT, Bucket: "secondary", UsedPct: &healthy, ResetsAt: &later, Observed: now.Add(-time.Minute), State: provider.QuotaOK},
+	}
+	blocked, reset := d.reconcileQuotaStop(rows, now)
+	if !blocked || !reset.Equal(soon) {
+		t.Fatalf("healthy window extended the block: blocked=%v reset=%v", blocked, reset)
+	}
+	if blocked, _ = d.reconcileQuotaStop(rows, soon.Add(time.Second)); blocked {
+		t.Fatal("exhausted window stayed blocked after its own reset")
+	}
+}
+
+func TestTiedInferredLimitsAllNeedRecovery(t *testing.T) {
+	now := time.Now()
+	used := 99.0
+	lower := 10.0
+	recovered := 40.0
+	primaryReset := now.Add(time.Hour)
+	weeklyReset := now.Add(2 * time.Hour)
+	d := &delegationRuntime{}
+	d.noteQuotaFailure(now)
+	rows := []provider.QuotaRow{
+		{Provider: provider.ChatGPT, LimitID: "a", Bucket: "primary", UsedPct: &used, ResetsAt: &primaryReset, Observed: now.Add(-time.Minute), State: provider.QuotaOK},
+		{Provider: provider.ChatGPT, LimitID: "b", Bucket: "secondary", UsedPct: &used, ResetsAt: &weeklyReset, Observed: now.Add(-time.Minute), State: provider.QuotaOK},
+		{Provider: provider.ChatGPT, LimitID: "c", Bucket: "credits", UsedPct: &lower, ResetsAt: &weeklyReset, Observed: now.Add(-time.Minute), State: provider.QuotaOK},
+	}
+	blocked, reset := d.reconcileQuotaStop(rows, now)
+	if !blocked || !reset.Equal(primaryReset) {
+		t.Fatalf("tied limits: blocked=%v reset=%v", blocked, reset)
+	}
+	one := append([]provider.QuotaRow(nil), rows...)
+	one[0].UsedPct = &recovered
+	one[0].Observed = now.Add(time.Minute)
+	if blocked, reset = d.reconcileQuotaStop(one, now.Add(time.Minute)); !blocked || !reset.Equal(weeklyReset) {
+		t.Fatalf("one tied limit cleared the other: blocked=%v reset=%v", blocked, reset)
+	}
+}

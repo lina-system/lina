@@ -75,6 +75,25 @@ func TestProviderReportFailureAndLifetimeAccounting(t *testing.T) {
 	}
 }
 
+func TestProviderReportClaudeAPIKeyPlainInput(t *testing.T) {
+	report := ProviderReport{Version: 1}
+	s := report.Observe("turn-1", 1, "claude_api_key", time.Now, func() (provider.Stream, error) {
+		return &reportStream{meta: provider.Meta{Usage: provider.Usage{Input: count64(100), Cached: count64(40), CacheWrite: count64(20), CacheByLifetime: map[provider.CacheLifetime]provider.CacheUsage{provider.Cache1Hour: {Write: count64(20)}}}}, events: []provider.Event{{Kind: provider.Terminal}}}, nil
+	})
+	s.Next(context.Background())
+	s.Close()
+	r := report.Requests[0]
+	if r.Input == nil || *r.Input != 160 || r.Plain == nil || *r.Plain != 100 || r.Read == nil || *r.Read != 40 || r.Written == nil || *r.Written != 20 {
+		t.Fatalf("row: %+v", r)
+	}
+	if write := r.WrittenByLifetime[provider.Cache1Hour]; write == nil || *write != 20 {
+		t.Fatalf("lifetime writes: %+v", r.WrittenByLifetime)
+	}
+	if r.CacheShare == nil || *r.CacheShare != 0.25 {
+		t.Fatalf("cache share: %+v", r.CacheShare)
+	}
+}
+
 func TestProviderCompareAlignsMissingRequestsAndRejectsDifferentSources(t *testing.T) {
 	a := ProviderReport{Version: 1, Source: "same", Requests: []RequestReport{{Turn: "1", Round: 1, Input: count64(9)}}}
 	b := ProviderReport{Version: 1, Source: "same", Requests: []RequestReport{{Turn: "1", Round: 1, Input: count64(8)}, {Turn: "1", Round: 2}}}
