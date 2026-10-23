@@ -31,7 +31,7 @@ func value(v any) (Value, error) {
 		return Value{"integer", strconv.FormatInt(v, 10)}, nil
 	case float64:
 		if math.IsNaN(v) || math.IsInf(v, 0) {
-			return Value{}, ErrSnapshot
+			return Value{}, invalidSnapshot("finite SQLite real")
 		}
 		return Value{"real", strconv.FormatFloat(v, 'g', -1, 64)}, nil
 	case string:
@@ -39,7 +39,7 @@ func value(v any) (Value, error) {
 	case []byte:
 		return Value{"blob", base64.StdEncoding.EncodeToString(v)}, nil
 	default:
-		return Value{}, ErrSnapshot
+		return Value{}, invalidSnapshot("supported SQLite value type")
 	}
 }
 func (r Row) text(k string) string {
@@ -134,26 +134,26 @@ func rowKey(table string, r Row, columns []Column) string {
 func checkRow(r Row) error {
 	for name, v := range r {
 		if name == "" {
-			return ErrSnapshot
+			return invalidSnapshot("source column name required")
 		}
 		switch v.Kind {
 		case "null":
 			if v.Data != "" {
-				return ErrSnapshot
+				return invalidSnapshot("null storage value must be empty")
 			}
 		case "text", "blob":
 			if _, err := base64.StdEncoding.DecodeString(v.Data); err != nil {
-				return ErrSnapshot
+				return invalidSnapshot("text/blob base64 encoding")
 			}
 		case "integer":
 			n, err := strconv.ParseInt(v.Data, 10, 64)
 			if err != nil || strconv.FormatInt(n, 10) != v.Data {
-				return ErrSnapshot
+				return invalidSnapshot("canonical integer encoding")
 			}
 		case "real":
 			n, err := strconv.ParseFloat(v.Data, 64)
 			if err != nil || math.IsNaN(n) || math.IsInf(n, 0) {
-				return ErrSnapshot
+				return invalidSnapshot("finite real encoding")
 			}
 		default:
 			return fmt.Errorf("%w: storage class", ErrSnapshot)

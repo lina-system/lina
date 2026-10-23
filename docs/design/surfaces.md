@@ -335,6 +335,7 @@ Core presents what the person should open and keep, apart from the chat text, as
 
 - A result card is a labeled block: the type icon with the type's name, the title, the summary in at most three lines, and its state, which is preview or saved. While a background run is still making the next revision, the card shows the working indicator. It carries the face and name of the agent that presented it.
 - A card offers Open and at most two other actions.
+- Open reads the complete retained result, including text beyond the card preview. The TUI fetches all text pages at the card's revision when opening a long authored result. Closing or switching the view discards late replies. A revision change requires reopening the card.
 - Open puts the result in the work panel. A short result, such as an outline of a few lines or a plan of a few entries, may expand in place inside its card; a long one opens only in the panel.
 - A result that a background run produces lands as the result card itself, at a turn boundary, and not as a second notice beside it ([work-and-delegation.md](work-and-delegation.md)).
 
