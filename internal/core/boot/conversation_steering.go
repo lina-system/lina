@@ -4,6 +4,8 @@ package boot
 
 import (
 	"context"
+	"encoding/json"
+	"github.com/thisisjun786/lina/internal/core/guard"
 
 	"github.com/thisisjun786/lina/internal/core/assemble"
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -51,10 +53,34 @@ type conversationInputs struct {
 
 func (q *conversationInputs) Drain() []provider.Item {
 	items := q.inputs.Drain()
+	var out []provider.Item
 	for _, body := range items {
+		out = append(out, body)
 		accepted, ok := q.runtime.takeSteering(body)
 		if !ok {
 			continue
+		}
+		runner := accepted.runner
+		if runner == nil {
+			runner = q.runtime
+		}
+		packet, err := runner.inputBindingPacket(q.runtime.ctx, accepted.event)
+		if err != nil {
+			q.failure = err
+		} else {
+			for _, item := range packet {
+				message, err := guard.Admit(guard.EntryTool, item.Origin, item.Text)
+				if err != nil {
+					q.failure = err
+					continue
+				}
+				evidence, _ := message.Evidence()
+				raw, _ := json.Marshal(struct {
+					Role    string `json:"role"`
+					Content string `json:"content"`
+				}{evidence.Role, evidence.Text})
+				out = append(out, raw)
+			}
 		}
 		if accepted.event.Surface.Kind == "channel" {
 			if err := q.runtime.db.Write(q.runtime.ctx, func(tx *canon.Tx) error {
@@ -70,7 +96,7 @@ func (q *conversationInputs) Drain() []provider.Item {
 			}
 		}
 	}
-	return items
+	return out
 }
 
 func (q *conversationInputs) Close() []provider.Item { return q.inputs.Close() }

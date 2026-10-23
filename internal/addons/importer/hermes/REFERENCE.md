@@ -52,6 +52,16 @@ transactional adoption path. These storage boundaries are LINA requirements.
 
 ## Implementation notes
 
+JSON display masking uses the shared decoded-string scanner at publication and
+material readback. Original `import_event_span` and `import_source_span` offsets
+remain byte-addressed and unchanged. A masking failure publishes an inline
+placeholder and retains `body_masking_error` in the native event's origin.
+`SealReport.UnavailableBodies` and `BodyFailures` count and identify these events
+on both first import and retry. The original sidecar remains referenced by
+`import_event` even when the native event uses the inline fallback. No migration
+is needed. `TestM1ImportJSONMasking` exercises installed import, verified backup,
+repeat import, safe promotion and a restarted Core's memory API with synthetic data.
+
 Design authority: [Go Core](../../../../docs/design/go-core.md) and the contracts it cites.
 These notes retain implementation and validation history from the cited increments;
 they do not establish current acceptance or change the contracts.
@@ -82,3 +92,39 @@ Empty import tables do not load an adapter or start a run.
   event, or asserting that one constituent is a view of another.
 - **unknown** — Other delivery table layouts and binding/relation kinds are
   not registered. The actual installation revision was not available here.
+
+## Owner channels and display provenance
+
+Read-only reference: Hermes Agent (MIT), revision
+`cb757fac59c92b49e9b8f2910e5cd7ab75efffdd`. The named local installation was
+unavailable; the public source snapshot was inspected before implementation.
+
+- **seen** — `gateway/run_turn_prepare.py:726-738` creates a persistence owner
+  UUID from the delivery namespace/message id, or a random UUID for keyless
+  input. `gateway/run_turn_persistence.py:416-432` writes it as
+  `display_metadata.gateway_input_owner`; `gateway/session_transcript.py:608-628`
+  uses it to find an already persisted input. It proves delivery ownership,
+  not the human sender.
+- **seen** — `gateway/response_filters.py:111-129` marks injected internal and
+  heartbeat turns `internal_notification`. `agent/prompt_builder.py:586-595`
+  stores mid-turn user steering as a user row with `display_kind=steer`.
+- **seen** — `tui_gateway/session_registry.py:339-357` retains the desktop
+  transport login; `tui_gateway/session_workdir.py:594-603` stores it in
+  `sessions.user_id`. `tests/tui_gateway/test_desktop_session_login_identity.py`
+  demonstrates authenticated and anonymous desktop sessions. Anonymous and
+  legacy sessions have no recorded login. `tui_gateway/session_lifecycle.py:392`
+  also recognizes `webui`; `agent/prompt_builder.py:724-732` explains that current
+  dashboard chat uses desktop/tui rather than constructing a webui platform.
+- **inferred** — A sole nonempty string `gateway_input_owner` is neutral for
+  attribution. It never substitutes for the confirmed channel; unknown keys or
+  malformed values remain unproven. `steer` still requires channel proof and
+  `internal_notification` is non-person regardless of the confirmed map.
+- **inferred** — CLI, desktop and legacy webui sessions may be confirmed
+  individually by their owner. The confirmation attests ownership of the
+  displayed session and recorded identities, including identity-less local
+  sessions. Gateway confirmation instead requires an exact source/user/chat
+  tuple and a private/dm host session. Neither permits shared-chat attribution.
+- **unknown** — Historical webui deployments and anonymous desktop sessions do
+  not provide independently verifiable human identity in the registered schema.
+  They require explicit per-session attestation; a source name, token, title or
+  message body is never enough. No new Honcho schema is registered.

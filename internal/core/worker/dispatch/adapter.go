@@ -83,7 +83,7 @@ func InstalledACPFactories(cfg Config) []Factory {
 
 func acpFactory(cfg Config, profile workeracp.Profile) Factory {
 	return Factory{Name: profile.Name, Explicit: true, Chooser: true, Open: func(context.Context, lease.Lease) (worker.Adapter, func(context.Context) error, error) {
-		a := workeracp.New(workeracp.Config{Profile: profile, Environment: cfg.Environment, Epoch: cfg.Epoch, Leaser: cfg.Activities})
+		a := workeracp.New(workeracp.Config{Profile: profile, Environment: cfg.Environment, Epoch: cfg.Epoch, Leaser: cfg.Activities, Prepare: cfg.PrepareClaudeACP})
 		return a, a.Close, nil
 	}}
 }

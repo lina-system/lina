@@ -350,7 +350,9 @@ func TestMemoryExtractionAdmissionDoesNotWaitForPreparation(t *testing.T) {
 
 func TestMemoryExtractionShrinksLargeBatch(t *testing.T) {
 	r, _, s := extractionFixture(t)
-	statement := "I enjoy hiking. " + strings.Repeat("Synthetic detail. ", 7000)
+	// Native admission also appends binding metadata, so the 32-row prefix
+	// contains 16 statements. Keep their encoded evidence over the byte cap.
+	statement := "I enjoy hiking. " + strings.Repeat("Synthetic detail. ", 14000)
 	for i := range 32 {
 		extractionEvent(t, r, fmt.Sprint("large-", i), guard.EntryOwner, statement)
 	}

@@ -49,7 +49,8 @@ export function build({ cwd = root, out, target, version: requestedVersion, exec
   out = outputPath(resolve(out));
   const [goos, goarch] = target.split('/');
   const names = ['lina', 'lina-node'].map(name => name + (goos === 'windows' ? '.exe' : ''));
-  const artifacts = [...names, 'manifest.json'].map(name => relative(cwd, join(out, name)).replaceAll('\\', '/'));
+  const adapterFiles = ['adapters/claude-acp/package.json', 'adapters/claude-acp/package-lock.json'];
+  const artifacts = [...names, 'manifest.json', ...adapterFiles].map(name => relative(cwd, outputPath(join(out, name))).replaceAll('\\', '/'));
   const inside = artifacts.filter(name => !name.startsWith('../'));
   // Never overwrite source files that happen to share an artifact's name.
   if (inside.length && gitOut(cwd, ['ls-files', '--', ...inside.map(name => `:(top,literal)${name}`)])) {
@@ -96,6 +97,12 @@ export function build({ cwd = root, out, target, version: requestedVersion, exec
         { ...context.env, GOOS: goos, GOARCH: goarch });
     }
     if (!initiallyClean || !clean() || gitOut(cwd, ['rev-parse', 'HEAD']) !== commit) return null;
+    const installFiles = adapterFiles.map(name => {
+      const bytes = readFileSync(join(cwd, name));
+      mkdirSync(dirname(join(out, name)), { recursive: true });
+      writeFileSync(join(out, name), bytes);
+      return { name, size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
+    });
     const binaries = names.map(name => {
       const bytes = readFileSync(join(out, name));
       return { name, size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
@@ -109,8 +116,9 @@ export function build({ cwd = root, out, target, version: requestedVersion, exec
       throw new Error('Responses manifest does not match the adapter or retry policy');
     }
     if (!clean() || gitOut(cwd, ['rev-parse', 'HEAD']) !== commit) return null;
+    const providerCapabilities = JSON.parse(readFileSync(join(cwd, 'kit/provider/capabilities.json'), 'utf8'));
     const verifiedWorkerVersions = { codex: JSON.parse(readFileSync(join(cwd, 'internal/core/worker/codex/versions.json'), 'utf8')) };
-    const manifest = { version, commit, date, target, goToolchain, kitVersion, binaries, sqlite, providers, supportedCombinations, crwPin, verifiedWorkerVersions };
+    const manifest = { version, commit, date, target, goToolchain, kitVersion, binaries, installFiles, sqlite, providers, providerCapabilities, supportedCombinations, crwPin, verifiedWorkerVersions };
     const staging = mkdtempSync(join(out, '.manifest-'));
     try {
       const temporary = join(staging, 'manifest.json');

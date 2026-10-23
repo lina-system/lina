@@ -78,6 +78,7 @@ func (s *Store) PrepareExtraction(ctx context.Context, scope RecallScope, after 
 			return err
 		}
 		rows, err := tx.QueryContext(ctx, `SELECT e.rowid,e.id,e.conversation_id,e.speaker_kind,coalesce(e.person_id,''),
+   (e.speaker_kind='system' AND coalesce(e.scaffold_kind,'')='input_binding' AND json_extract(e.origin,'$.kind')='native'),
    (EXISTS(SELECT 1 FROM retract_visible_event v WHERE v.id=e.id)
     AND json_extract(e.origin,'$.kind')='native' AND e.replay_of IS NULL AND NOT EXISTS(SELECT 1 FROM ev_rel r WHERE r.event_id=e.id AND r.kind='view_of'))
    FROM conv_event e WHERE e.agent_id=? AND e.rowid>? ORDER BY e.rowid LIMIT ?`, scope.Agent, after, limit)
@@ -88,11 +89,12 @@ func (s *Store) PrepareExtraction(ctx context.Context, scope RecallScope, after 
 			sequence                          int64
 			id, conversation, speaker, person string
 			visible                           bool
+			inputBinding                      bool
 		}
 		var sources []source
 		for rows.Next() {
 			var v source
-			if err := rows.Scan(&v.sequence, &v.id, &v.conversation, &v.speaker, &v.person, &v.visible); err != nil {
+			if err := rows.Scan(&v.sequence, &v.id, &v.conversation, &v.speaker, &v.person, &v.inputBinding, &v.visible); err != nil {
 				rows.Close()
 				return err
 			}
@@ -106,6 +108,11 @@ func (s *Store) PrepareExtraction(ctx context.Context, scope RecallScope, after 
 		var started, last int64
 		for _, v := range sources {
 			batch.Through = v.sequence
+			// Core appends binding metadata to each native input. It is not
+			// speech and neither contributes evidence nor interrupts a burst.
+			if v.inputBinding {
+				continue
+			}
 			if !v.visible || v.speaker != string(guard.Person) || v.person != scope.Person || blocked[v.id] {
 				previous = ""
 				continue
