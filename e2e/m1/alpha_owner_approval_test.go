@@ -28,6 +28,16 @@ func alphaLiveApproval(t *testing.T, h *harness, terminal *terminal, approval pr
 	}
 	key := fmt.Sprintf("%x", sha256.Sum256([]byte(approval.Card.ID+"\x00"+approval.Card.Revision)))[:16]
 	path := filepath.Join(directory, key)
+	receipt := mustJSON(t, map[string]string{"id": approval.Card.ID, "revision": approval.Card.Revision})
+	if delivered, err := os.ReadFile(path + ".delivered"); err == nil {
+		if string(delivered) != string(receipt) {
+			t.Fatal("approval delivery receipt does not match this card")
+		}
+		t.Log("duplicate delivered approval ignored:", key)
+		return
+	} else if !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(path+".json", mustJSON(t, approval), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -78,5 +88,10 @@ func alphaLiveApproval(t *testing.T, h *harness, terminal *terminal, approval pr
 	alphaScreen(t, h, terminal, "approval-choice-"+key, func(s string) bool { return strings.Contains(s, "["+strconv.Itoa(choice)+" ") }, "")
 	h.keys(terminal, "\r")
 	alphaScreen(t, h, terminal, "approval-delivered-"+key, func(s string) bool { return strings.Contains(s, design.Text(design.Korean, "resolved")) }, "")
+	// Waiting snapshots may repeat an already-delivered request. Record only an
+	// observed resolution, never the operator's answer, as proof of delivery.
+	if err := os.WriteFile(path+".delivered", receipt, 0600); err != nil {
+		t.Fatal(err)
+	}
 	h.keys(terminal, "\x1b[27u")
 }
