@@ -28,3 +28,17 @@ Read before implementation for #211. Authority: C-29 and
 `testdata/denied.jsonl` preserves the recorded denial fields with synthetic
 identities and the documented stream wrapper. Other fixtures are synthetic
 replays of the documented event shapes, with no personal prompts or output.
+
+## Implementation notes
+
+Design authority: [Go Core](../../../../docs/design/go-core.md) and the contracts it cites.
+These notes retain implementation and validation history from the cited increments;
+they do not establish current acceptance or change the contracts.
+
+### C-29 headless stream implementation
+
+`internal/core/worker/antigravity` implements C-29 against the documented `agy` headless stream.
+A `result` emits exactly one typed finish before process exit; `denied_actions` overrides a `SUCCESS` status.
+The supervised process owner retains its hard activity until all descendants have been reaped.
+No result or exit code constitutes delivery.
+Fixed `ghclient` reads verify the task PR's identity, current head, checks and review, with a head recheck after inline comments.

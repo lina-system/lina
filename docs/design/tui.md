@@ -862,12 +862,12 @@ It distinguishes the worker's owning coding agent from the conversation agent
 and covers renaming that owner after Core starts.
 
 After answering a question and sending Esc, alpha acceptance waits for a complete
-connected conversation frame with the composer cursor and footer before inspecting
-the work panel. The installed-Core question journey uses the same barrier. A
-controlled recorder test holds the resolved overlay and a split redraw to prove
-that neither can satisfy it, in Korean and English.
-The panel check accepts every documented elapsed-time format and requires the
-card's name and current activity.
+connected conversation frame with the composer cursor and footer. The installed-Core
+question journey uses the same barrier. An idle worker may have no card while its
+continuation starts or after it finishes; the owner journey still requires a
+delivered result and an independently verified artifact. Card checks hold the worker
+at an unanswered request and wait for its name, documented elapsed time and current
+activity. Recorder regressions cover the overlay, split redraw and delayed progress.
 
 **Sign-in.** The TUI is the client side of one relay for plugin and model-provider sign-in. It opens a loopback listener and reports its port, opens the system browser when it runs locally, and relays `code`, `state` and `iss`, or the `error` fields, exactly as received. Over SSH it takes a pasted URL instead. A secret the person types, such as an API key, is a masked field with no undo and no history, and travels once to Core.
 
@@ -1594,8 +1594,11 @@ operation is shown locally and never becomes a model prompt.
   supersedes that item with a newly sourced statement, retaining its scope and
   holder. `/memory forget <id>` uses Core's recoverable removal flow; the next
   recall and next model request exclude it. Results acknowledge committed ids.
-- `/agents` lists ids and names. `/agents create <name>` uses the LINA preset;
-  `/agents choose <id>` changes this client's conversation and memory focus;
+- `/agents` lists ids and names. Each entry shows the name, role and source
+  preset, then a labelled agent id and its `main:<agent_id>` conversation.
+  `/agents create <name>` uses the LINA preset;
+  `/agents choose <id>` takes either the agent id or that conversation id and
+  changes this client's conversation and memory focus;
   `/agents rename <id> <name>` keeps the id; `/agents delete <id>` uses the
   existing agent trash transition and ends its bindings. Selecting another
   agent drops the old conversation display and subscriptions, while Core keeps

@@ -26,3 +26,13 @@ LINA returns a P0/P1 subset without changing finding ids and retains the other
 records. Unknown: that reference establishes neither LINA's one-return
 allowance nor its GitHub close or merge authority. Those come from the owner
 correction and Judgment and delivery. No CRW review or relay was executed.
+
+## Implementation notes
+
+Design authority: [Go Core](../../../docs/design/go-core.md) and the contracts it cites.
+These notes retain implementation and validation history from the cited increments;
+they do not establish current acceptance or change the contracts.
+
+### C-58 review claims migration
+
+Canon migration 48 claims the normalized repository, PR number and head before manager dispatch, binding the task, execution generation and receipt.

@@ -162,6 +162,74 @@ func TestTwo(t *testing.T) { t.Fatal("must not run") }
   assert.match(mock.issues[0].body, /timeout_test.go/);
 });
 
+test('timeout running-test diagnostics distinguish active parents from waiting parents', () => {
+  const events = [];
+  const emit = (Action, Test, Output, Package = 'example/e2e') => events.push({ Action, Package, Test, Output });
+  for (const name of ['TestParent', 'TestNested', 'TestWaiting', 'TestFinished']) {
+    emit('run', name);
+    if (name === 'TestNested') emit('run', name + '/group');
+    const child = name + (name === 'TestNested' ? '/group' : '') + '/child';
+    emit('run', child);
+    emit('pause', child);
+  }
+  emit('pass', 'TestFinished');
+  // Matching names in a different package must not inherit these diagnostics.
+  emit('run', 'TestParent', undefined, 'other/e2e');
+  emit('run', 'TestParent/child', undefined, 'other/e2e');
+  emit('pause', 'TestParent/child', undefined, 'other/e2e');
+  // test2json may attach the panic output to the last test that wrote output.
+  emit('output', 'TestWaiting', 'panic: test timed out after 1s\n\trunning tests:\n');
+  emit('output', 'TestWaiting', '\t\tTestParent (1s)\n\t\tTestNested/group (1s)\n');
+  emit('output', 'TestWaiting', '\t\tTestFinished (1s)\n\t\tTestNeverStarted (1s)\n\n');
+  // Do not match test-like lines outside the running-tests section. Keep the
+  // running identities even when the stack dump exceeds the diagnostic tail.
+  emit('output', undefined, '\t\tTestWaiting (1s)\n' + 'stack dump\n'.repeat(2000));
+  emit('fail');
+  emit('fail', undefined, undefined, 'other/e2e');
+  const outcomes = goTestOutcomes(events.map(event => JSON.stringify(event)).join('\n'));
+  assert.deepEqual(outcomes.map(({ package: pkg, test, result }) => [pkg, test, result]), [
+    ['example/e2e', 'TestParent', 'fail'], ['example/e2e', 'TestNested', 'fail'],
+    ['example/e2e', 'TestWaiting', 'unknown'], ['example/e2e', 'TestFinished', 'pass'],
+    ['other/e2e', 'TestParent', 'unknown'],
+  ]);
+  assert.ok(outcomes.every(outcome => outcome.output.length <= 16000));
+});
+
+test('real Go timeouts report a parent still executing after pausing its child', async t => {
+  const sb = sandbox(t);
+  sb.write(sb.dir, 'go.mod', 'module example/e2e\n\ngo 1.24\n');
+  for (const nested of [false, true]) {
+    const body = 't.Run("child", func(t *testing.T) { t.Parallel() }); t.Log("parent still executing"); select {}';
+    sb.write(sb.dir, 'timeout_test.go', `// SPDX-License-Identifier: Apache-2.0
+package e2e
+import "testing"
+func TestAPaused(t *testing.T) { t.Parallel(); t.Fatal("must not run") }
+func TestOne(t *testing.T) { ${nested ? 't.Run("group", func(t *testing.T) { ' + body + ' })' : body} }
+func TestTwo(t *testing.T) { t.Fatal("must not run") }
+`);
+    const run = spawnSync('go', ['test', '-json', '-count=1', '-timeout=1s', '.'], {
+      cwd: sb.dir, env: { PATH: process.env.PATH, HOME: sb.dir, GOWORK: 'off', GOENV: 'off',
+        GOCACHE: process.env.GOCACHE, GOTOOLCHAIN: 'local' }, encoding: 'utf8', timeout: 120000,
+    });
+    assert.equal(run.error, undefined);
+    assert.equal(run.status, 1, run.stderr);
+    const diagnostics = run.stdout.split('\n').flatMap(line => {
+      try { return [JSON.parse(line).Output ?? '']; } catch { return []; }
+    }).join('');
+    assert.match(diagnostics, /running tests:\n\t\tTestOne(?:\/group)? \(/);
+    const input = fixture();
+    input.records[0].tests = goTestOutcomes(run.stdout);
+    assert.deepEqual(input.records[0].tests.map(({ test, result }) => [test, result]),
+      [['TestAPaused', 'unknown'], ['TestOne', 'fail']], `nested=${nested}`);
+    input.plan.tasks[0].tests.push('TestAPaused');
+    const mock = github();
+    await reconcileQA({ ...options(mock), ...input });
+    assert.equal(mock.issues.length, 1);
+    assert.match(mock.issues[0].title, /TestOne/);
+    assert.match(mock.issues[0].body, /panic: test timed out/);
+  }
+});
+
 test('package timeout leaves paused parallel scenarios unknown, including nested quota work', async () => {
   const events = [];
   const emit = (Action, Test, Output) => events.push({ Action, Package: 'example/e2e', Test, Output });

@@ -40,3 +40,27 @@ precedence over differences in the reference.
 
 Verification uses synthetic sources, the real fenced memory store and Core job
 service, plus a pure cadence comparison with the reference implementation.
+
+## Implementation notes
+
+Design authority: [Go Core](../../../docs/design/go-core.md) and the contracts it cites.
+These notes retain implementation and validation history from the cited increments;
+they do not establish current acceptance or change the contracts.
+
+### C-21 recall acceptance
+
+These operations are callable Core/tool services, tested with real canon and ledger package scenarios.
+Explicit client memory actions also have installed-Core acceptance through the [TUI memory requests](../../../docs/design/tui.md#memory-and-agent-command-requests); the condition-by-condition evidence is listed under [G1-13](../../../docs/design/go-roadmap.md#1d-memory-context-and-skills).
+
+### C-21 memory job interfaces
+
+The memory-job increment exposes Core-owned preparation, pre-dispatch checks and `ExtractionApply`, `MaintenanceApply` and `BriefApply` callbacks in `internal/core/memory`.
+They register with the existing job API; the worker still reads immutable tasks and submits their results through `Apply`.
+The composing schema owner installs `memory.JobsSchema` alongside `jobs.Schema` and the shared budget schema in a numbered migration.
+Worker startup never migrates canon.
+These are package and job-socket capabilities; installation and conversation composition select their schedules and model bindings.
+No new client command or TUI memory screen is introduced.
+
+### C-21 memory job acceptance
+
+Synthetic package tests and `e2e/m1/memory-jobs.json` exercise these operations with the real worker binary and Core job socket; model quality and installed scheduling remain composition concerns.

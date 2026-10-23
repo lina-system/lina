@@ -6,6 +6,18 @@ native Linux and macOS pseudo-terminals; it needs no window, display server,
 provider account, external network service or human input. Conversation screens
 use the pinned terminal library and a VT emulator.
 
+## Worker fixture stabilization
+
+The shared harness passes its current numeric Go CPU budget (`GOMAXPROCS`) to
+child commands while keeping their environment isolated. A subprocess regression
+checks parent budgets of 1 and 3 against the child's actual runtime setting.
+
+The host-capacity scenario observes its original dispatch's durable running claim
+and area lease within the operation deadline while a fixture barrier holds worker
+completion. It cancels that wakeup context before releasing the worker and checks
+completion and restart within the scenario deadline. This keeps the wakeup check
+independent of Git and manager delivery time while retaining exactly-once checks.
+
 Scenario notes live in the doc comments of their `Test` functions. The M1
 acceptance map is [m1/README.md](m1/README.md). Helpers are test-only Go files in
 `m1/`, shared by scenario tests. Keeping process creation in test files follows
@@ -142,6 +154,14 @@ No scripted provider response is used by these owner cases. `TestM1TUIChatPasteI
 provides the separate account-free paste regression; `TestAlphaWorkerCrashInstalledCore`
 checks that killing Core does not erase an acknowledged worker from its public
 lane snapshot.
+
+The coding journey checks the delivered answer, result file, executable function
+and original worker session after either a form answer or a spoken continuation.
+It does not require a card during that transition: the worker may still be idle
+or already finished. `TestM3WorkPanelLiveCodexWorker` checks the card while Core's
+worker is held at an unanswered approval or question, then verifies its artifact
+and restart. `TestAlphaWorkCardWaitsForProgress` holds back the card and its activity
+in separate recorder frames, without relying on execution speed.
 
 Set `LINA_ALPHA_CAPTURES` to a private absolute output directory to retain
 rendered text, ANSI output and terminal cells at each observed transition.

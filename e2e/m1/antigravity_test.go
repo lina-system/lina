@@ -280,6 +280,7 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 			fixtureCase := workerCase
 			if test.HostCapacity {
 				load.set(t, "1000000.00")
+				fixtureCase = "host-capacity"
 			}
 			if test.Choice != "" {
 				fixtureCase = test.Choice
@@ -369,18 +370,23 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 				managerTurns++
 			}
 			var capacityID string
-			resultContext := h.ctx
 			if test.HostCapacity {
 				capacityID = waitForHostCapacity(t, h, fixture)
 				load.set(t, "0.00")
-				// Finish before the dispatcher's minute-long safety sweep: the
-				// new input's committed event must wake this queued dispatch.
-				var cancel context.CancelFunc
-				resultContext, cancel = context.WithTimeout(h.ctx, operationTimeout)
+				// Observe the claim before the minute-long safety sweep. The worker
+				// is held so delivery cannot stand in for the wakeup observation.
+				wakeContext, cancel := context.WithTimeout(h.ctx, operationTimeout)
 				defer cancel()
 				recovery := *h
-				recovery.ctx = resultContext
+				recovery.ctx = wakeContext
 				events = append(events, admittedTurn(t, &recovery, c, conversation, "capacity-released", "The host has capacity again.")...)
+				waitForCapacityClaim(t, &recovery, fixture, capacityID)
+				// End the wakeup guard before releasing work. Completion retains the
+				// scenario budget even when Git and manager delivery take longer.
+				cancel()
+				if err = os.WriteFile(filepath.Join(fixture, "release-capacity"), nil, 0600); err != nil {
+					t.Fatal(err)
+				}
 			}
 			found := false
 			inspect := func(e protocol.Envelope) {
@@ -395,7 +401,7 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 				inspect(e)
 			}
 			for !found {
-				e, err := c.Receive(resultContext)
+				e, err := c.Receive(h.ctx)
 				if err != nil {
 					t.Fatal("worker result missing", err)
 				}

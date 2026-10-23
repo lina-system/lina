@@ -35,6 +35,13 @@ restart persistence; `e2e/m2/headless-worker-recovery.json` covers Claude dispat
 
 #930 admits a goal worker's committed recovery through the dispatch scheduler without requiring a conversation `turn_calls` receipt. The existing goal-action authorization and once-only recovery allowance still gate the attempt. `e2e/m2/goal-worker-recovery.json` covers a recovered result and a second failure through installed Core.
 
+#995 keeps conversation-worker output by full worker thread identity in the
+live observer. A delayed completion consumes only its own output, including
+when reconciliation already delivered that result. The installed-Core scenario
+`TestM2WorkerDelayedCompletionOutput` recovers one turn, continues the worker,
+and delivers the old completion between the new output and completion. It
+checks both stored results, file readback and result retention after restart.
+
 #999 checkpoints conversation-worker input before dispatch and after the adapter
 returns its binding. A pending input uses the existing unknown record with no
 exact turn, retaining its reservation and retry allowance. This also covers an

@@ -51,3 +51,34 @@ Read-only CRW reference at the same pinned commit:
 - **Unknown:** these references do not establish LINA's worker or forge behavior.
   CRW permits some nonexclusive overlaps; LINA's stricter design requires every
   overlapping area to remain exclusive. No CRW command or runtime is used.
+
+## Implementation notes
+
+Design authority: [Go Core](../../../docs/design/go-core.md) and the contracts it cites.
+These notes retain implementation and validation history from the cited increments;
+they do not establish current acceptance or change the contracts.
+
+### C-57 work area integration
+
+#127 wires `prepare_work` and `retain_work_result` into the running conversation tool registry.
+`work.Area` owns leased Git subprocesses through `kit/proc`, detached allocation at the pinned base, protected refs and branch bundles.
+Core closes its process owner during shutdown.
+
+### C-57 graph validation
+
+#539 bounds dependency reachability in both `ValidateSchedule` preflight and
+the transactional `Service.Schedule` check of proposed and stored tasks.
+After checking missing dependencies and cycles, each queried task's ancestor
+set is built once with an iterative visited traversal and cached for that
+validation only. Positive and negative queries share it. With V scheduled
+tasks and E dependency edges, all reachability queries take O(V(V+E)) traversal
+work and at most O(V²) cached membership entries; overlap checks remain
+pairwise. No cache survives admission or changes the ledger format.
+
+`TestDependencyReachabilityTraversalBound` counts dependency enumeration on a
+256-task DAG whose tasks depend on their previous two tasks. It bounds actual
+vertex and edge reads without a clock. Admission tests cover both task orders,
+idempotent retry, and atomic missing-dependency, cycle and unordered-fork
+rejection with an existing ledger. `TestM3SharedAncestorGraphInstalledCore`
+exercises the conversation tool, manager admission, real worker Git results,
+dependency release and restart while the shared-ancestor tail stays queued.

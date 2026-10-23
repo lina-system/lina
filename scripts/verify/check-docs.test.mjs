@@ -145,6 +145,49 @@ test('duplicate headings use collision-free suffixes in document order', (t) => 
   assert.match(result.stderr, /broken anchor guide\.md#tools-3/);
 });
 
+for (const underline of ['---', '===']) {
+  test(`multiline setext headings use the whole paragraph (${underline})`, (t) => {
+    const { check } = fixture(t, {
+      'README.md': '[heading](guide.md#first-linesecond-lineand-third)\n'
+        + '[duplicate](guide.md#first-linesecond-lineand-third-1)\n',
+      'guide.md': `First *line*\nsecond [line](guide.md)\nand \`third\`\n${underline}\n\n`
+        + `First line\nsecond line\nand third\n${underline}\n`,
+    });
+    const result = check();
+    assert.equal(result.status, 0, result.stderr);
+  });
+
+  test(`last line alone is not a multiline setext anchor (${underline})`, (t) => {
+    const { check } = fixture(t, {
+      'README.md': '[invalid](guide.md#second-line)\n',
+      'guide.md': `First line\nsecond line\n${underline}\n`,
+    });
+    const result = check();
+    assert.equal(result.status, 1, result.stdout);
+    assert.match(result.stderr, /README\.md: broken anchor guide\.md#second-line\n/);
+  });
+}
+
+test('setext paragraphs stop at blank lines, headings, code, and comments', (t) => {
+  const boundaries = [
+    'Earlier paragraph\n\n',
+    '# Earlier heading\n',
+    'Earlier heading\n===\n',
+    'Earlier paragraph\n```md\nCode\n```\n',
+    'Earlier paragraph\n<!-- Comment -->\n',
+    'Earlier paragraph\n\n---\n',
+    'Earlier paragraph\n* * *\n',
+    'Earlier paragraph\n___\n',
+  ];
+  const files = Object.fromEntries(boundaries.map((prefix, index) => [
+    `guide-${index}.md`, `${prefix}First line\nsecond line\n---\n`,
+  ]));
+  files['README.md'] = boundaries.map((_, index) => `[heading](guide-${index}.md#first-linesecond-line)`).join('\n');
+  const { check } = fixture(t, files);
+  const result = check();
+  assert.equal(result.status, 0, result.stderr);
+});
+
 test('headings in code and comments cannot satisfy an anchor', (t) => {
   const { check } = fixture(t, {
     'README.md': ['fenced', 'nested', 'tilde', 'indented', 'comment', 'not-a-heading']
