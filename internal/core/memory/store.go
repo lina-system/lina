@@ -33,7 +33,7 @@ func scopeRank(s Scope) int {
 }
 func validKind(k Kind) bool {
 	switch k {
-	case Fact, Preference, Commitment, Decision, Correction, SharedHistory, Relationship, EmotionObservation:
+	case Fact, Name, Preference, Commitment, Decision, Correction, SharedHistory, Relationship, EmotionObservation:
 		return true
 	}
 	return false
@@ -46,13 +46,16 @@ func validBasis(b Basis) bool {
 	return false
 }
 func defaultHolder(in Write) Holder {
+	if in.Item.Kind == Name {
+		return All
+	}
 	if in.Item.Subject.Kind == ThirdParty || in.AgentPreference {
 		return Holder(in.Agent)
 	}
 	switch in.Item.Kind {
 	case SharedHistory, Relationship, EmotionObservation:
 		return Holder(in.Agent)
-	case Fact, Preference, Commitment, Decision, Correction:
+	case Fact, Name, Preference, Commitment, Decision, Correction:
 		return All
 	}
 	return ""
@@ -60,6 +63,9 @@ func defaultHolder(in Write) Holder {
 func validate(in Write) (Item, error) { return validateWrite(in, false) }
 func validateWrite(in Write, promotion bool) (Item, error) {
 	item := in.Item
+	if err := validateName(item); err != nil {
+		return Item{}, err
+	}
 	for _, text := range []string{item.Content, item.Gloss} {
 		masked, err := secrets.Mask(text)
 		if err != nil || masked.Text() != text {
@@ -220,6 +226,9 @@ func insert(ctx context.Context, tx *canon.Tx, in Write, resolve ResolveEvidence
 	}
 	item.Evidence = evidence
 	slices.Sort(item.Sensitivity)
+	if item.Kind == Name {
+		return putName(ctx, tx, item)
+	}
 	if item.Supersedes != "" {
 		previous, err := readItem(ctx, tx, item.Supersedes)
 		if err != nil || previous.Person != item.Person || previous.Subject != item.Subject || previous.Holder != item.Holder || previous.Scope != item.Scope || previous.State != Active || item.Basis != Stated && previous.Basis == Stated {
@@ -300,6 +309,10 @@ func insert(ctx context.Context, tx *canon.Tx, in Write, resolve ResolveEvidence
 		}
 		return old, nil
 	}
+	return insertRecord(ctx, tx, item)
+}
+
+func insertRecord(ctx context.Context, tx *canon.Tx, item Item) (Item, error) {
 	var id [16]byte
 	_, _ = rand.Read(id[:])
 	item.ID = hex.EncodeToString(id[:])
@@ -353,7 +366,7 @@ func (s *Store) recall(ctx context.Context, scope RecallScope, q Query, standing
 		restrictedJSON, _ := json.Marshal(restricted)
 		text := normalize(q.Text)
 		match := "1"
-		args := []any{q.At, q.At, scope.Person, q.ID, q.ID, holders[0], holders[1], q.At, scope.Projection, scope.ExternalModel, standing, q.PersonOnly, relationship, scope.Agent, scope.Person, string(restrictedJSON), q.History}
+		args := []any{q.At, q.At, scope.Person, q.ID, q.ID, holders[0], holders[1], q.At, scope.Projection, scope.ExternalModel, standing, q.PersonOnly, relationship, scope.Agent, scope.Person, string(restrictedJSON), q.Kind, q.Kind, q.History}
 
 		switch {
 		case utf8.RuneCountInString(text) >= 3:
@@ -380,6 +393,7 @@ func (s *Store) recall(ctx context.Context, scope RecallScope, q Query, standing
    AND NOT EXISTS(SELECT 1 FROM json_each(m.record,'$.evidence') refs
     JOIN json_each(?) blocked ON blocked.key=json_extract(refs.value,'$.id')
     WHERE json_extract(refs.value,'$.kind')='event')
+   AND (?='' OR json_extract(m.record,'$.kind')=?)
    ), eligible AS MATERIALIZED (SELECT * FROM candidates WHERE ? OR NOT older)
    SELECT e.record,e.older FROM eligible e WHERE `+match+` AND (?='' OR e.priority < (SELECT max(sequence) FROM memory_revision WHERE item_id=?)
    OR (e.priority=(SELECT max(sequence) FROM memory_revision WHERE item_id=?) AND e.id>?))

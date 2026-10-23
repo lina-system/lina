@@ -143,6 +143,12 @@ Evidence: [Hand-offs](../research/m4-owner-agent-sessions.md#hand-offs) and conf
 
 The person's names for devices, organisations, artifacts and places are common knowledge items of kind `name`. Each holds the current name, any retired aliases, and the scope where it applies. Every agent's ContextPacket carries the names in scope. A reply that uses a retired alias counts as a naming breach for that agent. The person corrects a name once and the correction applies to every agent.
 
+Core's `remember_name` tool binds the write to the current native person event. It takes a subject, current name, exact quote and any explicitly retired aliases. A correction may identify the subject by its previous name. The subject remains stable across corrections; the existing holder and scope are preserved. Names first default to common knowledge. Corrections keep the item id, append a revision and a linked correction item, and retain previous current names as retired aliases. Repeating the same event does not create another revision. A name restored as current is removed from the retired set.
+
+Names in the agent's readable scope enter the mandatory correction part of every new turn's ContextPacket as untrusted, referenced data. They are independent of topic search and optional recall limits. Endpoint restrictions, validity and forgetting still apply. Follow-ups keep the prepared snapshot; the next turn sees a committed correction.
+
+Core counts one naming breach per completed assistant reply that contains any retired alias from its prepared names. Matching uses NFC and case normalization, with Latin identifier boundaries to avoid partial-word matches and support for Korean particles after a name. A current full name containing an old alias is not a breach. The masked full reply is checked, including content moved to a result card. The reply event and count commit together; repeated recording cannot add another count. Counts are per person and agent and survive restart. No name or reply text is copied into the counter.
+
 Evidence: [Naming and language](../research/m4-owner-agent-sessions.md#naming-and-language). One retired device name drifted into four agents.
 
 ## Starter records and persona changes

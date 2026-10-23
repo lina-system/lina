@@ -40,6 +40,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/internal/core/manifest"
+	"github.com/thisisjun786/lina/internal/core/memory"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
 	"github.com/thisisjun786/lina/internal/core/records"
 	"github.com/thisisjun786/lina/internal/core/reply"
@@ -866,6 +867,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		delete(r.personaGrants, turnID+":state")
 		delete(r.personaGrants, turnID+":expression")
 		delete(r.personaGrants, turnID+":relationship")
+		delete(r.personaGrants, turnID+":names")
 		delete(r.personaGrants, turnID+":coding")
 		r.personaMu.Unlock()
 
@@ -877,6 +879,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 	var memoryRefs []turn.Reference
 
 	evidence := turn.EvidenceWriter{Ledger: r.journal(), ConversationID: r.conversation, ParentID: input.ID, Surface: input.Surface, Now: time.Now}
+	var preparedNames []memory.Item
 	prep := &turn.Preparation{
 		VerifyBuild: r.verifyBuild,
 		Account:     func(context.Context) (provider.Credential, error) { return r.route.Request(nil).Credential, nil },
@@ -921,6 +924,12 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				return turn.PreparedRequest{}, err
 			}
 			minimum = append(minimum, methodology...)
+			namePacket, names, err := r.namePacket(ctx, at)
+			if err != nil {
+				return turn.PreparedRequest{}, err
+			}
+			preparedNames = names
+			minimum = append(minimum, namePacket...)
 			if err := r.prepareSkillTools(turnID, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
@@ -944,6 +953,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			declarations = append(declarations, coreexec.EmotionDeclarations()...)
 			declarations = append(declarations, coreexec.RelationshipDeclaration())
 			declarations = append(declarations, askQuestionDeclaration(), resolveQuestionDeclaration())
+			if r.channelBinding == nil || r.channelBinding.Scope.Memory {
+				declarations = append(declarations, coreexec.NameDeclaration())
+			}
 			declarations = append(declarations, coreexec.SkillDeclarations()...)
 			declarations = append(declarations, coreexec.RecordDeclarations()...)
 			declarations = append(declarations, workDeclarations...)
@@ -1088,7 +1100,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			}
 		}
 		var err error
-		saved, err = ledger.New(db, r.materials).AdmitBatch(ctx, batch)
+		saved, err = ledger.New(namingCanon{Canon: db, person: r.person, agent: r.agent, names: preparedNames, replies: batch}, r.materials).AdmitBatch(ctx, batch)
 		return err
 	}
 	inputQueue := &conversationInputs{runtime: r, inputs: inputs}
@@ -1121,6 +1133,15 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				// fences follow-up rounds; the existing turn flow records the refusal.
 				if err := r.validateChannel(ctx); err != nil {
 					return nil, err
+				}
+				if round == 1 {
+					refs := make([]turn.Reference, 0, len(preparedNames))
+					for _, name := range preparedNames {
+						refs = append(refs, turn.Reference{ID: name.ID, Revision: strconv.FormatInt(name.Revision, 10)})
+					}
+					if err := r.validateModelContext(ctx, memoryEpoch, refs); err != nil {
+						return nil, err
+					}
 				}
 				if err := r.validateModelContext(ctx, memoryEpoch, memoryRefs); err != nil {
 					return nil, err
