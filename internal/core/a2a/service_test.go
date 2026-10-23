@@ -473,3 +473,20 @@ func TestEmptyRawArtifactIsRetained(t *testing.T) {
 		t.Fatal("empty bytes treated as absent part", err)
 	}
 }
+
+func TestUnknownSendCannotFallbackToAnotherConnection(t *testing.T) {
+	f := peer(t, "lost")
+	other := peer(t, "task")
+	_, _ = f.send(t, false)
+	connection := other.connection
+	connection.ID = "another-agent"
+	if _, err := f.service.Configure(t.Context(), connection, []byte(other.token)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.service.Send(t.Context(), f.owner, "fallback-call", Input{Connection: connection.ID, Task: "compute", Text: "compute differently"}); err == nil {
+		t.Fatal("uncertain task admitted a different agent")
+	}
+	if f.sends.Load() != 1 || other.sends.Load() != 0 {
+		t.Fatal("fallback reached another agent")
+	}
+}
