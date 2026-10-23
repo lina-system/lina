@@ -63,10 +63,11 @@ type Step struct {
 // revision's event, so a replay needs no second source.
 type Revision struct{ Steps []Step }
 
-// StageStep is one step of a stage, as the 일 view lists it.
+// StageStep is one step of a stage, as the 일 view lists it. The id stays on
+// this side: a line holds no identity.
 type StageStep struct {
 	StartedAt time.Time `json:"started_at,omitzero"`
-	ID        string    `json:"id"`
+	ID        string    `json:"-"`
 	Name      string    `json:"name"`
 	State     StepState `json:"state"`
 }

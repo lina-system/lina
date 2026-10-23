@@ -240,6 +240,9 @@ func agentFixture() {
 	progress := func(text string) {
 		send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "fixture", "update": map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": text}}}})
 	}
+	thought := func(text string) {
+		send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "fixture", "update": map[string]any{"sessionUpdate": "agent_thought_chunk", "content": map[string]any{"type": "text", "text": text}}}})
+	}
 	var pending json.RawMessage
 	var requestMode string
 	for scan.Scan() {
@@ -286,7 +289,17 @@ func agentFixture() {
 					progress("REPLAY_ONLY")
 				}
 			}
+			// Live updates before the response fill the adapter's restore hold.
+			// The burst exceeds the client queue and the hold together, so the
+			// response cannot be read before the hold reaches its bound.
+			if os.Getenv("ACP_RESTORE_BURST") == "overflow" {
+				for range 1024 {
+					thought("LIVE_AFTER_RESTORE")
+				}
+			}
 			reply(f.ID, map[string]any{})
+			// A live update follows the restore response and must reach the adapter.
+			thought("LIVE_AFTER_RESTORE")
 		case "session/new":
 			if file := os.Getenv("ACP_MCP_CAPTURE"); file != "" {
 				raw, _ := json.Marshal(f.Params.McpServers)
@@ -328,6 +341,9 @@ func agentFixture() {
 					params = json.RawMessage(`{"sessionId":"fixture","mode":"form","message":"Secret","requestedSchema":{"type":"object","properties":{"api_key":{"type":"string"}}}}`)
 				}
 				send(map[string]any{"jsonrpc": "2.0", "id": "decision", "method": method, "params": params})
+			case "invalid-stop-exit":
+				reply(f.ID, map[string]any{"stopReason": "bogus"})
+				os.Exit(0)
 			case "exit":
 				os.Exit(0)
 			case "malformed":

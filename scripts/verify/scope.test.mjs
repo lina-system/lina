@@ -653,7 +653,7 @@ for (const path of ['scripts/verify/dependency-exceptions.json', 'THIRD-PARTY-NO
 }
 
 test('brand tokens and generated data select verification while PNGs remain evidence', () => {
-  for (const path of ['design/tokens/light.json', 'design/tokens/tokens.css', 'DESIGN.md']) assert.equal(kind(path), 'automation');
+  for (const path of ['design/tokens/light.json', 'design/tokens/tokens.css', 'design/tokens/tokens.swift', 'DESIGN.md']) assert.equal(kind(path), 'automation');
   assert.equal(kind('internal/design/tokens_gen.go'), 'components');
   assert.equal(kind('evidence/brand/dark-connected.png'), 'docs');
   assert.equal(kind('evidence/brand/unregistered.py'), 'unmapped');
@@ -670,6 +670,20 @@ test('vector rebuilds select automation and their notices remain documents', () 
   assert.equal(kind('packaging/sqlite-vec/NOTICE.md'), 'docs');
   assert.equal(kind('packaging/sqlite-vec/README.md'), 'docs');
   assert.equal(kind('packaging/sqlite-vec/unregistered.py'), 'unmapped');
+});
+
+test('native parts select automation and carry their own tests', t => {
+  for (const path of ['native/macos/unlock-plugin/src/lina_unlock.c', 'native/macos/unlock-plugin/README.md', 'native/macos/unlock-plugin/Info.plist']) {
+    assert.equal(kind(path), 'automation', path);
+  }
+  const r = repository(t);
+  const base = r.git('rev-parse', 'HEAD');
+  mkdirSync(join(r.cwd, 'native/macos/unlock-plugin/src'), { recursive: true });
+  writeFileSync(join(r.cwd, 'native/macos/unlock-plugin/src/lina_unlock.c'), 'int main(void) { return 0; }\n');
+  const scope = r.classify(r.commit(), { base });
+  assert.equal(scope.reason, 'automation-change');
+  assert.equal(scope.automation, true);
+  assert.deepEqual(scope.unmapped, []);
 });
 
 test('QA guide and repository opt-in have registered verification', () => {

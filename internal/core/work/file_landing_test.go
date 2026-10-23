@@ -289,9 +289,9 @@ func replaceRootWithSymlink(t *testing.T, root, name string) {
 func TestFileDoneRejectsRootSymlinks(t *testing.T) {
 	for _, name := range []string{"out", "report.md"} {
 		t.Run(name, func(t *testing.T) {
-			s, w, r, _ := fileFixture(t)
+			s, w, _, _ := fileFixture(t)
 			writeFixture(t, filepath.Join(w.Path, "report.md"), "result")
-			r = fileReceipt(t, w)
+			r := fileReceipt(t, w)
 			// Keep the exact bytes and receipt; only the root entry becomes a link
 			// to a directory or regular file inside the task directory.
 			replaceRootWithSymlink(t, w.Path, name)
@@ -336,9 +336,9 @@ func (r *readbackSymlinkReader) Open(ctx context.Context, m Material) (io.ReadCl
 func TestFileLandingReadbackRejectsRootSymlinks(t *testing.T) {
 	for _, name := range []string{"out", "report.md"} {
 		t.Run(name, func(t *testing.T) {
-			s, w, r, writer := fileFixture(t)
+			s, w, _, writer := fileFixture(t)
 			writeFixture(t, filepath.Join(w.Path, "report.md"), "result")
-			r = fileReceipt(t, w)
+			r := fileReceipt(t, w)
 			c := submitFiles(t, s, r)
 			bundle := filepath.Join(c.Task.Destination, c.Task.ID)
 			// The final material closes after both output files have been written,

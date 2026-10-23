@@ -54,3 +54,33 @@ func TestGoalDoesNotBecomeDoneWithoutItsOwnVerdict(t *testing.T) {
 		t.Fatalf("unobserved goal plan became known: %+v", rows)
 	}
 }
+
+// TestComputeGoalCarriesCurrentStageAndEntries checks that a goal line's stage
+// word is its current stage entry and that the entries stay on the line. A
+// running goal is visible on its own, without a child row.
+func TestComputeGoalCarriesCurrentStageAndEntries(t *testing.T) {
+	stages := []Stage{
+		{Number: 1, Kind: KindStage, Label: "숙소 고르기", State: StepDone, Steps: []StageStep{{ID: "private-step", Name: "숙소 고르기", State: StepDone}}},
+		{Number: 2, Kind: KindStage, Label: "이동 준비", State: StepWorking, Steps: []StageStep{{ID: "private-step-2", Name: "이동 준비", State: StepWorking}}},
+		{Kind: KindChecking, Label: "확인", State: StepNext},
+	}
+	rows := Compute([]Unit{{ID: "private-goal", Kind: "goal", Name: "Ship the workshop", Active: true, Stages: stages}})
+	if len(rows) != 1 {
+		t.Fatalf("running goal without children disappeared: %+v", rows)
+	}
+	line := rows[0].Line
+	if line.Stage != "이동 준비" || len(line.Stages) != 3 || line.Stages[2].Kind != KindChecking {
+		t.Fatalf("line = %+v", line)
+	}
+	// The wire line carries no step identity.
+	raw, _ := json.Marshal(line)
+	if strings.Contains(string(raw), "private-step") {
+		t.Fatalf("identity in line: %s", raw)
+	}
+	// A landed stage moves the current entry past it.
+	stages[1].State = StepDone
+	rows = Compute([]Unit{{ID: "private-goal", Kind: "goal", Name: "Ship the workshop", Active: true, Stages: stages}})
+	if len(rows) != 1 || rows[0].Line.Stage != "확인" {
+		t.Fatalf("current stage after landing = %+v", rows)
+	}
+}

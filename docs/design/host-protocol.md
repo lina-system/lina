@@ -764,6 +764,17 @@ never means zero. Stage and unknown are codes localized by the client. An option
 execution state; it does not supply a plan stage or completion verdict. Older
 clients may omit this additional presentation field.
 
+An optional `stages` array carries a line's stage list, in order, as Core computed
+it ([work-and-delegation.md](work-and-delegation.md#stages)). An entry has its
+`kind` (`stage`, `design`, `checking` or `done`), a `label`, a `state`, and, for a
+numbered entry, its `number`. An entry state and a step state are one of `next`,
+`waiting`, `working`, `needs_input`, `failed`, `stopped`, `unknown`, `done` and
+`superseded`; the client localizes them. A `steps` array lists the entry's steps
+with a name, a state and the instant a step started; it holds no step id, and a
+line holds no identity at all. A line without a stage list omits the field, which
+older clients ignore. The stage word of a goal line is the label of its current
+stage entry.
+
 The optional `started_at` and `finished_at` fields are RFC 3339 instants recorded
 by Core; `now` is Core's short current-activity line. The TUI applies its snapshot
 clock offset when displaying elapsed minutes. Missing timestamps remain unknown,

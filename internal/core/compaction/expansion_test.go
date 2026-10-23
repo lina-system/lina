@@ -14,6 +14,7 @@ import (
 )
 
 func TestExpansionReturnsExactScopedMaskedEvents(t *testing.T) {
+	t.Parallel()
 	db, _ := passDB(t)
 	events := ledger.New(db, nil)
 	for _, id := range []string{"fact", "foreign"} {
@@ -58,6 +59,7 @@ func TestExpansionReturnsExactScopedMaskedEvents(t *testing.T) {
 }
 
 func TestExpansionRefusesForgottenSourcesAndInvalidatedNodes(t *testing.T) {
+	t.Parallel()
 	db, s, removals, _ := fixture(t)
 	publish(t, s, proposal(t, s, "leaf"))
 	expansion := Expansion{DB: db, Events: ledger.New(db, nil), NodeEvents: s.ExpandEvents}
