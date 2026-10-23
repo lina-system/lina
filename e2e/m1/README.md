@@ -28,6 +28,13 @@ physical input and UX. Passing this suite alone does not declare the phase done.
 
 Failure coverage also includes:
 
+- `TestM2InstalledWorkerOutcome`: the pending-at-restart case releases the
+  worker only after Core emits the successful `start-worker` tool activity.
+  The provider continuation waits behind that release, so it cannot supply
+  the barrier. A committed completion with no claimed follow-up gates restart;
+  recovery must read the worker's file, deliver one reply and retain the result
+  without relaunching the worker. The 30-second scenario deadline is unchanged.
+
 - `TestM1TurnBudgetHandoffInstalledCore` keeps the complete long task name
   visible across wrapped rows in the 120-column terminal's running panel.
   Its assertion reads that panel from one frame, excluding the conversation's
