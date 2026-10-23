@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/work"
 	goal "github.com/thisisjun786/lina/internal/core/work/goal"
 	"github.com/thisisjun786/lina/kit/protocol"
+	"github.com/thisisjun786/lina/kit/result"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -51,7 +53,7 @@ func TestM2InstalledCodeGoalTool(t *testing.T) {
 
 func TestM2InstalledCodeGoalDriver(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"private", "public", "failed-deploy", "restart-deploy", "restart-unhealthy-probe", "external-merge", "no-antigravity"} {
+	for _, mode := range []string{"private", "public", "failed-deploy", "restart-deploy", "restart-unhealthy-probe", "external-merge", "no-antigravity", "completion-evidence", "completion-missing", "completion-wrong-kind"} {
 		t.Run(mode, func(t *testing.T) { t.Parallel(); installedCodeGoal(t, mode) })
 	}
 }
@@ -171,7 +173,15 @@ func installedCodeGoal(t *testing.T, mode string) {
 			t.Error(err)
 			return
 		}
-		if scriptedCodingManager(t, w, request) {
+		var completion *result.CompletionRequest
+		if mode == "completion-evidence" || mode == "completion-wrong-kind" {
+			kind := "owner_path_run"
+			if mode == "completion-wrong-kind" {
+				kind = "labelled_claim"
+			}
+			completion = &result.CompletionRequest{WorkKind: "code", Evidence: []result.EvidenceReference{{Kind: kind, CallID: "owner-path-observation"}}}
+		}
+		if scriptedCodingManager(t, w, request, completion) {
 			return
 		}
 		if calls.Add(1) == 1 {
@@ -450,6 +460,32 @@ func installedCodeGoal(t *testing.T, mode string) {
 	}
 	if string(before) != string(after) || calls.Load() != 2 {
 		t.Fatalf("restart replayed work: %s -> %s; calls=%d", before, after, calls.Load())
+	}
+	if strings.HasPrefix(mode, "completion-") {
+		db, closeDB := installedAcceptanceStore(t, h)
+		defer closeDB()
+		var card work.Card
+		var breaches int
+		err := db.Read(t.Context(), func(tx *canon.Tx) error {
+			var raw []byte
+			if err := tx.QueryRowContext(t.Context(), "SELECT record FROM work_cards WHERE json_extract(record,'$.applied')=1").Scan(&raw); err != nil {
+				return err
+			}
+			if err := json.Unmarshal(raw, &card); err != nil {
+				return err
+			}
+			return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM done_completions WHERE state='claimed'").Scan(&breaches)
+		})
+		want, count := "claimed", 1
+		if mode == "completion-evidence" {
+			want, count = "done", 0
+		}
+		if err != nil || card.Completion == nil || card.Completion.State != want || card.Completion.PolicyRevision == "" || breaches != count {
+			t.Fatalf("Git completion after restart: %+v breaches=%d err=%v", card.Completion, breaches, err)
+		}
+		if mode == "completion-evidence" && (len(card.Completion.Evidence) != 1 || card.Completion.Evidence[0].TurnID == "" || card.Completion.Evidence[0].CallID != "owner-path-observation") {
+			t.Fatalf("lost completion chain: %+v", card.Completion)
+		}
 	}
 }
 

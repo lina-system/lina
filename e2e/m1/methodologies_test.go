@@ -20,6 +20,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 	"github.com/thisisjun786/lina/kit/protocol"
+	"github.com/thisisjun786/lina/kit/result"
 	"github.com/thisisjun786/lina/kit/tools"
 )
 
@@ -104,7 +105,7 @@ func seedCodingFixture(t *testing.T, h *harness, start func(bool) *process, pres
 // Synthetic manager judgments drive the real dev preparation, loop, durable
 // decision tool and work verdict. Source-conversation script counters remain
 // separate, so an extra call or replay in either lane cannot be hidden.
-func scriptedCodingManager(t *testing.T, w http.ResponseWriter, request any) bool {
+func scriptedCodingManager(t *testing.T, w http.ResponseWriter, request any, completion ...*result.CompletionRequest) bool {
 	t.Helper()
 	raw, _ := json.Marshal(request)
 	var req methodologyRequest
@@ -141,11 +142,14 @@ func scriptedCodingManager(t *testing.T, w http.ResponseWriter, request any) boo
 	if !prepared {
 		t.Error("coding manager did not prepare dev methodology")
 	}
-	var last struct{ Type string }
+	var last struct {
+		Type   string
+		CallID string `json:"call_id"`
+	}
 	if len(req.Input) > 0 {
 		_ = json.Unmarshal(req.Input[len(req.Input)-1], &last)
 	}
-	if last.Type == "function_call_output" {
+	if last.Type == "function_call_output" && last.CallID != "owner-path-observation" {
 		methodologyOutput(t, req, "ok", nil)
 		emitResponse(w, "Manager decision recorded.", true)
 		return true
@@ -157,7 +161,18 @@ func scriptedCodingManager(t *testing.T, w http.ResponseWriter, request any) boo
 			decision = "verified"
 		}
 	}
-	emitPersonaCall(w, "coding-decision", "coding_decision", map[string]string{"decision": decision, "evidence": "Synthetic manager checked the retained definition and source-labeled artifact/PR observations."})
+	args := map[string]any{"decision": decision, "evidence": "Synthetic manager checked the retained definition and source-labeled artifact/PR observations."}
+	if delivery && verified && len(completion) > 0 && completion[0] != nil {
+		// Exercise the reference boundary with a real successful Core tool call.
+		// Evidence-kind interpretation remains the manager's responsibility.
+		if last.Type != "function_call_output" {
+			emitPersonaCall(w, "owner-path-observation", "query_records", map[string]any{"search": "", "kind": "goal", "after": "", "limit": 10})
+			return true
+		}
+		methodologyOutput(t, req, "ok", nil)
+		args["completion"] = completion[0]
+	}
+	emitPersonaCall(w, "coding-decision", "coding_decision", args)
 	return true
 }
 

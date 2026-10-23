@@ -11,6 +11,89 @@ import (
 	"testing"
 )
 
+func TestGitApplicationRetainsAcceptedCompletion(t *testing.T) {
+	for _, mode := range []string{"observed", "missing", "wrong-kind", "extended-policy", "moved-head"} {
+		t.Run(mode, func(t *testing.T) {
+			s, db := testStore(t)
+			task := taskFixture()
+			task.WorkKind, task.RequiresApply = "code", true
+			must := func(err error) {
+				t.Helper()
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			must(s.Create(t.Context(), task))
+			must(s.Start(t.Context(), runFixture()))
+			receipt := receiptFixture()
+			must(s.Submit(t.Context(), "run-1", receipt))
+			must(s.Finish(t.Context(), task.ID, "run-1", "completed"))
+			must(s.ObserveHead(t.Context(), task.ID, "run-1", strings.Repeat("a", 40)))
+			proof := result.CompletionRequest{WorkKind: "code"}
+			if mode != "missing" {
+				proof.Evidence = []result.EvidenceReference{{Kind: "owner_path_run", TurnID: "manager-turn", CallID: "check"}}
+			}
+			if mode == "wrong-kind" {
+				proof.Evidence[0].Kind = "labelled_claim"
+			}
+			ctx := result.WithCompletionPolicy(t.Context(), func(req result.CompletionRequest) result.Completion {
+				var required []string
+				if mode == "extended-policy" {
+					required = []string{"real_view"}
+				}
+				c := result.AssessCompletion(req, required, func(ref result.EvidenceReference) bool { return ref.TurnID == "manager-turn" && ref.CallID == "check" })
+				c.PolicyRevision = "prepared-policy"
+				return c
+			})
+			must(s.Judge(ctx, task.ID, receipt.EventID, "verified", "checked", proof))
+			card, err := s.Get(t.Context(), task.ID)
+			must(err)
+			if card.State == "done" || card.Completion != nil {
+				t.Fatalf("completed before application: %+v", card)
+			}
+			var recorded int
+			must(db.Read(t.Context(), func(tx *canon.Tx) error {
+				return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM done_completions").Scan(&recorded)
+			}))
+			if recorded != 0 {
+				t.Fatalf("acceptance recorded %d premature completions", recorded)
+			}
+			// Application after restart has no manager turn or prepared context.
+			s = New(db)
+			must(s.Rebuild(t.Context()))
+			must(s.Judge(t.Context(), task.ID, receipt.EventID, "verified", "checked", proof))
+			if mode == "moved-head" {
+				must(s.ObserveHead(t.Context(), task.ID, "run-1", strings.Repeat("b", 40)))
+			}
+			must(s.Apply(t.Context(), task.ID, receipt.EventID, "merged"))
+			must(s.Rebuild(t.Context()))
+			must(s.Apply(t.Context(), task.ID, receipt.EventID, "merged"))
+			card, err = s.Get(t.Context(), task.ID)
+			must(err)
+			want, breaches := "claimed", 1
+			if mode == "observed" {
+				want, breaches = "done", 0
+			}
+			if card.Completion == nil || card.Completion.State != want {
+				t.Fatalf("application lost accepted evidence: %+v", card.Completion)
+			}
+			if mode != "moved-head" && card.Completion.PolicyRevision != "prepared-policy" {
+				t.Fatalf("lost prepared policy: %+v", card.Completion)
+			}
+			if mode == "observed" && (len(card.Completion.Evidence) != 1 || card.Completion.Evidence[0] != proof.Evidence[0]) {
+				t.Fatalf("lost references: %+v", card.Completion)
+			}
+			var count int
+			must(db.Read(t.Context(), func(tx *canon.Tx) error {
+				return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM done_completions WHERE state='claimed'").Scan(&count)
+			}))
+			if count != breaches {
+				t.Fatalf("breaches=%d want=%d", count, breaches)
+			}
+		})
+	}
+}
+
 func TestTaskCompletionWithoutDoneEvidenceIsClaimed(t *testing.T) {
 	s, _ := testStore(t)
 	startFixture(t, s)

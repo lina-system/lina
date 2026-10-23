@@ -119,6 +119,9 @@ func (s *Service) Judge(ctx context.Context, taskID, receiptID, verdict, evidenc
 	defer s.workspaceMu.Unlock()
 	return s.append(ctx, Event{Key: "judge:" + receiptID, TaskID: taskID, Kind: "judged", ReceiptID: receiptID, Value: verdict, Evidence: evidence, DoneRequest: firstProof(proof)})
 }
+
+// Apply without new proof carries the prepared assessment from the matching
+// accepted receipt and head. It does not need a live manager turn.
 func (s *Service) Apply(ctx context.Context, taskID, receiptID, evidence string, proof ...result.CompletionRequest) error {
 	s.workspaceMu.Lock()
 	defer s.workspaceMu.Unlock()
@@ -186,6 +189,7 @@ func appendEvent(ctx context.Context, tx *canon.Tx, e Event) error {
 			return err
 		}
 		old.Completion = nil // The first committed policy decision is immutable.
+		old.DoneAcceptance = nil
 		if reflect.DeepEqual(old, e) {
 			return nil
 		}
@@ -197,18 +201,22 @@ func appendEvent(ctx context.Context, tx *canon.Tx, e Event) error {
 	if err = advance(&c, e); err != nil {
 		return err
 	}
+	if e.Kind == "judged" && e.Value == "verified" && c.Task.RequiresApply && c.Task.Destination == "" {
+		// Judge runs in the prepared manager turn; Apply may run after it has
+		// ended or after Core restarts. Retain the assessment with its receipt
+		// atomically, without recording a completed delivery before application.
+		e.DoneAcceptance = &AcceptedCompletion{Head: c.Head, Assessment: result.CompletionFor(ctx, taskCompletionRequest(c, e.DoneRequest))}
+	}
 	if c.State == "done" && (e.Kind == "judged" || e.Kind == "applied" || e.Kind == "files_landed") {
-		request := result.CompletionRequest{WorkKind: c.Task.WorkKind}
-		if e.DoneRequest != nil {
-			request = *e.DoneRequest
+		completion := result.CompletionFor(ctx, taskCompletionRequest(c, e.DoneRequest))
+		if e.Kind == "applied" && e.DoneRequest == nil {
+			for _, accepted := range events {
+				if accepted.Kind == "judged" && accepted.ReceiptID == e.ReceiptID && accepted.DoneAcceptance != nil && accepted.DoneAcceptance.Head == c.Head {
+					completion = accepted.DoneAcceptance.Assessment
+					break
+				}
+			}
 		}
-		if c.Task.WorkKind != "" {
-			request.WorkKind = c.Task.WorkKind
-		}
-		if c.Task.Workspace != nil && c.Task.Workspace.Spec.RepositoryID != "" {
-			request.WorkKind = "code"
-		}
-		completion := result.CompletionFor(ctx, request)
 		completion.ID, completion.AgentID = "task:"+e.TaskID+":"+e.Key, c.Task.AgentID
 		e.Completion, c.Completion = &completion, &completion
 		if err := canon.RecordDoneCompletion(ctx, tx, &completion); err != nil {
@@ -238,6 +246,21 @@ func appendEvent(ctx context.Context, tx *canon.Tx, e Event) error {
 	}
 	return nil
 }
+
+func taskCompletionRequest(c Card, proof *result.CompletionRequest) result.CompletionRequest {
+	request := result.CompletionRequest{WorkKind: c.Task.WorkKind}
+	if proof != nil {
+		request = *proof
+	}
+	if c.Task.WorkKind != "" {
+		request.WorkKind = c.Task.WorkKind
+	}
+	if c.Task.Workspace != nil && c.Task.Workspace.Spec.RepositoryID != "" {
+		request.WorkKind = "code"
+	}
+	return request
+}
+
 func saveCard(ctx context.Context, tx *canon.Tx, c Card) error {
 	b, err := json.Marshal(c)
 	if err != nil {
