@@ -105,10 +105,17 @@ func TestACPRecoveryThroughRunningCore(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				live := false
 				for _, event := range ledger {
 					if strings.Contains(event.Value, "REPLAY_ONLY") {
 						t.Fatal("loaded history was published as new progress")
 					}
+					if strings.Contains(event.Value, "LIVE_AFTER_RESTORE") {
+						live = true
+					}
+				}
+				if mode != "fresh" && mode != "unknown-effect" && mode != "completed-tool" && !live {
+					t.Fatal("live update after the restore response was lost")
 				}
 				if strings.Contains(string(record.Result), "REPLAY_ONLY") {
 					t.Fatal("loaded history leaked into the new result")
@@ -307,7 +314,9 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
    if(mode==='fresh')session='fresh-session';
    if(m.method==='session/load')for(let i=0;i<1024;i++)progress('REPLAY_ONLY '+i);
   }
-  reply(m.id,m.method==='session/new'?{sessionId:session}:{});break;
+  reply(m.id,m.method==='session/new'?{sessionId:session}:{});
+  if(m.method!=='session/new')progress('LIVE_AFTER_RESTORE');
+  break;
  case 'session/prompt':
   if(m.params.sessionId!==session)throw Error('wrong prompt session');
   pending=m.id;packet=m.params.prompt[0].text;
