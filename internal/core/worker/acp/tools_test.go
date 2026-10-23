@@ -12,6 +12,51 @@ import (
 	"github.com/thisisjun786/lina/internal/core/worker"
 )
 
+func TestCompletedWorkToolRetainsEffectEvidence(t *testing.T) {
+	a, ctx, l, spec := fixture(t)
+	spec.TaskPacket = "cancel"
+	thread, err := a.Start(ctx, l, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := make(chan clientapi.WorkerToolResponse, 1)
+	callErrors := make(chan error, 1)
+	go func() {
+		r, err := clientapi.CallWorkerTool(ctx, filepath.Join(a.tools.dir, "core.sock"), clientapi.WorkerToolRequest{Token: a.tools.token, Method: "tools/call", Name: "coordinate", Arguments: json.RawMessage(`{"request":"Continue the task."}`)})
+		response <- r
+		callErrors <- err
+	}()
+	var call worker.Event
+	for call.ToolCall == nil {
+		call = event(t, ctx, a)
+	}
+	if err = a.Answer(ctx, thread, worker.Answer{RequestID: call.ToolCall.ID, Result: json.RawMessage(`{"success":true,"contentItems":[{"type":"inputText","text":"{\"accepted\":true}"}]}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if r := <-response; r.Error != "" {
+		t.Fatal(r.Error)
+	}
+	if err = <-callErrors; err != nil {
+		t.Fatal(err)
+	}
+	for {
+		e := event(t, ctx, a)
+		if e.Progress != nil && e.Progress.Phase == "server_request_resolved" {
+			break
+		}
+	}
+	if snap, err := a.Snapshot(ctx, thread); err != nil || len(snap.Pending) != 0 {
+		t.Fatal("call did not complete", snap, err)
+	}
+	a.client.Close()
+	if terminal(t, ctx, a).Status != worker.Failed {
+		t.Fatal("process loss did not fail")
+	}
+	if snap, err := a.Snapshot(ctx, thread); err != nil || snap.EffectsKnown {
+		t.Fatalf("completed coordination lost effect evidence: %+v %v", snap, err)
+	}
+}
+
 func TestWorkToolsFenceSessionsTurnsAndAnswers(t *testing.T) {
 	a, ctx, l, spec := fixture(t)
 	spec.TaskPacket = "cancel"
