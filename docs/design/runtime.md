@@ -1,6 +1,6 @@
 # Runtime
 
-This contract fixes what LINA's components are built from and how they run: the language and the build, the vendored source, the LINA kit, the conversation loop and its model path, the non-chat adapters, the tools and their sandbox, the tools LINA uses without owning them, storage, packaging, updates, recovery, remote access and the composition of LINA OS. It is normative: implementations must follow it, and any change to it is made in this file and joins `dev` under [integration.md](../policy/integration.md). Finishing this document does not mean any component is built or accepted; runtime proof belongs to the implementation issues that consume it.
+This contract fixes what LINA's components are built from and how they run: the language and the build, the vendored source, the LINA kit, the conversation loop and its model path, the non-chat adapters, the tools and their sandbox, the tools LINA uses without owning them, storage, packaging, updates, recovery and remote access. It is normative: implementations must follow it, and any change to it is made in this file and joins `dev` under [integration.md](../policy/integration.md). Finishing this document does not mean any component is built or accepted; runtime proof belongs to the implementation issues that consume it.
 
 ## Scope
 
@@ -14,9 +14,9 @@ This contract covers:
 - the conversation tools, plugin tools and the OS sandbox
 - installed tools that LINA uses without owning them, including the coding tools LINA runs as workers
 - storage engines, packaging, the `lina` command, the release manifest and the packaging and resident budget
-- updates, recovery, failure injections, remote access and LINA OS composition
+- updates, recovery, failure injections and remote access
 
-It does not cover the envelope and wire formats ([host-protocol.md](host-protocol.md)), grants, epochs, receipts and the approval policy ([main-authority.md](main-authority.md)), turn preparation, request assembly, persona, memory and compaction ([conversation-and-memory.md](conversation-and-memory.md)), the work engine, the kind-of-work rule and worker adapters ([work-and-delegation.md](work-and-delegation.md)), plugins ([integrations.md](integrations.md)), installation modes and LINA OS profiles ([product-families.md](product-families.md)), the state root, backup generations and restore ([filesystem.md](filesystem.md)), screens ([surfaces.md](surfaces.md)) or dependency and vendoring rules ([dependencies.md](../policy/dependencies.md)).
+It does not cover the envelope and wire formats ([host-protocol.md](host-protocol.md)), grants, epochs, receipts and the approval policy ([main-authority.md](main-authority.md)), turn preparation, request assembly, persona, memory and compaction ([conversation-and-memory.md](conversation-and-memory.md)), the work engine, the kind-of-work rule and worker adapters ([work-and-delegation.md](work-and-delegation.md)), plugins ([integrations.md](integrations.md)), platforms and product families ([product-families.md](product-families.md)), the state root, backup generations and restore ([filesystem.md](filesystem.md)), screens ([surfaces.md](surfaces.md)) or dependency and vendoring rules ([dependencies.md](../policy/dependencies.md)).
 
 ## Language and build
 
@@ -44,7 +44,6 @@ LINA uses some tools that the user installs and that LINA neither ships nor pins
 - LINA uses the installed tool found on `PATH` or at a path the user configured, and records the version it observed.
 - LINA lists the versions of each such tool that it has verified. A version not on the list is reported to the user as unverified, with the version found and the verified versions, and LINA still uses the tool. A function becomes unsupported only when its tool is missing, can't be started or connected to, or fails its protocol handshake, and LINA says why.
 - LINA never installs, updates or pins the tool on its own, and installs nothing inside it.
-- LINA OS may offer to install these tools for the user ([product-families.md](product-families.md)).
 - Nothing in this section applies to the Claude Agent SDK package. LINA installs that package itself, on first use of a Claude account, under Provider adapters.
 - Nor does it apply to the `claude-agent-acp` program that lets the ACP adapter drive Claude Code ([work-and-delegation.md](work-and-delegation.md#claude-code-through-acp)). The release pins it with its own lockfile, and LINA installs it on first use of the Claude Code worker, under the same rules as the Claude adapter's lockfile, without its optional packages. It always runs the person's installed `claude`; LINA still never installs, updates or pins Claude Code itself.
 
@@ -740,7 +739,7 @@ preparation or sign-in implementation.
 The ChatGPT, Gemini and Grok adapters are Go inside LINA Core. The Claude adapter is the only provider adapter that is a separate program.
 
 - The Claude adapter is LINA's own TypeScript, an external component ([Language and build](#language-and-build)) that runs on Node.js. LINA Core starts it on first use of a Claude account, as a stdio child, and stops it after an idle period. It is never started at boot and never kept warm, because the vendor runtime it wraps is large: a binary of about 270 to 290 MB per platform, and a parked process of about 230 to 260 MB. Each concurrent turn on a Claude account holds its own runtime process, so the number of concurrent turns per account is limited (see Deferred).
-- LINA does not ship a Node.js runtime. The adapter runs on the Node.js that the person has installed, found on `PATH` or at a path the person configured, as an installed tool ([Installed tools](#installed-tools)). LINA OS offers to install it. Without a usable Node.js, only Claude accounts are unsupported, and the account says why.
+- LINA does not ship a Node.js runtime. The adapter runs on the Node.js that the person has installed, found on `PATH` or at a path the person configured, as an installed tool ([Installed tools](#installed-tools)). Without a usable Node.js, only Claude accounts are unsupported, and the account says why.
 - The release carries the adapter's lockfile, with the exact version and integrity value of the Claude Agent SDK and of its platform packages. On first use of a Claude account, LINA Core installs them into the adapter's own directory from the public npm registry with `npm ci --ignore-scripts`, and verifies the lockfile against the digest in the release manifest. LINA does not redistribute the SDK package in its installers or artifacts, because it is under the vendor's own license terms. Which SDK features are used is decided by the capabilities that the runtime's start-up message reports, not by comparing version numbers.
 - An update of the adapter, its lockfile and the SDK version is part of a LINA update ([Updates](#updates)).
 
@@ -753,13 +752,12 @@ The ChatGPT, Gemini and Grok adapters are Go inside LINA Core. The Claude adapte
 
 ### Install compositions
 
-Installation modes are defined in [product-families.md](product-families.md). Each mode is one of these runtime compositions:
+Supported platforms are defined in [product-families.md](product-families.md). An install is one of these runtime compositions:
 
 | Composition | Contains |
 | --- | --- |
-| Conversation only (general Linux) | LINA Core with the Claude adapter's files, the TUI, optionally `moirai-worker`, and bubblewrap |
-| Minimal general Linux | Conversation only, plus the worker adapters, which drive a coding tool the user installed when work is delegated |
-| LINA OS main | Minimal general Linux, plus Node, LINA APP and exactly one update owner |
+| Conversation only (Linux) | LINA Core with the Claude adapter's files, the TUI, optionally `moirai-worker`, and bubblewrap |
+| Linux main | Conversation only, plus the worker adapters, which drive a coding tool the user installed when work is delegated; optionally Node and LINA APP on the same machine |
 | Additional device Node | Node. Coding work there uses the coding tool installed on that device, and is supported only after the Node's relay of the worker is verified. |
 | LINA APP only | LINA APP |
 | Development host | Not a product composition |
@@ -840,7 +838,7 @@ Every external dependency, vendored source and bundled binary follows [dependenc
 
 ## Updates
 
-LINA OS composes pinned artifacts. Replacing the OS and migrating or rolling back state schemas are separate operations.
+Replacing the host OS and migrating or rolling back state schemas are separate operations.
 
 Core's restart request is durable in `system/core/lifecycle.json`, outside every backup generation. `when_idle` continues admitting work while waiting; explicit `drain` closes admission and waits for existing effects, streams and read-only calls. Both use the admission fence in [C-05–C-07](go-core.md#start-recovery-idle-and-update), and Unknown activity blocks both. No timeout forces a restart. A successful fence durably records commitment before orderly shutdown and planned exit 75. The request remains owed across a crash until a later epoch reaches READY and records discharge; a crash before commitment leaves the request pending for another safe attempt. Restore leaves the control record alone. Changes to settings, persona and bindings do not request restart or advance the epoch.
 
@@ -928,12 +926,12 @@ starting workers. This Core-only launch exception does not widen tool or worker
 environments or forward other filtered provider variables. The token stays out
 of logs, receipts and diagnostics.
 
-Rollback restores the previous compatible composition from the kept binaries and the pre-update snapshot. Automatic rollback is allowed only while the candidate has never reached READY. A possibly started forward schema migration without an undo proof holds instead of rolling back. Binaries are never rolled back over an irreversible migration. When an update fails, the install restores the previous compatible composition, or holds: it stops, keeps the current state intact and reports. It never leaves a half-updated component running against data it can't read. LINA OS adds steps of its own around this order (see Deferred).
+Rollback restores the previous compatible composition from the kept binaries and the pre-update snapshot. Automatic rollback is allowed only while the candidate has never reached READY. A possibly started forward schema migration without an undo proof holds instead of rolling back. Binaries are never rolled back over an irreversible migration. When an update fails, the install restores the previous compatible composition, or holds: it stops, keeps the current state intact and reports. It never leaves a half-updated component running against data it can't read.
 
 - The main gets release artifacts from the private GitHub Releases of the LINA repository with the owner's `gh` authentication, and distributes Node binaries and their updates to devices over the tailnet ([releases.md](../policy/releases.md)).
 - The Claude adapter, its lockfile and the SDK package it installs are updated only as part of a LINA update, by their pin. An update never starts, stops or updates a tool the user installed, such as a worker, the `grok` command or Node.js.
 - A hash of a dirty work tree is never a release.
-- An Omarchy update is never a ready receipt for LINA's composition. Snapshot settings, a CLI version or an active service never prove an install composition, a restore or model readiness.
+- An OS snapshot or an OS update is never a restore or a ready receipt for LINA Core's composition. Snapshot settings, a CLI version or an active service never prove an install composition, a restore or model readiness.
 
 ## Recovery
 
@@ -991,15 +989,8 @@ Both client listeners run during RECOVERING and share the READY transition, inst
 
 ## LINA OS composition
 
-LINA OS is Linux based on [Omarchy](https://github.com/basecamp/omarchy) 4. It composes verified LINA Core, Node and LINA APP artifacts, pinned by manifest with version and digest, together with an operating, update and recovery environment. Its profiles are defined in [product-families.md](product-families.md).
-
-- LINA OS may offer to install Node.js, which the Claude adapter needs, as it offers a coding tool. It is the user's installed tool (see Installed tools); LINA OS neither pins nor owns it.
-- LINA OS may offer to install a coding tool such as Codex for the user, which LINA then runs as a worker. It is the user's installed tool (see Installed tools); LINA OS neither pins nor owns it.
-- An Omarchy root snapshot or an Omarchy update is never a restore or a readiness proof for LINA Core. The recovery units of LINA OS are defined in [filesystem.md](filesystem.md).
-- Omarchy 4's desktop shell is one Quickshell-based shell that provides the bar, the launcher and notifications. Its active theme is `~/.local/state/omarchy/current/theme/colors.toml`, which third-party apps follow through templates in `~/.config/omarchy/themed/` and hooks in `~/.config/omarchy/hooks/theme-set.d/`.
-- Omarchy's default packages lack `fcitx5-hangul`. LINA OS adds it with its Hangul input setup, so Korean input works in the LINA app and the terminal. The desktop entry of the LINA app on LINA OS sets the input-method environment of the shell explicitly ([surfaces.md](surfaces.md#korean-input)).
-
-How LINA APP and the TUI adapt to Omarchy is defined in [surfaces.md](surfaces.md).
+LINA OS is a separate, optional project in [thisisjun786/lina-os](https://github.com/thisisjun786/lina-os).
+Its composition, profiles and desktop environment rules live in [lina-os `docs/design.md`](https://github.com/thisisjun786/lina-os/blob/main/docs/design.md).
 
 ## Runtime acceptance
 
@@ -1032,7 +1023,6 @@ Foundation keeps one local command and one required CI result. PRs select docs, 
 - Additional build-manifest fields beyond the implemented provenance and binary records in [Release manifest](#release-manifest): added by the implementation issues that introduce the corresponding components and behavior.
 - Publishing binaries and their manifests: added to [releases.md](../policy/releases.md) when LINA is first packaged.
 - The default embedding model: chosen by the implementation issue that brings memory recall into answers.
-- LINA OS's own update steps (a pre-update snapshot check and an extra backup before drain): set during LINA OS implementation acceptance.
 - Whether LINA qualifies as a Sign in with ChatGPT client, including a LINA Core on a remote host the person owns: confirmed with the issuer before the release that depends on it.
 - Whether the Claude subscription route through the Agent SDK is allowed for LINA: the SDK's overview says third-party products may not offer claude.ai login without approval ([research](../research/provider-optimization.md#result)). Confirmed with the vendor before the release that depends on it. A Claude API-key route over the Messages API is planned as its own implementation.
 - The keep-alive interval of an idle ChatGPT refresh token, the warning period before a Claude token's year ends, the idle period after which the Claude adapter stops, and the number of concurrent turns per Claude account: set during implementation acceptance of the provider adapters.
