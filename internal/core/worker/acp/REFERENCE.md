@@ -33,6 +33,35 @@ and C-29/C-60 in [Go Core](../../../../docs/design/go-core.md#work-engine).
   and remains opt-in. Synthetic tests do not verify a vendor release. This
   change implements the existing ACP contract, not a CRW or Hermes port.
 
+## Session work tools (#749)
+
+- **Seen:** LINA's existing Core work-tool handlers validate `work.Receipt` and
+  bind claim event identities to the thread, process generation and binding
+  epoch. The receipt carries its originating turn. The shared ACP client accepts
+  stdio MCP declarations in `session/new`.
+- **Inferred:** Reusing those handlers through `worker.ToolCallEvent` and `Answer`
+  keeps Codex and ACP receipt and question semantics together. A per-session
+  local socket must reject other sessions' tokens and calls outside an active
+  turn; its process and socket must end with the session.
+- **Unknown:** This integration does not establish behavior for any installed
+  vendor version. It reuses the existing LINA contract; no external Hermes,
+  Honcho, LCM-X or CRW behavior is newly ported.
+
+The shared declarations live in `worker.WorkToolDeclarations`. `lina worker-tools`
+implements MCP initialize, ping, tools/list and tools/call over bounded JSON lines.
+`internal/clientapi` defines the private session socket request and response; it
+never retries a possibly effective call. Core authenticates the token before
+listing or calling, assigns the full execution identity itself, bounds concurrent
+calls, and expires unanswered calls on completion. The stdio bridge receives the
+socket and token through its per-session environment, not command arguments.
+The socket and its private temporary directory are removed on close and failed
+session startup. Persistent receipts remain unverified claims in the existing
+conversation ledger, separate from dispatch's independently derived receipt.
+
+The installed-Core work-tools scenario also answers `ask` through the authenticated
+waiting-card client. Question forms carry the actual worker name; the reply returns
+to the same pending MCP call before the worker submits its completion claim.
+
 ## Implementation notes
 
 Design authority: [Go Core](../../../../docs/design/go-core.md) and the contracts it cites.

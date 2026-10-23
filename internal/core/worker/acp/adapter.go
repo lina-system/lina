@@ -60,16 +60,19 @@ type Adapter struct {
 	result          Result
 	events          chan worker.Event
 	turns           sync.WaitGroup
+	tools           *toolServer
+	pending         map[string]toolPending
+	turnEnded       chan struct{}
 }
 
 var _ worker.Adapter = (*Adapter)(nil)
 
 func New(cfg Config) *Adapter {
-	return &Adapter{cfg: cfg, events: make(chan worker.Event, 256), state: worker.Unknown}
+	return &Adapter{cfg: cfg, events: make(chan worker.Event, 256), state: worker.Unknown, pending: map[string]toolPending{}}
 }
 func (a *Adapter) Name() string { return a.cfg.Profile.Name }
 func (a *Adapter) Capabilities() worker.CapabilitySet {
-	return worker.CapabilitySet{worker.StreamProgress, worker.SignalCompletion}
+	return worker.CapabilitySet{worker.StreamProgress, worker.SignalCompletion, worker.WorkTools}
 }
 func (a *Adapter) Events() <-chan worker.Event                        { return a.events }
 func (a *Adapter) Quota(context.Context) ([]provider.QuotaRow, error) { return nil, nil }
@@ -124,7 +127,7 @@ func (a *Adapter) Start(ctx context.Context, l lease.Lease, s worker.StartSpec) 
 	if err := a.Capabilities().Require(s.Required...); err != nil {
 		return worker.Thread{}, err
 	}
-	if s.Model != "" || s.Effort != "" || len(s.Tools) > 0 {
+	if s.Model != "" || s.Effort != "" {
 		return worker.Thread{}, ErrUnsupported
 	}
 	if !filepath.IsAbs(a.cfg.Profile.Command) || !filepath.IsAbs(s.Workdir) || s.TaskID == "" || s.AttemptID == "" || strings.TrimSpace(s.TaskPacket) == "" || a.cfg.Epoch == 0 {
@@ -139,6 +142,9 @@ func (a *Adapter) Start(ctx context.Context, l lease.Lease, s worker.StartSpec) 
 		return worker.Thread{}, errors.New("ACP adapter already started or closed")
 	}
 	a.started = true
+	if len(s.Tools) == 0 {
+		s.Tools = worker.WorkToolDeclarations()
+	}
 	a.spec = s
 	a.life, a.cancel = context.WithCancel(ctx)
 	a.mu.Unlock()
@@ -156,7 +162,18 @@ func (a *Adapter) Start(ctx context.Context, l lease.Lease, s worker.StartSpec) 
 		c.Close()
 		return worker.Thread{}, err
 	}
-	session, err := c.NewSession(handshake, wire.NewSessionRequest{Cwd: s.Workdir})
+	server, err := a.startTools()
+	if err != nil {
+		c.Close()
+		return worker.Thread{}, err
+	}
+	success := false
+	defer func() {
+		if !success {
+			a.tools.close()
+		}
+	}()
+	session, err := c.NewSession(handshake, wire.NewSessionRequest{Cwd: s.Workdir, McpServers: []wire.McpServer{server}})
 	if err != nil {
 		c.Close()
 		var remote *wire.RPCError
@@ -192,11 +209,13 @@ func (a *Adapter) Start(ctx context.Context, l lease.Lease, s worker.StartSpec) 
 	a.events <- worker.Event{Thread: initial, Kind: worker.ProgressEvent, Progress: &worker.Progress{Phase: "compatibility", Text: notice}}
 	thread, err := a.beginLocked(ctx, s.TaskPacket)
 	a.mu.Unlock()
+	success = err == nil
 	return thread, err
 }
 func (a *Adapter) beginLocked(ctx context.Context, text string) (worker.Thread, error) {
 	a.turn++
 	a.thread.TurnID = fmt.Sprintf("acp:%d", a.turn)
+	a.turnEnded = make(chan struct{})
 	a.state = worker.Active
 	a.cancelled = false
 	a.result.Output = ""
@@ -205,6 +224,7 @@ func (a *Adapter) beginLocked(ctx context.Context, text string) (worker.Thread, 
 	result, err := a.client.StartPrompt(ctx, wire.PromptRequest{SessionID: wire.SessionID(th.ID), Prompt: []wire.ContentBlock{{Text: &wire.ContentBlockText{Text: text}}}})
 	if err != nil {
 		a.state = worker.Dead
+		close(a.turnEnded)
 		return th, err
 	}
 	a.turns.Add(1)
@@ -256,13 +276,11 @@ func (a *Adapter) Interrupt(ctx context.Context, t worker.Thread, why worker.Rea
 	a.mu.Unlock()
 	return c.Cancel(ctx, wire.SessionID(t.ID))
 }
-func (a *Adapter) Answer(_ context.Context, t worker.Thread, _ worker.Answer) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if !a.matches(t) {
-		return ErrThread
+func (a *Adapter) Answer(ctx context.Context, t worker.Thread, answer worker.Answer) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	return ErrUnsupported
+	return a.answerTool(t, answer)
 }
 func (a *Adapter) Snapshot(ctx context.Context, t worker.Thread) (worker.ThreadSnapshot, error) {
 	if err := ctx.Err(); err != nil {
@@ -301,6 +319,9 @@ func (a *Adapter) Close(context.Context) error {
 	}
 	if c != nil {
 		c.Close()
+	}
+	if a.tools != nil {
+		a.tools.close()
 	}
 	a.turns.Wait()
 	close(a.events)

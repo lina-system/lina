@@ -2350,8 +2350,8 @@ type Adapter interface {
 - A process group kill is the stop.
   A cut turn's effects are unknown until `Snapshot` and a read of GitHub settle them.
 - Implementation notes: [C-29 work tools and approvals](../../internal/core/worker/REFERENCE.md#c-29-work-tools-and-approvals).
-- Work tools: for Codex, `lina` dynamic tools (submit receipt, ask, coordinate, read projection).
-  For the others, the receipt is built from the final result and the pull request and marked adapter-derived.
+- Work tools: for Codex, `lina` dynamic tools (submit receipt, ask, coordinate, read projection); for ACP, the same declarations through the session-scoped `lina worker-tools` MCP server.
+  Other adapters build a receipt from the final result and the pull request and mark it adapter-derived.
 - The delegated-task store records the requesting agent and conversation, done condition, artifact roots and whether application is required.
   A run binds its task, generation, worker, thread, turn and observing node.
   Admission appends an event and updates the active-run reservation in one fenced canon transaction; a task cannot admit a second active run.
@@ -2397,6 +2397,10 @@ Evidence: [worker-protocols.md](../research/worker-protocols.md).
   It creates no run for a refused session; the next opened session uses the next actual run generation.
   Other start errors retain their uncertain outcome.
   The Cursor installed-Core scenario in `e2e/m2/cursor_worker_test.go` exercises this path.
+- Each ACP session declares one `lina worker-tools` stdio MCP server in `session/new`.
+  Core owns a private Unix socket for that session. The bridge authenticates a per-session token and routes calls as bound `worker.ToolCallEvent` observations to the existing work-tool handlers.
+  Only active turns admit calls; turn completion expires pending calls, and session teardown removes its socket. No worker configuration is installed or changed.
+  The headless `e2e/m2/acp_work_tools_test.go` scenario exercises installed Core, real commits, durable worker claims and cross-session/terminal refusals.
 - An ACP session id is the thread id.
   ACP version 1 has no turn id, so Core assigns one per `session/prompt` request and binds every update, request and reply of that request to it, with the process generation and binding epoch.
 

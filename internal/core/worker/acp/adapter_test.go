@@ -183,7 +183,7 @@ func TestAllStopReasonsAndWorkerCancel(t *testing.T) {
 }
 func TestInvalidStartDoesNotLaunch(t *testing.T) {
 	a, ctx, l, s := fixture(t)
-	s.Required = worker.CapabilitySet{worker.WorkTools}
+	s.Required = worker.CapabilitySet{worker.RequestApprovals}
 	if _, err := a.Start(ctx, l, s); err == nil {
 		t.Fatal("unsupported capability accepted")
 	}
@@ -246,8 +246,9 @@ func agentFixture() {
 			ID     json.RawMessage
 			Method string
 			Params struct {
-				Cwd    string
-				Prompt []struct{ Text string }
+				Cwd        string
+				McpServers []json.RawMessage
+				Prompt     []struct{ Text string }
 			}
 		}
 		if json.Unmarshal(scan.Bytes(), &f) != nil {
@@ -261,6 +262,12 @@ func agentFixture() {
 		case "initialize":
 			reply(f.ID, map[string]any{"protocolVersion": 1, "agentInfo": map[string]any{"name": "fixture", "version": "fixture-9"}})
 		case "session/new":
+			if file := os.Getenv("ACP_MCP_CAPTURE"); file != "" {
+				raw, _ := json.Marshal(f.Params.McpServers)
+				if err := os.WriteFile(file, raw, 0600); err != nil {
+					os.Exit(16)
+				}
+			}
 			cwd, _ := os.Getwd()
 			if f.Params.Cwd != cwd {
 				os.Exit(13)
@@ -368,5 +375,33 @@ func TestUnverifiedVersionIsReportedBeforeWorkAndStillRuns(t *testing.T) {
 	}
 	if f := terminal(t, ctx, a); f.Status != worker.Done {
 		t.Fatal("unverified version refused", f)
+	}
+}
+
+func TestSessionDeclaresWorkerTools(t *testing.T) {
+	a, ctx, l, spec := fixture(t)
+	capture := filepath.Join(t.TempDir(), "servers.json")
+	a.cfg.Environment = append(a.cfg.Environment, "ACP_MCP_CAPTURE="+capture)
+	if _, err := a.Start(ctx, l, spec); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(capture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var servers []struct {
+		Name, Command string
+		Args          []string
+		Env           []struct{ Name, Value string }
+	}
+	if err = json.Unmarshal(raw, &servers); err != nil {
+		t.Fatal(err)
+	}
+	if len(servers) != 1 {
+		t.Fatalf("session/new has %d MCP servers; want one lina worker-tools server", len(servers))
+	}
+	s := servers[0]
+	if s.Name != "lina" || !filepath.IsAbs(s.Command) || len(s.Args) == 0 || s.Args[0] != "worker-tools" || len(s.Env) != 2 {
+		t.Fatal("invalid per-session MCP declaration")
 	}
 }
