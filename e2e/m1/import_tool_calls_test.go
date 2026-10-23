@@ -8,61 +8,23 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/thisisjun786/lina/internal/addons/importer/hermes"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/compaction"
+	"github.com/thisisjun786/lina/internal/core/ledger"
 )
 
-func TestM1ImportedToolCallsExpandInRunningCore(t *testing.T) {
+func TestM1ImportedToolCallsInstalled(t *testing.T) {
 	t.Parallel()
 	const content = "Inspect the archived receipt."
 	const arguments = `{"path":"/work/archive-receipt.txt"}`
-	var eventID atomic.Value
-	var requests atomic.Int32
-	server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req struct{ Input, Tools []json.RawMessage }
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Error(err)
-			return
-		}
-		if requests.Add(1)%2 == 1 {
-			if !toolReachable(req.Tools, "expand") {
-				t.Error("running Core did not offer expand")
-				emitResponse(w, "Expansion unavailable.", true)
-				return
-			}
-			emitPersonaCall(w, "expand-import", "expand", map[string]any{"id": "event:" + eventID.Load().(string)})
-			return
-		}
-		var result struct{ Output string }
-		if err := json.Unmarshal(req.Input[len(req.Input)-1], &result); err != nil {
-			t.Error(err)
-		}
-		var receipt struct {
-			Code   string
-			Output compaction.ExpansionPage
-		}
-		if err := json.Unmarshal([]byte(result.Output), &receipt); err != nil || receipt.Code != "ok" || len(receipt.Output.Events) != 1 {
-			t.Errorf("expand receipt: %s: %v", result.Output, err)
-		} else {
-			var body struct {
-				Content string
-				Calls   []struct {
-					Type            string
-					ID              string `json:"call_id"`
-					Name, Arguments string
-				} `json:"tool_calls"`
-			}
-			if err := json.Unmarshal([]byte(receipt.Output.Events[0].Body), &body); err != nil || body.Content != content || len(body.Calls) != 1 {
-				t.Errorf("expanded body: %+v: %v", body, err)
-			} else if c := body.Calls[0]; c.Type != "function_call" || c.ID != "archive-read" || c.Name != "read_file" || c.Arguments != arguments {
-				t.Errorf("expanded call: %+v", c)
-			}
-		}
-		emitResponse(w, "The archived call read /work/archive-receipt.txt.", true)
-	})))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("import unexpectedly called a model")
+		http.Error(w, "unexpected model request", http.StatusInternalServerError)
+	}))
 	defer server.Close()
 	h, start := installedConversationHarness(t, server.URL)
 	ctx, cancel := context.WithTimeout(t.Context(), 8*operationTimeout)
@@ -120,15 +82,101 @@ func TestM1ImportedToolCallsExpandInRunningCore(t *testing.T) {
 		t.Fatal(err)
 	}
 	db.Close()
-	eventID.Store(id)
-	for _, key := range []string{"expand-import", "expand-after-restart"} {
+	// The installed command publishes into the same canon Core reopens.
+	// Read that durable evidence through the existing expansion and summary
+	// services; this import test adds no conversation tool or grant surface.
+	for range 2 {
 		core = start(true)
-		c, conversation := conversationClient(t, h)
-		admittedTurn(t, h, c, conversation, key, "Read the imported event "+id+" with expand.")
+		c, _ = conversationClient(t, h)
 		c.Close()
+		readImportedToolCalls(t, h, agent, id, content, arguments)
 		h.stopCore(core)
 	}
-	if requests.Load() != 4 {
-		t.Errorf("model requests=%d, want two tool calls and two results", requests.Load())
+}
+
+func readImportedToolCalls(t *testing.T, h *harness, agent, id, content, arguments string) {
+	t.Helper()
+	db, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close(context.Background())
+	events := ledger.New(db, nil)
+	event, err := events.Get(h.ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := func(raw string) {
+		t.Helper()
+		var body struct {
+			Content string
+			Calls   []struct {
+				Type            string
+				ID              string `json:"call_id"`
+				Name, Arguments string
+			} `json:"tool_calls"`
+		}
+		if err := json.Unmarshal([]byte(raw), &body); err != nil || body.Content != content || len(body.Calls) != 1 {
+			t.Fatalf("imported body: %+v %v", body, err)
+		}
+		if c := body.Calls[0]; c.Type != "function_call" || c.ID != "archive-read" || c.Name != "read_file" || c.Arguments != arguments {
+			t.Fatalf("imported call: %+v", c)
+		}
+	}
+	raw, err := (compaction.Expansion{DB: db, Events: events}).Read(h.ctx, agent, "event:"+id, 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var page compaction.ExpansionPage
+	if err = json.Unmarshal(raw, &page); err != nil || len(page.Events) != 1 {
+		t.Fatalf("expanded events: %s %v", raw, err)
+	}
+	check(page.Events[0].Body)
+	var segment compaction.PassSegment
+	if err = db.Read(h.ctx, func(tx *canon.Tx) error {
+		rows, err := tx.QueryContext(h.ctx, "SELECT id FROM conv_event WHERE conversation_id=? AND scaffold_kind IS NULL ORDER BY rowid", event.ConversationID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id string
+			if err = rows.Scan(&id); err != nil {
+				return err
+			}
+			segment.Records = append(segment.Records, compaction.Record{ID: id})
+		}
+		return rows.Err()
+	}); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	builder := compaction.Builder{Store: compaction.New(db), Events: events, Agent: agent, Conversation: event.ConversationID, Model: "fixture", Now: time.Now, NextID: func() string { return "summary-proof" }, Generate: func(_ context.Context, s compaction.PassSegment) (compaction.Text, error) {
+		for _, r := range s.Records {
+			if r.ID == id {
+				var body struct{ Body string }
+				if err := json.Unmarshal(r.Item, &body); err != nil {
+					t.Fatal(err)
+				}
+				check(body.Body)
+				found = true
+			}
+		}
+		return compaction.Text{Requests: "none", Topics: "archive", Actions: "read", Values: arguments, Omitted: "none"}, nil
+	}}
+	if _, err = builder.Summarize(h.ctx, segment); err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Fatal("summary omitted imported assistant")
+	}
+	key := hermes.LegacyKey{System: string(hermes.HermesLCM), Instance: "fixture", Kind: "messages", Key: "2"}
+	ref, err := hermes.Resolve(h.ctx, db, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, err := hermes.Reverse(h.ctx, db, key)
+	if err != nil || hermes.RowHash(row) != ref.SourceHash {
+		t.Fatalf("source round trip: %v", err)
 	}
 }

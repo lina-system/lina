@@ -412,7 +412,6 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 	for _, prepare := range []toolPreparer{
 		r.preparePersonaTools,
 		r.prepareSkillTools,
-		r.prepareExpandTools,
 		r.prepareRecordTools,
 		r.prepareResultTools,
 		r.prepareGoalWorkTools,

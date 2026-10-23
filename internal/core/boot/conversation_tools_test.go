@@ -35,7 +35,6 @@ func TestConversationToolFamilies(t *testing.T) {
 	for name, prepare := range map[string]toolPreparer{
 		"persona":     r.preparePersonaTools,
 		"skills":      r.prepareSkillTools,
-		"expand":      r.prepareExpandTools,
 		"records":     r.prepareRecordTools,
 		"results":     r.prepareResultTools,
 		"methodology": r.prepareMethodologyTools,

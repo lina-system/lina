@@ -323,7 +323,7 @@ func assertTurnRequests(t *testing.T, p *turnProvider, count int) {
 		want := []string{
 			"change_persona", "undo_persona", "fill_persona_setting", "fill_work_method",
 			"record_emotion", "set_emotion_expression", "record_relationship", "ask_question", "resolve_question", "remember_name",
-			"skill_notices", "skill_maintenance", "skill_index", "read_skill", "write_skill", "undo_skill", "expand",
+			"skill_notices", "skill_maintenance", "skill_index", "read_skill", "write_skill", "undo_skill",
 			"query_records", "read_record", "write_record", "promote_memo", "undo_record", "propose_candidate", "list_candidates",
 			"present_result", "read_result", "calculate",
 			"plan_index", "read_plan", "draft_plan", "start_run",
