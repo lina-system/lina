@@ -2702,6 +2702,7 @@ Package tests cover civil-time transitions, concurrent claims and SIGKILL at bot
 - `progress.Compute` builds one line per running 일 and 목표 per [work-and-delegation.md](work-and-delegation.md#progress-line): name, stage word and bar, just finished (the outcome line of the latest landing, built from structured fields and the title), next, and a waiting mark.
   Unobserved values are unknown, never zero.
   State words are codes; clients own the Korean and English catalogs.
+- Worker title/current-step observations are carried on the existing adapter event, fenced to its execution, and retained in the work ledger only when changed. Progress Now uses the same defanged observation in durable and conversation-started work. The optional observation adds no endpoint or required client field; old records retain the activity fallback.
 - Conversation-worker progress consumes the same `workerListSource` observations and `runs.RunningList` projection as the running list.
   Adapter snapshots are collected outside canonical transactions; idle sessions are absent, unavailable snapshots remain unknown, and failed sessions use the same `running_seen` acknowledgement.
   The optional execution-state code is distinct from the unobserved plan stage, percent, last task and next task.
