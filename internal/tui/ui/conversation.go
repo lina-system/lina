@@ -45,6 +45,8 @@ type inputHistory struct {
 
 type textPager struct {
 	board                    *boardView
+	records                  *recordPager
+	recordID                 string
 	tool                     bool
 	developer, developerBusy bool
 	developerID              string
@@ -275,6 +277,11 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		}
 		if handled, command := m.boardCommand(text); handled {
 			m.reduceInput(state.EditDraft{})
+			return command
+		}
+		if handled, command := m.recordsCommand(text); handled {
+			m.reduceInput(state.EditDraft{})
+			m.conversation.undo = nil
 			return command
 		}
 		if handled, command := m.developerCommand(text); handled {
@@ -635,6 +642,11 @@ func (m *shellModel) pagerKey(msg tea.KeyMsg, name string) tea.Cmd {
 	p := &m.conversation.pager
 	if p.board != nil && !p.searching {
 		if handled, cmd := m.boardKey(name); handled {
+			return cmd
+		}
+	}
+	if p.records != nil && !p.searching {
+		if handled, cmd := m.recordsKey(name); handled {
 			return cmd
 		}
 	}

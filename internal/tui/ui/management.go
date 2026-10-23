@@ -167,6 +167,11 @@ func (s *managementSession) request(ctx context.Context, c *clientapi.Client, p 
 		}
 	case protocol.RunningGet:
 		id, err = c.Running(ctx, p)
+	case protocol.RecordRequest:
+		id, err = c.Record(ctx, p)
+		if err == nil {
+			s.model.conversation.pager.recordID = id
+		}
 	case protocol.AgentRequest:
 		id, err = c.Agent(ctx, p)
 	case protocol.MemoryRequest:
@@ -193,6 +198,13 @@ func (s *managementSession) response(ctx context.Context, c *clientapi.Client, e
 			return true, nil
 		}
 	}
+	if _, records := request.(protocol.RecordRequest); records {
+		p := &m.conversation.pager
+		if !p.open || p.records == nil || p.recordID != *e.ReplyTo {
+			return true, nil
+		}
+		p.records.busy = false
+	}
 	if _, developer := request.(protocol.ProgressGet); developer {
 		p := &m.conversation.pager
 		if !p.open || !p.developer || p.developerID != *e.ReplyTo {
@@ -209,6 +221,12 @@ func (s *managementSession) response(ctx context.Context, c *clientapi.Client, e
 		return true, nil
 	}
 	switch p := e.Payload.(type) {
+	case protocol.RecordResult:
+		original, ok := request.(protocol.RecordRequest)
+		if !ok {
+			return true, errStream
+		}
+		return true, m.recordResponse(original, p)
 	case protocol.ProgressDigest:
 		lines := append([]string{}, p.Lines...)
 		lines = append(lines, fmt.Sprintf(design.Text(m.styles.options.Language, "progress.digest_count"), p.Total, p.More))
