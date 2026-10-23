@@ -105,8 +105,23 @@ enough to compile and verify locally but is not shippable. With
 `LINA_NOTARY_PROFILE` set it also submits the bundle to notarytool and staples
 the ticket.
 
-The core's tests run in the Linux foundation check. The bundle build, the
-signature check and notarization need macOS; their result is recorded as
-evidence for the release that ships the bundle. The macOS cells of the
+The core's tests run in the Linux foundation check. The bundle build and the
+signature check run on an Apple silicon hosted macOS runner in
+[`macos-unlock-plugin.yml`](../../../.github/workflows/macos-unlock-plugin.yml),
+which runs `build.sh`, then `codesign --verify --strict` and `lipo -archs` on the
+result, and keeps the bundle as a build artifact. The job's step summary holds
+the compiler, signature and architecture output for the reviewed head.
+
+That job signs with LINA's Developer ID identity when the repository carries the
+certificate and the hardened runtime flag either way. The identity comes from
+four secrets: `MACOS_SIGNING_P12` (base64 of the exported certificate and key),
+`MACOS_SIGNING_P12_PASSWORD`, `MACOS_SIGN_IDENTITY` (the identity's common name)
+and `MACOS_TEAM_ID`. Without them the job builds with an ad-hoc signature, which
+proves the bundle compiles and verifies but is not shippable; the job summary
+records which path ran. Notarization stays optional and needs
+`LINA_NOTARY_PROFILE` on a machine where the bundle is released.
+
+The macOS cells of the
 [non-competition matrix](../../../docs/design/non-competition.md#matrix) stay
-`unverified until evidence` until the locked-Mac eval produces its record.
+`unverified until evidence` until the locked-Mac eval produces its record. A
+build and a signature check are not that record.
