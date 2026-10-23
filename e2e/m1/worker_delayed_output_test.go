@@ -33,7 +33,7 @@ func TestM2WorkerDelayedCompletionOutput(t *testing.T) {
 			Type, Output, Content string
 			CallID                string `json:"call_id"`
 		}
-		if len(req.Input) == 0 || json.Unmarshal(req.Input[len(req.Input)-1], &last) != nil {
+		if len(req.Input) == 0 || json.Unmarshal(fixtureLatestInput(req.Input), &last) != nil {
 			t.Error("missing model input")
 			return
 		}

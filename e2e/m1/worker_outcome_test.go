@@ -60,7 +60,7 @@ func installedWorkerOutcome(t *testing.T, pendingAtRestart bool) {
 			Type, Output, Content string
 			CallID                string `json:"call_id"`
 		}
-		json.Unmarshal(req.Input[len(req.Input)-1], &last)
+		json.Unmarshal(fixtureLatestInput(req.Input), &last)
 		if restarted.Load() {
 			if !strings.Contains(raw, "LINA_WORKER_RESULT") {
 				t.Error("restart model context lost the recorded worker outcome")

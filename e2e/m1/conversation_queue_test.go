@@ -164,7 +164,7 @@ func TestM1QueuedConversationPreparation(t *testing.T) {
 				}
 			}
 			var current struct{ Role, Content string }
-			if len(request.Input) == 0 || json.Unmarshal(request.Input[len(request.Input)-1], &current) != nil || current.Role != "user" || current.Content != queuedInput {
+			if len(request.Input) == 0 || json.Unmarshal(fixtureTurnInput(request.Input), &current) != nil || current.Role != "user" || current.Content != queuedInput {
 				t.Error("queued input is not in the current-input slot")
 			}
 			emitResponse(w, queuedReply, true)

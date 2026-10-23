@@ -51,7 +51,7 @@ func TestM2TimerRecoveryInstalledCore(t *testing.T) {
 			Output  string `json:"output"`
 			Content string `json:"content"`
 		}
-		if err := json.Unmarshal(req.Input[len(req.Input)-1], &last); err != nil {
+		if err := json.Unmarshal(fixtureLatestInput(req.Input), &last); err != nil {
 			t.Error(err)
 			return
 		}

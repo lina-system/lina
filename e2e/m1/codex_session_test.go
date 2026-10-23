@@ -507,17 +507,9 @@ func TestM2InstalledCodexLive(t *testing.T) {
 
 // Existing adapter journeys explicitly handle the additional persona turns.
 func respondWorkerCompletion(w http.ResponseWriter, inputs []json.RawMessage, result string) bool {
-	// Discovery adds call/results after the current input. Classify the latest
-	// user input, rather than mistaking a load_tools receipt for a new request.
+	// The packet and deferred-tool receipts follow the triggering event.
 	var item struct{ Role, Content string }
-	found := false
-	for i := len(inputs) - 1; i >= 0; i-- {
-		if json.Unmarshal(inputs[i], &item) == nil && item.Role == "user" {
-			found = true
-			break
-		}
-	}
-	if !found || !strings.Contains(item.Content, `<external_evidence origin="worker-session:`) {
+	if json.Unmarshal(fixtureTurnInput(inputs), &item) != nil || item.Role != "user" || !strings.Contains(item.Content, `<external_evidence origin="worker-session:`) {
 		return false
 	}
 	if result == "" {

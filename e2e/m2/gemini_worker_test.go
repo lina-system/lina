@@ -54,7 +54,7 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
    const git=(...args)=>execFileSync('git',args,{encoding:'utf8'}).trim();
    git('switch','-c',definition.branch);fs.writeFileSync('result.txt','ACP result\n');git('add','result.txt');git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','Create result');
    const head=git('rev-parse','HEAD');
-   fs.writeFileSync(path.join(root,'pr.json'),JSON.stringify({number:17,url:'https://github.com/fixture/project/pull/17',state:'OPEN',isDraft:false,headRefName:definition.branch,baseRefName:'dev',headRefOid:head,statusCheckRollup:[{__typename:'CheckRun',name:'foundation',status:'COMPLETED',conclusion:'SUCCESS'}],reviews:[{state:'COMMENTED',body:'No blocking findings.',commit:{oid:head}}]}));
+   fs.writeFileSync(path.join(root,'pr.json'),JSON.stringify({number:17,url:git('remote','get-url','origin').replace(/\.git$/,'')+'/pull/17',state:'OPEN',isDraft:false,headRefName:definition.branch,baseRefName:'dev',headRefOid:head,statusCheckRollup:[{__typename:'CheckRun',name:'foundation',status:'COMPLETED',conclusion:'SUCCESS'}],reviews:[{state:'COMMENTED',body:'No blocking findings.',commit:{oid:head}}]}));
    reply(m.id,{stopReason:'end_turn'});
   },5);break;
  }
