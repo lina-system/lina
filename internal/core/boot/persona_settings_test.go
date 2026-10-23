@@ -64,7 +64,9 @@ func TestPersonaSettingsExcludeHiddenEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	p.WorkMethod = `{"schema":1,"preset":"lina","ask":{"form":"choices","per_turn":1},"fill":["ask.form","ask.per_turn"]}`
-	_, packet, err := r.preparePersonaTools(t.Context(), "settings", ledger.Event{ID: "input"}, p, state, time.Now(), map[string]loop.Tool{}, &questionTurn{})
+	input := &toolPreparation{ctx: t.Context(), event: ledger.Event{ID: "input"}, persona: p, settings: state, at: time.Now(), questions: &questionTurn{}}
+	_, err = r.preparePersonaTools("settings", input, map[string]loop.Tool{})
+	packet := input.packet
 	if err != nil {
 		t.Fatal(err)
 	}
