@@ -24,7 +24,22 @@ import (
 // and a 120x34 PTY. It does not stand in for the live-model or 24-hour acceptance.
 func TestM1TUIChatPasteInstalledCore(t *testing.T) {
 	t.Parallel()
+	testTUIChatPasteInstalledCore(t, false)
+}
+
+func TestM1TUIChatPasteContinuationInstalledCore(t *testing.T) {
+	t.Parallel()
+	testTUIChatPasteInstalledCore(t, true)
+}
+
+func testTUIChatPasteInstalledCore(t *testing.T, split bool) {
+	t.Helper()
 	token := "ghp_" + strings.Repeat("ChatPasteRegression", 3)
+	forbidden := token
+	const suffix = "RemainingPrivateTokenSuffix"
+	if split {
+		forbidden = suffix
+	}
 	var calls atomic.Int32
 	received, reply := make(chan struct{}), make(chan struct{})
 	var replyOnce sync.Once
@@ -36,7 +51,7 @@ func TestM1TUIChatPasteInstalledCore(t *testing.T) {
 			return
 		}
 		body := string(mustJSON(t, req.Input))
-		if strings.Contains(body, token) {
+		if strings.Contains(body, token) || strings.Contains(body, forbidden) {
 			t.Error("pasted credential reached model or summary input")
 		}
 		if !strings.Contains(body, "오늘의 확인") {
@@ -62,8 +77,14 @@ func TestM1TUIChatPasteInstalledCore(t *testing.T) {
 	c, _ := conversationClient(t, h)
 	terminal, _ := h.startConversationTUI(120, 34, "TERM=xterm-256color", "LC_ALL=ko")
 	chatPasteScreen(t, h, terminal, "fresh", func(s string) bool { return strings.Contains(s, "Ctrl+D") }, token)
-	h.keys(terminal, "\x1b[200~오늘의 확인 "+token+" 붙여넣기 끝\x1b[201~")
-	chatPasteScreen(t, h, terminal, "pasted", func(s string) bool { return strings.Contains(s, "붙여넣기 끝") }, token)
+	if split {
+		h.keys(terminal, "\x1b[200~오늘의 확인 "+token+"\x1b[201~")
+		chatPasteScreen(t, h, terminal, "first-fragment", func(s string) bool { return strings.Contains(s, "[REDACTED]") }, token)
+		h.keys(terminal, "\x1b[200~"+suffix+" 붙여넣기 끝\x1b[201~")
+	} else {
+		h.keys(terminal, "\x1b[200~오늘의 확인 "+token+" 붙여넣기 끝\x1b[201~")
+	}
+	chatPasteScreen(t, h, terminal, "pasted", func(s string) bool { return strings.Contains(s, "붙여넣기 끝") }, forbidden)
 	h.keys(terminal, "\r")
 	select {
 	case <-received:
@@ -72,9 +93,9 @@ func TestM1TUIChatPasteInstalledCore(t *testing.T) {
 	}
 	chatPasteScreen(t, h, terminal, "local-echo", func(s string) bool {
 		return strings.Contains(s, "붙여넣기 끝") && strings.Contains(s, "[REDACTED]")
-	}, token)
+	}, forbidden)
 	release()
-	chatPasteScreen(t, h, terminal, "answered", func(s string) bool { return strings.Contains(s, "민감한 값 없이 확인했어요.") }, token)
+	chatPasteScreen(t, h, terminal, "answered", func(s string) bool { return strings.Contains(s, "민감한 값 없이 확인했어요.") }, forbidden)
 	for {
 		frame, err := c.Receive(h.ctx)
 		if err != nil {
@@ -88,17 +109,18 @@ func TestM1TUIChatPasteInstalledCore(t *testing.T) {
 	chatPasteScreen(t, h, terminal, "recalled", func(s string) bool {
 		rows := strings.Split(strings.TrimSuffix(s, "\n"), "\n")
 		return len(rows) >= 2 && strings.Contains(rows[len(rows)-2], "붙여넣기 끝")
-	}, token)
+	}, forbidden)
 	h.keys(terminal, "\x04")
 	terminal.process.wait(t, 0)
 	c.Close()
 	h.stopCore(core)
 	chatPasteAssertNoPersistedSecret(t, h.root, token)
+	chatPasteAssertNoPersistedSecret(t, h.root, forbidden)
 
 	core = start(true)
 	// Reopen directly: startConversationTUI's one-use readiness link is retained.
 	terminal = h.startTerminalSize([]string{"TERM=xterm-256color", "LC_ALL=ko"}, false, true, 120, 34)
-	chatPasteScreen(t, h, terminal, "restored", func(s string) bool { return strings.Contains(s, "민감한 값 없이 확인했어요.") }, token)
+	chatPasteScreen(t, h, terminal, "restored", func(s string) bool { return strings.Contains(s, "민감한 값 없이 확인했어요.") }, forbidden)
 	if calls.Load() != 1 {
 		t.Fatal("restart replayed the provider request")
 	}
