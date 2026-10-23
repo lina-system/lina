@@ -854,6 +854,10 @@ approval do not create another notification.
 The listener registers decision handlers through the existing operation map.
 Approval decisions use Core's authority transaction and authenticated connection
 facts; question forms use the owning question source and cannot grant an approval.
+A question answer that matches the card but fails the worker's form schema is
+reported as malformed and leaves the card open. The draft remains, and the card
+says the value was not accepted, so the person can correct, decline, or cancel.
+An optional form field may be left blank; that blank is omitted from the answer.
 Installed Core registers approval operations against its already-open authority
 instance and advertises `waiting` alongside its other capabilities. Subscription
 admission refreshes that projection from canon; identical records do not advance

@@ -65,6 +65,7 @@ type workerSession struct {
 	started             time.Time
 	activity            string
 	doing               string
+	doingTurn           string
 	approvals           map[string]worker.Event
 	questions           map[string]*workerQuestion
 	output              string

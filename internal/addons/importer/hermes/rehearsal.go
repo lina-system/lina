@@ -2,7 +2,10 @@
 package hermes
 
 import (
+	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -53,6 +56,48 @@ type RehearsalReport struct {
 // Rehearse uses only the prepared snapshot. It neither opens nor writes canon.
 // All keys are checked; the deterministic sample is an additional report aid.
 func (p *Plan) Rehearse() (RehearsalReport, error) {
+	p.prepareRehearsal()
+	// Reports belong to callers; copying preserves immutable speaker decisions
+	// too, whose private fields deliberately cannot be decoded from JSON.
+	report := p.rehearsalReport
+	report.Mappings = slices.Clone(report.Mappings)
+	for i := range report.Mappings {
+		report.Mappings[i].OwnerChannels = slices.Clone(report.Mappings[i].OwnerChannels)
+		report.Mappings[i].CandidateOwnerChannels = slices.Clone(report.Mappings[i].CandidateOwnerChannels)
+	}
+	report.Tables = slices.Clone(report.Tables)
+	report.Inventory = slices.Clone(report.Inventory)
+	for i := range report.Inventory {
+		report.Inventory[i].Columns = slices.Clone(report.Inventory[i].Columns)
+		report.Inventory[i].Kinds = maps.Clone(report.Inventory[i].Kinds)
+	}
+	report.Speakers = slices.Clone(report.Speakers)
+	for i := range report.Speakers {
+		report.Speakers[i].Events = slices.Clone(report.Speakers[i].Events)
+	}
+	report.MissingBytes = slices.Clone(report.MissingBytes)
+	report.Gaps = slices.Clone(report.Gaps)
+	report.SampledReferences = slices.Clone(report.SampledReferences)
+	report.UIDLineageMappings = slices.Clone(report.UIDLineageMappings)
+	for i := range report.UIDLineageMappings {
+		report.UIDLineageMappings[i].CandidateLineages = slices.Clone(report.UIDLineageMappings[i].CandidateLineages)
+	}
+	return report, p.rehearsalErr
+}
+
+func (p *Plan) prepareRehearsal() {
+	p.rehearsalOnce.Do(func() {
+		p.rehearsalReport, p.rehearsalErr = p.rehearse()
+		if p.rehearsalErr != nil {
+			return
+		}
+		var encoded []byte
+		encoded, p.rehearsalErr = json.Marshal(p.rehearsalReport)
+		p.rehearsalJSON = string(encoded)
+	})
+}
+
+func (p *Plan) rehearseSnapshot() (RehearsalReport, error) {
 	report := RehearsalReport{Conversations: len(p.conversations), Inventory: p.inventory, Mappings: p.mappings, AmbiguousUIDRows: len(p.uidLineages), UIDLineageMappings: p.uidLineages}
 	counts := map[string]*Reconciliation{}
 	destinations := map[string]map[string]bool{}
