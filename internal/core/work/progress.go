@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/thisisjun786/lina/internal/core/work/observation"
 )
 
 // ReportProgress records an observation from the current worker run, never a
@@ -23,4 +25,13 @@ func (s *Service) ReportActivity(ctx context.Context, taskID, runID string, sequ
 		return ErrInvalid
 	}
 	return s.append(ctx, Event{Key: fmt.Sprintf("worker-activity:%s:%d", runID, sequence), TaskID: taskID, RunID: runID, Kind: "worker_activity", Value: activity})
+}
+
+// ReportDoing preserves only the defanged observation, not its source records.
+func (s *Service) ReportDoing(ctx context.Context, taskID, runID string, sequence uint64, value observation.Snapshot) error {
+	if sequence == 0 || value.Since.IsZero() {
+		return ErrInvalid
+	}
+	value.Line = observation.Clean(value.Line)
+	return s.append(ctx, Event{Key: fmt.Sprintf("worker-doing:%s:%d", runID, sequence), TaskID: taskID, RunID: runID, Kind: "worker_doing", Doing: &value})
 }
