@@ -315,7 +315,7 @@ func Request(ep Episode, candidates map[string]string, model, effort string, bui
 	instructions := strings.Join([]string{p.Core, p.DefaultVoice, p.UserVoice, p.GrowthSnapshot}, "\n")
 	switch ep.Evidence.Assembly.InstructionFormat {
 	case "": // Exact legacy layer assembly, still checked against its digest.
-	case "agent-v1", "persona-v1", "persona-tui-v1", "persona-tui-work-method-v1":
+	case "agent-v1", "persona-v1", "persona-tui-v1", "persona-tui-work-method-v1", "persona-tui-work-method-v2":
 		a := ep.Evidence.Assembly
 		if build == nil || a.AgentName == "" || a.OwnerPersonID == "" {
 			return provider.Request{}, Exclusion("missing_assembly")

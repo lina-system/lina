@@ -62,6 +62,13 @@ func TestOlderSchemaClientReceivesPresentationAdditions(t *testing.T) {
 	delete(fields, "tool_name")
 	turn["properties"], _ = json.Marshal(fields)
 	defs["turn_state"], _ = json.Marshal(turn)
+	var item map[string]json.RawMessage
+	_ = json.Unmarshal(defs["item_done"], &item)
+	var itemFields map[string]json.RawMessage
+	_ = json.Unmarshal(item["properties"], &itemFields)
+	delete(itemFields, "details")
+	item["properties"], _ = json.Marshal(itemFields)
+	defs["item_done"], _ = json.Marshal(item)
 	var running map[string]json.RawMessage
 	_ = json.Unmarshal(defs["running_update"], &running)
 	var runningFields map[string]json.RawMessage
@@ -138,6 +145,7 @@ const oldClientTest = `// SPDX-License-Identifier: Apache-2.0
 package protocol
 import ("encoding/json"; "os"; "path/filepath"; "reflect"; "slices"; "testing")
 func TestOldClient(t *testing.T) {
+ if _, present := reflect.TypeFor[ItemDone]().FieldByName("Details"); present { t.Fatal("test client knows notice details") }
  if _, present := reflect.TypeFor[TurnState]().FieldByName("Phase"); present { t.Fatal("test client knows phase") }
  if _, present := reflect.TypeFor[TurnState]().FieldByName("ToolName"); present { t.Fatal("test client knows tool_name") }
  for _, name := range []string{"State", "Summary", "Reason"} {
@@ -149,6 +157,12 @@ func TestOldClient(t *testing.T) {
  var client ClientDecoder
  for _, name := range []string{"phase_tool", "tool_started", "tool_finished_ok", "activity_snapshot", "phase_snapshot", "phase_streaming", "item_done", "running_localized", "running_snapshot"} {
   data, err := os.ReadFile(filepath.Join(os.Getenv("PROTOCOL_FIXTURES"), "conversation", name+".json")); if err != nil { t.Fatal(err) }
+  if name == "item_done" {
+   var envelope map[string]any
+   if err := json.Unmarshal(data, &envelope); err != nil { t.Fatal(err) }
+   envelope["payload"].(map[string]any)["details"] = "Request: 181354"
+   data, err = json.Marshal(envelope); if err != nil { t.Fatal(err) }
+  }
   got, err := client.Decode(data); if err != nil { t.Fatalf("%s: %v", name, err) }
   if name == "tool_started" || name == "tool_finished_ok" { if got != nil { t.Fatal("unknown tool activity was dispatched") }; continue }
   if got == nil { t.Fatalf("%s: known event ignored", name) }

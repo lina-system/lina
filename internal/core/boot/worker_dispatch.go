@@ -169,6 +169,11 @@ func (r *conversationRuntime) bindDispatchedWorker(record dispatch.Record, adapt
 	r.workers.mu.Unlock()
 	handle := func(event worker.Event) {
 		e.observeActivity(event)
+		if event.Kind == worker.ProgressEvent && event.Progress.Phase == "started" {
+			if err := e.resumeSteering(e.origin.ctx); err != nil {
+				e.bridgeFailure(err)
+			}
+		}
 		defer e.origin.notifyOwnerViews()
 		switch event.Kind {
 		case worker.ApprovalEvent:
@@ -182,6 +187,9 @@ func (r *conversationRuntime) bindDispatchedWorker(record dispatch.Record, adapt
 				e.stopRequest(event.Progress.ItemID)
 			}
 		case worker.FinishEvent:
+			if err := e.finishSteering(e.origin.ctx, event); err != nil {
+				e.bridgeFailure(err)
+			}
 			e.stopRequests(event.Thread.TurnID)
 		case worker.UsageEvent:
 		}

@@ -61,11 +61,9 @@ func TestAuthoredResultContentAndHistoryInstalledCore(t *testing.T) {
 			frames := admittedTurn(t, h, c, conversation, "authored-result", "Present the result.")
 			var live protocol.Result
 			for _, frame := range frames {
-				// A later context-limit diagnostic is a separate result. Keep
-				// the authored card's identity rather than the last card seen.
-				if card, ok := frame.Payload.(protocol.Result); ok && card.Stream != nil && card.Stream.Key == "result-card:"+card.ResultID {
+				if card, ok := frame.Payload.(protocol.Result); ok {
 					if live.ResultID != "" {
-						t.Fatal("authored result published twice")
+						t.Fatal("authored result published twice or replaced by a diagnostic")
 					}
 					live = card
 				}
@@ -127,9 +125,8 @@ func TestAuthoredResultContentAndHistoryInstalledCore(t *testing.T) {
 				waitComposerReady(t, h, terminal)
 				waitScreen(t, h, terminal, design.Text(design.English, "live"))
 				waitScreen(t, h, terminal, "Authored result")
-				// Select the authored card before a possible request-limit card.
-				h.keys(terminal, "\t\x1b[A\x0f\x1b[F")
-				waitScreen(t, h, terminal, "RESULT-END")
+				h.keys(terminal, "\x0f\x1b[F") // Open the card and follow its end as pages load.
+				t.Logf("Authored result pager capture:\n%s", screenText(waitScreen(t, h, terminal, "RESULT-END")))
 				h.keys(terminal, "\x04")
 				terminal.process.wait(t, 0)
 				h.expectTerminalRestored(terminal)
@@ -165,14 +162,11 @@ func TestAuthoredResultContentAndHistoryInstalledCore(t *testing.T) {
 				if row.Kind != protocol.KindResult {
 					continue
 				}
+				count++
 				var restored protocol.Result
 				if err := json.Unmarshal(row.Payload, &restored); err != nil {
 					t.Fatal(err)
 				}
-				if restored.ResultID != live.ResultID {
-					continue
-				}
-				count++
 				check("restored", row.Key, restored)
 				// Stream cursors change with Core's epoch; the card must not.
 				live.Stream, restored.Stream = nil, nil

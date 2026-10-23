@@ -84,9 +84,10 @@ func TestScheduledFollowUp(t *testing.T) {
 		t.Fatalf("model bypassed scheduled ownership: %+v %v", result, err)
 	}
 	for _, state := range []worker.ThreadState{worker.Idle, worker.Unknown, worker.Waiting, worker.Dead} {
+		request.MessageID = "held-" + string(state)
 		probe.snapshot.State = state
-		if _, err := r.followRun(t.Context(), clientsrv.Session{PersonID: r.person}, request); err == nil {
-			t.Fatalf("owner started scheduled turn from %s", state)
+		if _, err := r.followRun(t.Context(), clientsrv.Session{PersonID: r.person}, request); err != nil {
+			t.Fatalf("owner could not queue mail in %s: %v", state, err)
 		}
 	}
 	if probe.inputs != 1 {
@@ -94,6 +95,7 @@ func TestScheduledFollowUp(t *testing.T) {
 	}
 	// The worker can finish after Core reads the active snapshot. The adapter
 	// must receive a steer-only operation, not its idle-or-active Input API.
+	request.MessageID = "ended-followup"
 	probe.snapshot.State, probe.ended = worker.Active, true
 	if _, err := r.followRun(t.Context(), clientsrv.Session{PersonID: r.person}, request); err == nil || probe.starts != 0 {
 		t.Fatalf("owner follow-up started a new scheduled turn: starts=%d err=%v", probe.starts, err)
