@@ -46,12 +46,20 @@ func TestInstructionsCarryPreparedIdentityAndExactEnabledTools(t *testing.T) {
 		if identity.AgentID != persona.AgentID || identity.Name != persona.Name || identity.OwnerPersonID != persona.OwnerPersonID || identity.Layers != persona.Layers {
 			t.Fatalf("lost prepared identity: %+v", identity)
 		}
-		var declarations []provider.ToolDecl
-		if err := json.Unmarshal(block("enabled_tools"), &declarations); err != nil || declarations == nil {
+		var names []string
+		if err := json.Unmarshal(block("enabled_tools"), &names); err != nil || names == nil {
 			t.Fatalf("enabled tools must be an explicit array: %v", err)
 		}
-		if !reflect.DeepEqual(declarations, append([]provider.ToolDecl{}, tools...)) {
-			t.Fatalf("advertised tools differ from enabled declarations: %s", declarations)
+		want := make([]string, 0, len(tools))
+		for _, raw := range tools {
+			var declaration struct{ Name string }
+			if err := json.Unmarshal(raw, &declaration); err != nil {
+				t.Fatal(err)
+			}
+			want = append(want, declaration.Name)
+		}
+		if !reflect.DeepEqual(names, want) {
+			t.Fatalf("advertised names differ from native declarations: %v want %v", names, want)
 		}
 		if strings.Count(got, "</persona>") != 1 {
 			t.Fatal("persona field escaped its block")

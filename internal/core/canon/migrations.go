@@ -70,7 +70,8 @@ func Migrations() []Migration {
 		{Version: 56, SQL: MemoryExtractionSchema},
 		{Version: 57, SQL: A2ASchema},
 		{Version: 58, SQL: recallSchema},
-		{Version: 59, SQL: a2aSchema},
+		{Version: 59, SQL: steeringSchema},
+		{Version: 60, SQL: a2aSchema},
 	}
 }
 
@@ -79,6 +80,7 @@ var publishedMigrationTables = []struct {
 	version int
 	table   string
 }{
+	{59, "work_steering"}, {59, "work_steering_receipts"},
 	{56, "memory_extraction_cursor"},
 	{11, "retract_meta"}, {12, "turn_runs"}, {12, "turn_items"}, {12, "turn_calls"}, {12, "turn_partials"}, {13, "turn_control"}, {14, "turn_outcome"}, {15, "sum_node"}, {15, "sum_edge"}, {15, "sum_cover"},
 	{16, "owner_binding"}, {16, "sign_in_host"}, {16, "sign_in_identities"},
@@ -89,7 +91,7 @@ var publishedMigrationTables = []struct {
 	{21, "agent_growth_steps"}, {22, "moirai_jobs"}, {22, "budget_usage"},
 	{23, "skill_versions"}, {23, "skill_heads"}, {23, "skill_undone"}, {23, "skill_repo"},
 	{57, "a2a_connections"}, {57, "a2a_calls"},
-	{59, "a2a_tasks"}, {59, "a2a_messages"},
+	{60, "a2a_tasks"}, {60, "a2a_messages"},
 	{31, "worker_dispatch"}, {52, "worker_recovery"},
 	{41, "timer"}, {41, "timer_fire"}, {40, "work_completion_origins"}, {43, "worker_quota"}, {40, "work_completions"}, {40, "work_completion_claims"},
 	{34, "waiting_decisions"},
