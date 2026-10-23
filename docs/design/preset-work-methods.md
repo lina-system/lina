@@ -139,6 +139,9 @@ completion does not advance to the next occurrence or disappear during
 model-free recurrence maintenance. A verified occurrence retains its evidence
 while the live record advances.
 `present_result` and `read_result` expose the same metadata on result cards.
+Restoring an authored card, including a `plan_view`, preserves its completion
+state, label and conversation identity. Managed planning drafts retain their
+separate confirmation flow; a result's type alone does not make it a draft.
 Ordinary previews carry no completion claim. Revising a completion card without
 new evidence cannot remove its unverified status. Core never changes the
 agent's reply, title, summary or body to enforce this policy.

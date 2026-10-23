@@ -60,6 +60,9 @@ func (s *Session) Start(ctx context.Context, l lease.Lease, spec worker.StartSpe
 	}
 	s.mu.Lock()
 	s.snapshot.Thread.ID = response.Thread.ID
+	if response.Thread.Name != nil {
+		s.doing.Title(*response.Thread.Name)
+	}
 	s.snapshot.Workdir = string(response.Cwd)
 	s.snapshot.Model = provider.ModelRef(response.Model)
 	s.snapshot.State = worker.Idle

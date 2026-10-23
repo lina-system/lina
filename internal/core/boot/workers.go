@@ -63,6 +63,7 @@ type workerSession struct {
 	answered            func(context.Context, worker.Thread)
 	started             time.Time
 	activity            string
+	doing               string
 	approvals           map[string]worker.Event
 	questions           map[string]*workerQuestion
 	output              string
@@ -530,101 +531,22 @@ func (r *conversationRuntime) workerOperationWithOwner(ctx context.Context, name
 			return tools.Result{State: tools.Failed}, err
 		}
 	}
-	// Keep the new activity private until its returned turn id is bound. A late
-	// finish for the prior turn can only release that prior turn's activity.
-	entry.mu.Lock()
-	if name == "worker_input" && !entry.taskControlled() && r.work != nil {
-		if snap.State == worker.Idle {
-			// Snapshot is an authoritative terminal observation too. A delayed
-			// finish notification cannot retain the old reservation or release
-			// the next turn's reservation once its identity is installed.
-			if entry.reservation != "" && entry.reservationTurn == snap.Thread.TurnID {
-				if err = r.work.ReleaseWorker(ctx, entry.reservation); err != nil {
-					entry.mu.Unlock()
-					activity.Release()
-					return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
-				}
-				entry.reservation = ""
-				entry.reservationTurn = ""
-			}
-			reservation := rand.Text()
-			if err = r.work.ReserveWorker(ctx, reservation, entry.workdir); err == nil {
-				entry.reservation = reservation
-				entry.reservationTurn = "unknown:" + reservation
-			}
-		} else {
-			err = r.work.CheckWorker(ctx, entry.reservation)
-		}
-		if err != nil {
-			entry.mu.Unlock()
-			activity.Release()
-			return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
-		}
-	}
-	switch name {
-	case "worker_input":
-		if entry.taskControlled() {
-			// Input may start an idle turn. Task-controlled owner follow-ups must
-			// remain steer-only even if completion races this snapshot.
-			steerer, ok := entry.adapter.(interface {
-				Steer(context.Context, worker.Thread, worker.Input) error
-			})
-			if !ok {
-				err = errors.Join(worker.ErrInputRefused, errors.New("worker does not support active-turn steering"))
-			} else {
-				err = steerer.Steer(ctx, snap.Thread, worker.Input{Text: a.Text})
-			}
-		} else {
-			err = entry.adapter.Input(ctx, snap.Thread, worker.Input{Text: a.Text})
-		}
-	case "worker_interrupt":
-
-		err = entry.adapter.Interrupt(ctx, snap.Thread, worker.UserCancel)
-	}
 	if name == "worker_input" {
-		if errors.Is(err, worker.ErrInputRefused) {
-			// No request left the adapter. Preserve an existing turn's binding
-			// so its queued completion can drain it. An idle turn's new
-			// reservation has no execution and can be released immediately.
-			if snap.State == worker.Idle {
-				activity.Release()
-				if r.work != nil && entry.reservation != "" {
-					if releaseErr := r.work.ReleaseWorker(context.WithoutCancel(ctx), entry.reservation); releaseErr != nil {
-						entry.mu.Unlock()
-						return tools.Result{State: tools.Unknown, Body: workerError(releaseErr)}, releaseErr
-					}
-					entry.reservation = ""
-					entry.reservationTurn = ""
-				}
+		state, inputErr := entry.inputWorker(ctx, snap, a.Text, activity)
+		if inputErr != nil {
+			result := tools.Result{State: state, Body: workerError(inputErr)}
+			if state == tools.Unknown {
+				return result, inputErr
 			}
-			entry.mu.Unlock()
-			return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
+			return result, nil
 		}
-		if !entry.taskControlled() {
-			// Input may observe an idle worker after our active snapshot and start
-			// another turn. Bind every accepted input before queued completions can
-			// acquire mu; ambiguity keeps a reservation that no old event can free.
-			key := "unknown:" + rand.Text()
-			if err == nil {
-				current, readErr := entry.adapter.Snapshot(ctx, snap.Thread)
-				if readErr == nil && current.Thread.TurnID != "" && current.State != worker.Unknown && current.State != worker.Dead {
-					key = current.Thread.TurnID
-				} else if readErr != nil {
-					err = readErr
-				}
-			}
-			entry.reservationTurn = key
-			if snap.State == worker.Idle {
-				entry.active[key] = activity
-			} else if key != snap.Thread.TurnID {
-				entry.active[key] = entry.active[snap.Thread.TurnID]
-				delete(entry.active, snap.Thread.TurnID)
-			}
+	} else {
+		entry.mu.Lock()
+		err = entry.adapter.Interrupt(ctx, snap.Thread, worker.UserCancel)
+		entry.mu.Unlock()
+		if err != nil {
+			return tools.Result{State: tools.Unknown, Body: workerError(err)}, err
 		}
-	}
-	entry.mu.Unlock()
-	if err != nil {
-		return tools.Result{State: tools.Unknown, Body: workerError(err)}, err
 	}
 	return entry.result(ctx, snap.Thread)
 }
@@ -692,8 +614,7 @@ func (e *workerSession) observe() {
 		switch event.Kind {
 		case worker.ProgressEvent:
 			if event.Progress.Phase == "started" {
-				e.transferRecoveryLease(event.Thread.TurnID)
-				_ = e.bindRecovery(e.origin.ctx, event.Thread)
+				_ = e.bindStartedRecovery(e.origin.ctx, event.Thread)
 			}
 			if event.Progress.Phase == "server_request_resolved" {
 				_ = e.trackRecoveryRequest(event.Progress.ItemID, false)
