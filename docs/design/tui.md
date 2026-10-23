@@ -645,6 +645,9 @@ Compact rows reserve up to eight cells for Now before shortening a long name;
 elapsed time stays intact. View and filter choices last for the conversation view,
 including after Esc and reopening, and apply to both the sidebar and overlay.
 The focused footer and shortcut sheet list the view, filter and navigation keys.
+The panel boundary and elapsed-time column stay fixed even when a terminal joins
+emoji without mode 2027; correcting those columns preserves the composer cursor
+and emits nothing for an unchanged frame.
 
 **Adjusting.** On a selected card, Shift+Up and Shift+Down move the 일 up or down in priority, Space pauses or resumes it, and Delete asks to stop it: the card's second row asks for Enter to confirm, and any other key cancels. `-` and `+` lower and raise the run limit by one, and `0` returns it to automatic; the title shows the limit only when the person set one. These keys are not letters, so they work while a Korean input method is on. The TUI sends each choice to Core and changes nothing locally: a card moves, pauses or shows its place only when Core's update arrives ([work-and-delegation.md](work-and-delegation.md#order-pause-and-run-limit)). While the panel has focus, the footer shows these keys as whole hints (T-10).
 

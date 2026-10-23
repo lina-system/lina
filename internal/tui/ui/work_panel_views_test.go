@@ -2,6 +2,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/internal/tui/render"
 	"github.com/thisisjun786/lina/internal/tui/state"
+	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -251,6 +253,55 @@ func TestWorkPanelViewsBesideWideWaitingText(t *testing.T) {
 		prefix := render.Truncate(row, plan.SidePane.X, render.Unicode{})
 		if (render.Unicode{}).Width(prefix) != plan.SidePane.X || !strings.HasSuffix(prefix, " ") {
 			t.Fatalf("missing sidebar gap: %q", prefix)
+		}
+	}
+}
+
+func TestWorkPanelViewsTerminalColumns(t *testing.T) {
+	for _, label := range []string{"👩‍💻", strings.Repeat("👩‍💻", 30)} {
+		m := navigationShell(120, navigationCards(50))
+		m.content.Capabilities = append(m.content.Capabilities, protocol.Capability{Name: "waiting", Version: "1.0"})
+		m.content.Blocks = append(m.content.Blocks, state.Block{ID: "waiting", Topic: "waiting", Text: label})
+		m.Update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		t.Cleanup(cancel)
+		output, err := tuiterm.NewRecorder(120, 34)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { output.Close() })
+		renderer := startTerminalRenderer(ctx, rawTerminalWriter{output}, 120, 34, TrueColor)
+		t.Cleanup(func() { renderer.close() })
+		if err = renderer.showFlushed(m.View(), tea.WindowSizeMsg{Width: 120, Height: 34}); err != nil {
+			t.Fatal(err)
+		}
+		plan := m.conversationPlan()
+		right := m.workPanelRows(plan.SidePane.Width, plan.SidePane.Height)[plan.Cards.Y-plan.SidePane.Y]
+		var actual strings.Builder
+		for _, cell := range output.Snapshot().Cells[plan.Cards.Y][plan.SidePane.X:] {
+			actual.WriteString(cell.Content)
+		}
+		before := output.Snapshot().Writes
+		if err = renderer.showFlushed(m.View(), tea.WindowSizeMsg{Width: 120, Height: 34}); err != nil {
+			t.Fatal(err)
+		}
+		if output.Snapshot().Writes != before {
+			t.Fatal("unchanged panel repainted")
+		}
+		m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+		view := m.View()
+		if err = renderer.showFlushed(view, tea.WindowSizeMsg{Width: 120, Height: 34}); err != nil {
+			t.Fatal(err)
+		}
+		snapshot := output.Snapshot()
+		if view.Cursor == nil || snapshot.CursorHidden || snapshot.CursorX != view.Cursor.X || snapshot.CursorY != view.Cursor.Y {
+			t.Fatal("column repair moved the composer cursor")
+		}
+		renderer.close()
+		output.Close()
+		cancel()
+		if strings.TrimRight(actual.String(), " ") != right {
+			t.Fatalf("terminal lost panel columns beside %q: got %q, want %q", label, actual.String(), right)
 		}
 	}
 }
