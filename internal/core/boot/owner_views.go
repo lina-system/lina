@@ -326,7 +326,7 @@ func (r *conversationRuntime) ownerProjectionOrder(ctx context.Context, order wa
 		if len(v.Stages) > 0 {
 			stages := make([]protocol.ProgressStage, 0, len(v.Stages))
 			for _, entry := range v.Stages {
-				stage := protocol.ProgressStage{Kind: protocol.ProgressStageKind(entry.Kind), Label: entry.Label, State: protocol.ProgressStepState(entry.State)}
+				stage := protocol.ProgressStage{Kind: string(entry.Kind), Label: entry.Label, State: string(entry.State)}
 				if entry.Number > 0 {
 					value := number(entry.Number)
 					stage.Number = &value
@@ -334,7 +334,7 @@ func (r *conversationRuntime) ownerProjectionOrder(ctx context.Context, order wa
 				if len(entry.Steps) > 0 {
 					steps := make([]protocol.ProgressStageStep, 0, len(entry.Steps))
 					for _, step := range entry.Steps {
-						wire := protocol.ProgressStageStep{Name: step.Name, State: protocol.ProgressStepState(step.State)}
+						wire := protocol.ProgressStageStep{Name: step.Name, State: string(step.State)}
 						if !step.StartedAt.IsZero() {
 							value := step.StartedAt.UTC().Format(time.RFC3339Nano)
 							wire.StartedAt = &value

@@ -131,6 +131,10 @@ func goalNow(g goal.Goal, stages []Stage, language design.Language) string {
 		return design.Text(language, "progress.checking")
 	case goal.GoalDone:
 		return design.Text(language, "progress.done")
+	case goal.GoalRunning, goal.GoalWaiting, goal.GoalStopped, goal.GoalBlocked:
+		// A blocked goal already returned above; the others wait on their
+		// queue place or on the person, which the line's own state carries.
+		return design.Text(language, "progress.waiting_word")
 	}
 	return design.Text(language, "progress.waiting_word")
 }

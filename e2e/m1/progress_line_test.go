@@ -16,6 +16,7 @@ import (
 	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/core/boot"
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/progress"
 	work "github.com/thisisjun786/lina/internal/core/work/goal"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
@@ -242,7 +243,7 @@ func TestM3ProgressLinePublished(t *testing.T) {
 	if len(*line.Stages) != len(scenario.Steps)+1 || (*line.Stages)[0].Number == nil || *(*line.Stages)[0].Number != "1" {
 		t.Fatalf("stage entries = %+v", *line.Stages)
 	}
-	if state := (*line.Stages)[0].State; state != protocol.ProgressStepStateWorking {
+	if state := (*line.Stages)[0].State; state != string(progress.StepWorking) {
 		t.Fatalf("first stage state = %s, want working", state)
 	}
 	close(world.release)
@@ -293,7 +294,7 @@ func TestM3ProgressLinePublished(t *testing.T) {
 	if after.Stages == nil || len(*after.Stages) != len(*line.Stages) {
 		t.Fatalf("landing lost stage entries: %+v", after.Stages)
 	}
-	if state := (*after.Stages)[0].State; state != protocol.ProgressStepStateDone {
+	if state := (*after.Stages)[0].State; state != string(progress.StepDone) {
 		t.Fatalf("landed stage state = %s, want done", state)
 	}
 	// A recomputation that changes no line publishes nothing. The host report

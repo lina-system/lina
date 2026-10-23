@@ -719,40 +719,17 @@ type ProgressRow struct {
 	Ref  string       `json:"ref"`
 }
 type ProgressStage struct {
-	Kind   ProgressStageKind    `json:"kind"`
+	Kind   string               `json:"kind"`
 	Label  string               `json:"label"`
 	Number *json.Number         `json:"number,omitempty"`
-	State  ProgressStepState    `json:"state"`
+	State  string               `json:"state"`
 	Steps  *[]ProgressStageStep `json:"steps,omitempty"`
 }
-type ProgressStageKind string
-
-const (
-	ProgressStageKindStage    ProgressStageKind = "stage"
-	ProgressStageKindDesign   ProgressStageKind = "design"
-	ProgressStageKindChecking ProgressStageKind = "checking"
-	ProgressStageKindDone     ProgressStageKind = "done"
-)
-
 type ProgressStageStep struct {
-	Name      string            `json:"name"`
-	StartedAt *string           `json:"started_at,omitempty"`
-	State     ProgressStepState `json:"state"`
+	Name      string  `json:"name"`
+	StartedAt *string `json:"started_at,omitempty"`
+	State     string  `json:"state"`
 }
-type ProgressStepState string
-
-const (
-	ProgressStepStateNext       ProgressStepState = "next"
-	ProgressStepStateWaiting    ProgressStepState = "waiting"
-	ProgressStepStateWorking    ProgressStepState = "working"
-	ProgressStepStateNeedsInput ProgressStepState = "needs_input"
-	ProgressStepStateFailed     ProgressStepState = "failed"
-	ProgressStepStateStopped    ProgressStepState = "stopped"
-	ProgressStepStateUnknown    ProgressStepState = "unknown"
-	ProgressStepStateDone       ProgressStepState = "done"
-	ProgressStepStateSuperseded ProgressStepState = "superseded"
-)
-
 type ProgressUpdate struct {
 	CardOrder   *[]string       `json:"card_order,omitempty"`
 	Rows        *[]ProgressRow  `json:"rows,omitempty"`
@@ -8092,13 +8069,13 @@ const clientSchemaJSON = `{
           "minimum": 1
         },
         "kind": {
-          "$ref": "#/$defs/progress_stage_kind"
+          "type": "string"
         },
         "label": {
           "type": "string"
         },
         "state": {
-          "$ref": "#/$defs/progress_step_state"
+          "type": "string"
         },
         "steps": {
           "type": "array",
@@ -8121,7 +8098,7 @@ const clientSchemaJSON = `{
           "type": "string"
         },
         "state": {
-          "$ref": "#/$defs/progress_step_state"
+          "type": "string"
         },
         "started_at": {
           "type": "string",
@@ -8133,29 +8110,6 @@ const clientSchemaJSON = `{
         "state"
       ],
       "additionalProperties": false
-    },
-    "progress_stage_kind": {
-      "type": "string",
-      "enum": [
-        "stage",
-        "design",
-        "checking",
-        "done"
-      ]
-    },
-    "progress_step_state": {
-      "type": "string",
-      "enum": [
-        "next",
-        "waiting",
-        "working",
-        "needs_input",
-        "failed",
-        "stopped",
-        "unknown",
-        "done",
-        "superseded"
-      ]
     },
     "progress_row": {
       "type": "object",

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/progress"
 	"github.com/thisisjun786/lina/internal/core/work/goal"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
@@ -70,13 +71,13 @@ func TestProgressLinePublishesStageEntries(t *testing.T) {
 		t.Fatalf("stages = %+v, want two numbered entries and 확인", line.Stages)
 	}
 	first := (*line.Stages)[0]
-	if first.Number == nil || *first.Number != "1" || first.Label != "Draft workshop" || first.State != protocol.ProgressStepStateWorking {
+	if first.Number == nil || *first.Number != "1" || first.Label != "Draft workshop" || first.State != string(progress.StepWorking) {
 		t.Fatalf("first stage = %+v", first)
 	}
 	if first.Steps == nil || len(*first.Steps) != 1 || (*first.Steps)[0].Name != "Draft workshop" || (*first.Steps)[0].StartedAt != nil {
 		t.Fatalf("first stage steps = %+v", first.Steps)
 	}
-	if last := (*line.Stages)[2]; last.Kind != protocol.ProgressStageKindChecking || last.Number != nil {
+	if last := (*line.Stages)[2]; last.Kind != string(progress.KindChecking) || last.Number != nil {
 		t.Fatalf("checking entry = %+v", last)
 	}
 	raw, err := json.Marshal(line)
