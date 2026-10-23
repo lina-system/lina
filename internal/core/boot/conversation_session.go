@@ -179,8 +179,15 @@ func (s *turnState) resolveCompactionItems(ctx context.Context, items []provider
 
 // The auxiliary lease lasts until consumption, including background preparation.
 type summaryStream struct {
+	meter *summaryUsage
 	provider.Stream
 	release func()
 }
 
-func (s *summaryStream) Close() error { defer s.release(); return s.Stream.Close() }
+func (s *summaryStream) Close() error {
+	defer s.release()
+	if s.meter != nil {
+		s.meter.usage = s.Stream.Meta().Usage
+	}
+	return s.Stream.Close()
+}

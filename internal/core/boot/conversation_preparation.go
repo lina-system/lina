@@ -16,6 +16,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/jobs"
 	"github.com/thisisjun786/lina/internal/moirai/jobapi"
 	"github.com/thisisjun786/lina/kit/loop"
+	"github.com/thisisjun786/lina/kit/provider"
 )
 
 type conversationPreparation struct {
@@ -35,8 +36,7 @@ func (r *conversationRuntime) ensureSummaryPreparation(ctx context.Context) erro
 	if m.jobs != nil {
 		return nil
 	}
-	identity, _ := json.Marshal([]string{r.agent, r.conversation})
-	m.id = "summary:" + base64.RawURLEncoding.EncodeToString(identity)
+	m.id = summaryPreparationID(r.agent, r.conversation)
 	m.builders = map[string]*compaction.Builder{}
 	lookup := func(raw json.RawMessage) *compaction.Builder {
 		m.mu.Lock()
@@ -46,12 +46,14 @@ func (r *conversationRuntime) ensureSummaryPreparation(ctx context.Context) erro
 	service, err := jobs.New(jobs.Config{Store: r.db, Epoch: r.epoch, Limit: 1048576, Definitions: map[string]jobs.Definition{m.id: {
 		Agent: r.agent, Account: r.route.Request(nil).Credential.Account, Provider: r.route.Adapter.Provider(),
 		Model: func(ctx context.Context, call jobs.Call) (jobs.Result, error) {
+			meter := &summaryUsage{}
+			ctx = context.WithValue(ctx, summaryUsageKey{}, meter)
 			b := lookup(call.Input)
 			if b == nil {
-				return jobs.Result{Output: json.RawMessage(`{"ID":""}`)}, nil
+				return jobs.Result{Output: json.RawMessage(`{"ID":""}`), Usage: meter.result()}, nil
 			}
 			raw, err := b.GeneratePreparation(ctx, call.Input)
-			return jobs.Result{Output: raw}, err
+			return jobs.Result{Output: raw, Usage: meter.result()}, err
 		},
 		Apply: func(ctx context.Context, tx *canon.Tx, task jobapi.Task, raw json.RawMessage) error {
 			b := lookup(task.Input)
@@ -96,14 +98,14 @@ func (s *turnState) prepareSummaryAfterDelivery(ctx context.Context, out loop.Ou
 		return err
 	}
 	view.Active = append(view.Active, last...)
-	if err := r.ensureSummaryPreparation(ctx); err != nil {
-		return err
-	}
 	m := r.summaryState()
 	// A completed snapshot no longer has a protected active input. The builder
 	// is immutable while the optional worker uses it, including across new turns.
-	b := &compaction.Builder{Store: c.builder.Store, Events: c.builder.Events, Agent: c.builder.Agent, Conversation: c.builder.Conversation, Model: c.builder.Model, GenerationRevision: c.builder.GenerationRevision, PreparationJob: m.id, Now: c.builder.Now, NextID: c.builder.NextID, Generate: c.builder.Generate}
+	b := &compaction.Builder{Store: c.builder.Store, Events: c.builder.Events, Agent: c.builder.Agent, Conversation: c.builder.Conversation, Model: c.builder.Model, GenerationRevision: c.builder.GenerationRevision, PreparationJob: summaryPreparationID(r.agent, r.conversation), Now: c.builder.Now, NextID: c.builder.NextID, Generate: c.builder.Generate}
 	_, err = b.QueuePreparation(ctx, c.pass, view, func(ctx context.Context, raw json.RawMessage) error {
+		if err := r.ensureSummaryPreparation(ctx); err != nil {
+			return err
+		}
 		m.mu.Lock()
 		key := string(raw)
 		if _, exists := m.builders[key]; !exists {
@@ -152,4 +154,23 @@ func (r *conversationRuntime) summaryState() *conversationPreparation {
 		return &r.coordinator.summaryPreparation
 	}
 	return &r.summaryPreparation
+}
+
+func summaryPreparationID(agent, conversation string) string {
+	identity, _ := json.Marshal([]string{agent, conversation})
+	return "summary:" + base64.RawURLEncoding.EncodeToString(identity)
+}
+
+type summaryUsageKey struct{}
+type summaryUsage struct {
+	called bool
+	usage  provider.Usage
+}
+
+func (m *summaryUsage) result() provider.Usage {
+	if !m.called {
+		zero := int64(0)
+		return provider.Usage{Input: &zero, Output: &zero}
+	}
+	return m.usage
 }

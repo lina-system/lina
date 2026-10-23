@@ -538,12 +538,16 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 		if err != nil {
 			return nil, err
 		}
+		meter, _ := ctx.Value(summaryUsageKey{}).(*summaryUsage)
+		if meter != nil {
+			meter.called = true
+		}
 		stream, err := r.route.Adapter.Stream(ctx, activity, request)
 		if err != nil {
 			activity.Release()
 			return nil, err
 		}
-		return &summaryStream{Stream: stream, release: activity.Release}, nil
+		return &summaryStream{Stream: stream, release: activity.Release, meter: meter}, nil
 	}, func(c *conversationCompaction) { s.compaction = c })
 	if err != nil {
 		return turn.PreparedRequest{}, err

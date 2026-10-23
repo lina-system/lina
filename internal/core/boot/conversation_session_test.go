@@ -3,6 +3,7 @@ package boot
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/internal/moirai"
 	"github.com/thisisjun786/lina/internal/moirai/jobapi"
+	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/provider"
@@ -85,6 +87,7 @@ func TestConversationSessionCompactsBeforeToolFollowup(t *testing.T) {
 
 func TestConversationQueuesSummaryOnlyAfterDelivery(t *testing.T) {
 	r, p := turnRuntime(t)
+	r.route.Adapter = usageTurnProvider{p}
 	queuedContextEvent(t, r, "archive", strings.Repeat("archive ", 4000), guard.EntryOwner, "")
 	queuedContextEvent(t, r, "archive-reply", "Archived.", guard.EntryAgent, "")
 	input, inbox := admitTurnInput(t, r, "finish-current-work")
@@ -126,6 +129,15 @@ func TestConversationQueuesSummaryOnlyAfterDelivery(t *testing.T) {
 	}
 	if count("sum_node") != 0 {
 		t.Fatal("worker published before foreground fitting")
+	}
+	var charged int
+	if err := r.db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT charged FROM budget_usage WHERE run=?", m.id).Scan(&charged)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if charged != 168 {
+		t.Fatalf("summary usage charged=%d, want reported input+output 168", charged)
 	}
 	next, receipt := admitTurnInput(t, r, "next-work")
 	if err := r.run(t.Context(), &loop.Inputs{}, next, receipt); err != nil {
@@ -237,4 +249,49 @@ func TestConversationOversizeRecordsContinuationAndSizes(t *testing.T) {
 		t.Fatal("restored Details changed")
 	}
 	t.Logf("Diagnostic capture: %s — %s\n%s", live.Title, live.Summary, *live.Text)
+}
+
+type usageTurnProvider struct{ *turnProvider }
+
+func (p usageTurnProvider) Stream(ctx context.Context, l lease.Lease, request provider.Request) (provider.Stream, error) {
+	stream, err := p.turnProvider.Stream(ctx, l, request)
+	if err != nil || request.Purpose != provider.Auxiliary {
+		return stream, err
+	}
+	input, output := int64(123), int64(45)
+	return usageTurnStream{Stream: stream, usage: provider.Usage{Input: &input, Output: &output}}, nil
+}
+
+type usageTurnStream struct {
+	provider.Stream
+	usage provider.Usage
+}
+
+func (s usageTurnStream) Meta() provider.Meta { m := s.Stream.Meta(); m.Usage = s.usage; return m }
+
+func TestDiscardedSummaryPreparationHasNoModelCharge(t *testing.T) {
+	r, p := turnRuntime(t)
+	if err := r.ensureSummaryPreparation(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	m := r.summaryState()
+	job, err := m.jobs.Policy(t.Context(), m.id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.jobs.Enqueue(t.Context(), m.id, jobapi.Task{Sequence: 1, Input: json.RawMessage(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := (moirai.Worker{Core: m.jobs}).Step(t.Context(), jobapi.Work{Epoch: r.epoch, Job: job, Task: jobapi.Task{Sequence: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	var charged int
+	if err := r.db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT charged FROM budget_usage WHERE run=?", m.id).Scan(&charged)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if charged != 0 || len(p.requests) != 0 {
+		t.Fatalf("discard charged=%d requests=%d", charged, len(p.requests))
+	}
 }
