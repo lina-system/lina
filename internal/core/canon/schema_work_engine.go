@@ -26,3 +26,12 @@ CREATE TRIGGER work_events_no_replace BEFORE INSERT ON work_events
  WHEN EXISTS(SELECT 1 FROM work_events WHERE id=NEW.id)
  BEGIN SELECT RAISE(ABORT,'work_ledger_append_only'); END;
 `
+
+// SQLite REPLACE can delete a conflicting row without firing delete triggers.
+// Guard the sequence independently of the published id guard, without rewriting
+// the original migration or any event already in the journal.
+const workEventSequenceSchema = `
+CREATE TRIGGER work_events_no_sequence_replace BEFORE INSERT ON work_events
+ WHEN EXISTS(SELECT 1 FROM work_events WHERE seq=NEW.seq)
+ BEGIN SELECT RAISE(ABORT,'work_ledger_append_only'); END;
+`

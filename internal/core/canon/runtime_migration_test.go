@@ -363,3 +363,39 @@ func TestPlanningUpgradePreservesPublishedTodoProjection(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPlanningUpgradePreservesPublishedWorkSequenceGuard(t *testing.T) {
+	cfg := storeConfig(t)
+	cfg.Migrations = append(append([]Migration{}, Migrations()[:38]...), Migration{Version: 39, SQL: workEventSequenceSchema})
+	db := openStore(t, cfg)
+	if err := db.Write(t.Context(), func(tx *Tx) error {
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO work_events(seq,id,kind,at,body) VALUES(1,'existing','fixture',1,'{}')`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Migrations = Migrations()
+	db = openStore(t, cfg)
+	err := db.Write(t.Context(), func(tx *Tx) error {
+		_, err := tx.ExecContext(t.Context(), `INSERT OR REPLACE INTO work_events(seq,id,kind,at,body) VALUES(1,'replacement','fixture',2,'{}')`)
+		return err
+	})
+	if err == nil || !strings.Contains(err.Error(), "work_ledger_append_only") {
+		t.Fatalf("upgrade lost the published sequence guard: %v", err)
+	}
+	if err := db.Read(t.Context(), func(tx *Tx) error {
+		var id string
+		if err := tx.QueryRowContext(t.Context(), "SELECT id FROM work_events WHERE seq=1").Scan(&id); err != nil {
+			return err
+		}
+		if id != "existing" {
+			t.Fatalf("upgrade replaced published work event: %q", id)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -526,10 +526,10 @@ The current installed adapter uses Korean counting and the shared TUI renderer a
 - Summary-first writing is a background run given the latest outline revision.
 - Managed planning previews use the same result ledger and revision checks.
   Core installs the results and planning receipt schemas in the numbered canon
-  catalog at migration 39, after the published Korean records search migration
+  catalog at migration 40, after the published Korean records search migration
   33, waiting decisions migration 34, preset effects migration 35 and skill
   maintenance migration 36, work engine migration 37 and to-do records migration
-  38. Generic presentation and saving cannot replace or confirm a managed
+  38 and work event sequence guard migration 39. Generic presentation and saving cannot replace or confirm a managed
   plan. The `planning` capability binds confirmation to the authenticated person,
   agent, preview revision and accepted root revision. Complete plan bodies carry
   done conditions, ordered stage labels and dependency ids in addition to card
@@ -1313,7 +1313,9 @@ current head, checks and review, with a head recheck after inline comments.
 
 `internal/core/worker/dispatch` wires the adapter into installed Core's `dispatch_work`
 tool and existing work ledger. Migration 31 adds the dispatch journal; a committed
-conversation tool receipt gates execution. The journal reserves each repository
+conversation tool receipt gates execution. Identical retries load the durable
+admission before any manager handoff, preserving older manager definitions and
+ownership without resetting execution state. The journal reserves each repository
 through queued/running/unknown states. Core allocates through its shared
 `work.Area`, records the pinned workspace on the task and starts the worker in
 `work/tasks/<task-id>` from the detached base. The independent parent clone
