@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
@@ -145,7 +144,7 @@ type managementSession struct {
 	boardPending map[string]*boardView
 }
 
-func (s *managementSession) request(ctx context.Context, c *clientapi.Client, p protocol.Payload) error {
+func (s *managementSession) request(ctx context.Context, c shellClient, p protocol.Payload) error {
 	var id string
 	var err error
 	switch p := p.(type) {
@@ -182,7 +181,7 @@ func (s *managementSession) request(ctx context.Context, c *clientapi.Client, p 
 	}
 	return err
 }
-func (s *managementSession) response(ctx context.Context, c *clientapi.Client, e protocol.Envelope) (bool, error) {
+func (s *managementSession) response(ctx context.Context, c shellClient, e protocol.Envelope) (bool, error) {
 	if e.ReplyTo == nil {
 		return false, nil
 	}
