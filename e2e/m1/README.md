@@ -38,6 +38,13 @@ physical input and UX. Passing this suite alone does not declare the phase done.
 
 Failure coverage also includes:
 
+- `TestM2WorkerDelayedCompletionOutput`: the model fixture selects the latest
+  scenario input or worker result even when user-role ContextPacket evidence
+  follows it. After recovery, a delayed first-turn completion arrives between
+  the second turn's output and finish. The scenario checks file read-back,
+  both stored outputs, one worker start, two worker turns and result reactions,
+  and a non-live result snapshot after another restart.
+
 - `TestM2InstalledWorkerOutcome`: the pending-at-restart case releases the
   worker only after Core emits the successful `start-worker` tool activity.
   The provider continuation waits behind that release, so it cannot supply
