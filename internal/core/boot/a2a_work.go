@@ -69,6 +69,11 @@ func (p *publicationRuntime) sweep(ctx context.Context) {
 	for _, rec := range records {
 		if a2a.Terminal(rec.Task.Status.State) {
 			if err := p.deliver(ctx, rec); err != nil {
+				// A trashed persona cannot accept the owner notice. Leave that
+				// notice pending for restore and keep every other publication moving.
+				if publicationRecipientGone(err) {
+					continue
+				}
 				p.recovered.Store(false)
 				return
 			}
@@ -234,6 +239,11 @@ func (p *publicationRuntime) stopTask(ctx context.Context, rec a2a.Record) {
 		return nil
 	})
 }
+func publicationRecipientGone(err error) bool {
+	var refusal *clientsrv.OperationError
+	return errors.As(err, &refusal) && refusal.Code == protocol.ErrorOutOfScope
+}
+
 func (p *publicationRuntime) notice(ctx context.Context, rec a2a.Record) error {
 	view, err := p.root.router.view(ctx, clientsrv.Session{PersonID: p.root.person}, rec.Agent)
 	if err != nil {

@@ -885,11 +885,18 @@ work ledger has not recorded. Unassigned tasks have no worker lane yet.
   dispatch, and a recovered task's setup failure cannot disable delegation or
   terminate another task that was started in the same release event.
 - A quota or rate-limit finish is recorded before queued graph tasks are
-  reconsidered. When that finish has no exhausted window, the worker stays
-  blocked until its reset or a later measurement shows the limit below the cap.
-  The snapshot that missed the failure, and any older or unknown snapshot, does
-  not clear the stop. Rows from concurrent sessions merge per reported bucket
-  and window; a newer row in one window does not replace another window.
+  reconsidered. Measured exhausted windows are the stopped limits. When none
+  are exhausted, the stop follows every cached limit tied for the highest
+  reported usage; a snapshot that reports no usage follows every row it
+  contains, so one reported window is that limit. Each stopped limit keeps the
+  reset its own row reported, including when usage is still under the cap.
+  The worker stays blocked until every stopped limit reaches its own reset or
+  a later measurement shows that same limit below the cap. A newer row for
+  another window or limit does not clear the stop, and a healthy window's
+  reset cannot extend an exhausted one. The snapshot that missed the failure,
+  and any older or unknown snapshot, does not clear the stop. Rows from
+  concurrent sessions merge per reported bucket and window; a newer row in
+  one window does not replace another window.
 - When slots are free, the manager may start a dependent task as a stacked pull request on an open predecessor. It records the predecessor and its head as the task's base, and Core checks capacity and disjoint write-area leases before dispatch. The dependency remains: the dependent cannot land before the predecessor. The worker brings the stack onto the landed base and owns its resulting checks to green before the manager checks the delivery.
 
 ## Workers
@@ -1360,12 +1367,17 @@ message and tier, explicitly as a worker claim. Acknowledgements cannot name
 another session's messages or precede delivery.
 
 Known-unsent messages wait while the session is down or waiting for an answer
-and are delivered under the same session key after resume. A new session does
-not inherit another session's mail. Core claims a delivery before sending; an
-uncertain send stays held for reconciliation and is never automatically replayed.
-A task session that ends for good refuses its remaining unsent mail and tells
-the sender. Closing work preserves its receipts. These receipts neither accept
-a task result nor authorize new work.
+and are delivered under the same session key after that wait ends. Answering
+the pending question or approval is that resume for push mail: Core retries
+known-unsent push mail once the thread is active and no request remains,
+without waiting for another turn start or `check_inbox`. Turn and pull mail
+still leave at the next supported tool boundary, and only after those pending
+requests have cleared. A new session does not inherit another session's mail.
+Core claims a delivery before sending; an uncertain send stays held for
+reconciliation and is never automatically replayed. A task session that ends
+for good, including a scheduled task that completes or is interrupted, refuses
+its remaining unsent mail and tells the sender. Closing work preserves its
+receipts. These receipts neither accept a task result nor authorize new work.
 
 ### Completion signals
 
