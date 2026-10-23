@@ -49,3 +49,15 @@ transactional adoption path. These storage boundaries are LINA requirements.
   destination materials and cannot be adopted. After confirmation, the host
   prepares native assets. Sealed events retain their material identities;
   ledger reads and search apply the original source spans before exposing text.
+
+## Implementation notes
+
+Design authority: [Go Core](../../../../docs/design/go-core.md) and the contracts it cites.
+These notes retain implementation and validation history from the cited increments;
+they do not establish current acceptance or change the contracts.
+
+### C-28 import migration
+
+The shared canon catalog appends import storage and completion receipts at migration 24, after the unchanged published migrations 1–23.
+Core, backup and restore can reopen imported state using that same catalog.
+Empty import tables do not load an adapter or start a run.

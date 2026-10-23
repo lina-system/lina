@@ -61,3 +61,15 @@ conversation ledger, separate from dispatch's independently derived receipt.
 The installed-Core work-tools scenario also answers `ask` through the authenticated
 waiting-card client. Question forms carry the actual worker name; the reply returns
 to the same pending MCP call before the worker submits its completion claim.
+
+## Implementation notes
+
+Design authority: [Go Core](../../../../docs/design/go-core.md) and the contracts it cites.
+These notes retain implementation and validation history from the cited increments;
+they do not establish current acceptance or change the contracts.
+
+### C-60 worker profiles
+
+`internal/core/worker/acp` implements C-29 on that client.
+A profile holds the worker name, the command and arguments, the environment variables it sets (such as `CLAUDE_CODE_EXECUTABLE`), the version probe and the vendor rate-limit key it may read.
+Claude Code, Cursor, Gemini CLI and Grok are built-in profiles; person-added profiles come from an editable settings file defined by their own issue.

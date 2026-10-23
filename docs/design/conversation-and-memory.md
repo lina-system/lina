@@ -522,6 +522,14 @@ A continuation has no new message from the person: the ledger records a continua
 
 The node and its compaction audit event publish in the same transaction. A prepared result remains reusable when only events kept verbatim beside it have been appended, provided the summarized sources, root id and revision, revocation epoch and summary configuration (including model and reasoning policy) are unchanged; publication still checks the refreshed complete frontier.
 
+At a conversation turn boundary, person and forwarded inputs queued after the
+current input remain outside both the current model request and the summary.
+Their event ids count as retained ledger tail in the complete publication
+frontier. They remain available for their own turns, including after restart;
+they are neither summarized nor recorded as skipped source events. Retracted
+queued inputs follow the ordinary retraction rules. Queued inputs do not weaken
+the ordered summary-prefix or stale-frontier checks.
+
 Compaction is recorded as a ledger event that names its input range. It never deletes the original events, and a summary is not canon and never a ledger message. Every summary is also a node of the summary tree.
 
 Every summary is written by an auxiliary reasoning request to the conversation model ([runtime.md](runtime.md)), whether it is prepared in the background or built when needed, so a prepared summary has the same quality as one built on the spot. The summary request reuses the conversation's cached prefix:
