@@ -50,7 +50,7 @@ func tuiWorkerQuestion(t *testing.T, name, command string) {
 	workdir := t.TempDir()
 	finished := make(chan struct{})
 	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/worker-finished" {
 			close(finished)
 			w.WriteHeader(http.StatusNoContent)
@@ -72,7 +72,7 @@ func tuiWorkerQuestion(t *testing.T, name, command string) {
 			return
 		}
 		emitResponse(w, "Worker started.", true)
-	}))
+	})))
 	defer func() { server.CloseClientConnections(); server.Close() }()
 	h, bootstrap := installedConversationHarness(t, server.URL)
 	ids := seedCodingFixture(t, h, bootstrap)

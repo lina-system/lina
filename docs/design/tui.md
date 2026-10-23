@@ -1072,12 +1072,20 @@ scanner as Core before they reach the composer, local echo, undo or sent-input
 recall. The complete insertion is scanned before the composer length limit to cover
 a value pasted after a credential field name or a token split across pastes. If that replacement changes surrounding draft text, the
 cursor moves to the end of the masked draft. Ordinary pastes keep their insertion
-position. Masking precedes the composer length limit. Invalid structured input
+position. An exact redaction placeholder also marks a continuation boundary:
+text pasted or typed immediately after it is discarded up to the next whitespace
+or value delimiter (comma, semicolon, quote, angle bracket, closing brace,
+closing bracket, closing parenthesis or period). The delimiter and subsequent
+text remain. This applies after undo or input recall and to literal placeholders;
+it retains no original credential bytes. Inserting elsewhere or replacing the
+whole placeholder uses normal input handling.
+Masking precedes the composer length limit. Invalid structured input
 that cannot be masked safely becomes a placeholder. Dedicated sign-in and API
 key fields keep their separate hidden-input path. These detectors recognize
 known shapes; they do not identify every possible arbitrary secret. Core still
 masks every input before ledger storage and derivation.
-`TestM1TUIChatPasteInstalledCore` exercises the installed Core and a 120×34 PTY,
+`TestM1TUIChatPasteInstalledCore` and
+`TestM1TUIChatPasteContinuationInstalledCore` exercise the installed Core and a 120×34 PTY,
 checking the unsent draft, local echo, sent-input recall, provider input,
 persistent files and restored conversation. It scans terminal output as well
 as settled screens, so an intermediate leaked frame also fails.

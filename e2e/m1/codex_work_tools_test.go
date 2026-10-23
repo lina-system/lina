@@ -80,7 +80,7 @@ func codexWorkToolsFixture() {
 	const approvalID, projectionID = "71", `"projection-rpc"`
 	const coordinateID, receiptID = `"coordinate-rpc"`, `"receipt-rpc"`
 	initialized, approved, completed := false, false, false
-	quotaRead := false
+	quotaRead, quotaRecovered := false, false
 	cwd, assignment, receivedPacket := "", "", ""
 	pendingTools := map[string]bool{}
 	questionRequests := map[string]bool{}
@@ -264,7 +264,7 @@ func codexWorkToolsFixture() {
 			}
 		case "thread/read":
 			_, releaseErr := os.Stat(fixture.QuotaRelease)
-			if fixture.QuotaRecovery && quotaRead && releaseErr == nil {
+			if fixture.QuotaRecovery && quotaRead && !quotaRecovered && releaseErr == nil {
 				// Core may poll thread/read independently. Release recovery only
 				// after the model fixture has observed the initial quota pair.
 				// A sparse update changes only primary. The adapter must retain
@@ -274,6 +274,7 @@ func codexWorkToolsFixture() {
 					primary["windowDurationMins"] = 300
 				}
 				notify("account/rateLimits/updated", map[string]any{"rateLimits": map[string]any{"primary": primary}})
+				quotaRecovered = true
 			}
 			status, state := "inProgress", "active"
 			if completed {
@@ -351,7 +352,7 @@ func runCodexWorkToolsWithSetup(t *testing.T, scenario, kind string, setup func(
 	var calls atomic.Int32
 	var quotaChecked atomic.Bool
 	var sessionID, weeklyObserved atomic.Value
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/worker-finished" {
 			close(finished)
 			w.WriteHeader(http.StatusNoContent)
@@ -455,7 +456,7 @@ func runCodexWorkToolsWithSetup(t *testing.T, scenario, kind string, setup func(
 			quotaChecked.Store(true)
 		}
 		emitResponse(w, "worker quota checked", true)
-	}))
+	})))
 	defer func() { server.CloseClientConnections(); server.Close() }()
 	h, bootstrap := installedConversationHarness(t, server.URL)
 	seedCodingFixture(t, h, bootstrap)
