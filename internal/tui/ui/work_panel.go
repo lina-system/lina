@@ -3,6 +3,7 @@ package ui
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -69,6 +70,37 @@ func workElapsed(d time.Duration) string {
 	return fmt.Sprintf("%dm", minutes)
 }
 
+// Navigation and rendering share the same cards; folded completions are not
+// invisible keyboard stops.
+func (m *shellModel) workPanelCards() ([]state.WorkCard, int) {
+	active := []state.WorkCard{}
+	done := 0
+	for _, c := range m.workCards() {
+		if c.State == protocol.RunningStateDone && c.Waiting == 0 {
+			done++
+			continue
+		}
+		active = append(active, c)
+	}
+	return active, done
+}
+
+// Keep identity across reordering, or select the replacement at the old index.
+func (m *shellModel) workSelection(cards []state.WorkCard) int {
+	p := &m.conversation
+	if len(cards) == 0 {
+		p.workSelected = ""
+		p.workIndex, p.workOffset = 0, 0
+		return -1
+	}
+	index := slices.IndexFunc(cards, func(c state.WorkCard) bool { return c.ID == p.workSelected })
+	if index < 0 {
+		index = min(max(0, p.workIndex), len(cards)-1)
+	}
+	p.workSelected, p.workIndex = cards[index].ID, index
+	return index
+}
+
 func (m *shellModel) workPanelRows(width, height int) []string {
 	if width <= 0 || height <= 0 {
 		return nil
@@ -79,15 +111,7 @@ func (m *shellModel) workPanelRows(width, height int) []string {
 		ellipsis = "..."
 	}
 	rows := []string{text("work.title")}
-	active := []state.WorkCard{}
-	done := 0
-	for _, c := range m.workCards() {
-		if c.State == protocol.RunningStateDone && c.Waiting == 0 {
-			done++
-			continue
-		}
-		active = append(active, c)
-	}
+	active, done := m.workPanelCards()
 	available := height - 1
 	if done > 0 {
 		available--
@@ -96,8 +120,27 @@ func (m *shellModel) workPanelRows(width, height int) []string {
 	if shown < len(active) {
 		shown = min(len(active), max(0, (available-1)/2))
 	}
+	start := 0
+	selected := -1
+	if m.conversation.workFocused {
+		selected = m.workSelection(active)
+		if shown > 0 {
+			start = min(max(0, m.conversation.workOffset), len(active)-shown)
+			if selected < start {
+				start = selected
+			}
+			if selected >= start+shown {
+				start = selected - shown + 1
+			}
+			m.conversation.workOffset = start
+		}
+	}
+	marker := m.styles.tokens.GlyphUnicodeAction
+	if m.styles.options.ASCII {
+		marker = m.styles.tokens.GlyphAsciiAction
+	}
 	now := m.now().Add(m.content.Offset)
-	for _, c := range active[:shown] {
+	for i, c := range active[start : start+shown] {
 		elapsed := text("unknown")
 		if !c.Started.IsZero() {
 			end := now
@@ -106,7 +149,14 @@ func (m *shellModel) workPanelRows(width, height int) []string {
 			}
 			elapsed = workElapsed(end.Sub(c.Started))
 		}
-		name := panelClip(c.Name, max(0, width-(render.Unicode{}).Width(elapsed)-1), ellipsis)
+		prefix := ""
+		if m.conversation.workFocused {
+			prefix = strings.Repeat(" ", (render.Unicode{}).Width(marker)+1)
+			if start+i == selected {
+				prefix = marker + " "
+			}
+		}
+		name := prefix + panelClip(c.Name, max(0, width-(render.Unicode{}).Width(prefix)-(render.Unicode{}).Width(elapsed)-1), ellipsis)
 		first := name + strings.Repeat(" ", max(1, width-(render.Unicode{}).Width(name)-(render.Unicode{}).Width(elapsed))) + elapsed
 		activity := c.Now
 		if activity == "" {
@@ -119,8 +169,8 @@ func (m *shellModel) workPanelRows(width, height int) []string {
 	}
 	if shown < len(active) && len(rows) < height {
 		waiting := 0
-		for _, c := range active[shown:] {
-			if c.Waiting > 0 {
+		for i, c := range active {
+			if (i < start || i >= start+shown) && c.Waiting > 0 {
 				waiting++
 			}
 		}
@@ -162,20 +212,16 @@ func (m *shellModel) workPanelKey(key string) tea.Cmd {
 	case "esc":
 		m.conversation.workFocused = false
 	case "up", "down":
-		cards := m.workCards()
-		index := 0
-		for i, c := range cards {
-			if c.ID == m.conversation.workSelected {
-				index = i
-			}
-		}
-		if len(cards) > 0 {
+		cards, _ := m.workPanelCards()
+		index := m.workSelection(cards)
+		if index >= 0 {
 			if key == "up" {
 				index = max(0, index-1)
 			} else {
 				index = min(len(cards)-1, index+1)
 			}
 			m.conversation.workSelected = cards[index].ID
+			m.conversation.workIndex = index
 		}
 	}
 	return nil
