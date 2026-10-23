@@ -19,6 +19,8 @@ type Msg interface{ isMsg() }
 type Cmd func(context.Context) Msg
 
 type Block struct {
+	ResultID, ResultRevision string
+	ResultPaged              bool
 	Work                     *WorkSummary
 	ShellFileToolsAvailable  *bool
 	Card                     *Card

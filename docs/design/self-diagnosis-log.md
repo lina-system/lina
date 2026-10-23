@@ -133,6 +133,16 @@ The assertions check ids and codes:
 
 Prose is not asserted. A test that compares the summary's wording, tone or length is not an acceptance check for this contract.
 
+The [M1 record](../../evidence/m1/record.schema.json) retains one injection result
+for each of `model`, `interrupted` and `storage`. For a passing result it carries
+the independently observed injection root, a task-id query filter, the returned
+twelve-field events and a citation with root id, failing event id, error class
+and cause code. `scripts/accept-m1.mjs` rejects unknown fields and codes,
+non-opaque ids, duplicate event ids, missing parents, cycles, disconnected roots
+and mismatched citations. Its file reader also rejects duplicate JSON keys.
+An unavailable running-install diagnosis remains `not_run`; synthetic validator
+fixtures and package tests never supply that observation for an owner record.
+
 Passing these checks in an implementation is claimed by the implementation issue that ran them, with the event ids and query filters it used, not by this document.
 
 The #41 package tests simulate a provider failure, cancellation of a running context and a failed store write. They record each failure, query by agent and task, and build a machine-readable citation from those events alone. `diag.VerifyCitations` checks the independently supplied injection root, the cited failing event, its class and cause code, and every link to the root. It rejects empty citations, missing ids, cycles, duplicate ids, incorrect roots and mismatched codes. Tests log the generated root/failure ids and query filters and assert the exact stored key set and absence of synthetic forbidden content. They do not assert summary prose or claim a running-install model diagnosis. No protocol or TUI operation exposes this package yet; that observable scenario belongs to the issue that wires the conversation query tool.

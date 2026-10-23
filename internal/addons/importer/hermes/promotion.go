@@ -104,7 +104,7 @@ func (p *Plan) PromotionBatches(policy PromotionPolicy) ([]PromotionBatch, error
 				continue
 			}
 			if person == "" {
-				return nil, ErrSnapshot
+				return nil, invalidSnapshot("promotion person mapping required")
 			}
 			key := opaque(r.agent, person, strings.Join(strings.Fields(strings.ToLower(r.body)), " "), string(precision))
 			g := groups[key]
@@ -143,7 +143,7 @@ func (p *Plan) PromotionBatches(policy PromotionPolicy) ([]PromotionBatch, error
 // not a worker echo or text found in source data.
 func (p *Plan) Promote(ctx context.Context, db Canon, policy PromotionPolicy, accepted []string, confirmation string) (int, error) {
 	if strings.TrimSpace(confirmation) == "" {
-		return 0, ErrSnapshot
+		return 0, invalidSnapshot("promotion confirmation required")
 	}
 	batches, err := p.PromotionBatches(policy)
 	if err != nil {
@@ -163,7 +163,7 @@ func (p *Plan) Promote(ctx context.Context, db Canon, policy PromotionPolicy, ac
 	for _, id := range accepted {
 		b, ok := byID[id]
 		if !ok || b.PersonaProposal || seen[id] {
-			return 0, ErrSnapshot
+			return 0, invalidSnapshot("promotion batch selection")
 		}
 		seen[id] = true
 	}
@@ -180,7 +180,7 @@ func (p *Plan) Promote(ctx context.Context, db Canon, policy PromotionPolicy, ac
 					return err
 				}
 				if generation == "" {
-					return ErrSnapshot
+					return invalidSnapshot("promotion requires sealed backup")
 				}
 			}
 			var previous string
