@@ -26,6 +26,9 @@ func (s *turnState) prepareA2A(ctx context.Context, policy turn.ModelPolicy) (tu
 	if err != nil {
 		return turn.PreparedRequest{}, err
 	}
+	if a2a.Terminal(rec.Task.Status.State) {
+		return turn.PreparedRequest{}, a2a.ErrDenied
+	}
 	if err = r.publications.authorize(ctx, rec); err != nil {
 		return turn.PreparedRequest{}, err
 	}
@@ -97,8 +100,8 @@ func (s *turnState) prepareA2A(ctx context.Context, policy turn.ModelPolicy) (tu
 				if current.Calls == nil {
 					current.Calls = map[string]string{}
 				}
-				// Each owner-listed operation may execute once. A changed call ID cannot
-				// repeat a write even if the model asks for it in another round.
+				// Each operation is claimed once. Only the existing turn journal
+				// may replay its committed receipt; another turn cannot reuse a call ID.
 				key := call.Name
 				for i, allowed := range rec.Definition.Tools {
 					if call.Name == allowed.Name && a2a.ArgumentsEqual([]byte(call.Arguments), allowed.Arguments) {
@@ -106,15 +109,11 @@ func (s *turnState) prepareA2A(ctx context.Context, policy turn.ModelPolicy) (tu
 						break
 					}
 				}
-				for previous, id := range current.Calls {
-					if previous == key && id != call.ID {
-						return a2a.ErrDenied
-					}
+				if current.Calls[key] != "" {
+					return a2a.ErrDenied
 				}
-				if current.Calls[key] == "" {
-					current.Calls[key] = call.ID
-					current.ToolCalls++
-				}
+				current.Calls[key] = call.ID
+				current.ToolCalls++
 				return nil
 			})
 			if err != nil {

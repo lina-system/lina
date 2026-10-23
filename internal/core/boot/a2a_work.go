@@ -117,7 +117,7 @@ func (p *publicationRuntime) sweep(ctx context.Context) {
 			if rec.LocalWork == "" {
 				rec, _ = p.store.Update(ctx, rec.Task.ID, func(current *a2a.Record) error { current.LocalWork = work.ID; return nil })
 			}
-			_ = p.observeWork(ctx, rec, work)
+			_ = p.observeWork(ctx, rec, work, false)
 		} else if errors.Is(err, sql.ErrNoRows) && rec.Phase == "executing" {
 			var state string
 			if p.root.db.Read(ctx, func(tx *canon.Tx) error {
@@ -263,6 +263,9 @@ func (r *conversationRuntime) authorizePublishedWorker(ctx context.Context, d di
 		return false, err
 	}
 	if err = r.publications.authorize(ctx, rec); err != nil {
+		return false, nil
+	}
+	if a2a.Terminal(rec.Task.Status.State) {
 		return false, nil
 	}
 	definition := a2a.WorkDefinition(rec)

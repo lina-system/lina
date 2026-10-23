@@ -28,7 +28,7 @@ import (
 	"github.com/thisisjun786/lina/kit/result"
 )
 
-func (p *publicationRuntime) observeWork(ctx context.Context, rec a2a.Record, d dispatch.Record) error {
+func (p *publicationRuntime) observeWork(ctx context.Context, rec a2a.Record, d dispatch.Record, fresh bool) error {
 	set := func(state string) error {
 		_, err := p.store.Update(ctx, rec.Task.ID, func(current *a2a.Record) error {
 			if !a2a.Terminal(current.Task.Status.State) {
@@ -48,6 +48,12 @@ func (p *publicationRuntime) observeWork(ctx context.Context, rec a2a.Record, d 
 		return set(a2a.Unspecified)
 	}
 	if d.Code != "ready_for_review" || d.PR == nil || len(d.Denied) > 0 {
+		return set(a2a.Failed)
+	}
+	if !fresh {
+		return nil
+	}
+	if d.FailureReason != "" {
 		return set(a2a.Failed)
 	}
 	if err := p.requireTools(ctx, rec); err != nil {
@@ -94,7 +100,10 @@ func (p *publicationRuntime) observeWork(ctx context.Context, rec a2a.Record, d 
 		return err
 	}
 	_, err = p.store.Update(ctx, rec.Task.ID, func(current *a2a.Record) error {
-		if current.CancelRequested || a2a.Terminal(current.Task.Status.State) {
+		if a2a.Terminal(current.Task.Status.State) {
+			return nil
+		}
+		if current.CancelRequested {
 			return a2a.ErrDenied
 		}
 		current.Task.Artifacts = []a2a.Artifact{artifact}

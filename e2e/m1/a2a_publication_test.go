@@ -141,7 +141,7 @@ func testM3A2APublication(t *testing.T, mode string) {
 	}
 	def := a2a.Definition{ID: scenario.Task, Name: "Write result", Description: "Create and verify the approved result file", Seconds: 120, MaxCalls: 4, Tools: []a2a.Tool{{Name: "write_record", Arguments: json.RawMessage(`{"id":"","revision":"","kind":"memo","title":"A2A task tool evidence","note":"The permitted Core tool ran."}`)}}, Work: dispatch.Definition{Worker: "antigravity", Repository: repo, Base: "dev", Branch: "a2a-result", What: "Create result.txt", Why: "Complete the published task", Scope: []string{"result.txt"}, NotTouch: []string{"design.md"}, Done: "The committed result.txt contains the requested result, with green checks and verified review", DesignRefs: []string{"design.md#result"}, WriteArea: []string{"result.txt"}}, Artifact: a2a.ArtifactRule{Path: "result.txt", MediaType: "text/plain", Contains: scenario.Artifact, MaxBytes: 4096}}
 	if mode == "denied" {
-		def.Work.Worker = "codex"
+		def.Work.Worker = ""
 	}
 	var calls atomic.Int32
 	provider := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -259,6 +259,12 @@ func testM3A2APublication(t *testing.T, mode string) {
 	client.Close()
 	h.stopCore(bootstrap)
 	ids := seedMethodologyAgents(t, h, person, "dev")
+	if mode == "denied" {
+		rules := map[string]any{"provisional": true, "rules": []any{map[string]any{"worker": "codex", "tags": []string{repo}, "priority": 10}}}
+		if err = os.WriteFile(filepath.Join(h.root, "system/core/worker-choice.json"), mustJSON(t, rules), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	vault, err := secrets.OpenFiles(h.root)
 	if err != nil {
 		t.Fatal(err)

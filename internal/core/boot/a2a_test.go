@@ -107,6 +107,11 @@ func TestPublishedTurnExecutesToolButCannotCompleteWithoutWorker(t *testing.T) {
 	if err != nil || current.Task.Status.State != a2a.Failed || len(current.Task.Artifacts) != 0 {
 		t.Fatalf("model prose became completion: %+v %v", current, err)
 	}
+	admittedWorker.Definition = a2a.WorkDefinition(rec)
+	admittedWorker.Definition.Repository = root.root
+	if allowed, err := root.authorizePublishedWorker(t.Context(), admittedWorker); err != nil || allowed {
+		t.Fatal("terminal task retained worker execution authority", allowed, err)
+	}
 	if len(providerPeer.requests) != 2 {
 		t.Fatalf("provider rounds=%d", len(providerPeer.requests))
 	}

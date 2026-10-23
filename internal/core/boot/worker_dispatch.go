@@ -114,6 +114,18 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 				}
 			}
 		}
+
+		// The existing completion reactor has just reopened PR evidence and run the
+		// manager. Publication must use that observation, not a stale cached scan.
+		if task, external := strings.CutPrefix(record.Origin.Turn, "turn:a2a-input:"); external {
+			rec, err := r.publications.store.Read(ctx, task)
+			if err != nil {
+				return err
+			}
+			if err = r.publications.observeWork(ctx, rec, record, true); err != nil {
+				return err
+			}
+		}
 		text := record.WorkerName() + ": " + record.Code
 		if record.Version != "" {
 			text += " (" + record.Version + "; unverified version)"
