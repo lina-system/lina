@@ -94,6 +94,14 @@ extraction task is consumed without a model call or item writes; its replacement
 is rebuilt from the prior source cursor against current canon so still-eligible
 events are not skipped.
 
+Installed Core owns the extraction schedule and registers each live agent on
+the existing worker socket. Its source cursor is distinct from the worker task
+sequence: accepted memory and source progress commit together; an ineligible
+prefix advances without an auxiliary task. Failed or interrupted calls keep
+their original reservation and charge, and a later scan prepares a fresh task
+from the unchanged source cursor. The worker remains optional; without it,
+queued extraction cannot produce memory.
+
 The maintenance choice is a durable, revision-checked record for the person and
 holder. Its default allows no action. The pass may clear standing flags, merge
 exact duplicates or mark exclusively automated evidence only when that action

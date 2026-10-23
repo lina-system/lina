@@ -16,6 +16,14 @@ a second snapshot, then checks one completion and the result file. The gate
 wait runs outside the worker request loop. `TestM2InstalledWorkerOutcome`
 exercises the corresponding worker, file read-back and restart path in Core.
 
+`TestM2WorkArea` drives Core's workspace allocation and result retention tools,
+commits real worker output, and verifies branch isolation, restart and backup
+after losing the work area. Its completion responder locates the current input
+before the ContextPacket's clock reference. `TestWorkAreaCompletionRequest`
+uses production request assembly to check that trailing evidence cannot hide a
+completion or make an older completion consume a newer input. The installed
+scenario also rejects retention results produced before the retention request.
+
 This map follows the nine acceptance checks and failure injections in
 [LINA 1](../../docs/design/go-roadmap.md#lina-1). External providers and Telegram
 are synthetic wires; the production stores, operations, Core and TUI are real.
@@ -37,6 +45,22 @@ physical input and UX. Passing this suite alone does not declare the phase done.
 | 9. Waiting, running, cards, unchanged output, spikes | `TestM1WaitingRunningNotices`, `TestM1TUICards`, `TestM1TUIApprovalsInstalledCore`, `TestM1TurnBudgetHandoffInstalledCore` and the TUI stream/recovery/resize fixtures cover ordering, counts and cards. Foundation also runs the recording-writer checks `TestUnchangedConnectionWritesNothing`, `TestConversationDoneReplacesStreamAndUnchangedWritesNothing` and `TestConversationMarkdownProfilesAndUnchangedOutput` in `internal/tui/ui`. They compare exact byte counts synchronously, without idle sleeps. Physical spike evidence remains the prerequisite below. |
 
 Failure coverage also includes:
+
+- `TestM3WorkPanelLiveCodexWorker`: Core starts the worker, routes its approval
+  and question, displays live work-card activity, receives its file result and
+  retains the outcome after restart. The shared model fixture distinguishes
+  the current completion from the ContextPacket that follows it in the
+  [request layout](../../docs/design/conversation-and-memory.md#request-layout).
+  `TestWorkerCompletionFixtureRequestLayout` uses the real assembler to cover
+  trailing context, tool discovery, later inputs and result text that appears
+  only in retrieved context.
+
+- `TestM2WorkerDelayedCompletionOutput`: the model fixture selects the latest
+  scenario input or worker result even when user-role ContextPacket evidence
+  follows it. After recovery, a delayed first-turn completion arrives between
+  the second turn's output and finish. The scenario checks file read-back,
+  both stored outputs, one worker start, two worker turns and result reactions,
+  and a non-live result snapshot after another restart.
 
 - `TestM2TimersInstalledCore`: the scripted provider selects the latest input
   or tool result, skipping the following ContextPacket instructions and external
@@ -127,3 +151,10 @@ credential-free CI.
 
 [lcm]: https://github.com/electricsheephq/lcm-x/blob/709099b3a397a7893a7abae8802ebe7bf605f79e/compaction.py
 [honcho]: https://github.com/plastic-labs/honcho/blob/607438d20c408575d1c9257f325c4885da871e82/sdks/python/src/honcho/conclusions.py
+
+`TestM1MemoryQuotesInstalledCore` runs a conversation tool that remembers a
+name from a material-backed Korean event with a secret span. The installed
+Core resolves the quote through memory management before and after restart;
+canon inspection verifies that item/revision evidence contains no quote text.
+The management renderer's synthetic [capture](../../evidence/generated-ui/memory-quotes.png)
+shows a quote and an erased-source status.

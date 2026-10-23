@@ -813,6 +813,8 @@ The work of a goal is a graph of steps inside and a numbered list outside. The p
 - **Refusal.** A refused submission commits neither tasks nor a graph revision. It returns one machine code: `graph_cycle`, `graph_unknown_step` (including duplicate keys or blockers), `graph_invalid_area`, or `graph_invalid_name`. Other malformed work is `graph_invalid`; editing or removing started work is `graph_started_step`; a version conflict is `graph_stale_revision`. A missing goal and a caller outside its owning scope both return `graph_unavailable`. Names are measured by grapheme display width, including wide characters and combining marks, and are never shortened or rewritten to pass. Mechanical refusal covers issue/PR references, paths and filenames, branch/id notation and technical tokens, plus the graph's keys, base branches and known check names. Control and invisible formatting characters cannot hide a technical token. A name-only revision preserves worker claims and results; changing unstarted work retires only undispatched reservations and uses the normal execution fences for in-flight effects.
 - **Names.** The manager names each step in a few plain words of the person's language, at most 24 display cells (P): the thing the step does, such as "숙소 고르기" or "로그인 화면 수정", with no explanation ([surfaces.md](surfaces.md#default-view)). Core refuses a name that holds an issue or pull request number, a branch, a path, a check name or an id, the same rule as a line of the running list. Naming is judgment; the refusal is mechanical.
 - **Frontier.** After every event Core commits for a goal, the derivation of Next action computes the goal's ready frontier: the steps that have not started and whose blockers have all landed, or that have a recorded stacked start (see Parallel hand-off). Each frontier step whose write area, quota and capacity allow it is dispatched in that derivation, in the placement order of Capacity; one that cannot start shows its one reason. A step outside the frontier never starts. The frontier is computed from the ledger alone, without a model call, and two derivations over the same ledger give the same frontier in the same order.
+- **Kinds and landing.** Graph submissions may mix `task` (the default), `background` and `wait` steps. A background step carries a `start_run` brief and resource request; it uses the existing run service and lands from its stored complete result. A wait names either a date (`at`, Unix seconds) or a canonical record and its current revision with a deadline. Core closes it only after observing the date or a different owner-visible record revision. An expired unchanged record needs a decision. Waits hold no worker capacity or write-area lease. Code predecessors release on observed merge, background predecessors on complete stored results, and wait predecessors on their closing observation; a completion claim alone releases none of them. An incomplete background result stays visible for a manager decision. A start the run service refuses before admission creates no run and no effect; the step closes as needing a decision, which releases its reservation so the manager can correct the brief.
+- **One placement pass.** The ready frontier includes steps held by area, quota or capacity, in deadline, dependency depth, goal creation time, goal id and step id order. Core reserves every compatible start in that pass, accounting for earlier reservations in the same pass. A quota hold is distinct from a host-capacity hold. Graph storage order and event delivery order do not set placement order; recovery observes existing claimed starts instead of issuing them again.
 - **Stages are display.** The stage list (see Stages) is a projection of the graph. A stage never holds work back: a step starts when it is in the frontier, even while an earlier stage still has steps running.
 - **Live sessions.** A worker session is live only while its step is in progress or its pull request is being operated on. When the step has landed or been closed, Core ends the worker's process without closing its thread or session (see Control). Files, branches, receipts and the recorded thread or session id remain, and a later execution generation resumes it the way that worker's recovery does (see Codex adapter and ACP adapter). The number of live sessions therefore follows the frontier, never the history of the goal.
 
@@ -1131,7 +1133,21 @@ they do not enable operations the adapter has not implemented.
   incomplete protocol stream or an unfinished request keeps the outcome unknown. Loading or resuming a session
   does not reconcile an unknown turn after a Core crash. A second settled death
   creates the existing decision row and cannot start a third worker.
-- **Quota and typed failures.** ACP defines no quota signal. The adapter reads, in this order: the JSON-RPC error of a request (-32000 is login expiry); the stop reason (`refusal`, `max_tokens` and `max_turn_requests` are worker errors naming it); the JetBrains session-failure extension where the worker advertises it (rate limited, quota exhausted, sign-in required); and the vendor rate-limit metadata that a profile names, such as Claude Code's `usage_update._meta["_claude/rateLimit"]`. Anything else is unknown, and LINA's own usage accounting applies ([runtime.md](runtime.md#usage-and-cost)).
+- **Quota and typed failures.** ACP defines no quota signal. The adapter reads, in this order: the JSON-RPC error of `session/new` (-32000 means needs sign-in) or of `session/prompt` (a worker failure with code `prompt_failed`); the stop reason (`refusal`, `max_tokens` and `max_turn_requests` are worker errors naming it); the JetBrains session-failure extension where the worker advertises it (rate limited, quota exhausted, sign-in required); and the vendor rate-limit metadata that a profile names, such as Claude Code's `usage_update._meta["_claude/rateLimit"]`. Anything else is unknown, and LINA's own usage accounting applies ([runtime.md](runtime.md#usage-and-cost)).
+  Core opts into only AIR v1 `sessionFailure` and accepts it only when the
+  initialize response advertises it. Its error-severity category/actions map
+  to rate limited (`limit`/`retry`), quota exhausted (`limit`/no actions),
+  sign-in required (`access`/`login`) or connection lost
+  (`connection`/`new_session`). Warnings and unknown combinations do not end
+  a turn. The prompt reply remains the terminal boundary: request errors and
+  explicit non-success stop reasons take precedence over extension reports.
+  Claude's reported bucket, utilization, status and Unix-seconds reset become
+  quota rows; context-window usage is not subscription quota. Missing values
+  remain unknown. Core saves reported rows before closing the session, and an
+  exhausted worker permits only the existing single replacement after cleanup.
+  Replacement requires no tool activity, unknown update, unfinished request or
+  earlier prompt-error uncertainty. A native tool's `completed` or `failed`
+  status does not establish its external effects, as for connection recovery.
 - **Never sent.** `authenticate` and `logout`, because the person signs in to a worker in the worker itself; `session/delete`; and `session/set_mode`. `session/close` is sent only on an explicit close.
 - **Versions.** The adapter is verified per profile and version, listed in the release manifest's `verifiedWorkerVersions` like Codex (see Compatibility). An added agent is always unverified.
 
@@ -1148,20 +1164,28 @@ the receipt. They neither submit a receipt nor end the run.
 A cancelled prompt records an interrupted turn and receipt; an open prompt lost
 with its process remains an uncertain failed execution without a receipt.
 A JSON-RPC error reply to the prompt is an observed worker failure, including
-when the process exits immediately after replying. Core records the failed turn
+when the process exits immediately after replying. It uses code `prompt_failed`
+regardless of the remote error code. Core records the failed turn
 and an adapter-derived receipt without retaining the remote error message or
 data. The reply alone does not settle external effects: unresolved effects keep
-the existing recovery fence until reconciliation.
+the existing recovery fence until reconciliation; a later successful prompt
+does not settle that earlier uncertainty.
 The adapter advertises progress, completion, work tools, approvals and questions. ACP
 requests use the existing worker authority and waiting-card bridge, preserving
 the originating conversation. Cards identify the ACP worker; Codex cards retain
 their existing behavior. Form fields preserve string, number, integer, boolean
 and enum values; multi-select arrays use a text field containing a JSON array.
-Core validates the requested schema before consuming an accepted form answer.
-Secret and unsupported forms are declined without requesting secret input.
+The question lists each array's allowed values and labels.
+A property left out of the schema's required list is optional: a blank or
+missing answer is omitted from the accepted content, and the worker keeps its
+default. Core validates the requested schema before consuming an accepted form
+answer. A value that fails that schema does not settle the card, so the owner
+can correct it, decline, or cancel. Secret and unsupported forms are declined
+without requesting secret input. Field names the waiting-card bridge refuses
+are declined the same way and are not shown as a card.
 A pending native decision leaves the prompt's work tools available; prompt
 completion expires both decision and work-tool requests.
-Steering, quota and recovery remain separate integrations;
+Steering and recovery remain separate integrations;
 requesting a capability that is not implemented fails before dispatch.
 
 #### Claude Code through ACP
@@ -1599,7 +1623,7 @@ A goal is in one of these states. The person sees them only through the progress
 | `stopped` | The person stopped the goal. What it produced is kept. |
 | `blocked` | Work cannot go on without the person, and a row says why: recovery is exhausted, or evidence failed with no repair inside the scope. |
 
-`done` and `stopped` are final. A `blocked` goal resumes when the person answers its row. Revision of the goal moves it back to `running` from any state but `stopped`.
+`stopped` is final. A `done` goal remains complete while its evidence stays current; a later observed target change reopens it as described under Evidence before close. A `blocked` goal resumes when the person answers its row. Revision of the goal moves it back to `running` from any state but `stopped`.
 
 **The liveness rule.** A goal that is not final always has at least one of these: a task or background run in progress, a named wait with a wake condition and a deadline, a recovery in progress, or a row in "Waiting for me". Core checks the rule after every transition it commits for the goal. A goal that has none is orphaned. Core then runs the derivation of the next action at once. When the derivation finds nothing to do, Core gives the manager session one turn that names the gap: the open criteria and the fact that nothing will move them. When that turn records no task, wait or decision either, the goal becomes `blocked` with a row that says in plain words that LINA could not find a way to finish it and what is missing. A goal never ends silently and never sits idle with open criteria.
 
@@ -1667,6 +1691,15 @@ evidence. Unchanged work in the retained scope keeps its landed results.
 ### Next action
 
 After every event Core commits for a goal, Core derives the goal's next actions from the current ledger and the goal record. The event itself carries no instruction: it only says that something changed, and Core reads the current state before it acts (see Event-driven flow). The same derivation runs for every goal that is not final once at startup and in each reconcile sweep, so a lost event costs at most one sweep. Mechanics run in Core without a model call. A model turn happens only where judgment is needed: splitting work, writing a work definition or brief, checking a result against the done condition, or drafting text for the person or for someone else. The table lists who acts.
+
+Task, background-run and wait starts share the step frontier and its durable
+claims. Background completion wakes derivation through the run's stored result;
+record waits reread their owner-visible source on change and at expiry, and date
+waits use a timer. Neither kind borrows code merge or QA evidence. A mixed goal
+retains the merge, QA, deployment and runtime checks of each code task.
+For a graph containing only runs and waits with no service, the ordered stored
+results form the verification revision. Core rereads each result before checking
+the goal; `step.read` checks one named step and `steps.read` checks all results.
 
 A task's pull-request change signal invalidates its cached head, check, review and manager proofs, including while it waits for another task's merge slot. Core reads the pull request again before deriving a merge from those proofs.
 
@@ -1795,6 +1828,32 @@ A goal closes as `done` only when every criterion has evidence that Core collect
 - the manager's judgment against the criterion's written rubric, recorded with what it read.
 
 A worker's receipt, a model's sentence, a completed turn, a command's exit code alone, a pending check and an effect with an unknown outcome are never evidence. At `checking`, Core reads every piece of evidence again rather than trusting what it stored, so a document edited or an event moved after it was checked reopens its criterion. One check per criterion is enough; no panel of verifiers is used.
+
+The execution ledger retains the collected record or check output, not only its
+reference. Citation checks retain their result and the passages read, with each
+source's target, revision and content. A rubric judgment retains the exact
+criterion rubric, the judgment and the same source information. Unsupported
+evidence kinds and references without these contents cannot meet a criterion.
+An external-effect criterion records the expected fields of its target. Core
+compares them with the read-back record; extra record fields are allowed, while
+requested nested fields, arrays and scalar types must match. A connector's
+success flag cannot override a mismatch.
+
+Before closure, the installed Core reads every collected item again, including
+the actual external record and retained command output. It checks the goal
+revision and checking round again when committing closure. Re-reads run independently
+for each goal under the work runner, so slow connectors cannot block Core startup
+or unrelated work. An invalidated round retires its undispatched and authorization-
+waiting checks; a late grant cannot revive them. A changed, missing or
+unreadable item reopens the goal to `running` and starts a fresh checking round;
+prior observations and worker results remain in history. An integration's target
+change hint also invalidates criteria that read that target as a source. Repeated
+hints are idempotent and a delayed old check cannot satisfy the new round.
+Startup and the existing five-minute safety sweep re-read met evidence, including
+completed goals, so a missed hint cannot leave changed evidence accepted forever.
+These reads never repeat the underlying worker, merge, deployment or plugin
+effect. Failed fresh criteria return to the existing manager repair/attention path.
+Older records that contain only evidence references require fresh checks.
 
 For a non-code file task, its work definition records an absolute destination
 folder. The worker writes deliverables under `out/` and its report at
@@ -1935,6 +1994,12 @@ or an executable. The file contains:
   uses the existing argument-bound approval path; registration grants no public
   deployment approval. A private deployment remains subject to preset limits
   and the current goal's scope.
+- Optional `evidence_checks`: method names bound to a `repository`, fixed
+  `target`, evidence `kind` and read-only `command`. These connect external
+  records, citation checks and rubric judgments to a goal in that repository's
+  scope. The method cannot replace a built-in lifecycle check. An external read
+  requires the criterion's `expected` record fields. Registration supplies the
+  reader, never authority to perform the effect being verified.
 
 QA and outcome checks run in a disposable checkout of the observed merge commit.
 Deploy uses that same pinned revision. Core passes `LINA_GOAL_REVISION`,
@@ -1946,6 +2011,14 @@ code without this evidence cannot complete a stage. An explicit deployment failu
 it is not retried automatically. A deployment also requires
 an independent probe of the running service; the deploy command's output alone
 does not prove it is running.
+
+For criterion checks Core also supplies `LINA_GOAL_CHECK`, containing the
+criterion's check definition. An evidence connector returns the same envelope
+with `collected`: an external `record`; check `output`; citation `output` and
+`reads`; or `rubric`, `judgment` and `reads`. Each read has `target`, `revision`
+and `content`. Core retains this data and enforces the kind and expected-field
+requirements above. The ordinary repository check format remains supported;
+its retained structured output supplies its check evidence.
 
 Core captures protected refs before starting the worker, re-reads the PR's current
 head, checks and review, requires the dev manager's verified verdict, and merges
@@ -2010,7 +2083,7 @@ Two permissively licensed sources shaped this section; LINA keeps none of their 
 Effect states and idempotency keys are defined in [host-protocol.md](host-protocol.md), the effect ledger in [runtime.md](runtime.md), and epochs, reconciliation and the task owner's disposition of irreversible effects in [main-authority.md](main-authority.md). Work applies them as follows:
 
 - When LINA Core restarts, running worker turns are cut. Their effects are unknown. After the restart LINA Core reconciles with `thread/resume` and a `thread/read` snapshot.
-- Before sending conversation-worker input that can start a follow-up turn, Core persists an uncertain intent with its directory reservation. The prior turn's completion cannot settle that intent. Core checkpoints the accepted turn binding independently of notifications. A definitive refusal restores the prior binding and releases an unused reservation; a missing binding or failed checkpoint retains uncertainty without replay or guessing a turn on restart. Steering preserves the recovery allowance.
+- Before sending conversation-worker input that can start a follow-up turn, Core persists an uncertain intent with its directory reservation. The prior turn's completion cannot settle that intent. Core checkpoints the accepted turn binding independently of notifications. A definitive refusal restores the prior binding and releases an unused reservation; a missing binding or failed checkpoint retains uncertainty without replay or guessing a turn on restart. The adapter identifies steering versus a new turn at its serialized input boundary, before dispatch. Steering retains the exact existing turn and recovery allowance in its uncertain intent; a lost reply or failed post-input read can still be reconciled against that turn without replaying input. Only input that can start a new turn excludes the previous turn as evidence.
 - On reconnect, LINA Core reconciles with `thread/loaded/list` and `thread/read`. When a pending server request does not arrive again, the attempt is marked unknown and needing attention, and the originating conversation is told.
 - When a Node restarts or disconnects, the effects of its running turn are unknown and are reconciled. On a Node policy cancel the Node sends `turn/interrupt` and reports STOPPED or UNKNOWN.
 - A GitHub write or merge with an unknown outcome is settled by reading GitHub's state ([integrations.md](integrations.md)). It is never repeated automatically.
@@ -2065,7 +2138,7 @@ LINA Core keeps one progress line for each 일 and each 목표 that has work in 
 - The progress of a 목표 is the share of its 일 that are done, and its stage is that of its least advanced running 일.
 - Now is, in this order: 확인 필요 (needs you) and the subject of its row while a row of "Waiting for me" belongs to it; else 일시정지 (paused) while the person has paused it; else the name of the earliest-started step in progress, followed by the number of the other steps in progress ("로그인 화면 수정 외 1"); else its queue reason and place, or 대기 (waiting) and its one reason or wait (see Order, pause and run limit); else the stage word 설계, 확인 or 끝. It changes only when a step starts or ends, a wait or row opens or closes, or the goal's pause, rank or place changes.
 - Started is when the goal was handed over, or when a run that serves no goal started. Elapsed time runs from it to now, or to the finish of a done line. Core records the instant in new work-ledger events and preserves it through retries and projection rebuilds. Legacy events with no timestamp stay unknown. Live conversation workers use their Core launch time; independent background runs use their recorded creation time.
-- Before a plan's stages exist, Now prefers the worker's existing session title and current to-do item: `title · current step`, either alone when only one is observed. Core reads Claude Code `ai-title`, TodoWrite and session task files; Codex thread names and `update_plan`; Gemini `write_todos`; Cursor `todo_write`; opencode titles and todos; and ACP session metadata and plan entries. Streaming readers consume each new record once, file readers retain append offsets, and rewritten task/document snapshots are read only when changed. An empty plan clears the current step. Core masks secrets, removes terminal controls and active markup, and limits the line to 120 Unicode characters before storing or publishing it. Busy/idle and the last transition time come from those observations and adapter lifecycle events; silence changes neither. No prompt asks for a progress report and no model call produces this line. The next adapter event carries the observation to the work card and sidebar, using the existing progress publication window. The line is display evidence, never a completion verdict or plan percentage. When neither title nor current step is observed, Now reflects the observed execution: in progress, running a command, editing files, preparing a reply or using a tool. A pending person request takes precedence and supplies its subject. These fallback labels are Core activity classifications, not worker prose, command arguments, reasoning or completion claims. Repeated deltas in the same activity do not change Now; an activity change is retained for durable dispatched work. Plan stage and percentage remain unknown until observed.
+- Before a plan's stages exist, Now prefers the worker's existing session title and current to-do item: `title · current step`, either alone when only one is observed. Core reads Claude Code `ai-title`, TodoWrite and session task files; Codex thread names and `update_plan`; Gemini `write_todos`; Cursor `todo_write`; opencode titles and todos; and ACP session metadata and plan entries. Streaming readers consume each new record once, file readers retain append offsets, and rewritten task/document snapshots are read only when changed. An empty plan clears the current step. Core masks secrets, removes terminal controls and active markup, and limits the line to 120 Unicode characters before storing or publishing it. Busy/idle and the last transition time come from those observations and adapter lifecycle events; silence changes neither. No prompt asks for a progress report and no model call produces this line. The next adapter event carries the observation to the work card and sidebar, using the existing progress publication window. Core keeps that line for the session's current turn. A later turn, opened by input or recovery, replaces it; an observation from another turn does not. The line is display evidence, never a completion verdict or plan percentage. When neither title nor current step is observed, Now reflects the observed execution: in progress, running a command, editing files, preparing a reply or using a tool. A pending person request takes precedence and supplies its subject. These fallback labels are Core activity classifications, not worker prose, command arguments, reasoning or completion claims. Repeated deltas in the same activity do not change Now; an activity change is retained for durable dispatched work. Plan stage and percentage remain unknown until observed.
 - A value that cannot be observed is unknown and is shown as unknown, never as zero, as the rule of Plans says. A line says done only when the done condition is met.
 - A 목표 has a line when one of its 일 runs or something waits on the person. An 일 that belongs to a 목표 is a line below it, and an 일 that stands alone is a line of its own. A goal that is a single 할 일, and a background run that serves no goal, is a line of its own whose stage list is its one step. A finished item leaves the lines once the person has seen it.
 - Shared overview rows keep each goal immediately followed by its children, even when their execution states differ. Core supplies a separate flat card order for the work panel; sorting those cards never moves the shared rows or changes their depth.

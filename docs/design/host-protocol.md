@@ -562,6 +562,13 @@ existing authenticated `node` connection:
   existing `client` projections. A remote question or a Node message is not an
   approval answer. Only a permitted owner surface can answer one.
 
+The outbound Core implementation adds the owner-only `a2a` 1.0 **client**
+capability (`a2a_request`, `a2a_result`). Connection setup and status use closed
+schema payloads and generated types. OAuth shares `sign_in_listen`,
+`sign_in_listening`, `sign_in_open` and `sign_in_redirect` on the same authenticated
+client session; it does not create a model-provider account. Input and sign-in
+waits project through the existing waiting and conversation surfaces.
+
 The Node implementation issue must add closed schema payloads, generated
 types, version/capability negotiation and conformance fixtures together with
 the running handlers. This design registers no kind or supported combination;
@@ -586,7 +593,7 @@ Memory operations are `list`, `remember`, `correct` and `forget`, scoped to an
 `agent_id` and the connection's person. `item_id` identifies a correction or
 forget target; `text` holds a query or explicit statement; optional `holder`
 and `scope` apply only to remember. List accepts optional `after` (the last visible item id), and returns optional `next` for continuation. Pages bound serialized content plus evidence to 512 KiB, leaving room below the 1 MiB transport frame. A cursor is checked within the same authenticated scope before applying the result limit. Result items carry id, revision, content,
-holder, scope and canonical evidence identities. Correct returns the new id and
+holder, scope and canonical evidence identities. Optional `evidence_details` gives each reference's current quote or availability status, with deletion metadata for an erased source. Quotes follow the selected agent's evidence scope and secret masking; foreign evidence has only its reference. If quotes would make one item exceed a whole page, list omits those quotes with `quote_too_large`; if the optional details still do not fit, it retains the existing evidence identities without those details. Large quotes never make an otherwise listable item block continuation. Correct returns the new id and
 retains the target's holder and scope. Forget returns only the removed id.
 Agent operations are `list`, `create`, `choose`, `rename` and `delete`; requests
 carry `agent_id` and/or `name` as appropriate, and results return the affected id

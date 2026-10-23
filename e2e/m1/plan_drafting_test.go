@@ -56,6 +56,9 @@ func TestM3PlanDrafting(t *testing.T) {
 			t.Error("bad provider request")
 			return
 		}
+		if answerEmptyMemoryExtraction(w, req.Input) {
+			return
+		}
 		n := calls.Add(1)
 		switch n {
 		case 1:

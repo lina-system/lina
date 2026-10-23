@@ -23,6 +23,9 @@ type acceptedSteering struct {
 // submitInput runs under the shared conversation's admission mutex. Channel
 // adapters reuse this coordinator, including steering during a live turn.
 func (r *conversationRuntime) submitInput(event ledger.Event, inboxID int64, steer bool, runner *conversationRuntime) error {
+	if r.router != nil {
+		r.router.root.notifyExtraction()
+	}
 	items, err := assemble.History([]ledger.Event{event}, r.conversation, r.agent)
 	if err != nil {
 		return err
@@ -42,11 +45,12 @@ func (r *conversationRuntime) submitInput(event ledger.Event, inboxID int64, ste
 // Drained steering belongs to this turn; only the queue's final undrained
 // items are resubmitted as follow-ups, with their original durable identity.
 type conversationInputs struct {
-	bindingTurn *turnState
-	runtime     *conversationRuntime
-	inputs      *loop.Inputs
-	failure     error
-	questions   *questionTurn
+	bindingTurn   *turnState
+	runtime       *conversationRuntime
+	inputs        *loop.Inputs
+	failure       error
+	questions     *questionTurn
+	retainBinding func(string, int, provider.Item)
 }
 
 func (q *conversationInputs) Drain() []provider.Item {
@@ -72,7 +76,7 @@ func (q *conversationInputs) Drain() []provider.Item {
 		if err != nil {
 			q.failure = err
 		} else {
-			for _, item := range packet {
+			for index, item := range packet {
 				message, err := guard.Admit(guard.EntryTool, item.Origin, item.Text)
 				if err != nil {
 					q.failure = err
@@ -84,6 +88,9 @@ func (q *conversationInputs) Drain() []provider.Item {
 					Content string `json:"content"`
 				}{evidence.Role, evidence.Text})
 				out = append(out, raw)
+				if q.retainBinding != nil {
+					q.retainBinding(accepted.event.ID, index, raw)
+				}
 			}
 		}
 		if accepted.event.Surface.Kind == "channel" {

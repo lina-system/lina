@@ -34,6 +34,9 @@ func inputVersion(g Goal, a Action) *InputVersion {
 			v.TargetRevision = t.Head
 		}
 	case RunQA, PlanGoal:
+		if a.Kind == PlanGoal && a.TaskID == "" && a.FailureKey != "" {
+			v.CheckRound = g.CheckRound
+		}
 		if t := goalTask(&g, a.TaskID); t != nil {
 			v.TargetRevision = t.Merge.Revision
 		} else if a.Kind == PlanGoal && a.FailureKey != "" && a.Revision != "" {
@@ -55,7 +58,9 @@ func staleInputs(g Goal, a Action) bool {
 
 func currentActionTarget(g Goal, a Action) bool {
 	switch a.Kind {
-	case CheckCriterion, Deploy, Verify, InspectPR, Merge, RunQA:
+	case CheckCriterion:
+		return a.CheckRound == g.CheckRound && a.Revision == inputVersion(g, a).TargetRevision
+	case Deploy, Verify, InspectPR, Merge, RunQA:
 		return a.Revision == inputVersion(g, a).TargetRevision
 	case PlanGoal:
 		if a.TaskID != "" || a.FailureKey != "" && a.Revision != "" {

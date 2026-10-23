@@ -156,16 +156,23 @@ func (s *Session) bound(t worker.Thread, turn bool) error {
 	return nil
 }
 func (s *Session) Input(ctx context.Context, t worker.Thread, in worker.Input) error {
-	return s.inputTurn(ctx, t, in, false)
+	return s.inputTurn(ctx, t, in, false, nil)
+}
+
+// InputWithAdmission identifies steering under the same control lock as dispatch.
+// A failed admission sends nothing. A completion after admission may refuse a
+// steer, but cannot turn it into a newly started continuation.
+func (s *Session) InputWithAdmission(ctx context.Context, t worker.Thread, in worker.Input, admit func(steering bool) error) error {
+	return s.inputTurn(ctx, t, in, false, admit)
 }
 
 // Steer cannot open a new turn if the worker finishes between Core's snapshot
 // and delivery. The scheduled execution remains owned by the scheduler.
 func (s *Session) Steer(ctx context.Context, t worker.Thread, in worker.Input) error {
-	return s.inputTurn(ctx, t, in, true)
+	return s.inputTurn(ctx, t, in, true, nil)
 }
 
-func (s *Session) inputTurn(ctx context.Context, t worker.Thread, in worker.Input, activeOnly bool) error {
+func (s *Session) inputTurn(ctx context.Context, t worker.Thread, in worker.Input, activeOnly bool, admit func(steering bool) error) error {
 	if err := s.control.Lock(ctx); err != nil {
 		return errors.Join(worker.ErrInputRefused, err)
 	}
@@ -182,6 +189,11 @@ func (s *Session) inputTurn(ctx context.Context, t worker.Thread, in worker.Inpu
 	s.mu.Unlock()
 	if err != nil {
 		return errors.Join(worker.ErrInputRefused, err)
+	}
+	if admit != nil && (state == worker.Active || state == worker.Idle && !activeOnly) {
+		if err := admit(state == worker.Active); err != nil {
+			return errors.Join(worker.ErrInputRefused, err)
+		}
 	}
 	switch state {
 	case worker.Idle:

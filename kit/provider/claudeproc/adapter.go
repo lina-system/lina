@@ -239,3 +239,9 @@ func (s *stream) Close() error {
 		return errors.New("adapter shutdown timed out")
 	}
 }
+
+// RequestBudget retains conservative byte accounting until this adapter can
+// pair model context metadata with a tokenizer for its complete wire request.
+func (*Adapter) RequestBudget(provider.ModelRef) (int, func(provider.Request) int) {
+	return 128000, provider.RequestBytes
+}

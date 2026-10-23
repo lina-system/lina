@@ -29,8 +29,10 @@ read to 2 MiB and refreshes rewritten Gemini documents only on a change.
 `ClaudeFiles` discovers only the bound session's transcript and reads changed
 session task files, giving the latest task inventory precedence over TodoWrite.
 
-Adapters attach a value snapshot to their existing event. Core validates the
-thread, commits changed observations under the current run, and publishes Now
-through the existing progress topic. A repeated busy state preserves Since;
+Adapters attach a value snapshot to their existing event. Core accepts it
+only for the session's current turn. Input and recovery can open a later turn
+without replacing the launch handle; an observation from another turn does not
+replace Now. Core commits changed observations under the current run and
+publishes Now through the existing progress topic. A repeated busy state preserves Since;
 idle does not establish completion. Old cards with no observation use the
 existing activity classification. The UI does not infer worker progress.

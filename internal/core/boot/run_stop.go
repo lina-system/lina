@@ -3,6 +3,7 @@ package boot
 
 import (
 	"context"
+	"strings"
 
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/kit/protocol"
@@ -15,6 +16,9 @@ func (r *conversationRuntime) stopRun(ctx context.Context, s clientsrv.Session, 
 	request := e.Payload.(protocol.Stop)
 	if request.RunID == nil || *request.RunID == "" {
 		return clientsrv.Result{}, malformedManagement()
+	}
+	if strings.HasPrefix(*request.RunID, "a2a:") {
+		return r.stopA2A(ctx, s, request, e.MessageID)
 	}
 	if workerReference(*request.RunID) {
 		err := r.ownerWorkerControl(ctx, s, *request.RunID, request.ConversationID, e.MessageID, "")

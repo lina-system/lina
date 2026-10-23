@@ -103,9 +103,9 @@ Layers under `internal/core/`:
 | Layer | Packages |
 | --- | --- |
 | L1 | `canon` (writer, fence, migrations), `eventstore`, `secrets`, `ctlfiles`, `guard` (masking), `ids` |
-| L2 | `authority` (gate, grants, approvals, effect ledger), `lifecycle`, `budget`, `manifest`, `binding` (pure input rules and candidate ranking), `toolcatalog` (pure declaration reconstruction) |
+| L2 | `authority` (gate, grants, approvals, effect ledger), `lifecycle`, `budget`, `manifest`, `binding` (pure input rules and candidate ranking), `toolcatalog` (pure declaration reconstruction), `recall` (shared derived index writer and queued fill) |
 | L3 | One store per table group: `ledger`, `inbox`, `agents`, `memory`, `retract`, `skills`, `records`, `assets`, `work`, `timers`, `plugins`, `channels`, `accounts` |
-| L4 | Flows: `lane`, `assemble`, `compaction`, `turn`, `runs`, `replay`, `intakereplay`, `reply`, `results`, `modelpath`, `exec`, `exchange`, `gateway`, `worker`, `reactor`, `review`, `ghclient`, `progress`, `waiting`, `backup`, `update`, `recover`, `clientsrv`, `jobs`, `mcphost`, `install` |
+| L4 | Flows: `a2a`, `lane`, `assemble`, `compaction`, `turn`, `runs`, `replay`, `intakereplay`, `reply`, `results`, `modelpath`, `exec`, `exchange`, `gateway`, `worker`, `reactor`, `review`, `ghclient`, `progress`, `waiting`, `backup`, `update`, `recover`, `clientsrv`, `jobs`, `mcphost`, `install` |
 | L5 | `boot`, `supervise` |
 
 The separate worker has its own downward import layers.
@@ -2429,7 +2429,10 @@ Evidence: [worker-protocols.md](../research/worker-protocols.md).
   The Cursor installed-Core scenario in `e2e/m2/cursor_worker_test.go` exercises this path.
 - ACP approval and form events use the existing `boot` worker bridge. The
   adapter retains single-use request handles and validates offered once options
-  and form values before sending. Snapshots expose pending requests as waiting;
+  and form values before sending. Field names the waiting-card bridge refuses
+  are declined before a card is published. Optional schema properties may be
+  omitted, multi-select values and labels are shown on the question, and a
+  schema-invalid submission leaves the card open. Snapshots expose pending requests as waiting;
   cancel and prompt completion invalidate them. Core's existing authority claim
   consumes approval answers before delivery and stops unused answers on restart.
   No new storage format or migration is introduced. The headless scenario in
@@ -2447,7 +2450,9 @@ Evidence: [worker-protocols.md](../research/worker-protocols.md).
 | `session/update`: message, thought, tool call, tool-call update, plan | progress |
 | `usage_update`, usage in the `session/prompt` reply | usage |
 | `session/prompt` reply | finish: `end_turn` done; `cancelled` interrupted; `refusal`, `max_tokens`, `max_turn_requests` failed as a worker error naming the stop reason |
-| JSON-RPC error on a request; session-failure extension | finish failed: -32000 login expiry; extension kinds map to quota, rate limit, login or connection |
+| `session/new` JSON-RPC error -32000 | readiness refusal: needs sign-in |
+| `session/prompt` JSON-RPC error | finish failed: worker error with `prompt_failed`; effects remain unknown |
+| Advertised session-failure extension | finish failed: quota, rate limit, login or connection |
 | `session/request_permission` | approval |
 | `elicitation/create` (form) | question |
 | A tool call on LINA's session MCP server | work-tool call |
@@ -2460,6 +2465,16 @@ Evidence: [worker-protocols.md](../research/worker-protocols.md).
   It returns Core's record of the session: state, pending requests and the last message.
   After a Core restart the state is unknown until once-only recovery loads the session again.
 - `Quota` returns rows only from the session-failure extension and a profile's named rate-limit key; with neither, it returns none and the chooser treats the worker as unknown.
+  Worker initialization opts into AIR v1 session failures without changing the
+  shared client's provider defaults. Only advertised, error-severity machine
+  categories/actions are classified. Prompt RPC errors and stop reasons retain
+  precedence; warning updates and unknown metadata cannot finish a turn.
+  A terminal ACP snapshot carries its observed finish; transport loss leaves
+  effects unknown, as do prompt errors and native tool calls without a reported
+  terminal outcome. A later prompt does not reconcile an earlier error.
+  Dispatch persists streamed quota measurements before session
+  teardown and uses that snapshot to fence the one allowed replacement.
+  The synthetic installed-Core scenario is `e2e/m2/acp_quota_test.go`.
 - Every child is owned through `kit/proc` and reaped with its process tree; LINA's own model credential is removed from its environment.
 
 **C-57 Work definition, choice and splitting (new).**
