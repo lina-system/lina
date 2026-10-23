@@ -447,6 +447,12 @@ completion conditions to repository tests and installed Core scenarios.
 - Depends on: G2-22, G2-03. Design refs: C-54; [work-and-delegation.md](work-and-delegation.md#the-to-do-record).
 
 **G2-24 TUI records, progress and agent screens.** Views, memo inbox, progress view, quick add, board, steering, usage meter.
+- #164 connects the TUI memo inbox and record lenses to Core queries through a
+  negotiated `records` capability. Lists retain Core order and internal ids stay
+  out of display rows. [The record journey](../../e2e/m2/tui-records.json) covers
+  conversation capture, restart, discovery, direct browsing, preview cancellation
+  and explicit confirmation of token-based quick add. Memo promotion
+  remains #156.
 - Done when: a quick add shows chips before it saves; every view is a Core query result drawn without client ranking; a progress view line holds no id-shaped field; the board groups Core's rows into Waiting for me, Running and Done; a follow-up note reaches a running background run at its next round trip; the usage meter reads "unknown" for an unreported quota.
 - Depends on: G1-21, G2-13, G2-23, G2-25. Design refs: T-12, T-13, T-14.
 

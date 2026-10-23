@@ -114,6 +114,8 @@ type conversationRuntime struct {
 	agents           *agents.Store
 	skills           *skills.Store
 	records          *records.Store
+	recordCaptureMu  sync.Mutex
+	recordCaptures   map[string]*recordCapture
 	persona          *coreexec.Persona
 	personaAuthority *authority.Service
 	personaGrants    map[string]grant.Grant
@@ -262,6 +264,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	for kind, op := range clientsrv.AccountOperations(r.person, r.accounts, relay) {
 		r.identity.Operations[kind] = op
 	}
+	for kind, op := range clientsrv.RecordOperations(r) {
+		r.identity.Operations[kind] = op
+	}
 	for kind, op := range clientsrv.WebOperations(r) {
 		r.identity.Operations[kind] = op
 	}
@@ -326,6 +331,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 		return nil, err
 	}
 	if err = r.startTimers(ctx); err != nil {
+		return nil, err
+	}
+	if err = r.resumeWorkerCompletions(ctx); err != nil {
 		return nil, err
 	}
 	success = true
@@ -703,7 +711,7 @@ func (r *conversationRuntime) publishReply(ctx context.Context, key, turnID stri
 func (r *conversationRuntime) events(ctx context.Context, through string) ([]ledger.Event, error) {
 	var ids []string
 	err := r.db.Read(ctx, func(tx *canon.Tx) error {
-		query := `SELECT id FROM conv_event WHERE conversation_id=? AND (speaker_kind IN ('person','agent','forwarded') OR scaffold_kind IN ('interruption','failure','persona_change','run_handoff','background_notice','coding_handoff','work_completion','timer','timer_work'))`
+		query := `SELECT id FROM conv_event WHERE conversation_id=? AND (speaker_kind IN ('person','agent','forwarded') OR scaffold_kind IN ('interruption','failure','persona_change','run_handoff','background_notice','coding_handoff','work_completion','timer','timer_work','worker_session','worker_completion'))`
 		args := []any{r.conversation}
 		if through != "" {
 			query += ` AND (speaker_kind NOT IN ('person','forwarded') OR rowid <= (SELECT rowid FROM conv_event WHERE id=?))`
