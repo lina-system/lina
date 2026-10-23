@@ -737,8 +737,9 @@ priority. Without rules, otherwise equal candidates retain the installed
 Antigravity-then-Codex order. These rules grant no worker permissions.
 
 Dispatch keeps worker eligibility in one factory registry. Explicit selections
-are Antigravity, headless Claude and the built-in ACP profiles; automatic
-selection uses Antigravity, Codex and installed ACP profiles in that order.
+are Antigravity, headless Claude and the built-in and valid added ACP profiles;
+automatic selection uses Antigravity, Codex, installed built-in ACP profiles and
+valid added profiles in that order.
 Headless Claude remains explicit-only, and the provisional rules file accepts
 only Antigravity and Codex. Admission, the tool's worker enum and rule validation
 derive from those registrations. Startup converts legacy binary settings into
@@ -905,6 +906,9 @@ Every worker adapter offers the work engine the same operations:
 - LINA lists the worker versions each adapter has verified in the release manifest's `verifiedWorkerVersions` field ([runtime.md](runtime.md)). Installation compares Codex's bare version with that list, accepting the `codex-cli ` prefix in probe output and legacy lists. When the installed version is not on the list, LINA tells the user that the version is unverified, with the version it found and the verified ones, and still delegates.
 - LINA refuses delegation to the worker only when the adapter can't connect to it or the protocol handshake fails (for Codex, `initialize`), and names the cause.
 - LINA never installs, updates or pins the worker.
+- Person-added ACP workers are always unverified, including when their reported
+  version matches a verified built-in version. Their settings cannot assert
+  verification; an unknown version remains usable after a successful handshake.
 
 ### Codex adapter
 
@@ -1112,6 +1116,15 @@ capability names. Missing or malformed version metadata is unknown. Core retains
 no other handshake metadata, including host details, authentication descriptions
 or metadata nested inside capabilities. Advertised capabilities are observations;
 they do not enable operations the adapter has not implemented.
+
+The person adds ACP workers in `system/core/worker-profiles.json` under the Core
+state root; [C-60](go-core.md#work-engine) defines its versioned JSON format.
+Core reads it at startup and registers valid entries with the shared adapter.
+An added name cannot replace any built-in name. Invalid entries are refused with
+their cause while other workers remain available; malformed file syntax refuses
+only the added file. Settings changes require a restart. Commands and arguments
+are passed as entered without shell interpretation or worker configuration edits.
+Added workers participate in normal dispatch authority, readiness and receipts.
 
 - **Start.** Core starts the profile's command as a stdio child with the person's environment, removing only LINA's own model credential. `initialize` declares no file system or terminal capability, so the worker uses its own tools, and declares form elicitation. An answer other than protocol version 1 fails the handshake. The answered capabilities become the adapter's capability set: approvals and progress always, steering only with the steering extension, recovery only with `loadSession` or `session/resume`, quota only where a source below exists.
 - **Session.** `session/new` carries the worktree as `cwd` and LINA's tool server as the only entry of `mcpServers`; the worker's own MCP servers stay in its own configuration. LINA calls `session/set_config_option` only to apply a model or effort that the worker profile names, and never changes the session mode. The task packet goes out as the first `session/prompt`.
