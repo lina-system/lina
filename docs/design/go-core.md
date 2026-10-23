@@ -58,7 +58,7 @@ Callers pass state locations, persona, skills and knowledge scope.
 | L1 | `canon` (writer, fence, migrations), `eventstore`, `secrets`, `ctlfiles`, `guard` (masking), `ids` |
 | L2 | `authority` (gate, grants, approvals, effect ledger), `lifecycle`, `budget`, `manifest` |
 | L3 | One store per table group: `ledger`, `inbox`, `agents`, `memory`, `retract`, `skills`, `records`, `assets`, `work`, `timers`, `plugins`, `channels`, `accounts` |
-| L4 | Flows: `lane`, `assemble`, `compaction`, `turn`, `runs`, `replay`, `reply`, `results`, `modelpath`, `exec`, `exchange`, `gateway`, `worker`, `reactor`, `review`, `ghclient`, `progress`, `waiting`, `backup`, `update`, `recover`, `clientsrv`, `jobs`, `mcphost`, `install` |
+| L4 | Flows: `lane`, `assemble`, `compaction`, `turn`, `runs`, `replay`, `intakereplay`, `reply`, `results`, `modelpath`, `exec`, `exchange`, `gateway`, `worker`, `reactor`, `review`, `ghclient`, `progress`, `waiting`, `backup`, `update`, `recover`, `clientsrv`, `jobs`, `mcphost`, `install` |
 | L5 | `boot`, `supervise` |
 
 The separate worker has its own downward import layers. Core may import only its `jobapi` contract, never its reader or runtime; the worker imports no Core, provider, secret, process-launch or arbitrary third-party package. The SQLite binding is allowed only in the exact read-only reader package. The ordinary architecture test enforces these boundaries.
