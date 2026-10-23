@@ -186,6 +186,28 @@ func (r *conversationRuntime) Memory(ctx context.Context, s clientsrv.Session, p
 			if e != nil {
 				return result, e
 			}
+			// Optional quotes must not make an otherwise listable item exceed
+			// a whole page. Keep its source identities and explain the omission.
+			if len(raw)+1 > 512<<10 {
+				for i := range details {
+					if details[i].Quote != nil {
+						details[i].Quote = nil
+						status := "quote_too_large"
+						details[i].Status = &status
+					}
+				}
+				raw, e = json.Marshal(item)
+				if e != nil {
+					return result, e
+				}
+				if len(raw)+1 > 512<<10 {
+					item.EvidenceDetails = nil
+					raw, e = json.Marshal(item)
+					if e != nil {
+						return result, e
+					}
+				}
+			}
 			// Leave half the transport frame for envelope, metadata and JSON overhead.
 			if size+len(raw)+1 > 512<<10 {
 				if len(items) == 0 {
