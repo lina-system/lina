@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package goal
 
-import "testing"
+import (
+	"bytes"
+	"testing"
+)
 
 func TestRetiredSiblingRepairAssessmentIsDerivedAgain(t *testing.T) {
 	for _, tc := range []struct {
@@ -39,8 +42,9 @@ func TestRetiredSiblingRepairAssessmentIsDerivedAgain(t *testing.T) {
 				revisionEdit(t, e)
 			}
 			repair.ID, repair.Repairs, repair.DependsOn = "obsolete-repair-b", "b", []string{"b"}
+			late := Observation{Status: OutcomeSucceeded, Tasks: []Task{repair}}
 			for range 2 {
-				if err := e.Report(t.Context(), managers[1].ID, managers[1].Epoch, Observation{Status: OutcomeSucceeded, Tasks: []Task{repair}}); err != nil {
+				if err := e.Report(t.Context(), managers[1].ID, managers[1].Epoch, late); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -54,8 +58,8 @@ func TestRetiredSiblingRepairAssessmentIsDerivedAgain(t *testing.T) {
 					continue
 				}
 				found = true
-				if a.State != "finished" || !a.Superseded || a.RetirementReconciled != tc.corrected {
-					t.Fatalf("wrong retirement state: %+v", a)
+				if a.State != "finished" || !a.Superseded || a.RetirementReconciled != tc.corrected || !bytes.Equal(a.Receipt, encode(late)) {
+					t.Fatalf("retired assessment lost its state or late receipt: %+v", a)
 				}
 			}
 			if !found {
@@ -68,14 +72,19 @@ func TestRetiredSiblingRepairAssessmentIsDerivedAgain(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// Restart before reconciliation so the pending path must recover.
+			// Restart must recover pending retirement, preserve settled retirement,
+			// and retain the late receipt without reviving its old marker.
 			if err = e.Reconcile(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			for _, a := range revisionSnapshot(t, e).Actions {
-				if a.ID == managers[1].ID && !a.RetirementReconciled {
-					t.Fatal("restart left the old assessment unreconciled")
+			restarted := revisionSnapshot(t, e)
+			for _, a := range restarted.Actions {
+				if a.ID == managers[1].ID && (a.State != "finished" || !a.Superseded || !a.RetirementReconciled || !bytes.Equal(a.Receipt, encode(late))) {
+					t.Fatalf("restart lost settled retirement or its late receipt: %+v", a)
 				}
+			}
+			if b := restarted.Goals[0].Tasks[1]; b.Stage != TaskQAFailed || b.RepairedBy != "" || b.QA.Ref != "failed-qa" {
+				t.Fatalf("restart changed the failed task: %+v", b)
 			}
 			if tc.corrected {
 				if revisionSnapshot(t, e).Goals[0].Tasks[1].RepairAsked {
