@@ -433,7 +433,10 @@ func table(t *Table) error {
 	return nil
 }
 func block(b Block) error {
-	allowed := map[string]bool{"kind": true}
+	if !one(b.Audience, "", "recipient", "person") {
+		return bad()
+	}
+	allowed := map[string]bool{"kind": true, "audience": true}
 	var fields []string
 	switch b.Kind {
 	case "heading":
@@ -504,7 +507,7 @@ func blockShapes(raw []byte) error {
 		if err := json.Unmarshal(b["kind"], &kind); err != nil {
 			return err
 		}
-		allowed := map[string]bool{"kind": true}
+		allowed := map[string]bool{"kind": true, "audience": true}
 		required := []string{}
 		switch kind {
 		case "heading":

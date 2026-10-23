@@ -14,6 +14,9 @@ import (
 )
 
 func replayInstructions(format string, p agents.Preparation, tools []provider.ToolDecl) (string, error) {
+	if format != "persona-tui-work-method-v1" {
+		p.WorkMethod = ""
+	}
 	text, err := assemble.Instructions(p, tools)
 	if err != nil {
 		return "", err
@@ -21,7 +24,7 @@ func replayInstructions(format string, p agents.Preparation, tools []provider.To
 	switch format {
 	case "agent-v1":
 		return text, nil
-	case "persona-tui-v1":
+	case "persona-tui-v1", "persona-tui-work-method-v1":
 		return assemble.PersonaCoreV1 + "\n" + assemble.TUIFormatting + "\n\n" + text, nil
 	case "persona-v1":
 		return assemble.PersonaCoreV1 + "\n\n" + text, nil
@@ -87,12 +90,12 @@ func rebuildPersonaItems(ep replay.Episode, sources []replay.Context, profile []
 	}
 	history := append(append([]provider.Item(nil), profile...), ep.Items[:len(ep.Items)-1]...)
 	core := assemble.PersonaCoreV1
-	if a.InstructionFormat == "persona-tui-v1" {
+	if a.InstructionFormat == "persona-tui-v1" || a.InstructionFormat == "persona-tui-work-method-v1" {
 		core += "\n" + assemble.TUIFormatting
 	}
 	request, report := assemble.Assemble(assemble.Input{
 		Core: core, AgentID: a.AgentID, PersonaRevision: a.PersonaRevision,
-		AgentName: a.AgentName, OwnerPersonID: a.OwnerPersonID, Persona: ep.Persona,
+		AgentName: a.AgentName, OwnerPersonID: a.OwnerPersonID, Persona: ep.Persona, WorkMethod: ep.WorkMethod,
 		Catalog: catalog, AlwaysTools: ep.Evidence.Tools, History: history, Current: ep.Items[len(ep.Items)-1], Packet: packet,
 		Model: ep.Evidence.Model, Effort: ep.Evidence.Effort, Fields: ep.Evidence.Fields, MaxTokens: 128000,
 	}, conversationRequestSize)

@@ -31,6 +31,14 @@ import (
 // uses the same work admission API as the engine and a real child process; only
 // the external coordinator is synthetic. No installed CRW or account is used.
 func TestM3OperationalSwitch(t *testing.T) {
+	for _, outcome := range []string{"refused_input", "httpConnectionFailed", "responseStreamDisconnected"} {
+		t.Run(outcome, func(t *testing.T) {
+			testOperationalSwitch(t, outcome)
+		})
+	}
+}
+
+func testOperationalSwitch(t *testing.T, outcome string) {
 	var scenario struct {
 		Capability, Version string
 		TaskID              string `json:"task_id"`
@@ -181,6 +189,12 @@ func TestM3OperationalSwitch(t *testing.T) {
 			control["quote"] = "Stop this worker"
 			emit("worker_interrupt", control)
 		case 6, 8:
+			if n == 6 && outcome == "refused_input" {
+				// Stop before another input can reconcile the idle turn and
+				// hide a reservation left by the refused input.
+				emitResponse(w, "worker interrupted", true)
+				return
+			}
 			emit("worker_snapshot", map[string]any{"session": control["session"]})
 		case 7:
 			control["text"] = "produce result"
@@ -201,7 +215,7 @@ func TestM3OperationalSwitch(t *testing.T) {
 	var c *clientapi.Client
 	start := func() {
 		core = h.command("core", "--state-root", h.root, "--socket", h.socket)
-		core.command.Env = append(core.command.Env, "PATH="+bin, "LINA_WORKER_FIXTURE=1", "CODEX_HOME=/fixture/codex-home", "LINA_RESPONSES_BASE_URL="+server.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
+		core.command.Env = append(core.command.Env, "PATH="+bin, "LINA_WORKER_FIXTURE=1", "LINA_WORKER_CONNECTION_ERROR="+outcome, "CODEX_HOME=/fixture/codex-home", "LINA_RESPONSES_BASE_URL="+server.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
 		core.start(t)
 		h.connect(core).Close()
 		waitCoreReady(t, h)
@@ -308,6 +322,24 @@ func TestM3OperationalSwitch(t *testing.T) {
 		t.Fatal("two active coordinators")
 	}
 	admittedTurn(t, h, conversation, conversationID, "switch-execute", "Stop this worker after starting it, then resume to produce the result")
+	if outcome == "refused_input" {
+		if providerCalls.Load() != 6 {
+			t.Fatal("refused input path incomplete", providerCalls.Load())
+		}
+		// The observer writes the completion after releasing the turn's
+		// reservation. Await that durable boundary, never a fixed delay.
+		waitWorkerCanon(t, h, "SELECT count(*) FROM conv_event WHERE scaffold_kind='worker_completion'", 1)
+		if err = procedure.Rollback(h.ctx); err != nil {
+			t.Fatal("refused input retained the interrupted turn's reservation", err)
+		}
+		status, err := call(h.ctx, protocol.WorkSwitchRequest{Operation: "switch_status", SwitchID: scenario.SwitchID})
+		if err != nil || status.State != "rolled_back" || !enabled || !running {
+			t.Fatalf("refused input rollback: %+v enabled=%v running=%v %v", status, enabled, running, err)
+		}
+		conversation.Close()
+		stop()
+		return
+	}
 	if providerCalls.Load() != 9 {
 		t.Fatal("worker path incomplete", providerCalls.Load())
 	}
