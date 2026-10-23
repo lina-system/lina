@@ -132,7 +132,7 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 			server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				providerCalls.Add(1)
 				var req struct {
-					Tools []struct{ Name string }
+					Tools []json.RawMessage
 					Input []json.RawMessage
 				}
 				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -141,7 +141,12 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 				}
 				// Move the branch before returning any manager response, so
 				// execution cannot race this fixture's admission boundary.
-				for _, tool := range req.Tools {
+				for _, raw := range req.Tools {
+					var tool struct{ Name string }
+					if err := json.Unmarshal(raw, &tool); err != nil {
+						t.Error(err)
+						return
+					}
 					if tool.Name == "coding_decision" && test.MoveBase && moved.CompareAndSwap(false, true) {
 						moveBase()
 					}
@@ -157,11 +162,7 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 				}
 				callNumber := calls.Add(1)
 				if callNumber == 1 || test.Choice == "overlap" && callNumber == 3 {
-					for _, tool := range req.Tools {
-						if tool.Name == "dispatch_work" {
-							offered.Store(true)
-						}
-					}
+					offered.Store(toolReachable(req.Tools, "dispatch_work"))
 					if !offered.Load() {
 						t.Error("running Core does not offer dispatch_work with installed worker")
 						emitResponse(w, "Unavailable.", true)

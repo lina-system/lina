@@ -78,7 +78,7 @@ func codexWorkToolsFixture() {
 	const approvalID, projectionID = "71", `"projection-rpc"`
 	const coordinateID, receiptID = `"coordinate-rpc"`, `"receipt-rpc"`
 	initialized, approved, completed := false, false, false
-	quotaRead := false
+	quotaRead, quotaRecovered := false, false
 	cwd, assignment, receivedPacket := "", "", ""
 	pendingTools := map[string]bool{}
 	questionRequests := map[string]bool{}
@@ -257,14 +257,29 @@ func codexWorkToolsFixture() {
 				fail("Core changed server request id: " + string(r.ID))
 			}
 		case "thread/read":
-			if fixture.QuotaRecovery && quotaRead {
-				// A sparse update changes only primary. The adapter must retain
-				// secondary's original observation time through the next quota read.
-				primary := map[string]any{"usedPercent": fixture.FiveHour}
-				if fixture.UnknownQuotaWindow {
-					primary["windowDurationMins"] = 300
+			if fixture.QuotaRecovery && quotaRead && !quotaRecovered {
+				// Core may snapshot a completed worker before the model observes
+				// its first quota. Only the provider's explicit acknowledgement
+				// arms recovery; incidental snapshots cannot win that race.
+				client := &http.Client{Timeout: operationTimeout}
+				response, err := client.Get(strings.TrimSuffix(os.Getenv("LINA_WORKER_BARRIER_URL"), "/worker-finished") + "/quota-recovery-ready")
+				if err != nil {
+					fail("quota recovery barrier failed")
 				}
-				notify("account/rateLimits/updated", map[string]any{"rateLimits": map[string]any{"primary": primary}})
+				response.Body.Close()
+				if response.StatusCode != http.StatusNoContent && response.StatusCode != http.StatusConflict {
+					fail("quota recovery barrier refused")
+				}
+				quotaRecovered = response.StatusCode == http.StatusNoContent
+				if quotaRecovered {
+					// A sparse update changes only primary. The adapter must retain
+					// secondary's original observation time through the next quota read.
+					primary := map[string]any{"usedPercent": fixture.FiveHour}
+					if fixture.UnknownQuotaWindow {
+						primary["windowDurationMins"] = 300
+					}
+					notify("account/rateLimits/updated", map[string]any{"rateLimits": map[string]any{"primary": primary}})
+				}
 			}
 			status, state := "inProgress", "active"
 			if completed {
@@ -330,9 +345,17 @@ func runCodexWorkToolsWithSetup(t *testing.T, scenario, kind string, setup func(
 	workdir := t.TempDir()
 	finished := make(chan struct{})
 	var calls atomic.Int32
-	var quotaChecked atomic.Bool
+	var quotaChecked, quotaRecoveryReady atomic.Bool
 	var sessionID, weeklyObserved atomic.Value
 	server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/quota-recovery-ready" {
+			if quotaRecoveryReady.Load() {
+				w.WriteHeader(http.StatusNoContent)
+			} else {
+				w.WriteHeader(http.StatusConflict)
+			}
+			return
+		}
 		if r.URL.Path == "/worker-finished" {
 			close(finished)
 			w.WriteHeader(http.StatusNoContent)
@@ -413,6 +436,7 @@ func runCodexWorkToolsWithSetup(t *testing.T, scenario, kind string, setup func(
 				return
 			}
 			weeklyObserved.Store(quota.Rows[1].Observed)
+			quotaRecoveryReady.Store(true)
 			emitPersonaCall(w, "refresh-worker", "worker_snapshot", map[string]any{"session": sessionID.Load().(string)})
 			return
 		}

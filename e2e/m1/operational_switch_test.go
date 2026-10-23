@@ -128,6 +128,9 @@ func TestM3OperationalSwitch(t *testing.T) {
 		if scriptedCodingManager(t, w, req) {
 			return
 		}
+		if respondWorkerCompletion(w, req.Input, "LINA_WORKER_RESULT") {
+			return
+		}
 		n := providerCalls.Add(1)
 		if n == 2 || n >= 4 {
 			var item struct{ Output string }

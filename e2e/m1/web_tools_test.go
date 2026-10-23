@@ -209,13 +209,7 @@ func TestM1WebSearchExtractAndCitation(t *testing.T) {
 		if strings.Contains(string(mustJSON(t, req)), providerKey) {
 			t.Error("decoded provider credential reached model request")
 		}
-		names := map[string]bool{}
-		for _, raw := range req.Tools {
-			var d struct{ Name string }
-			_ = json.Unmarshal(raw, &d)
-			names[d.Name] = true
-		}
-		if !names["web_search"] || !names["web_extract"] {
+		if !toolReachable(req.Tools, "web_search") || !toolReachable(req.Tools, "web_extract") {
 			t.Error("web tools missing in normal turn")
 		}
 		n := calls.Add(1)
