@@ -178,6 +178,7 @@ func (r *conversationRuntime) bindDispatchedWorker(record dispatch.Record, adapt
 		case worker.ProgressEvent:
 			if event.Progress.Phase == "server_request_resolved" {
 				e.stopRequest(event.Progress.ItemID)
+				e.answerDelivered(e.origin.ctx, event.Thread)
 			}
 		case worker.FinishEvent:
 			if err := e.finishSteering(e.origin.ctx, event); err != nil {

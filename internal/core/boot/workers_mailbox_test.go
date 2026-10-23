@@ -184,3 +184,41 @@ func TestOfflineMailboxUsesConnectionTier(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkerMailboxHoldsInputUntilNativeDecisionResolves(t *testing.T) {
+	r := controlRuntime(t)
+	th := worker.Thread{ID: "waiting", TaskID: "task", AttemptID: "attempt", TurnID: "turn", ProcessGeneration: 1, BindingEpoch: 1}
+	p := &mailboxProbe{workerProbe: workerProbe{snapshot: worker.ThreadSnapshot{Thread: th, State: worker.Waiting, Pending: []worker.Request{{ID: "approval", Method: "session/request_permission"}}}}, tier: "turn"}
+	e := &workerSession{origin: r, thread: th, adapter: p, scheduled: true}
+	if err := e.ownerSteering(t.Context(), "waiting-message", "follow-up after the decision"); err != nil {
+		t.Fatal(err)
+	}
+	event := worker.Event{Thread: th, Kind: worker.ToolCallEvent, ToolCall: &worker.ToolCall{ID: "tool", Namespace: "lina", Name: "read_projection", Arguments: json.RawMessage(`{}`)}}
+	e.workTool(event)
+	messages, err := r.work.SteeringMessages(t.Context(), "fake:waiting")
+	if err != nil || len(messages) != 1 || messages[0].State != "held" {
+		t.Fatalf("ordinary input bypassed native decision: %+v %v", messages, err)
+	}
+	p.snapshot.State, p.snapshot.Pending = worker.Active, nil
+	e.workTool(event)
+	messages, err = r.work.SteeringMessages(t.Context(), "fake:waiting")
+	if err != nil || messages[0].State != "delivered" {
+		t.Fatalf("resolved decision did not release mail: %+v %v", messages, err)
+	}
+}
+
+func TestWorkerMailboxPushAfterAnswer(t *testing.T) {
+	r := controlRuntime(t)
+	th := worker.Thread{ID: "answer", TaskID: "task", AttemptID: "attempt", TurnID: "turn", ProcessGeneration: 1, BindingEpoch: 1}
+	p := &mailboxProbe{workerProbe: workerProbe{snapshot: worker.ThreadSnapshot{Thread: th, State: worker.Waiting}}, tier: "push"}
+	e := &workerSession{origin: r, thread: th, adapter: p, scheduled: true}
+	if err := e.ownerSteering(t.Context(), "after-answer", "continue with the correction"); err != nil {
+		t.Fatal(err)
+	}
+	p.snapshot.State = worker.Active
+	e.answerDelivered(t.Context(), th)
+	e.answerDelivered(t.Context(), th)
+	if p.inputs != 1 {
+		t.Fatalf("answer did not deliver held push once: %d", p.inputs)
+	}
+}

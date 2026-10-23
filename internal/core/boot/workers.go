@@ -654,6 +654,7 @@ func (e *workerSession) observe() {
 			if event.Progress.Phase == "server_request_resolved" {
 				_ = e.trackRecoveryRequest(event.Progress.ItemID, false)
 				e.stopRequest(event.Progress.ItemID)
+				e.answerDelivered(e.origin.ctx, event.Thread)
 			}
 			if event.Progress.Phase == "item_completed" && event.Progress.Text != "" {
 				outputs[event.Thread] = event.Progress.Text
