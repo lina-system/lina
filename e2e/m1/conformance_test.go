@@ -56,6 +56,13 @@ func assertConformance(t *testing.T, h *harness, mode string) {
 		t.Fatal(err)
 	}
 	switch mode {
+	case "scope-oversized":
+		if d.Code != "change_evidence_unavailable" || d.ChangeEvidence != "" || !strings.Contains(strings.Join(d.ChangedFiles, "\n"), "outside.txt") || card.Receipt.Outcome != "blocked_needs_input" {
+			t.Fatalf("oversized diff did not exercise blocked delivery: %+v receipt=%+v", d, card.Receipt)
+		}
+		if rr.State != "blocked" || rr.Cause != "change_evidence_unavailable" || rr.Verdict != "" || len(rr.Findings) != 0 || card.Verdict != "" || card.State != "input_needed" || managerInputs != 0 {
+			t.Fatalf("unavailable evidence became a judgment or unfinished claim: %+v calls=%d card=%+v", rr, managerInputs, card)
+		}
 	case "scope":
 		if rr.Verdict != "needs_changes" || card.Verdict != "needs_changes" || !strings.Contains(rr.Evidence, "outside.txt") || len(rr.Findings) != 0 || managerInputs != 0 {
 			t.Fatalf("scope miss called model or lost evidence: %+v calls=%d", rr, managerInputs)
