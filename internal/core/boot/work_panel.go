@@ -97,7 +97,9 @@ func (r *conversationRuntime) backgroundProgress(ctx context.Context, names map[
 func workCardOrder(rows []protocol.ProgressRow) []string {
 	cards := make([]protocol.ProgressRow, 0, len(rows))
 	for _, row := range rows {
-		if row.Line.Kind != "goal" {
+		// A 목표 heading and the rows inside a line are never cards: one card is
+		// one 일 or one run.
+		if row.Line.Kind != "goal" && (row.Line.Row == nil || !*row.Line.Row) {
 			cards = append(cards, row)
 		}
 	}
