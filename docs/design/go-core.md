@@ -103,7 +103,7 @@ Layers under `internal/core/`:
 | Layer | Packages |
 | --- | --- |
 | L1 | `canon` (writer, fence, migrations), `eventstore`, `secrets`, `ctlfiles`, `guard` (masking), `ids` |
-| L2 | `authority` (gate, grants, approvals, effect ledger), `lifecycle`, `budget`, `manifest` |
+| L2 | `authority` (gate, grants, approvals, effect ledger), `lifecycle`, `budget`, `manifest`, `binding` (pure input rules and candidate ranking), `toolcatalog` (pure declaration reconstruction) |
 | L3 | One store per table group: `ledger`, `inbox`, `agents`, `memory`, `retract`, `skills`, `records`, `assets`, `work`, `timers`, `plugins`, `channels`, `accounts` |
 | L4 | Flows: `lane`, `assemble`, `compaction`, `turn`, `runs`, `replay`, `intakereplay`, `reply`, `results`, `modelpath`, `exec`, `exchange`, `gateway`, `worker`, `reactor`, `review`, `ghclient`, `progress`, `waiting`, `backup`, `update`, `recover`, `clientsrv`, `jobs`, `mcphost`, `install` |
 | L5 | `boot`, `supervise` |
@@ -653,7 +653,7 @@ Tables: `conv_event` (append-only), `ev_rel` (`view_of` with ordinal, `supersede
 Fields are exactly those of [conversation-and-memory.md](conversation-and-memory.md#event-fields).
 The admit call takes the trusted entry path (a `guard.Entry` enum), from which `guard.Admit` fixes `speaker_kind`; it is never parsed from text.
 The shared `secrets.Mask` runs before append: a secret-shaped value or key block keeps the flag, not the value.
-A body above the inline size (P: 16 KiB) goes to `materials/lina/` and the event refers to it; missing bytes mark `bytes_unavailable`.
+A conversation message body above the inline size (P: 16 KiB) goes to `materials/lina/` and the event refers to it; missing bytes mark `bytes_unavailable`. Transaction-local structured binding snapshots stay inline so they commit with the exact input state without truncation or filesystem I/O under the writer.
 Only the Moirai write path and the ledger package write these tables.
 Provider-item JSON is masked at decoded string boundaries and serialized safely; both the persisted body and its derived history projection retain valid JSON, including nested JSON strings with quoted credentials.
 

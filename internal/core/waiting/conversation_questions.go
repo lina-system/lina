@@ -19,6 +19,7 @@ import (
 var ErrQuestionLimit = errors.New("question_limit")
 
 type QuestionDraft struct {
+	YesNo          bool     `json:"yes_no,omitempty"`
 	Question       string   `json:"question"`
 	Recommendation string   `json:"recommendation"`
 	Choices        []string `json:"choices,omitempty"`

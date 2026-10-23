@@ -3,6 +3,7 @@ package ledger
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/secrets"
@@ -18,7 +19,7 @@ func (s *Store) importedOutput(ctx context.Context, id, text string) (secrets.Ma
 		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM import_link l JOIN import_record r ON r.id=l.record_id WHERE l.target_id=? AND l.kind='output' AND EXISTS(SELECT 1 FROM json_each(r.flags) WHERE value='bytes_unavailable')`, id).Scan(&missing); err != nil {
 			return err
 		}
-		rows, err := tx.QueryContext(ctx, `SELECT s.start,s.end,s.sensitivity FROM import_source_span s JOIN legacy_ref ref ON ref.system=s.system AND ref.instance=s.instance AND ref.kind=s.kind AND ref.key=s.key JOIN import_link l ON l.record_id=ref.record_id WHERE l.target_id=? AND l.kind='output' AND s.column_name='bytes' ORDER BY s.start,s.end`, id)
+		rows, err := tx.QueryContext(ctx, `SELECT s.start,s.end,s.sensitivity FROM import_source_span s JOIN legacy_ref ref ON ref.system=s.system AND ref.instance=s.instance AND ref.kind=s.kind AND ref.key=s.key JOIN import_link l ON l.record_id=ref.record_id JOIN conv_event e ON e.id=l.target_id WHERE l.target_id=? AND l.kind='output' AND s.column_name='bytes' AND e.material_id IS NOT NULL ORDER BY s.start,s.end`, id)
 		if err != nil {
 			return err
 		}
@@ -37,6 +38,11 @@ func (s *Store) importedOutput(ctx context.Context, id, text string) (secrets.Ma
 	}
 	if missing != 0 {
 		return secrets.Masked{}, true, nil
+	}
+	// Match import publication: original detector spans can cross JSON syntax.
+	// Inline fallbacks have no material and must never use original offsets.
+	if json.Valid([]byte(text)) {
+		spans = nil
 	}
 	masked, err := secrets.Mask(text, spans...)
 	return masked, false, err
