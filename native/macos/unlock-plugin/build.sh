@@ -7,7 +7,7 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")" && pwd)
-: "${LINA_TEAM_ID:?set LINA_TEAM_ID to LINA's Developer ID team identifier}"
+: "${LINA_TEAM_ID:?set LINA_TEAM_ID to the Developer ID team identifier}"
 identity=${LINA_SIGN_IDENTITY:--}
 broker=${LINA_BROKER_ID:-com.lina.lock-broker}
 bundle="$root/build/LinaUnlock.bundle"
