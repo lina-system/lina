@@ -200,8 +200,11 @@ leaves the preview and records unchanged and releases the next queued request.
 The originating conversation receives one retained outcome line, including when
 startup recovers a rejection committed before publication.
 
-A completed model response that is not a valid plan (including invalid JSON or
-cyclic dependencies) also ends with a retained rejection. Core caches that
+A completed model response that is not a valid plan (including invalid JSON,
+cyclic dependencies or a dependency targeting a project instead of a to-do)
+also ends with a retained rejection before any preview is published. Dependency
+targets must be to-dos in the complete draft; they may appear later in the entry
+order or belong to another project under the accepted goal. Core caches that
 outcome and settles the completed call's usage; Moirai submits it through the
 same authenticated proposal path. The rejection and watermark commit together,
 and the conversation receives one retained outcome line. Restart and duplicate

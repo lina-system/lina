@@ -497,7 +497,11 @@ remain ordered by id with an exclusive `after` cursor, matching record search.
 
 Core checks dependency targets and cycles under the same writer lock as
 publication. Targets must be the person's existing to-dos; belonging targets
-must be that person's projects or areas. A self-edge or transitive cycle returns
+must be that person's projects or areas. A planning draft's dependency targets
+must be to-dos in that draft, including entries published together at confirmation.
+Core rejects project dependency targets before saving a `plan_view` preview,
+through the completed-invalid rejection path in [Planning](cognition-and-life.md#planning).
+A self-edge or transitive cycle returns
 `dependency_cycle` without changing the file, index or saved revision. The
 `blocked` overlay is queried from direct nonterminal blockers, never stored;
 completed or canceled predecessors no longer block. Human completion remains a
