@@ -148,6 +148,9 @@ func TestM3WorkPanelViewsInstalledCore(t *testing.T) {
 										if !strings.HasSuffix(rows[found], elapsed) {
 											return false
 										}
+										if s.Cells[found][x+panelWidth-1].Content != elapsed[len(elapsed)-1:] {
+											return false
+										}
 										body := strings.TrimSpace(strings.TrimSuffix(rows[found], elapsed))
 										body = strings.TrimPrefix(strings.TrimPrefix(body, "› "), "> ")
 										if compact {
