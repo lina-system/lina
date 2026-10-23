@@ -72,7 +72,7 @@ func checkScheduledOutcomes(t *testing.T, h *harness, conversation string, ids [
 	}
 	// The persona's actual completed turns prove delivery; a committed worker
 	// claim alone does not satisfy the conversation-result assertion.
-	waitWorkerCanon(t, h, `SELECT count(*) FROM conv_event e JOIN conv_event p ON p.id=e.parent_id JOIN turn_runs t ON t.id='turn:'||p.id WHERE p.scaffold_kind='worker_completion' AND e.speaker_kind='agent' AND coalesce(e.scaffold_kind,'')<>'result' AND t.state='completed'`, 2)
+	waitWorkerCanon(t, h, `SELECT count(*) FROM conv_event e JOIN conv_event p ON p.id=e.parent_id JOIN turn_runs t ON t.id='turn:'||p.id WHERE p.scaffold_kind='worker_completion' AND e.speaker_kind='agent' AND coalesce(e.scaffold_kind,'') NOT IN ('result','provider_item') AND t.state='completed'`, 2)
 }
 
 func respondScheduledOutcome(t *testing.T, w http.ResponseWriter, inputs []json.RawMessage, scenario scheduledOutcomeScenario) bool {
