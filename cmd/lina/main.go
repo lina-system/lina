@@ -38,6 +38,8 @@ func main() {
 			os.Exit(runIntakeReplay(os.Args[2:]))
 		case "a2a":
 			os.Exit(runA2A(os.Args[2:]))
+		case "mock-export":
+			os.Exit(runMockExport(os.Args[2:]))
 		case "export":
 			os.Exit(runExport(os.Args[2:]))
 		case "replay-worker":

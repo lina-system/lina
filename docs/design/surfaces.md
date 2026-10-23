@@ -620,7 +620,7 @@ LINA can show UI it makes from the person's words, in three parts, built in this
 | Generated card | A2UI messages that pick and fill widgets from LINA's catalog | None | Only as a request from the app's own widgets | A `surface` result |
 | Mini app | A small web app from LINA's fixed template | Yes, on its own origin | Only its declared reads and requests | A tool in "내 도구" |
 
-`mock` and `surface` are result types of a later protocol version ([host-protocol.md](host-protocol.md#typed-results)). A client that does not render them gets their `text`.
+`mock` is a client 1.1 result type; `surface` remains reserved ([host-protocol.md](host-protocol.md#typed-results)). A client that does not render a mock gets its `text`.
 
 ### Drawn mocks
 
@@ -631,6 +631,44 @@ LINA can show UI it makes from the person's words, in three parts, built in this
 - "Make this part smaller" redraws from the current revision. Every revision is kept, and the work panel steps between them.
 - "Build this" hands the mock and its checklist to the work engine as the reference for a screen or a mini app.
 - The scoring is set before drawing. The run first writes the request as a checklist: what must be on screen and what each control does. A revision is shown only when executable checks pass: every checklist item is there, no control does something that was not asked, only design tokens are used, no remote resource is named, and the page draws without an error or sideways scrolling at 390 and 1280 points wide. A failing draw is redrawn at most three times without new input from the person. It stops early when every check passes, and stops when a redraw passes no more checks than the one before. A model's judgment of how well a mock matches is not a check until it agrees with the owner's labels on at least 50 cases.
+
+The Core background tool uses `Result: "mock"`. Its goal is the request; feedback
+also supplies `Mock: { result_id, revision }`. Core retains the checklist before
+asking for the first page, and retains every candidate and per-dimension check
+before advancing. The initial draw is followed by at most three redraws.
+`all_passed`, `no_improvement` and `redraw_limit` are the recorded stop reasons;
+a renderer/model failure is `mock_unavailable`. Failed candidates remain private
+run evidence and never replace the last visible revision. A restart resumes the
+committed phase; publication is idempotent under the native run id.
+
+The shared template lives in `design/`: generated token CSS, base styles and
+bundled Pretendard. Mocks use structural XHTML with fixed local interactions:
+toggle a named element, select a local option, or edit a local input. Each control
+must match a checklist id and action. The generated fragment cannot supply code,
+style, a remote resource, navigation or a form submission. The template supplies
+the only script and styles. This restriction is part of mock validation, not an
+extra capability granted to the page. Mini-app workers receive a starter from
+the same template in the page bundle; their host still owns reads and requests.
+
+The main draws PNGs with installed Chromium/Chrome through DevTools Protocol,
+in a disposable profile with the browser sandbox enabled. It checks visible
+checklist labels, declared interactions, browser errors and horizontal overflow
+at 390 and 1280 CSS pixels. The exported bundle contains the static page and
+sandboxed phone/desktop frames. Each frame grants only scripts, with no same
+origin, forms, navigation, popups or downloads. The page's CSP permits only the
+fixed style/script hashes and embedded font; connections and remote resources
+are denied. No session, cookie or Core bridge enters the page. Missing Chromium
+is a failure; no placeholder PNG or model score substitutes for a browser check.
+
+Client 1.1's `mocks` capability reads any retained revision, downloads its pinned
+page/PNG asset in bounded chunks, and requests a work handoff. A build names the
+current revision, screen or mini-app target and repository scope, with an
+idempotency key. Core carries the complete mock reference and checklist into the
+normal work engine and coding-owner route. It grants no new effect or deployment
+authority. Earlier revisions remain readable but cannot initiate a new build.
+Text-only TUI/channel adapters receive every checklist item and explicit
+`lina mock-export` actions. Image-capable clients can fetch the pinned PNG;
+the current channel sender contract carries text only.
 
 ### Generated cards
 

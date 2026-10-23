@@ -23,12 +23,13 @@ type Operation struct {
 // Session contains connection facts established by Core. No request payload
 // supplies its person, epoch or decider eligibility.
 type Session struct {
-	ConnectionID string
-	Capabilities []protocol.Capability
-	PersonID     string
-	Epoch        uint64
-	ClientID     string
-	CanDecide    bool
+	ProtocolVersion string
+	ConnectionID    string
+	Capabilities    []protocol.Capability
+	PersonID        string
+	Epoch           uint64
+	ClientID        string
+	CanDecide       bool
 }
 
 // Result leaves envelope identity and correlation under the listener's control.
@@ -64,6 +65,9 @@ var deciderKinds = map[protocol.Kind]bool{
 // Work requests retain mutation admission for future work-record operations.
 // Only the implemented GitHub observation operations are reads during recovery.
 func readOnlyEnvelope(e protocol.Envelope) bool {
+	if p, ok := e.Payload.(protocol.MockRequest); ok {
+		return p.Action == "read" || p.Action == "asset"
+	}
 	if readOnlyKinds[e.Kind] {
 		return true
 	}

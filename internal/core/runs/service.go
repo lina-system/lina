@@ -58,6 +58,12 @@ func New(cfg Config) (*Service, error) {
 }
 func (s *Service) signal() { close(s.changed); s.changed = make(chan struct{}) }
 func valid(o Origin, b Brief) bool {
+	if b.Mock != nil && (b.Result != "mock" || b.Mock.ID == "" || b.Mock.Revision < 1) {
+		return false
+	}
+	if b.Result == "mock" && o.Job != "" {
+		return false
+	}
 	if o.Person == "" || b.Goal == "" || b.Scope == "" || b.NotTouch == "" || b.Done == "" || b.Result == "" || len(b.Checks) == 0 {
 		return false
 	}

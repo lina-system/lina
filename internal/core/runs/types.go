@@ -16,6 +16,7 @@ import (
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/materials"
 	"github.com/thisisjun786/lina/kit/provider"
+	"github.com/thisisjun786/lina/kit/result"
 )
 
 var (
@@ -74,6 +75,7 @@ type Origin struct {
 	Epoch                                  uint64
 }
 type Brief struct {
+	Mock                        *result.ResultRef `json:"Mock,omitempty"`
 	Goal, Scope, NotTouch, Done string
 	Checks                      []Check
 	Result                      string
@@ -87,7 +89,8 @@ type Artifact struct {
 	Citations []materials.Anchor `json:"citations,omitempty"`
 }
 type Record struct {
-	Requests []ledger.RequestEvidence `json:"request_assembly,omitempty"`
+	MockState json.RawMessage          `json:"mock_state,omitempty"`
+	Requests  []ledger.RequestEvidence `json:"request_assembly,omitempty"`
 	// Start identity and the original receipt commit with the run. Only hashes
 	// of native call metadata/brief are retained, never unmasked arguments.
 	StartKey, StartDigest       string
@@ -155,6 +158,7 @@ type MaterialStore interface {
 	SaveRunResult(context.Context, string, []byte, assets.Actor) (assets.Asset, error)
 }
 type Config struct {
+	DrawMock           func(context.Context, Record, func(json.RawMessage) error) (Artifact, string, error)
 	SelectCapabilities func(provider.Request) (provider.Request, error)
 	ProviderClass      provider.Class
 	Epoch              uint64 // current Core epoch, supplied by the composition root
