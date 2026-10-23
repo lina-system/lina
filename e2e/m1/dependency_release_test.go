@@ -182,6 +182,7 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 	}
 	var calls atomic.Int32
 	var managerCalls atomic.Int32
+	workerReplies := make(chan struct{}, 3)
 	var taskIDs []string
 	server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
@@ -228,6 +229,13 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 			return
 		}
 		if respondWorkerCompletion(w, request.Input, "") {
+			if option.sharedAncestors != 0 {
+				select {
+				case workerReplies <- struct{}{}:
+				default:
+					t.Error("unexpected extra worker completion reply")
+				}
+			}
 			return
 		}
 		if preset != "" {
@@ -773,6 +781,19 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 		admittedTurn(t, h, client, conversation, "conflict-input", "Observe the remaining conflict again.")
 	}
 	await(taskIDs[2], func(c work.Card) bool { return c.Run != nil && !c.Active })
+	if option.sharedAncestors != 0 {
+		// Both initial workers report back before the person asks to refresh.
+		// Their persona turns must not consume the scripted refresh request.
+		deadline := time.NewTimer(operationTimeout)
+		defer deadline.Stop()
+		for range 2 {
+			select {
+			case <-workerReplies:
+			case <-deadline.C:
+				t.Fatalf("initial worker replies missing before merge refresh: ordinary model calls=%d", calls.Load())
+			}
+		}
+	}
 	assertProtectedRefs := func() {
 		t.Helper()
 		dir := filepath.Join(h.root, "work", "tasks", taskIDs[0])
@@ -814,7 +835,7 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 	if err = os.WriteFile(filepath.Join(h.root, a.Task.ID+".merged"), []byte("observed"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	admittedTurn(t, h, client, conversation, "refresh-input", "Observe the landed foundation.")
+	queuedWorkTurn(t, h, client, conversation, "refresh-input", "Observe the landed foundation.")
 	b = await(taskIDs[1], func(c work.Card) bool { return c.Run != nil && !c.Active && c.TurnStatus == "completed" })
 	for _, id := range taskIDs[:3] {
 		dir := filepath.Join(h.root, "work", "tasks", id)
