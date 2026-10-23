@@ -143,10 +143,11 @@ func (m *shellModel) workPanelRows(width, height int) []string {
 	}
 	title := text("work.title")
 	if m.conversation.workFilter != "" {
-		title += " · " + text("work.filter."+string(m.conversation.workFilter))
+		separator := m.styles.tokens.GlyphUnicodeActivitySeparator
 		if m.styles.options.ASCII {
-			title = strings.ReplaceAll(title, " · ", " - ")
+			separator = m.styles.tokens.GlyphAsciiActivitySeparator
 		}
+		title += " " + separator + " " + text("work.filter."+string(m.conversation.workFilter))
 	}
 	rows := []string{panelClip(title, width, ellipsis)}
 	active, done := m.selectableWorkCards()
