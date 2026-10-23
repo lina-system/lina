@@ -214,6 +214,7 @@ jobs:
     permissions:
       contents: read
       issues: write
+      actions: read
     concurrency:
       group: post-merge-qa-${{ github.repository }}-${{ github.ref }}
       cancel-in-progress: false

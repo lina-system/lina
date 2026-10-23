@@ -4,13 +4,13 @@ import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { sandbox } from '../test-fixture.mjs';
 import { collectObservations, reconcileQA } from './post-merge-qa.mjs';
-import { goTestOutcomes } from './pipeline.mjs';
+import { goTestOutcomes, sealPlan } from './pipeline.mjs';
 
 const head = n => String(n).repeat(40);
 function fixture(result = 'fail', n = 1) {
-  const plan = { head: head(n), tree: 'tree', digest: 'digest', selection: { result: 'success' },
-    scope: { reason: 'manual-full', event: 'push' }, tasks: [{ id: 'e2e-m1-1', kind: 'e2e',
-      tests: ['TestOne', 'TestTwo'], components: [{ packages: ['example/e2e'] }] }] };
+  const plan = sealPlan({ schema: 2, head: head(n), tree: head(8), selection: { result: 'success' },
+    scope: { head: head(n), reason: 'manual-full', event: 'push' }, tasks: [{ id: 'e2e-m1-1', kind: 'e2e',
+      tests: ['TestOne', 'TestTwo'], components: [{ packages: ['example/e2e'] }] }] });
   const record = { schema: 1, id: 'e2e-m1-1', kind: 'e2e', head: plan.head, tree: plan.tree, digest: plan.digest,
     result: result === 'fail' ? 'failure' : 'success', tests: [
       { package: 'example/e2e', test: 'TestOne', result, output: 'scenario_test.go:12: forced failure\n' },
@@ -21,7 +21,26 @@ function fixture(result = 'fail', n = 1) {
 function github() {
   const issues = [];
   const writes = [];
+  const runs = [];
+  const artifacts = new Map();
+  const contents = new Map();
+  const publish = (input, { id = Number(input.plan.head[0]), branch = 'dev', event = 'push', expired = false } = {}) => {
+    runs.push({ id, head_sha: input.plan.head, head_branch: branch, event, status: 'completed', run_attempt: 1 });
+    const files = [{ id: id * 100, name: 'foundation-plan', expired }];
+    if (input.records.length) files.push({ id: id * 100 + 1, name: 'foundation-result-e2e-m1-1-attempt-1', expired });
+    artifacts.set(id, files);
+    contents.set(files[0].id, input.plan);
+    if (input.records.length) contents.set(files[1].id, input.records[0]);
+    return files;
+  };
   const api = async (method, path, body) => {
+    if (method === 'GET' && path.includes('/actions/')) {
+      if (path.includes('/workflows/ci.yml/runs?')) return { workflow_runs: runs };
+      const match = path.match(/\/actions\/runs\/(\d+)(\/artifacts)?/);
+      assert.ok(match, path);
+      if (match[2]) return { artifacts: artifacts.get(Number(match[1])) ?? [] };
+      return { created_at: '2026-10-23T00:00:00Z', head_sha: head(1) };
+    }
     if (method === 'GET') return issues;
     writes.push({ method, path, body });
     if (method === 'POST') {
@@ -33,9 +52,11 @@ function github() {
     Object.assign(issue, body);
     return issue;
   };
-  return { issues, writes, api };
+  return { issues, writes, api, publish, contents,
+    readArtifact: async artifact => structuredClone(contents.get(artifact.id)) };
 }
 const options = mock => ({ api: mock.api, repository: 'owner/repo', milestone: 3, branch: 'dev',
+  runId: 1, readArtifact: mock.readArtifact,
   before: head(0), runUrl: 'https://github.com/owner/repo/actions/runs/1',
   isAncestor: async (a, b) => Number(a[0]) <= Number(b[0]) });
 
@@ -174,6 +195,52 @@ test('later passing observations advance a resolved issue watermark', async () =
   await reconcileQA({ ...opts, ...fixture('pass', 4) });
   await reconcileQA({ ...opts, ...fixture('fail', 3) });
   assert.equal(mock.issues[0].state, 'closed');
+});
+
+test('a newer completed pass before the first issue prevents a late older failure from opening it', async () => {
+  const mock = github();
+  const newer = fixture('pass', 2);
+  await reconcileQA({ ...options(mock), ...newer });
+  assert.equal(mock.issues.length, 0);
+  mock.publish(newer);
+  await reconcileQA({ ...options(mock), ...fixture() });
+  assert.equal(mock.issues.length, 0, 'the completed descendant run already proves recovery');
+});
+
+test('only a later descendant pass for the same branch and test proves recovery', async () => {
+  for (const variant of ['same-head', 'other-branch', 'unrelated', 'skip', 'expired', 'missing']) {
+    const mock = github();
+    const input = fixture(variant === 'skip' ? 'skip' : 'pass', variant === 'same-head' ? 1 : 2);
+    if (variant === 'missing') input.records = [];
+    mock.publish(input, { id: 2, branch: variant === 'other-branch' ? 'qa/e2e-other' : 'dev', expired: variant === 'expired' });
+    await reconcileQA({ ...options(mock), ...fixture(),
+      ...(variant === 'unrelated' ? { isAncestor: async () => false } : {}) });
+    assert.equal(mock.issues.length, 1, variant);
+    assert.equal(mock.issues[0].state, 'open', variant);
+  }
+});
+
+test('the latest terminal observation and shard attempt take precedence over older passes', async () => {
+  for (const rerun of [false, true]) {
+    const mock = github();
+    const files = mock.publish(fixture('pass', 2));
+    if (rerun) {
+      files.push({ id: 299, name: 'foundation-result-e2e-m1-1-attempt-2', expired: false });
+      mock.contents.set(299, fixture('fail', 2).records[0]);
+    } else mock.publish(fixture('fail', 3));
+    await reconcileQA({ ...options(mock), ...fixture() });
+    assert.equal(mock.issues.length, 1);
+    assert.equal(mock.issues[0].state, 'open');
+  }
+});
+
+test('stale historical results cannot suppress a QA failure', async () => {
+  const mock = github();
+  const input = fixture('pass', 2);
+  input.records[0].digest = 'stale';
+  mock.publish(input);
+  await assert.rejects(reconcileQA({ ...options(mock), ...fixture() }), /result/i);
+  assert.equal(mock.writes.length, 0);
 });
 
 

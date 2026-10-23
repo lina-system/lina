@@ -65,9 +65,21 @@ reads the exact plan and newest shard result artifacts, including failures.
 Go top-level test, with nested failure lines, the tested head, first failing
 commit range and workflow run. A package timeout or panic also fails each started,
 unfinished test, with bounded package diagnostics. Completed tests retain their
-results; tests that never started are not reported as failures. Configure the repository's `QA_MILESTONE`
+results; tests that never started are not reported as failures. Configure the
+repository's `QA_MILESTONE`
 variable to the current milestone number; a missing setting fails reporting
 instead of assigning findings to a guessed milestone.
+
+Before opening the first issue for a test, the reporter checks retained artifacts
+from completed later CI runs on the same branch. It validates each plan and result
+against the run head and plan digest, selects the newest attempt per shard, and
+compares commit ancestry. A latest terminal pass on a descendant head prevents
+an older failure from creating an already recovered finding, even when the pass
+was reported before any issue existed. A same-head failure takes precedence over
+a pass. Missing, expired or skipped results cannot establish recovery; malformed
+results fail reporting. This uses existing Actions artifacts within their retention
+period, without creating issues for tests that have only passed. The reporter
+needs `actions: read` for cross-run artifacts and `unzip` to read their JSON members.
 
 Issue identity includes branch, package and test name in a machine-readable
 body marker. Repeated failures update the same issue, including reopening a
