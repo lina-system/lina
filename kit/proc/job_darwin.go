@@ -92,6 +92,19 @@ func (r jobRecord) failure() error {
 	return err
 }
 
+// sharedWriter serializes writes to a writer that may be supplied for both
+// stdout and stderr, which os/exec also guarantees.
+type sharedWriter struct {
+	mu *sync.Mutex
+	w  io.Writer
+}
+
+func (s *sharedWriter) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.w.Write(p)
+}
+
 type jobStream struct {
 	listener *net.UnixListener
 	accepted chan *net.UnixConn
@@ -109,6 +122,7 @@ type jobProcess struct {
 	streams                   map[string]*jobStream // "in", "out" and "err"
 	stdin                     io.Reader
 	stdout, stderr            io.Writer
+	writeMu                   sync.Mutex
 	coalition                 uint64
 	loaded                    bool
 	stop                      sync.Once
@@ -119,6 +133,20 @@ type jobProcess struct {
 func newProcess(c Command) (process, error) {
 	if len(c.ExtraFiles) != 0 {
 		return nil, errors.New("a launchd job cannot inherit extra descriptors")
+	}
+	if c.Dir == "" {
+		// The helper runs in the job's private directory, so an unset
+		// directory must be resolved here to match the owner's own.
+		wd, err := os.Getwd()
+		if err != nil {
+			return nil, err
+		}
+		c.Dir = wd
+	}
+	// A command never inherits an implicit environment: nil and empty both
+	// arrive at the job as an empty list, as they do on Linux.
+	if c.Env == nil {
+		c.Env = []string{}
 	}
 	dir, err := tempDir()
 	if err != nil {
@@ -273,9 +301,17 @@ func (p *jobProcess) start() error {
 		case "in":
 			go func() { _, _ = io.Copy(conn, p.stdin); stream.pump <- conn.CloseWrite() }()
 		case "out":
-			go func() { _, err := io.Copy(p.stdout, conn); stream.pump <- err }()
+			go func() {
+				_, err := io.Copy(&sharedWriter{mu: &p.writeMu, w: p.stdout}, conn)
+				stream.pump <- err
+				_ = conn.Close()
+			}()
 		default:
-			go func() { _, err := io.Copy(p.stderr, conn); stream.pump <- err }()
+			go func() {
+				_, err := io.Copy(&sharedWriter{mu: &p.writeMu, w: p.stderr}, conn)
+				stream.pump <- err
+				_ = conn.Close()
+			}()
 		}
 	}
 	record, err := p.next()
@@ -604,6 +640,11 @@ func JobMain(args []string, diagnostic io.Writer) int {
 		endJob(request.Domain, request.Label, request.Temp)
 		os.Exit(0)
 	}()
+	if request.Env == nil {
+		// A nil environment would make the command inherit the job's own, so
+		// an absent list is the same empty environment Linux gives it.
+		request.Env = []string{}
+	}
 	command := exec.Command(request.Path, request.Args...)
 	command.Dir, command.Env = request.Dir, request.Env
 	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
