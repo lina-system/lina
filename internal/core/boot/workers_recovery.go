@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/authority"
-	"github.com/thisisjun786/lina/internal/core/clientsrv"
+	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/reactor"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/internal/core/worker"
@@ -133,7 +133,7 @@ func (r *conversationRuntime) reconcileWorkers(ctx context.Context, attempted ma
 			if err != nil {
 				continue
 			}
-			delivery, err := r.router.view(ctx, clientsrv.Session{PersonID: rec.Person}, input.AgentID)
+			delivery, err := r.workerRecoveryView(ctx, input)
 			if err != nil {
 				continue
 			}
@@ -386,4 +386,12 @@ func (e *workerSession) transferRecoveryLease(turn string) {
 			delete(e.active, key)
 		}
 	}
+}
+
+func (r *conversationRuntime) workerRecoveryView(ctx context.Context, input ledger.Event) (*conversationRuntime, error) {
+	// workerCompletionView expects a completion whose parent names the original
+	// channel inbox. Keep the actual input unchanged for later result attribution.
+	origin := input
+	origin.ParentID = input.ID
+	return r.workerCompletionView(ctx, origin)
 }

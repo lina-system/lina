@@ -42,6 +42,7 @@ type workerRuntime struct {
 	starting     sync.WaitGroup
 }
 type workerSession struct {
+	cancelTask    func(context.Context) error
 	recoveryMu    sync.Mutex
 	recovery      recovery.Record
 	ownerControl  sync.Mutex
@@ -380,6 +381,15 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 		if err != nil {
 			return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
 		}
+		dispatcher := r.workerDispatch
+		if r.router != nil && r.router.root != nil {
+			dispatcher = r.router.root.workerDispatch
+		}
+		if dispatcher != nil {
+			if err = dispatcher.ObserveQuota(ctx, entry.adapter.Name(), rows); err != nil {
+				return tools.Result{State: tools.Failed}, err
+			}
+		}
 		body, err := json.Marshal(map[string]any{"rows": rows})
 		return tools.Result{State: tools.Applied, Body: body}, err
 	}
@@ -412,6 +422,11 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 	case "worker_input":
 		err = entry.adapter.Input(ctx, snap.Thread, worker.Input{Text: a.Text})
 	case "worker_interrupt":
+		if entry.cancelTask != nil {
+			if err = entry.cancelTask(ctx); err != nil {
+				return tools.Result{State: tools.Failed}, err
+			}
+		}
 		entry.recoveryMu.Lock()
 		rec := entry.recovery
 		rec.Canceled = true

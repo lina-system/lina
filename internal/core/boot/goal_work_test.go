@@ -115,6 +115,9 @@ func TestDispatchWorkToolUsesBoundOwnerAndRejectsExecutionClaims(t *testing.T) {
 	if len(snapshot.Goals) != 1 || snapshot.Goals[0].Person != r.person || snapshot.Goals[0].Agent != r.agent {
 		t.Fatalf("unbound goal admission: %+v", snapshot)
 	}
+	if snapshot.Goals[0].Conversation != r.conversation || snapshot.Goals[0].Turn != "turn" {
+		t.Fatalf("goal lost authenticated conversation origin: %+v", snapshot.Goals[0])
+	}
 	serviceInput := strings.Replace(input, `"no_service_reason":"library"`, `"service_target":"private-service","service_repository":"repo"`, 1)
 	serviceInput = strings.Replace(serviceInput, `"repositories":["repo"]`, `"repositories":["repo","docs"]`, 1)
 	serviceCall := provider.ToolCall{ID: "service-dispatch", Name: "dispatch_code_goal", Arguments: serviceInput}

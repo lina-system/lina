@@ -252,11 +252,11 @@ func TestWorkerCompletionReachesOriginatingChannelOnce(t *testing.T) {
 }
 
 func TestWorkerCompletionRecoversOriginalChannelScope(t *testing.T) {
-	for _, threaded := range []bool{false, true} {
-		name := "shared-main"
-		if threaded {
-			name = "thread-scope"
-		}
+	for _, tc := range []struct {
+		name               string
+		threaded, separate bool
+	}{{"shared-main", false, false}, {"thread-scope", true, false}, {"separate-conversation", true, true}} {
+		name, threaded := tc.name, tc.threaded
 		t.Run(name, func(t *testing.T) {
 			r := controlRuntime(t)
 			ctx, now := t.Context(), time.Now()
@@ -291,6 +291,9 @@ func TestWorkerCompletionRecoversOriginalChannelScope(t *testing.T) {
 				}
 				source.Topic = "thread"
 			}
+			if tc.separate {
+				source.Conversation = "channel:recovery"
+			}
 			source.Scope.Memory, source.Scope.Tools = false, false
 			if err := store.Bind(ctx, source); err != nil {
 				t.Fatal(err)
@@ -300,7 +303,14 @@ func TestWorkerCompletionRecoversOriginalChannelScope(t *testing.T) {
 			if err := gateway.New(r.db, func(_ context.Context, d gateway.Delivery) error { delivery = d; return nil }).Admit(ctx, inbound); err != nil {
 				t.Fatal(err)
 			}
-			completion := ledger.Event{ParentID: "channel-input:" + strconv.FormatInt(delivery.InboxID, 10), ConversationID: r.conversation, AgentID: r.agent, Surface: ledger.Surface{Kind: "channel"}}
+			completion := ledger.Event{ParentID: "channel-input:" + strconv.FormatInt(delivery.InboxID, 10), ConversationID: source.Conversation, AgentID: r.agent, Surface: ledger.Surface{Kind: "channel"}}
+			original := completion
+			original.ID = completion.ParentID
+			original.ParentID = ""
+			recovered, err := r.workerRecoveryView(ctx, original)
+			if err != nil || recovered.channelBinding == nil || *recovered.channelBinding != source || recovered.channelAddress != source.Address {
+				t.Fatalf("worker recovery widened channel authority: %+v %v", recovered, err)
+			}
 			view, err := r.workerCompletionView(ctx, completion)
 			if err != nil {
 				t.Fatal(err)
@@ -315,6 +325,9 @@ func TestWorkerCompletionRecoversOriginalChannelScope(t *testing.T) {
 			// platform, even though that other binding still has tools and memory.
 			if err := store.Disconnect(ctx, source.Bot, r.person); err != nil {
 				t.Fatal(err)
+			}
+			if _, err := r.workerRecoveryView(ctx, original); err == nil {
+				t.Fatal("worker recovery bypassed revoked channel")
 			}
 			if _, err := r.workerCompletionView(ctx, completion); err == nil {
 				t.Fatal("completion fell back to an unrelated channel after revocation")

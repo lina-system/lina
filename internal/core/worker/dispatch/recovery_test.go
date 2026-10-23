@@ -7,7 +7,9 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestDispatchRecoversOnceOnlyAfterAllEffectsSettle(t *testing.T) {
@@ -34,7 +36,7 @@ func TestDispatchRecoversOnceOnlyAfterAllEffectsSettle(t *testing.T) {
 	}
 	r.Snapshot.EffectsKnown = true
 	next, err := s.recoverRecord(t.Context(), r)
-	if err != nil || next.State != "queued" || next.Attempt != 2 {
+	if err != nil || next.State != "queued" || next.Attempt != 1 || next.Recoveries != 1 {
 		t.Fatalf("settled failure did not recover: %+v %v", next, err)
 	}
 	card, err := w.Get(t.Context(), task.ID)
@@ -44,6 +46,7 @@ func TestDispatchRecoversOnceOnlyAfterAllEffectsSettle(t *testing.T) {
 	if err = w.Start(t.Context(), work.Run{ID: "task:2", TaskID: task.ID, Generation: 2, Worker: "claude", ThreadID: "thread2", TurnID: "turn2", NodeID: "main"}); err != nil {
 		t.Fatal(err)
 	}
+	next.Attempt = 2
 	next.State = "unknown"
 	next.Snapshot = r.Snapshot
 	next.Snapshot.Thread.TurnID = "turn2"
@@ -72,4 +75,56 @@ func TestDispatchRecoversOnceOnlyAfterAllEffectsSettle(t *testing.T) {
 	if starts != 2 || ends != 2 {
 		t.Fatalf("attempt history lost: starts=%d ends=%d", starts, ends)
 	}
+}
+
+func TestTerminalSnapshotCannotCommitWithoutItsReceipt(t *testing.T) {
+	db := store(t)
+	w := work.New(db)
+	s := &Service{cfg: Config{DB: db, Work: w}}
+	if err := w.Create(t.Context(), work.Task{ID: "task", AgentID: "agent", ConversationID: "conversation", Title: "Task", Done: "result", ArtifactRoots: []string{"/task"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Start(t.Context(), work.Run{ID: "task:1", TaskID: "task", Generation: 1, Worker: "claude", ThreadID: "thread", TurnID: "turn", NodeID: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	r := Record{ID: "task", Attempt: 1, State: "running"}
+	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(t.Context(), "INSERT INTO worker_dispatch VALUES('task','origin','repo','running',?)", mustJSON(r))
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	r.State = "finished"
+	r.Snapshot = &worker.ThreadSnapshot{Thread: worker.Thread{ID: "thread", TurnID: "turn"}, Finish: &worker.Finish{Status: worker.Done}, EffectsKnown: true}
+	if err := s.finish(t.Context(), r, "task:1", "completed"); err == nil {
+		t.Fatal("terminal snapshot committed without receipt evidence")
+	}
+	now := time.Now()
+	receipt := work.Receipt{SchemaVersion: 1, RelationshipID: "task", ExecutionGeneration: 1, Attempt: 1, Outcome: "ready_for_review", Producer: "child", TurnRef: work.TurnRef{ThreadID: "thread", TurnID: "turn", TurnStatus: "completed"}, EmittedAt: now, Manifest: []work.Artifact{{Path: "/task/result", SHA256: strings.Repeat("a", 64)}}}
+	receipt.Provenance = []work.Provenance{{ArtifactID: "adapter-derived:task", TaskID: "task", NodeID: "main", Path: "/task/result", SHA256: receipt.Manifest[0].SHA256, ObservedAt: now}}
+	receipt.RevisionHash = work.ManifestHash(receipt.Manifest)
+	receipt.EventID = work.ReceiptID(receipt)
+	if err := s.finish(t.Context(), r, "task:1", "invalid", receipt); err == nil {
+		t.Fatal("invalid terminal observation committed")
+	}
+	card, err := w.Get(t.Context(), r.ID)
+	if err != nil || card.Receipt != nil || !card.Active {
+		t.Fatalf("partial receipt escaped rollback: %+v %v", card, err)
+	}
+	saved, err := s.records(t.Context())
+	if err != nil || saved[0].Snapshot != nil {
+		t.Fatalf("recoverable snapshot escaped rollback: %+v %v", saved, err)
+	}
+	if err = s.finish(t.Context(), r, "task:1", "completed", receipt); err != nil {
+		t.Fatal(err)
+	}
+	card, err = w.Get(t.Context(), r.ID)
+	if err != nil || card.Receipt == nil || card.Active {
+		t.Fatalf("terminal receipt missing: %+v %v", card, err)
+	}
+	saved, err = s.records(t.Context())
+	if err != nil || saved[0].Snapshot == nil || saved[0].State != "finished" {
+		t.Fatalf("terminal snapshot missing: %+v %v", saved, err)
+	}
+
 }

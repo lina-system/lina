@@ -107,7 +107,7 @@ func Observe(r Record, snap worker.ThreadSnapshot) (Record, bool) {
 		r.State = "finished"
 		return r, false
 	}
-	if snap.Finish.Failure == worker.QuotaFailure || snap.Finish.Failure == worker.RateLimitFailure {
+	if snap.Finish.Failure == worker.QuotaFailure || snap.Finish.Failure == worker.RateLimitFailure || snap.Finish.Failure == worker.LoginFailure {
 		r.State = "parked"
 		return r, false
 	}

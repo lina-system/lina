@@ -169,3 +169,15 @@ func TestStaleManagerPlanCannotClearCorrection(t *testing.T) {
 		t.Fatalf("not replanned against correction: %+v", current)
 	}
 }
+
+func TestWorkerRecoveryRequiresCurrentActionScope(t *testing.T) {
+	e := revisionEngine(t, readyTask("a"))
+	action := claimOnlyAction(t, e, Assign)
+	if allowed, err := e.CanContinue(t.Context(), action.ID); err != nil || !allowed {
+		t.Fatalf("current assignment refused: %v %v", allowed, err)
+	}
+	revisionEdit(t, e)
+	if allowed, err := e.CanContinue(t.Context(), action.ID); err != nil || allowed {
+		t.Fatalf("retired assignment recovered: %v %v", allowed, err)
+	}
+}

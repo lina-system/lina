@@ -486,6 +486,9 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	var workDone <-chan struct{}
 	if conversation != nil && cfg.Work != nil {
 		if err := conversation.startWork(ctx, cfg.Work); err != nil {
+			if errors.Is(err, context.Canceled) && ctx.Err() == context.Canceled {
+				return nil
+			}
 			return err
 		}
 		workDone = conversation.workEngine.done

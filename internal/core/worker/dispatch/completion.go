@@ -15,12 +15,39 @@ import (
 	"github.com/thisisjun786/lina/internal/core/worker/antigravity"
 )
 
-func (s *Service) finish(ctx context.Context, r Record, runID, status string) error {
+func (s *Service) finish(ctx context.Context, r Record, runID, status string, receipts ...work.Receipt) error {
 	head := ""
 	if r.PR != nil {
 		head = r.PR.Head
 	}
+	if len(receipts) > 1 {
+		return work.ErrInvalid
+	}
 	return s.cfg.DB.Write(ctx, func(tx *canon.Tx) error {
+		var canceled bool
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(json_extract(record,'$.canceled'),0) FROM worker_dispatch WHERE id=?`, r.ID).Scan(&canceled); err != nil {
+			return err
+		}
+		r.Canceled = r.Canceled || canceled
+
+		if len(receipts) == 1 {
+			if err := work.SubmitIn(ctx, tx, runID, receipts[0]); err != nil {
+				return err
+			}
+		}
+		if r.Snapshot != nil {
+			var raw []byte
+			var card work.Card
+			if err := tx.QueryRowContext(ctx, "SELECT record FROM work_cards WHERE task_id=?", r.ID).Scan(&raw); err != nil {
+				return err
+			}
+			if err := json.Unmarshal(raw, &card); err != nil {
+				return err
+			}
+			if card.Receipt == nil || card.Run == nil || card.Run.ID != runID {
+				return work.ErrState
+			}
+		}
 		if err := work.FinishIn(ctx, tx, r.ID, runID, status, head); err != nil {
 			return err
 		}
@@ -31,6 +58,11 @@ func (s *Service) finish(ctx context.Context, r Record, runID, status string) er
 	})
 }
 func saveRecord(ctx context.Context, tx *canon.Tx, r Record) error {
+	var canceled bool
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(json_extract(record,'$.canceled'),0) FROM worker_dispatch WHERE id=?`, r.ID).Scan(&canceled); err != nil {
+		return err
+	}
+	r.Canceled = r.Canceled || canceled
 	_, err := tx.ExecContext(ctx, "UPDATE worker_dispatch SET state=?,record=? WHERE id=?", r.State, mustJSON(r), r.ID)
 	return err
 }
@@ -52,12 +84,9 @@ func (s *Service) React(ctx context.Context, event work.Completion, card work.Ca
 	if err != nil {
 		return true, err
 	}
-	// A handled failure can already have queued or started the next generation.
-	// Its old completion is an observation, not a delivery for the new attempt.
-	if r.Attempt > 0 && event.Attempt != fmt.Sprintf("%s:%d", r.ID, r.Attempt) {
-		return true, nil
-	}
-	if r.State == "queued" || r.State == "running" {
+	// Goal execution observes this durable receipt through GoalRecord. Its
+	// engine owns judgment and continuation; do not also publish a task result.
+	if r.Goal || r.State == "queued" || r.State == "running" || r.Attempt > 0 && event.Attempt != fmt.Sprintf("%s:%d", r.ID, r.Attempt) {
 		return true, nil
 	}
 	if r.Announced {

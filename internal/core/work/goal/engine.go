@@ -1107,3 +1107,26 @@ func (e *Engine) Summary(ctx context.Context, id string) (string, error) {
 	}
 	return "", ErrInvalid
 }
+
+// CanContinue rechecks a claimed action before its worker's automatic recovery.
+// It grants no execution itself; the caller must still recheck effect authority.
+func (e *Engine) CanContinue(ctx context.Context, id string) (bool, error) {
+	state, err := e.Snapshot(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, a := range state.Actions {
+		if a.ID != id {
+			continue
+		}
+		if a.Superseded || a.InputVersion == nil || a.State != "claimed" && a.State != "running" && a.State != "unknown" {
+			return false, nil
+		}
+		for _, g := range state.Goals {
+			if g.ID == a.GoalID {
+				return g.State != GoalDone && g.State != GoalStopped && !staleInputs(g, a), nil
+			}
+		}
+	}
+	return false, nil
+}
