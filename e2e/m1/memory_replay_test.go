@@ -17,6 +17,7 @@ import (
 	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/core/assemble"
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/replay"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/provider"
@@ -26,6 +27,7 @@ func TestM1MemoryReplayInstalledCore(t *testing.T) {
 	for _, tc := range []struct {
 		name, text, operation, sql, reason string
 	}{
+		{name: "legacy layout"},
 		{name: "profile whitespace", text: "  I prefer\n\tgreen\u00a0 tea.  "},
 		{name: "corrected", operation: "correct", reason: "source_changed"},
 		{name: "forgotten", operation: "forget", reason: "forgotten"},
@@ -120,8 +122,67 @@ func TestM1MemoryReplayInstalledCore(t *testing.T) {
 			if !reflect.DeepEqual(remembered, want) {
 				t.Fatalf("live profile: %q", remembered)
 			}
+			var legacyEvidence ledger.RequestEvidence
+			if tc.name == "legacy layout" {
+				// Read evidence through Core, including material-backed large records.
+				p := h.command("export", "--socket", h.socket, "--agent", agent, "--conversation", conversation, "--since", "2020-01-01T00:00:00Z", "--until", "2100-01-01T00:00:00Z")
+				p.start(t)
+				p.wait(t, 0)
+				var out protocol.ExportResult
+				if err := json.Unmarshal(p.stdout.Bytes(), &out); err != nil {
+					t.Fatal(err)
+				}
+				raw, err := os.ReadFile(filepath.Join(out.Directory, "episodes.jsonl"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				var ep replay.Episode
+				if err := json.Unmarshal(bytes.TrimSpace(raw), &ep); err != nil {
+					t.Fatal(err)
+				}
+				legacyEvidence = ep.Evidence
+			}
 			// Restart proves reconstruction does not depend on transient packet bytes.
 			h.stopCore(core)
+			if tc.name == "legacy layout" {
+				// Model an old install: its profile preceded history, and its
+				// input followed the packet. Keep the actual immutable sources.
+				var profiles, rest []json.RawMessage
+				var current json.RawMessage
+				for _, raw := range original.Input {
+					var item struct{ Content string }
+					_ = json.Unmarshal(raw, &item)
+					switch {
+					case strings.HasPrefix(item.Content, "Remembered statement ("):
+						profiles = append(profiles, raw)
+					case strings.HasPrefix(item.Content, "Use my preferences."):
+						current = raw
+					default:
+						rest = append(rest, raw)
+					}
+				}
+				if len(profiles) != 2 || current == nil {
+					t.Fatal("legacy fixture missing profile or input")
+				}
+				original.Input = append(append(append([]json.RawMessage{rest[0]}, profiles...), rest[1:]...), current)
+				db, err := canon.OpenSQLite(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				evidence := legacyEvidence
+				evidence.Assembly.RequestLayout = ""
+				evidence.Hash = assemble.Digest(provider.Request{Model: evidence.Model, Effort: evidence.Effort, Purpose: provider.Turn, Instructions: original.Instructions, Items: original.Input, Tools: evidence.Tools, Fields: evidence.Fields})
+				raw, err := json.Marshal(evidence)
+				if err != nil {
+					db.Close()
+					t.Fatal(err)
+				}
+				_, err = db.ExecContext(h.ctx, "UPDATE conv_event SET body=?,material_id=NULL,material_revision=NULL WHERE id=?", string(raw), "request:"+evidence.TurnID+":0")
+				closeErr := db.Close()
+				if err != nil || closeErr != nil {
+					t.Fatalf("legacy evidence: %v %v", err, closeErr)
+				}
+			}
 			core = start()
 			digest := func() [32]byte {
 				t.Helper()
@@ -165,6 +226,13 @@ func TestM1MemoryReplayInstalledCore(t *testing.T) {
 			var ep replay.Episode
 			if err := json.Unmarshal(bytes.TrimSpace(data), &ep); err != nil {
 				t.Fatal(err)
+			}
+			wantLayout := ledger.InputBeforeContextV1
+			if tc.name == "legacy layout" {
+				wantLayout = ""
+			}
+			if ep.Evidence.Assembly.RequestLayout != wantLayout {
+				t.Fatalf("wrong recorded layout: %q", ep.Evidence.Assembly.RequestLayout)
 			}
 			if ep.Evidence.Hash == "" || len(ep.Evidence.Assembly.Profile) != 2 || ep.Evidence.Assembly.Profile[0].ID != *second.ItemID || ep.Evidence.Assembly.Profile[1].ID != *first.ItemID {
 				t.Fatal("missing ordered memory assembly")

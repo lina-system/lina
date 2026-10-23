@@ -255,7 +255,12 @@ are counted by reason; storage failures fail the operation.
 New TUI persona turns record `persona-tui-v1` assembly evidence (earlier `persona-v1` evidence remains replayable): the preparation clock,
 ordered history, profile references and typed packet source locators. Replay and
 export rebuild the exact selected items, catalog and fixed instruction format,
-then require the original request digest before accepting an episode. Skills
+then require the original request digest before accepting an episode. The assembly
+also records `RequestLayout: input-before-context-v1`. Replay and export use that
+recorded layout: this version places the input before the packet and standing
+profile. An absent layout preserves the earlier packet-before-input order and
+profile-before-history placement. An unknown layout is `missing_assembly`; it is
+never guessed from message text or retried with another ordering. Skills
 are read by their recorded commit, never from the current catalog head.
 
 Only the persona-owned revision, expression, emotion and settings projections
@@ -388,11 +393,12 @@ A request is laid out from what changes least to what changes most, so the prefi
    7. external evidence (user role, marked untrusted): worker results and what plugins read
 
 - Earlier turns retain their raw tool calls and tool outputs, including result codes, in the conversation ledger; an assistant reply is not a replacement for them. Successful turn completion admits reasoning, calls, outputs and replies together. Outputs retain tool provenance and a `pairs_with` link to their call. Subsequent turns, including after a Core restart, project these items through the normal masking and retraction rules in round and call order, not parallel tool completion order. A fixed event-count limit must not discard history or split a call/output pair; only the compaction rules below may replace older items. Provider items are model history, not additional person-facing replies.
-- A queued input can precede the prior turn's completed reply or system notice in the ledger. Preparation moves only that input event to item 7, exactly once, and retains the other visible history in ledger order, including those later replies and notices. Later queued person inputs stay out of this request. Distinct history events with the same text remain distinct.
+- A queued input can precede the prior turn's completed reply or system notice in the ledger. Preparation moves only that input event to item 6, exactly once, and retains the other visible history in ledger order, including those later replies and notices. Later queued person inputs stay out of this request. Distinct history events with the same text remain distinct.
 - This layout is the first request of a turn. When no compaction runs during the turn (see Compaction and resume), a follow-up request in the same turn, after tool results, keeps that request unchanged, apart from the plugin tools loaded on demand, and appends at its end, in ledger order, only the new reasoning items, tool calls and tool outputs and any steering input the person sent during the turn, in the user role ([runtime.md](runtime.md)). The ContextPacket is not rebuilt within a turn.
 - This layout is the request of a model-API provider. For an agent-runtime provider, the adapter receives the same layers in the same order as one non-persisted session. The runtime's own reasoning items do not return in later requests, the exact request input cannot be recorded, and the ledger records what the runtime reports instead ([runtime.md](runtime.md#providers)). The adapter still shapes the session so the runtime's cache covers the history: the Claude adapter sends each earlier turn as its own block and marks the last one ([Provider capabilities](runtime.md#provider-capabilities)).
 - Nothing that changes from turn to turn enters items 1 to 3 or the always-declared part of item 4. The time, the emotional state and the selected skill bodies sit in the ContextPacket. When the plugin tools loaded on demand change, the cached prefix ends at that point.
 - Requests in conversations with different agents differ from item 2 on, so they share the cached prefix only through item 1.
+- The standing profile belongs to packet group 7.5, after the current input; it never precedes conversation history or enters a compaction summary.
 - The ContextPacket is never written into the history. When no compaction runs at the turn boundary, the next turn's request therefore matches the previous turn's requests through the previous turn's input.
 - The ContextPacket follows the person's input, not the other way round. Some providers write their cache at the end of the latest user message, so a packet before the input would end that cache entry at the old packet, which the next turn no longer carries. Measured on ChatGPT's route, cross-turn cache hits rose from 55% to 93% with this order, and no provider got worse ([research](../research/provider-optimization.md#replay)).
 - Within a conversation the tool declarations and the tool choice stay as they are, apart from plugin tools loaded on demand, because a change to either ends the cached prefix on some providers.
