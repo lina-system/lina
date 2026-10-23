@@ -156,6 +156,9 @@ func (s *toolServer) call(request clientapi.WorkerToolRequest) clientapi.WorkerT
 	// the terminal event. A full queue refuses before sending an event.
 	select {
 	case a.events <- worker.Event{Thread: thread, Kind: worker.ToolCallEvent, ToolCall: &worker.ToolCall{ID: id, CallID: id, Namespace: "lina", Name: request.Name, Arguments: request.Arguments}}:
+		// An acknowledgement can precede the requested action. Retain admission
+		// for the whole turn even after answerTool removes the pending call.
+		a.effectSeen = true
 	default:
 		delete(a.pending, id)
 		a.mu.Unlock()

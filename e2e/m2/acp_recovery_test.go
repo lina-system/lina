@@ -21,13 +21,16 @@ import (
 // The agent is killed only after its progress is durable, while its prompt is open.
 func TestACPRecoveryThroughRunningCore(t *testing.T) {
 	var scenarios []acpScenario
-	for _, mode := range []string{"load", "resume", "fresh", "second-death", "unknown-effect"} {
+	for _, mode := range []string{"load", "resume", "fresh", "second-death", "unknown-effect", "completed-tool"} {
 		scenarios = append(scenarios, acpScenario{
 			name: mode, worker: "gemini", binary: "gemini", mode: mode,
 			script: acpRecoveryScript,
 			beforeFinish: func(t *testing.T, h *harness, fixture string, initial dispatch.Record) {
+				if mode == "completed-tool" {
+					coordinateBeforeACPDeath(t, h, fixture)
+				}
 				killACPAttempt(t, fixture, 1)
-				if mode == "unknown-effect" {
+				if mode == "unknown-effect" || mode == "completed-tool" {
 					return
 				}
 				waitACPRecovery(t, h, func(r dispatch.Record, card work.Card) bool {
@@ -51,7 +54,7 @@ func TestACPRecoveryThroughRunningCore(t *testing.T) {
 			},
 			afterFinish: func(t *testing.T, h *harness, fixture string, record dispatch.Record) {
 				wantStarts := 2
-				if mode == "unknown-effect" {
+				if mode == "unknown-effect" || mode == "completed-tool" {
 					wantStarts = 1
 					if record.State != "unknown" || record.Recoveries != 0 {
 						t.Fatal("unknown tool effect authorized recovery", record)
@@ -83,7 +86,7 @@ func TestACPRecoveryThroughRunningCore(t *testing.T) {
 						t.Fatal("worker moved worktree", start.Cwd)
 					}
 				}
-				if mode != "unknown-effect" {
+				if mode != "unknown-effect" && mode != "completed-tool" {
 					var restored struct{ Method, SessionID string }
 					readACPFixture(t, fixture, "restored.json", &restored)
 					want := "session/load"
@@ -114,6 +117,48 @@ func TestACPRecoveryThroughRunningCore(t *testing.T) {
 		})
 	}
 	runACPWorkersThroughRunningCore(t, scenarios)
+}
+
+func coordinateBeforeACPDeath(t *testing.T, h *harness, fixture string) {
+	t.Helper()
+	var server struct {
+		Env []struct{ Name, Value string }
+	}
+	readACPFixture(t, fixture, "old-server.json", &server)
+	var socket, token string
+	for _, env := range server.Env {
+		switch env.Name {
+		case "LINA_WORKER_TOOLS_SOCKET":
+			socket = env.Value
+		case "LINA_WORKER_TOOLS_TOKEN":
+			token = env.Value
+		}
+	}
+	response, err := clientapi.CallWorkerTool(h.ctx, socket, clientapi.WorkerToolRequest{Token: token, Method: "tools/call", Name: "coordinate", Arguments: json.RawMessage(`{"request":"Retain this coordination request."}`)})
+	var mcp struct {
+		IsError bool
+		Content []struct{ Text string }
+	}
+	if err != nil || response.Error != "" || json.Unmarshal(response.Result, &mcp) != nil || mcp.IsError || len(mcp.Content) != 1 {
+		t.Fatal("coordination failed", err)
+	}
+	var ack struct {
+		Accepted bool
+		EventID  string `json:"event_id"`
+	}
+	if json.Unmarshal([]byte(mcp.Content[0].Text), &ack) != nil || !ack.Accepted || ack.EventID == "" {
+		t.Fatal("coordination not acknowledged")
+	}
+	// The real Core acknowledged the call, committed its request and cleared
+	// pending state. No optional ACP tool-call update was sent by the agent.
+	waitACPRecovery(t, h, func(r dispatch.Record, _ work.Card) bool { return len(r.PendingRequests) == 0 })
+	db := acpRecoveryDB(t, h)
+	var count int
+	if err := db.Read(h.ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(h.ctx, "SELECT count(*) FROM conv_event WHERE id=?", ack.EventID).Scan(&count)
+	}); err != nil || count != 1 {
+		t.Fatalf("coordination not durable: count=%d error=%v", count, err)
+	}
 }
 
 func killACPAttempt(t *testing.T, fixture string, attempt int) {

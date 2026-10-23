@@ -1109,8 +1109,10 @@ One adapter drives every worker that speaks the Agent Client Protocol, version 1
   Dispatch commits the recovery allowance before starting the replacement. The
   replacement receives a fresh process binding and session tool server; restoring
   a session does not itself send a prompt. A rejected restore never falls back to
-  a new session. Core drains load history while waiting for the response, without
-  adding it to progress or the new result. A confirmed lost process with no
+  a new session. Recovery excludes load history before queue admission, without
+  adding it to progress or the new result; live updates after the load response
+  keep the usual queue limit. Core retains MCP tool admission for the entire turn,
+  even after an acknowledgement clears its pending request. A confirmed lost process with no
   unresolved effect can recover once; tool activity, an unknown update, an
   incomplete protocol stream or an unfinished request keeps the outcome unknown. Loading or resuming a session
   does not reconcile an unknown turn after a Core crash. A second settled death

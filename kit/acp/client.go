@@ -39,7 +39,7 @@ type pendingCall struct {
 	session SessionID
 	method  string
 }
-type sessionState struct{ busy, replay, cancelled bool }
+type sessionState struct{ busy, replay, discardReplay, cancelled bool }
 
 // Update marks history delivered before session/load's response as replay.
 // The read loop establishes that boundary before processing the next frame.
@@ -123,7 +123,7 @@ func (c *Client) write(ctx context.Context, f envelope) error {
 	}
 	return nil
 }
-func (c *Client) beginCall(ctx context.Context, method string, params any, session SessionID) (<-chan envelope, error) {
+func (c *Client) beginCall(ctx context.Context, method string, params any, session SessionID, discardReplay bool) (<-chan envelope, error) {
 	c.control.Lock()
 	defer c.control.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -161,6 +161,7 @@ func (c *Client) beginCall(ctx context.Context, method string, params any, sessi
 		}
 		s.busy = true
 		s.replay = method == "session/load"
+		s.discardReplay = s.replay && discardReplay
 		if method == "session/prompt" {
 			s.cancelled = false
 		}
@@ -181,7 +182,7 @@ func (c *Client) beginCall(ctx context.Context, method string, params any, sessi
 	return ch, nil
 }
 func (c *Client) call(ctx context.Context, method string, params, out any, session SessionID) error {
-	ch, err := c.beginCall(ctx, method, params, session)
+	ch, err := c.beginCall(ctx, method, params, session, false)
 	if err != nil {
 		return err
 	}
@@ -254,7 +255,7 @@ func (c *Client) StartPrompt(ctx context.Context, p PromptRequest) (<-chan Promp
 	if p.SessionID == "" || len(p.Prompt) == 0 {
 		return nil, errors.New("ACP prompt requires a session and content")
 	}
-	reply, err := c.beginCall(ctx, "session/prompt", p, p.SessionID)
+	reply, err := c.beginCall(ctx, "session/prompt", p, p.SessionID, false)
 	if err != nil {
 		return nil, err
 	}
@@ -289,6 +290,17 @@ func (c *Client) Prompt(ctx context.Context, p PromptRequest) (PromptResponse, e
 	}
 }
 func (c *Client) LoadSession(ctx context.Context, p LoadSessionRequest) (LoadSessionResponse, error) {
+	return c.loadSession(ctx, p, false)
+}
+
+// LoadSessionWithoutReplay restores a session without enqueueing its history.
+// The read loop clears suppression at the load response, so subsequent live
+// updates retain the ordinary bounded queue and overflow behavior.
+func (c *Client) LoadSessionWithoutReplay(ctx context.Context, p LoadSessionRequest) (LoadSessionResponse, error) {
+	return c.loadSession(ctx, p, true)
+}
+
+func (c *Client) loadSession(ctx context.Context, p LoadSessionRequest, discardReplay bool) (LoadSessionResponse, error) {
 	var out LoadSessionResponse
 	if p.SessionID == "" {
 		return out, errors.New("ACP load requires a session")
@@ -296,7 +308,10 @@ func (c *Client) LoadSession(ctx context.Context, p LoadSessionRequest) (LoadSes
 	if p.McpServers == nil {
 		p.McpServers = []McpServer{}
 	}
-	err := c.call(ctx, "session/load", p, &out, p.SessionID)
+	ch, err := c.beginCall(ctx, "session/load", p, p.SessionID, discardReplay)
+	if err == nil {
+		err = c.awaitCall(ctx, "session/load", ch, &out)
+	}
 	return out, err
 }
 func (c *Client) ResumeSession(ctx context.Context, p ResumeSessionRequest) (ResumeSessionResponse, error) {
@@ -395,6 +410,7 @@ func (c *Client) read() {
 				s := c.sessions[p.session]
 				s.busy = false
 				s.replay = false
+				s.discardReplay = false
 				if p.method == "session/prompt" {
 					for key, r := range c.requests {
 						if r.session == p.session {
@@ -422,7 +438,11 @@ func (c *Client) notification(f envelope) error {
 	c.mu.Lock()
 	s := c.sessions[n.SessionID]
 	replay := s != nil && s.replay
+	discard := replay && s.discardReplay
 	c.mu.Unlock()
+	if discard {
+		return nil
+	}
 	select {
 	case c.updates <- Update{n, replay}:
 		return nil

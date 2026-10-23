@@ -108,6 +108,9 @@ Claude Code, Cursor, Gemini CLI and Grok are built-in profiles; person-added pro
 `RecoverAttempt` is used only by dispatch after a committed recovery allowance.
 It prefers advertised resume, otherwise load, otherwise a new session, with a
 fresh session tool server. A restore error never falls back to another session.
-Replay is drained during load and omitted from both progress and new output.
+Recovery uses `LoadSessionWithoutReplay` to exclude history before queue admission;
+the ordinary shared-client load API still publishes tagged replay. Suppression
+ends when the read loop consumes the load response, preserving live updates.
 Terminal snapshots retain a copy of the finish and conservatively keep effects
-unknown after tool activity, unknown update types or unfinished requests.
+unknown after tool activity, unknown update types or unfinished requests. Core
+MCP admission latches tool activity even when an answered call is no longer pending.

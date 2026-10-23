@@ -27,7 +27,7 @@ func restoreSession(ctx context.Context, c *wire.Client, dir string, server wire
 			servers := []wire.McpServer{server}
 			_, err = c.ResumeSession(ctx, wire.ResumeSessionRequest{SessionID: id, Cwd: dir, McpServers: &servers})
 		} else {
-			_, err = c.LoadSession(ctx, wire.LoadSessionRequest{SessionID: id, Cwd: dir, McpServers: []wire.McpServer{server}})
+			_, err = c.LoadSessionWithoutReplay(ctx, wire.LoadSessionRequest{SessionID: id, Cwd: dir, McpServers: []wire.McpServer{server}})
 		}
 		result <- err
 	}()
