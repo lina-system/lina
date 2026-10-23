@@ -143,6 +143,14 @@ provides the separate account-free paste regression; `TestAlphaWorkerCrashInstal
 checks that killing Core does not erase an acknowledged worker from its public
 lane snapshot.
 
+The coding journey checks the delivered answer, result file, executable function
+and original worker session after either a form answer or a spoken continuation.
+It does not require a card during that transition: the worker may still be idle
+or already finished. `TestM3WorkPanelLiveCodexWorker` checks the card while Core's
+worker is held at an unanswered approval or question, then verifies its artifact
+and restart. `TestAlphaWorkCardWaitsForProgress` holds back the card and its activity
+in separate recorder frames, without relying on execution speed.
+
 Set `LINA_ALPHA_CAPTURES` to a private absolute output directory to retain
 rendered text, ANSI output and terminal cells at each observed transition.
 Use synthetic conversation facts and a generated canary for secret checks,
