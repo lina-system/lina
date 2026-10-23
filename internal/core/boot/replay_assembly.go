@@ -8,6 +8,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/assemble"
+	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/replay"
 	"github.com/thisisjun786/lina/internal/core/skills"
 	"github.com/thisisjun786/lina/kit/provider"
@@ -99,7 +100,15 @@ func rebuildPersonaItems(ep replay.Episode, sources []replay.Context, profile []
 		}
 		packet = append(packet, item)
 	}
-	history := append(append([]provider.Item(nil), profile...), ep.Items[:len(ep.Items)-1]...)
+	history := ep.Items[:len(ep.Items)-1]
+	switch a.RequestLayout {
+	case "": // Legacy records put the standing profile before history.
+		history = append(append([]provider.Item(nil), profile...), history...)
+		profile = nil
+	case ledger.InputBeforeContextV1:
+	default:
+		return nil, replay.Exclusion("missing_assembly")
+	}
 	core := assemble.PersonaCoreV1
 	if a.InstructionFormat == "persona-tui-v1" || a.InstructionFormat == "persona-tui-work-method-v1" {
 		core += "\n" + assemble.TUIFormatting
@@ -107,11 +116,19 @@ func rebuildPersonaItems(ep replay.Episode, sources []replay.Context, profile []
 	request, report := assemble.Assemble(assemble.Input{
 		Core: core, AgentID: a.AgentID, PersonaRevision: a.PersonaRevision,
 		AgentName: a.AgentName, OwnerPersonID: a.OwnerPersonID, Persona: ep.Persona, WorkMethod: ep.WorkMethod,
-		Catalog: catalog, AlwaysTools: ep.Evidence.Tools, History: history, Current: ep.Items[len(ep.Items)-1], Packet: packet,
+		Catalog: catalog, AlwaysTools: ep.Evidence.Tools, History: history, Profile: profile, Current: ep.Items[len(ep.Items)-1], Packet: packet,
 		Model: ep.Evidence.Model, Effort: ep.Evidence.Effort, Fields: ep.Evidence.Fields, MaxTokens: 128000,
 	}, conversationRequestSize)
 	if report.Failure != "" || len(report.Dropped) != 0 {
 		return nil, replay.Exclusion("missing_assembly")
+	}
+	if a.RequestLayout == "" {
+		// Preserve the recorded order and digest; do not reinterpret old turns
+		// using today's cache layout. Opaque history bytes remain untouched.
+		current := len(request.Items) - len(report.Items) - 1
+		item := request.Items[current]
+		copy(request.Items[current:], request.Items[current+1:])
+		request.Items[len(request.Items)-1] = item
 	}
 	return request.Items, nil
 }

@@ -55,6 +55,10 @@ func TestStubsPrecedeSummaryAndPreserveCurrentRoundTrip(t *testing.T) {
 	if !reflect.DeepEqual(got.View.Active, v.Active) || !reflect.DeepEqual(got.View.Packet, v.Packet) || !reflect.DeepEqual(got.View.History[0], v.History[0]) || !strings.Contains(string(got.View.History[1].Item), "output") || !strings.Contains(string(got.View.History[1].Item), "expand") {
 		t.Fatalf("bad stub projection: %+v", got.View)
 	}
+	tail := got.Request.Items[len(got.Request.Items)-3:]
+	if !reflect.DeepEqual(tail, []provider.Item{v.Input.Item, v.Packet[0], v.Active[0].Item}) {
+		t.Fatalf("compaction reordered input, packet or active items: %s", tail)
+	}
 	if !strings.Contains(string(v.History[1].Item), strings.Repeat("x", 2200)) {
 		t.Fatal("mutated source")
 	}
@@ -131,7 +135,7 @@ func TestContinuationInputOnceAndNoPriorRoundTrip(t *testing.T) {
 				t.Fatal("old round survived")
 			}
 		}
-		if count != 1 || !strings.Contains(string(r.Items[len(r.Items)-2]), "fresh-packet") {
+		if count != 1 || !strings.Contains(string(r.Items[len(r.Items)-1]), "fresh-packet") {
 			t.Fatalf("bad continuation layout: %s", r.Items)
 		}
 		return nil

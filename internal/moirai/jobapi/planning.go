@@ -101,7 +101,7 @@ func ValidatePlan(kind string, d PlanDraft) error {
 		visiting[id] = true
 		seen := map[string]bool{}
 		for _, dep := range e.DependsOn {
-			if seen[dep] || !visit(dep) {
+			if entries[dep].Kind != "todo" || seen[dep] || !visit(dep) {
 				return false
 			}
 			seen[dep] = true

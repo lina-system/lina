@@ -141,8 +141,8 @@ func (v View) request() provider.Request {
 	for _, e := range v.History {
 		r.Items = append(r.Items, append(provider.Item(nil), e.Item...))
 	}
-	r.Items = append(r.Items, copyItems(v.Packet)...)
 	r.Items = append(r.Items, append(provider.Item(nil), v.Input.Item...))
+	r.Items = append(r.Items, copyItems(v.Packet)...)
 	for _, e := range v.Active {
 		r.Items = append(r.Items, append(provider.Item(nil), e.Item...))
 	}
