@@ -50,7 +50,6 @@ func TestRetiredSiblingRepairAssessmentIsDerivedAgain(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("retired assessment disappeared")
-
 	}
 	cfg := e.cfg
 	cfg.Epoch++
