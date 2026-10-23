@@ -101,11 +101,17 @@ func TestM3WorkPanelInstalledCoreMatrix(t *testing.T) {
 							h.keys(terminal, "\x10")
 						}
 						title := expected[0].Line.Name
-						snap := waitScreen(t, h, terminal, title)
 						x, panelWidth := 80, 40
 						if width < 120 {
 							x = 0
 							panelWidth = width
+						}
+						snap, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
+							rows := panelCellRows(s, x, panelWidth)
+							return rows[1] == design.Text(language, "work.title") && strings.Contains(rows[2], title)
+						})
+						if err != nil {
+							t.Fatalf("panel frame: %v\n%s", err, screenText(snap))
 						}
 						rows := panelCellRows(snap, x, panelWidth)
 						if rows[1] != design.Text(language, "work.title") || !strings.Contains(rows[2], title) {
