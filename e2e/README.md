@@ -391,6 +391,42 @@ binding/scope replacement. A paired synthetic channel and an existing binding
 exercise the actual target-agent checks. Read-only canon snapshots prove that
 refused requests preserve agent revisions, actions, conversations and bindings.
 
+`m3/dependency-manager.json` exercises graph admission from a non-dev persona, durable dev ownership and assignment before dispatch, and missing-dev refusal without work cards or worker effects. Questions, approvals, refresh, stop controls, and restart retain the original conversation.
+
+`m3/dependency-release.json` runs the installed Core with a synthetic App Server
+and forge. Conversation tools admit a graph, Core creates actual Git worktrees,
+and worker processes write and commit results after a real client answers a
+worker question and approval. Independent work starts while a
+dependent waits; only a merge in a separate forge clone followed by Core's
+observation releases the dependent onto the fetched remote base. The parent
+clone's checked-out base branch stays unchanged. Restart retains the merge without
+turning it into a delivery verdict. The fixture has no provider credential or
+external GitHub effect.
+`m3/dependency-area-overlap.json` first submits unordered areas for a
+wildcard-matched directory and a nested file. Core must reject the graph before
+the ordered directory/child graph in the release scenario can execute.
+`m3/dependency-stop.json` holds one real worker active with two queued cards.
+Protocol stop-all, and an individual queued-row stop followed by stop-all,
+must prevent any additional worker launch after interrupted completion and
+after Core restart. Cancellation counts each task once.
+Ordinary Git commands in the scheduled worktree must refuse base and tracking-ref
+writes, another task's branch update, and deletion of its own assigned branch.
+The same checks run after restart, while real worker commits, pushes, and Core's
+dependent allocation continue through the protected parent clone.
+`m3/delegation-preset-limits.json` calls the configured graph tool through the
+installed Core as investing and legal presets. Both must receive a policy
+refusal before task admission, with no queued work appearing after restart.
+
+The worker also calls all four LINA work tools, receives both work-tool and
+native question answers, and submits a receipt for its committed artifact.
+`m3/dependency-start-failure.json` injects a failed initial Git fetch with one
+host slot: another task must finish and submit its receipt, while restart must
+retain the failed attempt without its reservations or a duplicate dispatch.
+`m3/dependency-conflict.json` keeps the predecessor pull request unmergeable
+through a correction turn. Core returns it to the same worker exactly once,
+requires input for the remaining conflict, and retains the dependent's gate
+until the forge merge. Repeated observation and restart cannot resend work.
+
 `m3/plan-drafting.json` exercises accepted goal discovery through model tools,
 Klotho drafting through a real Moirai worker and installed Core job socket,
 complete preview replacement, retirement of overlapping stale requests, stale confirmation refusal, one-version record
@@ -478,6 +514,22 @@ work tools, authenticated owner approval and question answers, worker-written
 artifact contents, reported quota windows, and restored completion history.
 Worker settings remain omitted. This scenario uses no real account or provider
 credentials and does not measure live Codex quota.
+
+`m3/dependency-recovery-failure.json` persists a graph with no capacity, then
+restarts Core with one slot and a single failing Git fetch. It requires graph
+tools to remain available, the independent worker to commit and submit its
+receipt, and the settled failure to survive another restart without replay.
+The conversation client correlates each readiness probe's reply by request id;
+worker notices and late replies cannot satisfy or reject that probe. A scripted
+regression interleaves those frames without depending on scheduler timing.
+
+`m3/delegation-readiness.json` exercises absent executables, failed worker
+handshakes and unavailable or unanswered quota observations. Installed Core keeps conversation
+available, omits unavailable graph tools and reaps partial worker processes.
+The unanswered-quota case exercises the startup readiness deadline with a
+worker that stays connected but never replies, then verifies conversation and
+worker process cleanup.
+The scenario uses the shared acceptance harness in `e2e/m1/`.
 
 `TestM1WebUnconfigured` checks installed Core's explicit missing-provider status, absence of web declarations and one-round notice. `TestM1WebSearchExtractAndCitation` runs the production Core composition in a separate test helper with a synthetic manifest recording that executable, and injects only the Firecrawl HTTP transport. The real TUI saves a hidden key; the protocol client approves each network request; the real provider adapter searches and extracts against stub responses; TUI cells show both running activities; the scripted model cites the source URL. No real provider account is used, and model compliance beyond the scripted boundary is not claimed.
 

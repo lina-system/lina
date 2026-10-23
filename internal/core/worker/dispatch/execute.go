@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -167,12 +168,18 @@ func (s *Service) execute(ctx context.Context, r Record) {
 	if err != nil {
 		return
 	}
+	priorProtected := r.Protected
 	r.Protected = map[string]string{}
 	for _, line := range strings.Split(protected, "\n") {
 		ref, head, ok := strings.Cut(line, " ")
 		if ok && strings.HasPrefix(ref, "refs/heads/") {
 			r.Protected[ref] = head
 		}
+	}
+	if r.ReturnReceipt != "" && !maps.Equal(priorProtected, r.Protected) {
+		r.Protected = priorProtected
+		r.Code = "protected_ref_changed"
+		return
 	}
 	if err = s.save(ctx, r); err != nil {
 		return
@@ -275,7 +282,7 @@ func (s *Service) execute(ctx context.Context, r Record) {
 			}
 			return
 		}
-		generation := len(r.Tried)
+		generation := r.GenerationBase + len(r.Tried)
 		run = work.Run{ID: fmt.Sprintf("%s:%d", r.ID, generation), TaskID: r.ID, Generation: generation, Worker: r.Worker, NodeID: s.cfg.Main}
 		// reserveWorker persisted this attempt before any launch. A crash is
 		// uncertain, never permission to consume another replacement.
@@ -407,6 +414,12 @@ func (s *Service) execute(ctx context.Context, r Record) {
 	// The artifact contains source-labeled observations, never an acceptance or
 	// merge verdict. Strip remote prose before persisting; it is untrusted input.
 	if r.PR != nil {
+		r.FailureReason = r.PR.FailureReason()
+		if masked, err := secrets.Mask(r.FailureReason); err == nil {
+			r.FailureReason = masked.Text()
+		} else {
+			r.FailureReason = ""
+		}
 		for i := range r.PR.Reviews {
 			r.PR.Reviews[i].Body = ""
 		}
@@ -419,6 +432,9 @@ func (s *Service) execute(ctx context.Context, r Record) {
 	}
 	evidence = []byte(masked.Text())
 	artifact := filepath.Join(taskRoot, "result.json")
+	if r.GenerationBase > 0 {
+		artifact = filepath.Join(taskRoot, fmt.Sprintf("result-%d.json", run.Generation))
+	}
 	if err = os.WriteFile(artifact, evidence, 0600); err != nil {
 		return
 	}

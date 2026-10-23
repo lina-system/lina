@@ -3,7 +3,6 @@
 package ui
 
 import (
-	"context"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
@@ -37,12 +36,6 @@ type conversationView struct {
 	selected     int
 }
 
-type inputHistory struct {
-	id     string
-	draft  state.Draft
-	column int // Recall starts on the first visual line of the saved draft.
-}
-
 type textPager struct {
 	board                    *boardView
 	records                  *recordPager
@@ -66,93 +59,6 @@ type textPager struct {
 	offset                   int
 	query                    string
 	searching                bool
-}
-
-func newConversationView(styles Styles) conversationView {
-	c := textarea.New()
-	c.Prompt = ""
-	c.Placeholder = fmt.Sprintf(design.Text(styles.options.Language, "composer.placeholder"), "LINA")
-	c.ShowLineNumbers = false
-	c.CharLimit = 16384
-	c.MaxWidth, c.MaxHeight = 0, 6
-	c.DynamicHeight = true
-	c.MinHeight = 1
-	c.MaxContentHeight = 16384
-	c.SetStyles(textarea.Styles{Focused: textarea.StyleState{Text: styles.Text, Placeholder: styles.Muted}, Blurred: textarea.StyleState{Text: styles.Muted}})
-	c.SetVirtualCursor(false)
-	c.SetWidth(max(1, styles.options.Width-styles.composerPromptWidth()))
-	c.SetHeight(1)
-	c.Focus()
-	// Clipboard reads are never an application action; terminal PasteMsg owns paste.
-	c.KeyMap.Paste.SetEnabled(false)
-	c.KeyMap.CopySelection.SetEnabled(false)
-	return conversationView{composer: c, selected: -1}
-}
-
-func (m *shellModel) hasCapability(name string) bool {
-	for _, cap := range m.content.Capabilities {
-		if cap.Name == name {
-			return true
-		}
-	}
-	return false
-}
-
-func (m *shellModel) syncComposer() {
-	m.syncInputHistory()
-	c := &m.conversation.composer
-	placeholder := "composer.placeholder"
-	if m.disambiguated {
-		placeholder = "composer.shift_enter"
-	}
-	c.Placeholder = fmt.Sprintf(design.Text(m.styles.options.Language, placeholder), m.conversationName())
-	if c.Value() != m.content.Draft.Text {
-		c.SetValue(m.content.Draft.Text)
-	}
-	c.SetWidth(max(1, m.size.Width-m.styles.composerPromptWidth()))
-}
-
-func (s Styles) composerPrompt() string { return s.listBullet() + " " }
-
-func (s Styles) composerPromptWidth() int { return (render.Unicode{}).Width(s.composerPrompt()) }
-
-func (m *shellModel) editComposer(msg tea.Msg) tea.Cmd {
-	if m.conversation.pager.open {
-		return nil
-	}
-	m.syncComposer()
-	c, command := m.conversation.composer.Update(msg)
-	m.conversation.composer = c
-	draft := m.content.Draft
-	if draft.Text != c.Value() {
-		m.conversation.history = nil
-		m.conversation.undo = append(m.conversation.undo, draft)
-		if len(m.conversation.undo) > 64 {
-			m.conversation.undo = m.conversation.undo[1:]
-		}
-	}
-	draft.Text = c.Value()
-	m.content, _ = state.Reduce(m.content, state.EditDraft{Draft: draft})
-	return command
-}
-
-func (m *shellModel) reduceInput(msg state.Msg) tea.Cmd {
-	switch msg.(type) {
-	case state.FocusConversation:
-		m.restoreHistoryDraft()
-	case state.EditDraft, state.Send:
-		m.conversation.history = nil
-	}
-	var commands []state.Cmd
-	m.content, commands = state.Reduce(m.content, msg)
-	m.syncComposer()
-	m.refreshBlocks()
-	var effects []tea.Cmd
-	for _, command := range commands {
-		generation := m.generation
-		effects = append(effects, func() tea.Msg { return shellEffect{Generation: generation, Message: command(context.Background())} })
-	}
-	return tea.Batch(effects...)
 }
 
 func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
@@ -355,84 +261,6 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 	return m.editComposer(msg)
 }
 
-func (m *shellModel) restoreHistoryDraft() {
-	h := m.conversation.history
-	if h == nil {
-		return
-	}
-	m.conversation.history = nil
-	m.content, _ = state.Reduce(m.content, state.EditDraft{Draft: h.draft})
-	c := &m.conversation.composer
-	c.SetValue(h.draft.Text)
-	for c.Line() > 0 || c.LineInfo().RowOffset > 0 {
-		c.CursorUp()
-	}
-	c.SetCursorColumn(h.column)
-}
-
-func (m *shellModel) syncInputHistory() {
-	h := m.conversation.history
-	if h == nil {
-		return
-	}
-	for _, entry := range m.content.InputHistory(m.conversation.id) {
-		if entry.ID == h.id {
-			if m.content.Draft.Text != entry.Text {
-				m.content, _ = state.Reduce(m.content, state.EditDraft{Draft: state.Draft{Text: entry.Text}})
-			}
-			return
-		}
-	}
-	// A replaced snapshot, revocation or focus change removed the selection.
-	m.restoreHistoryDraft()
-}
-
-func (m *shellModel) recallInput(older bool) bool {
-	m.syncComposer()
-	c := &m.conversation.composer
-	line := c.LineInfo()
-	if older && (c.Line() != 0 || line.RowOffset != 0) ||
-		!older && (c.Line() != c.LineCount()-1 || line.RowOffset != line.Height-1) {
-		return false
-	}
-	entries := m.content.InputHistory(m.conversation.id)
-	h := m.conversation.history
-	index := -1
-	if h != nil {
-		index = slices.IndexFunc(entries, func(e state.InputHistoryEntry) bool { return e.ID == h.id })
-	}
-	if older {
-		if len(entries) == 0 {
-			return false
-		}
-		index = min(index+1, len(entries)-1)
-		if h == nil {
-			draft := m.content.Draft
-			draft.Attachments = slices.Clone(draft.Attachments)
-			h = &inputHistory{draft: draft, column: c.Column()}
-			m.conversation.history = h
-		}
-	} else {
-		if h == nil {
-			return false
-		}
-		index--
-		if index < 0 {
-			m.restoreHistoryDraft()
-			return true
-		}
-	}
-	h.id = entries[index].ID
-	m.content, _ = state.Reduce(m.content, state.EditDraft{Draft: state.Draft{Text: entries[index].Text}})
-	c.SetValue(entries[index].Text)
-	if older {
-		for c.Line() > 0 || c.LineInfo().RowOffset > 0 {
-			c.CursorUp()
-		}
-	}
-	return true
-}
-
 func (m *shellModel) conversationPlan() layout.Layout {
 	m.syncComposer()
 	activityRows := 0
@@ -446,114 +274,6 @@ func (m *shellModel) conversationPlan() layout.Layout {
 		cardCount = cardRows + summary.More
 	}
 	return layout.Plan(m.size, layout.Caps{SidePane: true, Running: m.hasCapability("running"), Cards: m.hasCapability("waiting")}, layout.Shape{ActivityRows: activityRows, SidePane: m.conversation.pager.open, ComposerRows: m.conversation.composer.Height(), RunningCount: len(m.topicBlocks("running")), CardCount: cardCount, CardRows: cardRows, Attachments: len(m.content.Draft.Attachments) > 0})
-}
-
-func (m *shellModel) topicBlocks(topic string) []state.Block {
-	var blocks []state.Block
-	for _, b := range m.content.Blocks {
-		if b.Topic == topic {
-			if topic == "running" && b.RunState != "" {
-				b.Text = m.runningRowText(b)
-			}
-			if b.Card != nil {
-				card := *b.Card
-				for _, current := range m.content.Cards {
-					if current.ID == card.ID {
-						card = current
-						break
-					}
-				}
-				if card.Outcome != "" {
-					continue
-				}
-				b.Text = m.cardSummary(card)
-			}
-			blocks = append(blocks, b)
-		}
-	}
-	return blocks
-}
-func (m *shellModel) topicText(topic string) string {
-	if !m.hasCapability(topic) {
-		return design.Text(m.styles.options.Language, "capability_not_negotiated")
-	}
-	var lines []string
-	for _, b := range m.topicBlocks(topic) {
-		lines = append(lines, b.Text)
-	}
-	if topic == "waiting" && len(lines) == 0 {
-		return design.Text(m.styles.options.Language, "waiting.empty")
-	}
-	return strings.Join(lines, "\n")
-}
-func (m *shellModel) resultCards() []state.Block {
-	var cards []state.Block
-	for _, b := range m.content.Blocks {
-		if b.Kind == protocol.KindResult {
-			cards = append(cards, b)
-		}
-	}
-	return cards
-}
-func (m *shellModel) selectedCard() (state.Block, bool) {
-	cards := m.resultCards()
-	if len(cards) > 0 {
-		index := m.conversation.selected
-		if index < 0 {
-			index = len(cards) - 1
-		}
-		index = min(index, len(cards)-1)
-		return cards[index], true
-	}
-	return state.Block{}, false
-}
-func resultText(b state.Block) string {
-	if b.Body != "" {
-		return b.Body
-	}
-	return b.Text
-}
-
-func (m *shellModel) cardText() string {
-	if b, ok := m.selectedCard(); ok {
-		return resultText(b)
-	}
-	var lines []string
-	for _, b := range m.content.Blocks {
-		if strings.HasPrefix(b.Topic, "conversation:") || b.Local {
-			lines = append(lines, b.Text)
-		}
-	}
-	return strings.Join(lines, "\n\n")
-}
-func (m *shellModel) openPager(text string) {
-	m.conversation.pager = textPager{open: true, text: sanitize.Display(text)}
-}
-
-func conversationBlock(b state.Block) bool {
-	return b.Topic != "core" && b.Topic != "running" && (b.Topic != "waiting" || b.Card != nil) && b.Topic != "progress" && b.Kind != protocol.KindTurnState && b.Kind != protocol.KindToolActivity
-}
-
-func (m *shellModel) conversationName() string {
-	if m.conversation.agentMissing {
-		return design.Text(m.styles.options.Language, "agents.unavailable")
-	}
-	for _, a := range m.content.Agents {
-		if a.AgentID == m.activeAgent() {
-			return sanitize.Display(a.Name)
-		}
-	}
-	return "LINA"
-}
-
-func (m *shellModel) speakerName(b state.Block) string {
-	if b.Local || b.Speaker == protocol.ConversationSpeakerPerson {
-		return design.Text(m.styles.options.Language, "person")
-	}
-	if b.Speaker == protocol.ConversationSpeakerAgent || b.Kind == protocol.KindOutputDelta {
-		return m.conversationName()
-	}
-	return ""
 }
 
 func (m *shellModel) pagerText() string {
@@ -880,6 +600,9 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		// shortened slice must not overwrite the cache's trimmed boundary rows.
 		body = slices.Clone(body)
 		if b.Kind == protocol.KindResult && !b.InlineReply {
+			if b.CompletionLabel != "" {
+				body = append([]render.StyledRow{plainRow(sanitize.Display(b.CompletionLabel))}, body...)
+			}
 			body = append([]render.StyledRow{plainRow(design.Text(m.styles.options.Language, "result") + "  " + sanitize.Display(b.Title) + "  Ctrl+O")}, body...)
 		}
 		toolRowsAt := len(body)

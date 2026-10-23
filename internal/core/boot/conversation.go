@@ -75,6 +75,8 @@ type acceptedSteering struct {
 }
 
 type conversationRuntime struct {
+	// Installed only by the isolated intake replay command, never by Core boot.
+	intakeReplay func(context.Context, ledger.Event) error
 	artifactInit    sync.Once
 	artifactMu      *sync.Mutex
 	exchangeStop    context.CancelFunc
@@ -103,6 +105,7 @@ type conversationRuntime struct {
 	removals        *retract.Store
 	channels        *channelRuntime
 	workArea        *work.Area
+	delegation      *delegationRuntime
 	channelSurfaces atomic.Int64
 	channelBinding  *channels.Binding
 	channelAddress  channels.Address
@@ -315,6 +318,7 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err = r.startRuns(ctx); err != nil {
 		return nil, err
 	}
+
 	if r.agent != "" {
 		if err = r.seedHistory(ctx); err != nil {
 			return nil, err
@@ -349,6 +353,14 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	// Start them only after background services and the final lanes are ready.
 	if err = r.startWorkerDispatch(ctx); err != nil {
 		return nil, err
+	}
+	if delegationErr := r.startDelegation(ctx); delegationErr != nil {
+		// Optional worker readiness cannot take down conversation or channels.
+		if r.delegation != nil {
+			_ = r.delegation.close(ctx)
+			r.delegation = nil
+		}
+		fmt.Fprintln(os.Stderr, "Delegation is unavailable; other Core capabilities remain available.")
 	}
 	if err = r.startCompletions(ctx); err != nil {
 		return nil, err
@@ -390,6 +402,10 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 		case <-ctx.Done():
 			return errors.Join(err, ctx.Err())
 		}
+	}
+	if r.delegation != nil {
+		err = errors.Join(err, r.delegation.close(ctx))
+		r.delegation = nil
 	}
 	if r.completionStop != nil {
 		r.completionStop()
@@ -562,6 +578,9 @@ func (r *conversationRuntime) Input(ctx context.Context, s clientsrv.Session, p 
 	}
 	if err = r.publish(ctx, protocol.KindItemDone, eventID, answer); err != nil {
 		return protocol.ItemDone{}, err
+	}
+	if r.intakeReplay != nil {
+		return answer, r.intakeReplay(ctx, event)
 	}
 	err = r.submitInput(event, receipt.ID, p.Mode == nil || *p.Mode == protocol.InputModeSteer, r)
 	return answer, err
@@ -812,11 +831,17 @@ func (r *conversationRuntime) seedHistory(ctx context.Context) error {
 		}
 		text := e.Body.Text()
 		if e.ScaffoldKind == "result" {
-			var plan result.Result
-			if err := json.Unmarshal([]byte(text), &plan); err != nil {
+			var value result.Result
+			if err := json.Unmarshal([]byte(text), &value); err != nil {
 				return err
 			}
-			if err := r.publish(ctx, protocol.KindResult, plan.ID, planWire(plan)); err != nil {
+			var err error
+			if value.Type == result.PlanType {
+				err = r.publish(ctx, protocol.KindResult, value.ID, planWire(value))
+			} else if e.SpeakerKind == guard.Agent {
+				err = r.publishResult(ctx, value)
+			}
+			if err != nil {
 				return err
 			}
 			continue
@@ -917,6 +942,11 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		delete(r.personaGrants, turnID+":relationship")
 		delete(r.personaGrants, turnID+":names")
 		delete(r.personaGrants, turnID+":coding")
+		for id := range r.personaGrants {
+			if strings.HasPrefix(id, turnID+":results:") {
+				delete(r.personaGrants, id)
+			}
+		}
 		r.personaMu.Unlock()
 
 	}()
@@ -989,6 +1019,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			if err := r.prepareWorkerTools(turnID, input, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
+			if err := r.prepareResultTools(turnID, input, bindings); err != nil {
+				return turn.PreparedRequest{}, err
+			}
 			if err := r.prepareRecordTools(turnID, input.ID, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
@@ -1007,6 +1040,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			}
 			declarations = append(declarations, coreexec.SkillDeclarations()...)
 			declarations = append(declarations, coreexec.RecordDeclarations()...)
+			declarations = append(declarations, coreexec.ResultDeclarations()...)
 			declarations = append(declarations, workDeclarations...)
 			declarations = append(declarations, methodologyDeclarations()...)
 			declarations = append(declarations, coreexec.PlanningDeclarations()...)
@@ -1025,6 +1059,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			}
 			declarations = append(declarations, coreexec.WorkDeclarations()...)
 			declarations = append(declarations, workerDeclarations()...)
+			declarations = append(declarations, r.prepareDelegationTools(turnID, bindings)...)
 			declarations = append(declarations, r.prepareTimerTools(turnID, bindings)...)
 			declarations = append(declarations, r.prepareExchangeTools(turnID, bindings)...)
 			if r.coding != nil {
@@ -1051,6 +1086,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 					}
 					bindings[name] = tool
 				}
+			}
+			if err := r.bindDoneEvidence(ctx, persona, bindings); err != nil {
+				return turn.PreparedRequest{}, err
 			}
 			packet, _, err := atropos.Packet(ctx, minimum, 0, func(ctx context.Context) (assemble.ContextPacket, error) { return r.relationshipPacket(ctx, at) })
 			if err != nil {

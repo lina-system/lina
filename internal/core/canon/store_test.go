@@ -49,6 +49,19 @@ func openStore(t *testing.T, cfg Config) *Store {
 	return s
 }
 
+// migrationsBefore finds the migration by its SQL, so renumbering keeps an upgrade test on its target.
+func migrationsBefore(t *testing.T, sql string) []Migration {
+	t.Helper()
+	catalog := Migrations()
+	for i, migration := range catalog {
+		if migration.SQL == sql {
+			return catalog[:i]
+		}
+	}
+	t.Fatal("migration is not in the catalog")
+	return nil
+}
+
 func insertItem(tx *Tx) error {
 	ctx := tx.ctx
 	_, err := tx.ExecContext(ctx, "INSERT INTO items(body) VALUES (?)", "kept")

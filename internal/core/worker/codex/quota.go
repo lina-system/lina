@@ -281,3 +281,6 @@ func quotaState(used float64) provider.QuotaState {
 	}
 	return provider.QuotaOK
 }
+
+// QuotaUpdates coalesces observations for the event-driven scheduler.
+func (s *Session) QuotaUpdates() <-chan struct{} { return s.quotaWake }

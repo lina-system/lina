@@ -1,0 +1,7 @@
+{
+  "repository": "fixture/repo",
+  "tasks": [
+    {"key":"directory","what":"Update a matched directory","why":"Exercise directory leases","done":"artifact committed","areas":["sh*"],"depends_on":[],"design":["DESIGN.md#work"]},
+    {"key":"child","what":"Update a child path","why":"Exercise overlap refusal","done":"artifact committed","areas":["shared/nested/b.txt"],"depends_on":[],"design":["DESIGN.md#work"]}
+  ]
+}

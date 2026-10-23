@@ -50,6 +50,9 @@ type Definition struct {
 }
 type Origin struct{ Person, Agent, Conversation, Turn string }
 type Record struct {
+	ReturnReceipt  string                     `json:"return_receipt,omitempty"`
+	GenerationBase int                        `json:"generation_base,omitempty"`
+	FailureReason  string                     `json:"failure_reason,omitempty"`
 	RepositoryKey  string                     `json:"repository_key,omitempty"`
 	Worker         string                     `json:"worker,omitempty"`
 	Tried          []string                   `json:"tried,omitempty"`
@@ -426,7 +429,7 @@ func (s *Service) sync() {
 			err = s.cfg.DB.Read(s.ctx, func(tx *canon.Tx) error {
 				return tx.QueryRowContext(s.ctx, `SELECT count(*) FROM turn_calls WHERE turn_id=? AND json_extract(call,'$.Name')='dispatch_work' AND json_extract(result,'$.code')='ok' AND json_extract(result,'$.output.id')=?`, r.Origin.Turn, r.ID).Scan(&committed)
 			})
-			if err != nil || committed == 0 {
+			if err != nil || committed == 0 && !(r.Goal && r.ReturnReceipt != "") {
 				continue
 			}
 			s.mu.Lock()
