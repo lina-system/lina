@@ -3,7 +3,6 @@ package e2e_test
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -37,35 +36,14 @@ process.exit(result.status ?? 1);
 	if err := os.WriteFile(filepath.Join(root, "bin/npm"), []byte(wrapper), 0700); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(bundle, "manifest.json")
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
+	// Use the production assembly path. It must ship and hash the exact ACP
+	// inputs; the scenario never injects release artifacts itself.
+	build := exec.CommandContext(t.Context(), "node", "scripts/build.mjs", "--out", bundle)
+	build.Dir = "../.."
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("production bundle: %v\n%s", err, output)
 	}
-	var m map[string]any
-	if err := json.Unmarshal(raw, &m); err != nil {
-		t.Fatal(err)
-	}
-	var files []map[string]any
-	for _, name := range []string{"package.json", "package-lock.json"} {
-		data, err := os.ReadFile(filepath.Join("../../adapters/claude-acp", name))
-		if err != nil {
-			t.Fatal(err)
-		}
-		name = "adapters/claude-acp/" + name
-		if err := os.MkdirAll(filepath.Dir(filepath.Join(bundle, name)), 0700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(bundle, name), data, 0600); err != nil {
-			t.Fatal(err)
-		}
-		files = append(files, map[string]any{"name": name, "size": len(data), "sha256": fmt.Sprintf("%x", sha256.Sum256(data))})
-	}
-	m["installFiles"] = files
-	raw, _ = json.Marshal(m)
-	if err := os.WriteFile(path, raw, 0600); err != nil {
-		t.Fatal(err)
-	}
+
 }
 
 // The wrapper and SDK are the real pinned npm packages. Only Claude's stream,
